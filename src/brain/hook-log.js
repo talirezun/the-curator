@@ -29,11 +29,23 @@
  *   rung      the ladder rung that decided (stop/pre-compact), else null
  *   why       the ladder's own reason sentence, capped
  *   bound     how the stop window was bounded: marker | start-log | null
+ *   repo      SESSION-START LINES ONLY (v3.78.0): the absolute path of the
+ *             folder holding the `.curator-project` marker the project was
+ *             resolved from — the repository root, found on disk by walking
+ *             up from the working folder. null when the project came from a
+ *             flag or the default domain (no marker was read). The Setup
+ *             check offers it as "where is this project checked out here?"
+ *             Recording this ONE path was approved by the maintainer on
+ *             2026-09-28; it stays in this machine-local file (user data,
+ *             never synced, never under `domains/`).
  *
- * NEVER: a prompt, a transcript path, a workspace path, a model's text, an
- * error message from the harness, or any payload value other than the one
- * whitelisted `terminationReason` word. `scripts/test-hook-log.js` plants a
- * sentinel in every value of a payload and asserts it never reaches the file.
+ * So a line holds key NAMES, one whitelisted word, identifiers — and, on a
+ * session start, that one repository path. NEVER: a prompt, a transcript
+ * path, the working folder the harness sent (only the marker's folder, which
+ * exists on disk), a model's text, an error message from the harness, or
+ * any other payload value. `scripts/test-hook-log.js` plants a sentinel in
+ * every value of a payload and asserts it never reaches the file, and that
+ * the only path in the file is the marker folder, on start lines.
  *
  * ── WHERE ──────────────────────────────────────────────────────────────────
  * `getHookLogPath()` in paths.js — user data, never `domains/`, never synced.
@@ -81,8 +93,19 @@ function cleanWord(v, max = 80) {
  * Build one line from what the hook knows. Pure — the caller passes the
  * payload and every value is either whitelisted or reduced here.
  */
+/**
+ * The repository root, only on a session start, only when absolute, plain
+ * and of a sane length — anything else is dropped to null, never trimmed
+ * into a different path.
+ */
+export function cleanRepoPath(event, repo) {
+  if (event !== 'session-start' || typeof repo !== 'string') return null;
+  if (!repo.startsWith('/') || repo.length > 1024 || /[\u0000-\u001f]/.test(repo)) return null;
+  return repo;
+}
+
 export function buildHookLine({
-  harness, event, raw, sessionId, idKey, payload, project, decision, rung, why, bound, now,
+  harness, event, raw, sessionId, idKey, payload, project, decision, rung, why, bound, now, repo,
 }) {
   const p = payload && typeof payload === 'object' ? payload : {};
   const term = typeof p.terminationReason === 'string' && TERMINATION_WORDS.includes(p.terminationReason)
@@ -101,6 +124,7 @@ export function buildHookLine({
     rung: Number.isInteger(rung) ? rung : null,
     why: cleanWord(why, MAX_WHY),
     bound: ['marker', 'start-log'].includes(bound) ? bound : null,
+    repo: cleanRepoPath(cleanWord(event, 20), repo),
   };
 }
 

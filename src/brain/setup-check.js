@@ -36,6 +36,7 @@ import {
   MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates, skillRootsFor,
 } from './harness-adapters.js';
 import { normaliseHarness } from './harness-names.js';
+import { installIdOf } from './tray-summary.js';
 
 export const STATES = Object.freeze({
   OK: 'ok',
@@ -47,6 +48,19 @@ export const STATES = Object.freeze({
 });
 
 export const SKILL_NAMES = Object.freeze(['my-curator', 'curator-continuity']);
+
+/** File states that tell us nothing about the entry (see FILE_STATES). */
+const BAD_FILE_STATES = new Set(['empty', 'invalid', 'unopenable']);
+const BAD_FILE_WORDS = Object.freeze({
+  empty: 'is empty',
+  invalid: 'could not be read (not valid JSON)',
+  unopenable: 'could not be opened (a macOS permission)',
+});
+
+/** `~/…` for a path under `home` — a DISPLAY string only; paths stay absolute. */
+export function tildeUnder(home, p) {
+  return typeof p === 'string' && home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Reading JSON, including JSONC
@@ -105,17 +119,54 @@ export function stripJsonComments(text) {
   return res;
 }
 
-/** `{present, json?, jsonc?, parseError?, bytes?, readError?}` — never the text. */
+/**
+ * The five states a config file can be in (v3.78.0). Before this, an empty
+ * file and a file macOS would not let us open were indistinguishable from
+ * "broken" and "absent" respectively — measured 2026-09-28: a 0-byte
+ * `~/.gemini/antigravity/mcp_config.json` beside a WORKING
+ * `~/.gemini/config/mcp_config.json` turned Antigravity red with "a config
+ * file could not be read", and an EACCES file read as not there at all.
+ *
+ *   missing     no file at that path
+ *   unopenable  the file exists and reading it failed (EACCES, a macOS
+ *               privacy refusal, a folder where a file should be)
+ *   empty       0 bytes, or whitespace only — a half-written or placeholder file
+ *   invalid     text that does not parse (JSON, or JSONC after comments go)
+ *   ok          parsed
+ */
+export const FILE_STATES = Object.freeze(['missing', 'unopenable', 'empty', 'invalid', 'ok']);
+
+/** Read a file's text for a check: `{status, text?, bytes?, readError?}`. Never throws. */
+function readForCheck(file) {
+  let exists = false;
+  try { exists = existsSync(file); } catch { exists = false; }
+  if (!exists) return { status: 'missing' };
+  let text;
+  try { text = readFileSync(file, 'utf8'); } catch (err) {
+    return { status: 'unopenable', readError: String(err?.code || err?.message || 'unreadable').slice(0, 80) };
+  }
+  const bytes = Buffer.byteLength(text);
+  if (!text.trim()) return { status: 'empty', bytes };
+  return { status: 'ok', text, bytes };
+}
+
+/**
+ * `{present, status, json?, jsonc?, parseError?, bytes?, readError?}` — never the text.
+ * `present` keeps its v3.77.0 meaning for `doctor`: the file is there (an
+ * unopenable file IS there — it used to read as absent). `parseError` is set
+ * for `empty` as well as `invalid`, so a reader that only knows `parseError`
+ * still never treats an empty file as a working one.
+ */
 export function readJsonFile(file) {
-  try {
-    if (!existsSync(file)) return { present: false };
-    const text = readFileSync(file, 'utf8');
-    const bytes = Buffer.byteLength(text);
-    try { return { present: true, json: JSON.parse(text), bytes }; } catch (err) {
-      try { return { present: true, json: JSON.parse(stripJsonComments(text)), bytes, jsonc: true }; }
-      catch { return { present: true, parseError: err.message.slice(0, 160), bytes }; }
-    }
-  } catch (err) { return { present: false, readError: err.message.slice(0, 160) }; }
+  const r = readForCheck(file);
+  if (r.status === 'missing') return { present: false, status: 'missing' };
+  if (r.status === 'unopenable') return { present: true, status: 'unopenable', readError: r.readError };
+  if (r.status === 'empty') return { present: true, status: 'empty', parseError: 'the file is empty', bytes: r.bytes };
+  const { text, bytes } = r;
+  try { return { present: true, status: 'ok', json: JSON.parse(text), bytes }; } catch (err) {
+    try { return { present: true, status: 'ok', json: JSON.parse(stripJsonComments(text)), bytes, jsonc: true }; }
+    catch { return { present: true, status: 'invalid', parseError: err.message.slice(0, 160), bytes }; }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -130,7 +181,11 @@ export function readJsonFile(file) {
  */
 export function harnessTargets({ home = '', project = '' } = {}) {
   const dirs = { home, project };
-  const kindFor = (format) => (format === 'json' ? 'json' : format === 'toml' ? 'toml' : 'opaque');
+  // `cordis`: dsh's YAML patch layers, read by LINE-SCAN (no YAML parser in
+  // this repository — the TOML precedent below). goose's `config.yaml` stays
+  // opaque: its entry shape was never line-scanned and is not claimed here.
+  const kindFor = (cfg) => (cfg.format === 'json' ? 'json' : cfg.format === 'toml' ? 'toml'
+    : (cfg.format === 'yaml' && cfg.shape === 'cordis') ? 'cordis' : 'opaque');
   const rows = [];
   for (const id of listHarnesses()) {
     const a = adapterFor(id);
@@ -139,16 +194,27 @@ export function harnessTargets({ home = '', project = '' } = {}) {
     const mcpFiles = cfg
       ? [...resolveTemplates(cfg.user || [], dirs), ...resolveTemplates(cfg.project || [], dirs)]
       : [];
+    // One file per sub-folder (dsh's `~/.dsh/profiles/<name>/cordis.patch.yml`),
+    // marked `expanded` because no template names it. Read-only: a listing.
+    const expanded = [];
+    if (cfg?.eachDir) {
+      const base = resolveTemplates([cfg.eachDir.dir], dirs)[0];
+      let names = [];
+      try { names = base ? readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort().slice(0, 20) : []; }
+      catch { names = []; }
+      for (const n of names) expanded.push(path.join(base, n, cfg.eachDir.file));
+    }
     if (cfg && mcpFiles.length === 0) continue;
-    const kind = cfg ? kindFor(cfg.format) : 'json';
-    const mk = (file, via) => ({
+    const kind = cfg ? kindFor(cfg) : 'json';
+    const mk = (file, via, extra = {}) => ({
       file, kind, key: cfg?.key || null, via,
       tomlKey: kind === 'toml' ? `[${cfg.key}.${MCP_SERVER_NAME}]` : undefined,
+      ...extra,
     });
     const row = {
       id: a.id,
       label: a.label,
-      mcp: mcpFiles.map((f) => mk(f, 'own')),
+      mcp: [...mcpFiles.map((f) => mk(f, 'own')), ...expanded.map((f) => mk(f, 'own', { expanded: true }))],
       // Read for this row, never written for it (see the adapter's note).
       mcpAlso: cfg ? resolveTemplates(cfg.readAlso || [], dirs).map((f) => mk(f, 'readAlso')) : [],
       projectsKey: cfg?.projectsKey || null,
@@ -188,8 +254,15 @@ function entryFacts(entry) {
     args = Array.isArray(entry.args) ? entry.args.filter((x) => typeof x === 'string') : [];
   }
   const i = args.indexOf('--domains-path');
-  return { command, domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null };
+  // OUR entry's server script (`<install>/mcp/server.js`) — which Curator
+  // install this tool launches, so the Setup check can find that install's
+  // machine id on this Mac (v3.78.0). Our own entry's argument, never another's.
+  const serverScript = args.find((x) => /(^|\/)mcp\/server\.js$/.test(x)) || null;
+  return { command, domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null, serverScript };
 }
+
+/** The line a Cordis patch carries for our server — `serverName: my-curator`, quoted or not, not commented. */
+const CORDIS_SERVER_RE = new RegExp(`^\\s*serverName:\\s*(["']?)${MCP_SERVER_NAME}\\1\\s*(#.*)?$`);
 
 /**
  * Does this config file name the my-curator server, and where does it point?
@@ -197,21 +270,33 @@ function entryFacts(entry) {
  * Claude Code's local-scope entries in ~/.claude.json.
  */
 export function inspectMcpFile(target, opts = {}) {
-  if (target.kind === 'toml') {
-    try {
-      if (!existsSync(target.file)) return { present: false };
-      const text = readFileSync(target.file, 'utf8');
-      const named = text.split('\n').some((l) => l.trim().startsWith(target.tomlKey));
-      return { present: true, named, scan: 'line-scan (no TOML parser — a malformed file cannot be detected)' };
-    } catch (err) { return { present: false, readError: err.message }; }
+  if (target.kind === 'toml' || target.kind === 'cordis') {
+    // LINE-SCAN (no TOML or YAML parser in this repository): a malformed file
+    // cannot be detected, so `invalid` is never reported here — only missing,
+    // unopenable, empty, or read.
+    const r = readForCheck(target.file);
+    if (r.status === 'missing') return { present: false, status: 'missing' };
+    if (r.status === 'unopenable') return { present: true, status: 'unopenable', readError: r.readError };
+    if (r.status === 'empty') return { present: true, status: 'empty', parseError: 'the file is empty', bytes: r.bytes };
+    const lines = r.text.split('\n');
+    const named = target.kind === 'toml'
+      ? lines.some((l) => l.trim().startsWith(target.tomlKey))
+      : lines.some((l) => CORDIS_SERVER_RE.test(l));
+    return {
+      present: true, status: 'ok', named,
+      scan: `line-scan (no ${target.kind === 'toml' ? 'TOML' : 'YAML'} parser — a malformed file cannot be detected)`,
+    };
   }
   if (target.kind === 'dir') {
     try { return { present: existsSync(target.file) && statSync(target.file).isDirectory() }; }
     catch { return { present: false }; }
   }
-  if (target.kind === 'opaque') return { present: existsSync(target.file), opaque: true };
+  if (target.kind === 'opaque') {
+    const present = existsSync(target.file);
+    return { present, status: present ? 'ok' : 'missing', opaque: true };
+  }
   const r = readJsonFile(target.file);
-  if (!r.present || r.parseError) {
+  if (!r.present || r.status !== 'ok') {
     const { json, ...rest } = r;
     return rest;
   }
@@ -222,7 +307,7 @@ export function inspectMcpFile(target, opts = {}) {
     const e = p && typeof p === 'object' ? ourEntry(p, target.key) : null;
     if (e) { entry = e; at = 'project'; }
   }
-  const base = { present: true, ...(r.jsonc ? { jsonc: true } : {}) };
+  const base = { present: true, status: 'ok', ...(r.jsonc ? { jsonc: true } : {}) };
   if (!entry) return { ...base, named: false };
   return { ...base, named: true, at, ...entryFacts(entry) };
 }
@@ -233,7 +318,7 @@ export const OUR_HOOK_RE = /curator(?:\.js)?['"]?\s+hook\s/;
 /** Curator hook entries in a harness hook file, plus the accepted-and-inert ones. */
 export function inspectHookFile(harnessId, file) {
   const r = readJsonFile(file);
-  if (!r.present || r.parseError) { const { json, ...rest } = r; return rest; }
+  if (!r.present || r.status !== 'ok') { const { json, ...rest } = r; return rest; }
   const text = JSON.stringify(r.json);
   const ours = OUR_HOOK_RE.test(text);
   const events = [];
@@ -390,18 +475,29 @@ export function gitRead(cwd, args, { timeoutMs = 3000 } = {}) {
  * The `.curator-project` marker at the repository root: present, what it names,
  * and — read-only git, NO fetch — tracked, uncommitted, unpushed.
  */
-export async function inspectMarker(repo, { domain, project, git = gitRead } = {}) {
-  const file = path.join(repo, '.curator-project');
-  const rec = { file, present: false, line: null, namesThis: false, git: null };
+/**
+ * The `.curator-project` marker in `dir`, read without git: `{present, line,
+ * namesThis}`. Synchronous and cheap, so a candidate scan can ask it of many
+ * folders. Unreadable reads as absent.
+ */
+export function readMarkerLine(dir, { domain, project } = {}) {
+  const rec = { present: false, line: null, namesThis: false };
   try {
-    if (existsSync(file)) {
+    const file = path.join(dir, '.curator-project');
+    if (existsSync(file) && statSync(file).isFile()) {
       rec.present = true;
       const text = readFileSync(file, 'utf8').slice(0, 1024);
       rec.line = (text.split('\n').map((s) => s.trim()).find(Boolean) || '').slice(0, 200) || null;
       const names = new Set(domain === project ? [domain, `${domain}/${domain}`] : [project, `${domain}/${project}`]);
       rec.namesThis = !!(rec.line && names.has(rec.line));
     }
-  } catch { /* unreadable: reported absent */ }
+  } catch { return { present: false, line: null, namesThis: false }; }
+  return rec;
+}
+
+export async function inspectMarker(repo, { domain, project, git = gitRead } = {}) {
+  const file = path.join(repo, '.curator-project');
+  const rec = { file, ...readMarkerLine(repo, { domain, project }), git: null };
   const inside = await git(repo, ['rev-parse', '--is-inside-work-tree']);
   if (!inside.ok || inside.out.trim() !== 'true') { rec.git = { repo: false }; return rec; }
   rec.git = { repo: true, tracked: null, uncommitted: null, unpushed: null, upstream: null };
@@ -417,6 +513,78 @@ export async function inspectMarker(repo, { domain, project, git = gitRead } = {
     rec.git.unpushed = ahead.ok ? ahead.out.trim().length > 0 : null;
   }
   return rec;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Where is this project checked out here? (v3.78.0)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const REPO_CANDIDATE_MAX = 5;
+const REPO_WHY_TEXT = Object.freeze({
+  'claude-code': 'Claude Code has opened this folder, and its .curator-project names this project.',
+  foundations: 'This project’s foundation documents were read from this folder, and its .curator-project names this project.',
+  'hook-log': 'A Curator hook started a session for this project in this folder.',
+  'git-remote': 'Its git remote is the GitHub repository this project’s foundations mirror (it has no .curator-project for this project yet).',
+});
+
+/** `owner/repo` of a folder's `origin`, read from `.git/config` — no subprocess, no fetch. */
+export function originRepoOf(dir) {
+  try {
+    const cfg = path.join(dir, '.git', 'config');
+    if (!existsSync(cfg) || !statSync(cfg).isFile()) return null;
+    const text = readFileSync(cfg, 'utf8').slice(0, 64 * 1024);
+    const sec = /\[remote\s+"origin"\]([^[]*)/.exec(text);
+    const url = sec ? /^\s*url\s*=\s*(\S+)\s*$/m.exec(sec[1]) : null;
+    const m = url ? /github\.com[:/]([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/i.exec(url[1]) : null;
+    return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+  } catch { return null; }
+}
+
+/**
+ * Folders on THIS computer that are probably this project's checkout.
+ *
+ * PRIVACY — the inputs name OTHER folders (~/.claude.json's `projects` keys
+ * are every folder Claude Code has opened). A path leaves this function only
+ * when it exists here, sits under `home`, and either its `.curator-project`
+ * names this project or (`git-remote`) its origin is a GitHub repository this
+ * project's foundations mirror. Nothing else about any input is returned.
+ *
+ * @param {object} o
+ *   home, domain, project
+ *   sources   — `[{path, why}]` in detection order: claude-code, foundations, hook-log
+ *   githubRepos — `owner/repo` strings from the project's foundation sources
+ * @returns {Array<{path, display, why, whyText}>} at most REPO_CANDIDATE_MAX
+ */
+export function findRepoCandidates({ home, domain, project, sources = [], githubRepos = [] }) {
+  const out = [];
+  const seen = new Set();
+  const remotes = new Set((githubRepos || []).filter((x) => typeof x === 'string').map((x) => x.toLowerCase()));
+  const later = [];
+  if (!home) return out;
+  const usable = (p) => {
+    if (typeof p !== 'string' || !p.startsWith('/') || p.length > 1024 || p.includes('\0')) return null;
+    const r = path.resolve(p);
+    if (!r.startsWith(`${home}/`)) return null;
+    try { if (!statSync(r).isDirectory()) return null; } catch { return null; }
+    return r;
+  };
+  for (const s of sources) {
+    if (out.length >= REPO_CANDIDATE_MAX) break;
+    const p = usable(s && s.path);
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    const mk = readMarkerLine(p, { domain, project });
+    if (mk.namesThis) out.push({ path: p, display: tildeUnder(home, p), why: s.why, whyText: REPO_WHY_TEXT[s.why] || '' });
+    else if (!mk.present && remotes.size) later.push(p);
+  }
+  // A folder with NO marker whose origin is the mirrored repository. One with
+  // a marker naming ANOTHER project is never offered: it is that project's.
+  for (const p of later) {
+    if (out.length >= REPO_CANDIDATE_MAX) break;
+    const o = originRepoOf(p);
+    if (o && remotes.has(o)) out.push({ path: p, display: tildeUnder(home, p), why: 'git-remote', whyText: REPO_WHY_TEXT['git-remote'] });
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -444,30 +612,49 @@ export function collectMachineSetup(o = {}) {
     const files = [];
     for (const m of [...t.mcp, ...t.mcpAlso]) {
       const r = inspectMcpFile(m, { projectsKey: m.via === 'own' ? t.projectsKey : null, repo });
-      const rec = { file: m.file, via: m.via, present: !!r.present, named: r.named === true };
+      const status = r.status || (r.present ? 'ok' : 'missing');
+      const rec = { file: m.file, display: tildeUnder(home, m.file), via: m.via, present: !!r.present, named: r.named === true, status };
+      if (m.expanded) rec.expanded = true;
       if (r.jsonc) rec.jsonc = true;
-      if (r.parseError) rec.parseError = true;
+      if (status === 'invalid' || status === 'empty') rec.parseError = true;
+      if (status === 'unopenable') rec.unopenable = true;
       if (r.opaque) rec.opaque = true;
+      if (r.scan) rec.lineScan = true;
       if (r.at) rec.at = r.at;
       if (r.named) {
         if (r.domainsPath && o.domainsDir && r.domainsPath !== o.domainsDir) rec.otherFolder = true;
         if (r.command && r.command.startsWith('/') && !existsSync(r.command)) rec.commandMissing = true;
         rec.command = r.command || null;
+        if (r.serverScript) rec.serverScript = r.serverScript;
       }
       files.push(rec);
     }
     const own = files.filter((f) => f.via === 'own');
     const namedOwn = own.filter((f) => f.named);
     const namedAlso = files.filter((f) => f.via === 'readAlso' && f.named);
+    // A file that could not tell us anything (v3.78.0). It flags the tool ONLY
+    // when no file of this tool names my-curator: beside a working file it is
+    // a note, because the tool demonstrably has its entry. Measured
+    // 2026-09-28 — a 0-byte ~/.gemini/antigravity/mcp_config.json beside a
+    // working ~/.gemini/config/mcp_config.json turned Antigravity red.
+    const bad = files.filter((f) => BAD_FILE_STATES.has(f.status));
+    const anyNamed = files.some((f) => f.named);
     let bridge;
     if (t.noMcpClient) bridge = { state: STATES.NONE, word: 'no MCP client' };
-    else if (files.some((f) => f.parseError && !f.named)) {
-      bridge = { state: STATES.FIX, word: 'a config file could not be read' };
+    else if (bad.length && !anyNamed) {
+      const b = bad[0];
+      bridge = {
+        state: STATES.FIX,
+        word: `${b.display} ${BAD_FILE_WORDS[b.status]}`,
+        badFile: { file: b.file, display: b.display, status: b.status },
+      };
     } else if (namedOwn.some((f) => f.otherFolder || f.commandMissing)) {
       bridge = { state: STATES.FIX, word: namedOwn.some((f) => f.commandMissing) ? 'launch line points at a missing file' : 'reads a different knowledge folder' };
     } else if (namedOwn.length) {
-      const presentOwn = own.filter((f) => f.present && !f.opaque);
-      const userOwn = own.filter((f) => f.present);
+      // Only files that were READ count: an empty or unopenable file is a
+      // note below, never "not in 1 of 2 files".
+      const presentOwn = own.filter((f) => f.present && !f.opaque && f.status === 'ok');
+      const userOwn = own.filter((f) => f.present && f.status === 'ok');
       const notIn = userOwn.filter((f) => !f.named && t.id === 'antigravity');
       bridge = notIn.length
         ? { state: STATES.FIX, word: `not in ${notIn.length} of ${userOwn.length} files` }
@@ -482,6 +669,13 @@ export function collectMachineSetup(o = {}) {
       bridge = { state: STATES.CANT, word: 'config present, format not read' };
     } else {
       bridge = { state: STATES.NONE, word: own.some((f) => f.present) ? 'no entry found' : 'no config file found' };
+    }
+    // The bad files that did NOT flag the tool, as notes for the reader.
+    if (bad.length && bridge.state !== STATES.FIX && !t.noMcpClient) {
+      bridge.fileNotes = bad.map((b) => ({
+        file: b.file, display: b.display, status: b.status,
+        text: `${b.display} ${BAD_FILE_WORDS[b.status]} — not used; ${anyNamed ? 'another file names my-curator' : 'nothing depends on it'}.`,
+      }));
     }
 
     // Skills
@@ -577,23 +771,41 @@ export function incomingMachine(relPath, domain, project) {
  * @param {object} o
  *   domain, project
  *   pairs        — `listWorkingScopes(..., {withSaveTimes:true}).scopes`
- *   machine      — `{ids: string[]}` — every machine id that is THIS computer
+ *   machine      — `{ids: string[], installIds?: string[], installs?: [{installId, kind}]}`
+ *                  — every machine id and installation id found on THIS computer
  *   machineRows  — `collectMachineSetup({home, repo})` for this project's repo
  *   repo         — `{path, source}` or null
  *   marker       — `inspectMarker()` result or null
  *   template     — paragraph 1 of the agent-instructions block
  *   addedTools   — ids the user added here
+ *   customTools  — `[{id, label}]` tools the user named that no adapter knows
  *   sync         — `{configured, lastSyncAt, pending, incoming: string[]|null, checkedAt}`
  *   thisVersion  — this app's version
  */
 export function collectProjectSetup(o) {
   const { domain, project } = o;
   const pairs = Array.isArray(o.pairs) ? o.pairs : [];
-  const here = new Set(o.machine?.ids || []);
+  const hereIds = new Set(o.machine?.ids || []);
+  const hereInstalls = new Set(o.machine?.installIds || []);
+  for (const id of hereIds) { const i = installIdOf(id); if (i) hereInstalls.add(i); }
+  // THIS COMPUTER, by installation id as well as by exact name (v3.78.0):
+  // `mac-17d23c` and `talis-macbook-pro-17d23c` are one install (D10), and an
+  // exact-name comparison called one of them another computer. The id-less
+  // guard is tray-summary's: a bare hostname has no install id and matches
+  // only exactly.
+  const isHere = (name) => {
+    if (typeof name !== 'string' || !name) return false;
+    if (hereIds.has(name)) return true;
+    const i = installIdOf(name);
+    return i !== null && hereInstalls.has(i);
+  };
   const machineRows = Array.isArray(o.machineRows) ? o.machineRows : [];
   const byId = new Map(machineRows.map((r) => [r.id, r]));
   const repoPath = o.repo?.path || null;
   const toFix = [];
+  const custom = new Map((Array.isArray(o.customTools) ? o.customTools : [])
+    .filter((c) => c && typeof c.id === 'string' && c.id && !adapterFor(c.id))
+    .map((c) => [c.id, c.label || c.id]));
 
   // ── Evidence: saves by tool ────────────────────────────────────────────
   const saved = new Map();   // tool id → newest pair info
@@ -603,13 +815,14 @@ export function collectProjectSetup(o) {
     const at = p.writtenAt || p.lastWriteAt || null;
     const cur = saved.get(t.id);
     if (!cur || Date.parse(at) > Date.parse(cur.at)) {
-      saved.set(t.id, { tool: t, at, scope: p.scope, machine: p.machine, thisMachine: here.has(p.machine), curator: p.curator || null });
+      saved.set(t.id, { tool: t, at, scope: p.scope, machine: p.machine, thisMachine: isHere(p.machine), curator: p.curator || null });
     }
   }
 
   // ── Which tools get a row ──────────────────────────────────────────────
   const ids = new Set([...saved.keys()]);
   for (const id of o.addedTools || []) if (adapterFor(id)) ids.add(id);
+  for (const id of custom.keys()) ids.add(id);
   for (const r of machineRows) {
     if (r.configured && r.instructionNames.length) ids.add(r.id);
   }
@@ -620,14 +833,22 @@ export function collectProjectSetup(o) {
     const a = adapterFor(id);
     const m = byId.get(id) || null;
     const s = saved.get(id) || null;
-    const label = a?.label || s?.tool.label || id;
+    const label = a?.label || s?.tool.label || custom.get(id) || id;
     const row = { id, label, known: !!a };
+    const evidence = [];
+    if (!a) {
+      // A tool no adapter knows — named by the user or seen only in a save.
+      // Everything said about it is the generic convention, and says so.
+      row.custom = true;
+      row.userAdded = custom.has(id);
+      row.instructionFile = 'AGENTS.md';
+    }
 
     // Saved
     if (s) {
       const own = s.scope === id;
       const wrong = !own && collision.has(s.scope);
-      row.saved = { state: wrong ? STATES.FIX : STATES.OK, at: s.at, scope: s.scope, machine: s.machine, thisMachine: s.thisMachine, ownScope: own, wrongScope: wrong };
+      row.saved = { state: wrong ? STATES.FIX : STATES.OK, at: s.at, scope: s.scope, machine: s.machine, thisMachine: s.thisMachine, ownScope: own, wrongScope: wrong, curator: s.curator };
       if (wrong) {
         toFix.push({
           tool: id, kind: 'wrong-scope',
@@ -636,15 +857,57 @@ export function collectProjectSetup(o) {
           fix: { kind: 'copy-block' },
         });
       }
-    } else row.saved = { state: STATES.NONE, at: null };
+      evidence.push({ heading: 'Saved', lines: [
+        `Newest save ${s.at || '(time not recorded)'} under “${s.scope}”${own ? ' — its own scope' : wrong ? ' — not its own scope' : ''}.`,
+        s.thisMachine ? 'Made from this computer.' : `Made from ${s.machine || 'another computer'}.`,
+        ...(s.curator ? [`Saved with The Curator ${s.curator}.`] : []),
+      ] });
+    } else {
+      row.saved = { state: STATES.NONE, at: null };
+      evidence.push({ heading: 'Saved', lines: [`${label} has not saved to this project yet. A tool is ready only once it has saved from this computer under its own name.`] });
+    }
 
     // Bridge (this machine), with evidence overriding an absent entry
-    if (!m) row.bridge = { state: STATES.CANT, word: 'this tool has no config file The Curator knows' };
+    if (!m) row.bridge = { state: STATES.CANT, word: a ? 'this tool has no config file The Curator knows' : 'config location not known — copy the entry by hand' };
     else if (m.bridge.state === STATES.NONE && s && s.thisMachine) {
       row.bridge = { state: STATES.OK, word: 'working', note: 'entry not found in the files read — a save from this computer proves it works' };
     } else row.bridge = { ...m.bridge };
+    if (a && a.mcpConfig && a.mcpConfig.verified !== true && row.bridge.state !== STATES.OK) {
+      row.bridge.note = row.bridge.note || 'config location not measured — copy the entry by hand';
+    }
     if (m && m.bridge.state === STATES.FIX) {
-      toFix.push({ tool: id, kind: 'bridge', text: `${label}: ${m.bridge.word}.`, detail: 'See Settings › MCP bridge › Tools on this Mac for the file.', fix: { kind: 'settings' } });
+      const b = m.bridge.badFile;
+      if (b) {
+        const base = path.basename(b.file);
+        toFix.push({
+          tool: id, kind: 'bridge-file', status: b.status,
+          text: `${label}: ${b.display} ${BAD_FILE_WORDS[b.status]}.`,
+          detail: badFileDetail(id, label, b.status),
+          fix: { kind: 'reveal', path: b.file, label: `Reveal ${base}` },
+        });
+      } else {
+        toFix.push({ tool: id, kind: 'bridge', text: `${label}: ${m.bridge.word}.`, detail: 'See Settings › MCP bridge › Tools on this Mac for the file.', fix: { kind: 'settings' } });
+      }
+    }
+    {
+      const lines = [row.bridge.word + (row.bridge.note ? ` — ${row.bridge.note}` : '')];
+      let reveal = null;
+      for (const f of m?.files || []) {
+        const where = f.via === 'readAlso' ? ' (read for this tool; another app owns it)' : '';
+        let what;
+        if (f.status === 'missing') what = 'not found';
+        else if (BAD_FILE_STATES.has(f.status)) what = BAD_FILE_WORDS[f.status];
+        else if (f.opaque) what = 'present — format not read';
+        else if (f.named) what = `names my-curator${f.at === 'project' ? ' (for this repository)' : ''}${f.otherFolder ? ' — but reads a different knowledge folder' : ''}${f.commandMissing ? ' — but its launch file is missing' : ''}`;
+        else what = 'present, no my-curator entry';
+        lines.push(`${f.display || f.file}: ${what}${where}.`);
+        if (!reveal && (f.named || BAD_FILE_STATES.has(f.status))) reveal = f.file;
+      }
+      for (const n of m?.bridge?.fileNotes || []) lines.push(n.text);
+      if (m?.bridge?.observation) lines.push(m.bridge.observation);
+      if (m?.bridge?.badFile) reveal = m.bridge.badFile.file;
+      if (a?.mcpConfig?.note) lines.push(a.mcpConfig.note);
+      evidence.push({ heading: 'MCP bridge', lines, ...(reveal ? { reveal } : {}) });
     }
 
     // Skills
@@ -652,20 +915,36 @@ export function collectProjectSetup(o) {
     if (m && m.skills.state === STATES.FIX) {
       toFix.push({ tool: id, kind: 'skills', text: `${label}: ${m.skills.word}.`, detail: 'Replace the installed skill folders with the current copy this app carries.', fix: { kind: 'skills' } });
     }
+    {
+      const lines = [row.skills.word + (row.skills.note ? ` — ${row.skills.note}` : '')];
+      let reveal = null;
+      for (const sk of m?.skills?.installed || []) {
+        lines.push(`${sk.skill} at ${tildeUnder(o.home || '', sk.dir)}: ${sk.match === true ? 'current' : sk.match === false ? `outdated${sk.differs.length ? ` (differs: ${sk.differs.join(', ')})` : ''}${sk.missing.length ? ` (missing: ${sk.missing.join(', ')})` : ''}` : 'not compared'}.`);
+        if (!reveal) reveal = sk.dir;
+      }
+      if (!m?.skills?.installed?.length && m?.skills?.roots?.length) lines.push(`Looked in: ${m.skills.roots.map((r) => tildeUnder(o.home || '', r)).join(', ')}.`);
+      if (!a) lines.push('Where this tool keeps skills is not known; download the skill .zip files and install them the way the tool documents.');
+      evidence.push({ heading: 'Skills', lines, ...(reveal ? { reveal } : {}) });
+    }
 
     // Block
-    const names = a?.instructionFile?.names || [];
+    const names = a ? (a.instructionFile?.names || []) : ['AGENTS.md'];
     if (!names.length) row.block = { state: STATES.NONE, word: 'reads no instruction file' };
     else if (!repoPath) row.block = { state: STATES.NOT_CHECKED, word: 'not checked', note: 'no repository set on this computer' };
     else {
       const files = names.map((n) => inspectInstructionFile(path.join(repoPath, n), {
-        domain, project, template: o.template, cap: a.instructionFile.cap || null,
+        domain, project, template: o.template, cap: a?.instructionFile?.cap || null,
       }));
       const withBlock = files.filter((f) => f.hasBlock);
       const best = withBlock.find((f) => f.current && !f.wrongProject) || withBlock[0] || null;
       row.block = { files: files.map((f) => ({ name: path.basename(f.file), present: f.present, hasBlock: f.hasBlock, current: f.current, wrongProject: f.wrongProject, namesProject: f.namesProject, atTop: f.atTop, overCap: f.overCap, bytes: f.bytes })) };
       const fileWord = names.join(' or ');
-      if (!best) {
+      if (!a) {
+        // An ASSUMPTION (the common convention), so never a to-fix line.
+        Object.assign(row.block, best && best.current && !best.wrongProject
+          ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most tools read AGENTS.md' }
+          : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this tool reads is not known' });
+      } else if (!best) {
         Object.assign(row.block, { state: STATES.FIX, word: 'missing', note: `${fileWord} has no Curator block` });
         toFix.push({ tool: id, kind: 'block-missing', file: names[0],
           text: `${names[0]} has no Curator block.`,
@@ -684,6 +963,15 @@ export function collectProjectSetup(o) {
         Object.assign(row.block, { state: STATES.OK, word: best.atTop ? 'current · at the top' : 'current', note: path.basename(best.file) });
       }
     }
+    {
+      const lines = [row.block.word + (row.block.note ? ` — ${row.block.note}` : '')];
+      if (names.length) lines.push(`${label} reads ${names.join(' and ')}${a?.instructionFile?.firstMatch ? ' (the first one found wins)' : ''}.`);
+      for (const f of row.block.files || []) {
+        lines.push(`${f.name}: ${!f.present ? 'not in the repository' : !f.hasBlock ? 'no Curator block' : f.wrongProject ? `block names ${f.namesProject}` : f.current ? `current${f.atTop ? ', at the top' : ''}` : 'an older block'}.`);
+      }
+      const first = (row.block.files || []).find((f) => f.present) || (row.block.files || [])[0];
+      evidence.push({ heading: 'Instruction block', lines, ...(repoPath && first ? { reveal: path.join(repoPath, first.name) } : {}) });
+    }
 
     // Hooks (optional — never "to fix" unless wired where it cannot load)
     if (m) {
@@ -693,6 +981,29 @@ export function collectProjectSetup(o) {
         files: m.hooks.files.map((f) => ({ file: f.file, scope: f.scope, ours: f.ours, observation: f.observation || null })),
       };
     } else row.hooks = { state: STATES.NONE, word: '—' };
+    {
+      const lines = [row.hooks.word + (row.hooks.note ? ` — ${row.hooks.note}` : '')];
+      let reveal = null;
+      for (const f of row.hooks.files || []) {
+        lines.push(`${tildeUnder(o.home || '', f.file)} (${f.scope}): ${f.ours ? 'Curator hooks present' : 'no Curator hooks'}${f.observation ? ` — ${f.observation}` : ''}.`);
+        if (!reveal && f.ours) reveal = f.file;
+      }
+      const ev = row.hooks.evidence;
+      if (ev?.start) lines.push(`Start hook observed firing ${ev.start.at}.`);
+      if (ev?.stop) lines.push(`Stop hook observed firing ${ev.stop.at}${ev.stop.decision === 'ask' ? ' — asked for a save' : ` — did not ask: ${ev.stop.why || 'no reason recorded'}`}.`);
+      if (row.hooks.suggest) lines.push(`Suggested: ${row.hooks.suggest}`);
+      evidence.push({ heading: 'Hooks', lines, ...(reveal ? { reveal } : {}) });
+    }
+
+    // ── One word per tool, and the four parts (v3.78.0) ──────────────────
+    row.parts = {
+      mcp: { state: row.bridge.state, word: row.bridge.word },
+      skills: { state: row.skills.state, word: row.skills.word },
+      block: { state: row.block.state, word: row.block.word },
+      hooks: { state: row.hooks.state, word: row.hooks.word },
+    };
+    row.status = toolStatus(row);
+    row.evidence = evidence;
     tools.push(row);
   }
   tools.sort((x, y) => (Date.parse(y.saved?.at) || 0) - (Date.parse(x.saved?.at) || 0) || x.label.localeCompare(y.label));
@@ -718,33 +1029,9 @@ export function collectProjectSetup(o) {
     }
   }
 
-  // ── Computers ──────────────────────────────────────────────────────────
-  const comps = new Map();
-  for (const p of pairs) {
-    if (!p.machine) continue;
-    const c = comps.get(p.machine) || { machine: p.machine, thisMachine: here.has(p.machine), tools: new Set(), newestAt: null, curator: null };
-    const t = toolOf(p.harness);
-    if (t) c.tools.add(t.label);
-    const at = p.writtenAt || p.lastWriteAt || null;
-    if (at && (!c.newestAt || Date.parse(at) > Date.parse(c.newestAt))) { c.newestAt = at; c.curator = p.curator || null; }
-    comps.set(p.machine, c);
-  }
-  const incoming = Array.isArray(o.sync?.incoming) ? o.sync.incoming : null;
-  const waiting = new Map();
-  if (incoming) {
-    for (const f of incoming) {
-      const m = incomingMachine(f, domain, project);
-      if (m) waiting.set(m, (waiting.get(m) || 0) + 1);
-    }
-  }
-  for (const [m, n] of waiting) {
-    if (!comps.has(m)) comps.set(m, { machine: m, thisMachine: here.has(m), tools: new Set(), newestAt: null, curator: null });
-    comps.get(m).waiting = n;
-  }
-  const computers = [...comps.values()]
-    .map((c) => ({ ...c, tools: [...c.tools].sort(), waiting: c.waiting || 0 }))
-    .sort((x, y) => (y.thisMachine - x.thisMachine) || ((Date.parse(y.newestAt) || 0) - (Date.parse(x.newestAt) || 0)));
-  const waitingTotal = computers.reduce((s, c) => s + (c.thisMachine ? 0 : c.waiting), 0);
+  // ── Computers, grouped by INSTALLATION (v3.78.0) ──────────────────────
+  const computers = groupComputers(pairs, { domain, project, isHere, sync: o.sync, installs: o.machine?.installs || [] });
+  const waitingTotal = computers.rows.reduce((n, c) => n + (c.thisComputer ? 0 : c.waiting), 0);
   if (waitingTotal) {
     toFix.push({ kind: 'sync-incoming', text: `${waitingTotal === 1 ? 'A newer handoff is' : `${waitingTotal} handoff files are`} waiting on GitHub.`, detail: 'Another computer saved and synced. Sync this Mac before starting, so the agent reads it.', fix: { kind: 'sync' } });
   }
@@ -753,10 +1040,128 @@ export function collectProjectSetup(o) {
     domain, project,
     repo,
     tools,
-    computers,
+    computers: computers.rows,
+    physical: computers.physical,
     sync: o.sync || null,
     toFix,
-    counts: { toFix: toFix.length, tools: tools.length, computers: computers.length },
+    counts: {
+      toFix: toFix.length,
+      tools: tools.length,
+      computers: computers.physical.length,
+      installs: computers.rows.length,
+      machineNames: computers.rows.reduce((n, c) => n + c.names.length, 0),
+    },
     thisVersion: o.thisVersion || null,
   };
+}
+
+/**
+ * One word per tool. `ready` only when it has SAVED, from this computer,
+ * under a scope that is not another tool's, and its block is current (or it
+ * reads none) — the v3.77.0 rule that a tool turns ok only on evidence.
+ */
+function toolStatus(row) {
+  const cells = [row.saved, row.bridge, row.skills, row.block, row.hooks];
+  if (cells.some((c) => c && c.state === STATES.FIX)) return 'to-fix';
+  if (!row.saved || row.saved.state !== STATES.OK) return 'no-save';
+  const blockOk = row.block.state === STATES.OK || row.block.state === STATES.NONE;
+  const bridgeOk = row.bridge.state === STATES.OK;
+  return row.saved.thisMachine && blockOk && bridgeOk ? 'ready' : 'partly';
+}
+
+/** What to do about a config file that told us nothing — addressed to a person. */
+function badFileDetail(id, label, status) {
+  if (status === 'empty') {
+    return id === 'antigravity'
+      ? 'Antigravity writes it on first launch — open Antigravity once, then Re-check. If it stays empty, reveal it and fix or delete it.'
+      : `An empty file names no server. Open ${label} once (it may fill the file), then Re-check. If it stays empty, reveal it and add the my-curator entry, or delete it.`;
+  }
+  if (status === 'invalid') {
+    return `It is not valid JSON, so nothing in it can be read — including a my-curator entry — and ${label} may not read it either. Reveal it and fix the syntax (or delete it if it is a leftover), then Re-check.`;
+  }
+  return 'macOS did not let The Curator open it. Reveal it and check its permissions (or give The Curator access under System Settings › Privacy & Security), then Re-check.';
+}
+
+/**
+ * The Computers fold: one ROW per installation, and one PHYSICAL group for
+ * everything found on this Mac. Pure over its inputs.
+ *
+ * A row is keyed by the installation id — the trailing id of
+ * `<hostname-slug>-<install-id>` (`installIdOf`, tray-summary's rule, never a
+ * copy). `mac-17d23c` and `talis-macbook-pro-17d23c` are the same install
+ * under two hostname spellings (working-state.js D10), so they are one row
+ * with two names. A name with no install id (a pre-D9 bare hostname) is its
+ * own row.
+ *
+ * Every row that is this computer's joins ONE physical group: a Mac app and a
+ * source checkout on one laptop are two installs and one computer. Rows of
+ * other computers stay one group each — nothing proves two remote installs
+ * share hardware, and a hostname is not that proof (it flaps).
+ */
+export function groupComputers(pairs, { domain, project, isHere, sync, installs = [] }) {
+  const rows = new Map();
+  const keyOf = (name) => { const i = installIdOf(name); return i ? `install:${i}` : `name:${name}`; };
+  const rowFor = (name) => {
+    const key = keyOf(name);
+    if (!rows.has(key)) {
+      const i = installIdOf(name);
+      const inst = i ? installs.find((x) => x.installId === i) : null;
+      rows.set(key, { key, installId: i, names: new Map(), thisComputer: false, installKind: inst ? inst.kind || null : null, tools: new Set(), newestSaveAt: null, curatorVersion: null, waiting: 0 });
+    }
+    const r = rows.get(key);
+    if (!r.names.has(name)) r.names.set(name, null);
+    if (isHere(name)) r.thisComputer = true;
+    return r;
+  };
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    if (!p || !p.machine) continue;
+    const r = rowFor(p.machine);
+    const t = toolOf(p.harness);
+    if (t) r.tools.add(t.label);
+    const at = p.writtenAt || p.lastWriteAt || null;
+    const t0 = Date.parse(at);
+    if (Number.isFinite(t0)) {
+      const prevName = r.names.get(p.machine);
+      if (!prevName || t0 > Date.parse(prevName)) r.names.set(p.machine, at);
+      if (!r.newestSaveAt || t0 > Date.parse(r.newestSaveAt)) { r.newestSaveAt = at; r.curatorVersion = p.curator || null; }
+    }
+  }
+  const incoming = Array.isArray(sync?.incoming) ? sync.incoming : null;
+  if (incoming) {
+    for (const f of incoming) {
+      const m = incomingMachine(f, domain, project);
+      if (m) rowFor(m).waiting++;
+    }
+  }
+  const out = [...rows.values()].map((r) => {
+    // Newest-saved name first; a name with no dated save sorts last.
+    const names = [...r.names.entries()]
+      .sort((x, y) => (Date.parse(y[1]) || 0) - (Date.parse(x[1]) || 0) || x[0].localeCompare(y[0]))
+      .map(([n]) => n);
+    const row = {
+      key: r.key,
+      names,
+      primary: names[0],
+      aliases: names.slice(1),
+      thisComputer: r.thisComputer,
+      installKind: r.installKind,
+      tools: [...r.tools].sort(),
+      newestSaveAt: r.newestSaveAt,
+      curatorVersion: r.curatorVersion,
+      waiting: r.waiting,
+      // v3.77.0 names, kept for one release so an older view still renders.
+      machine: names[0],
+      thisMachine: r.thisComputer,
+      newestAt: r.newestSaveAt,
+      curator: r.curatorVersion,
+    };
+    if (r.thisComputer && sync) row.sync = sync;
+    return row;
+  }).sort((x, y) => (y.thisComputer - x.thisComputer) || ((Date.parse(y.newestSaveAt) || 0) - (Date.parse(x.newestSaveAt) || 0)));
+  const here = out.filter((r) => r.thisComputer);
+  const physical = [
+    ...(here.length ? [{ thisComputer: true, installs: here }] : []),
+    ...out.filter((r) => !r.thisComputer).map((r) => ({ thisComputer: false, installs: [r] })),
+  ];
+  return { rows: out, physical };
 }

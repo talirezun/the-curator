@@ -947,6 +947,49 @@ export function setSetupTools(ids) {
   return getSetupTools();
 }
 
+/**
+ * Tools the user NAMED in the Setup check that no adapter knows (v3.78.0) —
+ * "Custom tool…". Stored as the display names the user typed (already
+ * normalised by the route with `normaliseHarness`), per machine, never synced.
+ * The shape is validated on READ as well as write: a hand-edited config file
+ * can never put anything but a short plain name into a view.
+ */
+export const SETUP_CUSTOM_TOOL_RE = /^[A-Za-z0-9 ._-]{1,40}$/;
+export const SETUP_CUSTOM_TOOLS_MAX = 12;
+
+export function getSetupCustomTools() {
+  const cfg = readRaw();
+  const raw = Array.isArray(cfg.setupCustomTools) ? cfg.setupCustomTools : [];
+  const seen = new Set();
+  const out = [];
+  for (const x of raw) {
+    if (typeof x !== 'string') continue;
+    const name = x.trim();
+    if (!SETUP_CUSTOM_TOOL_RE.test(name) || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(name);
+    if (out.length >= SETUP_CUSTOM_TOOLS_MAX) break;
+  }
+  return out;
+}
+
+export function setSetupCustomTools(names) {
+  const cfg = readRaw();
+  const seen = new Set();
+  const list = [];
+  for (const x of Array.isArray(names) ? names : []) {
+    if (typeof x !== 'string') continue;
+    const name = x.trim();
+    if (!SETUP_CUSTOM_TOOL_RE.test(name) || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    list.push(name);
+  }
+  const capped = list.slice(0, SETUP_CUSTOM_TOOLS_MAX);
+  if (capped.length) cfg.setupCustomTools = capped; else delete cfg.setupCustomTools;
+  writeRaw(cfg);
+  return getSetupCustomTools();
+}
+
 // ── Shared Brain feature flag (v3.0.0+) ─────────────────────────────────────
 // When false (default), Shared Brain routes return 404 and the UI hides the
 // section. Circuit-breaker: if a Shared Brain bug ships, a hotfix can flip

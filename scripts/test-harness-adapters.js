@@ -320,6 +320,19 @@ section('§2  THE MCP ENTRY — the launch line is the caller\'s, in each format
   ok(dsh.format === 'yaml' && dsh.shape === 'cordis', 'dsh is a Cordis YAML overlay');
   ok(A.adapterFor('dsh').mcpConfig.stripsEnv === true,
     '…and is recorded as stripping credential-shaped env from stdio children');
+  // v3.78.0 — the shape dsh's own examples use (verified from its source):
+  // a PATCH item inserting one dsh-mcp-client entry, never a `mcp_servers` map.
+  ok(dsh.text.startsWith('- insert:\n    - id: "mcp-my-curator"\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: "my-curator"\n        transport: stdio\n'),
+    'dsh: a Cordis `- insert:` patch item for @deepseek-ai/dsh-mcp-client, serverName my-curator', dsh.text);
+  ok(dsh.text.includes('        command: "/opt/My Tools/node"') && dsh.text.includes('        env: {}') && !dsh.text.includes('mcp_servers'),
+    '…with the handed-in command quoted (a space stays one value), an empty env, and no `mcp_servers` key');
+  ok(Array.isArray(dsh.config) && dsh.config[0].insert[0].config.args.length === LAUNCH.args.length,
+    '…and the config object carries every launch argument');
+  const dshCfg = A.adapterFor('dsh').mcpConfig;
+  ok(dshCfg.verified === true && dsh.paths.user.includes('~/.dsh/cordis.patch.yml') && !dsh.paths.user.some((p) => /cordis\.yml$/.test(p)),
+    'dsh: verified from source — reads ~/.dsh/cordis.patch.yml, never cordis.yml (dsh rewrites it on every launch)', dsh.paths);
+  ok(A.adapterFor('dsh').instructionFile.names.join(',') === 'AGENTS.md,CLAUDE.md' && A.adapterFor('dsh').instructionFile.verified,
+    'dsh reads AGENTS.md and CLAUDE.md (verified)');
 
   const aider = A.mcpEntryFor('aider', LAUNCH);
   ok(aider.ok === false && aider.reason === 'no_mcp_client' && /wrapper around the process/.test(aider.message),
@@ -407,7 +420,9 @@ section('§4  THE PATHS — set equality against doctor.js\'s own table');
       ...A.resolveTemplates(a.mcpConfig?.user || [], dirs),
       ...A.resolveTemplates(a.mcpConfig?.project || [], dirs),
     ]);
-    const theirs = norm((t.mcp || []).map((m) => m.file));
+    // `expanded` files are enumerated from a folder on disk (dsh's profiles),
+    // not named by any template — they have no counterpart to compare.
+    const theirs = norm((t.mcp || []).filter((m) => !m.expanded).map((m) => m.file));
     if (mine.join('|') !== theirs.join('|')) mcpDrift.push(`${t.id}\n      adapters: ${mine.join(', ')}\n      doctor:   ${theirs.join(', ')}`);
 
     const myHooks = norm(['user', 'project', 'local'].flatMap((s) => A.resolveTemplates(a.hooks?.configPath?.[s] || [], dirs)));
@@ -434,8 +449,10 @@ section('§4  THE PATHS — set equality against doctor.js\'s own table');
   // And the other direction: the adapter table is a SUPERSET, never a subset.
   const doctorIds = new Set(targets.map((t) => t.id));
   const onlyHere = A.listHarnesses().filter((id) => !doctorIds.has(id));
-  ok(onlyHere.join(',') === 'kilo,dsh' || onlyHere.join(',') === 'dsh,kilo',
-    `the adapter table adds exactly the two harnesses doctor.js has no row for (${onlyHere.join(', ')})`);
+  // v3.78.0: dsh's config location was verified from its source, so it now
+  // has paths and a doctor row; Kilo's are still unmeasured.
+  ok(onlyHere.join(',') === 'kilo',
+    `the adapter table adds exactly the one harness doctor.js has no row for (${onlyHere.join(', ')})`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

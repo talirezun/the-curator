@@ -599,7 +599,12 @@ async function runHookInner(parsed) {
         note(`my-curator hook session-start: no project was resolved (${resolved.error || 'refused'}). Nothing was injected.`);
         return EXIT_OK;
       }
-      decide({ project: `${resolved.domain}/${resolved.project}` });
+      // v3.78.0 — the repository root: the folder of the marker the project
+      // was resolved FROM (a file found on disk), never the payload's cwd.
+      decide({
+        project: `${resolved.domain}/${resolved.project}`,
+        repo: resolved.source === 'marker' && typeof resolved.markerFile === 'string' ? path.dirname(resolved.markerFile) : null,
+      });
       const arm = entry.sessionStart;
       if (!arm || typeof arm.emit !== 'function') {
         decide({ why: arm?.withheld || 'no envelope is shipped for this harness' });

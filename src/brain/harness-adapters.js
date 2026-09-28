@@ -870,32 +870,77 @@ const ENTRIES = [
   {
     id: 'dsh',
     label: 'DeepSeek Harness',
-    // §2.10. Cordis YAML overlays plus a Claude-Code-hooks BRIDGE carrying
+    // §2.10. Cordis YAML patch layers plus a Claude-Code-hooks BRIDGE carrying
     // `Stop` but no SessionEnd and no PreCompact.
     //
+    // ── VERIFIED FROM SOURCE, v3.78.0 (2026-09-28) ─────────────────────────
+    // Read in https://github.com/deepseek-ai/deepseek-harness at commit
+    // 21638c56 (2026-09-27), not guessed:
+    //   - WHERE AN MCP SERVER GOES. `apps/cli/src/profile-boot.ts`: every boot
+    //     REWRITES `<profile>/cordis.yml` to an empty entry list
+    //     (PROFILE_ROOT_CONFIG — "Edit cordis.patch.yml, not this file") and
+    //     composes the tree from patch layers: each bundle, then the profile's
+    //     own `cordis.patch.yml` (`packages/boot/app-boot/src/profile.ts`,
+    //     PROFILE_PATCH_FILENAME, under `$DSH_HOME/profiles/<name>/`), then the
+    //     HOME-level `$DSH_HOME/cordis.patch.yml` (`homePatchPath()`), then any
+    //     `--patch` overlay. `$DSH_HOME` defaults to `~/.dsh`
+    //     (`packages/util/home-paths/src/index.ts`, DSH_HOME_DIR_NAME).
+    //     `docs/user/guide/mcp-memory.md` ("Enable one") says the same in
+    //     prose. So an entry written into `cordis.yml` is DELETED on the next
+    //     launch; the file to read, and to paste into, is `cordis.patch.yml`.
+    //     A `$DSH_HOME` set in the user's own shell is not visible to this
+    //     app; the default location is what is read.
+    //   - THE ENTRY SHAPE. A patch item `- insert: [{id, name:
+    //     '@deepseek-ai/dsh-mcp-client', config: {serverName, transport:
+    //     stdio, command, args, env}}]` (`apps/cli/config/examples/mcp-memory/
+    //     *.cordis.yml`; `packages/mcp/mcp-client/README.md`: serverName
+    //     `[A-Za-z0-9_-]{1,32}`). There is no `mcp_servers` map.
+    //   - INSTRUCTION FILES. `packages/context/agent-instructions/src/config.ts`:
+    //     candidates `['AGENTS.md', 'CLAUDE.md']`, and EVERY existing one
+    //     loads (not first-match), plus the user-global `$DSH_HOME/AGENTS.md`.
+    //   - SKILLS. `packages/skill/skill-filesystem/src/index.ts` (250-258):
+    //     `<project>/.dsh/skills`, `<project>/.agents/skills`,
+    //     `$DSH_HOME/skills`, `~/.agents/skills`.
+    //   - CLIENT NAME. `packages/mcp/mcp-client/src/connection.ts` (259):
+    //     `{ name: 'dsh-mcp-client' }`.
+    //   - HOOKS. `packages/hooks/hooks-claude-code/src/index.ts`: the hook file
+    //     is that plugin's own `configPath` config value, set per install in a
+    //     patch — no fixed location. So hooks stay UNVERIFIED here.
+    //
     // AND THE FACT ABOUT OUR OWN LAUNCH LINE: it STRIPS `DSH_*` and
-    // credential-shaped environment variables from stdio children. Anything
-    // the bridge needs must arrive as an argv flag — `buildCuratorEntry`
-    // already passes `--domains-path` that way, so the bridge works, but
-    // `CURATOR_MCP_VIA` would be stripped and a self-test run under dsh would
-    // write UNMARKED lines. Harmless today; recorded so nobody debugs it twice.
-    mcpConfig: fact('unverified', {
+    // credential-shaped environment variables from stdio children (the
+    // mcp-client README: names matching /KEY|PASSWORD|SECRET|TOKEN/i).
+    // Anything the bridge needs must arrive as an argv flag —
+    // `buildCuratorEntry` already passes `--domains-path` that way, so the
+    // bridge works, but `CURATOR_MCP_VIA` would be stripped and a self-test run
+    // under dsh would write UNMARKED lines. Harmless today; recorded so nobody
+    // debugs it twice.
+    mcpConfig: fact('source', {
       format: 'yaml',
       shape: 'cordis',
-      key: 'mcp_servers',
+      key: null,
       requiresType: 'stdio',
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
-      user: [],
+      // The home-level layer, which applies to every profile. The per-profile
+      // layers are enumerated from `eachDir` by the setup check (a reader of
+      // folders — this module reads nothing).
+      user: [H('.dsh', 'cordis.patch.yml')],
       project: [],
+      eachDir: Object.freeze({ dir: H('.dsh', 'profiles'), file: 'cordis.patch.yml' }),
+      // The Cordis plugin that carries an MCP server. No YAML parser exists in
+      // this repository, so a check LINE-SCANS for `serverName: my-curator`.
+      plugin: '@deepseek-ai/dsh-mcp-client',
       stripsEnv: true,
-      note: 'A Cordis YAML overlay. The overlay file location is not measured, so none is listed. This harness strips credential-shaped env from stdio children — argv only.',
+      note: 'A Cordis patch layer: ~/.dsh/cordis.patch.yml (every profile) or ~/.dsh/profiles/<name>/cordis.patch.yml. '
+        + 'Never cordis.yml — dsh rewrites that file on every launch. Merge the entry into an existing file; do not copy over it. '
+        + 'This harness strips credential-shaped env from stdio children — argv only.',
     }),
-    instructionFile: fact('unverified', { names: [], cap: null, firstMatch: false, note: null }),
-    hooks: fact('unverified', {
+    instructionFile: fact('source', { names: ['AGENTS.md', 'CLAUDE.md'], cap: null, firstMatch: false, note: null }),
+    hooks: fact('source', {
       state: HOOK_STATES.UNVERIFIED,
-      reason: 'the Cordis overlay path is not measured — the Stop event arrives through a Claude-Code-hooks bridge, but where the entry is written is not',
+      reason: 'the hook file location is not measured — dsh reads Claude-Code-format hooks from a path set in its own patch config, with no fixed location',
       events: { stop: 'Stop' },
       refusedEvents: {
         SessionEnd: 'this harness carries no session-end hook',
@@ -904,13 +949,16 @@ const ENTRIES = [
       envelope: 'exit2',
       loopGuard: 'stop_hook_active',
       writer: null,
-      format: 'yaml',
+      format: 'json',
       configPath: { user: [], project: [], local: [] },
       shapeVerified: false,
     }),
-    skillsTree: fact('docs', { path: '.agents/skills/' }),
+    skillsTree: fact('source', {
+      path: '.agents/skills/',
+      roots: [P('.dsh'), P('.agents'), H('.dsh'), H('.agents')],
+    }),
     captureClass: CAPTURE_CLASSES.HOOK_ASSISTED,
-    clientInfo: fact('docs', { names: ['dsh-mcp-client'] }),
+    clientInfo: fact('source', { names: ['dsh-mcp-client'] }),
     measured: null,
   },
   {
@@ -1121,6 +1169,11 @@ export function mcpEntryFor(id, launch, opts = {}) {
   } else if (m.format === 'toml') {
     config = { [m.key]: { [name]: entry } };
     text = renderTomlServer(m.key, name, entry);
+  } else if (m.format === 'yaml' && m.shape === 'cordis') {
+    // A Cordis PATCH item (see the dsh row): one `insert` of one plugin entry.
+    const cfg = { serverName: name, transport: 'stdio', command, args, env: {} };
+    config = [{ insert: [{ id: `mcp-${name}`, name: m.plugin, config: cfg }] }];
+    text = renderCordisInsert(`mcp-${name}`, m.plugin, cfg);
   } else if (m.format === 'yaml') {
     config = { [m.key]: { [name]: entry } };
     text = renderYamlServer(m.key, name, entry, m.envKey);
@@ -1174,6 +1227,29 @@ function renderYamlServer(key, name, entry, envKey) {
     else lines.push(`    ${k}: ${yamlString(String(v))}`);
   }
   if (envKey) lines.push(`    ${envKey}: {}`);
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * A Cordis patch item inserting ONE plugin entry — the shape dsh's own
+ * examples use (`apps/cli/config/examples/mcp-memory/*.cordis.yml`). Every
+ * path-like scalar is double-quoted, so a space or a colon stays one value.
+ */
+function renderCordisInsert(id, plugin, cfg) {
+  const lines = [
+    '- insert:',
+    `    - id: ${yamlString(id)}`,
+    `      name: ${yamlString(plugin)}`,
+    '      config:',
+    `        serverName: ${yamlString(cfg.serverName)}`,
+    `        transport: ${cfg.transport}`,
+    `        command: ${yamlString(cfg.command)}`,
+  ];
+  if (cfg.args.length) {
+    lines.push('        args:');
+    for (const a of cfg.args) lines.push(`          - ${yamlString(a)}`);
+  } else lines.push('        args: []');
+  lines.push('        env: {}');
   return `${lines.join('\n')}\n`;
 }
 

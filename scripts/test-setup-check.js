@@ -27,11 +27,24 @@
  *      under another tool's scope flagged, a session-named scope NOT flagged,
  *      a handoff waiting on GitHub named by machine.
  *  §10 a READ that writes: every fixture file's bytes and mtime are compared.
+ *
+ * v3.78.0:
+ *  §11 an empty / invalid / unopenable config file turning a WORKING tool red
+ *      (measured 2026-09-28), or read as absent (EACCES); alone, it is a
+ *      to-fix line naming the file with a reveal.
+ *  §12 one Mac with a Mac app, a source checkout and a hostname alias shown as
+ *      three computers — it is one computer, two installs, three names.
+ *  §13 a repository candidate offered whose marker names another project, or
+ *      that is outside home or not here.
+ *  §14 DeepSeek Harness read from `cordis.yml` (rewritten on every launch) or
+ *      a commented line counted; other entries leaking from the line-scan.
+ *  §15 a tool called ready without a save from here; a custom tool's
+ *      assumed AGENTS.md raised as a to-fix line.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
+  chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -337,6 +350,184 @@ section('§9  the project view');
   ok(gone.toFix.some((f) => f.kind === 'repo-missing' && f.fix.kind === 'change-repo'), 'a folder set but not on this computer is a to-fix line (its checks did not run)');
   ok(S.incomingMachine('projects/state/foundations/x/y/z.md', 'projects', 'projects') === null, 'foundations are never read as a machine');
   ok(S.incomingMachine('projects/state/main/mac-a/current.md', 'projects', 'projects') === 'mac-a', 'the domain\'s own project: <scope>/<machine>');
+}
+
+section('§11 config file states (v3.78.0): empty, invalid, unopenable');
+{
+  const agWorking = { mcpServers: { 'my-curator': ours, ...other } };
+  // (a) The measured case, 2026-09-28: an EMPTY antigravity/mcp_config.json
+  // beside a WORKING config/mcp_config.json. The tool stays ok; the empty
+  // file is a note, never a to-fix.
+  const HA = path.join(ROOT, 'st-a');
+  w(path.join(HA, '.gemini', 'config', 'mcp_config.json'), JSON.stringify(agWorking));
+  w(path.join(HA, '.gemini', 'antigravity', 'mcp_config.json'), '');
+  const a = row(S.collectMachineSetup({ home: HA, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  const emptyRec = a.files.find((f) => f.file.endsWith(path.join('antigravity', 'mcp_config.json')));
+  ok(emptyRec && emptyRec.status === 'empty' && emptyRec.display === '~/.gemini/antigravity/mcp_config.json', 'the empty file reads status "empty", with a ~ display path', emptyRec);
+  ok(a.bridge.state === 'ok', 'an empty file BESIDE a working file: the tool stays ok', a.bridge);
+  ok((a.bridge.fileNotes || []).some((n) => n.status === 'empty' && /is empty/.test(n.text) && /another file names my-curator/.test(n.text)), '…and the empty file is carried as a note', a.bridge.fileNotes);
+  const pa = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: [], machine: { ids: [] }, machineRows: [a], repo: null, template: TEMPLATE, addedTools: ['antigravity'] });
+  ok(!pa.toFix.some((f) => f.tool === 'antigravity' && /bridge/.test(f.kind)), '…so the project view raises no bridge to-fix for it', pa.toFix);
+  const agRow = pa.tools.find((t) => t.id === 'antigravity');
+  ok(agRow.evidence.some((e) => e.heading === 'MCP bridge' && e.lines.some((l) => /antigravity\/mcp_config\.json: is empty/.test(l))), 'the reader\'s evidence names the empty file', agRow.evidence);
+
+  // (b) The same empty file ALONE: to fix, naming the file, with a reveal.
+  const HB = path.join(ROOT, 'st-b');
+  w(path.join(HB, '.gemini', 'antigravity', 'mcp_config.json'), '  \n');
+  const b = row(S.collectMachineSetup({ home: HB, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  ok(b.bridge.state === 'fix' && b.bridge.badFile?.status === 'empty', 'an empty (whitespace-only) file alone: to fix', b.bridge);
+  const pb = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: [], machine: { ids: [] }, machineRows: [b], repo: null, template: TEMPLATE, addedTools: ['antigravity'] });
+  const fb = pb.toFix.find((f) => f.tool === 'antigravity' && f.kind === 'bridge-file');
+  const emptyFile = path.join(HB, '.gemini', 'antigravity', 'mcp_config.json');
+  ok(fb && fb.text === 'Antigravity: ~/.gemini/antigravity/mcp_config.json is empty.', 'the to-fix text names the file', fb);
+  ok(fb && /open Antigravity once, then Re-check/.test(fb.detail) && /reveal it and fix or delete it/.test(fb.detail), '…the detail says what to do', fb?.detail);
+  ok(fb && fb.fix.kind === 'reveal' && fb.fix.path === emptyFile && fb.fix.label === 'Reveal mcp_config.json', '…and the fix reveals that exact file', fb?.fix);
+  ok(pb.tools.find((t) => t.id === 'antigravity').status === 'to-fix', 'the tool\'s one word is "to-fix"');
+
+  // (c) invalid JSON alone: to fix; beside a working file: a note.
+  const HC = path.join(ROOT, 'st-c');
+  w(path.join(HC, '.gemini', 'antigravity', 'mcp_config.json'), '{ "mcpServers": ');
+  const c = row(S.collectMachineSetup({ home: HC, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  ok(c.bridge.state === 'fix' && c.bridge.badFile?.status === 'invalid' && /not valid JSON/.test(c.bridge.word), 'invalid JSON alone: to fix, "not valid JSON"', c.bridge);
+  w(path.join(HC, '.gemini', 'config', 'mcp_config.json'), JSON.stringify(agWorking));
+  const c2 = row(S.collectMachineSetup({ home: HC, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  ok(c2.bridge.state === 'ok' && c2.bridge.fileNotes?.[0]?.status === 'invalid', 'invalid JSON beside a working file: ok, with a note', c2.bridge);
+
+  // (d) EACCES: surfaced as "unopenable" — it used to read as absent.
+  const HD = path.join(ROOT, 'st-d');
+  const locked = path.join(HD, '.gemini', 'antigravity', 'mcp_config.json');
+  w(locked, JSON.stringify(agWorking));
+  chmodSync(locked, 0o000);
+  let canRead = true;
+  try { readFileSync(locked); } catch { canRead = false; }
+  if (!canRead) {
+    const r = S.readJsonFile(locked);
+    ok(r.present === true && r.status === 'unopenable' && /EACCES|EPERM/.test(r.readError || ''), 'readJsonFile: an EACCES file is present and "unopenable", not absent', r);
+    const d = row(S.collectMachineSetup({ home: HD, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+    ok(d.bridge.state === 'fix' && d.bridge.badFile?.status === 'unopenable' && /could not be opened/.test(d.bridge.word), 'the only file that could carry the entry is unopenable: to fix', d.bridge);
+    const pd = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: [], machine: { ids: [] }, machineRows: [d], repo: null, template: TEMPLATE, addedTools: ['antigravity'] });
+    const fd = pd.toFix.find((f) => f.kind === 'bridge-file');
+    ok(fd && fd.fix.path === locked && /permission/i.test(fd.detail), '…a to-fix line with a reveal and a permissions hint', fd);
+  } else {
+    ok(true, 'running as a user who can read a 0000 file (root) — the EACCES arm cannot be staged here');
+  }
+  chmodSync(locked, 0o600);
+  const all = JSON.stringify(S.collectMachineSetup({ home: HC, repo: '', skillsDir, domainsDir: DOMAINS }));
+  ok(!all.includes(SECRET) && !all.includes(OTHER), 'privacy holds on every new state (no planted value, no other server name)');
+}
+
+section('§12 computers grouped by installation (v3.78.0)');
+{
+  // The maintainer's MacBook: a Mac app (acb035), a source checkout (17d23c),
+  // and that checkout's pre-D10 hostname alias (mac-17d23c). One computer,
+  // two installs, three names. And one other computer.
+  const now = Date.now();
+  const iso = (m) => new Date(now - m * 60e3).toISOString();
+  const pairs = [
+    { scope: 'claude-code', machine: 'talis-macbook-pro-acb035', harness: 'Claude Code', writtenAt: iso(10), curator: '3.78.0' },
+    { scope: 'antigravity', machine: 'talis-macbook-pro-17d23c', harness: 'Antigravity', writtenAt: iso(20) },
+    { scope: 'antigravity', machine: 'mac-17d23c', harness: 'Antigravity', writtenAt: iso(600) },
+    { scope: 'antigravity', machine: 'talis-mac-mini-9e9e9e', harness: 'Antigravity', writtenAt: iso(30) },
+  ];
+  const machine = { ids: ['talis-macbook-pro-acb035', 'talis-macbook-pro-17d23c'], installIds: ['acb035', '17d23c'], installs: [{ installId: 'acb035', kind: 'app' }, { installId: '17d23c', kind: 'source' }] };
+  const r = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs, machine, machineRows: [], repo: null, template: TEMPLATE, sync: { configured: true } });
+  ok(r.counts.computers === 2 && r.counts.installs === 3 && r.counts.machineNames === 4, '3 local names + 1 remote: 2 computers, 3 installs, 4 names', r.counts);
+  const here = r.physical.find((p) => p.thisComputer);
+  ok(here && here.installs.length === 2, 'this Mac is ONE physical group holding both installs', r.physical);
+  const src = r.computers.find((c) => c.key === 'install:17d23c');
+  ok(src && src.names.length === 2 && src.primary === 'talis-macbook-pro-17d23c' && src.aliases[0] === 'mac-17d23c', 'the alias joins its install\'s row; the newest-saved name is primary', src);
+  ok(src.thisComputer === true && src.installKind === 'source', '…this computer, a source install', src);
+  const app = r.computers.find((c) => c.key === 'install:acb035');
+  ok(app && app.thisComputer && app.installKind === 'app' && app.curatorVersion === '3.78.0' && app.sync?.configured === true, 'the app install: this computer, kind app, its version, and the sync facts (this computer only)', app);
+  const mini = r.computers.find((c) => c.key === 'install:9e9e9e');
+  ok(mini && !mini.thisComputer && !mini.sync, 'the other computer carries no sync facts', mini);
+  ok(r.tools.find((t) => t.id === 'antigravity').saved.thisMachine === true, 'Antigravity\'s newest save (the source install\'s) is this computer\'s');
+  const r3 = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: pairs.slice(2), machine, machineRows: [], repo: null, template: TEMPLATE });
+  ok(r3.tools.find((t) => t.id === 'antigravity').saved.thisMachine === false, 'with only the alias and the mini, the newest is the mini\'s — not this computer (control)');
+  // Only the exact ids (the v3.77.0 input): the alias still matches by install id.
+  const r2 = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: pairs.slice(0, 3), machine: { ids: ['talis-macbook-pro-17d23c'] }, machineRows: [], repo: null, template: TEMPLATE });
+  ok(r2.computers.find((c) => c.key === 'install:17d23c')?.thisComputer === true && r2.computers.find((c) => c.key === 'install:acb035')?.thisComputer === false,
+    'given only one machine id, its alias matches by install id and the other install does not');
+  // A bare hostname (no install id) never matches by installation.
+  const g = S.groupComputers([{ machine: 'mac', harness: 'x', writtenAt: iso(1) }, { machine: 'mac-pro', harness: 'x', writtenAt: iso(1) }], { domain: 'projects', project: 'ott', isHere: () => false });
+  ok(g.rows.length === 2 && g.rows.every((x) => x.names.length === 1), 'names with no install id are one row each — never merged by hostname');
+}
+
+section('§13 repository candidates (v3.78.0)');
+{
+  const HOMEC = path.join(ROOT, 'cand-home');
+  const good = path.join(HOMEC, 'code', 'ott');
+  const otherProj = path.join(HOMEC, 'code', 'someone-else');
+  const bare = path.join(HOMEC, 'code', 'ott-clone');
+  const outside = path.join(ROOT, 'outside-home');
+  w(path.join(good, '.curator-project'), 'projects/ott\n');
+  w(path.join(otherProj, '.curator-project'), 'projects/zzz\n');
+  w(path.join(bare, '.git', 'config'), '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:acme/OTT.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
+  w(path.join(outside, '.curator-project'), 'projects/ott\n');
+  const sources = [
+    { path: otherProj, why: 'claude-code' }, { path: good, why: 'claude-code' }, { path: bare, why: 'claude-code' },
+    { path: outside, why: 'claude-code' }, { path: path.join(HOMEC, 'gone'), why: 'hook-log' }, { path: good, why: 'hook-log' },
+  ];
+  const c = S.findRepoCandidates({ home: HOMEC, domain: 'projects', project: 'ott', sources, githubRepos: ['acme/ott'] });
+  ok(c.length === 2 && c[0].path === good && c[0].why === 'claude-code' && c[0].display === '~/code/ott', 'the folder whose marker names this project is offered, once, with its source', c);
+  ok(c[1] && c[1].path === bare && c[1].why === 'git-remote' && /GitHub repository/.test(c[1].whyText), 'a marker-less folder whose origin is the mirrored repository is offered as git-remote', c[1]);
+  const s = JSON.stringify(c);
+  ok(!s.includes('someone-else') && !s.includes('outside-home') && !s.includes('gone'), 'a folder naming ANOTHER project, one outside home, and one that is not here never leave');
+  ok(S.findRepoCandidates({ home: HOMEC, domain: 'projects', project: 'ott', sources, githubRepos: [] }).length === 1, 'no mirrored repository: no git-remote match (control)');
+  ok(S.originRepoOf(bare) === 'acme/ott' && S.originRepoOf(good) === null, 'originRepoOf reads .git/config, no subprocess');
+  const many = Array.from({ length: 8 }, (_, i) => path.join(HOMEC, 'many', String(i)));
+  for (const d of many) w(path.join(d, '.curator-project'), 'projects/ott\n');
+  ok(S.findRepoCandidates({ home: HOMEC, domain: 'projects', project: 'ott', sources: many.map((p) => ({ path: p, why: 'claude-code' })) }).length === S.REPO_CANDIDATE_MAX, `at most ${S.REPO_CANDIDATE_MAX}`);
+}
+
+section('§14 DeepSeek Harness: cordis.patch.yml, line-scanned (v3.78.0)');
+{
+  const HX = path.join(ROOT, 'dsh-home');
+  const { mcpEntryFor } = await import('../src/brain/harness-adapters.js');
+  const entry = mcpEntryFor('dsh', { command: '/opt/node', args: ['/x/mcp/server.js', '--domains-path', DOMAINS] });
+  // A profile layer carrying our entry (as the app hands it out) beside another server with a secret.
+  w(path.join(HX, '.dsh', 'profiles', 'tui', 'cordis.patch.yml'), `# mine\n${entry.text}- insert:\n    - id: ${OTHER}\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: ${OTHER}\n        env:\n          K: ${SECRET}\n`);
+  w(path.join(HX, '.dsh', 'cordis.patch.yml'), '');
+  const t = S.harnessTargets({ home: HX, project: '' }).find((x) => x.id === 'dsh');
+  ok(t && t.mcp.some((m) => m.file === path.join(HX, '.dsh', 'cordis.patch.yml')) && t.mcp.some((m) => m.expanded && m.file.endsWith(path.join('profiles', 'tui', 'cordis.patch.yml'))),
+    'the home-level layer and each profile\'s layer are read — never cordis.yml', t?.mcp);
+  const d = row(S.collectMachineSetup({ home: HX, repo: '', skillsDir, domainsDir: DOMAINS }), 'dsh');
+  ok(d.bridge.state === 'ok' && d.files.some((f) => f.named && f.lineScan), 'our entry, as handed out, is found by the line-scan → configured', d.bridge);
+  ok((d.bridge.fileNotes || []).some((n) => n.status === 'empty'), 'the empty home-level layer is a note beside it');
+  ok(!JSON.stringify(d).includes(SECRET) && !JSON.stringify(d).includes(OTHER), 'no other entry\'s name or env value leaves the line-scan');
+  w(path.join(HX, '.dsh', 'profiles', 'tui', 'cordis.patch.yml'), '# serverName: my-curator\n- insert: []\n');
+  ok(row(S.collectMachineSetup({ home: HX, repo: '', skillsDir, domainsDir: DOMAINS }), 'dsh').bridge.state !== 'ok', 'a commented-out line does not count (control)');
+}
+
+section('§15 per-tool status, parts and evidence; custom tools (v3.78.0)');
+{
+  const now = Date.now();
+  const iso = (m) => new Date(now - m * 60e3).toISOString();
+  const emptyHome = path.join(ROOT, 'emptyhome');
+  const bare = S.collectMachineSetup({ home: emptyHome, repo: REPO, skillsDir, domainsDir: DOMAINS });
+  const marker = await S.inspectMarker(REPO, { domain: 'projects', project: 'ott' });
+  const pairs = [
+    { scope: 'claude-code', machine: 'mac-a-111111', harness: 'Claude Code', writtenAt: iso(5) },
+    { scope: 'zed', machine: 'mac-b-222222', harness: 'Zed', writtenAt: iso(9) },
+    { scope: 'my-agent', machine: 'mac-a-111111', harness: 'My Agent', writtenAt: iso(7) },
+  ];
+  const r = S.collectProjectSetup({
+    domain: 'projects', project: 'ott', pairs, machine: { ids: ['mac-a-111111'] }, machineRows: bare,
+    repo: { path: REPO, source: 'set' }, marker, template: TEMPLATE, customTools: [{ id: 'fancy bot', label: 'Fancy Bot' }],
+  });
+  const cc = r.tools.find((t) => t.id === 'claude-code');
+  ok(cc.status === 'ready', 'Claude Code: saved here under its own scope, bridge proven, block current → ready', cc);
+  ok(['mcp', 'skills', 'block', 'hooks'].every((k) => cc.parts[k] && typeof cc.parts[k].state === 'string' && typeof cc.parts[k].word === 'string'), 'four parts, each {state, word}', cc.parts);
+  ok(Array.isArray(cc.evidence) && ['Saved', 'MCP bridge', 'Skills', 'Instruction block', 'Hooks'].every((h) => cc.evidence.some((e) => e.heading === h && e.lines.length)), 'evidence: a heading per part, each with lines', cc.evidence.map((e) => e.heading));
+  ok(cc.evidence.find((e) => e.heading === 'Instruction block').reveal === path.join(REPO, 'CLAUDE.md'), 'the block evidence reveals the instruction file');
+  const zed = r.tools.find((t) => t.id === 'zed');
+  ok(zed.status !== 'ready', 'a tool whose only save is from another computer is never ready', zed.status);
+  const fancy = r.tools.find((t) => t.id === 'fancy bot');
+  ok(fancy && fancy.custom === true && fancy.userAdded === true && fancy.label === 'Fancy Bot' && fancy.instructionFile === 'AGENTS.md', 'a custom tool gets a row: custom, AGENTS.md', fancy);
+  ok(fancy.status === 'no-save' && !r.toFix.some((f) => f.tool === 'fancy bot'), 'a custom tool that never saved: "no-save", and nothing it cannot know is a to-fix line', r.toFix.filter((f) => f.tool === 'fancy bot'));
+  ok(fancy.block.state === 'unmeasured' && /AGENTS\.md has no Curator block/.test(fancy.block.word), 'its block cell reads AGENTS.md, labelled as an assumption (unmeasured, not red)', fancy.block);
+  const mine = r.tools.find((t) => t.id === 'my agent');
+  ok(mine && mine.custom && mine.userAdded === false && mine.status === 'partly', 'an unknown tool seen only in a save: custom, saved under its own name here → partly (block not proven)', mine);
 }
 
 section('§10 a read writes nothing');

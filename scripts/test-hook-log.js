@@ -154,7 +154,31 @@ section('§2  Stop: the marker bound, and the fallback when the id matches nothi
 
   const all = readFileSync(LOG, 'utf8');
   ok(!all.includes(SENTINEL), 'no payload VALUE (prompt, paths, model, error) ever reached the log', all.split('\n').find((x) => x.includes(SENTINEL)));
-  ok(!all.includes(WORK) && !all.includes(ROOT), 'no filesystem path reached the log');
+  // v3.78.0 — the ONE path a line may hold: the marker's folder (the
+  // repository root), on a session start that resolved from the marker.
+  const parsed = readLog();
+  const starts = parsed.filter((l) => l.event === 'session-start' && l.decision === 'inject');
+  ok(starts.length > 0 && starts.every((l) => l.repo === WORK), 'every injecting session-start line records the repository root — the marker\'s folder', starts.map((l) => l.repo));
+  ok(parsed.filter((l) => l.event === 'session-start').every((l) => l.repo === WORK || l.repo === null), '…and a repeat start (nothing resolved) records none');
+  ok(parsed.filter((l) => l.event !== 'session-start').every((l) => l.repo === null), 'a stop line never carries a path', parsed.filter((l) => l.event !== 'session-start').map((l) => l.repo));
+  const stripped = parsed.map(({ repo, ...rest }) => JSON.stringify(rest)).join('\n');
+  ok(!stripped.includes(WORK) && !stripped.includes(ROOT), 'apart from that one field, no filesystem path reached the log');
+}
+
+section('§1b the repository path: only the marker\'s folder, only on a start');
+{
+  ok(HL.cleanRepoPath('stop', WORK) === null, 'a stop line drops a path');
+  ok(HL.cleanRepoPath('session-start', 'relative/x') === null, 'a relative path is dropped');
+  ok(HL.cleanRepoPath('session-start', `/a\nb`) === null, 'a path with a control character is dropped, never trimmed into another');
+  ok(HL.cleanRepoPath('session-start', WORK) === WORK, 'an absolute plain path is kept');
+  // The payload's cwd is a payload VALUE: a start whose project came from a
+  // FLAG (no marker read) records no path, even though the harness sent one.
+  const before = readLog().length;
+  run(['hook', 'session-start', '--harness', 'antigravity', '--project', `${D}/ott`], {
+    input: JSON.stringify({ conversationId: 'conv-flag', workspacePaths: [path.join(ROOT, `x-${SENTINEL}`)] }),
+  });
+  const l = readLog()[before] || {};
+  ok(l.event === 'session-start' && l.project === `${D}/ott` && l.repo === null, 'resolved from --project: repo is null — the harness\'s folder is never copied in', l);
 }
 
 section('§3  switched off, and never fatal');

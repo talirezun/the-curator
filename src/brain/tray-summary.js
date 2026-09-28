@@ -978,8 +978,11 @@ export function machineIdentity(machine, self, host, hostRe, selfInstallId) {
  * (`alices-macbook-pro`), and only the final segment is ever the id. `i <= 0`
  * rejects both "no hyphen at all" and a leading hyphen, so a bare hostname
  * yields null and can never match anything.
+ *
+ * EXPORTED (v3.78.0) for the Setup check's Computers fold, which groups a
+ * project's machine folders by installation — the same rule, never a copy.
  */
-function installIdOf(machine) {
+export function installIdOf(machine) {
   if (typeof machine !== 'string') return null;
   const i = machine.lastIndexOf('-');
   if (i <= 0) return null;

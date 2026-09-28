@@ -1,10 +1,11 @@
 /**
- * The Setup check's endpoints (v3.77.0).
+ * The Setup check's endpoints (v3.77.0; v3.78.0 additions marked).
  *
  *   GET  /api/setup/machine                         → Settings › MCP bridge › Tools on this Mac
  *   GET  /api/setup/projects/:domain/:project       → Context › project › step 5 "Setup"
  *   PUT  /api/setup/projects/:domain/:project/repo  → {path} | {path: null} — this machine only
  *   PUT  /api/setup/tools                           → {ids: [...]} — the "+ Add a tool" choice
+ *                                                     {custom: {name}} | {removeCustom: name} (v3.78.0)
  *   POST /api/setup/reveal                          → {path} — Finder; only a path a check listed
  *   GET  /api/setup/skills/:name.zip                → the current skill folder, zipped
  *
@@ -16,23 +17,36 @@
  * `.curator-config.json` — the app's own, per-machine, never synced — and
  * nothing else. No route here writes a harness config, a skill folder, a
  * repository file or a git ref.
+ *
+ * v3.78.0 READS THREE MORE THINGS, each reduced before it leaves:
+ *   - `.curator-machine-id` / `.curator-install-id` in every Curator install
+ *     found on this Mac (the app's user-data folder, the Mac app's
+ *     Application Support folder, a set repository that is a Curator
+ *     checkout, and the install each my-curator MCP entry launches) — so a
+ *     Mac app and a source checkout on one laptop read as ONE computer;
+ *   - ~/.claude.json's `projects` KEYS (folder paths) — only a key whose
+ *     folder's `.curator-project` names this project ever leaves
+ *     (`findRepoCandidates`), and no value under any key is read at all;
+ *   - the hook activity log's session-start `repo` paths for this project.
  */
 import express from 'express';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { appPath } from '../brain/paths.js';
+import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { APP_SUPPORT_DIR_NAME, appPath, getUserDataDir } from '../brain/paths.js';
 import { describeInstall } from '../brain/install-mode.js';
 import {
   getDomainsDir, getProjectRepo, setProjectRepo, getSetupTools, setSetupTools,
+  getSetupCustomTools, setSetupCustomTools, SETUP_CUSTOM_TOOL_RE, SETUP_CUSTOM_TOOLS_MAX,
 } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import {
-  collectMachineSetup, collectProjectSetup, inspectMarker, SKILL_NAMES, STATES,
+  collectMachineSetup, collectProjectSetup, findRepoCandidates, inspectMarker, readJsonFile, SKILL_NAMES, STATES,
 } from '../brain/setup-check.js';
-import { adapterFor, listHarnesses, mcpEntryFor } from '../brain/harness-adapters.js';
+import { adapterFor, displayTemplate, listHarnesses, mcpEntryFor, MCP_SERVER_NAME } from '../brain/harness-adapters.js';
+import { normaliseHarness } from '../brain/harness-names.js';
 import { TEMPLATE } from '../public/next/shared/agent-instructions.js';
 import { buildCuratorEntry } from './mcp.js';
 
@@ -81,19 +95,111 @@ function withDisplay(v) {
   return v;
 }
 
-async function thisMachineIds() {
-  const ids = [];
+/** Every path a project result offers to reveal: fix buttons and evidence. */
+function listRevealPaths(result) {
+  for (const f of result.toFix || []) if (f.fix && typeof f.fix.path === 'string' && path.isAbsolute(f.fix.path)) revealable.add(f.fix.path);
+  for (const t of result.tools || []) {
+    for (const e of t.evidence || []) if (typeof e.reveal === 'string' && path.isAbsolute(e.reveal)) revealable.add(e.reveal);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// THIS MAC (v3.78.0): every Curator install found here, and its identity
+// ─────────────────────────────────────────────────────────────────────────
+
+const MACHINE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,99}$/i;
+
+/** The Mac app's Application Support folder, under THIS route's home (a test seam). */
+function appSupportDir() {
+  // An isolated suite that did not name a fake home must not be handed the
+  // maintainer's real install identity (candidateUsageLogPaths' rule).
+  if (process.env.CURATOR_TEST_USER_DATA_DIR && !homeOverride && !process.env.CURATOR_TEST_SETUP_HOME) return null;
+  const h = home();
+  return h ? path.join(h, 'Library', 'Application Support', APP_SUPPORT_DIR_NAME) : null;
+}
+
+/** A folder that is a checkout of this repository (its package.json names it). */
+function isCuratorCheckout(dir) {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    return pkg && pkg.name === 'the-curator' && existsSync(path.join(dir, 'bin', 'curator.js'));
+  } catch { return false; }
+}
+
+/**
+ * The folder holding an install's `.curator-machine-id`, from OUR MCP entry
+ * in a harness config: a source checkout keeps it at its root (user data IS
+ * the checkout); the Mac app keeps it in Application Support, which its
+ * launcher shim lives under (`…/The Curator/bin/…`).
+ */
+function installDirFromEntry(f) {
+  const out = [];
+  const support = appSupportDir();
+  if (typeof f.serverScript === 'string' && f.serverScript.startsWith('/')) {
+    const root = path.resolve(f.serverScript, '..', '..');
+    if (/\.app\/Contents\//.test(`${root}/`)) { if (support) out.push({ dir: support, kind: 'app' }); }
+    else if (isCuratorCheckout(root)) out.push({ dir: root, kind: 'source' });
+  }
+  if (typeof f.command === 'string' && f.command.startsWith('/')) {
+    const binDir = path.dirname(f.command);
+    if (path.basename(binDir) === 'bin' && path.basename(path.dirname(binDir)) === APP_SUPPORT_DIR_NAME) {
+      out.push({ dir: path.dirname(binDir), kind: 'app' });
+    }
+  }
+  return out;
+}
+
+/**
+ * Every Curator install on this Mac: `[{dir, kind, machineId, installId}]`.
+ * Read-only; a folder with neither id file contributes nothing.
+ */
+async function localInstalls({ repoPath = null, machineRows = [] } = {}) {
+  const support = appSupportDir();
+  const dirs = [];
+  const add = (dir, kind) => { if (dir) dirs.push({ dir, kind }); };
+  const kindOf = (dir) => (support && dir === support ? 'app' : 'source');
+  // The kind is read off WHERE the folder is (the Mac app keeps user data in
+  // Application Support), never off the install form — this route does not
+  // branch on the form (test-install-mode.js).
+  try { const d = getUserDataDir(); add(d, kindOf(d)); } catch { /* none */ }
   try {
     const { candidateUsageLogPaths } = await import('../brain/mcp-usage.js');
-    const dirs = [...new Set(candidateUsageLogPaths().map((f) => path.dirname(f)))];
-    for (const dir of dirs) {
-      try {
-        const v = readFileSync(path.join(dir, workingState.MACHINE_ID_FILENAME), 'utf8').trim();
-        if (v) ids.push({ dir, id: v });
-      } catch { /* not minted in this folder */ }
-    }
+    for (const f of candidateUsageLogPaths()) { const d = path.dirname(f); add(d, kindOf(d)); }
   } catch { /* none */ }
-  return ids;
+  add(support, 'app');
+  if (repoPath && isCuratorCheckout(repoPath)) add(repoPath, 'source');
+  for (const r of machineRows) {
+    for (const f of r.files || []) if (f.named) for (const x of installDirFromEntry(f)) add(x.dir, x.kind);
+  }
+  const seen = new Set();
+  const out = [];
+  for (const { dir, kind } of dirs) {
+    let real = dir;
+    try { real = realpathSync(dir); } catch { continue; }
+    if (seen.has(real)) continue;
+    seen.add(real);
+    let machineId = null;
+    let installId = null;
+    try {
+      const v = readFileSync(path.join(real, workingState.MACHINE_ID_FILENAME), 'utf8').trim();
+      if (MACHINE_ID_RE.test(v)) machineId = v;
+    } catch { /* not minted here */ }
+    try {
+      const v = readFileSync(path.join(real, workingState.INSTALL_ID_FILENAME), 'utf8').trim();
+      if (workingState.INSTALL_ID_RE.test(v)) installId = v;
+    } catch { /* not minted here */ }
+    if (machineId || installId) out.push({ dir: real, kind, machineId, installId });
+  }
+  return out;
+}
+
+function machineFacts(installs) {
+  const ids = [...new Set(installs.map((x) => x.machineId).filter(Boolean))];
+  return {
+    ids,
+    installIds: [...new Set(installs.map((x) => x.installId).filter(Boolean))],
+    installs: installs.map((x) => ({ installId: x.installId, machineId: x.machineId, kind: x.kind })),
+  };
 }
 
 async function hookSummary(project = null) {
@@ -104,9 +210,12 @@ async function hookSummary(project = null) {
   } catch { return {}; }
 }
 
+function launchLine() {
+  try { return buildCuratorEntry(getDomainsDir()); } catch { return null; }
+}
+
 function copyEntries(rows) {
-  let launch = null;
-  try { launch = buildCuratorEntry(getDomainsDir()); } catch { launch = null; }
+  const launch = launchLine();
   const out = {};
   for (const r of rows) {
     if (!launch) break;
@@ -114,6 +223,44 @@ function copyEntries(rows) {
     if (e && e.ok && typeof e.text === 'string') out[r.id] = e.text;
   }
   return out;
+}
+
+/**
+ * The generic `mcpServers` entry for a tool no adapter knows (v3.78.0): the
+ * ONE launch line (`buildCuratorEntry`), in the shape most MCP clients read.
+ */
+function genericSnippet(launch) {
+  if (!launch) return null;
+  const entry = { command: launch.command };
+  if (Array.isArray(launch.args) && launch.args.length) entry.args = launch.args;
+  return { format: 'json', text: `${JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: entry } }, null, 2)}\n` };
+}
+
+/** The "+ Add a tool" menu (v3.78.0): every adapter the app can write an MCP entry for. */
+function addableFor(shownIds) {
+  const shown = new Set(shownIds);
+  const known = listHarnesses()
+    .filter((id) => !shown.has(id) && adapterFor(id)?.mcpConfig)
+    .map((id) => {
+      const a = adapterFor(id);
+      const cfg = a.mcpConfig;
+      const paths = [...(cfg.user || []), ...(cfg.project || [])].map(displayTemplate);
+      const measured = cfg.verified === true && paths.length > 0;
+      const names = a.instructionFile?.names || [];
+      const detail = [
+        measured ? `MCP entry in ${paths.join(' or ')}` : 'config location not measured — copy the entry by hand',
+        names.length ? `reads ${names.join(' and ')}` : 'reads no instruction file The Curator knows',
+      ].join(' · ');
+      return { id, label: a.label, group: 'known', detail, measured };
+    });
+  return [...known, { id: '__custom', label: 'Custom tool…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false }];
+}
+
+function customToolIds() {
+  return getSetupCustomTools().map((n) => {
+    const h = normaliseHarness(n);
+    return h ? { id: h.id, label: h.label } : null;
+  }).filter(Boolean);
 }
 
 const PROJECT_RE = /^[a-z0-9][a-z0-9._-]{0,99}$/i;
@@ -131,6 +278,40 @@ async function checkProject(req, res) {
   return { domain, project };
 }
 
+/**
+ * Repository candidates for a project with none set (v3.78.0), in the
+ * contract's detection order. See `findRepoCandidates` for what may leave.
+ */
+async function repoCandidates(domain, project) {
+  const h = home();
+  const sources = [];
+  // 1. The folders Claude Code has opened — KEYS only.
+  try {
+    const cj = readJsonFile(path.join(h, '.claude.json'));
+    const pj = cj.status === 'ok' && cj.json && typeof cj.json.projects === 'object' && !Array.isArray(cj.json.projects) ? cj.json.projects : null;
+    if (pj) for (const k of Object.keys(pj).slice(0, 1000)) sources.push({ path: k, why: 'claude-code' });
+  } catch { /* none */ }
+  // 2. The project's recorded foundation folders that are here.
+  try {
+    for (const s of await workingState.foundationFolderSources(domain, project)) if (s.reachable) sources.push({ path: s.root, why: 'foundations' });
+  } catch { /* none */ }
+  // 3. The folders a Curator hook started a session in for this project.
+  try {
+    const { readHookLines } = await import('../brain/hook-log.js');
+    const { lines } = await readHookLines();
+    for (const l of [...lines].reverse()) {
+      if (l.event === 'session-start' && l.project === `${domain}/${project}` && typeof l.repo === 'string') sources.push({ path: l.repo, why: 'hook-log' });
+    }
+  } catch { /* none */ }
+  // 4. GitHub repositories the foundations mirror, for a git-remote match.
+  let githubRepos = [];
+  try {
+    const f = await workingState.listFoundations(domain, project);
+    if (f && f.ok && Array.isArray(f.sources)) githubRepos = f.sources.filter((s) => s.remote).map((s) => `${s.remote.owner}/${s.remote.repo}`);
+  } catch { githubRepos = []; }
+  return findRepoCandidates({ home: h, domain, project, sources, githubRepos });
+}
+
 // ── GET /machine ──────────────────────────────────────────────────────────
 router.get('/machine', async (_req, res) => {
   try {
@@ -144,7 +325,8 @@ router.get('/machine', async (_req, res) => {
       const bp = await detectBridgeProcesses();
       bridgeProcesses = { checked: bp.checked !== false, running: bp.running || 0, stale: (bp.stale || []).map((p) => ({ pid: p.pid, startedAt: p.startedAt })), codeChangedAt: bp.codeChangedAt || null, remedy: STALE_REMEDY };
     } catch { bridgeProcesses = { checked: false }; }
-    const ids = await thisMachineIds();
+    const installs = await localInstalls({ machineRows: rows });
+    const mf = machineFacts(installs);
     // Only harnesses with SOMETHING on this machine — a config file, a
     // skill folder, a hook file — or that the user added. Never all fifteen.
     const added = new Set(getSetupTools());
@@ -158,11 +340,12 @@ router.get('/machine', async (_req, res) => {
       // through install-mode.js — this route never branches on the form.
       install: (() => { try { return describeInstall().installModeLabel; } catch { return null; } })(),
       skillsShipped: skillsDir() !== null,
-      machine: { ids: ids.map((x) => x.id), split: new Set(ids.map((x) => x.id)).size > 1 },
+      machine: { ids: mf.ids, split: mf.ids.length > 1, installIds: mf.installIds, installs: mf.installs },
       bridgeProcesses,
       harnesses: shown,
       copyEntries: copyEntries(shown),
-      addable: listHarnesses().filter((id) => !shown.some((r) => r.id === id)).map((id) => ({ id, label: adapterFor(id).label })),
+      customTools: getSetupCustomTools(),
+      addable: addableFor(shown.map((r) => r.id)),
     }));
   } catch (err) {
     console.error('Setup machine check error:', err);
@@ -198,39 +381,68 @@ router.get('/projects/:domain/:project', async (req, res) => {
     try {
       const { getStatus } = await import('../brain/sync.js');
       const st = await getStatus();
-      sync = { configured: st.configured === true, lastSync: st.lastSync || null, pending: Number.isInteger(st.changesCount) ? st.changesCount : null };
+      // `pending` counts EVERY domain's changes, and Sync now pushes and
+      // pulls the whole knowledge folder — `scope` says so (v3.78.0), so a
+      // view never words it as this project's count.
+      sync = { configured: st.configured === true, scope: 'all-domains', lastSync: st.lastSync || null, pending: Number.isInteger(st.changesCount) ? st.changesCount : null };
       if (sync.configured) {
         const { readRemoteIncoming } = await import('../brain/tray-summary.js');
         const inc = readRemoteIncoming();
         sync.incoming = inc && inc.ok ? inc.files : null;
         sync.incomingCheckedAt = inc ? inc.checkedAt : null;
         sync.behindFiles = inc && inc.ok ? inc.behindFiles : null;
+        // The remote check keeps at most 20 file paths; past that, a waiting
+        // handoff may not be named — say the list is partial.
+        sync.incomingCapped = !!(inc && inc.ok && (Number.isInteger(inc.behindFiles)
+          ? inc.behindFiles > inc.files.length : inc.files.length >= 20));
       }
-    } catch { sync = { configured: false, error: true }; }
-    const ids = await thisMachineIds();
+    } catch { sync = { configured: false, scope: 'all-domains', error: true }; }
+    const installs = await localInstalls({ repoPath: repo?.exists ? repoPath : null, machineRows });
+    const mf = machineFacts(installs);
     const result = collectProjectSetup({
-      domain, project, pairs, machine: { ids: ids.map((x) => x.id) }, machineRows,
-      repo, marker, template: TEMPLATE, addedTools: getSetupTools(), sync, thisVersion: appVersion(),
+      domain, project, pairs, machine: mf, machineRows, home: home(),
+      repo, marker, template: TEMPLATE, addedTools: getSetupTools(), customTools: customToolIds(),
+      sync, thisVersion: appVersion(),
     });
+    // Copyable entries and skill links on each row (v3.78.0).
+    const launch = launchLine();
+    const zips = skillsDir() ? SKILL_NAMES.map((n) => ({ name: n, href: `/api/setup/skills/${n}.zip` })) : [];
+    for (const t of result.tools) {
+      if (t.custom) {
+        t.mcpSnippet = genericSnippet(launch);
+        t.skillZips = zips;
+      } else if (launch) {
+        const e = mcpEntryFor(t.id, launch);
+        if (e && e.ok) t.mcpSnippet = { format: e.format, text: e.text };
+        const cfg = adapterFor(t.id)?.mcpConfig;
+        t.measured = !!(cfg && cfg.verified === true && ((cfg.user || []).length + (cfg.project || []).length) > 0);
+      }
+    }
     // The repository's own files are revealable too: the folder, and every
     // instruction file a listed tool reads (it may not exist yet — reveal then
     // opens the folder, which is where the owner creates it).
     if (repo?.exists) {
       revealable.add(repoPath);
-      for (const t of result.tools) for (const n of adapterFor(t.id)?.instructionFile?.names || []) revealable.add(path.join(repoPath, n));
+      for (const t of result.tools) {
+        const names = t.custom ? ['AGENTS.md'] : (adapterFor(t.id)?.instructionFile?.names || []);
+        for (const n of names) revealable.add(path.join(repoPath, n));
+      }
       if (result.repo) result.repo.display = tilde(repoPath);
     }
-    const suggestions = repoPath ? [] : await workingState.foundationFolderSources(domain, project);
+    listRevealPaths(result);
+    const candidates = repoPath ? [] : await repoCandidates(domain, project);
     res.json(withDisplay({
       ok: true,
       checkedAt: new Date().toISOString(),
       ...result,
-      repoSuggestions: suggestions.map((s) => ({ ...s, rootDisplay: tilde(s.root) })),
-      machine: { ids: ids.map((x) => x.id), split: new Set(ids.map((x) => x.id)).size > 1 },
+      repoCandidates: candidates,
+      // v3.77.0's field, same data, kept for one release (v3.78.0).
+      repoSuggestions: candidates.map((c) => ({ root: c.path, reachable: true, inGit: existsSync(path.join(c.path, '.git')), rootDisplay: c.display })),
+      machine: { ids: mf.ids, split: mf.ids.length > 1, installIds: mf.installIds, installs: mf.installs },
       markerLine: `${domain}/${project}`,
       addedTools: getSetupTools(),
-      addable: listHarnesses().filter((id) => !result.tools.some((t) => t.id === id) && adapterFor(id)?.instructionFile?.names?.length)
-        .map((id) => ({ id, label: adapterFor(id).label })),
+      customTools: getSetupCustomTools(),
+      addable: addableFor(result.tools.map((t) => t.id)),
       states: STATES,
     }));
   } catch (err) {
@@ -272,7 +484,37 @@ router.put('/projects/:domain/:project/repo', async (req, res) => {
 
 // ── PUT /tools ────────────────────────────────────────────────────────────
 router.put('/tools', (req, res) => {
-  const ids = req.body && Array.isArray(req.body.ids) ? req.body.ids : null;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  // v3.78.0 — a tool the user NAMES ("Custom tool…").
+  if (Object.hasOwn(body, 'custom')) {
+    const name = body.custom && typeof body.custom.name === 'string' ? body.custom.name.trim() : '';
+    if (!SETUP_CUSTOM_TOOL_RE.test(name)) {
+      return res.status(400).json({ ok: false, reason: 'invalid_name', error: 'A tool name is 1–40 characters: letters, digits, spaces, dot, underscore or hyphen.' });
+    }
+    const n = normaliseHarness(name);
+    // A name that IS a known tool ("claude code", "DSH") joins the known list.
+    if (n && adapterFor(n.id)) {
+      const ids = setSetupTools([...getSetupTools(), n.id]);
+      return res.json({ ok: true, ids, custom: getSetupCustomTools(), added: { id: n.id, known: true } });
+    }
+    const current = getSetupCustomTools();
+    if (current.some((x) => normaliseHarness(x)?.id === n.id)) {
+      return res.json({ ok: true, ids: getSetupTools(), custom: current, added: { id: n.id, known: false } });
+    }
+    if (current.length >= SETUP_CUSTOM_TOOLS_MAX) {
+      return res.status(409).json({ ok: false, reason: 'too_many', error: `At most ${SETUP_CUSTOM_TOOLS_MAX} custom tools. Remove one first.` });
+    }
+    const custom = setSetupCustomTools([...current, n.label]);
+    return res.json({ ok: true, ids: getSetupTools(), custom, added: { id: n.id, known: false } });
+  }
+  if (Object.hasOwn(body, 'removeCustom')) {
+    const name = typeof body.removeCustom === 'string' ? body.removeCustom.trim() : '';
+    const n = name ? normaliseHarness(name) : null;
+    if (!n) return res.status(400).json({ ok: false, reason: 'invalid_name', error: 'Send {"removeCustom": "<name>"}.' });
+    const custom = setSetupCustomTools(getSetupCustomTools().filter((x) => normaliseHarness(x)?.id !== n.id));
+    return res.json({ ok: true, ids: getSetupTools(), custom });
+  }
+  const ids = Array.isArray(body.ids) ? body.ids : null;
   if (!ids || ids.some((x) => !adapterFor(x))) {
     return res.status(400).json({ ok: false, reason: 'invalid_tools', error: 'Send {"ids": [...]} with known tool ids.' });
   }
