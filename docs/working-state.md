@@ -2648,12 +2648,21 @@ it cannot read, and it leaves every hook it did not write untouched.
 | **goose** | unverified | `Stop` · `SessionEnd` — **refused by default**, envelopes unmeasured | `~/.agents/plugins/my-curator/hooks/hooks.json` |
 | **Gemini CLI** | unverified | none — `AfterAgent`'s envelope is unmeasured | — |
 | **Cline** | unverified | none — the config *path* is unmeasured. **`PreCompact` refused**: it is accepted and never fires | — |
-| **DeepSeek Harness (`dsh`)** | unverified | none — the Cordis overlay path is unmeasured | — |
+| **DeepSeek Harness (`dsh`)** | unverified | none — the hook file's path is a value inside `dsh`'s own Cordis patch config, set per install, with no fixed location | — |
 | **OpenCode**, **Kilo** | present-useless | none — hooks here are **TypeScript plugins**, not shell commands | — |
 | **Windsurf / Devin Desktop** | present-useless | none — twelve hooks, and not one of them is a stop, session-end or pre-compaction hook | — |
 | **Zed** | none | none — no hook mechanism exists (open proposal #57890) | — |
 | **Claude Desktop** | none | none | — |
 | **Aider** | none | none — **no MCP client at all**; the only capture is a shell wrapper around the process | — |
+
+**`dsh`'s row above is about hooks only — its MCP config location was separately VERIFIED from
+source in v3.78.0**, and the two facts are not the same claim: reading `github.com/deepseek-ai/
+deepseek-harness` at commit `21638c56` (2026-09-27) showed the MCP entry belongs in
+`~/.dsh/cordis.patch.yml` (or a profile's own copy) as a Cordis **patch** `insert` item — never
+`cordis.yml`, which the harness empties on every launch — while its hook file's location remains
+a value inside that same patch config, set per install, with nothing in the source naming a fixed
+path. So the Setup check's Bridge cell for `dsh` can read `configured` while its Hooks cell still
+reads `unverified`, on the same row, for the same tool.
 
 `--allow-withheld` lays the wiring for a refused-by-default harness anyway, knowing it stays inert
 until that envelope is measured. Every command written is the **resolved absolute path** of the
@@ -2763,6 +2772,20 @@ sentinel in every payload value). `my-curator hook-log` prints the last 20; `doc
 **Setup** check read it (*start hook observed firing …*, *stop hook observed firing … — asked / did
 not ask: …*, *installed, not yet observed firing*), with the old temp-folder markers only as a
 fallback.
+
+**A session-start line also carries `repo` (v3.78.0), and ONLY a session-start line does.** It is the
+absolute path of the folder holding the `.curator-project` marker the project was resolved from — the
+repository root, found on disk by walking up from the working folder — and it is `null` whenever the
+project instead came from a `--project` flag or the default domain, because then no marker was ever
+read. It is never the raw working directory the harness sent, never a transcript path, and never
+present on any event but `session-start`; `cleanRepoPath()` drops anything that is not an absolute,
+plain, reasonably short string before it is even considered, and `scripts/test-hook-log.js` asserts
+the *only* path in the whole log, across every event, is this one marker folder on a start line.
+Recording it was approved by the maintainer on 2026-09-28, specifically so the Setup check's
+repository-candidate detection (`hook-log` in [§13e](user-guide.md#13e-the-setup-check-in-the-app))
+has a third source beyond Claude Code's own project list and this project's foundation folders: a
+folder a Curator hook has actually started a session in for this project, on this computer. Like the
+rest of the file it stays machine-local, outside `domains/`, and is never synced.
 
 **The Stop fallback (v3.77.0).** A Stop whose conversation id matches no marker used to refuse at
 rung 2 (*"no session start is recorded, so the window cannot be bounded"*). It now looks in the
