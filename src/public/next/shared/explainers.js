@@ -56,21 +56,23 @@ const E = {
   'context.overview': {
     label: 'About the readings on this page',
     title: 'Overview',
-    lead: 'Five readings, one per part of this page. Press one to jump to its step.',
+    lead: 'Six readings, one per part of this page. Press one to jump to its step.',
     visual: {
       type: 'table',
-      caption: 'The five readings',
+      caption: 'The six readings',
       rows: [
         ['DOCUMENTS', 'how many, and whether they’re current'],
         ['MEMORY', 'when an agent last saved'],
         ['KNOWLEDGE', 'pages in the domains it searches'],
-        ['AGENT CONNECTIONS', 'did agents read first, and save?'],
         ['SESSION START', 'what an agent starts with'],
+        ['SETUP', 'can each tool reach this project?'],
       ],
     },
     points: [
       { icon: 'clock', text: 'Times are when the agent saved, or when the file arrived here.' },
       { icon: 'dot', text: 'A dot shows a real check; a dashed ring shows none.' },
+      // A table holds five rows at most, so the sixth reading is a point.
+      { icon: 'agent', text: '**AGENT CONNECTIONS** shows whether agents read first, and saved.' },
     ],
     guide: { key: 'context.overview', heading: 'The freshness dot, one scale everywhere' },
   },
@@ -145,17 +147,29 @@ const E = {
     guide: { key: 'context.session-start', heading: 'Session start and the context window' },
   },
 
-  // v3.77.0 — step 5, Setup.
+  // v3.77.0 — step 5, Setup. Rewritten v3.78.0 for the rebuilt step: what
+  // each mark means, what Re-check reads, what the repository folder is, what
+  // Computers counts, how far Sync now reaches, and custom tools.
   'context.setup': {
     label: 'About Setup',
     title: 'Setup',
-    lead: 'Steps 1 to 4 are what an agent reads. **Setup** shows whether each of your agent tools can reach them.',
+    lead: '**Setup** checks whether each agent tool here can reach this project. **Re-check** reads the files; tools needn’t run.',
+    visual: {
+      type: 'table',
+      caption: 'What each mark means',
+      rows: [
+        ['ready', 'checked, and it works'],
+        ['to fix', 'shown above, with its fix'],
+        ['can’t check here', 'nothing here to read'],
+        ['not checked', 'needs the repository folder'],
+      ],
+    },
     points: [
-      { icon: 'agent', text: '**Saved** is the proof: that tool saved this project.' },
-      { icon: 'computer', text: 'The other columns read files on this computer only.' },
-      { icon: 'refresh', text: '**Sync now** before you start, and after your last save.' },
+      { icon: 'folder', text: 'The **repository**: a code checkout, not your knowledge folder; set per computer.' },
+      { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
+      { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'After a fix, open a new conversation in that tool and say continue.',
+    try: 'Tool not listed? Pick **Custom tool…** under **+ Add a tool** and name it.',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 
@@ -904,6 +918,10 @@ export const SCREEN_WORDS = [
   'Restore',
   // v3.77.0 — Context step 5 and MCP bridge block 5.
   'Setup', 'SETUP', 'Saved', 'Tools on this Mac', 'Check again',
+  // v3.78.0 — step 5 rebuilt: its head control, its marks, its folds and its
+  // picker, each as printed.
+  'Re-check', 'ready', 'to fix', 'can’t check here', 'not checked', 'repository',
+  'Computers', 'Custom tool…', '+ Add a tool',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

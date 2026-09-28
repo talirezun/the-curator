@@ -11,20 +11,9 @@
    here, unmeasured — a DASHED ring, the app's "no reading" mark. A tool and a computer carry no
    colour (colour is a domain's — design rule 5).
    ═══════════════════════════════════════════════════════════════════════════ */
-.cur-setup-scroll { overflow-x: auto; }
-.cur-setup-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: var(--text-sm); }
-/* Below 760px of column the table SCROLLS inside `.cur-setup-scroll` rather than
-   squeezing every cell to a word per line (measured at a 900px window). */
-.cur-setup-table th, .cur-setup-table td {
-  text-align: left; vertical-align: top; padding: var(--space-5) var(--space-5);
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cur-setup-table thead th {
-  font: var(--type-mono); font-size: var(--text-2xs); letter-spacing: var(--track-mono);
-  text-transform: uppercase; color: var(--text-3); font-weight: 500;
-}
-.cur-setup-table tbody tr:last-child > * { border-bottom: 0; }
-.cur-setup-tool { font-weight: 500; color: var(--text); white-space: nowrap; }
+/* v3.78.0: the old `.cur-setup-table` / `.cur-setup-scroll` / `.cur-setup-tool`
+   are gone — step 5's tables are the Handoffs table's parts now
+   (`.mem-ws-table`, views/memory.css), and nothing else drew them. */
 .cur-setup-st {
   display: inline-flex; align-items: center; gap: var(--space-3);
   font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2);

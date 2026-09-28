@@ -126,6 +126,9 @@
 //       backlinks         Array<{path, title, type}> — rendered as
 //                                    clickable rows; `type` drives the same
 //                                    color dot as the type badge.
+//       hideBacklinks     boolean  — omit the BACKLINKS section entirely
+//                                    (v3.78.0, additive; for a page that is
+//                                    not a wiki page). Absent = printed.
 //       onBacklinkClick   function(path, title) — called when a backlink
 //                                    row is activated. The reader does not
 //                                    navigate itself; the caller decides
@@ -1340,8 +1343,13 @@ function renderReader() {
       tagsHtml +
       '<div class="reader-source-bar" id="reader-source-bar" hidden></div>' +
       '<div class="reader-body-text">' + (p.bodyHtml || '') + '</div>' +
-      '<div class="reader-backlinks-head">BACKLINKS · ' + backlinks.length + '</div>' +
-      '<div class="reader-backlinks">' + backlinksHtml + '</div>';
+      // `hideBacklinks` (v3.78.0, additive): a page that is not a wiki page —
+      // Context step 5's tool evidence — has no backlinks to count, and
+      // "BACKLINKS · 0" under it would be a reading about nothing. Absent
+      // (every caller before it) prints the section exactly as before.
+      (p.hideBacklinks === true ? '' :
+        '<div class="reader-backlinks-head">BACKLINKS · ' + backlinks.length + '</div>' +
+        '<div class="reader-backlinks">' + backlinksHtml + '</div>');
   }
 
   const open = liveReaderScrim();
