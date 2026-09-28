@@ -5270,7 +5270,7 @@ promise. Four words describe every row:
 | **goose** | unverified | Refused by default — same reason. The one harness with a genuinely usable session-end hook | not measured |
 | **Gemini CLI** | unverified | Nothing. `AfterAgent` is the right moment and its shape is unmeasured | not measured |
 | **Cline** | unverified | Nothing — the config path is unmeasured. **`PreCompact` is refused outright**: Cline accepts one and never fires it | not measured |
-| **DeepSeek Harness** | unverified | Nothing — the overlay path is unmeasured | not measured |
+| **DeepSeek Harness** | unverified | Nothing — the hook file's path is a value inside its own Cordis patch config, set per install, with no fixed location (its MCP entry's location, by contrast, *was* verified from source in v3.78.0 — see [§13d, step 2](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)) | not measured |
 | **OpenCode**, **Kilo** | present-useless | Nothing — hooks here are TypeScript plugins, not shell commands | not measured |
 | **Windsurf / Devin Desktop** | present-useless | Nothing — twelve hooks, and not one of them fires at a stop, a session end or a compaction | not measured |
 | **Zed** | none | Nothing — no hook mechanism exists | not measured |
@@ -5537,6 +5537,7 @@ it goes:
 | Claude Code | `~/.claude.json` (for you), or `.mcp.json` in a project | The same `mcpServers` shape |
 | Antigravity | `~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json` | **Three separate files** — `my-curator doctor` checks all three |
 | opencode | `~/.config/opencode/opencode.json`, or `opencode.json` in a project | A different shape: the key is `mcp`, the entry needs `"type": "local"`, the command and its arguments are **one array**, and environment variables go under `environment` |
+| DeepSeek Harness (`dsh`) *(verified from source, v3.78.0)* | `~/.dsh/cordis.patch.yml` (every profile), or `~/.dsh/profiles/<name>/cordis.patch.yml` for one profile — **never `cordis.yml`**, which `dsh` rewrites to empty on every launch | A Cordis **patch** layer, not a plain map: the entry is one `- insert:` item naming the `@deepseek-ai/dsh-mcp-client` plugin. Merge it into the file; do not copy over it. `dsh` strips credential-shaped environment variables from stdio children, so the bridge's arguments travel on the command line, never in `env` |
 
 **3 — Both skills, per tool.** `my-curator` carries how to work with the wiki; `curator-continuity`
 carries how to write a good handoff and when to save. Copy each skill **folder whole** — both have
@@ -5632,64 +5633,171 @@ comes with a source install (`npm link` puts it on your `PATH`); the Mac app doe
 
 ## 13e. The Setup check in the app
 
-*New in v3.77.0.* The checklist in [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
-is now visible in the app, for one project on one computer, so you do not have to check it by hand.
+*New in v3.77.0; redesigned in v3.78.0.* The checklist in
+[§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist) is visible
+in the app, for one project on one computer, so you do not have to check it by hand. v3.78.0 rebuilt
+step 5 from the app's own existing parts — no new component was designed for it — and answered a
+list of questions the first version left open: what an empty or broken config file means, how many
+*computers* you actually have when one Mac runs both the DMG and a source checkout, why a repository
+folder is needed at all, and what **Sync now** on this row actually syncs.
 
 **Where it is.** **Context** → open a project → the **SETUP** tile in the overview, and **step 5 ·
 Setup** at the foot of the page. The machine-wide detail is in **Settings → MCP bridge → Tools on
 this Mac**.
 
-**What step 5 shows.**
+**Nothing shows when nothing is wrong.** v3.77.0's step body had a summary card even on a clean
+project; v3.78.0 removed it. A project with no faults simply has no to-fix notes and three quiet
+folds below — there is no card, no score and no percentage anywhere in the step's body, on purpose:
+a "9/10" reads as a grade, and a grade invites optimising the number instead of the ten real things
+it stands for. (The overview's own SETUP tile is unchanged: it still reads *N to fix*, *repository
+not set* or *ready*, one word, the same as every other overview tile on the page.)
 
-- **A to-fix list, never folded.** One line for each precondition that is false *right now*, with
-  the one safe action beside it: **Copy block for AGENTS.md**, **Copy marker line**, **Copy
-  command** (for example the `git add .curator-project && git commit …` line), **Reveal** a file in
-  Finder, **Sync now**, or **Open Tools on this Mac**. When nothing is false it says *Nothing to fix
-  on this computer*. There is no score and no percentage.
+**The to-fix notes, loud.** Each one is its own line, outside every fold, with its own fix button
+right beside it — never a list you have to open first. What you see depends on what is actually
+false: **Copy block for AGENTS.md** (or `CLAUDE.md`, `GEMINI.md`), **Copy marker line**, **Copy
+command** (for example `git add .curator-project && git commit …`), **Reveal** (opens the exact file
+in Finder), **Sync now**, or **Open Tools on this Mac**. A note that names a bad config file
+(below) also says what to do about *that* file specifically, by name.
+
+**"checked *N* ago · Re-check."** The head of the step carries when it last read your tools' files
+and this repository, with a **Re-check** button beside it. **Re-check re-reads the config files and
+git state — it never re-reads your repository's file contents beyond `.curator-project` and the
+instruction files, and it changes nothing.** The check also runs itself automatically: when you come
+back to this window (a tab focus or the app becoming visible again) and the last reading is more
+than 10 seconds old, it quietly re-checks without you pressing anything — so switching from your
+editor back to The Curator after fixing a file shows the fix without an extra click.
+
+**Three folds, in the Handoffs table's own shape.** Below the to-fix notes:
+
 - **Tools** — one row per agent tool that has saved to this project, is set up on this computer, or
-  you added with **+ Add a tool**. The columns are **Saved** (the project's own record, from every
-  computer: when, from which computer, under which handoff name — and whether that name is the
-  tool's own), **Bridge**, **Skills** and **Hooks** (files on *this* computer), and **Block** (the
-  instruction file that tool reads, in *this* project's folder).
-- **Repository on this computer** — the folder, whether `.curator-project` names this project and
-  is committed (and pushed, as of your last `git fetch` — the app never fetches your project), and
-  for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
-- **Computers** — every computer that has saved to this project: which tools saved from it, its
-  newest save that has reached *this* computer, the Curator version it saved with (recorded from
-  v3.77.0 on; older saves say *not recorded*), and for this computer its last sync. When the app's
-  last check of GitHub found a newer handoff from another computer waiting, the row says so, and
-  **Sync now** is right there. Another computer's own sync time is not recorded anywhere, so it is
-  never shown.
+  you added with **+ Add a tool** (below). Each row's own word is one of **ready** (saved from this
+  computer, its bridge OK, its block current or the tool reads none), **to fix**, **partly checked**,
+  or **no save from here**. Click a row to open its full evidence — every file it read, what each one
+  said, and a **Reveal** for anything found — in the right-side reader, the same place every other
+  detail page in the app opens.
+- **Repository on this computer** — the folder, whether `.curator-project` names this project and is
+  committed (and pushed, as of your last `git fetch` — the app never fetches your project on its
+  own), and for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
+- **Computers** — see "How many computers?" below.
 
-**The states.** *ok*, *to fix*, *can't check here*, *not checked* (for example: no project folder
-set yet), *unmeasured* (hooks whose effect nobody has measured). Until a project folder is set, the
-repository checks do not run, so the tile reads **repository not set** and the step says *Nothing to
-fix among the checks that ran* — never "nothing to fix". The block counts as current when every word
-matches the current **Copy agent instructions** text, however your editor wrapped the lines; a block
-that differs in any word (an older version, or a hand edit) is *outdated*. Evidence beats configuration: if
-no config entry is found for Claude Code but Claude Code saved this project from this computer, the
-cell says **working** — on the maintainer's Mac the entry lives only in Claude Desktop's config, and
-a file-only check would have said "not configured" about a setup that works.
+**"+ Add a tool."** The same picker the app uses elsewhere (Domains' "+ Add a domain"): a listbox
+with two groups, **Known tools** (every agent tool The Curator can write an MCP entry for, including
+DeepSeek Harness, that is not already a row) and **Other**, whose last entry is **Custom tool…**. See
+"A tool that isn't listed" below for what picking it does.
 
-**Where is the project on this computer?** Nothing recorded it before v3.77.0. The first time,
-step 5 asks for the folder (suggesting any document source of the project that is a git checkout
-here). The answer is kept in this computer's own settings file and never synced — the same project
-lives at a different path on each computer. A folder inside Documents or Desktop makes macOS ask
-once whether The Curator may read it.
+### Config file states, and the bad-file rule
+
+Every config file a check reads is now one of five states, shown in its evidence: **missing** (no
+file there), **can't open** (found, but macOS refused to read it — a permission problem), **empty**
+(0 bytes, or whitespace only — most often a tool that has not launched since being installed), **not
+valid JSON** (present, but does not parse), or **ok**.
+
+**A bad file (can't open / empty / not valid JSON) flags the tool only when no *other* file of that
+tool names `my-curator`.** Antigravity keeps three separate config files; if one of them is empty
+while another already names the bridge, the tool's row stays fine — the empty file is listed as a
+note in its evidence, not a fault. Only when a bad file is the *one* place the entry could live does
+it turn the row to-fix. The to-fix line names the file by its path and offers **Reveal**, with
+guidance specific to the state — for an empty file, "open the tool once (it may fill the file), then
+Re-check"; for invalid JSON, "fix the syntax, or delete it if it's a leftover, then Re-check"; for a
+file that can't open, a pointer at macOS's Privacy & Security settings.
+
+**A tool need not be running for its row to read *ok*.** The check only ever reads files already on
+disk; it never asks a tool whether it is currently open. A closed tool with a valid, correctly filled
+config file reads exactly the same as an open one.
+
+### How many computers?
+
+**Computers are grouped by physical machine, not by config folder.** A Mac running both the
+downloaded app and a `git clone` of this repository used to read as two separate computers, because
+each keeps its own install identity; v3.78.0 finds every Curator install on *this* Mac (the app's own
+data folder, a repository folder you have set here if it is itself a Curator checkout, and the
+install behind each agent tool's MCP entry) and folds them into **one** physical-computer row, with
+each install's own name shown underneath (for example "also saved as `mac-17d23c`"). The Computers
+fold's own heading names both counts plainly — "1 computer · 2 installs" — so a number that looks
+doubled is explained on the same line rather than left for you to puzzle out.
+
+Each row shows which tools saved from it, its newest save that has reached *this* computer, the
+Curator version it saved with (recorded from v3.77.0 on; an older save reads *not recorded*), and —
+for this computer only — its last sync. When the app's last check of GitHub found a newer handoff
+from another computer waiting, the row says so and **Sync now** sits right beside it. Another
+computer's own sync time is never recorded anywhere and is therefore never shown.
+
+### Why a repository folder?
+
+The `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` block and the `.curator-project` marker live in your
+project's **code checkout** — a different folder from your knowledge folder, and typically a
+different path on every computer. Nothing recorded that folder before v3.77.0, so the app could not
+check the block or the marker at all. The first time, step 5 asks for it.
+
+**Auto-detected candidates.** Rather than a blank prompt, the folder note lists folders already found
+on this computer that are probably this checkout, each with a one-click **Use**: a folder Claude Code
+has opened whose `.curator-project` names this project; a folder this project's Documents/foundations
+were read from; a folder a Curator hook started a session in for this project (read from the hook
+activity log's new `repo` field — see below); and, once no marker-bearing folder turns up, a folder
+whose git remote matches the GitHub repository your foundations mirror. Only a folder that actually
+exists on this computer, under your home folder, and either names this project or matches its remote
+is ever offered — nothing about any *other* folder Claude Code has opened is shown. The answer is
+kept in this computer's own settings file and never synced — the same project lives at a different
+path on each computer. A folder inside Documents or Desktop makes macOS ask once whether The Curator
+may read it.
+
+### What Sync now syncs
+
+**Sync now**, wherever it appears on this step, pulls and pushes your **whole** knowledge folder —
+every domain, not only this project's. The *"N files not on GitHub"* count on the Computers fold adds
+up every domain's pending changes for the same reason, so it is not this project's own count; the
+row also shows when the app last checked GitHub for incoming changes, and — because that check keeps
+at most 20 file names — says so when the real number may be larger than the list it can name.
+
+### A tool that isn't listed
+
+Picking **Custom tool…** from **+ Add a tool** asks for a name (1–40 characters: letters, digits,
+spaces, dots, dashes, underscores) and adds a row for it. A name that turns out to match a tool The
+Curator already knows (typing "claude code", say) joins that known row instead — nothing is ever
+created twice. A genuinely custom row gets: a generic `mcpServers` JSON entry to paste into whatever
+config file that tool reads; `AGENTS.md` as its instruction file, **assumed** rather than checked (its
+Block cell reads *unmeasured*, never *to fix* — the app does not know this tool's convention, only
+the common one); and both skills' `.zip` files. Its row turns **ready** only once it has actually
+saved to this project from this computer under its own name — the same evidence-first rule every
+other tool's row follows. Custom tools are **kept per machine, never synced** (another computer needs
+its own), and capped at 12.
+
+### The states, restated
+
+*ok*, *to fix*, *can't check here*, *not checked* (for example: no project folder set yet),
+*unmeasured* (a fact nobody has measured — hooks on most harnesses, or a custom tool's instruction
+file). Until a project folder is set, the repository checks do not run, so the step lists only what
+*was* checked, never "nothing to fix" about work it never did. The block counts as current when every
+word matches the current **Copy agent instructions** text, however your editor wrapped the lines; a
+block that differs in any word (an older version, or a hand edit) is *outdated*. Evidence beats
+configuration: if no config entry is found for Claude Code but Claude Code saved this project from
+this computer, the cell says **working** — on the maintainer's Mac the entry lived only in Claude
+Desktop's config, and a file-only check would have said "not configured" about a setup that works.
 
 **What it reads, and what it never does.** It reads the agent tools' config files for one fact —
 whether they name `my-curator` — and never shows their contents or any other server's entry (those
 files hold other tools' API keys). It reads your project's marker and instruction files, and runs
 read-only `git` in the folder. It writes nothing to a tool's config, a skill folder, or your
-repository: every fix copies or reveals, and you paste. The two things it saves are this computer's
-project folder and the tools you added.
+repository: every fix copies or reveals, and you paste. The app's only writes for this feature are
+its own per-machine settings — the folder you set and the tools you added or named.
 
-**Skills.** For tools whose skills live on this computer (Antigravity; opencode and Claude Code
-when installed locally), each installed file is compared with the copy this app carries. Skills
-added to your Claude account reach the Claude app from the account and leave no local copy, so
-Claude's row says *can't check here*. **Settings → MCP bridge → Tools on this Mac** offers
-`my-curator.zip` and `curator-continuity.zip` of the current skills for that upload (the Mac app
-ships the skills since v3.77.0).
+**Skills.** For tools whose skills live on this computer (Antigravity; opencode and Claude Code when
+installed locally), each installed file is compared with the copy this app carries. Skills added to
+your Claude account reach the Claude app from the account and leave no local copy, so Claude's row
+says *can't check here*. **Settings → MCP bridge → Tools on this Mac** offers `my-curator.zip` and
+`curator-continuity.zip` of the current skills for that upload (the Mac app ships the skills since
+v3.77.0).
+
+**DeepSeek Harness (`dsh`).** Added to the tool list in v3.78.0, verified against its own source
+(github.com/deepseek-ai/deepseek-harness): its MCP entry belongs in `~/.dsh/cordis.patch.yml` or a
+profile's own `cordis.patch.yml` — never `cordis.yml`, which `dsh` empties on every launch — as one
+`- insert:` item, and the check line-scans for it (there is no YAML parser in this app, so a
+malformed patch file cannot itself be detected as broken, only missing, unopenable or empty). It
+reads both `AGENTS.md` and `CLAUDE.md` — every existing one, not first-match — and its skills folders
+are `.dsh/skills`, `.agents/skills`, `~/.dsh/skills` and `~/.agents/skills`. Its **hooks stay
+unverified**: the hook file's location is itself a value inside `dsh`'s own patch config, set per
+install, with no fixed place to look — unlike its MCP entry, which is why the two facts can read
+differently on the same row.
 
 **Hooks, and what was observed on 2026-09-26.** Antigravity reads hooks from a `hooks.json`. With
 only the user-level `~/.gemini/config/hooks.json`, the session-start hook **ran** (it left a marker)
@@ -5701,13 +5809,18 @@ computer's absolute path to `my-curator`, so do not commit it: add `--git-exclud
 in `.git/info/exclude` (local to this computer, never pushed). Whether the Stop hook fires is not
 known yet — see below.
 
-**The hook activity log.** Every `my-curator hook` run now leaves one line in
+**The hook activity log.** Every `my-curator hook` run leaves one line in
 `<user data>/.hook-activity.jsonl` (never synced, rotated): when, which tool, which event, a hash of
 the conversation id and which field carried it, the payload's field **names** (never a value), and
-what the hook decided and why. `my-curator hook-log` prints the last 20; `my-curator doctor` and the
-**Hooks** column read it (*start hook observed firing …*, *stop hook observed firing … — asked* /
-*did not ask: …*, or *installed, not yet observed firing*). To see why a Stop reminder did not
-appear, run a session, then `my-curator hook-log --harness antigravity`.
+what the hook decided and why. **As of v3.78.0, a session-start line also records `repo`** — the
+absolute path of the folder holding the `.curator-project` marker the project was resolved from —
+so the Setup check can offer that folder as a repository candidate (see "Why a repository folder?"
+above). It is recorded only when the session actually resolved through a marker (never a raw working
+folder), it stays in this one machine-local file exactly like the rest of the line, and no other
+payload value is ever added beside it. `my-curator hook-log` prints the last 20; `my-curator doctor`
+and the **Hooks** column read it (*start hook observed firing …*, *stop hook observed firing … —
+asked* / *did not ask: …*, or *installed, not yet observed firing*). To see why a Stop reminder did
+not appear, run a session, then `my-curator hook-log --harness antigravity`.
 
 ---
 
