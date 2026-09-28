@@ -67,6 +67,7 @@ const BUDGETS = {
   'curator-user-guide.md': 45_000,
   'curator-agent-memory.md': 30_000,
   'curator-links.md': 8_000,
+  'curator-site-map.md': 1_200,
 };
 const TOTAL_CEILING = 200_000;
 

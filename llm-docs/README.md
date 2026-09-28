@@ -40,6 +40,7 @@ on every answer, so a fact repeated in two files is a fact paid for twice.
 | `curator-user-guide.md` | Installing it, and using every screen: ingest, chat, domains, wiki, Health, sync, settings, Obsidian, troubleshooting |
 | `curator-agent-memory.md` | Project context — foundations and the reading plan, working state, projects, standing briefs, the MCP memory tools, the skills, activation, Copy agent instructions, the menu bar icon. **The FILENAME deliberately did not follow v3.62.0's rename**: the set is uploaded by filename, its budget is keyed on that name below, and renaming would break the upload identity for nothing |
 | `curator-links.md` | Navigation only. No facts: it says which page in the GitHub docs answers a question, and gives the URL |
+| `curator-site-map.md` | Maps a visitor's question to the mycurator.xyz page section that answers it, as a `https://mycurator.xyz/#section` link the assistant can send. Owns no product facts — only the section table. **Must be kept in sync by hand**: update it whenever a section id is renamed, added or removed in the website repository's `SECTIONS` / `SECTION_MAP` (`site/index.html`) — a stale id here sends a visitor to a page that scrolls nowhere |
 
 When a fact straddles two files, the owning file states it and the other file
 says nothing at all rather than summarising it. `curator-links.md` never
@@ -55,6 +56,7 @@ Estimated tokens = **characters ÷ 4**.
 | `curator-user-guide.md` | 45,000 |
 | `curator-agent-memory.md` | 30,000 |
 | `curator-links.md` | 8,000 |
+| `curator-site-map.md` | 1,200 |
 | **Hard ceiling over the set** | **200,000** |
 
 The target for the whole set is roughly **95,000** tokens. The 200,000 ceiling
