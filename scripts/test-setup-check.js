@@ -40,11 +40,18 @@
  *      a commented line counted; other entries leaking from the line-scan.
  *  §15 a tool called ready without a save from here; a custom tool's
  *      assumed AGENTS.md raised as a to-fix line.
+ *
+ * v3.79.0:
+ *  §16 the block-cap line firing on a long file whose block is at the top; a
+ *      wrong-name save shown twice, or with a copy button when the
+ *      instructions are already current; a to-fix button with no label; the
+ *      marker commands not pushing; sync-incoming not naming the computer;
+ *      travels and per-computer saves missing.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
+  chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -332,7 +339,11 @@ section('§9  the project view');
   ok(cc && cc.bridge.state === 'ok' && cc.bridge.word === 'working', 'Claude Code with no entry found but a save from THIS machine reads "working" — evidence first', cc?.bridge);
   const ag = r.tools.find((t) => t.id === 'antigravity');
   ok(ag && ag.saved.state === 'fix' && ag.saved.wrongScope, 'Antigravity\'s newest save under "main" is flagged', ag?.saved);
-  ok(r.toFix.some((f) => f.kind === 'wrong-scope' && f.tool === 'antigravity'), '…and it is a to-fix line');
+  // v3.79.0: its block is MISSING, so the wrong save joins the block line
+  // (which carries the fix) instead of a second line saying the same thing.
+  ok(!r.toFix.some((f) => f.kind === 'wrong-scope' && f.tool === 'antigravity')
+    && /That is why its (\d{1,2} [A-Z][a-z]{2}|last) save went under “main”\./.test(r.toFix.find((f) => f.kind === 'block-missing' && f.tool === 'antigravity')?.detail || ''),
+    '…and the block line explains it (no separate wrong-name line)', r.toFix.filter((f) => f.tool === 'antigravity'));
   const oc = r.tools.find((t) => t.id === 'opencode');
   ok(oc && oc.saved.state === 'ok', 'a session-named scope (the standing brief\'s own rule) is NOT flagged', oc?.saved);
   ok(ag.block.state === 'fix' && ag.block.word === 'missing', 'Antigravity reads AGENTS.md/GEMINI.md: the block is missing for it', ag.block);
@@ -379,9 +390,10 @@ section('§11 config file states (v3.78.0): empty, invalid, unopenable');
   const pb = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: [], machine: { ids: [] }, machineRows: [b], repo: null, template: TEMPLATE, addedTools: ['antigravity'] });
   const fb = pb.toFix.find((f) => f.tool === 'antigravity' && f.kind === 'bridge-file');
   const emptyFile = path.join(HB, '.gemini', 'antigravity', 'mcp_config.json');
-  ok(fb && fb.text === 'Antigravity: ~/.gemini/antigravity/mcp_config.json is empty.', 'the to-fix text names the file', fb);
-  ok(fb && /open Antigravity once, then Re-check/.test(fb.detail) && /reveal it and fix or delete it/.test(fb.detail), '…the detail says what to do', fb?.detail);
+  ok(fb && fb.text === 'Antigravity’s MCP settings file (~/.gemini/antigravity/mcp_config.json) is empty, so Antigravity can’t reach The Curator on this Mac.', 'the to-fix text names the file (v3.79.0 wording)', fb);
+  ok(fb && /^Open Antigravity once \(it fills the file\), then Re-check\./.test(fb.detail) && /reveal it and fix or delete it/.test(fb.detail), '…the detail says what to do', fb?.detail);
   ok(fb && fb.fix.kind === 'reveal' && fb.fix.path === emptyFile && fb.fix.label === 'Reveal mcp_config.json', '…and the fix reveals that exact file', fb?.fix);
+  ok(fb && fb.fixes.map((x) => x.kind).join() === 'reveal,recheck,settings' && fb.fixes.every((x) => x.label), '…then Re-check and Tools on this Mac, each labelled', fb?.fixes);
   ok(pb.tools.find((t) => t.id === 'antigravity').status === 'to-fix', 'the tool\'s one word is "to-fix"');
 
   // (c) invalid JSON alone: to fix; beside a working file: a note.
@@ -528,6 +540,182 @@ section('§15 per-tool status, parts and evidence; custom tools (v3.78.0)');
   ok(fancy.block.state === 'unmeasured' && /AGENTS\.md has no Curator block/.test(fancy.block.word), 'its block cell reads AGENTS.md, labelled as an assumption (unmeasured, not red)', fancy.block);
   const mine = r.tools.find((t) => t.id === 'my agent');
   ok(mine && mine.custom && mine.userAdded === false && mine.status === 'partly', 'an unknown tool seen only in a save: custom, saved under its own name here → partly (block not proven)', mine);
+}
+
+section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
+{
+  const opts = { domain: 'projects', project: 'ott', template: TEMPLATE };
+  const cur = block('projects/ott', 'ott');
+  const labelled = [];   // every item this section produces, for (h)
+  const run = (o) => { const r = S.collectProjectSetup({ domain: 'projects', project: 'ott', template: TEMPLATE, home: ROOT, ...o }); labelled.push(...r.toFix); return r; };
+
+  // (a) block offsets and mtime
+  {
+    const f = path.join(ROOT, 'offsets.md');
+    const text = `# ott\n\nIntro.\n\n## Working state\n\n${cur}\n## More\n\nOwner text.\n`;
+    w(f, text);
+    const r = S.inspectInstructionFile(f, opts);
+    const slice = text.slice(r.blockStart, r.blockEnd);
+    ok(r.current && slice.startsWith('## Working state') && slice.trimEnd().endsWith(cur.trimEnd().slice(-40)) && !slice.includes('## More'),
+      'block offsets: from its "## Working state" heading to the end of the block, before the next heading', { start: r.blockStart, end: r.blockEnd, tail: slice.slice(-60) });
+    ok(Number.isFinite(r.mtimeMs) && Math.abs(r.mtimeMs - statSync(f).mtimeMs) < 1, 'inspectInstructionFile returns the file\'s mtimeMs');
+    const a = S.analyseInstructionText(text.replace(/\n/g, '\r\n'), opts);
+    ok(a.current && a.blockStart === r.blockStart && a.blockEndBytes > r.blockEndBytes, 'CRLF: the same char offsets into the LF text; bytes counted on disk (larger)', { a: a.blockEndBytes, r: r.blockEndBytes });
+    const noHead = S.analyseInstructionText(`Some text.\n\n${cur}\n# Next\n`, opts);
+    ok(noHead.blockStart === 'Some text.\n\n'.length, 'with no heading above it, the block starts at its lead sentence', noHead.blockStart);
+  }
+
+  // (b) block-cap fires ONLY when the block does not fit in what the tool reads
+  {
+    const capRepo = path.join(ROOT, 'caprepo');
+    mkdirSync(capRepo, { recursive: true });
+    const filler = (n) => `${'x'.repeat(99)}\n`.repeat(Math.ceil(n / 100)).slice(0, n);
+    const agRun = (agents) => {
+      w(path.join(capRepo, 'AGENTS.md'), agents);
+      const r = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: capRepo, source: 'set' }, addedTools: ['antigravity'] });
+      return { r, cap: r.toFix.find((f) => f.kind === 'block-cap'), ag: r.tools.find((t) => t.id === 'antigravity') };
+    };
+    const top = agRun(`## Working state\n\n${cur}\n\n## Notes\n\n${filler(30000)}`);
+    ok(!top.cap && top.ag.block.state === 'ok', 'a 30 KB AGENTS.md with the block AT THE TOP: no cap line (v3.78.0 fired on overCap here)', top.r.toFix);
+    const mid = agRun(`${filler(3000)}\n## Working state\n\n${cur}\n`);
+    ok(!mid.cap && mid.ag.block.state === 'ok', 'a block 3 KB down (past "the top", well inside 24,000 bytes): no cap line', mid.r.toFix);
+    const deep = agRun(`${filler(30000)}\n## Working state\n\n${cur}\n`);
+    ok(deep.cap && deep.cap.text === 'Antigravity reads only the first 24,000 bytes of AGENTS.md, and the Curator instructions start after that.' && deep.cap.detail === 'Move them to the top, then commit and push.',
+      'a block starting 30 KB down: "…start after that." / "Move them to the top…"', deep.cap);
+    const straddle = agRun(`${filler(23500)}\n## Working state\n\n${cur}\n`);
+    ok(straddle.cap && /run past that\.$/.test(straddle.cap.text), 'a block starting inside the cap and ending past it: "…run past that."', straddle.cap);
+    ok(deep.cap.fixes.map((x) => x.kind).join() === 'reveal,copy-command', '…its buttons: Reveal AGENTS.md, the git command', deep.cap.fixes);
+  }
+
+  // (c) a wrong-name save when the instructions here are CURRENT
+  const curRepo = path.join(ROOT, 'currepo');
+  w(path.join(curRepo, 'AGENTS.md'), `## Working state\n\n${cur}\n`);
+  const edited = Date.parse('2026-09-24T12:00:00Z');
+  utimesSync(path.join(curRepo, 'AGENTS.md'), edited / 1000, edited / 1000);
+  const agSave = (machine, at) => [{ scope: 'main', machine, harness: 'Antigravity', writtenAt: at }];
+  {
+    const r = run({ pairs: agSave('mac-b-222222', '2026-09-25T12:00:00Z'), machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' } });
+    const ws = r.toFix.find((f) => f.kind === 'wrong-scope');
+    ok(ws && ws.text === 'Antigravity’s last save (25 Sep, on mac-b-222222) went under “main”, not its own name “antigravity”.', 'current block, another computer: the line names the date and the computer', ws);
+    ok(ws && /^Your instructions here are already current, so this clears the next time Antigravity saves — after that computer runs git pull\.$/.test(ws.detail), '…"already current… clears the next time… git pull"', ws?.detail);
+    ok(ws && ws.fixes.length === 0 && ws.fix === null && ws.at === '2026-09-25T12:00:00Z' && ws.machine === 'mac-b-222222' && ws.thisMachine === false, '…NO copy button; at / machine / thisMachine carried', ws);
+    ok(!/scope/i.test(`${ws.text} ${ws.detail}`), '…and the words say "name", never "scope"');
+    const unpushed = run({ pairs: agSave('mac-b-222222', '2026-09-25T12:00:00Z'), machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' }, instructionGit: { 'AGENTS.md': { committed: false, pushed: null } } });
+    const wu = unpushed.toFix.find((f) => f.kind === 'wrong-scope');
+    ok(wu && /not yet committed and pushed/.test(wu.detail) && wu.fixes.length === 1 && /git push$/.test(wu.fixes[0].command), 'current here but NOT committed: say so, and offer the commit-and-push command (that computer cannot pull it yet)', wu);
+    const here = run({ pairs: agSave('mac-a-111111', '2026-09-23T12:00:00Z'), machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' } });
+    const wh = here.toFix.find((f) => f.kind === 'wrong-scope');
+    ok(wh && /on this Mac\)/.test(wh.text) && wh.detail === 'Your instructions here are already current, so this clears the next time Antigravity saves.' && !wh.savedAfterInstructions, 'this Mac, saved BEFORE the file last changed: "clears the next time"', wh);
+    const after = run({ pairs: agSave('mac-a-111111', '2026-09-25T12:00:00Z'), machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' } });
+    const wa = after.toFix.find((f) => f.kind === 'wrong-scope');
+    ok(wa && wa.savedAfterInstructions === true && /ask it to save under “antigravity”/.test(wa.detail) && /If that session started before the change/.test(wa.detail) && wa.fixes.length === 0,
+      'this Mac, saved AFTER the file last changed: says so, hedged (a session reads the file when it starts), asks for its own name', wa);
+  }
+
+  // (d) an OUTDATED block: one line, the block's, which explains the save
+  {
+    const oldRepo = path.join(ROOT, 'oldrepo');
+    w(path.join(oldRepo, 'AGENTS.md'), `## Working state\n\n${cur.replace('call `get_project_context` again before acting', 'call it again')}\n`);
+    const r = run({ pairs: agSave('mac-b-222222', '2026-09-25T12:00:00Z'), machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: oldRepo, source: 'set' } });
+    const bo = r.toFix.find((f) => f.kind === 'block-outdated');
+    ok(!r.toFix.some((f) => f.kind === 'wrong-scope'), 'outdated block + wrong save: no separate wrong-name line');
+    ok(bo && bo.text === `AGENTS.md in ${S.tildeUnder(ROOT, oldRepo)} has older Curator instructions, so Antigravity may not re-read on “continue” or save under its own name.`
+      && /That is why its 25 Sep save went under “main”\.$/.test(bo.detail) && bo.at === '2026-09-25T12:00:00Z', '…the block line names the file and folder, and mentions the save', bo);
+    ok(bo && bo.fixes.map((x) => x.kind + ':' + x.label).join(' | ') === `copy-block:Copy instructions | reveal:Reveal AGENTS.md | copy-command:Copy the git command that commits and pushes it`
+      && bo.fixes[1].path === path.join(oldRepo, 'AGENTS.md') && bo.fixes[2].cwd === oldRepo && /^git add -- AGENTS\.md && git commit -m ".+" -- AGENTS\.md && git push$/.test(bo.fixes[2].command),
+      '…buttons: Copy instructions · Reveal AGENTS.md · the git command (run in the folder)', bo?.fixes);
+    const miss = path.join(ROOT, 'missrepo');
+    mkdirSync(miss, { recursive: true });
+    const m = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: miss, source: 'set' }, addedTools: ['antigravity'] });
+    const bm = m.toFix.find((f) => f.kind === 'block-missing');
+    ok(bm && bm.text === `AGENTS.md in ${S.tildeUnder(ROOT, miss)} has no Curator instructions, so Antigravity doesn’t know this project and may overwrite another tool’s handoff.`
+      && /Paste them at the very top \(create the file if it isn’t there\), then commit and push\.$/.test(bm.detail), 'block-missing: the contract\'s two lines', bm);
+  }
+
+  // (e)(f) the marker, through real git
+  {
+    const gRepo = path.join(ROOT, 'grepo');
+    mkdirSync(gRepo, { recursive: true });
+    const g = (...args) => execFileSync('git', args, { cwd: gRepo, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).toString();
+    g('init', '-q');
+    w(path.join(gRepo, 'README.md'), '# g\n');
+    g('add', 'README.md'); g('commit', '-q', '-m', 'i');
+    const other = [{ scope: 'claude-code', machine: 'mac-b-222222', harness: 'Claude Code', writtenAt: '2026-09-25T12:00:00Z' }];
+    let mk = await S.inspectMarker(gRepo, { domain: 'projects', project: 'ott' });
+    const withOther = run({ pairs: other, machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: gRepo, source: 'set' }, marker: mk });
+    const mm = withOther.toFix.find((f) => f.kind === 'marker-missing');
+    ok(mm && mm.text === `${S.tildeUnder(ROOT, gRepo)} has no .curator-project, so agents and hooks can’t tell which project this folder is.` && /^If it exists on another computer, run git pull here\./.test(mm.detail)
+      && mm.fixes[0].command === 'git pull' && mm.fixes[0].label === 'Copy git pull' && mm.fixes[0].cwd === gRepo, 'marker missing, another computer has saved: offer git pull first', mm);
+    const alone = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: gRepo, source: 'set' }, marker: mk });
+    const ma = alone.toFix.find((f) => f.kind === 'marker-missing');
+    ok(ma && ma.detail === 'Create it, then commit and push.' && /^printf '%s\\n' projects\/ott > \.curator-project && git add -- \.curator-project && git commit -m ".+" -- \.curator-project && git push$/.test(ma.fixes[0].command),
+      'marker missing, no other computer: one command that creates, commits and pushes it', ma?.fixes?.[0]);
+    // Run the offered create command's FIRST half for real: it writes the marker this project reads.
+    execFileSync('/bin/sh', ['-c', ma.fixes[0].command.split(' && ')[0]], { cwd: gRepo });
+    mk = await S.inspectMarker(gRepo, { domain: 'projects', project: 'ott' });
+    ok(mk.present && mk.namesThis, '…and that command writes a marker naming this project (run for real)', mk);
+    const un = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: gRepo, source: 'set' }, marker: mk });
+    const mu = un.toFix.find((f) => f.kind === 'marker-uncommitted');
+    ok(mu && mu.text === `${S.tildeUnder(ROOT, gRepo)}/.curator-project isn’t committed to the project’s git repository.` && mu.detail === 'Your other computers get it only after you commit and push it here, then pull there.'
+      && / && git push$/.test(mu.fixes[0].command) && mu.fixes[0].label === 'Copy the git command that commits and pushes it', 'marker uncommitted: the command commits AND pushes', mu);
+    w(path.join(gRepo, '.curator-project'), 'projects/zzz\n');
+    mk = await S.inspectMarker(gRepo, { domain: 'projects', project: 'ott' });
+    const wr = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: gRepo, source: 'set' }, marker: mk });
+    const mw = wr.toFix.find((f) => f.kind === 'marker-wrong');
+    ok(mw && mw.text === `${S.tildeUnder(ROOT, gRepo)}/.curator-project says projects/zzz, so every agent here opens projects/zzz.` && mw.detail === 'Change it to projects/ott, then commit and push.', 'marker wrong: says what it names and what to change it to', mw);
+    const gone = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: path.join(ROOT, 'nope-repo'), source: 'set', exists: false } });
+    ok(gone.toFix.find((f) => f.kind === 'repo-missing')?.text === `${S.tildeUnder(ROOT, path.join(ROOT, 'nope-repo'))} isn’t on this Mac.` && !gone.toFix.some((f) => /^block-/.test(f.kind)),
+      'a folder not on this Mac: one line, and its files are not reported missing beside it', gone.toFix.map((f) => f.kind));
+  }
+
+  // (g) sync-incoming names the computer; (i)(j) travels and saves
+  {
+    const pairs = [
+      { scope: 'main', machine: 'mac-b-222222', harness: 'Antigravity', writtenAt: '2026-09-25T12:00:00Z', curator: '3.78.0' },
+      { scope: 'antigravity', machine: 'mac-b-222222', harness: 'Antigravity', writtenAt: '2026-09-20T12:00:00Z' },
+      { scope: 'claude-code', machine: 'mac-a-111111', harness: 'Claude Code', writtenAt: '2026-09-26T12:00:00Z' },
+    ];
+    const r = run({ pairs, machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' }, marker: { present: true, namesThis: true, line: 'projects/ott', git: { repo: false } },
+      sync: { configured: true, incoming: ['projects/state/ott/main/mac-b-222222/current.md'] } });
+    const si = r.toFix.find((f) => f.kind === 'sync-incoming');
+    ok(si && si.text === 'mac-b-222222 saved a newer handoff; it’s waiting in your Personal Sync on GitHub.' && si.detail === 'Sync now before you start the agent.' && si.machine === 'mac-b-222222' && si.fix.kind === 'sync' && si.fix.label === 'Sync now',
+      'sync-incoming names the computer, one line per computer', si);
+    const t = r.tools.find((x) => x.id === 'claude-code');
+    ok(t.parts.mcp.travels === 'this-computer' && t.parts.skills.travels === 'this-computer' && t.parts.hooks.travels === 'this-computer' && t.parts.block.travels === 'project-git', 'tool parts: mcp/skills/hooks travel nowhere (this computer), the block by the project\'s git', t.parts);
+    ok(t.block.files.length && t.block.files.every((f) => f.travels === 'project-git'), 'repository file rows (block.files) carry travels: project-git');
+    ok(r.repo.travels === 'project-git' && r.repo.marker.travels === 'project-git', 'the repository and its marker: project-git');
+    const b = r.computers.find((c) => c.primary === 'mac-b-222222');
+    ok(b.travels === 'personal-sync' && b.saves.length === 1 && b.saves[0].tool === 'antigravity' && b.saves[0].scope === 'main' && b.saves[0].at === '2026-09-25T12:00:00Z'
+      && b.saves[0].ownScope === false && b.saves[0].wrongScope === true && b.saves[0].curator === '3.78.0' && b.saves[0].label === 'Antigravity' && b.saves[0].travels === 'personal-sync',
+      'computers: travels personal-sync; saves = each tool\'s NEWEST save, with the name it went under', b);
+    const a = r.computers.find((c) => c.thisComputer);
+    ok(a.saves.length === 1 && a.saves[0].ownScope === true, '…own name flagged ownScope', a.saves);
+  }
+
+  // (h) every fix button has a label, and `fix` is always `fixes[0]`
+  {
+    // Add the bridge and skills kinds to what this section produced.
+    const HB = path.join(ROOT, 'st-b');
+    const b = row(S.collectMachineSetup({ home: HB, repo: '', skillsDir, domainsDir: DOMAINS }), 'antigravity');
+    run({ pairs: [], machine: { ids: [] }, machineRows: [b], repo: null, addedTools: ['antigravity'] });
+    run({ pairs: [], machine: { ids: [] }, machineRows: machine, repo: { path: REPO, source: 'set' }, addedTools: ['antigravity', 'claude-code'] });
+    run({ pairs: [], machine: { ids: [] }, machineRows: machine, repo: null, addedTools: ['antigravity', 'claude-code'] });
+    const kinds = new Set(labelled.map((f) => f.kind));
+    const fixKinds = new Set(labelled.flatMap((f) => f.fixes.map((x) => x.kind)));
+    ok(['wrong-scope', 'block-missing', 'block-outdated', 'block-cap', 'marker-missing', 'marker-uncommitted', 'marker-wrong', 'repo-missing', 'sync-incoming', 'bridge-file', 'bridge', 'skills'].every((k) => kinds.has(k)), 'this section produced every to-fix kind', [...kinds]);
+    ok(['reveal', 'copy-block', 'copy-command', 'copy-marker', 'copy-snippet', 'download-skill', 'sync', 'change-repo', 'settings', 'recheck'].every((k) => fixKinds.has(k)), '…and every fix kind', [...fixKinds]);
+    const unlabelled = labelled.flatMap((f) => f.fixes.filter((x) => typeof x.label !== 'string' || !x.label.trim()).map((x) => `${f.kind}/${x.kind}`));
+    ok(unlabelled.length === 0, 'every fix button carries a label', unlabelled);
+    ok(labelled.every((f) => f.fix === (f.fixes[0] || null)), '`fix` is always `fixes[0]` (or null)');
+    ok(labelled.every((f) => typeof f.text === 'string' && f.text && typeof f.detail === 'string' && f.detail), 'every item has both lines: text and detail');
+    ok(!labelled.some((f) => /\bscope\b/i.test(`${f.text} ${f.detail}`)), 'no to-fix line says "scope"', labelled.filter((f) => /\bscope\b/i.test(`${f.text} ${f.detail}`)).map((f) => f.text));
+    const sk = labelled.find((f) => f.kind === 'skills' && f.tool === 'antigravity');
+    ok(sk && sk.fixes.filter((x) => x.kind === 'download-skill').map((x) => x.skill).join() === 'my-curator' && /my-curator skill is older/.test(sk.text) && /\(in ~\/home\/\.gemini\/config\/plugins\/the-curator\/skills\)\.$/.test(sk.text),
+      'skills: names the stale skill and its folder, and downloads ONLY that skill', sk);
+    const br = labelled.find((f) => f.kind === 'bridge' && f.tool === 'antigravity');
+    ok(br && /~\/\.gemini\/antigravity\/mcp_config\.json/.test(br.text) && br.fixes.map((x) => x.kind).join() === 'copy-snippet,reveal', 'bridge "not in every file": names the file; Copy MCP entry · Reveal', br);
+  }
+  ok(S.shq("it's") === `'it'\\''s'` && S.shq('AGENTS.md') === 'AGENTS.md' && S.shq('a b') === "'a b'", 'shell quoting: safe words bare, the rest single-quoted');
 }
 
 section('§10 a read writes nothing');

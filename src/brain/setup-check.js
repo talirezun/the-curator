@@ -414,16 +414,117 @@ export const AT_TOP_BYTES = 2048;
  * `src/public/next/shared/agent-instructions.js`), passed in so a suite can
  * drive it and so this module needs no second copy of model-read text.
  */
-export function inspectInstructionFile(file, { domain, project, template, cap = null } = {}) {
-  const rec = { file, present: false, bytes: 0, hasBlock: false, current: false, namesProject: null, wrongProject: false, atTop: false, overCap: false, blockPastCap: false };
+export function inspectInstructionFile(file, opts = {}) {
+  const empty = {
+    file, present: false, bytes: 0, mtimeMs: null, hasBlock: false, current: false, namesProject: null, wrongProject: false,
+    atTop: false, overCap: false, blockPastCap: false, blockStartsPastCap: false,
+    blockStart: null, blockEnd: null, blockStartBytes: null, blockEndBytes: null,
+  };
   let text;
+  let mtimeMs = null;
   try {
-    if (!existsSync(file) || !statSync(file).isFile()) return rec;
+    if (!existsSync(file)) return empty;
+    const st = statSync(file);
+    if (!st.isFile()) return empty;
+    mtimeMs = st.mtimeMs;
     text = readFileSync(file, 'utf8');
-  } catch { return rec; }
-  rec.present = true;
-  rec.bytes = Buffer.byteLength(text);
-  const norm = text.replace(/\r\n/g, '\n');
+  } catch { return empty; }
+  const { norm, ...a } = analyseInstructionText(text, opts);
+  return { ...empty, ...a, file, present: true, mtimeMs };
+}
+
+/**
+ * Where a thing reaches another computer (v3.79.0). The owner has TWO sync
+ * channels and a third kind of thing that syncs nowhere:
+ *   personal-sync  handoffs, the brief, Documents — Sync now (the private
+ *                  knowledge repository)
+ *   project-git    CLAUDE.md, AGENTS.md, .curator-project — the project's own
+ *                  git: commit and push here, pull there. Sync now never
+ *                  carries them.
+ *   this-computer  MCP settings, skills, hooks — set up on each computer.
+ */
+export const TRAVELS = Object.freeze({
+  PERSONAL_SYNC: 'personal-sync',
+  PROJECT_GIT: 'project-git',
+  THIS_COMPUTER: 'this-computer',
+});
+
+/** The heading Copy agent instructions puts above the block (agent-instructions.js HEADING). */
+const BLOCK_HEADING_RE = /^##[ \t]+Working state[ \t]*$/;
+
+/**
+ * Whitespace-collapsed copy of `s` with a map back into `s`: `out[i]` came
+ * from `s[map[i]]`. Leading and trailing whitespace go and every run becomes
+ * one space — the same collapse as the `ws()` comparison below, so a match
+ * found in `out` maps back to real offsets.
+ */
+function collapseWithMap(s) {
+  let out = '';
+  const map = [];
+  let gap = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (/\s/.test(s[i])) { if (out.length && gap === -1) gap = i; continue; }
+    if (gap !== -1) { out += ' '; map.push(gap); gap = -1; }
+    out += s[i];
+    map.push(i);
+  }
+  return { out, map };
+}
+
+/**
+ * Where the Curator block sits in `norm` (LF text), as JS string offsets.
+ *
+ * START: the `## Working state` heading when it is the nearest non-blank line
+ * above the lead sentence (how Copy agent instructions composes it), else the
+ * lead sentence itself.
+ * END: the next Markdown heading at that heading's level or higher (any
+ * heading when there is none above the lead), outside a code fence, or the end
+ * of the file — and never before the end of the matched current text. The
+ * block's paragraphs carry no heading, so the next heading is where the
+ * owner's own text resumes. Prose pasted straight after the block with NO
+ * heading reads as part of it: an over-estimate of the block, never a cut.
+ */
+function locateBlock(norm, leadIndex, bodyEnd) {
+  const lines = [];
+  { let i = 0; for (const l of norm.split('\n')) { lines.push({ at: i, text: l }); i += l.length + 1; } }
+  let leadLine = 0;
+  for (let k = 0; k < lines.length; k++) if (lines[k].at <= leadIndex) leadLine = k;
+  let start = leadIndex;
+  let level = 6;
+  for (let k = leadLine - 1; k >= 0; k--) {
+    const t = lines[k].text;
+    if (!t.trim()) continue;
+    if (BLOCK_HEADING_RE.test(t)) { start = lines[k].at; level = 2; }
+    break;
+  }
+  let end = norm.length;
+  let fence = false;
+  for (let k = leadLine + 1; k < lines.length; k++) {
+    const t = lines[k].text;
+    if (/^\s*(```|~~~)/.test(t)) { fence = !fence; continue; }
+    if (fence) continue;
+    const m = /^(#{1,6})[ \t]/.exec(t);
+    if (m && m[1].length <= level) { end = lines[k].at; break; }
+  }
+  while (end > start && /\s/.test(norm[end - 1])) end--;
+  if (Number.isInteger(bodyEnd) && bodyEnd > end) end = bodyEnd;
+  return { start, end };
+}
+
+/**
+ * The block analysis of an instruction file's TEXT (v3.79.0) — shared by the
+ * check and by the file reader route, so the two never disagree. Offsets are
+ * into the LF-normalised text, returned as `norm`.
+ */
+export function analyseInstructionText(text, { domain, project, template, cap = null } = {}) {
+  const raw = String(text ?? '');
+  const norm = raw.replace(/\r\n/g, '\n');
+  const rec = {
+    bytes: Buffer.byteLength(raw), hasBlock: false, current: false, namesProject: null, wrongProject: false,
+    atTop: false, overCap: false, blockPastCap: false, blockStartsPastCap: false,
+    blockStart: null, blockEnd: null, blockStartBytes: null, blockEndBytes: null, norm,
+  };
+  if (cap && rec.bytes > cap) rec.overCap = true;
   // A Curator block of ANY era: the lead sentence every version has carried,
   // or the save tool beside a read tool. The v3.72-v3.74 blocks call
   // `get_working_state`, not `get_project_context` — requiring the newer
@@ -434,10 +535,11 @@ export function inspectInstructionFile(file, { domain, project, template, cap = 
   // The lead may itself be re-wrapped: find it with any whitespace between words.
   const leadRe = new RegExp(BLOCK_LEAD.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
   const lm = leadRe.exec(norm);
-  const start = lm ? lm.index : -1;
+  const lead = lm ? lm.index : -1;
   const m = /The Curator \(project `([^`]{1,200})`/.exec(norm);
   rec.namesProject = m ? m[1] : null;
   rec.wrongProject = !!(rec.namesProject && domain && project && rec.namesProject !== `${domain}/${project}`);
+  let bodyEnd = null;
   if (typeof template === 'string' && domain && project) {
     const body = template.split('{{DOMAIN_PROJECT}}').join(`${domain}/${project}`).split('{{PROJECT}}').join(project);
     // WHITESPACE-INSENSITIVE, WORD-EXACT (v3.77.0 screen review): an owner's
@@ -447,14 +549,39 @@ export function inspectInstructionFile(file, { domain, project, template, cap = 
     // every other character must match exactly, so a block that differs in
     // a single word is still "not current".
     const ws = (s) => s.replace(/\s+/g, ' ').trim();
-    rec.current = ws(norm).includes(ws(body));
+    const want = ws(body);
+    const c = collapseWithMap(norm);
+    const at = want ? c.out.indexOf(want) : -1;
+    rec.current = at !== -1;
+    if (rec.current) bodyEnd = c.map[at + want.length - 1] + 1;
   }
-  if (start !== -1) {
-    const startBytes = Buffer.byteLength(norm.slice(0, start));
-    rec.atTop = startBytes <= AT_TOP_BYTES;
-    if (cap) rec.blockPastCap = startBytes + 1200 > cap;
+  if (lead !== -1) {
+    const { start, end } = locateBlock(norm, lead, bodyEnd);
+    rec.blockStart = start;
+    rec.blockEnd = end;
+    // Byte offsets are ON DISK (a CRLF file's `\r`s counted), since a tool's
+    // cap is bytes of the file it reads.
+    const rawAt = (k) => {
+      if (raw === norm) return k;
+      let n = 0;
+      let i = 0;
+      for (; i < raw.length && n < k; i++) if (!(raw[i] === '\r' && raw[i + 1] === '\n')) n++;
+      return i;
+    };
+    rec.blockStartBytes = Buffer.byteLength(raw.slice(0, rawAt(start)));
+    rec.blockEndBytes = Buffer.byteLength(raw.slice(0, rawAt(end)));
+    rec.atTop = rec.blockStartBytes <= AT_TOP_BYTES;
+    if (cap) {
+      // v3.79.0 — the block is past the cap when its END is: the tool reads
+      // the first `cap` bytes and cuts the rest, so a block that starts inside
+      // the cap but runs past it is cut too. Before, this was `start + 1200 >
+      // cap`, computed and never read: the to-fix fired on `overCap` (ANY
+      // file longer than the cap, block at the top or not) and on "not in the
+      // first 2 KB".
+      rec.blockPastCap = rec.blockEndBytes > cap;
+      rec.blockStartsPastCap = rec.blockStartBytes >= cap;
+    }
   }
-  if (cap && rec.bytes > cap) rec.overCap = true;
   return rec;
 }
 
@@ -512,6 +639,36 @@ export async function inspectMarker(repo, { domain, project, git = gitRead } = {
     const ahead = await git(repo, ['rev-list', '@{u}..HEAD', '--', '.curator-project']);
     rec.git.unpushed = ahead.ok ? ahead.out.trim().length > 0 : null;
   }
+  // v3.79.0 — the same two words the file reader uses.
+  rec.git.committed = rec.git.tracked === true && rec.git.uncommitted === false;
+  rec.git.pushed = rec.git.committed && rec.git.upstream ? rec.git.unpushed === false : null;
+  return rec;
+}
+
+/**
+ * One repository file's git standing (v3.79.0), read-only, NO fetch:
+ * `{repo, tracked, uncommitted, unpushed, upstream, committed, pushed}`.
+ * `committed` = tracked and clean; `pushed` = committed and not ahead of the
+ * upstream AS OF THIS MAC'S LAST FETCH — null when there is no upstream, so a
+ * view never claims either way. `name` is a repository-relative file name the
+ * caller already allow-listed; it is passed after `--`, never as an option.
+ */
+export async function inspectGitFile(repo, name, { git = gitRead, present = true } = {}) {
+  const inside = await git(repo, ['rev-parse', '--is-inside-work-tree']);
+  if (!inside.ok || inside.out.trim() !== 'true') return { repo: false, committed: null, pushed: null };
+  const rec = { repo: true, tracked: null, uncommitted: null, unpushed: null, upstream: null, committed: null, pushed: null };
+  if (!present) return rec;
+  rec.tracked = (await git(repo, ['ls-files', '--error-unmatch', '--', name])).ok;
+  const st = await git(repo, ['status', '--porcelain', '--', name]);
+  rec.uncommitted = st.ok ? st.out.trim().length > 0 : null;
+  const up = await git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  if (up.ok && up.out.trim()) {
+    rec.upstream = up.out.trim().slice(0, 200);
+    const ahead = await git(repo, ['rev-list', '@{u}..HEAD', '--', name]);
+    rec.unpushed = ahead.ok ? ahead.out.trim().length > 0 : null;
+  }
+  rec.committed = rec.tracked === true && rec.uncommitted === false;
+  rec.pushed = rec.committed && rec.upstream ? rec.unpushed === false : null;
   return rec;
 }
 
@@ -801,7 +958,28 @@ export function collectProjectSetup(o) {
   };
   const machineRows = Array.isArray(o.machineRows) ? o.machineRows : [];
   const byId = new Map(machineRows.map((r) => [r.id, r]));
-  const repoPath = o.repo?.path || null;
+  // A folder that is set but NOT on this computer is not read (v3.79.0): its
+  // files were reported missing beside "the folder isn't on this Mac".
+  const repoPath = o.repo && o.repo.exists !== false ? (o.repo.path || null) : null;
+  const repoDisplay = o.repo?.path ? tildeUnder(o.home || '', o.repo.path) : null;
+  // Is the folder a git repository? Unknown (no marker read) counts as yes:
+  // the git command is then offered, and git itself says if it is not.
+  const isGit = o.marker?.git?.repo !== false;
+  /** `{committed, pushed}` of one instruction file, from the route's read-only git (or null). */
+  const gitOf = (name) => {
+    const g = o.instructionGit && typeof o.instructionGit === 'object' ? o.instructionGit[name] : null;
+    return g && typeof g === 'object' ? { committed: g.committed ?? null, pushed: g.pushed ?? null } : null;
+  };
+  /** The one git command that commits and pushes one file, run in the set folder. */
+  const commitFixes = (name, message) => (repoPath && isGit
+    ? [FIX.command(commitPushCommand(name, message), 'Copy the git command that commits and pushes it', repoPath, o.home || '')]
+    : []);
+  const blockFixes = (name, message) => [
+    // `reveal` on copy-block: the v3.78.0 view builds its Reveal button from it.
+    { ...FIX.copyBlock(name), reveal: name },
+    FIX.reveal(path.join(repoPath, name), `Reveal ${name}`),
+    ...commitFixes(name, message),
+  ];
   const toFix = [];
   const custom = new Map((Array.isArray(o.customTools) ? o.customTools : [])
     .filter((c) => c && typeof c.id === 'string' && c.id && !adapterFor(c.id))
@@ -848,15 +1026,10 @@ export function collectProjectSetup(o) {
     if (s) {
       const own = s.scope === id;
       const wrong = !own && collision.has(s.scope);
-      row.saved = { state: wrong ? STATES.FIX : STATES.OK, at: s.at, scope: s.scope, machine: s.machine, thisMachine: s.thisMachine, ownScope: own, wrongScope: wrong, curator: s.curator };
-      if (wrong) {
-        toFix.push({
-          tool: id, kind: 'wrong-scope',
-          text: `${label} saved under “${s.scope}”, not “${id}”.`,
-          detail: `A tool saving under ${s.scope === 'main' ? 'the shared “main”' : `another tool’s scope`} replaces that handoff. The current agent instructions tell each tool to save under its own name.`,
-          fix: { kind: 'copy-block' },
-        });
-      }
+      row.saved = { state: wrong ? STATES.FIX : STATES.OK, at: s.at, scope: s.scope, machine: s.machine, thisMachine: s.thisMachine, ownScope: own, wrongScope: wrong, curator: s.curator, travels: TRAVELS.PERSONAL_SYNC };
+      // The wrong-name to-fix line is decided AFTER the block check below
+      // (v3.79.0): what to do about it depends on whether the instructions
+      // this tool reads are already current.
       evidence.push({ heading: 'Saved', lines: [
         `Newest save ${s.at || '(time not recorded)'} under “${s.scope}”${own ? ' — its own scope' : wrong ? ' — not its own scope' : ''}.`,
         s.thisMachine ? 'Made from this computer.' : `Made from ${s.machine || 'another computer'}.`,
@@ -879,14 +1052,13 @@ export function collectProjectSetup(o) {
       const b = m.bridge.badFile;
       if (b) {
         const base = path.basename(b.file);
-        toFix.push({
-          tool: id, kind: 'bridge-file', status: b.status,
-          text: `${label}: ${b.display} ${BAD_FILE_WORDS[b.status]}.`,
+        toFix.push(item({
+          tool: id, kind: 'bridge-file', status: b.status, file: b.file, fileDisplay: b.display,
+          text: `${label}’s MCP settings file (${b.display}) ${BAD_FILE_TEXT[b.status]}, so ${label} can’t reach The Curator on this Mac.`,
           detail: badFileDetail(id, label, b.status),
-          fix: { kind: 'reveal', path: b.file, label: `Reveal ${base}` },
-        });
+        }, [FIX.reveal(b.file, `Reveal ${base}`), FIX.recheck(), FIX.settings()]));
       } else {
-        toFix.push({ tool: id, kind: 'bridge', text: `${label}: ${m.bridge.word}.`, detail: 'See Settings › MCP bridge › Tools on this Mac for the file.', fix: { kind: 'settings' } });
+        toFix.push(bridgeItem(id, label, m));
       }
     }
     {
@@ -913,7 +1085,8 @@ export function collectProjectSetup(o) {
     // Skills
     row.skills = m ? { state: m.skills.state, word: m.skills.word, note: m.skills.note || null } : { state: STATES.CANT, word: 'can’t check here' };
     if (m && m.skills.state === STATES.FIX) {
-      toFix.push({ tool: id, kind: 'skills', text: `${label}: ${m.skills.word}.`, detail: 'Replace the installed skill folders with the current copy this app carries.', fix: { kind: 'skills' } });
+      const it = skillsItem(id, label, m.skills, o.home || '');
+      if (it) toFix.push(it);
     }
     {
       const lines = [row.skills.word + (row.skills.note ? ` — ${row.skills.note}` : '')];
@@ -929,39 +1102,74 @@ export function collectProjectSetup(o) {
 
     // Block
     const names = a ? (a.instructionFile?.names || []) : ['AGENTS.md'];
+    const cap = a?.instructionFile?.cap || null;
+    let best = null;       // the instruction file whose block this tool gets
+    let blockItem = null;  // its to-fix line, which a wrong-name save joins
     if (!names.length) row.block = { state: STATES.NONE, word: 'reads no instruction file' };
     else if (!repoPath) row.block = { state: STATES.NOT_CHECKED, word: 'not checked', note: 'no repository set on this computer' };
     else {
-      const files = names.map((n) => inspectInstructionFile(path.join(repoPath, n), {
-        domain, project, template: o.template, cap: a?.instructionFile?.cap || null,
-      }));
+      const files = names.map((n) => ({ ...inspectInstructionFile(path.join(repoPath, n), {
+        domain, project, template: o.template, cap,
+      }), name: n }));
       const withBlock = files.filter((f) => f.hasBlock);
-      const best = withBlock.find((f) => f.current && !f.wrongProject) || withBlock[0] || null;
-      row.block = { files: files.map((f) => ({ name: path.basename(f.file), present: f.present, hasBlock: f.hasBlock, current: f.current, wrongProject: f.wrongProject, namesProject: f.namesProject, atTop: f.atTop, overCap: f.overCap, bytes: f.bytes })) };
+      best = withBlock.find((f) => f.current && !f.wrongProject) || withBlock[0] || null;
+      row.block = {
+        travels: TRAVELS.PROJECT_GIT,
+        files: files.map((f) => ({
+          name: f.name, present: f.present, hasBlock: f.hasBlock, current: f.current, wrongProject: f.wrongProject,
+          namesProject: f.namesProject, atTop: f.atTop, overCap: f.overCap, blockPastCap: f.blockPastCap, bytes: f.bytes,
+          mtime: Number.isFinite(f.mtimeMs) ? new Date(f.mtimeMs).toISOString() : null,
+          ...(cap ? { cap } : {}),
+          git: gitOf(f.name),
+          travels: TRAVELS.PROJECT_GIT,
+        })),
+      };
       const fileWord = names.join(' or ');
+      const at = { repoDisplay, tool: id };
       if (!a) {
         // An ASSUMPTION (the common convention), so never a to-fix line.
         Object.assign(row.block, best && best.current && !best.wrongProject
           ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most tools read AGENTS.md' }
           : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this tool reads is not known' });
       } else if (!best) {
+        const f = names[0];
         Object.assign(row.block, { state: STATES.FIX, word: 'missing', note: `${fileWord} has no Curator block` });
-        toFix.push({ tool: id, kind: 'block-missing', file: names[0],
-          text: `${names[0]} has no Curator block.`,
-          detail: `${label} reads ${fileWord}${names.includes('CLAUDE.md') ? '' : ', not CLAUDE.md'}. Without the block it does not know which project to read, and it may save under “main” and replace another tool’s handoff.`,
-          fix: { kind: 'copy-block', reveal: names[0] } });
+        blockItem = item({ ...at, kind: 'block-missing', file: f,
+          text: `${f} in ${repoDisplay} has no Curator instructions, so ${label} doesn’t know this project and may overwrite another tool’s handoff.`,
+          detail: `${names.includes('CLAUDE.md') ? '' : `${label} reads ${names.join(' and ')}, not CLAUDE.md. `}Paste them at the very top (create the file if it isn’t there), then commit and push.`,
+        }, blockFixes(f, 'Add The Curator instructions'));
       } else if (best.wrongProject) {
-        Object.assign(row.block, { state: STATES.FIX, word: `names ${best.namesProject}`, note: path.basename(best.file) });
-        toFix.push({ tool: id, kind: 'block-wrong', file: path.basename(best.file), text: `${path.basename(best.file)} names project ${best.namesProject}, not ${domain}/${project}.`, detail: 'Replace the block with the one for this project.', fix: { kind: 'copy-block', reveal: path.basename(best.file) } });
+        Object.assign(row.block, { state: STATES.FIX, word: `names ${best.namesProject}`, note: best.name });
+        blockItem = item({ ...at, kind: 'block-wrong', file: best.name,
+          text: `${best.name} in ${repoDisplay} has the Curator instructions for ${best.namesProject}, so ${label} opens that project instead of ${domain}/${project}.`,
+          detail: 'Replace them with this project’s instructions at the very top, then commit and push.',
+        }, blockFixes(best.name, 'Use this project’s Curator instructions'));
       } else if (!best.current) {
-        Object.assign(row.block, { state: STATES.FIX, word: 'outdated', note: path.basename(best.file) });
-        toFix.push({ tool: id, kind: 'block-outdated', file: path.basename(best.file), text: `The Curator block in ${path.basename(best.file)} is not the current text.`, detail: 'The current text tells an agent to re-read on “continue” and to save under its own scope. Replace the old block.', fix: { kind: 'copy-block', reveal: path.basename(best.file) } });
-      } else if (best.overCap || (a.instructionFile.cap && !best.atTop)) {
-        Object.assign(row.block, { state: STATES.FIX, word: `past the ${a.instructionFile.cap.toLocaleString('en-US')}-byte cap`, note: path.basename(best.file) });
-        toFix.push({ tool: id, kind: 'block-cap', file: path.basename(best.file), text: `${path.basename(best.file)} is longer than ${label} reads.`, detail: `${label} reads the first ${a.instructionFile.cap.toLocaleString('en-US')} bytes. Move the block to the very top.`, fix: { kind: 'reveal', reveal: path.basename(best.file) } });
+        Object.assign(row.block, { state: STATES.FIX, word: 'outdated', note: best.name });
+        blockItem = item({ ...at, kind: 'block-outdated', file: best.name,
+          text: `${best.name} in ${repoDisplay} has older Curator instructions, so ${label} may not re-read on “continue” or save under its own name.`,
+          detail: 'Replace them with the current instructions at the very top, then commit and push.',
+        }, blockFixes(best.name, 'Update The Curator instructions'));
+      } else if (cap && best.blockPastCap) {
+        // v3.79.0 — ONLY when the block does not fit in what the tool reads.
+        // v3.78.0 fired on `overCap` (any file longer than the cap, the block
+        // at the top or not) and on "not in the first 2 KB".
+        const n = cap.toLocaleString('en-US');
+        Object.assign(row.block, { state: STATES.FIX, word: `past the ${n}-byte cap`, note: best.name });
+        blockItem = item({ ...at, kind: 'block-cap', file: best.name, cap,
+          text: `${label} reads only the first ${n} bytes of ${best.name}, and the Curator instructions ${best.blockStartsPastCap ? 'start after that' : 'run past that'}.`,
+          detail: 'Move them to the top, then commit and push.',
+        }, [FIX.reveal(path.join(repoPath, best.name), `Reveal ${best.name}`), ...commitFixes(best.name, 'Move The Curator instructions to the top')]);
       } else {
-        Object.assign(row.block, { state: STATES.OK, word: best.atTop ? 'current · at the top' : 'current', note: path.basename(best.file) });
+        Object.assign(row.block, { state: STATES.OK, word: best.atTop ? 'current · at the top' : 'current', note: best.name });
       }
+      if (blockItem) toFix.push(blockItem);
+    }
+
+    // The wrong-name save (v3.79.0), decided now that the block is known.
+    if (s && row.saved.wrongScope) {
+      const it = wrongSaveItem({ id, label, s, row, best, blockItem, names, repoPath, gitOf, commitFixes });
+      if (it) toFix.push(it);
     }
     {
       const lines = [row.block.word + (row.block.note ? ` — ${row.block.note}` : '')];
@@ -997,10 +1205,10 @@ export function collectProjectSetup(o) {
 
     // ── One word per tool, and the four parts (v3.78.0) ──────────────────
     row.parts = {
-      mcp: { state: row.bridge.state, word: row.bridge.word },
-      skills: { state: row.skills.state, word: row.skills.word },
-      block: { state: row.block.state, word: row.block.word },
-      hooks: { state: row.hooks.state, word: row.hooks.word },
+      mcp: { state: row.bridge.state, word: row.bridge.word, travels: TRAVELS.THIS_COMPUTER },
+      skills: { state: row.skills.state, word: row.skills.word, travels: TRAVELS.THIS_COMPUTER },
+      block: { state: row.block.state, word: row.block.word, travels: TRAVELS.PROJECT_GIT },
+      hooks: { state: row.hooks.state, word: row.hooks.word, travels: TRAVELS.THIS_COMPUTER },
     };
     row.status = toolStatus(row);
     row.evidence = evidence;
@@ -1008,32 +1216,86 @@ export function collectProjectSetup(o) {
   }
   tools.sort((x, y) => (Date.parse(y.saved?.at) || 0) - (Date.parse(x.saved?.at) || 0) || x.label.localeCompare(y.label));
 
+  // ── Computers, grouped by INSTALLATION (v3.78.0) ──────────────────────
+  // Before the repository (v3.79.0): whether ANOTHER computer has saved this
+  // project decides what the marker-missing line tells the owner to do.
+  const computers = groupComputers(pairs, { domain, project, isHere, sync: o.sync, installs: o.machine?.installs || [] });
+  const otherComputerSaved = computers.rows.some((c) => !c.thisComputer && c.newestSaveAt);
+
   // ── Repository ─────────────────────────────────────────────────────────
   let repo = null;
   if (o.repo) {
-    const mk = o.marker || null;
-    repo = { path: o.repo.path, source: o.repo.source, exists: o.repo.exists !== false, marker: mk };
+    const mk = o.marker ? { ...o.marker, travels: TRAVELS.PROJECT_GIT } : null;
+    repo = {
+      path: o.repo.path, source: o.repo.source, exists: o.repo.exists !== false, marker: mk,
+      travels: TRAVELS.PROJECT_GIT, ...(repoDisplay ? { repoDisplay } : {}),
+    };
+    const at = { repoDisplay };
+    const h = o.home || '';
     if (o.repo.exists === false) {
-      toFix.push({ kind: 'repo-missing', text: 'The repository folder set for this project is not on this computer.', detail: 'Its checks did not run. Set the folder where it is checked out here.', fix: { kind: 'change-repo' } });
+      toFix.push(item({ ...at, kind: 'repo-missing',
+        text: `${repoDisplay} isn’t on this Mac.`,
+        detail: 'Clone the project’s git repository here, then choose the folder.',
+      }, [FIX.changeRepo('Choose the folder')]));
     }
-    if (mk) {
+    if (mk && repoPath) {
+      const line = `${domain}/${project}`;
+      const create = `printf '%s\\n' ${shq(line)} > .curator-project`;
+      const createPush = `${create} && ${commitPushCommand('.curator-project', 'Add The Curator project marker')}`;
+      const gitRepo = mk.git?.repo !== false;
       if (!mk.present) {
-        toFix.push({ kind: 'marker-missing', text: '.curator-project is not in this checkout.', detail: 'Without it an agent and the hooks cannot tell which project this folder is. If it exists on another computer, it may not be committed there.', fix: { kind: 'copy-marker' } });
+        let detail;
+        let fixes;
+        if (!gitRepo) {
+          detail = `Create it with the one line ${line}.`;
+          fixes = [FIX.command(create, 'Copy the command that creates it', repoPath, h), FIX.copyMarker()];
+        } else if (otherComputerSaved) {
+          // Another computer has saved this project, so its checkout may well
+          // carry the marker. What this Mac cannot see is whether it was ever
+          // committed and pushed there — the second button covers that case.
+          detail = 'If it exists on another computer, run git pull here. If it isn’t there either, create it, then commit and push.';
+          fixes = [
+            FIX.command('git pull', 'Copy git pull', repoPath, h),
+            FIX.command(createPush, 'Copy the command that creates, commits and pushes it', repoPath, h),
+          ];
+        } else {
+          detail = 'Create it, then commit and push.';
+          fixes = [FIX.command(createPush, 'Copy the command that creates, commits and pushes it', repoPath, h), FIX.copyMarker()];
+        }
+        toFix.push(item({ ...at, kind: 'marker-missing', otherComputerSaved,
+          text: `${repoDisplay} has no .curator-project, so agents and hooks can’t tell which project this folder is.`,
+          detail,
+        }, fixes));
       } else if (!mk.namesThis) {
-        toFix.push({ kind: 'marker-wrong', text: `.curator-project names “${mk.line}”, not ${domain}/${project}.`, detail: 'Every agent in this folder would open that project instead.', fix: { kind: 'copy-marker' } });
+        const said = mk.line || '(nothing)';
+        const rewrite = gitRepo ? `${create} && ${commitPushCommand('.curator-project', 'Point .curator-project at this project')}` : create;
+        toFix.push(item({ ...at, kind: 'marker-wrong',
+          text: `${repoDisplay}/.curator-project says ${said}, so every agent here opens ${said}.`,
+          detail: `Change it to ${line}${gitRepo ? ', then commit and push' : ''}.`,
+        }, [FIX.command(rewrite, gitRepo ? 'Copy the command that rewrites, commits and pushes it' : 'Copy the command that rewrites it', repoPath, h), FIX.copyMarker()]));
       } else if (mk.git?.repo && (mk.git.tracked === false || mk.git.uncommitted === true)) {
-        toFix.push({ kind: 'marker-uncommitted', text: '.curator-project is not committed.', detail: 'A clone on another computer will not know which project it is.', fix: { kind: 'copy-command', command: 'git add .curator-project && git commit -m "Add The Curator project marker"' } });
+        toFix.push(item({ ...at, kind: 'marker-uncommitted',
+          text: `${repoDisplay}/.curator-project isn’t committed to the project’s git repository.`,
+          detail: 'Your other computers get it only after you commit and push it here, then pull there.',
+        }, [FIX.command(commitPushCommand('.curator-project', 'Add The Curator project marker'), 'Copy the git command that commits and pushes it', repoPath, h)]));
       } else if (mk.git?.repo && mk.git.unpushed === true) {
-        toFix.push({ kind: 'marker-unpushed', text: '.curator-project is committed but not pushed.', detail: 'Another computer will not see it until you push (as of this Mac’s last fetch).', fix: { kind: 'copy-command', command: 'git push' } });
+        toFix.push(item({ ...at, kind: 'marker-unpushed',
+          text: `${repoDisplay}/.curator-project is committed but not pushed.`,
+          detail: 'Your other computers get it only after you push it here, then pull there.',
+        }, [FIX.command('git push', 'Copy git push', repoPath, h)]));
       }
     }
   }
 
-  // ── Computers, grouped by INSTALLATION (v3.78.0) ──────────────────────
-  const computers = groupComputers(pairs, { domain, project, isHere, sync: o.sync, installs: o.machine?.installs || [] });
-  const waitingTotal = computers.rows.reduce((n, c) => n + (c.thisComputer ? 0 : c.waiting), 0);
-  if (waitingTotal) {
-    toFix.push({ kind: 'sync-incoming', text: `${waitingTotal === 1 ? 'A newer handoff is' : `${waitingTotal} handoff files are`} waiting on GitHub.`, detail: 'Another computer saved and synced. Sync this Mac before starting, so the agent reads it.', fix: { kind: 'sync' } });
+  // ── A newer handoff waiting in Personal Sync — one line per computer ──
+  for (const c of computers.rows) {
+    if (c.thisComputer || !c.waiting) continue;
+    toFix.push(item({
+      kind: 'sync-incoming', machine: c.primary, thisMachine: false, waiting: c.waiting,
+      ...(c.newestSaveAt ? { at: c.newestSaveAt } : {}),
+      text: `${c.primary} saved a newer handoff; it’s waiting in your Personal Sync on GitHub.`,
+      detail: 'Sync now before you start the agent.',
+    }, [FIX.sync()]));
   }
 
   return {
@@ -1073,13 +1335,192 @@ function toolStatus(row) {
 function badFileDetail(id, label, status) {
   if (status === 'empty') {
     return id === 'antigravity'
-      ? 'Antigravity writes it on first launch — open Antigravity once, then Re-check. If it stays empty, reveal it and fix or delete it.'
-      : `An empty file names no server. Open ${label} once (it may fill the file), then Re-check. If it stays empty, reveal it and add the my-curator entry, or delete it.`;
+      ? 'Open Antigravity once (it fills the file), then Re-check. If it stays empty, reveal it and fix or delete it.'
+      : `Open ${label} once (it may fill the file), then Re-check. If it stays empty, reveal it and add the my-curator entry, or delete it.`;
   }
   if (status === 'invalid') {
-    return `It is not valid JSON, so nothing in it can be read — including a my-curator entry — and ${label} may not read it either. Reveal it and fix the syntax (or delete it if it is a leftover), then Re-check.`;
+    return `Nothing in it can be read, and ${label} may not read it either. Reveal it and fix the syntax (or delete it if it is a leftover), then Re-check.`;
   }
-  return 'macOS did not let The Curator open it. Reveal it and check its permissions (or give The Curator access under System Settings › Privacy & Security), then Re-check.';
+  return 'Reveal it and check its permissions (or give The Curator access under System Settings › Privacy & Security), then Re-check.';
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// To-fix lines (v3.79.0): two lines each, and buttons that say what they do
+// ─────────────────────────────────────────────────────────────────────────
+
+/** A to-fix line's config-file words, for a sentence ("…file (~/x) is empty, so…"). */
+const BAD_FILE_TEXT = Object.freeze({
+  empty: 'is empty',
+  invalid: 'isn’t valid JSON',
+  unopenable: 'can’t be opened (a macOS permission)',
+});
+
+/**
+ * The fix buttons, one constructor per kind. Every one carries a `label`
+ * that says what pressing it does.
+ */
+export const FIX = Object.freeze({
+  reveal: (p, label) => ({ kind: 'reveal', path: p, label: label || `Reveal ${path.basename(p)}` }),
+  copyBlock: (file) => ({ kind: 'copy-block', label: 'Copy instructions', ...(file ? { file } : {}) }),
+  command: (command, label, cwd, home) => ({
+    kind: 'copy-command', command, label,
+    ...(cwd ? { cwd, cwdDisplay: tildeUnder(home, cwd) } : {}),
+  }),
+  copyMarker: () => ({ kind: 'copy-marker', label: 'Copy marker line' }),
+  copySnippet: (tool) => ({ kind: 'copy-snippet', tool, label: 'Copy MCP entry' }),
+  downloadSkill: (skill) => ({ kind: 'download-skill', skill, href: `/api/setup/skills/${skill}.zip`, label: `Download ${skill}.zip` }),
+  sync: () => ({ kind: 'sync', label: 'Sync now' }),
+  changeRepo: (label = 'Choose the folder') => ({ kind: 'change-repo', label }),
+  settings: () => ({ kind: 'settings', label: 'Open Tools on this Mac' }),
+  recheck: () => ({ kind: 'recheck', label: 'Re-check' }),
+});
+
+/** A to-fix item: `fixes` in button order, and `fix` = the first (a v3.78.0 view reads that). */
+function item(fields, fixes = []) {
+  const list = fixes.filter(Boolean);
+  return { ...fields, fixes: list, fix: list[0] || null };
+}
+
+/** A single-quoted shell word, unless it is plainly safe as it is. */
+export function shq(s) {
+  const t = String(s);
+  return /^[A-Za-z0-9._/@:+=-]+$/.test(t) ? t : `'${t.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The ONE command that commits and pushes one file, run in the set folder.
+ * `git commit … -- <file>` commits that file only, never whatever else the
+ * owner has staged.
+ */
+export function commitPushCommand(file, message) {
+  return `git add -- ${shq(file)} && git commit -m ${JSON.stringify(message)} -- ${shq(file)} && git push`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "25 Sep" — this Mac's local date, for a sentence. Null for no date. */
+export function shortDate(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** The bridge to-fix that is not a bad file: name the file, offer the entry and a reveal. */
+function bridgeItem(id, label, m) {
+  const files = m.files || [];
+  const flagged = files.find((f) => f.named && f.via === 'own' && (f.commandMissing || f.otherFolder))
+    || files.find((f) => f.named && (f.commandMissing || f.otherFolder));
+  const base = { tool: id, kind: 'bridge' };
+  if (flagged) {
+    const missing = !!flagged.commandMissing;
+    return item({ ...base, file: flagged.file, fileDisplay: flagged.display,
+      reason: missing ? 'launch-missing' : 'other-folder',
+      text: missing
+        ? `${label}’s MCP entry in ${flagged.display} launches a file that isn’t on this Mac, so ${label} can’t reach The Curator.`
+        : `${label}’s MCP entry in ${flagged.display} reads a different knowledge folder, so ${label} doesn’t see this project’s handoffs.`,
+      detail: `Replace the entry with the current one, then restart ${label}.`,
+    }, [FIX.copySnippet(id), FIX.reveal(flagged.file, `Reveal ${path.basename(flagged.file)}`)]);
+  }
+  const named = files.find((f) => f.named && f.via === 'own');
+  const notIn = files.filter((f) => f.via === 'own' && f.present && f.status === 'ok' && !f.named);
+  if (named && notIn.length) {
+    return item({ ...base, file: notIn[0].file, fileDisplay: notIn[0].display, reason: 'not-in-every-file',
+      text: `${label}’s MCP entry is in ${named.display} but not in ${notIn.map((f) => f.display).join(' or ')}, so ${label} may not reach The Curator from every window.`,
+      detail: `Add the entry to ${notIn.length === 1 ? 'that file' : 'those files'}, then restart ${label}.`,
+    }, [FIX.copySnippet(id), FIX.reveal(notIn[0].file, `Reveal ${path.basename(notIn[0].file)}`)]);
+  }
+  return item({ ...base, reason: 'other',
+    text: `${label}’s MCP entry: ${m.bridge.word}.`,
+    detail: 'Open Tools on this Mac to see each file it read.',
+  }, [FIX.settings()]);
+}
+
+/** The skills to-fix: which skill, where, and only the stale one's download. */
+function skillsItem(id, label, skills, home) {
+  const installed = skills.installed || [];
+  const stale = installed.filter((s) => s.match === false);
+  if (stale.length) {
+    const folders = [...new Set(stale.map((s) => path.dirname(s.dir)))];
+    const names = stale.map((s) => s.skill);
+    return item({ tool: id, kind: 'skills', reason: 'outdated', skills: names, folder: folders[0], folderDisplay: tildeUnder(home, folders[0]),
+      text: `${label}’s ${names.join(' and ')} skill${names.length === 1 ? ' is' : 's are'} older than the copy this app carries (in ${folders.map((f) => tildeUnder(home, f)).join(' and ')}).`,
+      detail: `Download the current .zip, replace the folder with it, then start a new ${label} session.`,
+    }, [...[...new Set(names)].map((n) => FIX.downloadSkill(n)), FIX.reveal(stale[0].dir, 'Reveal the folder')]);
+  }
+  const have = [...new Set(installed.map((s) => s.skill))];
+  const missing = SKILL_NAMES.filter((n) => !have.includes(n));
+  if (!missing.length || !installed.length) return null;
+  const folder = path.dirname(installed[0].dir);
+  return item({ tool: id, kind: 'skills', reason: 'missing', skills: missing, folder, folderDisplay: tildeUnder(home, folder),
+    text: `${label} has the ${have.join(' and ')} skill but not ${missing.join(' or ')} (in ${tildeUnder(home, folder)}).`,
+    detail: `Download it and unzip it beside the other one, then start a new ${label} session.`,
+  }, [...missing.map((n) => FIX.downloadSkill(n)), FIX.reveal(folder, 'Reveal the folder')]);
+}
+
+/**
+ * A tool's newest save went under a name that is not its own (v3.79.0).
+ *
+ * WHAT THIS CAN KNOW: the block check reads THIS Mac's checkout only. When
+ * the save came from another computer, nothing here says what that
+ * computer's checkout holds — only whether this Mac's copy is current and
+ * whether it is committed and pushed (so that a `git pull` there could bring
+ * it). And a file's mtime is when its CONTENT last changed on this Mac — an
+ * edit anywhere in the file moves it — while an agent reads its instruction
+ * file when its session STARTS. So "saved after the instructions changed"
+ * does not prove the session saw the current text; the wording says so.
+ */
+function wrongSaveItem({ id, label, s, row, best, blockItem, names, repoPath, gitOf, commitFixes }) {
+  const when = shortDate(s.at);
+  const where = s.thisMachine ? 'this Mac' : (s.machine || 'another computer');
+  const fields = { tool: id, at: s.at, machine: s.machine || null, thisMachine: !!s.thisMachine, scope: s.scope };
+  if (blockItem) {
+    // The block line already carries the fix; it explains the save too.
+    blockItem.detail += ` That is why its ${when ? `${when} ` : 'last '}save went under “${s.scope}”.`;
+    Object.assign(blockItem, { at: s.at, machine: s.machine || null, thisMachine: !!s.thisMachine, wrongSave: { scope: s.scope, at: s.at } });
+    return null;
+  }
+  const text = `${label}’s last save (${when ? `${when}, ` : ''}on ${where}) went under “${s.scope}”, not its own name “${id}”.`;
+  if (row.block.state === STATES.OK && best) {
+    const file = best.name;
+    const g = gitOf(file);
+    if (!s.thisMachine) {
+      if (g && (g.committed === false || g.pushed === false)) {
+        return item({ ...fields, kind: 'wrong-scope', blockCurrent: true, file,
+          text,
+          detail: `Your instructions here are current but not yet ${g.committed === false ? 'committed and pushed' : 'pushed'}, so ${where} can’t have them: commit and push ${file} here, then run git pull there.`,
+        }, commitFixes(file, 'Update The Curator instructions'));
+      }
+      return item({ ...fields, kind: 'wrong-scope', blockCurrent: true, file,
+        text,
+        detail: `Your instructions here are already current, so this clears the next time ${label} saves — after that computer runs git pull.`,
+      }, []);
+    }
+    const changedAt = Number.isFinite(best.mtimeMs) ? best.mtimeMs : null;
+    // Two seconds of slack: a save and an edit in the same moment are not "after".
+    if (changedAt !== null && Date.parse(s.at) > changedAt + 2000) {
+      return item({ ...fields, kind: 'wrong-scope', blockCurrent: true, file, savedAfterInstructions: true,
+        instructionsChangedAt: new Date(changedAt).toISOString(),
+        text,
+        detail: `Your instructions here are already current, but it saved after ${file} last changed (${shortDate(new Date(changedAt).toISOString())}). If that session started before the change, this clears next time; if not, ask it to save under “${id}”.`,
+      }, []);
+    }
+    return item({ ...fields, kind: 'wrong-scope', blockCurrent: true, file,
+      text,
+      detail: `Your instructions here are already current, so this clears the next time ${label} saves.`,
+    }, []);
+  }
+  // No block line to carry it: no folder set, a tool that reads no
+  // instruction file, or a custom tool whose file is assumed.
+  if (!names.length) {
+    return item({ ...fields, kind: 'wrong-scope', text,
+      detail: `${label} reads no instruction file, so tell it in the conversation to save under “${id}”.`,
+    }, []);
+  }
+  return item({ ...fields, kind: 'wrong-scope', text,
+    detail: repoPath
+      ? `Paste the current instructions at the very top of ${names[0]}; they tell it to save under its own name.`
+      : `The current instructions tell it to save under its own name. Set this project’s folder so Setup can check ${names.join(' and ')}.`,
+  }, [FIX.copyBlock(names[0]), ...(repoPath ? [] : [FIX.changeRepo('Set the folder')])]);
 }
 
 /**
@@ -1100,13 +1541,14 @@ function badFileDetail(id, label, status) {
  */
 export function groupComputers(pairs, { domain, project, isHere, sync, installs = [] }) {
   const rows = new Map();
+  const collision = toolScopeIds();
   const keyOf = (name) => { const i = installIdOf(name); return i ? `install:${i}` : `name:${name}`; };
   const rowFor = (name) => {
     const key = keyOf(name);
     if (!rows.has(key)) {
       const i = installIdOf(name);
       const inst = i ? installs.find((x) => x.installId === i) : null;
-      rows.set(key, { key, installId: i, names: new Map(), thisComputer: false, installKind: inst ? inst.kind || null : null, tools: new Set(), newestSaveAt: null, curatorVersion: null, waiting: 0 });
+      rows.set(key, { key, installId: i, names: new Map(), thisComputer: false, installKind: inst ? inst.kind || null : null, tools: new Set(), saves: new Map(), newestSaveAt: null, curatorVersion: null, waiting: 0 });
     }
     const r = rows.get(key);
     if (!r.names.has(name)) r.names.set(name, null);
@@ -1120,6 +1562,18 @@ export function groupComputers(pairs, { domain, project, isHere, sync, installs 
     if (t) r.tools.add(t.label);
     const at = p.writtenAt || p.lastWriteAt || null;
     const t0 = Date.parse(at);
+    // v3.79.0 — each tool's NEWEST save from this install, and the name it
+    // went under: the reader flags a save that is not under the tool's own.
+    if (t) {
+      const prev = r.saves.get(t.id);
+      if (!prev || (Number.isFinite(t0) && !(Date.parse(prev.at) >= t0))) {
+        const own = p.scope === t.id;
+        r.saves.set(t.id, {
+          tool: t.id, label: t.label, scope: p.scope || null, at, curator: p.curator || null, machine: p.machine,
+          ownScope: own, wrongScope: !own && collision.has(p.scope), travels: TRAVELS.PERSONAL_SYNC,
+        });
+      }
+    }
     if (Number.isFinite(t0)) {
       const prevName = r.names.get(p.machine);
       if (!prevName || t0 > Date.parse(prevName)) r.names.set(p.machine, at);
@@ -1149,6 +1603,8 @@ export function groupComputers(pairs, { domain, project, isHere, sync, installs 
       newestSaveAt: r.newestSaveAt,
       curatorVersion: r.curatorVersion,
       waiting: r.waiting,
+      saves: [...r.saves.values()].sort((x, y) => (Date.parse(y.at) || 0) - (Date.parse(x.at) || 0) || x.label.localeCompare(y.label)),
+      travels: TRAVELS.PERSONAL_SYNC,
       // v3.77.0 names, kept for one release so an older view still renders.
       machine: names[0],
       thisMachine: r.thisComputer,

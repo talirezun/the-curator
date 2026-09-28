@@ -29,11 +29,17 @@
  *   §11 the tools menu without DeepSeek Harness or "Custom tool…"; a custom
  *       name that is not validated, capped at 12, or removable.
  *   §12 an empty config file's to-fix line with a reveal that is refused.
+ *   v3.79.0:
+ *   §14 the repository-file reader (GET …/file) serving a file outside its OWN
+ *       allow-list — a traversal, an absolute path, a symlink out of the folder
+ *       or to a non-instruction file inside it, a name only an unlisted tool
+ *       reads, a project with no folder set — or mis-framing the block, or
+ *       sending more than 256 KB of text.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -187,7 +193,13 @@ try {
   {
     const r = await call('GET', `/api/setup/projects/${D}/ott`);
     const ag = r.body.tools.find((t) => t.id === 'antigravity');
-    ok(ag && ag.saved.wrongScope === true && r.body.toFix.some((f) => f.kind === 'wrong-scope'), 'Antigravity\'s save under "main" is a to-fix line', ag?.saved);
+    // v3.79.0 — AGENTS.md has no block, so the save is explained on the block line.
+    const bm = r.body.toFix.find((f) => f.kind === 'block-missing' && f.tool === 'antigravity');
+    ok(ag && ag.saved.wrongScope === true && !r.body.toFix.some((f) => f.kind === 'wrong-scope') && /That is why its .+ save went under “main”\.$/.test(bm?.detail || '') && bm.thisMachine === true,
+      'Antigravity\'s save under "main" is explained on its block-missing line (one line, not two)', { saved: ag?.saved, bm });
+    ok(bm && bm.fixes.map((x) => x.kind).join() === 'copy-block,reveal,copy-command' && bm.fixes[1].path === path.join(path.resolve(REPO), 'AGENTS.md'), '…Copy instructions · Reveal AGENTS.md · the git command', bm?.fixes);
+    const rv = await call('POST', '/api/setup/reveal', { path: bm?.fixes?.[1]?.path });
+    ok(rv.status === 200, '…and its Reveal path is on the reveal allow-list', rv.body);
     ok((r.body.computers || []).length === 1, 'one computer has saved', r.body.computers);
     // v3.77.0 (S5) — the Curator version is RECORDED by the save and read back.
     const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -302,7 +314,7 @@ try {
     w(path.join(HOME, '.cursor', 'mcp.json'), '');
     const r = await call('GET', `/api/setup/projects/${D}/fleet`);
     const f = (r.body.toFix || []).find((x) => x.tool === 'cursor' && x.kind === 'bridge-file');
-    ok(f && f.text === 'Cursor: ~/.cursor/mcp.json is empty.' && f.fix.kind === 'reveal' && f.fix.path === path.join(HOME, '.cursor', 'mcp.json'), 'an empty ~/.cursor/mcp.json alone is a to-fix line naming it, with a reveal', f);
+    ok(f && f.text === 'Cursor’s MCP settings file (~/.cursor/mcp.json) is empty, so Cursor can’t reach The Curator on this Mac.' && f.fix.kind === 'reveal' && f.fix.path === path.join(HOME, '.cursor', 'mcp.json'), 'an empty ~/.cursor/mcp.json alone is a to-fix line naming it, with a reveal', f);
     const rv = await call('POST', '/api/setup/reveal', { path: f?.fix?.path });
     ok(rv.status === 200 && revealed.at(-1) === path.join(HOME, '.cursor', 'mcp.json'), '…and that path is on the reveal allow-list', rv.body);
     w(path.join(HOME, '.gemini', 'antigravity', 'mcp_config.json'), '');
@@ -334,6 +346,76 @@ try {
     ok(r.body.counts?.computers === 1 && r.body.counts.installs === 2 && r.body.counts.machineNames === 3, '1 computer, 2 installs, 3 names — not 2 computers', r.body.counts);
     const src = r.body.computers.find((c) => c.key === 'install:5d5d5d');
     ok(src && src.thisComputer === true && src.installKind === 'source', 'the candidate checkout\'s install is this computer, kind source', src);
+  }
+
+  section('§14 GET …/file — the repository-file reader and its own allow-list (v3.79.0)');
+  {
+    const { TEMPLATE } = await import('../src/public/next/shared/agent-instructions.js');
+    const blk = TEMPLATE.split('{{DOMAIN_PROJECT}}').join(`${D}/ott`).split('{{PROJECT}}').join('ott');
+    const file = (project, name) => call('GET', `/api/setup/projects/${D}/${project}/file?name=${encodeURIComponent(name)}`);
+    await call('GET', `/api/setup/projects/${D}/ott`);   // the tool list, as the view has it
+    const noRepo = await file('solo2', 'AGENTS.md');
+    ok(noRepo.status === 409 && noRepo.body.reason === 'repo_not_set', 'a project with no folder set → refused (409 repo_not_set)', noRepo.body);
+    for (const bad of ['../x', '/etc/passwd', path.join(HOME, '.claude.json'), '.claude.json', 'package.json', 'AGENTS.md/../.git/config', '.git/config', '', '.rules']) {
+      const r = await file('ott', bad);
+      ok(r.status === 400 && r.body.reason === 'not_allowed', `a name not on the list is refused: ${JSON.stringify(bad)}`, r.body);
+    }
+    // .rules IS an instruction file (Zed's) — refused because no LISTED tool reads it.
+    w(path.join(REPO, '.rules'), SECRET);
+    ok((await file('ott', '.rules')).status === 400, '…including one only an UNLISTED tool reads, even when the file exists');
+
+    const agents = `# agents\n\nIntro.\n\n## Working state\n\n${blk}\n\n## Other\n\nOwner text.\n`;
+    w(path.join(REPO, 'AGENTS.md'), agents);
+    const a = await file('ott', 'AGENTS.md');
+    const b = a.body.block || {};
+    ok(a.status === 200 && a.body.ok && a.body.exists === true && a.body.text === agents && a.body.bytes === Buffer.byteLength(agents) && a.body.truncated === false,
+      'a real AGENTS.md: 200, its text, its size, not truncated', { status: a.status, keys: Object.keys(a.body) });
+    ok(b.state === 'current' && b.pill === 'ok' && a.body.text.slice(b.start, b.end).startsWith('## Working state') && a.body.text.slice(b.start, b.end).includes("This repository's working state lives in The Curator") && !a.body.text.slice(b.start, b.end).includes('## Other'),
+      '…block offsets frame exactly the Curator block, state current', b);
+    ok(a.body.travels === 'project-git' && typeof a.body.mtime === 'string' && Number.isFinite(a.body.mtimeMs), '…travels project-git, mtime', { travels: a.body.travels, mtime: a.body.mtime });
+    ok(a.body.cap && a.body.cap.bytes === 24000 && a.body.cap.tool === 'Antigravity' && a.body.cap.at === null, '…cap: Antigravity reads 24,000 bytes (the smallest cap of a LISTED tool; Codex is not listed); the whole file fits', a.body.cap);
+    ok(a.body.git && a.body.git.committed === false && a.body.git.gitRepo === true, '…git: modified since the last commit → not committed', a.body.git);
+
+    const big = `## Working state\n\n${blk}\n\n## Log\n\n${'é'.repeat(200 * 1024)}\n`;   // é is 2 bytes: ~400 KB
+    w(path.join(REPO, 'AGENTS.md'), big);
+    const t = await file('ott', 'AGENTS.md');
+    ok(t.status === 200 && t.body.truncated === true && Buffer.byteLength(t.body.text) <= 256 * 1024 && t.body.bytes === Buffer.byteLength(big) && !t.body.text.endsWith('�'),
+      'a 400 KB file: truncated at 256 KB of text, on a character boundary; bytes = the whole file', { truncated: t.body.truncated, len: Buffer.byteLength(t.body.text || '') });
+    ok(t.body.block?.state === 'current' && t.body.block.start === 0 && Number.isInteger(t.body.cap?.at) && Buffer.byteLength(t.body.text.slice(0, t.body.cap.at)) <= 24000 && Buffer.byteLength(t.body.text.slice(0, t.body.cap.at + 1)) > 24000,
+      '…the block at the top, and cap.at is the character where 24,000 bytes end', { block: t.body.block, at: t.body.cap?.at });
+
+    const missing = await file('ott', 'GEMINI.md');
+    ok(missing.status === 200 && missing.body.exists === false && missing.body.text === '' && missing.body.block === null, 'an allowed file that is not there: 200, exists false (the reader explains what goes there)', missing.body);
+
+    // Symlinks: out of the folder, and to a file inside that is not an instruction file.
+    const outside = path.join(TMP, 'outside-secret.md');
+    w(outside, `${SECRET}\n`);
+    symlinkSync(outside, path.join(REPO, 'GEMINI.md'));
+    const s1 = await file('ott', 'GEMINI.md');
+    ok(s1.status === 403 && s1.body.reason === 'outside_folder' && !JSON.stringify(s1.body).includes(SECRET), 'GEMINI.md → a file OUTSIDE the folder: refused, nothing of it returned', s1.body);
+    rmSync(path.join(REPO, 'GEMINI.md'));
+    w(path.join(REPO, 'notes-secret.txt'), SECRET);
+    symlinkSync(path.join(REPO, 'notes-secret.txt'), path.join(REPO, 'GEMINI.md'));
+    const s2 = await file('ott', 'GEMINI.md');
+    ok(s2.status === 403 && s2.body.reason === 'not_allowed' && !JSON.stringify(s2.body).includes(SECRET), 'GEMINI.md → a non-instruction file INSIDE the folder: refused', s2.body);
+    rmSync(path.join(REPO, 'GEMINI.md'));
+    symlinkSync('AGENTS.md', path.join(REPO, 'GEMINI.md'));
+    const s3 = await file('ott', 'GEMINI.md');
+    ok(s3.status === 200 && s3.body.text === big.slice(0, s3.body.text.length) && s3.body.block?.state === 'current', 'GEMINI.md → AGENTS.md (a common setup): served', s3.status);
+    rmSync(path.join(REPO, 'GEMINI.md'));
+    // The repository folder itself reached through a symlink still works; a
+    // name escaping it does not.
+    const LINK = path.join(TMP, 'ott-link');
+    symlinkSync(REPO, LINK);
+    await call('PUT', `/api/setup/projects/${D}/ott/repo`, { path: LINK });
+    ok((await file('ott', 'AGENTS.md')).status === 200, 'a folder set through a symlink: realpath\'d, still served');
+    await call('PUT', `/api/setup/projects/${D}/ott/repo`, { path: REPO });
+
+    const mk = await file('ott', '.curator-project');
+    ok(mk.status === 200 && mk.body.text === `${D}/ott\n` && mk.body.marker?.namesThis === true && mk.body.marker.committed === false && mk.body.marker.pushed === null && mk.body.block === null && mk.body.travels === 'project-git',
+      '.curator-project: its line, names this project, not committed, pushed unknown (no upstream)', mk.body);
+    ok(!JSON.stringify([a.body, t.body, mk.body]).includes(SECRET), 'no planted secret in any reader response');
+    rmSync(path.join(REPO, '.rules')); rmSync(path.join(REPO, 'notes-secret.txt'));
   }
 
   section('§8  the Mac app ships the skills (S5)');

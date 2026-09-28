@@ -3,6 +3,8 @@
  *
  *   GET  /api/setup/machine                         → Settings › MCP bridge › Tools on this Mac
  *   GET  /api/setup/projects/:domain/:project       → Context › project › step 5 "Setup"
+ *   GET  /api/setup/projects/:domain/:project/file?name=  (v3.79.0) → one repository file's text,
+ *                                                     for the reader; its OWN allow-list (see there)
  *   PUT  /api/setup/projects/:domain/:project/repo  → {path} | {path: null} — this machine only
  *   PUT  /api/setup/tools                           → {ids: [...]} — the "+ Add a tool" choice
  *                                                     {custom: {name}} | {removeCustom: name} (v3.78.0)
@@ -33,7 +35,9 @@ import express from 'express';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  closeSync, createReadStream, existsSync, fstatSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync,
+} from 'node:fs';
 import { APP_SUPPORT_DIR_NAME, appPath, getUserDataDir } from '../brain/paths.js';
 import { describeInstall } from '../brain/install-mode.js';
 import {
@@ -43,7 +47,8 @@ import {
 import { listDomains } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import {
-  collectMachineSetup, collectProjectSetup, findRepoCandidates, inspectMarker, readJsonFile, SKILL_NAMES, STATES,
+  analyseInstructionText, collectMachineSetup, collectProjectSetup, findRepoCandidates, inspectGitFile, inspectMarker,
+  readJsonFile, SKILL_NAMES, STATES, TRAVELS,
 } from '../brain/setup-check.js';
 import { adapterFor, displayTemplate, listHarnesses, mcpEntryFor, MCP_SERVER_NAME } from '../brain/harness-adapters.js';
 import { normaliseHarness } from '../brain/harness-names.js';
@@ -97,7 +102,11 @@ function withDisplay(v) {
 
 /** Every path a project result offers to reveal: fix buttons and evidence. */
 function listRevealPaths(result) {
-  for (const f of result.toFix || []) if (f.fix && typeof f.fix.path === 'string' && path.isAbsolute(f.fix.path)) revealable.add(f.fix.path);
+  for (const f of result.toFix || []) {
+    for (const x of [f.fix, ...(Array.isArray(f.fixes) ? f.fixes : [])]) {
+      if (x && x.kind === 'reveal' && typeof x.path === 'string' && path.isAbsolute(x.path)) revealable.add(x.path);
+    }
+  }
   for (const t of result.tools || []) {
     for (const e of t.evidence || []) if (typeof e.reveal === 'string' && path.isAbsolute(e.reveal)) revealable.add(e.reveal);
   }
@@ -364,7 +373,16 @@ router.get('/projects/:domain/:project', async (req, res) => {
   try {
     const ctx = await checkProject(req, res);
     if (!ctx) return;
-    const { domain, project } = ctx;
+    res.json(await projectPayload(ctx.domain, ctx.project));
+  } catch (err) {
+    console.error('Setup project check error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/** The whole project check, as the GET answers it (also run by the file reader when it has no tool list yet). */
+async function projectPayload(domain, project) {
+  {
     const repoPath = getProjectRepo(domain, project);
     let repo = null;
     let marker = null;
@@ -410,11 +428,23 @@ router.get('/projects/:domain/:project', async (req, res) => {
       repoPath: repo?.exists ? repoPath : null, machineRows, candidatePaths: candidates.map((c) => c.path),
     });
     const mf = machineFacts(installs);
+    // v3.79.0 — each instruction file's git standing (read-only, no fetch),
+    // so a line can say "current here but not pushed". Only files that exist,
+    // and only when the folder is a git repository.
+    const instructionGit = {};
+    if (repo?.exists && marker?.git?.repo) {
+      for (const n of instructionFileNames()) {
+        let isFile = false;
+        try { isFile = statSync(path.join(repoPath, n)).isFile(); } catch { isFile = false; }
+        if (isFile) instructionGit[n] = await inspectGitFile(repoPath, n);
+      }
+    }
     const result = collectProjectSetup({
       domain, project, pairs, machine: mf, machineRows, home: home(),
       repo, marker, template: TEMPLATE, addedTools: getSetupTools(), customTools: customToolIds(),
-      sync, thisVersion: appVersion(),
+      sync, thisVersion: appVersion(), instructionGit,
     });
+    listedTools.set(`${domain}/${project}`, result.tools.map((t) => ({ id: t.id, label: t.label, custom: !!t.custom })));
     // Copyable entries and skill links on each row (v3.78.0).
     const launch = launchLine();
     const zips = skillsDir() ? SKILL_NAMES.map((n) => ({ name: n, href: `/api/setup/skills/${n}.zip` })) : [];
@@ -429,6 +459,16 @@ router.get('/projects/:domain/:project', async (req, res) => {
         t.measured = !!(cfg && cfg.verified === true && ((cfg.user || []).length + (cfg.project || []).length) > 0);
       }
     }
+    // Fix buttons that need what only the route knows (v3.79.0): the entry
+    // text for "Copy MCP entry", and whether this install carries the skill
+    // zips. A button that cannot work is dropped, never shown dead.
+    const snippets = new Map(result.tools.map((t) => [t.id, t.mcpSnippet?.text || null]));
+    for (const f of result.toFix) {
+      if (!Array.isArray(f.fixes)) continue;
+      f.fixes = f.fixes.map((x) => (x.kind === 'copy-snippet' ? (snippets.get(x.tool) ? { ...x, text: snippets.get(x.tool) } : null) : x))
+        .filter((x) => x && !(x.kind === 'download-skill' && !zips.length));
+      f.fix = f.fixes[0] || null;
+    }
     // The repository's own files are revealable too: the folder, and every
     // instruction file a listed tool reads (it may not exist yet — reveal then
     // opens the folder, which is where the owner creates it).
@@ -441,7 +481,7 @@ router.get('/projects/:domain/:project', async (req, res) => {
       if (result.repo) result.repo.display = tilde(repoPath);
     }
     listRevealPaths(result);
-    res.json(withDisplay({
+    return withDisplay({
       ok: true,
       checkedAt: new Date().toISOString(),
       ...result,
@@ -454,9 +494,163 @@ router.get('/projects/:domain/:project', async (req, res) => {
       customTools: getSetupCustomTools(),
       addable: addableFor(result.tools.map((t) => t.id)),
       states: STATES,
-    }));
+      travels: TRAVELS,
+    });
+  }
+}
+
+// ── GET /projects/:domain/:project/file?name= (v3.79.0) ───────────────────
+//
+// The reader for ONE repository file: `.curator-project` or an instruction
+// file. SECURITY — this route returns file TEXT, which nothing else here does:
+//   - the folder comes ONLY from getProjectRepo (this machine's config),
+//     never from the request;
+//   - `name` must be one of READABLE_NAMES exactly — its OWN narrow list,
+//     never the reveal set (that set holds ~/.claude.json and MCP configs,
+//     which carry other servers' keys);
+//   - both the folder and the file are realpath'd; the file must resolve
+//     INSIDE the folder (defeats `..`, absolute names and symlinks leading
+//     out), and the file it resolves to must itself carry an allowed name (a
+//     symlink AGENTS.md → CLAUDE.md is fine; AGENTS.md → .claude.json in a
+//     folder set to ~ is refused);
+//   - a regular file only; at most FILE_TEXT_CAP bytes of text go out.
+const FILE_TEXT_CAP = 256 * 1024;
+const FILE_ANALYSE_CAP = 4 * 1024 * 1024;
+
+/** Every instruction-file name any tool reads, plus AGENTS.md (the custom-tool convention). */
+function instructionFileNames() {
+  const out = new Set(['AGENTS.md']);
+  for (const id of listHarnesses()) for (const n of adapterFor(id)?.instructionFile?.names || []) out.add(n);
+  return [...out];
+}
+
+/**
+ * The reader's allow-list: the marker, and the instruction-file names of the
+ * tools this project LISTS (AGENTS.md for a custom tool). A name no listed
+ * tool reads is refused, even if some other adapter reads it.
+ */
+function readableNames(listed) {
+  const out = new Set(['.curator-project']);
+  for (const t of listed) {
+    const names = t.custom ? ['AGENTS.md'] : (adapterFor(t.id)?.instructionFile?.names || []);
+    for (const n of names) out.add(n);
+  }
+  return out;
+}
+
+/** Tools listed for a project in its last check, keyed `domain/project`. */
+const listedTools = new Map();
+
+router.get('/projects/:domain/:project/file', async (req, res) => {
+  try {
+    const ctx = await checkProject(req, res);
+    if (!ctx) return;
+    const { domain, project } = ctx;
+    const refuse = (status, reason, error) => res.status(status).json({ ok: false, reason, error });
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    const key = `${domain}/${project}`;
+    const repoPath = getProjectRepo(domain, project);
+    if (!repoPath) return refuse(409, 'repo_not_set', 'Set this project’s folder first.');
+    if (!listedTools.has(key)) await projectPayload(domain, project);
+    const listed = listedTools.get(key) || [];
+    const allowed = readableNames(listed);
+    if (!name || !allowed.has(name)) return refuse(400, 'not_allowed', 'Only .curator-project and the instruction files a listed tool reads can be opened here.');
+    let realRepo;
+    try {
+      realRepo = realpathSync(repoPath);
+      if (!statSync(realRepo).isDirectory()) throw new Error('not a folder');
+    } catch { return refuse(409, 'repo_missing', 'The folder set for this project is not on this computer.'); }
+    const base = {
+      ok: true, name, travels: TRAVELS.PROJECT_GIT, repoDisplay: tilde(repoPath),
+    };
+    // What a tool reading this name caps it at: the smallest cap among the
+    // LISTED tools that read it.
+    const capOf = () => {
+      let best = null;
+      for (const t of listed) {
+        const f = t.custom ? null : adapterFor(t.id)?.instructionFile;
+        if (f && f.cap && (f.names || []).includes(name) && (!best || f.cap < best.bytes)) best = { bytes: f.cap, tool: t.label, toolId: t.id };
+      }
+      return best;
+    };
+    const candidate = path.join(realRepo, name);
+    let realFile = null;
+    try { realFile = realpathSync(candidate); } catch (err) {
+      if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+        // Not there (or a dangling link): the reader explains what goes here.
+        return res.json({ ...base, exists: false, text: '', bytes: 0, mtime: null, mtimeMs: null, truncated: false, block: null, cap: name === '.curator-project' ? null : capOf(), ...(name === '.curator-project' ? { marker: { present: false } } : {}) });
+      }
+      return refuse(403, 'unreadable', 'That file could not be opened.');
+    }
+    const rel = path.relative(realRepo, realFile);
+    if (!rel || rel.startsWith(`..${path.sep}`) || rel === '..' || path.isAbsolute(rel)) {
+      return refuse(403, 'outside_folder', 'That file is outside the project’s folder.');
+    }
+    if (!allowed.has(rel) && !allowed.has(path.basename(realFile))) {
+      return refuse(403, 'not_allowed', 'That name points at a file that is not an instruction file.');
+    }
+    let fd = null;
+    let buf;
+    let st;
+    try {
+      fd = openSync(realFile, 'r');
+      st = fstatSync(fd);
+      if (!st.isFile()) return refuse(403, 'not_a_file', 'That is not a file.');
+      const want = Math.min(st.size, FILE_ANALYSE_CAP);
+      buf = Buffer.alloc(want);
+      let got = 0;
+      while (got < want) {
+        const n = readSync(fd, buf, got, want - got, got);
+        if (n <= 0) break;
+        got += n;
+      }
+      buf = buf.subarray(0, got);
+    } catch { return refuse(403, 'unreadable', 'That file could not be read.'); }
+    finally { if (fd !== null) { try { closeSync(fd); } catch { /* closed */ } } }
+    const raw = buf.toString('utf8');
+    const norm = raw.replace(/\r\n/g, '\n');
+    const normBuf = Buffer.from(norm);
+    const truncated = st.size > FILE_TEXT_CAP || normBuf.length > FILE_TEXT_CAP;
+    const text = normBuf.length > FILE_TEXT_CAP ? normBuf.subarray(0, FILE_TEXT_CAP).toString('utf8').replace(/�+$/, '') : norm;
+    const out = {
+      ...base, exists: true, text, bytes: st.size, mtime: new Date(st.mtimeMs).toISOString(), mtimeMs: st.mtimeMs, truncated,
+      block: null, cap: null,
+    };
+    if (name === '.curator-project') {
+      const mk = await inspectMarker(realRepo, { domain, project });
+      out.marker = {
+        present: mk.present, line: mk.line, namesThis: mk.namesThis,
+        committed: mk.git?.repo ? mk.git.committed ?? null : null,
+        pushed: mk.git?.repo ? mk.git.pushed ?? null : null,
+        gitRepo: !!mk.git?.repo,
+      };
+      return res.json(out);
+    }
+    const cap = capOf();
+    const a = analyseInstructionText(raw, { domain, project, template: TEMPLATE, cap: cap ? cap.bytes : null });
+    if (a.hasBlock && Number.isInteger(a.blockStart)) {
+      const state = a.wrongProject ? 'wrong-project' : !a.current ? 'outdated' : (cap && a.blockPastCap) ? 'past-cap' : 'current';
+      out.block = {
+        start: a.blockStart, end: a.blockEnd, state, pill: state === 'current' ? 'ok' : 'fix',
+        namesProject: a.namesProject, startBytes: a.blockStartBytes, endBytes: a.blockEndBytes,
+      };
+    } else if (a.hasBlock) {
+      out.block = { start: null, end: null, state: a.wrongProject ? 'wrong-project' : a.current ? 'current' : 'outdated', pill: a.current && !a.wrongProject ? 'ok' : 'fix', namesProject: a.namesProject };
+    }
+    if (cap) {
+      // The char offset in `text` where the tool stops reading, or null when
+      // the whole file fits.
+      let at = null;
+      if (st.size > cap.bytes) {
+        const prefix = buf.subarray(0, cap.bytes).toString('utf8').replace(/�+$/, '');
+        at = prefix.replace(/\r\n/g, '\n').length;
+      }
+      out.cap = { ...cap, at };
+    }
+    out.git = await inspectGitFile(realRepo, rel).then((g) => ({ committed: g.committed ?? null, pushed: g.pushed ?? null, gitRepo: !!g.repo }));
+    res.json(out);
   } catch (err) {
-    console.error('Setup project check error:', err);
+    console.error('Setup file read error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
