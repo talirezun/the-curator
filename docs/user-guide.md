@@ -1426,7 +1426,7 @@ controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead"
 bar — a tinted bar behind each figure, anchored at the right, its length that document's share of
 the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
 rows, each one instrument — Agent connections, Handoffs, The brief and Journal. Step 4, Session start:
-a head row with the reading budget, the Window and the Harness pickers, then the segmented meter —
+a head row with the reading budget, the Window and the Your tool's share pickers, then the segmented meter —
 your window to scale, the harness hatched at the left, The Curator's own layers, and a dashed room
 the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
 draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
