@@ -7,7 +7,7 @@ When a section of mycurator.xyz answers the question, include its link in markdo
 | Section | What is there | Link |
 |---|---|---|
 | Ask | The chat you are in, at the top of the page (the chat widget is powered by Lumina, https://luminawidget.xyz/) | https://mycurator.xyz/#ask |
-| Two ways in | Which of the two audiences you are — reading a lot and wanting a wiki, or working across sessions and wanting a project to carry its context — and where each starts | https://mycurator.xyz/#ways |
+| Two ways in | Who it's for: people who write, research or market and want a second brain that compounds (in the app or over MCP — ask months later and get the why back), and people running AI agents across sessions, tools and computers who need context that outlives the window; one shared set of markdown files underneath, not two products; where each starts | https://mycurator.xyz/#ways |
 | Quick start | Download for macOS (releases), the one-line browser install, Windows and Linux manual setup, install with a coding agent (copyable prompt) | https://mycurator.xyz/#install |
 | Three brains | One set of markdown files read by you, your cohort and your agents, and the three kinds of context it holds: compounded knowledge (accumulates), volatile state (supersedes), canonical documents (replaced whole) | https://mycurator.xyz/#brains |
 | The context engine | Foundations, the standing brief and the handoff: how a project's context is added verbatim, read in one get_project_context call at the start of a session, and saved whole before the stop; the Context screen's Setup step shows which tools and computers are ready | https://mycurator.xyz/#context |
