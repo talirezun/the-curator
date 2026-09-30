@@ -74,6 +74,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *Three kinds of context, three write rules, and a project that outlives the session, the harness, the model and the machine — with the first live tests of two agent tools and two computers on one project, what they broke, and what was measured after the fixes.*
 
+- **[The Right Context, Not All of It](./articles/the-right-context-not-all-of-it.md)**  
+  By Dr. Tali Režun  
+  *A lesson in context engineering: what an agent needs before it starts, where each piece lives, and how it survives the move between sessions, harnesses, models and machines — taught through The Curator v3.80.0, with a reading of the session-start meter, the three routes things travel between computers, and an exercise for students.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -157,6 +161,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {September},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-context-engine.md}
+}
+
+@article{rezun2026right-context,
+  author = {Režun, Tali},
+  title = {The Right Context, Not All of It},
+  year = {2026},
+  month = {September},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-right-context-not-all-of-it.md}
 }
 ```
 
