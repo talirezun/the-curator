@@ -133,6 +133,17 @@ function eq(label, actual, expected) {
   ok(label, Object.is(actual, expected), 'got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected));
 }
 function section(t) { console.log('\n' + t); }
+// A save's stamp carries MILLISECONDS, and two real saves back to back land
+// 1 ms apart or in the SAME millisecond (measured: 2 in 12 solo runs). A
+// fixture whose assertion is "newest first" must therefore make the order it
+// asserts a fact of the clock, not of a race: wait until the clock has moved
+// past the previous save's stamp. The same-millisecond case is not dropped —
+// it is driven on its own, exactly, by §TIE below.
+async function afterStamp(r) {
+  const t = r && typeof r.savedAt === 'string' ? Date.parse(r.savedAt) : NaN;
+  if (!Number.isFinite(t)) return;
+  while (Date.now() <= t) await new Promise((res) => setTimeout(res, 1));
+}
 
 // ── Tempdir domains root ─────────────────────────────────────────────────
 
@@ -824,16 +835,24 @@ routerMod.__setWorkingStateStoreForTest(null);
   eq('CONTROL: a project for the tool rows is created', mk.status, 201);
   const s1 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ui',
     harness: 'Claude Code (desktop)', headline: 'ui work', now: 'n', next: 'x' });
+  await afterStamp(s1);
   const s2 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'api',
     harness: 'Antigravity', headline: 'api work', now: 'n', next: 'x' });
+  await afterStamp(s2);
   const s3 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ops',
     harness: 'claude-code', headline: 'ops work', now: 'n', next: 'x' });
   ok('CONTROL: three real saves by two tools', [s1, s2, s3].every((r) => r && r.ok === true), JSON.stringify([s1,s2,s3].map((r) => r && (r.reason || r.error))));
+  ok('CONTROL: the three stamps are three DISTINCT, rising milliseconds (so "newest first" is decided by the clock)',
+    Date.parse(s1.savedAt) < Date.parse(s2.savedAt) && Date.parse(s2.savedAt) < Date.parse(s3.savedAt),
+    JSON.stringify([s1.savedAt, s2.savedAt, s3.savedAt]));
   const toolIdx = await call('get', '/');
   const lum = (toolIdx.body.projects || []).find((r) => r.domain === 'alpha' && r.project === 'twotools') || {};
   const ids = (lum.tools || []).map((t) => t.id);
-  eq('★ the row names each TOOL once, newest first — two spellings of Claude Code are one',
-    JSON.stringify(ids), '["claude-code","antigravity"]');
+  ok('★ the row names each TOOL once, newest first — two spellings of Claude Code are one',
+    JSON.stringify(ids) === '["claude-code","antigravity"]',
+    'got ' + JSON.stringify(ids) + ' -- EVIDENCE ' + JSON.stringify((lum.tools || []).map((t) => [t.id, t.writtenAt]))
+      + ' scopes ' + JSON.stringify((await realStore.listWorkingScopes('alpha', { project: 'twotools', withSaveTimes: true })).scopes
+        .map((p) => [p.scope, p.harness, p.writtenAt, p.saveTimes, p.saveHarnesses])));
   eq('...under its one label', (lum.tools || [])[0] && lum.tools[0].label, 'Claude Code');
   ok('...each with its own save clock, for the view\'s 24-hour Active test',
     (lum.tools || []).every((t) => typeof t.writtenAt === 'string' || typeof t.lastWriteAt === 'string'),
@@ -849,14 +868,16 @@ routerMod.__setWorkingStateStoreForTest(null);
   eq('CONTROL: a project for the overwrite case', mk2.status, 201);
   const o1 = await realStore.saveWorkingState('alpha', { project: 'overtaken', scope: 'main',
     harness: 'Claude Code', headline: 'claude first', now: 'n', next: 'x' });
+  await afterStamp(o1);
   const o2 = await realStore.saveWorkingState('alpha', { project: 'overtaken', scope: 'main',
     harness: 'Antigravity', headline: 'antigravity over it', now: 'n', next: 'x' });
   ok('CONTROL: two tools, ONE pair — the second save replaced the first tool\'s handoff',
     o1.ok && o2.ok && o1.machine === o2.machine && o2.overwrote && o2.overwrote.harnessLabel === 'Claude Code');
   const ovIdx = await call('get', '/');
   const ov = (ovIdx.body.projects || []).find((r) => r.domain === 'alpha' && r.project === 'overtaken') || {};
-  eq('★ F7: the row still names BOTH tools, newest first — the overwritten one comes from the journal',
-    JSON.stringify((ov.tools || []).map((t) => t.id)), '["antigravity","claude-code"]');
+  ok('★ F7: the row still names BOTH tools, newest first — the overwritten one comes from the journal',
+    JSON.stringify((ov.tools || []).map((t) => t.id)) === '["antigravity","claude-code"]',
+    'EVIDENCE ' + JSON.stringify((ov.tools || []).map((t) => [t.id, t.writtenAt])));
   ok('...each with its OWN save clock (the journal line\'s `at`), inside 24 h',
     (ov.tools || []).every((t) => typeof t.writtenAt === 'string' && Date.now() - Date.parse(t.writtenAt) < 60_000),
     JSON.stringify(ov.tools));
@@ -864,6 +885,40 @@ routerMod.__setWorkingStateStoreForTest(null);
     ov.harnessLabel === 'Antigravity' && ov.headline === 'antigravity over it');
   ok('...and the journal arrays themselves never reach the wire (allow-list)',
     !('saveTimes' in ov) && (ov.tools || []).every((t) => !('saveTimes' in t)));
+
+  // ── v3.81.1: §TIE — AN EXACT SAME-MILLISECOND TIE FOLLOWS THE STORE'S ORDER ──
+  // The flake this suite had in the v3.77.0 and v3.80.0 release runs: `s2` and
+  // `s3` stamped in ONE millisecond, and `toolsOf` broke the tie on the tool's
+  // NAME — `tools[0]` read Antigravity while `harnessLabel`, picked off the
+  // same pairs in the store's (mtime) order, read Claude Code. The fixture
+  // above now separates its stamps; the tie itself is driven here, exactly,
+  // in BOTH input orders, through the real function.
+  const { toolsOf } = routerMod;
+  ok('CONTROL: toolsOf is exported for this guard', typeof toolsOf === 'function');
+  const T = '2026-09-30T12:01:24.844Z';
+  const TMS = Date.parse(T);
+  const pairOf = (scope, harness, extra) => ({ scope, machine: 'm', harness, writtenAt: T,
+    saveTimes: [TMS], saveHarnesses: [harness], ...(extra || {}) });
+  const idsOf = (x) => JSON.stringify(toolsOf(x).map((t) => t.id));
+  // Two pairs, one millisecond: the store lists the newer pair first.
+  eq('★ TIE across pairs: the store-listed-first pair\'s tool comes first (claude-code listed first)',
+    idsOf([pairOf('ops', 'claude-code'), pairOf('api', 'Antigravity')]), '["claude-code","antigravity"]');
+  eq('★ TIE across pairs, the OTHER input order: antigravity listed first comes first — never the name',
+    idsOf([pairOf('api', 'Antigravity'), pairOf('ops', 'claude-code')]), '["antigravity","claude-code"]');
+  // One pair, two journal lines in one millisecond: the later LINE is newer.
+  const onePair = (first, second) => [{ scope: 'main', machine: 'm', harness: second, writtenAt: T,
+    saveTimes: [TMS, TMS], saveHarnesses: [first, second] }];
+  eq('★ TIE inside one journal: the later line comes first (Antigravity saved over Claude Code)',
+    idsOf(onePair('Claude Code', 'Antigravity')), '["antigravity","claude-code"]');
+  eq('★ TIE inside one journal, the OTHER order: Claude Code saved over Antigravity',
+    idsOf(onePair('Antigravity', 'Claude Code')), '["claude-code","antigravity"]');
+  // A later millisecond still beats the store's order: the rank is a TIE-BREAK only.
+  const later = new Date(TMS + 1).toISOString();
+  eq('...and one millisecond later wins whatever the listed order (rank breaks ties, never overrides the clock)',
+    idsOf([pairOf('ops', 'claude-code'), pairOf('api', 'Antigravity', { writtenAt: later, saveTimes: [TMS + 1] })]),
+    '["antigravity","claude-code"]');
+  ok('...and the rank never reaches the wire (allow-list)',
+    toolsOf([pairOf('ops', 'claude-code')]).every((t) => !('pair' in t) && !('line' in t) && !('ms' in t)));
 
   // ── v3.76.0 (truth audit F10): EVERY WORK-STREAM ROW CARRIES THE NORMALISED TOOL ──
   const det = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'twotools' }, query: { open: 'newest' } });

@@ -553,9 +553,30 @@ export function tableFirstPair(scopes) {
  * name — and the list is capped (a project with a dozen tools is not a
  * sidebar line). Taken over the pairs the store LISTED; when it capped them,
  * `scopesTruncated` on the same row already says so.
+ *
+ * ── AN EXACT TIE ON THE MILLISECOND FALLS TO THE STORE'S OWN ORDER ──────
+ * (v3.81.1.) Two saves a millisecond apart are ordinary — an agent saving
+ * two work-streams back to back, or two tools at once — and a stamp carries
+ * only milliseconds. `listWorkingScopes` has already put the pairs newest
+ * first, with an agent-time tie kept in mtime order (`byNewestSave`, a
+ * sub-millisecond clock on APFS and ext4), and a pair's journal is in save
+ * order. Until v3.81.1 this sort threw that away and broke the tie on the
+ * tool's NAME, so on a same-millisecond tie the row's `tools[0]` could name
+ * Antigravity while `harnessLabel` — picked off the same pairs in the
+ * store's order — named Claude Code: one row, two answers to "who saved
+ * last". Measured: `scripts/test-next-memory-projects.js` failing 2 in 12
+ * solo runs with both stamps at `…:24.844Z`. So a reading carries its RANK —
+ * the pair's position in the store's list, then its line in that pair's
+ * journal (the current copy counting as the pair's newest) — and an exact
+ * millisecond tie is broken by rank; the name is only the last word, for
+ * readings that tie on both.
+ *
+ * EXPORTED for the guard, and only for it (the §TIE block of
+ * scripts/test-next-memory-projects.js drives an exact tie in both input
+ * orders, which the real store cannot produce on demand).
  */
 const PROJECT_TOOLS_MAX = 6;
-function toolsOf(scopes) {
+export function toolsOf(scopes) {
   const byId = new Map();
   // Epoch ms on the chosen clock — the agent's stamp first, then the file's.
   // Milliseconds, not the whole-second ages, so two saves in one second still
@@ -569,19 +590,26 @@ function toolsOf(scopes) {
     }
     return null;
   };
-  const offer = (harness, ms, fields) => {
+  // `rank` is where the reading sits in the store's own order (see the tie
+  // note above). Readings are offered in that order — pairs as listed, each
+  // pair's current copy before its journal — so on a same-tool millisecond
+  // tie the reading already kept is the best-ranked one, and `>=` keeps it.
+  const offer = (harness, ms, rank, fields) => {
     if (typeof harness !== 'string' || !harness.trim()) return;
     const n = normaliseHarness(harness);
     if (!n) return;
     const prev = byId.get(n.id);
     // Absence never displaces a reading; a newer reading wins.
     if (prev && (ms === null || (prev.ms !== null && prev.ms >= ms))) return;
-    byId.set(n.id, { id: n.id, label: n.label, raw: harness, ms, ...fields });
+    byId.set(n.id, { id: n.id, label: n.label, raw: harness, ms, ...rank, ...fields });
   };
-  for (const p of Array.isArray(scopes) ? scopes : []) {
+  const list = Array.isArray(scopes) ? scopes : [];
+  for (let pi = 0; pi < list.length; pi++) {
+    const p = list[pi];
     if (!p || typeof p !== 'object') continue;
     // THE CURRENT COPY'S TOOL — what this function read alone until v3.76.0.
-    offer(p.harness, msOf(p), {
+    // It is the pair's newest save, so it ranks after every journal line.
+    offer(p.harness, msOf(p), { pair: pi, line: Number.POSITIVE_INFINITY }, {
       writtenAt: p.writtenAt ?? null,
       writtenAgeSeconds: Number.isFinite(p.writtenAgeSeconds) ? p.writtenAgeSeconds : null,
       lastWriteAt: p.lastWriteAt ?? null,
@@ -603,7 +631,7 @@ function toolsOf(scopes) {
       for (let i = 0; i < times.length; i++) {
         const ms = Number.isFinite(times[i]) ? times[i] : null;
         if (ms === null) continue;
-        offer(who[i], ms, {
+        offer(who[i], ms, { pair: pi, line: i }, {
           writtenAt: new Date(ms).toISOString(),
           writtenAgeSeconds: Math.max(0, Math.round((now - ms) / 1000)),
           lastWriteAt: null,
@@ -614,9 +642,12 @@ function toolsOf(scopes) {
   }
   return [...byId.values()]
     .sort((a, b) => (a.ms === null ? 1 : 0) - (b.ms === null ? 1 : 0)
-      || (b.ms ?? 0) - (a.ms ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      || (b.ms ?? 0) - (a.ms ?? 0)
+      || a.pair - b.pair
+      || (a.line === b.line ? 0 : a.line > b.line ? -1 : 1)
+      || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .slice(0, PROJECT_TOOLS_MAX)
-    .map(({ ms, ...rest }) => rest);
+    .map(({ ms, pair, line, ...rest }) => rest);
 }
 
 /**
