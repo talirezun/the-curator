@@ -76,6 +76,7 @@ const {
   selectJournalEntries,
   projectOmissionNotes,
   PROJECT_CONFLICT_CLAUSE,
+  WIKI_ONLY_CLAUSE,
   PROJECT_JOURNAL_MAX,
   PROJECT_JOURNAL_FLOOR,
   PROJECT_EXTRA_FOUNDATIONS_MAX,
@@ -251,11 +252,22 @@ section('§1b — THE RECORDED BASELINE (the assertions above cannot see a chang
     'comprehensive|list every page about the curator': '09f97408c2514e52b25bf53bf93e6ab0fdc2179086ad28dff62c8e5852ec54e7',
     'comprehensive|should I use retrieval or embeddings': '4678dc038165fdff7cc83a7e5ffda5a62ca99e85aec5c9d72e8fe64b1f5a9c9b',
   };
+  /* v3.81.0 — THE ONE DELIBERATE EDIT SINCE v3.63.0. Every intent block now
+     ends with WIKI_ONLY_CLAUSE (chat cannot see how an ingest ran). Rather
+     than re-record nine new digests — which would prove only that the prompt
+     is whatever it now is — the v3.63.0 digests are KEPT and the prompt must
+     equal them once that one line is removed. So the clause is the ONLY
+     change, it sits exactly at the end of the intent block, and it occurs
+     exactly once. */
+  const CLAUSE_LINE = `\n${WIKI_ONLY_CLAUSE}`;
   const digest = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
   for (const [key, want] of Object.entries(BASELINE)) {
     const [style, msg] = key.split('|');
-    eq(digest(buildPrompt('articles', PAGES, HISTORY, msg, style)), want,
-      `the wiki-only prompt is byte-identical to v3.63.0's — ${style} / "${msg.slice(0, 28)}…"`);
+    const prompt = buildPrompt('articles', PAGES, HISTORY, msg, style);
+    eq(prompt.split(CLAUSE_LINE).length - 1, 1,
+      `the wiki-only clause occurs exactly once — ${style} / "${msg.slice(0, 28)}…"`);
+    eq(digest(prompt.replace(CLAUSE_LINE, '')), want,
+      `minus the v3.81.0 clause, the wiki-only prompt is byte-identical to v3.63.0's — ${style} / "${msg.slice(0, 28)}…"`);
   }
   // CONTROL: the digests really do discriminate. A single added character
   // must move one.

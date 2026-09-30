@@ -66,10 +66,12 @@ The screenshot below predates all of it and still shows the older `PAGES · THE 
 
    | Template | Best for | Entity types | Concept style |
    |----------|----------|-------------|---------------|
-   | Generic | Any other topic | person, item, organization | Overview / Examples |
+   | Generic | Any other topic | person, item, tool, product, organization | Overview / Examples |
    | Tech | Software, AI research, developer tools | person, tool, company, dataset | How It Works / Applications |
-   | Business | Startups, investing, strategy | person, company, fund, institution | Why It Matters / Examples |
-   | Personal | Books, habits, mental models | person, book, framework | Why It Matters / How to Apply It |
+   | Business | Startups, investing, strategy | person, company, product, fund, institution | Why It Matters / Examples |
+   | Personal | Books, habits, mental models | person, book, framework, tool | Why It Matters / How to Apply It |
+
+   Since v3.81.0 the Generic, Business and Personal templates name tools and products as entities. That changes only domains created from then on — an existing domain's `CLAUDE.md` is yours and is never rewritten; add the words to its entity line yourself if you want the same.
 
 5. Click **Create domain**.
 

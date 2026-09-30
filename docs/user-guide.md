@@ -3229,6 +3229,8 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **✨ Find duplicate pages** under QUICK MAINTENANCE. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
 | *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open **Domains → the domain → Wiki health** → expand Broken links → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
 | *"Stub page created: `<path>` — AI failed to write content for this page"* | ⚠ For review | The LLM failed to generate content for a planned page even after the page-by-page fallback and the v3.0.17 brevity retry above. | Wrote a clearly-marked stub with the LLM's planned summary preserved. | Re-ingest the source. The stub page has a `stub` tag so you can find it. |
+| *"Page 'entities/talirezun.md' is a spelling variant of the existing 'entities/tali-rezun.md' — redirected to canonical …; its content was merged into that page."* (v3.81.0; grouped form at 3 or more: *"N pages came back under a spelling variant of a page you already have …"*) | ✓ Auto-fixed | The AI named a page slightly differently from one you already have — a missing hyphen, different capitals, or a title such as `dr-`. | Wrote the content into the existing page instead of creating a near-copy. Before v3.81.0 this happened silently. | Nothing. |
+| *"Page 'entities/trust-grader.md' already exists in the other folder as 'concepts/trust-grader.md' — redirected to canonical … (the page that existed first keeps its folder); its content was merged into that page."* (v3.81.0; grouped form at 3 or more) | ✓ Auto-fixed | The AI filed a page under `entities/` while a page of the same name already sat in `concepts/` (or the other way round). | Merged it into the page that was there first, so the wiki never holds two pages with one name. Before v3.81.0 this happened silently. | Usually nothing. If the existing page is in the wrong folder — a product filed as a concept, say — move the file into the other folder by hand (in Finder or Obsidian); the next ingest will then merge into it there. |
 | *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
@@ -3315,6 +3317,28 @@ These are status messages during the ingest itself (not part of the report banne
 - **"AI is analyzing the document…"** — The LLM call is in flight. This can take 10–60 seconds depending on document size — watch the timer next to the progress bar rather than the percentage (see *Understanding the progress bar* above). Don't refresh.
 - **"Phase 2: writing content, batch N of M…"** — Multi-phase ingest is processing a batch. Wait for it to finish.
 - **"Could not extract text from PDF"** — See the table above.
+
+### Who tells the AI what to do during an ingest
+
+Two sets of instructions go to the AI on every ingest, and only one of them is yours:
+
+| | What it is | Who writes it | Can you change it? |
+|---|---|---|---|
+| **The domain's schema** | The domain's `CLAUDE.md` — its scope, what counts as an entity or a concept, the page formats | Written from the template when you create the domain; after that, **yours** | Yes — edit it any time ([docs/domains.md](domains.md)). The Curator never rewrites it |
+| **The app's own ingest instructions** | The rules every ingest follows in every domain — one summary per source, always a page for the author and for any product the source announces, reuse existing page names, keep to the three folders, plan 5–30 pages | Built into The Curator; they change only with a release | No |
+
+Since v3.81.0 the app's instructions also say that a source which **introduces, announces, launches or reviews a named product, tool, app, service or project** must give that product its own `entities/` page, even when concept pages already cover its features. New domains' templates name tools and products as entities too. An existing domain's `CLAUDE.md` is left exactly as you have it.
+
+<a id="why-didnt-the-ingest-create-a-page-for-x"></a>**"Why didn't the ingest create a page for X?"**
+
+The AI decides the page list for each source, and it can still leave something out or file it in the other folder. Check, in this order:
+
+1. **The ingest's report** — the result panel, and the same text in the domain's `wiki/log.md` under that ingest's heading. A *"redirected to canonical"* line means X's content went into a page that already existed, possibly in the other folder (see the table above).
+2. **Search for it** — X may exist under a slightly different name, or in `concepts/` instead of `entities/`.
+3. **Wiki health** on the domain's page ([§17](#17-wiki-health)) — broken links to X show that pages mention it and nothing was written for it.
+4. **Fix it** — re-ingest the source (safe, see below), or ask your agent through the MCP to create the page.
+
+Asking **Chat** why is not useful: Chat reads your wiki's pages and the domain's schema, but it cannot see how an ingest ran or the app's own instructions. Since v3.81.0 it is told to say so and point you to the report and Wiki health, instead of guessing a cause.
 
 ### Re-ingesting a source (and why it's safe)
 
@@ -8020,6 +8044,10 @@ The PDF is scanned (an image of a page, not real text). Copy the text manually a
 **Pages are not showing up in Obsidian after an ingest**
 
 Press `Cmd/Ctrl + R` in Obsidian to force a refresh, or close and reopen the vault. Obsidian does not always detect new files automatically.
+
+**The ingest finished but there is no page for something the source was about**
+
+See [*Why didn't the ingest create a page for X?*](#why-didnt-the-ingest-create-a-page-for-x) in §8: check the ingest's report (also in `wiki/log.md`), look for the page under a similar name or in the other folder, run Wiki health, then re-ingest or ask your agent to create it. Chat cannot tell you why — it never sees how an ingest ran.
 
 **An ingest (single-file or batch) fails right at the end with a cryptic error mentioning `log.md`**
 

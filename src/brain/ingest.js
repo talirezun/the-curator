@@ -389,6 +389,31 @@ export function parseJSON(raw) {
  * the blocker is measurement power, not implementation: you need enough paired
  * runs to separate an effect from the run-to-run variance.
  */
+// ── The announced-product rule (v3.81.0) ─────────────────────────────────────
+//
+// Appended to REQUIRED COVERAGE item 2 in BOTH prompts that decide which pages
+// exist — the outline (multi-phase) and the single-pass prompt — through this
+// one constant so the two cannot drift. Measured on a short article announcing
+// a tool ("Trust Grader"): without it, Haiku 4.5 on a seeded domain omitted the
+// tool's entity page 1 in 12 runs and Gemini 2.5 Flash-Lite filed the tool as a
+// CONCEPT 7 in 8; with it, 6/6 and 6/6 as an entity. The originator rule above
+// names people and companies only, and item 3 lists tools as ordinary
+// "substantive" entities — so a product that IS the article's subject was
+// competing with its own feature concepts and losing.
+//
+// NOT in the Phase 2 batch prompt (buildBatchPromptParts), on purpose: which
+// pages exist is decided ONCE, by the outline; a batch writes EXACTLY the pages
+// it was handed ("no others"). A coverage rule there would ask EVERY batch to
+// add the product page — N unplanned copies of one page, each let through by
+// reconcileGeneratedPages with an "unplanned" warning — and would bypass
+// validateOutline. The batch prefix is therefore unchanged by this rule, and
+// stays byte-identical across batches (the caching invariant).
+const ANNOUNCED_PRODUCT_RULE =
+`   If the source introduces, announces, launches or reviews a named product,
+   tool, app, service or project, that product is ALSO a primary subject: give
+   it its own entities/ page (e.g. entities/<product-name>.md — never concepts/),
+   even when concept pages cover its features or method. NEVER omit it.`;
+
 function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
   const overwriteNote = isOverwrite
     ? 'NOTE: This document has been ingested before. Update existing pages rather than duplicating content.'
@@ -433,6 +458,7 @@ REQUIRED COVERAGE — your outline MUST include ALL of the following:
    primary subject(s) of this source. If the source is an article, the author
    is an entity. If it's a talk, the speaker is an entity. If it's a company
    announcement, the company is an entity. NEVER omit the originator.
+${ANNOUNCED_PRODUCT_RULE}
 
 3. SUBSTANTIVE entities — people, tools, companies, frameworks, datasets,
    projects, countries, or organizations that the source discusses with
@@ -1387,6 +1413,7 @@ REQUIRED COVERAGE — your output MUST include ALL of the following:
    primary subject(s) of this source. If the source is an article, the author
    is an entity. If it's a talk, the speaker is an entity. If it's a company
    announcement, the company is an entity. NEVER omit the originator.
+${ANNOUNCED_PRODUCT_RULE}
 
 3. SUBSTANTIVE entities — people, tools, companies, frameworks, datasets,
    projects, countries, or organizations that the source discusses with
@@ -1538,6 +1565,24 @@ const AGGREGATABLE_WARNINGS = [
     render: (n) =>
       `${n} content batches were too large for the AI's output limit — those pages were written one at a ` +
       `time instead. Nothing was lost; the ingest just took longer than usual.`,
+  },
+  {
+    id: 'variant-redirect',
+    // Emitted by writePage (files.js) Pass A/B through its onWarn (v3.81.0).
+    // The aggregate keeps "redirected to canonical" → the Auto-fixed bucket.
+    match: /^Page "(.+?)" is a spelling variant of the existing "/,
+    render: (n, ex) =>
+      `${n} pages came back under a spelling variant of a page you already have (${renderExamples(ex)}) — ` +
+      `each was redirected to canonical: the existing page, where its content merged. Nothing was lost.`,
+  },
+  {
+    id: 'cross-folder',
+    // Emitted by writePage (files.js) step 3b through its onWarn (v3.81.0).
+    match: /^Page "(.+?)" already exists in the other folder as "/,
+    render: (n, ex) =>
+      `${n} pages were written to entities/ or concepts/ while a page of the same name already existed in ` +
+      `the other folder (${renderExamples(ex)}) — each was redirected to canonical: the existing page, which keeps ` +
+      `its folder, and its content merged there. Nothing was lost; if one belongs in the other folder, move it by hand.`,
   },
   {
     id: 'no-path',
@@ -3238,6 +3283,7 @@ export const __testing = {
   buildPrompt,
   buildBatchPrompt,
   buildBatchPromptParts,
+  ANNOUNCED_PRODUCT_RULE,
   slugLineCost,
   stubPageContent,
   isOutputTokenLimit,
