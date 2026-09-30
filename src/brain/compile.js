@@ -19,7 +19,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'node:crypto';
 import { generateText } from './llm.js';
-import { parseJSON, isOutputTokenLimit, makeUsageAccumulator } from './ingest.js';
+import { parseJSON, isOutputTokenLimit, makeUsageAccumulator, aggregateWarnings } from './ingest.js';
 // v3.67.0: the actual cost of a compile comes from src/brain/ai-run.js's
 // spentFromUsage — loaded with a CALL-TIME dynamic import (see spentOf below),
 // NEVER a static import. A static one closes this cycle:
@@ -555,7 +555,11 @@ export async function compileConversation(domain, conversationId, onProgress = (
   const changes = [];
   const writeRecords = [];
   for (const page of result.pages) {
-    const record = await writePage(domain, page.path, page.content);
+    // v3.81.0: writePage's redirects and path corrections reach the compile
+    // card's notes too, not only ingest's report.
+    const record = await writePage(domain, page.path, page.content, {
+      onWarn: (w) => warnings.push(w),
+    });
     writeRecords.push(record ? { originalPath: page.path, record } : null);
     if (record) {
       canonicalPaths.push(record.canonPath);
@@ -602,7 +606,7 @@ export async function compileConversation(domain, conversationId, onProgress = (
     changes,
     // Non-fatal notes (e.g. the conversation was large → concise/summary-only
     // fallback). Empty on a normal full compile. Surfaced in the result panel.
-    warnings,
+    warnings: aggregateWarnings(warnings),
     // v3.67.0: what the compile actually cost, summed across every ladder
     // rung (spentFromUsage in src/brain/ai-run.js). Always present on success.
     spent: await spentOf(usage.totals),

@@ -1081,6 +1081,20 @@ export async function loadProjectContext(domain, project, opts = {}) {
 const PROJECT_CONFLICT_CLAUSE =
   '- Where the project context and the wiki disagree, SAY SO and name both.';
 
+// ── THE CLAUSE EVERY INTENT BLOCK CARRIES: WHAT CHAT CANNOT SEE (v3.81.0) ──
+//
+// Chat's system prompt is the domain's CLAUDE.md, whose "Instructions for the
+// AI" describe ingest. Asked why an ingest did not create a page, a model
+// holding that text and nothing else invented a cause — "an oversight in the
+// instruction execution" — when it cannot see how any ingest ran, nor the
+// app's own ingest prompt (which is most of what an ingest is told). Appended
+// to all three intent blocks, unconditionally: unlike PROJECT_CONFLICT_CLAUSE
+// it applies whether or not a project is pinned.
+const WIKI_ONLY_CLAUSE =
+  "- You see this domain's wiki pages and its schema, not how any ingest ran nor the app's own ingest instructions. " +
+  "If asked why a page was or wasn't created, say plainly that you can't tell from here — do not guess a cause — " +
+  "and point to that ingest's warnings in the wiki's log.md and to the Wiki health panel on this domain's page.";
+
 function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balanced', projectBlock = null) {
   // Pull recent history into the query context so a multi-turn
   // conversation about "vector databases" still finds the right pages
@@ -1142,9 +1156,9 @@ function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balan
 - Be conversational — this is a multi-turn chat, not a one-shot Q&A. Keep answers focused and concise.`;
 
   const baseIntentInstructions =
-    intent === 'enumerate' ? enumerateInstructions
+    (intent === 'enumerate' ? enumerateInstructions
     : intent === 'decision' ? decisionInstructions
-    : synthesisInstructions;
+    : synthesisInstructions) + `\n${WIKI_ONLY_CLAUSE}`;
   // One clause, appended ONLY when a project is pinned — see
   // PROJECT_CONFLICT_CLAUSE for why it is not written into the three literals
   // above. With no project, `intentInstructions` is the untouched literal.
@@ -2192,4 +2206,4 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, normalizePriced, priceServedAnswer, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, normalizePriced, priceServedAnswer, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, WIKI_ONLY_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };

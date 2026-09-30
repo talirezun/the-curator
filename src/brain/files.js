@@ -1042,6 +1042,16 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   //             entity filename; if they match, redirect to the existing file.
   //             This handles any author/entity whose name the LLM hyphenates
   //             differently on different ingests — not just tali-rezun.
+  //
+  //    v3.81.0: every redirect below (A, B and 3b) now tells the user through
+  //    `warn` — "if the pipeline redirects or renames anything the model
+  //    produced, a user-visible warning says so". Before, A and B were silent
+  //    and 3b reached stderr only, so a page the model wrote as
+  //    entities/trust-grader.md could land in concepts/ with nothing on the
+  //    ingest report to say where it went. The wording keeps "redirected to
+  //    canonical" (the result panel's Auto-fixed bucket) and is aggregated by
+  //    ingest.js's AGGREGATABLE_WARNINGS ('variant-redirect', 'cross-folder').
+  const requestedPath = canonPath;
   if (canonPath.startsWith('entities/')) {
     const entitiesDir = path.join(wikiPath(domain), 'entities');
     let filename = canonPath.slice('entities/'.length);
@@ -1064,6 +1074,10 @@ export async function writePage(domain, relativePath, content, opts = {}) {
         canonPath = 'entities/' + match;
       }
     } catch { /* entities dir may not exist yet on first ingest */ }
+
+    if (canonPath !== requestedPath) {
+      warn(`Page "${requestedPath}" is a spelling variant of the existing "${canonPath}" — redirected to canonical "${canonPath}"; its content was merged into that page.`);
+    }
   }
 
   // 3b. Cross-folder dedup — prevent concepts/google.md when entities/google.md
@@ -1081,8 +1095,9 @@ export async function writePage(domain, relativePath, content, opts = {}) {
         f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm
       );
       if (match) {
-        console.error(`[writePage] Cross-folder dedup: ${canonPath} → ${siblingFolder}/${match}`);
-        canonPath = `${siblingFolder}/${match}`;
+        const target = `${siblingFolder}/${match}`;
+        warn(`Page "${canonPath}" already exists in the other folder as "${target}" — redirected to canonical "${target}" (the page that existed first keeps its folder); its content was merged into that page.`);
+        canonPath = target;
       }
     } catch { /* sibling dir may not exist yet */ }
   }
@@ -1515,6 +1530,12 @@ export async function deleteConversation(domain, id) {
 function generateClaudemd(slug, displayName, description, template) {
   const today = localDateStamp(); // LOCAL calendar day — see ./local-date.js (v3.72.1)
 
+  // v3.81.0: every template's entity wording names tools/products. This file
+  // is the ingest SYSTEM prompt (readSchema), and the app's own user prompt
+  // requires an entity page for an announced product — a schema that listed
+  // only "person, item, or organization" contradicted it. New domains only:
+  // an existing domain's CLAUDE.md belongs to its user and is never rewritten.
+  // (`entityTypes` is not interpolated below; kept in step for readers.)
   const templateConfig = {
     tech: {
       scope: description || 'Artificial intelligence, machine learning, software engineering, developer tools, programming languages, research papers, open-source projects, and the people and companies behind them.',
@@ -1532,8 +1553,8 @@ Explanation with examples.
     },
     business: {
       scope: description || 'Startups, venture capital, investing, markets, macroeconomics, business strategy, company analysis, financial instruments, and the people and organizations shaping the business world.',
-      entityTypes: 'person | company | fund | institution',
-      entitiesDesc: 'One page per notable person, company, fund, or institution (e.g., `entities/sam-altman.md`, `entities/sequoia.md`).',
+      entityTypes: 'person | company | product | fund | institution',
+      entitiesDesc: 'One page per notable person, company, product or tool, fund, or institution (e.g., `entities/sam-altman.md`, `entities/sequoia.md`).',
       entityKeyField: 'Key Facts',
       conceptMiddle: `## Why It Matters
 Business significance and applications.
@@ -1541,26 +1562,26 @@ Business significance and applications.
 ## Examples
 - Example 1
 - Example 2`,
-      ingestEntity: 'Create or update entity pages for every person, company, fund, or institution mentioned.',
+      ingestEntity: 'Create or update entity pages for every person, company, product or tool, fund, or institution mentioned.',
       ingestConcept: 'Create or update concept pages for every key business idea or financial concept.',
     },
     personal: {
       scope: description || 'Self-improvement, mental models, habits, learning techniques, decision-making, books, psychology, philosophy, productivity systems, and the thinkers behind them.',
-      entityTypes: 'person | book | framework',
-      entitiesDesc: 'One page per notable person, book, or framework (e.g., `entities/james-clear.md`, `entities/atomic-habits.md`).',
+      entityTypes: 'person | book | framework | tool',
+      entitiesDesc: 'One page per notable person, book, framework, or tool or app (e.g., `entities/james-clear.md`, `entities/atomic-habits.md`).',
       entityKeyField: 'Key Ideas',
       conceptMiddle: `## Why It Matters
 How this applies to personal growth.
 
 ## How to Apply It
 Practical steps or examples.`,
-      ingestEntity: 'Create or update entity pages for every person, book, or notable framework mentioned.',
+      ingestEntity: 'Create or update entity pages for every person, book, notable framework, or tool or app mentioned.',
       ingestConcept: 'Create or update concept pages for every key idea, mental model, or principle.',
     },
     generic: {
       scope: description || 'A focused knowledge domain for collecting, connecting, and querying information on this topic.',
-      entityTypes: 'person | item | organization',
-      entitiesDesc: 'One page per notable person, item, tool, or organization related to this domain.',
+      entityTypes: 'person | item | tool | product | organization',
+      entitiesDesc: 'One page per notable person, item, tool, product, or organization related to this domain.',
       entityKeyField: 'Key Points',
       conceptMiddle: `## Overview
 Detailed explanation with context.
@@ -1568,7 +1589,7 @@ Detailed explanation with context.
 ## Examples
 - Example 1
 - Example 2`,
-      ingestEntity: 'Create or update entity pages for every person, item, or organization mentioned.',
+      ingestEntity: 'Create or update entity pages for every person, item, tool, product, or organization mentioned.',
       ingestConcept: 'Create or update concept pages for every key idea, framework, or technique.',
     },
   };

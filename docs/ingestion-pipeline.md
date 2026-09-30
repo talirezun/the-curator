@@ -327,6 +327,8 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | Summary path differs from canonical filename slug | Common | `validateOutline` redirects |
 | Multiple summary entries in outline | Occasional | `validateOutline` keeps one |
 | Author/originator entity omitted | Common | `extractAuthorHints` + `validateOutline` injects |
+| Announced product/tool omitted, or filed under `concepts/` | Common on Gemini Flash-Lite, occasional on Haiku | Prompt only: `ANNOUNCED_PRODUCT_RULE` in the outline and single-pass REQUIRED COVERAGE item 2 (v3.81.0). No programmatic injection — there is no reliable way to detect "this source announces a product" without the model |
+| Entity slug variant / same name in the other folder | Common | `writePage` Pass A/B and step 3b redirect — and since v3.81.0 each redirect is a user-visible "redirected to canonical" warning, aggregated at 3 |
 | Honorific variant slug (`dr-X`, `dr.-X`) | Common | `validateOutline` redirects + `writePage` Pass A |
 | Diacritic in entity slug (`režun`) | Occasional | `slugifyName` NFKD normalises |
 | Sub-concept clusters without parent (`taste-*` without `taste`) | Common on Haiku | `validateOutline` trunk detector injects |

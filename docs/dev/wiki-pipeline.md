@@ -53,6 +53,8 @@ POST /api/ingest
            c. Pass B: hyphen-normalised dedup — talirezun.md → tali-rezun.md
            c2. Step 3b: cross-folder dedup — concepts/google.md → entities/google.md
                (prevents duplicate files when LLM misclassifies entity as concept)
+               v3.81.0: every A/B/3b redirect emits an onWarn warning ("…redirected
+               to canonical…"), aggregated at 3 ('variant-redirect', 'cross-folder')
            d. injectFrontmatter()
            e. mergeWikiPage() if file exists
            f. stripBlanksInBulletSections()
@@ -102,6 +104,7 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Missing article prefix in link: `[[energy-and-water...]]` vs `the-energy-and-water...` | Occasional | Step 5c Pass C strips `the-`/`a-`/`an-` prefixes for matching |
 | Semantic near-duplicates in Key Facts ("25 years" vs "30 years") | Common | NOT fixed — requires LLM or manual curation |
 | Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix |
+| **Announced product omitted, or filed as a concept** — a source announcing a tool ("Trust Grader") gets feature concepts but no `entities/trust-grader.md`, or gets `concepts/trust-grader.md` (v3.81.0) | Measured 2026-09-30 without the fix: Haiku 4.5 on a seeded domain omitted it 2/9; Gemini 2.5 Flash-Lite on an empty domain filed it as a concept 5/6 short + 2/2 long | `ANNOUNCED_PRODUCT_RULE` in `ingest.js`, appended to REQUIRED COVERAGE item 2 of the outline AND single-pass prompts (not the batch prompt — coverage is decided by the outline; the batch prefix is unchanged). With it, on the real code path: Haiku 6/6 short + 2/2 long, Gemini 6/6 short + 3/3 long, all as entities. The `(e.g. entities/<product-name>.md — never concepts/)` clause is load-bearing for Gemini (3/6 without it). The generic/personal/business templates' entity wording now names tools/products (new domains only). Guarded by `test-ingest-coverage-v381.js` |
 
 ---
 

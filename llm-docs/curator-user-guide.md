@@ -391,6 +391,23 @@ Below the change list a small footer reports the real usage for that ingest, not
 - **Mind the free-tier rate limits.** Ingesting five or more documents on Gemini's free tier will often hit a quota partway through.
 - **Read the warnings panel after each ingest.** If it says the source was truncated or a stub page was created, the ingest finished but with reduced quality, and the entry tells you what to do. Re-ingesting is always safe.
 
+## Who sets the instructions an ingest follows?
+
+Two sets of instructions go to the AI on every ingest. The first is the domain's schema, its `CLAUDE.md`: scope, what counts as an entity or a concept, the page formats. It is written from the template when you create the domain, and after that it is yours to edit; The Curator never rewrites it. The second is the app's own ingest instructions, built into The Curator and the same in every domain: one summary per source, a page for the author, reuse existing page names, keep to the three folders, plan roughly 5 to 30 pages. You cannot edit those; they change only with a release.
+
+Since v3.81.0 the app's instructions also say that a source which introduces, announces, launches or reviews a named product, tool, app, service or project must give that product its own `entities/` page, even when concept pages cover its features. The Generic, Business and Personal templates now name tools and products as entities too, for domains created from then on.
+
+## Why didn't the ingest create a page for something the source was about?
+
+The AI decides the page list, and it can still leave something out or file it in the other folder. Check, in order:
+
+1. **The ingest's report**, in the result panel and in the domain's `wiki/log.md` under that ingest's heading. A line saying a page was "redirected to canonical" means its content went into a page that already existed, possibly in the other folder. An existing page keeps its folder, so if a product sits in `concepts/`, move the file to `entities/` by hand.
+2. **Search the wiki** for a similar name, in both `entities/` and `concepts/`.
+3. **Wiki health** on the domain's page: broken links to the missing name mean pages mention it and nothing was written for it.
+4. **Fix it**: re-ingest the source, which is always safe, or ask your agent through the MCP to create the page.
+
+Asking Chat why does not help. Chat reads the wiki's pages and the domain's schema, but it cannot see how an ingest ran or the app's own instructions, and since v3.81.0 it is told to say so and point you to the report and Wiki health.
+
 ## How do I open and read a wiki page?
 
 Reading a page is not a place you navigate to. It is an overlay that slides over whatever you were doing. Two ways in: click a citation under a chat answer, or click a row in **Pages** on a domain's page. Close it with **Escape**, a click on the dimmed area outside it, or its cross. It never survives moving to another rail item.
