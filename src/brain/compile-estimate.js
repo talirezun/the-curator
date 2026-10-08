@@ -114,6 +114,7 @@ import {
   getModelPrice,
   isFreeModel,
   listOfferableModels,
+  estimateCallRates,
 } from './llm.js';
 // NAMESPACE import for the fallback-rung lookup (v3.72.0), for the reason
 // chat.js records at its own namespace import: a member that is renamed or
@@ -452,11 +453,17 @@ export async function estimateCompileCost(domain, conversationId) {
   const priceKnown = Boolean(price);
   // F5 — the rung a model-not-found walk would bill, or null.
   const fallback = provider ? compileFallbackRung(provider, model) : null;
+  // TIERED PRICE (2026-10-08): a compile is one call whose prompt is
+  // `promptChars`, so a tiered model (claude-haiku-5-5) is quoted at the tier
+  // that prompt could reach — llm.js's `estimateCallRates`, which takes the
+  // upper tier whenever the estimate is within its safety margin of the
+  // threshold. A flat model's rate is `price`, unchanged.
+  const rate = priceKnown ? (estimateCallRates(model, promptChars, CHARS_PER_TOKEN) || price) : null;
   const usdLow = priceKnown
-    ? round6((inputTokens.low / 1e6) * price.input + (outputTokens.low / 1e6) * price.output)
+    ? round6((inputTokens.low / 1e6) * rate.input + (outputTokens.low / 1e6) * rate.output)
     : null;
   const usdHigh = priceKnown
-    ? round6((inputTokens.high / 1e6) * price.input + (outputTokens.high / 1e6) * price.output)
+    ? round6((inputTokens.high / 1e6) * rate.input + (outputTokens.high / 1e6) * rate.output)
     : null;
 
   return {

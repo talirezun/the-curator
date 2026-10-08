@@ -279,6 +279,7 @@
 import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 import { docsUrl } from './shared/docs-links.js';
 import { createSidebarDrawer } from './shared/sidebar-drawer.js';
+import { checkModelRetirement } from './shared/model-retirement.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -3448,6 +3449,12 @@ function boot() {
   // Fire-and-forget for the markBooted() reason documented below: the
   // function is async and never throws, and it is not awaited.
   checkOtherInstances();
+
+  // Retired-model migration (2026-10-08): move this browser's remembered chat
+  // pick forward if it names a retired model, and show the one-time note for
+  // that and for any build pick the server moved. Same fire-and-forget shape
+  // as the line above: async, never throws, not awaited.
+  checkModelRetirement();
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs

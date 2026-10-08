@@ -12,7 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel } from './config.js';
+import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel, setSelectedModel, addModelMigrationNotes } from './config.js';
 // RETRY_CLASSIFIER_TOKENS / MODEL_NOT_FOUND_CLAUSES are the census of message
 // substrings the recovery classifiers below key on. They are DECLARED in the
 // adapter, beside the neutralisers that must strip them, and imported here so
@@ -358,9 +358,10 @@ const ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS = {
   'claude-haiku-5-5':          128000,
   'claude-haiku-4-5-20251001':  64000,   // dated snapshot the alias resolves to
   'claude-sonnet-5':           128000,   // fallback rung 1
-  'claude-sonnet-4-6':         128000,   // fallback rung 2
-  'claude-sonnet-4-5':          64000,   // fallback rung 3 — NOT 128k, despite being Sonnet
-  'claude-sonnet-4-5-20250929': 64000,   // dated snapshot the alias resolves to
+  // GET /v1/models/<id> read 2026-10-08: max_tokens 128000, max_input_tokens
+  // 1000000 for both. Undated ids; no dated snapshot listed.
+  'claude-sonnet-5-5':         128000,
+  'claude-opus-5-5':           128000,
   // Offerable-only ids (never reached by the fallback chain, pickable by a user).
   // The pattern here is GENERATIONAL, not chronological: everything in the "4.5
   // generation" caps at 64,000 and everything 4.6-and-later at 128,000 — which is
@@ -371,6 +372,13 @@ const ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS = {
   // has already been bitten twice by exactly that (the price-tier heuristic below,
   // and the pre-2026-08-24 flat 64000 clamp that silently halved Sonnet's ceiling).
   'claude-opus-5':             128000,
+  // RETIRED from the catalogue on 2026-10-08 (see RETIRED_MODELS) — no price,
+  // not offerable, not a rung. Their CEILINGS stay, because a ceiling is a fact
+  // about the API that is still true, and an `LLM_MODEL` developer override
+  // naming one would otherwise be clamped to the conservative 64,000.
+  'claude-sonnet-4-6':         128000,
+  'claude-sonnet-4-5':          64000,   // NOT 128k, despite being Sonnet
+  'claude-sonnet-4-5-20250929': 64000,   // dated snapshot the alias resolves to
   'claude-opus-4-8':           128000,
   'claude-opus-4-5':            64000,   // NOT 128k — the 4.5 generation caps low
 };
@@ -691,10 +699,23 @@ const FALLBACK_CHAINS = {
   // cheapest-first among models verified alive today; 4.6 and 4.5 tie on price,
   // and the forward-in-time rule breaks the tie toward 4.6 (which also carries
   // the larger 128k output ceiling).
+  //
+  // ── 2026-10-08: REBUILT ON THE 5.5 GENERATION ──────────────────────────
+  // claude-sonnet-4-6 and claude-sonnet-4-5 were retired from the catalogue
+  // (two generations behind Sonnet 5.5), so they left the chain with it.
+  // The chain is still cheapest-first among MEASURED, PRICED, live models, every
+  // rung newer than the default it backs up, ties broken newest-first:
+  //   • claude-haiku-5-5 — $0.10/$0.50 up to 100k prompt tokens, $0.50/$2.50
+  //     over; even its upper tier is half the default's rate. TIERED, and
+  //     priced per call by the tier-aware path (priceUsageUsd). Measured for
+  //     the build lane 2026-10-08. The natural successor of the default, and
+  //     there is now a cheaper Haiku, so the chain no longer jumps to Sonnet.
+  //   • claude-sonnet-5-5 — $2/$10, the newest model at that price.
+  //   • claude-sonnet-5   — $2/$10, tie on price, older.
   anthropic: [
-    'claude-sonnet-5',              // $2/$10 — cheapest live non-Haiku AND the newest
-    'claude-sonnet-4-6',            // $3/$15 — tie on price with 4.5, newer, 128k output
-    'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output
+    'claude-haiku-5-5',             // $0.10/$0.50 (≤100k prompt), $0.50/$2.50 above — tiered, newest Haiku
+    'claude-sonnet-5-5',            // $2/$10 — newest at this price
+    'claude-sonnet-5',              // $2/$10 — tie on price, older
   ],
   /**
    * A fallback chain picks FOR the user, silently, on the day their model
@@ -830,8 +851,13 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // introductory framing been current, hard-coding $2/$10 would have inverted
   // this chain's cost ordering one week later.
   'claude-sonnet-5':           { input: 2.00, output: 10.00 },
-  'claude-sonnet-4-6':         { input: 3.00, output: 15.00 },
-  'claude-sonnet-4-5':         { input: 3.00, output: 15.00 },
+  // Read 2026-10-08 off the live pricing page: $2/$10, NOT tiered (the page's
+  // long-context section names Haiku 5.5 as the only tiered model). Cache hits
+  // bill at 0.05x base input on this model — see CACHE_READ_MULTIPLIER_BY_MODEL.
+  'claude-sonnet-5-5':         { input: 2.00, output: 10.00 },
+  // Read 2026-10-08: $4/$20 — CHEAPER than claude-opus-5's $5/$25, a second
+  // within-family price drop. Not tiered; cache hits 0.05x.
+  'claude-opus-5-5':           { input: 4.00, output: 20.00 },
   // Offerable-only (never a fallback rung). ⚠ The headline $5 UNDERSTATES what
   // these cost against a Haiku baseline for two of the three: claude-opus-5 and
   // claude-opus-4-8 use a newer tokenizer measured at 1.329x more input tokens
@@ -841,8 +867,9 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // the TEXT-to-token conversion, not of the published rate — folding it in
   // would make this table disagree with the provider's own invoice.
   'claude-opus-5':             { input: 5.00, output: 25.00 },
-  'claude-opus-4-8':           { input: 5.00, output: 25.00 },
-  'claude-opus-4-5':           { input: 5.00, output: 25.00 },
+  // claude-sonnet-4-6/4-5 ($3/$15) and claude-opus-4-8/4-5 ($5/$25) were
+  // RETIRED from the catalogue on 2026-10-08 — see RETIRED_MODELS — and their
+  // prices removed, per this table's "only the ids we ship" contract.
 
   // ── OpenRouter (PAID entries only) ──
   // Read verbatim from OpenRouter's public catalogue on 2026-08-27 and
@@ -993,12 +1020,10 @@ const PRICE_VERIFIED_ON = Object.freeze({
   'gemini-3.5-flash':                '2026-09-25',
   'claude-haiku-4-5':                '2026-10-08',
   'claude-haiku-5-5':                '2026-10-08',
+  'claude-sonnet-5-5':               '2026-10-08',
+  'claude-opus-5-5':                 '2026-10-08',
   'claude-sonnet-5':                 '2026-10-08',
-  'claude-sonnet-4-6':               '2026-10-08',
-  'claude-sonnet-4-5':               '2026-10-08',
   'claude-opus-5':                   '2026-10-08',
-  'claude-opus-4-8':                 '2026-10-08',
-  'claude-opus-4-5':                 '2026-10-08',
   'ibm-granite/granite-4.0-h-micro': '2026-09-25',
   'upstage/solar-pro4':              '2026-09-25',
   'z-ai/glm-5.3-flash':              '2026-09-25',
@@ -1031,12 +1056,10 @@ const MEASURED_ON = Object.freeze({
   'gemini-3.5-flash':                '2026-08-26',
   'claude-haiku-4-5':                '2026-08-26',
   'claude-haiku-5-5':                '2026-10-08',
+  'claude-sonnet-5-5':               '2026-10-08',
+  'claude-opus-5-5':                 '2026-10-08',
   'claude-sonnet-5':                 '2026-08-26',
-  'claude-sonnet-4-6':               '2026-08-26',
-  'claude-sonnet-4-5':               '2026-08-26',
   'claude-opus-5':                   '2026-08-26',
-  'claude-opus-4-8':                 '2026-08-26',
-  'claude-opus-4-5':                 '2026-08-26',
   'ibm-granite/granite-4.0-h-micro': '2026-08-27',
   'upstage/solar-pro4':              '2026-08-27',
   'z-ai/glm-5.3-flash':              '2026-08-28',
@@ -1310,11 +1333,22 @@ function registerDynamicPrice(modelId, price) {
  * The mechanism exists so a tiered model cannot be admitted by omission.
  */
 /**
- * The ABOVE-THRESHOLD rate of each tiered static model, as DATA. Nothing on the
- * money path reads it — a tiered model is chat-only precisely so that nothing
- * has to — but it is the provider's published fact, the offer entry's
- * `priceTierThresholdTokens` is DERIVED from it, and the price-truth suite
- * checks a note's "rises 5x" against it rather than against prose.
+ * The ABOVE-THRESHOLD rate of each tiered static model, as DATA — and, since
+ * 2026-10-08 (the release that let claude-haiku-5-5 build a wiki), READ BY THE
+ * MONEY PATH: `priceUsageUsd`, `rateForPromptTokens` and `estimateRates` below
+ * are the one place a tiered rate is resolved, and every cost surface (the
+ * batch estimate and budget cap, `chargeForItem`, ai-run's finished-run price,
+ * chat's recorded answer price, Health/Compile estimates) goes through them.
+ * The offer entry's `priceTierThresholdTokens` and `priceAbove` are DERIVED
+ * from this table, and the price-truth suite checks a note's "rises 5x"
+ * against it rather than against prose.
+ *
+ * A model listed here is FULLY SPECIFIED: a threshold and the upper-tier
+ * {input, output}. That is what `defineOfferableModel` requires before a
+ * tiered model may enter the build lane — a model that is tiered by any other
+ * route (OpenRouter's `tiered: true`, which reports THAT a rate changes but
+ * not where) has no schedule here, cannot be priced per call, and stays
+ * chat-only.
  */
 const TIERED_PRICES = Object.freeze({
   // The first entry (2026-10-08). platform.claude.com/docs/en/about-claude/pricing
@@ -1348,6 +1382,189 @@ function hasTieredPricing(modelId, spec) {
   if (spec && spec.tiered === true) return true;
   if (spec && Number.isFinite(spec.priceTierThresholdTokens)) return true;
   return typeof modelId === 'string' && TIERED_PRICE_MODELS.has(modelId);
+}
+
+/**
+ * ── THE TIER-AWARE MONEY PATH (2026-10-08) ───────────────────────────────────
+ *
+ * Every function that turns tokens into dollars, or quotes a rate for an
+ * estimate, resolves a TIERED model here. Flat models fall straight through to
+ * `resolveModelPrice`, so for them the answers are identical to before.
+ *
+ * WHAT COUNTS AS "THE PROMPT". The provider's page says a Haiku 5.5 "prompt of
+ * over 100,000 tokens pays higher prices" without naming which usage fields
+ * make up the prompt. We count EVERY input-side token the call reported —
+ * `inputTokens + cachedReadTokens + cacheWriteTokens`, the total prompt size by
+ * the provider-neutral convention on normalizeGeminiUsage — because that is
+ * the reading that crosses the line EARLIEST: if the provider counts fewer
+ * fields, we quote the upper tier on a few calls it bills at the lower one,
+ * never the reverse. Strictly OVER the threshold pays the upper tier (the page
+ * says "up to 100,000" and "over 100,000"), so exactly 100,000 is the lower.
+ *
+ * ALL OF A CALL'S TOKENS MOVE TOGETHER. Above the threshold the page lists a
+ * different input, output, cache-write and cache-read figure for the whole
+ * request; there is no split of one call across two tiers. So a call is
+ * classified once, by its own prompt, and every one of its tokens is priced at
+ * that tier.
+ */
+
+/** The full tier schedule of a tiered model, or null. */
+export function priceTierFor(modelId) {
+  if (typeof modelId !== 'string' || !Object.hasOwn(TIERED_PRICES, modelId)) return null;
+  return TIERED_PRICES[modelId];
+}
+
+/** Total prompt size of ONE call's normalised usage (all input-side fields). */
+export function callPromptTokens(u) {
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  if (!u || typeof u !== 'object') return 0;
+  return n(u.inputTokens) + n(u.cachedReadTokens) + n(u.cacheWriteTokens);
+}
+
+/** Did this ONE call cross its model's price threshold? false for a flat model. */
+export function isAboveTierCall(modelId, u) {
+  const tier = priceTierFor(modelId);
+  return !!tier && callPromptTokens(u) > tier.thresholdTokens;
+}
+
+/**
+ * The {input, output} rate a call with this prompt size is billed at. For a
+ * flat model, `resolveModelPrice`. For a tiered one: the lower tier at or under
+ * the threshold, the upper tier over it, and — the conservative half — the
+ * UPPER tier when the prompt size is unknown (`null`, `undefined`, NaN).
+ */
+export function rateForPromptTokens(modelId, promptTokens, atMs = Date.now()) {
+  const base = resolveModelPrice(modelId, atMs);
+  if (!base) return null;
+  const tier = priceTierFor(modelId);
+  if (!tier) return base;
+  const known = typeof promptTokens === 'number' && Number.isFinite(promptTokens);
+  return (known && promptTokens <= tier.thresholdTokens) ? base : tier.above;
+}
+
+/**
+ * The rate to ESTIMATE with, before any call has run, given the largest prompt
+ * a planned call could carry (or null when the planner cannot bound it).
+ * Conservative by construction: any call that COULD cross the line is quoted
+ * at the upper tier. Returns `{input, output, tiered, aboveTier}` or null.
+ */
+export function estimateRates(modelId, maxPromptTokens = null, atMs = Date.now()) {
+  const r = rateForPromptTokens(modelId, maxPromptTokens, atMs);
+  if (!r) return null;
+  const tiered = !!priceTierFor(modelId);
+  return { input: r.input, output: r.output, tiered, aboveTier: tiered && r !== resolveModelPrice(modelId, atMs) };
+}
+
+/**
+ * How far BELOW the threshold an ESTIMATED call must sit before an estimate may
+ * quote it at the lower tier. An estimate's prompt size comes from a character
+ * count divided by a chars-per-token constant — a proxy measured within roughly
+ * ±15% (compile-estimate.js records 0.855x-1.108x on seven runs) and sized on an
+ * older tokenizer. A 1.5x margin means a planned call is quoted at the upper
+ * tier whenever its estimated prompt exceeds two thirds of the threshold
+ * (66,667 tokens for Haiku 5.5): the "could cross" reading, so an estimate,
+ * and the budget cap built from it, never quotes the cheap tier for a call that
+ * might bill the dear one. It is never used to CHARGE — a finished call is
+ * priced by its own reported prompt.
+ */
+export const TIER_ESTIMATE_MARGIN = 1.5;
+
+/** The measured input-side tokenizer premium of an offerable model, else 1. */
+export function tokenizerFactorOf(modelId) {
+  for (const provider of KNOWN_PROVIDERS) {
+    const e = findOfferableModel(provider, modelId);
+    if (e && typeof e.tokenizerFactor === 'number' && Number.isFinite(e.tokenizerFactor) && e.tokenizerFactor >= 1) {
+      return e.tokenizerFactor;
+    }
+  }
+  return 1;
+}
+
+/**
+ * Rate for ONE PLANNED call whose prompt is `promptChars` characters, before it
+ * runs: `{input, output, tiered, aboveTier}` or null. The prompt-token figure is
+ * `promptChars / charsPerToken`, times the model's measured tokenizer premium,
+ * times TIER_ESTIMATE_MARGIN — and an unknown size quotes the upper tier.
+ */
+export function estimateCallRates(modelId, promptChars, charsPerToken, atMs = Date.now()) {
+  if (!priceTierFor(modelId)) return estimateRates(modelId, null, atMs);
+  const ok = typeof promptChars === 'number' && Number.isFinite(promptChars) && promptChars >= 0
+    && typeof charsPerToken === 'number' && Number.isFinite(charsPerToken) && charsPerToken > 0;
+  const tokens = ok ? (promptChars / charsPerToken) * tokenizerFactorOf(modelId) * TIER_ESTIMATE_MARGIN : null;
+  return estimateRates(modelId, tokens, atMs);
+}
+
+/**
+ * Cache-read multiplier overrides, per MODEL, read off the live pricing page on
+ * 2026-10-08: "Cache read (hit) 0.1x base input price (… 0.05x on Claude Opus
+ * 5.5 and Claude Sonnet 5.5)". Every other Anthropic model reads at 0.1x.
+ */
+const CACHE_READ_MULTIPLIER_BY_MODEL = Object.freeze({
+  'claude-sonnet-5-5': 0.05,
+  'claude-opus-5-5':   0.05,
+});
+
+/**
+ * The cached-read and cache-write multipliers on a model's BASE INPUT rate (of
+ * the tier the call is billed at). Anthropic: 0.1x / 1.25x from the provider's
+ * page (0.05x read on the two models above). Every other provider: full price
+ * on reads — OpenRouter MEASURED at full price, Gemini unmeasured and therefore
+ * charged high — and 1.25x on writes, which errs upward. This is the rule
+ * `chargeForItem`'s and ai-run's private copies stated; they now call this.
+ */
+export function cacheRatesFor(modelId) {
+  if (typeof modelId === 'string' && modelId && isOfferableModel('anthropic', modelId)) {
+    const read = Object.hasOwn(CACHE_READ_MULTIPLIER_BY_MODEL, modelId)
+      ? CACHE_READ_MULTIPLIER_BY_MODEL[modelId] : 0.1;
+    return { read, write: 1.25 };
+  }
+  return { read: 1, write: 1.25 };
+}
+
+/**
+ * USD for normalised usage on one model: ONE call, or a running total from
+ * `makeUsageAccumulator` (ingest.js). THE one tier-aware formula.
+ *
+ *   • free model (membership)   → 0
+ *   • no published price        → null
+ *   • flat model                → each token class at its rate
+ *   • tiered model, and usage carries `aboveTier` (the accumulator's per-call
+ *     split: the tokens of the calls that crossed) → the rest at the lower
+ *     tier, `aboveTier` at the upper one
+ *   • tiered model, a single call (`calls === 1`) → the tier of its own prompt
+ *   • tiered model, a total of unknown composition → ALL at the upper tier.
+ *     Conservative on purpose: an aggregate that cannot say which calls crossed
+ *     is never priced at the rate that would flatter it.
+ */
+export function priceUsageUsd(modelId, usage, atMs = Date.now()) {
+  if (typeof modelId !== 'string' || !modelId || !usage || typeof usage !== 'object') return null;
+  if (isFreeModel(modelId)) return 0;
+  const base = resolveModelPrice(modelId, atMs);
+  if (!base) return null;
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  // Resolved only when a cache term exists: `cacheRatesFor` reads the offer
+  // catalogue, and `defineOfferableModel` calls this function WHILE that
+  // catalogue is being built (its tier self-check, cache-free by design).
+  let mult = null;
+  const rates = () => (mult || (mult = cacheRatesFor(modelId)));
+  const part = (u, r) => (n(u.inputTokens) / 1e6) * r.input
+    + (n(u.outputTokens) / 1e6) * r.output
+    + (n(u.cachedReadTokens) ? (n(u.cachedReadTokens) / 1e6) * r.input * rates().read : 0)
+    + (n(u.cacheWriteTokens) ? (n(u.cacheWriteTokens) / 1e6) * r.input * rates().write : 0);
+  const tier = priceTierFor(modelId);
+  if (!tier) return part(usage, base);
+  const split = usage.aboveTier;
+  if (split && typeof split === 'object') {
+    const below = {
+      inputTokens: Math.max(0, n(usage.inputTokens) - n(split.inputTokens)),
+      outputTokens: Math.max(0, n(usage.outputTokens) - n(split.outputTokens)),
+      cachedReadTokens: Math.max(0, n(usage.cachedReadTokens) - n(split.cachedReadTokens)),
+      cacheWriteTokens: Math.max(0, n(usage.cacheWriteTokens) - n(split.cacheWriteTokens)),
+    };
+    return part(below, base) + part(split, tier.above);
+  }
+  if (usage.calls === 1) return part(usage, isAboveTierCall(modelId, usage) ? tier.above : base);
+  return part(usage, tier.above);
 }
 
 /**
@@ -1413,14 +1630,8 @@ export const DOMINATED_MODELS = Object.freeze({
       'truncation that the output-token-limit ladder could route around. gemini-2.5-flash was 3/3 ' +
       'clean on the identical probe and plans wider outlines (17-19 pages vs 12-16).',
   }),
-  'claude-opus-4-5': Object.freeze({
-    dominatedBy: 'claude-opus-5',
-    reason:
-      'Identical published price ($5/$25) to claude-opus-5 and behind it on all three measured axes: ' +
-      'half the output ceiling (64,000 vs 128,000), fenced JSON that only parses via jsonrepair ' +
-      '(3/3) where opus-5 returned bare JSON (3/3), and 12-13 outline pages against opus-5\'s 25-27. ' +
-      'It also plans more thinly than claude-sonnet-5 does at two-fifths of the price.',
-  }),
+  // 'claude-opus-4-5' (dominated by claude-opus-5) left this list when it was
+  // retired from the catalogue on 2026-10-08 — see RETIRED_MODELS.
 });
 
 /**
@@ -1444,19 +1655,98 @@ export const DOMINATED_MODELS = Object.freeze({
  * probe will not reproduce the failures this table records), then add its price,
  * cap and measured fields together.
  */
-export const AWAITING_MEASUREMENT = Object.freeze({
-  'claude-opus-4-7': Object.freeze({
-    reason:
-      'Provider docs give $5/$25 and a 128,000 output ceiling, and describe the newer 1.329x ' +
-      'tokenizer — but it has never been run against the real ingest outline prompt, so its JSON ' +
-      'reliability, outline coverage and thinking behaviour are all unmeasured.',
-  }),
-  'claude-opus-4-6': Object.freeze({
-    reason:
-      'Provider docs give $5/$25 and a 128,000 output ceiling; never probed live. Same gap as ' +
-      'claude-opus-4-7 — nothing about its behaviour under a real ingest prompt is known.',
-  }),
+// EMPTY since 2026-10-08: its two entries, claude-opus-4-7 and claude-opus-4-6,
+// are two generations behind Opus 5.5 and were RETIRED rather than measured
+// (see RETIRED_MODELS). The mechanism stays, for the next real-but-unprobed id.
+export const AWAITING_MEASUREMENT = Object.freeze({});
+
+/**
+ * ── RETIRED_MODELS: taken out of the catalogue BY POLICY, not because they 404 ─
+ *
+ * The maintainer's rule (2026-10-08): The Curator offers the CURRENT Anthropic
+ * generation and the one immediately before it, and nothing older — Haiku 5.5 /
+ * 4.5 (there is no Haiku 5), Sonnet 5.5 / 5, Opus 5.5 / 5. Anthropic only;
+ * Gemini and OpenRouter are untouched. Every id below still ANSWERS on the API
+ * today (GET /v1/models listed all of them on 2026-10-08) — this is a
+ * different idea from test-chat-model.js §9's RETIRED list, which is ids that
+ * 404. Neither the Fable line (claude-fable-5, -5-1) nor any Mythos model was
+ * ever in the catalogue, so nothing here concerns them.
+ *
+ * Removing a model from OFFERABLE_MODELS already made a stored pick of it fall
+ * back to the provider DEFAULT on the read side — which would have quietly
+ * moved a user who chose Opus 4.8 down to Haiku 4.5. The maintainer's choice
+ * is the opposite direction: FORWARD, to the same family's newest model. So:
+ *
+ *   • READ side — `storedSelection` maps a retired pick to its successor before
+ *     anything else sees it, so no call ever runs on the default by accident.
+ *   • WRITE side — `migrateRetiredModelSelections()` (called at server start)
+ *     rewrites the stored pick once and records a one-time note, which the app
+ *     shows until the user dismisses it.
+ *   • BROWSER — the chat composer's remembered pick (localStorage
+ *     `curator-next-chat-model`) is migrated by the same map, served on
+ *     GET /api/config/model-retirement.
+ *
+ * A successor must be offerable AND build-lane (asserted in test-chat-model):
+ * a build pick moved forward must still be able to build.
+ */
+export const RETIRED_MODELS = Object.freeze({
+  'claude-sonnet-4-6': Object.freeze({ provider: 'anthropic', label: 'Sonnet 4.6', successor: 'claude-sonnet-5-5', retiredOn: '2026-10-08' }),
+  'claude-sonnet-4-5': Object.freeze({ provider: 'anthropic', label: 'Sonnet 4.5', successor: 'claude-sonnet-5-5', retiredOn: '2026-10-08' }),
+  'claude-opus-4-8':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.8',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
+  'claude-opus-4-7':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.7',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
+  'claude-opus-4-6':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.6',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
+  'claude-opus-4-5':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.5',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
 });
+
+/** The successor a retired id migrates to, or null (not retired / successor not offered). */
+export function retiredModelSuccessor(provider, modelId) {
+  if (typeof modelId !== 'string' || !Object.hasOwn(RETIRED_MODELS, modelId)) return null;
+  const r = RETIRED_MODELS[modelId];
+  if (r.provider !== provider) return null;
+  return isOfferableModel(provider, r.successor) ? r.successor : null;
+}
+
+/** Display label of an offerable model, or the id. */
+function labelOfOffer(provider, id) {
+  const e = findOfferableModel(provider, id);
+  return e && e.label ? e.label : id;
+}
+
+/**
+ * The note shown once after a migration: what changed and why, in one line.
+ * Built here so the server note and the browser note use the same words.
+ */
+export function retirementNoteText(from, to, lane) {
+  const r = Object.hasOwn(RETIRED_MODELS, from) ? RETIRED_MODELS[from] : null;
+  const fromLabel = r ? r.label : from;
+  const toLabel = r ? labelOfOffer(r.provider, to) : to;
+  const where = lane === 'chat' ? 'Your chat model' : 'The model that builds your wiki';
+  return `${where} moved from ${fromLabel} to ${toLabel}: The Curator now offers only the current Anthropic ` +
+    `generation and the one before it, so ${fromLabel} was retired and you were moved to the same family's newest model.`;
+}
+
+/**
+ * Rewrite every stored build pick that names a retired model to its successor,
+ * ONCE, and record a one-time note per change. Idempotent: after it runs no
+ * stored pick names a retired id, so a second call changes nothing. Never
+ * throws — it runs at server start. Returns the notes it recorded.
+ */
+export function migrateRetiredModelSelections(now = new Date()) {
+  const notes = [];
+  try {
+    for (const provider of KNOWN_PROVIDERS) {
+      const from = getSelectedModel(provider);
+      const to = retiredModelSuccessor(provider, from);
+      if (!to) continue;
+      setSelectedModel(provider, to);
+      notes.push({ lane: 'build', provider, from, to, at: now.toISOString(), text: retirementNoteText(from, to, 'build') });
+    }
+    if (notes.length) addModelMigrationNotes(notes);
+  } catch (err) {
+    console.error(`[llm] retired-model migration failed (ignored): ${err && err.message}`);
+  }
+  return notes;
+}
 
 /**
  * The three suitability verdicts an offerable model can carry.
@@ -1731,14 +2021,47 @@ function defineOfferableModel(provider, spec, opts = {}) {
       '`jsonRaw` must be a boolean or omitted');
   }
 
-  // A model whose rate changes above a prompt-size threshold cannot be
-  // described by the single flat {input, output} pair every cost surface in
-  // this app consumes. The build lane is the only lane that can cross such a
-  // threshold, so tiered models are refused there STRUCTURALLY rather than by
-  // convention. See TIERED_PRICE_MODELS for the full reasoning.
+  // ── TIERED PRICE: ADMITTED TO BUILD ONLY THROUGH THE TIER-AWARE PATH ─────
+  // Until 2026-10-08 this REFUSED every tiered model outside chat, because
+  // every cost surface assumed one flat {input, output}. The money path is now
+  // tier-aware (`priceUsageUsd`, `estimateCallRates` — see TIERED_PRICES), so
+  // the refusal became a GUARANTEE, still structural and still at module load:
+  //
+  //   1. a build-lane tiered model must be HAND-TYPED (never fetched) and carry
+  //      a FULL schedule in TIERED_PRICES — threshold and upper-tier rates, the
+  //      upper at least the lower. OpenRouter's `tiered: true` says THAT a rate
+  //      changes but not where, so such a model can never be priced per call
+  //      and stays chat-only;
+  //   2. a declared `priceTierThresholdTokens` must equal that schedule's;
+  //   3. the tier-aware function must actually APPLY the schedule: one
+  //      synthetic call just under the threshold and one just over are priced
+  //      through `priceUsageUsd` here, and must come out at exactly the lower
+  //      and the upper tier. A future edit that flattens the formula, or a
+  //      tiered model whose price the function does not see, fails to load
+  //      rather than quoting a fifth of the bill on a large ingest.
   const tiered = hasTieredPricing(spec.id, spec);
-  need(!(tiered && buildLane),
-    'has tiered (long-context) pricing, so a flat price would UNDER-STATE the bill on exactly the large ingests the build lane produces. Such a model may only be admitted as `suitability: "chat-only"`');
+  if (tiered) {
+    const schedule = priceTierFor(spec.id);
+    const base = Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, spec.id) ? MODEL_PRICES_USD_PER_MTOK[spec.id] : null;
+    const fullSchedule = !!schedule && !!base && !opts.dynamic
+      && Number.isInteger(schedule.thresholdTokens) && schedule.thresholdTokens > 0
+      && schedule.above && Number.isFinite(schedule.above.input) && Number.isFinite(schedule.above.output)
+      && schedule.above.input >= base.input && schedule.above.output >= base.output;
+    need(!buildLane || fullSchedule,
+      'has tiered (long-context) pricing but no FULL tier schedule in TIERED_PRICES (threshold + upper-tier rates, hand-typed). Without one the tier-aware money path cannot price it per call, so a flat price would UNDER-STATE the bill on exactly the large ingests the build lane produces. Such a model may only be admitted as `suitability: "chat-only"`');
+    need(!Number.isFinite(spec.priceTierThresholdTokens) || !schedule
+      || spec.priceTierThresholdTokens === schedule.thresholdTokens,
+      '`priceTierThresholdTokens` disagrees with its TIERED_PRICES schedule — derive it from the table, never re-type it');
+    if (fullSchedule) {
+      const under = priceUsageUsd(spec.id, { calls: 1, inputTokens: schedule.thresholdTokens, outputTokens: 1e6 });
+      const over = priceUsageUsd(spec.id, { calls: 1, inputTokens: schedule.thresholdTokens + 1, outputTokens: 1e6 });
+      const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b));
+      const wantUnder = (schedule.thresholdTokens / 1e6) * base.input + base.output;
+      const wantOver = ((schedule.thresholdTokens + 1) / 1e6) * schedule.above.input + schedule.above.output;
+      need(typeof under === 'number' && near(under, wantUnder) && typeof over === 'number' && near(over, wantOver),
+        `is tiered, and the tier-aware money path (priceUsageUsd) does not apply its schedule: a call at the threshold priced ${under} (want ${wantUnder}), one token over priced ${over} (want ${wantOver})`);
+    }
+  }
 
   need(hasKnownPricePosture(spec.id, spec),
     'no known price posture — a model may not be offerable unless it is either priced or explicitly free (see FREE_MODELS; a free model must NEVER be recorded as {input: 0, output: 0})');
@@ -1840,8 +2163,25 @@ function defineOfferableModel(provider, spec, opts = {}) {
      * Present so a UI can say so; a model carrying one can only ever be
      * 'chat-only' (see TIERED_PRICE_MODELS).
      */
-    priceTierThresholdTokens: Number.isFinite(spec.priceTierThresholdTokens)
-      ? spec.priceTierThresholdTokens : null,
+    priceTierThresholdTokens: priceTierFor(spec.id)
+      ? priceTierFor(spec.id).thresholdTokens
+      : (Number.isFinite(spec.priceTierThresholdTokens) ? spec.priceTierThresholdTokens : null),
+    /**
+     * The UPPER-tier {input, output} of a tiered model (USD per 1M), billed on
+     * every token of a call whose prompt is over `priceTierThresholdTokens`, or
+     * null for a flat model. Read from TIERED_PRICES, never re-typed. The
+     * composer's mirrored cost formula reads it (views/chat.js).
+     */
+    priceAbove: priceTierFor(spec.id)
+      ? { input: priceTierFor(spec.id).above.input, output: priceTierFor(spec.id).above.output }
+      : null,
+    /**
+     * Cache-read multiplier on the base input rate when it differs from the
+     * provider's usual one (0.05x on claude-sonnet-5-5 / claude-opus-5-5), else
+     * null. Mirrors CACHE_READ_MULTIPLIER_BY_MODEL for the composer's copy.
+     */
+    cacheReadMultiplier: Object.hasOwn(CACHE_READ_MULTIPLIER_BY_MODEL, spec.id)
+      ? CACHE_READ_MULTIPLIER_BY_MODEL[spec.id] : null,
     /** Last day of the current promotional price (ISO date), or null. */
     promotionUntilIso: promo ? promo.untilIso : null,
     /** First day the standard price applies (ISO date), or null. */
@@ -2136,21 +2476,30 @@ export const OFFERABLE_MODELS = Object.freeze({
       // 4/4 bare JSON single-pass, but 5 of 15 multi-phase responses fenced.
       jsonRaw: false,
       tokenizerFactor: 1.329,
-      suitability: 'chat-only',
-      priceTierThresholdTokens: TIERED_PRICES['claude-haiku-5-5'].thresholdTokens,
+      // BUILD LANE since 2026-10-08 — admitted only because the money path is
+      // now tier-aware (see TIERED_PRICES / priceUsageUsd): each call is
+      // priced at the tier of its own prompt, and estimates quote the upper
+      // tier for any call that could cross.
+      suitability: 'general',
+      // The 34,000-character source of the 2026-10-08 sessions (NOT the
+      // 2026-08-26 source the older entries were measured on): 21-25 pages.
+      outlinePagesLow: 21, outlinePagesHigh: 25,
+      // Not a flag — a COST fact that must render unfolded beside the price.
       cautionReason:
-        'Chat only: its price rises 5x on prompts over 100,000 tokens, which large ingests cross.',
+        'Price rises 5x on prompts over 100,000 tokens, which large-wiki ingests cross.',
       note:
-        'Offered for chat only, because of how it is priced: $0.10/$0.50 per 1M tokens on prompts up to ' +
-        '100,000 tokens and $0.50/$2.50 above, and the ingest outline of a large wiki crosses that line — ' +
-        'one flat rate, which is all this app can quote, would understate exactly those calls. Measured ' +
-        'on the real ingest pipeline anyway: an article announcing a product got its own entity page 4/4 ' +
-        '(Haiku 4.5: 4/4 on the same article), a 34,000-character source 2/2 with 21-25 pages written ' +
-        '(Haiku 4.5: 20-21); ' +
-        'bare JSON 4/4 single-pass but 10 of 15 multi-phase responses (the rest fenced, all repaired). ' +
-        'It runs adaptive thinking on almost every call, billed as output — about twice Haiku 4.5\'s ' +
-        'output tokens — and its newer tokenizer produced 1.329x more input tokens than Haiku 4.5 on the ' +
-        'same prose; even so, each ingest cost a fifth to a sixth of what Haiku 4.5 billed on the same sources.',
+        'The cheapest Anthropic model: $0.10/$0.50 per 1M tokens on prompts up to 100,000 tokens and ' +
+        '$0.50/$2.50 on prompts over that — the ingest outline of a large wiki crosses the line, and ' +
+        'those calls are billed (and estimated) at the higher rate; even then it is half the price of ' +
+        'Haiku 4.5. Measured on the real ingest pipeline: an article announcing a product got its own ' +
+        'entity page 4/4 (Haiku 4.5: 4/4), a 34,000-character source 2/2 with 21-25 pages written ' +
+        '(Haiku 4.5: 20-21), and into a 3,300-page wiki, where its first call (120,820 prompt tokens) ' +
+        'crossed the threshold, 2/2 ingests completed with 32-39 pages and that one call charged at the ' +
+        'higher tier: $0.09-0.10 an ingest against $0.22 on Haiku 4.5 (22 pages). Bare JSON 4/4 ' +
+        'single-pass, 24 of 35 multi-phase responses (the rest fenced, all repaired). It runs adaptive thinking on almost every call, ' +
+        'billed as output — about twice Haiku 4.5\'s output tokens — and its newer tokenizer produced ' +
+        '1.329x more input tokens than Haiku 4.5 on the same prose; even so, each ingest cost a fifth ' +
+        'to a sixth of what Haiku 4.5 billed on the same sources.',
     }),
     defineOfferableModel('anthropic', {
       id: 'claude-haiku-4-5',
@@ -2160,13 +2509,37 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'general',
       outlinePagesLow: 5, outlinePagesHigh: 13,
       note:
-        'The default and the cheapest Anthropic model that can build your wiki (Haiku 5.5 is cheaper ' +
-        'but is offered for chat only). No hidden reasoning tokens, but it wraps its ' +
+        'The Anthropic default, though no longer the cheapest: Haiku 5.5 costs a tenth as much on ' +
+        'prompts up to 100,000 tokens. It runs no hidden reasoning, but it wraps its ' +
         'ingest-outline JSON in ```json fences 3/3, so every ingest on it depends on the jsonrepair ' +
         'fence-stripping fallback (benign — that is what the fallback is for). Its outline coverage ' +
         'is the MOST VARIABLE measured, 5 to 13 pages on the same source, so a long document may be ' +
         'planned much more thinly on one run than the next. That variability is the single best ' +
         'reason to reach for a stronger model on a big wiki.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-sonnet-5-5',
+      label: 'Sonnet 5.5',
+      // GET /v1/models/claude-sonnet-5-5 (2026-10-08): max_input_tokens 1,000,000.
+      contextLength: 1000000,
+      // Adaptive thinking (the API lists `disabled` as unsupported): measured on
+      // 7 of 15 multi-phase calls, 0 of 4 single-pass ingests, 0 of 3 chat answers.
+      thinks: true,
+      // 19/19 ingest responses parsed as bare JSON (4 single-pass, 15 multi-phase).
+      jsonRaw: true,
+      // Same newer tokenizer as Sonnet 5 (the page: "Claude 4.7 and later").
+      tokenizerFactor: 1.329,
+      suitability: 'general',
+      // The 34,000-character source of the 2026-10-08 sessions.
+      outlinePagesLow: 22, outlinePagesHigh: 25,
+      note:
+        'The newest Sonnet, at the same $2/$10 as Sonnet 5, with cached reads at a twentieth of the ' +
+        'input price (0.05x, against 0.1x on older models). Measured on the real ingest pipeline ' +
+        '(2026-10-08): an article announcing a product got its own entity page 4/4, 19 of 19 responses ' +
+        'were bare JSON, and a 34,000-character source was planned at 22-25 pages (Haiku 4.5: 20-21) ' +
+        'for about $0.29-0.32 an ingest. It thinks when it judges a call needs it — 7 of 15 multi-phase ' +
+        'calls, none of the short ones — billed as output, and its newer tokenizer produced 1.329x more ' +
+        'input tokens than Haiku 4.5 on the same prose.',
     }),
     defineOfferableModel('anthropic', {
       id: 'claude-sonnet-5',
@@ -2176,40 +2549,36 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'general',
       outlinePagesLow: 16, outlinePagesHigh: 18,
       note:
-        'The strongest value here: cheaper than both Sonnet 4.6 and 4.5 while measuring better than ' +
-        'either — 7/7 clean raw JSON, a steady 16-18 outline pages, and a 128,000 output ceiling. ' +
-        'Two costs the headline price hides: it is the only model measured running adaptive thinking ' +
-        'on every single call (7/7, billed as output), and its newer tokenizer produced 1.329x more ' +
+        'The same $2/$10 as Sonnet 5.5, which planned wider on the same 34,000-character source ' +
+        '(22-25 pages against 19, 2026-10-08) and reads its cache at half the rate. Measured ' +
+        '2026-08-26: 7/7 clean raw JSON, a steady 16-18 outline pages on that session\'s source, and ' +
+        'a 128,000 output ceiling. Two costs the headline price hides: it ran adaptive thinking on ' +
+        'every call measured that day (7/7, billed as output), and its newer tokenizer produced 1.329x more ' +
         'input tokens than Haiku 4.5 on the same prose — so $2 per 1M input is really ~$2.66 of the ' +
         'same text.',
     }),
     defineOfferableModel('anthropic', {
-      id: 'claude-sonnet-4-6',
-      label: 'Sonnet 4.6',
+      id: 'claude-opus-5-5',
+      label: 'Opus 5.5',
+      // GET /v1/models/claude-opus-5-5 (2026-10-08): max_input_tokens 1,000,000.
       contextLength: 1000000,
-      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      // Adaptive thinking (`disabled` unsupported): 2 of 2 single-pass ingests,
+      // 0 of 8 multi-phase calls.
+      thinks: true,
+      // 10/10 bare JSON.
+      jsonRaw: true,
+      tokenizerFactor: 1.329,
       suitability: 'general',
-      outlinePagesLow: 17, outlinePagesHigh: 17,
+      // The 34,000-character source of the 2026-10-08 sessions (one run).
+      outlinePagesLow: 27, outlinePagesHigh: 27,
       note:
-        'The most predictable model measured: 3/3 clean raw JSON, no hidden reasoning tokens at all, ' +
-        'a 128,000 output ceiling and a steady 17-page outline every run. At $3/$15 it is 50% dearer ' +
-        'than claude-sonnet-5, which measured stronger — choose this when you specifically want zero ' +
-        'thinking-token spend and no tokenizer premium.',
-    }),
-    defineOfferableModel('anthropic', {
-      id: 'claude-sonnet-4-5',
-      label: 'Sonnet 4.5',
-      contextLength: 1000000,
-      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
-      suitability: 'caution',
-      outlinePagesLow: 15, outlinePagesHigh: 16,
-      cautionReason:
-        'Behind the same-priced Sonnet 4.6 on three measured axes.',
-      note:
-        'Same $3/$15 as claude-sonnet-4-6 but behind it on three measured axes: half the output ' +
-        'ceiling (64,000 vs 128,000), fenced JSON rather than raw, and 15-16 outline pages against ' +
-        '17. claude-sonnet-5 is cheaper AND measured stronger than both. It is here because it is ' +
-        'the last rung of the Anthropic fallback chain; there is no reason to choose it deliberately.',
+        'The newest and richest Opus, and CHEAPER than Opus 5: $4/$20 against $5/$25, with cached reads ' +
+        'at 0.05x the input price. Measured on the real ingest pipeline (2026-10-08, few runs): the ' +
+        'product entity page 2/2, 10 of 10 responses bare JSON, and ' +
+        '27 pages planned from the 34,000-character source (Opus 5: 30; Sonnet 5.5: 22-25; Haiku ' +
+        '4.5: 20-21) for about $0.56 an ingest, against $0.80 on Opus 5. It thought on both short ingests and on none of the ' +
+        'long one\'s calls; thinking is billed as output. Its newer tokenizer produced 1.329x more input ' +
+        'tokens than Haiku 4.5 on the same prose.',
     }),
     defineOfferableModel('anthropic', {
       id: 'claude-opus-5',
@@ -2220,41 +2589,11 @@ export const OFFERABLE_MODELS = Object.freeze({
       outlinePagesLow: 25, outlinePagesHigh: 27,
       note:
         'The richest planner measured — 25-27 outline pages where the default plans 5-13 on the same ' +
-        'source — with 3/3 clean raw JSON, no hidden reasoning tokens and a 128,000 output ceiling. ' +
-        'Also the most expensive: $5/$25 headline, and its newer tokenizer produced 1.329x more input ' +
+        'source, and 30 on the 34,000-character source of 2026-10-08 where Opus 5.5 planned 27 — with ' +
+        'clean raw JSON (3/3, and 9/9 that day), no hidden reasoning tokens and a 128,000 output ceiling. ' +
+        'Also the most expensive: $5/$25 headline (Opus 5.5 is $4/$20), and its newer tokenizer produced 1.329x more input ' +
         'tokens than Haiku 4.5 on the same prose, so the real input cost is ~$6.65 per 1M ' +
         'Haiku-equivalent tokens — 6.6x the default, not the 5x the headline implies.',
-    }),
-    defineOfferableModel('anthropic', {
-      id: 'claude-opus-4-8',
-      label: 'Opus 4.8',
-      contextLength: 1000000,
-      thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
-      suitability: 'caution',
-      outlinePagesLow: 19, outlinePagesHigh: 20,
-      cautionReason:
-        'Plans thinner outlines than Opus 5 at the identical price.',
-      note:
-        'Priced identically to claude-opus-5 ($5/$25), same 128,000 ceiling, same clean raw JSON, no ' +
-        'thinking, same 1.329x tokenizer premium — but measured 19-20 outline pages against opus-5\'s ' +
-        '25-27 on the identical source. No axis measured better than opus-5. Flagged rather than ' +
-        'listed as dominated because that verdict rests on outline coverage alone from a small ' +
-        'sample, and an over-claimed domination is worth less than an honest number.',
-    }),
-    defineOfferableModel('anthropic', {
-      id: 'claude-opus-4-5',
-      label: 'Opus 4.5',
-      contextLength: 200000,
-      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
-      suitability: 'caution',
-      outlinePagesLow: 12, outlinePagesHigh: 13,
-      cautionReason:
-        'Out-performed by Opus 5 at the identical price.',
-      note:
-        'Dominated by claude-opus-5 at the identical $5/$25: half the output ceiling (64,000 vs ' +
-        '128,000), fenced JSON rather than raw, and 12-13 outline pages against 25-27 — thinner than ' +
-        'claude-sonnet-5 plans at two-fifths of the price. Offered because the choice is yours, but ' +
-        'nothing measured supports paying $5 per 1M for it.',
     }),
   ]),
   /**
@@ -4138,7 +4477,12 @@ export function compareModelCost(requestedModel, usingModel) {
     return getModelPrice(usingModel) ? 'costlier' : 'unknown';
   }
   const a = getModelPrice(requestedModel);
-  const b = getModelPrice(usingModel);
+  const priced = getModelPrice(usingModel);
+  // TIERED (2026-10-08): the model a fallback lands on is compared at its UPPER
+  // tier — the rate any large call would pay — so "similar" is never claimed
+  // for a rung that could cost more on a big ingest. The requested side keeps
+  // its lower (headline) rate: the conservative reading on both ends.
+  const b = priced ? (estimateRates(usingModel, null) || priced) : null;
   if (!a || !b) return 'unknown';
   return (b.input > a.input || b.output > a.output) ? 'costlier' : 'similar';
 }
@@ -4221,7 +4565,11 @@ function storedSelection(provider) {
     default:           savedKey = null;
   }
   if (!savedKey) return null;
-  return getSelectedModel(provider);
+  const stored = getSelectedModel(provider);
+  // A pick of a RETIRED model resolves FORWARD to its successor, never down to
+  // the provider default (see RETIRED_MODELS). Read-side, so it holds even
+  // before migrateRetiredModelSelections has rewritten the stored value.
+  return retiredModelSuccessor(provider, stored) || stored;
 }
 
 /**
@@ -6067,7 +6415,7 @@ export const __testing = {
   ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, GEMINI_MODEL_MAX_OUTPUT_TOKENS,
   OPENROUTER_MODEL_MAX_OUTPUT_TOKENS,
   PROMOTIONAL_PRICES, OFFERABLE_SUITABILITY,
-  KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS, TIERED_PRICES,
+  KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS, TIERED_PRICES, CACHE_READ_MULTIPLIER_BY_MODEL,
   // v3.72.1 — the as-of dates and the live-price registry, exposed so the
   // price-truth suite drives the real tables and the real recorder.
   PRICE_VERIFIED_ON, MEASURED_ON, recordLiveStaticPrices, liveStaticPriceFromRecord,

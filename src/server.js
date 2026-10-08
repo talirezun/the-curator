@@ -22,7 +22,7 @@ import readingPlanRouter from './routes/reading-plan.js';
 import writeStatusRouter from './routes/write-status.js';
 import trashRouter from './routes/trash.js';
 import setupRouter from './routes/setup.js';
-import { getProviderInfo } from './brain/llm.js';
+import { getProviderInfo, migrateRetiredModelSelections } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
 import { ensureDefaultDomainsDir, getDomainsDir } from './brain/config.js';
@@ -408,6 +408,14 @@ function providerStartupLabel(provider) {
 let server;
 function startListen(retriesLeft = MAX_BIND_RETRIES) {
   server = app.listen(PORT, BIND_HOST, () => {
+    // Retired-model migration (2026-10-08): move a stored build pick that names
+    // a model the catalogue retired FORWARD to its successor, once, and record
+    // the one-time note — before the first provider resolution below logs it.
+    // Never throws (llm.js absorbs every error).
+    try {
+      const moved = migrateRetiredModelSelections();
+      for (const n of moved) logInfo('server', `Retired model migrated: ${n.provider} ${n.from} → ${n.to}`);
+    } catch { /* never surfaces */ }
     try {
       const { provider, model } = getProviderInfo();
       const providerLabel = providerStartupLabel(provider);

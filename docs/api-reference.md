@@ -1015,10 +1015,12 @@ Exactly one of these three also produces exactly one sentence in the top-level
 
 `tokenizerFactor` is the model's published input-token premium, read at runtime
 from the offerable-models catalogue and **already applied** to
-`inputTokensLow`/`High`. It is **1.329** for `claude-sonnet-5`,
-`claude-opus-5` and `claude-opus-4-8`, and **1** for every other shipped model
-— note that `claude-opus-4-5` is **not** in the premium set, so "the Opus tier"
-is the wrong way to describe it. An OpenRouter catalogue entry may carry its
+`inputTokensLow`/`High`. It is **1.329** for `claude-haiku-5-5`,
+`claude-sonnet-5-5`, `claude-sonnet-5`, `claude-opus-5-5` and `claude-opus-5`,
+and **1** for `claude-haiku-4-5` — so "the Opus tier" or "the Haiku tier" is the
+wrong way to describe it (it follows the tokenizer, not the family). For a
+TIERED model (`claude-haiku-5-5`) `usdLow`/`usdHigh` use the rate of the tier
+this one compile call could reach (`estimateCallRates`, 2026-10-08). An OpenRouter catalogue entry may carry its
 own factor (`defineOfferableModel` requires `>= 1`); a configured model that is
 not in `listOfferableModels(provider)` degrades to `1` rather than throwing.
 
@@ -5505,6 +5507,36 @@ doing something the icon has no bearing on. What bounds the write instead is the
 value lands in `.curator-config.json`, which holds the user's API keys, so exactly three literal
 strings are accepted and everything else is refused. Mutating requests also pass the server's
 cross-origin guard.
+
+---
+
+## GET /api/config/model-retirement
+
+*(2026-10-08)* The retired-model map and any undismissed migration notes. No body; never non-200.
+
+```json
+{
+  "ok": true,
+  "retired": {
+    "claude-opus-4-8": { "provider": "anthropic", "successor": "claude-opus-5-5", "retiredOn": "2026-10-08", "chatNote": "Your chat model moved from Opus 4.8 to Opus 5.5: …" }
+  },
+  "notes": [
+    { "lane": "build", "provider": "anthropic", "from": "claude-opus-4-8", "to": "claude-opus-5-5", "at": "2026-10-08T12:00:00.000Z", "text": "The model that builds your wiki moved from Opus 4.8 to Opus 5.5: …" }
+  ]
+}
+```
+
+`retired` names every id taken out of the Anthropic catalogue (two generations behind the newest),
+with the same-family successor a saved pick moves to. The browser uses it to move its own remembered
+chat model (`localStorage['curator-next-chat-model']`); the same map is also on
+`GET /api/config/api-keys` as `retiredModels`. `notes` are written by the server when it moves a
+stored **build** pick forward at start, and stay until dismissed.
+
+## POST /api/config/model-retirement/dismiss
+
+Clears the notes so the one-time banner is never shown again. No body. Returns
+`{ "ok": true, "notes": [] }`. Not behind the write-concurrency guard (nothing on a write path reads
+the notes); the cross-origin guard applies.
 
 ---
 

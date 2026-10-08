@@ -1282,7 +1282,10 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // window and harness ESTIMATE the Context view's meter and the menubar
     // widget draw against. Exempted below on /ui-state's and
     // /background-mode's axis: no write path reads either number.
-    expectedMutatingCount: 21,
+    // 21 -> 22: POST /model-retirement/dismiss (2026-10-08) — clears the
+    // one-time "your model was moved forward" notes. Exempted below on
+    // /ui-state's axis: no write path reads the notes.
+    expectedMutatingCount: 22,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
@@ -1293,6 +1296,8 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
       exemptions: [
         { method: 'POST', path: '/default-domain', reason:
           'selects which domain MCP write tools assume when the caller does not name one; an in-flight write already carries an explicit domain captured at request time, so changing this default cannot affect it (see CLAUDE.md section 5 of this same file\'s own docblock).' },
+        { method: 'POST', path: '/model-retirement/dismiss', reason:
+          'clears the one-time notes recorded when a stored build pick that named a RETIRED model was moved forward to its successor (src/brain/config.js dismissModelMigrationNotes). It deletes one display-only list from .curator-config.json and touches nothing else: NOTHING on any write path reads the notes — the migration itself happens once at server start, before any route can run, and getProviderInfo() never consults them — so an in-flight ingest, sync or update cannot observe the change. Guarding it would be harmful for /ui-state\'s reason: a 409 during a long ingest would refuse to let the user dismiss a banner the ingest has no bearing on. It takes no body, so no request-chosen content can reach the credential file. The cross-origin guard in server.js still applies.' },
         { method: 'POST', path: '/ui-state', reason:
           'records "the user has already been told this" — a privacy consent, two one-time dismissals and the install-origin verdict. Nothing on any WRITE path reads these four fields: they are consumed only by views/onboarding.js, views/cutover-notice.js and views/domains.js when deciding whether to put a panel on screen, so an in-flight ingest, sync or update cannot observe the change. Guarding it would be actively HARMFUL for the same reason api-keys/validate is exempt above and GET /api/ingest/activity is unguarded: a 409 would fire precisely while a long ingest is running, i.e. exactly when the user dismisses a panel — and the failure it would cause is the app re-showing something the user already dismissed, which is the symptom this endpoint exists to prevent. The write itself is bounded to five literal strings by setUiState()\'s allow-list (src/brain/config.js), so an unguarded POST cannot put attacker-chosen content into .curator-config.json.' },
         { method: 'POST', path: '/pick-path', reason:

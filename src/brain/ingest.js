@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import { localDateStamp } from './local-date.js';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { generateText, isAbortError, makeAbortError } from './llm.js';
+import { generateText, isAbortError, makeAbortError, isAboveTierCall } from './llm.js';
 import {
   readSchema,
   readIndex,
@@ -1823,10 +1823,20 @@ export function makeUsageAccumulator(forward = null) {
   // normalizeGeminiUsage in llm.js: inputTokens EXCLUDES cached tokens on BOTH
   // providers, so `inputTokens + cachedReadTokens + cacheWriteTokens` is the
   // total prompt size and a cost calculation never branches on provider.
+  //
+  // `aboveTier` (2026-10-08) is the TIER SPLIT a tiered-price model needs: the
+  // tokens of the calls whose OWN prompt crossed their model's price threshold
+  // (llm.js isAboveTierCall), classified one call at a time as they land —
+  // the only moment a call's prompt size is still known. The four totals above
+  // it are unchanged and still hold EVERYTHING; `priceUsageUsd` prices
+  // `totals − aboveTier` at the lower tier and `aboveTier` at the upper one.
+  // A total WITHOUT this field is priced entirely at the upper tier, so a
+  // future accumulator that forgets it over-states the bill, never under.
   const totals = {
     calls: 0, inputTokens: 0, outputTokens: 0,
     cachedReadTokens: 0, cacheWriteTokens: 0,
     provider: null, model: null,
+    aboveTier: { calls: 0, inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 },
   };
   const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   return {
@@ -1838,6 +1848,16 @@ export function makeUsageAccumulator(forward = null) {
       totals.outputTokens     += num(r.outputTokens);
       totals.cachedReadTokens += num(r.cachedReadTokens);
       totals.cacheWriteTokens += num(r.cacheWriteTokens);
+      let crossed = false;
+      try { crossed = isAboveTierCall(r.model, r); } catch { crossed = false; }
+      if (crossed) {
+        const a = totals.aboveTier;
+        a.calls++;
+        a.inputTokens      += num(r.inputTokens);
+        a.outputTokens     += num(r.outputTokens);
+        a.cachedReadTokens += num(r.cachedReadTokens);
+        a.cacheWriteTokens += num(r.cacheWriteTokens);
+      }
       if (r.provider) totals.provider = r.provider;
       if (r.model)    totals.model = r.model;
       if (typeof forward === 'function') {

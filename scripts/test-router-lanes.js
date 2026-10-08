@@ -264,7 +264,8 @@ const audit = llm.auditStaticOffers();
 eq(audit.failures.length, 0, 'every static offer and every fallback rung passes, or carries a named exemption');
 // 18 since 2026-09-25: minimax/minimax-m3:free was withdrawn by OpenRouter and removed.
 // 19 since v3.82.0: claude-haiku-5-5 (chat-only — tiered price).
-eq(audit.offers.length, 19, 'the audit covers all 19 hand-typed offers');
+// 19 → 17 on 2026-10-08: four Anthropic entries retired, Sonnet 5.5 and Opus 5.5 added.
+eq(audit.offers.length, 17, 'the audit covers all 17 hand-typed offers');
 eq(audit.rungs.length, 6, '…and all 6 fallback rungs');
 ok(audit.rungs.every(r => r.offered === true),
   'every fallback rung is itself an offerable entry — a rung nobody could pick has been held to nothing');
@@ -345,7 +346,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
   for (const p of ['gemini', 'anthropic', 'openrouter']) {
     for (const e of (llm.OFFERABLE_MODELS[p] || [])) ALL.push({ p, e });
   }
-  eq(ALL.length, 19, 'nineteen hand-typed entries (minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0)');
+  eq(ALL.length, 17, 'seventeen hand-typed entries (minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0; four 2-gen-old Anthropic entries retired and Sonnet/Opus 5.5 added 2026-10-08)');
   ok(ALL.every(({ e }) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     'every one carries a positive integer context window');
   ok(ALL.every(({ e }) => e.contextLength >= 100000 && e.contextLength <= 10000000),
@@ -359,9 +360,10 @@ section('§4. contextLength on every static entry — read from a provider, neve
   const byId = new Map(ALL.map(({ e }) => [e.id, e.contextLength]));
   const PINNED = {
     'gemini-2.5-flash-lite': 1048576, 'gemini-3.7-flash': 1048576,
-    'claude-haiku-4-5': 200000, 'claude-opus-4-5': 200000, 'claude-sonnet-5': 1000000,
-    // GET /v1/models/claude-haiku-5-5 → max_input_tokens 1000000, read 2026-10-08.
-    'claude-haiku-5-5': 1000000,
+    'claude-haiku-4-5': 200000, 'claude-sonnet-5': 1000000,
+    // GET /v1/models/<id> → max_input_tokens, read 2026-10-08 (claude-opus-4-5's
+    // 200000 left with its retirement the same day).
+    'claude-haiku-5-5': 1000000, 'claude-sonnet-5-5': 1000000, 'claude-opus-5-5': 1000000,
     'ibm-granite/granite-4.0-h-micro': 131000, 'upstage/solar-pro4': 524288,
     'z-ai/glm-5.3-flash': 1048576, 'moonshotai/kimi-k2-0905': 262144,
   };
@@ -712,7 +714,8 @@ const ANTHROPIC_FIXTURE = {
       created_at: '2025-10-15T00:00:00Z', max_input_tokens: 200000, max_tokens: 64000 },
     // A model we have LOOKED AT and deliberately not offered. It must not be
     // reported: re-raising a recorded decision every day is how a signal becomes
-    // noise, and `AWAITING_MEASUREMENT` is exactly where that decision lives.
+    // noise. Until 2026-10-08 the decision lived in `AWAITING_MEASUREMENT`; it
+    // now lives in `RETIRED_MODELS` (two generations behind Opus 5.5).
     { type: 'model', id: 'claude-opus-4-7', display_name: 'Claude Opus 4.7',
       created_at: '2026-04-14T00:00:00Z', max_input_tokens: 1000000, max_tokens: 128000 },
   ],
@@ -758,9 +761,9 @@ section('§7a. Unlisted ids are found; ids we already have a record of are not')
     'claude-fable-5-1 is reported — the exact model the audit found INVISIBLE in both tables');
   ok(!aIds.includes('claude-opus-5'), '…while claude-opus-5 is not, because it IS offered');
   ok(!aIds.includes('claude-opus-4-7'),
-    '…and claude-opus-4-7 is not, because it is in AWAITING_MEASUREMENT — a recorded decision is not a discovery');
-  ok(Object.hasOwn(llm.AWAITING_MEASUREMENT, 'claude-opus-4-7'),
-    '⟨PREMISE⟩ …and that id really is in AWAITING_MEASUREMENT, so the suppression above is not a coincidence of the fixture');
+    '…and claude-opus-4-7 is not, because it is in RETIRED_MODELS — a recorded decision is not a discovery');
+  ok(Object.hasOwn(llm.RETIRED_MODELS, 'claude-opus-4-7') && !llm.isOfferableModel('anthropic', 'claude-opus-4-7'),
+    '⟨PREMISE⟩ …and that id really is retired and not offered, so the suppression above is not a coincidence of the fixture');
   eq(a.listed, 4, '…over 4 listed ids, of which two are already recorded and one is genuinely unknown');
   // ── A KNOWN AND DELIBERATE FALSE POSITIVE, PINNED RATHER THAN HIDDEN ──────
   // Anthropic lists DATED ids (`claude-haiku-4-5-20251001`); the app stores the

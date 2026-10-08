@@ -179,7 +179,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOfferableModel } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOfferableModel, priceUsageUsd } from '../src/brain/llm.js';
 // The REAL shared formatter the view imports, driven directly — not a stub. A
 // stub would let a bespoke re-implementation in the view pass unnoticed, which
 // is mutation M4.
@@ -370,9 +370,15 @@ const QUEUE_PATH = path.join(ROOT, 'src/brain/ingest-queue.js');
 // The other two are its per-provider cache-rate helpers; §11.1 prices cache
 // terms through them, so extracting the real ones (rather than re-declaring a
 // copy here) is what makes the mirror a measurement of the shipping formula.
-const QUEUE_FN_NAMES = ['chargeForItem', 'cacheRateProvider', 'cacheMultipliers'];
+// 2026-10-08: the two cache-rate helpers moved into llm.js (`cacheRatesFor`),
+// and chargeForItem now prices through the ONE tier-aware formula,
+// `priceUsageUsd`, which is injected below as the REAL function.
+const QUEUE_FN_NAMES = ['chargeForItem'];
 const QUEUE_INJECTED = {
   getModelPrice,
+  // The tier-aware money formula itself (llm.js). Injected REAL, never stubbed,
+  // so §11.1 measures the mirror against the shipping arithmetic.
+  priceUsageUsd,
   // `cacheRateProvider` decides whose cache RATES apply by exact-`===`
   // catalogue membership. Injecting the REAL predicate, not a stub, so §11.1c
   // measures the shipping decision against the shipping catalogue — a stub
@@ -1876,6 +1882,11 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     { inputTokens: 500, outputTokens: 200, cachedReadTokens: 9000, cacheWriteTokens: 4000 },
     { inputTokens: 500, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 },
     { inputTokens: 0, outputTokens: 200, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    // 2026-10-08 — over a TIERED model's threshold (claude-haiku-5-5: 100,000
+    // prompt tokens), once by fresh input alone and once only because the
+    // cached reads count toward the prompt. Flat models are unaffected.
+    { inputTokens: 120000, outputTokens: 900, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 60000, outputTokens: 900, cachedReadTokens: 50000, cacheWriteTokens: 0 },
   ];
   // NOT in USAGES, deliberately: {0,0,0,0} is the "provider reported nothing"
   // sentinel and is refused before the arithmetic runs (§11.3), so it is not a
@@ -1913,7 +1924,10 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     for (const { e } of everyEntry) {
       for (const u of USAGES) {
         const mine = messageCostUsd(msg(e.id, u), ctx);
-        const theirs = chargeForItem(JOB(), { tokenUsage: Object.assign({ model: e.id }, u) });
+        // `calls: 1` — one answer is ONE provider call, which is what lets the
+        // tier-aware formula price a tiered model at the tier of its own prompt
+        // (a multi-call total without a split is priced at the upper tier).
+        const theirs = chargeForItem(JOB(), { tokenUsage: Object.assign({ model: e.id, calls: 1 }, u) });
         if (e.free === true) {
           // A free entry is the SECOND deliberate divergence (see §11.1b).
           // The property that protects money holds either way and is asserted
@@ -1995,6 +2009,9 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     // now held to it here.
     {
       const ANTHROPIC_READ = 0.1, WRITE = 1.25;
+      // platform.claude.com pricing, read 2026-10-08: "0.05x on Claude Opus 5.5
+      // and Claude Sonnet 5.5". Typed here, not read from llm.js.
+      const ANTHROPIC_READ_BY_MODEL = { 'claude-sonnet-5-5': 0.05, 'claude-opus-5-5': 0.05 };
       // ── WHY THIS ONE COMPARISON IS NOT `===` ────────────────────────────
       // §11.1 above compares the view against chargeForItem, two implementations
       // that sum the SAME terms in the SAME order, so bit-for-bit equality is the
@@ -2023,11 +2040,20 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
         const row = resolveChatModel(e.id, OFF, ANY);
         if (!row) { ok(false, `§11.1c ${e.id} did not resolve — the provider dimension is unreadable`); continue; }
         providersSeen.add(row.provider);
-        const base = (u.inputTokens / 1e6) * e.input + (u.outputTokens / 1e6) * e.output
-                   + (u.cacheWriteTokens / 1e6) * e.input * WRITE;
-        const readTokens = u.cachedReadTokens / 1e6 * e.input;
-        // The independent expectation: full price unless Anthropic.
-        const expect = base + readTokens * (row.provider === 'anthropic' ? ANTHROPIC_READ : 1);
+        // The rate tier of THIS call: a tiered entry over its threshold pays its
+        // upper tier on every token (2026-10-08). Read off the entry's own
+        // published fields, independently of both implementations.
+        const prompt = u.inputTokens + u.cachedReadTokens + u.cacheWriteTokens;
+        const over = Number.isFinite(e.priceTierThresholdTokens) && prompt > e.priceTierThresholdTokens && e.priceAbove;
+        const rin = over ? e.priceAbove.input : e.input;
+        const rout = over ? e.priceAbove.output : e.output;
+        const base = (u.inputTokens / 1e6) * rin + (u.outputTokens / 1e6) * rout
+                   + (u.cacheWriteTokens / 1e6) * rin * WRITE;
+        const readTokens = u.cachedReadTokens / 1e6 * rin;
+        // The independent expectation: full price unless Anthropic; on Anthropic
+        // 0.1x, except the two models the provider's page prices at 0.05x.
+        const anthRead = Object.hasOwn(ANTHROPIC_READ_BY_MODEL, e.id) ? ANTHROPIC_READ_BY_MODEL[e.id] : ANTHROPIC_READ;
+        const expect = base + readTokens * (row.provider === 'anthropic' ? anthRead : 1);
         const rate = row.provider === 'anthropic' ? '0.1x' : 'FULL price';
         if (!nearly(mine, expect)) {
           ok(false, `§11.1c ${e.id} (${row.provider}) ${JSON.stringify(u)}: the VIEW produced ${mine}, but this provider's cached reads bill at ${rate} => ${expect}`);

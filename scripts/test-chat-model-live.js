@@ -54,7 +54,7 @@ function ok(cond, label) {
   // must reach it for real — and be SERVED by it, not silently demoted to the
   // provider default (the allow-list falls back without throwing, so a
   // non-empty answer alone would pass on Haiku 4.5).
-  console.log('\nPer-call model — claude-haiku-5-5 (chat-only):');
+  console.log('\nPer-call model — claude-haiku-5-5 (text):');
   const served55 = [];
   const r55 = await generateText(
     'You are a connectivity test. Reply with exactly the word OK.', 'Reply now.', 1024, 'text', null,
@@ -62,6 +62,23 @@ function ok(cond, label) {
   ok(typeof r55 === 'string' && r55.trim().length > 0, 'model override → claude-haiku-5-5 returns a non-empty answer');
   ok(served55.length > 0 && served55.every(m => m === 'claude-haiku-5-5'),
     `the call was SERVED by claude-haiku-5-5, not a fallback (served: ${served55.join(', ') || 'none'})`);
+
+  // 2026-10-08: the whole 5.5 generation may BUILD now. Each is asked a tiny
+  // JSON-mode question (the build lane's call shape) and must be SERVED by the
+  // model asked for, and the per-call price must come from the tier-aware path.
+  const { priceUsageUsd } = await import('../src/brain/llm.js');
+  for (const id of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) {
+    console.log(`\nPer-call model, JSON mode — ${id}:`);
+    const usage = [];
+    const out = await generateText(
+      'You are a connectivity test. Respond with JSON only.', 'Return {"ok": true}.', 1024, 'json', null,
+      { provider: 'anthropic', model: id, onUsage: (u) => usage.push(u) });
+    ok(typeof out === 'string' && /"ok"\s*:\s*true/.test(out), `${id} answers in JSON mode`);
+    ok(usage.length > 0 && usage.every(u => u && u.model === id),
+      `the call was SERVED by ${id} (served: ${usage.map(u => u && u.model).join(', ') || 'none'})`);
+    const usd = usage.length ? priceUsageUsd(id, { ...usage[0], calls: 1 }) : null;
+    ok(typeof usd === 'number' && usd > 0 && usd < 0.05, `priced through priceUsageUsd: $${usd}`);
+  }
 
   // Garbage override → falls back to the global active provider (still works).
   const rf = await ask('nonsense-provider');

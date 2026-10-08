@@ -53,6 +53,7 @@ import { renderAnswer, sourcesHtml, sourceByNumber } from '../shared/answer.js';
 // cheapest model measures ~$0.0000015, so that is this surface's ORDINARY case,
 // not an edge case. See shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { migrateStoredChatModel } from '../shared/model-retirement.js';
 import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
 // v3.72.0 (P4): the ONE model-row body, shared by the Model menu and the
 // browse dialog — see the model-row region below.
@@ -1088,6 +1089,9 @@ function applyApiKeys(data) {
 
   let savedModel = null;
   try { savedModel = localStorage.getItem(LS_MODEL); } catch { /* ignore */ }
+  // A remembered pick of a RETIRED model moves forward to its successor (and
+  // the one-time note is queued) — shared/model-retirement.js.
+  savedModel = migrateStoredChatModel(savedModel, data && data.retiredModels);
   const restored = resolveChatModel(savedModel, state.offerable, providers);
   state.chatModel = restored ? restored.entry.id : null;
   // A restored model implies its provider — otherwise a saved Anthropic model
@@ -6023,10 +6027,24 @@ function messageCostUsd(m, ctx) {
   // walk that produced the price two lines up, so the rate and the multiplier
   // applied to it can never come from two different catalogue entries.
   const mult = cacheMultipliers(row.provider);
-  const inCost = (u.inputTokens || 0) / 1e6 * input;
-  const outCost = (u.outputTokens || 0) / 1e6 * output;
-  const cachedReadCost = (u.cachedReadTokens || 0) / 1e6 * input * mult.read;
-  const cacheWriteCost = (u.cacheWriteTokens || 0) / 1e6 * input * mult.write;
+  // Per-MODEL cache-read rate where the provider publishes one (0.05x on Sonnet
+  // and Opus 5.5) — the entry carries it, mirroring llm.js's cacheRatesFor.
+  const cr = row.entry.cacheReadMultiplier;
+  const readMult = (typeof cr === 'number' && Number.isFinite(cr) && cr >= 0) ? cr : mult.read;
+  // TIERED PRICE (claude-haiku-5-5): ONE answer is ONE call, priced at the tier
+  // its own prompt (input + cached-read + cache-write) falls in — strictly over
+  // `priceTierThresholdTokens` pays `priceAbove`. Mirrors llm.js priceUsageUsd.
+  const tierAt = row.entry.priceTierThresholdTokens;
+  const above = row.entry.priceAbove;
+  const prompt = (u.inputTokens || 0) + (u.cachedReadTokens || 0) + (u.cacheWriteTokens || 0);
+  const overTier = typeof tierAt === 'number' && Number.isFinite(tierAt) && prompt > tierAt
+    && above && typeof above.input === 'number' && typeof above.output === 'number';
+  const rIn = overTier ? above.input : input;
+  const rOut = overTier ? above.output : output;
+  const inCost = (u.inputTokens || 0) / 1e6 * rIn;
+  const outCost = (u.outputTokens || 0) / 1e6 * rOut;
+  const cachedReadCost = (u.cachedReadTokens || 0) ? (u.cachedReadTokens || 0) / 1e6 * rIn * readMult : 0;
+  const cacheWriteCost = (u.cacheWriteTokens || 0) ? (u.cacheWriteTokens || 0) / 1e6 * rIn * mult.write : 0;
   const total = inCost + outCost + cachedReadCost + cacheWriteCost;
   return Number.isFinite(total) ? total : null;
 }

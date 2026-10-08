@@ -207,6 +207,8 @@ const STAYS = {
     'per-device convenience; chat.js already re-validates it against the live domain list and falls back safely when it is absent or stale.',
   'curator-next-chat-model':
     'per-device convenience; re-derived against the live catalogue on every load, with a documented safe fallback when absent.',
+  'curator-next-model-retirement-notes-v1':
+    'per-device by construction: it holds the one-time note for the move of THIS browser\'s own chat pick (curator-next-chat-model, itself per-device) off a retired model. Losing it loses only that note, never the move — the pick is already rewritten — and the build-pick note it is shown beside lives server-side.',
   'curator-next-chat-model-recents':
     'derived data — a recency list rebuilds itself from use within a session or two.',
   'curator-next-chat-model-starred':

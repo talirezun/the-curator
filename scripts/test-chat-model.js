@@ -314,12 +314,13 @@ section('6. compareModelCost — every rung of every shipped chain');
     // here; this map is looked up only for rungs actually in the chain.)
     'gemini-3.1-flash-lite':     'costlier',   // $0.25/$1.50 vs $0.10/$0.40
     'gemini-2.5-flash':          'costlier',   // $0.30/$2.50
-    // Anthropic: the entire Haiku 3.5 family is retired (404), so every live
-    // rung is now Sonnet and all three are costlier than the Haiku 4.5 default.
-    // Honest, and the reason getFallbackStatus surfaces a costTier at all.
+    // Anthropic (rebuilt 2026-10-08 on the 5.5 generation): the first rung is
+    // claude-haiku-5-5, NOT costlier even at its UPPER tier ($0.50/$2.50 vs
+    // $1/$5 — compareModelCost compares a tiered rung at its upper tier), then
+    // the two $2/$10 Sonnets, both costlier than the Haiku 4.5 default.
+    'claude-haiku-5-5':          'similar',    // ≤ $0.50/$2.50 vs $1/$5
+    'claude-sonnet-5-5':         'costlier',   // $2/$10 vs $1/$5
     'claude-sonnet-5':           'costlier',   // $2/$10 vs $1/$5
-    'claude-sonnet-4-6':         'costlier',   // $3/$15
-    'claude-sonnet-4-5':         'costlier',   // $3/$15
   };
   for (const provider of ['gemini', 'anthropic']) {
     for (const rung of FALLBACK_CHAINS[provider]) {
@@ -494,7 +495,8 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
   // DOMINATED_MODELS and re-adding it to a chain must go red.
   const EXPECT_DOMINATED = {
     'gemini-3.5-flash-lite': 'gemini-2.5-flash',
-    'claude-opus-4-5':       'claude-opus-5',
+    // 'claude-opus-4-5' (dominated by claude-opus-5) left with its retirement
+    // from the catalogue on 2026-10-08 — see test-tiered-pricing.js §5.
   };
   for (const [id, by] of Object.entries(EXPECT_DOMINATED)) {
     ok(Object.hasOwn(DOMINATED_MODELS, id), `DOMINATED_MODELS still records "${id}"`);
@@ -533,7 +535,10 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
   // be guessed (claude-opus-5 is NEWER than claude-sonnet-5 and thinks 0/3
   // where sonnet-5 thinks 7/7), so an unprobed id's behaviour is unknown, not
   // "probably like its neighbour".
-  const EXPECT_AWAITING = ['claude-opus-4-7', 'claude-opus-4-6'];
+  // EMPTY since 2026-10-08: claude-opus-4-7 and claude-opus-4-6 were RETIRED
+  // (two generations behind Opus 5.5) rather than measured. The loop below
+  // still holds any future entry to all four rules.
+  const EXPECT_AWAITING = [];
   eq(Object.keys(AWAITING_MEASUREMENT).length, EXPECT_AWAITING.length,
     'AWAITING_MEASUREMENT holds exactly the ids this suite knows about');
   for (const id of EXPECT_AWAITING) {
@@ -1060,7 +1065,13 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // claude-opus-5's $5/1M is really ~$6.65 against a Haiku baseline.
     'claude-sonnet-5': 1.329,
     'claude-opus-5':   1.329,
-    'claude-opus-4-8': 1.329,
+    // ('claude-opus-4-8': 1.329 left with its retirement, 2026-10-08.)
+    // Measured 2026-10-08 with /v1/messages/count_tokens on the same three
+    // Curator docs: within 2 tokens of claude-sonnet-5 on each (user-guide
+    // 69,310 vs 69,308; architecture 71,594 vs 71,592; curator-overview 10,995
+    // vs 10,993) — the same newer tokenizer, so the same recorded factor.
+    'claude-sonnet-5-5': 1.329,
+    'claude-opus-5-5':   1.329,
     // Measured 2026-10-08 with /v1/messages/count_tokens on three Curator docs
     // (user-guide 1.297x, architecture 1.330x, curator-overview 1.336x against
     // claude-haiku-4-5) — and within 2 tokens of claude-sonnet-5 on every one,
@@ -1178,7 +1189,7 @@ section('12. getProviderInfo — OFFERABLE ids resolve, everything else is refus
       // provider, so a refusal can only ever spend LESS than the user asked.
       const refusals = [
         'gemini-1.5-flash',            // RETIRED — 404s in production
-        'claude-opus-4-7',             // real but AWAITING_MEASUREMENT
+        'claude-opus-4-7',             // real but RETIRED from the catalogue (2026-10-08)
         'claude-3-5-haiku-latest',     // RETIRED
         'gpt-4o', 'zz-not-a-model', '', '   ',
         '../../etc/passwd', 'claude-sonnet-5\nX-Injected: 1',
@@ -2295,7 +2306,9 @@ section('19. Promoted measurements — the fields both pickers summarise from');
 {
   const ALL = [];
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
-  ok(ALL.length >= 18, `corpus: ${ALL.length} static offerable entries`);
+  // 2026-10-08: 17 → the Anthropic retirement removed four entries and the
+  // 5.5 generation added two (Haiku 5.5 was already in), so the floor drops by 2.
+  ok(ALL.length >= 16, `corpus: ${ALL.length} static offerable entries`);
 
   // ── 19a. THE FIELD AND THE NOTE BENEATH IT CANNOT DISAGREE ────────────
   // The strongest guard available, and it is mechanical rather than a promise:
@@ -2317,7 +2330,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
     ok(re.test(e.note), `${e.id}: the ${lo}-${hi} page range in the FIELD also appears in its own note`);
     rangeChecked++;
   }
-  ok(rangeChecked >= 17, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
+  ok(rangeChecked >= 15, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
 
   let medianChecked = 0;
   for (const { e } of ALL) {
@@ -2463,7 +2476,7 @@ section('20. Two PUBLISHED facts — optional, additive, and never derived');
 {
   const ALL = [];
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
-  ok(ALL.length >= 18, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
+  ok(ALL.length >= 16, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
 
   // ── 20a. ADDITIVE: every hand-typed entry carries them as UNKNOWN ──────
   ok(ALL.every(({ e }) => Object.hasOwn(e, 'createdUnixSec') && Object.hasOwn(e, 'contextLength')),
@@ -2810,45 +2823,51 @@ section('21b. Citation titles — driven through the real transport, read back o
   }
 }
 
-// ── v3.82.0: Claude Haiku 5.5 — offered for CHAT, refused for BUILDING ───────
-// The first TIERED model. Its price is $0.10/$0.50 up to 100,000 prompt tokens
-// and $0.50/$2.50 above (live pricing page, 2026-10-08), and every cost surface
-// in the app assumes one flat rate — so it is chat-only by STRUCTURE
-// (TIERED_PRICE_MODELS → defineOfferableModel refuses a build-lane entry), not
-// by a convention someone could forget.
-section('v3.82.0 — claude-haiku-5-5: chat-only because its price is tiered');
+// ── Claude Haiku 5.5 — TIERED, and since 2026-10-08 allowed to BUILD ─────────
+// The first TIERED model: $0.10/$0.50 up to 100,000 prompt tokens and
+// $0.50/$2.50 above (live pricing page, 2026-10-08). It shipped chat-only
+// because every cost surface assumed one flat rate; the money path is now
+// tier-aware (llm.js priceUsageUsd / estimateCallRates — test-tiered-pricing.js
+// pins the arithmetic), and the maintainer enabled it for building on
+// 2026-10-08. What stays STRUCTURAL is that a tiered model can only build with
+// a full schedule the tier-aware path applies — the refusal below now names
+// THAT, for a tiered model without one.
+section('claude-haiku-5-5: tiered price, build lane through the tier-aware path');
 {
   const { DEFAULTS, FALLBACK_CHAINS, TIERED_PRICE_MODELS, TIERED_PRICES, defineOfferableModel } = llmTesting;
   const e = OFFERABLE_MODELS.anthropic.find(m => m.id === 'claude-haiku-5-5');
   ok(!!e, 'claude-haiku-5-5 is offerable on Anthropic');
   eq(e?.label, 'Haiku 5.5', 'its display name is "Haiku 5.5"');
-  eq(e?.suitability, 'chat-only', 'it is offered for CHAT only');
+  eq(e?.suitability, 'general', 'it is offered for building AND chat (measured 2026-10-08)');
   ok(isOfferableModel('anthropic', 'claude-haiku-5-5'), 'the chat allow-list admits it');
-  eq(isBuildLaneModel('anthropic', 'claude-haiku-5-5'), false, '★ it can NOT be the build model (ingest, Wiki Health, Compile)');
+  eq(isBuildLaneModel('anthropic', 'claude-haiku-5-5'), true, '★ it can be the build model (ingest, Wiki Health, Compile)');
   ok(TIERED_PRICE_MODELS.has('claude-haiku-5-5'), 'it is registered as a TIERED-price model');
   eq(TIERED_PRICES['claude-haiku-5-5']?.thresholdTokens, 100000, 'the published threshold is 100,000 prompt tokens');
   eq(e?.priceTierThresholdTokens, 100000, '…and the offer entry carries that threshold to the screen');
-  eq(e?.input, 0.10, 'quoted input is the lower-tier $0.10 per 1M (the rate a bounded chat prompt pays)');
-  eq(e?.output, 0.50, 'quoted output is the lower-tier $0.50 per 1M');
+  eq(e?.priceAbove?.input, 0.50, '…and the upper tier\'s $0.50 input');
+  eq(e?.priceAbove?.output, 2.50, '…and the upper tier\'s $2.50 output');
+  eq(e?.input, 0.10, 'the headline input is the lower-tier $0.10 per 1M');
+  eq(e?.output, 0.50, 'the headline output is the lower-tier $0.50 per 1M');
+  ok(typeof e?.cautionReason === 'string' && /100,000/.test(e.cautionReason), 'the tier is stated UNFOLDED beside the price (cautionReason), never only behind the note');
   eq(anthropicMaxOutputTokens('claude-haiku-5-5'), 128000, 'output ceiling 128,000 (GET /v1/models, 2026-10-08)');
   eq(e?.contextLength, 1000000, 'context window 1,000,000 (GET /v1/models, 2026-10-08)');
-  eq(e?.thinks, true, 'measured THINKING (adaptive when the param is omitted) — billed as output, so the chat cost line must say so');
-  eq(DEFAULTS.anthropic, 'claude-haiku-4-5', 'the Anthropic default is UNCHANGED');
-  ok(!FALLBACK_CHAINS.anthropic.includes('claude-haiku-5-5'), 'it is not a fallback rung (a rung can carry an ingest)');
-  // The refusal itself, driven: the same spec declared 'general' must not build.
+  eq(e?.thinks, true, 'measured THINKING (adaptive when the param is omitted) — billed as output');
+  eq(DEFAULTS.anthropic, 'claude-haiku-4-5', 'the Anthropic default is UNCHANGED (the maintainer\'s call: the default moves only when it is retired)');
+  eq(FALLBACK_CHAINS.anthropic[0], 'claude-haiku-5-5', 'it is the first Anthropic fallback rung — newer than the default and cheaper even at its upper tier');
+  // The guard, driven: a TIERED model WITHOUT a schedule declared for building.
   let threw = null;
   try {
-    defineOfferableModel('anthropic', { id: 'claude-haiku-5-5', label: 'x', contextLength: 1000000, thinks: true,
-      jsonRaw: true, tokenizerFactor: 1.329, suitability: 'general', note: 'probe' });
+    defineOfferableModel('anthropic', { id: 'claude-haiku-4-5', label: 'x', contextLength: 200000, thinks: false,
+      jsonRaw: true, tokenizerFactor: 1.0, suitability: 'general', note: 'probe', tiered: true });
   } catch (err) { threw = String(err && err.message); }
-  ok(threw && /tiered/i.test(threw), '★ declared for the build lane it is REFUSED at definition, naming the tiered price');
-  // Anti-vacuity: the same probe for a NON-tiered priced model builds fine.
+  ok(threw && /tier schedule/i.test(threw), '★ a tiered model with no TIERED_PRICES schedule is REFUSED for the build lane, naming why');
+  // Anti-vacuity: the same probe without `tiered` builds.
   let built = null;
   try {
     built = defineOfferableModel('anthropic', { id: 'claude-haiku-4-5', label: 'x', contextLength: 200000, thinks: false,
       jsonRaw: false, tokenizerFactor: 1.0, suitability: 'general', note: 'probe' });
   } catch { built = null; }
-  ok(built && built.suitability === 'general', '⟨ANTI-VACUITY⟩ the identical probe for claude-haiku-4-5 builds — the refusal is about the tier, not the probe');
+  ok(built && built.suitability === 'general', '⟨ANTI-VACUITY⟩ the identical probe without the tier flag builds — the refusal is about the missing schedule');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

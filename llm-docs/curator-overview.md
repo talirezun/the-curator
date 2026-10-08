@@ -134,7 +134,7 @@ The Curator itself is free, open-source software. The only paid component is the
 |---|---|---|---|---|
 | Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) | Google Gemini | Free tier available, rate-limited | $0.10 in, $0.40 out | The pinned default. About 5 euros a month at heavy solo use |
 | Claude Haiku 4.5 (`claude-haiku-4-5`) | Anthropic | No | $1.00 in, $5.00 out | The Anthropic default. 10 times the Gemini bill on input, 12.5 times on output |
-| Claude Haiku 5.5 (`claude-haiku-5-5`) | Anthropic | No | $0.10 in, $0.50 out on prompts up to 100,000 tokens; $0.50 in, $2.50 out above | Chat only (added 8 October 2026). Its price rises fivefold on very large prompts, and big ingests cross that line, so it cannot build the wiki. In chat it costs about a fifth of Haiku 4.5 per answer |
+| Claude Haiku 5.5 (`claude-haiku-5-5`) | Anthropic | No | $0.10 in, $0.50 out on a call whose prompt is up to 100,000 tokens; $0.50 in, $2.50 out on a call over it | Added 8 October 2026; can build the wiki and chat. Each call is charged at its own rate, and cost estimates assume the higher rate for any call that could cross the line. The cheapest Anthropic model, but not the default |
 | Solar Pro 4 (`upstage/solar-pro4`) | OpenRouter | No | $0.09 in, $0.36 out | The OpenRouter default, priced close to the Gemini default (measured against a billed call on 16 September 2026) |
 | MiniMax M3 (`minimax/minimax-m3:free`) | OpenRouter | Was free | Nothing | The one free model measured for building; OpenRouter withdrew the free id in September 2026, and the app now reports it as no longer offered. Other free routes remain usable for chat |
 

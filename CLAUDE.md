@@ -116,6 +116,7 @@ llm-docs/            — self-contained markdown written for language models (th
 - API keys are UI-first: `.curator-config.json` beats `.env`.
 - One LLM chokepoint, `generateText()`; the build model is chosen explicitly (last-saved-wins retired, `ACTIVE_PROVIDER_DERIVED`); fallback chains escalate FORWARD in time and every rung is priced.
 - `getProviderInfo` falls through to whichever provider has a key — never infer the provider from a label; assert the resolved one.
+- A TIERED price (`claude-haiku-5-5`) is charged per call by `priceUsageUsd` and estimated by `estimateCallRates` — never read a flat `getModelPrice` into a cost; Anthropic offers the current generation + the one before, and a retired pick moves FORWARD (`RETIRED_MODELS`).
 
 ### Security, credentials and paths → [decisions-app.md#security-credentials-and-user-data-paths](docs/dev/decisions-app.md#security-credentials-and-user-data-paths)
 - The server binds 127.0.0.1 only, with a cross-origin guard on mutating requests and a Host-header guard on all.

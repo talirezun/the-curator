@@ -809,6 +809,51 @@ export function setSelectedModel(provider, modelId) {
   return next[provider] || null;
 }
 
+// ── Retired-model migration notes (2026-10-08) ──────────────────────────────
+//
+// When a stored build pick names a model the catalogue has retired, llm.js's
+// migrateRetiredModelSelections moves it to the same family's newest model and
+// records one note here, which the app shows ONCE (GET /api/config/
+// model-retirement) until the user dismisses it (POST …/dismiss clears them).
+// Persisted so the note survives a restart between the migration and the
+// user's next look. Sanitised on read: only string fields, a bounded list.
+const MAX_MIGRATION_NOTES = 20;
+function sanitizeMigrationNotes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const n of raw) {
+    if (!n || typeof n !== 'object') continue;
+    const s = (v) => (typeof v === 'string' && v.length <= 500 ? v : null);
+    const note = { lane: s(n.lane), provider: s(n.provider), from: s(n.from), to: s(n.to), at: s(n.at), text: s(n.text) };
+    if (note.from && note.to && note.text) out.push(note);
+    if (out.length >= MAX_MIGRATION_NOTES) break;
+  }
+  return out;
+}
+
+/** The undismissed retired-model migration notes, oldest first. */
+export function getModelMigrationNotes() {
+  return sanitizeMigrationNotes(readRaw().modelMigrationNotes);
+}
+
+/** Append notes (never throws on a bad shape; drops it). */
+export function addModelMigrationNotes(notes) {
+  const cfg = readRaw();
+  const next = sanitizeMigrationNotes([...sanitizeMigrationNotes(cfg.modelMigrationNotes), ...(Array.isArray(notes) ? notes : [])]);
+  if (!next.length) return [];
+  cfg.modelMigrationNotes = next;
+  writeRaw(cfg);
+  return next;
+}
+
+/** Dismiss: the notes are removed, so they are never shown again. */
+export function dismissModelMigrationNotes() {
+  const cfg = readRaw();
+  if (!Object.hasOwn(cfg, 'modelMigrationNotes')) return;
+  delete cfg.modelMigrationNotes;
+  writeRaw(cfg);
+}
+
 // ── AI Health settings (v2.4.5+) ─────────────────────────────────────────────
 
 // THE TWO DEFAULTS MUST AGREE (v3.72.1). The ceiling hard-stops a semantic-

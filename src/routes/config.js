@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings, getModelMigrationNotes, dismissModelMigrationNotes } from '../brain/config.js';
 // v3.65.2 — the GitHub read-only token's TEST route. The read client is the
 // one implementation of GET-only GitHub plumbing (v3.63.0); this route reuses
 // its token reader and its getRef rather than composing a second request.
@@ -650,6 +650,51 @@ router.post('/ui-state', (req, res) => {
     const patch = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
     const { state, refused } = setUiState(patch);
     res.json({ ok: true, ui: state, refused });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Retired models (2026-10-08) ─────────────────────────────────────────────
+//
+// GET returns the retirement map (old id → successor) so the browser can move
+// the chat composer's remembered pick forward (localStorage
+// `curator-next-chat-model` — only the browser can read it), plus the
+// undismissed notes the server recorded when it moved a stored BUILD pick
+// forward at start (llm.js migrateRetiredModelSelections). POST …/dismiss
+// clears those notes so the one-time note is never shown again. Not behind
+// guardConcurrent, for the ui-state routes' reason: nothing on a write path
+// reads the notes. The cross-origin guard in server.js covers the POST.
+function retiredModelMap() {
+  const retired = {};
+  try {
+    const map = llmModule.RETIRED_MODELS || {};
+    for (const id of Object.keys(map)) {
+      const r = map[id];
+      const to = typeof llmModule.retiredModelSuccessor === 'function'
+        ? llmModule.retiredModelSuccessor(r.provider, id) : null;
+      if (!to) continue;
+      retired[id] = {
+        provider: r.provider, successor: to, retiredOn: r.retiredOn,
+        chatNote: llmModule.retirementNoteText(id, to, 'chat'),
+      };
+    }
+  } catch { /* an empty map migrates nothing — the safe direction */ }
+  return retired;
+}
+
+router.get('/model-retirement', (_req, res) => {
+  try {
+    res.json({ ok: true, retired: retiredModelMap(), notes: getModelMigrationNotes() });
+  } catch (err) {
+    res.status(200).json({ ok: false, error: err.message });
+  }
+});
+
+router.post('/model-retirement/dismiss', (_req, res) => {
+  try {
+    dismissModelMigrationNotes();
+    res.json({ ok: true, notes: getModelMigrationNotes() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1590,6 +1635,11 @@ router.get('/api-keys', (_req, res) => {
     // The `keys.*ApiKey ? … : []` gating is UNCHANGED and load-bearing: a
     // provider with no key SAVED IN SETTINGS serialises an empty array whatever
     // any catalogue holds (the v3.0.13 config-scoped rule).
+    // 2026-10-08, ADDITIVE: old id → successor for every RETIRED model (see
+    // llm.js RETIRED_MODELS), so the chat view can move a remembered pick
+    // forward before it resolves it. Not key-gated: it names no offer, only a
+    // mapping between ids the app no longer offers and ones it does.
+    retiredModels: retiredModelMap(),
     offerable: {
       gemini:     keys.geminiApiKey     ? withMeasurement('gemini')     : [],
       anthropic:  keys.anthropicApiKey  ? withMeasurement('anthropic')  : [],

@@ -199,7 +199,7 @@ import {
   makeUsageAccumulator,
   __testing as ingestTesting,
 } from './ingest.js';
-import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError } from './llm.js';
+import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -826,7 +826,7 @@ export function cachingSavingsFraction(totalCalls) {
   return 0.303 + (0.56 - 0.303) * ((totalCalls - 4) / 3);
 }
 
-function estimateOneFile({ f, promptFiles, index, today, price }) {
+function estimateOneFile({ f, promptFiles, index, today, price, model = null }) {
   // Size-based proxy for extracted text length — /estimate takes metadata
   // only (no file bytes, per the HTTP contract), so no real extraction
   // happens here. For .txt/.md this is close (bytes≈chars for ASCII-heavy
@@ -846,9 +846,13 @@ function estimateOneFile({ f, promptFiles, index, today, price }) {
   const placeholderSummaryPath = 'summaries/estimate-placeholder.md';
 
   let promptChars;
+  // The planned calls' own prompt sizes, kept so a TIERED model (whose rate
+  // depends on each call's prompt) can be quoted per call — see below.
+  let callChars;
   if (mode === 'single-pass') {
     const prompt = buildPrompt(today, index, promptFiles, f.name, syntheticText, false, false, placeholderSummaryPath);
     promptChars = prompt.length;
+    callChars = [prompt.length];
   } else {
     const outline = buildOutlinePrompt(today, index, promptFiles, f.name, syntheticText, false, placeholderSummaryPath);
     // pageBatch=[] and allOutlinePages=[] slightly UNDER-count the small
@@ -858,6 +862,7 @@ function estimateOneFile({ f, promptFiles, index, today, price }) {
     const batchParts = buildBatchPromptParts(today, f.name, syntheticText, [], promptFiles, []);
     const batchChars = batchParts.prefix.length + batchParts.suffix.length;
     promptChars = outline.length + numBatches * batchChars;
+    callChars = [outline.length, ...Array(numBatches).fill(batchChars)];
   }
 
   const inputTokens = Math.round(promptChars / CHARS_PER_TOKEN);
@@ -865,6 +870,34 @@ function estimateOneFile({ f, promptFiles, index, today, price }) {
 
   if (!price) {
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: null, usdHigh: null };
+  }
+
+  // ── TIERED PRICE (claude-haiku-5-5): PRICE EACH PLANNED CALL ON ITS OWN ──
+  // A tiered model's rate depends on the size of EACH call's prompt, so one
+  // blended rate over the file's total is wrong in both directions. Each planned
+  // call is quoted through llm.js's `estimateCallRates`, which puts it at the
+  // UPPER tier whenever its estimated prompt could cross the threshold (a 1.5x
+  // margin on the chars-per-token proxy, times the model's measured tokenizer
+  // premium). This is the figure `createJob`'s budget cap and `chargeForItem`'s
+  // fallback share are built from, so it must not quote the cheap tier for a
+  // call that may bill the dear one. Flat models never enter this branch, and
+  // their arithmetic below is byte-for-byte what it was.
+  if (model && estimateCallRates(model, 0, CHARS_PER_TOKEN)?.tiered) {
+    let high = 0, rawIn = 0;
+    // The model's measured tokenizer premium IS applied to the token count here
+    // (it is what decided the tier, two lines down), so the dollars and the
+    // tier come from one token figure. The flat path below predates the field
+    // and does not apply it — a known, documented under-count on the newer
+    // Anthropic tokenizer, left unchanged so flat estimates stay byte-stable.
+    const factor = tokenizerFactorOf(model);
+    for (const chars of callChars) {
+      const r = estimateCallRates(model, chars, CHARS_PER_TOKEN);
+      const inTok = (chars / CHARS_PER_TOKEN) * factor;
+      rawIn += (inTok / 1e6) * r.input;
+      high += (inTok / 1e6) * r.input + (AVG_OUTPUT_TOKENS_PER_CALL / 1e6) * r.output;
+    }
+    const low = Math.max(0, high - rawIn * cachingSavingsFraction(totalCalls));
+    return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high };
   }
 
   const usdHigh = (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output;
@@ -1117,7 +1150,7 @@ export async function estimateIngestQueueCost(domain, files) {
   let stats = null;
   try { stats = await getDomainStats(domain); } catch { /* best-effort context only */ }
 
-  const perFile = accepted.map(f => estimateOneFile({ f, promptFiles, index, today, price }));
+  const perFile = accepted.map(f => estimateOneFile({ f, promptFiles, index, today, price, model }));
 
   // The SAME files, the SAME code, against an EMPTY domain. This is what makes
   // "how much is my wiki's size costing me" answerable for the batch actually
@@ -1126,7 +1159,7 @@ export async function estimateIngestQueueCost(domain, files) {
   // Pure string work on much smaller prompts — no I/O, no extra readdir. On
   // the real `articles` domain a 100-file estimate measures 33 ms before this
   // and 46 ms after.
-  const perFileFresh = accepted.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price }));
+  const perFileFresh = accepted.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price, model }));
   const matureInputTokens = perFile.reduce((n, e) => n + (e.inputTokens || 0), 0);
   const freshInputTokens = perFileFresh.reduce((n, e) => n + (e.inputTokens || 0), 0);
   // Deliberately independent of `price`: the ratio is meaningful even when no
@@ -1420,83 +1453,17 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
 
 // ── Cost charging (real usage, with a fallback that keeps the cap honest) ───
 
-/**
- * Which provider's CACHE RATES apply to this model id — or `null` for "we have
- * not measured this one", which is the fail-safe answer and the common one.
- *
- * Deliberately NOT a general provider resolver, and the asymmetry is the whole
- * design: a provider only needs to be nameable here if it has earned a
- * DISCOUNT. Anything this function cannot place falls through to full price in
- * `cacheMultipliers`, so a fourth provider, an unqualified OpenRouter id, a
- * retired model, an id from a catalogue that has not synced yet, and a garbage
- * string all over-state rather than under-state. Adding a provider to a
- * discount table is a deliberate act backed by a measurement; forgetting to
- * add one costs the user nothing.
- *
- * Membership is an exact `===` scan over the live catalogue via
- * `isOfferableModel`, so `'__proto__'`, `'constructor'` and `'toString'` are
- * structurally unable to resolve (llm.js's `findOfferableModel` indexes no
- * object with the caller's string). Anthropic and OpenRouter ids cannot
- * collide — every OpenRouter id carries a `vendor/` segment and no Anthropic
- * id does — so a non-Anthropic model cannot acquire Anthropic's discount by
- * name.
- */
-function cacheRateProvider(modelId) {
-  if (typeof modelId !== 'string' || modelId.length === 0) return null;
-  if (isOfferableModel('anthropic', modelId)) return 'anthropic';
-  return null;
-}
+// The per-provider (and, since 2026-10-08, per-model) CACHE RATES that used to
+// live here as `cacheRateProvider` + `cacheMultipliers` moved, with the rule and
+// its measurements, to llm.js's `cacheRatesFor` — the one money formula,
+// `priceUsageUsd`, is what `chargeForItem` calls now. The rule is unchanged:
+// Anthropic reads 0.1x base input (0.05x on claude-sonnet-5-5 and
+// claude-opus-5-5, per the provider's page), every other provider's reads FULL
+// price (OpenRouter measured at full price against real credit deltas: cold run
+// exact, warm run up to 2.17x under at 0.1x), writes 1.25x everywhere. Anything
+// that cannot be placed — a retired id, an unsynced OpenRouter id, a garbage
+// string — over-states rather than under-states.
 
-/**
- * The cached-read and cache-write multipliers on the base INPUT rate, per
- * provider. Mirrors `cacheMultipliers` in src/public/next/views/chat.js —
- * same name, same two numbers, same fail-safe default — because the two
- * surfaces price the same tokens and a user comparing them must not be shown
- * two answers.
- *
- * ── THE DEFECT THIS CLOSES, AND WHY THIS COPY WAS THE WORSE ONE ──────────
- * Both copies used to apply Anthropic's 0.1x cached-read discount to EVERY
- * provider. OpenRouter bills cached reads at FULL input price — measured
- * against real credit-balance deltas, a cold run as the control (matching
- * actual spend to 8 decimal places, so the rates and the harness are both
- * validated) and a warm run as the case, which came in up to 2.17x UNDER.
- *
- * In the chat view that was a misreport. HERE it is a control failure: this
- * number feeds `job.spentUsd`, which the worker loop tests against
- * `job.budgetUsd` between items. Under-counting cached reads let a batch run
- * PAST the ceiling the user set — the cap did not merely display a wrong
- * figure, it stopped biting when it should have.
- *
- * ── ANTHROPIC: 0.1x / 1.25x, FROM THE PROVIDER'S OWN DOCUMENTATION ───────
- * `cache_read_input_tokens` bills at ~0.1x base input and
- * `cache_creation_input_tokens` at ~1.25x. It is the only provider this
- * project has a published source for, and the only one that gets a discount.
- * It is also the only provider ingest sends a cache breakpoint to at all (see
- * llm.js's ANTHROPIC_CACHE_MIN_PREFIX_CHARS, gated on a 16k-char prefix AND
- * totalBatches >= 2), so this is the arm the multi-batch path exercises.
- *
- * ── EVERYONE ELSE: FULL PRICE ON READS ───────────────────────────────────
- * OpenRouter is MEASURED at full price. Gemini's implicit prefix cache is NOT
- * measured — its real discount is neither 1.0x nor 0.1x, and inventing a
- * third number from memory is precisely the move that put the wrong constant
- * in both files to begin with. Over-stating a bill pauses a batch sooner than
- * strictly necessary; under-stating one lets it spend past a cap the user set.
- * Only the second is a failure the user cannot detect. When a provider's rate
- * is measured the way OpenRouter's was, add it here with the numbers in the
- * comment, not from a spec sheet.
- *
- * ── WRITES STAY AT 1.25x EVERYWHERE, DELIBERATELY ────────────────────────
- * Only Anthropic's write rate is published, but 1.25 > 1.0, so applying it
- * universally errs UPWARD — the same direction llm.js's
- * `normalizeOpenRouterUsage` already reasons about when it declines to
- * subtract `cache_write_tokens` from `prompt_tokens`. Dropping it to 1.0 for
- * unverified providers would be a second under-report introduced while fixing
- * the first.
- */
-function cacheMultipliers(provider) {
-  if (provider === 'anthropic') return { read: 0.1, write: 1.25 };
-  return { read: 1, write: 1.25 };
-}
 
 /**
  * Charge one completed item against `job.spentUsd`. If the item returned a
@@ -1582,28 +1549,18 @@ function chargeForItem(job, item) {
   // manifest, which is a schema change and a separate piece of work.
   if (u && isFreeModel(u.model)) return 0;
   const price = u && u.model ? getModelPrice(u.model) : null;
+  // ── ONE FORMULA, IN llm.js (2026-10-08) ─────────────────────────────────
+  // `priceUsageUsd` prices the tokens of the model that ACTUALLY RAN (`u.model`,
+  // reported by llm.js per completed provider call — on a fallback walk, the id
+  // the user did NOT choose, which is exactly when it matters) with that
+  // model's own cache rates and, for a TIERED model (claude-haiku-5-5), the
+  // per-call tier split the usage accumulator recorded: crossing calls at the
+  // upper tier, and a total of unknown composition entirely at the upper tier.
+  // This is the budget cap's input, so it must never charge a crossing call at
+  // the lower rate.
   if (u && price) {
-    const inCost = (u.inputTokens || 0) / 1e6 * price.input;
-    const outCost = (u.outputTokens || 0) / 1e6 * price.output;
-    // Resolved from the model that ACTUALLY RAN (`u.model`, reported by llm.js
-    // per completed provider call) — the same id the price two lines up came
-    // from, so the rate and the multiplier applied to it can never be drawn
-    // from two different catalogue entries. On a fallback-chain walk this is
-    // the id the user did NOT choose, which is exactly when it matters.
-    //
-    // Written as two statements rather than `cacheMultipliers(cacheRateProvider(u.model))`
-    // ON PURPOSE. The suite's §0 binding scanner matches `name(` only when a
-    // non-identifier character precedes it, and that character is CONSUMED by
-    // the enclosing match — so a call nested as the first argument of another
-    // call is invisible to it. Measured: the nested form reported only
-    // `cacheMultipliers` as unresolved and said nothing about
-    // `cacheRateProvider`. Keeping both at statement level keeps §0 able to
-    // see them, i.e. keeps the guard load-bearing rather than lucky.
-    const rateProvider = cacheRateProvider(u.model);
-    const mult = cacheMultipliers(rateProvider);
-    const cachedReadCost = (u.cachedReadTokens || 0) / 1e6 * price.input * mult.read;
-    const cacheWriteCost = (u.cacheWriteTokens || 0) / 1e6 * price.input * mult.write;
-    return inCost + outCost + cachedReadCost + cacheWriteCost;
+    const usd = priceUsageUsd(u.model, u);
+    if (typeof usd === 'number' && Number.isFinite(usd)) return usd;
   }
   job.spendIsEstimated = true;
   const plannedCount = job.items.filter(i => i.status !== 'skipped').length || 1;
@@ -2657,7 +2614,7 @@ export async function recoverOnBoot() {
 
 export const __testing = {
   jobDir, manifestPath, filesDir,
-  chargeForItem, chargePartialSpend, estimateCallCounts, sanitizeBaseName, stagedFileName,
+  chargeForItem, chargePartialSpend, estimateCallCounts, estimateOneFile, sanitizeBaseName, stagedFileName,
   reclaimStrandedItems, pruneOldJobs,
   // Exposed so the `done` tripwire can be tested DIRECTLY. It is the second
   // of two layers: while `reclaimStrandedItems` works, the state the tripwire

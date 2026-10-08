@@ -44,10 +44,10 @@ const FALLBACK_CHAINS = {
     'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
     'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
-  anthropic: [
-    'claude-sonnet-5',              // $2/$10 — cheapest live non-Haiku AND the newest
-    'claude-sonnet-4-6',            // $3/$15 — ties 4.5 on price, newer, 128k output ceiling
-    'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output ceiling
+  anthropic: [                      // rebuilt 2026-10-08 on the 5.5 generation
+    'claude-haiku-5-5',             // $0.10/$0.50 (≤100k prompt), $0.50/$2.50 above — tiered, newest Haiku
+    'claude-sonnet-5-5',            // $2/$10 — newest at this price
+    'claude-sonnet-5',              // $2/$10 — tie on price, older
   ],
   openrouter: [
     'ibm-granite/granite-4.0-h-micro',  // $0.017/$0.112 — cheaper than the default it backs up
@@ -157,14 +157,14 @@ Prices verified 2026-08-26 against [ai.google.dev/gemini-api/docs/pricing](https
 | `gemini-3.7-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
 | `gemini-3.6-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
 | `gemini-3.5-flash` | $1.50 | $9.00 | 15× / 22.5× |
-| `claude-haiku-5-5` *(chat only)* | $0.10 *(→ $0.50 over 100k-token prompts)* | $0.50 *(→ $2.50)* | 0.1× / 0.1× *(0.5× / 0.5× over the threshold; ≈0.13× input on real text)* |
+| `claude-haiku-5-5` | $0.10 *(→ $0.50 on a call whose prompt is over 100k tokens)* | $0.50 *(→ $2.50)* | 0.1× / 0.1× *(0.5× / 0.5× over the threshold; ≈0.13× input on real text)* |
 | `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
+| `claude-sonnet-5-5` | $2.00 | $10.00 | 2× / 2× *(≈2.66× input on real text; cache reads 0.05×)* |
 | `claude-sonnet-5` | $2.00 | $10.00 | 2× / 2× *(≈2.66× input on real text — see tokenizer note)* |
-| `claude-sonnet-4-6` | $3.00 | $15.00 | 3× / 3× |
-| `claude-sonnet-4-5` | $3.00 | $15.00 | 3× / 3× |
+| `claude-opus-5-5` | $4.00 | $20.00 | 4× / 4× *(≈5.3× input on real text; cache reads 0.05×)* |
 | `claude-opus-5` | $5.00 | $25.00 | 5× / 5× *(≈6.65× input on real text)* |
-| `claude-opus-4-8` | $5.00 | $25.00 | 5× / 5× *(≈6.65× input on real text)* |
-| `claude-opus-4-5` | $5.00 | $25.00 | 5× / 5× |
+
+*(`claude-sonnet-4-6`, `-4-5` at $3/$15 and `claude-opus-4-8`, `-4-5` at $5/$25 were retired from the catalogue on 2026-10-08 — see [Retiring two-generation-old Anthropic models](#retiring-two-generation-old-anthropic-models-and-moving-picks-forward-2026-10-08).)*
 
 What to do:
 1. Click **Check for Updates** in Settings → **App**.
@@ -189,42 +189,71 @@ For most of its life The Curator could run exactly **two** models — one per pr
 
 `OFFERABLE_MODELS` in [`llm.js`](../src/brain/llm.js) is that ask: the set of models the app will let you select, per provider, **cheapest first**. Every entry was probed live on 2026-08-26 against this repo's **real** ingest outline prompt on real prose — never a toy `return this JSON` probe — and carries what that probe measured, so the cost *and* the trade-off are visible at the moment of choosing.
 
-**The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned, and remain the cheapest thing on their provider **that can build a wiki** (`claude-haiku-5-5`, added 2026-10-08, is cheaper but chat-only — see [Claude Haiku 5.5](#claude-haiku-55--cheaper-measured-and-chat-only-because-its-price-is-tiered) below). Picking a stronger model is a deliberate act, and the price is on screen when you do it.
+**The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned. On Gemini the default is still the cheapest model that can build a wiki; on Anthropic it no longer is — `claude-haiku-5-5` (added 2026-10-08, allowed to build the same day once the money path became tier-aware) is cheaper — and the default stays put by the maintainer's decision: a default moves when it is retired, and Haiku 4.5 is the previous generation, not a retired one. See [The Anthropic 5.5 generation and tiered pricing](#the-anthropic-55-generation-and-tiered-pricing-2026-10-08) below. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
 
-The hand-measured catalogue holds **seven Gemini and eight Anthropic entries, plus a set of OpenRouter routes that grows as candidates are measured** — this document deliberately prints no running total, because the OpenRouter half moves with measurement; read `listOfferableModels(provider)` for the live list. Almost every entry may enter the build lane; `gemini-3.5-flash-lite` and `claude-haiku-5-5` are the hand-measured exceptions, offered as `chat-only` (the first for a measured JSON defect, the second for its tiered price). Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because a *second*, much larger chat-lane list is read from the provider's live catalogue rather than hand-typed here. **That overlay is populated on demand**, by `POST /api/config/openrouter/sync` — so `listOfferableModels('openrouter')` returns the hand-measured entries above until a user refreshes, and those plus every admitted catalogue entry afterwards. A fetched entry is `chat-only` by construction and can never be promoted by a refresh; the one route out of that lane is a user's own [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages), which is a **third lane state** and never entry into this hand-measured one. The OpenRouter entries here were admitted the same way every other entry was, by measurement against the real ingest prompt.
+The hand-measured catalogue holds **seven Gemini and six Anthropic entries, plus a set of OpenRouter routes that grows as candidates are measured** — this document deliberately prints no running total, because the OpenRouter half moves with measurement; read `listOfferableModels(provider)` for the live list. Almost every entry may enter the build lane; `gemini-3.5-flash-lite` is the hand-measured exception, offered as `chat-only` for a measured JSON defect. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved). On Anthropic the catalogue is **the current generation and the one before it** — Haiku 5.5 / 4.5, Sonnet 5.5 / 5, Opus 5.5 / 5 — and everything older is in `RETIRED_MODELS` (see [Retiring two-generation-old Anthropic models](#retiring-two-generation-old-anthropic-models-and-moving-picks-forward-2026-10-08)). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because a *second*, much larger chat-lane list is read from the provider's live catalogue rather than hand-typed here. **That overlay is populated on demand**, by `POST /api/config/openrouter/sync` — so `listOfferableModels('openrouter')` returns the hand-measured entries above until a user refreshes, and those plus every admitted catalogue entry afterwards. A fetched entry is `chat-only` by construction and can never be promoted by a refresh; the one route out of that lane is a user's own [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages), which is a **third lane state** and never entry into this hand-measured one. The OpenRouter entries here were admitted the same way every other entry was, by measurement against the real ingest prompt.
 
-### Claude Haiku 5.5 — cheaper, measured, and chat-only because its price is tiered
+### The Anthropic 5.5 generation and tiered pricing (2026-10-08)
 
-Added **2026-10-08**, the day after Anthropic released it. Facts, each with its source:
+Three models were added on **2026-10-08** and all three may build a wiki. Facts, each with its source:
 
-| Fact | Value | Source |
-|---|---|---|
-| Model id | `claude-haiku-5-5` (undated; no dated snapshot is listed) | `GET /v1/models/claude-haiku-5-5` |
-| Released | 2026-10-07 (`created_at` 2026-10-07T18:00:00Z) | same |
-| Context window / max output | 1,000,000 / 128,000 tokens | same (`max_input_tokens`, `max_tokens`) |
-| Price, prompts up to 100,000 tokens | $0.10 in / $0.50 out per 1M (cache read $0.01) | live pricing page |
-| Price, prompts over 100,000 tokens | $0.50 in / $2.50 out per 1M (cache read $0.05) | live pricing page |
-| Tokenizer | the newer one: 1.297–1.336× the input tokens of Haiku 4.5 on three Curator docs, within 2 tokens of `claude-sonnet-5` | `/v1/messages/count_tokens` |
-| Thinking | adaptive when the `thinking` parameter is omitted (The Curator never sends one) | measured — see below |
+| | Claude Haiku 5.5 | Claude Sonnet 5.5 | Claude Opus 5.5 |
+|---|---|---|---|
+| Model id | `claude-haiku-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` |
+| Released (`created_at`, `GET /v1/models/<id>`) | 2026-10-07 | 2026-09-28 | 2026-09-21 |
+| Context / max output (same endpoint) | 1,000,000 / 128,000 | 1,000,000 / 128,000 | 1,000,000 / 128,000 |
+| Price per 1M, live pricing page | **$0.10 / $0.50** for prompts up to 100,000 tokens; **$0.50 / $2.50** over | $2 / $10 (flat) | $4 / $20 (flat) — cheaper than Opus 5's $5 / $25 |
+| Cache write (5 min) / cache read | 1.25x / 0.1x of the tier's own input rate ($0.125 / $0.01 lower, $0.625 / $0.05 upper) | 1.25x / **0.05x** ($2.50 / $0.10) | 1.25x / **0.05x** ($5 / $0.20) |
+| Thinking (the API lists `thinking.disabled` as unsupported on Sonnet/Opus 5.5) | adaptive; measured on almost every call | adaptive; 7 of 15 multi-phase calls, 0 of 4 single-pass, 0 of 3 chat | adaptive; 2 of 2 single-pass, 0 of 8 multi-phase, 3 of 3 chat |
+| Tokenizer (`/v1/messages/count_tokens`, three Curator docs) | 1.297–1.336x Haiku 4.5 | within 2 tokens of Sonnet 5 → 1.329 | within 2 tokens of Sonnet 5 → 1.329 |
 
-**Why chat-only.** Its price is **tiered**: above 100,000 prompt tokens every rate is five times higher. Every cost surface in The Curator — the estimate, the budget cap, the per-item charge — assumes one flat rate per model, and the requests that cross the threshold are exactly the large ingests (a real outline on a big wiki is ~341,000 characters, about 110,000 tokens on this tokenizer). So it is the first entry in `TIERED_PRICE_MODELS`, and `defineOfferableModel` refuses to build it as anything but `chat-only`. Chat prompts are bounded (60 KB of pages plus a 12 KB catalogue), so the flat lower-tier rate quoted for chat is the rate billed. Admitting it to the build lane needs a tier-aware money path first — its own release.
+**Measured for the build lane on the real pipeline** — real `ingestFile`, the real `generateText` chokepoint with a per-call model, isolated domain and user-data folders, the same three sources for every model: an article announcing a product into a seeded domain (single pass), a 34,000-character source into an empty domain (multi-phase), and that same source into a snapshot of a real 3,300-page wiki (multi-phase, outline over 100,000 prompt tokens). Baselines were re-run on the same sources the same day.
 
-**Measured anyway, on the real pipeline (2026-10-08, ~$0.29 in total).** Real `ingestFile` and the real `generateText` chokepoint, isolated domain and user-data folders, the same sources for both models:
+| | Haiku 5.5 | Haiku 4.5 | Sonnet 5.5 | Sonnet 5 | Opus 5.5 | Opus 5 |
+|---|---|---|---|---|---|---|
+| Announcement: product entity page written | 4/4 | 4/4 | 4/4 | 2/2 | 2/2 | — |
+| …cost per ingest | ~$0.0029 | ~$0.014 | ~$0.042–0.047 | ~$0.051–0.054 | ~$0.114–0.119 | — |
+| 34k source: product entity page | 2/2 | 2/2 | 2/2 | 1/1 | 1/1 | 1/1 |
+| …pages planned and written | 21–25 | 20–21 | 22–25 | 19 | 27 | 30 |
+| …cost per ingest | ~$0.012–0.016 | ~$0.083–0.088 | ~$0.29–0.32 | ~$0.25 | ~$0.56 | ~$0.80 |
+| 3,300-page wiki: pages written | 32–39 (2/2) | 22 (1/1) | — | — | — | — |
+| …outline prompt / tier | 120,820 tokens — **upper tier** | 83,520 (flat) | | | | |
+| …cost per ingest | **~$0.093–0.097** | ~$0.22 | | | | |
+| Bare JSON (no fence) | 28 of 39 responses | 0 of 24 | 19 of 19 | 7 of 8 | 10 of 10 | 9 of 9 |
+| Chat on the demo domain (×3): grounded, cited, says when the wiki lacks it | yes | yes | yes | — | yes | — |
 
-| | Haiku 5.5 | Haiku 4.5 |
-|---|---|---|
-| Announcement article, seeded domain (×4, single pass): `entities/<product>.md` written | **4/4** | 4/4 |
-| …bare JSON (no fence) | 4/4 | 0/4 (fenced, repaired) |
-| …thinking block present | 4/4 | 0/4 |
-| …cost per ingest | **~$0.0029** | ~$0.0143 |
-| 34,000-character source (×2, multi-phase): product entity written | 2/2 | 2/2 |
-| …pages written | 21–25 | 20–21 |
-| …bare JSON | 10 of 15 calls | 0 of 13 |
-| …cost per ingest | **~$0.014** | ~$0.085 |
-| Chat on the demo domain (×3): thinking | 3/3 | 0/3 |
-| …cost per answer | ~$0.0006–$0.0012 | ~$0.003–$0.006 |
+On the large wiki the tier-aware charge (`priceUsageUsd` over the accumulator's per-call split) equalled an independent per-call computation from the page's rates to the micro-dollar; a flat lower-tier quote of the same tokens would have said **$0.037–0.040** — 2.5x under the bill. The batch estimate for that ingest quotes **$0.056–0.113**; the actual $0.093–0.097 sits inside it. Spend for this session's measurements: about $3.3 (Haiku 5.5 large wiki ~$0.19, Haiku 4.5 large wiki ~$0.22, Sonnet 5.5 ~$0.79, Opus 5.5 ~$0.80, Sonnet 5 ~$0.36, Opus 5 ~$0.80, chat ~$0.14, token counting free); the Haiku 5.5 / 4.5 announcement and 34k rows are the morning's chat-only session (~$0.30).
 
-Chat answers were grounded and cited; asked about a topic the wiki does not cover, it said so. One answer wrote three compound citation markers (`[source: a.md; see also b.md]`), which Haiku 4.5 did not. It emits roughly twice Haiku 4.5's output tokens (the thinking), and still costs a fifth to a sixth as much.
+#### How a tiered price is charged, estimated and capped
+
+`TIERED_PRICES` in `llm.js` holds the full schedule (threshold, upper-tier rates); `MODEL_PRICES_USD_PER_MTOK` holds the lower tier, which is the headline price on every row. Every surface that turns tokens into dollars resolves a tiered model through **one** place:
+
+- **Anything already billed** — `chargeForItem` (the batch budget cap), ai-run's `spentFromUsage` (ingest, Health, Compile `spent`), chat's recorded answer price — goes through `priceUsageUsd(model, usage)`. A call is classified by **its own** prompt: `inputTokens + cachedReadTokens + cacheWriteTokens`, the reading that crosses the line earliest. Strictly over the threshold pays the upper tier on every token of that call, output and cache included. `makeUsageAccumulator` records which calls crossed (`totals.aboveTier`), so a run total is priced call by call; a multi-call total **without** that split is priced entirely at the upper tier.
+- **Anything not yet run** — the batch estimate (`estimateOneFile`, per planned call), the compile estimate, `describeRun`, Health's estimate — goes through `estimateCallRates` / `estimateRates`. A planned call is quoted at the upper tier when its estimated prompt, times the model's tokenizer premium, times `TIER_ESTIMATE_MARGIN` (1.5), is over the threshold — i.e. whenever it *could* cross. An unknown size quotes the upper tier.
+- **The composer's mirrored formula** reads `priceTierThresholdTokens` and `priceAbove` off the entry.
+- **The structural guard.** `defineOfferableModel` admits a tiered model to the build lane only with a hand-typed full schedule, and at module load prices one call at the threshold and one a token over through `priceUsageUsd`; if those do not come out at exactly the lower and the upper tier, the module refuses to load. A fetched OpenRouter entry that reports *that* its rate changes (`tiered: true`) but not where stays chat-only.
+
+`DEFAULTS.anthropic` stays `claude-haiku-4-5`, although `claude-haiku-5-5` is now cheaper and may build: the maintainer's decision is that a default moves when it is retired, and Haiku 4.5 is the previous generation, not a retired one.
+
+### Retiring two-generation-old Anthropic models, and moving picks forward (2026-10-08)
+
+**Rule:** The Curator offers the current Anthropic generation and the one immediately before it. Today: Haiku 5.5 / 4.5 (there is no Haiku 5), Sonnet 5.5 / 5, Opus 5.5 / 5. Anthropic only — Gemini and OpenRouter are untouched. The Fable line (`claude-fable-5`, `-5-1`) was never in the catalogue and is not concerned.
+
+| Retired id | Moves to |
+|---|---|
+| `claude-sonnet-4-6`, `claude-sonnet-4-5` | `claude-sonnet-5-5` |
+| `claude-opus-4-8`, `claude-opus-4-5` (and the never-offered `-4-7`, `-4-6`, which left `AWAITING_MEASUREMENT`) | `claude-opus-5-5` |
+
+Retired is **not** the same as the 404 list in `test-chat-model.js` §9: every id above still answers on the API. They are in `RETIRED_MODELS`, carry no price, are not offerable and are no longer fallback rungs (their output ceilings stay, as facts, for an `LLM_MODEL` override). `claude-opus-4-5` left `DOMINATED_MODELS` with them.
+
+**Migration — forward, never down.** Before this change a stored pick of a model that left the catalogue fell back to the provider default, which would have moved someone who chose Opus 4.8 down to Haiku 4.5. Now:
+
+1. **Read side** — `storedSelection` maps a retired build pick to its successor before anything resolves it.
+2. **Write side** — at server start, `migrateRetiredModelSelections()` rewrites the stored pick once and records a note in `.curator-config.json` (`modelMigrationNotes`).
+3. **Browser** — the chat composer's remembered pick (`localStorage['curator-next-chat-model']`) is moved by the same map, served on `GET /api/config/model-retirement` and as `retiredModels` on `/api-keys`; the chat view migrates it before resolving it.
+4. **One note** — a banner above the view says what changed and why, for both lanes, until **Dismiss** (`POST /api/config/model-retirement/dismiss`, plus the browser's own note key). It is not shown again.
+
+**The Anthropic fallback chain** is rebuilt on the same generations, still cheapest-first with ties newest-first and every rung priced and build-lane: `claude-haiku-5-5` (cheaper than the default even at its upper tier) → `claude-sonnet-5-5` → `claude-sonnet-5`.
 
 ### Where a user picks, and what each choice governs (v3.13.0)
 
@@ -280,13 +309,13 @@ The lane is now a predicate — `isBuildLaneModel(provider, id)`, derived from `
 
 **1. Thinking behaviour is PER-MODEL, not per-generation.** `claude-opus-5` was released *after* `claude-sonnet-5` and ran no hidden reasoning at all (0/3), while `claude-sonnet-5` ran adaptive thinking on **every single call** (7/7). Two models one release apart, opposite behaviour. So for any model nobody has probed, `thinks` is genuinely **unknown** — not "probably like its neighbour". This is why unprobed models are refused outright (below).
 
-**2. The headline price understates the newest Anthropic models by ~33%.** `claude-sonnet-5`, `claude-opus-5` and `claude-opus-4-8` use a newer tokenizer that produced **1.329× more input tokens** than `claude-haiku-4-5` on the same Curator prose. So `claude-opus-5` at $5/1M input really costs **≈$6.65 per 1M Haiku-equivalent tokens — 6.6×, not the 5× the headline implies**. A cost estimate computed from *character count* under-reports these models by about a quarter unless the factor is applied. It is carried per-model as `tokenizerFactor` rather than folded into the price, because folding it in would make our table disagree with the provider's own invoice. It is deliberately **not** applied to output: the 1.329× figure was measured on prompt text, and extending an input measurement to output would be over-claiming. It is also **provider-relative** — it compares models within one provider and says nothing about Gemini-vs-Anthropic token counts.
+**2. The headline price understates the newest Anthropic models by ~33%.** `claude-sonnet-5`, `claude-opus-5` (and, since 2026-10-08, all three 5.5 models) use a newer tokenizer that produced **1.329× more input tokens** than `claude-haiku-4-5` on the same Curator prose. So `claude-opus-5` at $5/1M input really costs **≈$6.65 per 1M Haiku-equivalent tokens — 6.6×, not the 5× the headline implies**. A cost estimate computed from *character count* under-reports these models by about a quarter unless the factor is applied. It is carried per-model as `tokenizerFactor` rather than folded into the price, because folding it in would make our table disagree with the provider's own invoice. It is deliberately **not** applied to output: the 1.329× figure was measured on prompt text, and extending an input measurement to output would be over-claiming. It is also **provider-relative** — it compares models within one provider and says nothing about Gemini-vs-Anthropic token counts.
 
 **3. More money does not buy a better plan.** `gemini-3.5-flash` costs **15× the input and 22.5× the output** of the default and planned *fewer* outline pages than it (8–14 against 18–20). `gemini-3.1-flash-lite` is 2.5× the price and thinner still (5–12). The strongest reason to reach for a bigger model is not the Flash ladder — it is `claude-haiku-4-5`'s **outline variability**: 5 to 13 pages on the *same source*, the widest spread measured, so a long document can be planned much more thinly on one run than the next. `claude-opus-5` planned 25–27 pages on that same source.
 
 ### Two rules that keep the catalogue honest
 
-**A model may not be offered for a feature it has never been measured against.** `claude-opus-4-7` and `claude-opus-4-6` are real, documented, and have a published price and ceiling — and are **not offerable**, because neither has been run against the real ingest prompt. They sit in `AWAITING_MEASUREMENT` with the reason, and the suite asserts they carry no price, are not a default, are not a fallback rung, and are refused by `getProviderInfo`. To promote one: probe it live with the real prompt, then add its price, cap and measured fields together.
+**A model may not be offered for a feature it has never been measured against.** A real, documented, priced model that nobody has run against the real ingest prompt sits in `AWAITING_MEASUREMENT` with the reason, and the suite asserts it carries no price, is not a default, is not a fallback rung, and is refused by `getProviderInfo`. To promote one: probe it live with the real prompt, then add its price, cap and measured fields together. (Its two entries, `claude-opus-4-7` and `claude-opus-4-6`, were retired rather than measured on 2026-10-08; the list is empty today.)
 
 **A model may not be offerable unless it is fully specified.** This is structural, not a convention: `OFFERABLE_MODELS` entries are built by a factory that **throws at module load** if any measured field is missing, if the id has no entry in `MODEL_PRICES_USD_PER_MTOK`, or if it has no entry in the provider's output-cap map. Price and ceiling are **derived** from those tables rather than re-typed into the entry, so there is no second copy to drift — two hand-maintained copies of one fact is this repo's named cause of the v3.2.0 CRITICAL, and here the fact is a number a user makes a spending decision from.
 
@@ -304,12 +333,9 @@ That split is the whole point. A **fallback chain** picks *for* the user, silent
 Current entries:
 
 - **`gemini-3.5-flash-lite`** — dominated by `gemini-2.5-flash`. Identical $0.30/$2.50, but 2 of 9 live runs against the real ingest prompt returned JSON that *neither* `JSON.parse` nor `jsonrepair` could fix (a dropped object key, `finishReason: STOP` — a generation defect, not truncation the output-token-limit ladder could route around). `gemini-2.5-flash` was 3/3 clean on the identical probe and plans wider outlines. It was pulled from the Gemini chain on 2026-08-26 by a bespoke pair of assertions naming it specifically; those are now folded into this list, so the *next* dominated model is caught by the same class invariant instead of needing its own pair.
-- **`claude-opus-4-5`** — dominated by `claude-opus-5`. Identical $5/$25 and behind on all three measured axes: half the output ceiling (64,000 vs 128,000), fenced JSON where opus-5 returns bare JSON, and 12–13 outline pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price.
+- *(`claude-opus-4-5`, dominated by `claude-opus-5` at the identical $5/$25, left this list when it was retired from the catalogue on 2026-10-08, together with `claude-opus-4-8` and `claude-sonnet-4-5`, the two models this section recorded as considered and deliberately not listed.)*
 
-Two models were **considered and deliberately not listed**, because an over-claimed domination is worth less than an honest number:
-
-- **`claude-opus-4-8`** meets the definition on the data — same price and ceiling as `claude-opus-5`, no axis better, 19–20 outline pages against 25–27 — but that verdict rests on **outline coverage alone from a small sample**. It carries `suitability: 'caution'` with the measured number instead.
-- **`claude-sonnet-4-5`** is behind the same-priced `claude-sonnet-4-6` on three axes (64,000 vs 128,000 ceiling, fenced vs raw JSON, 15–16 vs 17 outline pages). It is **not** listed only because it is a live `FALLBACK_CHAINS` rung, and listing it would break the invariant that makes `DOMINATED` meaningful. Recorded here rather than quietly dropped: **if the Anthropic chain is ever revisited, `claude-sonnet-4-5` is the rung to re-examine.**
+`claude-sonnet-5` and `claude-sonnet-5-5` share a price ($2/$10); the newer one measured wider plans (22–25 pages against 19 on the same source) and cheaper cached reads, but Sonnet 5 is **not** listed as dominated: it is a live fallback rung, and the comparison rests on one source and a handful of runs.
 
 ### Promotional prices expire — the app handles the date itself
 

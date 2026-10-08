@@ -1673,8 +1673,12 @@ export async function priceServedAnswer(servedModel, servedUsage) {
     if (typeof llmModule.isFreeModel === 'function' && llmModule.isFreeModel(servedModel)) {
       return { free: true, costUsd: 0, at };
     }
-    const price = typeof llmModule.getModelPrice === 'function'
-      ? llmModule.getModelPrice(servedModel) : null;
+    // The rate THIS call was billed at: for a tiered model (claude-haiku-5-5)
+    // the tier its own prompt falls in, so the recorded per-1M figures and the
+    // recorded dollar figure below describe the same tier.
+    const price = typeof llmModule.rateForPromptTokens === 'function'
+      ? llmModule.rateForPromptTokens(servedModel, llmModule.callPromptTokens(usage))
+      : (typeof llmModule.getModelPrice === 'function' ? llmModule.getModelPrice(servedModel) : null);
     if (!price || !isRate(price.input) || !isRate(price.output)) return null;
     const { spentFromUsage } = await import('./ai-run.js');
     const spent = spentFromUsage({ ...usage, model: servedModel, calls: 1 });

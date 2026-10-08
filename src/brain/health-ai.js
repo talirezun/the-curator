@@ -22,7 +22,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
-import { generateText, getProviderInfo, getModelPrice, isFreeModel } from './llm.js';
+import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from './health.js';
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
@@ -422,7 +422,13 @@ export async function describeHealthRun(kind, estimatedTokens) {
  *   already have `provider` in scope from `getProviderInfo()`).
  */
 function estimateUsdCost(provider, model, inputTokens, outputTokens) {
-  const p = getModelPrice(model);
+  if (!getModelPrice(model)) return null;
+  // TIERED PRICE (2026-10-08): these are token totals across a scan's calls
+  // with no per-call prompt sizes, so a tiered model (claude-haiku-5-5) is
+  // quoted at its UPPER tier — llm.js's `estimateRates` with an unknown prompt
+  // size. A flat model's rate is unchanged. The figure a finished scan reports
+  // (`spent`) is priced per call by `priceUsageUsd` and is never this.
+  const p = estimateRates(model, null);
   if (!p) return null;
   return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
 }

@@ -107,6 +107,10 @@ export function knownModelIds(provider) {
   for (const e of offerable) if (e && typeof e.id === 'string') out.add(e.id);
   const awaiting = llmModule.AWAITING_MEASUREMENT || {};
   for (const id of Object.keys(awaiting)) out.add(id);
+  // RETIRED by policy (2026-10-08): still listed by the provider, deliberately
+  // no longer offered — a recorded decision, not a discovery.
+  const retired = llmModule.RETIRED_MODELS || {};
+  for (const id of Object.keys(retired)) if (retired[id] && retired[id].provider === provider) out.add(id);
   const chains = llmModule.__testing && llmModule.__testing.FALLBACK_CHAINS;
   for (const id of (chains && chains[provider]) || []) out.add(id);
   const def = typeof llmModule.getDefaultModel === 'function' ? llmModule.getDefaultModel(provider) : null;

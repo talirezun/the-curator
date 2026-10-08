@@ -5167,8 +5167,10 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
     }
   }
   ok(checkedFlagged >= 8, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
-  ok(checkedPrice >= 18, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
-  ok(checkedNote >= 18, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
+  // (2026-10-08: floors 18 → 16 — the Anthropic retirement removed four static
+  // entries and the 5.5 generation added two.)
+  ok(checkedPrice >= 16, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
+  ok(checkedNote >= 16, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
 
   // (d) ABSENT IS NOT ZERO, on the real screen. One shipping model has NO page
   // measurement at all; several have no latency. Their rows must omit the
@@ -5687,7 +5689,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   {
     const statics = (OFFERABLE_MODELS.gemini || []).concat(
       OFFERABLE_MODELS.anthropic || [], OFFERABLE_MODELS.openrouter || []);
-    ok(statics.length >= 18, `control: ${statics.length} hand-measured entries built — the module loaded`);
+    ok(statics.length >= 16, `control: ${statics.length} hand-measured entries built — the module loaded`);
     ok(statics.every((e) => Object.hasOwn(e, 'createdUnixSec') && e.createdUnixSec === null),
       'EVERY hand-typed entry carries `createdUnixSec: null` — the field is additive and absent means unpublished');
     // REVERSED FOR `contextLength` IN v3.45.0: every hand-typed entry now

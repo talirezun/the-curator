@@ -302,28 +302,34 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
       ['The dearest Gemini here', () => std('gemini-3.5-flash').input === maxIn(listOf('gemini'))],
     ],
     'claude-haiku-4-5': [
-      // v3.82.0: claude-haiku-5-5 is cheaper but chat-only, so the claim is now
-      // scoped to the build lane — and the unscoped form is checked FALSE below.
-      ['the cheapest Anthropic model that can build your wiki', () =>
-        std('claude-haiku-4-5').input === minIn(anBuild())],
-      ['Haiku 5.5 is cheaper', () => std('claude-haiku-5-5').input < std('claude-haiku-4-5').input
-        && std('claude-haiku-5-5').output < std('claude-haiku-4-5').output],
+      // 2026-10-08: claude-haiku-5-5 may now build, so the "cheapest that can
+      // build" claim became false and was REMOVED from the note; this is the
+      // claim that replaced it, recomputed from the two tables.
+      ['though no longer the cheapest: Haiku 5.5 costs a tenth as much on prompts up to 100,000 tokens', () =>
+        std('claude-haiku-5-5').input < minIn(anBuild().filter(i => i !== 'claude-haiku-5-5'))
+        && near(std('claude-haiku-5-5').input / std('claude-haiku-4-5').input, 0.1)
+        && T.TIERED_PRICES['claude-haiku-5-5'].thresholdTokens === 100000],
     ],
-    // v3.82.0 — the first TIERED model. Every rate claim is checked against the
-    // price table (lower tier) and TIERED_PRICES (upper tier), never prose.
+    // The first TIERED model. Every rate claim is checked against the price
+    // table (lower tier) and TIERED_PRICES (upper tier), never prose.
     'claude-haiku-5-5': [
-      ['its price rises 5x on prompts over 100,000 tokens', () => {
+      ['Price rises 5x on prompts over 100,000 tokens', () => {
         const t = T.TIERED_PRICES['claude-haiku-5-5'];
         return t.thresholdTokens === 100000 && byId['claude-haiku-5-5'].priceTierThresholdTokens === 100000
           && near(t.above.input / std('claude-haiku-5-5').input, 5) && near(t.above.output / std('claude-haiku-5-5').output, 5);
       }],
-      ['because of how it is priced: $0.10/$0.50 per 1M tokens on prompts up to 100,000 tokens and $0.50/$2.50 above', () => {
+      ['The cheapest Anthropic model: $0.10/$0.50 per 1M tokens on prompts up to 100,000 tokens and $0.50/$2.50 on prompts over that', () => {
         const t = T.TIERED_PRICES['claude-haiku-5-5'];
         return $pair('claude-haiku-5-5') === '$0.1/$0.5' && t.above.input === 0.5 && t.above.output === 2.5
-          && T.TIERED_PRICE_MODELS.has('claude-haiku-5-5');
+          && std('claude-haiku-5-5').input === minIn(listOf('anthropic'));
       }],
-      ['one flat rate, which is all this app can quote', () => byId['claude-haiku-5-5'].suitability === 'chat-only'],
+      ['those calls are billed (and estimated) at the higher rate; even then it is half the price of Haiku 4.5', () => {
+        const t = T.TIERED_PRICES['claude-haiku-5-5'];
+        return near(t.above.input / std('claude-haiku-4-5').input, 0.5) && near(t.above.output / std('claude-haiku-4-5').output, 0.5);
+      }],
       ['1.329x more input tokens', () => tf('claude-haiku-5-5') === 1.329],
+      // Two measured BILLS on a 3,300-page wiki (2026-10-08), not rates.
+      ['$0.09-0.10 an ingest against $0.22 on Haiku 4.5', NOT_A_RATE],
       // A measured BILL ratio (2026-10-08: $0.0029 vs $0.0143 per short ingest,
       // $0.014 vs $0.085 per long one), not a rate — and consistent with the
       // rates: 0.1x the price, ~2x the output tokens, 1.33x the input tokens.
@@ -331,43 +337,36 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
         near(std('claude-haiku-5-5').input / std('claude-haiku-4-5').input, 0.1)
         && near(std('claude-haiku-5-5').output / std('claude-haiku-4-5').output, 0.1)],
     ],
+    'claude-sonnet-5-5': [
+      ['The newest Sonnet, at the same $2/$10 as Sonnet 5', () => $pair('claude-sonnet-5-5') === '$2/$10' && $pair('claude-sonnet-5') === '$2/$10'],
+      // Cache-read multiplier: the provider's page, typed in llm.js's per-model table.
+      ['cached reads at a twentieth of the input price (0.05x, against 0.1x on older models)', () =>
+        T.CACHE_READ_MULTIPLIER_BY_MODEL['claude-sonnet-5-5'] === 0.05 && byId['claude-sonnet-5-5'].cacheReadMultiplier === 0.05],
+      ['for about $0.29-0.32 an ingest', NOT_A_RATE], // two measured bills (2026-10-08), not a rate
+      ['1.329x more input tokens', () => tf('claude-sonnet-5-5') === 1.329],
+    ],
     'claude-sonnet-5': [
-      ['cheaper than both Sonnet 4.6 and 4.5', () => std('claude-sonnet-5').input < std('claude-sonnet-4-6').input
-        && std('claude-sonnet-5').input < std('claude-sonnet-4-5').input],
+      ['The same $2/$10 as Sonnet 5.5', () => $pair('claude-sonnet-5') === '$2/$10' && $pair('claude-sonnet-5-5') === '$2/$10'],
+      ['reads its cache at half the rate', () => T.CACHE_READ_MULTIPLIER_BY_MODEL['claude-sonnet-5-5'] === 0.05
+        && !Object.hasOwn(T.CACHE_READ_MULTIPLIER_BY_MODEL, 'claude-sonnet-5')],
       ['Two costs the headline price hides', NOT_A_RATE],
       ['1.329x more input tokens', () => tf('claude-sonnet-5') === 1.329],
       ['$2 per 1M input is really ~$2.66', () => std('claude-sonnet-5').input === 2 && near(2 * tf('claude-sonnet-5'), 2.66)],
     ],
-    'claude-sonnet-4-6': [
-      ['At $3/$15 it is 50% dearer than claude-sonnet-5', () => $pair('claude-sonnet-4-6') === '$3/$15'
-        && near(std('claude-sonnet-4-6').input / std('claude-sonnet-5').input, 1.5)],
-    ],
-    'claude-sonnet-4-5': [
-      ['Same $3/$15 as claude-sonnet-4-6', () => $pair('claude-sonnet-4-5') === '$3/$15' && $pair('claude-sonnet-4-6') === '$3/$15'],
-      ['half the output ceiling', () => cap('claude-sonnet-4-5') * 2 === cap('claude-sonnet-4-6')],
-      ['claude-sonnet-5 is cheaper', () => std('claude-sonnet-5').input < std('claude-sonnet-4-5').input],
-      ['the same-priced Sonnet 4.6', () => std('claude-sonnet-4-5').input === std('claude-sonnet-4-6').input],
+    'claude-opus-5-5': [
+      ['CHEAPER than Opus 5: $4/$20 against $5/$25', () => $pair('claude-opus-5-5') === '$4/$20' && $pair('claude-opus-5') === '$5/$25'],
+      ['cached reads at 0.05x the input price', () => T.CACHE_READ_MULTIPLIER_BY_MODEL['claude-opus-5-5'] === 0.05],
+      ['for about $0.56 an ingest, against $0.80 on Opus 5', NOT_A_RATE], // two measured bills (2026-10-08)
+      ['1.329x more input tokens', () => tf('claude-opus-5-5') === 1.329],
     ],
     'claude-opus-5': [
-      ['the most expensive: $5/$25 headline', () => $pair('claude-opus-5') === '$5/$25'
-        && std('claude-opus-5').input === maxIn(listOf('anthropic'))],
+      ['the most expensive: $5/$25 headline (Opus 5.5 is $4/$20)', () => $pair('claude-opus-5') === '$5/$25'
+        && std('claude-opus-5').input === maxIn(listOf('anthropic')) && $pair('claude-opus-5-5') === '$4/$20'],
       ['1.329x more input tokens', () => tf('claude-opus-5') === 1.329],
       ['the real input cost is ~$6.65 per 1M Haiku-equivalent tokens — 6.6x the default, not the 5x the headline implies', () =>
         near(std('claude-opus-5').input * tf('claude-opus-5'), 6.65)
         && near(std('claude-opus-5').input * tf('claude-opus-5') / std('claude-haiku-4-5').input, 6.6)
         && near(std('claude-opus-5').input / std('claude-haiku-4-5').input, 5)],
-    ],
-    'claude-opus-4-8': [
-      ['Priced identically to claude-opus-5 ($5/$25)', () => $pair('claude-opus-4-8') === $pair('claude-opus-5') && $pair('claude-opus-5') === '$5/$25'],
-      ['same 1.329x tokenizer premium', () => tf('claude-opus-4-8') === tf('claude-opus-5')],
-      ['at the identical price', () => $pair('claude-opus-4-8') === $pair('claude-opus-5')],
-    ],
-    'claude-opus-4-5': [
-      ['at the identical $5/$25', () => $pair('claude-opus-4-5') === '$5/$25' && $pair('claude-opus-5') === '$5/$25'],
-      ['half the output ceiling', () => cap('claude-opus-4-5') * 2 === cap('claude-opus-5')],
-      ['at two-fifths of the price', () => near(std('claude-sonnet-5').input / std('claude-opus-4-5').input, 0.4)],
-      ['paying $5 per 1M', () => std('claude-opus-4-5').input === 5],
-      ['at the identical price', () => $pair('claude-opus-4-5') === $pair('claude-opus-5')],
     ],
     'ibm-granite/granite-4.0-h-micro': [
       ['The cheapest OpenRouter model offered for building a wiki', () => std('ibm-granite/granite-4.0-h-micro').input === minIn(orBuild())],

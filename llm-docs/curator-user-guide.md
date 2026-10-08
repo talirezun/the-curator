@@ -87,7 +87,7 @@ Yes, and on Windows and Linux it is the easiest route. Any CLI-aware coding agen
 | Provider | Free tier | Notes | Where |
 |---|---|---|---|
 | Google Gemini | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost and the app's default. | https://aistudio.google.com/app/apikey |
-| Anthropic Claude | No, paid only | Roughly 10 times the Gemini bill for the same workload. Defaults to Claude Haiku 4.5. Claude Haiku 5.5 is far cheaper but is offered for chat only. | https://console.anthropic.com/ |
+| Anthropic Claude | No, paid only | Roughly 10 times the Gemini bill for the same workload. Defaults to Claude Haiku 4.5. Claude Haiku 5.5 is far cheaper and can also build the wiki. | https://console.anthropic.com/ |
 | OpenRouter | Free `:free` models exist in its catalogue for chat, with a daily request cap; none is currently hand-listed for building the wiki | One key onto many vendors. It can build your wiki on several hand-measured, paid models — the list is live in Settings and grows over time. | https://openrouter.ai/keys |
 
 To create a Gemini key: sign in at the link above, click **Create API key**, and copy it. It starts with `AIza` and is about 40 characters long. Strongly recommended: click **Set up Billing** in the same console. The free tier is enough to try the app on a few articles, but Gemini 2.5 Flash Lite on the free tier is capped at 15 requests per minute, 1,000 requests per day and 250,000 tokens per minute, and a batch of 5 to 10 PDFs can stall mid-run with `429 RESOURCE_EXHAUSTED`. The paid price is low enough that most users pay between 1 and 10 euros a month.
@@ -161,9 +161,9 @@ Under a **CHEAPEST MEASURED** heading it names the cheapest measured model for t
 
 Chat is a separate lane, chosen per message in the composer, and is unaffected by any of this.
 
-## Why can I chat with Claude Haiku 5.5 but not build my wiki with it?
+## How is Claude Haiku 5.5 priced, and which Anthropic models are offered?
 
-Claude Haiku 5.5, added on 8 October 2026, costs $0.10 in and $0.50 out per million tokens, a tenth of Haiku 4.5, but only on prompts up to 100,000 tokens. Above that every rate is five times higher. The Curator quotes one price per model, and the prompts that cross the line are large ingests, so an ingest quote would understate the bill. It is therefore offered in the chat composer only, where a question stays far below the line. Measured on the real pipeline it wrote the right pages and cost a fifth to a sixth of Haiku 4.5 per ingest; in chat it cited its pages and said when the wiki did not cover a question, at about a fifth of Haiku 4.5's cost per answer. The Anthropic default for building stays Haiku 4.5.
+Claude Haiku 5.5, added on 8 October 2026, costs $0.10 in and $0.50 out per million tokens, a tenth of Haiku 4.5, on any call whose prompt is up to 100,000 tokens; a call over that pays five times as much on every token. A chat question stays far below the line; the first call of an ingest into a large wiki does not. The Curator records which calls crossed and charges each at its own rate, and cost estimates and the budget cap assume the higher rate for any call that could cross. It can build the wiki: on a 3,300-page wiki it cost under half of Haiku 4.5 per ingest. The Anthropic default stays Haiku 4.5. The app offers the current Anthropic generation and the one before it: Haiku 5.5 and 4.5, Sonnet 5.5 and 5, Opus 5.5 and 5. Older ones were retired; a saved pick of one moves forward to the same family's newest model, and a note says so once.
 
 ## How do I start and quit the app?
 

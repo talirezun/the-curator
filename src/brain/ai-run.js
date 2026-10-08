@@ -37,6 +37,9 @@ import {
   isOfferableModel,
   listOfferableModels,
   getFallbackStatus,
+  estimateRates,
+  priceUsageUsd,
+  cacheRatesFor,
 } from './llm.js';
 import { estimateInputTokens } from './compile-estimate.js';
 import { aiJob } from './ai-jobs.js';
@@ -158,8 +161,14 @@ export function describeRun({
     out.usdLow = 0;
     out.usdHigh = 0;
   } else if (price && input && output) {
+    // TIERED PRICE (2026-10-08): a describe call carries run TOTALS with no
+    // per-call prompt sizes, so for a tiered model the low end is the lower
+    // tier (every call under the threshold) and the HIGH end the upper tier
+    // (any call could cross) — `estimateRates` with an unknown size. For a
+    // flat model both are `price`, exactly as before.
+    const hi = estimateRates(model, null) || price;
     out.usdLow = round6((input.low / 1e6) * price.input + (output.low / 1e6) * price.output);
-    out.usdHigh = round6((input.high / 1e6) * price.input + (output.high / 1e6) * price.output);
+    out.usdHigh = round6((input.high / 1e6) * hi.input + (output.high / 1e6) * hi.output);
   }
   out.priceKnown = priceKnown;
   out.free = free;
@@ -170,18 +179,13 @@ export function describeRun({
   return out;
 }
 
-// ── CACHE RATES: THE BATCH QUEUE'S RULE, RESTATED ───────────────────────────
-// `chargeForItem` in src/brain/ingest-queue.js is the app's one formula for
-// what a finished AI call cost. Its two helpers are module-private there, so
-// the rule is restated here and scripts/test-ai-run.js drives BOTH functions
-// over the same totals and asserts equal answers — the pin that keeps two
-// copies from drifting (the v3.2.0 shape). Anthropic reads bill at 0.1x input,
-// every provider's cache writes at 1.25x, every other read at full price.
+// ── CACHE RATES: ONE RULE, IN llm.js ────────────────────────────────────────
+// Until 2026-10-08 this was a restated copy of the batch queue's rule, pinned to
+// it by scripts/test-ai-run.js. Both now call llm.js's `cacheRatesFor` (and the
+// whole finished-call formula, `priceUsageUsd`), so there is no second copy to
+// drift. Kept as a named export for the suites that drive it.
 function cacheMultipliersFor(modelId) {
-  if (typeof modelId === 'string' && modelId && isOfferableModel('anthropic', modelId)) {
-    return { read: 0.1, write: 1.25 };
-  }
-  return { read: 1, write: 1.25 };
+  return cacheRatesFor(modelId);
 }
 
 /**
@@ -231,14 +235,11 @@ export function spentFromUsage(totals) {
     if (isFreeModel(model)) {
       out.usd = 0;
     } else {
-      const price = getModelPrice(model);
-      if (price) {
-        const mult = cacheMultipliersFor(model);
-        out.usd = (out.inputTokens / 1e6) * price.input
-          + (out.outputTokens / 1e6) * price.output
-          + (out.cachedReadTokens / 1e6) * price.input * mult.read
-          + (out.cacheWriteTokens / 1e6) * price.input * mult.write;
-      }
+      // The ONE tier-aware formula (llm.js `priceUsageUsd`): the cache rates of
+      // the model that ran and, for a tiered model, the per-call tier split the
+      // accumulator recorded (a total without one is priced at the upper tier).
+      const usd = priceUsageUsd(model, t);
+      if (typeof usd === 'number' && Number.isFinite(usd)) out.usd = usd;
     }
 
     let fb = null;

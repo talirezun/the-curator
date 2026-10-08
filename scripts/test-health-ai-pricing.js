@@ -39,7 +39,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getModelPrice, __testing as llmTesting } from '../src/brain/llm.js';
+import { getModelPrice, priceTierFor, __testing as llmTesting } from '../src/brain/llm.js';
 import { __setUserDataDirOverride } from '../src/brain/paths.js';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 import {
@@ -151,9 +151,15 @@ section("2. Shared-source invariant — health-ai matches llm.js's LIVE table fo
     // Re-deriving through the same expression keeps this an assertion about the
     // TABLE (does health-ai read llm.js's number) rather than about float
     // association, which is what it was always meant to say.
-    const expectedUsd = (1_000_000 * price.input + 1_000_000 * price.output) / 1_000_000;
+    // A TIERED model (claude-haiku-5-5) is estimated at its UPPER tier: a scan's
+    // token TOTAL carries no per-call prompt sizes, so health-ai quotes the rate
+    // any call could reach (2026-10-08). The expectation reads that tier from
+    // llm.js's schedule, never re-types it.
+    const tier = priceTierFor(id);
+    const r = tier ? tier.above : price;
+    const expectedUsd = (1_000_000 * r.input + 1_000_000 * r.output) / 1_000_000;
     const got = estimateUsdCost('irrelevant-provider-arg', id, 1_000_000, 1_000_000);
-    eq(got, expectedUsd, `health-ai prices "${id}" identically to llm.js's live table`);
+    eq(got, expectedUsd, `health-ai prices "${id}" identically to llm.js's live table${tier ? ' (upper tier — tiered model, conservative estimate)' : ''}`);
   }
 }
 
@@ -197,7 +203,9 @@ section('5. Fallback-chain rungs + claude-sonnet-4-5 — the specific "shows not
 {
   const previouslyMissing = [
     'gemini-3.1-flash-lite',
-    'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5',
+    // claude-sonnet-4-6 / -4-5 left this list on 2026-10-08: retired from the
+    // catalogue (and the chain), so llm.js correctly prices neither any more.
+    'claude-sonnet-5',
   ];
   for (const id of previouslyMissing) {
     ok(getModelPrice(id), `fixture sanity: llm.js prices "${id}"`);

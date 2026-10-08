@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 
-import { OFFERABLE_MODELS, isOfferableModel } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, isOfferableModel, __testing as llmTesting } from '../src/brain/llm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -55,16 +55,27 @@ process.on('exit', () => { try { rmSync(tmpBase, { recursive: true, force: true 
 // is claude-haiku-5-5, which is cheaper than the default but chat-only (tiered
 // price). Reading [0] would assert the app should default to a model it may not
 // build with.
+//
+// 2026-10-08: and on Anthropic the cheapest build-lane entry is no longer the
+// default either — claude-haiku-5-5 may now build (tier-aware money path) and
+// is cheaper, while the maintainer kept DEFAULTS.anthropic on claude-haiku-4-5.
+// So the expectation is read from DEFAULTS itself, and cross-checked below to be
+// a build-lane entry (a default must be able to build).
 const buildLane = (p) => OFFERABLE_MODELS[p].filter(e => e.suitability !== 'chat-only');
 const DEFAULT_MODEL = {
-  gemini:    buildLane('gemini')[0].id,      // cheapest-first ⇒ build-lane head IS the default
-  anthropic: buildLane('anthropic')[0].id,
+  gemini:    llmTesting.DEFAULTS.gemini,
+  anthropic: llmTesting.DEFAULTS.anthropic,
 };
+for (const p of ['gemini', 'anthropic']) {
+  if (!buildLane(p).some(e => e.id === DEFAULT_MODEL[p])) {
+    console.log(`  ✗ DEFAULTS.${p} (${DEFAULT_MODEL[p]}) is not a build-lane entry`); process.exitCode = 1;
+  }
+}
 // A non-default but legitimately offerable id per provider — the realistic
 // "user upgraded on their own key" case.
 const UPGRADE_MODEL = {
-  gemini:    buildLane('gemini')[1].id,
-  anthropic: buildLane('anthropic')[1].id,
+  gemini:    buildLane('gemini').find(e => e.id !== DEFAULT_MODEL.gemini).id,
+  anthropic: buildLane('anthropic').find(e => e.id !== DEFAULT_MODEL.anthropic).id,
 };
 const PROVIDERS = ['gemini', 'anthropic'];
 
