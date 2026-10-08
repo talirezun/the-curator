@@ -3214,7 +3214,7 @@ section('§13  THE WORKING SET — a short list that hides nothing');
     const runs = models.map((o) => o.group).filter((g, i, a) => i === 0 || a[i - 1] !== g);
     ok(new Set(runs).size === runs.length, 'every group is one contiguous run');
     // The foot: the unit and where the choice is kept; no date when none was sent.
-    ok(/Prices per 1M tokens, input \/ output/.test(cfg.footHtml) && /remembered on this computer across chats/.test(cfg.footHtml),
+    ok(/Prices per 1M tokens, input \/ output/.test(cfg.footHtml) && /Your pick is remembered for every new chat on this computer/.test(cfg.footHtml),
       'the foot states the unit once and that the choice is remembered on this computer');
     ok(!/synced/.test(cfg.footHtml), 'no sync date is claimed when the server sent none');
     __setChatState({ availableProviders: ['gemini', 'openrouter'], offerable: { gemini: [mkEntry('g0', { provider: 'gemini' })], openrouter: [] },

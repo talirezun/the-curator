@@ -137,7 +137,7 @@ section('§2  The row — name, price, meta, promo; chat facts only');
   }
   ok(ingestNoteText('') === '' && ingestNoteText('  ') === '', 'no summary → no note');
   const foot = modelMenuFootHtml({ syncedAt: '2026-08-30T10:00:00.000Z' });
-  ok(/Prices per 1M tokens, input \/ output/.test(foot) && /remembered on this computer across chats/.test(foot)
+  ok(/Prices per 1M tokens, input \/ output/.test(foot) && /Your pick is remembered for every new chat on this computer/.test(foot)
     && /OpenRouter catalogue synced 30 Aug 2026/.test(foot), 'the foot: unit, where the choice lives, the catalogue\'s own sync day');
   ok(!/synced/.test(modelMenuFootHtml({})), 'no date when none is known');
   ok(metaParts('gemini', { thinks: true, contextLength: 1048576 }, { detailed: true }).join(' · ') ===

@@ -364,7 +364,12 @@ section('§7 — SOURCE GUARD: a domain pick starts a new chat there; boot resto
   ok(/state\.activeConversationId = null/.test(switchSrc) && /state\.thread = \[\]/.test(switchSrc),
     'switchDomain lands on an empty new chat');
   ok(/adoptActiveDomain\(slug/.test(switchSrc), 'and makes that domain active through the ONE domain-change path');
-  ok(!/loadConversationList\(/.test(switchSrc), '…without reloading a list that already spans every domain');
+  // v3.81.2: the ONE reload left is when a list FILTERED to another domain
+  // follows the pick (test-next-chat-scope-follow.js drives it); with "All
+  // domains" the list already spans every domain and nothing reloads.
+  ok((switchSrc.match(/loadConversationList\(/g) || []).length === 1 &&
+    /if \(followFilterTo\(slug\)\) \{\s*loadConversationList\(/.test(switchSrc),
+    '…reloading the list only when a filter on another domain followed the pick');
   ok(!/selectedConvKeys\.clear\(\)/.test(switchSrc), '…or throwing away a selection that is not per-domain any more');
   const bootSrc = extractFunction(chatViewCode, 'boot');
   ok(/autoSelectMostRecent:\s*true/.test(bootSrc), 'boot() still auto-selects the most recent conversation');

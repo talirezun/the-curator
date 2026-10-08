@@ -323,7 +323,7 @@ export function listRowBodyHtml(o) {
  */
 export function modelMenuFootHtml(o) {
   const opts = o || {};
-  const parts = ['Prices per 1M tokens, input / output', 'remembered on this computer across chats'];
+  const parts = ['Prices per 1M tokens, input / output', 'Your pick is remembered for every new chat on this computer'];
   const day = syncedDay(opts.syncedAt);
   if (day) parts.push('OpenRouter catalogue synced ' + day);
   return '<p class="mr-foot">' + parts.map(esc).join(' · ') + '</p>';

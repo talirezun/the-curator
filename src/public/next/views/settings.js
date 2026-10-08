@@ -3703,6 +3703,38 @@ function allCatalogueRows(k) {
 }
 
 /**
+ * The chat model the composer remembered in THIS browser, or null. Same
+ * origin as views/chat.js, so the same storage; READ ONLY — Settings never
+ * writes this key (one writer: chat.js's selectChatModel). Never throws.
+ */
+function readStoredChatPick() {
+  try {
+    const v = typeof localStorage !== 'undefined' && localStorage ? localStorage.getItem('curator-next-chat-model') : null;
+    return typeof v === 'string' && v ? v : null;
+  } catch { return null; }
+}
+
+/**
+ * The stored pick, resolved the way the composer restores it
+ * (views/chat.js `resolveChatModel` with no provider hint): the first keyed
+ * provider, in the composer's provider order, whose offerable list carries the
+ * id. A pick no connected provider offers is NOT stated — the composer would
+ * not restore it either, and a new chat would start on the start model.
+ * Returns {provider, model, label} or null. Pure.
+ */
+function rememberedChatPick(k, storedId) {
+  if (!k || typeof storedId !== 'string' || !storedId) return null;
+  for (const p of ['gemini', 'anthropic', 'openrouter']) {
+    if (!providerHasSavedKey(p, k)) continue;
+    const list = (k.offerable && Array.isArray(k.offerable[p])) ? k.offerable[p] : [];
+    if (list.some((m) => m && typeof m === 'object' && m.id === storedId)) {
+      return { provider: p, model: storedId, label: buildModelDisplayName(k, { provider: p, model: storedId }) || storedId };
+    }
+  }
+  return null;
+}
+
+/**
  * What chat starts on, and how many models it can reach.
  *
  * READ from `chat {startsOn {model, provider}, count}`, degrading to the pair
@@ -5529,17 +5561,24 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
  * A STATEMENT AND A POINTER. Never a second picker.
  *
  * The composer already owns this control, and it owns it for a reason: the
- * choice is per message, so it belongs beside the message. A duplicate here
- * would put two controls on one setting and immediately reopen the question this
- * whole restructure exists to close — "which of these two am I actually
- * setting?" — with the added trap that the Settings copy would be the stale one,
- * because chat's is sticky per browser and this screen has no idea which
- * conversation you are in.
+ * choice is made beside the message it answers. A duplicate here would put two
+ * controls on one setting and immediately reopen the question this whole
+ * restructure exists to close — "which of these two am I actually setting?".
  *
- * WHAT IT DOES ADD IS A READOUT, WHICH IS NOT A CONTROL. "Starts on" answers a
- * question the composer cannot: which model a NEW conversation opens on, before
- * anyone has picked anything. It carries no button, no `data-` write hook and no
- * listbox, and the suite asserts exactly that.
+ * WHAT IT DOES ADD IS A READOUT, WHICH IS NOT A CONTROL. It carries no button,
+ * no `data-` write hook and no listbox, and the suite asserts exactly that.
+ *
+ * ── WHAT THE READOUT MAY CLAIM (v3.81.2) ──────────────────────────────────
+ * The composer's pick is STICKY: it is kept in this browser's storage
+ * (`curator-next-chat-model`, views/chat.js LS_MODEL) and every later chat on
+ * this computer — new conversations and restarts included — starts on it until
+ * another is picked. The server's `chat.startsOn` is only the model a chat
+ * starts on while NO pick is stored, so this block used to say "Starts on
+ * Flash Lite 2.5" to a user whose every chat was answered by the model they had
+ * picked weeks before (the 2026-10 report). It now says the start model holds
+ * "until you pick a model in the composer", and when a pick IS stored — the
+ * same origin, so the same storage — it states it, read-only, under "Now",
+ * resolved the way the composer restores it (`rememberedChatPick`).
  */
 function renderChatBlock(k) {
   const c = chatStartFacts(k);
@@ -5552,6 +5591,7 @@ function renderChatBlock(k) {
   } else {
     const label = buildModelDisplayName(k, { provider: c.provider, model: c.model }) || c.model;
     const prov = providerLabel(c.provider) || c.provider;
+    const pick = rememberedChatPick(k, readStoredChatPick());
     body =
       '<div class="chat-start-row">' +
         '<span class="chat-start-k">Starts on</span>' +
@@ -5561,6 +5601,16 @@ function renderChatBlock(k) {
         '<span class="chat-start-sp"></span>' +
         '<span class="chat-start-k">' + escapeHtml(String(c.count)) + ' models available</span>' +
       '</div>' +
+      (pick
+        ? '<div class="chat-start-row chat-start-now" data-chat-pick-now>' +
+            '<span class="chat-start-k">Now</span>' +
+            '<span class="chat-start-v">' + escapeHtml(pick.label + ' (your pick)') +
+              '<small>' + escapeHtml((providerLabel(pick.provider) || pick.provider) + ' · ' + pick.model) + '</small>' +
+            '</span>' +
+          '</div>'
+        : '') +
+      '<p class="settings-block-footnote">New chats start on ' + escapeHtml(label) +
+      ' until you pick a model in the composer; the composer remembers your pick on this computer.</p>' +
       // Favourites are INERT here. The composer owns the star, and a star that
       // could be set in two places would be two writers on one localStorage
       // key — the shape this file already refuses for the chat model itself.

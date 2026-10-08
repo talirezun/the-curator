@@ -129,6 +129,17 @@
    by scripts/test-tone-channel.js, and moving them would read as two new ones. */
 .chat-list-more,
 .chat-list-unreadable { padding: 6px 4px; }
+/* The scope line (v3.81.2, views/chat-list.js scopeNoteHtml): the same quiet
+   sidebar-hint ink as the two lines above, wrapping rather than clipping a
+   long domain name; its button is the list head's own ghost xs button. */
+.chat-list-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  padding: 0 4px 6px;
+}
+.chat-scope-new { gap: 6px; }
 
 /* The label that carries a row checkbox's pointer target. It paints nothing;
    it adds 28x28 of hittable area around the 13x13 box. `flex: none` so it

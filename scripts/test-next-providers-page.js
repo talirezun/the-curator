@@ -119,7 +119,7 @@ const FNS = [
   // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
   // the manifest is this suite's record of what settings.js needs to evaluate.
   'modelLiveMissing', 'renderGoneChip',
-  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
+  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts', 'readStoredChatPick', 'rememberedChatPick',
   'catalogueCountsOf', 'allCatalogueRows',
   'measurementChip', 'renderMeasurementChip',
   'modelLaneOf', 'laneBuildsWiki', 'qualificationFor', 'isCuratorMeasured', 'modelSearchText',
@@ -538,6 +538,37 @@ section('\u00a74  BLOCK 3 — a statement and a readout, never a second picker')
   const j4 = a.indexOf('<h2 class="settings-job-title">All models</h2>');
   okContains(a.slice(j3, j4), 'No models are available to chat yet.',
     'with nothing connected it says what it is waiting for');
+
+  // ── v3.81.2: "Starts on" is true only until a pick is stored ────────────
+  // The composer's model pick is sticky (localStorage `curator-next-chat-model`,
+  // same origin as Settings), so the block says how long the start model holds,
+  // and states a remembered pick, read-only, when one exists.
+  okContains(block, 'New chats start on Solar Pro 4 until you pick a model in the composer; ' +
+    'the composer remembers your pick on this computer.', 'it says the start model holds only until a pick');
+  ok(!/data-chat-pick-now|\(your pick\)/.test(block), 'with no stored pick there is no "Now" line');
+  const sliceChat = (html) => html.slice(html.indexOf('<h2 class="settings-job-title">Chat</h2>'),
+    html.indexOf('<h2 class="settings-job-title">All models</h2>'));
+  const withStored = (id, st) => {
+    const prev = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true,
+      value: { getItem: (k) => (k === 'curator-next-chat-model' ? id : null), setItem() {} } });
+    try { return sliceChat(renderWith(st)); }
+    finally {
+      if (prev) Object.defineProperty(globalThis, 'localStorage', prev);
+      else delete globalThis.localStorage;
+    }
+  };
+  const picked = withStored('gemini-3.1-flash-lite', stateC());
+  okContains(picked, 'Flash Lite 3.1 (your pick)', 'a stored pick is stated by NAME, as "(your pick)"');
+  okContains(picked, 'Gemini · gemini-3.1-flash-lite', '…with its provider and id');
+  ok(/<span class="chat-start-k">Now<\/span>/.test(picked), '…under "Now"');
+  okContains(picked, 'New chats start on Solar Pro 4 until', 'the start model is still stated');
+  ok(!/data-build-model|data-pick-model|data-listbox|data-set-active/.test(picked), 'the "Now" line is a readout — no control');
+  // A pick no connected provider offers would not be restored by the
+  // composer either, so it is not claimed.
+  ok(!/\(your pick\)/.test(withStored('claude-opus-5', stateC())), 'a stored pick no connected provider offers is not stated');
+  ok(!/\(your pick\)/.test(withStored('upstage/solar-pro4', Object.assign(stateC(), { hasOpenrouterKey: false }))),
+    'nor is one whose provider has no key saved');
 }
 
 // ══════════════════════════════════════════════════════════════════════════

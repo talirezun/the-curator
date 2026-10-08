@@ -134,7 +134,7 @@ const SET_FNS = [
   'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
   'modelLiveMissing', 'renderGoneChip',
-  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
+  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts', 'readStoredChatPick', 'rememberedChatPick',
   'catalogueCountsOf', 'allCatalogueRows',
   'measurementChip', 'renderMeasurementChip',
   'modelLaneOf', 'laneBuildsWiki', 'qualificationFor', 'isCuratorMeasured', 'modelSearchText',
