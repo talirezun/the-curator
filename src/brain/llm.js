@@ -244,7 +244,10 @@ function buildServiceUnavailableMessage(providerName, providerId) {
 // DELIBERATELY UNCHANGED in the 2026-08-24 chain repair. Both ids were probed
 // live that day and both remain the CHEAPEST working model on their provider
 // (gemini-2.5-flash-lite $0.10/$0.40; claude-haiku-4-5 $1/$5 — every live
-// alternative on each provider costs strictly more). Project policy is explicit
+// alternative on each provider costs strictly more). ⚠ 2026-10-08: no longer
+// true of Anthropic in general — claude-haiku-5-5 is $0.10/$0.50 — but it is
+// TIERED and therefore chat-only, so haiku-4-5 is still the cheapest Anthropic
+// model that may build a wiki, which is what a default is. Project policy is explicit
 // that the fallback chain is INSURANCE, not a migration: repairing dead rungs
 // must never quietly move users onto a newer or costlier default. Bump these
 // only when the pinned model is actually retired, or on a deliberate, separately
@@ -349,6 +352,10 @@ export const ANTHROPIC_MAX_OUTPUT_TOKENS = 64000;
  */
 const ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS = {
   'claude-haiku-4-5':           64000,   // current default
+  // Chat-only (tiered price — see TIERED_PRICE_MODELS). GET /v1/models/claude-haiku-5-5
+  // read 2026-10-08: max_tokens 128000, max_input_tokens 1000000. Undated id;
+  // the listing carries no dated snapshot for it.
+  'claude-haiku-5-5':          128000,
   'claude-haiku-4-5-20251001':  64000,   // dated snapshot the alias resolves to
   'claude-sonnet-5':           128000,   // fallback rung 1
   'claude-sonnet-4-6':         128000,   // fallback rung 2
@@ -800,6 +807,16 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // ── Anthropic ── (re-verified 2026-08-24; the four retired 3.x rungs and their
   // prices were removed together with the dead chain entries)
   'claude-haiku-4-5':          { input: 1.00, output: 5.00 },   // current default
+  // ⚠ TIERED. Released 2026-10-07. The live pricing page (read 2026-10-08)
+  // lists TWO rows: $0.10/$0.50 "for prompts up to 100,000 tokens" and
+  // $0.50/$2.50 "for prompts over 100,000 tokens" — 5x above the threshold.
+  // The figure here is the LOWER tier, which is the rate a chat prompt pays
+  // (chat.js bounds its prompt at roughly 20k tokens), and the model is in
+  // TIERED_PRICE_MODELS, so it can only ever be offered for chat: a real
+  // ingest outline on a large wiki (~341k chars, ~110k tokens on this
+  // tokenizer) crosses the threshold, and a flat price would quote a fifth
+  // of the bill on exactly those calls.
+  'claude-haiku-5-5':          { input: 0.10, output: 0.50 },
   // ⚠ Sonnet 5 is CHEAPER than both Sonnet 4.6 and Sonnet 4.5 despite being the
   // newest of the three — a within-family price DROP, the mirror image of the
   // Gemini flash-lite rise above, and the second independent proof that only an
@@ -953,7 +970,9 @@ Object.freeze(MODEL_PRICES_USD_PER_MTOK);
  *               tier, text. Re-read 2026-09-25: all seven figures (and both
  *               promotions, through 31 Dec 2026) matched this table.
  *   Anthropic   the live platform.claude.com pricing page. Re-read 2026-09-25:
- *               all seven figures matched.
+ *               all seven figures matched. Re-read 2026-10-08 (the release that
+ *               added claude-haiku-5-5): all seven still matched, and Haiku 5.5's
+ *               two tiers were read off the same page.
  *   OpenRouter  THE BILL, not the catalogue: one cold call per id on
  *               2026-09-25, `usage.cost_details` divided by the token counts.
  *               granite 0.017/0.112 (Cloudflare), solar-pro4 0.09/0.36
@@ -972,13 +991,14 @@ const PRICE_VERIFIED_ON = Object.freeze({
   'gemini-3.7-flash':                '2026-09-25',
   'gemini-3.6-flash':                '2026-09-25',
   'gemini-3.5-flash':                '2026-09-25',
-  'claude-haiku-4-5':                '2026-09-25',
-  'claude-sonnet-5':                 '2026-09-25',
-  'claude-sonnet-4-6':               '2026-09-25',
-  'claude-sonnet-4-5':               '2026-09-25',
-  'claude-opus-5':                   '2026-09-25',
-  'claude-opus-4-8':                 '2026-09-25',
-  'claude-opus-4-5':                 '2026-09-25',
+  'claude-haiku-4-5':                '2026-10-08',
+  'claude-haiku-5-5':                '2026-10-08',
+  'claude-sonnet-5':                 '2026-10-08',
+  'claude-sonnet-4-6':               '2026-10-08',
+  'claude-sonnet-4-5':               '2026-10-08',
+  'claude-opus-5':                   '2026-10-08',
+  'claude-opus-4-8':                 '2026-10-08',
+  'claude-opus-4-5':                 '2026-10-08',
   'ibm-granite/granite-4.0-h-micro': '2026-09-25',
   'upstage/solar-pro4':              '2026-09-25',
   'z-ai/glm-5.3-flash':              '2026-09-25',
@@ -1010,6 +1030,7 @@ const MEASURED_ON = Object.freeze({
   'gemini-3.6-flash':                '2026-08-26',
   'gemini-3.5-flash':                '2026-08-26',
   'claude-haiku-4-5':                '2026-08-26',
+  'claude-haiku-5-5':                '2026-10-08',
   'claude-sonnet-5':                 '2026-08-26',
   'claude-sonnet-4-6':               '2026-08-26',
   'claude-sonnet-4-5':               '2026-08-26',
@@ -1285,10 +1306,27 @@ function registerDynamicPrice(modelId, price) {
  * lane, which is the only lane that can cross a threshold, cannot reach these
  * models at all.
  *
- * Empty today: this release admits no tiered model. The mechanism exists so the
- * next one cannot be admitted by omission.
+ * Empty until 2026-10-08, when claude-haiku-5-5 became its first entry (below).
+ * The mechanism exists so a tiered model cannot be admitted by omission.
  */
-const TIERED_PRICE_MODELS = Object.freeze(new Set([]));
+/**
+ * The ABOVE-THRESHOLD rate of each tiered static model, as DATA. Nothing on the
+ * money path reads it — a tiered model is chat-only precisely so that nothing
+ * has to — but it is the provider's published fact, the offer entry's
+ * `priceTierThresholdTokens` is DERIVED from it, and the price-truth suite
+ * checks a note's "rises 5x" against it rather than against prose.
+ */
+const TIERED_PRICES = Object.freeze({
+  // The first entry (2026-10-08). platform.claude.com/docs/en/about-claude/pricing
+  // lists Claude Haiku 5.5 at $0.10/$0.50 "for prompts up to 100,000 tokens" and
+  // $0.50/$2.50 "for prompts over 100,000 tokens" (cache reads $0.01 / $0.05).
+  // The threshold sits INSIDE the size of a real ingest outline on a large wiki.
+  'claude-haiku-5-5': Object.freeze({
+    thresholdTokens: 100000,
+    above: Object.freeze({ input: 0.50, output: 2.50 }),
+  }),
+});
+const TIERED_PRICE_MODELS = Object.freeze(new Set(Object.keys(TIERED_PRICES)));
 
 /**
  * True when a model's published rate changes above some prompt size — either
@@ -1929,7 +1967,8 @@ function defineOfferableModel(provider, spec, opts = {}) {
  * affordable and it stays the DEFAULT — but it also meant a user who wanted more
  * capability out of a big wiki, and was willing to pay for it on their own key,
  * had no way to ask. This table is that ask: every model here was probed live on
- * 2026-08-26 with this repo's REAL buildOutlinePrompt on real prose, and every
+ * 2026-08-26 (claude-haiku-5-5: 2026-10-08, through the real ingestFile and the
+ * real chat path — see its entry) with this repo's REAL buildOutlinePrompt on real prose, and every
  * entry carries what that probe measured so the cost and the trade-off are both
  * visible at the moment of choosing.
  *
@@ -1963,7 +2002,8 @@ function defineOfferableModel(provider, spec, opts = {}) {
  *               field `inputTokenLimit`. All seven read 1,048,576.
  *   Anthropic   GET https://api.anthropic.com/v1/models
  *               field `max_input_tokens`. 200,000 for claude-haiku-4-5 and
- *               claude-opus-4-5; 1,000,000 for the five newer entries. (The
+ *               claude-opus-4-5; 1,000,000 for the five newer entries, and
+ *               for claude-haiku-5-5 (read 2026-10-08, when it was added). (The
  *               dated ids the endpoint returns — e.g. claude-haiku-4-5-20251001
  *               — are what our undated aliases resolve to.)
  *   OpenRouter  GET https://openrouter.ai/api/v1/models
@@ -2086,6 +2126,33 @@ export const OFFERABLE_MODELS = Object.freeze({
   ]),
   anthropic: Object.freeze([
     defineOfferableModel('anthropic', {
+      id: 'claude-haiku-5-5',
+      label: 'Haiku 5.5',
+      contextLength: 1000000,
+      // Measured 2026-10-08: a thinking block on 4/4 single-pass ingests, 12/15
+      // multi-phase calls and 3/3 chat answers — the app sends no `thinking`
+      // parameter, and on this model omitting it runs adaptive thinking.
+      thinks: true,
+      // 4/4 bare JSON single-pass, but 5 of 15 multi-phase responses fenced.
+      jsonRaw: false,
+      tokenizerFactor: 1.329,
+      suitability: 'chat-only',
+      priceTierThresholdTokens: TIERED_PRICES['claude-haiku-5-5'].thresholdTokens,
+      cautionReason:
+        'Chat only: its price rises 5x on prompts over 100,000 tokens, which large ingests cross.',
+      note:
+        'Offered for chat only, because of how it is priced: $0.10/$0.50 per 1M tokens on prompts up to ' +
+        '100,000 tokens and $0.50/$2.50 above, and the ingest outline of a large wiki crosses that line — ' +
+        'one flat rate, which is all this app can quote, would understate exactly those calls. Measured ' +
+        'on the real ingest pipeline anyway: an article announcing a product got its own entity page 4/4 ' +
+        '(Haiku 4.5: 4/4 on the same article), a 34,000-character source 2/2 with 21-25 pages written ' +
+        '(Haiku 4.5: 20-21); ' +
+        'bare JSON 4/4 single-pass but 10 of 15 multi-phase responses (the rest fenced, all repaired). ' +
+        'It runs adaptive thinking on almost every call, billed as output — about twice Haiku 4.5\'s ' +
+        'output tokens — and its newer tokenizer produced 1.329x more input tokens than Haiku 4.5 on the ' +
+        'same prose; even so, each ingest cost a fifth to a sixth of what Haiku 4.5 billed on the same sources.',
+    }),
+    defineOfferableModel('anthropic', {
       id: 'claude-haiku-4-5',
       label: 'Haiku 4.5',
       contextLength: 200000,
@@ -2093,7 +2160,8 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'general',
       outlinePagesLow: 5, outlinePagesHigh: 13,
       note:
-        'The default and the cheapest Anthropic model. No hidden reasoning tokens, but it wraps its ' +
+        'The default and the cheapest Anthropic model that can build your wiki (Haiku 5.5 is cheaper ' +
+        'but is offered for chat only). No hidden reasoning tokens, but it wraps its ' +
         'ingest-outline JSON in ```json fences 3/3, so every ingest on it depends on the jsonrepair ' +
         'fence-stripping fallback (benign — that is what the fallback is for). Its outline coverage ' +
         'is the MOST VARIABLE measured, 5 to 13 pages on the same source, so a long document may be ' +
@@ -5999,7 +6067,7 @@ export const __testing = {
   ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, GEMINI_MODEL_MAX_OUTPUT_TOKENS,
   OPENROUTER_MODEL_MAX_OUTPUT_TOKENS,
   PROMOTIONAL_PRICES, OFFERABLE_SUITABILITY,
-  KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS,
+  KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS, TIERED_PRICES,
   // v3.72.1 — the as-of dates and the live-price registry, exposed so the
   // price-truth suite drives the real tables and the real recorder.
   PRICE_VERIFIED_ON, MEASURED_ON, recordLiveStaticPrices, liveStaticPriceFromRecord,

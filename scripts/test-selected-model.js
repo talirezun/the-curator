@@ -50,15 +50,21 @@ const tmpBase = mkdtempSync(path.join(os.tmpdir(), 'curator-selmodel-'));
 process.on('exit', () => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
 
 // ── Enumerated from the REAL table, never hardcoded ──────────────────────────
+// The default is the cheapest BUILD-LANE entry, not the head of the list: the
+// list is cheapest-first over EVERY offer, and since v3.82.0 the Anthropic head
+// is claude-haiku-5-5, which is cheaper than the default but chat-only (tiered
+// price). Reading [0] would assert the app should default to a model it may not
+// build with.
+const buildLane = (p) => OFFERABLE_MODELS[p].filter(e => e.suitability !== 'chat-only');
 const DEFAULT_MODEL = {
-  gemini:    OFFERABLE_MODELS.gemini[0].id,      // cheapest-first ⇒ head IS the default
-  anthropic: OFFERABLE_MODELS.anthropic[0].id,
+  gemini:    buildLane('gemini')[0].id,      // cheapest-first ⇒ build-lane head IS the default
+  anthropic: buildLane('anthropic')[0].id,
 };
 // A non-default but legitimately offerable id per provider — the realistic
 // "user upgraded on their own key" case.
 const UPGRADE_MODEL = {
-  gemini:    OFFERABLE_MODELS.gemini[1].id,
-  anthropic: OFFERABLE_MODELS.anthropic[1].id,
+  gemini:    buildLane('gemini')[1].id,
+  anthropic: buildLane('anthropic')[1].id,
 };
 const PROVIDERS = ['gemini', 'anthropic'];
 

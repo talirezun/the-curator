@@ -246,6 +246,7 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
   const near = (a, b, tol = 0.011) => Math.abs(a - b) <= tol * Math.max(Math.abs(a), Math.abs(b));
   const listOf = (p) => OFFERABLE_MODELS[p].map(e => e.id);
   const orBuild = () => OFFERABLE_MODELS.openrouter.filter(e => e.suitability !== 'chat-only').map(e => e.id);
+  const anBuild = () => OFFERABLE_MODELS.anthropic.filter(e => e.suitability !== 'chat-only').map(e => e.id);
   const minIn = (ids) => Math.min(...ids.map(i => std(i).input));
   const maxIn = (ids) => Math.max(...ids.map(i => std(i).input));
   const tf = (id) => byId[id].tokenizerFactor;
@@ -301,7 +302,34 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
       ['The dearest Gemini here', () => std('gemini-3.5-flash').input === maxIn(listOf('gemini'))],
     ],
     'claude-haiku-4-5': [
-      ['the cheapest Anthropic model', () => std('claude-haiku-4-5').input === minIn(listOf('anthropic'))],
+      // v3.82.0: claude-haiku-5-5 is cheaper but chat-only, so the claim is now
+      // scoped to the build lane — and the unscoped form is checked FALSE below.
+      ['the cheapest Anthropic model that can build your wiki', () =>
+        std('claude-haiku-4-5').input === minIn(anBuild())],
+      ['Haiku 5.5 is cheaper', () => std('claude-haiku-5-5').input < std('claude-haiku-4-5').input
+        && std('claude-haiku-5-5').output < std('claude-haiku-4-5').output],
+    ],
+    // v3.82.0 — the first TIERED model. Every rate claim is checked against the
+    // price table (lower tier) and TIERED_PRICES (upper tier), never prose.
+    'claude-haiku-5-5': [
+      ['its price rises 5x on prompts over 100,000 tokens', () => {
+        const t = T.TIERED_PRICES['claude-haiku-5-5'];
+        return t.thresholdTokens === 100000 && byId['claude-haiku-5-5'].priceTierThresholdTokens === 100000
+          && near(t.above.input / std('claude-haiku-5-5').input, 5) && near(t.above.output / std('claude-haiku-5-5').output, 5);
+      }],
+      ['because of how it is priced: $0.10/$0.50 per 1M tokens on prompts up to 100,000 tokens and $0.50/$2.50 above', () => {
+        const t = T.TIERED_PRICES['claude-haiku-5-5'];
+        return $pair('claude-haiku-5-5') === '$0.1/$0.5' && t.above.input === 0.5 && t.above.output === 2.5
+          && T.TIERED_PRICE_MODELS.has('claude-haiku-5-5');
+      }],
+      ['one flat rate, which is all this app can quote', () => byId['claude-haiku-5-5'].suitability === 'chat-only'],
+      ['1.329x more input tokens', () => tf('claude-haiku-5-5') === 1.329],
+      // A measured BILL ratio (2026-10-08: $0.0029 vs $0.0143 per short ingest,
+      // $0.014 vs $0.085 per long one), not a rate — and consistent with the
+      // rates: 0.1x the price, ~2x the output tokens, 1.33x the input tokens.
+      ['each ingest cost a fifth to a sixth of what Haiku 4.5 billed on the same sources', () =>
+        near(std('claude-haiku-5-5').input / std('claude-haiku-4-5').input, 0.1)
+        && near(std('claude-haiku-5-5').output / std('claude-haiku-4-5').output, 0.1)],
     ],
     'claude-sonnet-5': [
       ['cheaper than both Sonnet 4.6 and 4.5', () => std('claude-sonnet-5').input < std('claude-sonnet-4-6').input

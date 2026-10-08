@@ -50,6 +50,19 @@ function ok(cond, label) {
   const ra = await ask('anthropic');
   ok(typeof ra === 'string' && ra.trim().length > 0, 'override → anthropic returns a non-empty answer');
 
+  // v3.82.0: claude-haiku-5-5 is offered for chat. The per-call MODEL override
+  // must reach it for real — and be SERVED by it, not silently demoted to the
+  // provider default (the allow-list falls back without throwing, so a
+  // non-empty answer alone would pass on Haiku 4.5).
+  console.log('\nPer-call model — claude-haiku-5-5 (chat-only):');
+  const served55 = [];
+  const r55 = await generateText(
+    'You are a connectivity test. Reply with exactly the word OK.', 'Reply now.', 1024, 'text', null,
+    { provider: 'anthropic', model: 'claude-haiku-5-5', onUsage: (u) => served55.push(u && u.model) });
+  ok(typeof r55 === 'string' && r55.trim().length > 0, 'model override → claude-haiku-5-5 returns a non-empty answer');
+  ok(served55.length > 0 && served55.every(m => m === 'claude-haiku-5-5'),
+    `the call was SERVED by claude-haiku-5-5, not a fallback (served: ${served55.join(', ') || 'none'})`);
+
   // Garbage override → falls back to the global active provider (still works).
   const rf = await ask('nonsense-provider');
   ok(typeof rf === 'string' && rf.trim().length > 0, 'garbage override falls back to the global provider and works');

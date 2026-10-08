@@ -498,6 +498,7 @@ structural Health scans and the MCP bridge itself cost nothing at all.
 |---|---|---|---|
 | **Gemini 2.5 Flash Lite** *(default)* | Yes, but [rate-limited](https://ai.google.dev/gemini-api/docs/rate-limits) — enough to try, not to work | $0.10/M in · $0.40/M out | **~€5/month** at heavy solo use |
 | **Anthropic Claude Haiku 4.5** | No | $1/M in · $5/M out | 10× the Gemini bill on input, 12.5× on output |
+| **Anthropic Claude Haiku 5.5** *(chat only)* | No | $0.10/M in · $0.50/M out up to 100k-token prompts; 5× above | About a fifth of Haiku 4.5 per chat answer; cannot build the wiki (tiered price) |
 
 Those are the *defaults*, not the only options. A hand-measured catalogue spans Gemini, Anthropic
 and OpenRouter — free routes exist for chat, and on a connected install the app names the cheapest

@@ -1061,6 +1061,11 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     'claude-sonnet-5': 1.329,
     'claude-opus-5':   1.329,
     'claude-opus-4-8': 1.329,
+    // Measured 2026-10-08 with /v1/messages/count_tokens on three Curator docs
+    // (user-guide 1.297x, architecture 1.330x, curator-overview 1.336x against
+    // claude-haiku-4-5) — and within 2 tokens of claude-sonnet-5 on every one,
+    // i.e. the same newer tokenizer, so the same recorded factor.
+    'claude-haiku-5-5': 1.329,
     // OpenRouter, measured 2026-08-27 across 9 runs each on the real ingest
     // outline prompt; deterministic to the token on a byte-identical prompt.
     'ibm-granite/granite-4.0-h-micro': 1.036,
@@ -2803,6 +2808,47 @@ section('21b. Citation titles — driven through the real transport, read back o
     rmSync(tmpUD, { recursive: true, force: true });
     rmSync(tmpDom, { recursive: true, force: true });
   }
+}
+
+// ── v3.82.0: Claude Haiku 5.5 — offered for CHAT, refused for BUILDING ───────
+// The first TIERED model. Its price is $0.10/$0.50 up to 100,000 prompt tokens
+// and $0.50/$2.50 above (live pricing page, 2026-10-08), and every cost surface
+// in the app assumes one flat rate — so it is chat-only by STRUCTURE
+// (TIERED_PRICE_MODELS → defineOfferableModel refuses a build-lane entry), not
+// by a convention someone could forget.
+section('v3.82.0 — claude-haiku-5-5: chat-only because its price is tiered');
+{
+  const { DEFAULTS, FALLBACK_CHAINS, TIERED_PRICE_MODELS, TIERED_PRICES, defineOfferableModel } = llmTesting;
+  const e = OFFERABLE_MODELS.anthropic.find(m => m.id === 'claude-haiku-5-5');
+  ok(!!e, 'claude-haiku-5-5 is offerable on Anthropic');
+  eq(e?.label, 'Haiku 5.5', 'its display name is "Haiku 5.5"');
+  eq(e?.suitability, 'chat-only', 'it is offered for CHAT only');
+  ok(isOfferableModel('anthropic', 'claude-haiku-5-5'), 'the chat allow-list admits it');
+  eq(isBuildLaneModel('anthropic', 'claude-haiku-5-5'), false, '★ it can NOT be the build model (ingest, Wiki Health, Compile)');
+  ok(TIERED_PRICE_MODELS.has('claude-haiku-5-5'), 'it is registered as a TIERED-price model');
+  eq(TIERED_PRICES['claude-haiku-5-5']?.thresholdTokens, 100000, 'the published threshold is 100,000 prompt tokens');
+  eq(e?.priceTierThresholdTokens, 100000, '…and the offer entry carries that threshold to the screen');
+  eq(e?.input, 0.10, 'quoted input is the lower-tier $0.10 per 1M (the rate a bounded chat prompt pays)');
+  eq(e?.output, 0.50, 'quoted output is the lower-tier $0.50 per 1M');
+  eq(anthropicMaxOutputTokens('claude-haiku-5-5'), 128000, 'output ceiling 128,000 (GET /v1/models, 2026-10-08)');
+  eq(e?.contextLength, 1000000, 'context window 1,000,000 (GET /v1/models, 2026-10-08)');
+  eq(e?.thinks, true, 'measured THINKING (adaptive when the param is omitted) — billed as output, so the chat cost line must say so');
+  eq(DEFAULTS.anthropic, 'claude-haiku-4-5', 'the Anthropic default is UNCHANGED');
+  ok(!FALLBACK_CHAINS.anthropic.includes('claude-haiku-5-5'), 'it is not a fallback rung (a rung can carry an ingest)');
+  // The refusal itself, driven: the same spec declared 'general' must not build.
+  let threw = null;
+  try {
+    defineOfferableModel('anthropic', { id: 'claude-haiku-5-5', label: 'x', contextLength: 1000000, thinks: true,
+      jsonRaw: true, tokenizerFactor: 1.329, suitability: 'general', note: 'probe' });
+  } catch (err) { threw = String(err && err.message); }
+  ok(threw && /tiered/i.test(threw), '★ declared for the build lane it is REFUSED at definition, naming the tiered price');
+  // Anti-vacuity: the same probe for a NON-tiered priced model builds fine.
+  let built = null;
+  try {
+    built = defineOfferableModel('anthropic', { id: 'claude-haiku-4-5', label: 'x', contextLength: 200000, thinks: false,
+      jsonRaw: false, tokenizerFactor: 1.0, suitability: 'general', note: 'probe' });
+  } catch { built = null; }
+  ok(built && built.suitability === 'general', '⟨ANTI-VACUITY⟩ the identical probe for claude-haiku-4-5 builds — the refusal is about the tier, not the probe');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
