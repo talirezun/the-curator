@@ -921,6 +921,20 @@ async function boot(token, scopeReq) {
   }
 
   state.activeDomain = decision.activeDomain;
+  // ── THE LIST'S FILTER AND THE DOMAIN AGREE ON ARRIVAL (v3.81.2) ─────────
+  // `domainFilter` outlives a mount (module state), so a filter set before
+  // leaving Chat is still set on return. A handoff ("Ask this domain") is the
+  // user's explicit choice: a filter on another domain follows IT, or the
+  // next New chat (which follows the filter) would undo the handoff. With no
+  // handoff, the empty chat boot opens starts where the filter points.
+  if (state.domainFilter && !canHoldConversations(state.domainFilter)) state.domainFilter = null;
+  if (state.domainFilter && state.domainFilter !== state.activeDomain) {
+    if (decision.appliedScopeSlug) followFilterTo(state.activeDomain);
+    else {
+      state.activeDomain = state.domainFilter;
+      try { localStorage.setItem(LS_DOMAIN, state.activeDomain); } catch { /* ignore */ }
+    }
+  }
   // Persist only when the handoff itself chose the domain — an ordinary
   // fallback to the already-saved value (or to domains[0]) has nothing new
   // to remember; re-writing the same key either way would be harmless but
@@ -1358,14 +1372,61 @@ function switchDomain(slug) {
   state.thread = [];
   state.cancelNotice = null;     // belonged to the thread being left behind
   adoptActiveDomain(slug, myMountToken);
+  // v3.81.2: a list filtered to ANOTHER domain follows the pick. New chat
+  // follows the filter (see newChatDomain), so a filter left on the old
+  // domain would send the next New chat back there — undoing the choice just
+  // made in the pill. "All domains" is left alone: it already shows `slug`.
+  if (followFilterTo(slug)) {
+    loadConversationList(myMountToken, { q: state.searchQuery, sidebarOnly: true }).catch(reportAsyncActionFailure);
+  }
   renderShell(myMountToken);
   focusComposer();
+}
+
+/**
+ * IS A CONVERSATION ON SCREEN? (v3.81.2) An opened one, or a new one whose
+ * first question is already in the thread (its id arrives with the answer).
+ * The one predicate for "never re-scope this": a conversation lives in one
+ * domain's folder, so only an EMPTY new chat may move with the list's filter.
+ */
+function conversationOpen() {
+  return !!state.activeConversationId || (Array.isArray(state.thread) && state.thread.length > 0) || state.sending === true;
+}
+
+/** Can `slug` hold conversations here? A Shared Brain mirror is answered but
+ *  never written to, so it is never a filter value (see domainFilterCfg). */
+function canHoldConversations(slug) {
+  return typeof slug === 'string' && !!slug && state.domains.some((d) => d.slug === slug && d.readonly !== true);
+}
+
+/**
+ * WHERE A NEW CHAT STARTS (v3.81.2, the 2026-10 report). The list's domain
+ * filter, when it names a domain — the sidebar is what the user is looking at
+ * when they press New chat, and a question sent from there to a DIFFERENT
+ * domain, into a conversation the filtered list then hides, is the defect.
+ * "All domains" (null) keeps the active domain, as before.
+ */
+function newChatDomain() {
+  return canHoldConversations(state.domainFilter) ? state.domainFilter : state.activeDomain;
+}
+
+/** Move a SET filter to `slug` (null when `slug` cannot hold conversations).
+ *  "All domains" is never changed. Returns whether the filter moved. */
+function followFilterTo(slug) {
+  if (!state.domainFilter || state.domainFilter === slug) return false;
+  state.domainFilter = canHoldConversations(slug) ? slug : null;
+  state.bulkNotice = null;
+  return true;
 }
 
 function startNewChat() {
   state.activeConversationId = null;
   state.thread = [];
   state.cancelNotice = null;   // belonged to the thread being left behind
+  // v3.81.2: New chat follows the list's filter. adoptActiveDomain is a no-op
+  // when the domain is already active, and resets the project to the new
+  // domain's own pin when it is not.
+  adoptActiveDomain(newChatDomain(), myMountToken);
   restorePinnedProject(myMountToken);
   renderShell(myMountToken);
   focusComposer();
@@ -2890,6 +2951,7 @@ function listCtx() {
     searchQuery: state.searchQuery,
     loadError: state.loadError,
     domainFilter: state.domainFilter,
+    conversationOpen: conversationOpen(),
     total: state.listTotal,
     unreadable: state.listUnreadable,
     bulkNotice: state.bulkNotice,
@@ -2928,6 +2990,14 @@ function domainFilterCfg() {
       if (next === state.domainFilter) return;
       state.domainFilter = next;
       state.bulkNotice = null;
+      // v3.81.2: with NO conversation open, the empty new chat moves with the
+      // filter (as the composer's Domain pill would move it). An OPEN
+      // conversation is never re-scoped — the scope line says where it is and
+      // offers a new chat in the filter's domain instead.
+      if (next && !conversationOpen() && adoptActiveDomain(next, myMountToken)) {
+        state.cancelNotice = null;
+        renderMain(myMountToken);
+      }
       loadConversationList(myMountToken, { q: state.searchQuery, sidebarOnly: true }).catch(reportAsyncActionFailure);
     },
   };
@@ -2966,6 +3036,8 @@ function wirePane(root) {
       if (next) next.focus();
     },
     onAsk: askFilterTextInNewChat,
+    // The scope line's button: a new chat in the filter's domain.
+    onNewInFilter: startNewChat,
   }, { selectMode: state.selectMode });
 
   const allBox = root.querySelector('#chat-bulk-all');

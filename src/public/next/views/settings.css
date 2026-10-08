@@ -2247,6 +2247,8 @@
   color: var(--text-2);
 }
 .chat-start-sp { flex: 1; }
+/* v3.81.2: the remembered composer pick, read-only, under the start model. */
+.chat-start-now { margin-top: var(--space-4); }
 
 /* ── BLOCK 4 · the browse table ─────────────────────────────────────────── */
 

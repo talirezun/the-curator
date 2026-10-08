@@ -212,7 +212,7 @@ const FNS = [
   // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
   // the manifest is this suite's record of what settings.js needs to evaluate.
   'modelLiveMissing', 'renderGoneChip',
-  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
+  'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts', 'readStoredChatPick', 'rememberedChatPick',
   'catalogueCountsOf', 'allCatalogueRows',
   'measurementChip', 'renderMeasurementChip',
   'modelLaneOf', 'laneBuildsWiki', 'qualificationFor', 'isCuratorMeasured', 'modelSearchText',

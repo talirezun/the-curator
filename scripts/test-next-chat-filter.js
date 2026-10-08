@@ -215,6 +215,13 @@ function makeSandbox(over = {}) {
     // v3.76.0 (F13): a new chat goes back to the per-domain pin. Lifted real;
     // with no restored project in this sandbox it returns at its first line.
     extractFunction(chatSrc, 'restorePinnedProject') + '\n' +
+    // v3.81.2: New chat follows the list's filter, and the pane's scope line
+    // reads whether a conversation is open. Lifted real; the domain change
+    // itself (adoptActiveDomain) is a stub here — test-next-chat-scope-follow.js
+    // drives the real one.
+    extractFunction(chatSrc, 'conversationOpen') + '\n' +
+    extractFunction(chatSrc, 'canHoldConversations') + '\n' +
+    extractFunction(chatSrc, 'newChatDomain') + '\n' +
     extractFunction(chatSrc, 'focusComposer') + '\n' +
     extractFunction(chatSrc, 'autosize') + '\n' +
     // v3.72.0 (P3): the row, list, bar and their wiring are
@@ -239,7 +246,7 @@ function makeSandbox(over = {}) {
     'scheduleConversationSearch', 'deleteConversationRow', 'deleteSelectedConversations',
     'selectConversation', 'reportAsyncActionFailure', 'navigate', 'MESSAGES_PER_TURN_UNUSED',
     'conversationPaneHtml', 'wireConversationPane', 'convKey', 'identitySlotClass',
-    'renderListboxHtml', 'mountListbox', 'tickAgesNow',
+    'renderListboxHtml', 'mountListbox', 'tickAgesNow', 'adoptActiveDomain', 'renderMain',
     src
   )(
     doc, state,
@@ -257,6 +264,8 @@ function makeSandbox(over = {}) {
     null,
     LIST.conversationPaneHtml, LIST.wireConversationPane, LIST.convKey, SIDEBAR.identitySlotClass,
     () => '<span data-lb-stub></span>', () => null, () => 0,
+    (slug) => { if (!slug || slug === state.activeDomain) return false; state.activeDomain = slug; return true; },
+    () => {},
   );
 
   return { doc, state, calls, api };

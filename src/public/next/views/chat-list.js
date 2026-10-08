@@ -327,6 +327,41 @@ export function selectBarHtml(ctx) {
   );
 }
 
+/**
+ * THE SCOPE LINE (v3.81.2) — one line, shown only while a conversation is OPEN
+ * and the list's domain filter names a DIFFERENT domain. The 2026-10 report:
+ * the filter was set to NewsRadar, New chat was pressed, and the question went
+ * to Curation — the filter only ever narrowed the LIST. New chat now follows
+ * the filter, and an open conversation is never re-scoped (one domain per
+ * conversation), so the one state left where the two can disagree is an open
+ * conversation under another domain's filter. This line names both halves in
+ * words, each with its domain's identity dot (the RECORDED slot, rule 5), and
+ * the second half is the button that starts a new chat in the filter's domain.
+ * ctx adds: { conversationOpen }
+ */
+export function scopeNoteHtml(ctx) {
+  const x = ctx || {};
+  if (x.conversationOpen !== true) return '';
+  const filter = typeof x.domainFilter === 'string' ? x.domainFilter : '';
+  const open = typeof x.activeDomain === 'string' ? x.activeDomain : '';
+  if (!filter || !open || filter === open) return '';
+  const dot = (slug) => {
+    const i = domainIndexOf(x.domains, slug);
+    const slot = i >= 0 && x.domains[i] ? x.domains[i].identitySlot : null;
+    const cls = identitySlotClass(slot);
+    return cls ? '<span class="cur-sb-dot ' + cls + '" aria-hidden="true"></span>' : '';
+  };
+  return (
+    '<div class="sidebar-hint chat-list-scope" role="status">' +
+      '<span class="chat-dom-opt">Open chat is in ' + dot(open) + escapeHtml(domainName(x.domains, open)) + '</span>' +
+      '<span aria-hidden="true"> · </span>' +
+      '<button type="button" class="btn btn-ghost btn-xs chat-scope-new" id="chat-scope-new">' +
+        'New chat in ' + dot(filter) + escapeHtml(domainName(x.domains, filter)) +
+      '</button>' +
+    '</div>'
+  );
+}
+
 export function bulkNoticeHtml(notice) {
   if (!notice || !notice.text) return '';
   return '<div class="chat-bulk-notice' + (notice.tone === 'error' ? ' error' : '') + '" role="status">' +
@@ -338,6 +373,7 @@ export function conversationPaneHtml(ctx) {
   const x = ctx || {};
   return (
     listHeadHtml(x) +
+    scopeNoteHtml(x) +
     selectBarHtml(x) +
     bulkNoticeHtml(x.bulkNotice) +
     unreadableHintHtml(x) +
@@ -355,7 +391,8 @@ export function conversationPaneHtml(ctx) {
  * reaches for `document`, so a suite drives it with a fake root.
  * @param {object} root
  * @param {{ onOpen(id, domain), onDelete(id, domain, title), onToggle(key, on),
- *           onToggleAll(on), onDeleteSelected(), onSelectMode(on), onAsk?() }} h
+ *           onToggleAll(on), onDeleteSelected(), onSelectMode(on), onAsk?(),
+ *           onNewInFilter?() }} h
  * @param {{ selectMode?: boolean }} [opts]
  */
 export function wireConversationPane(root, h, opts) {
@@ -390,6 +427,8 @@ export function wireConversationPane(root, h, opts) {
   if (sel) sel.addEventListener('click', () => h.onSelectMode(true));
   const done = root.querySelector('#chat-select-done');
   if (done) done.addEventListener('click', () => h.onSelectMode(false));
+  const scopeNew = root.querySelector('#chat-scope-new');
+  if (scopeNew && typeof h.onNewInFilter === 'function') scopeNew.addEventListener('click', () => h.onNewInFilter());
   const ask = root.querySelector('#chat-filter-ask');
   if (ask && typeof h.onAsk === 'function') ask.addEventListener('click', () => h.onAsk());
 }

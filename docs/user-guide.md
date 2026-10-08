@@ -3461,6 +3461,18 @@ button, four pills in a row:
   a new chat there."* Picking a different domain from that menu does not move the current
   conversation — it starts a fresh one, in the domain you picked. On a brand-new, empty
   conversation the pill is a normal choice.
+
+  > **Where does my question go? (v3.81.2)** The **Domain** pill — or **Ask this domain** on a
+  > domain's page — is what chooses the domain a question is asked in. The dropdown above the
+  > conversation list (*"All domains"*, or one domain) **filters the list**; it never moves a
+  > conversation that is already open. Two things connect them: **New chat follows the list's
+  > dropdown** — set it to NewsRadar, press **New chat**, and the new chat is in NewsRadar — and,
+  > with no conversation open, changing the dropdown moves the empty new chat with it. When a
+  > conversation from one domain is open while the list shows another, one line above the list
+  > says so — *"Open chat is in ● Curation · New chat in ● NewsRadar"* — and pressing its second
+  > half starts a new chat in the list's domain. Picking a domain in the pill (or arriving from
+  > **Ask this domain**) moves a list that was set to a different domain along with it, so the
+  > next **New chat** does not undo your pick; *"All domains"* is left as it is.
 - **Project** (described above, [Pin a project](#pin-a-project-and-the-answer-reads-its-context-too))
   — the hollow grey mark, never a coloured dot, and its name in words. Picked **per question**: you
   can pin, change or clear it between messages in the same conversation.
@@ -3495,7 +3507,7 @@ When it does collapse, a **browse** row opens the full catalogue with **search**
 
 Every dropdown in the app is drawn by The Curator rather than by your operating system, which means keyboard behaviour is consistent and is ours to get right: **arrow keys** move (and open a closed menu), **Home/End** jump to the first and last option, **Page Up/Down** move by a screenful, **Enter** commits, **Escape** closes and changes nothing, **Tab** closes without committing, and **typing** jumps to a match — by prefix first, then anywhere in the name, so typing `opus` finds a model whose id begins with a vendor prefix. Typing the same letter repeatedly cycles between matches. Typing never commits blindly.
 
-Both pickers open **upward**. Both choices are remembered in your browser between questions — the model you pick stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one.
+Both pickers open **upward**. Both choices are remembered in your browser between questions — the model you pick stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one. The Model menu's foot line says so: *"Your pick is remembered for every new chat on this computer."* So a new chat starts on **your last pick**, not on the model **Settings › Providers & keys › 3 · Chat** names as the start: that one is used only until you pick a model here, and since v3.81.2 Settings says so and shows your remembered pick beside it (*"Now: Haiku 4.5 (your pick)"*).
 
 #### Ask the same question again, on a different model
 
@@ -3572,7 +3584,10 @@ The panel beside the rail is no longer one domain's history — it is **every co
 
 - **Every row carries its domain's own coloured dot** (the same one The Curator uses for that domain everywhere else — the sidebar, the Ingest destination, the Context breadcrumb) so you can tell at a glance which knowledge base a conversation belongs to without opening it.
 - **A conversation that was last answered with a project pinned also carries a small hollow grey square, followed by the project's name in words** — a deliberately different mark from the domain dot (round, coloured) so it can never read as a second domain. It appears only when the **last turn** recorded a project; an older conversation, or one where no project was pinned, shows nothing.
-- **A domain filter** above the list narrows it to one domain, if you want that.
+- **A domain filter** above the list narrows it to one domain, if you want that. It filters the
+  list; **New chat** starts in the domain it shows (since v3.81.2), and with no conversation open,
+  changing it moves the empty new chat too. It never moves an open conversation — see
+  [Where does my question go?](#the-composer--length-and-model-selectors).
 - **Rows are grouped by when they were last used** — **Today**, **Yesterday**, **Previous 7 days**, **Earlier** — with a live, ticking age (*"12 min ago"*) rather than a static timestamp. A conversation from before v3.72.0 has no recorded last-use time, so it reads *"started 3 weeks ago"* from when it was created — worded that way deliberately, so it is never mistaken for something you just used.
 - **The count in the list head is the true total** across every domain, and if there are more conversations than fit on screen, a line at the bottom says *"Showing the newest N of M."*
 - **Deleting one conversation** uses the same neutral trash icon every list-with-a-delete-action in The Curator now uses ([one row-action rule, app-wide](#the-one-row-action-rule)) — always visible, never red until you confirm. **Deleting several at once** is a mode: press **Select**, tick the ones you want (or **Select all**), and a bar reads *"N selected · Delete N · Done"*. The per-row trash icons hide while you're in Select mode, so there is never a checkbox and a trash icon competing for the same row.
@@ -3625,7 +3640,8 @@ regenerates this image and its dark twin, `images/curator-chat-dark.png`.*
 ### Starting a conversation
 
 1. Click **Chat** in the rail
-2. Pick a domain from the composer's **Domain** pill
+2. Pick a domain from the composer's **Domain** pill (or set the list's dropdown to that domain —
+   **New chat** starts where the dropdown points)
 3. Click **New chat** (or just start typing — a new conversation is created automatically)
 4. Type your question in the box at the bottom
 5. Press **Send** or use `Cmd + Enter` (Mac) / `Ctrl + Enter` (Windows)
@@ -6460,6 +6476,8 @@ The block shows:
 Chat can use **any** model you have connected, including the ones that cannot build a wiki — nothing is at stake in an answer but the cost of that answer. You choose it **per message, in the composer**, next to Send.
 
 The block is a readout, not a control: which model a new conversation **starts on**, and how many models chat can reach. Starring a model in the composer keeps it at the top of that menu.
+
+**"Starts on" holds only until you pick a model in the composer** — the composer remembers your pick on this computer, and every new chat after that starts on it (across conversations and restarts). Since v3.81.2 the block says exactly that, and when a pick is remembered in this browser it shows it underneath, read-only: *"Now: Haiku 4.5 (your pick)"*. A pick no connected provider offers any more is not shown — chat would not use it either, and new chats fall back to the start model.
 
 ### 4 · All models
 

@@ -519,6 +519,7 @@ const E = {
     lead: 'In **Chat**, any model you have connected can answer. Pick one per message, in the composer.',
     points: [
       { icon: 'check', text: 'Your Chat choice never changes the model that builds your wiki.' },
+      { icon: 'refresh', text: 'The composer remembers your pick for every new chat on this computer.' },
     ],
     guide: { key: 'settings.chat', heading: 'The composer — Length and Model selectors' },
   },

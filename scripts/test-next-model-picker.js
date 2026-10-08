@@ -637,7 +637,7 @@ const RENDER_FN_NAMES = [
   // the manifest is this suite's record of what settings.js needs to evaluate.
   'modelLiveMissing', 'renderGoneChip',
   'providerConnected', 'buildLaneFacts', 'buildModelDisplayName',
-  'chatStartFacts', 'catalogueCountsOf', 'allCatalogueRows',
+  'chatStartFacts', 'readStoredChatPick', 'rememberedChatPick', 'catalogueCountsOf', 'allCatalogueRows',
   // The block wrapper and the three new block renderers. `renderProviders`
   // delegates to them, so a stub would make every assertion driven through the
   // real page vacuous — the rule §16 already states for renderProviderRow.
