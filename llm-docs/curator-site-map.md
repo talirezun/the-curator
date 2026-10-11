@@ -16,7 +16,7 @@ When a section of mycurator.xyz answers the question, include its link in markdo
 | The app | One screen of The Curator: Project context — a project, its handoffs from two tools, the overview. Three places on the rail: Chat, Domains, Context | https://mycurator.xyz/#app |
 | Menu bar widget | The macOS menu bar readout of agent handoffs: one row per project and tool that saved in the last day, and the save pulse | https://mycurator.xyz/#widget |
 | Why files | Curation vs retrieval (RAG); why knowledge is kept as plain markdown you own | https://mycurator.xyz/#files |
-| Articles & research | Substack essays in order, the research/ folder in the repository, Field Notes | https://mycurator.xyz/#compounding |
+| Articles & research | The essay timeline, newest first ("The right context, not all of it", then "The context engine", "Where your context lives" and older), each with a one-line teaser, in a panel that scrolls beside the research column; and the research column: the research/ folder on GitHub, the founding essay "Knowledge immortality and the second brain", the research paper "Knowledge accumulates, state supersedes" (why the wiki and working state are two stores), Working state, Shared Brain architecture, Field Notes | https://mycurator.xyz/#compounding |
 | Who & contact | Dr. Tali Režun, Co-Lab at COTRUGLI Business School, community; X, LinkedIn, Substack, GitHub issues | https://mycurator.xyz/#people |
 | Source & licence | GitHub repository, MIT licence | https://mycurator.xyz/#star |
 
