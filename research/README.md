@@ -78,6 +78,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *A lesson in context engineering: what an agent needs before it starts, where each piece lives, and how it survives the move between sessions, harnesses, models and machines — taught through The Curator v3.80.0, with a reading of the session-start meter, the three routes things travel between computers, and an exercise for students.*
 
+- **[Knowledge Accumulates, State Supersedes](./articles/knowledge-accumulates-state-supersedes.md)** — *research paper*  
+  By Dr. Tali Režun  
+  *Structuring and carrying context for multi-session, multi-harness AI agent work — a design study of The Curator: three kinds of context told apart by their write rules (knowledge accumulates, state supersedes, canonical documents are replaced whole), the architecture that implements them, a budgeting principle for session start, and small, dated measurements of whether agents actually read and save. Also published on ResearchGate.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -169,6 +173,15 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {September},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-right-context-not-all-of-it.md}
+}
+
+@article{rezun2026knowledge-accumulates,
+  author = {Režun, Tali},
+  title = {Knowledge Accumulates, State Supersedes: Structuring and Carrying Context for Multi-Session, Multi-Harness {AI} Agent Work --- A Design Study of The Curator, an Open-Source Context Engine},
+  year = {2026},
+  month = {October},
+  note = {Research article. Also published on ResearchGate},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-accumulates-state-supersedes.md}
 }
 ```
 
