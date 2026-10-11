@@ -1072,7 +1072,7 @@ the project is *planned*: `readingBudgetDefaulted` becomes `false`, and the read
 (`PATCH …/reading/budget`); no agent tool or CLI command writes it. A hand-edited invalid value
 reads back as **not set**, with `readingBudgetError` naming the defect, rather than throwing.
 `readingBudgetPreset(bytes)` names which of the seven presets a stored value **is** — Index only
-(0) · Lean (8,192 B) · Standard (65,536 B) · Deep (131,072 B) · Large (262,144 B) · Extra large
+(0) · Lean (32,768 B) · Standard (65,536 B) · Deep (131,072 B) · Large (262,144 B) · Extra large
 (524,288 B) · Max (819,200 B) — or, for any other valid value (an old 120 KB Deep or 200 KB Max, or
 a hand edit), `{id: 'custom', nearest}` naming the closest preset. It never writes; it is read
 by the app's picker to label a stored value.
