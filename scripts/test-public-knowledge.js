@@ -26,9 +26,9 @@
  * GitHub's own slug rules (or an explicit `<a id>`).
  *
  * ── Absent files SKIP, an empty set FAILS ───────────────────────────────────
- * The four knowledge files are written and revised independently, so a file
+ * The knowledge files are written and revised independently, so a file
  * that is not on disk is reported as a skip and the rest of the set still
- * passes. If NONE of the four is present the suite FAILS LOUDLY rather than
+ * passes. If NONE of them is present the suite FAILS LOUDLY rather than
  * reporting "0 checked, 0 wrong" — a guard that has stopped reaching the thing
  * it guards is the recorded failure shape in this repo (see
  * test-frontend-null-safety.js's history), and a green run over an empty set is
@@ -68,6 +68,7 @@ const BUDGETS = {
   'curator-agent-memory.md': 30_000,
   'curator-links.md': 8_000,
   'curator-site-map.md': 1_200,
+  'curator-reading.md': 1_600,
 };
 const TOTAL_CEILING = 200_000;
 

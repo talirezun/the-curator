@@ -209,6 +209,8 @@ Everything below is in the repository and is public.
 
 Go here for the essay on why knowledge is kept as plain markdown files you own: https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-immortality-second-brain.md
 
+All other essays and the research paper, and where to start: curator-reading.md.
+
 ## Where is the source code?
 
 Go here for the repository itself, including the test suite and the MCP server: https://github.com/talirezun/the-curator
