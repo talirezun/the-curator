@@ -180,7 +180,7 @@ If you're referencing articles from this research series, please cite them as fo
   title = {Knowledge Accumulates, State Supersedes: Structuring and Carrying Context for Multi-Session, Multi-Harness {AI} Agent Work --- A Design Study of The Curator, an Open-Source Context Engine},
   year = {2026},
   month = {October},
-  note = {Research article. Also published on ResearchGate},
+  note = {Research article. Also published on ResearchGate: https://www.researchgate.net/publication/415028893},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-accumulates-state-supersedes.md}
 }
 ```
