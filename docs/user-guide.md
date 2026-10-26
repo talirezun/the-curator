@@ -3162,7 +3162,7 @@ In practice, The Curator's ingest pipeline currently caps the **input** at 80,00
 
 1. **Phase 1** — outline pass: the AI reads the whole document and produces a list of pages to write (with a required-coverage checklist: one summary, originator entity, every named person/tool/company, every key concept, consolidation rule for closely related sub-ideas)
 2. **Phase 2** — batched content: pages are written in batches of 4 per LLM call
-3. **Index merge** — the app appends new rows to `index.md` programmatically (no LLM call), so the index stays consistent even on large domains
+3. **Index merge** — the app adds a row to `index.md` for every page the ingest touched that the index does not list yet — newly created or merely updated — programmatically (no LLM call), re-reading `index.md` at that moment so a change made while the ingest ran is kept. The index stays consistent even on large domains
 
 **Practical guidance:**
 
@@ -4223,6 +4223,8 @@ Set up each group exactly like this:
 4. Click the color circle next to each group and choose your color
 
 **Result:** Entities (people, tools, companies) appear blue; concepts (ideas, techniques) appear green; summaries (source documents) appear purple/red. Your neural network is now visually segmented — you can instantly see at a glance whether a cluster contains mostly ideas or mostly sources.
+
+**Pro tip — keep `index.md` out of the graph (v3.83.0):** a complete `index.md` links to every page in the wiki, so it shows up as one huge hub and the **Orphans** toggle stops showing anything as orphaned. In the Graph View's filter box type `-file:index`. (The Curator's own Wiki health ignores `index.md`, so it still tells you which pages are truly orphaned.)
 
 **Pro tip — node size:** In the same Graph View gear panel, find **Node size** → set it to **Linked mentions**. Pages with more connections grow larger, making your most-connected concepts and entities visually prominent.
 
@@ -7785,6 +7787,7 @@ Use it if your wiki starts to feel messy — broken links, duplicate entities, p
 | **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
 | **Hyphen variants** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix. The scanner groups files whose normalised form (strip honorifics like `dr-` / `dr.-` / `prof-`, then strip all hyphens, then lowercase) is identical. Example groups: `tali-rezun` + `talirezun` + `dr.-tali-rezun`; `prof-smith` + `smith`. | **Fix** — merges all variants into the canonical slug (no honorific, most hyphens, shortest). See the detailed walk-through below. |
 | **Missing backlinks** | A summary lists an entity under *Entities Mentioned* but the entity's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
+| **Index gaps** *(v3.83.0)* | `index.md` — the wiki's page catalogue, which your AI agents read through the `get_index` tool — is missing rows for pages that exist, or still has rows for pages that are gone. See [Index gaps and Rebuild index](#index-gaps-and-rebuild-index-v3830) below. Counted as **one** issue however many rows are off. | **Rebuild index** under QUICK MAINTENANCE — free, no AI, previewed before anything is written. There is no Fix or Dismiss on this row. |
 
 **Auto-fixable issues** have a **Fix** button per row, and a **Fix all N** button on the section header. **Broken links** use the same flow per row but with an **Apply** button — only rows where the scanner found a plausible target are applicable. **Orphans** are review-only per row, but you don't have to work through them one at a time; see **Quick maintenance** below.
 
@@ -7795,6 +7798,7 @@ This is the recommended way to maintain a wiki, and it's what makes health usabl
 | Button | What it does | AI? | Cost |
 |---|---|---|---|
 | **Fix N safe issues** | Applies every deterministic fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched. One click, no AI, no preview needed (these are unambiguous). | No | Free |
+| **Rebuild index** *(v3.83.0)* | Appears only when the scan finds **Index gaps**. Rebuilds `index.md` from the files on disk — adds the missing pages, removes rows for pages that no longer exist. **You see a preview first**, and nothing is written until you click Apply. | No | Free (no sparkles, no cost badge) |
 | **✨ Fix N broken links** | Resolves broken `[[wikilinks]]` in bulk. Free formatting fixes first (slugifying, stripping `.md`), then the AI matches the rest to real pages when they're a clear variant, and removes the brackets on links that point at no real page. **You review the full plan before it's applied.** | Yes | shown on the button |
 | **✨ Rescue N orphans** | For each orphan (a page nothing links to), the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Orphans with no confident match are left for manual review. **You review the plan before it's applied.** | Yes | shown on the button |
 | **✨ Find duplicate pages** | The semantic-duplicate scan (see below). Always offered when a key is configured — there's no free count to gate it on, so the cost is fetched when you open it. | Yes | shown when you open it |
@@ -7808,6 +7812,32 @@ This is the difference between maintaining a 50-page personal wiki and a 3,000-p
 > **Buttons grey out while a fix is running** — including a fix you started, then navigated away from and came back to. If you see *"An earlier fix on this domain is still running — please wait for it to finish before starting another,"* that's a real operation still working on disk, not a stuck screen.
 
 > **The first time you use any AI action**, a one-time notice explains what leaves your machine. You confirm once.
+
+### Index gaps and Rebuild index (v3.83.0)
+
+Every wiki has an `index.md`: one row per page, with a one-line description. You rarely open it yourself, but it matters — it is the catalogue your AI agents read through the `get_index` tool to see what a wiki contains. Before v3.83.0 the index only ever **gained** rows for pages an ingest *created*, so a page that was merely updated, that was written before the index existed, or whose row was lost in a sync merge simply never appeared — and a row for a page you later deleted never went away. On large wikis that left the catalogue far behind the files: one real 3,000-page wiki had **2,705 pages missing** from its index.
+
+**Index gaps** is the Health check that finds this. It is one row in the issue list and one issue in the count, however many pages are off.
+
+| What the scan compares | What it reports | What Rebuild does about it |
+|---|---|---|
+| Every page in `entities/`, `concepts/` and `summaries/` against the index's rows | **Missing** — a page with no row | Adds a row, in sorted order, under Summaries, Entities or Concepts |
+| Every row against the files | **Stale** — a row whose page no longer exists | Removes the row |
+| Rows against each other | **Duplicates**; rows that **can be repointed** to the page they actually name | Merges the duplicates; repoints the rows |
+| An existing row's description | — | **Keeps it exactly as written**; a new row's description comes from the page's own title or first line |
+
+**To rebuild:** open the domain's **Wiki health** panel and click **Rebuild index · N pages missing** under QUICK MAINTENANCE (or **Preview rebuild** on the Index gaps row). A card appears headed **Plan ready — nothing written yet**, telling you how many pages will be added, how many stale rows removed, how many existing descriptions are kept, and how large `index.md` will become (on that 3,000-page wiki: 146 KB to 614 KB). Click **Apply this plan** to write it, or **Discard** to walk away. The scan then re-runs and the Index gaps row disappears.
+
+- **It is free and uses no AI.** The rebuild is deterministic: the same wiki always produces the same index.
+- **The preview is a promise.** If anything in the wiki changed after you looked — a page, or the index itself — Apply refuses with *"The wiki changed after this preview, so nothing was written. Preview the rebuild again."* The app never writes text it was handed by the browser; it re-plans from the files at the moment you click.
+- **Some pages are left out, and the card says so.** A page whose file name cannot be linked (a leading or trailing space, or any of `| [ ] #`) and a concept that shares its name with an entity page (fix **Cross-folder duplicates** first) are listed in the card rather than silently skipped.
+- **It cannot be dismissed, and "Fix N safe issues" never touches it.** Rebuilding is a rewrite of a whole file, so it always goes through its own preview.
+- **Read-only Shared Brain mirrors are not checked.** A mirror's `index.md` is a stub the app never maintains; the Index gaps check would be red forever with nothing to do about it.
+- **Since v3.83.0 it stays complete on its own.** Every ingest, every Compile and every agent's `compile_to_wiki` adds a row for **every** page it touched that the index lacks. Only a deletion, or a sync that lost a row, can open a gap again — and Health will show it.
+
+> **If you use Obsidian:** a complete `index.md` links to every page, so it appears as one big hub in the graph and the **Orphans** toggle will stop showing anything as orphaned. Add `-file:index` to the graph's filter to leave it out. Wiki health keeps reporting real orphans — it skips `index.md`.
+
+> **Dates on summary pages.** A summary's `created` and `date` fields are the day **The Curator ingested** the source, not the day it was written or published. For an authoring date, read the summary itself or its original source.
 
 ### How to use it (step by step)
 
@@ -8205,7 +8235,7 @@ For a typical 10-page article on a small or fresh domain:
 | Cost per ingest | **~$0.003** (≈€0.003) | **~$0.035** (≈€0.03) |
 | Cost per 100 ingests | ~$0.30 | ~$3.50 |
 
-**As of v3.0.16, the index page (`index.md`) is still sent to the AI on the planning step, unchanged from before** — an earlier attempt to remove it was tried and then reverted before release once live testing showed prompt caching (below) delivered roughly twice the saving with none of the open questions, so it wasn't worth the trade-off. If you're comparing notes with an earlier description of this release, that removal is not what shipped. This table's numbers are unaffected by v3.0.16 for that reason.
+**The index page (`index.md`) is sent to the AI on the planning step** — since v3.83.0 only up to 150,000 characters of it. Under that size (every wiki except a very large one) it goes exactly as it always did, character for character. Over it, the AI is sent every section heading plus the rows for the pages most related to the source you are ingesting, with one line saying how many rows were left out; the full list of page names is still sent, so linking is not affected. Nothing is reported in the ingest result when this happens, because nothing the AI wrote is dropped. The cap exists because a *complete* index on a very large wiki would not fit in the AI's reading window. *Background:* in v3.0.16 an earlier attempt to remove it was tried and then reverted before release once live testing showed prompt caching (below) delivered roughly twice the saving with none of the open questions, so it wasn't worth the trade-off. If you're comparing notes with an earlier description of this release, that removal is not what shipped. This table's numbers are unaffected by v3.0.16 for that reason.
 
 **A related, separate safety net:** on a genuinely huge domain (thousands of pages in one folder), the list of existing page names sent to the AI is capped to the most relevant ones so the request never overflows what the AI can read — this is a rare safety net, not something that fires on a normal-sized wiki, and it will show up as the *"This domain has grown large enough that the AI request had to be trimmed…"* note in §8's ingest-report reference below if it ever does.
 

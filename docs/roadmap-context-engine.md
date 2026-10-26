@@ -101,7 +101,7 @@ basics** — they are first because they must not regress, not because they are 
 | K13 | 1 | Sync to their own private repository; set up a second machine without losing anything | shipped | built |
 | K14 | 1 | Open the vault folder in Obsidian and colour the graph by type | shipped + guide | built |
 | K15 | 1 | Chat's view header stated `the default view`, untrue since v3.49.0 moved the default to Domains | v3.61.0 | built |
-| K16 | 1 | `index.md` has rotted, and it is the grounding step for every agent write into their wiki | standing (§D) | open |
+| K16 | 1 | `index.md` has rotted, and it is the grounding step for every agent write into their wiki | standing (§D) | addressed in v3.83.0 — Health "Index gaps" + a previewed Rebuild index, and every write path now adds every touched page; the maintainer still has to run Rebuild per domain |
 | K17 | 1 | Pages and Wiki health still have no ⓘ to explain themselves (OVERVIEW gained one in v3.62.0) | v3.66.0 | partly built |
 | B1 | 2 | Create a project and choose, once, where its documents come from: keep them here · mirror a folder · decide later | v3.61.0 | built |
 | B2 | 2 | Onboard a checkout: name a folder, scan it, tick the documents, mirror them byte-for-byte | v3.61.0 | built |

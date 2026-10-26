@@ -465,6 +465,8 @@ Triggered weekly or on admin demand. Per Decision 4, applies rules 1-5:
 - **Rule 4** — Provenance section auto-appended with shortened contributor UUIDs (always, on every collective page, with no flag involved — the `attribute_by_name` opt-in gates the *contribution payload*, never a wiki page; see Decision 6a)
 - **Rule 5** — Collective `index.md` rebuilt
 
+*A Pull does not write a mirror's `index.md`* — a `shared-*` mirror's own `index.md` stays the creation stub (a Pull writes only the three page folders). Because of that, Wiki Health's **Index gaps** check (v3.83.0) is skipped on read-only mirrors, and `get_index` with `view: "pages"` is the way to list a mirror's pages completely.
+
 Runs locally on admin's machine. Collective storage just receives the written pages — no cloud compute.
 
 **Processed-submission tracking (v3.0.3).** `meta/state/last-synthesis.json` carries a `watermark` (the max `contributed_at` across fully-processed submissions — derived from the contributions' own stamps, never the admin's clock) plus a window-bounded `processed_ids` list. Contributions are listed from `watermark − 24h` and deduplicated by ID, so clock skew between machines and pushes landing mid-synthesis can no longer silently skip anyone. A submission is marked processed **only when every page it touches wrote successfully** — failed pages leave their submissions queued for the next run instead of being consumed.

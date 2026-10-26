@@ -37,7 +37,7 @@ My Curator exposes **twenty-four tools** to whichever client you connect — fou
 | Tool | Purpose |
 |---|---|
 | `list_domains` | Show available knowledge domains |
-| `get_index` | Browse a domain's full page catalog |
+| `get_index` | Browse a domain's page catalog — `index.md` (default) or, with `view: "pages"`, a list built from the files on disk; filter by `type`, check candidate links with `slugs`, and large wikis arrive in pages (see [Reading a large wiki's catalog](#reading-a-large-wikis-catalog-v3830)) |
 | `get_graph_overview` | Compact topology snapshot: stats, top hubs, orphans, top tags |
 | `get_tags` | Tag inventory (top 50 by default; filter for specifics) |
 | `search_wiki` | Ranked search enriched with tags + link counts |
@@ -100,6 +100,20 @@ one shared classification of the standing brief's authority — `owner`, `commis
 surface is rendering it. A brief sitting in a read-only Shared Brain mirror is always presented as
 untrusted recorded data, never as the owner's own standing instructions, on every one of those
 surfaces alike.
+
+
+### Reading a large wiki's catalog (v3.83.0)
+
+`get_index` used to hand back `index.md` as one block of text. On a big wiki that is hundreds of kilobytes — more than a client will put in front of the model — and the file itself could be missing most of the wiki's pages. Since v3.83.0 the same tool (no new tool; the count is unchanged) reads a wiki of any size:
+
+| You ask for | You get |
+|---|---|
+| `get_index(domain)` | `index.md`. A small index comes back as plain markdown, exactly as in every earlier version. A large one arrives in **pages** of at most about 20,000 tokens each, with a `continuation` telling the agent which `page` to ask for next — the agent should read them all before relying on the list. |
+| `view: "pages"` | A compact list built from **the files on disk**: slug, type, title and, where the page records them, `created`, `date` and `source`. Complete even when `index.md` has fallen behind, and it lists both pages when a summary and a concept share a slug. |
+| `type: "entity"`, `"concept"` or `"summary"` | Only that kind of page, in either view. `type: "summary"` is the list of the domain's sources. |
+| `view: "pages"` with `slugs: [...]` (1 to 200) | An existence check: the pages that exist, plus `not_found` with up to three `near` slugs that differ only by case, hyphens or a plural. This is how an agent grounds its `[[wikilinks]]` on a large wiki without paging through everything. |
+
+Two things to know. **`created` and `date` are when The Curator ingested the source**, not when it was written or published — for an authoring date, the agent should read the summary or its raw source. And if `index.md` is behind the files, `scan_wiki_health` reports it as **`indexDrift`**: that one is **app-only** — it is counted separately, `fix_wiki_issue` refuses it, and the fix is the **Rebuild index** button in the app's Wiki health ([user guide § 17](user-guide.md#index-gaps-and-rebuild-index-v3830)). Until then `view: "pages"` is the complete listing.
 
 ### Write tools (v2.5.2+)
 
@@ -331,7 +345,7 @@ After installing, run this prompt in a fresh conversation:
 
 The skill should drive Claude to:
 1. Call `list_domains` to confirm `articles` exists.
-2. Call `get_index(domain="articles")` to inventory existing slugs.
+2. Call `get_index(domain="articles")` to inventory existing slugs (on a large wiki: `get_index(domain="articles", view="pages", slugs=[…your candidate links…])` instead, which checks just those).
 3. Compose with grounded `[[wikilinks]]`.
 4. Call `compile_to_wiki` with appropriate `broken_link_policy`.
 5. Read back the `links` field and report results.
@@ -562,7 +576,7 @@ For every `compile_to_wiki` call:
 - **One summary page** under `summaries/<slug>-<date>-<hash>.md` — the durable record of what was learned. The hash makes the slug deterministic, so re-compiling the same conversation never creates a duplicate.
 - **Optional entity / concept pages** for any new people, tools, ideas, or frameworks that emerged. On an existing page the merge is **partly** additive: bullet sections (Key Facts, Related, Entities Mentioned, and the rest) genuinely accumulate and nothing is lost. **Prose sections behave differently** — a `## Definition` or `## Summary` in the incoming page *replaces* the existing one, and is only preserved when the incoming page omits that heading entirely. That is deliberate (it is how a full re-ingest rewrites a page with complete document context), but it means a thin update can overwrite richer existing prose. The tool description tells Claude to read the page first when updating; if you care about a hand-written Definition, say so in the conversation.
 - **Cross-links** — every entity mentioned in the summary gets a backlink to it; the summary references all the entities and concepts.
-- **Index update** — the new pages are added to `index.md` automatically.
+- **Index update** — every page the call touched that `index.md` does not list yet — created or updated — gets a row automatically (since v3.83.0; before, only created pages did).
 - **Log entry** in `log.md` recording the compile.
 
 The same write pipeline used by The Curator app's in-app Compile button runs here — typo-variant slugs are normalised, duplicates caught, folder-prefix link errors stripped, summary backlinks injected automatically. **The MCP and the app are equally-capable clients to the same wiki.**
