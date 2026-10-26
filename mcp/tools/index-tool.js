@@ -33,7 +33,7 @@
  * Shared Brain mirrors. Nothing here writes to stdout.
  */
 import { createHash } from 'node:crypto';
-import { isValidDomain } from '../util.js';
+import { isValidDomain, isValidSlug } from '../util.js';
 import { buildGraph } from '../graph.js';
 import {
   parseIndex, resolveTarget, indexCoverage, buildInventory, INDEX_SECTIONS,
@@ -42,6 +42,10 @@ import {
 
 /** Upper bound, in bytes, of one get_index reply as the dispatcher serialises it. */
 export const INDEX_PAGE_BYTES = 60 * 1024;
+/** Most candidate slugs one view:"pages" grounding call may check. */
+export const MAX_GROUNDING_SLUGS = 200;
+/** Most `near` variants offered per not-found slug. */
+const MAX_NEAR = 3;
 
 const VIEWS = ['index', 'pages'];
 const TYPES = INDEX_SECTIONS.map((s) => s.type);              // entity, concept, summary (any order)
@@ -62,7 +66,10 @@ export const getIndexDefinition = {
     'is the original file name; for an authoring date, read the summary or its raw source (get_raw_source). ' +
     'Use view: "pages" to ground [[wikilinks]] before any write, and whenever you need EVERY page ' +
     '("list my sources", a timeline): it is complete even when index.md has fallen behind, which ' +
-    'scan_wiki_health reports as indexDrift. Narrow either view with type: "entity", "concept" or "summary" ' +
+    'scan_wiki_health reports as indexDrift. On a LARGE wiki (the view: "pages" reply carries continuation) do ' +
+    'not page through it to ground links: call view: "pages" with slugs: [your candidate slugs] (up to 200), which ' +
+    'returns exactly the pages that exist plus not_found, each with up to 3 `near` slugs on disk that differ only ' +
+    'by case, hyphens or a plural — adopt a near slug instead of inventing a variant. Narrow either view with type: "entity", "concept" or "summary" ' +
     '(type: "summary" lists the domain\'s sources). Link entities and concepts as [[slug]] and summaries as ' +
     '[[summaries/slug]]. A large reply arrives in PAGES of at most ≈20k tokens: while `continuation` is present, ' +
     'call again with the same arguments plus its `page`, and do not compose links from a partial list; if ' +
@@ -82,6 +89,13 @@ export const getIndexDefinition = {
         type: 'string',
         enum: TYPE_ENUM,
         description: "Only pages of this type, resolved against the files on disk. 'summary' lists the domain's sources.",
+      },
+      slugs: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 1,
+        maxItems: MAX_GROUNDING_SLUGS,
+        description: 'view "pages" only: check these candidate slugs (1–200) against the files on disk. Returns the matching pages, and not_found with near variants.',
       },
       page: {
         type: 'integer',
@@ -192,7 +206,15 @@ export async function getIndexHandler(args, storage) {
   const pageArg = parsePageArg(args?.page);
   if (!pageArg.ok) return refuse('invalid-argument', pageArg.error);
 
-  if (view === 'pages') return pagesView(domain, type, pageArg.value, storage);
+  let slugs = null;
+  if (args?.slugs !== undefined && args?.slugs !== null) {
+    if (view !== 'pages') return refuse('invalid-argument', '`slugs` works with view: "pages" only.');
+    const v = parseSlugsArg(args.slugs);
+    if (!v.ok) return refuse('invalid-argument', v.error);
+    slugs = v.value;
+  }
+
+  if (view === 'pages') return pagesView(domain, type, pageArg.value, storage, slugs);
   return indexView(domain, type, pageArg, storage);
 }
 
@@ -360,9 +382,36 @@ function indexReport(page, of, rowsOnPage, rowsTotal, health, type) {
   return `Page ${page} of ${of} (${rowsOnPage} of ${rowsTotal} ${what}). Call get_index again with the same arguments plus page: ${page + 1}.${healthLine}`;
 }
 
+// ── grounding: `slugs` and the `near` normaliser ─────────────────────────────
+
+function parseSlugsArg(raw) {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_GROUNDING_SLUGS) {
+    return { ok: false, error: `\`slugs\` is a list of 1 to ${MAX_GROUNDING_SLUGS} slugs (got ${Array.isArray(raw) ? raw.length + ' items' : typeof raw}). Split a longer list across calls.` };
+  }
+  const bad = raw.find((x) => !isValidSlug(x));
+  if (bad !== undefined) {
+    return { ok: false, error: `\`slugs\` entries are page slugs — letters, digits, '.', '_' and '-', no folder prefix (got ${String(JSON.stringify(bad)).slice(0, 60)}). Pass summaries without "summaries/".` };
+  }
+  return { ok: true, value: [...new Set(raw)] };
+}
+
+/**
+ * The key two slugs share when they differ only by case, separators or a
+ * plural: lower-cased, every non-alphanumeric dropped (open-ai ≡ openai ≡
+ * Open_AI), then one plural ending folded (agents ≡ agent, policies ≡ policy,
+ * boxes ≡ box). Deterministic and cheap — no edit distance, no library.
+ */
+export function nearKey(slug) {
+  let k = String(slug).toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '');
+  if (k.length > 4 && k.endsWith('ies')) k = k.slice(0, -3) + 'y';
+  else if (k.length > 4 && /(?:ss|x|z|ch|sh)es$/.test(k)) k = k.slice(0, -2);
+  else if (k.length > 3 && k.endsWith('s') && !k.endsWith('ss')) k = k.slice(0, -1);
+  return k;
+}
+
 // ── view "pages" ─────────────────────────────────────────────────────────────
 
-async function pagesView(domain, type, page, storage) {
+async function pagesView(domain, type, page, storage, slugs = null) {
   const known = typeof storage.listDomains === 'function' ? await storage.listDomains() : null;
   if (Array.isArray(known) && !known.includes(domain)) {
     return refuse('unknown-domain', `Unknown domain: ${domain}. Available: ${known.join(', ') || '(none)'}`);
@@ -378,29 +427,67 @@ async function pagesView(domain, type, page, storage) {
   });
   const basis = sha12(all.map((p) => p.path).join('\n'));
 
+  // Grounding: exactly the pages whose slug equals a candidate (every folder
+  // that has one — both sides of a cross-folder collision), in the caller's
+  // order; the rest are not_found with up to MAX_NEAR near variants.
+  let shown = list;
+  let notFound = null;
+  if (slugs) {
+    const bySlug = new Map();
+    const byKey = new Map();
+    for (const e of list) {
+      if (!bySlug.has(e.slug)) bySlug.set(e.slug, []);
+      bySlug.get(e.slug).push(e);
+      const k = nearKey(e.slug);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(e);
+    }
+    shown = [];
+    notFound = [];
+    for (const s of slugs) {
+      const hit = bySlug.get(s);
+      if (hit) { shown.push(...hit); continue; }
+      const near = (byKey.get(nearKey(s)) || []).slice(0, MAX_NEAR).map((e) => ({ slug: e.slug, type: e.type, title: e.title }));
+      notFound.push({ slug: s, near });
+    }
+  }
+
   const envelope = (pg, of, s, e) => {
     const r = {
       ok: true, domain, view: 'pages', type,
-      page: pg, of, pages_total: list.length, pages_on_page: e - s,
+      page: pg, of, pages_total: shown.length, pages_on_page: e - s,
       basis,
       note: PAGES_NOTE,
-      pages: list.slice(s, e),
     };
+    if (slugs) { r.slugs_checked = slugs.length; r.not_found = notFound; }
+    r.pages = shown.slice(s, e);
     if (pg < of) r.continuation = { page: pg + 1, of, remaining: of - pg };
-    r.report = pagesReport(pg, of, e - s, list.length, type);
+    r.report = slugs
+      ? groundingReport(slugs.length, slugs.length - notFound.length, notFound, of)
+      : pagesReport(pg, of, e - s, shown.length, type);
     return r;
   };
   // Each entry at depth 2 of the pretty-printed reply: its own pretty JSON,
   // indented 4 more per line, plus ",\n".
   const cost = (i) => {
-    const t = JSON.stringify(list[i], null, 2);
+    const t = JSON.stringify(shown[i], null, 2);
     return Buffer.byteLength(t, 'utf8') + 4 * (t.split('\n').length) + 2;
   };
-  const overhead = bytesOf(envelope(Math.max(1, list.length), Math.max(1, list.length), 0, 0)) + 64;
-  const replies = planPages(list.length, cost, overhead, (s, e, pg, of) => envelope(pg, of, s, e));
+  const overhead = bytesOf(envelope(Math.max(1, shown.length), Math.max(1, shown.length), 0, 0)) + 64;
+  const replies = planPages(shown.length, cost, overhead, (s, e, pg, of) => envelope(pg, of, s, e));
   const of = replies.length;
   if (page > of) return pageOutOfRange(page, of, domain, 'page list');
   return replies[page - 1];
+}
+
+function groundingReport(checked, found, notFound, of) {
+  const withNear = notFound.filter((n) => n.near.length).length;
+  return `${found} of ${checked} slug${checked === 1 ? '' : 's'} exist on disk.` +
+    (notFound.length
+      ? ` ${notFound.length} not found${withNear ? ` (${withNear} with near variants — adopt the existing slug instead of inventing one)` : ''}; ` +
+        'create the rest in additional_pages or write them as plain prose without [[brackets]].'
+      : '') +
+    (of > 1 ? ` The matches arrive in ${of} pages; follow continuation.` : '');
 }
 
 function pagesReport(page, of, onPage, total, type) {

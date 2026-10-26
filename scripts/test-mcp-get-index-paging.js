@@ -44,7 +44,7 @@ process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA;
 for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'DOMAINS_PATH', 'LLM_MODEL']) delete process.env[k];
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ } });
 
-const { getIndexHandler, getIndexDefinition, INDEX_PAGE_BYTES } = await import('../mcp/tools/index-tool.js');
+const { getIndexHandler, getIndexDefinition, INDEX_PAGE_BYTES, MAX_GROUNDING_SLUGS } = await import('../mcp/tools/index-tool.js');
 const H = await import('../mcp/tools/health.js');
 const { DISMISSIBLE_TYPE_VALUES } = await import('../mcp/tools/dismissed.js').catch(() => ({}));
 const { createStorageAdapter } = await import('../mcp/storage/local.js');
@@ -139,6 +139,17 @@ put('emptyidx', 'entities/a.md', pageBody('A'));
 put('emptyidx', 'summaries/a.md', pageBody('A summary', { type: 'summary' }));
 mkDomain('noidx');
 put('noidx', 'concepts/q.md', pageBody('Q'));
+
+// ground: the slugs grounding call (§7)
+mkDomain('ground');
+put('ground', 'entities/openai.md', pageBody('OpenAI'));
+put('ground', 'concepts/agent.md', pageBody('Agent'));
+put('ground', 'concepts/policy.md', pageBody('Policy'));
+put('ground', 'concepts/box.md', pageBody('Box'));
+put('ground', 'concepts/rag.md', pageBody('RAG concept'));
+put('ground', 'summaries/rag.md', pageBody('RAG summary', { type: 'summary', created: '2026-06-06' }));
+put('ground', 'concepts/context-engineering.md', pageBody('Context engineering'));
+put('ground', 'index.md', '# Wiki Index — Ground\n\n| Page | Type | Summary |\n|---|---|---|\n');
 
 // a read-only Shared Brain mirror
 mkDomain('shared-mirror', { readonly: true });
@@ -387,6 +398,48 @@ try {
     ok(/INGESTED/.test(getIndexDefinition.description) && /continuation/.test(getIndexDefinition.description) && /view: "pages"/.test(getIndexDefinition.description),
       'the description names ingest dates, continuation and view: "pages"');
     ok(!/<[a-z_-]+>/i.test(getIndexDefinition.description), 'no <placeholder> in the description');
+  }
+  // ── §7 ───────────────────────────────────────────────────────────────────
+  section('§7  GROUNDING — view:"pages" with slugs: exact matches, not_found, near');
+  {
+    const g = await call({ domain: 'ground', view: 'pages', slugs: ['openai', 'rag', 'context-engineering'] });
+    ok(g.ok && g.of === 1 && Array.isArray(g.not_found) && g.not_found.length === 0, 'three existing slugs: all found, not_found is []', JSON.stringify(g.not_found));
+    const keys = g.pages.map((p) => `${p.type}:${p.slug}`);
+    ok(JSON.stringify(keys) === JSON.stringify(['entity:openai', 'summary:rag', 'concept:rag', 'concept:context-engineering']),
+      'exact matches in the caller\'s order — BOTH sides of the rag collision', keys.join(', '));
+    ok(!keys.includes('concept:agent'), 'and nothing that was not asked for');
+    const n = await call({ domain: 'ground', view: 'pages', slugs: ['open-ai', 'OpenAI', 'Open_AI', 'agents', 'policies', 'boxes', 'quantum-foam'] });
+    const nf = Object.fromEntries(n.not_found.map((x) => [x.slug, x.near.map((e) => e.slug)]));
+    ok(n.pages.length === 0 && n.not_found.length === 7, 'seven variants: none exact, all seven not_found', JSON.stringify(n.not_found));
+    ok(JSON.stringify(nf['open-ai']) === '["openai"]', 'hyphen rule: open-ai → near openai', JSON.stringify(nf['open-ai']));
+    ok(JSON.stringify(nf.OpenAI) === '["openai"]', 'case rule: OpenAI → near openai (exact match is case-sensitive)');
+    ok(JSON.stringify(nf.Open_AI) === '["openai"]', 'separator rule: Open_AI → near openai');
+    ok(JSON.stringify(nf.agents) === '["agent"]', 'plural -s rule: agents → near agent');
+    ok(JSON.stringify(nf.policies) === '["policy"]', 'plural -ies rule: policies → near policy');
+    ok(JSON.stringify(nf.boxes) === '["box"]', 'plural -es rule: boxes → near box');
+    ok(JSON.stringify(nf['quantum-foam']) === '[]', 'an unrelated slug has no near variants');
+    ok(/0 of 7/.test(n.report) && /additional_pages/.test(n.report), 'the report says how many exist and what to do with the rest', n.report);
+    const t = await call({ domain: 'ground', view: 'pages', type: 'concept', slugs: ['rag', 'openai'] });
+    ok(t.pages.length === 1 && t.pages[0].type === 'concept' && t.not_found.length === 1 && t.not_found[0].slug === 'openai',
+      'combinable with type: rag → the concept side only; openai (an entity) is not_found under type:"concept"', JSON.stringify(t));
+    const d = await call({ domain: 'ground', view: 'pages', slugs: ['agent', 'agent'] });
+    ok(d.pages.length === 1 && d.slugs_checked === 1, 'duplicate candidates are checked once');
+    for (const [label, slugs] of [['empty list', []], ['a string', 'openai'], ['a folder prefix', ['summaries/rag']],
+      ['a path', ['../x']], ['whitespace', ['open ai']], ['a non-string', [42]], [`${MAX_GROUNDING_SLUGS + 1} items`, Array.from({ length: 201 }, (_, i) => `s-${i}`)]]) {
+      const r = await call({ domain: 'ground', view: 'pages', slugs });
+      ok(r.ok === false && r.reason === 'invalid-argument', `slugs as ${label} is refused`, JSON.stringify(r).slice(0, 200));
+    }
+    ok(MAX_GROUNDING_SLUGS === 200, 'the cap is 200');
+    const r200 = await call({ domain: 'ground', view: 'pages', slugs: Array.from({ length: 200 }, (_, i) => `s-${i}`) });
+    ok(r200.ok === true && r200.not_found.length === 200, 'exactly 200 slugs is accepted');
+    const idx = await call({ domain: 'ground', slugs: ['openai'] });
+    ok(idx.ok === false && idx.reason === 'invalid-argument', 'slugs with view:"index" is refused');
+    // bound: 200 found slugs on a large domain, each with a full entry
+    const many = Array.from({ length: 200 }, (_, i) => `c-${i}`);
+    const { first, replies } = await walk({ domain: 'sect', view: 'pages', slugs: many });
+    ok(first.ok && replies.every((x) => bytes(x) <= BOUND), `200 found slugs: every reply ≤ 61,440 B (${replies.map(bytes).join(', ')})`);
+    ok(replies.flatMap((x) => x.pages).length === 200 && first.not_found.length === 0, 'and all 200 come back');
+    ok(/slugs:/.test(getIndexDefinition.description) && /near/.test(getIndexDefinition.description), 'the description names slugs and near');
   }
 } catch (err) {
   failed++;

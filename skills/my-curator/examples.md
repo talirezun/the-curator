@@ -106,7 +106,7 @@ The retry loop typically converges in 1–2 calls and produces a wiki with **zer
 
 **Key moves**
 - Strict `'refuse'` mode on a fresh domain prevents broken-link inflation.
-- Every wikilink grounded against either the `get_index` page list or `additional_pages`.
+- Every wikilink grounded against either the `get_index` page list (small domain: read in full) or `additional_pages`.
 - The retry loop is fast because the response includes `valid_slugs_sample`.
 
 ---
@@ -122,13 +122,19 @@ The user wants to add findings to a domain that already has hundreds of pages. T
 **Step 2 — Inventory.**
 
 ```
-get_index(domain="articles", view="pages", type="concept")
 get_index(domain="articles", view="pages", type="entity")
 ```
 
-Returns ~2,750 concept slugs over several pages; follow `continuation` to the last page before you rely on the list. You scan for relevant slugs — you already see `[[rag]]`, `[[fine-tuning]]`, `[[retrieval-augmented-generation]]`, `[[llm-customization]]`, etc.
+The reply carries `continuation` — `articles` is a large domain (~3,500 pages), so you do NOT page through it. You draft your candidate slugs and check them in one call:
 
-**Step 3 — Disambiguate variant slugs.** You spot `[[rag]]` AND `[[retrieval-augmented-generation]]` in the list. They're probably semantic duplicates the user will eventually merge — but for now, pick the one that has more content. Quick `search_wiki(domain="articles", query="rag")` confirms `[[rag]]` is the established hub. Use that one.
+```
+get_index(domain="articles", view="pages",
+          slugs=["rag", "fine-tuning", "retrieval-augmented-generation", "llm-customization", "LoRA", "embeddings"])
+```
+
+Four come back in `pages`. `not_found` holds `LoRA` with `near: [{ slug: "lora" }]` — adopt `[[lora]]` — and `embeddings` with `near: [{ slug: "embedding" }]` — adopt `[[embedding]]`. Anything with no `near` and no page of its own would go to `additional_pages` or stay plain prose.
+
+**Step 3 — Disambiguate variant slugs.** Both `[[rag]]` AND `[[retrieval-augmented-generation]]` came back as existing pages. They're probably semantic duplicates the user will eventually merge — but for now, pick the one that has more content. Quick `search_wiki(domain="articles", query="rag")` confirms `[[rag]]` is the established hub. Use that one.
 
 **Step 4 — Compose with the existing slugs.** No new pages this time — every concept you mention already has a page. So `additional_pages` is empty; the summary just references existing slugs:
 
@@ -151,7 +157,7 @@ The change panel shows: 1 new page (the summary), 8 updated pages (each referenc
 > **You:** *"Compiled into `articles`. New summary created; 8 existing pages picked up backlinks. No broken links, no duplicates introduced. Want me to read the summary back?"*
 
 **Key moves**
-- `get_index` (`view="pages"`) first to spot variant slugs (e.g. `[[rag]]` vs `[[retrieval-augmented-generation]]`).
+- On a large domain, check candidate slugs with `get_index(view="pages", slugs=[...])` and adopt the `near` variants (e.g. `LoRA` → `[[lora]]`) instead of paging the whole list.
 - Use `search_wiki` for confidence on which variant is canonical.
 - Empty `additional_pages` — no new pages because everything already exists.
 - `'keep'` policy is fine on populated domains; the response confirms zero broken.

@@ -96,7 +96,8 @@ When the user says one of these phrases, follow the matching script.
    brain, **ask the user**: *"You have personal domains `work-ai` and `research`. Which one
    feeds the shared brain you want me to contribute to?"*
 2. **Compile to that personal domain** using the full SKILL.md §5 writing playbook
-   (`get_index` with `view="pages"` → ground links → `compile_to_wiki`).
+   (`get_index` with `view="pages"` — on a large domain, check candidates with `slugs=[...]` —
+   → ground links → `compile_to_wiki`).
 3. **Tell the user how the contribution reaches the cohort**: *"I've saved this to your
    `work-ai` domain. To make it appear in the shared brain for your cohort, open the
    Curator app's **Shared Brain** view and click **Push contributions**. The admin will

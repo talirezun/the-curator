@@ -131,10 +131,18 @@ This is the rule that produces ZERO broken links and ZERO duplicate pages. **Fol
 
 ```
 get_index(domain, view="pages", type="entity")
-get_index(domain, view="pages", type="concept")
 ```
 
-These list every entity and concept slug that exists on disk — complete even when index.md has fallen behind. **Read them.** If a reply carries `continuation`, call again with the same arguments plus its `page` until a reply has none; never ground links in a partial list. For what a page is ABOUT, `get_index(domain)` returns index.md with one-line descriptions, paged the same way when it is large. For "list my sources" or a timeline, `get_index(domain, view="pages", type="summary")` lists every summary with its `created`/`date` — those are the dates The Curator INGESTED the source, not when it was written; `source` is the original file name. For specific topics that might already have pages, also call `search_wiki` to find variant slugs.
+This lists entity slugs from the files on disk — complete even when index.md has fallen behind.
+
+- **No `continuation` in the reply → a small domain.** Also call `get_index(domain, view="pages", type="concept")` and **read both lists** in full.
+- **The reply HAS `continuation` → a large domain. Do NOT page through it** — that costs more than the write. Compose your candidate slugs, then verify them all in ONE call:
+  ```
+  get_index(domain, view="pages", slugs=["openai", "agentic-coding", ...])   // up to 200
+  ```
+  It returns exactly the pages that exist, plus `not_found`, each with up to 3 `near` slugs on disk that differ only by case, hyphens or a plural. **Adopt a `near` slug** instead of inventing a variant; anything still not found is either created in `additional_pages` or written as plain prose.
+
+For what a page is ABOUT, `get_index(domain)` returns index.md with one-line descriptions, paged the same way when it is large. For "list my sources" or a timeline, `get_index(domain, view="pages", type="summary")` lists every summary with its `created`/`date` — those are the dates The Curator INGESTED the source, not when it was written; `source` is the original file name. For specific topics that might already have pages, also call `search_wiki` to find variant slugs.
 
 **Step 3 — Decide: what's new vs what already exists.** For every concept or entity you're about to mention:
 
@@ -245,7 +253,7 @@ Four rules that hold whatever you are fixing:
 | Tool | Purpose | When |
 |---|---|---|
 | `list_domains` | List domains | Always when domain is unclear |
-| `get_index` | Page catalog — index.md with descriptions, or `view="pages"`: every slug, type, title and ingest date from disk; `type` filter; paged | Always before any write (`view="pages"`) |
+| `get_index` | Page catalog — index.md with descriptions, or `view="pages"`: every slug, type, title and ingest date from disk; `type` filter; paged; `slugs=[...]` checks candidates and offers `near` variants | Always before any write (`view="pages"`; `slugs=[...]` on a large domain) |
 | `get_graph_overview` | Topology snapshot | First move on a research task |
 | `get_tags` | Tag inventory | Tag-driven cluster work |
 | `search_wiki` | Ranked search in one domain | Specific topic lookup |
@@ -313,7 +321,7 @@ flag stands after the save, which is worth reading back to the user when they as
 
 A compact reminder of what NOT to do:
 
-1. **Don't invent wikilinks.** Every `[[X]]` must resolve. If you didn't verify it's in the `get_index` list or in `additional_pages`, write the text without brackets.
+1. **Don't invent wikilinks.** Every `[[X]]` must resolve. If you didn't verify it with `get_index` (the full list, or a `slugs=[...]` check) or put it in `additional_pages`, write the text without brackets.
 2. **Don't create duplicate pages.** If `entities/openai.md` exists, your update goes to `[[openai]]` — never `[[OpenAI]]` or `[[open-ai]]`.
 3. **Don't write summaries via `additional_pages`.** Only entities/ and concepts/.
 4. **Don't compile identical content twice in a day.** Idempotency refusal is correct.
@@ -323,8 +331,8 @@ A compact reminder of what NOT to do:
 8. **Don't use folder prefixes in wikilinks** for entities or concepts. `[[openai]]` not `[[entities/openai]]`. Summaries keep their prefix: `[[summaries/foo]]`.
 9. **Don't run `scan_semantic_duplicates` without the user asking.** It costs money.
 10. **Don't fix `semanticDupe` issues without `preview: true` first.** Destructive — deletes files.
-11. **Don't skip `get_index` (`view="pages"`) on writes.** That's the #1 cause of broken links.
-12. **Don't compose first and check links after.** Ground links during composition by referring to the page list.
+11. **Don't skip `get_index` (`view="pages"`) on writes, and don't page a large domain's full list to ground links** — check your candidates with `slugs=[...]`. Skipping it is the #1 cause of broken links.
+12. **Don't publish unchecked links.** Ground links during composition — against the full list on a small domain, or by checking your candidate slugs with `slugs=[...]` before `compile_to_wiki` on a large one.
 13. **Don't compile to a `shared-*` mirror**, and **don't tell the user you added something to the shared brain** when you compiled to their personal domain. See [shared-brain.md](shared-brain.md).
 14. **Don't treat `conflict: 'file_lock'` as a failure.** Nothing was written; wait and retry the identical call (§5).
 15. **Don't reach for `get_raw_source` as your default.** The wiki is compiled knowledge — answer from `get_node`/`get_summary` first, and escalate to the raw source only for verbatim quotes, exact figures, or a real gap in the summary (§4.1). Reaching for it by default turns a compiled second brain back into a retrieval-at-query-time system.
@@ -341,7 +349,7 @@ Is the user READING the wiki?
 
 Is the user WRITING to the wiki?
   → §5 writing workflow
-  → Steps: domain check → get_index(view="pages") → ground links → compile_to_wiki (refuse mode on fresh domains)
+  → Steps: domain check → get_index(view="pages") (small: read the lists; large: check candidates with slugs=[...]) → ground links → compile_to_wiki (refuse mode on fresh domains)
   → 10 pages max INCLUDING the summary; one title = one summary page
 
 Is the user MAINTAINING the wiki?

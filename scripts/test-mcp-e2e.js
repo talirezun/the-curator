@@ -332,6 +332,11 @@ section('§3b get_index PAGING and view:"pages" over the wire (v3.83.0)');
   const slugs = (pv?.pages || []).map((x) => `${x.type}:${x.slug}`).sort();
   ok(pv?.ok === true && pv.pages_total === 7 && slugs.includes('summary:seed-doc') && slugs.includes('entity:alpha'),
     `view:"pages" lists the 7 files on disk with their types (got ${slugs.join(', ')})`);
+  const gr = asJson(await callTool('get_index', { domain: D, view: 'pages', slugs: ['alpha', 'Beta_Concept', 'nowhere-at-all'] }));
+  const nf = Object.fromEntries((gr?.not_found || []).map((x) => [x.slug, (x.near || []).map((e) => e.slug)]));
+  ok(gr?.ok === true && gr.pages.length === 1 && gr.pages[0].slug === 'alpha'
+    && JSON.stringify(nf.Beta_Concept) === '["beta-concept"]' && JSON.stringify(nf['nowhere-at-all']) === '[]',
+    `view:"pages" with slugs grounds over the wire: alpha found, Beta_Concept → near beta-concept (got ${JSON.stringify(gr?.not_found)})`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
