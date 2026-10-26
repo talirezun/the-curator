@@ -63,7 +63,7 @@ export const compileToWikiDefinition = {
     "Pass dry_run: true on the first call to preview what will be written, present the plan to the user, then call again with dry_run: false to commit. " +
     "" +
     "GROUNDING WIKILINKS (v2.5.5+): every [[wikilink]] you write MUST reference either (a) an existing page in the wiki, or (b) a page you are creating in this same call's additional_pages. " +
-    "Inventing links to pages that do not exist creates broken links the user has to fix later. Before composing the summary, call get_index with view: \"pages\" (type: \"entity\" and type: \"concept\" keep it small) to see which slugs exist on disk, then write [[slug]] links that reference those exact slugs. " +
+    "Inventing links to pages that do not exist creates broken links the user has to fix later. Before composing the summary, call get_index with view: \"pages\" to see which slugs exist on disk (on a large wiki, verify your candidates in one call with slugs: [...] instead of paging the full list), then write [[slug]] links that reference those exact slugs. " +
     "If a concept comes up that does NOT have an existing page, your options are: (1) add it to additional_pages so it gets created, or (2) write the term as plain text without [[brackets]]. " +
     "The response includes a `links` field with `resolved`, `normalized` (variant slugs auto-fixed), and `broken` counts so you can verify your work and decide whether to retry. " +
     "Use broken_link_policy='refuse' on fresh / new domains to have the call fail loudly if any link is broken — you'll get a sample of valid slugs back to retry with.",
