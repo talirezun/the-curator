@@ -7520,6 +7520,7 @@ function renderPendingPlan(crossMountBusy) {
   const busy = state.busyKey || crossMountBusy;
   let summaryLine = '';
   let body = '';
+  let sampleHtml = '';
   if (p.kind === 'brokenLinks') {
     const s = p.summary;
     summaryLine = pluralize(s.retarget, 'link') + ' will be repointed to an existing page, ' + pluralize(s.strip, 'link') + ' will have the brackets removed (no matching page found).';
@@ -7555,6 +7556,22 @@ function renderPendingPlan(crossMountBusy) {
           + ' left out — fix Cross-folder duplicates first. '
         : '')
       + GIT_UNDO_NOTE;
+    // Examples of what will change — plain lines, never behind a <details>.
+    const sm = p.samples || {};
+    const adds = (Array.isArray(sm.add) ? sm.add : []).slice(0, 5);
+    const rms = (Array.isArray(sm.removeStale) ? sm.removeStale : []).slice(0, 5);
+    // ONE emission site for the code-face literal (a path or a [[wikilink]]).
+    const line = (literal, desc) => '<div class="dm-plan-detail"><span class="mono">' + escapeHtml(literal) + '</span>'
+      + (desc ? ' — ' + escapeHtml(desc) : '') + '</div>';
+    if (adds.length) {
+      sampleHtml += '<div class="dm-plan-detail">For example, added:</div>' + adds.map((a) => line(a.path, a.description)).join('');
+    }
+    if (rms.length) {
+      sampleHtml += '<div class="dm-plan-detail">Removed (the page no longer exists):</div>'
+        + rms.map((r) => line(/^\[\[/.test(String(r.target)) ? r.target : '[[' + r.target + ']]', r.description)).join('');
+    }
+    const more = Math.max(0, add - adds.length) + Math.max(0, rm - rms.length);
+    if (sampleHtml && more > 0) sampleHtml += '<div class="dm-plan-detail">…and ' + fmtInt(more) + ' more</div>';
   } else {
     const s = p.summary;
     summaryLine = pluralize(s.rescuable, 'orphan') + ' found a home; ' + pluralize(s.noHome, 'orphan') + ' left for manual review.';
@@ -7564,6 +7581,7 @@ function renderPendingPlan(crossMountBusy) {
     '<div class="dm-plan-card">' +
       '<div class="dm-plan-title">Plan ready — nothing written yet</div>' +
       '<div class="dm-plan-summary">' + escapeHtml(summaryLine) + '</div>' +
+      sampleHtml +
       '<div class="dm-plan-detail">' + escapeHtml(body) + '</div>' +
       '<div class="dm-plan-actions">' +
         '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (busy ? ' disabled' : '') + '>' + (busy === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
@@ -7818,10 +7836,11 @@ function renderIssueRow(type, issue, readonly) {
       const num = (n) => (Number(n) || 0).toLocaleString('en-US');
       const missing = Number(issue.missing) || 0;
       const stale = Number(issue.stale) || 0;
-      main = 'index.md is missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
+      // The mono column holds only the path; the sentence goes in the wide meta column.
+      main = 'index.md';
+      meta = 'Missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
         + (stale > 0 ? ', and ' + num(stale) + (stale === 1 ? ' row points' : ' rows point') + ' to ' + (stale === 1 ? 'a page' : 'pages') + ' that no longer ' + (stale === 1 ? 'exists' : 'exist') : '')
-        + '.';
-      meta = 'Rebuilt from the files on disk — free, previewed first. '
+        + '. Rebuilt from the files on disk — free, previewed first. '
         + '<button class="btn btn-ghost btn-xs dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
       break;
     }

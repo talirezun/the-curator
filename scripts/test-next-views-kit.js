@@ -627,7 +627,11 @@ section('7. The monospace face is spent on LITERALS, not on facts');
            the code face — both exactly what the project delete's confirm
            already does; and the trash folder the domain goes to is named in
            the code face (the path a user opens to restore it). */
-    'views/domains.js': 27,
+    /* v3.83.0 RAISED IT FROM 27 TO 28, for one emission site and the same rule:
+         · 1 `mono` span in the index-rebuild plan card — the page path (or
+           [[wikilink]]) of each example addition / removal, which is exactly
+           what the Health rows beside it set in the code face. */
+    'views/domains.js': 28,
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string

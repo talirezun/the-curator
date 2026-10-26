@@ -159,13 +159,14 @@ section('§3 issue row');
 {
   const { api } = build(okFetch(200, {}));
   const row = api.renderIssueRow('indexDrift', DRIFT, false);
-  ok(row.includes('index.md is missing 2,705 pages, and 39 rows point to pages that no longer exist.'), 'row prose with stale');
+  ok(/<span class="mono dm-issue-main">index\.md<\/span>/.test(row), 'main cell is exactly the mono path index.md');
+  ok(/<span class="dm-issue-meta">Missing 2,705 pages, and 39 rows point to pages that no longer exist\./.test(row), 'prose sits in the meta column (with stale)');
   const noStale = api.renderIssueRow('indexDrift', { ...DRIFT, stale: 0 }, false);
-  ok(noStale.includes('index.md is missing 2,705 pages.') && !/no longer/.test(noStale), 'row prose without stale');
+  ok(noStale.includes('Missing 2,705 pages. Rebuilt') && !/no longer/.test(noStale), 'row prose without stale');
   ok(row.includes('Rebuilt from the files on disk — free, previewed first.'), 'meta line');
   ok(/data-action="indexPlan"[^>]*>Preview rebuild</.test(row), '"Preview rebuild" action');
   ok(!/Dismiss|dm-dismiss-btn|data-dismiss/.test(row), 'no Dismiss control, even on a writable domain');
-  ok(api.renderIssueRow('indexDrift', { ...DRIFT, missing: 1, stale: 1 }, false).includes('is missing 1 page, and 1 row points to a page that no longer exists.'), 'singular forms');
+  ok(api.renderIssueRow('indexDrift', { ...DRIFT, missing: 1, stale: 1 }, false).includes('Missing 1 page, and 1 row points to a page that no longer exists.'), 'singular forms');
   const hostile = api.renderIssueRow('indexDrift', { missing: '<img onerror=x>', stale: 0 }, false);
   ok(!/<img/.test(hostile), 'a hostile field value never reaches the HTML');
 }
@@ -199,6 +200,29 @@ section('§4 plan card');
   ok(api.renderPendingPlan(false).includes('index.md will be created at 438 KB.'), 'no index yet: "will be created"');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'd', samples: {}, summary: { ...SUMMARY, add: 1, removeStale: 1, keepDescriptions: 1 } };
   ok(api.renderPendingPlan(false).includes('1 page will be added to the index, 1 row that points to a missing page will be removed, and 1 existing description is kept as written.'), 'singular summary');
+}
+
+// ── §4b ────────────────────────────────────────────────────────────────────
+section('§4b plan card examples');
+{
+  const { api, state } = build(okFetch(200, {}));
+  const add = Array.from({ length: 10 }, (_, i) => ({ path: `concepts/p${i}.md`, description: i === 0 ? '<b>x</b> & y' : `d${i}` }));
+  const rm = Array.from({ length: 8 }, (_, i) => ({ target: i === 0 ? '[[gone0]]' : `gone${i}`, description: `r${i}` }));
+  state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: SUMMARY, samples: { add, removeStale: rm } };
+  const card = api.renderPendingPlan(false);
+  ok(card.includes('For example, added:') && card.includes('Removed (the page no longer exists):'), 'both group labels');
+  ok(card.includes('<span class="mono">concepts/p0.md</span> — &lt;b&gt;x&lt;/b&gt; &amp; y'), 'an addition: mono path — escaped description');
+  ok(card.includes('concepts/p4.md') && !card.includes('concepts/p5.md'), 'at most 5 additions');
+  ok(card.includes('<span class="mono">[[gone0]]</span>') && card.includes('<span class="mono">[[gone4]]</span>') && !card.includes('gone5'), 'at most 5 removals, targets as [[wikilinks]]');
+  // total = 2705 + 39; shown = 5 + 5
+  ok(card.includes('…and 2,734 more'), '"…and N more" = (add - 5) + (remove - 5)');
+  eq(detailsMax(card), 0, 'examples are not inside a <details>');
+  state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: SUMMARY, samples: { add: [], removeStale: [] } };
+  const empty = api.renderPendingPlan(false);
+  ok(!/For example|Removed \(|…and/.test(empty), 'empty samples: no groups, no "and N more"');
+  state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: { ...SUMMARY, add: 2, removeStale: 0 }, samples: { add: add.slice(0, 2), removeStale: [] } };
+  const small = api.renderPendingPlan(false);
+  ok(small.includes('For example, added:') && !small.includes('Removed (') && !small.includes('…and'), 'one group only; nothing hidden so no "and N more"');
 }
 
 // ── §5 ─────────────────────────────────────────────────────────────────────
