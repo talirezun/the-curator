@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.82.0` | The Claude 5.5 generation, a tier-aware money path, two-generation-old Claude models retired with a forward migration — and Chat's domain and model choices made honest after a user's second report. |
 | `v3.81.1` | Dependency security updates (fast-uri, ip-address, multer, qs; desktop lockfile) that had turned the audit job red, and a real same-millisecond ordering bug in `toolsOf` behind the long-running `test-next-memory-projects` flake. |
 | `v3.81.0` | An announced product always gets its own entity page, Chat stops guessing about how an ingest ran, and silent page redirects now warn — after a user's Haiku 4.5 ingest of an article announcing his own tool ("Trust Grader") produced concept pages but no entity, and Chat called it "an oversight in the instruction execution". |
 | `v3.80.0` | "+ Add a tool" made usable — the two-line model-picker row, a way to remove a tool, and a setup guide per tool. |
