@@ -1765,7 +1765,7 @@ curl http://localhost:3333/api/health/ai-tech
 {
   "domain": "ai-tech",
   "scannedAt": "2026-04-20T11:03:13.937Z",
-  "counts": { "entities": 42, "concepts": 28, "summaries": 15 },
+  "counts": { "entities": 42, "concepts": 28, "summaries": 15, "indexRows": 83 },
   "brokenLinks": [
     { "sourceFile": "summaries/foo.md", "linkText": "missing-page", "suggestedTarget": null }
   ],
@@ -1783,6 +1783,17 @@ curl http://localhost:3333/api/health/ai-tech
   ],
   "missingBacklinks": [
     { "summary": "summaries/foo.md", "entity": "entities/bar.md", "summarySlug": "foo" }
+  ],
+  "indexDrift": [
+    {
+      "missing": 2,
+      "missingByFolder": { "entities": 1, "concepts": 1, "summaries": 0 },
+      "stale": 1, "duplicates": 0, "repointable": 0,
+      "unlinkable": 0, "unaddressable": 0,
+      "indexExists": true, "indexBytes": 9120,
+      "sampleMissing": ["entities/bar.md", "concepts/baz.md"],
+      "sampleStale": ["[[gone-page]]"]
+    }
   ],
   "dismissedRecords": 6
 }
@@ -1803,6 +1814,7 @@ read.
 | `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |
 | `hyphenVariants` | ✓ | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). |
 | `missingBacklinks` | ✓ | Summary mentions an entity under "Entities Mentioned" but the entity's Related section doesn't link back. |
+| `indexDrift` | — | **New in v3.83.0.** `index.md` lacks a row for some pages on disk (`missing`), has rows whose target does not exist (`stale`), duplicate rows, or rows that can be repointed. Either `[]` or exactly **one** row — one issue however large the numbers. **Not auto-fixable and not dismissible**: `POST …/fix` and `…/fix-all` refuse it, and "Fix all safe" never touches it; the repair is `POST …/index/plan` then `…/index/apply` below. Matching is by canonical path (a bare `[[x]]` resolves to `entities/` then `concepts/`). `unlinkable` counts pages whose file name cannot be linked (leading/trailing space, or `\| [ ] #`); `unaddressable` counts concepts shadowed by an entity of the same name. `[]` on a read-only `shared-*` mirror, where `counts.indexCheck` is `"mirror"` and `counts.indexRows` is omitted (`"unreadable"` if `index.md` is a symlink out of the wiki). |
 
 ¹ `brokenLinks` are auto-fixable **only when `suggestedTarget` is non-null** — the fix rewrites the link in the source file to point at the suggestion. Broken links without a suggestion are review-only; `fix-all` silently skips them and `total` reflects the count of fixable (suggested) issues, not the total broken-link count.
 
@@ -1834,7 +1846,7 @@ Apply a single fix for a specific issue.
 
 Those last two were missing the refusal until v3.6.2, while their MCP twins (`dismiss_wiki_issue`, `undismiss_wiki_issue`) had carried it since v3.0.0-beta.1. The store they write, `<domain>/wiki/.health-dismissed.jsonl`, lives *inside* the git-tracked `wiki/` folder and therefore syncs, so a dismissal recorded on a mirror was silently discarded by the next Pull exactly like a "fix" would be.
 
-Scanning (`GET /api/health/:domain`), reading dismissals (`GET /api/health/:domain/dismissed`), and the read-only planning endpoints (`/ai-suggest`, `/semantic-dupes/scan`, `/semantic-dupes/preview`, `/broken-links/plan`, `/orphans/plan`) all still work on mirrors — reads are deliberately allowed so users can inspect a mirror and spot conflict markers.
+Scanning (`GET /api/health/:domain`), reading dismissals (`GET /api/health/:domain/dismissed`), and the read-only planning endpoints (`/ai-suggest`, `/semantic-dupes/scan`, `/semantic-dupes/preview`, `/broken-links/plan`, `/orphans/plan`) all still work on mirrors (`/index/plan` does not — it refuses a mirror, whose `index.md` is not checked) — reads are deliberately allowed so users can inspect a mirror and spot conflict markers.
 
 This list is enumerated mechanically rather than maintained by hand: `scripts/test-route-write-guards.js` derives the writability class from `src/routes/health.js` itself and fails if any route in it lacks the guard, if the behavioural sweep leaves one undriven, or if a new mutating route appears without being classified.
 
@@ -1875,6 +1887,68 @@ Apply every fix of a given type in one call. Re-scans the wiki, then applies eac
 `fixed` may be less than `total` if any individual fix fails (each failure is logged to the server console but does not abort the batch).
 
 **Error responses** — same as `/fix`, including `409`.
+
+---
+
+## POST /api/health/:domain/index/plan
+
+**New in v3.83.0.** Preview a rebuild of the domain's `index.md`. **Read-only and free: no AI, no writes, no lock.** The rebuild is deterministic — existing descriptions are kept byte-for-byte, a missing page gets a description derived from its first `# ` heading or first body line, rows are sorted by code unit into `## Summaries`, `## Entities` and `## Concepts`, stale rows are removed, duplicates merged and repointable rows repointed. No request body.
+
+```bash
+curl -X POST http://localhost:3333/api/health/articles/index/plan
+```
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "basis": "9f2c…64 hex characters…",
+  "nothingToDo": false,
+  "summary": {
+    "indexExists": true, "rowsBefore": 806, "rowsAfter": 3472,
+    "bytesBefore": 145844, "bytesAfter": 614210,
+    "add": 2705, "addByFolder": { "entities": 440, "concepts": 2224, "summaries": 41 },
+    "removeStale": 39, "mergeDuplicates": 0, "repoint": 0,
+    "aliasesDropped": 0, "typeCellsCorrected": 0,
+    "keepDescriptions": 767, "deriveDescriptions": 2705, "emptyDescriptions": 0,
+    "unlinkable": 0, "unaddressable": 0, "preservedProseLines": 0
+  },
+  "samples": {
+    "add": [{ "path": "concepts/rag.md", "description": "…" }],
+    "removeStale": [{ "target": "gone-page", "description": "…" }],
+    "unlinkable": [], "unaddressable": []
+  }
+}
+```
+
+`basis` is a SHA-256 hash of the current index text together with the rebuilt text (with its *Last updated* date blanked, so a preview at 23:59 applied at 00:01 is not stale). Pass it to `/index/apply`. `nothingToDo: true` means the index already lists every page. `samples` holds at most 10 entries per list.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Read-only Shared Brain mirror (the same refusal as every other write-class route) |
+| `409` | `code: "INDEX_UNREADABLE"` — `index.md` is a symlink that leaves the wiki, or not a readable file; nothing was read or written |
+| `404` | Unknown domain |
+
+---
+
+## POST /api/health/:domain/index/apply
+
+**New in v3.83.0.** Write the rebuild previewed by `/index/plan`. **Body: `{ "basis": "<64 hex characters from /index/plan>" }` and nothing else — the server never accepts index text from the client.** It re-plans from the files on disk and writes `index.md` atomically only if the fresh plan's `basis` equals the one supplied; any page or index change since the preview makes them differ. Write-op: refused on a mirror, refused with `409` during an app update, registered as `index-rebuild-apply`, and taken under the per-domain file lock.
+
+```bash
+curl -X POST http://localhost:3333/api/health/articles/index/apply \
+  -H 'Content-Type: application/json' -d '{"basis":"9f2c…"}'
+```
+
+**Success response** `200 OK` — `{ "ok": true, "written": true, "summary": { …same shape as /index/plan… } }`. `written: false` means the index already listed every page; nothing was touched.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing or non-hex `basis` (checked after the mirror refusal) |
+| `409` | `code: "INDEX_PLAN_STALE"` — the wiki changed after the preview; nothing was written. Also `INDEX_UNREADABLE`; an update in progress; or `conflict: "file_lock"` when another process holds the domain |
+
+The scan cache includes `index.md` in its signature, so the next `GET /api/health/:domain` reflects the rebuild immediately.
 
 ---
 
@@ -1988,7 +2062,7 @@ Deliberately a **read** route, and deliberately **not** behind `guardConcurrent`
 `ops` values come from a fixed internal vocabulary — enumerable from the
 `registerWrite` call sites, currently `ingest`, `batch-ingest`, `compile`,
 `health-fix`, `health-fix-all`, `health-fix-all-safe`, `broken-links-apply`,
-`orphan-rescue-apply`, `semantic-dupes-merge-batch`, `sharedbrain-push`,
+`orphan-rescue-apply`, `index-rebuild-apply`, `semantic-dupes-merge-batch`, `sharedbrain-push`,
 `sharedbrain-pull`, `sharedbrain-synthesize`, `sharedbrain-revoke`, plus the
 default `write`. Shared Brain synthesis and revoke register against a
 `shared-<slug>` domain.
@@ -6512,7 +6586,7 @@ time and money a run would take.
 | Parameter | Required | Description |
 |---|---|---|
 | `model` | yes | The OpenRouter model id to measure. |
-| `domain` | no | Which wiki to measure against. Omitted, the server picks the domain with the **largest `index.md`** — the cheapest proxy for *most realistic prompt*. Deliberately **not** the MCP default domain, which answers a different question and is often a small scratch domain. |
+| `domain` | no | Which wiki to measure against. Omitted, the server picks the domain with the **largest `index.md`** — the cheapest proxy for *most realistic prompt*. (Since v3.83.0 the index embedded in that prompt is capped at 150,000 characters, and a Health **Rebuild index** can make a different domain the largest.) Deliberately **not** the MCP default domain, which answers a different question and is often a small scratch domain. |
 
 ```json
 {

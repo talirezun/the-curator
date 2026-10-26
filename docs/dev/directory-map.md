@@ -41,7 +41,11 @@ src/
     llm.js        — LLM abstraction (Gemini or Claude, auto-detected via config.js)
     chat.js       — multi-turn chat against the wiki
     sync.js       — GitHub sync (git --git-dir / --work-tree)
-    health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks)
+    health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks);
+                    v3.83.0: the `indexDrift` check (report-only) + planIndexRebuild/applyIndexRebuild (the previewed index.md rebuild)
+    wiki-index.js — index.md logic (v3.83.0), PURE parse/coverage/rebuild functions + an fs wrapper: ensurePagesInIndex (called after every
+                    ingest, compile and MCP compile_to_wiki write), parseIndex, indexCoverage, rebuildIndexText, deriveDescription.
+                    On the MCP child's import graph: never writes to stdout
     config.js     — persistent config (.curator-config.json): getApiKeys, setApiKeys, getEffectiveKey, getDomainsDir;
                     setGithubReadToken/clearGithubReadToken/getGithubReadTokenStatus (v3.65.2) — the first writer
                     `githubReadToken` ever had; refuses (`config_unreadable`) rather than overwriting an unparseable
@@ -84,7 +88,7 @@ src/
     domains.js    — domain CRUD
     chat.js       — chat endpoints
     wiki.js       — GET /api/wiki/:domain
-    health.js     — GET /api/health/:domain, POST /api/health/:domain/fix[-all]
+    health.js     — GET /api/health/:domain, POST /api/health/:domain/fix[-all]; POST …/index/plan + …/index/apply (the index.md rebuild, v3.83.0)
     sync.js       — sync endpoints
     config.js     — Settings/config endpoints (API keys, updates, domains path); GET|PUT|DELETE
                     /api/config/github-read-token + POST …/test (v3.65.2) — the only HTTP path a GitHub read-only
@@ -151,7 +155,7 @@ mcp/              — My Curator: local read+write MCP server bridging the wiki 
     index.js      — tool registration hub (the `tools` array is the authoritative
                     tool list) + response-size guard (MAX_RESPONSE_BYTES = 400 KB,
                     ~100 k tokens, with progressive trim)
-    domains.js, index-tool.js, search.js, nodes.js, connected.js, summary.js,
+    domains.js, index-tool.js (get_index: views, paging, slugs — v3.83.0), search.js, nodes.js, connected.js, summary.js,
     cross.js, overview.js, tags.js, backlinks.js, raw-source.js   — read tools
     compile.js, health.js, dismissed.js, working-state.js         — write tools
 scripts/
@@ -175,7 +179,7 @@ domains/
       entities/       — people, tools, companies, frameworks
       concepts/       — ideas, techniques, principles
       summaries/      — one page per ingested source
-      index.md        — master page catalog
+      index.md        — master page catalog (kept complete by ensurePagesInIndex; rebuilt by Health)
       log.md          — chronological ingest history
     state/            — working state (v3.17.0). SYNCED, unlike raw/: project.md +
                         <scope>/<machine>/current.md + journal.jsonl +

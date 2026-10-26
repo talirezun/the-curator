@@ -538,6 +538,7 @@ Wiki health lives inside a domain, as the last section on that domain's page. Se
 | Cross-folder duplicates | The same page in both `entities/` and `concepts/`. | **Fix** merges the concept into the entity version, keeping all bullets. |
 | Hyphen variants | Files for the same thing differing in hyphenation or an honorific — `tali-rezun`, `talirezun`, `dr.-tali-rezun`. | **Fix** merges all variants into the canonical slug and repoints every link that pointed at a variant. |
 | Missing backlinks | A summary lists an entity but the entity does not link back. | **Fix** injects the missing backlink. |
+| Index gaps | `index.md` (the wiki's page catalogue) lacks a row for some pages, or has rows pointing at pages that no longer exist. Counted as one issue; not shown on read-only mirrors. | **Rebuild index** in Quick maintenance: a free, no-AI rebuild you preview first. It keeps existing descriptions as written and derives new ones from each page's title or first line. Cannot be dismissed. |
 
 A **QUICK MAINTENANCE** block holds one button per batch tool, each with a live count, each appearing only when it has work to do:
 
@@ -547,6 +548,7 @@ A **QUICK MAINTENANCE** block holds one button per batch tool, each with a live 
 | **Fix N broken links** — free formatting fixes first, then the AI matches the rest to real pages or removes brackets pointing at nothing | Yes | Shown on the button |
 | **Rescue N orphans** — the AI finds the page that should most naturally link to each orphan and writes a short relationship note into it | Yes | Shown on the button |
 | **Find duplicate pages** — the semantic-duplicate scan | Yes | Shown when you open it |
+| **Rebuild index** — appears only with Index gaps; previews "Plan ready — nothing written yet", then **Apply**. Refused if the wiki changed since the preview | No | Free |
 
 The pattern is always the same: click, a confirm card names exactly what will happen and what it costs, you confirm, the AI plans with a progress bar, you see a preview, you click **Apply**, and the wiki re-scans so you watch the counts drop. Without an API key you still get **Fix N safe issues**; **since version 3.67.0** the three AI buttons stay visible with no key too, disabled rather than hidden, with a line underneath linking to Providers & keys, and a second line naming the one model they all run on. The first time you use any AI action, a one-time notice explains what leaves your machine, and it now names all three supported providers — Google Gemini, Anthropic or OpenRouter.
 

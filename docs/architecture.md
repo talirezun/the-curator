@@ -258,7 +258,7 @@ the-curator/
 │   │   ├── ingest-queue.js     /api/ingest-queue — batch ingest job (create/list/start/pause/cancel/delete) (v3.3.0+)
 │   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]; POST streams SSE on `stream: true`
 │   │   ├── wiki.js             GET /api/wiki/:domain, GET .../page (v3.2.0+), GET .../source + POST .../source/reveal (v3.5.0)
-│   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
+│   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed|/index/plan|/index/apply]
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
 │   │   ├── diagnostics.js      GET /api/diagnostics/quick, POST /api/diagnostics/live (System Check)
 │   │   ├── write-status.js     GET /api/write-status — is it safe to quit? (v3.26.0; consumed by the
@@ -346,7 +346,8 @@ the-curator/
 │   │   │                       and the scope pills they cover are marked) and never SELECTED —
 │   │   │                       one lit chip still means the one wiki the answer reads
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
-│   │   ├── health.js           Wiki health scanner + auto-fix logic
+│   │   ├── health.js           Wiki health scanner + auto-fix logic; indexDrift check + index rebuild plan/apply (v3.83.0)
+│   │   ├── wiki-index.js       index.md parse / coverage / rebuild; ensurePagesInIndex (v3.83.0)
 │   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
 │   │   ├── health-dismissed.js Persistent skip-store for Health issues (v2.5.1+) — wiki/.health-dismissed.jsonl
 │   │   └── config.js           Persistent config (API keys, domains path) — resolves through paths.js
@@ -396,7 +397,7 @@ the-curator/
 │       ├── index.js            Registration hub + response-size guard (400 KB)
 │       ├── domains.js, index-tool.js, search.js, nodes.js, connected.js,
 │       │   summary.js, cross.js, overview.js, tags.js, backlinks.js, raw-source.js
-│       │                       Read tools (11): list_domains, get_index, search_wiki, get_node, get_connected_nodes,
+│       │                       Read tools (11): list_domains, get_index (views, paging, slugs — v3.83.0), search_wiki, get_node, get_connected_nodes,
 │       │                       get_summary, search_cross_domain, get_graph_overview, get_tags, get_backlinks,
 │       │                       get_raw_source (v3.5.0 — the original document behind a summary, text-extracted only)
 │       ├── compile.js          Write tool (v2.5.2): compile_to_wiki — research → wiki pages
@@ -1582,6 +1583,11 @@ src/brain/ingest.js
       │     but that was reverted before release (see
       │     docs/ingestion-pipeline.md §1b for why). Also still read
       │     separately for the programmatic index merge at step 8.
+      │     v3.83.0: the prompt builders cap what they embed — indexForPrompt
+      │     passes index.md through UNCHANGED up to INDEX_PROMPT_BUDGET_CHARS
+      │     (150,000 chars); over that, every heading plus the rows most related
+      │     to the source (stderr line only, no user-visible warning). A complete
+      │     index would otherwise overflow Haiku 4.5's window on a large wiki.
       │     Also read the existing entity/concept filenames, sent to the LLM
       │     in FULL — capExistingFilesForPrompt (v3.0.16) is an inert safety
       │     valve, not a cost cap: it does not fire on any real domain
@@ -1683,12 +1689,17 @@ src/brain/ingest.js
       │       c. Re-fires injectSummaryBacklinks() with the complete list so
       │          every entity/concept page receives [[summaries/<slug>]] — not just
       │          the few the LLM remembered to mention
-      ├─ 8. Programmatic index merge via mergeIntoIndex() (shared with compile, v3.0.1+)
-      │     Reads existing wikilinks in index.md → skips any slug already there.
-      │     Appends rows for newly CREATED pages (not updated/unchanged), pairing
-      │     LLM-supplied summaries with canonical post-write paths so cross-folder
-      │     dedup redirects keep the correct type column. No LLM call. Sanitises
-      │     pipe + newline characters from summary text before insertion.
+      ├─ 8. Programmatic index merge via ensurePagesInIndex() (src/brain/wiki-index.js;
+      │     shared with compile and the MCP's compile_to_wiki, v3.83.0)
+      │     RE-READS index.md now (not the step-4 copy), then adds a row for EVERY
+      │     page this ingest touched that the index lacks — created, updated or
+      │     unchanged — by canonical-path coverage, at its sorted position under
+      │     Summaries / Entities / Concepts. LLM-supplied summaries are paired with
+      │     canonical post-write paths so cross-folder dedup redirects keep the
+      │     correct type column; a page with no summary gets a description derived
+      │     from its H1 / first body line. No LLM call. Sanitises pipe + newline
+      │     characters from summary text before insertion. (Through v3.82.1 this was
+      │     mergeIntoIndex(), created pages only.)
       └─ 9. Append timestamped entry to log.md (warnings section included if any)
 
 HTTP response → { type: 'done', title, pagesWritten, changes,
@@ -1708,7 +1719,7 @@ wiki. The chain that makes this work, in order of where it kicks in:
 | **Bullet sections** (Key Facts, Related, Entities Mentioned) | `mergeWikiPage` union + `deduplicateBulletSections` safety net | Bullets with the same link target collapsed to one. |
 | **Summary "Entities Mentioned"** | `syncSummaryEntities` always rebuilds from the ground-truth `pagesWritten` list | List always matches the actual pages written this run. |
 | **Backlinks** | `injectSummaryBacklinks` is dedup-safe (`dedupKey()`) | Same `[[summaries/<slug>]]` bullet is never added twice. |
-| **`index.md` rows** | `mergeIntoIndex` scans existing wikilinks → skips any slug already mentioned | Re-ingest never adds a duplicate row. Only newly CREATED pages get rows. |
+| **`index.md` rows** | `ensurePagesInIndex` checks canonical-path coverage against the files on disk → skips any page already listed | Re-ingest never adds a duplicate row. Since v3.83.0 every touched page that lacks a row gets one (was: created pages only); the user-triggered Health **Rebuild index** repairs the rest. |
 
 ### Batch ingest queue (v3.3.0+)
 
@@ -1880,6 +1891,10 @@ src/brain/health.js  →  scanWiki(domain, opts?)  (pure, no writes)
       │   (~30-40ms vs ~800ms cold on a 3,400-page wiki) without touching a
       │   single page; opts.noCache forces a fresh read
       ├─ Walk wiki/*.md files
+      ├─ Index gaps (v3.83.0): parse index.md (included in the cache signature)
+      │   and compare its rows with the three folders by canonical path →
+      │   indexDrift: missing / stale / duplicate / repointable. Skipped on
+      │   read-only shared-* mirrors. Report-only (not in AUTO_FIXABLE).
       ├─ For every [[wikilink]]: resolve target; record incoming links;
       │   flag folder-prefix violations; flag broken targets with suggestions
       ├─ Orphan pass: entity/concept files with zero incoming links
@@ -1892,7 +1907,17 @@ src/brain/health.js  →  scanWiki(domain, opts?)  (pure, no writes)
           [[summaries/<slug>]] bullet
 
 HTTP response → { counts, brokenLinks, orphans, folderPrefixLinks,
-                  crossFolderDupes, hyphenVariants, missingBacklinks }
+                  crossFolderDupes, hyphenVariants, missingBacklinks,
+                  indexDrift }   // indexDrift: [] or one row (v3.83.0)
+
+User clicks Rebuild index (v3.83.0) — deterministic, no AI, two stages:
+
+POST /api/health/:domain/index/plan                       (read-only)
+      └─ planIndexRebuild() → { basis, nothingToDo, summary, samples }
+POST /api/health/:domain/index/apply    body: { basis }   (write-op + file lock)
+      └─ applyIndexRebuild() re-plans from disk; writes index.md atomically only
+         if the fresh basis equals the caller's, else 409 INDEX_PLAN_STALE.
+         The server never writes client-supplied index text.
 
 User clicks Fix / Fix all:
 

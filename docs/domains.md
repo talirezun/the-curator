@@ -26,6 +26,8 @@ domains/<slug>/
     └── summaries/       ← one page per ingested source / compiled conversation
 ```
 
+**`index.md` is the page catalogue** — one row per page (`| Page | Type | Summary |`), sectioned `## Summaries`, `## Entities`, `## Concepts` once rebuilt. Since v3.83.0 every ingest, Compile and agent `compile_to_wiki` adds a row for **every** page it touched that the index lacks (before, only newly created pages got one), and Wiki Health's **Index gaps** check plus its free, previewed **Rebuild index** repair an index that has fallen behind or still lists deleted pages ([user guide § 17](user-guide.md#index-gaps-and-rebuild-index-v3830)). A read-only `shared-*` mirror's `index.md` is a stub the app never maintains, so it is not checked. A domain's `index.md` is also pasted into the ingest prompts, capped at 150,000 characters ([ingestion-pipeline.md § 8.0](ingestion-pipeline.md)).
+
 No domains ship with the app — a fresh install starts empty ("No domains yet") and you create as many as you like, each from one of the templates below.
 
 ### `state/` — working state, not wiki content

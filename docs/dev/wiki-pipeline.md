@@ -7,7 +7,8 @@
 | Function | Purpose |
 |---|---|
 | `writePage(domain, relativePath, content)` | Normalise path → dedup passes A+B → cross-folder dedup (3b) → inject frontmatter → capture pre-write state → merge with existing → strip blanks → dedup bullets → strip folder-prefix links → normalize variant links (5c: entities + concepts + summaries, prefix-tolerant) → write → call injectSummaryBacklinks if summary → return `{canonPath, status, bytesBefore, bytesAfter, sectionsChanged, bulletsAdded}` (v2.5.0+; null on invalid input) |
-| `compileConversation(domain, conversationId, onProgress, opts)` | Conversation compile: load conversation → refuse if fewer than `MIN_USER_MESSAGES` user turns (**1** since v3.0.1-beta.15, was 2) → compute deterministic summary slug `<title>-YYYY-MM-DD-<4hex>` → refuse if file already exists at slug (idempotency guard) → **3-step LLM ladder `full → concise → summary-only`** (v3.0.1-beta.27), escalating ONLY on `isOutputTokenLimit(err)` or a JSON parse failure; any other LLM error (503/429/auth/network) surfaces immediately → write all pages via the same writePage pipeline → syncSummaryEntities → programmatic mergeIntoIndex (no LLM-driven index regen) → appendLog → return `{ok, title, pagesWritten, changes, warnings}`. `opts.generateText` is a **test-only** seam (defaults to the real one) for driving the ladder offline. |
+| `compileConversation(domain, conversationId, onProgress, opts)` | Conversation compile: load conversation → refuse if fewer than `MIN_USER_MESSAGES` user turns (**1** since v3.0.1-beta.15, was 2) → compute deterministic summary slug `<title>-YYYY-MM-DD-<4hex>` → refuse if file already exists at slug (idempotency guard) → **3-step LLM ladder `full → concise → summary-only`** (v3.0.1-beta.27), escalating ONLY on `isOutputTokenLimit(err)` or a JSON parse failure; any other LLM error (503/429/auth/network) surfaces immediately → write all pages via the same writePage pipeline → syncSummaryEntities → programmatic ensurePagesInIndex (no LLM-driven index regen) → appendLog → return `{ok, title, pagesWritten, changes, warnings}`. `opts.generateText` is a **test-only** seam (defaults to the real one) for driving the ladder offline. |
+| `ensurePagesInIndex(domain, entries, opts)` (`wiki-index.js`, v3.83.0) | The ONE index-maintenance call after every ingest, compile and MCP `compile_to_wiki` write: re-reads `index.md` NOW, derives a description (page summary, else H1 / first body line) for any touched page that lacks a row, adds rows by canonical-path coverage at their sorted position in Summaries / Entities / Concepts, and writes through `writePage`. Returns `null` (no write) when nothing was missing. Companions: `parseIndex`, `indexCoverage`, `rebuildIndexText` (used by Health's `planIndexRebuild` / `applyIndexRebuild`) |
 | `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity AND concept slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks with the complete list |
 | `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section; checks entities/ first, falls back to concepts/; creates the section if it doesn't exist |
 | `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities |
@@ -37,6 +38,8 @@ POST /api/ingest
       1. Save to raw/
       2. Extract text (pdf-parse or readFile), cap at 80k chars
       3. Load domain CLAUDE.md schema + current index.md
+         (the prompt embeds it through indexForPrompt: <= 150,000 chars as-is,
+          over that only the rows most related to the source - v3.83.0)
       4. Read existing entity/concept filenames → pass to LLM prompt
          (prevents LLM creating lumina.md when lumina-ai.md exists)
       5. Single-pass LLM call (< 15k chars input)
@@ -76,7 +79,10 @@ POST /api/ingest
            summary's "Entities Mentioned" → deduplicates → re-fires
            injectSummaryBacklinks() with the complete list →
            ALL entities/concepts get bidirectional backlinks
-      8. writePage(index.md)
+      8. ensurePagesInIndex() - a row for EVERY page this ingest touched that
+         index.md lacks (created, updated or unchanged), index.md RE-READ at
+         this moment, then writePage(index.md) (v3.83.0; was created-only,
+         merged into the step-3 copy)
       9. appendLog()
 ```
 
@@ -184,6 +190,8 @@ In Graph View → ⚙ → Groups:
 | Entities | `tag:#type/entity` | Blue |
 | Concepts | `tag:#type/concept` | Green |
 | Summaries | `tag:#type/summary` | Purple |
+
+**Add `-file:index` to the Graph filter (v3.83.0).** Since Health's Rebuild index, `index.md` links to every page, so it is a hub node and Obsidian's "Orphans" toggle stops showing anything orphaned. The Curator's Wiki Health (which skips `index.md`) remains the authority on orphans.
 
 The vault root should point to `domains/<domain>/wiki/` (or a parent folder covering multiple domains). Use the Knowledge Base Location shown in the Domains tab.
 
