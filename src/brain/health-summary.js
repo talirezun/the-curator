@@ -12,7 +12,7 @@
  * paths.js getHealthSummaryPath() — in the user-data dir, OUTSIDE domains/,
  * never synced (see that resolver for why).
  *
- *   · `count`     — open issues across the six categories the Domains view
+ *   · `count`     — open issues across the seven categories the Domains view
  *                   counts (HEALTH_ISSUE_KEYS, the view's HEALTH_CATEGORIES),
  *                   after dismissals, exactly as that scan reported them.
  *   · `scannedAt` — the report's own `scannedAt`: when the wiki was READ.
@@ -37,9 +37,10 @@ import { getHealthSummaryPath } from './paths.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { wikiPath } from './files.js';
 
-/** The six categories the Domains view sums (views/domains.js HEALTH_CATEGORIES). */
+/** The seven categories the Domains view sums (views/domains.js HEALTH_CATEGORIES); v3.83.0 added indexDrift (0 or 1). */
 export const HEALTH_ISSUE_KEYS = Object.freeze([
   'brokenLinks', 'orphans', 'crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks',
+  'indexDrift',
 ]);
 
 export function countOpenIssues(report) {

@@ -305,7 +305,9 @@ console.log('\n4. mergeIntoIndex (shared with compile)\n');
   assertEq(merged, null, 'case C: returns null when slug already in index');
 }
 
-// Case D: status=updated should NOT add a row (only `created` pages)
+// Case D (INVERTED BY DESIGN in v3.83.0): an UPDATED page that is missing from
+// the index now gets its row. Before, only `created` pages were added, so a
+// page whose index write was ever lost never came back (CONTRACT §4.4).
 {
   const existingIndex = `| Page | Type | Summary |\n|---|---|---|\n`;
   const pages = [
@@ -315,7 +317,22 @@ console.log('\n4. mergeIntoIndex (shared with compile)\n');
     { originalPath: 'entities/alice.md', record: { canonPath: 'entities/alice.md', status: 'updated' } },
   ];
   const merged = mergeIntoIndex(existingIndex, pages, writeRecords);
-  assertEq(merged, null, 'case D: status=updated → no new index row');
+  assertTrue(merged && merged.includes('| [[alice]] | entity | Updated alice |'),
+    'case D: status=updated + missing from the index → row added (v3.83.0)');
+}
+
+// Case D2: an UPDATED page already in the index → nothing to add (null), and the
+// existing row is never edited.
+{
+  const existingIndex = `| Page | Type | Summary |\n|---|---|---|\n| [[alice]] | entity | Original alice |\n`;
+  const pages = [
+    { path: 'entities/alice.md', content: '', summary: 'Updated alice' },
+  ];
+  const writeRecords = [
+    { originalPath: 'entities/alice.md', record: { canonPath: 'entities/alice.md', status: 'updated' } },
+  ];
+  const merged = mergeIntoIndex(existingIndex, pages, writeRecords);
+  assertEq(merged, null, 'case D2: status=updated + already in the index → null (no write)');
 }
 
 // Case E: pipe / newline injection in summary is sanitised

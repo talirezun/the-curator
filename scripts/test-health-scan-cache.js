@@ -283,6 +283,40 @@ section('F. Editing .health-dismissed.jsonl forces a miss, independent of every 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('F2. Editing index.md forces a miss (v3.83.0 — the indexDrift check reads it); log.md still does not');
+// ═══════════════════════════════════════════════════════════════════════════
+// An index rebuild writes ONLY index.md. Without index.md in the signature the
+// rescan after a successful rebuild would serve the cached "N pages missing"
+// and the fix would look broken (CONTRACT C7).
+{
+  const wiki = mkDomain('cache-index', {
+    'entities/listed.md': page('Listed', 'entity'),
+  });
+
+  const before = await scanWiki('cache-index');
+  assert(before.indexDrift.length === 1 && before.indexDrift[0].missing === 1,
+    'F2.1 PRECONDITION — the page is missing from index.md', JSON.stringify(before.indexDrift));
+
+  // log.md is never read by the scan: changing it stays a HIT (same scannedAt).
+  writeFileSync(path.join(wiki, 'log.md'), '# Log\n\n## [2026-01-01] ingest | x\n');
+  const logOnly = await scanWiki('cache-index');
+  assert(logOnly.scannedAt === before.scannedAt,
+    'F2.2 a log.md-only change is still a cache HIT (log.md stays out of the signature)');
+
+  writeFileSync(path.join(wiki, 'index.md'),
+    '# Index\n\n| Page | Type | Summary |\n|---|---|---|\n| [[listed]] | entity | now listed |\n');
+  const after = await scanWiki('cache-index');
+  assert(after.indexDrift.length === 0 && after.counts.indexRows === 1,
+    'F2.3 THE MISS — after index.md changed, the drift row is gone and the row is counted (a stale hit would still say 1 missing)',
+    JSON.stringify({ drift: after.indexDrift, counts: after.counts }));
+
+  rmSync(path.join(wiki, 'index.md'));
+  const absent = await scanWiki('cache-index');
+  assert(absent.indexDrift.length === 1 && absent.indexDrift[0].indexExists === false,
+    'F2.4 …and DELETING index.md is a miss too (absence is its own hashed value)', JSON.stringify(absent.indexDrift));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('G. The bound evicts the OLDEST domain, not an arbitrary one');
 // ═══════════════════════════════════════════════════════════════════════════
 // HEALTH_SCAN_CACHE_MAX is 8 in health.js and is NOT exported (adding an

@@ -7,11 +7,13 @@
  *   GET  /api/health/:domain            — scan wiki, return issue report
  *   POST /api/health/:domain/fix        — apply one fix     body: { type, issue }
  *   POST /api/health/:domain/fix-all    — apply all of type body: { type }
+ *   POST /api/health/:domain/index/plan — preview an index.md rebuild (read-only, v3.83.0)
+ *   POST /api/health/:domain/index/apply — apply it              body: { basis }
  */
 import { Router } from 'express';
 import { readFileSync } from 'fs';
-import { isDomainReadonly, assertKnownDomain } from '../brain/files.js';
-import { scanWiki, fixIssue, AUTO_FIXABLE } from '../brain/health.js';
+import { isDomainReadonly, assertKnownDomain, readSchema, extractDomainDisplayName } from '../brain/files.js';
+import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild } from '../brain/health.js';
 import {
   suggestBrokenLinkTarget,
   suggestOrphanHomes,
@@ -513,6 +515,76 @@ router.post('/:domain/orphans/apply', async (req, res) => {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();
     res.end();
+  }
+});
+
+// ── v3.83.0 — index.md rebuild: plan (read-only) → apply (guarded) ─────────
+//
+// Deterministic and free: no LLM call anywhere on either route. The plan is
+// read-only; the apply RE-PLANS from disk under the domain's write lock and
+// writes only when the fresh basis equals the one the user previewed — the
+// client sends the basis and nothing else, so the server never writes text it
+// was handed. `indexDrift` is deliberately NOT in AUTO_FIXABLE: /fix,
+// /fix-all and /fix-all-safe can never reach index.md.
+
+/** The domain's display name for a missing index title: CLAUDE.md "# Domain:". */
+async function indexDisplayName(domain) {
+  try { return extractDomainDisplayName(await readSchema(domain), domain); }
+  catch { return domain; }
+}
+
+router.post('/:domain/index/plan', async (req, res) => {
+  const { domain } = req.params;
+  try {
+    await assertWritableDomain(domain);
+    const plan = await planIndexRebuild(domain, { displayName: await indexDisplayName(domain) });
+    res.json({ ok: true, ...plan });
+  } catch (err) {
+    if (err && err.code === 'INDEX_UNREADABLE') {
+      return res.status(409).json({ error: err.message, code: 'INDEX_UNREADABLE' });
+    }
+    if (!err.status || err.status >= 500) console.error('[health index plan]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+const INDEX_BASIS_RE = /^[0-9a-f]{64}$/;
+router.post('/:domain/index/apply', async (req, res) => {
+  const { domain } = req.params;
+  // The mirror refusal comes FIRST (before body validation), like every other
+  // writability-class route: a mirror is refused with its steer message
+  // whatever the body says.
+  try { await assertWritableDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+  const basis = req.body && req.body.basis;
+  if (typeof basis !== 'string' || !INDEX_BASIS_RE.test(basis)) {
+    return res.status(400).json({ error: 'This request carried no preview to apply. Preview the index rebuild first, then apply it.' });
+  }
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`rebuild the index of domain "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'index-rebuild-apply');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'index-rebuild-apply' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({ error: `Another process is already writing to "${domain}" (file lock held).`, conflict: 'file_lock' });
+  }
+  try {
+    const result = await applyIndexRebuild(domain, basis, { displayName: await indexDisplayName(domain) });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err && err.code === 'INDEX_PLAN_STALE') {
+      return res.status(409).json({ error: err.message, code: 'INDEX_PLAN_STALE' });
+    }
+    if (err && err.code === 'INDEX_UNREADABLE') {
+      return res.status(409).json({ error: err.message, code: 'INDEX_UNREADABLE' });
+    }
+    console.error('[health index apply]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
   }
 });
 
