@@ -37,7 +37,7 @@
 export const TOOL_CATALOGUE = [
   // ── Read ──────────────────────────────────────────────────────────────────
   { name: 'list_domains',             group: 'read',  mutates: false, purpose: 'List every knowledge domain in this wiki.' },
-  { name: 'get_index',                group: 'read',  mutates: false, purpose: "The domain's full page catalogue, slug by slug." },
+  { name: 'get_index',                group: 'read',  mutates: false, purpose: 'Page catalogue: index rows, or the complete on-disk page list.' },
   { name: 'get_graph_overview',       group: 'read',  mutates: false, purpose: 'Orientation snapshot: stats, hub pages, orphans, top tags.' },
   { name: 'get_tags',                 group: 'read',  mutates: false, purpose: 'The tag inventory, ranked by how many pages carry each.' },
   { name: 'search_wiki',              group: 'read',  mutates: false, purpose: "Full-text search across one domain's pages." },

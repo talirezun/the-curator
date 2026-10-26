@@ -130,19 +130,20 @@ This is the rule that produces ZERO broken links and ZERO duplicate pages. **Fol
 **Step 2 — Inventory the existing wiki.** Mandatory before composing.
 
 ```
-get_index(domain)
+get_index(domain, view="pages", type="entity")
+get_index(domain, view="pages", type="concept")
 ```
 
-This returns the master catalog. **Read it.** Note which entities and concepts already exist. For specific topics that might already have pages, also call `search_wiki` to find variant slugs you might miss in the index.
+These list every entity and concept slug that exists on disk — complete even when index.md has fallen behind. **Read them.** If a reply carries `continuation`, call again with the same arguments plus its `page` until a reply has none; never ground links in a partial list. For what a page is ABOUT, `get_index(domain)` returns index.md with one-line descriptions, paged the same way when it is large. For "list my sources" or a timeline, `get_index(domain, view="pages", type="summary")` lists every summary with its `created`/`date` — those are the dates The Curator INGESTED the source, not when it was written; `source` is the original file name. For specific topics that might already have pages, also call `search_wiki` to find variant slugs.
 
 **Step 3 — Decide: what's new vs what already exists.** For every concept or entity you're about to mention:
 
-- **Already in the index?** → use that EXACT slug in your `[[wikilinks]]`. Do not invent a variant. (`[[openai]]` matches `entities/openai.md`; `[[OpenAI]]` or `[[open-ai]]` would NOT.)
-- **Not in the index, but you want to introduce it?** → add it to `additional_pages` so it gets created in this same call.
-- **Not in the index, and you don't want to create a page for it?** → write the term as plain prose without `[[brackets]]`.
+- **Already in the list?** → use that EXACT slug in your `[[wikilinks]]`. Do not invent a variant. (`[[openai]]` matches `entities/openai.md`; `[[OpenAI]]` or `[[open-ai]]` would NOT.)
+- **Not in the list, but you want to introduce it?** → add it to `additional_pages` so it gets created in this same call.
+- **Not in the list, and you don't want to create a page for it?** → write the term as plain prose without `[[brackets]]`.
 
 **Step 4 — Compose with grounded links.** Every `[[wikilink]]` you write must reference one of:
-- A slug already in the index (from step 2)
+- A slug already in the list (from step 2)
 - A slug you're creating in this same `additional_pages` array
 
 Anything else is a broken link the user will have to fix later. Do not invent slugs.
@@ -204,7 +205,7 @@ So when a page in `additional_pages` already exists:
   survives untouched. This is the safe default.
 - **Genuinely rewriting the prose?** Call `get_node(domain, slug)` first, read what is there, and
   carry forward anything still true. Do not ship a one-line `## Definition` over a rich one.
-- **Not sure whether the page exists?** It was in the index from step 2 — check.
+- **Not sure whether the page exists?** It was in the list from step 2 — check.
 
 Use `dry_run: true` when you are unsure. It shows which pages are creates and which are updates.
 
@@ -244,7 +245,7 @@ Four rules that hold whatever you are fixing:
 | Tool | Purpose | When |
 |---|---|---|
 | `list_domains` | List domains | Always when domain is unclear |
-| `get_index` | Master page catalog | Always before any write |
+| `get_index` | Page catalog — index.md with descriptions, or `view="pages"`: every slug, type, title and ingest date from disk; `type` filter; paged | Always before any write (`view="pages"`) |
 | `get_graph_overview` | Topology snapshot | First move on a research task |
 | `get_tags` | Tag inventory | Tag-driven cluster work |
 | `search_wiki` | Ranked search in one domain | Specific topic lookup |
@@ -312,7 +313,7 @@ flag stands after the save, which is worth reading back to the user when they as
 
 A compact reminder of what NOT to do:
 
-1. **Don't invent wikilinks.** Every `[[X]]` must resolve. If you didn't verify it's in the index or in `additional_pages`, write the text without brackets.
+1. **Don't invent wikilinks.** Every `[[X]]` must resolve. If you didn't verify it's in the `get_index` list or in `additional_pages`, write the text without brackets.
 2. **Don't create duplicate pages.** If `entities/openai.md` exists, your update goes to `[[openai]]` — never `[[OpenAI]]` or `[[open-ai]]`.
 3. **Don't write summaries via `additional_pages`.** Only entities/ and concepts/.
 4. **Don't compile identical content twice in a day.** Idempotency refusal is correct.
@@ -322,8 +323,8 @@ A compact reminder of what NOT to do:
 8. **Don't use folder prefixes in wikilinks** for entities or concepts. `[[openai]]` not `[[entities/openai]]`. Summaries keep their prefix: `[[summaries/foo]]`.
 9. **Don't run `scan_semantic_duplicates` without the user asking.** It costs money.
 10. **Don't fix `semanticDupe` issues without `preview: true` first.** Destructive — deletes files.
-11. **Don't skip `get_index` on writes.** That's the #1 cause of broken links.
-12. **Don't compose first and check links after.** Ground links during composition by referring to the index.
+11. **Don't skip `get_index` (`view="pages"`) on writes.** That's the #1 cause of broken links.
+12. **Don't compose first and check links after.** Ground links during composition by referring to the page list.
 13. **Don't compile to a `shared-*` mirror**, and **don't tell the user you added something to the shared brain** when you compiled to their personal domain. See [shared-brain.md](shared-brain.md).
 14. **Don't treat `conflict: 'file_lock'` as a failure.** Nothing was written; wait and retry the identical call (§5).
 15. **Don't reach for `get_raw_source` as your default.** The wiki is compiled knowledge — answer from `get_node`/`get_summary` first, and escalate to the raw source only for verbatim quotes, exact figures, or a real gap in the summary (§4.1). Reaching for it by default turns a compiled second brain back into a retrieval-at-query-time system.
@@ -340,7 +341,7 @@ Is the user READING the wiki?
 
 Is the user WRITING to the wiki?
   → §5 writing workflow
-  → Steps: domain check → get_index → ground links → compile_to_wiki (refuse mode on fresh domains)
+  → Steps: domain check → get_index(view="pages") → ground links → compile_to_wiki (refuse mode on fresh domains)
   → 10 pages max INCLUDING the summary; one title = one summary page
 
 Is the user MAINTAINING the wiki?

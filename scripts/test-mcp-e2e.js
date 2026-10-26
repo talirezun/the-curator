@@ -190,6 +190,14 @@ for (let i = 0; i < 40; i++) {
     `---\ntype: concept\ntags: [type/concept]\n---\n# Bulk ${i}\n\n## Body\n${FILLER}\n`);
 }
 
+// ── Paged get_index fixture (§3b, v3.83.0) ─────────────────────────────────
+// An index.md well over get_index's 60 KB page bound on BIG: one row per real
+// page plus 700 rows for pages that do not exist (stale — the index as it is).
+let BIG_INDEX = '# Wiki Index — zz-mcp-big\nLast updated: 2026-01-01\n\n| Page | Type | Summary |\n|---|---|---|\n';
+for (let i = 0; i < 40; i++) BIG_INDEX += `| [[bulk-${i}]] | concept | Bulk page ${i}, a long enough description to weigh like a real row in an index. |\n`;
+for (let i = 0; i < 700; i++) BIG_INDEX += `| [[gone-${i}]] | concept | A page that was deleted long ago, still listed in the index as rows often are. |\n`;
+writeFileSync(path.join(DOMAINS_DIR, BIG, 'wiki', 'index.md'), BIG_INDEX);
+
 // ── stdio JSON-RPC client ──────────────────────────────────────────────────
 const env = { ...process.env };
 for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'GITHUB_TEST_REPO', 'GITHUB_TEST_PAT', 'DOMAINS_PATH', 'LLM_MODEL']) {
@@ -300,6 +308,31 @@ for (const [name, args] of Object.entries(READ_CALLS)) {
   ok(!!f?.result && !f.__timeout && !f.error, `${name} returned a result (not an error, not a timeout)`);
 }
 ok(rawText(R.list_domains).includes(D), `list_domains sees the fixture domain "${D}"`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('§3b get_index PAGING and view:"pages" over the wire (v3.83.0)');
+{
+  // The small fixture index still arrives as the raw file, byte for byte.
+  ok(rawText(R.get_index) === readFileSync(path.join(DOMAINS_DIR, D, 'wiki', 'index.md'), 'utf8'),
+    'get_index on a small index, no arguments: the wire text IS the file (byte-identical)');
+  const p1 = await callTool('get_index', { domain: BIG });
+  const j1 = asJson(p1);
+  ok(j1?.ok === true && j1.of >= 2 && j1.continuation?.page === 2,
+    `get_index on a ${Math.round(Buffer.byteLength(BIG_INDEX) / 1024)} KB index is PAGED (of=${j1?.of})`);
+  const texts = [rawText(p1)];
+  for (let pg = 2; pg <= (j1?.of || 0); pg++) texts.push(rawText(await callTool('get_index', { domain: BIG, page: pg })));
+  ok(texts.every((t) => Buffer.byteLength(t, 'utf8') <= 61_440),
+    `every page's WIRE text ≤ 61,440 B (${texts.map((t) => Buffer.byteLength(t, 'utf8')).join(', ')})`);
+  const rowsOf = (t) => (t.split('\n').filter((l) => l.startsWith('| [[')));
+  const fileRows = rowsOf(BIG_INDEX);
+  const wireRows = texts.flatMap((t) => rowsOf(asJson({ result: { content: [{ text: t }] } })?.content || ''));
+  ok(wireRows.length === fileRows.length && wireRows.every((l, i) => l === fileRows[i]),
+    `the pages carry all ${fileRows.length} rows once, in order`);
+  const pv = asJson(await callTool('get_index', { domain: D, view: 'pages' }));
+  const slugs = (pv?.pages || []).map((x) => `${x.type}:${x.slug}`).sort();
+  ok(pv?.ok === true && pv.pages_total === 7 && slugs.includes('summary:seed-doc') && slugs.includes('entity:alpha'),
+    `view:"pages" lists the 7 files on disk with their types (got ${slugs.join(', ')})`);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('§4  GRAPH SEMANTICS — mcp/graph.js is load-bearing and was uncovered');

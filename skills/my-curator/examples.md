@@ -64,7 +64,8 @@ Returns `["articles", "business", "projects", "research"]`. `projects` is named 
 **Step 2 — Inventory the existing wiki.**
 
 ```
-get_index(domain="projects")
+get_index(domain="projects", view="pages", type="entity")
+get_index(domain="projects", view="pages", type="concept")
 ```
 
 Returns ~6 pages — fresh domain. Note them: `entities/lumina-ai.md`, `concepts/agentic-coding.md`, etc.
@@ -105,7 +106,7 @@ The retry loop typically converges in 1–2 calls and produces a wiki with **zer
 
 **Key moves**
 - Strict `'refuse'` mode on a fresh domain prevents broken-link inflation.
-- Every wikilink grounded against either the index or `additional_pages`.
+- Every wikilink grounded against either the `get_index` page list or `additional_pages`.
 - The retry loop is fast because the response includes `valid_slugs_sample`.
 
 ---
@@ -121,12 +122,13 @@ The user wants to add findings to a domain that already has hundreds of pages. T
 **Step 2 — Inventory.**
 
 ```
-get_index(domain="articles")
+get_index(domain="articles", view="pages", type="concept")
+get_index(domain="articles", view="pages", type="entity")
 ```
 
-Returns 2000+ rows. You scan for relevant slugs — you already see `[[rag]]`, `[[fine-tuning]]`, `[[retrieval-augmented-generation]]`, `[[llm-customization]]`, etc.
+Returns ~2,750 concept slugs over several pages; follow `continuation` to the last page before you rely on the list. You scan for relevant slugs — you already see `[[rag]]`, `[[fine-tuning]]`, `[[retrieval-augmented-generation]]`, `[[llm-customization]]`, etc.
 
-**Step 3 — Disambiguate variant slugs.** You spot `[[rag]]` AND `[[retrieval-augmented-generation]]` in the index. They're probably semantic duplicates the user will eventually merge — but for now, pick the one that has more content. Quick `search_wiki(domain="articles", query="rag")` confirms `[[rag]]` is the established hub. Use that one.
+**Step 3 — Disambiguate variant slugs.** You spot `[[rag]]` AND `[[retrieval-augmented-generation]]` in the list. They're probably semantic duplicates the user will eventually merge — but for now, pick the one that has more content. Quick `search_wiki(domain="articles", query="rag")` confirms `[[rag]]` is the established hub. Use that one.
 
 **Step 4 — Compose with the existing slugs.** No new pages this time — every concept you mention already has a page. So `additional_pages` is empty; the summary just references existing slugs:
 
@@ -149,7 +151,7 @@ The change panel shows: 1 new page (the summary), 8 updated pages (each referenc
 > **You:** *"Compiled into `articles`. New summary created; 8 existing pages picked up backlinks. No broken links, no duplicates introduced. Want me to read the summary back?"*
 
 **Key moves**
-- `get_index` first to spot variant slugs (e.g. `[[rag]]` vs `[[retrieval-augmented-generation]]`).
+- `get_index` (`view="pages"`) first to spot variant slugs (e.g. `[[rag]]` vs `[[retrieval-augmented-generation]]`).
 - Use `search_wiki` for confidence on which variant is canonical.
 - Empty `additional_pages` — no new pages because everything already exists.
 - `'keep'` policy is fine on populated domains; the response confirms zero broken.
@@ -275,7 +277,8 @@ The `shared-cohort` is a mirror (read-only). The others are personal. You cannot
 **Step 2 — Inventory `work-ai` before composing.** Apply the SKILL.md §5 writing playbook:
 
 ```
-get_index(domain="work-ai")
+get_index(domain="work-ai", view="pages", type="entity")
+get_index(domain="work-ai", view="pages", type="concept")
 ```
 
 Read the existing slugs. You see `entities/anthropic.md` exists, `concepts/agentic-workflows.md` exists, and there is no page for context engineering at all. Context engineering is an idea without a single owner, so per SKILL.md §2 it is a **concept**, not an entity. So you will:

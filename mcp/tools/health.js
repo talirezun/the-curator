@@ -46,7 +46,8 @@ export const scanWikiHealthDefinition = {
     "Use this when the user asks to 'check my wiki', 'find problems', 'clean up the knowledge base', 'audit my second brain', 'see what's broken'. " +
     "Returns categorized issue lists. Issues the user has already dismissed (via the in-app Health panel, in the Domains view, or a previous MCP session) are filtered out automatically — counts.dismissed reports how many. " +
     "Pair this with fix_wiki_issue to apply repairs. Auto-fixable types (folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, brokenLinks WITH a suggestedTarget) can be fixed without confirmation. " +
-    "Review-only types (orphans, brokenLinks WITHOUT a target) require human judgement — confirm with the user before fixing or dismissing.",
+    "Review-only types (orphans, brokenLinks WITHOUT a target) require human judgement — confirm with the user before fixing or dismissing. " +
+    "indexDrift (index.md missing pages or carrying stale rows) is reported only: tell the user, never try to fix it — the user rebuilds index.md in the app, and until then get_index with view: \"pages\" lists every page from the files on disk.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -59,25 +60,39 @@ export const scanWikiHealthDefinition = {
   },
 };
 
+// TEST-ONLY seam: lets a suite feed scan_wiki_health a stubbed scan report
+// (e.g. one carrying indexDrift before the producer exists). null restores
+// the real scanWiki. Never set outside scripts/.
+let scanWikiImpl = null;
+export function __setScanWikiForTest(fn) { scanWikiImpl = typeof fn === 'function' ? fn : null; }
+
 export async function scanWikiHealthHandler(args, storage) {
   const domain = await resolveDomainArg(args, storage, getDefaultDomain);
   if (domain.error) return { ok: false, error: domain.error };
 
-  const report = await scanWiki(domain.value);
+  const report = await (scanWikiImpl || scanWiki)(domain.value);
+  // v3.83.0 — indexDrift: [] | [{ missing, stale, … }] (src/brain/health.js).
+  // APP-ONLY: counted and reported, never auto-fixable, never dismissible.
+  // Read defensively — a scan from a build without the field reports nothing.
+  const indexDrift = Array.isArray(report.indexDrift) ? report.indexDrift : [];
+  const appOnlyCount = indexDrift.length;
   const total =
     report.brokenLinks.length +
     report.orphans.length +
     report.folderPrefixLinks.length +
     report.crossFolderDupes.length +
     report.hyphenVariants.length +
-    report.missingBacklinks.length;
+    report.missingBacklinks.length +
+    appOnlyCount;
 
   // Fixable count — broken links with a target are also auto-fixable.
   const autoFixableTypes = ['folderPrefixLinks', 'crossFolderDupes', 'hyphenVariants', 'missingBacklinks'];
   const autoFixableCount =
     report.brokenLinks.filter(b => b.suggestedTarget).length +
     autoFixableTypes.reduce((sum, t) => sum + (report[t]?.length || 0), 0);
-  const reviewOnlyCount = total - autoFixableCount;
+  const reviewOnlyCount = total - autoFixableCount - appOnlyCount;
+  const drift = indexDrift[0] || null;
+  const driftSentence = drift ? indexDriftSentence(drift) : '';
 
   // Issues are placed at the top level (not nested under `issues`) so the
   // MCP response-size guard's progressive-trim logic can find and shrink them
@@ -92,6 +107,7 @@ export async function scanWikiHealthHandler(args, storage) {
       total_issues:    total,
       auto_fixable:    autoFixableCount,
       review_only:     reviewOnlyCount,
+      app_only:        appOnlyCount,
     },
     brokenLinks:       report.brokenLinks,
     orphans:           report.orphans,
@@ -99,12 +115,29 @@ export async function scanWikiHealthHandler(args, storage) {
     crossFolderDupes:  report.crossFolderDupes,
     hyphenVariants:    report.hyphenVariants,
     missingBacklinks:  report.missingBacklinks,
+    indexDrift,
     report:
       total === 0
         ? `Wiki '${domain.value}' is clean. No structural issues.${report.counts.dismissed ? ` (${report.counts.dismissed} previously dismissed.)` : ''}`
-        : `Found ${total} issue${total === 1 ? '' : 's'} in '${domain.value}': ${autoFixableCount} auto-fixable, ${reviewOnlyCount} review-only${report.counts.dismissed ? `, ${report.counts.dismissed} previously dismissed` : ''}.`,
+        : `Found ${total} issue${total === 1 ? '' : 's'} in '${domain.value}': ${autoFixableCount} auto-fixable, ${reviewOnlyCount} review-only${appOnlyCount ? `, ${appOnlyCount} app-only` : ''}${report.counts.dismissed ? `, ${report.counts.dismissed} previously dismissed` : ''}.${driftSentence}`,
   };
 }
+
+/** The scan report's indexDrift sentence. Numbers come from the scan row. */
+function indexDriftSentence(drift) {
+  const missing = Number.isFinite(drift.missing) ? drift.missing : 0;
+  const stale = Number.isFinite(drift.stale) ? drift.stale : 0;
+  const what = missing
+    ? `index.md is missing ${missing} page${missing === 1 ? '' : 's'}${stale ? ` and has ${stale} row${stale === 1 ? '' : 's'} for pages that no longer exist` : ''}`
+    : `index.md has ${stale} row${stale === 1 ? '' : 's'} for pages that no longer exist`;
+  return ` ${what} — the user rebuilds it in the app (Domains › Wiki health › Rebuild index, previewed first); ` +
+    `it cannot be fixed over MCP. Until then use get_index with view: "pages" for a complete page list.`;
+}
+
+/** The app-only refusal sentence, shared by error and report. */
+const INDEX_DRIFT_APP_ONLY =
+  'Rebuilding index.md is done by the user in the app (Domains › Wiki health › Rebuild index), which previews ' +
+  'the change before writing. It is not fixable over MCP.';
 
 // ── fix_wiki_issue ───────────────────────────────────────────────────────────
 
@@ -137,7 +170,8 @@ export const fixWikiIssueDefinition = {
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
-    "Without a preview having been performed in this MCP session, a preview: false call on semanticDupe is refused.",
+    "Without a preview having been performed in this MCP session, a preview: false call on semanticDupe is refused. " +
+    "indexDrift is app-only and is refused here (reason: 'app-only'): the user rebuilds index.md in the app's Wiki health.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -190,6 +224,18 @@ export async function fixWikiIssueHandler(args, storage) {
   const preview = !!args?.preview;
 
   if (!type || typeof type !== 'string') return { ok: false, error: 'type is required' };
+  // v3.83.0 — indexDrift is APP-ONLY (not in AUTO_FIXABLE, and never will be
+  // from here): the app's rebuild previews the whole new index.md first.
+  if (type === 'indexDrift') {
+    return {
+      ok: false,
+      domain: domain.value,
+      type,
+      reason: 'app-only',
+      error: INDEX_DRIFT_APP_ONLY,
+      report: `REFUSED — nothing was written. ${INDEX_DRIFT_APP_ONLY} Tell the user, and use get_index with view: "pages" for a complete page list meanwhile.`,
+    };
+  }
   if (!FIXABLE_TYPES.has(type))            return { ok: false, error: `Type "${type}" cannot be fixed via this tool. Valid: ${[...FIXABLE_TYPES].join(', ')}` };
   if (!AUTO_FIXABLE.has(type))             return { ok: false, error: `Type "${type}" is not auto-fixable in this codebase` };
   if (!issue || typeof issue !== 'object') return { ok: false, error: 'issue is required and must be an object' };

@@ -84,6 +84,14 @@ which one in a `reason` field, with the prose in `report`. Only `link-not-presen
 and the issue is still there**; the `report` names the next action. Do not count such a
 call as a success, and do not report a clean sweep to the user on the strength of it.
 
+## `indexDrift` is app-only
+
+`indexDrift` in a scan means index.md is missing pages, or lists pages that no longer exist.
+Report the numbers (`missing`, `stale`) to the user; it is **app-only** — the user runs
+**Rebuild index** in Domains › Wiki health, which previews the new index before writing.
+`fix_wiki_issue` refuses it (`reason: "app-only"`) and it cannot be dismissed. Until the
+user rebuilds, `get_index(domain, view="pages")` lists every page from the files on disk.
+
 ## Dismissals
 
 `dismiss_wiki_issue` writes to a file synced across the user's machines. Items dismissed in

@@ -11,7 +11,27 @@
  * scoped to a single conversation.
  */
 
-const graphCache = new Map();   // domain → { builtAt, fileCount, nodes, edges, tags }
+const graphCache = new Map();   // domain → { builtAt, fileCount, nodes, edges, tags, pages }
+
+// The three page folders, in the order a page LIST is presented (the index's
+// section order: Summaries, Entities, Concepts). Kept literal here rather than
+// imported so this module stays free of src/brain imports.
+const PAGE_FOLDERS = [
+  { folder: 'summaries', type: 'summary' },
+  { folder: 'entities',  type: 'entity' },
+  { folder: 'concepts',  type: 'concept' },
+];
+const PAGE_FOLDER_ORDER = new Map(PAGE_FOLDERS.map((f, i) => [f.folder, i]));
+const PAGE_FOLDER_TYPE = new Map(PAGE_FOLDERS.map((f) => [f.folder, f.type]));
+
+/** Case-folded UTF-16 code-unit order, ties by raw code units — the same rule
+ *  as src/brain/wiki-index.js compareSlugs, never localeCompare. */
+function compareSlugCodeUnits(a, b) {
+  const la = a.toLowerCase(), lb = b.toLowerCase();
+  if (la !== lb) return la < lb ? -1 : 1;
+  if (a !== b) return a < b ? -1 : 1;
+  return 0;
+}
 const CACHE_TTL_MS = 10 * 60_000;   // 10 min — Claude Desktop spawns a fresh process per session,
                                     // so within-session files rarely change; this avoids the cost
                                     // of re-reading hundreds of .md files on every tool call.
@@ -77,6 +97,14 @@ export async function buildGraph(domain, storage) {
   const files = await storage.listWikiFiles(domain);
   const nodes = new Map();   // slug → node
   const edges = [];          // { from, to, section }
+  // v3.83.0 — EVERY page file, one entry each, recorded BEFORE the node map's
+  // basename-keyed `nodes.set` below. That map collapses `summaries/x.md` and
+  // `concepts/x.md` into one node (the later one wins), so a page list read off
+  // `nodes` silently loses one side of every cross-folder collision. get_index
+  // view:"pages" reads this array instead. Direct children of the three page
+  // folders only (the same files the index can name); cached and invalidated
+  // with the rest of the graph.
+  const pages = [];
 
   // Pass 1 — parse every file into a node with frontmatter + outgoing links
   for (const { path: filePath, content } of files) {
@@ -96,6 +124,22 @@ export async function buildGraph(domain, storage) {
 
     const tags = frontmatter.tags || [];
     const outgoing = extractOutgoingLinks(body);
+
+    const parts = filePath.split('/');
+    if (parts.length === 2 && PAGE_FOLDER_TYPE.has(parts[0])) {
+      const entry = {
+        path: filePath,
+        folder: parts[0],
+        slug,
+        type: PAGE_FOLDER_TYPE.get(parts[0]),
+        title: pageTitle(frontmatter, body) || slug,
+      };
+      // Absent fields are OMITTED, never null.
+      if (frontmatter.created) entry.created = frontmatter.created;
+      if (frontmatter.date) entry.date = frontmatter.date;
+      if (frontmatter.source) entry.source = frontmatter.source;
+      pages.push(entry);
+    }
 
     nodes.set(slug, {
       slug,
@@ -139,9 +183,23 @@ export async function buildGraph(domain, storage) {
     .map(t => ({ tag: t.tag, count: t.count, pages: [...t.pages].sort() }))
     .sort((a, b) => b.count - a.count);
 
-  const graph = { builtAt: Date.now(), fileCount: files.length, nodes, edges, tags };
+  pages.sort((a, b) =>
+    (PAGE_FOLDER_ORDER.get(a.folder) - PAGE_FOLDER_ORDER.get(b.folder))
+    || compareSlugCodeUnits(a.slug, b.slug));
+
+  const graph = { builtAt: Date.now(), fileCount: files.length, nodes, edges, tags, pages };
   graphCache.set(domain, graph);
   return graph;
+}
+
+/** A page's title: frontmatter `title:` → first `# ` H1 → '' (the caller falls back to the slug). */
+function pageTitle(frontmatter, body) {
+  if (typeof frontmatter.title === 'string' && frontmatter.title.trim()) return frontmatter.title.trim();
+  for (const line of String(body || '').split('\n')) {
+    const m = /^#\s+(.+?)\s*#*\s*$/.exec(line.replace(/\r$/, ''));
+    if (m) return m[1].trim();
+  }
+  return '';
 }
 
 /** Extract slug from a wiki file path like "entities/tali-rezun.md" → "tali-rezun". */
