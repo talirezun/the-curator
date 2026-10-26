@@ -342,6 +342,10 @@ const HEALTH_CATEGORIES = [
   { key: 'hyphenVariants', label: 'Hyphen variants' },
   { key: 'folderPrefixLinks', label: 'Folder-prefix links' },
   { key: 'missingBacklinks', label: 'Missing backlinks' },
+  // v3.83.0 — index.md vs the files on disk. NOT in AUTO_FIX_TYPES (its fix is
+  // a previewed rebuild, never "Fix all") and never dismissible. One row at
+  // most: the scan sends [] or a single summary object.
+  { key: 'indexDrift', label: 'Index gaps' },
 ];
 // Auto-fixable types (mirrors src/brain/health.js AUTO_FIXABLE minus the
 // pseudo-types orphanLink/semanticDupe, which scanWiki never emits).
@@ -1684,6 +1688,13 @@ function countSafeFixable(report) {
     + (report.missingBacklinks || []).length;
 }
 
+// v3.83.0 — whole numbers with thousands separators, and a size in KB
+// (1 KB = 1000 bytes, as the plan card's copy says). Plain functions so the
+// suites that lift one view function can lift these beside it.
+function fmtInt(n) { return (Number(n) || 0).toLocaleString('en-US'); }
+function fmtKB(bytes) { return Math.max(1, Math.round((Number(bytes) || 0) / 1000)).toLocaleString('en-US') + ' KB'; }
+function countOf(n, one, many) { const v = Number(n) || 0; return fmtInt(v) + ' ' + (v === 1 ? one : many); }
+
 function totalOpenIssues(report) {
   if (!report) return 0;
   let n = 0;
@@ -2822,7 +2833,7 @@ function deleteDomainOutcome(form, result) {
 // themselves (reloadAfterLifecycleChange) and are left to it.
 const WRITES_THAT_RESCAN_THEMSELVES = new Set([
   'health-fix-all-safe', 'health-fix', 'broken-links-apply', 'orphan-rescue-apply',
-  'semantic-dupe-merge', 'semantic-dupes-merge-batch',
+  'semantic-dupe-merge', 'semantic-dupes-merge-batch', 'index-rebuild-apply',
 ]);
 const WRITES_THAT_RELOAD_THE_LIST = new Set(['rename-domain', 'delete-domain']);
 // slug -> Set of write labels seen while that domain's gate was held. Module
@@ -7362,6 +7373,21 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
     );
   }
 
+  // v3.83.0 — the index rebuild: deterministic, free, previewed. Deliberately
+  // NOT a quickAiButton (no sparkles, no cost badge) and not counted in the
+  // "Fix N safe issues" total — it never runs without its own preview card.
+  const drift = Array.isArray(report.indexDrift) ? report.indexDrift[0] : null;
+  if (drift) {
+    const missing = Number(drift.missing) || 0;
+    const what = missing > 0 ? countOf(missing, 'page', 'pages') + ' missing' : countOf(drift.stale, 'stale row', 'stale rows');
+    items.push(
+      '<button class="btn btn-secondary btn-xs dm-quick-btn" data-action="indexPlan"' + (disableAll ? ' disabled' : '') + '>' +
+        (busy === 'indexRebuildPlan' ? buttonRingHtml() : '') +
+        '<span class="dm-quick-label">' + (busy === 'indexRebuildPlan' ? 'Planning…' : 'Rebuild index · ' + escapeHtml(what)) + '</span>' +
+      '</button>'
+    );
+  }
+
   // ── THE AI ACTIONS ARE NEVER HIDDEN (v3.67.0) ──────────────────────────
   // Through v3.66.x, with no provider key, the three ✨ buttons were simply
   // not rendered, and the only trace of them was a sentence — shown ONLY when
@@ -7498,6 +7524,37 @@ function renderPendingPlan(crossMountBusy) {
     const s = p.summary;
     summaryLine = pluralize(s.retarget, 'link') + ' will be repointed to an existing page, ' + pluralize(s.strip, 'link') + ' will have the brackets removed (no matching page found).';
     body = pluralize(s.retargetOccurrences, 'occurrence') + ' repointed, ' + pluralize(s.stripOccurrences, 'occurrence') + ' stripped, across the domain.';
+  } else if (p.kind === 'indexRebuild') {
+    // v3.83.0 — every number, the size change and every warning sit in the
+    // card itself, never behind a <details> (the v3.16.1 rule).
+    const s = p.summary || {};
+    const add = Number(s.add) || 0;
+    const rm = Number(s.removeStale) || 0;
+    const keep = Number(s.keepDescriptions) || 0;
+    const rp = Number(s.repoint) || 0;
+    const mg = Number(s.mergeDuplicates) || 0;
+    summaryLine = countOf(add, 'page', 'pages') + ' will be added to the index, '
+      + countOf(rm, 'row that points to a missing page', 'rows that point to missing pages') + ' will be removed, and '
+      + countOf(keep, 'existing description is', 'existing descriptions are') + ' kept as written.';
+    if (rp > 0) summaryLine += ' ' + countOf(rp, 'row will be', 'rows will be') + ' repointed to the page they name.';
+    if (mg > 0) summaryLine += ' ' + countOf(mg, 'duplicate row will be', 'duplicate rows will be') + ' merged.';
+    const before = Number(s.bytesBefore) || 0;
+    const after = Number(s.bytesAfter) || 0;
+    body = 'New descriptions come from each page’s title or first line — no AI, no cost. '
+      + 'Rows are sorted into Summaries, Entities and Concepts. '
+      + (s.indexExists === false
+        ? 'index.md will be created at ' + fmtKB(after) + '. '
+        : 'index.md ' + (after >= before ? 'grows' : 'shrinks') + ' from ' + fmtKB(before) + ' to ' + fmtKB(after) + '. ')
+      + (Number(s.unlinkable) > 0
+        ? countOf(s.unlinkable, 'page has a file name that cannot be linked', 'pages have file names that cannot be linked')
+          + ' (a leading or trailing space, or | [ ] #) and ' + (Number(s.unlinkable) === 1 ? 'is' : 'are') + ' left out — rename '
+          + (Number(s.unlinkable) === 1 ? 'it' : 'them') + ' to include ' + (Number(s.unlinkable) === 1 ? 'it' : 'them') + '. '
+        : '')
+      + (Number(s.unaddressable) > 0
+        ? countOf(s.unaddressable, 'concept page shares a name with an entity page and is', 'concept pages share a name with an entity page and are')
+          + ' left out — fix Cross-folder duplicates first. '
+        : '')
+      + GIT_UNDO_NOTE;
   } else {
     const s = p.summary;
     summaryLine = pluralize(s.rescuable, 'orphan') + ' found a home; ' + pluralize(s.noHome, 'orphan') + ' left for manual review.';
@@ -7754,6 +7811,20 @@ function renderIssueRow(type, issue, readonly) {
     case 'missingBacklinks':
       main = escapeHtml(issue.summary) + ' ↔ ' + escapeHtml(issue.entity);
       break;
+    case 'indexDrift': {
+      // v3.83.0 — prose, self-contained (the sandboxed row suites hand this
+      // function only escapeHtml). Not dismissible, not fixable in place: the
+      // only action is the same previewed rebuild as the Quick maintenance button.
+      const num = (n) => (Number(n) || 0).toLocaleString('en-US');
+      const missing = Number(issue.missing) || 0;
+      const stale = Number(issue.stale) || 0;
+      main = 'index.md is missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
+        + (stale > 0 ? ', and ' + num(stale) + (stale === 1 ? ' row points' : ' rows point') + ' to ' + (stale === 1 ? 'a page' : 'pages') + ' that no longer ' + (stale === 1 ? 'exists' : 'exist') : '')
+        + '.';
+      meta = 'Rebuilt from the files on disk — free, previewed first. '
+        + '<button class="btn btn-ghost btn-xs dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
+      break;
+    }
     default:
       // L7 fix: every other branch above escapes its interpolated fields;
       // this one didn't, and was unreachable until a 7th health category
@@ -8076,6 +8147,7 @@ function confirmAiAction(slug, action) {
 
 function onQuickAction(slug, action) {
   if (action === 'fixSafe') return confirmFixSafe(slug);
+  if (action === 'indexPlan') return runIndexRebuildPlan(slug);
   if (action === 'brokenLinks' || action === 'orphans' || action === 'semanticDupes') return confirmAiAction(slug, action);
 }
 
@@ -8437,10 +8509,74 @@ async function runOrphansPlan(slug) {
   render(token);
 }
 
+// ── Index rebuild (v3.83.0): deterministic, free, previewed ────────────────
+
+async function runIndexRebuildPlan(slug) {
+  const token = myMountToken;
+  state.busyKey = 'indexRebuildPlan';
+  render(token);
+  try {
+    const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/index/plan', { method: 'POST' });
+    if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
+    else if (!result || result.nothingToDo) {
+      state.pendingPlan = null;
+      state.banner = { tone: 'info', text: 'index.md already lists every page.' };
+    } else {
+      state.pendingPlan = { kind: 'indexRebuild', basis: result.basis, summary: result.summary, samples: result.samples };
+    }
+  } catch (err) {
+    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message };
+  } finally {
+    state.busyKey = null;
+  }
+  render(token);
+}
+
+async function applyIndexRebuildPlan(slug) {
+  const token = myMountToken;
+  const p = state.pendingPlan;
+  if (!p) return;
+  state.busyKey = 'indexRebuildApply';
+  render(token);
+  const releaseGate = beginDomainWrite(slug, 'index-rebuild-apply');
+  try {
+    inFlightWriteSlugs.add(slug);
+    // The server re-plans from disk and writes only if the basis still matches;
+    // the body is the basis and nothing else — never the preview's text.
+    const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/index/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ basis: p.basis }),
+    });
+    if (isCurrentMount(token)) {
+      const s = (result && result.summary) || {};
+      state.banner = result && result.written === false
+        ? { tone: 'info', text: 'index.md already lists every page.' }
+        : { tone: 'success', text: 'Index rebuilt — added ' + countOf(s.add, 'page', 'pages') + ' and removed '
+            + countOf(s.removeStale, 'stale row', 'stale rows') + '. index.md is now ' + fmtKB(s.bytesAfter) + '.' };
+    }
+  } catch (err) {
+    if (isCurrentMount(token)) {
+      state.banner = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
+        ? { tone: 'info', text: err.message }
+        : { tone: 'error', text: 'Could not rebuild the index — ' + err.message };
+    }
+  } finally {
+    if (isCurrentMount(token)) state.pendingPlan = null;
+    inFlightWriteSlugs.delete(slug);
+    releaseGate();
+    state.busyKey = null;
+  }
+  if (!isCurrentMount(token)) return;
+  await loadHealth(slug, token, { silent: true });
+}
+
 async function applyPendingPlan(slug) {
   const token = myMountToken;
   const p = state.pendingPlan;
   if (!p) return;
+  // v3.83.0 — BEFORE the empty-plan guard below: an index plan has no `plan[]`.
+  if (p.kind === 'indexRebuild') return applyIndexRebuildPlan(slug);
   // v3.9.1 — SECOND, INDEPENDENT layer. The plan runners above already refuse to
   // store an empty plan, so this should be unreachable; it is here because the
   // cost of being wrong is asymmetric. `state` is module-scoped and survives
