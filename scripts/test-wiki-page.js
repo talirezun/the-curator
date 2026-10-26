@@ -67,6 +67,7 @@ import {
   fixIssue, scanWiki, fixAllSafe, countLinksToSlug,
   previewSemanticDuplicateMerge, applyOrphanRescue, applyBrokenLinkFixes,
   fixSemanticDuplicatesBatch, findSemanticCandidatePairs,
+  planIndexRebuild, applyIndexRebuild,
 } from '../src/brain/health.js';
 import {
   getWikiPage,
@@ -828,6 +829,45 @@ try {
       'M4 #5: the refusal explains WHAT is wrong (a symlink leaving the wiki), not a bare "Invalid page path"');
     assert(msg.length > 60, 'M4 #6: …and it is actionable prose, not a two-word error');
 
+    // ── Case 11 (v3.83.0): planIndexRebuild / applyIndexRebuild through a
+    // symlinked FOLDER. concepts/ points outside; the rebuild must neither
+    // list nor read those pages, and must write only wiki/index.md.
+    {
+      const plan = await planIndexRebuild('escape-a', { today: '2026-01-01' });
+      const planJson = JSON.stringify(plan);
+      assert(plan.summary.addByFolder.concepts === 0 && !planJson.includes('dupe') && !planJson.includes('victim'),
+        'H1 #36a: planIndexRebuild does not list pages reached through a symlinked folder', planJson.slice(0, 300));
+      const applied = await applyIndexRebuild('escape-a', plan.basis, { today: '2026-01-01' });
+      assert(applied.written === true, 'H1 #36b: applyIndexRebuild writes the in-wiki index.md');
+      const idx = readFileSync(path.join(aWiki, 'index.md'), 'utf8');
+      assert(!idx.includes('dupe') && !idx.includes('victim') && !idx.includes('linksrc'),
+        'H1 #36c: …and the written index names no outside page');
+      unchanged('H1 #36d: no outside file was read into or written by the index rebuild');
+    }
+
+    // ── Case 12 (v3.83.0): index.md ITSELF a symlink out of the wiki ──────
+    {
+      const cWiki = wikiDirFor('escape-c');
+      for (const f of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(cWiki, f), { recursive: true });
+      writeFileSync(path.join(domainsDir, 'escape-c', 'CLAUDE.md'), '# Domain: Escape C\n', 'utf8');
+      writeFileSync(path.join(cWiki, 'entities', 'page-one.md'), '# Page One\n\nA page.\n', 'utf8');
+      const outsideIndex = path.join(work, 'outside-index.md');
+      writeFileSync(outsideIndex, '# Outside index\n\nsensitive-index-line\n', 'utf8');
+      symlinkSync(outsideIndex, path.join(cWiki, 'index.md'));
+      let planCode = null, leakedPlan = '';
+      try { leakedPlan = JSON.stringify(await planIndexRebuild('escape-c')); } catch (e) { planCode = e.code; }
+      assert(planCode === 'INDEX_UNREADABLE' && !leakedPlan.includes('sensitive-index-line'),
+        'H1 #36e: planIndexRebuild REFUSES a symlinked index.md (INDEX_UNREADABLE) and returns none of its bytes', `code ${planCode}`);
+      let applyCode = null;
+      try { await applyIndexRebuild('escape-c', 'a'.repeat(64)); } catch (e) { applyCode = e.code; }
+      assert(applyCode === 'INDEX_UNREADABLE', 'H1 #36f: applyIndexRebuild refuses it too, before any write', `code ${applyCode}`);
+      assert(readFileSync(outsideIndex, 'utf8') === '# Outside index\n\nsensitive-index-line\n',
+        'H1 #36g: the outside file the symlinked index.md points at is byte-identical');
+      const cScan = await scanWiki('escape-c');
+      assert(Array.isArray(cScan.indexDrift) && cScan.indexDrift.length === 0 && cScan.counts.indexCheck === 'unreadable',
+        'H1 #36h: scanWiki does not read through it either (indexDrift [] + counts.indexCheck "unreadable")', JSON.stringify(cScan.counts));
+    }
+
     unchanged('H1 #35: FINAL — after every destructive entry point was exercised, every outside file is byte-identical');
     assert(readFileSync(secret, 'utf8').includes('sensitive-line'), 'H1 #36: the out-of-tree secret file is untouched');
   }
@@ -1273,6 +1313,11 @@ try {
       'applyBrokenLinkFixes', 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
       'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',
+      // v3.83.0: the index rebuild. planIndexRebuild is read-only;
+      // applyIndexRebuild writes ONE file, wiki/index.md, via writeFileAtomic
+      // through wikiFile(). Both have §8b cases (Cases 11 and 12: a symlinked
+      // folder, and index.md itself a symlink out) and §8d positive paths.
+      'planIndexRebuild', 'applyIndexRebuild',
     ].sort();
     assert(JSON.stringify(exports) === JSON.stringify(KNOWN),
       '8c #7: health.js\'s export surface is unchanged — a NEW export must be added to section 8b\'s enumeration and to this list',
@@ -1490,8 +1535,13 @@ try {
         'concepts/rag.md':    '# RAG\n',
         'entities/e.md':      '# E\n\nSee [[concepts/rag]].\n',
       });
+      // v3.83.0: an index that is missing pages must survive "Fix N safe
+      // issues" byte-identical — indexDrift is not AUTO_FIXABLE.
+      writeFileSync(path.join(d.w, 'index.md'), '# Wiki Index — Happy\n\n| Page | Type | Summary |\n|---|---|---|\n', 'utf8');
       const r = await fixAllSafe(d.name);
       assert(r.fixed >= 2, '8d #40: fixAllSafe ("Fix N safe issues") actually fixes multiple types in one pass', JSON.stringify(r.byType));
+      assert(d.read('index.md') === '# Wiki Index — Happy\n\n| Page | Type | Summary |\n|---|---|---|\n',
+        '8d #40b: …and leaves a drifting index.md byte-identical (indexDrift is not auto-fixable)');
       assert(!existsSync(path.join(d.w, 'concepts/google.md')), '8d #41: …the cross-folder dupe is gone');
       assert(d.read('entities/e.md').includes('[[rag]]'), '8d #42: …and the folder-prefix link is normalised');
     }
@@ -1522,6 +1572,36 @@ try {
       assert(scan.counts.entities === 1 && scan.counts.concepts === 1,
         '8d #46: …while the inventory still SEES both pages (a gate that hid them would also pass every "no issues" test above)',
         JSON.stringify(scan.counts));
+    }
+
+    // ── v3.83.0: planIndexRebuild / applyIndexRebuild on a valid domain ────
+    {
+      const d = mk({
+        'entities/alpha.md':    '# Alpha\n\nAlpha is the first page.\n',
+        'concepts/beta.md':     '# Beta\n\nBeta is a concept.\n',
+        'summaries/gamma.md':   '# Gamma Source\n\nA source.\n',
+        'index.md':             '# Wiki Index — Happy\nLast updated: 2025-01-01\n\n| Page | Type | Summary |\n|---|---|---|\n| [[alpha]] | entity | Kept as written |\n| [[ghost]] | concept | gone |\n',
+      });
+      const before = d.read('index.md');
+      const scan = await scanWiki(d.name);
+      assert(scan.indexDrift.length === 1 && scan.indexDrift[0].missing === 2 && scan.indexDrift[0].stale === 1,
+        '8d #47: scanWiki reports index drift (2 pages missing, 1 stale row)', JSON.stringify(scan.indexDrift));
+      const plan = await planIndexRebuild(d.name, { today: '2026-02-02' });
+      assert(plan.nothingToDo === false && plan.summary.add === 2 && plan.summary.removeStale === 1
+        && plan.summary.keepDescriptions === 1 && /^[0-9a-f]{64}$/.test(plan.basis),
+        '8d #48: planIndexRebuild RETURNS a plan (add 2, remove 1 stale, keep 1 description, a hex basis)', JSON.stringify(plan.summary));
+      assert(d.read('index.md') === before, '8d #49: …and wrote nothing');
+      const r = await applyIndexRebuild(d.name, plan.basis, { today: '2026-02-02' });
+      const after = d.read('index.md');
+      assert(r.written === true && after.includes('| [[summaries/gamma]] | summary | Gamma Source |')
+        && after.includes('| [[alpha]] | entity | Kept as written |') && after.includes('| [[beta]] | concept | Beta is a concept. |')
+        && !after.includes('[[ghost]]'),
+        '8d #50: applyIndexRebuild writes the rebuilt index (new rows derived, existing description kept, stale row gone)', after);
+      const rescan = await scanWiki(d.name);
+      assert(rescan.indexDrift.length === 0 && rescan.counts.indexRows === 3,
+        '8d #51: …and a rescan (cache on) reports no drift', JSON.stringify(rescan.counts));
+      const again = await planIndexRebuild(d.name);
+      assert(again.nothingToDo === true, '8d #52: …and a second plan has nothing to do');
     }
   }
 

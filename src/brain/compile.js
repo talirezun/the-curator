@@ -32,9 +32,9 @@ import { parseJSON, isOutputTokenLimit, makeUsageAccumulator, aggregateWarnings 
 // MEASURED on this branch before the fix: test-health-ai-pricing crashed at
 // load. test-next-compile-estimate §11 loads every module on the cycle as
 // the FIRST import of a fresh process, so a static import back here reds.
+import { ensureRowsInIndex, ensurePagesInIndex, indexEntriesFrom } from './wiki-index.js';
 import {
   readSchema,
-  readIndex,
   readConversation,
   wikiPath,
   writePage,
@@ -231,7 +231,7 @@ Be much more economical this time:
   // budget and surfaced as "hit the output token limit (65536 tokens)". The LLM
   // does not need the index: link grounding comes from the entity/concept
   // filename lists above, the summary path is forced below, and the app updates
-  // index.md programmatically via mergeIntoIndex AFTER this call (the LLM is told
+  // index.md programmatically via ensurePagesInIndex AFTER this call (the LLM is told
   // not to touch it). Removing the index is the root-cause fix — do not re-add it.
   return `Today's date: ${today}
 ${conciseDirective}
@@ -305,90 +305,28 @@ no index.md content — the app maintains the index itself):
 }
 
 /**
- * Programmatically merge new pages into the existing index.md.
+ * COMPAT WRAPPER (v3.83.0) — kept exported so existing callers and suites keep
+ * importing it; the logic lives in src/brain/wiki-index.js.
  *
- * Replaces the LLM-driven index regeneration that blew the output budget on
- * large domains (a 20 KB markdown table can saturate the response with one
- * field). Reads the existing index, appends rows for any newly-created pages
- * that aren't already in the table, leaves all existing rows untouched.
+ * Returns the index text with a row added for every page in `writeRecords`
+ * (ANY status — created, updated or unchanged) whose canonical path has no row
+ * yet, or null when nothing is missing. Before v3.83.0 only `created` pages
+ * were added, so a page whose index write was ever lost (or one written by a
+ * redirect into an existing file) never got a row back.
+ *
+ * Pure: it sees only `existingIndex`, not the disk. The real write paths
+ * (ingest, compile, compile_to_wiki) call `ensurePagesInIndex`, which re-reads
+ * index.md at merge time and checks coverage against the files on disk.
  *
  * @param {string}   existingIndex  current index.md content
  * @param {object[]} pages          [{path, content, summary}] from the LLM
  * @param {object[]} writeRecords   [{originalPath, record}] aligned 1:1 with `pages`
- *                                  so we can look up summaries by post-write
- *                                  canonical path (writePage may redirect via
- *                                  cross-folder dedup, hyphen normalisation, etc.)
  */
 export function mergeIntoIndex(existingIndex, pages, writeRecords) {
-  // Build a quick lookup of pages already mentioned in the index
-  const mentioned = new Set();
-  const wikiLinkRe = /\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g;
-  let m;
-  while ((m = wikiLinkRe.exec(existingIndex)) !== null) {
-    // Strip folder prefix (summaries/foo → foo) for normalised comparison
-    const slug = m[1].split('/').pop();
-    mentioned.add(slug);
-  }
-
-  // Pair the LLM's per-page summary with the canonical post-write path. The
-  // LLM emits {path, content, summary}; writePage may have redirected `path`
-  // (e.g. concepts/Google.md → entities/google.md), so we map by record index
-  // — pages[i] produced writeRecords[i].
-  const summaryByCanon = new Map();
-  for (let i = 0; i < writeRecords.length; i++) {
-    const entry = writeRecords[i];
-    if (!entry || !entry.record) continue;
-    const llmSummary = pages[i] && pages[i].summary;
-    if (llmSummary) summaryByCanon.set(entry.record.canonPath, llmSummary);
-  }
-
-  // Sanitise a free-form LLM summary string for safe inclusion in a markdown
-  // table cell: strip pipes (column separator), strip newlines (row break),
-  // collapse whitespace, cap length.
-  const cellSafe = (s) => String(s || '')
-    .replace(/[|\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160);
-
-  const newRows = [];
-  for (const entry of writeRecords) {
-    if (!entry || !entry.record || entry.record.status !== 'created') continue;
-    const canon = entry.record.canonPath;
-    const slug = canon.replace(/\.md$/, '').split('/').pop();
-    if (mentioned.has(slug)) continue; // already in index from a prior ingest
-
-    const folder = canon.split('/')[0]; // entities | concepts | summaries
-    const type =
-      folder === 'entities' ? 'entity' :
-      folder === 'concepts' ? 'concept' :
-      'summary';
-
-    const linkSlug = folder === 'summaries' ? `summaries/${slug}` : slug;
-    const summary = cellSafe(summaryByCanon.get(canon));
-    newRows.push(`| [[${linkSlug}]] | ${type} | ${summary} |`);
-  }
-
-  if (newRows.length === 0) {
-    // Nothing new to add — return null so the caller can skip the index write.
-    return null;
-  }
-
-  // Detect a markdown table and append rows after the last table row.
-  // If the existing index has no table, append new rows under a heading.
-  const lines = existingIndex.split('\n');
-  let lastTableLine = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\|/.test(lines[i])) lastTableLine = i;
-  }
-
-  if (lastTableLine >= 0) {
-    lines.splice(lastTableLine + 1, 0, ...newRows);
-    return lines.join('\n');
-  }
-
-  // No table found — append a fresh table at the end.
-  return existingIndex.trimEnd() + `\n\n## New pages\n\n| Page | Type | Summary |\n|---|---|---|\n${newRows.join('\n')}\n`;
+  const entries = indexEntriesFrom(pages, writeRecords)
+    .map((e) => ({ ...e, description: e.description ?? '' }));
+  return ensureRowsInIndex(typeof existingIndex === 'string' ? existingIndex : '', entries,
+    { today: localDateStamp() }).text;
 }
 
 /** spentFromUsage, reached at call time — see the import note at the top. */
@@ -427,7 +365,8 @@ export async function compileConversation(domain, conversationId, onProgress = (
   // 3. Load domain context
   progress(10, 'Loading domain context…');
   const schema = await readSchema(domain);
-  const index = await readIndex(domain);
+  // index.md is NOT read here (v3.83.0): it is not a prompt input (Fix #1, see
+  // buildCompilePrompt), and the row merge at step 10 re-reads it at merge time.
 
   const wikiDir = wikiPath(domain);
   const existingFiles = {
@@ -468,8 +407,8 @@ export async function compileConversation(domain, conversationId, onProgress = (
     try {
       raw = (await llm(
         schema,
-        // Note: `index` is intentionally NOT passed to the prompt (Fix #1, see
-        // buildCompilePrompt). It is still read above for mergeIntoIndex below.
+        // Note: the index is intentionally NOT passed to the prompt (Fix #1, see
+        // buildCompilePrompt).
         buildCompilePrompt({ today, existingFiles, conversation, summaryPath, mode: attempt.mode }),
         65536,
         'json',
@@ -547,7 +486,7 @@ export async function compileConversation(domain, conversationId, onProgress = (
 
   // 8. Write all pages — collect canonical paths and change records.
   //    `writeRecords` is aligned 1:1 with `result.pages` (or null when writePage
-  //    refused the input). mergeIntoIndex uses this alignment to look up the
+  //    refused the input). indexEntriesFrom uses this alignment to look up the
   //    LLM-supplied `page.summary` by the post-write canonical path, since
   //    writePage may have redirected (cross-folder dedup, hyphen normalisation).
   progress(85, `Writing ${result.pages.length} pages to wiki…`);
@@ -575,17 +514,15 @@ export async function compileConversation(domain, conversationId, onProgress = (
     await syncSummaryEntities(domain, summaryCanonPath, canonicalPaths);
   }
 
-  // 10. Programmatically append new pages to the existing index.md.
+  // 10. Programmatically add rows to index.md.
   //     We do NOT ask the LLM to regenerate the index — on large domains the
   //     20+ KB markdown table saturates the output budget and breaks JSON.
-  //     Instead, we read the current index, append rows for any pages this
-  //     compile actually CREATED (not updates), and write it back.
+  //     v3.83.0: every page this compile touched (any status) that has no row
+  //     by canonical path gets one; index.md is re-read NOW, not merged into
+  //     the copy read at step 3.
   progress(96, 'Updating index…');
-  const mergedIndex = mergeIntoIndex(index, result.pages, writeRecords);
-  if (mergedIndex) {
-    const indexRecord = await writePage(domain, 'index.md', mergedIndex);
-    if (indexRecord) changes.push(indexRecord);
-  }
+  const indexRecord = await ensurePagesInIndex(domain, indexEntriesFrom(result.pages, writeRecords));
+  if (indexRecord) changes.push(indexRecord);
 
   // 11. Append to log
   const compileTitle = result.title || conversation.title || 'Compiled conversation';

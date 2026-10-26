@@ -1025,7 +1025,7 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
 // enumerate. Only running the code and observing the registry can tell them
 // apart, which is exactly the asymmetry between the two axes below.
 //
-// WRITABILITY — ENFORCED BEHAVIOURALLY for all 8 routes in the class.
+// WRITABILITY — ENFORCED BEHAVIOURALLY for all 10 routes in the class (v3.83.0: +/index/plan, +/index/apply).
 //   Section 13 drives every writability-class route over real HTTP against a
 //   real read-only mirror domain and asserts the ACTUAL refusal (status,
 //   message, zero side effects). A present-but-inert `assertWritableDomain`
@@ -1052,7 +1052,7 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
 //   ai-suggest, /:domain/semantic-dupes/scan, /:domain/semantic-dupes/preview,
 //   /:domain/broken-links/plan, /:domain/orphans/plan, /:domain/dismiss,
 //   /:domain/undismiss, /:domain/fix-all-safe, /:domain/broken-links/apply,
-//   /:domain/orphans/apply, /:domain/semantic-dupes/merge-batch. For these, a
+//   /:domain/orphans/apply, /:domain/semantic-dupes/merge-batch, /:domain/index/apply. For these, a
 //   present-but-inert registerWrite/acquireFileLock/isUpdateInProgress call
 //   (dead-code-wrapped, wrongly-scoped, or otherwise never actually reached)
 //   would NOT be caught by this suite today — only a guard token that is
@@ -1079,6 +1079,11 @@ const HEALTH_GUARD_CLASSES = [
         'runs the deterministic pre-pass + AI batches and streams the plan; read-only — the write happens in the separate, guarded /broken-links/apply route.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
         'same shape as broken-links/plan — read-only planning stage; the write happens in the separate, guarded /orphans/apply route.' },
+      // v3.83.0. Exempt from CONCURRENCY only — it still refuses a mirror
+      // (writability axis below), because the rebuild it previews could never
+      // be applied there.
+      { method: 'POST', path: '/:domain/index/plan', reason:
+        'deterministic, read-only planning stage; the write happens in the separate, guarded /index/apply route.' },
       // The two below are exempt from CONCURRENCY only. They remain fully
       // in scope for the writability axis — that separation is the whole
       // point of splitting the classes, and its absence is what let the
@@ -1332,7 +1337,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 14,
+    expectedMutatingCount: 16, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via
@@ -1713,6 +1718,11 @@ const WRITABILITY_ROUTES = [
   { method: 'POST', path: '/semantic-dupes/merge-batch', body: {},                             label: '/semantic-dupes/merge-batch' },
   { method: 'POST', path: '/dismiss',                    body: dismissBody,                    label: '/dismiss' },
   { method: 'POST', path: '/undismiss',                  body: dismissBody,                    label: '/undismiss' },
+  // v3.83.0 — the index rebuild. /index/plan is read-only but still refuses a
+  // mirror (nothing it previews could be applied there); /index/apply is in
+  // both axes. The mirror refusal precedes body validation on both.
+  { method: 'POST', path: '/index/plan',                 body: {},                             label: '/index/plan' },
+  { method: 'POST', path: '/index/apply',                body: {},                             label: '/index/apply' },
 ];
 
 console.log('\n=== 13. BEHAVIOURAL: every writability-class route refuses a read-only mirror ===');

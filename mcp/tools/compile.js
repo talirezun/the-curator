@@ -2,7 +2,7 @@
  * compile_to_wiki — v2.5.2 MCP write tool
  *
  * The primary write tool: turns conversation findings into permanent wiki
- * pages. Reuses the same writePage → syncSummaryEntities → mergeIntoIndex
+ * pages. Reuses the same writePage → syncSummaryEntities → ensurePagesInIndex
  * pipeline as the in-app Compile feature (v2.5.0). The MCP imports those
  * functions directly — no parallel write logic.
  *
@@ -22,7 +22,6 @@ import { existsSync } from 'fs';
 import { readdir } from 'fs/promises';
 import {
   readSchema,
-  readIndex,
   wikiPath,
   domainPath,
   writePage,
@@ -34,6 +33,7 @@ import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 import { acquireFileLock, isFileLocked } from '../../src/brain/write-registry.js';
 import { invalidateGraph } from '../graph.js';
+import { ensurePagesInIndex, deriveDescription, cellSafe } from '../../src/brain/wiki-index.js';
 
 // Hard caps — defense against runaway LLM output. Generous enough to never
 // bite a real compile; small enough that a confused or malicious model can't
@@ -63,7 +63,7 @@ export const compileToWikiDefinition = {
     "Pass dry_run: true on the first call to preview what will be written, present the plan to the user, then call again with dry_run: false to commit. " +
     "" +
     "GROUNDING WIKILINKS (v2.5.5+): every [[wikilink]] you write MUST reference either (a) an existing page in the wiki, or (b) a page you are creating in this same call's additional_pages. " +
-    "Inventing links to pages that do not exist creates broken links the user has to fix later. Before composing the summary, call get_index for the target domain to see which slugs already exist, then write [[slug]] links that reference those exact slugs. " +
+    "Inventing links to pages that do not exist creates broken links the user has to fix later. Before composing the summary, call get_index with view: \"pages\" (type: \"entity\" and type: \"concept\" keep it small) to see which slugs exist on disk, then write [[slug]] links that reference those exact slugs. " +
     "If a concept comes up that does NOT have an existing page, your options are: (1) add it to additional_pages so it gets created, or (2) write the term as plain text without [[brackets]]. " +
     "The response includes a `links` field with `resolved`, `normalized` (variant slugs auto-fixed), and `broken` counts so you can verify your work and decide whether to retry. " +
     "Use broken_link_policy='refuse' on fresh / new domains to have the call fail loudly if any link is broken — you'll get a sample of valid slugs back to retry with.",
@@ -154,42 +154,6 @@ function validateAdditionalPath(p) {
   if (REFUSED_SLUGS.has(slug) || REFUSED_FILES.has(file)) return 'path targets a reserved file';
   if (!/^[a-z0-9][a-z0-9\-]*$/i.test(slug)) return `slug "${slug}" must be lowercase alphanumeric with hyphens`;
   return null;
-}
-
-// Programmatic index merge — same logic as src/brain/compile.js, kept here to
-// keep the MCP tool fully self-contained without exporting compile.js's
-// private helper (the in-app compile route's mergeIntoIndex is not exported
-// publicly). If we ever extract it, the MCP tool should switch to the shared
-// import — for now this is a deliberate small duplication.
-function mergeIntoIndex(existingIndex, writeRecords) {
-  const mentioned = new Set();
-  const wikiLinkRe = /\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g;
-  let m;
-  while ((m = wikiLinkRe.exec(existingIndex)) !== null) {
-    mentioned.add(m[1].split('/').pop());
-  }
-  const cellSafe = (s) => String(s || '').replace(/[|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
-  const newRows = [];
-  for (const entry of writeRecords) {
-    if (!entry || !entry.record || entry.record.status !== 'created') continue;
-    const canon = entry.record.canonPath;
-    const slug = canon.replace(/\.md$/, '').split('/').pop();
-    if (mentioned.has(slug)) continue;
-    const folder = canon.split('/')[0];
-    const type = folder === 'entities' ? 'entity' : folder === 'concepts' ? 'concept' : 'summary';
-    const linkSlug = folder === 'summaries' ? `summaries/${slug}` : slug;
-    const summary = cellSafe(entry.summaryHint);
-    newRows.push(`| [[${linkSlug}]] | ${type} | ${summary} |`);
-  }
-  if (newRows.length === 0) return null;
-  const lines = existingIndex.split('\n');
-  let lastTableLine = -1;
-  for (let i = 0; i < lines.length; i++) if (/^\|/.test(lines[i])) lastTableLine = i;
-  if (lastTableLine >= 0) {
-    lines.splice(lastTableLine + 1, 0, ...newRows);
-    return lines.join('\n');
-  }
-  return existingIndex.trimEnd() + `\n\n## New pages\n\n| Page | Type | Summary |\n|---|---|---|\n${newRows.join('\n')}\n`;
 }
 
 // Build a human-readable one-line "report" Claude can render in chat without
@@ -620,9 +584,11 @@ export async function compileToWikiHandler(args, storage) {
       writeRecords.push({
         originalPath: p.path,
         record: rec,
-        // Use the first non-empty line of the content (after the heading) as
-        // the index summary — small heuristic, keeps index rows informative.
-        summaryHint: extractFirstSentence(p.content),
+        // v3.83.0: the page's first body sentence, through the SAME
+        // deriveDescription Health's rebuild uses — it skips every heading
+        // (the old first-line heuristic kept `## Overview` text, which is how
+        // rows like "Overview ARIA is…" got into index.md).
+        summaryHint: deriveDescription(p.content, p.path),
       });
     }
   }
@@ -634,13 +600,15 @@ export async function compileToWikiHandler(args, storage) {
     await syncSummaryEntities(domain, summaryCanon, canonicalPaths);
   }
 
-  // 4d. Programmatic index merge (no LLM call — same approach as v2.5.0 compile)
-  const existingIndex = await readIndex(domain);
-  const mergedIndex = mergeIntoIndex(existingIndex, writeRecords);
-  if (mergedIndex) {
-    const indexRecord = await writePage(domain, 'index.md', mergedIndex);
-    if (indexRecord) writeRecords.push({ originalPath: 'index.md', record: indexRecord });
-  }
+  // 4d. Programmatic index merge (no LLM call). v3.83.0: the SHARED helper
+  //     (src/brain/wiki-index.js) the app's ingest and compile use — every
+  //     page this call touched (any status) that has no row by canonical path
+  //     gets one; index.md is re-read at merge time.
+  const indexRecord = await ensurePagesInIndex(domain, writeRecords.map(w => ({
+    canonPath: w.record.canonPath,
+    description: w.summaryHint ? cellSafe(w.summaryHint) : null,
+  })));
+  if (indexRecord) writeRecords.push({ originalPath: 'index.md', record: indexRecord });
 
   // 4e. Append to log
   const pageList = canonicalPaths.map(p => `  - ${p}`).join('\n');
@@ -718,15 +686,4 @@ export async function compileToWikiHandler(args, storage) {
     try { invalidateGraph(domain); } catch { /* never let a cache drop fail a write */ }
   }
   return mcpResult;
-}
-
-function extractFirstSentence(content) {
-  // Strip the leading heading (# Title) and any blank lines, take the first
-  // sentence-ish chunk for the index summary cell.
-  const stripped = content
-    .split('\n')
-    .filter(l => !l.startsWith('# ') && l.trim())
-    .join(' ');
-  const firstSentence = stripped.split(/[.!?]/)[0] || stripped;
-  return firstSentence.replace(/[*_`#\[\]]/g, '').slice(0, 160).trim();
 }

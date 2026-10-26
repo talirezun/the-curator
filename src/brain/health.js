@@ -18,7 +18,14 @@ import { readFile, writeFile, readdir, rm, stat, lstat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
-import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
+import { wikiPath, injectSingleBacklink, injectRelatedLink, isDomainReadonly } from './files.js';
+import { localDateStamp } from './local-date.js';
+// v3.83.0: index.md as DATA. The pure work (parse, canonical-path coverage,
+// rebuild composition, descriptions) lives in wiki-index.js; every filesystem
+// touch for it stays HERE, behind wikiFile(), like every other Health path.
+import {
+  parseIndex, buildInventory, indexCoverage, rebuildIndexText, deriveDescription,
+} from './wiki-index.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
 // Path chokepoint — see the comment above the fix handlers below. Imported,
@@ -365,6 +372,12 @@ async function walkMdFiles(rootDir) {
 // hashed value (not skipped) so the first dismissal ever written — which
 // creates the file — is a signature change, not a silent hit.
 //
+// v3.83.0: `index.md` IS now read — the `indexDrift` check parses it — so it
+// is stated explicitly too (absence hashed, like the dismissal store). Without
+// it, an index rebuild (which writes ONLY index.md) would leave the cached
+// "N pages missing" on screen and the fix would look broken. `log.md` is
+// still never read by the scan and stays out.
+//
 // BOUND. `healthScanCache` holds at most HEALTH_SCAN_CACHE_MAX domains
 // (keyed by resolved wiki directory, not domain name, so a renamed-then-
 // recreated domain never reuses a stale slot by accident) with simple LRU:
@@ -513,6 +526,16 @@ async function computeWikiSignature(wikiDir) {
   }
   lines.push(`.health-dismissed.jsonl:${dSt ? `${dSt.mtimeNs}:${dSt.size}` : 'absent'}`);
 
+  // index.md — read by the scan's indexDrift check (v3.83.0). Pass 1 skips it
+  // by name, so it is stated here, once. Absent and unreadable (a symlink out
+  // of the wiki, refused by wikiFile) are distinct hashed values.
+  const indexAbs = wikiFile(wikiDir, 'index.md');
+  let iSt = null;
+  if (indexAbs) {
+    try { iSt = await stat(indexAbs, { bigint: true }); } catch { iSt = null; }
+  }
+  lines.push(`index.md:${!indexAbs ? 'unreadable' : iSt ? `${iSt.mtimeNs}:${iSt.size}` : 'absent'}`);
+
   lines.sort();
   return createHash('sha1').update(lines.join('\n')).digest('hex');
 }
@@ -562,6 +585,10 @@ async function scanWikiUncached(domain) {
   const entityFiles  = await listMd(wikiDir, 'entities');
   const conceptFiles = await listMd(wikiDir, 'concepts');
   const summaryFiles = await listMd(wikiDir, 'summaries');
+
+  // v3.83.0 — does index.md list every page? (CONTRACT §3.2). One read + parse
+  // of index.md; no page body is read for it.
+  const indexCheck = await checkIndexDrift(wikiDir, entityFiles, conceptFiles, summaryFiles);
 
   // Slug sets (bare filename without .md)
   const entitySlugs  = new Set(entityFiles.map(f => f.slice(0, -3)));
@@ -768,6 +795,7 @@ async function scanWikiUncached(domain) {
       concepts: conceptFiles.length,
       summaries: summaryFiles.length,
       dismissed: totalDismissed,
+      ...indexCheck.counts,
     },
     brokenLinks:       filtered.brokenLinks,
     orphans:           filtered.orphans,
@@ -775,7 +803,179 @@ async function scanWikiUncached(domain) {
     crossFolderDupes:  filtered.crossFolderDupes,
     hyphenVariants:    filtered.hyphenVariants,
     missingBacklinks:  filtered.missingBacklinks,
+    // NOT auto-fixable, NOT dismissible: one row, rebuilt by the user through
+    // the plan/apply routes (planIndexRebuild / applyIndexRebuild below).
+    indexDrift:        indexCheck.indexDrift,
   };
+}
+
+// ── index.md coverage and rebuild (v3.83.0) ─────────────────────────────────
+
+const INDEX_SAMPLE_MAX = 10;
+
+/**
+ * Read index.md through the gate. `{ unreadable: true }` when wikiFile refuses
+ * it (a symlink that leaves the wiki, or a dangling one) or it is not a
+ * readable file; `{ text: null }` when it does not exist.
+ */
+async function readIndexFile(wikiDir) {
+  const indexAbs = wikiFile(wikiDir, 'index.md');
+  if (!indexAbs) return { unreadable: true, text: null };
+  let text = null;
+  try {
+    text = await readFile(indexAbs, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { unreadable: false, text: null };
+    return { unreadable: true, text: null };
+  }
+  return { unreadable: false, text };
+}
+
+/** missing + stale + duplicates + repointable — the ONE predicate for drift,
+ *  shared by the scan row and the plan's `nothingToDo` so they never disagree. */
+function driftTotal(cov) {
+  return cov.missing.length + cov.stale.length + cov.duplicates.length + cov.repointable.length;
+}
+
+/**
+ * The scan's indexDrift row (CONTRACT §3.2), from the three listings the scan
+ * already made. Type-cell-only differences never raise a row. The read-only
+ * mirror override is applied in scanWiki (it depends on CLAUDE.md, which the
+ * cache signature does not cover).
+ */
+async function checkIndexDrift(wikiDir, entityFiles, conceptFiles, summaryFiles) {
+  const state = await readIndexFile(wikiDir);
+  if (state.unreadable) return { indexDrift: [], counts: { indexCheck: 'unreadable' } };
+  const inventory = buildInventory({ entities: entityFiles, concepts: conceptFiles, summaries: summaryFiles });
+  const parsed = parseIndex(state.text ?? '');
+  const cov = indexCoverage(parsed, inventory);
+  const counts = { indexRows: parsed.rows.length };
+  if (driftTotal(cov) === 0) return { indexDrift: [], counts };
+  const missingByFolder = { entities: 0, concepts: 0, summaries: 0 };
+  for (const p of cov.missing) missingByFolder[p.slice(0, p.indexOf('/'))]++;
+  return {
+    counts,
+    indexDrift: [{
+      missing: cov.missing.length,
+      missingByFolder,
+      stale: cov.stale.length,
+      duplicates: cov.duplicates.length,
+      repointable: cov.repointable.length,
+      unlinkable: cov.unlinkable.length,
+      unaddressable: cov.unaddressable.length,
+      indexExists: state.text !== null,
+      indexBytes: state.text === null ? 0 : Buffer.byteLength(state.text, 'utf8'),
+      sampleMissing: cov.missing.slice(0, INDEX_SAMPLE_MAX),
+      sampleStale: cov.stale.slice(0, INDEX_SAMPLE_MAX).map(r => '[[' + r.target + ']]'),
+    }],
+  };
+}
+
+/**
+ * A read-only Shared Brain mirror's index.md is the creation stub and is never
+ * maintained (pull writes only the three page folders), so the check would be
+ * permanently red with no possible fix: it is skipped there.
+ */
+async function applyMirrorIndexCheck(domain, report) {
+  let readonly = false;
+  try { readonly = await isDomainReadonly(domain); } catch { readonly = false; }
+  if (!readonly) return report;
+  report.indexDrift = [];
+  if (report.counts) {
+    delete report.counts.indexRows;
+    report.counts.indexCheck = 'mirror';
+  }
+  return report;
+}
+
+/** INDEX_UNREADABLE — thrown, never a silent fallback to an empty index. */
+function indexUnreadableError() {
+  const err = new Error('index.md cannot be read safely: it is a symlink that leaves the wiki, or not a readable file. Nothing was read or written. Replace it with a regular file inside the wiki, then try again.');
+  err.code = 'INDEX_UNREADABLE';
+  return err;
+}
+
+/**
+ * Compose the rebuild from disk. READ-ONLY. Reads index.md, the three folder
+ * listings, and the body of each MISSING page only (for its description). The
+ * rebuilt text is returned for applyIndexRebuild; the plan never sends it.
+ */
+async function composeIndexRebuild(wikiDir, opts) {
+  const state = await readIndexFile(wikiDir);
+  if (state.unreadable) throw indexUnreadableError();
+  const inventory = buildInventory({
+    entities: await listMd(wikiDir, 'entities'),
+    concepts: await listMd(wikiDir, 'concepts'),
+    summaries: await listMd(wikiDir, 'summaries'),
+  });
+  const cov = indexCoverage(parseIndex(state.text ?? ''), inventory);
+  const derived = new Map();
+  for (const rel of cov.missing) {
+    const folder = rel.slice(0, rel.indexOf('/'));
+    const name = rel.slice(rel.indexOf('/') + 1);
+    const pageAbs = wikiFile(wikiDir, folder, name);
+    let content = null;
+    if (pageAbs) {
+      try { content = await readFile(pageAbs, 'utf8'); } catch { content = null; }
+    }
+    derived.set(rel, content === null ? '' : deriveDescription(content, rel));
+  }
+  const today = (opts && opts.today) || localDateStamp();
+  const displayName = (opts && opts.displayName) || undefined;
+  const rebuilt = rebuildIndexText(state.text, inventory, derived, { today, displayName });
+  // basis: the index as it is NOW + the rebuild with its date blanked, so a
+  // preview at 23:59 applied at 00:01 is not stale, but any page or index
+  // change is.
+  const dateless = rebuilt.text.replace(/^Last updated:.*$/m, 'Last updated:');
+  const basis = createHash('sha256')
+    .update(state.text === null ? 'absent' : 'present\n' + state.text)
+    .update('\0')
+    .update(dateless)
+    .digest('hex');
+  return {
+    basis,
+    nothingToDo: driftTotal(cov) === 0,
+    summary: rebuilt.summary,
+    samples: rebuilt.samples,
+    text: rebuilt.text,
+  };
+}
+
+/**
+ * Plan an index.md rebuild (CONTRACT §3.3). READ-ONLY — writes nothing and
+ * never calls an LLM. Throws {code:'INDEX_UNREADABLE'} when an existing
+ * index.md is a symlink out of the wiki. opts: { displayName, today }
+ * @returns {Promise<{ basis: string, nothingToDo: boolean, summary: object, samples: object }>}
+ */
+export async function planIndexRebuild(domain, opts = {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+  const plan = await composeIndexRebuild(wikiDir, opts);
+  return { basis: plan.basis, nothingToDo: plan.nothingToDo, summary: plan.summary, samples: plan.samples };
+}
+
+/**
+ * Apply an index.md rebuild. RE-PLANS from disk and writes only when the fresh
+ * basis equals the caller's — the caller never supplies index text, so the
+ * server only ever writes what it composed itself. Throws
+ * {code:'INDEX_PLAN_STALE'} on a mismatch, with nothing written. The caller
+ * holds the domain's write lock (the route does).
+ * @returns {Promise<{ written: boolean, summary: object }>}
+ */
+export async function applyIndexRebuild(domain, basis, opts = {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+  const plan = await composeIndexRebuild(wikiDir, opts);
+  if (typeof basis !== 'string' || basis !== plan.basis) {
+    const err = new Error('The wiki changed after this preview, so nothing was written. Preview the rebuild again.');
+    err.code = 'INDEX_PLAN_STALE';
+    throw err;
+  }
+  if (plan.nothingToDo) return { written: false, summary: plan.summary };
+  const indexOut = wikiFile(wikiDir, 'index.md');
+  if (!indexOut) throw indexUnreadableError();
+  await writeFileAtomic(indexOut, plan.text, 'utf8');
+  return { written: true, summary: plan.summary };
 }
 
 /**
@@ -805,15 +1005,17 @@ export async function scanWiki(domain, opts = {}) {
     throw new Error(`No wiki found for domain: ${domain}`);
   }
 
-  if (noCache) return scanWikiUncached(domain);
+  if (noCache) return applyMirrorIndexCheck(domain, await scanWikiUncached(domain));
 
   const signature = await computeWikiSignature(wikiDir);
   const hit = cacheGet(wikiDir, signature);
-  if (hit) return structuredClone(hit);
+  if (hit) return applyMirrorIndexCheck(domain, structuredClone(hit));
 
   const report = await scanWikiUncached(domain);
   cacheSet(wikiDir, signature, report);
-  return report;
+  // After cacheSet (which stores its own clone): the mirror override never
+  // reaches the cache, so a readonly flag that flips is seen on the next scan.
+  return applyMirrorIndexCheck(domain, report);
 }
 
 // ── Fix handlers ────────────────────────────────────────────────────────────

@@ -13,7 +13,11 @@ import {
   syncSummaryEntities,
   mergeWikiPage,
 } from './files.js';
-import { mergeIntoIndex } from './compile.js';
+// v3.83.0: index.md is DATA — rows are ensured, never LLM-written, through the
+// one shared module (ingest, compile and the MCP's compile_to_wiki all use it).
+// Importing it here, not compile.js, also removes ingest.js → compile.js from
+// the import graph (compile.js imports ingest.js; nothing here needed compile).
+import { parseIndex, ensurePagesInIndex, indexEntriesFrom } from './wiki-index.js';
 // Reused, not reimplemented: the same tokeniser the Shared Brain delta/synthesis
 // code uses (lowercase, punctuation-stripped, stop-worded). Keeping one
 // tokeniser means "relevant to this source" means the same thing everywhere.
@@ -126,11 +130,19 @@ export function computeSummarySlugFromSource(originalName) {
  *     128,000 + 40,300 + 5,000 + 1,000 + 64,000 = 238,300  ✗ over the window
  *
  * So this valve BOUNDS THE LARGEST CONTROLLABLE TERM; it does not on its own
- * guarantee the request fits. It cannot: index.md grows with the domain too and
- * has no cap. If a domain ever gets large enough to overflow in practice, the
- * index is the next term to bound, not this one — lowering this budget re-enters
- * the measured-regression zone described above for a term that is no longer the
- * biggest one.
+ * guarantee the request fits. Until v3.83.0 it could not: index.md grows with
+ * the domain too and had no cap. v3.83.0 bounded it — the index is the term
+ * that was "next to bound", not this one — with INDEX_PROMPT_BUDGET_CHARS
+ * (150,000 chars ≈ 50,000 tok at 3 c/t; see indexForPrompt below). With both
+ * valves the REALISTIC case is now bounded whatever the index grows to:
+ *
+ *     64,000 (one list at the cap) + 50,000 (index at its cap) + 5,000
+ *       + 1,000 + 64,000 = 184,000  ✓ < 200,000
+ *
+ * (The SYMMETRIC worst case stays over — 128,000 + 50,000 + … = 248,000 — and
+ * stays a shape no real domain has.) Lowering THIS budget still re-enters the
+ * measured-regression zone described above; the index cap is where prompt
+ * size is bounded now.
  *
  * It does NOT fire on anything real today: the largest list we have anywhere is
  * the articles domain's 2,651 concepts at ~112,200 chars — 70% of the budget,
@@ -254,6 +266,94 @@ export function capExistingFilesForPrompt(existingFiles, sourceText, budgetChars
     }
   }
   return { files, warnings };
+}
+
+// ── index.md in the outline / single-pass prompts (v3.83.0) ─────────────────
+//
+// Health's index rebuild and the drift prevention below (every touched page is
+// ensured into index.md) make index.md COMPLETE — on articles that is ~3,500
+// rows, ~614 KB, ≈ 205k tokens at the 3 chars/token budgeted above. Pasted
+// verbatim it would overflow Haiku 4.5's 200k window on every articles ingest.
+// So the index embedded in a prompt is capped. The full slug inventory stays
+// uncapped and is what grounds links (see SLUG_INVENTORY_BUDGET_CHARS); what
+// the cap drops is the DESCRIPTIONS of the pages least related to the source.
+//
+// 150,000 sits just above today's largest index (projects, 146,744 chars), so
+// NO domain's prompt changes until its index grows past it or is rebuilt: at
+// or under the budget the index string is returned UNCHANGED (same string) and
+// every prompt is byte-identical to v3.82.1. No user-visible warning when it
+// fires — nothing the MODEL produced is dropped (the warn-on-drop rule is about
+// model output) and it would fire on every large-domain ingest — one stderr
+// line per ingest instead (ingestFile).
+
+/** Character budget for the index.md text embedded in the outline / single-pass prompts. */
+export const INDEX_PROMPT_BUDGET_CHARS = 150_000;
+
+/**
+ * The index as the prompt sees it. PURE, deterministic (no clock, no
+ * randomness; original line order is the final tie-break).
+ *
+ * index.length <= budget → `text` is `index` itself — byte-identical prompts.
+ * Over budget → every non-row line (title, Last updated, prose, section
+ * headings, table header/separator lines) is kept; page rows are ranked by
+ * token overlap of (slug words + description) with tokenize(sourceText) —
+ * coverage first, then raw match count, then ORIGINAL LINE ORDER — and the top
+ * rows that fit are kept, rendered in their ORIGINAL order (a subsequence of
+ * the index), then one trailing notice line. The whole result, notice
+ * included, is ≤ budgetChars.
+ *
+ * @returns {{ text: string, kept: number, total: number, truncated: boolean }}
+ */
+export function indexForPrompt(index, sourceText, budgetChars = INDEX_PROMPT_BUDGET_CHARS) {
+  if (typeof index !== 'string') return { text: '', kept: 0, total: 0, truncated: false };
+  const parsed = parseIndex(index);
+  const total = parsed.rows.length;
+  if (index.length <= budgetChars) return { text: index, kept: total, total, truncated: false };
+  const lines = index.split('\n');
+  const rowLines = new Set(parsed.rows.map((r) => r.line));
+  const sourceTokens = new Set(tokenize(typeof sourceText === 'string' ? sourceText : ''));
+
+  const noticeFor = (kept) =>
+    `(Index shortened for this prompt: ${kept} of ${total} pages, those most related to ` +
+    `this source. Every existing entity and concept filename is listed above.)`;
+  // Reserve room for the notice at its LONGEST (kept === total digits).
+  const noticeCost = noticeFor(total).length + 1; // + the '\n' before it
+
+  const keep = new Uint8Array(lines.length);
+  let used = noticeCost;
+  // 1. Non-row lines first, in order, while they fit (a pathological prose-only
+  //    index still respects the budget).
+  for (let i = 0; i < lines.length; i++) {
+    if (rowLines.has(i)) continue;
+    const cost = lines[i].length + 1;
+    if (used + cost > budgetChars) continue;
+    used += cost;
+    keep[i] = 1;
+  }
+  // 2. Rows by relevance.
+  const scored = parsed.rows.map((r) => {
+    const slugWords = r.target.split('/').pop();
+    const words = [...new Set(tokenize(`${slugWords} ${r.description || ''}`.replace(/[-_]+/g, ' ')))];
+    let matched = 0;
+    for (const t of words) if (sourceTokens.has(t)) matched++;
+    return { line: r.line, matched, coverage: words.length ? matched / words.length : 0 };
+  });
+  scored.sort((a, b) => (b.coverage - a.coverage) || (b.matched - a.matched) || (a.line - b.line));
+  let kept = 0;
+  for (const s of scored) {
+    const cost = lines[s.line].length + 1;
+    // `continue`, not `break`: a shorter lower-ranked row may still fit.
+    if (used + cost > budgetChars) continue;
+    used += cost;
+    keep[s.line] = 1;
+    kept++;
+  }
+  const out = [];
+  for (let i = 0; i < lines.length; i++) if (keep[i]) out.push(lines[i]);
+  // Drop trailing blank lines so the notice sits right under the last row.
+  while (out.length && out[out.length - 1].trim() === '') out.pop();
+  out.push(noticeFor(kept));
+  return { text: out.join('\n'), kept, total, truncated: true };
 }
 
 /**
@@ -439,7 +539,7 @@ Existing concept files:
 ${conceptFileList}
 
 Current wiki index:
-${index || '(empty — this is the first ingest)'}
+${indexForPrompt(index, text).text || '(empty — this is the first ingest)'}
 
 --- SOURCE DOCUMENT: ${originalName} ---
 ${text}
@@ -678,7 +778,7 @@ function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = 
 // ── Phase 3 (REMOVED in v3.0.1-beta.1) ────────────────────────────────────────
 //
 // The LLM-driven index regeneration that previously lived here was replaced by
-// a programmatic merge (see mergeIntoIndex imported from compile.js). On large
+// a programmatic merge (v3.83.0: ensurePagesInIndex, src/brain/wiki-index.js). On large
 // domains the 20+ KB markdown table saturated the output budget; pages could
 // land on disk but vanish from the index. The same bug was already fixed in
 // the compile pipeline (v2.5.0). Multi-phase ingest now uses the same primitive.
@@ -1395,7 +1495,7 @@ Existing concept files:
 ${conceptFileList}
 
 Current wiki index:
-${index || '(empty — this is the first ingest)'}
+${indexForPrompt(index, text).text || '(empty — this is the first ingest)'}
 
 --- SOURCE DOCUMENT: ${originalName} ---
 ${text}
@@ -2754,6 +2854,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     console.warn(`[ingest] ${w}`);
     warnings.push(w);
   }
+  // v3.83.0: the builders cap the embedded index themselves (indexForPrompt);
+  // this only reports it, once per ingest, on stderr — no user-visible
+  // warning (see the block comment above INDEX_PROMPT_BUDGET_CHARS).
+  const indexView = indexForPrompt(index, text);
+  if (indexView.truncated) {
+    console.error(`[ingest] index shortened for prompt: ${indexView.kept}/${indexView.total}`);
+  }
 
   // v3.0.16: real token spend, gathered out-of-band from every LLM call this
   // ingest makes (including retries and model-fallback rungs).
@@ -2946,7 +3053,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // Each writePage now returns a change record {canonPath, status, bytesBefore,
   // bytesAfter, sectionsChanged, bulletsAdded} — collected for the result panel.
   // v3.0.1-beta.1: writeRecords[i] is aligned 1:1 with result.pages[i] (or null
-  // when writePage refused the input) so mergeIntoIndex can look up the LLM's
+  // when writePage refused the input) so indexEntriesFrom can look up the LLM's
   // per-page `summary` text by post-write canonical path.
   progress(90, `Writing ${result.pages.length} wiki pages to disk…`);
   const canonicalPaths = [];
@@ -2976,10 +3083,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   }
 
   // v3.0.1-beta.1: programmatic index merge replaces the old LLM-driven
-  // Phase-3 index regeneration. Skips rows whose slugs are already in the
-  // index → no duplicates on re-ingest.
+  // Phase-3 index regeneration. v3.83.0: EVERY page this ingest touched —
+  // created, updated or unchanged — that has no row in index.md (by canonical
+  // path) gets one; a page already listed is never edited. index.md is
+  // RE-READ at merge time (ensurePagesInIndex), not merged into the copy read
+  // at the start of this ingest (`index` above is the PROMPT input only), so
+  // a row written by anything else during this ingest survives.
   progress(96, 'Updating index…');
-  // mergeIntoIndex looks up per-page summary text via writeRecords[i] →
+  // indexEntriesFrom looks up per-page summary text via writeRecords[i] →
   // pages[i].summary. Multi-phase's batched responses sometimes omit `summary`
   // even though we ask for it; fall back to the outline's planned summary.
   if (Array.isArray(result.outlinePages)) {
@@ -2990,11 +3101,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       }
     }
   }
-  const mergedIndex = mergeIntoIndex(index, result.pages, writeRecords);
-  if (mergedIndex) {
-    const indexRecord = await writePage(domain, 'index.md', mergedIndex);
-    if (indexRecord) changes.push(indexRecord);
-  }
+  const indexRecord = await ensurePagesInIndex(domain, indexEntriesFrom(result.pages, writeRecords));
+  if (indexRecord) changes.push(indexRecord);
 
   // v3.0.1-beta.11: post-batch hub-page linkification.
   //

@@ -163,11 +163,19 @@ section('§3 estimates are conservative — a call that COULD cross is quoted up
   ok(llm.estimateCallRates('claude-sonnet-5-5', 5e6, CHARS_PER_TOKEN).input === 2, 'a flat model is its flat rate at any size');
   // The batch estimate itself, per planned call.
   const price = llm.getModelPrice(H55);
-  const bigIndex = 'x'.repeat(300000);
-  // A short note on a large wiki: ONE single-pass call carrying the whole index.
+  // v3.83.0: the prompt builders cap the embedded index at
+  // INDEX_PROMPT_BUDGET_CHARS (150,000), so a large index ALONE no longer makes
+  // a call cross the tier (an unbroken 300,000-char line, as this fixture used
+  // to be, is now dropped whole). A large wiki is shaped like one: index ROWS
+  // (capped to ~150 KB) plus a large slug inventory (never capped below 160 KB
+  // per list) — together they still put one single-pass call over the line.
+  const bigIndex = '# Wiki Index\n\n| Page | Type | Summary |\n|---|---|---|\n'
+    + Array.from({ length: 3000 }, (_, i) => `| [[page-${i}]] | concept | ${'a description of this page '.repeat(3)} |`).join('\n') + '\n';
+  const bigFiles = { entities: [], concepts: Array.from({ length: 3000 }, (_, i) => `a-reasonably-long-concept-slug-${i}.md`) };
+  // A short note on a large wiki: ONE single-pass call carrying the (capped) index and the inventory.
   const one = { name: 'note.md', size: 5000 };
-  const est1 = q.estimateOneFile({ f: one, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price, model: H55 });
-  const flat1 = q.estimateOneFile({ f: one, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price, model: null });
+  const est1 = q.estimateOneFile({ f: one, promptFiles: bigFiles, index: bigIndex, today: '2026-10-08', price, model: H55 });
+  const flat1 = q.estimateOneFile({ f: one, promptFiles: bigFiles, index: bigIndex, today: '2026-10-08', price, model: null });
   // The upper tier is 5x on both rates; the tiered branch also applies the
   // model's measured 1.329x tokenizer premium to input, so the ratio lands in
   // [5, 5 x 1.329].

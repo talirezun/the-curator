@@ -89,6 +89,12 @@ section('1. The store');
   ok(hs.countOpenIssues(report) === totalOpenIssues(report) && totalOpenIssues(report) > 0,
     `1.1 the server's count equals the Domains view's own totalOpenIssues on a real scan (${hs.countOpenIssues(report)})`);
 
+  // v3.83.0: the index-drift category counts (0 or 1) — in the server's keys,
+  // and counted exactly once by countOpenIssues.
+  ok(hs.HEALTH_ISSUE_KEYS.includes('indexDrift'), '1.1b HEALTH_ISSUE_KEYS includes indexDrift (v3.83.0)');
+  ok(hs.countOpenIssues({ indexDrift: [{ missing: 2705, stale: 39 }] }) === 1,
+    '1.1c …and an indexDrift row counts as ONE open issue, whatever its page count');
+
   ok(Object.keys(await hs.readHealthSummaries(['alpha', 'beta'])).length === 0, '1.2 nothing recorded yet → no entries (never a guessed "0 issues")');
   await hs.recordHealthSummary('alpha', report);
   const got = (await hs.readHealthSummaries(['alpha', 'beta']));
