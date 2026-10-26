@@ -12,7 +12,7 @@
     "dist": "node lib/dist.js"
   },
   "devDependencies": {
-    "electron": "43.5.0",
+    "electron": "43.8.3",
     "electron-builder": "26.15.3"
   }
 }

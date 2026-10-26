@@ -8,7 +8,7 @@ What was actually done, and on one machine only (macOS 15, arm64):
 
 | | |
 |---|---|
-| `npm install` in `desktop/` | electron **43.5.0**, electron-builder **26.15.3**, both now pinned EXACTLY |
+| `npm install` in `desktop/` | electron **43.8.3**, electron-builder **26.15.3**, both now pinned EXACTLY |
 | `electron .` | a real window, the app's own UI, a real domain rendered |
 | a mutating `POST` from the renderer | **201** — the server's origin guards accept a `BrowserWindow` on a dynamic loopback port |
 | `electron-builder --mac` | one `.app` and two `.dmg`s (arm64 and x64), unsigned |

@@ -285,7 +285,7 @@ section('§3  desktop/ is a separate, self-contained project');
   // These are values, not shapes: bumping them is a deliberate act that should
   // come with a fresh build and a fresh relocation test, which is why the
   // assertion names them.
-  eq(dd.electron, '43.5.0', 'electron is pinned EXACTLY to the version that was built and launched');
+  eq(dd.electron, '43.8.3', 'electron is pinned EXACTLY to the version that was built and launched');
   eq(dd['electron-builder'], '26.15.3', 'electron-builder is pinned EXACTLY to the version that produced the DMGs');
   for (const [name, range] of Object.entries(dd)) {
     ok(/^\d+\.\d+\.\d+$/.test(range),
