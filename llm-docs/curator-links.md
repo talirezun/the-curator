@@ -6,6 +6,10 @@ This file is navigation only. It says which page in the GitHub repository answer
 
 The official website is https://mycurator.xyz — a one-page overview with downloads and this assistant.
 
+## Is there a video that shows The Curator?
+
+Yes — a 2-minute product video on YouTube: https://youtu.be/1QUIppY80x8
+
 ## Where do I download the Mac app?
 
 Go here for the .dmg installer (Apple Silicon and Intel builds are published side by side): https://github.com/talirezun/the-curator/releases

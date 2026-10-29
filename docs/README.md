@@ -87,6 +87,8 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 **Official website:** [mycurator.xyz](https://mycurator.xyz) — the one-page overview with an AI
 assistant that answers questions about The Curator from this documentation.
 
+**Product video:** [2 minutes on YouTube](https://youtu.be/1QUIppY80x8).
+
 **Want the whole picture first — or handing this to an AI agent?** Read the
 [Product Overview](product-overview.md). One document covering every capability, what each one
 is for, the scenarios it serves, where the project stands, and an explicit account of what it

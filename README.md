@@ -24,6 +24,12 @@
 
 <p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
 
+<p align="center">
+  <a href="https://youtu.be/1QUIppY80x8"><img src="docs/images/curator-video-thumbnail.jpg" alt="Thumbnail of The Curator's two-minute product video. A dark knowledge graph of coloured dots joined by purple links fills the frame, under three labels — Second brain, Company brain, Organizational brain — and a timeline reading Today, 1 year, 2 years. The caption reads 'Every source connects to everything before it. Picture it after one year. After two.' A purple play button sits in the centre, with the label 'Watch the product video · 2 min'." width="800"></a>
+</p>
+
+<p align="center">▶ <a href="https://youtu.be/1QUIppY80x8">Watch the 2-minute product video on YouTube</a></p>
+
 ## What it is, in plain words
 
 One knowledge folder on your own computer, three things you can do with it — always in this

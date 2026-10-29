@@ -7,6 +7,8 @@ A local app that turns what you read into a compounding wiki, shares it with a c
 your projects' context — foundations, working state and knowledge — so any agent, in any harness,
 resumes where the last one stopped. Plain markdown, in your own repo.
 
+New here? ▶ [Watch the 2-minute product video](https://youtu.be/1QUIppY80x8).
+
 This guide covers everything from first-time setup to daily use. No technical background is required.
 
 ---
