@@ -224,6 +224,7 @@ try {
     eq('restore written', r2.outcome, 'written');
     eq('the ORIGINAL bytes are back', bytes(CU).toString(), original);
     ok('restore itself kept a backup of what it replaced', r2.backup && backupsOf(CU).length >= 2);
+    ok('...a NEW copy, not the one it restored from (the preview\'s backupWillBe !== restoreFrom too)', r2.backup !== rs.restoreFrom && rs.backupWillBe !== rs.restoreFrom, `${r2.backup} / ${rs.restoreFrom} / ${rs.backupWillBe}`);
     const [again] = plan('cursor', 'restore');
     ok('a second restore is not offered', again.action === 'none' || (again.refused && again.refused.reason === 'changed_since'));
 

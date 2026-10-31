@@ -209,7 +209,7 @@ try {
     ok('the public item never carries another server\'s value', !JSON.stringify(M.publicItem(it)).includes('sk-PLANTED'));
     ok('the public item carries the ~ display path, not the absolute one', M.publicItem(it).file === '~/.cursor/mcp.json' && !JSON.stringify(M.publicItem(it)).includes(HOME));
     ok('the public item drops executor-only fields', Object.keys(M.publicItem(it)).every((k) => !k.startsWith('_')));
-    ok('backupWillBe names a sibling .curator-backup-<UTC stamp>', /^~\/\.cursor\/mcp\.json\.curator-backup-20261031T120000Z$/.test(it.backupWillBe), it.backupWillBe);
+    eq('backupWillBe names a NEW sibling copy, stamped at apply (never a predicted stamp)', it.backupWillBe, `~/.cursor/mcp.json.curator-backup-${M.BACKUP_AT_APPLY}`);
     const next = JSON.parse(it._nextText);
     ok('next document: other servers byte-for-byte equal as values', JSON.stringify(next.mcpServers.other) === JSON.stringify(OTHER) && next.globalShortcut === 'x');
     ok('next text keeps 4-space indent and the trailing newline', it._nextText.startsWith('{\n    "globalShortcut"') && it._nextText.endsWith('}\n'));
@@ -286,6 +286,12 @@ try {
     const io = memfs({ [CU]: after.toString(), [bk]: orig.toString() });
     const [rs] = M.planTool('cursor', 'restore', ctx(io, { manifestRows: [row] }));
     ok('restore offered while the file is exactly what we left', rs.action === 'restore' && rs._restoreFrom === bk);
+    const pub = M.publicItem(rs);
+    eq('restoreFrom = the display path of the SOURCE backup', pub.restoreFrom, '~/.cursor/mcp.json.curator-backup-20261030T000000Z');
+    eq('restoreFromAt = that manifest row\'s `at`', pub.restoreFromAt, '2026-10-30T00:00:00Z');
+    ok('backupWillBe !== restoreFrom (the new copy is never the copy being restored from)', pub.backupWillBe && pub.backupWillBe !== pub.restoreFrom, `${pub.backupWillBe} vs ${pub.restoreFrom}`);
+    ok('...and it is the new-copy pattern', pub.backupWillBe === `~/.cursor/mcp.json.curator-backup-${M.BACKUP_AT_APPLY}`);
+    ok('the old field name restoreAt is gone', !('restoreAt' in pub));
     const io2 = memfs({ [CU]: after.toString() + ' ', [bk]: orig.toString() });
     const [rs2] = M.planTool('cursor', 'restore', ctx(io2, { manifestRows: [row] }));
     ok('restore refused changed_since after a later edit', rs2.refused && rs2.refused.reason === 'changed_since');

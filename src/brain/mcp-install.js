@@ -110,6 +110,8 @@ export function isInstallCapable(id) {
 export const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
 export const MANIFEST_CAP = 200;
 const BACKUP_INFIX = '.curator-backup-';
+/** The preview's stand-in for a backup stamp that is fixed only at apply. */
+export const BACKUP_AT_APPLY = '<UTC time of apply>';
 
 /** Is `p` strictly under `home`? Both absolute, compared after resolve. */
 export function isUnderHome(home, p) {
@@ -552,6 +554,13 @@ export function planTool(id, action, ctx) {
     base.preserved = Object.keys(servers).filter((k) => k !== MCP_SERVER_NAME);
     const ours = doc ? ourEntryIn(doc, key) : undefined;
     const backupName = `${f.file}${BACKUP_INFIX}${stamp(io.now())}`;
+    // What the preview may PROMISE about the new copy. The exact stamp is not
+    // knowable here: apply re-plans from disk at a later second, and a name
+    // already taken gets `-2`. So the preview names the pattern, never a stamp —
+    // and in particular never an EXISTING backup (v3.85.0 screen review: a
+    // restore preview showed the copy it restores FROM). `backup` on the apply
+    // result is the real name.
+    const newCopy = `${display}${BACKUP_INFIX}${BACKUP_AT_APPLY}`;
 
     if (action === 'install') {
       if (!insp.mcp.ok) { items.push(refusedItem(base, insp.mcp.reason || 'no_entry', insp.mcp.message || 'No entry could be built.')); continue; }
@@ -578,7 +587,7 @@ export function planTool(id, action, ctx) {
         action: f.read.state === 'missing' ? 'add' : (ours === undefined ? 'add' : 'update'),
         entryText: JSON.stringify(planned, null, 2),
         kept,
-        backupWillBe: f.read.exists ? tildeUnder(home, backupName) : null,
+        backupWillBe: f.read.exists ? newCopy : null,
         _nextText: serialise(next, fmt),
         _entry: entry,
         _create: f.read.state === 'missing',
@@ -596,7 +605,7 @@ export function planTool(id, action, ctx) {
         ...base,
         action: 'remove',
         entryText: JSON.stringify(ours, null, 2),
-        backupWillBe: tildeUnder(home, backupName),
+        backupWillBe: newCopy,
         _nextText: serialise(next, f.read.fmt),
         _entry: null,
         _create: false,
@@ -630,8 +639,8 @@ export function planTool(id, action, ctx) {
         ...base,
         action: 'restore',
         restoreFrom: tildeUnder(home, backupPath),
-        restoreAt: cand.row.at || null,
-        backupWillBe: tildeUnder(home, backupName),
+        restoreFromAt: cand.row.at || null,
+        backupWillBe: newCopy,
         _restoreFrom: backupPath,
         _restoreSha: cand.row.shaBefore,
         _create: false,
