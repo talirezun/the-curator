@@ -163,6 +163,10 @@ import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // DOM-free module (its suite imports the real builders); this file owns the
 // state, the one request (GET /api/setup/machine) and the listeners.
 import { renderToolsOnThisMacBody, toolsOnThisMacHead } from './setup-machine.js';
+// v3.85.0 — "My Curator in your tools": the status check and the one-click install.
+import {
+  renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds,
+} from './mcp-install.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
@@ -1118,6 +1122,13 @@ function freshState() {
     setupMachine: null,
     setupMachineFolds: {},
     setupMachineCopied: null,
+    // v3.85.0 — My Curator in your tools. `status` is GET /api/mcp/install/status
+    // ({data, error, loading}); `ticks` the person's own checkbox overrides
+    // (id → bool, defaults come from the statuses); `plan` the previewed
+    // plan awaiting Apply; `results` the last apply, kept until dismissed.
+    // NOTHING here is written by a load: only a click on Install / Remove /
+    // Restore asks for a plan, and only a click on Apply writes.
+    mcpInstall: { status: null, ticks: {}, plan: null, results: null, busy: null, error: null, copied: null },
     mcpExerciseBusy: false,
     mcpExerciseError: null,
 
@@ -1674,6 +1685,7 @@ async function loadMcp(token) {
     loadAcrossProjects(token);
     // ⑤'s reading, the same way: started, never awaited, its own failure.
     loadSetupMachine(token);
+    loadInstallStatus(token);
     const [cfgRes, ddRes, usage] = await Promise.all([
       fetch('/api/mcp/config'),
       fetch('/api/config/default-domain'),
@@ -1757,13 +1769,79 @@ async function loadSetupMachine(token) {
   if (state.section === 'mcp') render(token);
 }
 
+/**
+ * v3.85.0 — GET /api/mcp/install/status, read-only. A failure is its own
+ * state; a failed RE-check keeps the last good reading beside the error.
+ */
+async function loadInstallStatus(token) {
+  const mi = state.mcpInstall;
+  const prev = mi.status;
+  mi.status = { data: prev ? prev.data : null, error: null, loading: true };
+  const r = await fetchInstallStatus();
+  if (!isCurrentMount(token)) return;
+  mi.status = { data: r.ok ? r.data : (prev && prev.data) || null, error: r.ok ? null : failureWords(r), loading: false };
+  if (state.section === 'mcp') render(token);
+}
+
+/** display path → absolute path, from the Setup machine reading, so Reveal can name a real file. */
+function installRevealPaths() {
+  const out = {};
+  const hs = state.setupMachine && state.setupMachine.data && state.setupMachine.data.harnesses;
+  for (const h of Array.isArray(hs) ? hs : []) {
+    for (const f of Array.isArray(h.files) ? h.files : []) if (f && f.display && f.file) out[f.display] = f.file;
+  }
+  return out;
+}
+
+/** Ask for a PLAN (writes nothing) for the given action and tool ids. */
+async function planInstall(token, action, ids) {
+  const mi = state.mcpInstall;
+  if (mi.busy || !ids.length) return;
+  mi.busy = 'plan'; mi.error = null; mi.results = null; mi.plan = null;
+  render(token);
+  const r = await requestPlan(action, ids);
+  if (!isCurrentMount(token)) return;
+  mi.busy = null;
+  if (r.ok) mi.plan = { action, token: r.data.token, expiresAt: r.data.expiresAt, items: r.data.items };
+  else mi.error = failureWords(r);
+  render(token);
+}
+
+/** Apply the previewed plan — reached only from the Apply button's click. */
+async function applyInstall(token) {
+  const mi = state.mcpInstall;
+  const plan = mi.plan;
+  if (mi.busy || !plan || !plan.token) return;
+  mi.busy = 'apply'; mi.error = null;
+  render(token);
+  const r = await requestApply(plan.token);
+  if (!isCurrentMount(token)) return;
+  mi.busy = null;
+  if (r.ok) {
+    mi.results = { action: plan.action, planItems: plan.items, items: r.data.results };
+    mi.plan = null;
+    mi.ticks = {};
+    loadInstallStatus(token);
+  } else {
+    mi.error = failureWords(r) + ' Preview again to continue.';
+    mi.plan = null;
+  }
+  render(token);
+}
+
 /** Block ⑤. The head's controls ride at the top of the body (a settings block has no head slot). */
 function renderToolsOnThisMac() {
   const m = state.setupMachine;
   const lede = 'Each agent tool set up on this computer, and whether it can reach The Curator.';
   const body = '<div class="settings-setup-head">' + toolsOnThisMacHead(m)
     + (state.setupMachineCopied ? '<span class="settings-setup-copied" role="status">' + escapeHtml(state.setupMachineCopied) + '</span>' : '')
-    + '</div>' + renderToolsOnThisMacBody(m, state.setupMachineFolds);
+    + '</div>'
+    + renderInstallPanel({
+      status: state.mcpInstall.status, ticks: state.mcpInstall.ticks, plan: state.mcpInstall.plan,
+      results: state.mcpInstall.results, busy: state.mcpInstall.busy, error: state.mcpInstall.error,
+      copied: state.mcpInstall.copied, folds: state.setupMachineFolds, paths: installRevealPaths(),
+    })
+    + '<div id="mcpi-detail" class="mcpi-detail">' + renderToolsOnThisMacBody(m, state.setupMachineFolds) + '</div>';
   return settingsBlock(5, 'mcp-tools', 'Tools on this Mac', lede, body, 'settings.mcp-tools', '');
 }
 
@@ -10898,6 +10976,56 @@ function focusReplaceInput() {
   if (el) el.focus();
 }
 
+/** v3.85.0 — the install panel's controls. Every write starts at a click here. */
+function wireInstallListeners(token) {
+  const mi = state.mcpInstall;
+  const root = '.settings-block-mcp-tools ';
+  document.querySelectorAll(root + '[data-mcpi-tick]').forEach((el) => {
+    el.addEventListener('change', () => {
+      mi.ticks[el.dataset.mcpiTick] = el.checked;
+      const b = document.getElementById('mcpi-install-btn');
+      if (b) { const s = installButtonState(mi.status, mi.ticks, mi.busy); b.disabled = s.disabled; b.textContent = s.label; }
+    });
+  });
+  document.querySelectorAll(root + '[data-mcpi-act]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const act = el.dataset.mcpiAct;
+      const tools = (mi.status && mi.status.data && mi.status.data.tools) || [];
+      if (act === 'install') { planInstall(token, 'install', tickedIds(tools, mi.ticks)); return; }
+      if (act === 'remove') { planInstall(token, 'remove', [el.dataset.tool]); return; }
+      if (act === 'restore') { planInstall(token, 'restore', [el.dataset.tool]); return; }
+      if (act === 'apply') { applyInstall(token); return; }
+      if (act === 'cancel') { mi.plan = null; mi.error = null; render(token); return; }
+      if (act === 'dismiss') { mi.results = null; render(token); return; }
+      if (act === 'check-again') { mi.results = null; loadInstallStatus(token); loadSetupMachine(token); render(token); return; }
+      if (act === 'copy-myself') {
+        const d = document.getElementById('mcpi-detail');
+        if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      if (act === 'copy') {
+        const text = mi.status && mi.status.data && mi.status.data.manualSnippets
+          ? mi.status.data.manualSnippets[el.dataset.tool] : null;
+        if (!text) return;
+        try { await copyToClipboard(text); mi.copied = 'Entry copied — paste it into that tool’s config file.'; }
+        catch { mi.copied = 'Could not copy.'; }
+        if (!isCurrentMount(token)) return;
+        render(token);
+        setTimeout(() => { if (isCurrentMount(token)) { mi.copied = null; render(token); } }, 4000);
+        return;
+      }
+      if (act === 'reveal') {
+        try {
+          await fetch('/api/setup/reveal', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: el.dataset.path || '' }),
+          });
+        } catch (err) { reportAsyncActionFailure(err); }
+      }
+    });
+  });
+}
+
 function wireMcpListeners() {
   // ── ⑤ Tools on this Mac (v3.77.0): reveal, copy an entry, check again,
   // and the folds' open state (kept in memory for this mount only).
@@ -10906,7 +11034,7 @@ function wireMcpListeners() {
     document.querySelectorAll('.settings-block-mcp-tools [data-setup-act]').forEach((el) => {
       el.addEventListener('click', async () => {
         const act = el.dataset.setupAct;
-        if (act === 'machine-check') { loadSetupMachine(token); render(token); return; }
+        if (act === 'machine-check') { loadSetupMachine(token); loadInstallStatus(token); render(token); return; }
         if (act === 'copy-entry') {
           const text = state.setupMachine && state.setupMachine.data && state.setupMachine.data.copyEntries
             ? state.setupMachine.data.copyEntries[el.dataset.tool] : null;
@@ -10928,6 +11056,7 @@ function wireMcpListeners() {
         }
       });
     });
+    wireInstallListeners(token);
     document.querySelectorAll('.settings-block-mcp-tools details[data-setup-fold]').forEach((d) => {
       d.addEventListener('toggle', () => { state.setupMachineFolds[d.dataset.setupFold] = d.open; });
     });
