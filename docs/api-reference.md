@@ -3167,7 +3167,7 @@ own entry's command and `--domains-path` — never file text, another server's n
 value), the project's repository folder (its `.curator-project`, instruction files, and read-only
 `git` with no fetch), the store's scope index and the app's last remote check. Nothing here writes a
 harness config, a skill folder, a repository file or a git ref; the two PUTs write this install's own
-`.curator-config.json` (never synced).
+`.curator-config.json` (never synced). (The one-click MCP installer, which does write a harness config, is separate and click-only: `/api/mcp/install/*`.)
 
 | Method & path | What it does |
 |---|---|
