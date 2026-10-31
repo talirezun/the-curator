@@ -10982,7 +10982,7 @@ function wireInstallListeners(token) {
     el.addEventListener('click', async () => {
       const act = el.dataset.mcpiAct;
       const tools = (mi.status && mi.status.data && mi.status.data.tools) || [];
-      if (act === 'install') { planInstall(token, 'install', tickedIds(tools, mi.ticks)); return; }
+      if (act === 'install') { planInstall(token, 'install', tickedIds(tools, mi.ticks, mi.status && mi.status.data && mi.status.data.platform)); return; }
       if (act === 'remove') { planInstall(token, 'remove', [el.dataset.tool]); return; }
       if (act === 'restore') { planInstall(token, 'restore', [el.dataset.tool]); return; }
       if (act === 'apply') { applyInstall(token); return; }

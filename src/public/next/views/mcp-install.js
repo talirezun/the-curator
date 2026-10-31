@@ -48,16 +48,35 @@ export const DEFAULT_TICKED = Object.freeze(['needs-update', 'not-installed']);
 
 const normStatus = (s) => (Object.hasOwn(STATUS_WORDS, s) ? s : 'manual');
 
+/** v3.86.0 — on Windows only Claude Desktop can be written; every other tool is copy-only. */
+export const WINDOWS_INSTALLABLE = Object.freeze(['claude-desktop']);
+/** The small greyscale label on the one Windows row that can be installed. */
+export const WINDOWS_NEW_LABEL = 'New on Windows — tell us if it works';
+/** Said OPEN after Claude Desktop is changed on Windows. */
+export const WINDOWS_RESTART_LINE = 'Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check again';
+
+/** Whether a click may write this tool's file on this platform ('' / darwin / linux: the status decides). */
+function writableHere(tool, platform) {
+  return platform !== 'win32' || (!!tool && WINDOWS_INSTALLABLE.includes(tool.id));
+}
+
 /** The tools whose row offers a checkbox: the ones a click may write to. */
-export function isInstallable(tool) {
-  return !!tool && (tool.status === 'needs-update' || tool.status === 'not-installed') && tool.installer === 'file';
+export function isInstallable(tool, platform) {
+  return !!tool && (tool.status === 'needs-update' || tool.status === 'not-installed') && tool.installer === 'file'
+    && writableHere(tool, platform);
+}
+
+/** A tool's status as this platform shows it: a Windows row that cannot be written reads "copy only". */
+function effStatus(tool, platform) {
+  const s = normStatus(tool && tool.status);
+  return (s === 'needs-update' || s === 'not-installed') && !writableHere(tool, platform) ? 'manual' : s;
 }
 
 /** `{connected, needsUpdate, canAdd, cantRead, manual}` over a status payload's tools. Pure. */
-export function countStatuses(tools) {
+export function countStatuses(tools, platform) {
   const c = { connected: 0, needsUpdate: 0, canAdd: 0, cantRead: 0, manual: 0 };
   for (const t of Array.isArray(tools) ? tools : []) {
-    const s = normStatus(t && t.status);
+    const s = effStatus(t, platform);
     if (s === 'connected') c.connected++;
     else if (s === 'needs-update') c.needsUpdate++;
     else if (s === 'not-installed') c.canAdd++;
@@ -71,31 +90,31 @@ export function countStatuses(tools) {
  * "My Curator in your tools — 2 connected · 1 needs an update · 1 can be added".
  * Zero counts are left out; nothing to say says so.
  */
-export function overviewLine(tools) {
-  const c = countStatuses(tools);
+export function overviewLine(tools, platform) {
+  const c = countStatuses(tools, platform);
   const parts = [];
   if (c.connected) parts.push(c.connected + ' connected');
   if (c.needsUpdate) parts.push(c.needsUpdate + (c.needsUpdate === 1 ? ' needs an update' : ' need an update'));
   if (c.canAdd) parts.push(c.canAdd + ' can be added');
   if (c.cantRead) parts.push(c.cantRead + ' can’t be read');
   if (c.manual) parts.push(c.manual + ' copy only');
-  return 'My Curator in your tools — ' + (parts.length ? parts.join(' · ') : 'no tool found on this Mac');
+  return 'My Curator in your tools — ' + (parts.length ? parts.join(' · ') : 'no tool found on this ' + (platform === 'win32' ? 'PC' : 'Mac'));
 }
 
 /** Which tool ids start ticked. `overrides` (id → boolean) are the person's own ticks. Pure. */
-export function defaultTicks(tools, overrides) {
+export function defaultTicks(tools, overrides, platform) {
   const out = {};
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
   for (const t of Array.isArray(tools) ? tools : []) {
-    if (!t || !isStr(t.id) || !isInstallable(t)) continue;
+    if (!t || !isStr(t.id) || !isInstallable(t, platform)) continue;
     out[t.id] = Object.hasOwn(ov, t.id) ? ov[t.id] === true : DEFAULT_TICKED.includes(t.status);
   }
   return out;
 }
 
 /** The ids the Install button would send, in the payload's order. */
-export function tickedIds(tools, overrides) {
-  const ticks = defaultTicks(tools, overrides);
+export function tickedIds(tools, overrides, platform) {
+  const ticks = defaultTicks(tools, overrides, platform);
   return (Array.isArray(tools) ? tools : []).filter((t) => t && ticks[t.id] === true).map((t) => t.id);
 }
 
@@ -103,7 +122,7 @@ export function tickedIds(tools, overrides) {
 export function installButtonState(status, ticks, busy) {
   const data = status && status.data;
   const tools = data && Array.isArray(data.tools) ? data.tools : [];
-  const n = tickedIds(tools, ticks).length;
+  const n = tickedIds(tools, ticks, data && data.platform).length;
   const writable = !!(data && data.writable);
   return {
     n,
@@ -118,6 +137,11 @@ export function installButtonState(status, ticks, busy) {
 export function statusTag(status) {
   const s = normStatus(status);
   return '<span class="mcpi-st mcpi-st-' + s + '" data-mcpi-status="' + s + '">' + escapeHtml(STATUS_WORDS[s]) + '</span>';
+}
+
+function newOnWindowsTag(tool, platform) {
+  return platform === 'win32' && tool && WINDOWS_INSTALLABLE.includes(tool.id) && tool.installer === 'file'
+    ? '<span class="mcpi-note mcpi-new" data-mcpi-new-windows>' + escapeHtml(WINDOWS_NEW_LABEL) + '</span>' : '';
 }
 
 function runningTag(tool) {
@@ -149,7 +173,7 @@ export function renderInstallOverview(status, ticks, busy) {
   const data = status && status.data;
   if (!data) return '';
   const tools = Array.isArray(data.tools) ? data.tools : [];
-  const c = countStatuses(tools);
+  const c = countStatuses(tools, data.platform);
   const card = renderOverview({
     id: 'settings-mcpi-overview',
     eyebrow: 'MY CURATOR IN YOUR TOOLS',
@@ -163,22 +187,30 @@ export function renderInstallOverview(status, ticks, busy) {
   const b = installButtonState(status, ticks, busy);
   const installLabel = busy === 'plan' ? 'Preparing…' : b.label;
   return '<div class="mcpi-overview">'
-    + '<p class="visually-hidden" role="status">' + escapeHtml(overviewLine(tools)) + '</p>'
+    + '<p class="visually-hidden" role="status">' + escapeHtml(overviewLine(tools, data.platform)) + '</p>'
     + card
     + '<div class="mcpi-buttons">'
     + '<button type="button" class="btn btn-primary" id="mcpi-install-btn" data-mcpi-act="install"' + (b.disabled ? ' disabled' : '') + '>' + escapeHtml(installLabel) + '</button>'
     + '<button type="button" class="btn btn-secondary" data-mcpi-act="copy-myself">Copy it myself</button>'
     + '</div>'
-    + (data.writable ? '' : nonMacLine(data))
+    + (data.writable ? (data.platform === 'win32' ? windowsLine() : '') : nonMacLine(data))
     + '</div>';
 }
 
 /** Said OPEN whenever one-click install is not available on this computer. */
 export function nonMacLine(data) {
   const p = data && isStr(data.platform) ? data.platform : '';
+  if (p === 'win32') {
+    return '<p class="mcpi-line" data-mcpi-nonmac>One-click install on Windows is not available right now — copy the entry for each tool instead.</p>';
+  }
   const where = p && p !== 'darwin' ? ' on ' + (p === 'win32' ? 'Windows' : p === 'linux' ? 'Linux' : p) : '';
   return '<p class="mcpi-line" data-mcpi-nonmac>One-click install works on a Mac in this version' + escapeHtml(where)
     + ' — copy the entry for each tool instead.</p>';
+}
+
+/** Said OPEN on Windows when install works: one tool only. */
+export function windowsLine() {
+  return '<p class="mcpi-line" data-mcpi-windows>On Windows, one-click install covers Claude Desktop only — copy the entry for each other tool.</p>';
 }
 
 // ── tool rows ──────────────────────────────────────────────────────────────
@@ -228,8 +260,26 @@ export function copyPlanFor(id, data, machineFiles) {
   return { text: whole, whole: true, file, line: 'Add this to ' + file };
 }
 
-/** An escaped path that may wrap only after a slash. */
-function wbrPath(p) { return escapeHtml(p).replace(/\//g, '/<wbr>'); }
+/** An escaped path that may wrap only after a slash or a backslash (Windows). */
+function wbrPath(p) { return escapeHtml(p).replace(/[\/\\]/g, '$&<wbr>'); }
+
+/**
+ * The reason a row is copy-only, in words. `config_not_found` and
+ * `config_ambiguous` (v3.86.0) are said for a person; any other reason is the
+ * backend's own message. Candidate files come from the reason, else the row's files.
+ */
+export function reasonWords(tool) {
+  const r = tool && tool.reason;
+  const code = r && typeof r === 'object' ? r.code : '';
+  const names = (list) => (Array.isArray(list) ? list : []).map((x) => (isStr(x) ? x : x && (x.display || x.file))).filter(isStr);
+  if (code === 'config_not_found') return 'Open Claude Desktop once, then press Check again';
+  if (code === 'config_ambiguous') {
+    const c = names(r.candidates).length ? names(r.candidates) : names(tool.files);
+    return 'Claude Desktop has more than one config file' + (c.length ? ': ' + c.join(' · ') : '')
+      + ' — nothing was changed. Add the entry to the one it uses.';
+  }
+  return reasonText(r);
+}
 
 function fileLines(tool) {
   const files = Array.isArray(tool.files) ? tool.files : [];
@@ -254,11 +304,13 @@ function revealPathFor(tool, paths) {
  * the restart hint.
  */
 export function renderToolRow(tool, ctx = {}) {
-  const status = normStatus(tool.status);
+  const platform = ctx.platform;
+  const status = effStatus(tool, platform);
   const ticks = ctx.ticks || {};
   const id = String(tool.id || '');
-  const installable = isInstallable(tool) && ctx.writable !== false;
-  const ticked = installable && defaultTicks([tool], ticks)[id] === true;
+  const installable = isInstallable(tool, platform) && ctx.writable !== false;
+  const canWrite = tool.installer === 'file' && ctx.writable !== false && writableHere(tool, platform);
+  const ticked = installable && defaultTicks([tool], ticks, platform)[id] === true;
   const label = '<span class="mcpi-name">' + escapeHtml(tool.label || id) + '</span>';
   const head = installable
     ? '<label class="mcpi-pick"><input type="checkbox" class="cur-check cur-check-sm" data-mcpi-tick="' + escapeHtml(id) + '"' + (ticked ? ' checked' : '')
@@ -268,23 +320,24 @@ export function renderToolRow(tool, ctx = {}) {
   const acts = [];
   const plan = status !== 'connected' && ctx.data ? copyPlanFor(id, ctx.data, ctx.machineFiles) : null;
   const snippet = !!plan;
-  if (status === 'connected' && tool.installer === 'file' && ctx.writable !== false) acts.push(btnG('remove', 'Remove', tid));
-  if (tool.restorable === true && tool.installer === 'file' && ctx.writable !== false) acts.push(btnG('restore', 'Restore original', tid));
+  if (status === 'connected' && canWrite) acts.push(btnG('remove', 'Remove', tid));
+  if (tool.restorable === true && canWrite) acts.push(btnG('restore', 'Restore original', tid));
   if (status === 'cant-read') {
-    const p = revealPathFor(tool, ctx.paths);
+    // Reveal is `open -R` (macOS only): never a dead button on Windows or Linux.
+    const p = isStr(platform) && platform !== 'darwin' ? '' : revealPathFor(tool, ctx.paths);
     if (p) acts.push(btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"'));
   }
   if ((status === 'manual' || status === 'cant-read' || status === 'not-installed' || status === 'needs-update') && snippet) {
     acts.push(btnG('copy', 'Copy', tid));
   }
-  const reason = reasonText(tool.reason) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reasonText(tool.reason)) + '</p>' : '';
+  const reason = reasonWords(tool) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reasonWords(tool)) + '</p>' : '';
   const copyLine = plan ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(plan.line) + '</p>' : '';
   const hint = isStr(tool.restartHint) && tool.running && tool.running.running === true
     ? '<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>' : '';
   const extra = isStr(tool.note) ? '<p class="mcpi-hint">' + escapeHtml(tool.note) + '</p>' : '';
   return '<div class="mcpi-row mcpi-row-' + status + '" data-mcpi-tool="' + escapeHtml(id) + '">'
     + '<div class="mcpi-l1">' + head
-    + '<span class="mcpi-tags">' + statusTag(status) + runningTag(tool) + usedNote(tool, ctx.now) + '</span>'
+    + '<span class="mcpi-tags">' + statusTag(status) + runningTag(tool) + usedNote(tool, ctx.now) + (ctx.writable !== false ? newOnWindowsTag(tool, platform) : '') + '</span>'
     + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
     + (fileLines(tool) ? '<div class="mcpi-files">' + fileLines(tool) + '</div>' : '')
     + reason + copyLine + hint + extra
@@ -296,7 +349,7 @@ export function renderToolRows(status, ctx = {}) {
   const data = status && status.data;
   if (!data) return '';
   const tools = Array.isArray(data.tools) ? data.tools : [];
-  const c2 = { ...ctx, writable: data.writable, data };
+  const c2 = { ...ctx, writable: data.writable, data, platform: data.platform };
   const rows = tools.map((t) => renderToolRow(t, c2)).join('');
   const nf = Array.isArray(data.notFound) ? data.notFound : [];
   const open = ctx.folds && ctx.folds['mcpi-notfound'];
@@ -448,8 +501,9 @@ export function resultLine(r, action, planItems) {
 }
 
 /** The restart sentence: names the running tools that were changed. '' when none. */
-export function restartLine(results, tools) {
-  const running = new Set((Array.isArray(tools) ? tools : []).filter((t) => t && t.running && t.running.running === true).map((t) => t.id));
+export function restartLine(results, tools, platform) {
+  const running = new Set((Array.isArray(tools) ? tools : []).filter((t) => t && t.running && t.running.running === true
+    && !(platform === 'win32' && t.id === 'claude-desktop')).map((t) => t.id));
   const names = [];
   for (const r of Array.isArray(results) ? results : []) {
     if (r && (r.outcome === 'written' || r.outcome === 'created') && running.has(r.id) && !names.includes(r.label || r.id)) names.push(r.label || r.id);
@@ -460,14 +514,16 @@ export function restartLine(results, tools) {
 }
 
 /** The results block: every line, the restart line, and Check again. Never folded. */
-export function renderResults(res, tools) {
+export function renderResults(res, tools, platform) {
   if (!res || !Array.isArray(res.items)) return '';
   const lines = res.items.map((r) => resultLine(r, res.action || 'install', res.planItems)).join('');
-  const rs = restartLine(res.items, tools);
+  const rs = restartLine(res.items, tools, platform);
+  const win = platform === 'win32' && res.items.some((r) => r && r.id === 'claude-desktop' && (r.outcome === 'written' || r.outcome === 'created'));
   return '<div class="mcpi-results" data-mcpi-results role="status">'
     + lines
     + (rs ? '<p class="mcpi-line mcpi-restart" data-mcpi-restart>' + escapeHtml(rs) + '</p>' : '')
-    + '<div class="mcpi-result-acts">' + btnS('check-again', 'Check again') + btnG('dismiss', 'Dismiss') + '</div>'
+    + (win ? '<p class="mcpi-line mcpi-restart" data-mcpi-restart-windows>' + escapeHtml(WINDOWS_RESTART_LINE) + '</p>' : '')
+    + '<div class="mcpi-result-acts">' + (win ? btnP : btnS)('check-again', 'Check again') + btnG('dismiss', 'Dismiss') + '</div>'
     + '</div>';
 }
 
@@ -494,7 +550,7 @@ export function renderInstallPanel(st) {
     + renderInstallOverview(status, s.ticks, s.busy)
     + err + stale
     + (s.plan ? renderPlanCard(s.plan, tools, s.busy) : '')
-    + renderResults(s.results, tools)
+    + renderResults(s.results, tools, data.platform)
     + (isStr(s.copied) ? '<p class="mcpi-line" role="status">' + escapeHtml(s.copied) + '</p>' : '')
     + renderToolRows(status, { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles })
     + '</div>';
