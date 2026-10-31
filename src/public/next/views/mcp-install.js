@@ -274,7 +274,8 @@ export function reasonWords(tool) {
   const names = (list) => (Array.isArray(list) ? list : []).map((x) => (isStr(x) ? x : x && (x.display || x.file))).filter(isStr);
   if (code === 'config_not_found') return 'Open Claude Desktop once, then press Check again';
   if (code === 'config_ambiguous') {
-    const c = names(r.candidates).length ? names(r.candidates) : names(tool.files);
+    const live = (Array.isArray(tool.candidates) ? tool.candidates : []).filter((x) => x && x.live);
+    const c = names(r.candidates).length ? names(r.candidates) : names(live).length ? names(live) : names(tool.files);
     return 'Claude Desktop has more than one config file' + (c.length ? ': ' + c.join(' · ') : '')
       + ' — nothing was changed. Add the entry to the one it uses.';
   }

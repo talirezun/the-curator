@@ -304,6 +304,8 @@ section('§9 platform gating: darwin, win32, linux');
   ok(/more than one config file: C:\\<wbr>A|more than one config file: C:\\A/.test(amb.replace(/<wbr>/g, '')) && /C:\\B\\c\.json/.test(amb.replace(/<wbr>/g, '')), 'config_ambiguous names the candidates', amb);
   const amb2 = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_ambiguous', message: 'm' }, files: [{ display: 'C:\\X\\c.json' }, { display: 'C:\\Y\\c.json' }] }), { platform: 'win32' });
   ok(/C:\\X\\c\.json · C:\\Y\\c\.json/.test(amb2.replace(/<wbr>/g, '')), 'config_ambiguous falls back to the row’s files');
+  const amb3 = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_ambiguous', message: 'm' }, files: [], candidates: [{ display: 'C:\\L\\c.json', live: true }, { display: 'C:\\R\\c.json', live: true }, { display: 'C:\\Dead\\c.json', live: false }] }), { platform: 'win32' });
+  ok(/C:\\L\\c\.json · C:\\R\\c\.json/.test(amb3.replace(/<wbr>/g, '')) && !/Dead/.test(amb3), 'config_ambiguous names the backend’s LIVE row candidates (the v3.86.0 status shape), never a dead one', amb3);
   ok(/data-mcpi-reason>Some other message</.test(M.renderToolRow(tool({ status: 'manual', reason: { code: 'other', message: 'Some other message' } }), {})), 'any other reason is the backend’s message');
 
   // result line + Check again
