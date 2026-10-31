@@ -61,7 +61,7 @@ const SAMPLE = [
 // ── §1 words, counts, ticks ────────────────────────────────────────────────
 section('§1 statuses, counts, default ticks');
 ok(M.STATUS_WORDS.connected === 'connected' && M.STATUS_WORDS['needs-update'] === 'needs an update'
-  && M.STATUS_WORDS['not-installed'] === 'not connected' && M.STATUS_WORDS['cant-read'] === 'can’t read'
+  && M.STATUS_WORDS['not-installed'] === 'can be added' && M.STATUS_WORDS['cant-read'] === 'can’t read'
   && M.STATUS_WORDS.manual === 'copy only', 'one word per status');
 ok(JSON.stringify(Object.keys(M.STATUS_WORDS)) === JSON.stringify(['connected', 'needs-update', 'not-installed', 'cant-read', 'manual']), 'exactly the five contract statuses');
 const c = M.countStatuses(SAMPLE);
@@ -255,9 +255,17 @@ section('§8 Copy it myself');
 // A3 — backend restore fields
 {
   const c = M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', preserved: [], basis: 'h', backupWillBe: '~/.cursor/mcp.json.curator-backup-<UTC time of apply>', restoreFrom: '~/.cursor/mcp.json.curator-backup-20261031T095800Z', restoreFromAt: '2026-10-31T09:58:00' }] }, [], null);
-  ok(/Puts back the copy kept on 31 Oct, 09:58 \(~\/\.cursor\/mcp\.json\.curator-backup-20261031T095800Z\)/.test(c) && /backup-&lt;UTC time of apply&gt;/.test(c), 'restore: the source copy and when it was kept; the new copy named by the literal text, escaped');
+  ok(/Puts back the copy kept on 31 Oct, 09:58 \(~\/\.cursor\/mcp\.json\.curator-backup-20261031T095800Z\)/.test(c) && /new dated copy first/.test(c) && !/UTC time|&lt;/.test(c), 'restore: the source copy and when it was kept; the new copy said as “dated”, no placeholder');
 }
 
+{
+  const P = '~/Library/Application Support/Claude/claude_desktop_config.json.curator-backup-<UTC time of apply>';
+  const ins = M.renderPlanCard({ action: 'install', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/f.json', action: 'update', entryText: '{}', preserved: [], basis: 'h', backupWillBe: P }] }, [], null);
+  ok(/A dated copy of the current file is kept beside it \(<span class="mono">[^<]*config\.json\.curator-backup-…<\/span>\)/.test(ins) && !/UTC time|&lt;|<UTC/.test(ins), 'a placeholder backup name reads “A dated copy … (…curator-backup-…)”, no angle brackets', ins.match(/data-mcpi-backup[^<]*<[^<]*/)?.[0]);
+  const rst = M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/f.json', preserved: [], basis: 'h', backupWillBe: P, restoreFrom: '~/old.bak', restoreFromAt: '2026-10-31T09:58:00' }] }, [], null);
+  ok(/Your current file is kept as a new dated copy first\./.test(rst) && !/UTC time|&lt;/.test(rst), 'restore: “kept as a new dated copy first”, no placeholder');
+  ok(M.STATUS_WORDS['not-installed'] === 'can be added' && /can be added<\/span>/.test(M.statusTag('not-installed')), 'a not-installed row’s tag uses the overview’s word');
+}
 const SM = await import('../src/public/next/views/setup-machine.js');
 const foot = SM.renderToolsOnThisMacBody({ data: { harnesses: [], version: 'x' } }, {});
 ok(/The checks only read\. Install for me writes only the my-curator entry, after a preview/.test(foot) && !/Nothing here writes a file/.test(foot), 'the block’s footer no longer says nothing is written');

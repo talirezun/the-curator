@@ -8890,7 +8890,7 @@ function deriveMcpStatus(m) {
   // was checked; the tool map below states what agents actually called.
   const pillLabel = unreadable
     ? 'Config unreadable'
-    : (connected ? 'Configured' : (m.installed ? 'Needs re-connect' : 'Not connected'));
+    : (connected ? 'Configured' : (m.installed ? 'Needs an update' : 'Not connected'));
   return { unreadable, connected, pillTone, pillLabel };
 }
 
@@ -8967,7 +8967,7 @@ function deriveStaleBridgeNote(m, now = Date.now()) {
  * file happens to be wrong" (that was the pre-v3.6.1 bug: spawning a
  * path-less command gave a green pass against the wrong folder). That
  * means a self-test can be green — the bridge software genuinely works
- * with today's settings — while the pill is still "Needs re-connect" —
+ * with today's settings — while the pill is still "Needs an update" —
  * Claude Desktop is still launching the OLD command until the user re-runs
  * setup. Both are true; they are not in tension. Only the combination is
  * worth a note, so this returns false in the far more common case where
