@@ -812,7 +812,10 @@ export function collectMachineSetup(o = {}) {
       // note below, never "not in 1 of 2 files".
       const presentOwn = own.filter((f) => f.present && !f.opaque && f.status === 'ok');
       const userOwn = own.filter((f) => f.present && f.status === 'ok');
-      const notIn = userOwn.filter((f) => !f.named && t.id === 'antigravity');
+      // A PROJECT-level file (Antigravity's <workspace>/.agents/mcp_config.json,
+      // v3.84.1) is that workspace's own and legitimately names other servers:
+      // only the USER files are held to "every file has the entry".
+      const notIn = userOwn.filter((f) => !f.named && t.id === 'antigravity' && !(repo && f.file.startsWith(repo + path.sep)));
       bridge = notIn.length
         ? { state: STATES.FIX, word: `not in ${notIn.length} of ${userOwn.length} files` }
         : { state: STATES.OK, word: 'configured', count: `${namedOwn.length} of ${presentOwn.length || namedOwn.length} file${(presentOwn.length || namedOwn.length) === 1 ? '' : 's'}` };

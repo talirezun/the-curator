@@ -34,6 +34,14 @@
  * seeded anywhere as settled. A consumer that wants to make a claim about a
  * harness reads `verified` first.
  *
+ * v3.84.1 — three DATA-ONLY fields on every `mcpConfig`: `installer`
+ * (`'file'` the app can merge JSON itself · `'cli'` the vendor's own command
+ * is the right way in · `'manual'` copy by hand), `cli: {add, remove,
+ * scopeFlag?}` on the `'cli'` rows (plain strings; nothing runs them), and
+ * `verifiedOn` ('YYYY-MM-DD', present only on a row re-checked against the
+ * vendor's source or docs on that day — never invented). `jsonc: true` marks a
+ * config file that allows comments: a writer must not re-serialise it.
+ *
  * `measured` is `null` on every entry EXCEPT `claude-code` (v3.64.0, package
  * M): §E's protocol has now been run once, against a real harness, and that
  * one row carries the result. A harness with no measurement row renders as
@@ -248,8 +256,14 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'file',
       user: [
         H('Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+        // The LINUX location (modelcontextprotocol.io, "Connect to local
+        // servers": Linux `~/.config/Claude/claude_desktop_config.json`). Dead
+        // on macOS: kept ONLY so a reader finds a file there if one exists,
+        // and never a macOS write target — the wizard writes the first path.
         H('.config', 'Claude', 'claude_desktop_config.json'),
       ],
       project: [],
@@ -278,6 +292,16 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'cli',
+      // Vendor CLI (code.claude.com/docs/en/mcp; `claude mcp add --help`).
+      // DATA ONLY — nothing in this release runs it. Default scope is `local`
+      // (per-project, inside ~/.claude.json), so `user` must be named.
+      cli: Object.freeze({
+        add: 'claude mcp add --transport stdio --scope user <name> -- <command> [args...]',
+        remove: 'claude mcp remove --scope user <name>',
+        scopeFlag: '--scope user',
+      }),
       user: [H('.claude.json')],
       project: [P('.mcp.json')],
       // `claude mcp add` at LOCAL scope (the default) writes the server under
@@ -374,13 +398,25 @@ const ENTRIES = [
       key: 'mcp_servers',
       requiresType: false,
       argvShape: 'command+args',
-      envKey: 'env_vars',
+      // `env` is the KEY=VALUE map; `env_vars` is a pass-through LIST of
+      // variable names (openai/codex rust-v0.166.0 config/src/mcp_types.rs).
+      // An earlier revision named `env_vars` here, which is the wrong table.
+      envKey: 'env',
       // The vendor command exists and is PREFERRED over merging TOML by hand:
       // this package ships no TOML parser and a hand-merge of a file it cannot
       // read is Decision L's exact failure.
       addCommand: 'codex mcp add',
-      // `startup_timeout_sec`, NOT `startup_timeout_ms` — an easy, silent
-      // mis-write named in §2.2.
+      verifiedOn: '2026-10-31',
+      installer: 'cli',
+      // `codex mcp add|remove` always act on the global ~/.codex/config.toml:
+      // there is no scope flag (cli/src/mcp_cmd.rs, rust-v0.166.0). DATA ONLY.
+      cli: Object.freeze({
+        add: 'codex mcp add <name> -- <command> [args...]',
+        remove: 'codex mcp remove <name>',
+      }),
+      // `startup_timeout_sec` is the documented key to WRITE. `startup_timeout_ms`
+      // is still ACCEPTED as a fallback when `_sec` is absent (rust-v0.166.0),
+      // so it is not a silent mis-write — only the older spelling.
       timeoutKey: 'startup_timeout_sec',
       user: [H('.codex', 'config.toml')],
       project: [P('.codex', 'config.toml')],
@@ -435,9 +471,26 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'cli',
+      // settings.json is read through stripJsonComments (gemini-cli v0.66.0,
+      // packages/cli/src/config/settings.ts): it is JSONC, so a writer must
+      // never JSON.stringify it back over the user's comments. `format` stays
+      // 'json' (the Setup check reads it as JSON, comments tolerated).
+      jsonc: true,
+      // `-s user` is REQUIRED from the home directory (the default scope is
+      // project, and it errors there). DATA ONLY.
+      cli: Object.freeze({
+        add: 'gemini mcp add -s user <name> <command> [args...]',
+        remove: 'gemini mcp remove -s user <name>',
+        scopeFlag: '-s user',
+      }),
       timeoutKey: 'timeout',
       user: [H('.gemini', 'settings.json')],
       project: [P('.gemini', 'settings.json')],
+      note: 'settings.json is JSONC (comments allowed). Also read by Gemini CLI: the system settings file '
+        + '/Library/Application Support/GeminiCli/settings.json (override: GEMINI_CLI_SYSTEM_SETTINGS_PATH) — '
+        + 'not listed in the paths here, which are home and project only.',
     }),
     instructionFile: fact('docs', {
       names: ['GEMINI.md'],
@@ -498,14 +551,19 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'file',
       user: [
         H('.gemini', 'config', 'mcp_config.json'),
         H('.gemini', 'antigravity', 'mcp_config.json'),
         H('.gemini', 'antigravity-ide', 'mcp_config.json'),
       ],
-      project: [],
-      note: 'The docs name ~/.gemini/config/mcp_config.json; ~/.gemini/antigravity/ and ~/.gemini/antigravity-ide/ '
-        + 'each held their own mcp_config.json on the maintainer\'s Mac on 2026-09-25 (observed, three separate files).',
+      // antigravity.google/docs/mcp: "Workspace configuration:
+      // <workspace>/.agents/mcp_config.json, which applies only to that workspace."
+      project: [P('.agents', 'mcp_config.json')],
+      note: 'Only ~/.gemini/config/mcp_config.json is documented (and <workspace>/.agents/mcp_config.json for one workspace); '
+        + '~/.gemini/antigravity/ and ~/.gemini/antigravity-ide/ each held their own mcp_config.json on the maintainer\'s Mac '
+        + 'on 2026-09-25 (observed, three separate files).',
     }),
     // rules.md: `GEMINI.md` and `AGENTS.md`, walked up from the working
     // directory to the repository root, no frontmatter, always on for their
@@ -627,6 +685,7 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      installer: 'file',
       user: [H('.cursor', 'mcp.json')],
       project: [P('.cursor', 'mcp.json')],
     }),
@@ -674,6 +733,17 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'cli',
+      // docs.github.com Copilot CLI command reference, "Local server
+      // configuration fields": `tools` (use ["*"] for all) and `args` are both
+      // REQUIRED; `type` is optional ("local" | "stdio", default "local").
+      alwaysArgs: true,
+      entryExtra: Object.freeze({ tools: Object.freeze(['*']) }),
+      cli: Object.freeze({
+        add: 'copilot mcp add <name> -- <command> [args...]',
+        remove: 'copilot mcp remove <name>',
+      }),
       user: [H('.copilot', 'mcp-config.json')],
       project: [P('.github', 'mcp.json'), P('.mcp.json')],
     }),
@@ -708,8 +778,14 @@ const ENTRIES = [
     id: 'cline',
     label: 'Cline',
     // §2.6 (311-324). A hook file that is ACCEPTED and never fires: PreCompact
-    // maps to `undefined`. The docs say ~/.cline/mcp.json; the SOURCE says the
-    // settings path. Source wins, and both are checked.
+    // maps to `undefined`. The docs said ~/.cline/mcp.json; the SOURCE (cline
+    // v4.1.26, sdk/packages/shared/src/storage/paths.ts) says the settings path,
+    // and `~/.cline/mcp.json` is REFUTED — the only `mcp.json` in that tree is
+    // a plugin-root file. The old VS Code extension's globalStorage copy
+    // (Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/
+    // settings/cline_mcp_settings.json) is a LEGACY file Cline migrates FROM;
+    // it is named in the note and deliberately not a `readAlso`, whose Setup
+    // wording is Claude Desktop's.
     mcpConfig: fact('source', {
       format: 'json',
       shape: 'mcpServers',
@@ -718,8 +794,17 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
-      user: [H('.cline', 'data', 'settings', 'cline_mcp_settings.json'), H('.cline', 'mcp.json')],
+      verifiedOn: '2026-10-31',
+      installer: 'cli',
+      // `--yes` skips the wizard. DATA ONLY.
+      cli: Object.freeze({
+        add: 'cline mcp add <name> --yes -- <command> [args...]',
+        remove: 'cline mcp remove <name>',
+      }),
+      user: [H('.cline', 'data', 'settings', 'cline_mcp_settings.json')],
       project: [],
+      note: 'Legacy, migrated from and never a write target: the old VS Code extension kept '
+        + '~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json.',
     }),
     instructionFile: fact('unverified', { names: [], cap: null, firstMatch: false, note: 'Which instruction file Cline reads is unverified.' }),
     hooks: fact('unverified', {
@@ -758,10 +843,21 @@ const ENTRIES = [
       argvShape: 'single-array',
       envKey: 'environment',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'manual',
+      jsonc: true,
       // `.jsonc` too (v3.77.0): opencode accepts either, and the maintainer's
       // Mac carries `opencode.jsonc` — a reader that knew only `.json` reported
       // "not configured" about a file it never opened. Comments are tolerated.
-      user: [H('.config', 'opencode', 'opencode.json'), H('.config', 'opencode', 'opencode.jsonc')],
+      // anomalyco/opencode v1.19.5 (src/config/config.ts) MERGES the global
+      // files in order config.json -> opencode.json -> opencode.jsonc (later
+      // wins); its own writer targets the first that exists of opencode.jsonc,
+      // opencode.json, config.json.
+      user: [
+        H('.config', 'opencode', 'opencode.json'),
+        H('.config', 'opencode', 'opencode.jsonc'),
+        H('.config', 'opencode', 'config.json'),
+      ],
       project: [P('opencode.json'), P('opencode.jsonc')],
     }),
     instructionFile: fact('docs', { names: ['AGENTS.md', 'CLAUDE.md'], cap: null, firstMatch: false, note: 'Read walking up from cwd.' }),
@@ -794,9 +890,16 @@ const ENTRIES = [
       shape: 'extensions',
       key: 'extensions',
       requiresType: 'stdio',
-      argvShape: 'command+args',
+      // block/goose v1.57.0 crates/goose/src/agents/extension.rs: a stdio
+      // extension is {type, name, cmd, args, envs, timeout}; `command` is not
+      // accepted, `args` has no default (required). crates/goose/src/config/
+      // extensions.rs: the entry flattens an `enabled: bool` with no default.
+      argvShape: 'cmd+args',
       envKey: 'envs',
+      entryExtra: Object.freeze({ timeout: 300 }),
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'manual',
       user: [H('.config', 'goose', 'config.yaml')],
       project: [],
     }),
@@ -832,11 +935,11 @@ const ENTRIES = [
   {
     id: 'kilo',
     label: 'Kilo',
-    // §2.10 — an OpenCode fork, same shapes. Its config PATHS were not
-    // measured, so it carries the shape and NO path: a doctor that reports
-    // "not configured" for a file it looked for in the wrong place is worse
-    // than one that says it did not look.
-    mcpConfig: fact('unverified', {
+    // §2.10 — an OpenCode fork, same shapes. Its paths were unmeasured until
+    // v3.84.1, when Kilo-Org/kilocode v7.8.18 (kilo-docs, automate/mcp/
+    // using-in-cli.md) named them. Kilo also reads opencode.json(c) and
+    // config.json; those are not listed here — OpenCode's own row owns them.
+    mcpConfig: fact('docs', {
       format: 'json',
       shape: 'mcp',
       key: 'mcp',
@@ -844,9 +947,12 @@ const ENTRIES = [
       argvShape: 'single-array',
       envKey: 'environment',
       addCommand: null,
-      user: [],
-      project: [],
-      note: 'Shape as OpenCode (a fork). The config file locations are not measured, so none are listed.',
+      verifiedOn: '2026-10-31',
+      installer: 'manual',
+      jsonc: true,
+      user: [H('.config', 'kilo', 'kilo.json'), H('.config', 'kilo', 'kilo.jsonc')],
+      project: [P('kilo.json'), P('.kilo', 'kilo.json')],
+      note: 'Shape as OpenCode (a fork); the files may carry comments (JSONC).',
     }),
     instructionFile: fact('unverified', { names: ['AGENTS.md', 'CLAUDE.md'], cap: null, firstMatch: false, note: 'As OpenCode; unverified on this fork.' }),
     hooks: fact('docs', {
@@ -907,14 +1013,16 @@ const ENTRIES = [
     //     is that plugin's own `configPath` config value, set per install in a
     //     patch — no fixed location. So hooks stay UNVERIFIED here.
     //
-    // AND THE FACT ABOUT OUR OWN LAUNCH LINE: it STRIPS `DSH_*` and
-    // credential-shaped environment variables from stdio children (the
-    // mcp-client README: names matching /KEY|PASSWORD|SECRET|TOKEN/i).
-    // Anything the bridge needs must arrive as an argv flag —
-    // `buildCuratorEntry` already passes `--domains-path` that way, so the
-    // bridge works, but `CURATOR_MCP_VIA` would be stripped and a self-test run
-    // under dsh would write UNMARKED lines. Harmless today; recorded so nobody
-    // debugs it twice.
+    // AND THE FACT ABOUT OUR OWN LAUNCH LINE: dsh scrubs the INHERITED parent
+    // environment before spawning a stdio child — ambient `DSH_*` and names
+    // matching /KEY|PASSWORD|SECRET|TOKEN/i are dropped — and then merges the
+    // entry's explicit `env` ON TOP (`{...scrubbedParentEnv(), ...config.env}`,
+    // mcp-client transport.ts @ce7073d; README: "explicit overrides survive").
+    // So an `env` we write DOES reach the bridge. `buildCuratorEntry` still
+    // passes `--domains-path` as argv, which works either way; and
+    // `CURATOR_MCP_VIA` does not match the scrub pattern, so an ambient one
+    // survives too. An earlier revision of this comment said it "would be
+    // stripped": that was wrong.
     mcpConfig: fact('source', {
       format: 'yaml',
       shape: 'cordis',
@@ -923,6 +1031,8 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
+      verifiedOn: '2026-10-31',
+      installer: 'manual',
       // The home-level layer, which applies to every profile. The per-profile
       // layers are enumerated from `eachDir` by the setup check (a reader of
       // folders — this module reads nothing).
@@ -932,10 +1042,12 @@ const ENTRIES = [
       // The Cordis plugin that carries an MCP server. No YAML parser exists in
       // this repository, so a check LINE-SCANS for `serverName: my-curator`.
       plugin: '@deepseek-ai/dsh-mcp-client',
+      // True means the INHERITED environment is scrubbed (see above), not that
+      // an explicit `env` is dropped.
       stripsEnv: true,
       note: 'A Cordis patch layer: ~/.dsh/cordis.patch.yml (every profile) or ~/.dsh/profiles/<name>/cordis.patch.yml. '
         + 'Never cordis.yml — dsh rewrites that file on every launch. Merge the entry into an existing file; do not copy over it. '
-        + 'This harness strips credential-shaped env from stdio children — argv only.',
+        + 'It scrubs credential-shaped variables it INHERITS from its own environment, but an explicit `env` in the entry still reaches the server.',
     }),
     instructionFile: fact('source', { names: ['AGENTS.md', 'CLAUDE.md'], cap: null, firstMatch: false, note: null }),
     hooks: fact('source', {
@@ -976,8 +1088,22 @@ const ENTRIES = [
       argvShape: 'command+args',
       envKey: 'env',
       addCommand: null,
-      user: [H('.codeium', 'windsurf', 'mcp_config.json')],
+      installer: 'manual',
+      // The vendor docs now disagree. docs.windsurf.com redirects to
+      // docs.devin.ai, whose desktop page says ~/.config/devin/config.json and
+      // whose CLI page says ~/.config/devin/mcp_config.json; neither names
+      // ~/.codeium/windsurf/mcp_config.json any more. All three are READ (the
+      // first stays first: it is what a Windsurf install wrote); none is a
+      // write target, hence installer 'manual'.
+      user: [
+        H('.codeium', 'windsurf', 'mcp_config.json'),
+        H('.config', 'devin', 'config.json'),
+        H('.config', 'devin', 'mcp_config.json'),
+      ],
       project: [],
+      note: 'Windsurf is now Devin Desktop and its config location is in flux: the vendor docs name '
+        + '~/.config/devin/config.json and ~/.config/devin/mcp_config.json (and no longer ~/.codeium/windsurf/mcp_config.json). '
+        + 'All three are read; copy the entry by hand.',
     }),
     // Rule files are capped at 6,000 / 12,000 CHARACTERS. The lower figure is
     // the cap carried here: a cap that is sometimes wrong in the user's favour
@@ -1022,6 +1148,11 @@ const ENTRIES = [
       envKey: 'env',
       addCommand: null,
       flat: true,
+      verifiedOn: '2026-10-31',
+      installer: 'manual',
+      // Zed: "The syntax is JSON with support for `//` comments"
+      // (configuring-zed.md, v1.26.2) — never re-serialise this file.
+      jsonc: true,
       user: [H('.config', 'zed', 'settings.json')],
       project: [],
     }),
@@ -1155,10 +1286,21 @@ export function mcpEntryFor(id, launch, opts = {}) {
 
   // The server object, in this harness's argv and type conventions.
   const entry = {};
-  if (m.requiresType) entry.type = m.requiresType;
-  if (m.argvShape === 'single-array') entry.command = [command, ...args];
-  else { entry.command = command; if (args.length) entry.args = args; }
-  if (m.shape === 'mcp') entry.enabled = true;
+  if (m.argvShape === 'cmd+args') {
+    // goose: `enabled` and `name` are required beside `type`, the executable is
+    // `cmd` (never `command`), and `args` is required even when empty.
+    entry.enabled = true;
+    if (m.requiresType) entry.type = m.requiresType;
+    entry.name = name;
+    entry.cmd = command;
+    entry.args = args;
+  } else {
+    if (m.requiresType) entry.type = m.requiresType;
+    if (m.argvShape === 'single-array') entry.command = [command, ...args];
+    else { entry.command = command; if (args.length || m.alwaysArgs) entry.args = args; }
+    if (m.shape === 'mcp') entry.enabled = true;
+  }
+  for (const [k, v] of Object.entries(m.entryExtra || {})) entry[k] = Array.isArray(v) ? [...v] : v;
 
   // The document a caller would merge into, and its serialisation.
   let config;
@@ -1221,9 +1363,11 @@ function renderYamlServer(key, name, entry, envKey) {
   const lines = [`${key}:`, `  ${yamlKey(name)}:`];
   for (const [k, v] of Object.entries(entry)) {
     if (Array.isArray(v)) {
+      if (!v.length) { lines.push(`    ${k}: []`); continue; }
       lines.push(`    ${k}:`);
       for (const item of v) lines.push(`      - ${yamlString(String(item))}`);
     } else if (typeof v === 'boolean') lines.push(`    ${k}: ${v ? 'true' : 'false'}`);
+    else if (typeof v === 'number') lines.push(`    ${k}: ${v}`);
     else lines.push(`    ${k}: ${yamlString(String(v))}`);
   }
   if (envKey) lines.push(`    ${envKey}: {}`);

@@ -328,7 +328,8 @@ try {
     ok(codex && JSON.stringify(codex.reads) === '["AGENTS.md"]' && codex.configPaths[0] === '~/.codex/config.toml' && typeof codex.detail === 'string',
       'addable carries `reads` and `configPaths` (own user path first), and still `detail` for an older view', codex);
     const kilo = add.find((a) => a.id === 'kilo');
-    ok(kilo && kilo.measured === false && Array.isArray(kilo.configPaths) && kilo.configPaths.length === 0, 'an unmeasured tool claims no config path', kilo);
+    ok(kilo && kilo.measured === true && kilo.configPaths[0] === '~/.config/kilo/kilo.json', 'Kilo (v3.84.1: documented paths) is measured and names its own user path first', kilo);
+    ok(add.filter((a) => a.group === 'known' && a.measured === false).every((a) => a.configPaths.length === 0), 'a tool that is not measured claims no config path');
     ok(add.at(-1)?.id === '__custom' && JSON.stringify(add.at(-1).reads) === '["AGENTS.md"]', 'Custom tool…: the AGENTS.md convention');
     // Windsurf: added, never saved, not configured → removable; its config
     // file exists here → Reveal is allowed for it.

@@ -315,11 +315,49 @@ section('§2  THE MCP ENTRY — the launch line is the caller\'s, in each format
   ok(g.format === 'yaml' && g.text.startsWith('extensions:\n  my-curator:'),
     'goose serialises YAML under `extensions`');
   ok(g.text.includes('    envs: {}'), '…with goose\'s own env key, `envs`');
+  // v3.84.1 — block/goose v1.57.0 deserialises ONLY {enabled, type, name, cmd,
+  // args, envs, timeout}: `command` is rejected, `args` and `enabled` required.
+  // Parse the rendered text back (a flat reader is enough for this shape).
+  const gy = {};
+  let gList = null;
+  for (const line of g.text.split('\n').slice(2)) {
+    const lm = /^      - "(.*)"$/.exec(line);
+    if (lm && gList) { gList.push(lm[1].replace(/\\(["\\])/g, '$1')); continue; }
+    const km = /^    ([a-z]+): ?(.*)$/.exec(line);
+    if (!km) continue;
+    gList = null;
+    if (km[2] === '') { gList = []; gy[km[1]] = gList; } else gy[km[1]] = km[2];
+  }
+  ok(gy.enabled === 'true' && gy.type === '"stdio"' && gy.name === '"my-curator"' && gy.cmd === '"/opt/My Tools/node"'
+    && JSON.stringify(gy.args) === JSON.stringify(LAUNCH.args) && gy.timeout === '300' && gy.envs === '{}',
+  'goose: enabled/type/name/cmd/args/envs/timeout, with the caller\'s command as `cmd`', gy);
+  ok(!('command' in gy) && !/^\s+command:/m.test(g.text), '…and NO `command` key (goose rejects it)');
+  ok(Object.keys(g.entry).sort().join() === 'args,cmd,enabled,name,timeout,type', '…the entry\'s exact field set', Object.keys(g.entry));
+  const g0 = A.mcpEntryFor('goose', { command: '/usr/bin/node' });
+  ok(/^    args: \[\]$/m.test(g0.text), 'goose: `args` is emitted even when empty (it has no serde default)');
+
+  // Copilot CLI: `tools` and `args` are both REQUIRED (docs.github.com
+  // Copilot CLI command reference, "Local server configuration fields").
+  const cp = A.mcpEntryFor('copilot-cli', { command: '/usr/bin/node' });
+  const cpe = JSON.parse(cp.text).mcpServers['my-curator'];
+  ok(JSON.stringify(cpe.tools) === '["*"]' && Array.isArray(cpe.args) && cpe.args.length === 0 && cpe.command === '/usr/bin/node',
+    'Copilot CLI: `tools: ["*"]` and `args` (even empty) are always emitted', cpe);
+  const cpL = JSON.parse(A.mcpEntryFor('copilot-cli', LAUNCH).text).mcpServers['my-curator'];
+  ok(JSON.stringify(cpL.args) === JSON.stringify(LAUNCH.args) && JSON.stringify(cpL.tools) === '["*"]',
+    '…and with a launch line, args are the caller\'s');
+  ok(JSON.parse(A.mcpEntryFor('claude-code', { command: '/usr/bin/node' }).text).mcpServers['my-curator'].args === undefined
+    && JSON.parse(A.mcpEntryFor('claude-code', { command: '/usr/bin/node' }).text).mcpServers['my-curator'].tools === undefined,
+  '…while no other JSON harness gains `tools` or an empty `args`');
+
+  // Codex: `env` is the KEY=VALUE map; `env_vars` is a pass-through name list.
+  ok(A.adapterFor('codex').mcpConfig.envKey === 'env', 'Codex: envKey is `env` (not `env_vars`)');
+  ok(A.adapterFor('codex').mcpConfig.timeoutKey === 'startup_timeout_sec', '…and the timeout key to write stays `startup_timeout_sec`');
 
   const dsh = A.mcpEntryFor('dsh', LAUNCH);
   ok(dsh.format === 'yaml' && dsh.shape === 'cordis', 'dsh is a Cordis YAML overlay');
-  ok(A.adapterFor('dsh').mcpConfig.stripsEnv === true,
-    '…and is recorded as stripping credential-shaped env from stdio children');
+  ok(A.adapterFor('dsh').mcpConfig.stripsEnv === true
+    && !/argv only/.test(A.adapterFor('dsh').mcpConfig.note) && /explicit `env`/.test(A.adapterFor('dsh').mcpConfig.note),
+  '…recorded as scrubbing INHERITED credential-shaped env, with the note saying an explicit `env` still arrives (not "argv only")');
   // v3.78.0 — the shape dsh's own examples use (verified from its source):
   // a PATCH item inserting one dsh-mcp-client entry, never a `mcp_servers` map.
   ok(dsh.text.startsWith('- insert:\n    - id: "mcp-my-curator"\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: "my-curator"\n        transport: stdio\n'),
@@ -354,6 +392,62 @@ section('§2  THE MCP ENTRY — the launch line is the caller\'s, in each format
     && JSON.stringify(realEntry.config.mcpServers['my-curator'].args || []) === JSON.stringify(real.args),
   'the Claude Desktop entry equals buildCuratorEntry\'s output, compared by execution');
   ok(path.isAbsolute(real.command), '…and that launch line is absolute (the control on the comparison)');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§2b  THE REGISTRY CORRECTIONS (v3.84.1) — paths, install kinds, vendor commands');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  const userOf = (id) => A.mcpEntryFor(id, { command: '/usr/bin/node' }).paths.user;
+  const projOf = (id) => A.mcpEntryFor(id, { command: '/usr/bin/node' }).paths.project;
+  const sameSet = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+
+  ok(!userOf('cline').some((p) => /\.cline\/mcp\.json$/.test(p)) && userOf('cline').includes('~/.cline/data/settings/cline_mcp_settings.json'),
+    'Cline: ~/.cline/mcp.json (refuted in cline v4.1.26) is gone; the settings file stays', userOf('cline'));
+  ok(sameSet(userOf('kilo'), ['~/.config/kilo/kilo.json', '~/.config/kilo/kilo.jsonc'])
+    && sameSet(projOf('kilo'), ['kilo.json', '.kilo/kilo.json']) && A.adapterFor('kilo').mcpConfig.source === 'docs',
+  'Kilo: the documented user and project files, source docs', { u: userOf('kilo'), p: projOf('kilo') });
+  ok(sameSet(userOf('opencode'), ['~/.config/opencode/opencode.json', '~/.config/opencode/opencode.jsonc', '~/.config/opencode/config.json']),
+    'OpenCode: opencode.json, opencode.jsonc AND config.json (the three global files it merges)', userOf('opencode'));
+  ok(sameSet(userOf('antigravity'), ['~/.gemini/config/mcp_config.json', '~/.gemini/antigravity/mcp_config.json', '~/.gemini/antigravity-ide/mcp_config.json'])
+    && sameSet(projOf('antigravity'), ['.agents/mcp_config.json']),
+  'Antigravity: the three user files kept, plus the workspace .agents/mcp_config.json', { u: userOf('antigravity'), p: projOf('antigravity') });
+  ok(userOf('windsurf')[0] === '~/.codeium/windsurf/mcp_config.json'
+    && userOf('windsurf').includes('~/.config/devin/config.json') && userOf('windsurf').includes('~/.config/devin/mcp_config.json')
+    && A.adapterFor('windsurf').mcpConfig.verified === true,
+  'Windsurf/Devin: all three locations are read, the legacy one still first, source unchanged', userOf('windsurf'));
+  ok(userOf('claude-desktop')[0] === '~/Library/Application Support/Claude/claude_desktop_config.json'
+    && userOf('claude-desktop')[1] === '~/.config/Claude/claude_desktop_config.json',
+  'Claude Desktop: the macOS path is first (the write target); the Linux path is only read');
+
+  // JSONC is carried as a flag (format stays "json": the Setup check reads it as JSON).
+  const jsoncIds = A.listHarnesses().filter((id) => A.adapterFor(id).mcpConfig?.jsonc === true).sort();
+  ok(jsoncIds.join(',') === 'gemini-cli,kilo,opencode,zed', 'JSONC files are marked (Gemini CLI, Kilo, OpenCode, Zed)', jsoncIds);
+  ok(jsoncIds.every((id) => A.adapterFor(id).mcpConfig.format === 'json'), '…and their `format` stays "json"');
+
+  // installer / cli / verifiedOn on every mcpConfig.
+  const rows = A.listHarnesses().map((id) => A.adapterFor(id)).filter((a) => a.mcpConfig);
+  ok(rows.every((a) => ['file', 'cli', 'manual'].includes(a.mcpConfig.installer)),
+    'every mcpConfig has an installer of file | cli | manual', rows.filter((a) => !['file', 'cli', 'manual'].includes(a.mcpConfig.installer)).map((a) => a.id));
+  const byKind = (k) => rows.filter((a) => a.mcpConfig.installer === k).map((a) => a.id).sort().join(',');
+  ok(byKind('file') === 'antigravity,claude-desktop,cursor' && byKind('cli') === 'claude-code,cline,codex,copilot-cli,gemini-cli',
+    'file: Claude Desktop, Cursor, Antigravity · cli: Claude Code, Codex, Gemini CLI, Copilot CLI, Cline', { file: byKind('file'), cli: byKind('cli') });
+  ok(rows.filter((a) => a.mcpConfig.installer === 'cli').every((a) => {
+    const c = a.mcpConfig.cli;
+    return c && typeof c.add === 'string' && c.add && typeof c.remove === 'string' && c.remove && (c.scopeFlag === undefined || typeof c.scopeFlag === 'string');
+  }), 'every `cli` row carries plain-string add and remove commands');
+  ok(rows.filter((a) => a.mcpConfig.installer !== 'cli').every((a) => a.mcpConfig.cli === undefined),
+    '…and no other row carries a `cli` block');
+  ok(rows.every((a) => a.mcpConfig.verifiedOn === undefined || /^\d{4}-\d{2}-\d{2}$/.test(a.mcpConfig.verifiedOn)),
+    'verifiedOn, where present, is a YYYY-MM-DD date');
+  ok(['goose', 'codex', 'gemini-cli', 'claude-code', 'copilot-cli', 'cline', 'antigravity', 'kilo', 'zed', 'claude-desktop', 'opencode', 'dsh']
+    .every((id) => A.adapterFor(id).mcpConfig.verifiedOn === '2026-10-31')
+    && A.adapterFor('cursor').mcpConfig.verifiedOn === undefined && A.adapterFor('windsurf').mcpConfig.verifiedOn === undefined,
+  'verifiedOn is 2026-10-31 on the re-verified rows only; cursor and windsurf carry none');
+  ok(A.adapterFor('windsurf').mcpConfig.installer === 'manual', 'Windsurf: installer manual (its location is in flux)');
+  // The Codex addCommand output is unchanged by the new `cli` data.
+  ok(A.mcpEntryFor('codex', { command: '/usr/bin/node', args: ['/x/server.js'] }).addCommand === "codex mcp add my-curator -- /usr/bin/node /x/server.js",
+    'Codex addCommand output is unchanged');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -450,9 +544,10 @@ section('§4  THE PATHS — set equality against doctor.js\'s own table');
   const doctorIds = new Set(targets.map((t) => t.id));
   const onlyHere = A.listHarnesses().filter((id) => !doctorIds.has(id));
   // v3.78.0: dsh's config location was verified from its source, so it now
-  // has paths and a doctor row; Kilo's are still unmeasured.
-  ok(onlyHere.join(',') === 'kilo',
-    `the adapter table adds exactly the one harness doctor.js has no row for (${onlyHere.join(', ')})`);
+  // has paths and a doctor row. v3.84.1: Kilo's paths were named by its docs,
+  // so every harness with an MCP location now has a doctor row.
+  ok(onlyHere.join(',') === '',
+    `every adapter with an MCP config location has a doctor.js row (extra: ${onlyHere.join(', ') || 'none'})`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

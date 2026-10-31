@@ -189,6 +189,20 @@ section('§3  Antigravity, three files');
   ok(ag.bridge.state === 'fix' && /not in 1 of 2 files/.test(ag.bridge.word), 'named in one present file, absent from another → to fix, counted', ag.bridge);
 }
 
+section('§3b  Antigravity: a workspace .agents/mcp_config.json (v3.84.1) is the workspace\'s own');
+{
+  const HC = path.join(ROOT, 'st-ws'); const RC = path.join(ROOT, 'st-ws-repo');
+  w(path.join(HC, '.gemini', 'config', 'mcp_config.json'), JSON.stringify({ mcpServers: { 'my-curator': ours } }));
+  // The workspace file exists and names ONLY another server: that must not turn a working user setup red.
+  w(path.join(RC, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: other }));
+  const c = row(S.collectMachineSetup({ home: HC, repo: RC, skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  ok(c.bridge.state === 'ok', 'a working user file plus a workspace file that names another server stays ok', c.bridge);
+  ok(c.files.some((f) => f.file === path.join(RC, '.agents', 'mcp_config.json') && f.present && !f.named), '…while the workspace file IS read (present, not naming us)', c.files);
+  // And the OLD rule still bites for two USER files.
+  const d = row(S.collectMachineSetup({ home: HOME, repo: REPO, skillsDir, domainsDir: DOMAINS }), 'antigravity');
+  ok(d.bridge.state === 'fix' && /not in 1 of 2 files/.test(d.bridge.word), '…and a user file without the entry still counts', d.bridge);
+}
+
 section('§4  skills');
 {
   const ag = row(machine, 'antigravity');

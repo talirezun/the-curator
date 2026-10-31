@@ -355,8 +355,8 @@ section('§5  doctor — MCP files, hook file, skills by hash, the AGENTS.md blo
   const j = parse(r);
   const row = j?.harnesses?.find((h) => h.id === 'antigravity');
   ok(r.code === 0 && row, 'doctor exits 0 and has an Antigravity row', r.stderr);
-  ok(row.mcp.length === 3 && row.mcp.filter((m) => m.named).length === 1 && row.mcp.filter((m) => m.present).length === 2,
-    '…MCP: three files looked at, two present, one naming my-curator');
+  ok(row.mcp.length === 4 && row.mcp.filter((m) => m.named).length === 1 && row.mcp.filter((m) => m.present).length === 2,
+    '…MCP: four files looked at (three user files + the workspace .agents/mcp_config.json), two present, one naming my-curator');
   ok(row.hooks.some((h) => h.ours && h.events.join() === 'PreInvocation,Stop'),
     '…hooks: the user hooks.json carries our entries, events read one level below the hook NAME');
   const sk = row.skills?.installed || [];
