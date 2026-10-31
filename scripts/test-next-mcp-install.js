@@ -296,6 +296,7 @@ section('§9 platform gating: darwin, win32, linux');
   ok(/~\/<wbr>\.cursor\/<wbr>mcp\.json/.test(M.renderInstallPanel({ status: status(SAMPLE) })), 'POSIX paths still wrap after a slash');
   ok(!/<wbr>/.test(M.renderInstallPanel({ status: wst([tool({ id: 'cursor', files: [{ display: 'C:\\a<b>\\c' }] })]) }).replace(/\\<wbr>|&lt;|&gt;/g, '')) , 'a path is escaped before the break points are added');
 
+  ok(!/data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: status([WIN[3]], { platform: 'linux', writable: false }) })), 'Reveal is hidden on linux too: it shows only on darwin');
   // reasons
   const nf = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_not_found', message: 'backend text' }, files: [] }), { platform: 'win32', writable: true });
   ok(/data-mcpi-reason>Open Claude Desktop once, then press Check again</.test(nf), 'config_not_found in words', nf);

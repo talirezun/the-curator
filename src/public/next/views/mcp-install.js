@@ -323,8 +323,8 @@ export function renderToolRow(tool, ctx = {}) {
   if (status === 'connected' && canWrite) acts.push(btnG('remove', 'Remove', tid));
   if (tool.restorable === true && canWrite) acts.push(btnG('restore', 'Restore original', tid));
   if (status === 'cant-read') {
-    // Reveal is `open -R` (macOS only): never a dead button on Windows.
-    const p = platform === 'win32' ? '' : revealPathFor(tool, ctx.paths);
+    // Reveal is `open -R` (macOS only): never a dead button on Windows or Linux.
+    const p = isStr(platform) && platform !== 'darwin' ? '' : revealPathFor(tool, ctx.paths);
     if (p) acts.push(btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"'));
   }
   if ((status === 'manual' || status === 'cant-read' || status === 'not-installed' || status === 'needs-update') && snippet) {
