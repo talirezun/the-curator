@@ -6,7 +6,8 @@
  * scanWiki(domain)  → pure scanner. Reads the wiki and returns a report of
  *                     structural issues: broken links, orphans, folder-prefix
  *                     violations, cross-folder duplicates, hyphen variants,
- *                     missing summary→entity backlinks.
+ *                     missing summary→entity backlinks, untidy summary link
+ *                     sections (v3.84.0, summaryLinkSections).
  *
  * fixIssue(domain, type, issue?)  → applies a single repair, or all repairs
  *                                   of one type when issue is omitted.
@@ -18,7 +19,11 @@ import { readFile, writeFile, readdir, rm, stat, lstat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
-import { wikiPath, injectSingleBacklink, injectRelatedLink, isDomainReadonly } from './files.js';
+import {
+  wikiPath, injectSingleBacklink, injectRelatedLink, isDomainReadonly,
+  tidySummaryLinkSections, dedupRewrittenBullets,
+  SUMMARY_ENTITIES_HEADING, SUMMARY_CONCEPTS_HEADING,
+} from './files.js';
 import { localDateStamp } from './local-date.js';
 // v3.83.0: index.md as DATA. The pure work (parse, canonical-path coverage,
 // rebuild composition, descriptions) lives in wiki-index.js; every filesystem
@@ -612,6 +617,7 @@ async function scanWikiUncached(domain) {
 
   const brokenLinks = [];
   const folderPrefixLinks = [];
+  const summaryLinkSections = [];
 
   const allFiles = await walkMdFiles(wikiDir);
 
@@ -621,6 +627,25 @@ async function scanWikiUncached(domain) {
 
     const content = await readFile(full, 'utf8');
     const links = [...content.matchAll(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g)];
+
+    // v3.84.0 — summaryLinkSections: would the deterministic tidy change this
+    // summary's two link sections? Uses the content this loop already read and
+    // the slug sets built above, so it costs no extra I/O. Top-level summaries
+    // only (the folder listing's set), the same pages the fix can address.
+    const relPosix = relPath.split(path.sep).join('/');
+    if (relPosix.startsWith('summaries/') && relPosix.indexOf('/', 10) === -1 && summarySlugs.has(relPosix.slice(10, -3))) {
+      const tidy = tidySummaryLinkSections(content, { entitySlugs, conceptSlugs });
+      if (tidy.changed) {
+        summaryLinkSections.push({
+          summary: relPosix,
+          duplicateLines: tidy.stats.duplicateLines,
+          conceptsToMove: tidy.stats.conceptsToMove,
+          entitiesToMove: tidy.stats.entitiesToMove,
+          sampleConcepts: tidy.stats.sampleConcepts,
+          sampleEntities: tidy.stats.sampleEntities,
+        });
+      }
+    }
 
     for (const m of links) {
       const raw = m[1].trim();
@@ -720,15 +745,21 @@ async function scanWikiUncached(domain) {
     }
   }
 
-  // Missing backlinks: summary mentions entity X (in Entities Mentioned),
-  // but X's Related section has no [[summaries/summarySlug]]
+  // Missing backlinks: summary mentions entity X (in Entities Mentioned, or —
+  // v3.84.0 — in Concepts Introduced or Referenced, which is where concept
+  // pages now live and which injectSummaryBacklinks now reads too), but X's
+  // Related section has no [[summaries/summarySlug]]
   const missingBacklinks = [];
   for (const sf of summaryFiles) {
     const summarySlug = sf.slice(0, -3);
     const summaryAbs = wikiFile(wikiDir, 'summaries', sf);
     if (!summaryAbs) continue;
     const summaryContent = await readFile(summaryAbs, 'utf8');
-    const entityBullets = extractBulletsFromSection(summaryContent, 'Entities Mentioned');
+    const entityBullets = [
+      ...extractBulletsFromSection(summaryContent, SUMMARY_ENTITIES_HEADING),
+      ...extractBulletsFromSection(summaryContent, SUMMARY_CONCEPTS_HEADING),
+    ];
+    const seenTargets = new Set();
     for (const bullet of entityBullets) {
       const m = bullet.match(/\[\[([^\]]+)\]\]/);
       if (!m) continue;
@@ -751,6 +782,9 @@ async function scanWikiUncached(domain) {
         }
       }
       if (!targetRel) continue; // broken link — handled separately
+      // One row per (summary, page) even when both sections list it.
+      if (seenTargets.has(targetRel)) continue;
+      seenTargets.add(targetRel);
 
       const targetAbs = wikiFile(wikiDir, targetRel);
       if (!targetAbs) continue;
@@ -806,6 +840,9 @@ async function scanWikiUncached(domain) {
     // NOT auto-fixable, NOT dismissible: one row, rebuilt by the user through
     // the plan/apply routes (planIndexRebuild / applyIndexRebuild below).
     indexDrift:        indexCheck.indexDrift,
+    // v3.84.0 — AUTO-FIXABLE, NOT dismissible (a fix row, not review-only):
+    // one row per summary whose link sections the tidy would change.
+    summaryLinkSections,
   };
 }
 
@@ -881,6 +918,8 @@ async function applyMirrorIndexCheck(domain, report) {
   try { readonly = await isDomainReadonly(domain); } catch { readonly = false; }
   if (!readonly) return report;
   report.indexDrift = [];
+  // v3.84.0: a mirror is read-only — nothing there can be tidied, so no row.
+  report.summaryLinkSections = [];
   if (report.counts) {
     delete report.counts.indexRows;
     report.counts.indexCheck = 'mirror';
@@ -1041,6 +1080,10 @@ export const AUTO_FIXABLE = new Set([
   // Phase 3 scan is a separate opt-in flow; see scanSemanticDuplicates in
   // health-ai.js.
   'semanticDupe',
+  // v3.84.0 — deterministic, free, link-preserving (hard-guarded) tidy of a
+  // summary's two link sections. Same class as folderPrefixLinks: one page,
+  // rewritten in place, reversible from version history, nothing deleted.
+  'summaryLinkSections',
 ]);
 
 /**
@@ -1097,10 +1140,13 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
   // Allow whitespace inside [[ ... ]] — the scanner trims linkText but the source
   // file may have `[[ Cline]]` or `[[Cline ]]` with stray spaces from LLM output.
   const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
-  const after = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
+  const rewritten = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
   // The ONE reason that genuinely means "already resolved": the target exists,
   // the source file exists, and the link is simply not in it any more.
-  if (after === before) return { ok: false, reason: 'link-not-present' };
+  if (rewritten === before) return { ok: false, reason: 'link-not-present' };
+  // v3.84.0: a retarget can turn `- [[old]]` into a copy of an existing
+  // `- [[new]]` — drop only the line the rewrite turned into a copy.
+  const after = dedupRewrittenBullets(before, rewritten);
   await writeFileAtomic(full, after, 'utf8');
   return { ok: true, reason: null };
 }
@@ -1112,6 +1158,8 @@ async function fixFolderPrefixLink(wikiDir, issue) {
   const before = content;
   content = content.replace(/\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
     (_m, _folder, slug, alias) => `[[${slug}${alias || ''}]]`);
+  // v3.84.0: `- [[concepts/rag]]` beside `- [[rag]]` becomes a copy — drop it.
+  content = dedupRewrittenBullets(before, content);
   if (content !== before) await writeFileAtomic(full, content, 'utf8');
   return content !== before;
 }
@@ -1270,7 +1318,10 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
     if (rel === 'index.md' || rel === 'log.md') continue;
     if (doomed.some((d) => path.resolve(d) === path.resolve(full))) continue;
     const content = await readFile(full, 'utf8');
-    const rewritten = content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`);
+    // v3.84.0: after a merge, `- [[old]]` and `- [[keep]]` on one page become
+    // two copies of `- [[keep]]` — the rewritten copy goes.
+    const rewritten = dedupRewrittenBullets(content,
+      content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`));
     if (rewritten !== content) {
       await writeFileAtomic(full, rewritten, 'utf8');
       changed++;
@@ -1455,6 +1506,43 @@ async function fixMissingBacklink(wikiDir, issue) {
 }
 
 /**
+ * Tidy one summary's two link sections (v3.84.0, `summaryLinkSections`).
+ *
+ * Deterministic and free: tidySummaryLinkSections (files.js) moves each bullet
+ * to the section its page's folder names and drops repeated lines, and REFUSES
+ * — returning `changed: false, refused` — unless the page's set of link
+ * targets and every line outside the two sections are exactly unchanged. The
+ * refusal is surfaced as `link-guard` and nothing is written.
+ *
+ * `issue` may be LLM-composed (MCP fix_wiki_issue), so `summary` is validated
+ * structurally (splitWikiRef: `summaries/<file>.md`, one level) and resolved
+ * through wikiFile like every other path here. `slugs` is an optional
+ * prebuilt slug inventory so fix-all does not re-list the folders per page.
+ *
+ * RETURNS `{ ok, reason }`.
+ */
+async function fixSummaryLinkSections(wikiDir, issue, slugs = null) {
+  const ref = splitWikiRef(issue && issue.summary);
+  if (!ref || ref.folder !== 'summaries') return { ok: false, reason: 'summary-invalid' };
+  const summaryFileAbs = wikiFile(wikiDir, 'summaries', `${ref.slug}.md`);
+  if (!summaryFileAbs) return { ok: false, reason: 'summary-invalid' };
+  if (!existsSync(summaryFileAbs)) return { ok: false, reason: 'summary-not-found' };
+  const known = slugs || await buildEntityConceptSlugs(wikiDir);
+  const before = await readFile(summaryFileAbs, 'utf8');
+  const tidy = tidySummaryLinkSections(before, known);
+  if (tidy.refused) return { ok: false, reason: 'link-guard' };
+  if (!tidy.changed) return { ok: false, reason: 'already-tidy' };
+  await writeFileAtomic(summaryFileAbs, tidy.content, 'utf8');
+  return { ok: true, reason: null };
+}
+
+/** The entity/concept slug sets the tidy classifies against, from the gated listing. */
+async function buildEntityConceptSlugs(wikiDir) {
+  const { ents, cons } = await buildTargetInventory(wikiDir);
+  return { entitySlugs: new Set(ents), conceptSlugs: new Set(cons) };
+}
+
+/**
  * REFUSAL REASONS — why `fixed: 0` is not one fact but several.
  *
  * The two handlers below that accept an LLM-COMPOSED issue object return
@@ -1511,6 +1599,7 @@ export async function fixIssue(domain, type, issue = null) {
     if (type === 'missingBacklinks')  raw = await fixMissingBacklink(wikiDir, issue);
     if (type === 'orphanLink')        raw = await fixOrphanLink(wikiDir, issue);
     if (type === 'semanticDupe')      raw = await fixSemanticDuplicate(wikiDir, issue);
+    if (type === 'summaryLinkSections') raw = await fixSummaryLinkSections(wikiDir, issue);
     const { ok, reason, missing } = normaliseFixOutcome(raw);
     return {
       fixed: ok ? 1 : 0,
@@ -1534,6 +1623,7 @@ export async function fixIssue(domain, type, issue = null) {
   // existence check would otherwise re-read three folders for every link, and
   // a mature domain reaches here with hundreds.
   const knownTargets = type === 'brokenLinks' ? (await buildTargetInventory(wikiDir)).valid : null;
+  const knownSlugs = type === 'summaryLinkSections' ? await buildEntityConceptSlugs(wikiDir) : null;
   let fixed = 0;
   for (const it of issues) {
     let raw = false;
@@ -1543,6 +1633,7 @@ export async function fixIssue(domain, type, issue = null) {
       if (type === 'crossFolderDupes')  raw = await fixCrossFolderDupe(wikiDir, it);
       if (type === 'hyphenVariants')    raw = await fixHyphenVariant(wikiDir, it);
       if (type === 'missingBacklinks')  raw = await fixMissingBacklink(wikiDir, it);
+      if (type === 'summaryLinkSections') raw = await fixSummaryLinkSections(wikiDir, it, knownSlugs);
     } catch (err) {
       console.warn(`[fixIssue] ${type} failed:`, err.message);
     }
@@ -2282,7 +2373,7 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
     if (rel === 'index.md' || rel === 'log.md') { processed++; continue; }
     const before = await readFile(full, 'utf8');
     let changedHere = 0;
-    const after = before.replace(linkRe, (m0, inner, alias) => {
+    const replaced = before.replace(linkRe, (m0, inner, alias) => {
       const act = actions.get(inner.trim());
       if (!act) return m0;
       changedHere++;
@@ -2291,6 +2382,9 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
       // Keep readable text: the alias label if the link had one, else the link text.
       return alias ? alias.slice(1).trim() : inner.trim();
     });
+    // v3.84.0: a retarget or strip can turn a line into a copy of its
+    // neighbour in the same section — drop only the rewritten copy.
+    const after = dedupRewrittenBullets(before, replaced);
     if (changedHere > 0 && after !== before) {
       await writeFileAtomic(full, after, 'utf8');
       filesChanged++;
@@ -2380,7 +2474,9 @@ export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
  * Reuses fixIssue(domain, type, null) — the same chokepoint as fix-all.
  */
 export async function fixAllSafe(domain) {
-  const TYPES = ['crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks', 'brokenLinks'];
+  // summaryLinkSections runs LAST: the types before it merge pages and rewrite
+  // links, which changes which folder a summary's links resolve to.
+  const TYPES = ['crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];
   const byType = {};
   let fixed = 0, total = 0;
   for (const type of TYPES) {

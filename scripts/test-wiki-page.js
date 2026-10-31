@@ -868,6 +868,43 @@ try {
         'H1 #36h: scanWiki does not read through it either (indexDrift [] + counts.indexCheck "unreadable")', JSON.stringify(cScan.counts));
     }
 
+    // ── Case 13 (v3.84.0): summaryLinkSections — the summary tidy rewrites
+    // ONE summary in place. Three escape shapes: summaries/ itself a symlink
+    // out (domain D), a symlinked summary LEAF inside a real summaries/
+    // (domain A), and a traversal in the LLM-composable `summary` field.
+    {
+      const MESSY = '# Messy\n\n## Entities Mentioned\n- [[alpha]]\n- [[alpha]]\n- [[beta]]\n';
+      const dWiki = wikiDirFor('escape-d');
+      for (const f of ['entities', 'concepts']) mkdirSync(path.join(dWiki, f), { recursive: true });
+      writeFileSync(path.join(domainsDir, 'escape-d', 'CLAUDE.md'), '# Domain: Escape D\n', 'utf8');
+      writeFileSync(path.join(dWiki, 'entities', 'alpha.md'), '# Alpha\n', 'utf8');
+      writeFileSync(path.join(dWiki, 'concepts', 'beta.md'), '# Beta\n', 'utf8');
+      const outSummaries = path.join(work, 'outside-summaries');
+      mkdirSync(outSummaries, { recursive: true });
+      const outMessy = path.join(outSummaries, 'messy.md');
+      writeFileSync(outMessy, MESSY, 'utf8');
+      symlinkSync(outSummaries, path.join(dWiki, 'summaries'));
+      const outLeaf = path.join(work, 'outside-leaf-summary.md');
+      writeFileSync(outLeaf, MESSY, 'utf8');
+      symlinkSync(outLeaf, path.join(aWiki, 'summaries', 'leaf-messy.md'));
+
+      const r13a = await fixIssue('escape-d', 'summaryLinkSections', { summary: 'summaries/messy.md' });
+      assert(r13a.fixed === 0, 'H1 #37a: summaryLinkSections refuses a summary reached through a symlinked summaries/ folder', JSON.stringify(r13a));
+      const r13b = await fixIssue('escape-a', 'summaryLinkSections', { summary: 'summaries/leaf-messy.md' });
+      assert(r13b.fixed === 0, 'H1 #37b: …and a symlinked summary LEAF that points outside the wiki', JSON.stringify(r13b));
+      const r13c = await fixIssue('escape-a', 'summaryLinkSections', { summary: 'summaries/../../outside-all/victim.md' });
+      assert(r13c.fixed === 0 && r13c.reason === 'summary-invalid', 'H1 #37c: …and a traversal in issue.summary (reason summary-invalid)', JSON.stringify(r13c));
+      const r13d = await fixIssue('escape-a', 'summaryLinkSections', { summary: '/etc/passwd' });
+      assert(r13d.fixed === 0 && r13d.reason === 'summary-invalid', 'H1 #37d: …and an absolute path', JSON.stringify(r13d));
+      const r13e = await fixIssue('escape-d', 'summaryLinkSections', null);
+      assert(r13e.fixed === 0 && r13e.total === 0, 'H1 #37e: fix-all of the type finds nothing to fix through a symlinked folder', JSON.stringify(r13e));
+      const dScan = await scanWiki('escape-d');
+      assert(Array.isArray(dScan.summaryLinkSections) && dScan.summaryLinkSections.length === 0,
+        'H1 #37f: scanWiki reports no summaryLinkSections row for a summary outside the wiki', JSON.stringify(dScan.summaryLinkSections));
+      assert(readFileSync(outMessy, 'utf8') === MESSY && readFileSync(outLeaf, 'utf8') === MESSY,
+        'H1 #37g: both outside summaries are byte-identical');
+    }
+
     unchanged('H1 #35: FINAL — after every destructive entry point was exercised, every outside file is byte-identical');
     assert(readFileSync(secret, 'utf8').includes('sensitive-line'), 'H1 #36: the out-of-tree secret file is untouched');
   }
@@ -1325,7 +1362,8 @@ try {
 
     // (g) …and every fix type the router will dispatch is exercised above.
     const covered = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolderDupes',
-                             'hyphenVariants', 'missingBacklinks', 'orphanLink', 'semanticDupe']);
+                             'hyphenVariants', 'missingBacklinks', 'orphanLink', 'semanticDupe',
+                             'summaryLinkSections']);   // v3.84.0 — Case 13
     const uncovered = [...healthModule.AUTO_FIXABLE].filter(t => !covered.has(t));
     assert(uncovered.length === 0,
       '8c #8: every AUTO_FIXABLE type has an escape case in section 8/8b',
@@ -1527,6 +1565,19 @@ try {
       assert(r.filesChanged === 1 && r.occurrencesReplaced === 3, '8d #37: …reporting real file/occurrence counts', JSON.stringify(r));
       assert(body.includes('[[rag]]'), '8d #38: …the retarget landed');
       assert(!body.includes('[[ghost') && body.includes('Ghosty'), '8d #39: …and stripping keeps the readable alias label');
+    }
+    // v3.84.0 — summaryLinkSections succeeds on valid input.
+    {
+      const d = mk({
+        'entities/alpha.md': '# Alpha\n',
+        'concepts/beta.md':  '# Beta\n',
+        'summaries/s.md':    '# S\n\n## Key Takeaways\n- kept\n\n## Entities Mentioned\n- [[alpha]]\n- [[alpha]]\n- [[beta]]\n',
+      });
+      const r = await fixIssue(d.name, 'summaryLinkSections', { summary: 'summaries/s.md' });
+      assert(r.fixed === 1, '8d #40c: summaryLinkSections tidies a valid summary', JSON.stringify(r));
+      const after = d.read('summaries/s.md');
+      assert(/## Concepts Introduced or Referenced\n- \[\[beta\]\]/.test(after) && after.split('- [[alpha]]').length === 2,
+        '8d #40d: …beta moved to the concepts section, the repeated alpha line removed', after);
     }
     {
       const d = mk({
