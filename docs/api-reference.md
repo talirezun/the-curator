@@ -2803,14 +2803,16 @@ that setter, so its own resolution is unchanged. See
 
 | `POST /api/mcp/exercise` *(v3.61.0)* | Backs the **Test all N tools** button on the tool map. Runs `exerciseAllTools()` (`src/brain/mcp-exercise.js`): seeds a throwaway fixture domain under an OS temp dir, starts `mcp/server.js` through the SAME launch-line builder `POST /self-test` uses, calls every tool in `mcp/tools/catalogue.js` once in a fixed order with deterministic arguments, and removes the fixture in `finally`. The child is pinned to the fixture (`--domains-path` for reads, `CURATOR_TEST_DOMAINS_DIR` for writes), so the user's `domains/` is neither read nor written; provider and GitHub credentials are stripped from its environment. Lines land in the **real** `getMcpUsageLogPath()` with `via: "self-test"`. No tool is driven on an arm that makes an LLM or network call, so a run costs nothing and needs no key. **At most one run at a time** — a concurrent request is refused `409 {ok:false, reason:"busy"}` — and a 60 s route wall clock over the driver's own 50 s answers `504 {reason:"timeout"}`. Guarded by the global cross-origin middleware like every mutating route. |
 
-### One-click install routes (`/api/mcp/install`, v3.85.0)
+### One-click install routes (`/api/mcp/install`, v3.85.0; Windows Claude Desktop, v3.86.0)
 
 Back **Settings › MCP bridge › 5 Tools on this Mac**. They add, update or remove the `my-curator`
 entry in a tool's own user-level MCP file, and nothing else (the rule is in
 [decisions-app.md](dev/decisions-app.md#security-credentials-and-user-data-paths)). Install-capable
 tools: `claude-desktop`, `cursor`, `antigravity` — the fixed allow-list; every other tool is
-copy-only. **macOS only**: on any other platform the POSTs answer 409 `platform_unsupported` and
-every status row is `manual`. Source: `src/routes/mcp-install.js`, `src/brain/mcp-install.js`,
+copy-only. **macOS and Windows only**: on Windows (v3.86.0) the install-capable set is
+`claude-desktop` alone (any other id is refused per item with `platform_unsupported`, the plan
+still answering 200), and on Linux the POSTs answer 409 `platform_unsupported` and every status row
+is `manual`. [The Windows additions](#windows-claude-desktop-v3860) are below. Source: `src/routes/mcp-install.js`, `src/brain/mcp-install.js`,
 `src/brain/harness-detect.js`.
 
 | Route | What it does |
@@ -2822,7 +2824,7 @@ every status row is `manual`. Source: `src/routes/mcp-install.js`, `src/brain/mc
 **The gate on both POSTs.** An `Origin` header is **required** and must be the app's own loopback
 origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **403** `origin_required`
 (unlike the global guard, a request with no `Origin` is refused here); any other → **403**
-`origin_refused`. Non-macOS → **409** `platform_unsupported`. Nothing is ever read from a client path.
+`origin_refused`. Neither macOS nor Windows → **409** `platform_unsupported`. Nothing is ever read from a client path.
 
 #### `GET /api/mcp/install/status`
 
@@ -2851,7 +2853,7 @@ origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **4
 }
 ```
 
-`manual` rows (a CLI or manual tool, or any non-macOS platform) carry `files: []`.
+`manual` rows (a CLI or manual tool, or any platform where the app does not write) carry `files: []`.
 
 #### `POST /api/mcp/install/plan`
 
@@ -2902,7 +2904,7 @@ Errors are **per item** — one bad file never turns the whole call into a 500.
 |---|---|---|
 | 400 | `bad_request` | Body is not exactly the documented shape, or an id is not on the allow-list |
 | 403 | `origin_required` · `origin_refused` | Missing or foreign `Origin` header |
-| 409 | `platform_unsupported` | Not macOS |
+| 409 | `platform_unsupported` | Neither macOS nor Windows (message: available on macOS and Windows only) |
 | 409 | `busy` | An install is already running (one apply at a time) |
 | 409 | `token_invalid` · `token_expired` | Unknown or already-used token · older than 10 minutes — plan again |
 | 500 | `plan_failed` · `apply_failed` | Unexpected only |
@@ -2917,12 +2919,65 @@ Errors are **per item** — one bad file never turns the whole call into a 500.
 | `duplicate_key` · `lossy_number` | A repeated key, or an integer beyond 2^53, would be silently changed by a rewrite |
 | `launcher_missing` | A packaged app's launcher script is not there |
 | `not_detected` · `not_installable` | The tool is not on this Mac, or has no install-capable file |
-| `no_home` · `outside_home` | No safe home folder, or a target resolved outside it |
+| `no_home` · `outside_home` | No safe home folder, or a target resolved outside it (on Windows the comparison is case-insensitive) |
+| `read_only` | Windows: the file's write bit is off, checked at plan and again before each rename attempt |
+| `file_locked` | Windows: the rename-over still failed with EPERM, EACCES or EBUSY after the last retry (about 2.75 s in all, the plan's hash re-checked before each attempt); "quit Claude Desktop and try again" |
+| `platform_unsupported` | Windows: any tool id but `claude-desktop` (a plan item, not a route error) |
 | `structure_changed` | The structural check found something other than `my-curator` would change |
 | `config_changed` · `plan_changed` | The file (or what would be written) changed after the preview |
 | `backup_failed` · `write_failed` | The backup could not be made (nothing replaced) · the write failed |
 | `changed_since` | Restore only: the file was edited after our write — Remove the entry instead |
 | `no_backup` · `backup_missing` · `backup_mismatch` | Restore only: no usable backup |
+
+#### Windows: Claude Desktop (v3.86.0)
+
+On `platform: "win32"` the status carries `writable: true` when the user-profile and AppData roots
+resolve, and the `claude-desktop` row gains the fields below. Every other tool is `manual` with
+reason `platform_unsupported` and `files: []`, and has no `candidates`. Paths are shown as
+`%LOCALAPPDATA%\…`, `%APPDATA%\…` or `%USERPROFILE%\…` (not `~`); `files[].file` stays absolute. The
+entry is `{command: <absolute node>, args: [mcp/server.js, --domains-path, <folder>]}` with no `env`
+(a user's own extra keys are ignored when deciding `connected`).
+
+```jsonc
+// on the claude-desktop row, win32 only
+"candidates": [{                     // all seven, in order, on every win32 claude-desktop row
+  "n": 1,                            // 1–7
+  "file": "C:\\Users\\…\\claude_desktop_config.json",   // absolute
+  "display": "%LOCALAPPDATA%\\Claude-Data\\…",
+  "exists": true, "live": true,
+  "stale": "marker" | "copying" | null,  // a .user-data-left.* marker in the file's folder; a ~copying.* sibling
+  "uncertain": false,                // the folder could not be listed (counts as live)
+  "write": true,                     // false = read only as evidence, never a write target
+  "source": "docs" | "unverified"
+}],
+"restartHint": "Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check again",
+"detected": { "by": "app" | "config" | null, "path": "…" },   // app: Appx package, Update.exe or the MSIX folder
+"running":  { "checked": true, "running": false }             // checked:false on any doubt
+```
+
+A candidate is **live** when its file exists, its own folder holds no `.user-data-left.*` marker,
+and no `~copying.*` entry sits beside it. Exactly one live, writable candidate that passes the checks
+below is the target (`files` has that one file; `status` as on macOS). Otherwise the row is
+`manual`, `files: []`, `reason: {code, message}` (the message names the files), and the plan returns
+one item `{file: null, action: "none", refused: {reason, message}}`. With no file at all, the app
+creates `%APPDATA%\Claude\claude_desktop_config.json` only for a confirmed legacy `.exe` install; with
+nothing detected the tool is listed under `notFound`.
+
+| `reason.code` | Meaning |
+|---|---|
+| `config_not_found` | No settings file exists: "Open Claude Desktop once, then press Check again" |
+| `config_ambiguous` | More than one live file; the app cannot tell which Claude Desktop reads |
+| `config_unverified` | The only live file is a `write: false` candidate |
+| `config_unconfirmed` | The only live file is `%APPDATA%\Claude\…`, but an MSIX/Store package is present or could not be ruled out |
+| `config_moving` | A `~copying.*` entry is in `%LOCALAPPDATA%\Claude-Data`; the whole row waits |
+| `appdata_unknown` | `%LOCALAPPDATA%` or `%APPDATA%` is missing or not absolute |
+| `outside_home` | The live file is outside the user folder (redirected AppData) |
+
+The apply result's `restart` is the Windows line above and `backup` uses the `%VAR%\…` form. A
+UTF-8 byte-order mark and CRLF line endings are kept when the file is rewritten (on macOS as well:
+a BOM file used to be refused as `corrupt`). Rename-over retries a locked file, then refuses
+`file_locked`. `POST /api/setup/reveal` is unchanged and still macOS-only; the UI shows no Reveal on
+Windows.
 
 Every install, update, remove and restore is logged in `<user data>/.mcp-installs.json`
 (`{at, harness, file, action, shaBefore, shaAfter, backup}`, newest 200 rows, never under `domains/`).

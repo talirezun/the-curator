@@ -689,7 +689,7 @@ Shared Brain pushes are managed in the Shared Brain view, not in Sync. The Sync 
 
 ## How do I connect The Curator to Claude Desktop?
 
-The MCP bridge lets an AI client read and write your wiki directly. Since version 3.85.0, on a Mac (the Mac app, or a local install on macOS), The Curator does the setup for you: it shows what it would write, keeps a copy of your original file, and changes only its own `my-curator` entry. It takes under two minutes and lives in **Settings → MCP bridge**. The old setup wizard, and its Re-connect, View config and Copy snippet buttons, no longer exist.
+The MCP bridge lets an AI client read and write your wiki directly. Since version 3.85.0, on a Mac (the Mac app, or a local install on macOS), and since 3.86.0 for Claude Desktop on Windows, The Curator does the setup for you: it shows what it would write, keeps a copy of your original file, and changes only its own `my-curator` entry. It takes under two minutes and lives in **Settings → MCP bridge**. The old setup wizard, and its Re-connect, View config and Copy snippet buttons, no longer exist.
 
 | Step | What to do |
 |---|---|
@@ -699,7 +699,17 @@ The MCP bridge lets an AI client read and write your wiki directly. Since versio
 | 4 | Fully quit and reopen the tool (Command-Q for Claude Desktop; closing the window is not enough), because a tool reads its MCP list only when it starts. If Claude Desktop is running, quit it before you apply: it rewrites its own file. |
 | 5 | Click **Check again**. The tool's row should read **connected**. **Run self-test** in block 1 re-checks the bridge itself. |
 
-Only Claude Desktop, Cursor and Antigravity can be installed this way. Every other tool, and every tool on Linux or Windows in this version, is **copy only**: its row has a **Copy** button. **Copy it myself** goes to those rows. The line under a row says **Save as ‹file›** when the tool's file does not exist yet (copy the whole small file), or **Paste into ‹file› inside "mcpServers"** when it does (copy only the entry).
+Which tools can be installed this way depends on the computer. Every other tool is **copy only**: its row has a **Copy** button.
+
+| Computer | Install for me writes | Copy only |
+|---|---|---|
+| Mac | Claude Desktop, Cursor, Antigravity | Every other tool |
+| Windows | Claude Desktop only, labelled "New on Windows — tell us if it works" | Every other tool |
+| Linux | Nothing | Every tool |
+
+On Windows (new in 3.86.0, not yet confirmed on every kind of Claude Desktop install), Claude Desktop keeps its settings file in one of several folders, shown as %LOCALAPPDATA%\… or %APPDATA%\…. The Curator writes only into the one in use and refuses with a reason instead of guessing; the row then reads **copy only**. Not found: "Open Claude Desktop once, then press Check again". More than one config file: copy the entry into the one Claude Desktop opens from Settings → Developer → Edit Config. Also refused, with a reason: a location not verified yet, a file that may not be the one Claude Desktop reads (Windows app package), a data move in progress, a file outside the user folder, a read-only file, or one in use by another program. After an install on Windows: "Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check again". Claude Desktop's Code tab reads the same file; the standalone Claude Code command-line tool does not, so copy the entry for it. **Reveal** appears on a Mac only. A file with a byte-order mark or Windows line endings is written back as it was (on a Mac too).
+
+ **Copy it myself** goes to those rows. The line under a row says **Save as ‹file›** when the tool's file does not exist yet (copy the whole small file), or **Paste into ‹file› inside "mcpServers"** when it does (copy only the entry).
 
 | Row status | Meaning | Buttons |
 |---|---|---|
@@ -707,7 +717,7 @@ Only Claude Desktop, Cursor and Antigravity can be installed this way. Every oth
 | needs an update | An entry exists but launches a missing file, names another knowledge folder, or is in only some of Antigravity's files | **Install for me** |
 | can be added | The tool is on this Mac but has no entry | **Install for me** |
 | can't read | The file is corrupt, has comments (JSONC), or is a symlink; the reason is shown | **Copy**, **Reveal** |
-| copy only | A tool The Curator does not write for, or a non-Mac computer | **Copy** |
+| copy only | A tool The Curator does not write for, a computer it does not write on, or a Windows Claude Desktop settings file it will not pick | **Copy** |
 
 What it writes and how to undo it: before changing a file it copies the original to `<file>.curator-backup-<UTC time>`, then changes nothing but the `my-curator` entry and checks that. It refuses, and writes nothing, if the file changed after the preview, is corrupt, has comments, is a symlink, has a repeated key, or has numbers beyond 2^53. **Remove** deletes only that entry. **Restore original** puts the backup back, but only while the file is still exactly what The Curator wrote. Each install, update, remove and restore is logged in `.mcp-installs.json` in the app's data folder.
 

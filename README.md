@@ -463,6 +463,9 @@ first-class one: ingest, chat, wiki, MCP, sync and Health are all here. The Node
 anywhere Node 18+ runs; only the `.dmg`, the one-line installer and the auto-built `.app` Dock
 launcher are macOS-specific.
 
+On Windows, the **Install for me** button in Settings → MCP bridge does exist for **Claude
+Desktop** (new, and not yet confirmed on every install); every other tool, and Linux, is copy-only.
+
 **Prerequisites:** [Node.js 18+](https://nodejs.org) · an API key from
 [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available),
 [Anthropic](https://console.anthropic.com/) (paid only) or
@@ -482,6 +485,12 @@ Then open **http://localhost:3333**.
 > **Windows / Linux notes:** the auto-update, Dock-app and folder-picker buttons are macOS-only;
 > ingest, chat, wiki, MCP, sync and Health work identically. Set `DOMAINS_PATH=…` to point at your
 > knowledge folder, and `CURATOR_NO_OPEN=1` to skip the macOS browser launch on startup.
+>
+> **Connecting your AI tools:** in Settings → MCP bridge, the **Install for me** button writes The
+> Curator's entry into your tools' config files on a Mac (Claude Desktop, Cursor, Antigravity) and,
+> new on Windows, into **Claude Desktop only** (labelled "New on Windows — tell us if it works").
+> It refuses with a reason rather than guess which settings file Claude Desktop reads. On Linux, and
+> for every other tool on Windows, copy the entry from the same screen and paste it in yourself.
 
 > **Install with a coding agent** — Claude Code, Cursor, Cline and friends can do the whole thing
 > from one pasted prompt: [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent).

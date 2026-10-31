@@ -171,7 +171,7 @@ A frontier model can always get the full picture — it just has to ask in piece
 
 ## Setup (under 2 minutes)
 
-**On a Mac (the Mac app, or a local install on macOS), The Curator does the setup for you.** It
+**On a Mac (the Mac app, or a local install on macOS), and for Claude Desktop on Windows (new in v3.86.0), The Curator does the setup for you.** It
 checks the tools it can find, shows you exactly what it would write, keeps a copy of your original
 file, and changes nothing but its own `my-curator` entry.
 
@@ -183,7 +183,34 @@ file, and changes nothing but its own `my-curator` entry.
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
 
-**Which tools can be installed this way:** Claude Desktop, Cursor and Antigravity. Every other tool (Claude Code, Codex, Gemini CLI, opencode and the rest) is **copy only**: its row has a **Copy** button and a line saying where to put the entry. The same is true of every tool on Linux and Windows in this version.
+**Which tools can be installed this way:**
+
+| Computer | Install for me writes | Copy only |
+|---|---|---|
+| **Mac** | Claude Desktop, Cursor, Antigravity | Every other tool (Claude Code, Codex, Gemini CLI, opencode and the rest) |
+| **Windows** | Claude Desktop, labelled **New on Windows — tell us if it works** | Every other tool |
+| **Linux** | Nothing | Every tool |
+
+A copy-only row has a **Copy** button and a line saying where to put the entry.
+
+> **On Windows (new in v3.86.0 — please tell us if it works).** Claude Desktop keeps its settings
+> file in one of several folders, shown as `%LOCALAPPDATA%\…` or `%APPDATA%\…`. The app writes only into
+> the one that is really in use, and **refuses with a reason instead of guessing**; the row then
+> reads **copy only**:
+>
+> | Reason on the row | What to do |
+> |---|---|
+> | Settings file not found | Open Claude Desktop once, then press **Check again** |
+> | More than one config file | **Copy** the entry into the one that Claude Desktop opens from Settings → Developer → Edit Config |
+> | Location not verified yet, or the file may not be the one Claude Desktop reads (it is installed as a Windows app package) | **Copy** the entry in by hand |
+> | Claude Desktop is moving its data | Open it, wait a minute, press **Check again** |
+> | File outside your user folder (redirected AppData), or AppData not found | **Copy** the entry in by hand |
+> | File read-only, or in use by another program | Clear the read-only flag, or quit Claude Desktop and try again |
+>
+> After an install: **Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check
+> again.** Claude Desktop's **Code** tab reads the same file; the standalone Claude Code command-line
+> tool does not, so copy the entry for it. **Reveal** appears on a Mac only. A file with a byte-order
+> mark or Windows line endings is written back as it was (on a Mac too; such a file used to be refused).
 
 ### What each row can say
 
@@ -193,7 +220,7 @@ file, and changes nothing but its own `my-curator` entry.
 | **needs an update** | An entry exists but differs: it launches a missing file, names another knowledge folder, or is in some of Antigravity's files and not others | Yes | **Install for me** (updates it) |
 | **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
-| **copy only** | A tool The Curator does not write for, or a non-Mac computer | No | **Copy** |
+| **copy only** | A tool The Curator does not write for, a computer it does not write on (Linux; on Windows, every tool but Claude Desktop), or a Windows Claude Desktop whose settings file it will not pick | No | **Copy** |
 
 Tools not found on this Mac are folded under **Not found on this Mac (N)**, each with **Copy**. A row
 can also carry **running** and *used 2 days ago* — labels only (the second comes from the local usage

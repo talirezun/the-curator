@@ -276,7 +276,7 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 | **Linux** | ❌ | ❌ — script checks for Darwin | ✅ Works (`node src/server.js`) |
 | **Windows** | ❌ | ❌ | ✅ Works (PowerShell or WSL2; set `CURATOR_NO_OPEN=1`) |
 
-> The one-line installer is macOS-only because it builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users clone the repo and run `node src/server.js` directly. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
+> The one-line installer is macOS-only because it builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users clone the repo and run `node src/server.js` directly. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. **Install for me** (MCP bridge) works on macOS and, for Claude Desktop only, on Windows. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
 
 > **Don't have a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
 
@@ -4327,7 +4327,7 @@ Use **Obsidian** when you want to:
 
 Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or any MCP-compatible AI client — to **research** your wiki AND, since v2.5.2, **save findings back into it** without leaving the conversation.
 
-> **Which AIs can use it.** The bridge is a **stdio JSON-RPC server** — an ordinary local program — so it works with **any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor, and others.** It is not an integration with one assistant. The one real limit is the transport rather than the vendor: **ChatGPT's web app cannot run a local server, so it cannot connect.** **Install for me** (v3.85.0) puts the entry into Claude Desktop, Cursor and Antigravity with one click on a Mac; for every other tool you copy the entry into that tool's file yourself — only the file changes. Full detail in [docs/mcp-user-guide.md](mcp-user-guide.md).
+> **Which AIs can use it.** The bridge is a **stdio JSON-RPC server** — an ordinary local program — so it works with **any MCP client that runs local servers: Claude Desktop, Claude Code, Cursor, and others.** It is not an integration with one assistant. The one real limit is the transport rather than the vendor: **ChatGPT's web app cannot run a local server, so it cannot connect.** **Install for me** (v3.85.0) puts the entry into Claude Desktop, Cursor and Antigravity with one click on a Mac, and into Claude Desktop on Windows (new in v3.86.0); for every other tool you copy the entry into that tool's file yourself — only the file changes. Full detail in [docs/mcp-user-guide.md](mcp-user-guide.md).
 
 ![Settings → MCP bridge on the demo workspace. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The main column reads CONFIGURATION over MCP bridge. Step 1, Connect a client: 'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.' over a recessed monitor reading CONFIGURED, CLIENT Claude Desktop, SERVER my-curator and DOMAINS /tmp/curator-demo-…/domains, then Re-run setup (filled), Run self-test, View config and Copy snippet. Step 2, Default domain for MCP writes, with a picker reading '— none (require an explicit domain) —' and a line on what leaving it unset means. Step 3, Tool map: 'What your agents used, and when — kept on this machine only.', a Test all 24 tools button, a monitor with LAST SESSION START 38 min ago and LAST SAVE 8 min ago, and BUSIEST · LAST 5 DAYS · AGENTS ONLY — get_project_context 8, save_working_state 7, search_wiki 7.](images/curator-mcp-bridge.png)
 
@@ -4347,7 +4347,14 @@ Everything stays local — the MCP server only sees your wiki folder, and writes
 
 #### Connecting your tools: **Install for me** (v3.85.0)
 
-*Mac only — the Mac app, or a local install on macOS. On Linux and Windows every tool is copy-only.*
+*Mac (all three tools) and Windows (Claude Desktop only, new in v3.86.0). On Linux every tool is copy-only.*
+
+| Computer | Install for me writes | Everything else |
+|---|---|---|
+| **Mac** (the Mac app, or a local install on macOS) | **Claude Desktop, Cursor, Antigravity** | **Copy** |
+| **Windows** (the browser install) | **Claude Desktop** only, labelled **New on Windows — tell us if it works** | **Copy** |
+| **Linux** | Nothing | **Copy**, for every tool |
+
 Open **Settings → MCP bridge** and press **Install in your tools** in block ①; it takes you to block
 ⑤, **Tools on this Mac**, which checks every agent tool it can find and offers to add The Curator to
 it. The same button, **Install for me**, appears on a Context → Setup to-fix line about a tool's bridge.
@@ -4359,7 +4366,7 @@ it. The same button, **Install for me**, appears on a Context → Setup to-fix l
 | 3 | Quit and reopen the tool | A tool reads its MCP list only when it starts. If it was running, a line names it. Claude Desktop is the one to quit **before** you apply, because it rewrites its own file |
 | 4 | Press **Check again** | The row should now read **connected** |
 
-Only **Claude Desktop, Cursor and Antigravity** can be installed this way. Every other tool shows
+Only the tools in the table above can be installed this way. Every other tool shows
 **copy only**, with a **Copy** button.
 
 | Status | Meaning | Ticked for you? | Buttons |
@@ -4368,7 +4375,32 @@ Only **Claude Desktop, Cursor and Antigravity** can be installed this way. Every
 | **needs an update** | An entry exists but differs: it launches a missing file, points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
 | **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
-| **copy only** | A tool the app does not write for, or any non-Mac computer | No | **Copy** |
+| **copy only** | A tool the app does not write for, a computer it does not write on (Linux; on Windows, every tool but Claude Desktop), or a Windows Claude Desktop whose settings file the app will not pick (see below) | No | **Copy** |
+
+> **On Windows (new in v3.86.0 — please tell us if it works)**
+>
+> Windows has no single, certain place for Claude Desktop's settings file: current installs keep
+> it in one of several folders. The app lists the known places (shown as `%LOCALAPPDATA%\…` or
+> `%APPDATA%\…`), writes the entry only into the one that is really in use, and otherwise **refuses
+> with a reason instead of guessing**. The row then reads **copy only** and names the files.
+>
+> | The row says | Why | What to do |
+> |---|---|---|
+> | **Open Claude Desktop once, then press Check again** | No settings file was found | Open Claude Desktop, then **Check again** |
+> | **More than one config file** | Two or more settings files are in use and the app cannot tell which one Claude Desktop reads | **Copy** the entry into the one that Claude Desktop opens from Settings → Developer → Edit Config |
+> | Settings are in a location the app **has not verified** | The only file found is one the app only reads, never writes | **Copy** it in by hand |
+> | The file **may not be the one Claude Desktop reads** | A lone `%APPDATA%\Claude` file exists, but Claude Desktop is installed as a Windows app package (or this could not be ruled out) | **Copy** it in by hand |
+> | Claude Desktop is **moving its data** | A move to a new folder is in progress | Open Claude Desktop, wait a minute, **Check again** |
+> | The file is **outside your user folder**, or the AppData folders could not be found | Redirected AppData, for example on a network share | **Copy** it in by hand |
+> | The file is **read-only**, or **in use by another program** | Windows will not let the app replace it | Clear the read-only flag, or quit Claude Desktop and try again |
+>
+> After an install: **Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check
+> again.** Check again re-reads the file, so if Claude Desktop rewrote it the row says so. Claude
+> Desktop's **Code** tab reads the same file; the standalone `claude` command-line tool does not
+> (copy the entry for it as for any other tool). **Reveal** is a Mac-only button; on Windows
+> copy the path shown on the row. A file saved with a byte-order mark or Windows line endings is
+> kept exactly as it was (this now also holds on a Mac, where such a file used to be refused).
+> Report what you see on Windows: it has not been confirmed on every kind of Claude Desktop install.
 
 Tools not found on this Mac sit in a folded **Not found on this Mac (N)** group, each with **Copy**.
 A row may also say **running**, or *used 2 days ago* (from the local usage log; a label only — it never
@@ -5654,7 +5686,7 @@ tool needs on a computer is set up **on that computer**, once per computer.*
 | Your **source files** (`raw/`: the PDFs and text files you ingested) | Your knowledge folder | **Never synced** — they stay on the computer you ingested on | Copy them yourself if you need them elsewhere | — |
 | **The code**, **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**, and **`.curator-project`** | The project folder (a git clone) | ② The project's own git | Commit and `git push` here; `git pull` there (the first time, `git clone`) | *"AGENTS.md in ‹folder› has no Curator instructions…"* · *"‹folder› has no .curator-project…"* · *".curator-project isn't committed…"* · *"…is committed but not pushed"* |
 | **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | Setup (step ⑤) → **Use** a folder it found, or **Choose the folder** | The SETUP tile reads *repository not set*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
-| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Settings → MCP bridge → Tools on this Mac → Install for me** (Claude Desktop, Cursor, Antigravity, on a Mac), or **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
+| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Settings → MCP bridge → Tools on this Mac → Install for me** (Claude Desktop, Cursor, Antigravity, on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
 | **The two skills** (`my-curator`, `curator-continuity`) | The tool's skills folder — or, for the Claude app, your Claude account | ③ Nothing (skills uploaded to your Claude account follow the account) | Download the two `.zip` files from step ② of the tool's setup guide and unzip them into the tool's skills folder (for the Claude app, upload them to your account) | *"‹tool›'s … skill is older than the copy this app carries"* · *"‹tool› has the … skill but not …"* · *can't check here* for skills held by your Claude account |
 | **Hooks** (optional) | The tool's hook settings | ③ Nothing | `my-curator install-hooks <tool>` on each computer (source install) | The row's hooks mark reads *not wired (optional)* — never a to-fix line |
 | **Tools you added** to Setup, and custom tools | This computer's app settings | ③ Nothing | **+ Add a tool** again on the other computer | The tool is simply not listed there |
@@ -5716,12 +5748,13 @@ reopen each agent tool: a bridge that was already running keeps running the old 
 **2 — The MCP, per tool.** On a Mac, **Settings → MCP bridge → Tools on this Mac → Install for me**
 writes the entry for **Claude Desktop, Cursor and Antigravity** for you (preview first, original
 kept, one-click **Remove** and **Restore original** — see [what it writes](#connecting-your-tools-install-for-me-v3850)).
-For every other tool, or on another OS, copy the entry and paste it in yourself: the snippet is in
+On Windows it does the same for **Claude Desktop only** (new in v3.86.0; it refuses and tells you
+why when it cannot tell which settings file is the live one). For every other tool, or on Linux, copy the entry and paste it in yourself: the snippet is in
 the common `mcpServers` shape. Where it goes:
 
 | Tool | File | Notes |
 |---|---|---|
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | **Install for me** (quit Claude Desktop first — it rewrites its own file) |
+| Claude Desktop | Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`. Windows: one of several (for example `%APPDATA%\Claude\claude_desktop_config.json` or a file under `%LOCALAPPDATA%\Claude-Data\…`); the row names the one in use | **Install for me** on Mac and Windows (quit Claude Desktop first — it rewrites its own file; on Windows, system tray → Quit) |
 | Cursor | `~/.cursor/mcp.json` | **Install for me**; the entry needs `"type": "stdio"`, which it adds |
 | Claude Code | `~/.claude.json` (for you), or `.mcp.json` in a project | The same `mcpServers` shape |
 | Antigravity | `~/.gemini/config/mcp_config.json` (the documented one), plus `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json`; or `.agents/mcp_config.json` in a project | **Three separate user files** — `my-curator doctor` checks all of them. **Install for me** writes the documented file, and the other two only when they already exist (it never creates them) |
@@ -5864,7 +5897,7 @@ sentence. **Every button's label says what pressing it does** — never a bare "
 see things like **Copy instructions**, **Copy marker line**, **Copy the git command that commits and
 pushes it**, **Copy the git command that commits and pushes it, then run `git pull` there**,
 **Reveal AGENTS.md** (opens the exact file in Finder), **Sync now**, **Choose the folder**, **Open
-Tools on this Mac**, or — on a bridge line for Claude Desktop, Cursor or Antigravity — **Install for me**
+Tools on this Mac**, or — on a bridge line for Claude Desktop, Cursor or Antigravity (Claude Desktop only, on Windows) — **Install for me**
 (v3.85.0), which opens Settings → MCP bridge → Tools on this Mac, the one place that writes. A line can carry more than one button — for example a missing block offers
 **Copy instructions**, **Reveal AGENTS.md** *and* the git command, in that order, because there is
 more than one safe next action. A note that names a bad config file (below) also says what to do
@@ -5887,7 +5920,7 @@ instead — a `git pull` there cannot bring a file this Mac never pushed.
 | You'll see | What it means | What to do | Which computer |
 |---|---|---|---|
 | A tool's config file **is empty / not valid JSON / can't open** | That file told the check nothing, and no other file of that tool proves the bridge either | Open the tool once (it may fill the file), or fix the syntax, or check macOS's Privacy & Security — then **Re-check** | This one |
-| MCP entry **reads a different knowledge folder**, or its **launch file is missing** | The entry points somewhere stale — an old install, a moved folder | **Install for me** (Claude Desktop, Cursor, Antigravity on a Mac), or **Copy MCP entry**, paste over the old one; then restart the tool | This one |
+| MCP entry **reads a different knowledge folder**, or its **launch file is missing** | The entry points somewhere stale — an old install, a moved folder | **Install for me** (Claude Desktop, Cursor, Antigravity on a Mac; Claude Desktop on Windows), or **Copy MCP entry**, paste over the old one; then restart the tool | This one |
 | MCP entry **is in one of Antigravity's config files but not the others** | Antigravity keeps three config files; a window that reads another may not reach The Curator | **Install for me** (it fills in the files that lack it), or **Copy MCP entry** and add it to the file the line names; then restart Antigravity | This one |
 | Instruction file **has no Curator instructions** | The tool doesn't know this project, and its agent may overwrite another tool's handoff | **Copy instructions**, paste at the very top (create the file if needed), commit and push | The repository, from any computer that has it cloned |
 | Instruction file **has another project's instructions** | The block here names a different `domain/project`, so this tool opens the wrong one | **Replace them with this project's instructions**, commit and push | Same |
