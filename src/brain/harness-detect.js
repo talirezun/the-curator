@@ -223,8 +223,21 @@ export function isClaudeDesktopExe(p) {
   return WIN_CLAUDE_EXE_PATTERNS.some((re) => re.test(l));
 }
 
+/**
+ * Windows PowerShell 5.1 by ABSOLUTE path, never by bare name: a bare
+ * `powershell.exe` is resolved through the current folder and PATH, where any
+ * `powershell.exe` placed earlier would run instead. %SystemRoot% is set on
+ * every Windows session; C:\\Windows is the fallback. path.win32 so the path
+ * is a Windows path on every host (the suites check it on a Mac too).
+ */
+export function powershellPath() {
+  const root = typeof process.env.SystemRoot === 'string' && path.win32.isAbsolute(process.env.SystemRoot)
+    ? process.env.SystemRoot : 'C:\\Windows';
+  return path.win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
 function runPowerShell(script) {
-  return spawnProbe('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+  return spawnProbe(powershellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], {
     timeout: WIN_PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true,
   });
 }

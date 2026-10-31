@@ -4386,16 +4386,17 @@ Only the tools in the table above can be installed this way. Every other tool sh
 >
 > | The row says | Why | What to do |
 > |---|---|---|
+> | **Claude Desktop is running. Quit Claude Desktop fully (system tray → Quit), then press Install for me** | On Windows the app will not write Claude Desktop's file while it runs — it can rewrite that file at any moment, including when it quits | Quit it from the system tray (closing the window is not enough), then **Install for me** |
 > | **Open Claude Desktop once, then press Check again** | No settings file was found | Open Claude Desktop, then **Check again** |
 > | **More than one config file** | Two or more settings files are in use and the app cannot tell which one Claude Desktop reads | **Copy** the entry into the one that Claude Desktop opens from Settings → Developer → Edit Config |
 > | Settings are in a location the app **has not verified** | The only file found is one the app only reads, never writes | **Copy** it in by hand |
 > | The file **may not be the one Claude Desktop reads** | A lone `%APPDATA%\Claude` file exists, but Claude Desktop is installed as a Windows app package (or this could not be ruled out) | **Copy** it in by hand |
-> | Claude Desktop is **moving its data** | A move to a new folder is in progress | Open Claude Desktop, wait a minute, **Check again** |
-> | The file is **outside your user folder**, or the AppData folders could not be found | Redirected AppData, for example on a network share | **Copy** it in by hand |
-> | The file is **read-only**, or **in use by another program** | Windows will not let the app replace it | Clear the read-only flag, or quit Claude Desktop and try again |
+> | Claude Desktop is **moving its data** | A move to a new folder is in progress, or its data folder could not be looked into | Open Claude Desktop, wait a minute, **Check again** |
+> | The file is **outside your user folder**, or the AppData folders could not be found | For example AppData redirected to a network share | **Copy** it in by hand |
+> | The file is **read-only**, or **in use by another program** | Windows will not let the app replace it | Clear the read-only flag, or quit Claude Desktop and try again. If a `.tmp-…` file is left beside it, it is safe to delete |
 >
-> After an install: **Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check
-> again.** Check again re-reads the file, so if Claude Desktop rewrote it the row says so. Claude
+> **The order on Windows:** quit Claude Desktop fully (system tray → Quit) → **Install for me** →
+> reopen Claude Desktop → **Check again**. (On a Mac the app only advises quitting first.) Check again re-reads the file, so if Claude Desktop rewrote it the row says so. Claude
 > Desktop's **Code** tab reads the same file; the standalone `claude` command-line tool does not
 > (copy the entry for it as for any other tool). **Reveal** is a Mac-only button; on Windows
 > copy the path shown on the row. A file saved with a byte-order mark or Windows line endings is
@@ -5754,7 +5755,7 @@ the common `mcpServers` shape. Where it goes:
 
 | Tool | File | Notes |
 |---|---|---|
-| Claude Desktop | Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`. Windows: one of several (for example `%APPDATA%\Claude\claude_desktop_config.json` or a file under `%LOCALAPPDATA%\Claude-Data\…`); the row names the one in use | **Install for me** on Mac and Windows (quit Claude Desktop first — it rewrites its own file; on Windows, system tray → Quit) |
+| Claude Desktop | Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`. Windows: one of several (for example `%APPDATA%\Claude\claude_desktop_config.json` or a file under `%LOCALAPPDATA%\Claude-Data\…`); the row names the one in use | **Install for me** on Mac and Windows (quit Claude Desktop first — it rewrites its own file; on Windows it is required: system tray → Quit, or the install is refused) |
 | Cursor | `~/.cursor/mcp.json` | **Install for me**; the entry needs `"type": "stdio"`, which it adds |
 | Claude Code | `~/.claude.json` (for you), or `.mcp.json` in a project | The same `mcpServers` shape |
 | Antigravity | `~/.gemini/config/mcp_config.json` (the documented one), plus `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json`; or `.agents/mcp_config.json` in a project | **Three separate user files** — `my-curator doctor` checks all of them. **Install for me** writes the documented file, and the other two only when they already exist (it never creates them) |

@@ -200,15 +200,16 @@ A copy-only row has a **Copy** button and a line saying where to put the entry.
 >
 > | Reason on the row | What to do |
 > |---|---|
+> | Claude Desktop is running | **Quit Claude Desktop fully (system tray → Quit), then press Install for me** — on Windows the app refuses to write while it runs |
 > | Settings file not found | Open Claude Desktop once, then press **Check again** |
 > | More than one config file | **Copy** the entry into the one that Claude Desktop opens from Settings → Developer → Edit Config |
 > | Location not verified yet, or the file may not be the one Claude Desktop reads (it is installed as a Windows app package) | **Copy** the entry in by hand |
-> | Claude Desktop is moving its data | Open it, wait a minute, press **Check again** |
-> | File outside your user folder (redirected AppData), or AppData not found | **Copy** the entry in by hand |
-> | File read-only, or in use by another program | Clear the read-only flag, or quit Claude Desktop and try again |
+> | Claude Desktop is moving its data (or its data folder could not be looked into) | Open it, wait a minute, press **Check again** |
+> | File outside your user folder, or AppData not found | **Copy** the entry in by hand |
+> | File read-only, or in use by another program | Clear the read-only flag, or quit Claude Desktop and try again; a leftover `.tmp-…` file beside it is safe to delete |
 >
-> After an install: **Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check
-> again.** Claude Desktop's **Code** tab reads the same file; the standalone Claude Code command-line
+> The order on Windows: **quit Claude Desktop fully (system tray → Quit) → Install for me → reopen
+> it → Check again.** Claude Desktop's **Code** tab reads the same file; the standalone Claude Code command-line
 > tool does not, so copy the entry for it. **Reveal** appears on a Mac only. A file with a byte-order
 > mark or Windows line endings is written back as it was (on a Mac too; such a file used to be refused).
 

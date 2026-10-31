@@ -333,7 +333,8 @@ export function renderToolRow(tool, ctx = {}) {
   }
   const reason = reasonWords(tool) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reasonWords(tool)) + '</p>' : '';
   const copyLine = plan ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(plan.line) + '</p>' : '';
-  const hint = isStr(tool.restartHint) && tool.running && tool.running.running === true
+  // On Windows a running Claude Desktop gets the refusal line instead (appRunningLine).
+  const hint = isStr(tool.restartHint) && tool.running && tool.running.running === true && !appRunningLine(tool, platform)
     ? '<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>' : '';
   const extra = isStr(tool.note) ? '<p class="mcpi-hint">' + escapeHtml(tool.note) + '</p>' : '';
   return '<div class="mcpi-row mcpi-row-' + status + '" data-mcpi-tool="' + escapeHtml(id) + '">'
@@ -341,8 +342,23 @@ export function renderToolRow(tool, ctx = {}) {
     + '<span class="mcpi-tags">' + statusTag(status) + runningTag(tool) + usedNote(tool, ctx.now) + (ctx.writable !== false ? newOnWindowsTag(tool, platform) : '') + '</span>'
     + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
     + (fileLines(tool) ? '<div class="mcpi-files">' + fileLines(tool) + '</div>' : '')
-    + reason + copyLine + hint + extra
+    + appRunningLine(tool, platform) + reason + copyLine + hint + extra
     + '</div>';
+}
+
+/** "PC" on Windows, "Mac" elsewhere (darwin and linux keep today's word). */
+export function machineWord(platform) { return platform === 'win32' ? 'PC' : 'Mac'; }
+
+/**
+ * Windows only (v3.86.0 audit): the backend REFUSES to write Claude Desktop's
+ * file while it runs (`app_running`), so the row says so before anyone clicks.
+ * macOS keeps its warn-and-allow lines unchanged.
+ */
+export const APP_RUNNING_WORDS = 'Claude Desktop is running. Quit Claude Desktop fully (system tray → Quit), then press Install for me.';
+function appRunningLine(tool, platform) {
+  const r = tool && tool.running;
+  return platform === 'win32' && tool.id === 'claude-desktop' && r && r.checked === true && r.running === true
+    ? '<p class="mcpi-reason" data-mcpi-app-running>' + escapeHtml(APP_RUNNING_WORDS) + '</p>' : '';
 }
 
 /** The rows and the "Not found on this Mac (N)" fold. */
@@ -357,14 +373,14 @@ export function renderToolRows(status, ctx = {}) {
   const snippets = data.manualSnippets || {};
   const fold = nf.length
     ? '<details class="settings-setup-fold mcpi-notfound" data-setup-fold="mcpi-notfound"' + (open ? ' open' : '') + '>'
-      + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not found on this Mac (' + nf.length + ')</span></summary>'
+      + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not found on this ' + machineWord(data.platform) + ' (' + nf.length + ')</span></summary>'
       + '<div class="mcpi-nf-body">' + nf.map((t) => '<div class="mcpi-row mcpi-row-nf" data-mcpi-tool="' + escapeHtml(t.id) + '">'
         + '<div class="mcpi-l1"><span class="mcpi-pick"><span class="mcpi-name">' + escapeHtml(t.label || t.id) + '</span></span>'
         + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span></div>'
         + (() => { const pl = copyPlanFor(t.id, data, ctx.machineFiles); return pl ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(pl.line) + '</p>' : ''; })()
         + '</div>').join('') + '</div></details>'
     : '';
-  const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent tool was found on this Mac.</p>' : '';
+  const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent tool was found on this ' + machineWord(data.platform) + '.</p>' : '';
   return '<div class="mcpi-rows" id="mcpi-rows">' + rows + '</div>' + fold + none;
 }
 

@@ -119,7 +119,7 @@ function memWorld() {
     readFile(p) { const e = fs.get(p); if (!e || e.type !== 'file') throw err('ENOENT'); return Buffer.from(e.bytes); },
     exists: (p) => fs.has(p),
     mkdirp: (p) => addDirs(p),
-    readdir(p) { const e = fs.get(p); if (!e) throw err('ENOENT'); if (e.type !== 'dir') throw err('ENOTDIR'); return w.list(p); },
+    readdir(p) { if (w.unlistable && w.unlistable.has(p)) throw err('EACCES'); const e = fs.get(p); if (!e) throw err('ENOENT'); if (e.type !== 'dir') throw err('ENOTDIR'); return w.list(p); },
     writeExclusive(p, buf, mode) { if (fs.has(p)) throw err('EEXIST'); if (!fs.has(P.dirname(p))) throw err('ENOENT'); fs.set(p, { type: 'file', bytes: Buffer.from(buf), mode: 0o666 }); },
     writeAtomic(p, text) { if (!p.startsWith(UD)) w.posixWrites++; addDirs(P.dirname(p)); fs.set(p, { type: 'file', bytes: Buffer.from(text), mode: 0o666 }); },
     writeTemp(target, data) {
@@ -240,6 +240,18 @@ try {
     ok('another drive is NOT under home', !M.isUnderHome(H, 'D:\\Users\\Ana\\x.json', 'win32'));
     ok('a traversal out of home is NOT under home', !M.isUnderHome(H, 'C:\\Users\\Ana\\..\\Bob\\x.json', 'win32'));
     ok('home itself is not "under" home', !M.isUnderHome(H, 'C:\\Users\\ana', 'win32'));
+    ok('a DRIVE-ROOT home contains nothing (refused)', !M.isUnderHome('C:\\', 'C:\\Users\\x.json', 'win32') && !M.isUnderHome('c:/', 'c:\\x.json', 'win32'));
+    ok('…nor a share-root home', !M.isUnderHome('\\\\server\\share\\', '\\\\server\\share\\x.json', 'win32'));
+    {
+      const mw = memWorld();
+      mw.home = 'C:\\';
+      const roots = { localAppData: 'C:\\AppData\\Local', appData: 'C:\\AppData\\Roaming' };
+      mw.put('C:\\AppData\\Local\\Claude-Data\\claude_pzs8sxrjxfjjc\\claude_desktop_config.json', '{}');
+      const r = M.resolveWinClaude({ home: mw.home, roots, io: mw.io });
+      ok('a live file under a drive-root home → manual outside_home', !r.decision.ok && r.decision.reason === 'outside_home');
+      ok('…said as "outside your user folder", with no guess about why', /is outside your user folder, so/.test(r.decision.message) && !/redirect/i.test(r.decision.message));
+    }
+    ok('"unopenable" is said without naming macOS (it shows on Windows too)', !/macOS/.test(M.reasonText('unopenable')));
     ok('CONTROL: macOS containment stays case-SENSITIVE', !M.isUnderHome('/Users/ana', '/users/ana/x.json', 'darwin') && M.isUnderHome('/Users/ana', '/Users/ana/x.json', 'darwin'));
   }
 
@@ -281,6 +293,13 @@ try {
       r = decide(w);
       ok(`[${K}] marker in #3's folder (the #378 layout) → #1 again`, r.decision.ok && r.decision.file === L.c[1]);
 
+      // Claude-Data exists but cannot be listed (fix 5): nothing is decided.
+      if (w.kind === 'mem') {
+        w.unlistable = new Set([L.claudeData]);
+        const u = decide(w);
+        ok(`[${K}] Claude-Data cannot be listed → manual config_moving, never a write`, !u.decision.ok && u.decision.reason === 'config_moving' && /could not look inside/.test(u.decision.message));
+        w.unlistable = null;
+      }
       // A move in progress.
       w.mkdir(w.P.join(L.claudeData, '~copying.claude_pzs8sxrjxfjjc'));
       r = decide(w);
@@ -380,6 +399,39 @@ try {
       ok(`[${K}] the manifest recorded both writes`, M.readManifest(w.io).rows.filter((r) => r.file === L.c[1]).map((r) => r.action).join() === 'install,remove');
     }
     {
+      // Fix 1 (audit): Claude Desktop RUNNING on Windows → every write refused.
+      const w = make(); worlds.push(w);
+      const L = layout(w);
+      w.put(L.c[1], doc({ mcpServers: { other: OTHER, 'my-curator': { command: 'old' } } }));
+      for (const action of ['install', 'remove']) {
+        const its = plan(w, action, { running: { checked: true, running: true } });
+        ok(`[${K}] ${action} while Claude Desktop runs → refused app_running, in words`, its.length === 1 && its[0].refused && its[0].refused.reason === 'app_running'
+          && its[0].refused.message === 'Quit Claude Desktop fully (system tray → Quit), then press Install for me' && its[0]._nextText === undefined);
+        ok(`[${K}] …and the executor writes nothing for it`, run(w, its[0]).reason === 'app_running');
+      }
+      ok(`[${K}] a running probe that could NOT look (checked:false) does not block`, plan(w, 'install', { running: { checked: false, running: false } })[0].action === 'update');
+      ok(`[${K}] not running → planned as usual`, plan(w, 'install', { running: { checked: true, running: false } })[0].action === 'update');
+    }
+    {
+      // Fix 3b (audit): a target that became UNREADABLE reports its own reason.
+      const w = make(); worlds.push(w);
+      const L = layout(w);
+      w.put(L.c[1], doc({ mcpServers: { other: OTHER } }));
+      let it = plan(w, 'install')[0];
+      w.put(L.c[1], '{ "mcpServers": ');
+      let r = run(w, it);
+      ok(`[${K}] corrupted between plan and apply → refused "corrupt", not config_changed`, r.outcome === 'refused' && r.reason === 'corrupt' && /not valid JSON/.test(r.message), JSON.stringify(r));
+      w.put(L.c[1], doc({ mcpServers: { other: OTHER } }));
+      it = plan(w, 'install')[0];
+      let first = true;
+      w.renameHook = (a, b) => { if (b === L.c[1] && first) { first = false; w.put(L.c[1], 'not json'); throw Object.assign(new Error('busy'), { code: 'EBUSY' }); } };
+      r = run(w, it);
+      w.renameHook = null;
+      ok(`[${K}] corrupted during a lock wait → refused "corrupt" on the retry`, r.outcome === 'refused' && r.reason === 'corrupt', JSON.stringify(r));
+      ok(`[${K}] …temp file removed, the corrupt bytes left alone`, !w.list(w.P.dirname(L.c[1])).some((n) => n.startsWith('.tmp-')) && w.read(L.c[1]).toString() === 'not json');
+      ok(`[${K}] CONTROL: a READABLE change is still config_changed`, (() => { w.put(L.c[1], doc({})); const i2 = plan(w, 'install')[0]; w.put(L.c[1], doc({ a: 1 })); return run(w, i2).reason === 'config_changed'; })());
+    }
+    {
       // Read-only target: refused at plan time …
       const w = make(); worlds.push(w);
       const L = layout(w);
@@ -422,6 +474,7 @@ try {
       const r = run(w, it);
       w.renameHook = null;
       ok(`[${K}] locked for good → refused file_locked`, r.outcome === 'refused' && r.reason === 'file_locked' && /quit Claude Desktop/i.test(r.message));
+      ok(`[${K}] …the message says a leftover .tmp-… file may remain and is safe to delete`, /\.tmp-/.test(r.message) && /safe to delete/.test(r.message));
       eq(`[${K}] …after ${M.WIN_RENAME_BACKOFF_MS.length + 1} attempts`, w.renames, M.WIN_RENAME_BACKOFF_MS.length + 1);
       ok(`[${K}] …waiting at most ~3 s in all`, sum(w.sleeps) <= 3000 && sum(w.sleeps) === sum(M.WIN_RENAME_BACKOFF_MS));
       ok(`[${K}] …original byte-identical, temp file removed`, Buffer.compare(w.read(L.c[1]), b0) === 0 && !w.list(w.P.dirname(L.c[1])).some((n) => n.startsWith('.tmp-')));
@@ -531,9 +584,19 @@ try {
       delete process.env.CURATOR_TEST_INSTALL_HOME;
       const c = await D.detectWinAppx(FAMS);
       process.env.CURATOR_TEST_INSTALL_HOME = h;
-      ok('CONTROL: with the guard off the observer sees the spawn', spawned.join() === 'powershell.exe' && typeof c.checked === 'boolean', spawned.join());
+      ok('CONTROL: with the guard off the observer sees the spawn — by ABSOLUTE path, never bare `powershell.exe`', spawned.join() === D.powershellPath() && typeof c.checked === 'boolean', spawned.join());
     }
     D.__setSpawnObserver(null);
+
+    // Fix 2 (audit): PowerShell by absolute path.
+    const savedRoot = process.env.SystemRoot;
+    process.env.SystemRoot = 'D:\\Win';
+    eq('powershellPath() follows %SystemRoot%', D.powershellPath(), 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    process.env.SystemRoot = 'relative\\Windows';
+    eq('…a non-absolute %SystemRoot% falls back to C:\\Windows', D.powershellPath(), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    delete process.env.SystemRoot;
+    ok('…and with none it is still an absolute Windows path', path.win32.isAbsolute(D.powershellPath()) && D.powershellPath() !== 'powershell.exe');
+    if (savedRoot === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = savedRoot;
   }
 
   section('§4 — the routes, in-process, on win32');
@@ -592,6 +655,16 @@ try {
       ok(`[${K}] no other server's value leaves the status`, !JSON.stringify(s.body).includes('sk-PLANTED'));
       ok(`[${K}] status wrote nothing`, Buffer.compare(w.read(L.c[1]), b0) === 0);
 
+      const blocked = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });
+      ok(`[${K}] Claude Desktop RUNNING → plan refuses app_running in words`, blocked.status === 200 && blocked.body.items[0].refused && blocked.body.items[0].refused.reason === 'app_running' && /system tray → Quit/.test(blocked.body.items[0].refused.message));
+      const ba = await call('POST', '/api/mcp/install/apply', { token: blocked.body.token });
+      ok(`[${K}] …apply writes nothing`, ba.body.results[0].outcome === 'refused' && ba.body.results[0].reason === 'app_running' && Buffer.compare(w.read(L.c[1]), b0) === 0);
+      procs = '';
+      const late = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });
+      procs = 'P|C:\\Program Files\\WindowsApps\\Claude_1.3.4.0_x64__pzs8sxrjxfjjc\\app\\claude.exe\r\n';
+      const la = await call('POST', '/api/mcp/install/apply', { token: late.body.token });
+      ok(`[${K}] Claude Desktop started between plan and apply → app_running (not plan_changed), nothing written`, la.body.results[0].reason === 'app_running' && Buffer.compare(w.read(L.c[1]), b0) === 0, JSON.stringify(la.body.results[0]));
+      procs = '';
       const p = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop', 'cursor'] });
       eq(`[${K}] plan 200 on win32`, p.status, 200);
       const ci = p.body.items.find((i) => i.id === 'claude-desktop');
@@ -622,6 +695,13 @@ try {
       ok(`[${K}] …plan refuses with the same reason`, pa.body.items[0].refused && pa.body.items[0].refused.reason === 'config_ambiguous');
       const aa = await call('POST', '/api/mcp/install/apply', { token: pa.body.token });
       ok(`[${K}] …apply writes nothing`, aa.body.results[0].outcome === 'refused' && Buffer.compare(w.read(L.c[1]), b0) === 0 && Buffer.compare(w.read(L.c[4]), b4) === 0);
+
+      // Fix 4 (audit): AppData unknown → a ROW with its reason, never notFound.
+      process.env.CURATOR_TEST_INSTALL_LOCALAPPDATA = 'not\\absolute';
+      s = await call('GET', '/api/mcp/install/status');
+      cd = cdOf(s);
+      ok(`[${K}] AppData folders unknown → Claude Desktop is a manual ROW (appdata_unknown), not in notFound`, cd && cd.status === 'manual' && cd.reason.code === 'appdata_unknown' && !s.body.notFound.some((n) => n.id === 'claude-desktop'));
+      delete process.env.CURATOR_TEST_INSTALL_LOCALAPPDATA;
 
       M.__setPlatformOverride('linux');
       const lin = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });

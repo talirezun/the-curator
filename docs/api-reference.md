@@ -2921,10 +2921,11 @@ Errors are **per item** — one bad file never turns the whole call into a 500.
 | `not_detected` · `not_installable` | The tool is not on this Mac, or has no install-capable file |
 | `no_home` · `outside_home` | No safe home folder, or a target resolved outside it (on Windows the comparison is case-insensitive) |
 | `read_only` | Windows: the file's write bit is off, checked at plan and again before each rename attempt |
-| `file_locked` | Windows: the rename-over still failed with EPERM, EACCES or EBUSY after the last retry (about 2.75 s in all, the plan's hash re-checked before each attempt); "quit Claude Desktop and try again" |
+| `file_locked` | Windows: the rename-over still failed with EPERM, EACCES or EBUSY after the last retry (about 2.75 s in all, the plan's hash re-checked before each attempt); "quit Claude Desktop and try again", and a leftover `.tmp-…` file beside it is safe to delete |
+| `app_running` | Windows, `claude-desktop` only: the running probe looked (`checked: true`) and Claude Desktop is running, so every write (install, update, remove, restore) is refused: "Quit Claude Desktop fully (system tray → Quit), then press Install for me". Read at plan AND at apply (apply re-plans; a start between the two reports `app_running`, not `plan_changed`). macOS only warns |
 | `platform_unsupported` | Windows: any tool id but `claude-desktop` (a plan item, not a route error) |
 | `structure_changed` | The structural check found something other than `my-curator` would change |
-| `config_changed` · `plan_changed` | The file (or what would be written) changed after the preview |
+| `config_changed` · `plan_changed` | The file (or what would be written) changed after the preview. A file that became unreadable reports its own reason (`corrupt`, `symlink`, `read_only`, …) instead |
 | `backup_failed` · `write_failed` | The backup could not be made (nothing replaced) · the write failed |
 | `changed_since` | Restore only: the file was edited after our write — Remove the entry instead |
 | `no_backup` · `backup_missing` · `backup_mismatch` | Restore only: no usable backup |
@@ -2969,9 +2970,9 @@ nothing detected the tool is listed under `notFound`.
 | `config_ambiguous` | More than one live file; the app cannot tell which Claude Desktop reads |
 | `config_unverified` | The only live file is a `write: false` candidate |
 | `config_unconfirmed` | The only live file is `%APPDATA%\Claude\…`, but an MSIX/Store package is present or could not be ruled out |
-| `config_moving` | A `~copying.*` entry is in `%LOCALAPPDATA%\Claude-Data`; the whole row waits |
-| `appdata_unknown` | `%LOCALAPPDATA%` or `%APPDATA%` is missing or not absolute |
-| `outside_home` | The live file is outside the user folder (redirected AppData) |
+| `config_moving` | A `~copying.*` entry is in `%LOCALAPPDATA%\Claude-Data`, or that folder exists but cannot be listed; the whole row waits |
+| `appdata_unknown` | `%LOCALAPPDATA%` or `%APPDATA%` is missing or not absolute; the row is shown with this reason, never listed under `notFound` |
+| `outside_home` | The live file is outside the user folder (for example redirected AppData), or the home folder is a drive root |
 
 The apply result's `restart` is the Windows line above and `backup` uses the `%VAR%\…` form. A
 UTF-8 byte-order mark and CRLF line endings are kept when the file is rewritten (on macOS as well:

@@ -232,7 +232,9 @@ export async function buildStatus() {
       }));
       row.restartHint = WIN_RESTART;
       if (!win.decision.ok) {
-        if (!det && !win.candidates.some((c) => c.exists)) { notFound.push({ id, label }); continue; }
+        // `appdata_unknown` is shown as a row with its reason: it is a fact
+        // about this PC, not evidence that Claude Desktop is absent.
+        if (win.decision.reason !== 'appdata_unknown' && !det && !win.candidates.some((c) => c.exists)) { notFound.push({ id, label }); continue; }
         row.reason = { code: win.decision.reason, message: win.decision.message };
         tools.push(row);
         continue;
@@ -318,7 +320,7 @@ router.get('/status', async (_req, res) => {
   try {
     res.json(await buildStatus());
   } catch (err) {
-    res.status(500).json({ error: `Could not read the tools on this Mac: ${err && err.message}` });
+    res.status(500).json({ error: `Could not read the tools on this ${installPlatform() === 'win32' ? 'PC' : 'Mac'}: ${err && err.message}` });
   }
 });
 
@@ -384,11 +386,16 @@ async function makePlan(action, ids) {
     // Windows: Claude Desktop's file is CHOSEN by the resolver (which also
     // decides whether a missing file may be created); every other id is
     // refused per item by planTool.
-    const wc = home ? await winClaude(home, theIO, deps) : { roots: null, win: undefined };
+    // …and refuses Claude Desktop while it runs (`app_running`), so the
+    // running probe is read at plan AND at apply (apply re-plans).
+    const [wc, running] = await Promise.all([
+      home ? winClaude(home, theIO, deps) : Promise.resolve({ roots: null, win: undefined }),
+      ids.includes('claude-desktop') ? detectWinClaudeRunning(deps) : Promise.resolve({ checked: false, running: false }),
+    ]);
     const items = [];
     for (const id of [...new Set(ids)]) {
       items.push(...planTool(id, action, {
-        home, launch, launcherState, detected: false, manifestRows, io: theIO, platform, roots: wc.roots, win: wc.win,
+        home, launch, launcherState, detected: false, manifestRows, io: theIO, platform, roots: wc.roots, win: wc.win, running,
       }));
     }
     return { home, platform, roots: wc.roots, items };
@@ -448,7 +455,10 @@ export async function applyHandler(req, res) {
       const was = rec.basis.get(k);
       const pub = { id: it.id, label: it.label, file: it.display || null };
       let r;
-      if (!was || was.basis !== it.basis) {
+      if (it.refused && it.refused.reason === 'app_running') {
+        // Windows: Claude Desktop started after the plan — say THAT, not "changed".
+        r = { outcome: 'refused', reason: 'app_running', message: it.refused.message };
+      } else if (!was || was.basis !== it.basis) {
         r = { outcome: 'refused', reason: 'config_changed', message: `${it.display || it.label} changed after the plan was made. Nothing was written — plan again.` };
       } else if (was.action !== it.action || was.entryText !== it.entryText) {
         r = { outcome: 'refused', reason: 'plan_changed', message: `What would be written to ${it.display || it.label} changed after the plan was made. Nothing was written — plan again.` };

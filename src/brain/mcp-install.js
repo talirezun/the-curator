@@ -144,6 +144,8 @@ export function isUnderHome(home, p, platform) {
   if ((platform || installPlatform()) === 'win32') {
     const P = pathFor(home);
     if (!home || typeof p !== 'string' || !P.isAbsolute(p) || !P.isAbsolute(home)) return false;
+    // A drive root (C:\\) or share root as "home" contains everything: refused.
+    if (P.parse(P.resolve(home)).root === P.resolve(home)) return false;
     const h = P.resolve(home).toLowerCase().replace(/[\\/]+$/, '');
     const r = P.resolve(p).toLowerCase();
     return r !== h && r.startsWith(`${h}${P.sep}`) && !r.split(P.sep).includes('..');
@@ -270,6 +272,7 @@ export const WIN_MANUAL_REASONS = Object.freeze([
   'config_not_found', 'config_ambiguous', 'config_unverified', 'config_unconfirmed',
   'config_moving', 'appdata_unknown', 'outside_home',
 ]);
+// Per-item on win32 only: `app_running` (Claude Desktop is running — see planTool).
 
 /** The win32 candidates from the adapter row, resolved. Pure. */
 export function winCandidates(home, roots) {
@@ -327,6 +330,9 @@ export function resolveWinClaude({ home, roots, io = defaultIO(), appx } = {}) {
   const claudeData = P.join(roots.localAppData, 'Claude-Data');
   const cdList = listDir(claudeData, io);
   const moving = cdList.names.filter((n) => typeof n === 'string' && n.startsWith('~copying.'));
+  // Claude-Data exists but cannot be listed: a move in progress cannot be ruled
+  // out, so nothing is decided from what is visible (manual, never a write).
+  const unlisted = !cdList.ok;
 
   for (const c of winCandidates(home, roots)) {
     const rec = { ...c, display: d(c.file), exists: lexists(c.file, io), live: false, stale: null };
@@ -364,7 +370,9 @@ export function resolveWinClaude({ home, roots, io = defaultIO(), appx } = {}) {
   }
 
   const names = (list) => list.map((c) => c.display).join(' and ');
-  if (moving.length) {
+  if (unlisted) {
+    out.decision = { ok: false, reason: 'config_moving', message: `The Curator could not look inside ${d(claudeData)}, so it cannot tell whether Claude Desktop is moving its data. Open Claude Desktop, wait a minute, then press Check again — or copy the entry in by hand.` };
+  } else if (moving.length) {
     out.decision = { ok: false, reason: 'config_moving', message: 'Claude Desktop is moving its data to a new folder right now. Open Claude Desktop, wait a minute, then press Check again.' };
   } else if (out.live.length > 1) {
     out.decision = { ok: false, reason: 'config_ambiguous', message: `Claude Desktop has more than one settings file (${names(out.live)}), and The Curator cannot tell which one it reads. Add the entry by hand to the one Claude Desktop opens from Settings › Developer › Edit Config.` };
@@ -375,7 +383,7 @@ export function resolveWinClaude({ home, roots, io = defaultIO(), appx } = {}) {
     } else if (c.n === 4 && out.msix !== false) {
       out.decision = { ok: false, reason: 'config_unconfirmed', message: `${c.display} exists, but Claude Desktop ${out.msix ? 'is installed as a Windows app package, which may keep its settings elsewhere' : 'could not be checked for a Windows app package install'}, so The Curator cannot be sure this is the file it reads. Add the entry by hand from Settings › Developer › Edit Config.` };
     } else if (!isUnderHome(home, c.file, platform)) {
-      out.decision = { ok: false, reason: 'outside_home', message: `${c.display} is outside your user folder (AppData is redirected), so The Curator will not write it. Copy the entry in by hand.` };
+      out.decision = { ok: false, reason: 'outside_home', message: `${c.display} is outside your user folder, so The Curator will not write it. Copy the entry in by hand.` };
     } else {
       out.decision = { ok: true, file: c.file, n: c.n, role: c.n === 4 ? 'documented' : 'observed', createAllowed: false };
     }
@@ -435,7 +443,7 @@ export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const REASON_TEXT = Object.freeze({
   symlink: 'is a symbolic link — The Curator does not write through links',
   not_regular: 'is not a regular file',
-  unopenable: 'could not be opened (a macOS permission, or it is in use)',
+  unopenable: 'could not be opened (a permission setting, or another program has it open)',
   too_large: 'is larger than The Curator will rewrite',
   corrupt: 'is not valid JSON',
   jsonc: 'contains comments — rewriting it would delete them',
@@ -947,8 +955,22 @@ export function planTool(id, action, ctx) {
   if (!items.length) {
     items.push({ id, label, file: null, display: null, action: 'none' });
   }
+  // WINDOWS: refuse while Claude Desktop runs (v3.86.0 audit). It may rewrite
+  // its own file at any moment, including on quit, which would drop our entry
+  // or race our replace; the running probe is by executable path and is only
+  // trusted when it could look (`checked`). macOS keeps warn-and-allow.
+  if (platform === 'win32' && id === 'claude-desktop' && ctx.running && ctx.running.checked === true && ctx.running.running === true) {
+    return items.map((it) => {
+      if (it.refused || (it._nextText === undefined && it._restoreFrom === undefined)) return it;
+      const pub = Object.fromEntries(Object.entries(it).filter(([k]) => !k.startsWith('_')));
+      return refusedItem({ ...pub, backupWillBe: null }, 'app_running', APP_RUNNING_MESSAGE);
+    });
+  }
   return items;
 }
+
+/** The win32 refusal while Claude Desktop is running. */
+export const APP_RUNNING_MESSAGE = 'Quit Claude Desktop fully (system tray → Quit), then press Install for me';
 
 /** Strip the executor-only fields for a response. */
 export function publicItem(it) {
@@ -988,7 +1010,7 @@ export function executeItem(item, ctx) {
   const jsonc = a.mcpConfig.jsonc === true;
 
   const cur = readTargetOn(platform, item.file, key, io, jsonc);
-  if (cur.sha !== item.basis) return { outcome: 'refused', reason: 'config_changed', message: `${display} changed after the plan was made. Nothing was written — check again and re-plan.` };
+  if (cur.sha !== item.basis) return unreadableRefusal(cur, display) || { outcome: 'refused', reason: 'config_changed', message: `${display} changed after the plan was made. Nothing was written — check again and re-plan.` };
   if (cur.reason === 'read_only') return { outcome: 'refused', reason: 'read_only', message: `${display} ${reasonText('read_only')}. Nothing was written.` };
 
   let text;
@@ -1039,7 +1061,7 @@ export function executeItem(item, ctx) {
   // COMPARE-AND-SWAP, immediately before the replace.
   const again = readTargetOn(platform, item.file, key, io, jsonc);
   if (again.sha !== item.basis) {
-    return { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${backup ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
+    return unreadableRefusal(again, display, kept) || { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${backup ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
   }
 
   if (win) {
@@ -1079,6 +1101,18 @@ export function executeItem(item, ctx) {
   };
 }
 
+/**
+ * A re-read that no longer matches the plan because the target became
+ * UNREADABLE (a symlink, corrupt, unopenable, read-only …) is refused with ITS
+ * reason, never as "changed": the person needs to know what is wrong with the
+ * file, not that it moved. Returns null when the target is readable.
+ */
+export function unreadableRefusal(r, display, kept) {
+  if (!r || r.state !== 'cant-read') return null;
+  const code = r.reason || 'unopenable';
+  return { outcome: 'refused', reason: code, message: `${display} ${reasonText(code) || 'could not be read'}. Nothing was written.`, ...(kept ? { backup: kept } : {}) };
+}
+
 /** The rename errors an antivirus, indexer, backup tool or editor causes on Windows. */
 export const LOCK_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
 /** Waits between rename attempts: 7 attempts, about 2.75 s in all (contract §3: ~3 s). */
@@ -1103,7 +1137,7 @@ export function replaceWithRetry(item, text, { io, key, jsonc, platform, display
     const now = readTargetOn(platform, item.file, key, io, jsonc);
     if (now.sha !== item.basis) {
       cleanup();
-      return { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${kept ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
+      return unreadableRefusal(now, display, kept) || { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${kept ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
     }
     if (now.reason === 'read_only') {
       cleanup();
@@ -1117,7 +1151,7 @@ export function replaceWithRetry(item, text, { io, key, jsonc, platform, display
       if (!LOCK_CODES.includes(code) || attempt >= WIN_RENAME_BACKOFF_MS.length) {
         cleanup();
         return LOCK_CODES.includes(code)
-          ? { outcome: 'refused', reason: 'file_locked', message: `${display} is in use by another program (${code}). Nothing was written — quit Claude Desktop and try again.`, backup: kept }
+          ? { outcome: 'refused', reason: 'file_locked', message: `${display} is in use by another program (${code}). Nothing was written — quit Claude Desktop and try again. A leftover .tmp-… file beside it may remain; it is safe to delete.`, backup: kept }
           : { outcome: 'refused', reason: 'write_failed', message: `Could not write ${display} (${code || 'error'}). The original is unchanged.`, backup: kept };
       }
       io.sleep(WIN_RENAME_BACKOFF_MS[attempt]);

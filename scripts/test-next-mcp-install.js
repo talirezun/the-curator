@@ -325,6 +325,17 @@ section('§9 platform gating: darwin, win32, linux');
   ok(M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'darwin') && M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'linux'), 'darwin/linux results unchanged');
   const linX = M.renderInstallPanel({ status: status(SAMPLE.map((x) => ({ ...x, status: 'manual' })), { platform: 'linux', writable: false }) });
   ok(/on Linux/.test(linX) && !/data-mcpi-new-windows|data-mcpi-windows/.test(linX) && !/data-mcpi-tick/.test(linX), 'linux: copy-only, no Windows label');
+  // v3.86.0 audit fix 1: on Windows a RUNNING Claude Desktop is refused, and the row says so in words.
+  ok(/data-mcpi-app-running>Claude Desktop is running\. Quit Claude Desktop fully \(system tray → Quit\), then press Install for me\.</.test(row(html, 'claude-desktop')), 'win32: running Claude Desktop row says quit fully, then Install for me', row(html, 'claude-desktop'));
+  ok(!/mcpi-hint/.test(row(html, 'claude-desktop')) || !/Check again/.test(row(html, 'claude-desktop')), 'win32: …instead of the restart hint');
+  const notRunning = M.renderInstallPanel({ status: wst([{ ...WIN[0], running: { checked: true, running: false } }]) });
+  const unknownRun = M.renderInstallPanel({ status: wst([{ ...WIN[0], running: { checked: false, running: false } }]) });
+  ok(!/data-mcpi-app-running/.test(notRunning) && !/data-mcpi-app-running/.test(unknownRun), 'win32: no refusal line when not running, or when the check could not look');
+  const macRunning = M.renderInstallPanel({ status: status([{ ...WIN[0], files: [{ display: '~/Library/Application Support/Claude/claude_desktop_config.json', action: 'add', state: 'absent' }] }]) });
+  ok(!/data-mcpi-app-running/.test(macRunning) && /mcpi-hint/.test(macRunning), 'darwin: a running Claude Desktop keeps warn-and-allow (its hint, no refusal line)');
+  // audit fix 3d: "on this Mac" never shows on Windows.
+  ok(/Not found on this PC \(1\)/.test(html) && !/on this Mac/.test(html), 'win32: the Not found fold says "this PC", and no "this Mac" anywhere', (html.match(/[^>]*on this Mac[^<]*/) || [''])[0]);
+  ok(/No agent tool was found on this PC\./.test(M.renderToolRows(wst([], { notFound: [] }))) && /No agent tool was found on this Mac\./.test(M.renderToolRows(status([], { notFound: [] }))), 'the empty line says PC on win32, Mac on darwin');
   const wOff = M.renderInstallPanel({ status: wst(WIN, { writable: false }) });
   ok(/data-mcpi-nonmac>One-click install on Windows is not available right now/.test(wOff) && !/data-mcpi-tick/.test(wOff) && !/data-mcpi-new-windows/.test(wOff), 'win32 not writable: said open, copy instead');
   ok(!/data-mcpi-tick/.test(wOff) && /id="mcpi-install-btn"[^>]*disabled/.test(wOff), 'win32 not writable: no checkbox, Install disabled');
