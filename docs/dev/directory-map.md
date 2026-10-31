@@ -64,6 +64,14 @@ src/
                     `verified`, `hooks.state` in FOUR words (verified · unverified · present-useless
                     · none), `measured: null` on EVERY row. Pure data + pure functions, no Node
                     builtin, so a view can import it exactly as agent-instructions.js does
+    mcp-install.js— v3.85.0: the ONE writer of another tool's MCP config. Pure planner + executor with
+                    injected IO; adds / updates / removes ONLY the `my-curator` key, in a verified user-level
+                    file (adapter `installer: 'file'`: Claude Desktop, Cursor, Antigravity), macOS only.
+                    Backup of the original bytes first, structural check, compare-and-swap on the file's
+                    sha256, single-use plan tokens, a manifest at `<user data>/.mcp-installs.json`.
+                    Fails closed (no home) under CURATOR_TEST_USER_DATA_DIR unless CURATOR_TEST_INSTALL_HOME
+    harness-detect.js— v3.85.0: which tools are on this Mac (app bundle, CLI on the login-shell PATH,
+                    or a config file) and which are running (one `ps` over a fixed argv). Read-only
     github-read-client.js— READ-ONLY GitHub plumbing (v3.63.0), EXTRACTED from
                     sharedbrain-github-adapter.js so there is one implementation; GET only, the
                     token read from a FILE and never logged. MIT by ENTERPRISE-FILES.txt's own rule
@@ -121,9 +129,13 @@ src/
                     project enforced in the store, a repo-owned document's CONTENT never written
                     here, only mirrored; tiers 2/3 stay agent-only over MCP — a browser writer there
                     would be a SECOND writer (see the invariants below)
-    mcp.js        — My Curator MCP wizard endpoints (config, claude-config, self-test, reveal-config)
+    mcp.js        — My Curator MCP endpoints (config, self-test, usage, exercise, reveal-config). `write-config`,
+                    `claude-config` and `claude-full-config` are the retired wizard's routes: kept for API
+                    compatibility, called by no screen since v3.85.0
+    mcp-install.js— v3.85.0: `GET /api/mcp/install/status`, `POST /plan`, `POST /apply` — the one-click
+                    install of the my-curator entry (gate: same-origin `Origin` required, macOS only)
     diagnostics.js— GET /api/diagnostics/quick (free), POST /api/diagnostics/live (opt-in AI ping)
-  public/         — vanilla JS frontend (no build step; Settings tab hosts the MCP wizard, System Check panel, Health tab, onboarding wizard)
+  public/         — vanilla JS frontend (no build step; Settings tab hosts the MCP bridge (status card, tools installer), System Check panel, Health tab, onboarding wizard)
     next/shared/overview.js — renderOverview() (v3.64.2): the ONE overview card, rendered by BOTH
                     the Domains page's OVERVIEW and the Context page's three-layer readings; kit
                     classes `cur-ov-*` carry every rule, the domain page's nine historical `dm-*`

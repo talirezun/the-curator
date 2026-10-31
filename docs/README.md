@@ -146,7 +146,7 @@ first group applies to all three.
 | Document | What's inside |
 |----------|---------------|
 | [ai-health.md](ai-health.md) | AI-assisted Wiki Health — broken-link rescue, orphan rescue, semantic-duplicate detection, persistent dismissals |
-| [mcp-user-guide.md](mcp-user-guide.md) | My Curator MCP — expose the wiki *and* the working state to any local MCP client (Claude Code, Claude Desktop, Cursor) for frontier-model research and write-back |
+| [mcp-user-guide.md](mcp-user-guide.md) | My Curator MCP — expose the wiki *and* the working state to any local MCP client (Claude Code, Claude Desktop, Cursor) for frontier-model research and write-back; on a Mac, **Install for me** adds the entry to Claude Desktop, Cursor and Antigravity in one click |
 
 **Layer 2 — your team's brain** (Shared Brain; opt-in, `v3.0.0-beta+`)
 

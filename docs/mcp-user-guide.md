@@ -171,25 +171,69 @@ A frontier model can always get the full picture — it just has to ask in piece
 
 ## Setup (under 2 minutes)
 
-1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and click **Set up Claude Desktop**. (If a bridge is already connected the same button reads **Re-run setup**. Through v3.40.0, in the pre-redesign shell at `/old`, the section was in the Settings tab and headed *My Curator — Private MCP Bridge*. That shell was deleted in v3.41.0.)
-2. Step 1 of the wizard, *Copy the Curator entry*: choose **Just the Curator entry** (safe if you already run other MCP servers) or **The whole file, with Curator added**, then click **Copy the Curator entry & continue →**.
-3. Step 2, *Paste it into Claude Desktop's config*: click **Show it in Finder** and Finder opens the folder containing `claude_desktop_config.json`. (**Copy the path** is there too, and where the wizard can do it safely it offers **Write it for me**.)
-4. Open that file in any text editor (TextEdit, VS Code). If it doesn't exist, create one containing just `{}`.
-5. Paste the snippet inside the `mcpServers` key (the wizard shows you exactly what "before" and "after" look like), save, and click **I've saved the file →**.
-6. Step 3, *Restart Claude Desktop, then check it*: **fully quit and reopen Claude Desktop** (⌘Q — closing the window is not enough), then click **Test the bridge**. **Re-read the config file** is the separate check of what Claude Desktop now has saved.
-7. Close the wizard. The **MCP bridge** section then shows a green **Connected** line, and **Run self-test** re-runs the same check any time. In Claude Desktop:
+**On a Mac (the Mac app, or a local install on macOS), The Curator does the setup for you.** It
+checks the tools it can find, shows you exactly what it would write, keeps a copy of your original
+file, and changes nothing but its own `my-curator` entry.
+
+1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and click **Install in your tools** in block ① (*Connect a client*). It takes you to block ⑤, **Tools on this Mac**.
+2. Tick the tools you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Plan ready — nothing written yet** and shows, per file, its path, the exact entry, the names of your other servers (which stay unchanged), and the name of the backup it will keep.
+3. Click **Apply**. One result line per file stays on screen, for example *"Cursor — added to ~/.cursor/mcp.json · original kept · restart Cursor"*.
+4. **Fully quit and reopen the tool** (⌘Q for Claude Desktop — closing the window is not enough). A tool reads its list of MCP servers only when it starts. If Claude Desktop is running when you apply, the preview says so: quit it first for the safest install, because it rewrites its own file.
+5. Click **Check again** — the tool's row should read **connected**. Then, in Claude Desktop:
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
 
-This is the screen you set the bridge up from. **The connection reads as a monitor (v3.65.0)**, not
-a status card: a recessed, terminal-like panel carrying one fact per line — the client, the server
-name, and the knowledge folder the bridge is pointed at — with the connection's state as a word and
-a coloured dot sitting above them. The install photographed here needs re-connecting — its
-knowledge folder moved since the config was written, so the state word reads amber **Needs
-re-connect** and the primary button reads **Re-connect**. On a healthy install the state word is a
-green **Connected**, and pressing **Run self-test** paints a *second* monitor underneath, headed
-**Bridge self-test**, reporting whether the bridge responded, how many tools it exposes and how
-many domains it can see:
+**Which tools can be installed this way:** Claude Desktop, Cursor and Antigravity. Every other tool (Claude Code, Codex, Gemini CLI, opencode and the rest) is **copy only**: its row has a **Copy** button and a line saying where to put the entry. The same is true of every tool on Linux and Windows in this version.
+
+### What each row can say
+
+| Status | Meaning | Ticked for you? | Buttons |
+|---|---|---|---|
+| **connected** | The file names `my-curator` and the entry is the one this install would write | No | **Remove**; **Restore original** while a backup of the previous file is still valid |
+| **needs an update** | An entry exists but differs: it launches a missing file, names another knowledge folder, or is in some of Antigravity's files and not others | Yes | **Install for me** (updates it) |
+| **not connected** (counted as *can be added*) | The tool is on this Mac but has no entry | Yes | **Install for me** |
+| **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
+| **copy only** | A tool The Curator does not write for, or a non-Mac computer | No | **Copy** |
+
+Tools not found on this Mac are folded under **Not found on this Mac (N)**, each with **Copy**. A row
+can also carry **running** and *used 2 days ago* — labels only (the second comes from the local usage
+log); neither changes a status or an offer.
+
+### Copy it yourself
+
+**Copy it myself** (beside **Install for me**) takes you to the tool rows. **Copy** puts one of two
+things on the clipboard, and the line under the row says which:
+
+- **Save as ‹file›** — the tool's file does not exist yet: copy the whole small file and save it under that name.
+- **Paste into ‹file› inside "mcpServers"** — the file exists: copy only the `my-curator` entry and paste it inside that key, next to your other servers.
+
+A tool whose file is not JSON (TOML or YAML) gets the snippet as that tool writes it, with an
+**Add this to ‹file›** line. Then fully quit and reopen the tool.
+
+### What it writes, and how to undo it
+
+| | |
+|---|---|
+| **Writes** | Only the `my-curator` entry in the tool's own user-level file. Your other servers and every other setting stay as they are. It never touches instruction files, skills, hooks or project files |
+| **Before writing** | The original is copied beside itself as `<file>.curator-backup-<UTC time>` (readable only by you), and the new content is checked to differ from the old in `my-curator` alone |
+| **Refuses, and writes nothing** | When the file changed after the preview, is corrupt, has comments (JSONC), is a symlink, has a repeated key, or has numbers beyond 2^53 |
+| **Undo** | **Remove** deletes only the `my-curator` entry. **Restore original** puts the backup back, but only while the file is still exactly what The Curator wrote; if it was edited since, it refuses and tells you to Remove instead |
+| **Record** | Each install, update, remove and restore is logged in `.mcp-installs.json` in the app's data folder, on this computer only |
+
+A rewrite saves the whole file with its existing indentation, so a compact one-line object can end
+up spread over several lines. The values are identical, and the backup keeps the original bytes.
+
+### The status card (block ①)
+
+Block ① writes nothing. **The connection reads as a monitor (v3.65.0)**: a recessed, terminal-like
+panel carrying one fact per line — the client, the server name, and the knowledge folder the bridge
+is pointed at — with the connection's state as a word above them (**Configured**, **Needs
+re-connect**, **Not connected**, or **Config unreadable**) and two buttons beneath it, **Install in
+your tools** and **Run self-test**. (The older wizard, with its Re-connect, View config and Copy
+snippet buttons, was retired in v3.85.0.) Pressing **Run self-test** paints a *second* monitor
+underneath, headed **Bridge self-test**, reporting whether the bridge responded, how many tools it
+exposes and how many domains it can see. The screenshot below was taken before v3.85.0 and still
+shows the retired buttons:
 
 ![Settings → MCP bridge on the demo workspace. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The main column reads CONFIGURATION over MCP bridge. Step 1, Connect a client: 'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.' over a recessed monitor reading CONFIGURED, CLIENT Claude Desktop, SERVER my-curator and DOMAINS /tmp/curator-demo-…/domains, then Re-run setup (filled), Run self-test, View config and Copy snippet. Step 2, Default domain for MCP writes, with a picker reading '— none (require an explicit domain) —' and a line on what leaving it unset means. Step 3, Tool map: 'What your agents used, and when — kept on this machine only.', a Test all 24 tools button, a monitor with LAST SESSION START 38 min ago and LAST SAVE 8 min ago, and BUSIEST · LAST 5 DAYS · AGENTS ONLY — get_project_context 8, save_working_state 7, search_wiki 7.](images/curator-mcp-bridge.png)
 
@@ -206,12 +250,11 @@ headed **Bridge sessions**: its two lines are the headline readings the whole me
 answer — *when did a session last start*, and *when did one last save* — and it re-counts each age
 in place, once a second, with no page reload and no re-fetch, for as long as the block is on screen.
 
-**If your `claude_desktop_config.json` already exists but contains a JSON syntax error**, the wizard
-will **not** show you an "After" preview and the copy button on that pane disappears. That is
-deliberate: a file that cannot be parsed cannot be merged into, and the only payload the Curator
-could invent would contain *only* the my-curator entry — pasting it would delete every other MCP
-server you have configured. Fix the syntax error in that file first, then reopen the wizard. The
-entry-only **Copy snippet** in step 2 is unaffected and remains safe to paste by hand.
+**If your `claude_desktop_config.json` already exists but contains a JSON syntax error**, the row reads
+**can't read**, with the reason, and **Install for me** is not offered for it. That is deliberate: a
+file that cannot be parsed cannot be merged into, and writing a new one would delete every other MCP
+server you have configured. Fix the syntax error first, then press **Check again**. **Copy** remains
+safe to paste by hand. The same goes for a file with comments (JSONC), which a rewrite would strip.
 
 **What the self-test actually checks** (v3.6.1+): it spawns **exactly the command the snippet
 prescribes** — in a source install, `mcp/server.js` with the same `--domains-path`; in the packaged
@@ -724,14 +767,14 @@ Composing every answer from raw source text instead of the compiled wiki would q
 | | **Source install** (git checkout) | **The packaged Mac app** |
 |---|---|---|
 | The entry Claude Desktop gets | your Node binary, `mcp/server.js`, **and `--domains-path <your folder>`** | a small launcher script the app writes for itself, with **no arguments at all** |
-| Move the knowledge folder | **The entry goes stale.** Come back to **Settings → MCP bridge**, click **Re-run setup**, paste the fresh snippet, restart Claude Desktop. The wizard detects the mismatch and shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
+| Move the knowledge folder | **The entry goes stale.** The tool's row in **Settings → MCP bridge → Tools on this Mac** reads **needs an update**: click **Install for me**, then restart Claude Desktop. The status card shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
 | Move the app itself | Rebuild the Dock launcher (`bash scripts/build-app.sh`) | The launcher script is **regenerated at every app launch**, so it repairs itself — with one honest gap: between moving the app and next opening it, the script still names the old location for one session. Launching The Curator once fixes it |
 
 The flag was dropped in the app deliberately. It is a **snapshot** taken when the config was written, and it outranks your live Settings choice — so under the app it would silently point the bridge at a folder you had already moved on from. The source install keeps it, equally deliberately: removing it there would mark every existing user's config stale overnight.
 
 **The MCP and the app now agree on `DOMAINS_PATH` vs Settings.** If you've set a `DOMAINS_PATH` environment variable (the developer-oriented `.env` fallback described in [user-guide.md](user-guide.md)) *and* a different Knowledge Base Location in Settings, the Settings value wins — in both the app and in Claude Desktop, identically. That particular disagreement can no longer happen.
 
-The one way they can still drift apart is the one described just above, **and it applies to a source install only** — the packaged app's entry carries no folder path, so there is nothing to go stale. In a source install, the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time you ran the wizard. If you change the Knowledge Base Location in Settings afterward without regenerating that snippet, Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → MCP bridge → **Re-run setup** → paste the fresh snippet → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
+The one way they can still drift apart is the one described just above, **and it applies to a source install only** — the packaged app's entry carries no folder path, so there is nothing to go stale. In a source install, the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time the entry was written. If you change the Knowledge Base Location in Settings afterward without updating the entry (**Install for me**), Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → MCP bridge → Tools on this Mac → **Install for me** → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
 
 **The Curator server does not need to be running.** Claude Desktop spawns `mcp/server.js` as a child process on demand. It's a separate, read-only path into the same markdown files.
 
@@ -832,13 +875,13 @@ A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotf
 
 | Symptom | Most likely cause | Fix |
 |---|---|---|
-| Claude Desktop shows no `my-curator` tools | Snippet pasted incorrectly, or Claude Desktop not restarted | Double-check the "After" preview in the wizard, then ⌘Q and reopen Claude Desktop |
-| "Stale config" banner in Settings | **Source install:** Knowledge Base Location changed since you last generated the snippet. **Packaged app:** a folder change cannot cause this — the entry holds no folder path — so look for a moved app or a hand-edited config instead | Click **Re-run setup**, paste the fresh snippet, restart Claude Desktop. In the app, launching it once also rewrites its own launcher script |
-| "Needs re-connect" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Re-run the wizard to refresh what is saved on disk |
-| Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then **Re-run setup** to regenerate the snippet and re-paste it. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
+| Claude Desktop shows no `my-curator` tools | The tool was not restarted, or the entry was pasted incorrectly | Press **Check again** in Tools on this Mac: the row should read **connected**. Then ⌘Q and reopen the tool |
+| "Stale config" banner in Settings | **Source install:** Knowledge Base Location changed since you last generated the snippet. **Packaged app:** a folder change cannot cause this — the entry holds no folder path — so look for a moved app or a hand-edited config instead | Click **Install for me** on the tool's row, then restart Claude Desktop. In the app, launching it once also rewrites its own launcher script |
+| "Needs re-connect" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Press **Install for me** to refresh what is saved on disk |
+| Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then press **Install for me** to rewrite the entry. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
 | Tools show but return "no domains" | You haven't created any domains yet | Open the Curator, create a domain, ingest a source |
 | Claude finds a page in search but gets "Invalid slug" when it tries to open it | The slug contains a character the MCP refused. Before v3.9.1 that was any dot (`claude-sonnet-3.5`) | Update to v3.9.1 or later. If it persists, the slug likely has an accented character or a space — rename the file to plain lowercase-and-hyphens, or open the page in the Curator app instead |
-| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | The self-test only checks the bridge, never your config file — a syntax error there cannot fail it. The wizard detects it separately: the Settings panel's status call (`GET /api/mcp/config`) returns `claude_config_parse_error: true`, and the merged "After" preview then shows **no merge at all** rather than a misleading one, because a file that can't be parsed can't be safely merged into. Fix the JSON syntax in `claude_desktop_config.json` first, then reopen Settings |
+| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | The self-test only checks the bridge, never your config file — a syntax error there cannot fail it. The Settings panel detects it separately: the status call (`GET /api/mcp/config`) returns `claude_config_parse_error: true` and the tool's row reads **can't read**, because a file that can't be parsed can't be safely written to. Fix the JSON syntax in `claude_desktop_config.json` first, then press **Check again** |
 
 ---
 
