@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.83.1` | Dependency security updates — nine packages (body-parser, multer, zod and others, three HIGH) via `npm audit fix` with no `--force`; Electron in `desktop/` left HIGH, fixed in v3.83.2. |
 | `v3.83.0` | A complete `index.md`, kept complete — Wiki Health "Index gaps" with a user-triggered deterministic Rebuild index, every write path now adds a row for every page it touched, an ingest-prompt cap on the embedded index, and MCP `get_index` paged to read at any size. |
 | `v3.82.1` | Dependency security updates (proxy-addr, @modelcontextprotocol/sdk; desktop http-cache-semantics) that turned the audit job red the day v3.82.0 shipped; 8 moderate electron-builder-chain findings left unfixed. |
 | `v3.82.0` | The Claude 5.5 generation, a tier-aware money path, two-generation-old Claude models retired with a forward migration — and Chat's domain and model choices made honest after a user's second report. |
