@@ -1519,6 +1519,9 @@ function withMdExtension(p) {
  *     silently. That is benign cross-batch chatter (the page is planned, and the
  *     owning batch writes it); the caller's existing keep-last-occurrence dedup
  *     already collapses it, and warning on it would bury the real signals.
+ *     (v3.84.0: in multi-phase such copies no longer reach this function —
+ *     filterBatchReply sets them aside per batch, so the owning batch's copy is
+ *     the one written. Single-pass has no batches, so the case does not arise.)
  *
  * MERGE DIRECTION for a summary collision: `mergeWikiPage(existing, incoming)`
  * treats `incoming` as the base and injects `existing`'s ACCUMULATE bullets plus
