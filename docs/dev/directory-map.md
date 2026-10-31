@@ -36,13 +36,15 @@ src/
                     v3.64.0 when it also gained the BRIDGE PROCESSES section)
   brain/
     ingest.js     — main ingest pipeline (single-pass + multi-phase for large docs)
-    files.js      — all filesystem logic: writePage (returns change records v2.5.0+), mergeWikiPage, syncSummaryEntities, injectSummaryBacklinks
+    files.js      — all filesystem logic: writePage (returns change records v2.5.0+), mergeWikiPage, syncSummaryEntities, injectSummaryBacklinks;
+                    v3.84.0: tidySummaryLinkSections / summaryTidyGuard (summary link sections filed by folder), dedupRewrittenBullets (Health rewriters)
     compile.js    — conversation compilation (v2.5.0): turns a chat thread into wiki pages via the same writePage pipeline
     llm.js        — LLM abstraction (Gemini or Claude, auto-detected via config.js)
     chat.js       — multi-turn chat against the wiki
     sync.js       — GitHub sync (git --git-dir / --work-tree)
     health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks);
-                    v3.83.0: the `indexDrift` check (report-only) + planIndexRebuild/applyIndexRebuild (the previewed index.md rebuild)
+                    v3.83.0: the `indexDrift` check (report-only) + planIndexRebuild/applyIndexRebuild (the previewed index.md rebuild);
+                    v3.84.0: the `summaryLinkSections` check + safe fix
     wiki-index.js — index.md logic (v3.83.0), PURE parse/coverage/rebuild functions + an fs wrapper: ensurePagesInIndex (called after every
                     ingest, compile and MCP compile_to_wiki write), parseIndex, indexCoverage, rebuildIndexText, deriveDescription.
                     On the MCP child's import graph: never writes to stdout
