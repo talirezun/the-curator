@@ -30,7 +30,8 @@ import { writeFileAtomic } from './atomic-write.js';
 // Track 7 Part II. raw-store imports extractText from THIS module, but does so
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
-import { appendManifestRecord, hashRawSource } from './raw-store.js';
+import { appendManifestRecord, hashRawSource, readManifest } from './raw-store.js';
+import { createHash } from 'crypto';
 import { listOtherInstances, describeOthers } from './instance-probe.js';
 
 /**
@@ -57,6 +58,116 @@ export function computeSummarySlugFromSource(originalName) {
     .slice(0, 80)
     .replace(/^-+|-+$/g, '');    // strip leading + trailing hyphens
   return slug || 'untitled';
+}
+
+/** The `source:` value of a page's leading YAML frontmatter, or null. */
+function frontmatterSource(content) {
+  if (typeof content !== 'string') return null;
+  const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return null;
+  const m = fm[1].match(/^source:\s*(.+)$/im);
+  if (!m) return null;
+  const v = m[1].trim().replace(/^["']|["']$/g, '').trim();
+  return v || null;
+}
+
+const sameName = (a, b) => typeof a === 'string' && typeof b === 'string'
+  && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * One user-visible warning when a WRITTEN summary lacks the shape the domain
+ * schema prescribes (v3.84.0): a `# Title`, a recorded `source:`, and a
+ * `## Key Takeaways` section with at least one bullet. Models (Flash-Lite in a
+ * user's report) sometimes write labels ("Key Takeaways:") instead of headings,
+ * or no title — the page then reads as broken and nothing said so.
+ * Stubs are skipped (they already carry their own warning). Pure.
+ *
+ * @returns {string|null}
+ */
+export function summaryShapeWarning(summaryPath, content, originalName) {
+  if (typeof content !== 'string') return null;
+  if (/Stub (page|summary) —/.test(content)) return null;
+  const fm = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  const body = fm ? content.slice(fm[0].length) : content;
+  const missing = [];
+  if (!/^#[ \t]+\S/m.test(body)) missing.push('a title (# heading)');
+  if (!frontmatterSource(content)) missing.push('a source');
+  const kt = body.match(/^#{2,6}[ \t]*key takeaways\b[^\n]*(?:\n|$)([\s\S]*?)(?=^#{1,6}[ \t]|(?![\s\S]))/im);
+  if (!kt || !/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/m.test(kt[1])) missing.push('a Key Takeaways section');
+  if (!missing.length) return null;
+  const list = missing.length === 1 ? missing[0]
+    : missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1];
+  return `The summary "${summaryPath}" is missing ${list} — the AI did not follow the summary layout. ` +
+    `Open it in the Wiki tab; re-ingesting "${originalName}" usually fixes it.`;
+}
+
+/**
+ * The summary path for a source, refusing to merge two DIFFERENT sources into
+ * one summary (v3.84.0).
+ *
+ * computeSummarySlugFromSource is lossy, so `a-very-long-title…-part-1.pdf` and
+ * `…-part-2.pdf` (differing after char 80), `report.pdf` and `report.txt`, or
+ * any two all-non-Latin names (both `untitled`) used to share one summary and
+ * union-merge silently. Re-ingesting the SAME file must still land on the same
+ * summary (that idempotency is the slug's whole purpose), so a different slug
+ * is chosen only on POSITIVE evidence that the existing summary is another
+ * source's:
+ *   • the raw manifest records this summary path for another filename and
+ *     never for this one; or, with no manifest record either way,
+ *   • its frontmatter `source:` is a filename (has an extension) that maps to
+ *     the same slug and is not this filename.
+ * A `source:` that is a title rather than a filename (the model writes what it
+ * likes there), or no source at all, is NOT evidence — those summaries keep
+ * today's merge, because a false "different source" would split every
+ * re-ingest of a pre-manifest summary into a duplicate.
+ *
+ * The disambiguated slug is `<slug>-<first 6 hex of sha256(filename)>`, stable
+ * per filename, so a re-ingest of the second file finds its own summary again.
+ * Never throws: any read failure falls back to the plain slug (today's
+ * behaviour).
+ *
+ * @returns {Promise<{summarySlug: string, summaryPath: string, warning: string|null}>}
+ */
+export async function resolveSummaryPath(domain, originalName) {
+  const base = computeSummarySlugFromSource(originalName);
+  const plain = { summarySlug: base, summaryPath: `summaries/${base}.md`, warning: null };
+  try {
+    let existing;
+    try {
+      existing = await readFile(path.join(wikiPath(domain), 'summaries', `${base}.md`), 'utf8');
+    } catch { return plain; }                       // no summary there → no collision
+
+    let otherName = null;
+    let sameByManifest = false;
+    const records = await readManifest(domain);
+    for (const rec of records) {
+      if (!rec || rec.summaryPath !== plain.summaryPath || typeof rec.filename !== 'string') continue;
+      if (sameName(rec.filename, originalName)) sameByManifest = true;
+      else if (!otherName) otherName = rec.filename;
+    }
+    if (sameByManifest) return plain;
+    if (!otherName) {
+      const recorded = frontmatterSource(existing);
+      if (recorded && /\.[A-Za-z0-9]{1,8}$/.test(recorded) && !sameName(recorded, originalName)
+          && computeSummarySlugFromSource(recorded) === base) {
+        otherName = recorded;
+      }
+    }
+    if (!otherName) return plain;
+
+    const hash = createHash('sha256').update(String(originalName), 'utf8').digest('hex').slice(0, 6);
+    const slug = `${base}-${hash}`;
+    return {
+      summarySlug: slug,
+      summaryPath: `summaries/${slug}.md`,
+      warning:
+        `Two different sources map to the same summary name "summaries/${base}.md" ("${otherName}" and ` +
+        `"${originalName}") — keeping both: this source's summary was written to "summaries/${slug}.md" ` +
+        `instead of being merged into the other one.`,
+    };
+  } catch {
+    return plain;
+  }
 }
 
 // ── Slug-inventory safety valve (v3.0.16) ───────────────────────────────────
@@ -751,6 +862,17 @@ index. Keep each under 160 characters. Where a page listed BELOW already comes
 with a summary, you may reuse that summary text verbatim.`;
 
   // ── VARIES per batch — must stay AFTER the cache breakpoint ───────────────
+  // v3.84.0: the SUFFIX states the page count and that every other page (the
+  // summary included) is written in a separate request, and its JSON example
+  // is this batch's own first path — the old example started with
+  // "summaries/example-source.md" in EVERY batch. Measured live on Flash-Lite
+  // 2.5 (40,939-char source, n=1 per arm): batches answering with pages they
+  // were not asked for 5/6 → 0/7, Phase 1+2 output tokens 30,564 → 10,489.
+  // filterBatchReply still enforces the rule whatever the model does. All of
+  // this is after the cache breakpoint; the prefix is untouched (pinned in
+  // test-ingest-coverage-v381.js to its v3.80.0 digest).
+  const n = pageBatch.length;
+  const firstPath = pageBatch[0] && pageBatch[0].path ? pageBatch[0].path : 'concepts/some-concept.md';
   const suffix = `
 
 Write the full markdown content for EXACTLY these wiki pages (no others):
@@ -758,11 +880,12 @@ Write the full markdown content for EXACTLY these wiki pages (no others):
 ${pageList}
 ]
 
+Your reply must contain exactly ${n} page${n === 1 ? '' : 's'} — the ${n === 1 ? 'one' : n} listed above. Every other page of this ingest (including the summary, unless it is listed above) is written in a separate request; do not write it here.
+
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
   "pages": [
-    { "path": "summaries/example-source.md", "content": "...", "summary": "1-line description for the index" },
-    { "path": "concepts/some-concept.md",    "content": "...", "summary": "1-line description" }
+    { "path": "${firstPath}", "content": "...", "summary": "1-line description for the index" }
   ]
 }`;
 
@@ -910,7 +1033,21 @@ export function slugifyName(name) {
  *
  * @returns {{ outline: object, warnings: string[] }}  patched outline + any warnings
  */
-export function validateOutline(outline, summaryPath, originalName, originatorHints = []) {
+export function validateOutline(outline, summaryPath, originalName, originatorHints = [], opts = {}) {
+  // v3.84.0 options (both optional; omitted → the pre-v3.84.0 behaviour):
+  //   existingFiles {entities, concepts} — on-disk filenames; a trunk page that
+  //     already exists on disk is never injected (its links already resolve).
+  //   singlePass — the pages already carry their content and no further AI
+  //     call follows, so an injected trunk page could only ever be an empty
+  //     stub. It is reported instead of injected.
+  const onDisk = new Set();
+  const ef = opts && opts.existingFiles;
+  for (const folder of ['entities', 'concepts']) {
+    for (const f of (ef && Array.isArray(ef[folder]) ? ef[folder] : [])) {
+      if (typeof f === 'string') onDisk.add(f.replace(/\.md$/, ''));
+    }
+  }
+  const singlePass = !!(opts && opts.singlePass);
   const warnings = [];
   const pages = Array.isArray(outline?.pages) ? [...outline.pages] : [];
 
@@ -1017,6 +1154,7 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
       const newEntry = {
         path: `entities/${canonSlug}.md`,
         summary: `${hint} — originator of "${originalName}".`,
+        injectedBy: 'originator',
       };
       pages.splice(insertAt, 0, newEntry);
       entityByNormKey.set(canonKey, newEntry);
@@ -1069,11 +1207,29 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
       // in the outline? If yes, the LLM did the right thing; skip.
       if (conceptSlugsInOutline.has(prefix)) continue;
 
+      // v3.84.0: already on disk (as a concept, or as an entity writePage's
+      // cross-folder rule would redirect to) → [[prefix]] resolves; nothing to
+      // inject and nothing to warn about.
+      if (onDisk.has(prefix)) continue;
+
       const trunkPath = `concepts/${prefix}.md`;
       const subPaths = cluster.map(p => p.path).slice(0, 5);
       const subList = subPaths.length === cluster.length
         ? subPaths.join(', ')
         : subPaths.join(', ') + `, … (+${cluster.length - subPaths.length} more)`;
+
+      if (singlePass) {
+        // Not injected: this ingest's pages are already written by the AI and
+        // no further call follows, so an injected page would be an empty stub
+        // (the pre-v3.84.0 behaviour, mislabelled as the originator check).
+        warnings.push(
+          `This source has ${cluster.length} "${prefix}-*" pages without a parent "${trunkPath}". ` +
+          `It was not created: a source this short is written in one AI pass, which cannot add a page ` +
+          `afterwards. Sub-pages: ${subList}.`
+        );
+        conceptSlugsInOutline.add(prefix);
+        continue;
+      }
 
       warnings.push(
         `Outline had ${cluster.length} "${prefix}-*" pages without a parent "${trunkPath}" — ` +
@@ -1085,6 +1241,7 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
       const trunkEntry = {
         path: trunkPath,
         summary: `Umbrella concept that the ${prefix}-* pages elaborate on.`,
+        injectedBy: 'trunk',
       };
       const summaryIdx = pages.findIndex(p =>
         p && typeof p.path === 'string' && p.path.startsWith('summaries/')
@@ -1456,6 +1613,75 @@ export function reconcileGeneratedPages(pages, { summaryPath, plannedPaths = [] 
     );
   }
   return { pages: out, warnings };
+}
+
+/**
+ * Keep only the pages a Phase 2 batch was ASKED for (v3.84.0).
+ *
+ * THE DEFECT THIS CLOSES (a user's Flash-Lite 2.5 ingest, reproduced live on
+ * a 40,939-char source): every batch prompt lists ALL planned pages (the
+ * "PAGES BEING CREATED IN THIS SAME INGEST" block, which must stay in the
+ * byte-stable prefix), and the model answered 4 of 5 batches with EVERY
+ * planned page — the summary included — although the suffix says "EXACTLY
+ * these wiki pages (no others)". Nothing filtered the reply, so
+ * reconcileGeneratedPages folded five independently written summaries into
+ * one and mergeWikiPage unioned their Key Takeaways: 33 bullets for ~6 real
+ * points, and on a real wiki 935 takeaways from ONE ingest. Every other page
+ * was paid for up to five times and all but the last copy thrown away.
+ *
+ * Rules, per returned page:
+ *   • requested by THIS batch                       → kept.
+ *   • a summaries/ page, this batch was asked for
+ *     the summary                                   → kept (reconcile pins a
+ *                                                     stray path to canonical).
+ *   • a summaries/ page, this batch was NOT asked   → deferred.
+ *   • planned for ANOTHER batch                     → deferred (its own batch
+ *                                                     writes it).
+ *   • in NO batch (unplanned) or malformed          → kept, unchanged: today's
+ *                                                     handling (reconcile warns).
+ *
+ * "Deferred" is not "discarded": the caller holds the first usable deferred
+ * copy per path as a RESERVE and uses it only if the owning batch produced
+ * nothing for that page, or only a stub — so the filter can never turn "page
+ * written from a stray copy" into "page missing".
+ *
+ * NO USER-VISIBLE WARNING for deferred copies, deliberately. The warn-on-drop
+ * rule (CLAUDE.md, Ingest) is about losing what the model produced; a deferred
+ * copy is an unrequested REWRITE of a page that IS written (by the batch that
+ * was asked), and keeping it is precisely the pile-up defect. Before this fix
+ * the same cross-batch copies of entity/concept pages were already discarded
+ * silently by ingestFile's keep-last dedup (reconcileGeneratedPages documents
+ * why warning on that chatter would bury real signals). The user cannot act on
+ * "the model wrote pages it was not asked for", so it goes to stderr only.
+ *
+ * Pure and deterministic. Paths compare .md-normalised (withMdExtension).
+ *
+ * @returns {{kept: Array, deferred: Array<{key: string, page: object}>}}
+ */
+export function filterBatchReply(pages, { requestedPaths = [], plannedPaths = [], summaryPath = null } = {}) {
+  const list = Array.isArray(pages) ? pages : [];
+  const requested = new Set((requestedPaths || []).filter(p => typeof p === 'string' && p).map(withMdExtension));
+  const planned = new Set((plannedPaths || []).filter(p => typeof p === 'string' && p).map(withMdExtension));
+  const canonicalSummary = typeof summaryPath === 'string' && summaryPath ? withMdExtension(summaryPath) : null;
+  const askedForSummary = [...requested].some(p => p.startsWith('summaries/'));
+  const kept = [];
+  const deferred = [];
+  for (const page of list) {
+    if (!page || typeof page !== 'object' || typeof page.path !== 'string' || !page.path) {
+      kept.push(page);            // reconcile reports "no path" — unchanged
+      continue;
+    }
+    const norm = withMdExtension(page.path);
+    if (requested.has(norm)) { kept.push(page); continue; }
+    if (norm.startsWith('summaries/')) {
+      if (askedForSummary) kept.push(page);
+      else deferred.push({ key: canonicalSummary || norm, page });
+      continue;
+    }
+    if (planned.has(norm)) { deferred.push({ key: norm, page }); continue; }
+    kept.push(page);              // unplanned — reconcile keeps it, with a warning
+  }
+  return { kept, deferred };
 }
 
 // ── Single-pass prompt (small documents) ─────────────────────────────────────
@@ -2103,6 +2329,12 @@ function reportOutlineUsage(label, totals, pageCount) {
  */
 function stubPageContent(pagePath, summary, originalName) {
   const slug = pagePath.replace(/^.*\//, '').replace(/\.md$/, '');
+  // v3.84.0: a summary stub was tagged `type/concept` and carried no Source
+  // line, so its frontmatter had no `source:` — the reader could not find the
+  // original document, and the summary-shape check could not tell whose it was.
+  const isSummary = pagePath.startsWith('summaries/');
+  const type = pagePath.startsWith('entities/') ? 'entity' : isSummary ? 'summary' : 'concept';
+  const sourceLine = isSummary ? `Source: ${originalName}\n` : '';
   return `# ${slug}
 
 > ⚠ **Stub page — AI failed to write this on ingest.**
@@ -2111,7 +2343,7 @@ function stubPageContent(pagePath, summary, originalName) {
 
 ${summary || '(no summary captured)'}
 
-Tags: stub, type/${pagePath.startsWith('entities/') ? 'entity' : 'concept'}
+${sourceLine}Tags: stub, type/${type}
 `;
 }
 
@@ -2380,7 +2612,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   // Injects the summary page if the LLM omitted it; redirects non-canonical
   // summary paths to the deterministic slug; injects any originator entities
   // that the LLM omitted but the source text plainly identifies.
-  const validated = validateOutline(outline, summaryPath, originalName, originatorHints);
+  const validated = validateOutline(outline, summaryPath, originalName, originatorHints, { existingFiles });
   outline = validated.outline;
   for (const w of validated.warnings) {
     console.warn(`[ingest] Outline validator: ${w}`);
@@ -2422,6 +2654,13 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
 
   // Phase 2: batched content  (20% → 78%)
   const writtenPages = []; // [{path, content, summary?}]
+  // v3.84.0 — see filterBatchReply. `reserve` holds the first usable copy of a
+  // page returned by a batch that was NOT asked for it; `stubEntries` the
+  // placeholder pages the page-by-page fallback created.
+  const reserve = new Map();
+  const stubEntries = new Set();
+  let deferredCount = 0;
+  let deferredSummaryCount = 0;
 
   for (let i = 0; i < allPages.length; i += BATCH_SIZE) {
     // THE checkpoint that makes cancel feel instant on a real ingest: a large
@@ -2582,14 +2821,35 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         } else {
           // Absolute last resort — create a clearly-marked stub page so the
           // ingest completes; the user can see and re-ingest to fix.
+          // v3.84.0: the warning is pushed AFTER the loop, and only if no
+          // sibling batch returned real content for this page (see below).
           console.warn(`[ingest]   ✗ ${singlePage.path} — stub created.`);
-          warnings.push(`Stub page created for "${singlePage.path}" — LLM could not generate content. Re-ingest to fix.`);
-          batchResult.pages.push({
+          const stub = {
             path: singlePage.path,
             content: stubPageContent(singlePage.path, singlePage.summary, originalName),
             summary: singlePage.summary,
-          });
+          };
+          stubEntries.add(stub);
+          batchResult.pages.push(stub);
         }
+      }
+    }
+
+    // v3.84.0: keep only what THIS batch was asked for (filterBatchReply).
+    // Applied after BOTH the batch path and the page-by-page fallback, since a
+    // single-page reply can carry extra pages too.
+    {
+      const filtered = filterBatchReply(batchResult.pages, {
+        requestedPaths: batch.map(b => b && b.path),
+        plannedPaths: allPages.map(p => p && p.path),
+        summaryPath,
+      });
+      batchResult.pages = filtered.kept;
+      for (const { key, page } of filtered.deferred) {
+        deferredCount++;
+        if (key.startsWith('summaries/')) deferredSummaryCount++;
+        const usable = page && typeof page.content === 'string' && page.content.trim();
+        if (usable && !reserve.has(key)) reserve.set(key, { ...page, path: key.startsWith('summaries/') ? summaryPath : page.path });
       }
     }
 
@@ -2602,6 +2862,52 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       }
     }
     writtenPages.push(...batchResult.pages);
+  }
+
+  // v3.84.0: the reserve. A deferred copy is used only where the owning batch
+  // left a hole — nothing at all for a planned page, or only a stub. Real
+  // content from a sibling batch beats a placeholder, and the filter must
+  // never turn "written from a stray copy" into "missing".
+  if (deferredCount > 0) {
+    console.error(
+      `[ingest] Phase 2: ignored ${deferredCount} page cop${deferredCount === 1 ? 'y' : 'ies'} returned by batches ` +
+      `that were not asked for them (${deferredSummaryCount} of the summary); each page is written by its own batch.`
+    );
+  }
+  {
+    const isStub = (p) => stubEntries.has(p);
+    const realByPath = new Map();     // norm path → last NON-stub entry
+    for (const p of writtenPages) {
+      if (p && typeof p.path === 'string' && !isStub(p)) {
+        realByPath.set(p.path.startsWith('summaries/') ? withMdExtension(summaryPath) : withMdExtension(p.path), p);
+      }
+    }
+    for (let k = 0; k < writtenPages.length; k++) {
+      const p = writtenPages[k];
+      if (!isStub(p)) continue;
+      const key = p.path.startsWith('summaries/') ? withMdExtension(summaryPath) : withMdExtension(p.path);
+      const replacement = realByPath.get(key) || reserve.get(key);
+      if (replacement) {
+        console.error(`[ingest]   ↺ ${p.path} — stub replaced by content another batch returned.`);
+        writtenPages[k] = { ...replacement, path: p.path, summary: replacement.summary || p.summary };
+        stubEntries.delete(p);
+      }
+    }
+    for (const p of stubEntries) {
+      warnings.push(`Stub page created for "${p.path}" — LLM could not generate content. Re-ingest to fix.`);
+    }
+    const present = new Set(writtenPages
+      .filter(p => p && typeof p.path === 'string')
+      .map(p => p.path.startsWith('summaries/') ? withMdExtension(summaryPath) : withMdExtension(p.path)));
+    for (const planned of allPages) {
+      if (!planned || typeof planned.path !== 'string') continue;
+      const key = planned.path.startsWith('summaries/') ? withMdExtension(summaryPath) : withMdExtension(planned.path);
+      if (present.has(key) || !reserve.has(key)) continue;
+      const copy = reserve.get(key);
+      console.error(`[ingest]   ↺ ${planned.path} — its own batch omitted it; using the copy another batch returned.`);
+      writtenPages.push({ ...copy, path: planned.path, summary: copy.summary || planned.summary });
+      present.add(key);
+    }
   }
 
   // v3.0.16: enforce the outline's structural guarantees on what Phase 2 actually
@@ -2686,8 +2992,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // v3.0.1-beta.1: deterministic summary slug from source filename. Re-ingesting
   // the same file always lands on the same summary path → mergeWikiPage union-
   // merges into the existing summary instead of creating a duplicate file.
-  const summarySlug = computeSummarySlugFromSource(originalName);
-  const summaryPath = `summaries/${summarySlug}.md`;
+  //
+  // v3.84.0: …unless that slug already belongs to a DIFFERENT source. The slug
+  // is lossy (80-char cut, non-ASCII dropped, extension stripped), so two
+  // different files could land on one summary and merge silently. See
+  // resolveSummaryPath for what counts as evidence of a different source.
+  const resolvedSummary = await resolveSummaryPath(domain, originalName);
+  const summarySlug = resolvedSummary.summarySlug;
+  const summaryPath = resolvedSummary.summaryPath;
+  if (resolvedSummary.warning) {
+    console.warn(`[ingest] ${resolvedSummary.warning}`);
+    warnings.push(resolvedSummary.warning);
+  }
 
   // Save to raw/
   progress(4, 'Saving source file…');
@@ -2998,7 +3314,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       }
     }
 
-    const validated = validateOutline(result, summaryPath, originalName, originatorHints);
+    const validated = validateOutline(result, summaryPath, originalName, originatorHints, { existingFiles, singlePass: true });
     result = validated.outline;
     for (const w of validated.warnings) {
       console.warn(`[ingest] Outline validator: ${w}`);
@@ -3034,18 +3350,53 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // {path, summary} as plan-only entries), fill them with a stub so the file
   // isn't empty. Multi-phase doesn't hit this path because Phase 2 generates
   // content for every validator-injected page before this point.
-  for (const page of result.pages) {
-    if (page && (!page.content || !page.content.trim())) {
-      if (page.path === summaryPath) {
-        console.warn('[ingest] Summary page had no content — generating stub.');
-        warnings.push(`Summary page "${summaryPath}" had no content from the AI — wrote a stub. Re-ingest to fix.`);
-        page.content = `# ${summarySlug}\n\n> ⚠ **Stub summary — AI did not produce content for this page.**\n> Re-ingest "${originalName}" to fix.\n\nSource: ${originalName}\nDate Ingested: ${today}\nTags: stub, type/summary\n`;
-      } else if (page.path.startsWith('entities/') || page.path.startsWith('concepts/')) {
-        console.warn(`[ingest] Validator-injected page had no content — generating stub: ${page.path}`);
-        warnings.push(`Page "${page.path}" was injected by the originator-hint validator but had no AI content — wrote a stub. Re-ingest to populate.`);
-        page.content = stubPageContent(page.path, page.summary, originalName);
+  //
+  // v3.84.0: a content-less entity/concept whose file ALREADY EXISTS on disk is
+  // left out of the write instead — merging a placeholder into a real page only
+  // pollutes it, and the existing page already makes its [[links]] resolve.
+  // The warning now names the check that actually added the page (it blamed
+  // the originator-hint validator for trunk pages too).
+  {
+    const keep = [];
+    for (const page of result.pages) {
+      if (page && (!page.content || !page.content.trim())) {
+        if (page.path === summaryPath) {
+          console.warn('[ingest] Summary page had no content — generating stub.');
+          warnings.push(`Summary page "${summaryPath}" had no content from the AI — wrote a stub. Re-ingest to fix.`);
+          page.content = `# ${summarySlug}\n\n> ⚠ **Stub summary — AI did not produce content for this page.**\n> Re-ingest "${originalName}" to fix.\n\nSource: ${originalName}\nDate Ingested: ${today}\nTags: stub, type/summary\n`;
+        } else if (page.path.startsWith('entities/') || page.path.startsWith('concepts/')) {
+          let exists = false;
+          try { await readFile(path.join(wikiDir, withMdExtension(page.path)), 'utf8'); exists = true; } catch { /* absent */ }
+          if (exists) {
+            console.error(`[ingest] Plan-only page already exists on disk — left as is: ${page.path}`);
+            continue;
+          }
+          const by = page.injectedBy === 'trunk'
+            ? 'by the trunk-page check (a parent for several related pages)'
+            : page.injectedBy === 'originator'
+              ? `by the originator check (an author or speaker named in the source)`
+              : 'to the plan by The Curator';
+          console.warn(`[ingest] Plan-only page had no content — generating stub: ${page.path}`);
+          warnings.push(`Page "${page.path}" was added ${by} but the AI wrote no content for it — wrote a stub page. Re-ingest to populate.`);
+          page.content = stubPageContent(page.path, page.summary, originalName);
+        }
       }
+      keep.push(page);
     }
+    result.pages = keep;
+  }
+
+  // v3.84.0: the summary's `source:` frontmatter is built from an inline
+  // `Source:` line (injectFrontmatter). When the model wrote none at all, the
+  // uploaded filename IS the source, so supply it — otherwise the reader cannot
+  // find the original and resolveSummaryPath cannot tell whose summary it is.
+  // Any `source:` line already present (any case) is left to the model.
+  for (const page of result.pages) {
+    if (!page || typeof page.path !== 'string' || !page.path.startsWith('summaries/')) continue;
+    if (typeof page.content !== 'string' || !page.content.trim()) continue;
+    if (/^---\r?\n/.test(page.content)) continue;           // frontmatter supplied — not ours to edit
+    if (/^source:\s*\S/im.test(page.content)) continue;
+    page.content = page.content.replace(/\s*$/, '\n') + `Source: ${originalName}\n`;
   }
 
   // Write all wiki pages — collect canonical paths (writePage may redirect
@@ -3080,6 +3431,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const summaryCanonPath = canonicalPaths.find(p => p.startsWith('summaries/'));
   if (summaryCanonPath) {
     await syncSummaryEntities(domain, summaryCanonPath, canonicalPaths);
+    // v3.84.0: say so when the summary ON DISK lacks the layout every reader
+    // of it assumes. Read back after the write, so it judges what was saved.
+    try {
+      const saved = await readFile(path.join(wikiDir, summaryCanonPath), 'utf8');
+      const w = summaryShapeWarning(summaryCanonPath, saved, originalName);
+      if (w) { console.warn(`[ingest] ${w}`); warnings.push(w); }
+    } catch { /* unreadable → nothing to judge; never fails an ingest */ }
   }
 
   // v3.0.1-beta.1: programmatic index merge replaces the old LLM-driven
