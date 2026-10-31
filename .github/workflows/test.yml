@@ -56,6 +56,42 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # ── Windows: the one-click Claude Desktop installer on a REAL Windows disk ───
+  # v3.86.0. The installer writes Claude Desktop's config on Windows, a platform
+  # the maintainer cannot run locally. `test-mcp-install-windows.js` runs every
+  # scenario twice: on an in-memory Windows filesystem (also run by `offline`
+  # on Linux and by `npm test` on a Mac) AND on the real disk — which only HERE
+  # is NTFS with real `C:\…` paths, real MoveFileEx rename-over, the real
+  # read-only attribute and real CRLF/BOM bytes. Only %LOCALAPPDATA%/%APPDATA%
+  # are simulated (inside a scratch home); the suite fingerprints the runner's
+  # real Claude Desktop candidates before and after.
+  #
+  # Only this suite runs here: the macOS install suites assert POSIX modes,
+  # symlinks and `~/Library` paths, which are not Windows facts.
+  #
+  # THIS JOB GATES A RELEASE. `scripts/release.js` reads per-JOB conclusions and
+  # treats every job not named in its ADVISORY_JOBS as part of the gate, and
+  # this job runs on `release/v*` branches because the push trigger is
+  # unfiltered. A red Windows run therefore leaves `main` untouched (CI_RED). To
+  # make it report-only instead, put `continue-on-error: true` on the test STEP
+  # (not the job) — no release.js change is needed either way.
+  #
+  # autocrlf is turned off BEFORE checkout so the repo's files arrive as
+  # committed (the suite writes its own fixtures, but nothing should depend on
+  # the runner's git defaults).
+  windows:
+    name: Windows installer tests
+    runs-on: windows-latest
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/test-mcp-install-windows.js
+
   # ── Live tests: real Gemini/Anthropic calls (cost ≈ a few cents). ───────────
   # Runs ONLY on a push to main or a manual run — NEVER on pull requests, so a
   # community fork can never reach the API-key secrets. `needs: offline` means we

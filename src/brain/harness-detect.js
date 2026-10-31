@@ -44,6 +44,29 @@ export const APP_BUNDLES = Object.freeze({
 });
 
 export const PROBE_TIMEOUT_MS = 3000;
+/** PowerShell's cold start alone can pass 3 s on a slow Windows PC. */
+export const WIN_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * NO REAL PROBE UNDER TEST (v3.86.0). Every default runner below — `ps`, the
+ * login shell, PowerShell — refuses to spawn while CURATOR_TEST_INSTALL_HOME
+ * is set, whatever the caller injected or forgot to inject. A suite that
+ * forgets a seam gets `checked: false`, never the maintainer's processes or a
+ * CI runner's real Appx packages.
+ */
+export function probesDisabled() { return !!process.env.CURATOR_TEST_INSTALL_HOME; }
+
+let _spawnObserver = null;
+/** TEST-ONLY: called with (cmd, argv) every time a default runner REALLY spawns. */
+export function __setSpawnObserver(fn) { _spawnObserver = typeof fn === 'function' ? fn : null; }
+
+function spawnProbe(cmd, argv, opts) {
+  return new Promise((resolve, reject) => {
+    if (probesDisabled()) { reject(new Error('probes disabled under test')); return; }
+    if (_spawnObserver) { try { _spawnObserver(cmd, argv); } catch { /* observer only */ } }
+    execFile(cmd, argv, opts, (err, out) => { if (err) reject(err); else resolve(String(out)); });
+  });
+}
 
 const BIN_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/;
 
@@ -79,11 +102,7 @@ function isFile(p, deps) {
  * `deps.runPs()` (tests) resolves to the ps text or rejects.
  */
 export async function detectRunning(deps = {}) {
-  const run = deps.runPs || (() => new Promise((resolve, reject) => {
-    execFile('ps', ['-axo', 'pid=,comm='], { timeout: PROBE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
-      if (err) reject(err); else resolve(String(out));
-    });
-  }));
+  const run = deps.runPs || (() => spawnProbe('ps', ['-axo', 'pid=,comm='], { timeout: PROBE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }));
   let text;
   try { text = await run(); } catch { return { checked: false, byId: {} }; }
   if (typeof text !== 'string') return { checked: false, byId: {} };
@@ -105,14 +124,12 @@ export async function detectRunning(deps = {}) {
 export async function detectClis(bins, deps = {}) {
   const list = [...new Set((bins || []).filter((b) => typeof b === 'string' && BIN_RE.test(b)))];
   if (!list.length) return { checked: true, byBin: {} };
-  const run = deps.runShell || ((names) => new Promise((resolve, reject) => {
+  const run = deps.runShell || ((names) => {
     const shell = typeof process.env.SHELL === 'string' && path.isAbsolute(process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
     // The script is a CONSTANT; the names arrive as "$@", never interpolated.
     const script = 'for b in "$@"; do printf "%s=%s\\n" "$b" "$(command -v -- "$b" 2>/dev/null)"; done';
-    execFile(shell, ['-lc', script, 'curator-detect', ...names], { timeout: PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (err, out) => {
-      if (err) reject(err); else resolve(String(out));
-    });
-  }));
+    return spawnProbe(shell, ['-lc', script, 'curator-detect', ...names], { timeout: PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+  });
   let text;
   try { text = await run(list); } catch { return { checked: false, byBin: {} }; }
   const byBin = {};
@@ -160,4 +177,89 @@ export async function detectTools({ home, configFiles = {}, deps = {} } = {}) {
     out[id] = { id, detected, cliChecked: bin ? clis.checked : null };
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WINDOWS (v3.86.0) — Claude Desktop only
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Two read-only PowerShell probes, each one `powershell.exe -NoProfile
+// -NonInteractive -Command <CONSTANT>` through execFile (no shell, nothing
+// interpolated, 5 s timeout, window hidden), run in parallel:
+//
+//   INSTALLED  `Get-AppxPackage` for the two MSIX names Anthropic publishes
+//              (`Claude`, and the Microsoft Store's `AnthropicPBC.Claude`).
+//              Never `-AllUsers` (needs elevation). The answer is the
+//              PackageFamilyName, compared EXACTLY against the adapter row.
+//   RUNNING    `Get-CimInstance Win32_Process` for `claude.exe`, by
+//              EXECUTABLE PATH. `claude.exe` is also the Claude Code CLI
+//              (`~\.local\bin`, WinGet, npm) and the copy Claude Desktop
+//              bundles under its own data folder, so a name match proves
+//              nothing; only the three install locations below count. A
+//              process whose path could not be read makes the answer
+//              `checked: false` — never "not running".
+//
+// A failed or timed-out probe is `checked: false`. Both are disabled under
+// CURATOR_TEST_INSTALL_HOME (see `probesDisabled`).
+
+const WIN_APPX_SCRIPT = "$ErrorActionPreference='SilentlyContinue'; "
+  + "@(Get-AppxPackage -Name 'Claude'; Get-AppxPackage -Name 'AnthropicPBC.Claude') "
+  + '| ForEach-Object { $_.PackageFamilyName }';
+const WIN_PROC_SCRIPT = "$ErrorActionPreference='SilentlyContinue'; "
+  + "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" "
+  + "| ForEach-Object { 'P|' + $_.ExecutablePath }";
+
+/** Lower-cased executable paths that ARE Claude Desktop (contract §2). */
+export const WIN_CLAUDE_EXE_PATTERNS = Object.freeze([
+  /\\windowsapps\\claude_[^\\]+__pzs8sxrjxfjjc\\/,
+  /\\windowsapps\\anthropicpbc\.claude_[^\\]+__fnn82j28hfe8t\\/,
+  /\\appdata\\local\\anthropicclaude\\app-[^\\]+\\claude\.exe$/,
+]);
+
+/** Is this Win32_Process ExecutablePath Claude Desktop's own executable? */
+export function isClaudeDesktopExe(p) {
+  if (typeof p !== 'string' || !p.trim()) return false;
+  const l = p.trim().toLowerCase();
+  return WIN_CLAUDE_EXE_PATTERNS.some((re) => re.test(l));
+}
+
+function runPowerShell(script) {
+  return spawnProbe('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    timeout: WIN_PROBE_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true,
+  });
+}
+
+/**
+ * `{checked, families: [PackageFamilyName…]}` — only the families named in
+ * `wanted` (case-insensitive), in their canonical spelling. Never throws.
+ * `deps.runAppx()` (tests) resolves to the probe's text or rejects.
+ */
+export async function detectWinAppx(wanted, deps = {}) {
+  const run = deps.runAppx || (() => runPowerShell(WIN_APPX_SCRIPT));
+  let text;
+  try { text = await run(); } catch { return { checked: false, families: [] }; }
+  if (typeof text !== 'string') return { checked: false, families: [] };
+  const got = new Set(text.split(/\r?\n/).map((l) => l.trim().toLowerCase()).filter(Boolean));
+  return { checked: true, families: (wanted || []).filter((f) => got.has(String(f).toLowerCase())) };
+}
+
+/**
+ * `{checked, running}` for Claude Desktop on Windows. Never throws.
+ * `deps.runWinProcs()` (tests) resolves to lines `P|<ExecutablePath>`.
+ */
+export async function detectWinClaudeRunning(deps = {}) {
+  const run = deps.runWinProcs || (() => runPowerShell(WIN_PROC_SCRIPT));
+  let text;
+  try { text = await run(); } catch { return { checked: false, running: false }; }
+  if (typeof text !== 'string') return { checked: false, running: false };
+  let unreadable = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line.startsWith('P|')) continue;
+    const p = line.slice(2).trim();
+    if (!p) { unreadable = true; continue; }
+    if (isClaudeDesktopExe(p)) return { checked: true, running: true };
+  }
+  // A claude.exe whose path we could not read might be the app: we cannot say "not running".
+  return unreadable ? { checked: false, running: false } : { checked: true, running: false };
 }

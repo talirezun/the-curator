@@ -1,5 +1,6 @@
 /**
- * "My Curator in your tools" — status, plan and apply (v3.85.0, macOS only).
+ * "My Curator in your tools" — status, plan and apply (v3.85.0 macOS; v3.86.0
+ * adds Claude Desktop on Windows — every other tool stays copy-only there).
  *
  *   GET  /api/mcp/install/status  → every MCP-capable tool on this Mac and whether
  *                                   it is connected. READ-ONLY.
@@ -17,7 +18,8 @@
  *     missing Origin → 403 `origin_required`, a foreign one → 403
  *     `origin_refused`. The allowed origins are the loopback origins of the
  *     port the request actually arrived on.
- *   - macOS only: anything else → 409 `platform_unsupported`.
+ *   - macOS and Windows only: anything else → 409 `platform_unsupported`. On
+ *     Windows only Claude Desktop is planned; another id is refused per item.
  *   - BODY ALLOW-LIST: only the named keys, ids from a fixed list. A path, an
  *     entry or any unknown key → 400 `bad_request`. Paths come only from the
  *     adapter table resolved against home.
@@ -36,11 +38,13 @@ import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { adapterFor, mcpEntryFor } from '../brain/harness-adapters.js';
 import { tildeUnder } from '../brain/setup-check.js';
 import { readUsageLinesUnion, summariseSessions } from '../brain/mcp-usage.js';
-import { detectRunning, detectTools } from '../brain/harness-detect.js';
+import {
+  detectRunning, detectTools, detectWinAppx, detectWinClaudeRunning,
+} from '../brain/harness-detect.js';
 import {
   ACTIONS, INSTALL_IDS, TOKEN_RE, TOKEN_TTL_MS, executeItem, inspectTool, installActionFor, installAppsDirs,
-  installHome, installPlatform, isInstallCapable, mcpHarnessIds, newToken, planTool, publicItem, readManifest,
-  reasonText, restoreCandidate, statusFor, targetsFor, defaultIO,
+  installHome, installPlatform, isInstallCapableOn, mcpHarnessIds, newToken, planTool, publicItem, readManifest,
+  reasonText, restoreCandidate, statusFor, targetsFor, defaultIO, displayFor, resolveWinClaude, winRoots,
 } from '../brain/mcp-install.js';
 import { buildCuratorEntry } from './mcp.js';
 
@@ -61,13 +65,48 @@ function detectDeps(home) {
   const appsDirs = installAppsDirs(home);
   const deps = {};
   if (appsDirs) deps.appsDirs = appsDirs;
-  // An isolated test process must never run the user's login shell or ps.
+  // An isolated test process must never run the user's login shell, ps or
+  // PowerShell (harness-detect refuses too: `probesDisabled`).
   if (process.env.CURATOR_TEST_INSTALL_HOME) {
     deps.runShell = async () => '';
     deps.runPs = async () => { throw new Error('ps disabled under test'); };
+    deps.runAppx = async () => { throw new Error('PowerShell disabled under test'); };
+    deps.runWinProcs = async () => { throw new Error('PowerShell disabled under test'); };
+  }
+  // Windows has no login shell and no /Applications: never look for them there.
+  if (installPlatform() === 'win32') {
+    deps.appsDirs = [];
+    deps.runShell = async () => { throw new Error('no login shell on Windows'); };
   }
   return deps;
 }
+
+/**
+ * Windows: which Claude Desktop file is live. PowerShell's Appx probe runs only
+ * when its answer can change the decision (a lone %APPDATA%\Claude file, or
+ * none at all with the legacy updater present) — otherwise the folders decide.
+ */
+async function winClaude(home, theIO, deps, { eagerAppx = false } = {}) {
+  const roots = winRoots(home);
+  const fams = adapterFor('claude-desktop').mcpConfig.platforms.win32.appxFamilies;
+  if (eagerAppx) {
+    // Status: the Appx answer also says "installed" for a package that has
+    // never been opened. The decision is the same as the lazy path's (the
+    // probe only matters where `msix` would otherwise be unknown).
+    const appx = await detectWinAppx(fams, deps);
+    return { roots, win: resolveWinClaude({ home, roots, io: theIO, appx }) };
+  }
+  let w = resolveWinClaude({ home, roots, io: theIO });
+  const loneLegacy = w.live.length === 1 && w.live[0].n === 4;
+  const noneButUpdater = w.live.length === 0 && w.installed && w.installed.by === 'app';
+  if (w.msix === null && (loneLegacy || noneButUpdater)) {
+    const appx = await detectWinAppx(fams, deps);
+    w = resolveWinClaude({ home, roots, io: theIO, appx });
+  }
+  return { roots, win: w };
+}
+
+const WIN_RESTART = 'Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check again';
 
 /**
  * The launch line (ONLY from buildCuratorEntry) and whether it needs the
@@ -94,7 +133,7 @@ function launchNow() {
   return { launch, style, launcherState };
 }
 
-function isMac() { return installPlatform() === 'darwin'; }
+function canWriteHere() { const p = installPlatform(); return p === 'darwin' || p === 'win32'; }
 
 function restartHint(id, label, running) {
   if (id === 'claude-desktop') {
@@ -130,15 +169,28 @@ export async function buildStatus() {
   const home = installHome();
   const platform = installPlatform();
   const mac = platform === 'darwin';
+  const windows = platform === 'win32';
   const { launch, style, launcherState } = launchNow();
   const theIO = io();
+  const deps = detectDeps(home);
+  const [wc, winRun] = windows && home
+    ? await Promise.all([winClaude(home, theIO, deps, { eagerAppx: true }), detectWinClaudeRunning(deps)])
+    : [null, null];
   const configFiles = {};
-  for (const id of INSTALL_IDS) configFiles[id] = home ? targetsFor(id, home, theIO).map((t) => t.file) : [];
+  for (const id of INSTALL_IDS) {
+    // Windows: Claude Desktop's evidence is its candidate files; the other two
+    // fall back to their table paths (detection only — they are copy-only).
+    if (windows && id !== 'claude-desktop') continue;
+    configFiles[id] = !home ? []
+      : windows ? (wc ? wc.win.candidates.map((c) => c.file) : [])
+        : targetsFor(id, home, theIO).map((t) => t.file);
+  }
   const [detected, running, used] = await Promise.all([
-    detectTools({ home, configFiles, deps: detectDeps(home) }),
-    mac ? detectRunning(detectDeps(home)) : Promise.resolve({ checked: false, byId: {} }),
+    detectTools({ home, configFiles, deps }),
+    mac ? detectRunning(deps) : Promise.resolve({ checked: false, byId: {} }),
     usedAtById(),
   ]);
+  if (winRun) running.byId = { ...(running.byId || {}), 'claude-desktop': winRun.running };
   const manifestRows = readManifest(theIO).rows;
 
   const tools = [];
@@ -149,9 +201,13 @@ export async function buildStatus() {
     const label = a.label;
     const entry = mcpEntryFor(id, launch);
     if (entry.ok) manualSnippets[id] = entry.text;
-    const det = detected[id]?.detected || null;
-    const capable = isInstallCapable(id) && mac;
-    const run = { checked: running.checked && id in (running.byId || {}), running: !!(running.byId || {})[id] };
+    let det = detected[id]?.detected || null;
+    const capable = isInstallCapableOn(id, platform);
+    let run = { checked: running.checked && id in (running.byId || {}), running: !!(running.byId || {})[id] };
+    if (windows && id === 'claude-desktop') {
+      det = wc && wc.win.installed ? wc.win.installed : null;
+      run = winRun ? { checked: winRun.checked, running: winRun.checked && winRun.running } : { checked: false, running: false };
+    }
     const row = {
       id, label,
       status: 'manual',
@@ -165,7 +221,45 @@ export async function buildStatus() {
       restartHint: null,
       restorable: false,
     };
-    if (capable && home) {
+    if (windows && capable && home && wc) {
+      // ── Windows Claude Desktop (v3.86.0) ──
+      const { roots, win } = wc;
+      const disp = (p) => displayFor(home, p, platform, roots);
+      row.detected = det ? { by: det.by, path: det.path } : { by: null, path: null };
+      row.candidates = win.candidates.map((c) => ({
+        n: c.n, file: c.file, display: c.display, exists: c.exists, live: c.live, stale: c.stale,
+        uncertain: !!c.uncertain, write: c.write, source: c.source,
+      }));
+      row.restartHint = WIN_RESTART;
+      if (!win.decision.ok) {
+        if (!det && !win.candidates.some((c) => c.exists)) { notFound.push({ id, label }); continue; }
+        row.reason = { code: win.decision.reason, message: win.decision.message };
+        tools.push(row);
+        continue;
+      }
+      const insp = inspectTool(id, { home, launch, io: theIO, platform, roots, win });
+      row.files = insp.files.map((f) => ({
+        file: f.file,
+        display: disp(f.file),
+        role: f.role,
+        action: installActionFor(f),
+        state: f.read.state === 'missing' ? 'missing'
+          : f.read.state === 'cant-read' ? 'cant-read'
+            : f.entryState === 'match' ? 'connected' : f.entryState === 'differs' ? 'differs' : 'no-entry',
+        reason: f.read.state === 'cant-read' ? f.read.reason : null,
+      }));
+      row.status = statusFor(insp.files);
+      const bad = insp.files.find((f) => f.read.state === 'cant-read');
+      if (bad) row.reason = { code: bad.read.reason, message: `${disp(bad.file)} ${reasonText(bad.read.reason) || 'could not be read'}.` };
+      if (row.status !== 'cant-read' && launcherState.required && !launcherState.present) {
+        row.reason = { code: 'launcher_missing', message: launcherState.message };
+      }
+      row.restorable = insp.files.some((f) => f.read.state !== 'cant-read'
+        && restoreCandidate(manifestRows, id, f.file, f.read.sha).eligible);
+      tools.push(row);
+      continue;
+    }
+    if (capable && home && mac) {
       const insp = inspectTool(id, { home, launch, io: theIO });
       row.files = insp.files.map((f) => ({
         // Absolute, for Settings' Reveal (POST /api/setup/reveal). That route
@@ -200,7 +294,9 @@ export async function buildStatus() {
     } else {
       if (!det) { notFound.push({ id, label }); continue; }
       row.reason = !mac
-        ? { code: 'platform_unsupported', message: 'One-click install is macOS-only in this version. Copy the entry in by hand.' }
+        ? { code: 'platform_unsupported', message: windows
+          ? `One-click install for ${label} is not available on Windows in this version. Copy the entry in by hand.`
+          : 'One-click install is macOS-only in this version. Copy the entry in by hand.' }
         : a.mcpConfig.installer === 'cli'
           ? { code: 'installer_cli', message: `${label} has its own command for this — one-click install comes in a later version. Copy the entry for now.` }
           : { code: 'installer_manual', message: `Copy the entry into ${label}'s settings by hand.` };
@@ -210,7 +306,7 @@ export async function buildStatus() {
 
   return {
     platform,
-    writable: mac && !!home && !(launcherState.required && !launcherState.present),
+    writable: (mac || (windows && !!wc && !!wc.roots)) && !!home && !(launcherState.required && !launcherState.present),
     launch: { style, command: launch.command, argsCount: Array.isArray(launch.args) ? launch.args.length : 0 },
     tools,
     notFound,
@@ -240,8 +336,8 @@ export function gate(req, res, next) {
   if (!allowed.has(origin)) {
     return res.status(403).json({ ok: false, reason: 'origin_refused', error: 'Cross-origin request blocked.' });
   }
-  if (!isMac()) {
-    return res.status(409).json({ ok: false, reason: 'platform_unsupported', error: 'One-click install is macOS-only in this version. Copy the entry in by hand.' });
+  if (!canWriteHere()) {
+    return res.status(409).json({ ok: false, reason: 'platform_unsupported', error: 'One-click install is available on macOS and Windows only. Copy the entry in by hand.' });
   }
   next();
 }
@@ -279,19 +375,34 @@ const itemKey = (it) => `${it.id}\u0000${it.file || ''}`;
 
 async function makePlan(action, ids) {
   const home = installHome();
+  const platform = installPlatform();
   const { launch, launcherState } = launchNow();
   const theIO = io();
   const manifestRows = readManifest(theIO).rows;
+  const deps = detectDeps(home);
+  if (platform === 'win32') {
+    // Windows: Claude Desktop's file is CHOSEN by the resolver (which also
+    // decides whether a missing file may be created); every other id is
+    // refused per item by planTool.
+    const wc = home ? await winClaude(home, theIO, deps) : { roots: null, win: undefined };
+    const items = [];
+    for (const id of [...new Set(ids)]) {
+      items.push(...planTool(id, action, {
+        home, launch, launcherState, detected: false, manifestRows, io: theIO, platform, roots: wc.roots, win: wc.win,
+      }));
+    }
+    return { home, platform, roots: wc.roots, items };
+  }
   const configFiles = {};
   for (const id of ids) configFiles[id] = home ? targetsFor(id, home, theIO).map((t) => t.file) : [];
-  const detected = await detectTools({ home, configFiles, deps: detectDeps(home) });
+  const detected = await detectTools({ home, configFiles, deps });
   const items = [];
   for (const id of [...new Set(ids)]) {
     items.push(...planTool(id, action, {
       home, launch, launcherState, detected: !!detected[id]?.detected, manifestRows, io: theIO,
     }));
   }
-  return { home, items };
+  return { home, platform, items };
 }
 
 export async function planHandler(req, res) {
@@ -342,16 +453,18 @@ export async function applyHandler(req, res) {
       } else if (was.action !== it.action || was.entryText !== it.entryText) {
         r = { outcome: 'refused', reason: 'plan_changed', message: `What would be written to ${it.display || it.label} changed after the plan was made. Nothing was written — plan again.` };
       } else {
-        r = executeItem(it, { home: plan.home, io: theIO });
+        r = plan.platform === 'win32'
+          ? executeItem(it, { home: plan.home, io: theIO, platform: 'win32', roots: plan.roots })
+          : executeItem(it, { home: plan.home, io: theIO });
       }
       const restart = (r.outcome === 'written' || r.outcome === 'created')
-        ? `Quit and reopen ${it.label}` : null;
+        ? (plan.platform === 'win32' ? WIN_RESTART : `Quit and reopen ${it.label}`) : null;
       results.push({ ...pub, action: it.action, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), message: r.message, ...(r.backup ? { backup: r.backup } : {}), restart });
     }
     for (const k of rec.basis.keys()) {
       if (seen.has(k)) continue;
       const [id, file] = k.split('\u0000');
-      results.push({ id, label: adapterFor(id)?.label || id, file: file ? tildeUnder(plan.home, file) : null, action: 'none', outcome: 'refused', reason: 'config_changed', message: 'A file in the plan is no longer there. Nothing was written to it — plan again.', restart: null });
+      results.push({ id, label: adapterFor(id)?.label || id, file: file ? displayFor(plan.home, file, plan.platform, plan.roots) : null, action: 'none', outcome: 'refused', reason: 'config_changed', message: 'A file in the plan is no longer there. Nothing was written to it — plan again.', restart: null });
     }
     res.json({ ok: true, action: rec.action, results });
   } catch (e) {

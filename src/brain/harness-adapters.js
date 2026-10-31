@@ -271,6 +271,70 @@ const ENTRIES = [
         H('.config', 'Claude', 'claude_desktop_config.json'),
       ],
       project: [],
+      // v3.86.0: WINDOWS. DATA ONLY — the selection rules live in
+      // src/brain/mcp-install.js (`resolveWinClaude`). Claude Desktop on
+      // Windows has kept its config in at least three places across install
+      // channels and versions (legacy .exe, MSIX ≤ 2.x, MSIX ≥ 3.1623), and
+      // the documented one is not reliably the one the app reads. So every
+      // candidate is listed, each with where the fact comes from, and `write`
+      // says whether The Curator may ever write it. A `write: false` row is
+      // READ for detection only: if it is the only live file, or one of
+      // several, the row is manual. Order is the research's order.
+      // Research record (2026-10-31): Anthropic's Intune README
+      // (downloads.claude.ai/releases/enterprise/intune/Claude-Intune-README.md),
+      // modelcontextprotocol.io "Connect to local MCP servers", Microsoft Learn
+      // "MSIX behind the scenes", and user reports anthropics/claude-code
+      // #25579 #26073 #103860, jacob-bd/gemini-notebook-mcp-cli #378.
+      platforms: Object.freeze({
+        win32: Object.freeze({
+          installer: 'file',
+          verifiedOn: '2026-10-31',
+          candidates: Object.freeze([
+            Object.freeze({
+              n: 1, base: 'localappdata', segments: Object.freeze(['Claude-Data', 'claude_pzs8sxrjxfjjc', 'claude_desktop_config.json']),
+              source: 'docs', write: true,
+              note: 'MSIX ≥ 3.1623 (direct download / winget). The data folder is in Anthropic\'s Intune README; the config file inside it is reported by users (#378) — the owner\'s Windows test confirms it.',
+            }),
+            Object.freeze({
+              n: 2, base: 'localappdata', segments: Object.freeze(['Claude-Data', 'anthropicpbc.claude_fnn82j28hfe8t', 'claude_desktop_config.json']),
+              source: 'unverified', write: false,
+              note: 'Microsoft Store build. The data folder is in the Intune README; the file name is INFERRED. Read for detection only.',
+            }),
+            Object.freeze({
+              n: 3, base: 'localappdata', segments: Object.freeze(['Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json']),
+              source: 'docs', write: true,
+              note: 'MSIX ≤ 2.x: the MSIX write-virtualised copy of %APPDATA%\\Claude (Microsoft Learn, "MSIX behind the scenes"; #25579, #26073).',
+            }),
+            Object.freeze({
+              n: 4, base: 'appdata', segments: Object.freeze(['Claude', 'claude_desktop_config.json']),
+              source: 'docs', write: true,
+              note: 'The documented path (modelcontextprotocol.io) and the legacy .exe installer\'s data folder (Intune README).',
+            }),
+            // Read-only extras from the research's list (§1), NOT in the
+            // contract's four: if one of these exists, The Curator cannot tell
+            // which file the app reads, so it refuses rather than guesses.
+            Object.freeze({
+              n: 5, base: 'localappdata', segments: Object.freeze(['Claude-Data', 'claude_desktop_config.json']),
+              source: 'unverified', write: false,
+              note: 'relocateUncUserData policy: data in Claude-Data itself (Intune README); the file name is inferred. Detection only.',
+            }),
+            Object.freeze({
+              n: 6, base: 'localappdata', segments: Object.freeze(['Packages', 'AnthropicPBC.Claude_fnn82j28hfe8t', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json']),
+              source: 'unverified', write: false,
+              note: 'Microsoft Store build, MSIX ≤ 2.x virtualised copy — inferred. Detection only.',
+            }),
+            Object.freeze({
+              n: 7, base: 'localappdata', segments: Object.freeze(['Claude-3p', 'claude_desktop_config.json']),
+              source: 'unverified', write: false,
+              note: 'Third-party (3P) mode keeps its data in %LOCALAPPDATA%\\Claude-3p (claude.com docs); the file name is inferred. Detection only.',
+            }),
+          ]),
+          // Signals, all READ-ONLY: the MSIX package names `Get-AppxPackage`
+          // is asked for, and the legacy installer's updater.
+          appxFamilies: Object.freeze(['Claude_pzs8sxrjxfjjc', 'AnthropicPBC.Claude_fnn82j28hfe8t']),
+          legacyUpdater: Object.freeze({ base: 'localappdata', segments: Object.freeze(['AnthropicClaude', 'Update.exe']) }),
+        }),
+      }),
     }),
     instructionFile: fact('repo', { names: [], cap: null, firstMatch: false, note: 'Claude Desktop reads no per-project instruction file; the block belongs in a project on the desktop app.' }),
     hooks: fact('repo', { state: HOOK_STATES.NONE, reason: 'Claude Desktop has no hook mechanism.', events: {}, refusedEvents: {}, envelope: null, loopGuard: null, writer: null, configPath: { user: [], project: [], local: [] }, format: null }),

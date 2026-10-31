@@ -38,6 +38,18 @@
  *      no write, no backup, no manifest row.
  *   8. MODE KEPT: a replaced file keeps its permission bits; a new one is 0600.
  *
+ * WINDOWS (v3.86.0, Claude Desktop only — `resolveWinClaude` below). The
+ * file is CHOSEN, never assumed: Claude Desktop on Windows has kept its config
+ * in several places, so exactly one LIVE candidate is a target, none or more
+ * than one is `manual` with the reason, and a candidate the adapter row marks
+ * `write: false` is never written. On top of rules 1–7: the under-home check is
+ * case-insensitive; a read-only file is refused (`read_only`); the replace is
+ * temp-file + rename, retried for about 3 s on EPERM / EACCES / EBUSY (an
+ * antivirus or indexer holding the file) with the compare-and-swap re-checked
+ * before EVERY attempt, then refused `file_locked`; no POSIX mode is copied.
+ * On every platform a UTF-8 BOM is stripped to parse and written back, and
+ * CRLF stays CRLF.
+ *
  * TEST SEAMS (never set in production): `__setHomeOverride`,
  * `CURATOR_TEST_INSTALL_HOME`, `__setPlatformOverride`,
  * `CURATOR_TEST_INSTALL_PLATFORM`, `CURATOR_TEST_INSTALL_APPS_DIR`. A process
@@ -49,7 +61,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -68,14 +80,14 @@ let _homeOverride = null;
 let _platformOverride = null;
 
 /** TEST-ONLY: resolve every target under this folder instead of the user's home. */
-export function __setHomeOverride(p) { _homeOverride = p ? path.resolve(p) : null; }
+export function __setHomeOverride(p) { _homeOverride = p ? pathFor(p).resolve(p) : null; }
 /** TEST-ONLY: pretend to be this platform ('darwin', 'linux', 'win32'). */
 export function __setPlatformOverride(p) { _platformOverride = p || null; }
 
 /** The home every target resolves against, or null (fail closed). */
 export function installHome() {
   if (_homeOverride) return _homeOverride;
-  if (process.env.CURATOR_TEST_INSTALL_HOME) return path.resolve(process.env.CURATOR_TEST_INSTALL_HOME);
+  if (process.env.CURATOR_TEST_INSTALL_HOME) return pathFor(process.env.CURATOR_TEST_INSTALL_HOME).resolve(process.env.CURATOR_TEST_INSTALL_HOME);
   // An isolated process that named no fake home must not be handed the real one.
   if (process.env.CURATOR_TEST_USER_DATA_DIR) return null;
   try { const h = os.homedir(); return h && path.isAbsolute(h) ? path.resolve(h) : null; } catch { return null; }
@@ -98,6 +110,16 @@ export function installAppsDirs(home) {
 
 /** The fixed allow-list of tools this release can write (contract §0). */
 export const INSTALL_IDS = Object.freeze(['claude-desktop', 'cursor', 'antigravity']);
+/** …and the subset it can write on Windows (v3.86.0): Claude Desktop only. */
+export const WIN32_INSTALL_IDS = Object.freeze(['claude-desktop']);
+
+/** Can THIS platform write this tool? macOS: the three; Windows: Claude Desktop; else none. */
+export function isInstallCapableOn(id, platform) {
+  if (!isInstallCapable(id)) return false;
+  if (platform === 'darwin') return true;
+  if (platform === 'win32') return WIN32_INSTALL_IDS.includes(id) && !!adapterFor(id)?.mcpConfig?.platforms?.win32;
+  return false;
+}
 
 /** Install-capable = the table says so AND the release allows it. Both must hold. */
 export function isInstallCapable(id) {
@@ -113,12 +135,87 @@ const BACKUP_INFIX = '.curator-backup-';
 /** The preview's stand-in for a backup stamp that is fixed only at apply. */
 export const BACKUP_AT_APPLY = '<UTC time of apply>';
 
-/** Is `p` strictly under `home`? Both absolute, compared after resolve. */
-export function isUnderHome(home, p) {
+/**
+ * Is `p` strictly under `home`? Both absolute, compared after resolve. On
+ * win32 the comparison is case-insensitive and uses Windows path semantics
+ * (`C:\\Users\\Ana` and `c:\\users\\ana` are one folder). macOS: unchanged.
+ */
+export function isUnderHome(home, p, platform) {
+  if ((platform || installPlatform()) === 'win32') {
+    const P = pathFor(home);
+    if (!home || typeof p !== 'string' || !P.isAbsolute(p) || !P.isAbsolute(home)) return false;
+    const h = P.resolve(home).toLowerCase().replace(/[\\/]+$/, '');
+    const r = P.resolve(p).toLowerCase();
+    return r !== h && r.startsWith(`${h}${P.sep}`) && !r.split(P.sep).includes('..');
+  }
   if (!home || typeof p !== 'string' || !path.isAbsolute(p)) return false;
   const h = path.resolve(home);
   const r = path.resolve(p);
   return r !== h && r.startsWith(`${h}${path.sep}`) && !r.split(path.sep).includes('..');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Windows: path semantics, roots, display
+// ─────────────────────────────────────────────────────────────────────────
+
+const WIN_PATH_RE = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+
+/**
+ * The path module for logic about Windows paths. On Windows it is Node's own
+ * (= path.win32). Elsewhere it is path.win32 when the home LOOKS like a
+ * Windows path (the in-memory suites: real backslash semantics on a Mac), and
+ * the host's path otherwise (a simulated win32 over a real POSIX scratch home,
+ * so the real server can be smoke-tested on a Mac). Never used on macOS paths.
+ */
+export function pathFor(home) {
+  if (process.platform === 'win32') return path.win32;
+  return typeof home === 'string' && WIN_PATH_RE.test(home) ? path.win32 : path;
+}
+
+/**
+ * `{localAppData, appData}` for win32, or null. Production reads
+ * %LOCALAPPDATA% and %APPDATA% (absolute, or null). A test home NEVER reads
+ * the process's real ones — on a Windows CI runner they are the runner's real
+ * folders: it takes CURATOR_TEST_INSTALL_LOCALAPPDATA / _APPDATA, or derives
+ * `<home>\\AppData\\Local` and `<home>\\AppData\\Roaming`.
+ */
+export function winRoots(home) {
+  if (!home) return null;
+  const P = pathFor(home);
+  const testHome = !!(_homeOverride || process.env.CURATOR_TEST_INSTALL_HOME);
+  let la;
+  let ad;
+  if (testHome) {
+    la = process.env.CURATOR_TEST_INSTALL_LOCALAPPDATA || P.join(home, 'AppData', 'Local');
+    ad = process.env.CURATOR_TEST_INSTALL_APPDATA || P.join(home, 'AppData', 'Roaming');
+  } else {
+    la = process.env.LOCALAPPDATA;
+    ad = process.env.APPDATA;
+  }
+  if (typeof la !== 'string' || typeof ad !== 'string' || !P.isAbsolute(la) || !P.isAbsolute(ad)) return null;
+  return { localAppData: P.resolve(la), appData: P.resolve(ad) };
+}
+
+/**
+ * A path for a HUMAN. macOS: `~/…` (unchanged). Windows: `%LOCALAPPDATA%\\…`,
+ * `%APPDATA%\\…` or `%USERPROFILE%\\…` — the forms Windows' own Run box and
+ * Explorer accept — else the path as is.
+ */
+export function displayFor(home, p, platform, roots) {
+  if ((platform || installPlatform()) !== 'win32') return tildeUnder(home, p);
+  if (typeof p !== 'string') return p;
+  const P = pathFor(home);
+  const pl = p.toLowerCase();
+  const bases = [];
+  if (roots) bases.push(['%LOCALAPPDATA%', roots.localAppData], ['%APPDATA%', roots.appData]);
+  if (home) bases.push(['%USERPROFILE%', home]);
+  bases.sort((x, y) => y[1].length - x[1].length);
+  for (const [name, b] of bases) {
+    const bl = P.resolve(b).toLowerCase();
+    if (pl === bl) return name;
+    if (pl.startsWith(`${bl}${P.sep}`)) return `${name}${p.slice(bl.length)}`;
+  }
+  return p;
 }
 
 /**
@@ -133,9 +230,16 @@ export function isUnderHome(home, p) {
  *                   only when something is already at that path — never created.
  * Project files: never.
  */
-export function targetsFor(id, home, io = defaultIO()) {
+export function targetsFor(id, home, io = defaultIO(), opts = {}) {
   const m = adapterFor(id)?.mcpConfig;
   if (!m || !home) return [];
+  // Windows: Claude Desktop's ONE chosen file, or nothing (manual). Every other
+  // tool writes nothing on Windows in this version.
+  if ((opts.platform || installPlatform()) === 'win32') {
+    if (id !== 'claude-desktop') return [];
+    const w = opts.win || resolveWinClaude({ home, roots: opts.roots === undefined ? winRoots(home) : opts.roots, io, appx: opts.appx });
+    return w.decision.ok ? [{ file: w.decision.file, role: w.decision.role, createAllowed: w.decision.createAllowed }] : [];
+  }
   const resolve = (tpl) => resolveTemplate(tpl, { home });
   const out = [];
   if (id === 'claude-desktop') {
@@ -158,6 +262,135 @@ function lexists(p, io) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Windows: WHICH FILE Claude Desktop reads (v3.86.0)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Reason codes a win32 Claude Desktop row can be `manual` for. */
+export const WIN_MANUAL_REASONS = Object.freeze([
+  'config_not_found', 'config_ambiguous', 'config_unverified', 'config_unconfirmed',
+  'config_moving', 'appdata_unknown', 'outside_home',
+]);
+
+/** The win32 candidates from the adapter row, resolved. Pure. */
+export function winCandidates(home, roots) {
+  const w = adapterFor('claude-desktop')?.mcpConfig?.platforms?.win32;
+  if (!w || !roots) return [];
+  const P = pathFor(home);
+  return w.candidates.map((c) => {
+    const base = c.base === 'localappdata' ? roots.localAppData : c.base === 'appdata' ? roots.appData : null;
+    return { n: c.n, file: base ? P.join(base, ...c.segments) : null, source: c.source, write: c.write === true, note: c.note };
+  }).filter((c) => c.file);
+}
+
+function listDir(p, io) {
+  try { return { ok: true, names: io.readdir(p) }; } catch (err) {
+    return { ok: !!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')), names: [] };
+  }
+}
+
+/**
+ * Decide which Claude Desktop config file on Windows is LIVE, read-only.
+ *
+ * A candidate is LIVE when the path exists, no folder between its root
+ * (%LOCALAPPDATA% / %APPDATA%) and the file holds a `.user-data-left.*`
+ * marker (Claude Desktop leaves one in a folder whose data it moved away), and
+ * no `~copying.*` entry sits beside its folder (a move in progress). A folder
+ * that cannot be listed makes its candidate UNCERTAIN, which counts as live:
+ * an unknown never shrinks the set and so never makes a single file "the one".
+ *
+ *   any `~copying.*` in %LOCALAPPDATA%\Claude-Data → manual config_moving
+ *   more than one live                              → manual config_ambiguous
+ *   one live, row `write: false`                    → manual config_unverified
+ *   one live = %APPDATA%\Claude, and an MSIX
+ *     install is present or could not be ruled out  → manual config_unconfirmed
+ *   one live, outside the user folder               → manual outside_home
+ *   one live                                        → THAT file
+ *   none, legacy .exe confirmed (Update.exe, Appx
+ *     checked and absent, no MSIX folders)          → create %APPDATA%\Claude\…
+ *   none                                            → manual config_not_found
+ *
+ * `appx` is `{checked, families}` from harness-detect's `detectWinAppx`, or
+ * undefined (= not checked). Returns `{roots, candidates, live, installed,
+ * msix, legacy, decision}`; decision is `{ok: true, file, n, role,
+ * createAllowed}` or `{ok: false, reason, message}`. Never throws.
+ */
+export function resolveWinClaude({ home, roots, io = defaultIO(), appx } = {}) {
+  const platform = 'win32';
+  const d = (p) => displayFor(home, p, platform, roots);
+  const w = adapterFor('claude-desktop')?.mcpConfig?.platforms?.win32;
+  const out = { roots: roots || null, candidates: [], live: [], installed: null, msix: null, legacy: false, decision: null };
+  if (!home || !roots || !w) {
+    out.decision = { ok: false, reason: 'appdata_unknown', message: 'The Curator could not find your AppData folders (%LOCALAPPDATA% and %APPDATA%), so it will not write Claude Desktop\'s settings. Copy the entry in by hand.' };
+    return out;
+  }
+  const P = pathFor(home);
+  const claudeData = P.join(roots.localAppData, 'Claude-Data');
+  const cdList = listDir(claudeData, io);
+  const moving = cdList.names.filter((n) => typeof n === 'string' && n.startsWith('~copying.'));
+
+  for (const c of winCandidates(home, roots)) {
+    const rec = { ...c, display: d(c.file), exists: lexists(c.file, io), live: false, stale: null };
+    if (rec.exists) {
+      // Only the file's OWN folder and that folder's siblings are read. A
+      // marker further up could belong to some other folder, and calling a
+      // file stale is not the safe direction: it can turn "two live files"
+      // (manual) into "one" (written).
+      const own = listDir(P.dirname(c.file), io);
+      if (own.names.some((n) => typeof n === 'string' && n.startsWith('.user-data-left.'))) rec.stale = 'marker';
+      const sib = listDir(P.dirname(P.dirname(c.file)), io);
+      if (!rec.stale && sib.names.some((n) => typeof n === 'string' && n.startsWith('~copying.'))) rec.stale = 'copying';
+      rec.live = !rec.stale;
+      if (!rec.stale && (!own.ok || !sib.ok)) rec.uncertain = true;
+    }
+    out.candidates.push(rec);
+  }
+  out.live = out.candidates.filter((c) => c.live);
+
+  // Installed / MSIX / legacy signals — read-only.
+  const families = appx && appx.checked ? (appx.families || []) : null;
+  const msixFolder = (w.appxFamilies || []).flatMap((fam) => [P.join(roots.localAppData, 'Packages', fam), P.join(claudeData, fam.toLowerCase())])
+    .find((f) => lexists(f, io)) || null;
+  const msixFolders = !!msixFolder;
+  out.msix = families === null ? (msixFolders ? true : null) : (families.length > 0 || msixFolders);
+  const upd = w.legacyUpdater ? P.join(roots.localAppData, ...w.legacyUpdater.segments) : null;
+  const updater = !!(upd && lexists(upd, io));
+  out.legacy = updater && out.msix === false;
+  if (families && families.length) out.installed = { by: 'app', path: families[0] };
+  else if (updater) out.installed = { by: 'app', path: d(upd) };
+  else if (msixFolder) out.installed = { by: 'app', path: d(msixFolder) };
+  else {
+    const any = out.candidates.find((c) => c.exists);
+    if (any) out.installed = { by: 'config', path: any.display };
+  }
+
+  const names = (list) => list.map((c) => c.display).join(' and ');
+  if (moving.length) {
+    out.decision = { ok: false, reason: 'config_moving', message: 'Claude Desktop is moving its data to a new folder right now. Open Claude Desktop, wait a minute, then press Check again.' };
+  } else if (out.live.length > 1) {
+    out.decision = { ok: false, reason: 'config_ambiguous', message: `Claude Desktop has more than one settings file (${names(out.live)}), and The Curator cannot tell which one it reads. Add the entry by hand to the one Claude Desktop opens from Settings › Developer › Edit Config.` };
+  } else if (out.live.length === 1) {
+    const c = out.live[0];
+    if (!c.write) {
+      out.decision = { ok: false, reason: 'config_unverified', message: `Claude Desktop's settings are in ${c.display}, a location The Curator has not verified yet, so it will not write there. Copy the entry in by hand.` };
+    } else if (c.n === 4 && out.msix !== false) {
+      out.decision = { ok: false, reason: 'config_unconfirmed', message: `${c.display} exists, but Claude Desktop ${out.msix ? 'is installed as a Windows app package, which may keep its settings elsewhere' : 'could not be checked for a Windows app package install'}, so The Curator cannot be sure this is the file it reads. Add the entry by hand from Settings › Developer › Edit Config.` };
+    } else if (!isUnderHome(home, c.file, platform)) {
+      out.decision = { ok: false, reason: 'outside_home', message: `${c.display} is outside your user folder (AppData is redirected), so The Curator will not write it. Copy the entry in by hand.` };
+    } else {
+      out.decision = { ok: true, file: c.file, n: c.n, role: c.n === 4 ? 'documented' : 'observed', createAllowed: false };
+    }
+  } else {
+    const legacyFile = out.candidates.find((c) => c.n === 4);
+    if (out.legacy && legacyFile && legacyFile.write && !legacyFile.exists && isUnderHome(home, legacyFile.file, platform)) {
+      out.decision = { ok: true, file: legacyFile.file, n: 4, role: 'documented', createAllowed: true };
+    } else {
+      out.decision = { ok: false, reason: 'config_not_found', message: `Claude Desktop's settings file was not found. Open Claude Desktop once, then press Check again. (Looked in ${names(out.candidates.filter((c) => c.write))}.)` };
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // IO
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -169,11 +402,29 @@ export function defaultIO() {
     mkdirp: (p) => mkdirSync(p, { recursive: true }),
     // Exclusive create: a backup never overwrites anything, including an
     // earlier backup taken in the same second.
-    writeExclusive: (p, buf, mode) => { writeFileSync(p, buf, { flag: 'wx', mode }); chmodSync(p, mode); },
+    writeExclusive: (p, buf, mode) => {
+      writeFileSync(p, buf, { flag: 'wx', mode });
+      // Windows has no POSIX mode; chmod there can only toggle read-only. The
+      // backup's privacy comes from the folder's inherited ACL.
+      if (process.platform !== 'win32') chmodSync(p, mode);
+    },
     writeAtomic: (p, text, mode) => writeFileAtomicSync(p, text, { encoding: 'utf8', mode }),
     now: () => new Date(),
+    // v3.86.0, the Windows replace (see `replaceWithRetry`). Host path
+    // semantics: these touch the real disk.
+    readdir: (p) => readdirSync(p),
+    writeTemp: (target, data) => {
+      _tmpN = (_tmpN + 1) & 0xffffffff;
+      const tmp = path.join(path.dirname(target), `.tmp-${path.basename(target)}-${process.pid}-${_tmpN}`);
+      writeFileSync(tmp, data, { flag: 'wx' });
+      return tmp;
+    },
+    rename: (a, b) => renameSync(a, b),
+    unlink: (p) => unlinkSync(p),
+    sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
   };
 }
+let _tmpN = 0;
 
 export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
@@ -192,6 +443,7 @@ const REASON_TEXT = Object.freeze({
   servers_not_object: 'has a server list that is not a JSON object',
   duplicate_key: 'names the same key twice — rewriting it would silently drop one of them',
   lossy_number: 'holds a number that would change if the file were rewritten',
+  read_only: 'is marked read-only — The Curator will not change that',
 });
 
 /** Human sentence for a per-file refusal code. */
@@ -291,7 +543,14 @@ export function serialise(doc, fmt) {
   let s = JSON.stringify(doc, null, fmt.indent);
   if (fmt.eol === '\r\n') s = s.replace(/\n/g, '\r\n');
   if (fmt.trailingNewline) s += fmt.eol;
+  // A file that began with a UTF-8 byte-order mark (Notepad writes one) keeps it.
+  if (fmt.bom) s = `\uFEFF${s}`;
   return s;
+}
+
+/** True when the bytes start with the UTF-8 byte-order mark EF BB BF. */
+export function hasUtf8Bom(bytes) {
+  return !!bytes && bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
 }
 
 /**
@@ -314,11 +573,14 @@ export function readTarget(file, key, io = defaultIO(), adapterJsonc = false) {
   try { bytes = io.readFile(file); } catch { return { ...base, sha: null, bytes: null, state: 'cant-read', reason: 'unopenable' }; }
   const sha = sha256(bytes);
   const r = { ...base, sha, bytes };
-  const text = bytes.toString('utf8');
+  // JSON.parse rejects a byte-order mark, so it is set aside here and written
+  // back by `serialise` (v3.86.0; every platform).
+  const bom = hasUtf8Bom(bytes);
+  const text = (bom ? bytes.subarray(3) : bytes).toString('utf8');
   if (adapterJsonc) return { ...r, state: 'cant-read', reason: 'jsonc' };
   // Whitespace only: there is nothing in it to lose. It is written as a new
   // document (backup of the original bytes still taken).
-  if (!text.trim()) return { ...r, state: 'ok', doc: {}, empty: true, fmt: detectFormat('') };
+  if (!text.trim()) return { ...r, state: 'ok', doc: {}, empty: true, fmt: { ...detectFormat(''), bom } };
   let doc;
   try { doc = JSON.parse(text); } catch {
     let commentsOnly = false;
@@ -332,7 +594,21 @@ export function readTarget(file, key, io = defaultIO(), adapterJsonc = false) {
   }
   const hazard = scanJsonHazards(text);
   if (hazard) return { ...r, state: 'cant-read', reason: hazard.reason };
-  return { ...r, state: 'ok', doc, fmt: detectFormat(text) };
+  return { ...r, state: 'ok', doc, fmt: { ...detectFormat(text), bom } };
+}
+
+/** Windows: the file's write permission is off (the read-only attribute). */
+export function isReadOnlyMode(mode) {
+  return Number.isInteger(mode) && (mode & 0o222) === 0;
+}
+
+/** readTarget, plus the win32 rule that a read-only file is not ours to change. */
+function readTargetOn(platform, file, key, io, jsonc) {
+  const r = readTarget(file, key, io, jsonc);
+  if (platform === 'win32' && r.state === 'ok' && r.exists && isReadOnlyMode(r.mode)) {
+    return { ...r, state: 'cant-read', reason: 'read_only' };
+  }
+  return r;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -476,11 +752,12 @@ function stamp(d) {
  * Returns `{files: [{file, role, read, entryState}], planned, mcp}`.
  * entryState: 'none' | 'match' | 'differs' | null (file not readable/absent).
  */
-export function inspectTool(id, { home, launch, io = defaultIO() }) {
+export function inspectTool(id, { home, launch, io = defaultIO(), platform, roots, win, appx }) {
+  const plat = platform || installPlatform();
   const mcp = mcpEntryFor(id, launch);
   const m = adapterFor(id).mcpConfig;
-  const files = targetsFor(id, home, io).map((t) => {
-    const read = readTarget(t.file, m.key, io, m.jsonc === true);
+  const files = targetsFor(id, home, io, { platform: plat, roots, win, appx }).map((t) => {
+    const read = readTargetOn(plat, t.file, m.key, io, m.jsonc === true);
     let entryState = null;
     if (read.state === 'ok') {
       const ours = ourEntryIn(read.doc, m.key);
@@ -527,24 +804,39 @@ function refusedItem(base, reason, message) {
  */
 export function planTool(id, action, ctx) {
   const { home, launch, launcherState, io = defaultIO() } = ctx;
+  const platform = ctx.platform || installPlatform();
   const a = adapterFor(id);
   const label = a ? a.label : id;
   if (!isInstallCapable(id)) {
     return [{ id, label, file: null, display: null, action: 'none', refused: { reason: 'not_installable', message: `${label} cannot be installed by The Curator in this version — copy the entry in by hand.` } }];
   }
+  if (platform === 'win32' && !WIN32_INSTALL_IDS.includes(id)) {
+    return [{ id, label, file: null, display: null, action: 'none', refused: { reason: 'platform_unsupported', message: `One-click install for ${label} is not available on Windows in this version. Copy the entry in by hand.` } }];
+  }
   if (!home) {
     return [{ id, label, file: null, display: null, action: 'none', refused: { reason: 'no_home', message: 'The Curator could not find your home folder, so it will not write any tool\'s settings.' } }];
   }
-  const insp = inspectTool(id, { home, launch, io });
+  let roots;
+  let win;
+  if (platform === 'win32') {
+    roots = ctx.roots === undefined ? winRoots(home) : ctx.roots;
+    win = ctx.win || resolveWinClaude({ home, roots, io, appx: ctx.appx });
+    if (!win.decision.ok) {
+      return [{ id, label, file: null, display: null, action: 'none', refused: { reason: win.decision.reason, message: win.decision.message } }];
+    }
+  }
+  const disp = (p) => displayFor(home, p, platform, roots);
+  const P = platform === 'win32' ? pathFor(home) : path;
+  const insp = inspectTool(id, { home, launch, io, platform, roots, win });
   const { key } = insp;
   const items = [];
   for (const f of insp.files) {
-    const display = tildeUnder(home, f.file);
+    const display = disp(f.file);
     const base = {
       id, label, file: f.file, display, basis: f.read.sha === null ? null : f.read.sha,
       entryText: null, preserved: [], kept: [], backupWillBe: null,
     };
-    if (!isUnderHome(home, f.file)) { items.push(refusedItem(base, 'outside_home', `${display} is not inside your home folder.`)); continue; }
+    if (!isUnderHome(home, f.file, platform)) { items.push(refusedItem(base, 'outside_home', `${display} is not inside your home folder.`)); continue; }
     if (f.read.state === 'cant-read') {
       items.push(refusedItem(base, f.read.reason, `${display} ${reasonText(f.read.reason) || 'could not be read'}. Nothing was changed — add the entry by hand.`));
       continue;
@@ -573,8 +865,10 @@ export function planTool(id, action, ctx) {
         items.push({ ...base, action: 'none', entryText: JSON.stringify(ours, null, 2) });
         continue;
       }
-      if (f.read.state === 'missing' && !(f.createAllowed && ctx.detected)) {
-        items.push(refusedItem(base, 'not_detected', `${label} was not found on this Mac, so The Curator will not create ${display}.`));
+      // Windows: the resolver itself allows creation only on a confirmed legacy
+      // install (`createAllowed`), which is detection enough.
+      if (f.read.state === 'missing' && !(f.createAllowed && (ctx.detected || platform === 'win32'))) {
+        items.push(refusedItem(base, 'not_detected', `${label} was not found on this ${platform === 'win32' ? 'PC' : 'Mac'}, so The Curator will not create ${display}.`));
         continue;
       }
       const { entry, kept } = entryToWrite(ours, planned);
@@ -624,8 +918,8 @@ export function planTool(id, action, ctx) {
         continue;
       }
       const backupPath = cand.row.backup;
-      if (!isUnderHome(home, backupPath) || path.dirname(backupPath) !== path.dirname(f.file)
-        || !path.basename(backupPath).startsWith(`${path.basename(f.file)}${BACKUP_INFIX}`)) {
+      if (!isUnderHome(home, backupPath, platform) || P.dirname(backupPath) !== P.dirname(f.file)
+        || !P.basename(backupPath).startsWith(`${P.basename(f.file)}${BACKUP_INFIX}`)) {
         items.push(refusedItem(base, 'backup_missing', `The saved copy of ${display} is not where The Curator left it.`));
         continue;
       }
@@ -638,7 +932,7 @@ export function planTool(id, action, ctx) {
       items.push({
         ...base,
         action: 'restore',
-        restoreFrom: tildeUnder(home, backupPath),
+        restoreFrom: disp(backupPath),
         restoreFromAt: cand.row.at || null,
         backupWillBe: newCopy,
         _restoreFrom: backupPath,
@@ -678,16 +972,24 @@ const MANIFEST_ACTION = { add: 'install', update: 'update', remove: 'remove', re
  */
 export function executeItem(item, ctx) {
   const io = ctx.io || defaultIO();
+  const platform = ctx.platform || installPlatform();
+  const win = platform === 'win32';
+  const roots = win ? (ctx.roots === undefined ? winRoots(ctx.home) : ctx.roots) : undefined;
+  const disp = (p) => displayFor(ctx.home, p, platform, roots);
+  const P = win ? pathFor(ctx.home) : path;
   const display = item.display;
   if (item.refused) return { outcome: 'refused', reason: item.refused.reason, message: item.refused.message };
   if (item.action === 'none') return { outcome: 'unchanged', message: `${display || item.label} already as planned — nothing written.` };
-  if (!isUnderHome(ctx.home, item.file)) return { outcome: 'refused', reason: 'outside_home', message: `${display} is not inside your home folder.` };
+  if (!isUnderHome(ctx.home, item.file, platform)) return { outcome: 'refused', reason: 'outside_home', message: `${display} is not inside your home folder.` };
   if (!isInstallCapable(item.id)) return { outcome: 'refused', reason: 'not_installable', message: `${item.label} cannot be written by The Curator.` };
+  if (win && !WIN32_INSTALL_IDS.includes(item.id)) return { outcome: 'refused', reason: 'platform_unsupported', message: `${item.label} cannot be written by The Curator on Windows.` };
   const a = adapterFor(item.id);
   const key = a.mcpConfig.key;
+  const jsonc = a.mcpConfig.jsonc === true;
 
-  const cur = readTarget(item.file, key, io, a.mcpConfig.jsonc === true);
+  const cur = readTargetOn(platform, item.file, key, io, jsonc);
   if (cur.sha !== item.basis) return { outcome: 'refused', reason: 'config_changed', message: `${display} changed after the plan was made. Nothing was written — check again and re-plan.` };
+  if (cur.reason === 'read_only') return { outcome: 'refused', reason: 'read_only', message: `${display} ${reasonText('read_only')}. Nothing was written.` };
 
   let text;
   if (item.action === 'restore') {
@@ -699,7 +1001,8 @@ export function executeItem(item, ctx) {
     if (cur.state !== 'ok' && cur.state !== 'missing') return { outcome: 'refused', reason: cur.reason || 'unopenable', message: `${display} ${reasonText(cur.reason) || 'could not be read'}.` };
     const before = cur.state === 'ok' ? cur.doc : {};
     let next;
-    try { next = JSON.parse(item._nextText); } catch { next = null; }
+    // The planned text may carry a byte-order mark (kept from the original).
+    try { next = JSON.parse(String(item._nextText).replace(/^﻿/, '')); } catch { next = null; }
     if (!next || !structureOk(before, next, key, item._entry)) {
       return { outcome: 'refused', reason: 'structure_changed', message: `The change to ${display} would have touched more than the my-curator entry, so it was not made.` };
     }
@@ -710,7 +1013,7 @@ export function executeItem(item, ctx) {
   let backup = null;
   if (cur.exists) {
     backup = item._backup;
-    if (!backup || path.dirname(backup) !== path.dirname(item.file)) return { outcome: 'refused', reason: 'backup_failed', message: `No safe place for a copy of ${display}; nothing was written.` };
+    if (!backup || P.dirname(backup) !== P.dirname(item.file)) return { outcome: 'refused', reason: 'backup_failed', message: `No safe place for a copy of ${display}; nothing was written.` };
     // Exclusive create; a second write in the same second gets `-2`, `-3`, …
     // An earlier backup is never overwritten.
     let lastErr = null;
@@ -727,22 +1030,30 @@ export function executeItem(item, ctx) {
     }
     backup = taken;
   } else {
-    try { io.mkdirp(path.dirname(item.file)); } catch (err) {
+    try { io.mkdirp(P.dirname(item.file)); } catch (err) {
       return { outcome: 'refused', reason: 'write_failed', message: `Could not create the folder for ${display} (${err && err.code ? err.code : 'error'}).` };
     }
   }
+  const kept = backup ? disp(backup) : undefined;
 
   // COMPARE-AND-SWAP, immediately before the replace.
-  const again = readTarget(item.file, key, io, a.mcpConfig.jsonc === true);
+  const again = readTargetOn(platform, item.file, key, io, jsonc);
   if (again.sha !== item.basis) {
-    return { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${backup ? ` A copy was kept as ${tildeUnder(ctx.home, backup)}.` : ''}`, backup: backup ? tildeUnder(ctx.home, backup) : undefined };
+    return { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${backup ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
   }
 
-  const mode = cur.exists && Number.isInteger(cur.mode) ? (cur.mode & 0o777) : 0o600;
-  try {
-    io.writeAtomic(item.file, text, mode);
-  } catch (err) {
-    return { outcome: 'refused', reason: 'write_failed', message: `Could not write ${display} (${err && err.code ? err.code : 'error'}). The original is unchanged.`, backup: backup ? tildeUnder(ctx.home, backup) : undefined };
+  if (win) {
+    // Windows: temp file + rename, retried while something holds the file,
+    // with the compare-and-swap re-checked before EVERY attempt.
+    const r = replaceWithRetry(item, text, { io, key, jsonc, platform, display, kept });
+    if (r) return r;
+  } else {
+    const mode = cur.exists && Number.isInteger(cur.mode) ? (cur.mode & 0o777) : 0o600;
+    try {
+      io.writeAtomic(item.file, text, mode);
+    } catch (err) {
+      return { outcome: 'refused', reason: 'write_failed', message: `Could not write ${display} (${err && err.code ? err.code : 'error'}). The original is unchanged.`, backup: kept };
+    }
   }
   const shaAfter = sha256(Buffer.isBuffer(text) ? text : Buffer.from(text, 'utf8'));
 
@@ -764,8 +1075,54 @@ export function executeItem(item, ctx) {
   return {
     outcome: cur.exists ? 'written' : 'created',
     message: `${item.label} — ${verb} ${display}${backup ? ' · original kept' : ''}${manifestNote}`,
-    backup: backup ? tildeUnder(ctx.home, backup) : undefined,
+    backup: kept,
   };
+}
+
+/** The rename errors an antivirus, indexer, backup tool or editor causes on Windows. */
+export const LOCK_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
+/** Waits between rename attempts: 7 attempts, about 2.75 s in all (contract §3: ~3 s). */
+export const WIN_RENAME_BACKOFF_MS = Object.freeze([50, 100, 200, 400, 800, 1200]);
+
+/**
+ * The Windows replace. Writes the new bytes to a temp file beside the target,
+ * then, for each attempt: re-reads the target and refuses `config_changed` if
+ * its sha256 is no longer the plan's basis (or `read_only` if it became
+ * read-only), and renames the temp file over it. A lock error waits and tries
+ * again; after the last wait it refuses `file_locked`. Any refusal removes the
+ * temp file. Returns null on success, else the refusal result. Synchronous:
+ * the waits block for at most WIN_RENAME_BACKOFF_MS's sum, only on this path.
+ */
+export function replaceWithRetry(item, text, { io, key, jsonc, platform, display, kept }) {
+  let tmp;
+  try { tmp = io.writeTemp(item.file, text); } catch (err) {
+    return { outcome: 'refused', reason: 'write_failed', message: `Could not write ${display} (${err && err.code ? err.code : 'error'}). The original is unchanged.`, backup: kept };
+  }
+  const cleanup = () => { try { io.unlink(tmp); } catch { /* best effort */ } };
+  for (let attempt = 0; ; attempt++) {
+    const now = readTargetOn(platform, item.file, key, io, jsonc);
+    if (now.sha !== item.basis) {
+      cleanup();
+      return { outcome: 'refused', reason: 'config_changed', message: `${display} changed while it was being updated. Nothing was written.${kept ? ` A copy was kept as ${kept}.` : ''}`, backup: kept };
+    }
+    if (now.reason === 'read_only') {
+      cleanup();
+      return { outcome: 'refused', reason: 'read_only', message: `${display} ${reasonText('read_only')}. Nothing was written.`, backup: kept };
+    }
+    try {
+      io.rename(tmp, item.file);
+      return null;
+    } catch (err) {
+      const code = err && err.code;
+      if (!LOCK_CODES.includes(code) || attempt >= WIN_RENAME_BACKOFF_MS.length) {
+        cleanup();
+        return LOCK_CODES.includes(code)
+          ? { outcome: 'refused', reason: 'file_locked', message: `${display} is in use by another program (${code}). Nothing was written — quit Claude Desktop and try again.`, backup: kept }
+          : { outcome: 'refused', reason: 'write_failed', message: `Could not write ${display} (${code || 'error'}). The original is unchanged.`, backup: kept };
+      }
+      io.sleep(WIN_RENAME_BACKOFF_MS[attempt]);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

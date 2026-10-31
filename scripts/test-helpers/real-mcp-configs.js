@@ -27,18 +27,40 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const MARKERS = ['curator-mcpinst-', 'sk-PLANTED', '/app/mcp/server.js'];
+const MARKERS = ['curator-mcpinst-', 'sk-PLANTED', '/app/mcp/server.js', 'Tester Name'];
+
+// v3.86.0: on a real Windows machine (the CI `windows` job), the REAL Claude
+// Desktop candidates too. %LOCALAPPDATA% / %APPDATA% are captured ONCE, when
+// this helper is imported — before any suite points them at a decoy — so the
+// before/after fingerprints always name the same real files.
+const REAL_WIN_ROOTS = process.platform === 'win32'
+  ? { la: process.env.LOCALAPPDATA || '', ad: process.env.APPDATA || '' } : null;
 
 export function realConfigPaths() {
   let home = '';
   try { home = os.userInfo().homedir || os.homedir(); } catch { home = os.homedir(); }
-  return [
+  const out = [
     path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
     path.join(home, '.cursor', 'mcp.json'),
     path.join(home, '.gemini', 'config', 'mcp_config.json'),
     path.join(home, '.gemini', 'antigravity', 'mcp_config.json'),
     path.join(home, '.gemini', 'antigravity-ide', 'mcp_config.json'),
   ];
+  if (REAL_WIN_ROOTS) {
+    const { la, ad } = REAL_WIN_ROOTS;
+    if (la) {
+      out.push(
+        path.join(la, 'Claude-Data', 'claude_pzs8sxrjxfjjc', 'claude_desktop_config.json'),
+        path.join(la, 'Claude-Data', 'anthropicpbc.claude_fnn82j28hfe8t', 'claude_desktop_config.json'),
+        path.join(la, 'Claude-Data', 'claude_desktop_config.json'),
+        path.join(la, 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+        path.join(la, 'Packages', 'AnthropicPBC.Claude_fnn82j28hfe8t', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+        path.join(la, 'Claude-3p', 'claude_desktop_config.json'),
+      );
+    }
+    if (ad) out.push(path.join(ad, 'Claude', 'claude_desktop_config.json'));
+  }
+  return out;
 }
 
 function backupsOf(p) {
