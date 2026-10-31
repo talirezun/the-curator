@@ -161,7 +161,12 @@ try {
     ok('Cursor entry missing type → does NOT match (needs-update)', !M.entryMatches({ command: REPO.command, args: REPO.args }, cu, 'stdio'));
     ok('Cursor entry with type → matches', M.entryMatches({ type: 'stdio', command: REPO.command, args: REPO.args }, cu, 'stdio'));
     const cdB = A.mcpEntryFor('claude-desktop', BUNDLE).entry;
-    ok('bundle launch: planned entry has no args key', !('args' in cdB));
+    for (const id of M.INSTALL_IDS) {
+      const e = A.mcpEntryFor(id, BUNDLE).entry;
+      ok(`${id}: launcher-mode planned entry has args: [] (the write-config shape)`, Array.isArray(e.args) && e.args.length === 0);
+    }
+    ok('an existing entry WITHOUT args (older hand-pasted shape) still MATCHES — missing ≡ []', M.entryMatches({ command: BUNDLE.command }, cdB, false));
+    ok('...and for Cursor too', M.entryMatches({ type: 'stdio', command: BUNDLE.command }, A.mcpEntryFor('cursor', BUNDLE).entry, 'stdio'));
     ok('...and an existing `args: []` (what write-config writes) still MATCHES — no false needs-update', M.entryMatches({ command: BUNDLE.command, args: [] }, cdB, false));
     ok('a repo-mode entry on a bundle install does NOT match', !M.entryMatches({ command: REPO.command, args: REPO.args }, cdB, false));
     ok('another knowledge folder does NOT match', !M.entryMatches({ command: REPO.command, args: ['/app/mcp/server.js', '--domains-path', '/elsewhere'] }, A.mcpEntryFor('claude-desktop', REPO).entry, false));
@@ -241,7 +246,7 @@ try {
     ok('a cli row → refused not_installable', ni.refused && ni.refused.reason === 'not_installable');
 
     const [cdB] = M.planTool('claude-desktop', 'install', ctx(memfs({ [CD]: '{}' }), { launch: BUNDLE }));
-    ok('bundle launch: the entry is the launcher, no args', JSON.parse(cdB.entryText).command === BUNDLE.command && !('args' in JSON.parse(cdB.entryText)));
+    ok('bundle launch: the entry is the launcher with args: []', JSON.parse(cdB.entryText).command === BUNDLE.command && JSON.stringify(JSON.parse(cdB.entryText).args) === '[]');
     const [cdR] = M.planTool('claude-desktop', 'install', ctx(memfs({ [CD]: '{}' })));
     ok('repo launch: node + server.js + --domains-path', JSON.stringify(JSON.parse(cdR.entryText).args) === JSON.stringify(REPO.args));
 
