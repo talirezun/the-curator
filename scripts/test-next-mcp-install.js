@@ -270,5 +270,63 @@ const SM = await import('../src/public/next/views/setup-machine.js');
 const foot = SM.renderToolsOnThisMacBody({ data: { harnesses: [], version: 'x' } }, {});
 ok(/The checks only read\. Install for me writes only the my-curator entry, after a preview/.test(foot) && !/Nothing here writes a file/.test(foot), 'the block’s footer no longer says nothing is written');
 
+// ── §9 Windows (v3.86.0) ───────────────────────────────────────────────────
+section('§9 platform gating: darwin, win32, linux');
+{
+  const WIN = [
+    tool({ id: 'claude-desktop', label: 'Claude Desktop', status: 'not-installed', files: [{ display: 'C:\\Users\\Ann Lee\\AppData\\Roaming\\Claude\\claude_desktop_config.json', action: 'add', state: 'absent' }], running: { checked: true, running: true } }),
+    tool({ id: 'cursor', status: 'needs-update', files: [{ display: 'C:\\Users\\Ann Lee\\.cursor\\mcp.json', action: 'update', state: 'stale' }] }),
+    tool({ id: 'antigravity', label: 'Antigravity', status: 'not-installed' }),
+    tool({ id: 'windsurf', label: 'Windsurf', status: 'cant-read', reason: 'x', files: [{ display: 'C:\\w\\mcp_config.json', file: 'C:\\w\\mcp_config.json', state: 'jsonc' }] }),
+  ];
+  const wst = (tools = WIN, extra = {}) => status(tools, { platform: 'win32', writable: true, ...extra });
+  const html = M.renderInstallPanel({ status: wst() });
+  const row = (h, id) => (h.match(new RegExp('<div class="mcpi-row [^"]*" data-mcpi-tool="' + id + '">[\\s\\S]*?(?=<div class="mcpi-row |$)')) || [''])[0];
+  ok(/data-mcpi-tick="claude-desktop"[^>]* checked/.test(html), 'win32: Claude Desktop is installable and ticked');
+  ok(!/data-mcpi-tick="cursor"/.test(html) && !/data-mcpi-tick="antigravity"/.test(html), 'win32: every other row has no checkbox');
+  ok(/data-mcpi-new-windows>New on Windows — tell us if it works</.test(row(html, 'claude-desktop')) && (html.match(/data-mcpi-new-windows/g) || []).length === 1, 'win32: the label sits on the Claude Desktop row only');
+  ok(/data-mcpi-status="manual"/.test(row(html, 'cursor')) && !/data-mcpi-new-windows/.test(row(html, 'cursor')), 'win32: another tool reads "copy only" and keeps Copy', row(html, 'cursor'));
+  ok(M.countStatuses(WIN, 'win32').canAdd === 1 && M.countStatuses(WIN, 'win32').needsUpdate === 0 && M.countStatuses(WIN, 'win32').manual === 2, 'win32: the counts follow what can be written', JSON.stringify(M.countStatuses(WIN, 'win32')));
+  ok(M.overviewLine(WIN, 'win32') === 'My Curator in your tools — 1 can be added · 1 can’t be read · 2 copy only', 'win32: overview line', M.overviewLine(WIN, 'win32'));
+  ok(M.installButtonState(wst(), {}, null).n === 1 && M.installButtonState(wst(), {}, null).label === 'Install for me', 'win32: Install for me counts one tool');
+  ok(JSON.stringify(M.tickedIds(WIN, {}, 'win32')) === JSON.stringify(['claude-desktop']) && JSON.stringify(M.tickedIds(WIN, {})) === JSON.stringify(['claude-desktop', 'cursor', 'antigravity']), 'win32 gates ticks; no platform keeps today’s');
+  ok(/data-mcpi-windows/.test(html), 'win32: said open that install covers Claude Desktop only');
+  ok(!/data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: wst() })) && /data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: status([WIN[3]]) })) && !/data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: wst([WIN[3]]) })), 'Reveal is hidden on win32 (the reveal route is `open -R`, macOS only) and kept on darwin');
+  ok(/C:\\<wbr>Users\\<wbr>Ann Lee\\<wbr>AppData\\<wbr>Roaming\\<wbr>Claude\\<wbr>claude_desktop_config\.json/.test(html), 'Windows paths wrap after each backslash', row(html, 'claude-desktop'));
+  ok(/~\/<wbr>\.cursor\/<wbr>mcp\.json/.test(M.renderInstallPanel({ status: status(SAMPLE) })), 'POSIX paths still wrap after a slash');
+  ok(!/<wbr>/.test(M.renderInstallPanel({ status: wst([tool({ id: 'cursor', files: [{ display: 'C:\\a<b>\\c' }] })]) }).replace(/\\<wbr>|&lt;|&gt;/g, '')) , 'a path is escaped before the break points are added');
+
+  // reasons
+  const nf = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_not_found', message: 'backend text' }, files: [] }), { platform: 'win32', writable: true });
+  ok(/data-mcpi-reason>Open Claude Desktop once, then press Check again</.test(nf), 'config_not_found in words', nf);
+  const amb = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_ambiguous', message: 'm', candidates: ['C:\\A\\c.json', 'C:\\B\\c.json'] }, files: [] }), { platform: 'win32', writable: true });
+  ok(/more than one config file: C:\\<wbr>A|more than one config file: C:\\A/.test(amb.replace(/<wbr>/g, '')) && /C:\\B\\c\.json/.test(amb.replace(/<wbr>/g, '')), 'config_ambiguous names the candidates', amb);
+  const amb2 = M.renderToolRow(tool({ id: 'claude-desktop', status: 'manual', reason: { code: 'config_ambiguous', message: 'm' }, files: [{ display: 'C:\\X\\c.json' }, { display: 'C:\\Y\\c.json' }] }), { platform: 'win32' });
+  ok(/C:\\X\\c\.json · C:\\Y\\c\.json/.test(amb2.replace(/<wbr>/g, '')), 'config_ambiguous falls back to the row’s files');
+  ok(/data-mcpi-reason>Some other message</.test(M.renderToolRow(tool({ status: 'manual', reason: { code: 'other', message: 'Some other message' } }), {})), 'any other reason is the backend’s message');
+
+  // result line + Check again
+  const res = { action: 'install', items: [{ id: 'claude-desktop', label: 'Claude Desktop', outcome: 'written', file: 'C:\\f.json', backup: 'b' }] };
+  const wr = M.renderResults(res, WIN, 'win32');
+  ok(/data-mcpi-restart-windows>Quit Claude Desktop fully \(system tray → Quit\), reopen it, then press Check again</.test(wr), 'win32: the restart line is shown, open');
+  ok(/class="btn btn-primary btn-xs" data-mcpi-act="check-again"/.test(wr), 'win32: Check again is the primary button');
+  ok(!/is running — restart/.test(wr), 'win32: no second, generic restart sentence for Claude Desktop');
+  const dr = M.renderResults({ ...res }, SAMPLE.map((x) => (x.id === 'claude-desktop' ? { ...x, running: { checked: true, running: true } } : x)), 'darwin');
+  ok(!/restart-windows/.test(dr) && /btn-secondary btn-xs" data-mcpi-act="check-again"/.test(dr) && /Claude Desktop is running — restart it/.test(dr), 'darwin: results unchanged (secondary Check again, generic restart)');
+  ok(!/restart-windows/.test(M.renderResults({ action: 'install', items: [{ id: 'cursor', label: 'Cursor', outcome: 'written', file: 'f' }] }, WIN, 'win32')), 'win32: the line is only for a Claude Desktop change');
+
+  // darwin and linux: byte-identical to the platform-less render
+  const dsPanel = M.renderInstallPanel({ status: status(SAMPLE) });
+  ok(!/data-mcpi-new-windows|data-mcpi-windows|data-mcpi-restart-windows/.test(dsPanel) && /data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: status([{ ...SAMPLE[3], files: [{ display: '~/w', file: '/h/w', state: 'jsonc' }] }]) })), 'darwin: no Windows element, Reveal kept');
+  ok(M.overviewLine(SAMPLE) === M.overviewLine(SAMPLE, 'darwin') && M.overviewLine([], 'linux') === 'My Curator in your tools — no tool found on this Mac', 'darwin/linux overview line unchanged');
+  ok(M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'darwin') && M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'linux'), 'darwin/linux results unchanged');
+  const linX = M.renderInstallPanel({ status: status(SAMPLE.map((x) => ({ ...x, status: 'manual' })), { platform: 'linux', writable: false }) });
+  ok(/on Linux/.test(linX) && !/data-mcpi-new-windows|data-mcpi-windows/.test(linX) && !/data-mcpi-tick/.test(linX), 'linux: copy-only, no Windows label');
+  const wOff = M.renderInstallPanel({ status: wst(WIN, { writable: false }) });
+  ok(/data-mcpi-nonmac>One-click install on Windows is not available right now/.test(wOff) && !/data-mcpi-tick/.test(wOff) && !/data-mcpi-new-windows/.test(wOff), 'win32 not writable: said open, copy instead');
+  ok(!/data-mcpi-tick/.test(wOff) && /id="mcpi-install-btn"[^>]*disabled/.test(wOff), 'win32 not writable: no checkbox, Install disabled');
+}
+ok(netCalls === 0, 'no request fired by any Windows render');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -2980,6 +2980,7 @@ body.guide-docked .main {
 .mcpi-tags { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
 .mcpi-acts { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
 .mcpi-note { font-size: var(--text-xs); color: var(--text-3); }
+.mcpi-new { overflow-wrap: anywhere; }
 .mcpi-reason, .mcpi-hint { margin: 0; font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
 .mcpi-hint { color: var(--text-3); }
 .mcpi-st {
