@@ -37,7 +37,7 @@ const isStr = (v) => typeof v === 'string' && v.length > 0;
 export const STATUS_WORDS = Object.freeze({
   connected: 'connected',
   'needs-update': 'needs an update',
-  'not-installed': 'not connected',
+  'not-installed': 'can be added',
   'cant-read': 'can’t read',
   manual: 'copy only',
 });
@@ -352,6 +352,9 @@ export function restoreWords(item) {
   return 'Puts back the copy kept earlier.';
 }
 
+/** The backend's literal stand-in for the apply time in a copy's name (never shown as-is). */
+export const BACKUP_AT_APPLY = '<UTC time of apply>';
+
 function planItem(item, action, tool) {
   const label = escapeHtml(item.label || item.id || '');
   const file = '<span class="mono">' + escapeHtml(item.file || '') + '</span>';
@@ -365,11 +368,18 @@ function planItem(item, action, tool) {
       + '<pre class="mcpi-entry" data-mcpi-entry>' + escapeHtml(item.entryText) + '</pre>' : '';
   const restoreLine = action === 'restore' ? '<p class="mcpi-line" data-mcpi-restore-from>' + escapeHtml(restoreWords(item)) + '</p>' : '';
   const absent = item.basis === 'absent';
+  const placeholder = isStr(item.backupWillBe) && item.backupWillBe.includes(BACKUP_AT_APPLY);
+  // The backend names the copy by a literal placeholder (the time is known only at apply). Said for a person.
+  const dated = placeholder ? wbrPath(item.backupWillBe.replace(BACKUP_AT_APPLY, '…')).replace(/<wbr>/g, '') : '';
   const keeps = absent
     ? '<p class="mcpi-line">This file does not exist yet — it is created, so there is no original to keep.</p>'
-    : (isStr(item.backupWillBe) ? '<p class="mcpi-line">' + (action === 'restore' ? 'Your current file is kept as a new copy first: ' : 'A new copy of the current file is kept beside it as ')
-      + '<span class="mono">' + wbrPath(item.backupWillBe).replace(/<wbr>/g, '') + '</span>.</p>'
-      : (action === 'restore' ? '<p class="mcpi-line">Your current file is kept as a new copy first.</p>' : ''));
+    : (placeholder
+      ? '<p class="mcpi-line" data-mcpi-backup>' + (action === 'restore'
+        ? 'Your current file is kept as a new dated copy first.'
+        : 'A dated copy of the current file is kept beside it (<span class="mono">' + dated + '</span>).') + '</p>'
+      : (isStr(item.backupWillBe) ? '<p class="mcpi-line">' + (action === 'restore' ? 'Your current file is kept as a new copy first: ' : 'A new copy of the current file is kept beside it as ')
+        + '<span class="mono">' + wbrPath(item.backupWillBe).replace(/<wbr>/g, '') + '</span>.</p>'
+        : (action === 'restore' ? '<p class="mcpi-line">Your current file is kept as a new copy first.</p>' : '')));
   const running = tool && tool.running && tool.running.running === true;
   const quit = running && item.id === 'claude-desktop'
     ? '<p class="mcpi-line mcpi-quit" data-mcpi-quit>' + escapeHtml((item.label || 'Claude Desktop') + ' is running. Quit it first for the safest install — it rewrites its own file.') + '</p>'

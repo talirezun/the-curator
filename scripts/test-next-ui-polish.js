@@ -354,7 +354,7 @@ section('§5  deriveMcpStatus() — the pill, unchanged in behaviour by this fix
 {
   const s = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
   ok(s.connected === false, 'installed + stale -> NOT connected');
-  ok(s.pillLabel === 'Needs re-connect', 'pillLabel "Needs re-connect" — the exact text the maintainer reported');
+  ok(s.pillLabel === 'Needs an update', 'pillLabel "Needs an update" — names no button (the Re-connect button is gone)');
   ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
 }
 {
