@@ -289,9 +289,37 @@ function extractBulletsFromSection(content, sectionName) {
  * are treated as duplicates and only one is kept.
  */
 function dedupKey(line) {
+  // v3.84.0: a LINK-ONLY bullet (`- [[x]]`, `- [[x|Alias]]`) keys on its target
+  // with the alias stripped, so the two spellings of one link are one bullet.
+  // Bullets with prose keep the historical key (first link's inner text, alias
+  // included) — widening that would merge prose bullets that merely share a link.
+  const onlyLink = linkOnlyTarget(line);
+  if (onlyLink !== null) return onlyLink.toLowerCase();
   const linkMatch = line.match(/\[\[([^\]]+)\]\]/);
   if (linkMatch) return linkMatch[1].toLowerCase().trim();
   return line.toLowerCase().trim();
+}
+
+/**
+ * The target of a bullet that is ONLY a wikilink — `- [[x]]` or `- [[x|Alias]]`,
+ * nothing else on the line but whitespace — with the alias stripped and the
+ * target trimmed. Case preserved. null for anything else.
+ */
+function linkOnlyTarget(line) {
+  const m = String(line).match(/^\s*-\s+\[\[([^\]\n]+?)\]\]\s*$/);
+  if (!m) return null;
+  const target = m[1].split('|')[0].trim();
+  return target || null;
+}
+
+/** Every wikilink target in `text` (inner text before `|`, trimmed), in order. */
+function wikilinkTargets(text) {
+  const out = [];
+  for (const m of String(text).matchAll(/\[\[([^\]\n]+?)\]\]/g)) {
+    const t = m[1].split('|')[0].trim();
+    if (t) out.push(t);
+  }
+  return out;
 }
 
 /** Inject extra bullet lines into a named ## section, skipping duplicates. */
@@ -454,6 +482,287 @@ function deduplicateBulletSections(content) {
 }
 
 /**
+ * After a line-for-line link rewrite (`before` → `after`, same line count),
+ * drop each bullet line the rewrite CHANGED that is now IDENTICAL to another
+ * bullet in the same section (headings of any level delimit sections).
+ *
+ * Deliberately narrower than deduplicateBulletSections: Health's rewriters
+ * (fix a broken link, apply an AI broken-link plan, repoint links after a
+ * merge) are a SECOND write surface and must not apply writePage's first-link
+ * key to prose bullets the user never asked them to touch. Only lines the
+ * rewrite produced can be dropped, and only when a copy remains — so a
+ * rewrite never leaves `- [[x]]` twice and never loses a line's content.
+ * Returns `after` unchanged when the line counts differ (not a line rewrite).
+ */
+export function dedupRewrittenBullets(before, after) {
+  const a = String(before).split('\n');
+  const b = String(after).split('\n');
+  if (a.length !== b.length || before === after) return after;
+  // Section id per line; bullets grouped by section.
+  const sectionOf = new Array(b.length);
+  let sec = 0;
+  for (let i = 0; i < b.length; i++) {
+    if (/^#{1,6}\s/.test(b[i])) sec++;
+    sectionOf[i] = sec;
+  }
+  const isBullet = (l) => l.startsWith('- ');
+  // Identical text only (trimmed). `[[x]]` vs `[[x|Alias]]` is NOT merged
+  // here: the rewriters preserve aliases verbatim, and dropping the aliased
+  // line would lose the label a user wrote.
+  const keyOf = (l) => l.trim();
+  // Keys held by UNCHANGED bullets — a rewritten copy of one of those goes.
+  const held = new Map(); // section → Set(keys)
+  const hold = (s, k) => { if (!held.has(s)) held.set(s, new Set()); held.get(s).add(k); };
+  for (let i = 0; i < b.length; i++) {
+    if (isBullet(b[i]) && a[i] === b[i]) hold(sectionOf[i], keyOf(b[i]));
+  }
+  const out = [];
+  for (let i = 0; i < b.length; i++) {
+    const line = b[i];
+    if (isBullet(line) && a[i] !== line) {
+      const k = keyOf(line);
+      const s = sectionOf[i];
+      if (held.has(s) && held.get(s).has(k)) continue; // a copy remains
+      hold(s, k);                                       // first rewritten copy stays
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+// ── Summary link sections (v3.84.0) ─────────────────────────────────────────
+//
+// A summary lists its pages in two sections: `## Entities Mentioned` and
+// `## Concepts Introduced or Referenced` (the canonical headings of the domain
+// template in generateClaudemd and of compile's summary contract). Until
+// v3.84.0 syncSummaryEntities put EVERY written page — entities AND concepts —
+// under Entities Mentioned (measured on the maintainer's articles domain:
+// 2,969 of 4,936 Entities-Mentioned links resolve to concepts), and link
+// rewrites after the dedup left identical lines (200 across articles +
+// projects). tidySummaryLinkSections is the one deterministic repair, used by
+// syncSummaryEntities (every new write) and by Health's `summaryLinkSections`
+// fix (existing wikis).
+
+export const SUMMARY_ENTITIES_HEADING = 'Entities Mentioned';
+export const SUMMARY_CONCEPTS_HEADING = 'Concepts Introduced or Referenced';
+
+/** Which folder a link target resolves to — the Health rule. 'entity' | 'concept' | null. */
+function classifyLinkTarget(target, entitySlugs, conceptSlugs) {
+  let t = String(target).trim();
+  if (t.startsWith('entities/')) return entitySlugs.has(t.slice(9)) ? 'entity' : null;
+  if (t.startsWith('concepts/')) return conceptSlugs.has(t.slice(9)) ? 'concept' : null;
+  if (t.includes('/')) return null;               // summaries/… or anything nested
+  if (entitySlugs.has(t)) return 'entity';        // bare: entities/ first …
+  if (conceptSlugs.has(t)) return 'concept';      // … then concepts/
+  return null;                                    // broken — never moved
+}
+
+/** A bullet's class: every link in it resolves to the same folder, else null. */
+function classifyBullet(line, entitySlugs, conceptSlugs) {
+  const targets = wikilinkTargets(line);
+  if (!targets.length) return null;
+  let cls = null;
+  for (const t of targets) {
+    const c = classifyLinkTarget(t, entitySlugs, conceptSlugs);
+    if (!c) return null;
+    if (cls && cls !== c) return null;
+    cls = c;
+  }
+  return cls;
+}
+
+/** [start, end) line ranges of the first `## Entities Mentioned` / concepts section. */
+function findSummaryLinkSections(lines) {
+  const eRe = new RegExp(`^##\\s+${SUMMARY_ENTITIES_HEADING}\\s*$`, 'i');
+  const cRe = new RegExp(`^##\\s+${SUMMARY_CONCEPTS_HEADING}\\s*$`, 'i');
+  const find = (re) => {
+    const h = lines.findIndex(l => re.test(l));
+    if (h < 0) return null;
+    let end = lines.length;
+    for (let i = h + 1; i < lines.length; i++) {
+      if (/^#{1,6}\s/.test(lines[i])) { end = i; break; }
+    }
+    return { heading: h, start: h + 1, end };
+  };
+  return { E: find(eRe), C: find(cRe) };
+}
+
+/** Lines outside both sections, blank lines dropped — what the tidy may never change. */
+function outsideSummaryLinkSections(content) {
+  const lines = content.split('\n');
+  const { E, C } = findSummaryLinkSections(lines);
+  const inside = (i) => (E && i >= E.heading && i < E.end) || (C && i >= C.heading && i < C.end);
+  return lines.filter((l, i) => !inside(i) && l.trim() !== '');
+}
+
+/**
+ * The HARD GUARD for any summary-link tidy: the set of link targets on the
+ * page and every non-blank line outside the two sections must be exactly the
+ * same before and after. Returns null when `after` is safe to write, else the
+ * reason. Exported so the guard is tested on its own, not only through a
+ * tidy that (when correct) never trips it.
+ */
+export function summaryTidyGuard(before, after) {
+  const setOf = (s) => [...new Set(wikilinkTargets(s))].sort().join('\n');
+  if (setOf(before) !== setOf(after)) return 'link-set-changed';
+  const ob = outsideSummaryLinkSections(before);
+  const oa = outsideSummaryLinkSections(after);
+  if (ob.length !== oa.length || ob.some((l, i) => l !== oa[i])) return 'outside-text-changed';
+  return null;
+}
+
+// TEST-ONLY seam: replaces the tidy's composition step so a suite can prove
+// the guard refuses a lossy result. Never set outside scripts/.
+let summaryTidyComposeOverride = null;
+export function __setSummaryTidyComposeForTest(fn) {
+  summaryTidyComposeOverride = typeof fn === 'function' ? fn : null;
+}
+
+function composeSummaryTidy(content, entitySlugs, conceptSlugs) {
+  const lines = content.split('\n');
+  const { E, C } = findSummaryLinkSections(lines);
+  const stats = { duplicateLines: 0, conceptsToMove: 0, entitiesToMove: 0, sampleConcepts: [], sampleEntities: [] };
+  if (!E && !C) return { content, stats };
+
+  // Items per destination section, in order: original bullets that stay, then
+  // bullets moving in from the other section. `src` = original line index.
+  const itemsFor = { E: [], C: [] };
+  const moveIn = { E: [], C: [] };
+  const sample = (arr, line) => {
+    if (arr.length >= 5) return;
+    const first = wikilinkTargets(line)[0];
+    const t = first ? first.replace(/^(entities|concepts)\//, '') : '';
+    if (t && !arr.includes(t)) arr.push(t);
+  };
+  for (const [name, range] of [['E', E], ['C', C]]) {
+    if (!range) continue;
+    for (let i = range.start; i < range.end; i++) {
+      const line = lines[i];
+      if (!line.startsWith('- ')) continue;
+      const cls = classifyBullet(line, entitySlugs, conceptSlugs);
+      if (name === 'E' && cls === 'concept') { moveIn.C.push({ src: i, line }); stats.conceptsToMove++; sample(stats.sampleConcepts, line); continue; }
+      if (name === 'C' && cls === 'entity')  { moveIn.E.push({ src: i, line }); stats.entitiesToMove++; sample(stats.sampleEntities, line); continue; }
+      itemsFor[name].push({ src: i, line });
+    }
+  }
+
+  // Dedup each destination's final list. An identical line goes. A PLAIN
+  // link-only line (`- [[x]]`) goes when the section already carries `x`
+  // another way: as the FIRST link of a bullet with prose, as an aliased
+  // `- [[x|Label]]`, or as an earlier plain `- [[x]]`. First links are what
+  // backlinks are built from, so a link that is only a SECOND link elsewhere
+  // keeps its own bullet; an aliased or prose line is never dropped for being
+  // "the same link" — only a byte-identical copy of it is — so no label or
+  // description is ever lost.
+  const kept = { E: [], C: [] };
+  const isPlain = (line) => /^\s*-\s+\[\[[^\]|\n]+\]\]\s*$/.test(line);
+  for (const name of ['E', 'C']) {
+    const all = [...itemsFor[name], ...moveIn[name]];
+    const carriedElsewhere = new Set();
+    for (const it of all) {
+      if (isPlain(it.line)) continue;
+      const f = wikilinkTargets(it.line)[0];
+      if (f) carriedElsewhere.add(f);
+    }
+    const seenLines = new Set();
+    const seenPlain = new Set();
+    for (const it of all) {
+      const tl = it.line.trim();
+      if (seenLines.has(tl)) { stats.duplicateLines++; continue; }
+      if (isPlain(it.line)) {
+        const only = linkOnlyTarget(it.line);
+        if (carriedElsewhere.has(only) || seenPlain.has(only)) { stats.duplicateLines++; continue; }
+        seenPlain.add(only);
+      }
+      seenLines.add(tl);
+      kept[name].push(it);
+    }
+  }
+
+  if (!stats.duplicateLines && !stats.conceptsToMove && !stats.entitiesToMove) return { content, stats };
+
+  // Rebuild. Original bullets stay in place (or are dropped); bullets moving
+  // in land after the destination's last original bullet.
+  const keepSrc = new Set();
+  const insertAfter = new Map(); // line index → lines
+  const created = { E: null, C: null };
+  for (const name of ['E', 'C']) {
+    const range = name === 'E' ? E : C;
+    const incoming = [];
+    for (const it of kept[name]) {
+      if ((range && it.src >= range.start && it.src < range.end)) keepSrc.add(it.src);
+      else incoming.push(it.line);
+    }
+    if (!incoming.length) continue;
+    if (range) {
+      let last = range.heading;
+      for (let i = range.start; i < range.end; i++) if (lines[i].startsWith('- ')) last = i;
+      insertAfter.set(last, [...(insertAfter.get(last) || []), ...incoming]);
+    } else {
+      created[name] = incoming;
+    }
+  }
+
+  const out = [];
+  const inRange = (r, i) => r && i >= r.start && i < r.end;
+  for (let i = 0; i < lines.length; i++) {
+    // A missing concepts section is created just above Entities Mentioned
+    // (the template's order).
+    if (created.C && E && i === E.heading) {
+      out.push(`## ${SUMMARY_CONCEPTS_HEADING}`, ...created.C, '');
+    }
+    // A missing Entities section is created right after the concepts section.
+    if (created.E && C && i === C.end) {
+      if (out.length && out[out.length - 1].trim() !== '') out.push('');
+      out.push(`## ${SUMMARY_ENTITIES_HEADING}`, ...created.E, '');
+    }
+    const line = lines[i];
+    const isSectionBullet = (inRange(E, i) || inRange(C, i)) && line.startsWith('- ');
+    if (!isSectionBullet || keepSrc.has(i)) out.push(line);
+    if (insertAfter.has(i)) out.push(...insertAfter.get(i));
+  }
+  if (created.E && C && C.end === lines.length) {
+    // Concepts section ran to end of file.
+    while (out.length && out[out.length - 1] === '') out.pop();
+    out.push('', `## ${SUMMARY_ENTITIES_HEADING}`, ...created.E, '');
+  }
+  return { content: out.join('\n'), stats };
+}
+
+/**
+ * Tidy a summary's two link sections, deterministically: each bullet whose
+ * links all resolve to concepts/ moves from Entities Mentioned to Concepts
+ * Introduced or Referenced (and entity-only bullets the other way — a page's
+ * FOLDER decides its section), then repeated lines go (identical, or a
+ * link-only line whose target the section already lists). Nothing else on
+ * the page is touched, and the result is refused by summaryTidyGuard unless
+ * every link target and every line outside the two sections survive.
+ *
+ * @param {string} content
+ * @param {{entitySlugs: Set<string>, conceptSlugs: Set<string>}} slugs
+ * @returns {{content: string, changed: boolean, refused: string|null, stats: object}}
+ */
+export function tidySummaryLinkSections(content, { entitySlugs, conceptSlugs }) {
+  const text = String(content);
+  const composed = summaryTidyComposeOverride
+    ? summaryTidyComposeOverride(text, entitySlugs, conceptSlugs)
+    : composeSummaryTidy(text, entitySlugs, conceptSlugs);
+  if (composed.content === text) return { content: text, changed: false, refused: null, stats: composed.stats };
+  const refused = summaryTidyGuard(text, composed.content);
+  if (refused) return { content: text, changed: false, refused, stats: composed.stats };
+  return { content: composed.content, changed: true, refused: null, stats: composed.stats };
+}
+
+/** The entity/concept slug sets of a wiki, from disk. */
+async function readEntityConceptSlugs(wikiDir) {
+  const slugsIn = async (folder) => {
+    try { return new Set((await readdir(path.join(wikiDir, folder))).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3))); }
+    catch { return new Set(); }
+  };
+  return { entitySlugs: await slugsIn('entities'), conceptSlugs: await slugsIn('concepts') };
+}
+
+/**
  * Remove blank lines that appear inside bullet-list sections.
  * The LLM sometimes emits two groups of bullets separated by a blank line;
  * this causes the merge logic to place injected bullets after the gap.
@@ -550,44 +859,66 @@ export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
   }
 
   // Build [[slug]] bullets from every entity AND concept path written this ingest.
-  // Include concepts because the LLM sometimes misclassifies entities as concepts —
-  // those pages still need to appear in "Entities Mentioned" and receive backlinks.
-  const entityBullets = writtenPaths
-    .filter(p => p.startsWith('entities/') || p.startsWith('concepts/'))
-    .map(p => `- [[${path.basename(p, '.md')}]]`);
+  //
+  // v3.84.0: a page's FOLDER decides its section — entities/ pages under
+  // "Entities Mentioned", concepts/ pages under "Concepts Introduced or
+  // Referenced". Until v3.84.0 every page went under Entities Mentioned. The
+  // reason (the LLM sometimes misclassifies an entity as a concept) is still
+  // honoured: what the model CALLED a page never matters here, only where
+  // writePage actually put it (writtenPaths are canonical paths, after the
+  // cross-folder redirect), and injectSummaryBacklinks reads BOTH sections, so
+  // a concept page still receives its backlink.
+  const pages = writtenPaths.filter(p => p.startsWith('entities/') || p.startsWith('concepts/'));
+  const entityBullets = pages.filter(p => p.startsWith('entities/')).map(p => `- [[${path.basename(p, '.md')}]]`);
+  const conceptBullets = pages.filter(p => p.startsWith('concepts/')).map(p => `- [[${path.basename(p, '.md')}]]`);
 
-  if (!entityBullets.length) return;
+  if (!pages.length) return;
 
-  // Ensure the summary has an "Entities Mentioned" section to inject into.
-  // If it's missing entirely (fully truncated summary), add it before Notes or at end.
-  if (!/^## Entities Mentioned\s*$/m.test(summaryContent)) {
-    console.warn(`[syncSummaryEntities] Summary has no "Entities Mentioned" section — adding it.`);
-    // Insert before ## Notes if present, otherwise append
-    if (/^## Notes\s*$/m.test(summaryContent)) {
-      summaryContent = summaryContent.replace(/^## Notes\s*$/m, '## Entities Mentioned\n\n## Notes');
+  // Ensure the summary has the section to inject into. If it's missing
+  // entirely (fully truncated summary), add it before Notes or at end. The
+  // concepts section goes above Entities Mentioned (the template's order).
+  const ensureSection = (heading, before) => {
+    if (new RegExp(`^##\\s+${heading}\\s*$`, 'im').test(summaryContent)) return;
+    console.warn(`[syncSummaryEntities] Summary has no "${heading}" section — adding it.`);
+    const anchor = new RegExp(`^##\\s+${before}\\s*$`, 'im');
+    if (anchor.test(summaryContent)) {
+      summaryContent = summaryContent.replace(anchor, (m) => `## ${heading}\n\n${m}`);
     } else {
-      summaryContent = summaryContent.trimEnd() + '\n\n## Entities Mentioned\n';
+      summaryContent = summaryContent.trimEnd() + `\n\n## ${heading}\n`;
     }
+  };
+  if (entityBullets.length) ensureSection(SUMMARY_ENTITIES_HEADING, 'Notes');
+  if (conceptBullets.length) {
+    const hasEntities = new RegExp(`^##\\s+${SUMMARY_ENTITIES_HEADING}\\s*$`, 'im').test(summaryContent);
+    ensureSection(SUMMARY_CONCEPTS_HEADING, hasEntities ? SUMMARY_ENTITIES_HEADING : 'Notes');
   }
 
-  // Inject missing entity bullets (dedup logic inside injectBulletsIntoSection)
-  const updated = injectBulletsIntoSection(summaryContent, 'Entities Mentioned', entityBullets);
+  // Inject missing bullets (dedup logic inside injectBulletsIntoSection)
+  let updated = injectBulletsIntoSection(summaryContent, SUMMARY_ENTITIES_HEADING, entityBullets);
+  updated = injectBulletsIntoSection(updated, SUMMARY_CONCEPTS_HEADING, conceptBullets);
   const stripped = stripBlanksInBulletSections(updated);
-  const cleaned = deduplicateBulletSections(stripped);
+  let cleaned = deduplicateBulletSections(stripped);
+
+  // Then the same deterministic tidy Health offers for existing wikis: bullets
+  // the MODEL filed under the wrong section move to the one their page's folder
+  // names, and repeated lines go. Link-preserving by construction AND by its
+  // guard (a refused tidy leaves `cleaned` as it was).
+  const tidy = tidySummaryLinkSections(cleaned, await readEntityConceptSlugs(wikiDir));
+  if (tidy.changed) cleaned = tidy.content;
 
   await writeFileAtomic(summaryFile, cleaned, 'utf8');
 
-  // Now re-run backlink injection with the complete Entities Mentioned list
+  // Now re-run backlink injection with the complete lists (both sections)
   const summarySlug = path.basename(summaryPath, '.md');
   await injectSummaryBacklinks(summarySlug, cleaned, wikiDir);
 
-  const injected = entityBullets.length;
+  const injected = pages.length;
   // IMPORTANT: every diagnostic in this module MUST use console.error (stderr).
   // src/brain/files.js is imported directly by the MCP server (mcp/server.js)
   // which uses stdout exclusively for JSON-RPC. Any console.log here would
   // poison the JSON-RPC stream and break Claude Desktop with "Unexpected
   // token" parse errors. See v2.5.2 release notes.
-  console.error(`[syncSummaryEntities] Synced ${injected} entity slugs into ${summaryPath} and propagated backlinks.`);
+  console.error(`[syncSummaryEntities] Synced ${injected} entity/concept slugs into ${summaryPath} and propagated backlinks.`);
 }
 
 export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDir) {
@@ -595,13 +926,19 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
   const titleMatch = summaryContent.match(/^#\s+(.+)$/m);
   const title = titleMatch ? titleMatch[1].trim() : summarySlug;
 
-  const entityBullets = extractBulletsFromSection(summaryContent, 'Entities Mentioned');
+  // v3.84.0: BOTH link sections. Concept pages now live under "Concepts
+  // Introduced or Referenced" (syncSummaryEntities files each page by its
+  // folder), so reading Entities Mentioned alone would stop backlinking them.
+  const entityBullets = [
+    ...extractBulletsFromSection(summaryContent, SUMMARY_ENTITIES_HEADING),
+    ...extractBulletsFromSection(summaryContent, SUMMARY_CONCEPTS_HEADING),
+  ];
   if (!entityBullets.length) {
-    // Summary is missing its Entities Mentioned section — the LLM produced a
-    // truncated page. Log a warning so the issue is visible in the server console.
+    // Summary is missing both link sections — the LLM produced a truncated
+    // page. Log a warning so the issue is visible in the server console.
     console.warn(
       `[injectSummaryBacklinks] WARNING: summaries/${summarySlug}.md has no ` +
-      `"Entities Mentioned" section — no entity backlinks were injected. ` +
+      `"Entities Mentioned" or "Concepts Introduced or Referenced" links — no backlinks were injected. ` +
       `Consider re-ingesting the source or adding the section manually.`
     );
     return;
@@ -861,9 +1198,17 @@ function injectFrontmatter(content, relativePath, today) {
     ? tagsMatch[1].split(',').map(slugTag).filter(Boolean)
     : [];
 
-  // Extract inline Source: and Date Ingested: for summary pages
-  const sourceMatch = content.match(/^Source:\s*(.+)$/m);
-  const dateMatch   = content.match(/^Date Ingested:\s*(.+)$/m);
+  // Extract inline Source: and Date Ingested: for summary pages.
+  // v3.84.0: case-insensitive, and the bold forms models also emit
+  // (`**Source:** x`, `**Source**: x`) — the case-sensitive `^Source:` missed
+  // `source: x` and `**Source:** x`, so those summaries got no `source:`
+  // frontmatter and kept the label in the body. Summaries only: on other pages
+  // the historical case-sensitive strip below is unchanged. Never a bullet
+  // (`- **Source control:** …` is a fact, not a field).
+  const SOURCE_RE = /^\*{0,2}source\*{0,2}\s*:\s*(?:\*{2}\s*)?(.+)$/im;
+  const DATE_RE   = /^\*{0,2}date ingested\*{0,2}\s*:\s*(?:\*{2}\s*)?(.+)$/im;
+  const sourceMatch = type === 'summary' ? content.match(SOURCE_RE) : content.match(/^Source:\s*(.+)$/m);
+  const dateMatch   = type === 'summary' ? content.match(DATE_RE)   : content.match(/^Date Ingested:\s*(.+)$/m);
 
   // Merge extracted tags with the mandatory type tag, deduplicate
   const tags = [...new Set([...existing, `type/${type}`])];
@@ -872,19 +1217,33 @@ function injectFrontmatter(content, relativePath, today) {
   const yamlLines = ['---', `type: ${type}`];
   if (type === 'summary' && sourceMatch) {
     // Sanitise value: strip surrounding quotes the LLM may have added
-    const src = sourceMatch[1].trim().replace(/^["']|["']$/g, '');
+    const src = sourceMatch[1].trim().replace(/\*+$/, '').trim().replace(/^["']|["']$/g, '');
     yamlLines.push(`source: ${src}`);
   }
-  if (type === 'summary' && dateMatch) yamlLines.push(`date: ${dateMatch[1].trim()}`);
+  if (type === 'summary' && dateMatch) yamlLines.push(`date: ${dateMatch[1].trim().replace(/\*+$/, '').trim()}`);
   yamlLines.push(`tags: [${tags.join(', ')}]`, `created: ${today}`, '---', '');
 
   // Strip the now-redundant inline fields from the body
   let body = content
     .replace(/^Tags:\s*.+\n?/m, '')
-    .replace(/^Type:\s*.+\n?/m, '')
-    .replace(/^Source:\s*.+\n?/m, '')
-    .replace(/^Date Ingested:\s*.+\n?/m, '')
-    .trimStart();                        // remove any leading blank lines left behind
+    .replace(/^Type:\s*.+\n?/m, '');
+  if (type === 'summary') {
+    // Strip exactly the LINES the extraction above matched (whole-line
+    // equality, so the same text inside another line is never touched).
+    const drop = (text, matched) => {
+      if (!matched) return text;
+      const ls = text.split('\n');
+      const at = ls.indexOf(matched[0]);
+      if (at >= 0) ls.splice(at, 1);
+      return ls.join('\n');
+    };
+    body = drop(drop(body, sourceMatch), dateMatch);
+  } else {
+    body = body
+      .replace(/^Source:\s*.+\n?/m, '')
+      .replace(/^Date Ingested:\s*.+\n?/m, '');
+  }
+  body = body.trimStart();                        // remove any leading blank lines left behind
 
   return yamlLines.join('\n') + body;
 }
@@ -1232,6 +1591,14 @@ export async function writePage(domain, relativePath, content, opts = {}) {
 
       return match;
     });
+
+    // 5d. Dedup AGAIN, after the rewrites (v3.84.0). 5a ran before 5b-5c, and
+    //     those passes turn distinct lines into identical ones — `[[concepts/rag]]`
+    //     and `[[rag]]`, `[[rag.md]]` and `[[rag]]`, `[[dr-x]]` and `[[x]]` all
+    //     become `[[rag]]`/`[[x]]` AFTER the dedup had already let both through.
+    //     Measured: 200 identical lines across the maintainer's articles and
+    //     projects summaries. Same function, same key as 5a.
+    final = deduplicateBulletSections(final);
   }
 
   await writeFileAtomic(fullPath, final, 'utf8');

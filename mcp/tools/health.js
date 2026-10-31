@@ -42,10 +42,11 @@ import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 export const scanWikiHealthDefinition = {
   name: 'scan_wiki_health',
   description:
-    "Scan the user's second brain wiki for structural issues — broken links, orphan pages, duplicate entities, hyphenation drift, folder-prefix violations, missing backlinks. " +
+    "Scan the user's second brain wiki for structural issues — broken links, orphan pages, duplicate entities, hyphenation drift, folder-prefix violations, missing backlinks, untidy summary link lists. " +
     "Use this when the user asks to 'check my wiki', 'find problems', 'clean up the knowledge base', 'audit my second brain', 'see what's broken'. " +
     "Returns categorized issue lists. Issues the user has already dismissed (via the in-app Health panel, in the Domains view, or a previous MCP session) are filtered out automatically — counts.dismissed reports how many. " +
-    "Pair this with fix_wiki_issue to apply repairs. Auto-fixable types (folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, brokenLinks WITH a suggestedTarget) can be fixed without confirmation. " +
+    "Pair this with fix_wiki_issue to apply repairs. Auto-fixable types (folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, summaryLinkSections, brokenLinks WITH a suggestedTarget) can be fixed without confirmation. " +
+    "summaryLinkSections is one row per summary whose 'Entities Mentioned' / 'Concepts Introduced or Referenced' lists repeat a line or file a page under the wrong section ({ summary, duplicateLines, conceptsToMove, entitiesToMove, sampleConcepts, sampleEntities }); its fix is deterministic and keeps every link on the page. " +
     "Review-only types (orphans, brokenLinks WITHOUT a target) require human judgement — confirm with the user before fixing or dismissing. " +
     "indexDrift (index.md missing pages or carrying stale rows) is reported only: tell the user, never try to fix it — the user rebuilds index.md in the app, and until then get_index with view: \"pages\" lists every page from the files on disk.",
   inputSchema: {
@@ -76,6 +77,9 @@ export async function scanWikiHealthHandler(args, storage) {
   // Read defensively — a scan from a build without the field reports nothing.
   const indexDrift = Array.isArray(report.indexDrift) ? report.indexDrift : [];
   const appOnlyCount = indexDrift.length;
+  // v3.84.0 — summaryLinkSections: auto-fixable, one row per summary. Read
+  // defensively like indexDrift.
+  const summaryLinkSections = Array.isArray(report.summaryLinkSections) ? report.summaryLinkSections : [];
   const total =
     report.brokenLinks.length +
     report.orphans.length +
@@ -83,13 +87,15 @@ export async function scanWikiHealthHandler(args, storage) {
     report.crossFolderDupes.length +
     report.hyphenVariants.length +
     report.missingBacklinks.length +
+    summaryLinkSections.length +
     appOnlyCount;
 
   // Fixable count — broken links with a target are also auto-fixable.
   const autoFixableTypes = ['folderPrefixLinks', 'crossFolderDupes', 'hyphenVariants', 'missingBacklinks'];
   const autoFixableCount =
     report.brokenLinks.filter(b => b.suggestedTarget).length +
-    autoFixableTypes.reduce((sum, t) => sum + (report[t]?.length || 0), 0);
+    autoFixableTypes.reduce((sum, t) => sum + (report[t]?.length || 0), 0) +
+    summaryLinkSections.length;
   const reviewOnlyCount = total - autoFixableCount - appOnlyCount;
   const drift = indexDrift[0] || null;
   const driftSentence = drift ? indexDriftSentence(drift) : '';
@@ -115,6 +121,7 @@ export async function scanWikiHealthHandler(args, storage) {
     crossFolderDupes:  report.crossFolderDupes,
     hyphenVariants:    report.hyphenVariants,
     missingBacklinks:  report.missingBacklinks,
+    summaryLinkSections,
     indexDrift,
     report:
       total === 0
@@ -147,6 +154,7 @@ const FIXABLE_TYPES = new Set([
   'crossFolderDupes',
   'hyphenVariants',
   'missingBacklinks',
+  'summaryLinkSections', // v3.84.0 — deterministic summary link-list tidy
   'orphanLink',     // pseudo-type for AI orphan-rescue (Phase 2)
   'semanticDupe',   // pseudo-type for semantic-dupe merge (Phase 3, DESTRUCTIVE, gated)
 ]);
@@ -164,7 +172,8 @@ export const fixWikiIssueDefinition = {
   description:
     "Apply ONE fix to the user's second brain wiki. Use after scan_wiki_health to repair an issue you've decided to act on. " +
     "PASS BACK THE ISSUE OBJECT SCAN_WIKI_HEALTH GAVE YOU. Do not compose one, and do not substitute your own idea of the right target — the scanner's suggestions come from deterministic slug normalisation, yours would be a guess, and a wrong retarget writes a factually wrong link into every page that referenced it. " +
-    "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, and brokenLinks that already carry a suggestedTarget. " +
+    "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, summaryLinkSections, and brokenLinks that already carry a suggestedTarget. " +
+    "summaryLinkSections rewrites ONE summary's two link lists only: a page listed twice keeps one line, a concept page filed under 'Entities Mentioned' moves to 'Concepts Introduced or Referenced' (and an entity page the other way); every link stays on the page and nothing else on it changes — the fix refuses to write otherwise (reason: 'link-guard'). Pass { summary } from the scan row. " +
     "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the AI broken-link fixer in the app's Health panel (Domains view), which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
     "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed): tell the user which page disappears before you call them. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
@@ -198,6 +207,7 @@ export const fixWikiIssueDefinition = {
           " - crossFolderDupes: { keep, remove }\n" +
           " - hyphenVariants: { files: [...], suggestedSlug }\n" +
           " - missingBacklinks: { summary, entity, summarySlug }\n" +
+          " - summaryLinkSections: { summary } — e.g. 'summaries/foo.md'\n" +
           " - orphanLink: { orphanSlug, targetSlug, description }\n" +
           " - semanticDupe: { keepSlug, keepFolder, removeSlug, removeFolder, rationale }",
       },
@@ -389,6 +399,14 @@ function noOpReport(type, reason, domainName, missing) {
       return `REFUSED — nothing was written. orphanSlug and targetSlug are the same page; a page cannot rescue itself. Pick a different existing page to link FROM.`;
     case 'link-already-present':
       return `No changes applied — the target page already links to that orphan, so this issue really was already resolved. Re-run scan_wiki_health to confirm it has cleared.`;
+    case 'already-tidy':
+      return `No changes applied — that summary's link lists are already tidy, so this issue really was already resolved. Re-run scan_wiki_health to confirm it has cleared.`;
+    case 'summary-invalid':
+      return `REFUSED — nothing was written. summaryLinkSections needs { summary: "summaries/<file>.md" } — a page directly inside summaries/. Pass the row exactly as scan_wiki_health returned it.`;
+    case 'summary-not-found':
+      return `REFUSED — nothing was written. That summary no longer exists in '${domainName}'. Re-run scan_wiki_health.`;
+    case 'link-guard':
+      return `REFUSED — nothing was written. The tidy would have changed the set of links on the page, or text outside its two link lists, so the guard stopped it. This should never happen: tell the user, and leave the page as it is.`;
     case 'link-not-present':
       return `No changes applied — the target exists and the source file exists, but that [[link]] is no longer in it, so this issue really was already resolved. Re-run scan_wiki_health to confirm it has cleared.`;
     default:

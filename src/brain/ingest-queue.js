@@ -1868,6 +1868,7 @@ async function settleJob(jobId, patch) {
           crossFolderDupes: report.crossFolderDupes.length,
           hyphenVariants: report.hyphenVariants.length,
           missingBacklinks: report.missingBacklinks.length,
+          summaryLinkSections: (report.summaryLinkSections || []).length,
         },
       };
     } catch (err) {

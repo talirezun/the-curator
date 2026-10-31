@@ -33,7 +33,13 @@
  *
  * WHAT IS PINNED — an INVARIANT, deliberately, not a list of cases:
  *
- *   entitiesMentioned(summary)  ==  { pages holding a backlink to summary }
+ *   linkSections(summary)  ==  { pages holding a backlink to summary }
+ *
+ * v3.84.0: the left-hand side is BOTH link sections — "Entities Mentioned"
+ * and "Concepts Introduced or Referenced". syncSummaryEntities now files each
+ * written page by its FOLDER (entities → Entities Mentioned, concepts →
+ * Concepts Introduced or Referenced), and injectSummaryBacklinks reads both,
+ * so a concept page is still backlinked. §1 also pins the placement.
  *
  * SET EQUALITY in both directions, not one-directional containment. Testing
  * the invariant rather than the branch is what catches a door the fix was
@@ -187,12 +193,17 @@ function backlinkersOf(domain, summarySlug) {
   }
   return found;
 }
-/** The LEFT-HAND side: bare slugs listed under the summary's Entities Mentioned. */
-function mentionedIn(domain, summaryRel) {
+/** Bare slugs listed under ONE named section of a summary. */
+function listedUnder(domain, summaryRel, sectionName) {
   const content = readWiki(domain, summaryRel);
-  return new Set(
-    linkTargets(bulletsUnder(content, 'Entities Mentioned')).map(t => t.split('/').pop())
-  );
+  return new Set(linkTargets(bulletsUnder(content, sectionName)).map(t => t.split('/').pop()));
+}
+/** The LEFT-HAND side: bare slugs listed under either of the summary's two link sections. */
+function mentionedIn(domain, summaryRel) {
+  return new Set([
+    ...listedUnder(domain, summaryRel, 'Entities Mentioned'),
+    ...listedUnder(domain, summaryRel, 'Concepts Introduced or Referenced'),
+  ]);
 }
 
 try {
@@ -252,15 +263,19 @@ try {
     const backlinkers = backlinkersOf(d, SUMMARY_SLUG);
     const expected = new Set([...ENTITIES, ...CONCEPTS]);
 
-    // Requirement 1 — every ENTITY slug reaches Entities Mentioned.
+    // Requirement 1 — every ENTITY slug reaches Entities Mentioned, and only there.
+    const inEntities = listedUnder(d, SUMMARY, 'Entities Mentioned');
+    const inConcepts = listedUnder(d, SUMMARY, 'Concepts Introduced or Referenced');
     for (const s of ENTITIES) {
-      assert(mentioned.has(s), `#4.${s}: entity "${s}" appears in Entities Mentioned after the sync`);
+      assert(inEntities.has(s) && !inConcepts.has(s),
+        `#4.${s}: entity "${s}" is listed under Entities Mentioned (and not under Concepts) after the sync`);
     }
-    // Requirement 1, the half a refactor drops — CONCEPTS too. The filter in
-    // syncSummaryEntities is `entities/ || concepts/`; narrowing it to
-    // entities/ is a one-token edit with no other visible symptom.
+    // Requirement 1, the half a refactor drops — CONCEPTS too. v3.84.0: under
+    // "Concepts Introduced or Referenced", by FOLDER — including the concept
+    // the model itself had filed under Entities Mentioned ([[data-centres]]).
     for (const s of CONCEPTS) {
-      assert(mentioned.has(s), `#5.${s}: CONCEPT "${s}" appears in Entities Mentioned after the sync (concepts are explicitly in the contract)`);
+      assert(inConcepts.has(s) && !inEntities.has(s),
+        `#5.${s}: CONCEPT "${s}" is listed under Concepts Introduced or Referenced (and not under Entities Mentioned) after the sync`);
     }
     // Requirement 2 — bidirectionality.
     for (const s of [...ENTITIES, ...CONCEPTS]) {
@@ -268,11 +283,11 @@ try {
     }
     // Requirement 3 — SET EQUALITY, both directions.
     assert(setEq(mentioned, expected),
-      `#7: Entities Mentioned is EXACTLY the set of written entity+concept pages — no page missing, none invented\n       expected ${show(expected)}\n       actual   ${show(mentioned)}`);
+      `#7: the two link sections hold EXACTLY the set of written entity+concept pages — no page missing, none invented\n       expected ${show(expected)}\n       actual   ${show(mentioned)}`);
     assert(setEq(backlinkers, expected),
       `#8: the backlinking pages are EXACTLY the written entity+concept pages\n       expected ${show(expected)}\n       actual   ${show(backlinkers)}`);
     assert(setEq(mentioned, backlinkers),
-      `#9: THE INVARIANT — entitiesMentioned(summary) == { pages backlinking to summary }\n       mentioned   ${show(mentioned)}\n       backlinkers ${show(backlinkers)}`);
+      `#9: THE INVARIANT — linkSections(summary) == { pages backlinking to summary }\n       mentioned   ${show(mentioned)}\n       backlinkers ${show(backlinkers)}`);
   }
 
   // ══ §2 — IDEMPOTENCY ═══════════════════════════════════════════════════
@@ -409,6 +424,14 @@ try {
     const after = readWiki(d, 'concepts/only-a-concept.md');
     assert(linkTargets(bulletsUnder(after, 'Related')).includes('summaries/fallback-summary'),
       '#2: the concept page received its backlink via the concepts/ fallback');
+
+    // v3.84.0: a concept listed ONLY under "Concepts Introduced or Referenced"
+    // is backlinked too — that is where syncSummaryEntities now files it.
+    await writePage(d, 'concepts/listed-as-concept.md', pageWithRelated('Listed As Concept'));
+    await injectSummaryBacklinks('concepts-section-summary',
+      `# CS\n\n## Concepts Introduced or Referenced\n- [[listed-as-concept]]\n\n## Entities Mentioned\n`, wikiPath(d));
+    assert(linkTargets(bulletsUnder(readWiki(d, 'concepts/listed-as-concept.md'), 'Related')).includes('summaries/concepts-section-summary'),
+      '#3: a concept listed only under Concepts Introduced or Referenced receives its backlink (both sections are read)');
   }
 
   // ══ §7 — NEGATIVE CONTROL ══════════════════════════════════════════════

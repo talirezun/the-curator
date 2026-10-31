@@ -647,7 +647,7 @@ Health checks and repairs are also available through the MCP. Three tiers, encod
 
 | Tier | Issue types | Behaviour |
 |---|---|---|
-| **Auto-fix** | folder-prefix violations, missing backlinks, and broken links that the *scanner* already matched to a target | Claude applies these without asking — they have one clear right answer, and no page is removed. |
+| **Auto-fix** | folder-prefix violations, missing backlinks, summary link lists (v3.84.0 — a summary that lists a page twice or files it under the wrong heading; every link stays on the page), and broken links that the *scanner* already matched to a target | Claude applies these without asking — they have one clear right answer, and no page is removed. |
 | **Say what disappears first** | cross-folder duplicates, hyphen variants | These **merge two pages and delete one of them** (links pointing at the deleted page are repointed to the survivor). Since v3.9.1 the tool description tells Claude to name the page that disappears before calling. |
 | **Confirm first** | orphans, broken links *without* a scanner target | Claude shows you the issue, you say fix / dismiss / leave, Claude calls the tool. |
 | **Always preview** | semantic-duplicate merges (DESTRUCTIVE — deletes a file, rewrites links domain-wide) | Claude calls `fix_wiki_issue` with `preview: true` first to show the diff plan; only after your explicit yes can it call again with `preview: false` to commit. |

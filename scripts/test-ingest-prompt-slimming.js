@@ -1289,7 +1289,10 @@ section('19. Ingest warning wording states the true cause and the true cost');
     'and does not dress the salvage up as a success');
 
   // The genuinely actionable one keeps the literal text the UI keys on.
-  ok(/Stub page created for "\$\{singlePage\.path\}"/.test(src),
+  // v3.84.0: the warning is pushed after Phase 2's reserve pass (only for a
+  // stub no sibling batch could replace), so its variable is now `p`; the
+  // behaviour is asserted in test-ingest-batch-filter.js.
+  ok(/Stub page created for "\$\{(?:singlePage|p)\.path\}"/.test(src),
     'the stub warning keeps its literal "Stub page" text');
 }
 

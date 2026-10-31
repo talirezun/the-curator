@@ -117,9 +117,22 @@ section('2. the Phase 2 batch prompt — unchanged, and its prefix stable across
   // Recorded from v3.80.0 (ccdc68e) over these fixtures.
   eq(digest(p1.prefix), '9ebe04513c603696ba37f3d088da59bb5029ebed7beb75337e72086eb783733a',
     'the batch prefix is byte-identical to v3.80.0 (the rule did not leak into it)');
+  // v3.84.0 changed the SUFFIX only (after the cache breakpoint): it states the
+  // page count and that every other page — the summary included — is written
+  // in a separate request, and its JSON example shows this batch's own first
+  // path instead of a summary. Measured live on Flash-Lite 2.5 (40,939-char
+  // source): batches returning pages they were not asked for 5/6 → 0/7,
+  // output tokens 30,564 → 10,489. The PREFIX pin above stays at v3.80.0.
   eq(digest(buildBatchPrompt('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all)),
-    '0e48553c9341c27be4b827826050baa9059e2e5354c58c7150ff6c74f1faf5d0',
-    'the whole batch prompt is byte-identical to v3.80.0');
+    'f46cda962d565a5020471fb19c636da5ddfb78fe301acf2dd18d8aa23667d64c',
+    'the whole batch prompt is byte-identical to v3.84.0 (v3.80.0 prefix + the v3.84.0 suffix)');
+  eq(digest(p1.prefix + p1.suffix), digest(buildBatchPrompt('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all)),
+    'prefix + suffix still assembles the whole prompt');
+  ok(/Your reply must contain exactly 4 pages/.test(p1.suffix) && /exactly 1 page —/.test(p2.suffix),
+    'the suffix states this batch\'s page count (4, and 1 for the last batch)');
+  ok(p1.suffix.includes('"path": "summaries/s.md", "content"') && p2.suffix.includes('"path": "concepts/x.md", "content"')
+    && !p2.suffix.includes('example-source'),
+    'the JSON example shows the batch\'s OWN first path — no invented summary in a batch that was not asked for one');
   ok(!p1.prefix.includes(ANNOUNCED_PRODUCT_RULE) && !p1.suffix.includes(ANNOUNCED_PRODUCT_RULE),
     'the batch prompt does not carry the coverage rule — coverage is decided once, by the outline');
 }

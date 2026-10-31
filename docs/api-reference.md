@@ -1784,6 +1784,13 @@ curl http://localhost:3333/api/health/ai-tech
   "missingBacklinks": [
     { "summary": "summaries/foo.md", "entity": "entities/bar.md", "summarySlug": "foo" }
   ],
+  "summaryLinkSections": [
+    {
+      "summary": "summaries/foo.md",
+      "duplicateLines": 3, "conceptsToMove": 12, "entitiesToMove": 1,
+      "sampleConcepts": ["rag", "fine-tuning"], "sampleEntities": ["openai"]
+    }
+  ],
   "indexDrift": [
     {
       "missing": 2,
@@ -1813,7 +1820,8 @@ read.
 | `folderPrefixLinks` | ✓ | Links like `[[concepts/rag]]` that should be `[[rag]]`. |
 | `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |
 | `hyphenVariants` | ✓ | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). |
-| `missingBacklinks` | ✓ | Summary mentions an entity under "Entities Mentioned" but the entity's Related section doesn't link back. |
+| `missingBacklinks` | ✓ | Summary lists a page under "Entities Mentioned" **or** "Concepts Introduced or Referenced" (both since v3.84.0; before, only the first) but that page's Related section doesn't link back. One row per (summary, page). |
+| `summaryLinkSections` | ✓ | **New in v3.84.0.** One row per summary whose two link lists are untidy: `duplicateLines` bullet lines repeat another line in the same section (identical, or a plain `- [[x]]` whose target the section already lists), `conceptsToMove` bullets under "Entities Mentioned" link only to `concepts/` pages, `entitiesToMove` the reverse. `sampleConcepts` / `sampleEntities` hold up to 5 slugs each. Always an array (`[]` when clean and on read-only `shared-*` mirrors); counts in the persisted per-domain health mark. Fix body `{ "type": "summaryLinkSections", "issue": { "summary": "summaries/foo.md" } }`; free, deterministic, idempotent, not dismissible, runs last in `fix-all-safe` (`byType.summaryLinkSections`). Hard guard: nothing is written unless the page's set of link targets and every line outside the two sections are unchanged. Single-issue refusals (`fixed: 0` + `reason`): `summary-invalid`, `summary-not-found`, `already-tidy`, `link-guard` (a bug if it ever fires). **Upgrade note:** because `missingBacklinks` now also reads the concepts section, an existing wiki can show many more missing backlinks right after updating (measured: 4 → 338 and 0 → 512); they are auto-fixable. |
 | `indexDrift` | — | **New in v3.83.0.** `index.md` lacks a row for some pages on disk (`missing`), has rows whose target does not exist (`stale`), duplicate rows, or rows that can be repointed. Either `[]` or exactly **one** row — one issue however large the numbers. **Not auto-fixable and not dismissible**: `POST …/fix` and `…/fix-all` refuse it, and "Fix all safe" never touches it; the repair is `POST …/index/plan` then `…/index/apply` below. Matching is by canonical path (a bare `[[x]]` resolves to `entities/` then `concepts/`). `unlinkable` counts pages whose file name cannot be linked (leading/trailing space, or `\| [ ] #`); `unaddressable` counts concepts shadowed by an entity of the same name. `[]` on a read-only `shared-*` mirror, where `counts.indexCheck` is `"mirror"` and `counts.indexRows` is omitted (`"unreadable"` if `index.md` is a symlink out of the wiki). |
 
 ¹ `brokenLinks` are auto-fixable **only when `suggestedTarget` is non-null** — the fix rewrites the link in the source file to point at the suggestion. Broken links without a suggestion are review-only; `fix-all` silently skips them and `total` reflects the count of fixable (suggested) issues, not the total broken-link count.
@@ -2446,7 +2454,7 @@ v3.0.1-beta.17. DESTRUCTIVE (additive). SSE stream. Injects `- [[orphanSlug]] �
 
 ## POST /api/health/:domain/fix-all-safe
 
-v3.0.1-beta.17. DESTRUCTIVE. Runs every deterministic auto-fix type (`crossFolderDupes`, `hyphenVariants`, `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` with a suggested target) in a single locked pass. No LLM, no body. Domain is validated before the lock is acquired.
+v3.0.1-beta.17. DESTRUCTIVE. Runs every deterministic auto-fix type (`crossFolderDupes`, `hyphenVariants`, `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` with a suggested target, and — v3.84.0 — `summaryLinkSections`) in a single locked pass. No LLM, no body. Domain is validated before the lock is acquired.
 
 **Response** `200 OK`: `{ ok: true, fixed, total, byType: { <type>: { fixed, total } } }`. `409` if a write/update is already in progress.
 

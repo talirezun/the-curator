@@ -2809,6 +2809,7 @@ function classifyIngestEntry(w) {
     return { kind: 'fixed', iconName: 'checkAlt', color: 'var(--success-text)', label: 'Auto-fixed' };
   }
   if (lc.includes('keeping both') ||
+      lc.includes('did not follow the summary layout') ||
       lc.includes("don't resolve") ||
       lc.includes('do not resolve') ||
       lc.includes('stub page') ||

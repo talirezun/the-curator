@@ -9,9 +9,11 @@
 | `writePage(domain, relativePath, content)` | Normalise path → dedup passes A+B → cross-folder dedup (3b) → inject frontmatter → capture pre-write state → merge with existing → strip blanks → dedup bullets → strip folder-prefix links → normalize variant links (5c: entities + concepts + summaries, prefix-tolerant) → write → call injectSummaryBacklinks if summary → return `{canonPath, status, bytesBefore, bytesAfter, sectionsChanged, bulletsAdded}` (v2.5.0+; null on invalid input) |
 | `compileConversation(domain, conversationId, onProgress, opts)` | Conversation compile: load conversation → refuse if fewer than `MIN_USER_MESSAGES` user turns (**1** since v3.0.1-beta.15, was 2) → compute deterministic summary slug `<title>-YYYY-MM-DD-<4hex>` → refuse if file already exists at slug (idempotency guard) → **3-step LLM ladder `full → concise → summary-only`** (v3.0.1-beta.27), escalating ONLY on `isOutputTokenLimit(err)` or a JSON parse failure; any other LLM error (503/429/auth/network) surfaces immediately → write all pages via the same writePage pipeline → syncSummaryEntities → programmatic ensurePagesInIndex (no LLM-driven index regen) → appendLog → return `{ok, title, pagesWritten, changes, warnings}`. `opts.generateText` is a **test-only** seam (defaults to the real one) for driving the ladder offline. |
 | `ensurePagesInIndex(domain, entries, opts)` (`wiki-index.js`, v3.83.0) | The ONE index-maintenance call after every ingest, compile and MCP `compile_to_wiki` write: re-reads `index.md` NOW, derives a description (page summary, else H1 / first body line) for any touched page that lacks a row, adds rows by canonical-path coverage at their sorted position in Summaries / Entities / Concepts, and writes through `writePage`. Returns `null` (no write) when nothing was missing. Companions: `parseIndex`, `indexCoverage`, `rebuildIndexText` (used by Health's `planIndexRebuild` / `applyIndexRebuild`) |
-| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity AND concept slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks with the complete list |
-| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section; checks entities/ first, falls back to concepts/; creates the section if it doesn't exist |
-| `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities |
+| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: files every written page under the summary section its FOLDER names (entities/ → "Entities Mentioned", concepts/ → "Concepts Introduced or Referenced", v3.84.0; before that every page went under Entities Mentioned), runs `tidySummaryLinkSections` (moves a bullet the model misfiled, drops repeated lines), then re-fires injectSummaryBacklinks with the complete list |
+| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each page in "Entities Mentioned" AND "Concepts Introduced or Referenced" (both since v3.84.0), injects `[[summaries/slug]]` into that entity's Related section; checks entities/ first, falls back to concepts/; creates the section if it doesn't exist |
+| `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities. Since v3.84.0 `writePage` runs it a SECOND time after its link rewrites (folder-prefix, `.md`, variants — they turn distinct lines into identical ones), and a link-only bullet keys on its target with the alias stripped (`[[x]]` = `[[x\|Alias]]`) |
+| `tidySummaryLinkSections(content, {entitySlugs, conceptSlugs})` | v3.84.0. The one deterministic repair of a summary's two link sections, used by `syncSummaryEntities` (every write) and Health's `summaryLinkSections` fix (existing wikis). Moves bullets to the section their page's folder names, drops identical lines and plain `- [[x]]` lines whose target the section lists another way (aliased and prose lines are never dropped for being "the same link"). Refused by `summaryTidyGuard` unless the link-target set and every non-blank line outside the two sections are unchanged. Acts on the FIRST section with each heading only |
+| `dedupRewrittenBullets(before, after)` | v3.84.0. For Health's link rewriters (`fixBrokenLink`, the AI broken-link apply, the merge repoint): after a line-for-line rewrite, drops each CHANGED bullet that is now identical to another bullet in its section. Narrower than `deduplicateBulletSections` on purpose |
 | `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing ACCUMULATE sections are injected (Key Facts, Related, Entities Mentioned, etc.). **Prose preservation (v3.0.1-beta.15):** any `## ` PROSE section present in `existing` but ENTIRELY ABSENT from `incoming` is preserved (case-insensitive match), so a thin Compile/Curate edit can't wipe an existing page's Definition / Summary / Why It Matters. If `incoming` includes the heading, incoming wins (no duplication). Exported for unit testing. |
 | `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
@@ -45,10 +47,17 @@ POST /api/ingest
       5. Single-pass LLM call (< 15k chars input)
          OR multi-phase for large docs:
            Phase 1: outline → [{path, summary}]
-           Phase 2: batched content (BATCH_SIZE=4 pages/call)
+           Phase 2: batched content (BATCH_SIZE=4 pages/call). Each reply is
+           filtered by filterBatchReply (v3.84.0) to the pages THAT batch was
+           asked for; pages planned for another batch, and a summary the batch
+           was not asked for, are set aside as a reserve (used only if the
+           owning batch returned nothing or a stub). The suffix after the cache
+           breakpoint states the exact page count; the stable prefix is unchanged
            Phase 3: index update
-      5.5 Deduplicate result.pages — multi-phase can return the same path in
-           multiple batches; keep last occurrence per path (Map dedup)
+      5.5 Deduplicate result.pages — a page can still arrive twice (e.g. an
+           unplanned path); keep last occurrence per path (Map dedup). Since
+           v3.84.0 the common cause (every batch answering with every planned
+           page) is removed upstream by filterBatchReply
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
            a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md
@@ -76,7 +85,8 @@ POST /api/ingest
            Uses canonicalPaths (returned by writePage), NOT original LLM paths.
            This ensures redirected slugs (dr-tali-rezun → tali-rezun) appear
            correctly in the summary. Injects ALL entity AND concept slugs into
-           summary's "Entities Mentioned" → deduplicates → re-fires
+           summary's "Entities Mentioned" / "Concepts Introduced or Referenced"
+           by folder (v3.84.0) → tidies and deduplicates → re-fires
            injectSummaryBacklinks() with the complete list →
            ALL entities/concepts get bidirectional backlinks
       8. ensurePagesInIndex() - a row for EVERY page this ingest touched that
@@ -99,7 +109,9 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Title prefix ghost files: `dr-tali-rezun.md` | Occasional | Pass A strip + redirect in `writePage()` |
 | `[[dr-tali-rezun]]` written as a link in page content | Occasional | Step 5c in `writePage()` normalizes all variant links at write time |
 | Folder-prefix links: `[[concepts/rag]]` instead of `[[rag]]` | Common | `writePage()` step h strips `entities/` and `concepts/` prefixes |
-| Multi-phase returns same page path in multiple batches | Occasional | `result.pages` deduped in `ingest.js` before the write loop |
+| Multi-phase returns pages the batch was not asked for — every planned page, the summary included, in every batch (Flash-Lite 2.5: 4 of 5 batches; 33 Key Takeaways instead of ~6; a real summary held 935) | Model-dependent | `filterBatchReply` in `ingest.js` keeps each batch's own pages (v3.84.0); the `result.pages` dedup remains as a backstop |
+| Summary written without a `# Title`, a source, or a Key Takeaways section (labels instead of headings) | Model-dependent | `summaryShapeWarning` reads the saved summary back and warns → "For review"; the filename is supplied as `Source:` when the model wrote none (v3.84.0) |
+| Two different sources map to one summary slug (80-char cut, non-ASCII dropped) | Rare | `resolveSummaryPath` gives the second a `-<6 hex of sha256(filename)>` slug and warns "keeping both" (v3.84.0) |
 | Duplicate bullets in sections (from multi-write edge cases) | Occasional | `deduplicateBulletSections()` safety net on every write |
 | Entity has no Related section — backlinks silently dropped | New entities | `injectBulletsIntoSection()` now creates the section if it doesn't exist |
 | Summary truncated — missing "Entities Mentioned" section entirely | Occasional (large docs) | `syncSummaryEntities()` adds the section if missing |

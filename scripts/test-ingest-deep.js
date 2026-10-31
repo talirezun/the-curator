@@ -31,10 +31,13 @@
  *   Q1.  Atomic-write contract     — no zero-byte files, no orphan .tmp-*
  *   Q2.  Frontmatter present       — every page has YAML frontmatter block
  *   Q3.  Type tag present          — entity/concept/summary type tag set
- *   Q4.  Summary structure         — Entities Mentioned section populated
+ *   Q4.  Summary structure         — a link section (Entities Mentioned or
+ *                                    Concepts Introduced or Referenced) populated
  *   Q5.  Wikilink resolution       — broken-link rate under an absolute ceiling
  *   Q6.  syncSummaryEntities       — a/ every entity+concept page THIS ingest
- *                                    wrote is listed in the summary;
+ *                                    wrote is listed in the summary, in the
+ *                                    section its folder names (v3.84.0), and
+ *                                    in at least one of the two (cross-check);
  *                                    b/ each carries the [[summaries/x]]
  *                                    backlink; c/ every resolvable bullet is
  *                                    consistent with its page
@@ -235,6 +238,12 @@ function extractFrontmatter(content) {
   return fm;
 }
 
+// The two summary link-section headings, read from files.js in main() (the
+// module is imported lazily, after the env isolation above is in place) so the
+// suite and the writer can never disagree on the spelling.
+let SUMMARY_ENTITIES_HEADING = null;
+let SUMMARY_CONCEPTS_HEADING = null;
+
 // Per-scenario ingestion-quality measurements, printed as a table at the end.
 // These are REPORTED, not gated (see the note beside the report).
 const qualityLedger = [];
@@ -373,22 +382,33 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
     assertEq(sc, mismatched, 0, 'Q3: every page has the correct type/* tag for its folder');
   }
 
-  // Q4. Summary structure — Entities Mentioned populated
+  // Q4. Summary structure — its link sections populated
+  //
+  // v3.84.0 changed the invariant ON PURPOSE: syncSummaryEntities files each
+  // written page by its FOLDER — entities/ under "Entities Mentioned",
+  // concepts/ under "Concepts Introduced or Referenced" — and only adds the
+  // section it has bullets for, and the tidy moves a concept bullet the model
+  // filed under Entities Mentioned to the concepts section. A summary whose
+  // ingests wrote only concept pages (SYN-10's 09b, measured) legitimately has
+  // no "Entities Mentioned" section. So: at least ONE of the two sections
+  // exists, and together they hold >= 1 bullet. Q6a then pins which section
+  // each page this ingest wrote landed in.
   {
     const summaries = pages.filter(p => p.rel.startsWith('summaries' + path.sep));
     for (const s of summaries) {
       const content = readFileSync(s.abs, 'utf8');
-      const hasSection = extractSectionBody(content, 'Entities Mentioned') !== null;
+      const ent = extractSectionBody(content, SUMMARY_ENTITIES_HEADING);
+      const con = extractSectionBody(content, SUMMARY_CONCEPTS_HEADING);
+      const hasSection = ent !== null || con !== null;
       assertTrue(sc, hasSection,
-        `Q4: summary ${s.name} has "Entities Mentioned" section`);
+        `Q4: summary ${s.name} has an "${SUMMARY_ENTITIES_HEADING}" or "${SUMMARY_CONCEPTS_HEADING}" section`);
       if (hasSection) {
-        const block = extractSectionBody(content, 'Entities Mentioned') || '';
-        const bullets = block.match(/^- /gm) || [];
+        const bullets = ((ent || '') + '\n' + (con || '')).match(/^- /gm) || [];
         // HARD: syncSummaryEntities injects a bullet for every entity/concept
-        // page the ingest wrote, so an empty section means the reconciliation
+        // page the ingest wrote, so empty sections mean the reconciliation
         // did not run. Deterministic — not an LLM-judgement call.
         assertTrue(sc, bullets.length > 0,
-          `Q4b: summary ${s.name} "Entities Mentioned" has ≥1 bullet`);
+          `Q4b: summary ${s.name} link sections hold >= 1 bullet (entities section: ${ent === null ? 'absent' : 'present'}, concepts section: ${con === null ? 'absent' : 'present'})`);
       }
     }
   }
@@ -487,23 +507,59 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
 
       if (writtenNodes.length > 0 && existsSync(summaryAbs)) {
         const sContent = readFileSync(summaryAbs, 'utf8');
-        const sectBody = extractSectionBody(sContent, 'Entities Mentioned');
-        const listed = new Set();
-        if (sectBody !== null) {
-          for (const line of sectBody.split('\n')) {
-            const lm = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
-            if (lm) listed.add(normSlugKey(lm[1].trim()));
+        const listedIn = (heading) => {
+          const set = new Set();
+          const body = extractSectionBody(sContent, heading);
+          if (body !== null) {
+            for (const line of body.split('\n')) {
+              const lm = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
+              if (lm) set.add(normSlugKey(lm[1].trim()));
+            }
           }
-        }
+          return set;
+        };
+        const listedEnt = listedIn(SUMMARY_ENTITIES_HEADING);
+        const listedCon = listedIn(SUMMARY_CONCEPTS_HEADING);
+        const entityPages = writtenNodes.filter(p => p.startsWith('entities/'));
+        const conceptPages = writtenNodes.filter(p => p.startsWith('concepts/'));
+        console.log(`    · this ingest wrote ${entityPages.length} entity + ${conceptPages.length} concept page(s); ` +
+          `the summary lists ${listedEnt.size} under "${SUMMARY_ENTITIES_HEADING}", ${listedCon.size} under "${SUMMARY_CONCEPTS_HEADING}"`);
 
         // Q6a — every entity/concept page written by THIS ingest is listed in
-        // the summary's Entities Mentioned. This is exactly what
-        // syncSummaryEntities promises (writtenPaths → bullets).
+        // the summary section its FOLDER names (v3.84.0; until then every page
+        // went under Entities Mentioned, and this assertion said so). This is
+        // exactly what syncSummaryEntities promises (writtenPaths -> bullets,
+        // by folder). One exception, the Health classification rule
+        // tidySummaryLinkSections applies: a bare [[x]] resolves to entities/
+        // first, so a concept page whose slug ALSO exists in entities/ belongs
+        // under Entities Mentioned.
+        const expectedHeading = (p) => {
+          if (p.startsWith('entities/')) return SUMMARY_ENTITIES_HEADING;
+          const slug = path.basename(p, '.md');
+          return existsSync(path.join(wikiDir, 'entities', slug + '.md'))
+            ? SUMMARY_ENTITIES_HEADING : SUMMARY_CONCEPTS_HEADING;
+        };
+        const notInSection = writtenNodes.filter(p => {
+          const key = normSlugKey(path.basename(p, '.md'));
+          return !(expectedHeading(p) === SUMMARY_ENTITIES_HEADING ? listedEnt : listedCon).has(key);
+        });
+        const misEnt = notInSection.filter(p => p.startsWith('entities/'));
+        const misCon = notInSection.filter(p => p.startsWith('concepts/'));
+        assertEq(sc, misEnt.length, 0,
+          `Q6a: all ${entityPages.length} entity pages written this ingest are in "${SUMMARY_ENTITIES_HEADING}"`);
+        assertEq(sc, misCon.length, 0,
+          `Q6a: all ${conceptPages.length} concept pages written this ingest are in "${SUMMARY_CONCEPTS_HEADING}" (or "${SUMMARY_ENTITIES_HEADING}" when the slug is also an entity)`);
+        if (notInSection.length > 0) {
+          console.log(`    └─ not in their section: ${notInSection.slice(0, 8).join(', ')}${notInSection.length > 8 ? ` (+${notInSection.length - 8})` : ''}`);
+        }
+
+        // Q6a-x — the dumb cross-check, independent of the folder rule above:
+        // no written page is lost from BOTH sections.
         const notListed = writtenNodes
           .map(p => path.basename(p, '.md'))
-          .filter(slug => !listed.has(normSlugKey(slug)));
+          .filter(slug => !listedEnt.has(normSlugKey(slug)) && !listedCon.has(normSlugKey(slug)));
         assertEq(sc, notListed.length, 0,
-          `Q6a: all ${writtenNodes.length} entity/concept pages written this ingest are in "Entities Mentioned"`);
+          `Q6a-x: all ${writtenNodes.length} entity/concept pages written this ingest appear in at least one of the two link sections`);
         if (notListed.length > 0) {
           console.log(`    └─ missing from summary: ${notListed.slice(0, 8).join(', ')}${notListed.length > 8 ? ` (+${notListed.length - 8})` : ''}`);
         }
@@ -535,8 +591,11 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
       const samples = [];
       for (const s of summaries) {
         const sContent = readFileSync(s.abs, 'utf8');
-        const sectBody = extractSectionBody(sContent, 'Entities Mentioned');
-        if (sectBody === null) continue;
+        // v3.84.0: both link sections (injectSummaryBacklinks reads both).
+        const bodies = [SUMMARY_ENTITIES_HEADING, SUMMARY_CONCEPTS_HEADING]
+          .map(h => extractSectionBody(sContent, h)).filter(b => b !== null);
+        if (!bodies.length) continue;
+        const sectBody = bodies.join('\n');
         const summaryFolderSlug = `summaries/${s.name.replace(/\.md$/, '')}`;
         for (const line of sectBody.split('\n')) {
           const lm = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
@@ -552,7 +611,7 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
         }
       }
       assertEq(sc, missing, 0,
-        `Q6c: every resolvable "Entities Mentioned" bullet has its backlink (${checked} checked)`);
+        `Q6c: every resolvable "${SUMMARY_ENTITIES_HEADING}" / "${SUMMARY_CONCEPTS_HEADING}" bullet has its backlink (${checked} checked)`);
       if (missing > 0) console.log(`    └─ ${samples.join('; ')}`);
     }
   }
@@ -741,6 +800,10 @@ async function createTestDomain(domainName) {
 // ── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
+  ({ SUMMARY_ENTITIES_HEADING, SUMMARY_CONCEPTS_HEADING } = await import('../src/brain/files.js'));
+  if (!SUMMARY_ENTITIES_HEADING || !SUMMARY_CONCEPTS_HEADING) {
+    throw new Error('files.js no longer exports SUMMARY_ENTITIES_HEADING / SUMMARY_CONCEPTS_HEADING');
+  }
   console.log('═══════════════════════════════════════════════════════════════════════');
   console.log('  In-depth ingest pipeline stress test');
   console.log(`  DOMAINS_PATH = ${tempRoot}`);
