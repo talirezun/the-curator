@@ -663,7 +663,7 @@ const E = {
     lead: '**Connect a client** shows whether your agent apps can reach your wiki.',
     points: [
       { icon: 'computer', text: 'The Curator need not be running; your agent app starts the bridge.' },
-      { icon: 'refresh', text: 'Install in your tools adds or updates the entry for each tool, with a preview first.' },
+      { icon: 'refresh', text: 'Install in your tools adds the entry for you, after a preview.' },
       { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
