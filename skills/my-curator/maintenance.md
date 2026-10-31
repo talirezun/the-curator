@@ -13,7 +13,7 @@ the four safety rules that govern *whether* to call anything are in [SKILL.md](S
 3. List the review-only ones; ask the user one by one (or in batch)
 4. For each user-approved fix → fix_wiki_issue
    — brokenLinks / folderPrefixLinks / crossFolderDupes / hyphenVariants /
-     missingBacklinks: pass the scan object through unchanged
+     missingBacklinks / summaryLinkSections: pass the scan object through unchanged
    — an ORPHAN: type="orphanLink" with a composed
      {orphanSlug, targetSlug, description}, target agreed with the user
 5. For each user dismissal → dismiss_wiki_issue (persists across scans + machines)
@@ -23,8 +23,8 @@ the four safety rules that govern *whether* to call anything are in [SKILL.md](S
 ## `type` is the scan CATEGORY, not a field on the issue
 
 `scan_wiki_health` returns issues grouped under `brokenLinks`, `orphans`,
-`folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks` — and the
-individual objects do **not** carry that name. (A `folderPrefixLinks` issue is just
+`folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks`,
+`summaryLinkSections` — and the individual objects do **not** carry that name. (A `folderPrefixLinks` issue is just
 `{sourceFile, linkText}`; an `orphans` issue *does* have a `type` field, but it holds the
 page kind — `"entity"` / `"concept"` — which is not a fixable issue type.) Pass the key you
 found the issue under, and pass the issue object through unchanged:
@@ -35,9 +35,26 @@ fix_wiki_issue(domain, type="folderPrefixLinks", issue=<the object>)
 
 **`orphans` is NOT a `fix_wiki_issue` type.** It is a scan category and a
 `dismiss_wiki_issue` type, and those are the only two places the word is accepted.
-`fix_wiki_issue` takes exactly seven types — `brokenLinks`, `folderPrefixLinks`,
-`crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `orphanLink`, `semanticDupe` —
-and passing `"orphans"` is rejected outright.
+`fix_wiki_issue` takes exactly eight types — `brokenLinks`, `folderPrefixLinks`,
+`crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `summaryLinkSections`,
+`orphanLink`, `semanticDupe` — and passing `"orphans"` is rejected outright.
+
+## `summaryLinkSections` — a summary's two link lists
+
+One row per summary whose **Entities Mentioned** / **Concepts Introduced or Referenced**
+lists need tidying: `{summary, duplicateLines, conceptsToMove, entitiesToMove,
+sampleConcepts, sampleEntities}`. The fix is deterministic and free: a page listed twice
+keeps one line, a concept page filed under Entities Mentioned moves to Concepts
+Introduced or Referenced (an entity page the other way — the page's folder decides), and
+nothing else on the page changes. It is auto-fixable — pass the row through unchanged:
+
+```
+fix_wiki_issue(domain, type="summaryLinkSections", issue={ summary: "summaries/foo.md", … })
+```
+
+The fix refuses to write unless every link target on the page, and every line outside the
+two lists, is exactly the same afterwards (`reason: "link-guard"` — report it; it should
+never happen). It cannot be dismissed, and on a `shared-*` mirror the scan never reports it.
 
 ## `orphanLink` is the one issue you compose rather than pass through
 
@@ -78,10 +95,11 @@ version/polarity safety gate before writing.
 
 Never read `fixed: 0` as "already fine". It has several causes and the response tells you
 which one in a `reason` field, with the prose in `report`. Only `link-not-present` and
-`link-already-present` mean the issue really had already been resolved. Everything else —
-`target-not-found`, `orphan-fields-missing`, `no-suggested-target`, `orphan-not-found`,
-`self-link`, `slug-shape-invalid`, `source-file-not-found` — means **nothing was written
-and the issue is still there**; the `report` names the next action. Do not count such a
+`link-already-present` (and `already-tidy` for `summaryLinkSections`) mean the issue really
+had already been resolved. Everything else — `target-not-found`, `orphan-fields-missing`,
+`no-suggested-target`, `orphan-not-found`, `self-link`, `slug-shape-invalid`,
+`source-file-not-found`, `summary-invalid`, `summary-not-found`, `link-guard` — means
+**nothing was written and the issue is still there**; the `report` names the next action. Do not count such a
 call as a success, and do not report a clean sweep to the user on the strength of it.
 
 ## `indexDrift` is app-only
