@@ -588,6 +588,24 @@ export function getMcpUsageLogPath() {
  *
  * Pure resolver — never creates the file or its directory.
  */
+/**
+ * The MCP INSTALL MANIFEST (v3.85.0) — one row per write the app made to ANOTHER
+ * tool's MCP config ("My Curator in your tools"): `{at, harness, file, action,
+ * shaBefore, shaAfter, backup}`, newest 200 kept. It is what lets Restore put a
+ * tool's original file back, and only while that file is still exactly what
+ * the app left (`shaAfter`).
+ *
+ * Machine-local and OUTSIDE `domains/` for the usage log's reasons: it names
+ * absolute paths on THIS Mac, so it must never sync or be committed (repo mode
+ * puts user data in the checkout — `.gitignore` lists it). Honours
+ * CURATOR_TEST_USER_DATA_DIR through userDataPath().
+ *
+ * Pure resolver — never creates the file.
+ */
+export function getMcpInstallManifestPath() {
+  return userDataPath('.mcp-installs.json');
+}
+
 export function getHookLogPath() {
   return userDataPath('.hook-activity.jsonl');
 }

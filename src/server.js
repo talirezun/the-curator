@@ -13,6 +13,7 @@ import syncRouter from './routes/sync.js';
 import configRouter, { maybeAutoSyncOpenRouter } from './routes/config.js';
 import healthRouter from './routes/health.js';
 import mcpRouter    from './routes/mcp.js';
+import mcpInstallRouter from './routes/mcp-install.js';
 import compileRouter from './routes/compile.js';
 import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
@@ -202,6 +203,9 @@ app.use('/api/chat', chatRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/config',  configRouter);
 app.use('/api/health',  healthRouter);
+// v3.85.0 — "My Curator in your tools": writes OTHER tools' MCP configs, so its
+// POSTs carry their own stricter gate (Origin REQUIRED) — see the router.
+app.use('/api/mcp/install', mcpInstallRouter);
 app.use('/api/mcp',     mcpRouter);
 app.use('/api/compile', compileRouter);
 app.use('/api/sharedbrain', sharedbrainRouter);
