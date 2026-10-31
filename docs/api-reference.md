@@ -2757,9 +2757,16 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 ## My Curator MCP endpoints (`/api/mcp`)
 
-These back the **Settings → MCP bridge** wizard. They inspect and help assemble the Claude Desktop
-config; **none of them writes `claude_desktop_config.json`** — the user always pastes the snippet
-themselves. `CLAUDE_CONFIG_PATH` is a module constant in `src/routes/mcp.js` with no override seam.
+These back **Settings → MCP bridge**. The routes in this table inspect the bridge and the Claude
+Desktop config; **none of them writes another application's file**, with one exception that lives in
+its own section below — the [one-click install routes](#one-click-install-routes-apimcpinstall-v3850),
+which add, update or remove only the `my-curator` entry. `CLAUDE_CONFIG_PATH` is a module constant in
+`src/routes/mcp.js` with no override seam.
+
+> **Retired wizard (v3.85.0).** The three-step MCP setup wizard is gone from the app. Its three
+> routes — `GET /api/mcp/claude-config`, `GET /api/mcp/claude-full-config` and
+> `POST /api/mcp/write-config` — are **no longer called by the app; kept for compatibility**, and
+> behave exactly as documented in the table.
 
 The config entry these endpoints describe is always:
 
@@ -2785,16 +2792,140 @@ that setter, so its own resolution is unchanged. See
 | Path | Description |
 |---|---|
 | `GET /api/mcp/config` | Install status. `{ok, mcp_server_path, mcp_server_exists, mcp_server_name, domains_dir, domains_dir_exists, node_binary, claude_config_path, claude_config_exists, claude_config_parse_error, installed, stale}`. `ok` is `mcp_server_exists && domains_dir_exists`. `installed` is true when the config already has an `mcpServers["my-curator"]` entry; `stale` is true when that entry's `command`/`args` differ from what this install would generate (the usual cause is a moved domains folder). Both are forced `false` when `claude_config_parse_error` is true — an unreadable file cannot be inspected. |
-| `GET /api/mcp/claude-config` | The entry-only snippet, nothing else. Always valid, in every state. |
-| `GET /api/mcp/claude-full-config` | Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
+| `GET /api/mcp/claude-config` | *(Legacy — no longer called by the app; kept for compatibility.)* The entry-only snippet, nothing else. Always valid, in every state. |
+| `GET /api/mcp/claude-full-config` | *(Legacy — no longer called by the app; kept for compatibility.)* Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
 | `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
-| `POST /api/mcp/write-config` | **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
+| `POST /api/mcp/write-config` | *(Legacy — no longer called by the app; kept for compatibility.)* **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
 | `GET /api/mcp/config` *(two additive fields, v3.64.0)* | `bridge_processes: {checked, reason, running, stale: [{pid, startedAt, ageMs}], codeChangedAt, serverPath}` and `bridge_stale_remedy`. A **read-only** reading, taken from `ps` over a fixed argv with no shell: it lists processes running *this install's own* `mcp/server.js` and calls one **stale** when it started before the code on disk last changed. An MCP client keeps its bridge alive until the client itself is restarted, so a bridge launched before an update carries on serving the tools it was launched with — measured on one machine as two days and five updates, offering 22 tools while the files on disk offered 24. **`checked: false` means the reading was not taken** (not macOS, `ps` unavailable, an error) and carries `reason`; it must never be rendered as "no stale bridge". `bridge_stale_remedy` names the act and the actor — restart the app that launched it, usually Claude Desktop — and deliberately does not name The Curator, because restarting The Curator is exactly what does not help. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
 | `GET /api/mcp/usage` *(v3.60.0)* | Backs **Settings → MCP bridge → The tool map**. Reads the local, content-free call log at `getMcpUsageLogPath()` (`<user-data>/.mcp-usage.jsonl`, never under `domains/`) and returns per-tool aggregates plus two session-level readings. Cheap by construction — the log is capped at ~1 MB before it rotates, so a full parse on every call stays inexpensive; the route additionally caches its result by the log file's mtime + size. See the response shape below. |
 
 | `POST /api/mcp/exercise` *(v3.61.0)* | Backs the **Test all N tools** button on the tool map. Runs `exerciseAllTools()` (`src/brain/mcp-exercise.js`): seeds a throwaway fixture domain under an OS temp dir, starts `mcp/server.js` through the SAME launch-line builder `POST /self-test` uses, calls every tool in `mcp/tools/catalogue.js` once in a fixed order with deterministic arguments, and removes the fixture in `finally`. The child is pinned to the fixture (`--domains-path` for reads, `CURATOR_TEST_DOMAINS_DIR` for writes), so the user's `domains/` is neither read nor written; provider and GitHub credentials are stripped from its environment. Lines land in the **real** `getMcpUsageLogPath()` with `via: "self-test"`. No tool is driven on an arm that makes an LLM or network call, so a run costs nothing and needs no key. **At most one run at a time** — a concurrent request is refused `409 {ok:false, reason:"busy"}` — and a 60 s route wall clock over the driver's own 50 s answers `504 {reason:"timeout"}`. Guarded by the global cross-origin middleware like every mutating route. |
+
+### One-click install routes (`/api/mcp/install`, v3.85.0)
+
+Back **Settings › MCP bridge › 5 Tools on this Mac**. They add, update or remove the `my-curator`
+entry in a tool's own user-level MCP file, and nothing else (the rule is in
+[decisions-app.md](dev/decisions-app.md#security-credentials-and-user-data-paths)). Install-capable
+tools: `claude-desktop`, `cursor`, `antigravity` — the fixed allow-list; every other tool is
+copy-only. **macOS only**: on any other platform the POSTs answer 409 `platform_unsupported` and
+every status row is `manual`. Source: `src/routes/mcp-install.js`, `src/brain/mcp-install.js`,
+`src/brain/harness-detect.js`.
+
+| Route | What it does |
+|---|---|
+| `GET /api/mcp/install/status` | Read-only; no `Origin` needed; writes nothing. Called when the section loads and on **Check again**, never on a poll. |
+| `POST /api/mcp/install/plan` | Writes nothing. Returns the exact plan and a single-use token. |
+| `POST /api/mcp/install/apply` | Writes. Takes only the token from a plan. |
+
+**The gate on both POSTs.** An `Origin` header is **required** and must be the app's own loopback
+origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **403** `origin_required`
+(unlike the global guard, a request with no `Origin` is refused here); any other → **403**
+`origin_refused`. Non-macOS → **409** `platform_unsupported`. Nothing is ever read from a client path.
+
+#### `GET /api/mcp/install/status`
+
+```jsonc
+{
+  "platform": "darwin", "writable": true,
+  "launch": { "style": "node-script" /* or "launcher-script" */, "command": "…", "argsCount": 3 },
+  "tools": [{
+    "id": "cursor", "label": "Cursor",
+    "status": "connected" | "needs-update" | "not-installed" | "cant-read" | "manual",
+    "installer": "file" | "cli" | "manual",
+    "detected": { "by": "app" | "cli" | "config" | null, "path": "~/…" | null },
+    "running":  { "checked": true, "running": false },   // checked:false is "unknown", not "not running"
+    "files": [{ "file": "/abs/path", "display": "~/.cursor/mcp.json",
+                "role": "documented" | "observed",
+                "action": "add" | "update" | "none",
+                "state": "missing" | "no-entry" | "connected" | "differs" | "cant-read",
+                "reason": "<code>" | null }],
+    "reason": { "code": "…", "message": "…" } | null,
+    "note": "…" | null, "usedAt": "<ISO>" | null,   // usedAt labels a row; it never changes a status
+    "restartHint": "…" | null,
+    "restorable": true | false                       // a backup exists and the file is still what we wrote
+  }],
+  "notFound": [{ "id": "…", "label": "…" }],          // tools not detected on this Mac
+  "manualSnippets": { "<id>": "<text to copy>" }
+}
+```
+
+`manual` rows (a CLI or manual tool, or any non-macOS platform) carry `files: []`.
+
+#### `POST /api/mcp/install/plan`
+
+Body, exactly: `{"action": "install" | "remove" | "restore", "ids": ["cursor", …]}`. Any other key,
+a path, an entry, an id outside the allow-list, or an empty `ids` → **400** `bad_request`.
+
+```jsonc
+{ "ok": true, "token": "<48 hex>", "expiresAt": "<ISO, now + 10 min>", "action": "install",
+  "items": [{
+    "id": "cursor", "label": "Cursor", "file": "~/.cursor/mcp.json", "display": "~/.cursor/mcp.json",
+    "action": "add" | "update" | "remove" | "restore" | "none",
+    "basis": "<sha256 of the file now>" | "absent" | null,
+    "entryText": "<JSON of OUR entry only>" | null,
+    "preserved": ["other-server-name"],   // names only, never another server's values
+    "kept": ["env"],                      // keys carried over from our old entry; values not echoed
+    "backupWillBe": "~/.cursor/mcp.json.curator-backup-<UTC time of apply>" | null,
+    "refused": { "reason": "<code>", "message": "…" },            // only on a refused item
+    "restoreFrom": "~/…", "restoreFromAt": "<ISO>"                // restore items only
+  }] }
+```
+
+A tool whose files all need nothing comes back as one item with `action: "none"`. The real backup
+name is on the apply result; `backupWillBe` is a pattern, because apply re-plans from disk a moment
+later.
+
+#### `POST /api/mcp/install/apply`
+
+Body, exactly: `{"token": "<from plan>"}`. The token is single-use (consumed whatever happens next),
+lives 10 minutes, is held in memory, and is bound to the file hashes that were planned. Apply
+re-plans from disk and writes nothing for an item whose file changed.
+
+```jsonc
+{ "ok": true, "action": "install",
+  "results": [{
+    "id": "cursor", "label": "Cursor", "file": "~/.cursor/mcp.json", "action": "add",
+    "outcome": "written" | "created" | "unchanged" | "refused",
+    "reason": "<code>",                    // refused only
+    "message": "Cursor — added to ~/.cursor/mcp.json · original kept",
+    "backup": "~/.cursor/mcp.json.curator-backup-20261031T095800Z",   // when a copy was made
+    "restart": "Quit and reopen Cursor" | null } ] }
+```
+
+Errors are **per item** — one bad file never turns the whole call into a 500.
+
+**Route-level errors**
+
+| Status | `reason` | Meaning |
+|---|---|---|
+| 400 | `bad_request` | Body is not exactly the documented shape, or an id is not on the allow-list |
+| 403 | `origin_required` · `origin_refused` | Missing or foreign `Origin` header |
+| 409 | `platform_unsupported` | Not macOS |
+| 409 | `busy` | An install is already running (one apply at a time) |
+| 409 | `token_invalid` · `token_expired` | Unknown or already-used token · older than 10 minutes — plan again |
+| 500 | `plan_failed` · `apply_failed` | Unexpected only |
+
+**Per-item refusal codes** (`refused.reason` on a plan item, `reason` on a result)
+
+| Code | Why the file is left alone |
+|---|---|
+| `symlink` · `not_regular` · `unopenable` · `too_large` (over 4 MB) | The file cannot be safely read as a plain file |
+| `corrupt` · `jsonc` | Not valid JSON, or it has comments (JSONC) that a rewrite would lose |
+| `not_object` · `servers_not_object` | The document, or its server list, is not a JSON object |
+| `duplicate_key` · `lossy_number` | A repeated key, or an integer beyond 2^53, would be silently changed by a rewrite |
+| `launcher_missing` | A packaged app's launcher script is not there |
+| `not_detected` · `not_installable` | The tool is not on this Mac, or has no install-capable file |
+| `no_home` · `outside_home` | No safe home folder, or a target resolved outside it |
+| `structure_changed` | The structural check found something other than `my-curator` would change |
+| `config_changed` · `plan_changed` | The file (or what would be written) changed after the preview |
+| `backup_failed` · `write_failed` | The backup could not be made (nothing replaced) · the write failed |
+| `changed_since` | Restore only: the file was edited after our write — Remove the entry instead |
+| `no_backup` · `backup_missing` · `backup_mismatch` | Restore only: no usable backup |
+
+Every install, update, remove and restore is logged in `<user data>/.mcp-installs.json`
+(`{at, harness, file, action, shaBefore, shaAfter, backup}`, newest 200 rows, never under `domains/`).
 
 ### `GET /api/mcp/usage` response
 

@@ -435,7 +435,7 @@ the first real update is the first real test.
 
 Your knowledge is plain markdown in a folder you chose, so nothing above affects it. Coming
 from the shell installer below? Your wiki comes across untouched; you re-paste your API key and
-re-run the MCP wizard — and point the app at your existing folder, which is
+press **Install for me** in Settings → MCP bridge → Tools on this Mac — and point the app at your existing folder, which is
 [one button and one trap](docs/user-guide.md#pick-the-folder-that-contains-your-domains). The
 decisions behind the packaging — and, for each, whether code exists yet — are in
 [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).

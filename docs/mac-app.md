@@ -522,7 +522,7 @@ costs. The reasoning behind each row is in
 |---|---|
 | Every wiki page, domain and summary | Paste your API key again |
 | Chat history and working state | Reconnect Personal Sync, if you use it |
-| Your Obsidian vault and graph settings | Re-run the MCP wizard, if you use it |
+| Your Obsidian vault and graph settings | Press **Install for me** in Settings → MCP bridge, if you use it |
 
 The one thing that must work is that **your existing wiki appears**. There is no
 importer and no conversion: the wiki is plain markdown, and pointing the app at

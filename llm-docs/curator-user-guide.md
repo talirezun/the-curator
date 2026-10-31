@@ -283,7 +283,7 @@ the-curator/
 
 Pick `articles` and The Curator looks inside it for domains, finds none, and shows an empty list. An empty folder, a folder picked one level too deep, somebody's Pictures folder and an unmounted drive all produce exactly the same answer and are indistinguishable, so rather than guess the app tells you what it looked in: **No domains found there**, with "Looking in `<path>`", and a **Go back to the previous folder** button.
 
-Nothing is copied, moved or converted. Pointing the app at the folder is the whole migration. What you redo once: paste your API key again, reconnect Personal Sync, and re-run the MCP wizard. What never happens: no file is deleted, rewritten or converted, and your browser install is not modified.
+Nothing is copied, moved or converted. Pointing the app at the folder is the whole migration. What you redo once: paste your API key again, reconnect Personal Sync, and press **Install for me** in Settings → MCP bridge if you use the MCP. What never happens: no file is deleted, rewritten or converted, and your browser install is not modified.
 
 The **Choose folder** button greys out while anything is writing to your wiki, because changing the folder mid-ingest would scatter the rest of that document's pages into the new location. There is no field to type a path into; on Linux and Windows use the `DOMAINS_PATH` environment variable instead.
 
@@ -689,18 +689,29 @@ Shared Brain pushes are managed in the Shared Brain view, not in Sync. The Sync 
 
 ## How do I connect The Curator to Claude Desktop?
 
-The MCP bridge lets an AI client read and write your wiki directly. Setup takes under two minutes and lives in **Settings → MCP bridge**.
+The MCP bridge lets an AI client read and write your wiki directly. Since version 3.85.0, on a Mac (the Mac app, or a local install on macOS), The Curator does the setup for you: it shows what it would write, keeps a copy of your original file, and changes only its own `my-curator` entry. It takes under two minutes and lives in **Settings → MCP bridge**. The old setup wizard, and its Re-connect, View config and Copy snippet buttons, no longer exist.
 
 | Step | What to do |
 |---|---|
-| 1 | Click **Set up Claude Desktop**. If a bridge is already connected the same button reads **Re-run setup**, or **Re-connect**. |
-| 2 | Wizard step 1, *Copy the Curator entry*: choose **Just the Curator entry**, which is safe if you already run other MCP servers, or **The whole file, with Curator added**. Click **Copy the Curator entry & continue →**. |
-| 3 | Wizard step 2, *Paste it into Claude Desktop's config*: click **Show it in Finder** to open the folder containing `claude_desktop_config.json`. **Copy the path** is there too, and where it can do so safely the wizard offers **Write it for me**. |
-| 4 | Open that file in any text editor. If it does not exist, create one containing just `{}`. Paste the snippet inside the `mcpServers` key — the wizard shows you what "before" and "after" look like — save, and click **I've saved the file →**. |
-| 5 | Wizard step 3, *Restart Claude Desktop, then check it*: fully quit and reopen Claude Desktop, Command-Q, because closing the window is not enough. Then click **Test the bridge**. **Re-read the config file** separately checks what Claude Desktop now has saved. |
-| 6 | Close the wizard. The section shows a green **Connected** line, and **Run self-test** re-runs the check any time. **View config** and **Copy snippet** sit alongside it. |
+| 1 | In block 1, *Connect a client*, click **Install in your tools**. It takes you to block 5, **Tools on this Mac**. |
+| 2 | Tick the tools you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Plan ready — nothing written yet** and shows each file's path, the exact entry, the names of your other servers (which stay unchanged), and the backup it will keep. |
+| 3 | Click **Apply**. One result line per file stays on screen, for example "Cursor — added to ~/.cursor/mcp.json · original kept · restart Cursor". |
+| 4 | Fully quit and reopen the tool (Command-Q for Claude Desktop; closing the window is not enough), because a tool reads its MCP list only when it starts. If Claude Desktop is running, quit it before you apply: it rewrites its own file. |
+| 5 | Click **Check again**. The tool's row should read **connected**. **Run self-test** in block 1 re-checks the bridge itself. |
 
-If your `claude_desktop_config.json` already exists but contains a JSON syntax error, the wizard will not show an "After" preview and the copy button on that pane disappears. That is deliberate: a file that cannot be parsed cannot be merged into, and the only payload the app could invent would contain the Curator entry alone, which would delete every other MCP server you have configured. Fix the syntax error first. The entry-only **Copy snippet** is unaffected.
+Only Claude Desktop, Cursor and Antigravity can be installed this way. Every other tool, and every tool on Linux or Windows in this version, is **copy only**: its row has a **Copy** button. **Copy it myself** goes to those rows. The line under a row says **Save as ‹file›** when the tool's file does not exist yet (copy the whole small file), or **Paste into ‹file› inside "mcpServers"** when it does (copy only the entry).
+
+| Row status | Meaning | Buttons |
+|---|---|---|
+| connected | The file names `my-curator` and the entry is current | **Remove**; **Restore original** while a backup is still valid |
+| needs an update | An entry exists but launches a missing file, names another knowledge folder, or is in only some of Antigravity's files | **Install for me** |
+| not connected | The tool is on this Mac but has no entry | **Install for me** |
+| can't read | The file is corrupt, has comments (JSONC), or is a symlink; the reason is shown | **Copy**, **Reveal** |
+| copy only | A tool The Curator does not write for, or a non-Mac computer | **Copy** |
+
+What it writes and how to undo it: before changing a file it copies the original to `<file>.curator-backup-<UTC time>`, then changes nothing but the `my-curator` entry and checks that. It refuses, and writes nothing, if the file changed after the preview, is corrupt, has comments, is a symlink, has a repeated key, or has numbers beyond 2^53. **Remove** deletes only that entry. **Restore original** puts the backup back, but only while the file is still exactly what The Curator wrote. Each install, update, remove and restore is logged in `.mcp-installs.json` in the app's data folder.
+
+If a config file has a JSON syntax error, its row reads **can't read** and no install is offered, because a file that cannot be parsed cannot be safely written; fix the syntax and click **Check again**.
 
 The same section holds **Default domain for MCP writes**. Pick a domain, or leave it on "— none (require an explicit domain) —". If it is unset, the AI must ask you which domain to write to every time, which is the safer default for multi-domain users.
 
@@ -708,11 +719,11 @@ The bridge works with any MCP client that runs local servers — Claude Desktop,
 
 The bridge itself costs you nothing in API fees. It is a local bridge to your own markdown files and never calls an AI model. The frontier model you connect to it bills you on its own plan.
 
-If you move your knowledge folder, re-run the wizard in the browser install — the entry names an absolute path, and the wizard detects a stale one and shows a banner. In the Mac app the bridge starts through a launcher the app writes for itself, so moving the folder no longer makes the entry go stale.
+If you move your knowledge folder in the browser install, the entry names an absolute path, so the tool's row reads **needs an update**; click **Install for me**. In the Mac app the bridge starts through a launcher the app writes for itself, so moving the folder no longer makes the entry go stale.
 
 ## What does the MCP bridge's tool map show?
 
-**Settings → MCP bridge**, below the setup wizard and the default domain, is a small local log of
+**Settings → MCP bridge**, below the connection card and the default domain, is a small local log of
 what your agents have actually done over the bridge — kept on your machine only, never synced,
 never uploaded. Each line records a tool's name, the domain it touched, whether the call
 succeeded, and how long it took. It never records what you asked or what came back.
@@ -738,7 +749,7 @@ handoff before stopping.
 | **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
 | **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder; and, since version 3.65.2, a **GitHub read-only token** field — see the next question. |
-| **MCP bridge** | Five numbered blocks: connect a client (the setup wizard, **Run self-test**, **View config**, **Copy snippet**, and a note naming any bridge process still running older code), the default write domain, the tool map, across projects, and **Tools on this Mac** — each agent tool's config files, skills and hooks on this computer, with the skills' `.zip` files for the Claude app. |
+| **MCP bridge** | Five numbered blocks: connect a client (a status card with **Install in your tools**, **Run self-test**, and a note naming any bridge process still running older code), the default write domain, the tool map, across projects, and **Tools on this Mac** — each agent tool's config files, skills and hooks on this computer, **Install for me** for the MCP entry, and the skills' `.zip` files for the Claude app. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
 Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.68.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
@@ -773,7 +784,7 @@ System check answers "is the app working?". A domain's **Wiki health** panel ans
 
 ## What does the Setup step on the Context page check?
 
-**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. It is read-only: it reads files and runs read-only `git`, and never writes to a tool's config, a skills folder or your repository — every fix is a button that copies, reveals a file in Finder, or runs Sync now, and you paste. The machine-wide half is **Settings → MCP bridge → Tools on this Mac**.
+**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. The check itself is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository — every fix is a button that copies, reveals a file in Finder, or runs Sync now, and you paste. The one exception is **Install for me** on a bridge line for Claude Desktop, Cursor or Antigravity (version 3.85.0), which opens the installer and writes only the `my-curator` entry, after a preview. The machine-wide half is **Settings → MCP bridge → Tools on this Mac**.
 
 It checks, for this project on this computer: each tool's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` — present, naming this project, current, and not past what the tool reads; `.curator-project` — present, naming this project, committed and pushed; whether each tool has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
 
