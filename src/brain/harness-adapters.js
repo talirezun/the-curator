@@ -258,6 +258,10 @@ const ENTRIES = [
       addCommand: null,
       verifiedOn: '2026-10-31',
       installer: 'file',
+      // v3.85.0: `args` always written, `[]` when empty — the shape write-config
+      // has written into Claude Desktop since the launcher seam (bundle mode),
+      // kept identical for the one-click installer and the Copy snippet.
+      alwaysArgs: true,
       user: [
         H('Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
         // The LINUX location (modelcontextprotocol.io, "Connect to local
@@ -553,6 +557,10 @@ const ENTRIES = [
       addCommand: null,
       verifiedOn: '2026-10-31',
       installer: 'file',
+      // v3.85.0: `args` always written, `[]` when empty — the shape write-config
+      // has written into Claude Desktop since the launcher seam (bundle mode),
+      // kept identical for the one-click installer and the Copy snippet.
+      alwaysArgs: true,
       user: [
         H('.gemini', 'config', 'mcp_config.json'),
         H('.gemini', 'antigravity', 'mcp_config.json'),
@@ -686,6 +694,10 @@ const ENTRIES = [
       envKey: 'env',
       addCommand: null,
       installer: 'file',
+      // v3.85.0: `args` always written, `[]` when empty — the shape write-config
+      // has written into Claude Desktop since the launcher seam (bundle mode),
+      // kept identical for the one-click installer and the Copy snippet.
+      alwaysArgs: true,
       user: [H('.cursor', 'mcp.json')],
       project: [P('.cursor', 'mcp.json')],
     }),

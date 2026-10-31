@@ -450,6 +450,21 @@ section('§2b  THE REGISTRY CORRECTIONS (v3.84.1) — paths, install kinds, vend
     'Codex addCommand output is unchanged');
 }
 
+
+// v3.85.0: the three install-capable tools always write `args`, `[]` in launcher
+// (bundle) mode — the shape write-config has put in Claude Desktop for months.
+{
+  const LAUNCHER = { command: '/Users/x/Library/Application Support/The Curator/bin/my-curator-mcp', args: [] };
+  for (const id of ['claude-desktop', 'cursor', 'antigravity']) {
+    const e = A.mcpEntryFor(id, LAUNCHER);
+    ok(A.adapterFor(id).mcpConfig.alwaysArgs === true && Array.isArray(e.entry.args) && e.entry.args.length === 0
+      && JSON.parse(e.text).mcpServers['my-curator'].args.length === 0,
+    `${id}: launcher-mode entry and copy snippet carry "args": []`);
+  }
+  const g = A.mcpEntryFor('gemini-cli', LAUNCHER);
+  ok(!('args' in g.entry), 'CONTROL: a row without alwaysArgs still omits an empty args (gemini-cli)');
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 section('§3  THE INSTRUCTION SNIPPET — derived, byte-equal, never authored');
 // ─────────────────────────────────────────────────────────────────────────
