@@ -244,6 +244,7 @@ function formatHealthCounts(counts) {
     brokenLinks: 'broken links', orphans: 'orphans',
     folderPrefixLinks: 'folder-prefix links', crossFolderDupes: 'cross-folder duplicates',
     hyphenVariants: 'hyphen variants', missingBacklinks: 'missing backlinks',
+    summaryLinkSections: 'summary link lists',
   };
   const parts = [];
   for (const key of Object.keys(labels)) {

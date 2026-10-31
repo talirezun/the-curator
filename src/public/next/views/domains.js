@@ -342,6 +342,9 @@ const HEALTH_CATEGORIES = [
   { key: 'hyphenVariants', label: 'Hyphen variants' },
   { key: 'folderPrefixLinks', label: 'Folder-prefix links' },
   { key: 'missingBacklinks', label: 'Missing backlinks' },
+  // v3.84.0 — summaries that list a page twice or file it under the wrong
+  // heading. Free, local, auto-fixable; one row per summary; never dismissible.
+  { key: 'summaryLinkSections', label: 'Summary link lists' },
   // v3.83.0 — index.md vs the files on disk. NOT in AUTO_FIX_TYPES (its fix is
   // a previewed rebuild, never "Fix all") and never dismissible. One row at
   // most: the scan sends [] or a single summary object.
@@ -349,7 +352,7 @@ const HEALTH_CATEGORIES = [
 ];
 // Auto-fixable types (mirrors src/brain/health.js AUTO_FIXABLE minus the
 // pseudo-types orphanLink/semanticDupe, which scanWiki never emits).
-const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolderDupes', 'hyphenVariants', 'missingBacklinks']);
+const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolderDupes', 'hyphenVariants', 'missingBacklinks', 'summaryLinkSections']);
 // Per the shipping app's invariant, Dismiss appears ONLY on review-only
 // rows — auto-fixable issues get "Fix", never "skip". renderIssueRow's
 // `dismissible` flag is set true only for orphans and for brokenLinks rows
@@ -1685,7 +1688,8 @@ function countSafeFixable(report) {
     + (report.crossFolderDupes || []).length
     + (report.hyphenVariants || []).length
     + (report.folderPrefixLinks || []).length
-    + (report.missingBacklinks || []).length;
+    + (report.missingBacklinks || []).length
+    + (Array.isArray(report.summaryLinkSections) ? report.summaryLinkSections.length : 0);
 }
 
 // v3.83.0 — whole numbers with thousands separators, and a size in KB
@@ -7829,6 +7833,21 @@ function renderIssueRow(type, issue, readonly) {
     case 'missingBacklinks':
       main = escapeHtml(issue.summary) + ' ↔ ' + escapeHtml(issue.entity);
       break;
+    case 'summaryLinkSections': {
+      // v3.84.0 — path in the mono column, counts in prose. Every part with a
+      // zero is omitted; nothing is removed that carries a label or a link.
+      const n = (v) => Math.max(0, Number(v) || 0).toLocaleString('en-US');
+      const dup = Number(issue.duplicateLines) || 0;
+      const toC = Number(issue.conceptsToMove) || 0;
+      const toE = Number(issue.entitiesToMove) || 0;
+      const parts = [];
+      if (dup > 0) parts.push(n(dup) + (dup === 1 ? ' repeated line' : ' repeated lines'));
+      if (toC > 0) parts.push(n(toC) + (toC === 1 ? ' concept' : ' concepts') + ' filed under Entities');
+      if (toE > 0) parts.push(n(toE) + (toE === 1 ? ' entity' : ' entities') + ' filed under Concepts');
+      main = escapeHtml(issue.summary);
+      meta = escapeHtml(parts.join(' \u00b7 ')) + (parts.length ? ' \u2014 ' : '') + 'tidied without removing any link.';
+      break;
+    }
     case 'indexDrift': {
       // v3.83.0 — prose, self-contained (the sandboxed row suites hand this
       // function only escapeHtml). Not dismissible, not fixable in place: the
@@ -8183,7 +8202,7 @@ function confirmFixSafe(slug) {
   state.confirm = {
     title: 'Fix ' + pluralize(total, 'safe issue') + '?',
     body: 'Applies deterministic repairs only — cross-folder duplicates, hyphen variants, folder-prefix links, ' +
-      'missing backlinks, and broken links that already have a known target. Nothing here spends AI tokens. ' +
+      'missing backlinks, summary link lists, and broken links that already have a known target. Nothing here spends AI tokens. ' +
       (deletes > 0
         ? 'The duplicates and hyphen variants are MERGED: ' + pluralize(deletes, 'page') + ' will be deleted. ' + GIT_UNDO_WARN
         : GIT_UNDO_NOTE),

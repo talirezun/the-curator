@@ -144,7 +144,7 @@ function enforceSizeLimit(toolName, result) {
     // v2.5.2+ — health scan result fields can grow unbounded on large
     // domains (the user's articles wiki currently has 645 broken links).
     'brokenLinks', 'orphans', 'folderPrefixLinks',
-    'crossFolderDupes', 'hyphenVariants', 'missingBacklinks', 'pairs',
+    'crossFolderDupes', 'hyphenVariants', 'missingBacklinks', 'summaryLinkSections', 'pairs',
     // v3.59.0 — get_project_context's document bodies, ONE level down. The
     // halving keeps the FIRST half, and the store put the documents in
     // reading order, so the last in reading order go first. Without this a
