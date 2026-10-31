@@ -4366,7 +4366,7 @@ Only **Claude Desktop, Cursor and Antigravity** can be installed this way. Every
 |---|---|---|---|
 | **connected** | The tool's file names `my-curator` and the entry is the one this install would write | No | **Remove**, and **Restore original** while a backup of the previous file is still valid |
 | **needs an update** | An entry exists but differs: it launches a missing file, points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
-| **not connected** (counted as *can be added*) | The tool is on this Mac but has no entry | Yes | **Install for me** |
+| **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
 | **copy only** | A tool the app does not write for, or any non-Mac computer | No | **Copy** |
 

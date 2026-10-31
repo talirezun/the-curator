@@ -191,7 +191,7 @@ file, and changes nothing but its own `my-curator` entry.
 |---|---|---|---|
 | **connected** | The file names `my-curator` and the entry is the one this install would write | No | **Remove**; **Restore original** while a backup of the previous file is still valid |
 | **needs an update** | An entry exists but differs: it launches a missing file, names another knowledge folder, or is in some of Antigravity's files and not others | Yes | **Install for me** (updates it) |
-| **not connected** (counted as *can be added*) | The tool is on this Mac but has no entry | Yes | **Install for me** |
+| **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
 | **copy only** | A tool The Curator does not write for, or a non-Mac computer | No | **Copy** |
 
@@ -227,8 +227,8 @@ up spread over several lines. The values are identical, and the backup keeps the
 
 Block ① writes nothing. **The connection reads as a monitor (v3.65.0)**: a recessed, terminal-like
 panel carrying one fact per line — the client, the server name, and the knowledge folder the bridge
-is pointed at — with the connection's state as a word above them (**Configured**, **Needs
-re-connect**, **Not connected**, or **Config unreadable**) and two buttons beneath it, **Install in
+is pointed at — with the connection's state as a word above them (**Configured**, **Needs an
+update**, **Not connected**, or **Config unreadable**) and two buttons beneath it, **Install in
 your tools** and **Run self-test**. (The older wizard, with its Re-connect, View config and Copy
 snippet buttons, was retired in v3.85.0.) Pressing **Run self-test** paints a *second* monitor
 underneath, headed **Bridge self-test**, reporting whether the bridge responded, how many tools it
@@ -877,7 +877,7 @@ A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotf
 |---|---|---|
 | Claude Desktop shows no `my-curator` tools | The tool was not restarted, or the entry was pasted incorrectly | Press **Check again** in Tools on this Mac: the row should read **connected**. Then ⌘Q and reopen the tool |
 | "Stale config" banner in Settings | **Source install:** Knowledge Base Location changed since you last generated the snippet. **Packaged app:** a folder change cannot cause this — the entry holds no folder path — so look for a moved app or a hand-edited config instead | Click **Install for me** on the tool's row, then restart Claude Desktop. In the app, launching it once also rewrites its own launcher script |
-| "Needs re-connect" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Press **Install for me** to refresh what is saved on disk |
+| "Needs an update" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Press **Install for me** to refresh what is saved on disk |
 | Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then press **Install for me** to rewrite the entry. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
 | Tools show but return "no domains" | You haven't created any domains yet | Open the Curator, create a domain, ingest a source |
 | Claude finds a page in search but gets "Invalid slug" when it tries to open it | The slug contains a character the MCP refused. Before v3.9.1 that was any dot (`claude-sonnet-3.5`) | Update to v3.9.1 or later. If it persists, the slug likely has an accented character or a space — rename the file to plain lowercase-and-hyphens, or open the page in the Curator app instead |
