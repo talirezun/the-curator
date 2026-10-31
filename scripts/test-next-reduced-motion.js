@@ -725,7 +725,7 @@ const cssFiles = walkCssFiles(NEXT_DIR)
 
 ok(cssFiles.length >= 15, `found ${cssFiles.length} .css file(s) under src/public/next/** (expected at least 15)`);
 ok(cssFiles.some(f => f.rel === 'src/public/next/tokens/motion.css'), 'tokens/motion.css is discovered');
-ok(cssFiles.some(f => f.rel === 'src/public/next/views/mcp-wizard.css'), 'views/mcp-wizard.css is discovered');
+ok(!cssFiles.some(f => f.rel === 'src/public/next/views/mcp-wizard.css'), 'views/mcp-wizard.css is gone (the MCP wizard was retired in v3.85.0) — the walk must not find it');
 ok(cssFiles.some(f => f.rel === 'src/public/next/views/shared.css'), 'views/shared.css is discovered');
 ok(cssFiles.some(f => f.rel === 'src/public/next/views/chat.css'), 'views/chat.css is discovered');
 ok(cssFiles.some(f => f.rel === 'src/public/next/shared/progress-ring.css'), 'shared/progress-ring.css is discovered');
@@ -781,20 +781,7 @@ ok(violations.length === 0,
 //    just the general rule, so a revert of either is unmistakable in the
 //    failure message rather than landing in the generic bucket above.
 // ─────────────────────────────────────────────────────────────────────────
-section('3. Regression guards — .mcpw-panel and .sbw-panel specifically');
-
-{
-  const raw = readFileSync(path.join(ROOT, 'src/public/next/views/mcp-wizard.css'), 'utf8');
-  const { reduceSelectors, animationDecls } = analyzeFile(raw);
-  const decl = animationDecls.find(d => d.selectors.includes('.mcpw-panel') && d.propName === 'animation');
-  ok(!!decl, 'views/mcp-wizard.css: .mcpw-panel has an animation: declaration');
-  ok(!!decl && !decl.hardcoded,
-    !!decl && !decl.hardcoded
-      ? '.mcpw-panel animation duration is token-driven (var(--dur-mid)), not a hardcoded literal'
-      : `REGRESSION: .mcpw-panel animation duration reverted to a hardcoded literal: ${decl && decl.valueText}`);
-  ok(reduceSelectors.has('.mcpw-panel'),
-    '.mcpw-panel has an explicit @media (prefers-reduced-motion: reduce) escape in the same file');
-}
+section('3. Regression guards — .sbw-panel specifically (.mcpw-panel went with the MCP wizard)');
 
 {
   const raw = readFileSync(path.join(ROOT, 'src/public/next/views/shared.css'), 'utf8');

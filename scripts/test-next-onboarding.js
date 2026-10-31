@@ -1024,11 +1024,11 @@ section('8. The Settings re-open seam (D-C) and the ownership asymmetry');
   const reopenSites = (settingsCode.match(/openOnboardingPanel\(\)/g) || []).length;
   eq(reopenSites, 1, 'exactly one call site for the re-open control');
 
-  // THE ASYMMETRY: the MCP wizard IS closed by this view's teardown; the
-  // onboarding panel must NOT be. It is shell-level and has to survive
+  // THE ASYMMETRY: the onboarding panel must NOT be closed by this view's
+  // teardown (the MCP wizard that used to be was retired in v3.85.0). It is shell-level and has to survive
   // navigate() — closing it on leaving Settings would make step 2 and 3
   // unreachable the instant the user followed step 1.
-  ok(/closeMcpWizardIfOpen\(\);/.test(settingsCode), 'the MCP wizard IS still closed by settings teardown');
+  ok(!/closeMcpWizardIfOpen|openMcpWizard/.test(settingsCode), 'the retired MCP wizard is no longer opened or closed by settings');
   ok(!/closeOnboarding/.test(settingsCode), 'settings.js never closes the onboarding panel');
   ok(!/closeOnboarding/.test(obCode.replace(/closePanel/g, '')), 'and the module exports no close for it to call');
   const exports = [...obCode.matchAll(/export (?:async )?function (\w+)/g)].map((m) => m[1]).sort();
@@ -1161,7 +1161,7 @@ section('10. CSS — tokens, [data-theme], prefix ownership, no scrim');
   // a real rule (comments are all it removes), and the sanity anchors
   // below fail loudly if the stripper ever over-reaches into one.
   const otherNextCssFiles = ['shell.css', 'views/shared.css', 'views/settings.css', 'views/chat.css',
-    'views/domains.css', 'views/ingest.css', 'views/sync.css', 'views/memory.css', 'views/mcp-wizard.css'];
+    'views/domains.css', 'views/ingest.css', 'views/sync.css', 'views/memory.css'];
   const otherNextCss = assertStrippedSane(
     stripComments(otherNextCssFiles
       .map((f) => readFileSync(path.join(ROOT, 'src/public/next', f), 'utf8')).join('\n')),

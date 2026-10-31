@@ -105,12 +105,6 @@
       "ok": true,
       "servedAsShell": false
     },
-    "/next/views/mcp-wizard.css": {
-      "status": 200,
-      "type": "text/css",
-      "ok": true,
-      "servedAsShell": false
-    },
     "/next/views/memory.css": {
       "status": 200,
       "type": "text/css",

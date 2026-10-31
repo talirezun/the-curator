@@ -524,60 +524,13 @@ section('§7  D2 — the honest result actually REACHES the user (frontend consu
 // knowledge folder with "no domains yet … the issue is inside its config file",
 // which is the exact harm D2 exists to remove.
 
-const wizardSrc = readFileSync(
-  path.join(REPO_ROOT, 'src', 'public', 'next', 'views', 'mcp-wizard.js'), 'utf8');
-
-// ── THE GAP THIS DELETION SURFACED, NOW CLOSED ───────────────────────────
-// Everything below used to read src/public/app.js. v3.41.0 deleted that
-// shell, and repointing the assertions at /next found that the D2 half did
-// not exist there: src/public/next/views/mcp-wizard.js never read
-// `domains_status`. Its describeSelfTest() branched on `ok`, `tool_count`,
-// `error`, `stderr` and a null `domains` list — so a MISSING knowledge folder
-// and an EMPTY one reached the user as the same sentence, which is precisely
-// the harm D2 was built to remove. /next has been the only shell a user sees
-// since v3.9.0, so the consumer was absent for thirty releases while this
-// section reported green against the shell nobody was served.
-//
-// It was wired up in the same release, so what stood here as a recorded gap
-// is now a positive assertion. This half is deliberately SHALLOW — that the
-// field is read at all, and that the sentences are not shared. The
-// BEHAVIOURAL proof, which executes describeSelfTest over every status the
-// route can emit and asserts the four user-facing outcomes render distinct
-// copy, lives in scripts/test-next-mcp-wizard.js §5b; §6 above proves the
-// route PRODUCES the statuses. This file's job is only that the two halves
-// are connected.
-// Scoped to describeSelfTest's own body, with COMMENTS STRIPPED. Both halves
-// were found by mutation: `const status = null;` — the consumer switched off
-// — left a whole-file regex GREEN, because this file's own explanation of the
-// defect contains the word `domains_status`. A guard satisfied by a comment
-// about the thing it guards is this repo's recorded "the check stopped
-// reaching what it protects" shape, arrived at here by the shortest road.
-const describeFn = functionBody(wizardSrc, 'function describeSelfTest(');
-check('frontend: /next describeSelfTest() was located',
-  typeof describeFn === 'string' && describeFn.length > 500);
-const describeCode = String(describeFn || '')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
-// Tripwire: the strip must not eat the code it is about to be asked about.
-check('  (control) the comment strip left real code behind',
-  /r\.tool_count/.test(describeCode) && /return \{/.test(describeCode));
-// …and that it genuinely REMOVED something, so a no-op strip can't make the
-// checks below pass for the wrong reason.
-check('  (control) …and it did remove commentary',
-  describeCode.length < String(describeFn || '').length * 0.8);
-
-check('frontend: describeSelfTest reads domains_status in CODE, not only in a comment',
-  /r\.domains_status/.test(describeCode));
-// The two statuses the collapse used to merge must each have their own arm.
-// This is the SEAM check only; the executed proof — every status the route
-// emits driven through the real function, with the four user-facing outcomes
-// asserted pairwise distinct — is scripts/test-next-mcp-wizard.js §5b.
-check('frontend: it branches on missing_folder specifically', /'missing_folder'/.test(describeCode));
-check('frontend: …and on empty separately', /'empty'/.test(describeCode));
-// The fresh-install reassurance was the sentence that was wrong for a missing
-// folder. The missing case must name itself.
-check('frontend: a missing folder is named as missing, not as a fresh install',
-  /knowledge folder is missing/i.test(describeCode));
+// v3.85.0: the MCP wizard that used to say this is RETIRED. Its self-test
+// sentences moved to block 1's own result (views/settings.js
+// renderSelfTestResult), the only consumer of `domains_status` now. The
+// assertions below are the same ones, pointed at the code that remains.
+const settingsSrc = readFileSync(
+  path.join(REPO_ROOT, 'src', 'public', 'next', 'views', 'settings.js'), 'utf8');
+const stripC = (t) => String(t || '').replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
 
 /** Slice a function body out of source by brace-matching from its signature. */
 function functionBody(src, signature) {
@@ -594,20 +547,28 @@ function functionBody(src, signature) {
   return null;
 }
 
-// D1 residue — the "Your file now" pane must not claim an unparseable file is
-// empty. This half DID survive the port: /next's wholeFileUsable() makes the
-// ordered decision the deleted shell's diff-before block did.
-const usabilityFn = functionBody(wizardSrc, 'function wholeFileUsable(');
-check('frontend: /next wholeFileUsable() was located', typeof usabilityFn === 'string' && usabilityFn.length > 100);
-if (usabilityFn) {
-  const mergeAt = usabilityFn.indexOf('merge_available');
-  const emptyAt = usabilityFn.indexOf('was_empty');
-  check('frontend: it checks merge_available at all', mergeAt !== -1);
-  check('frontend: …and checks it BEFORE was_empty, so a corrupt file never renders as "{}"',
-    mergeAt !== -1 && emptyAt !== -1 && mergeAt < emptyAt);
-}
-check('frontend: the corrupt branch says the file is unreadable, not empty',
-  /not valid JSON/.test(wizardSrc));
+const describeFn = functionBody(settingsSrc, 'function renderSelfTestResult(');
+check('frontend: block 1\'s renderSelfTestResult() was located',
+  typeof describeFn === 'string' && describeFn.length > 500);
+const describeCode = stripC(describeFn);
+check('  (control) the comment strip left real code behind',
+  /r\.tool_count/.test(describeCode) && /return renderMonitor/.test(describeCode));
+check('  (control) …and it did remove commentary',
+  describeCode.length < String(describeFn || '').length * 0.8);
+
+check('frontend: it reads domains_status in CODE, not only in a comment',
+  /r\.domains_status/.test(describeCode));
+check('frontend: it branches on missing_folder specifically', /'missing_folder'/.test(describeCode));
+check('frontend: …and on empty separately', /'empty'/.test(describeCode));
+check('frontend: a missing folder is named as missing, and as a loud (never folded) warning',
+  /knowledge folder is missing/i.test(describeCode) && /folderLoud/.test(describeCode) && /loud: \[\.\.\.folderLoud/.test(describeCode));
+check('frontend: the missing-folder sentence says it is NOT a tool config mistake',
+  /not a mistake in a tool/i.test(describeCode));
+
+// D1 residue — the whole-file route has no UI consumer any more, so a corrupt
+// file can never be rendered as "{}" by this app: nothing in /next calls it.
+check('frontend: no /next script calls /api/mcp/claude-full-config or /write-config',
+  !/\/api\/mcp\/(claude-full-config|write-config)/.test(stripC(settingsSrc)));
 
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(60)}`);

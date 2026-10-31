@@ -31,7 +31,6 @@ import path from 'node:path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const settings = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
-const wizard = readFileSync(path.join(ROOT, 'src/public/next/views/mcp-wizard.js'), 'utf8');
 const { formatPricePerM } = await import('../src/public/next/shared/model-row.js');
 
 let passed = 0, failed = 0;
@@ -363,15 +362,11 @@ section('§6. A refused default-domain save keeps the old value and says why [F1
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-section('§7. The wizard, the MCP pill and the providers subtitle say what is true [F12, F13, F14]');
+section('§7. The MCP pill and the providers subtitle say what is true [F12, F13, F14]');
 {
-  const W = new Function('icon', extractConst(wizard, 'TOOL_TOTAL') + '\n' + extractConst(wizard, 'TOOL_WRITE') + '\n' +
-    extractConst(wizard, 'TOOL_READ') + '\n' + extractFunction(wizard, 'panelStep3') + '\nreturn { panelStep3 };')((n) => `<i ${n}></i>`);
-  const p3 = W.panelStep3();
-  ok(/17 that read, 7 that write: to your wiki, and to your projects’ working state/.test(p3),
-    '★ the seven writers are not all called wiki writers — three write working state [F12]');
-  ok(/Write working state:/.test(p3) && /handoff, its brief and its documents/.test(p3), '…and the working-state writes are named');
-  ok(/Counted from mcp\/tools\/index\.js: 24 tools, of which 7 mutate/.test(wizard), 'the header record says 24 tools, 7 mutating (it said 22 and 6)');
+  // F12 (the wizard's "7 writers" sentence) went with the MCP wizard in v3.85.0; nothing in /next states the
+  // writer count now, so the thing to guard is that nothing reintroduces a stale one.
+  ok(!/\b(22|24) tools\b|\b17 that read\b/.test(settings.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')), 'no stale tool-count sentence in settings.js [F12]');
 
   const s = S.deriveMcpStatus({ installed: true, stale: false, claude_config_parse_error: false });
   eq(s.pillLabel, 'Configured', '★ a current saved config reads "Configured", not "Connected" — no client was observed [F13]');

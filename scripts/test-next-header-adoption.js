@@ -301,7 +301,6 @@ section('§3  THE EXEMPTIONS ARE DIALOGS, AND EACH MUST MATCH SOMETHING');
  */
 const DIALOG_EXEMPT = {
   'onboarding.js': { headingId: 'obp-title', role: 'region' },
-  'mcp-wizard.js': { headingId: 'mcpw-title', role: 'dialog' },
   'shared-brain-wizard.js': { headingId: 'sbw-title', role: 'dialog' },
 };
 {
@@ -477,7 +476,6 @@ const TITLE_ALLOW = {
   'memory.js': 1,            // mem-j-when: ISO stamp behind a humanised age.
   'sync.js': 0,
   'onboarding.js': 0,
-  'mcp-wizard.js': 0,
   'shared-brain-wizard.js': 0,
 };
 {

@@ -463,6 +463,9 @@ const btn2 = (act, label, extra = '') => '<button type="button" class="btn btn-s
 const btnG = (act, label, extra = '') => '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
 const ZIPS = '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/my-curator.zip" download>my-curator.zip</a>'
   + '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/curator-continuity.zip" download>curator-continuity.zip</a>';
+// The tools whose config file The Curator can write (v3.85.0, macOS) — the link
+// is a door to the installer, which says whether this computer can use it.
+const INSTALL_TOOLS = ['claude-desktop', 'cursor', 'antigravity'];
 const baseName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
 // Only this app's own skill downloads are ever linked (a payload href is data).
 const SKILL_HREF_RE = /^\/api\/setup\/skills\/[a-z0-9-]+\.zip$/;
@@ -549,6 +552,12 @@ export function fixButtons(f, repo) {
       out.push(btnG('reveal', 'Reveal ' + fix.reveal, ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + fix.reveal) + '"'));
     }
     if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Tools on this Mac'));
+  }
+  // v3.85.0: a bridge line for a tool The Curator can write for opens the one
+  // installer (Settings › MCP bridge › Tools on this Mac) — no second writer
+  // here. Said only where the line already offers the entry to copy.
+  if (f && INSTALL_TOOLS.includes(f.tool) && fixListOf(f).some((x) => x.kind === 'copy-snippet')) {
+    out.push(btnG('settings', 'Install for me'));
   }
   return out.join('');
 }

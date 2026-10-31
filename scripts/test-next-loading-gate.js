@@ -443,8 +443,6 @@ const EXEMPT = [
     why: 'progress label for a user-initiated action' },
   { file: 'views/domains.js', needle: "'semanticPreview:' + key",
     why: 'Preview-diff BUTTON label during a user-initiated LLM call (seconds)' },
-  { file: 'views/mcp-wizard.js', needle: 'Checking your setup…',
-    why: 'lives inside panelLoading(), which ships HIDDEN and is revealed only by the gate — asserted below, so this exemption is not taken on trust' },
   { file: 'views/settings.js', needle: "state.quickLoading ? 'Scanning…'",
     why: 'System-check BUTTON label during a user-initiated scan' },
   // RE-ANCHORED, not widened, when views/shared.js adopted shared/text.js.
@@ -494,22 +492,7 @@ for (let i = 0; i < EXEMPT.length; i++) {
   ok(exemptHits[i] > 0, `EXEMPT entry still matches something: ${EXEMPT[i].file} / "${EXEMPT[i].needle}" (${EXEMPT[i].why})`);
 }
 
-// The mcp-wizard exemption above claims its panel ships hidden. Prove it,
-// rather than taking the comment's word: if that class is dropped, the
-// panel flashes on every open again and the exemption becomes false.
-{
-  const mw = readFileSync(join(NEXT, 'views/mcp-wizard.js'), 'utf8');
-  ok(/id="mcpw-panel-loading" class="mcpw-panel mcpw-hidden"/.test(mw),
-    'mcp-wizard: the loading panel ships HIDDEN, so it can only appear via the gate');
-  // The loading phase must be reachable ONLY from the gate's onChange —
-  // exactly one call site, and it must sit inside that callback.
-  const showLoadingCalls = [...mw.matchAll(/showPhase\('loading'/g)];
-  ok(showLoadingCalls.length === 1, `mcp-wizard: exactly one showPhase('loading') call site (found ${showLoadingCalls.length})`);
-  const gateBlock = /loadGate = createLoadingGate\(\{[\s\S]*?\n  \}\);/.exec(mw);
-  ok(!!gateBlock && gateBlock[0].includes("showPhase('loading'"),
-    'mcp-wizard: that call site is INSIDE the gate\'s onChange, so the panel cannot appear un-gated');
-  ok(/loadGate\.begin\(\)/.test(mw), 'mcp-wizard: the gate is started at open');
-}
+// (The mcp-wizard exemption and its "panel ships hidden" proof were removed with the wizard, v3.85.0.)
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§6  BEHAVIOURAL — Chat never claims "no domains" before boot concluded');
@@ -825,7 +808,6 @@ const OWNERS = [
   ['views/settings.js', 'loadGate'],
   ['views/shared.js', 'loadGate'],
   ['views/sync.js', 'loadGate'],
-  ['views/mcp-wizard.js', 'loadGate'],
   ['views/shared-brain-wizard.js', 'domainsGate'],
 ];
 for (const [file, handle] of OWNERS) {

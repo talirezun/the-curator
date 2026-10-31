@@ -701,7 +701,7 @@ const E = {
     lead: 'Each agent tool set up on this computer: its config files, its skills and its hooks.',
     points: [
       { icon: 'lock', text: 'Only whether a file names my-curator is read.' },
-      { icon: 'pencil', text: 'Nothing is written: copy the entry, or reveal the file.' },
+      { icon: 'pencil', text: 'Install for me adds only the my-curator entry, after a preview.' },
       { icon: 'check', text: 'Skills are compared with the copy this app carries.' },
     ],
     guide: { key: 'settings.mcp-tools', heading: 'The Setup check in the app' },

@@ -123,7 +123,7 @@ ok(docsUrl('app.two-installs') ===
    'https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#two-installs-one-knowledge-folder',
   'MIGRATION PIN: app.js\'s INSTANCE_DOCS_URL resolves byte-for-byte to the literal it replaced');
 ok(docsUrl('settings.mcp-bridge') === 'https://github.com/talirezun/the-curator/blob/main/docs/mcp-user-guide.md',
-  'MIGRATION PIN: mcp-wizard.js\'s MCP_GUIDE_URL resolves byte-for-byte to the literal it replaced');
+  'the settings.mcp-bridge key still resolves to the MCP guide (its one reader, the MCP wizard, was retired in v3.85.0)');
 {
   let threw = null;
   try { docsUrl('settings.does-not-exist'); } catch (e) { threw = e; }
@@ -185,13 +185,10 @@ section('§8  THE TWO MIGRATED CONSTANTS GO THROUGH THE MAP');
 
 {
   const appJs = readFileSync(join(NEXT, 'app.js'), 'utf8');
-  const wiz = readFileSync(join(NEXT, 'views/mcp-wizard.js'), 'utf8');
   ok(/const INSTANCE_DOCS_URL = docsUrl\('app\.two-installs'\);/.test(appJs),
     "app.js's INSTANCE_DOCS_URL is docsUrl('app.two-installs')");
   ok(/import \{ docsUrl \} from '\.\/shared\/docs-links\.js';/.test(appJs), '…and app.js imports it');
-  ok(/export const MCP_GUIDE_URL = docsUrl\('settings\.mcp-bridge'\);/.test(wiz),
-    "mcp-wizard.js's MCP_GUIDE_URL is docsUrl('settings.mcp-bridge')");
-  ok(/import \{ docsUrl \} from '\.\.\/shared\/docs-links\.js';/.test(wiz), '…and mcp-wizard.js imports it');
+  ok(!existsSync(join(NEXT, 'views/mcp-wizard.js')), 'the second migrated constant, mcp-wizard.js\'s MCP_GUIDE_URL, went with the wizard (v3.85.0)');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

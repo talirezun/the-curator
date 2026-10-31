@@ -2945,3 +2945,74 @@ body.guide-docked .main {
 /* <main> carries tabindex="-1" (index.html) so the drawer can hand focus to
    the column after a choice. It is a landmark, not a control: no ring. */
 .main:focus { outline: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v3.85.0 — MY CURATOR IN YOUR TOOLS (Settings › MCP bridge › 5). The markup
+   is views/mcp-install.js. STATUS TAGS ARE GREYSCALE: the word is --text-2 and
+   only the SHAPE of the dot before it differs (filled · ring · dashed ·
+   half) — colour is a domain's (design rule 5). Nothing here scrolls sideways:
+   every long path and the preview's entry text WRAP.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mcpi-panel { display: flex; flex-direction: column; gap: var(--space-6); margin-bottom: var(--space-7); min-width: 0; }
+.mcpi-overview { display: flex; flex-direction: column; gap: var(--space-5); }
+.mcpi-buttons { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.mcpi-line { margin: 0; font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.mcpi-rows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); min-width: 0; }
+.mcpi-row {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-5) var(--space-7); border-top: 1px dashed var(--border-subtle);
+  font-size: var(--text-sm); min-width: 0;
+}
+/* Line 1: pick · name · tags · actions. The name never breaks mid-word; the line wraps as a whole. */
+.mcpi-l1 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-6); min-width: 0; }
+.mcpi-l1 .mcpi-pick { flex: 0 1 auto; }
+.mcpi-l1 .mcpi-name { overflow-wrap: normal; word-break: keep-all; white-space: nowrap; }
+.mcpi-l1 .mcpi-acts { margin-left: auto; }
+.mcpi-detail-head {
+  margin: var(--space-7) 0 var(--space-4); font: var(--type-mono); font-size: var(--text-2xs);
+  letter-spacing: var(--track-mono); text-transform: uppercase; color: var(--text-3); font-weight: 400;
+}
+.mcpi-row:first-child { border-top: 0; }
+.mcpi-pick { display: inline-flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.mcpi-name { font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.mcpi-files { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding-left: 0; }
+.mcpi-path { font-size: var(--text-xs); color: var(--text-3); overflow-wrap: anywhere; }
+.mcpi-tags { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.mcpi-acts { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
+.mcpi-note { font-size: var(--text-xs); color: var(--text-3); }
+.mcpi-reason, .mcpi-hint { margin: 0; font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
+.mcpi-hint { color: var(--text-3); }
+.mcpi-st {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2);
+}
+.mcpi-st::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-2); }
+.mcpi-st-not-installed::before { background: none; border: 1.5px solid var(--text-3); width: 5px; height: 5px; }
+.mcpi-st-needs-update::before { background: linear-gradient(90deg, var(--text-2) 50%, transparent 50%); border: 1.5px solid var(--text-2); width: 5px; height: 5px; }
+.mcpi-st-cant-read::before, .mcpi-st-manual::before { background: none; border: 1.5px dashed var(--text-3); width: 5px; height: 5px; }
+.mcpi-st-running::before { border-radius: 1px; background: var(--text-3); }
+.mcpi-plan { min-width: 0; }
+.mcpi-plan-item { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) 0; border-top: 1px dashed var(--border-subtle); min-width: 0; }
+.mcpi-plan-item:first-of-type { border-top: 0; }
+.mcpi-plan-head { font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
+.mcpi-plan-cap { font-size: var(--text-xs); color: var(--text-3); }
+.mcpi-entry {
+  margin: 0; padding: var(--space-4) var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  background: var(--surface); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all;
+}
+.mcpi-results { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5) var(--space-7); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.mcpi-result { font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
+.mcpi-hint-inline { color: var(--text-3); }
+.mcpi-result-acts { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+.mcpi-nf-body { display: flex; flex-direction: column; padding: 0 var(--space-4) var(--space-4); }
+.mcpi-notfound { margin-top: var(--space-4); }
+.mcpi-row-nf { padding: var(--space-4) var(--space-4); }
+.mcpi-detail { min-width: 0; }
+@media (max-width: 900px) {
+  .mcpi-row { padding: var(--space-5); }
+  .mcpi-l1 .mcpi-acts { margin-left: 0; justify-content: flex-start; }
+}
+
+.mcpi-flash { box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
+.mcpi-copyline { margin: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
