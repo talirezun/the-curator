@@ -189,3 +189,11 @@ AuthKey_*.p8
 # beside tracked source. The TENTH instance of the class above, added in the
 # same change that creates the file.
 .health-summary.json
+
+# MCP install manifest (v3.85.0, src/brain/paths.js getMcpInstallManifestPath()) —
+# every write the app made to another tool's MCP config, with ABSOLUTE paths on
+# this Mac and its backup names. Machine-local; in REPO mode it lands beside
+# tracked source, and this repository is PUBLIC. The ELEVENTH instance of the
+# class above, added in the same change that creates the file.
+.mcp-installs.json
+.mcp-installs.json.unreadable-*
