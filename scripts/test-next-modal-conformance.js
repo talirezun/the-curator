@@ -192,15 +192,16 @@ ok(modals.every((m) => m.cls),
 // §1b — the count. Five today: four centered dialogs and one drawer.
 // This is deliberately an EQUALITY, not a floor: a sixth modal must come
 // past this suite, and a deleted one must be noticed too.
-const EXPECTED_MODAL_COUNT = 5;
+// v3.85.0: four — the MCP wizard (mcpw-card) was retired; the panel in block 5 replaced it.
+const EXPECTED_MODAL_COUNT = 4;
 ok(modals.length === EXPECTED_MODAL_COUNT,
   `exactly ${EXPECTED_MODAL_COUNT} modal surfaces in /next (got ${modals.length}) — a sixth must be conformed, not merely added`);
 
 // §1c — and they are the five we think they are, by class.
 const classes = modals.map((m) => m.cls).sort();
-const EXPECTED = ['cfd-card', 'chat-browse', 'mcpw-card', 'reader-panel', 'sbw-card'];
+const EXPECTED = ['cfd-card', 'chat-browse', 'reader-panel', 'sbw-card'];
 ok(JSON.stringify(classes) === JSON.stringify(EXPECTED),
-  `the five are ${EXPECTED.join(', ')} (got ${classes.join(', ')})`);
+  `the four are ${EXPECTED.join(', ')} (got ${classes.join(', ')})`);
 
 // ── Build a comment-free view of every CSS rule in /next ────────────────
 // Declarations are collected per class token. Deliberately textual: see the
@@ -366,7 +367,7 @@ section('§3  RADIUS — "Modals 14px", stated three ways in the bundle');
    the alert's own answers left exactly as they were. A single list with the
    sheets deleted from it would have been the relaxation; this is not that. */
 const CENTERED = ['cfd-card', 'chat-browse'];
-const SHEETS = ['sbw-card', 'mcpw-card'];
+const SHEETS = ['sbw-card'];
 for (const cls of CENTERED) {
   ok(declares(cls, 'border-radius', /var\(\s*--radius-xl\s*\)/),
     `.${cls} is at --radius-xl (14px)`);
@@ -408,7 +409,7 @@ section('§4  BACKDROP BLUR — the system scopes it to exactly two places');
 // The confirm dialog and chat-browse omitted it, so the app shipped two
 // visual grades of modal: one frosted, one flat, side by side in the same
 // session.
-const SCRIMS = ['cfd-scrim', 'sbw-scrim', 'mcpw-scrim', 'chat-browse-scrim', 'reader-scrim'];
+const SCRIMS = ['cfd-scrim', 'sbw-scrim', 'chat-browse-scrim', 'reader-scrim'];
 for (const cls of SCRIMS) {
   ok(declares(cls, 'backdrop-filter', /blur\(\s*6px\s*\)/),
     `.${cls} carries backdrop-filter: blur(6px)`);

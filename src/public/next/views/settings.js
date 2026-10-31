@@ -13,7 +13,7 @@
 //   GET/POST /api/config/default-domain         (MCP default write domain)
 //   POST     /api/config/pick-folder            (native folder picker)
 //   GET/POST /api/health/ai-settings            (scan cost ceilings)
-//   GET      /api/mcp/config /claude-config
+//   GET      /api/mcp/config
 //   POST     /api/mcp/self-test /reveal-config
 //   GET      /api/diagnostics/quick
 //   POST     /api/diagnostics/live              (cost-gated — see below)
@@ -149,38 +149,27 @@ import {
   trashSectionHtml, trashDeleteConfirmMatches, trashDeleteBody, trashRestorePlan,
   trashRestoreBody, trashRestoreOutcomeText, trashDeleteOutcomeText,
 } from './trash-list.js';
-// Overlay, not a view — same relationship views/shared.js has with
-// views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
-// closed unconditionally by this view's teardown, so navigating away can
-// never leave it mounted behind the next view.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-// MCP_GUIDE_URL is DECLARED THERE and is not imported here. Block ①'s link
-// lives in its ⓘ: since v3.71.1 that is the `settings.mcp-connect` explainer's
-// guide card (the user guide's "MCP bridge — connect a client", which links on
-// to the MCP guide the wizard opens via `settings.mcp-bridge`).
-import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // v3.77.0 — MCP bridge block 5 "Tools on this Mac": the words live in a
 // DOM-free module (its suite imports the real builders); this file owns the
 // state, the one request (GET /api/setup/machine) and the listeners.
 import { renderToolsOnThisMacBody, toolsOnThisMacHead } from './setup-machine.js';
 // v3.85.0 — "My Curator in your tools": the status check and the one-click install.
 import {
-  renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds,
+  focusInstallPanel, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds,
 } from './mcp-install.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
 //
-// NOTE THE ASYMMETRY WITH THE WIZARD IMPORT ABOVE, WHICH IS DELIBERATE:
-// there is no closeOnboardingPanelIfOpen() and this view's teardown must
-// NOT close the panel. The MCP wizard is a modal owned by this view, so an
-// overlay surviving a view change would be a bug. The onboarding panel is
+// NOTE: there is no closeOnboardingPanelIfOpen() and this view's teardown must
+// NOT close the panel. The onboarding panel is
 // a SHELL-level layer whose entire purpose is to point AT other views — it
 // is opened from app.js's boot() and is required to survive navigate().
 import { openOnboardingPanel } from './onboarding.js';
 // The in-design replacement for window.confirm — see shared/confirm.js's
 // header for why it takes the ACTION rather than returning a DECISION.
-// Closed unconditionally by this view's teardown, exactly like the wizard.
+// Closed unconditionally by this view's teardown.
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // The ONE honest USD renderer for /next — imported, never copied. Prices in
@@ -1082,9 +1071,6 @@ function freshState() {
     mcpError: null,
     selfTest: null,
     selfTestLoading: false,
-    configSnippet: null,    // GET /api/mcp/claude-config (raw object)
-    configSnippetOpen: false,
-    copyFeedback: null,
     defaultDomainInfo: null, // { defaultDomain, domains }
     defaultDomainSaving: false,
     defaultDomainError: null,
@@ -1368,20 +1354,11 @@ registerView('settings', {
       // depends on a repaint happening is not a teardown.
       closeAllListboxes();
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
-      // Never leave the MCP wizard's overlay mounted behind the next view —
-      // the same unconditional rule views/shared.js applies to the Shared
-      // Brain wizard. Safe to call when it isn't open.
       // Same unconditional rule for the shared confirm dialog — it mounts
       // on document.body, so without this an "Install this update?" left
       // open would sit over whatever view came next. Closing takes the
       // CANCEL path, so a teardown can never fire the destructive action.
       //
-      // Ordered BEFORE the wizard close deliberately, and it must stay
-      // that way: scripts/test-next-mcp-wizard.js pins closeMcpWizardIfOpen()
-      // as the LAST statement of this teardown. The two are independent —
-      // neither can be open while the other is — so there is no behavioural
-      // reason to prefer either order, and keeping that existing guard
-      // intact is worth more than the alphabetical tidiness of appending.
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
@@ -1395,7 +1372,6 @@ registerView('settings', {
       }
       stopUsagePoll();
       closeConfirmIfOpen();
-      closeMcpWizardIfOpen();
     };
   },
 });
@@ -1793,6 +1769,16 @@ function installRevealPaths() {
   return out;
 }
 
+/** id → the files /api/setup/machine read for that tool — names the file a copy-only row's entry belongs in. */
+function installMachineFiles() {
+  const out = {};
+  const hs = state.setupMachine && state.setupMachine.data && state.setupMachine.data.harnesses;
+  for (const h of Array.isArray(hs) ? hs : []) {
+    if (h && h.id) out[h.id] = (Array.isArray(h.files) ? h.files : []).filter((f) => f && f.display).map((f) => ({ display: f.display, file: f.file, present: f.present === true }));
+  }
+  return out;
+}
+
 /** Ask for a PLAN (writes nothing) for the given action and tool ids. */
 async function planInstall(token, action, ids) {
   const mi = state.mcpInstall;
@@ -1840,8 +1826,9 @@ function renderToolsOnThisMac() {
       status: state.mcpInstall.status, ticks: state.mcpInstall.ticks, plan: state.mcpInstall.plan,
       results: state.mcpInstall.results, busy: state.mcpInstall.busy, error: state.mcpInstall.error,
       copied: state.mcpInstall.copied, folds: state.setupMachineFolds, paths: installRevealPaths(),
+      machineFiles: installMachineFiles(),
     })
-    + '<div id="mcpi-detail" class="mcpi-detail">' + renderToolsOnThisMacBody(m, state.setupMachineFolds) + '</div>';
+    + '<div id="mcpi-detail" class="mcpi-detail"><h3 class="mcpi-detail-head">Each tool in detail — every file it reads</h3>' + renderToolsOnThisMacBody(m, state.setupMachineFolds) + '</div>';
   return settingsBlock(5, 'mcp-tools', 'Tools on this Mac', lede, body, 'settings.mcp-tools', '');
 }
 
@@ -8904,10 +8891,7 @@ function deriveMcpStatus(m) {
   const pillLabel = unreadable
     ? 'Config unreadable'
     : (connected ? 'Configured' : (m.installed ? 'Needs re-connect' : 'Not connected'));
-  const wizardLabel = unreadable
-    ? 'Fix the config file'
-    : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
-  return { unreadable, connected, pillTone, pillLabel, wizardLabel };
+  return { unreadable, connected, pillTone, pillLabel };
 }
 
 /**
@@ -9035,12 +9019,9 @@ function renderMcp() {
   }
   const m = state.mcp;
   const status = deriveMcpStatus(m);
-  const { pillTone, pillLabel, wizardLabel } = status;
+  const { pillTone, pillLabel } = status;
 
   const selfTestHtml = state.selfTest ? renderSelfTestResult() : '';
-  const snippetHtml = state.configSnippetOpen && state.configSnippet
-    ? '<pre class="mcp-config-snippet mono">' + escapeHtml(JSON.stringify(state.configSnippet, null, 2)) + '</pre>'
-    : '';
   const staleNoteHtml = shouldShowMcpStaleNote(status, m, state.selfTest)
     ? '<div class="settings-mcp-stale-note" role="status">' +
         icon('alertTriangle', 15) +
@@ -9048,7 +9029,7 @@ function renderMcp() {
         'settings — it does not check what Claude Desktop has saved. That saved ' +
         'copy is out of date (your knowledge folder, the app, or Node itself has ' +
         'moved since you last connected), so Claude Desktop is still launching the ' +
-        'old one. Click <strong>' + escapeHtml(wizardLabel) + '</strong> above to ' +
+        'old one. Click <strong>Install in your tools</strong> above to ' +
         'update it — nothing else here needs fixing.</span>' +
       '</div>'
     : '';
@@ -9142,20 +9123,16 @@ function renderMcp() {
     }) +
     // Body-level buttons, so md (32px): the SIZE is the container's decision,
     // per the taxonomy comment above `.btn` in shell.css. Exactly one primary
-    // — the wizard is the single action that completes this block. Self-test
-    // and View config are secondary (they inspect rather than complete), and
-    // Copy is ghost: it neither completes nor inspects, it hands you a string.
+    // — "Install in your tools" points at block ⑤, the one installer (this
+    // block writes nothing). Self-test is secondary: it inspects.
     '<div class="settings-btn-row">' +
-      '<button type="button" class="btn btn-primary" id="btn-mcp-wizard">' + escapeHtml(wizardLabel) + '</button>' +
+      '<button type="button" class="btn btn-primary" id="btn-mcp-install-tools">Install in your tools</button>' +
       '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (state.selfTestLoading ? ' disabled' : '') + '>' +
         (state.selfTestLoading ? 'Testing…' : 'Run self-test') +
       '</button>' +
-      '<button type="button" class="btn btn-secondary" id="btn-mcp-view-config">' + (state.configSnippetOpen ? 'Hide config' : 'View config') + '</button>' +
-      '<button type="button" class="btn btn-ghost" id="btn-mcp-copy-snippet">' + icon('copy', 13) + ' Copy snippet' + (state.copyFeedback ? ' — ' + escapeHtml(state.copyFeedback) : '') + '</button>' +
     '</div>' +
     selfTestHtml +
-    staleNoteHtml +
-    snippetHtml;
+    staleNoteHtml;
 
   // ── ② DEFAULT DOMAIN FOR MCP WRITES ──────────────────────────────────────
   // The listbox is the whole body. The paragraph that used to sit above it
@@ -9211,7 +9188,21 @@ function renderSelfTestResult() {
     });
   }
   const names = (r.tool_names || []).slice(0, 6).join(', ') + ((r.tool_names || []).length > 6 ? ', …' : '');
-  const domainsNote = Array.isArray(r.domains) ? r.domains.length + ' domain(s) visible' : 'no domains found yet';
+  // v3.85.0: this is now the ONLY place the self-test's `domains_status` reaches
+  // the user (the MCP wizard that used to say it is retired). A MISSING
+  // knowledge folder and an EMPTY one are different sentences, and the missing
+  // one is a `loud` warning — it is not a mistake in any tool's config file.
+  const domainsStatus = typeof r.domains_status === 'string' ? r.domains_status : null;
+  const domainsNote = domainsStatus === 'missing_folder' ? 'knowledge folder is missing'
+    : domainsStatus === 'empty' ? 'none yet — the folder is empty (normal on a fresh install)'
+      : (Array.isArray(r.domains) ? r.domains.length + ' domain(s) visible' : 'no domains found yet');
+  const folderLoud = domainsStatus === 'missing_folder'
+    ? [{ tone: 'warn',
+         text: 'The bridge works, but your knowledge folder is missing — '
+          + (typeof r.domains_dir === 'string' && r.domains_dir.trim() ? r.domains_dir.trim() : 'the configured folder')
+          + ' does not exist, so a tool will connect and see nothing. This is not a mistake in a tool’s config file. '
+          + 'Open Settings → Knowledge base and point The Curator at the folder your knowledge lives in.' }]
+    : [];
   // WHAT A GREEN PASS DOES NOT COVER (v3.64.0). This spawned a NEW child a
   // moment ago; the tool count above is that child's. A bridge a client has
   // had open since before the last update is a different process running
@@ -9239,7 +9230,7 @@ function renderSelfTestResult() {
       { key: 'tools', value: String(r.tool_count), sub: names },
       { key: 'domains', value: domainsNote },
     ],
-    loud: bridgeLoud,
+    loud: [...folderLoud, ...bridgeLoud],
   });
 }
 
@@ -10999,19 +10990,18 @@ function wireInstallListeners(token) {
       if (act === 'dismiss') { mi.results = null; render(token); return; }
       if (act === 'check-again') { mi.results = null; loadInstallStatus(token); loadSetupMachine(token); render(token); return; }
       if (act === 'copy-myself') {
-        const d = document.getElementById('mcpi-detail');
+        const d = document.getElementById('mcpi-rows') || document.getElementById('mcpi-detail');
         if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
       if (act === 'copy') {
-        const text = mi.status && mi.status.data && mi.status.data.manualSnippets
-          ? mi.status.data.manualSnippets[el.dataset.tool] : null;
-        if (!text) return;
-        try { await copyToClipboard(text); mi.copied = 'Entry copied — paste it into that tool’s config file.'; }
+        const plan = mi.status && mi.status.data ? copyPlanFor(el.dataset.tool, mi.status.data, installMachineFiles()) : null;
+        if (!plan) return;
+        try { await copyToClipboard(plan.text); mi.copied = (plan.whole ? 'The whole file copied. ' : 'The entry copied. ') + plan.line + '.'; }
         catch { mi.copied = 'Could not copy.'; }
         if (!isCurrentMount(token)) return;
         render(token);
-        setTimeout(() => { if (isCurrentMount(token)) { mi.copied = null; render(token); } }, 4000);
+        setTimeout(() => { if (isCurrentMount(token)) { mi.copied = null; render(token); } }, 6000);
         return;
       }
       if (act === 'reveal') {
@@ -11073,36 +11063,19 @@ function wireMcpListeners() {
   // calling loadMcp() forces the refetch; loadMcp re-checks isCurrentMount
   // itself and calls render(), so this is safe even if the user navigated
   // away while the wizard was open.
-  const wizardBtn = document.getElementById('btn-mcp-wizard');
-  if (wizardBtn) {
-    const token = myMountToken;
-    wizardBtn.addEventListener('click', () => openMcpWizard({
-      onDone: () => {
-        if (!isCurrentMount(token)) return;
-        state.mcp = null;
-        state.selfTest = null;
-        // Re-focus the CTA after the refresh, not before. closeWizard()
-        // restores focus to the launching button and then calls this, so
-        // the re-render below replaces that node underneath the focus and
-        // it falls back to <body> — measured in-browser. Looking the
-        // button up again after the render is the only way to land back on
-        // it. (No-op when the section has moved on; the button is gone.)
-        loadMcp(token)
-          .then(() => {
-            if (!isCurrentMount(token)) return;
-            document.getElementById('btn-mcp-wizard')?.focus();
-          })
-          .catch(reportAsyncActionFailure);
-      },
-    }));
+  // v3.85.0: block ① writes NOTHING. "Install in your tools" takes the person
+  // to block ⑤'s "My Curator in your tools" panel — the one installer — and,
+  // when Claude Desktop is not connected, marks that row.
+  const installBtn = document.getElementById('btn-mcp-install-tools');
+  if (installBtn) {
+    installBtn.addEventListener('click', () => {
+      const tools = (state.mcpInstall.status && state.mcpInstall.status.data && state.mcpInstall.status.data.tools) || [];
+      const cd = tools.find((t) => t && t.id === 'claude-desktop');
+      focusInstallPanel(cd && cd.status !== 'connected' ? 'claude-desktop' : '');
+    });
   }
-
   const testBtn = document.getElementById('btn-mcp-self-test');
   if (testBtn) testBtn.addEventListener('click', () => onMcpSelfTest(myMountToken));
-  const viewBtn = document.getElementById('btn-mcp-view-config');
-  if (viewBtn) viewBtn.addEventListener('click', () => onMcpViewConfig(myMountToken));
-  const copyBtn = document.getElementById('btn-mcp-copy-snippet');
-  if (copyBtn) copyBtn.addEventListener('click', () => onMcpCopySnippet(myMountToken));
   // Block ③'s run control. Also re-bound by the 30 s revalidate, which
   // replaces the body this button lives in.
   wireExerciseControl(myMountToken);
@@ -12922,38 +12895,6 @@ function paintToolMapBody() {
   if (!body) return;
   body.innerHTML = renderToolMapBody();
   wireExerciseControl(myMountToken);
-}
-
-async function onMcpViewConfig(token) {
-  if (state.configSnippetOpen) { state.configSnippetOpen = false; render(token); return; }
-  try {
-    const res = await fetch('/api/mcp/claude-config');
-    const data = await res.json();
-    if (!isCurrentMount(token)) return;
-    state.configSnippet = data;
-    state.configSnippetOpen = true;
-  } catch (err) {
-    if (!isCurrentMount(token)) return;
-    state.mcpError = err.message;
-  }
-  if (isCurrentMount(token)) render(token);
-}
-
-async function onMcpCopySnippet(token) {
-  try {
-    const res = await fetch('/api/mcp/claude-config');
-    const data = await res.json();
-    const text = JSON.stringify(data, null, 2);
-    await copyToClipboard(text);
-    if (!isCurrentMount(token)) return;
-    state.copyFeedback = 'copied';
-  } catch {
-    if (!isCurrentMount(token)) return;
-    state.copyFeedback = 'copy failed';
-  }
-  if (!isCurrentMount(token)) return;
-  render(token);
-  setTimeout(() => { if (isCurrentMount(token)) { state.copyFeedback = null; render(token); } }, 2000);
 }
 
 /**

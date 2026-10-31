@@ -332,16 +332,6 @@
 <link rel="stylesheet" href="/next/views/ingest.css">
 <link rel="stylesheet" href="/next/views/sync.css">
 <link rel="stylesheet" href="/next/views/settings.css">
-<!-- Not a view: the MCP setup wizard is an overlay owned by
-     views/mcp-wizard.js and opened from the Settings view (the same
-     relationship views/shared-brain-wizard.js has with views/shared.js,
-     whose chrome lives inside views/shared.css). It gets its own file
-     because it is the larger of the two surfaces and has no view of its
-     own to hide in. This <link> is load-bearing twice over: without it
-     the wizard is unstyled in the browser AND invisible to
-     scripts/test-css-tokens.js §5, which discovers /next stylesheets
-     only from this file's <link> tags. -->
-<link rel="stylesheet" href="/next/views/mcp-wizard.css">
 <!-- Also not a view: the first-run guidance panel is a SHELL-level layer
      owned by views/onboarding.js, opened from app.js's boot() and (D-C)
      re-openable from Settings → General. It is deliberately not a modal —

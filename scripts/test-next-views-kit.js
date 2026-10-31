@@ -184,10 +184,10 @@ const NONTEXT_FLOOR = 3;
 
 const OWNED = ['views/chat.css', 'views/chat-list.css', 'views/domains.css', 'views/ingest.css',
   'views/memory.css', 'views/sync.css', 'views/shared.css',
-  'views/onboarding.css', 'views/mcp-wizard.css'];
+  'views/onboarding.css'];
 const OWNED_JS = ['views/chat.js', 'views/chat-list.js', 'views/domains.js', 'views/ingest.js',
   'views/memory.js', 'views/sync.js', 'views/shared.js',
-  'views/onboarding.js', 'views/mcp-wizard.js'];
+  'views/onboarding.js'];
 
 /** The last declaration of `prop` in the last top-level rule whose selector
  *  list matches `selector` exactly. Comments are stripped first. */
@@ -635,7 +635,6 @@ section('7. The monospace face is spent on LITERALS, not on facts');
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string
-    'views/mcp-wizard.js': 4, // the config snippet and the config-file paths
     /* v3.55.0 RAISED IT FROM 4 TO 6, for two spans and the same rule. The
        Agent-memory page became five blocks, each with its own ⓘ fold, and two
        of those folds name the same two kinds of literal the budget already
@@ -745,11 +744,10 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('9. The two wizards are SHEETS');
+section('9. The Shared Brain wizard is a SHEET (the MCP wizard was retired in v3.85.0)');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  const SHEETS = [['views/shared.css', '.sbw-scrim', '.sbw-card'],
-                  ['views/mcp-wizard.css', '.mcpw-scrim', '.mcpw-card']];
+  const SHEETS = [['views/shared.css', '.sbw-scrim', '.sbw-card']];
   for (const [file, scrim, card] of SHEETS) {
     const css = read(file);
     ok(declFor(css, scrim, 'align-items') === 'flex-start',

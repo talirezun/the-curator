@@ -177,7 +177,7 @@ export function renderToolsOnThisMacBody(m, openFolds = {}) {
       + '</div></details>';
   }).join('');
   const none = hs.length ? '' : '<p class="cur-setup-hint">No agent tool is set up on this computer.</p>';
-  const privacy = '<p class="cur-setup-hint">Only whether each file names my-curator is read — never its contents, and never another server’s entry. Nothing here writes a file.</p>';
+  const privacy = '<p class="cur-setup-hint">Only whether each file names my-curator is read — never its contents, and never another server’s entry. The checks only read. Install for me writes only the my-curator entry, after a preview, and keeps a copy of the file first.</p>';
   return '<div class="settings-setup-stack">' + mon + folds + none + privacy + '</div>';
 }
 

@@ -349,19 +349,19 @@ section('§5  deriveMcpStatus() — the pill, unchanged in behaviour by this fix
   // config is current — not that a client connected.
   ok(s.pillLabel === 'Configured', 'pillLabel "Configured"');
   ok(s.pillLabel !== 'Connected', 'never "Connected": nothing here observed a client connecting');
-  ok(s.wizardLabel === 'Re-run setup', 'wizardLabel "Re-run setup"');
+  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
 }
 {
   const s = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
   ok(s.connected === false, 'installed + stale -> NOT connected');
   ok(s.pillLabel === 'Needs re-connect', 'pillLabel "Needs re-connect" — the exact text the maintainer reported');
-  ok(s.wizardLabel === 'Re-connect', 'wizardLabel "Re-connect"');
+  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
 }
 {
   const s = deriveMcpStatus({ installed: false, stale: false, claude_config_parse_error: false });
   ok(s.connected === false, 'not installed -> not connected');
   ok(s.pillLabel === 'Not connected', 'pillLabel "Not connected"');
-  ok(s.wizardLabel === 'Set up Claude Desktop', 'wizardLabel "Set up Claude Desktop"');
+  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
 }
 {
   const s = deriveMcpStatus({ installed: false, stale: false, claude_config_parse_error: true });
@@ -427,7 +427,7 @@ section('§7  Wiring — renderMcp() actually consults shouldShowMcpStaleNote(),
   const renderMcpBody = extractFunction(settingsJs, 'renderMcp');
   ok(/shouldShowMcpStaleNote\s*\(/.test(renderMcpBody), 'renderMcp() calls shouldShowMcpStaleNote()');
   ok(/staleNoteHtml\s*=\s*shouldShowMcpStaleNote/.test(renderMcpBody), 'renderMcp() assigns staleNoteHtml FROM shouldShowMcpStaleNote()\'s result, not independently of it');
-  ok(/\+\s*staleNoteHtml\s*\+/.test(renderMcpBody) || /staleNoteHtml\s*\+/.test(renderMcpBody),
+  ok(/\+\s*staleNoteHtml\s*[;+]/.test(renderMcpBody) || /staleNoteHtml\s*[;+]/.test(renderMcpBody),
     'renderMcp() actually concatenates staleNoteHtml into its returned markup');
 }
 {

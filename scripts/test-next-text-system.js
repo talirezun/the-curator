@@ -890,7 +890,7 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
   // placement-only class as a size role would have pinned a size that rule
   // must never grow.
   const VIEW_TITLE = ['.view-title', '.reader-title'];
-  const HERO_TITLE = ['.chat-empty-title', '.mcpw-title', '.sbw-title'];
+  const HERO_TITLE = ['.chat-empty-title', '.sbw-title'];
   const CARD_TITLE = [
     '.sidebar-title', '.settings-job-title', '.dm-health-title',
     '.sb-card-title', '.sb-cta-title', '.sb-enable-title',

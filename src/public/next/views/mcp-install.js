@@ -183,10 +183,58 @@ export function nonMacLine(data) {
 
 // ── tool rows ──────────────────────────────────────────────────────────────
 
+/** A refusal reason as one sentence: the status sends `{code, message}`; older shapes send a string. */
+export function reasonText(r) {
+  if (isStr(r)) return r;
+  return r && isStr(r.message) ? r.message : '';
+}
+
+/**
+ * What Copy puts on the clipboard for one tool, and the line that says what to
+ * do with it. Pure. `data` is the status payload (its `tools` and
+ * `manualSnippets`); `machineFiles` (id → [{display, file, present}]) names
+ * the files of a tool the status read could not (copy-only rows).
+ *
+ *   · the tool's file does not exist yet → the WHOLE small document, "Save as <file>";
+ *   · the file exists, JSON → ONLY the my-curator entry, "Paste into <file> inside "<key>"";
+ *   · any other format (TOML, YAML…) → the snippet as the tool writes it, "Add this to <file>".
+ */
+export function copyPlanFor(id, data, machineFiles) {
+  const snippets = data && data.manualSnippets && typeof data.manualSnippets === 'object' ? data.manualSnippets : {};
+  const whole = isStr(snippets[id]) ? snippets[id] : '';
+  if (!whole) return null;
+  const tool = (data && Array.isArray(data.tools) ? data.tools : []).find((t) => t && t.id === id);
+  let file = null; let exists = null;
+  const own = tool && Array.isArray(tool.files) ? tool.files.filter((f) => f && isStr(f.display)) : [];
+  if (own.length) { file = own[0].display; exists = own[0].state !== 'missing'; }
+  else {
+    const mf = machineFiles && Array.isArray(machineFiles[id]) ? machineFiles[id].filter((f) => f && isStr(f.display)) : [];
+    const pick = mf.find((f) => f.present) || mf[0];
+    if (pick) { file = pick.display; exists = pick.present === true; }
+  }
+  let key = null; let inner = null;
+  try {
+    const doc = JSON.parse(whole);
+    const top = doc && typeof doc === 'object' && !Array.isArray(doc) ? Object.keys(doc)[0] : null;
+    const group = top ? doc[top] : null;
+    const name = group && typeof group === 'object' && !Array.isArray(group) ? Object.keys(group)[0] : null;
+    if (top && name) { key = top; inner = JSON.stringify({ [name]: group[name] }, null, 2).replace(/^\{\n?/, '').replace(/\n?\}$/, '').replace(/^ {2}/gm, ''); }
+  } catch { /* not JSON: copied as the tool writes it */ }
+  if (!file) {
+    return { text: whole, whole: true, file: null, line: 'Add this to the tool’s own MCP config file.' };
+  }
+  if (exists === false) return { text: whole, whole: true, file, line: 'Save as ' + file };
+  if (inner && key) return { text: inner, whole: false, file, line: 'Paste into ' + file + ' inside "' + key + '"' };
+  return { text: whole, whole: true, file, line: 'Add this to ' + file };
+}
+
+/** An escaped path that may wrap only after a slash. */
+function wbrPath(p) { return escapeHtml(p).replace(/\//g, '/<wbr>'); }
+
 function fileLines(tool) {
   const files = Array.isArray(tool.files) ? tool.files : [];
   if (!files.length) return '';
-  return files.map((f) => '<span class="mcpi-path mono">' + escapeHtml(f && (f.display || f.file) || '') + '</span>').join('');
+  return files.map((f) => '<span class="mcpi-path mono">' + wbrPath(f && (f.display || f.file) || '') + '</span>').join('');
 }
 
 /** The absolute path to reveal for a file's display path, or '' (the status read does not send it). */
@@ -218,7 +266,8 @@ export function renderToolRow(tool, ctx = {}) {
     : '<span class="mcpi-pick">' + label + '</span>';
   const tid = ' data-tool="' + escapeHtml(id) + '"';
   const acts = [];
-  const snippet = ctx.snippets && isStr(ctx.snippets[id]);
+  const plan = status !== 'connected' && ctx.data ? copyPlanFor(id, ctx.data, ctx.machineFiles) : null;
+  const snippet = !!plan;
   if (status === 'connected' && tool.installer === 'file' && ctx.writable !== false) acts.push(btnG('remove', 'Remove', tid));
   if (tool.restorable === true && tool.installer === 'file' && ctx.writable !== false) acts.push(btnG('restore', 'Restore original', tid));
   if (status === 'cant-read') {
@@ -228,16 +277,17 @@ export function renderToolRow(tool, ctx = {}) {
   if ((status === 'manual' || status === 'cant-read' || status === 'not-installed' || status === 'needs-update') && snippet) {
     acts.push(btnG('copy', 'Copy', tid));
   }
-  const reason = isStr(tool.reason) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(tool.reason) + '</p>' : '';
+  const reason = reasonText(tool.reason) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reasonText(tool.reason)) + '</p>' : '';
+  const copyLine = plan ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(plan.line) + '</p>' : '';
   const hint = isStr(tool.restartHint) && tool.running && tool.running.running === true
     ? '<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>' : '';
   const extra = isStr(tool.note) ? '<p class="mcpi-hint">' + escapeHtml(tool.note) + '</p>' : '';
   return '<div class="mcpi-row mcpi-row-' + status + '" data-mcpi-tool="' + escapeHtml(id) + '">'
-    + head
-    + '<span class="mcpi-files">' + fileLines(tool) + '</span>'
+    + '<div class="mcpi-l1">' + head
     + '<span class="mcpi-tags">' + statusTag(status) + runningTag(tool) + usedNote(tool, ctx.now) + '</span>'
-    + '<span class="mcpi-acts">' + acts.join('') + '</span>'
-    + reason + hint + extra
+    + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
+    + (fileLines(tool) ? '<div class="mcpi-files">' + fileLines(tool) + '</div>' : '')
+    + reason + copyLine + hint + extra
     + '</div>';
 }
 
@@ -246,7 +296,7 @@ export function renderToolRows(status, ctx = {}) {
   const data = status && status.data;
   if (!data) return '';
   const tools = Array.isArray(data.tools) ? data.tools : [];
-  const c2 = { ...ctx, writable: data.writable, snippets: data.manualSnippets || {} };
+  const c2 = { ...ctx, writable: data.writable, data };
   const rows = tools.map((t) => renderToolRow(t, c2)).join('');
   const nf = Array.isArray(data.notFound) ? data.notFound : [];
   const open = ctx.folds && ctx.folds['mcpi-notfound'];
@@ -255,13 +305,13 @@ export function renderToolRows(status, ctx = {}) {
     ? '<details class="settings-setup-fold mcpi-notfound" data-setup-fold="mcpi-notfound"' + (open ? ' open' : '') + '>'
       + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not found on this Mac (' + nf.length + ')</span></summary>'
       + '<div class="mcpi-nf-body">' + nf.map((t) => '<div class="mcpi-row mcpi-row-nf" data-mcpi-tool="' + escapeHtml(t.id) + '">'
-        + '<span class="mcpi-pick"><span class="mcpi-name">' + escapeHtml(t.label || t.id) + '</span></span>'
-        + '<span class="mcpi-files"></span><span class="mcpi-tags"></span>'
-        + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span>'
+        + '<div class="mcpi-l1"><span class="mcpi-pick"><span class="mcpi-name">' + escapeHtml(t.label || t.id) + '</span></span>'
+        + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span></div>'
+        + (() => { const pl = copyPlanFor(t.id, data, ctx.machineFiles); return pl ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(pl.line) + '</p>' : ''; })()
         + '</div>').join('') + '</div></details>'
     : '';
   const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent tool was found on this Mac.</p>' : '';
-  return '<div class="mcpi-rows">' + rows + '</div>' + fold + none;
+  return '<div class="mcpi-rows" id="mcpi-rows">' + rows + '</div>' + fold + none;
 }
 
 // ── the preview ────────────────────────────────────────────────────────────
@@ -283,6 +333,25 @@ export function preservedLine(names) {
   return 'Your ' + (list.length === 1 ? '1 other server stays' : list.length + ' other servers stay') + ' unchanged: ' + list.join(', ') + '.';
 }
 
+/** "31 Oct, 09:58" in the reader's own clock, or '' when the stamp can't be read. */
+export function keptOnWords(iso) {
+  const t = isStr(iso) ? new Date(iso) : null;
+  if (!t || !Number.isFinite(t.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][t.getMonth()];
+  return t.getDate() + ' ' + mon + ', ' + pad(t.getHours()) + ':' + pad(t.getMinutes());
+}
+
+/** Which copy goes back, and when it was kept. Falls back gracefully on an older server. */
+export function restoreWords(item) {
+  const when = keptOnWords(item.restoreFromAt);
+  const name = isStr(item.restoreFrom) ? item.restoreFrom : '';
+  if (when && name) return 'Puts back the copy kept on ' + when + ' (' + name + ').';
+  if (when) return 'Puts back the copy kept on ' + when + '.';
+  if (name) return 'Puts back the copy ' + name + '.';
+  return 'Puts back the copy kept earlier.';
+}
+
 function planItem(item, action, tool) {
   const label = escapeHtml(item.label || item.id || '');
   const file = '<span class="mono">' + escapeHtml(item.file || '') + '</span>';
@@ -292,19 +361,22 @@ function planItem(item, action, tool) {
       + '<p class="mcpi-line">' + escapeHtml(item.refused.message || item.refused.reason || 'This file was left as it is.') + '</p></div>';
   }
   const entry = isStr(item.entryText)
-    ? '<div class="mcpi-plan-cap">' + (action === 'remove' ? 'This entry is removed:' : action === 'restore' ? 'The file goes back to the copy kept earlier. Its My Curator entry then reads:' : 'The entry written:') + '</div>'
+    ? '<div class="mcpi-plan-cap">' + (action === 'remove' ? 'This entry is removed:' : action === 'restore' ? 'After the restore its My Curator entry reads:' : 'The entry written:') + '</div>'
       + '<pre class="mcpi-entry" data-mcpi-entry>' + escapeHtml(item.entryText) + '</pre>' : '';
+  const restoreLine = action === 'restore' ? '<p class="mcpi-line" data-mcpi-restore-from>' + escapeHtml(restoreWords(item)) + '</p>' : '';
   const absent = item.basis === 'absent';
   const keeps = absent
     ? '<p class="mcpi-line">This file does not exist yet — it is created, so there is no original to keep.</p>'
-    : (isStr(item.backupWillBe) ? '<p class="mcpi-line">A copy of the current file is kept as <span class="mono">' + escapeHtml(item.backupWillBe) + '</span>.</p>' : '');
+    : (isStr(item.backupWillBe) ? '<p class="mcpi-line">' + (action === 'restore' ? 'Your current file is kept as a new copy first: ' : 'A new copy of the current file is kept beside it as ')
+      + '<span class="mono">' + wbrPath(item.backupWillBe).replace(/<wbr>/g, '') + '</span>.</p>'
+      : (action === 'restore' ? '<p class="mcpi-line">Your current file is kept as a new copy first.</p>' : ''));
   const running = tool && tool.running && tool.running.running === true;
   const quit = running && item.id === 'claude-desktop'
     ? '<p class="mcpi-line mcpi-quit" data-mcpi-quit>' + escapeHtml((item.label || 'Claude Desktop') + ' is running. Quit it first for the safest install — it rewrites its own file.') + '</p>'
     : (running ? '<p class="mcpi-line">' + escapeHtml((item.label || item.id) + ' is running — it needs a restart to pick this up.') + '</p>' : '');
   return '<div class="mcpi-plan-item" data-mcpi-plan-item="' + escapeHtml(item.id) + '">'
     + '<div class="mcpi-plan-head"><strong>' + label + '</strong> — ' + escapeHtml(itemVerb(item, action)) + ' ' + file + '</div>'
-    + entry
+    + restoreLine + entry
     + (action === 'restore' ? '' : '<p class="mcpi-line">' + escapeHtml(preservedLine(item.preserved)) + '</p>')
     + keeps + quit
     + '</div>';
@@ -408,14 +480,39 @@ export function renderInstallPanel(st) {
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const err = isStr(s.error) ? '<p class="settings-inline-error" role="alert" data-mcpi-error>' + escapeHtml(s.error) + '</p>' : '';
   const stale = status.error ? '<p class="settings-inline-error" role="alert">Could not re-check: ' + escapeHtml(status.error) + '</p>' : '';
-  return '<div class="mcpi-panel" data-mcpi-panel>'
+  return '<div class="mcpi-panel" id="mcpi-panel" data-mcpi-panel>'
     + renderInstallOverview(status, s.ticks, s.busy)
     + err + stale
     + (s.plan ? renderPlanCard(s.plan, tools, s.busy) : '')
     + renderResults(s.results, tools)
     + (isStr(s.copied) ? '<p class="mcpi-line" role="status">' + escapeHtml(s.copied) + '</p>' : '')
-    + renderToolRows(status, { ticks: s.ticks, folds: s.folds, paths: s.paths })
+    + renderToolRows(status, { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles })
     + '</div>';
+}
+
+// ── the door from elsewhere ────────────────────────────────────────────────
+
+/**
+ * Scroll to the "My Curator in your tools" panel and mark one tool's row
+ * (default Claude Desktop) — the single target Settings block 1 and the MCP
+ * wizard point at, so there is ONE installer. Writes and requests nothing.
+ * Falls back to the panel, then to block 5, while the status is still loading.
+ * Returns the element it scrolled to, or null.
+ */
+export function focusInstallPanel(toolId = 'claude-desktop', doc = globalThis.document) {
+  if (!doc || typeof doc.querySelector !== 'function') return null;
+  const safe = String(toolId).replace(/[^A-Za-z0-9_-]/g, '');
+  const row = doc.querySelector('[data-mcpi-tool="' + safe + '"]');
+  const target = row || doc.getElementById('mcpi-panel') || doc.querySelector('.settings-block-mcp-tools');
+  if (!target) return null;
+  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (row && row.classList) {
+    row.classList.add('mcpi-flash');
+    if (typeof setTimeout === 'function') setTimeout(() => row.classList.remove('mcpi-flash'), 2400);
+    const f = row.querySelector('input, button');
+    if (f && typeof f.focus === 'function') { try { f.focus({ preventScroll: true }); } catch { /* not focusable */ } }
+  }
+  return target;
 }
 
 // ── requests (the only network code; every one is called from a click) ─────

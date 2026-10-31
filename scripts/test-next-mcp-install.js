@@ -84,13 +84,16 @@ ok(M.installButtonState(status(SAMPLE, { writable: false }), {}, null).disabled,
 section('§1 rows');
 const st = status(SAMPLE);
 const panel = M.renderInstallPanel({ status: st, ticks: {} });
+const plain = (h) => h.replace(/<wbr>/g, '');
 const rowOf = (id) => (panel.match(new RegExp('<div class="mcpi-row[^>]*data-mcpi-tool="' + id + '">[\\s\\S]*?(?=<div class="mcpi-row|</div></details>|</div>$)')) || [''])[0];
 ok(/data-mcpi-tick="cursor" checked/.test(panel) && /data-mcpi-tick="antigravity" checked/.test(panel), 'cursor and antigravity rows carry a ticked checkbox');
 ok(!/data-mcpi-tick="(claude-desktop|windsurf|opencode)"/.test(panel), 'no checkbox on connected / can’t-read / copy-only rows');
 ok(/Remove/.test(rowOf('claude-desktop')) && /data-mcpi-act="remove"/.test(rowOf('claude-desktop')), 'connected row offers Remove');
 ok(/used 2 days ago/.test(rowOf('claude-desktop')), 'connected row carries the used-age note', rowOf('claude-desktop'));
 ok(/data-mcpi-running/.test(rowOf('cursor')) && !/data-mcpi-running/.test(rowOf('antigravity')), 'running tag only on the running tool');
-ok(/~\/\.cursor\/mcp\.json/.test(rowOf('cursor')), 'row names the file it will write');
+ok(/~\/\.cursor\/mcp\.json/.test(plain(rowOf('cursor'))), 'row names the file it will write');
+ok(/~\/<wbr>\.cursor\/<wbr>mcp\.json/.test(rowOf('cursor')), 'a path may wrap only after a slash (<wbr>)');
+ok(/class="mcpi-l1"[\s\S]*data-mcpi-tick="cursor"[\s\S]*mcpi-st-needs-update[\s\S]*mcpi-acts[\s\S]*class="mcpi-files"/.test(rowOf('cursor')), 'two-line row: name, tag and actions on line 1, the path on line 2');
 ok(/data-mcpi-reason/.test(rowOf('windsurf')) && /comments/.test(rowOf('windsurf')), 'can’t-read row shows its reason, open');
 ok(/data-mcpi-act="copy"/.test(rowOf('opencode')) && !/data-mcpi-tick/.test(rowOf('opencode')) && /later version/.test(rowOf('opencode')), 'copy-only row: Copy, no checkbox, reason shown');
 const withPaths = M.renderInstallPanel({ status: st, paths: { '~/.codeium/windsurf/mcp_config.json': '/Users/x/.codeium/windsurf/mcp_config.json' } });
@@ -128,7 +131,7 @@ ok(card.includes(M.preservedLine(['github', 'sentry', 'a<b>']).replace(/&/g, '&a
 ok(/Your 3 other servers stay unchanged: github, sentry, a&lt;b&gt;\./.test(card), 'the exact preserved sentence', card.match(/Your[^<]*/)?.[0]);
 ok(M.preservedLine(['a']) === 'Your 1 other server stays unchanged: a.' && M.preservedLine([]) === 'No other servers are in this file.', 'preserved sentence: one / none');
 ok(card.includes('data-mcpi-entry') && card.includes('&quot;command&quot;: &quot;node&quot;') && card.includes('Curator &amp; &lt;Co&gt;'), 'the exact entry text, escaped');
-ok(/A copy of the current file is kept as <span class="mono">~\/\.cursor\/mcp\.json\.curator-backup-20261031T120000Z<\/span>/.test(card), 'names the backup file');
+ok(/A new copy of the current file is kept beside it as <span class="mono">~\/\.cursor\/mcp\.json\.curator-backup-20261031T120000Z<\/span>/.test(card), 'names the backup file');
 ok(/does not exist yet — it is created/.test(card), 'a new file says there is no original to keep');
 ok(/Update in <span class="mono">~\/\.cursor\/mcp\.json/.test(card) && /Add to <span class="mono">~\/\.gemini/.test(card), 'update vs add wording per file');
 ok(/This file has comments\./.test(card) && /Windsurf<\/strong> — not changed/.test(card), 'a refused item says why, open');
@@ -142,8 +145,11 @@ ok(/disabled/.test(M.renderPlanCard({ action: 'install', token: 't', items: [pla
 ok(/Writing…/.test(M.renderPlanCard(plan, SAMPLE, 'apply')), 'busy label while applying');
 const rm = M.renderPlanCard({ action: 'remove', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', entryText: '{"command":"node"}', preserved: ['x'], backupWillBe: '~/b', basis: 'h' }] }, SAMPLE, null);
 ok(/Remove from/.test(rm) && /This entry is removed/.test(rm) && />Remove</.test(rm), 'remove preview: names the entry removed');
-const rs = M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', preserved: [], backupWillBe: '~/b2', basis: 'h' }] }, SAMPLE, null);
-ok(/Restore/.test(rs) && /A copy of the current file is kept as/.test(rs) && !/stay unchanged|No other servers/.test(rs), 'restore preview: the copy of the current file is kept, no server list');
+const rs = M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', preserved: [], backupWillBe: '~/b2', basis: 'h', restoreFrom: 'claude_desktop_config.json.curator-backup-20261031T095800Z', restoreFromAt: '2026-10-31T09:58:00' }] }, SAMPLE, null);
+ok(/Puts back the copy kept on 31 Oct, 09:58 \(claude_desktop_config\.json\.curator-backup-20261031T095800Z\)\./.test(rs), 'restore says which copy goes back and when it was kept', rs.match(/data-mcpi-restore-from[^<]*/)?.[0]);
+ok(/Your current file is kept as a new copy first: <span class="mono">~\/b2/.test(rs), 'restore says the current file is kept as a new copy first');
+ok(M.restoreWords({}) === 'Puts back the copy kept earlier.' && /Your current file is kept as a new copy first\./.test(M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'C', file: '~/f', preserved: [], basis: 'h' }] }, SAMPLE, null)), 'restore falls back gracefully without the new fields');
+ok(/Restore/.test(rs) && /Your current file is kept as a new copy first/.test(rs) && !/stay unchanged|No other servers/.test(rs), 'restore preview: the copy of the current file is kept, no server list');
 
 // ── §4 results ─────────────────────────────────────────────────────────────
 section('§4 results are never behind a chevron');
@@ -217,6 +223,44 @@ const bridge = (tool) => S.fixButtons({ tool, fixes: [{ kind: 'copy-snippet', to
 ok(['claude-desktop', 'cursor', 'antigravity'].every((id) => /data-setup-act="settings">Install for me</.test(bridge(id))), 'Setup bridge line links to the installer for the three writable tools');
 ok(!/Install for me/.test(bridge('opencode')) && !/Install for me/.test(bridge('claude-code')), '…and not for any other tool');
 ok(!/Install for me/.test(S.fixButtons({ tool: 'cursor', fixes: [{ kind: 'copy-block' }] }, null)), '…and only on a line that already offers the entry');
+
+
+// ── Copy: what goes on the clipboard, and the line that says what to do ───
+section('§8 Copy it myself');
+{
+  const DOC = JSON.stringify({ mcpServers: { 'my-curator': { type: 'stdio', command: 'node', args: ['/x/server.js'] } } }, null, 2) + '\n';
+  const data = { manualSnippets: { cursor: DOC, goose: 'extensions:\n  my-curator:\n    cmd: node\n', opencode: DOC },
+    tools: [
+      t_({ id: 'cursor', files: [{ display: '~/.cursor/mcp.json', state: 'missing' }] }),
+      t_({ id: 'opencode', status: 'manual', files: [] }),
+      t_({ id: 'goose', status: 'manual', files: [] }),
+    ] };
+  function t_(o) { return { installer: 'file', status: 'not-installed', files: [], ...o }; }
+  const noFile = M.copyPlanFor('cursor', data, {});
+  ok(noFile.whole === true && noFile.text === DOC && noFile.line === 'Save as ~/.cursor/mcp.json', 'a tool with NO file yet: the whole small document, “Save as <file>”', JSON.stringify(noFile));
+  const has = M.copyPlanFor('cursor', { ...data, tools: [t_({ id: 'cursor', files: [{ display: '~/.cursor/mcp.json', state: 'no-entry' }] })] }, {});
+  ok(has.whole === false && /^"my-curator": \{/.test(has.text) && !/mcpServers/.test(has.text) && has.line === 'Paste into ~/.cursor/mcp.json inside "mcpServers"', 'a file that exists: only the entry, “Paste into <file> inside "mcpServers"”', has.text + ' | ' + has.line);
+  ok(JSON.parse('{' + has.text + '}')['my-curator'].command === 'node', 'the pasted entry is valid inside an object');
+  const mf = M.copyPlanFor('opencode', data, { opencode: [{ display: '~/.config/opencode/opencode.json', present: true }] });
+  ok(mf.whole === false && /inside "mcpServers"/.test(mf.line) && /~\/\.config\/opencode\/opencode\.json/.test(mf.line), 'a copy-only row names its file from the machine reading');
+  const toml = M.copyPlanFor('goose', data, { goose: [{ display: '~/.config/goose/config.yaml', present: true }] });
+  ok(toml.whole === true && toml.line === 'Add this to ~/.config/goose/config.yaml' && toml.text.startsWith('extensions:'), 'a non-JSON tool: the snippet as written, “Add this to <file>”');
+  ok(M.copyPlanFor('cursor', { manualSnippets: {}, tools: [] }, {}) === null, 'no snippet, no Copy');
+  const html = M.renderInstallPanel({ status: { data: { platform: 'darwin', writable: true, notFound: [], ...data, tools: [t_({ id: 'cursor', label: 'Cursor', files: [{ display: '~/.cursor/mcp.json', state: 'missing' }] })] } } });
+  ok(/data-mcpi-copyline>Save as ~\/<wbr>\.cursor\/<wbr>mcp\.json</.test(html) && /data-mcpi-act="copy" data-tool="cursor"/.test(html), 'the line sits under the row, visible, beside a Copy button');
+  const cr = M.renderInstallPanel({ status: { data: { platform: 'darwin', writable: true, notFound: [], ...data, tools: [t_({ id: 'cursor', label: 'Cursor', status: 'cant-read', reason: { code: 'corrupt', message: '~/.cursor/mcp.json is not valid JSON.' }, files: [{ display: '~/.cursor/mcp.json', file: '/Users/x/.cursor/mcp.json', state: 'cant-read' }] })] } } });
+  ok(/data-mcpi-reason>~\/\.cursor\/mcp\.json is not valid JSON\./.test(cr) && /data-mcpi-act="reveal" data-path="\/Users\/x\/\.cursor\/mcp\.json"/.test(cr) && /data-mcpi-act="copy"/.test(cr), 'can’t-read: the reason (object form) in words, Reveal on the absolute path, and Copy');
+  ok(!/\[object Object\]/.test(cr), 'a {code, message} reason never prints as [object Object]');
+}
+// A3 — backend restore fields
+{
+  const c = M.renderPlanCard({ action: 'restore', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', preserved: [], basis: 'h', backupWillBe: '~/.cursor/mcp.json.curator-backup-<UTC time of apply>', restoreFrom: '~/.cursor/mcp.json.curator-backup-20261031T095800Z', restoreFromAt: '2026-10-31T09:58:00' }] }, [], null);
+  ok(/Puts back the copy kept on 31 Oct, 09:58 \(~\/\.cursor\/mcp\.json\.curator-backup-20261031T095800Z\)/.test(c) && /backup-&lt;UTC time of apply&gt;/.test(c), 'restore: the source copy and when it was kept; the new copy named by the literal text, escaped');
+}
+
+const SM = await import('../src/public/next/views/setup-machine.js');
+const foot = SM.renderToolsOnThisMacBody({ data: { harnesses: [], version: 'x' } }, {});
+ok(/The checks only read\. Install for me writes only the my-curator entry, after a preview/.test(foot) && !/Nothing here writes a file/.test(foot), 'the block’s footer no longer says nothing is written');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
