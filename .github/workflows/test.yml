@@ -92,6 +92,264 @@ jobs:
       - run: npm ci
       - run: node scripts/test-mcp-install-windows.js
 
+  # ── Windows: the one-line installer, end to end, on a real Windows PC ───────
+  # v3.87.0. `install.ps1` is what non-technical Windows users paste into
+  # PowerShell, and the maintainer has no Windows PC to try it on, so THIS is
+  # its proof. It installs for real (private Node.js + MinGit downloaded and
+  # SHA-256 checked, the clone, npm ci, the shortcuts), starts and stops the
+  # app through the two desktop-icon scripts, and re-runs the installer as a
+  # repair. Both PowerShells are exercised: Windows PowerShell 5.1 (what every
+  # Windows 10/11 PC has, and what the shortcuts run) and PowerShell 7.
+  #
+  # The install goes into a folder whose name has a SPACE and a NON-ASCII
+  # letter, and %LOCALAPPDATA% (the private runtime and the logs) is pointed at
+  # one too, because a user name like "Ziga Novak" (with a caron) is the most
+  # likely way a quoted-path bug reaches a real user.
+  #
+  # Where the code comes from: on a push to a branch, the installer clones THAT
+  # branch from GitHub (the same route a user's install takes). A pull request
+  # (incl. forks) and a tag have no pushed branch to clone, so they clone the
+  # checked-out commit from the runner's workspace via -RepoUrl instead.
+  #
+  # Message boxes are suppressed (CURATOR_WIN_NONINTERACTIVE=1) and the
+  # browser is not opened; everything else is the real code path.
+  #
+  # THIS JOB GATES A RELEASE, exactly like `windows` above: release.js treats
+  # every job not named in ADVISORY_JOBS as part of the gate, and it has no
+  # `if:` (a skipped job is reported, not gated). Keep it that way.
+  windows-install:
+    name: Windows one-line install
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CURATOR_WIN_NONINTERACTIVE: '1'
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+
+      - name: Parse the four scripts (Windows PowerShell 5.1 and PowerShell 7)
+        shell: pwsh
+        run: |
+          $check = Join-Path $env:RUNNER_TEMP 'parse-check.ps1'
+          Set-Content -LiteralPath $check -Encoding ascii -Value @'
+          param([string]$FileList)
+          $bad = 0
+          $files = $FileList.Split('|')
+          foreach ($f in $files) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) { Write-Host ("::error file=" + $f + ",line=" + $e.Extent.StartLineNumber + "::" + $e.Message); $bad++ }
+          }
+          Write-Host ("PowerShell " + $PSVersionTable.PSVersion + ": " + $files.Count + " files, " + $bad + " parse errors")
+          if ($bad) { exit 1 }
+          '@
+          $files = @('install.ps1', 'scripts\windows\start-curator.ps1', 'scripts\windows\stop-curator.ps1', 'scripts\windows\curator-common.ps1') | ForEach-Object { (Resolve-Path $_).Path }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $check -FileList ($files -join '|')
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & pwsh -NoProfile -File $check -FileList ($files -join '|')
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # Nothing in them may be non-ASCII (Windows PowerShell 5.1 reads a
+          # BOM-less script in the ANSI code page).
+          foreach ($f in $files) {
+            $bytes = [System.IO.File]::ReadAllBytes($f)
+            foreach ($b in $bytes) { if ($b -gt 127) { Write-Host "::error file=$f::non-ASCII byte"; exit 1 } }
+          }
+
+      - name: Choose the install folders (a space and a non-ASCII letter)
+        shell: powershell
+        run: |
+          $z = [string][char]0x017D
+          $root = Join-Path $env:RUNNER_TEMP ('Curator User ' + $z + 'iga')
+          $dir = Join-Path $root 'the curator'
+          $lad = Join-Path $root 'AppData Local'
+          [void][System.IO.Directory]::CreateDirectory($lad)
+          if ('${{ github.event_name }}' -ne 'pull_request' -and '${{ github.ref_type }}' -eq 'branch') {
+            $branch = '${{ github.ref_name }}'
+            $repo = ''
+          } else {
+            git -C $env:GITHUB_WORKSPACE branch -f ci-install HEAD
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $branch = 'ci-install'
+            $repo = $env:GITHUB_WORKSPACE
+          }
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $lines = "CI_CURATOR_DIR=$dir`nLOCALAPPDATA=$lad`nCI_CURATOR_BRANCH=$branch`nCI_CURATOR_REPO=$repo`n"
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, $lines, $utf8)
+          Write-Host "install folder: $dir"
+          Write-Host "LOCALAPPDATA:   $lad"
+          Write-Host "branch: $branch   repo: $(if ($repo) { $repo } else { 'GitHub' })"
+
+      - name: First install (Windows PowerShell 5.1, the test-a-branch form, -NoStart)
+        shell: powershell
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CI_CURATOR_DIR
+          & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')))) -Branch $env:CI_CURATOR_BRANCH -NoStart -InstallDir $dir -RepoUrl $env:CI_CURATOR_REPO
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 reported failure ($LASTEXITCODE)" }
+
+          $rt = Join-Path $env:LOCALAPPDATA 'TheCurator\runtime'
+          $node = Join-Path $rt 'node\node.exe'
+          $git = Join-Path $rt 'git\cmd\git.exe'
+          foreach ($p in @($node, $git, (Join-Path $dir 'node_modules\express\package.json'), (Join-Path $dir '.env'), (Join-Path $dir 'src\server.js'))) {
+            if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "missing after install: $p" }
+          }
+          Write-Host ("private node: " + (& $node --version) + "   private git: " + (& $git --version))
+          $head = (& $git -C $dir rev-parse HEAD)
+          Write-Host "checkout HEAD: $head"
+          if ('${{ github.event_name }}' -ne 'pull_request' -and $head -ne '${{ github.sha }}') {
+            Write-Host "::warning::the cloned branch head ($head) is not this run's commit (${{ github.sha }}); a newer push probably landed"
+          }
+
+          # Both shortcuts, in both places, with the right target, arguments and icon.
+          $sh = New-Object -ComObject WScript.Shell
+          $places = @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('Programs')) 'The Curator'))
+          $pairs = @(@('The Curator.lnk', 'start-curator.ps1', 'curator-start.ico'), @('Stop The Curator.lnk', 'stop-curator.ps1', 'curator-stop.ico'))
+          foreach ($place in $places) {
+            foreach ($pair in $pairs) {
+              $lnkPath = Join-Path $place $pair[0]
+              if (-not (Test-Path -LiteralPath $lnkPath -PathType Leaf)) { throw "missing shortcut: $lnkPath" }
+              $l = $sh.CreateShortcut($lnkPath)
+              $script = Join-Path $dir ('scripts\windows\' + $pair[1])
+              $ico = Join-Path $dir ('scripts\windows\assets\' + $pair[2])
+              if ($l.TargetPath -notlike '*\System32\WindowsPowerShell\v1.0\powershell.exe') { throw "$lnkPath target: $($l.TargetPath)" }
+              if (-not $l.Arguments.Contains('-File "' + $script + '"')) { throw "$lnkPath arguments: $($l.Arguments)" }
+              if (-not $l.Arguments.Contains('-ExecutionPolicy Bypass') -or -not $l.Arguments.Contains('-WindowStyle Hidden')) { throw "$lnkPath arguments: $($l.Arguments)" }
+              if ($l.WorkingDirectory -ne $dir) { throw "$lnkPath working folder: $($l.WorkingDirectory)" }
+              if (-not (Test-Path -LiteralPath $ico -PathType Leaf)) { throw "icon file missing: $ico" }
+              if ($l.IconLocation -ne ($ico + ',0')) { throw "$lnkPath icon: $($l.IconLocation) (expected $ico,0)" }
+              Write-Host "ok: $lnkPath"
+            }
+          }
+
+      - name: Start, check, stop (the desktop-icon scripts)
+        shell: powershell
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CI_CURATOR_DIR
+          $start = Join-Path $dir 'scripts\windows\start-curator.ps1'
+          $stop = Join-Path $dir 'scripts\windows\stop-curator.ps1'
+          $port = 3399
+          $needle = (Join-Path $dir 'src\server.js').ToLowerInvariant()
+          function Get-Servers { @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Replace('/', '\').ToLowerInvariant().Contains($needle) }) }
+          function Get-Version { param($h) try { (Invoke-RestMethod -Uri "http://${h}:$port/api/version" -TimeoutSec 5 -UseBasicParsing).version } catch { $null } }
+          function Test-Free { $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port); try { $l.Start(); $true } catch { $false } finally { try { $l.Stop() } catch { } } }
+          function Show-Log { $log = Join-Path $env:LOCALAPPDATA 'TheCurator\logs\server.log'; if (Test-Path -LiteralPath $log) { Write-Host '----- server.log -----'; Get-Content -LiteralPath $log -Tail 80 } }
+
+          # The scripts honour a PORT in the checkout's .env (src/server.js reads it via dotenv).
+          [System.IO.File]::WriteAllText((Join-Path $dir '.env'), "PORT=$port`r`n# planted by CI`r`n", (New-Object System.Text.UTF8Encoding($false)))
+          $want = (Get-Content -Raw -LiteralPath (Join-Path $dir 'package.json') | ConvertFrom-Json).version
+
+          # A node process that is NOT The Curator: Stop must leave it alone.
+          $decoy = Start-Process -FilePath node -ArgumentList '-e', '"setInterval(function(){},1000)"' -PassThru -WindowStyle Hidden
+
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start
+          if ($LASTEXITCODE -ne 0) { Show-Log; throw "start-curator.ps1 failed ($LASTEXITCODE)" }
+          $v = Get-Version '127.0.0.1'
+          if ($v -ne $want) { Show-Log; throw "/api/version answered '$v', expected '$want'" }
+          if ((Get-Version 'localhost') -ne $want) { throw '/api/version did not answer on localhost' }
+          $s = Get-Servers
+          if ($s.Count -ne 1) { throw "expected 1 server process, found $($s.Count)" }
+          $privNode = Join-Path $env:LOCALAPPDATA 'TheCurator\runtime\node\node.exe'
+          if ($s[0].ExecutablePath -ne $privNode) { throw "the server runs on $($s[0].ExecutablePath), not the private node $privNode" }
+          Write-Host "running: v$v, process $($s[0].ProcessId), $($s[0].ExecutablePath)"
+
+          # Double-click again: no second server.
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start
+          if ($LASTEXITCODE -ne 0) { throw "second start failed ($LASTEXITCODE)" }
+          if ((Get-Servers).Count -ne 1) { throw 'a second start launched a second server' }
+
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop
+          if ($LASTEXITCODE -ne 0) { throw "stop-curator.ps1 failed ($LASTEXITCODE)" }
+          if ((Get-Servers).Count -ne 0) { throw 'a server process is still running after Stop' }
+          if (Get-Version '127.0.0.1') { throw 'The Curator still answers after Stop' }
+          if (-not (Test-Free)) { throw "port $port is not free after Stop" }
+          if ($decoy.HasExited) { throw 'Stop killed a node process that is not The Curator' }
+          Write-Host 'stopped; port free; the other node process is untouched'
+
+          $out = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $out -notmatch 'was not running') { throw "second stop: $out" }
+
+          # Port taken by another program: a plain-words refusal, exit code 1.
+          $blocker = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
+          $blocker.Start()
+          try {
+            $out = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start) -join "`n"
+            $code = $LASTEXITCODE
+          } finally { $blocker.Stop() }
+          Write-Host $out
+          if ($code -ne 1 -or $out -notmatch 'already used by another program') { throw "port-in-use start: exit $code" }
+          if ((Get-Servers).Count -ne 0) { throw 'a server was left running after the port-in-use refusal' }
+          Stop-Process -Id $decoy.Id -Force
+
+      - name: Second install = repair (PowerShell 7, without -NoStart)
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CI_CURATOR_DIR
+          $port = 3399
+          $rt = Join-Path $env:LOCALAPPDATA 'TheCurator\runtime'
+          $git = Join-Path $rt 'git\cmd\git.exe'
+
+          # The user's data, planted: it must come through byte-identical.
+          $wiki = Join-Path $dir 'domains\x\wiki'
+          [void][System.IO.Directory]::CreateDirectory($wiki)
+          [byte[]]$bytes = @(0xEF, 0xBB, 0xBF) + [System.Text.Encoding]::UTF8.GetBytes("# A page`r`n`r`n" + [char]0x017D + "iga's note, [[b]]`n")
+          [System.IO.File]::WriteAllBytes((Join-Path $wiki 'a.md'), $bytes)
+          [System.IO.File]::WriteAllText((Join-Path $dir '.curator-config.json'), '{"planted": true}')
+          $guarded = @((Join-Path $wiki 'a.md'), (Join-Path $dir '.env'), (Join-Path $dir '.curator-config.json'))
+          $before = @{}
+          foreach ($f in $guarded) { $before[$f] = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash }
+          $headBefore = (& $git -C $dir rev-parse HEAD)
+
+          # Break things a re-run must repair.
+          Remove-Item -LiteralPath (Join-Path $rt 'node\node.exe') -Force
+          Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'The Curator.lnk') -Force
+          Remove-Item -LiteralPath (Join-Path $dir 'src\server.js') -Force
+
+          & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')))) -Branch $env:CI_CURATOR_BRANCH -InstallDir $dir -RepoUrl $env:CI_CURATOR_REPO
+          if ($LASTEXITCODE -ne 0) { throw "the repair run reported failure ($LASTEXITCODE)" }
+
+          foreach ($f in $guarded) {
+            if ((Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash -ne $before[$f]) { throw "the repair run changed $f" }
+          }
+          foreach ($p in @((Join-Path $rt 'node\node.exe'), (Join-Path ([Environment]::GetFolderPath('Desktop')) 'The Curator.lnk'), (Join-Path $dir 'src\server.js'))) {
+            if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "not repaired: $p" }
+          }
+          $headAfter = (& $git -C $dir rev-parse HEAD)
+          if ($headAfter -ne $headBefore) { Write-Host "::notice::the repair run fast-forwarded $headBefore -> $headAfter" }
+          $log = Get-Content -Raw -LiteralPath (Join-Path $env:LOCALAPPDATA 'TheCurator\logs\install.log')
+          if ($log -notmatch 'Git [0-9.]+windows\.[0-9]+ is already installed and works') { throw 'the repair run re-installed Git, which was intact' }
+          if ($log -notmatch 'Components are already installed') { throw 'the repair run re-ran npm, which was not needed' }
+
+          # Without -NoStart the installer started the app and RETURNED.
+          $v = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/version" -TimeoutSec 5).version
+          Write-Host "running after the repair run: v$v"
+
+          # The icon scripts also run under PowerShell 7.
+          & pwsh -NoProfile -File (Join-Path $dir 'scripts\windows\stop-curator.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'stop under pwsh failed' }
+          & pwsh -NoProfile -File (Join-Path $dir 'scripts\windows\start-curator.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'start under pwsh failed' }
+          & pwsh -NoProfile -File (Join-Path $dir 'scripts\windows\stop-curator.ps1')
+          if ($LASTEXITCODE -ne 0) { throw 'second stop under pwsh failed' }
+          $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
+          $l.Start(); $l.Stop()
+          Write-Host 'repair run OK; data byte-identical; port free'
+
+      - name: Logs
+        if: always()
+        shell: pwsh
+        run: |
+          $logs = Join-Path $env:LOCALAPPDATA 'TheCurator\logs'
+          foreach ($f in @('install.log.1', 'install.log', 'server.log.1', 'server.log')) {
+            $p = Join-Path $logs $f
+            if (Test-Path -LiteralPath $p) { Write-Host "===== $f ====="; Get-Content -LiteralPath $p -Tail 150 }
+          }
+          Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -match 'server\.js' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
   # ── Live tests: real Gemini/Anthropic calls (cost ≈ a few cents). ───────────
   # Runs ONLY on a push to main or a manual run — NEVER on pull requests, so a
   # community fork can never reach the API-key secrets. `needs: offline` means we
