@@ -36,7 +36,7 @@ import { existsSync } from 'node:fs';
 import { getDomainsDir } from '../brain/config.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { adapterFor, mcpEntryFor } from '../brain/harness-adapters.js';
-import { tildeUnder } from '../brain/setup-check.js';
+import { tildeUnder, machineWord } from '../brain/setup-check.js';
 import { readUsageLinesUnion, summariseSessions } from '../brain/mcp-usage.js';
 import {
   detectRunning, detectTools, detectWinAppx, detectWinClaudeRunning,
@@ -291,7 +291,8 @@ export async function buildStatus() {
       row.restorable = insp.files.some((f) => f.read.state !== 'cant-read'
         && restoreCandidate(manifestRows, id, f.file, f.read.sha).eligible);
       if (id === 'antigravity' && insp.files.some((f) => f.role === 'observed')) {
-        row.note = 'Antigravity keeps more than one MCP file on this Mac; each one that exists is kept in step.';
+        // v3.87.0: the machine word follows the platform (Mac / PC / computer).
+        row.note = `Antigravity keeps more than one MCP file on this ${machineWord(platform)}; each one that exists is kept in step.`;
       }
     } else {
       if (!det) { notFound.push({ id, label }); continue; }

@@ -38,6 +38,18 @@ import {
 import { normaliseHarness } from './harness-names.js';
 import { installIdOf } from './tray-summary.js';
 
+// v3.87.0: the machine word in user-visible text — "this Mac" on macOS (every
+// string byte-identical to before), "this PC" on Windows, "this computer"
+// elsewhere. The same words as src/public/next/shared/platform.js.
+let _platformOverride = null;
+/** Test seam: pin the platform for the strings below; null clears. */
+export function __setSetupPlatform(p) { _platformOverride = p || null; }
+/** 'Mac' | 'PC' | 'computer'. */
+export function machineWord(platform = _platformOverride || process.platform) {
+  return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer';
+}
+const thisMachineText = () => `this ${machineWord()}`;
+
 export const STATES = Object.freeze({
   OK: 'ok',
   FIX: 'fix',
@@ -1057,7 +1069,7 @@ export function collectProjectSetup(o) {
         const base = path.basename(b.file);
         toFix.push(item({
           tool: id, kind: 'bridge-file', status: b.status, file: b.file, fileDisplay: b.display,
-          text: `${label}’s MCP settings file (${b.display}) ${BAD_FILE_TEXT[b.status]}, so ${label} can’t reach The Curator on this Mac.`,
+          text: `${label}’s MCP settings file (${b.display}) ${BAD_FILE_TEXT[b.status]}, so ${label} can’t reach The Curator on ${thisMachineText()}.`,
           detail: badFileDetail(id, label, b.status),
         }, [FIX.reveal(b.file, `Reveal ${base}`), FIX.recheck(), FIX.settings()]));
       } else {
@@ -1273,7 +1285,7 @@ export function collectProjectSetup(o) {
     const h = o.home || '';
     if (o.repo.exists === false) {
       toFix.push(item({ ...at, kind: 'repo-missing',
-        text: `${repoDisplay} isn’t on this Mac.`,
+        text: `${repoDisplay} isn’t on ${thisMachineText()}.`,
         detail: 'Clone the project’s git repository here, then choose the folder.',
       }, [FIX.changeRepo('Choose the folder')]));
     }
@@ -1410,7 +1422,7 @@ export const FIX = Object.freeze({
   downloadSkill: (skill) => ({ kind: 'download-skill', skill, href: `/api/setup/skills/${skill}.zip`, label: `Download ${skill}.zip` }),
   sync: () => ({ kind: 'sync', label: 'Sync now' }),
   changeRepo: (label = 'Choose the folder') => ({ kind: 'change-repo', label }),
-  settings: () => ({ kind: 'settings', label: 'Open Tools on this Mac' }),
+  settings: () => ({ kind: 'settings', label: `Open Tools on ${thisMachineText()}` }),
   recheck: () => ({ kind: 'recheck', label: 'Re-check' }),
 });
 
@@ -1455,7 +1467,7 @@ function bridgeItem(id, label, m) {
     return item({ ...base, file: flagged.file, fileDisplay: flagged.display,
       reason: missing ? 'launch-missing' : 'other-folder',
       text: missing
-        ? `${label}’s MCP entry in ${flagged.display} launches a file that isn’t on this Mac, so ${label} can’t reach The Curator.`
+        ? `${label}’s MCP entry in ${flagged.display} launches a file that isn’t on ${thisMachineText()}, so ${label} can’t reach The Curator.`
         : `${label}’s MCP entry in ${flagged.display} reads a different knowledge folder, so ${label} doesn’t see this project’s handoffs.`,
       detail: `Replace the entry with the current one, then restart ${label}.`,
     }, [FIX.copySnippet(id), FIX.reveal(flagged.file, `Reveal ${path.basename(flagged.file)}`)]);
@@ -1470,7 +1482,7 @@ function bridgeItem(id, label, m) {
   }
   return item({ ...base, reason: 'other',
     text: `${label}’s MCP entry: ${m.bridge.word}.`,
-    detail: 'Open Tools on this Mac to see each file it read.',
+    detail: `Open Tools on ${thisMachineText()} to see each file it read.`,
   }, [FIX.settings()]);
 }
 
@@ -1510,7 +1522,7 @@ function skillsItem(id, label, skills, home) {
  */
 function wrongSaveItem({ id, label, s, row, best, blockItem, names, repoPath, gitOf, commitFixes }) {
   const when = shortDate(s.at);
-  const where = s.thisMachine ? 'this Mac' : (s.machine || 'another computer');
+  const where = s.thisMachine ? thisMachineText() : (s.machine || 'another computer');
   const fields = { tool: id, at: s.at, machine: s.machine || null, thisMachine: !!s.thisMachine, scope: s.scope };
   if (blockItem) {
     // The block line already carries the fix; it explains the save too.

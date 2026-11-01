@@ -703,6 +703,18 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
     const gone = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: path.join(ROOT, 'nope-repo'), source: 'set', exists: false } });
     ok(gone.toFix.find((f) => f.kind === 'repo-missing')?.text === `${S.tildeUnder(ROOT, path.join(ROOT, 'nope-repo'))} isn’t on this Mac.` && !gone.toFix.some((f) => /^block-/.test(f.kind)),
       'a folder not on this Mac: one line, and its files are not reported missing beside it', gone.toFix.map((f) => f.kind));
+    // v3.87.0: the machine word follows the platform; macOS stays "this Mac".
+    for (const [plat, word] of [['win32', 'PC'], ['linux', 'computer'], ['darwin', 'Mac']]) {
+      S.__setSetupPlatform(plat);
+      try {
+        const g = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: path.join(ROOT, 'nope-repo'), source: 'set', exists: false } });
+        const t = g.toFix.find((f) => f.kind === 'repo-missing')?.text;
+        ok(t === `${S.tildeUnder(ROOT, path.join(ROOT, 'nope-repo'))} isn’t on this ${word}.`, `${plat}: the folder line says "this ${word}"`, t);
+        ok(S.FIX.settings().label === `Open Tools on this ${word}`, `${plat}: the settings fix reads "Open Tools on this ${word}"`, S.FIX.settings());
+        if (plat !== 'darwin') ok(!/this Mac/.test(JSON.stringify(g)), `${plat}: no "this Mac" anywhere in the result`, g);
+      } finally { S.__setSetupPlatform(null); }
+    }
+    ok(S.machineWord('win32') === 'PC' && S.machineWord('darwin') === 'Mac' && S.machineWord('') === 'computer', 'machineWord: PC / Mac / computer');
   }
 
   // (g) sync-incoming names the computer; (i)(j) travels and saves
