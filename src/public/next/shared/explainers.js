@@ -699,10 +699,10 @@ const E = {
   'settings.mcp-across': {
     label: 'About Across projects',
     title: 'Across projects',
-    lead: '**Across projects** shows which projects’ agents saved a Handoff, and when: the last 30 days.',
+    lead: '**Across projects** shows which projects’ agents saved a Handoff, and when: the last 7 days.',
     points: [
       { icon: 'agent', text: 'Each bar counts the Handoff saves in that project’s journals.' },
-      { icon: 'clock', text: 'The second reading: saves in the last 7 days, per agent app.' },
+      { icon: 'clock', text: 'The second reading: the same saves, per agent app.' },
       { icon: 'search', text: '“+” means at least: a long journal is read only partly.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },

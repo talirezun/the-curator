@@ -321,6 +321,11 @@ section('§4  Across projects — handoff saves from the store, and the capped f
   ok('the route answers a byProject list', Array.isArray(body.byProject));
   ok('…every row carries saves / lastSaveAt / savesCapped', body.byProject.every((r) => 'saves' in r && 'lastSaveAt' in r && 'savesCapped' in r));
   ok('…and no row carries the raw save times', body.byProject.every((r) => !('saveTimes' in r) && !('cappedFrom' in r)));
+  // v3.88.0 polish — ONE window for block ④: saves per project are counted
+  // over the pulse's window (the per-app reading's), and the route says so.
+  eq('byProjectWindow.savesWindowDays is the pulse window (7)', body.byProjectWindow && body.byProjectWindow.savesWindowDays, T.PULSE_WINDOW_SECONDS / 86400);
+  const ss = body.byProjectWindow && Date.parse(body.byProjectWindow.savesSince);
+  ok('…and savesSince is that many days back', Number.isFinite(ss) && Math.abs((Date.now() - ss) - T.PULSE_WINDOW_SECONDS * 1000) < 60000, body.byProjectWindow && body.byProjectWindow.savesSince);
 }
 
 R.__setMachineRows(null);

@@ -236,6 +236,35 @@ section('§6 older payloads, and "did not look"');
   const row = M.appRowModel({ id: 'cline', label: 'Cline', status: 'manual', installer: 'cli', verdict: 'to-fix', setupFix: { word: 'launch file missing' }, files: [] }, { platform: 'darwin' });
   ok(row.fix === true && row.warnings.some((w) => w.kind === 'bridge-file' && /launch file missing/.test(w.text)), 'a `setupFix` the backend counts is said on its row');
 }
+// v3.88.0 polish — "Run self-test" is a real secondary button ATTACHED to
+// the Bridge answers panel (the same `btn btn-secondary` as "Copy it myself"),
+// never faint plain text floating under it. Executed from views/settings.js.
+section('§7 the self-test is a button on the Bridge answers panel');
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const url = await import('node:url');
+  const ROOT = path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..');
+  const src = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+  const start = src.search(/function renderSelfTestResult\s*\(/);
+  let i = src.indexOf('{', start), depth = 0;
+  for (; i < src.length; i++) { if (src[i] === '{') depth++; else if (src[i] === '}' && --depth === 0) break; }
+  const fnSrc = src.slice(start, i + 1);
+  const { renderMonitor } = await import('../src/public/next/shared/monitor.js');
+  const { formatAge } = await import('../src/public/next/shared/age.js');
+  const esc = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const run = (st, last) => new Function('state', 'lastSelfTest', 'adaptMachine', 'adaptBridges', 'currentBridgeFacts', 'tildePath',
+    'ageSecondsOf', 'formatAge', 'escapeHtml', 'installWords', 'renderMonitor', fnSrc + '\nreturn renderSelfTestResult();')(
+    st, () => last, () => null, () => ({ checked: true, running: 0, list: [] }), () => ({ version: '3.88.0' }), (p) => p,
+    () => 5, formatAge, esc, () => '', renderMonitor);
+  const h = run({ mcp: { domains_dir: '/x/domains' } }, { ok: true, toolCount: 24, at: iso(5000) });
+  const btn = (h.match(/<button[^>]*id="btn-mcp-self-test"[^>]*>[^<]*<\/button>/) || [''])[0];
+  ok(/class="btn btn-secondary"/.test(btn) && />Run self-test</.test(btn), '★ "Run self-test" is a secondary button, like "Copy it myself"', btn);
+  ok(/^<div class="mcp-bridge-panel"><div class="cur-mon" id="mcp-bridge-monitor"[^]*<\/div><div class="settings-btn-row mcp-bridge-acts"><button/.test(h),
+    '…attached directly under the Bridge answers panel, inside its wrapper', h.slice(-300));
+  const busy = run({ mcp: {}, selfTestLoading: true }, null);
+  ok(/class="btn btn-secondary" id="btn-mcp-self-test" disabled>Testing…</.test(busy), '…and while it runs it says "Testing…" and is disabled');
+}
 ok(net === 0, 'no builder fired a request', net);
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-mcp-bridge-page: ${passed} passed, ${failed} failed`);

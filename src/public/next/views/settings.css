@@ -2783,7 +2783,7 @@
 .mcp-busiest { margin-top: var(--space-6); }
 .mcp-all-tools { margin-top: var(--space-6); }
 .mcp-all-tools .settings-setup-summary { flex-wrap: wrap; row-gap: var(--space-2); }
-.mcp-all-tools-hint { margin-left: auto; text-align: right; }
+.mcp-all-tools-legend { margin: 0 0 var(--space-4); }
 .mcp-all-tools .settings-setup-body { padding-top: var(--space-2); }
 .mcp-tool-cols {
   display: grid;
@@ -2824,7 +2824,11 @@
 /* ④ is two readings since v3.76.0 (truth audit F12): the connections, then
    the journal-based saves, each with its own note. A gap between them so
    the second does not read as a continuation of the first's note. */
-.mcp-across > .cur-mon + .cur-mon { margin-top: var(--space-4); }
+.mcp-across > .cur-mon + .cur-mon,
+.mcp-across > .mcp-foot + .cur-mon { margin-top: var(--space-4); }
+/* v3.88.0 polish — a footnote under a panel is ONE short line in the page's
+   muted text (.tx-note), never a mono paragraph inside the monitor. */
+.mcp-foot { margin-top: var(--space-2); }
 
 /* THE IDENTITY DOT BEFORE THE NAME. The monitor's one trusted slot
    (`markHtml`) renders INSIDE the value, beside the figure; on these two

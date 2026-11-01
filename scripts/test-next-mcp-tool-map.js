@@ -80,7 +80,7 @@ function extractFunction(source, name) {
   throw new Error(`extractFunction: unbalanced braces in ${name}`);
 }
 
-const RENDER_CHAIN = ['ageSecondsOf', 'usageWindowWords', 'agentReading', 'tickedAgeHtml', 'sessionLine', 'lastExerciseRun',
+const RENDER_CHAIN = ['ageSecondsOf', 'usageWindowWords', 'footWindowWords', 'agentReading', 'tickedAgeHtml', 'sessionLine', 'lastExerciseRun',
   'renderExerciseOutcome', 'renderExerciseRunner',
   'renderToolMapBody', 'renderToolMap', 'usageSignature',
   // v3.72.1 (truth audit F9): the poll compares the save/session stamp to
@@ -237,7 +237,10 @@ section('3. Each line is AGENT use: calls in the window · last agent use; "—"
     'search_wiki: "11 · 2 days ago" — agent calls and the last AGENT use, on the tick hook', line('search_wiki'));
   ok(/cur-mon-value">—</.test(line('get_tags')), 'a tool no agent called: "—", with no age');
   ok(!/1 min ago/.test(h.slice(h.indexOf('mcp-all-tools'))), 'the test run’s "1 min ago" appears on NO line');
-  ok(/— = none since \d+ \w{3}/.test(h), 'the fold’s hint says what "—" means, and since when (the log’s own start)');
+  ok(/<p class="tx-note mcp-foot mcp-all-tools-legend">Each line: agent calls · last agent use · — none since \d+ \w{3}<\/p>/.test(h),
+    'the column legend sits INSIDE the fold, one short line: what each line is, what "—" means and since when');
+  ok(/<summary class="settings-setup-summary"><span class="settings-setup-name">All 24 tools<\/span><\/summary>/.test(h),
+    'the fold’s summary is its name only — no cryptic legend on it (v3.88.0 polish)');
   // An older server (no lastAgentAt field) may stand its lastUsedAt in ONLY when that use was not a test run.
   const older = build(null, { state: { mcpUsage: payload() } }).agentReading;
   ok(older({ name: 'a', lastUsedAt: ago(30), lastVia: 'self-test' }).lastAgentAt === null, 'older server: a test run’s use is never passed off as an agent’s');
@@ -260,8 +263,8 @@ section('4. The Agent use monitor: two session readings, then the busiest five')
   const h = build(null, { state: { mcpUsage: many } }).renderToolMapBody(NOW);
   const mon = (h.match(/<div class="cur-mon" id="mcp-agent-use"[\s\S]*?(?=<details)/) || [''])[0];
   ok((mon.match(/cur-depth/g) || []).length >= 5 && (mon.match(/class="cur-mon-line[" ]/g) || []).length === 7, 'two readings + FIVE tools with depth bars, never more');
-  ok(/3 more tools called less/.test(mon) && /16 of 24 not called by an agent/.test(mon) && /Test runs are not counted\./.test(mon),
-    'the note counts the rest in words and says test runs are not counted');
+  ok(/3 more called less/.test(mon) && /16 tools unused/.test(mon) && /test runs not counted/.test(mon),
+    'the footnote counts the rest in words and says test runs are not counted');
   // THE EMPTY STATE — the log absent entirely.
   const emptyHtml = build(null, { state: { mcpUsage: { present: false, tools: [], sessions: {} } } }).renderToolMapBody(NOW);
   ok(/No calls recorded yet/.test(emptyHtml) && /The map fills as your agents use the bridge/.test(emptyHtml) && !/mcp-all-tools/.test(emptyHtml),
@@ -852,16 +855,24 @@ section('13. Agent use: agents only, the busiest five, bars against the busiest'
   ok(/>41<\/span>/.test(lines[2] ? lines[2].val : ''), 'the figure printed is count7dAgent (41), NOT count7d (50) — a test call is never an agent’s');
   ok(!/cur-depth-danger/.test(mon), 'NEVER red: the busiest tool is not a fault');
   ok(/visually-hidden"> 12 calls · bar scaled to get_project_context’s 41</.test(mon), '★ every bar names its scale as the BUSIEST TOOL, by name (v3.76.0 F8a)');
-  ok(/21 of 24 not called by an agent this week\. Test runs are not counted\./.test(mon), 'the tools left out are COUNTED in words; test runs are said not to count', mon.slice(-400));
+  // ONE SHORT LINE (v3.88.0 polish, the owner's complaint): the footnote is a
+  // muted .tx-note under the panel — never the monitor's mono note — one
+  // clause list, no second sentence, short enough for one line at 1280 px.
+  const foot = (x) => [...x.matchAll(/<p class="tx-note mcp-foot">([^<]*)<\/p>/g)].map((m) => m[1]);
+  const isOneLine = (t) => t.length <= 90 && !/[.!?]\s+\S/.test(t) && !/\n/.test(t);
+  ok(JSON.stringify(foot(mon)) === JSON.stringify(['Last 7 days · 21 tools unused · test runs not counted']),
+    'the footnote is ONE short line: window · unused · test runs (got ' + JSON.stringify(foot(mon)) + ')');
+  ok(foot(mon).every(isOneLine) && !/cur-mon-note/.test(mon), '★ one-line footnote: no second sentence, no mono note inside the monitor');
 
   // A LOG YOUNGER THAN THE WINDOW STATES ITS TRUE SPAN (v3.76.0 F8b).
   const young = withAgent({ logStartedAt: ago(5.4 * 86400), countWindowDays: 7 });
   const yh = build(null, { state: { mcpUsage: young, mcpUsageError: null } }).renderToolMapBody(NOW);
   const ym = yh.slice(yh.indexOf('class="mcp-busiest"'), yh.indexOf('mcp-all-tools'));
-  ok(/Counted over the last 5 days — the log begins \d+ \w{3}/.test(ym) && /not called by an agent in the last 5 days/.test(ym) && !/this week|7 days/i.test(ym),
-    '★ a 5-day log says "last 5 days" and where it begins; no "this week" or "7 days" [F8b]', ym);
+  ok(/<p class="tx-note mcp-foot">Last 5 days \(log begins \d+ \w{3}\) · 21 tools unused · test runs not counted<\/p>/.test(ym) && !/this week|7 days/i.test(ym),
+    '★ a 5-day log says "Last 5 days (log begins …)", once, on one line; no "this week" or "7 days" [F8b]', ym);
+  ok(foot(ym).every(isOneLine), '…and that footnote is still one line');
   ok(/aria-label="Agent use, last 5 days"/.test(yh), '…and the monitor’s name carries the same window');
-  ok(/agent calls in the last 5 days · last agent use/.test(yh), '…and so does the fold’s hint');
+  ok(!/in the last 5 days/.test(yh.slice(yh.indexOf('mcp-all-tools'))), 'the window is stated once — the fold’s legend does not repeat it');
 
   // Five at most, and the rest are said.
   const many = payload({ tools: Array.from({ length: 11 }, (_, i) => ({ name: 't' + String(i).padStart(2, '0'),
@@ -870,13 +881,13 @@ section('13. Agent use: agents only, the busiest five, bars against the busiest'
   const mh = build(null, { state: { mcpUsage: many, mcpUsageError: null } }).renderToolMapBody(NOW);
   const mm = mh.slice(mh.indexOf('class="mcp-busiest"'), mh.indexOf('mcp-all-tools'));
   ok((mm.match(/cur-depth-bar/g) || []).length === 5, 'at most five bars');
-  ok(/6 more tools called less/.test(mm), '...and the six past the cap are said in words');
+  ok(/6 more called less/.test(mm), '...and the six past the cap are said in words');
 
   // A test-run-only week: no bar, one sentence.
   const selfOnly = payload({ tools: USED.concat(UNUSED_READ, UNUSED_WRITE).map((t) => ({ ...t, count7d: 1, count7dAgent: 0 })) });
   const sh = build(null, { state: { mcpUsage: selfOnly, mcpUsageError: null } }).renderToolMapBody(NOW);
   const sm = sh.slice(sh.indexOf('class="mcp-busiest"'), sh.indexOf('mcp-all-tools'));
-  ok(/No agent called a tool this week\. Test runs are not counted\./.test(sm) && !/cur-depth-bar/.test(sm), 'a week with only test runs draws NO bar and says why');
+  ok(/Last 7 days · no agent called a tool · test runs not counted/.test(sm) && !/cur-depth-bar/.test(sm), 'a week with only test runs draws NO bar and says why, on one line');
 
   // ABSENT IS NOT ZERO: an older server sends no count7dAgent → no busiest list.
   const old = build(null, { state: { mcpUsage: FIXTURE, mcpUsageError: null } }).renderToolMapBody(NOW);
@@ -899,7 +910,7 @@ section('14. ④ Across projects: handoff saves per project, the last save, idle
   const { domainIdentityClass } = await import('../src/public/next/shared/sidebar.js');
   const across = (projects) => build([extractFunction(src, 'renderAcrossProjects'),
     extractFunction(src, 'renderAcrossProjectsBody'), extractFunction(src, 'windowDaysWords'),
-    extractFunction(src, 'logWindowWords'), extractFunction(src, 'adaptProjects'), extractFunction(src, 'acrossProjectsLede')], {
+    extractFunction(src, 'logWindowWords'), extractFunction(src, 'adaptProjects'), extractFunction(src, 'acrossProjectsLede'), extractFunction(src, 'acrossWindowWords')], {
     state: { mcpProjects: projects, mcpProjectsError: null,
       defaultDomainInfo: { domains: ['business', 'posts', 'research'], identity: { business: 4, posts: 12, research: 7 } } },
     domainIdentityClass, ACROSS_PROJECTS_MAX_ROWS: 12,
@@ -908,24 +919,39 @@ section('14. ④ Across projects: handoff saves per project, the last save, idle
     sessions: 3, sessionsRead: 3, sessionsSaved: 3, lastSessionAt: ago(60),
     saves, lastSaveAt: saves ? ago(2 * 86400) : null, savesCapped: false, domainMismatch: false, sharedName: false, ...(extra || {}) });
   const P = { byProject: [row('business', 'alpha', 12, { savesCapped: true }), row('posts', 'curator', 5), row('research', 'quiet', 0), row('posts', 'ott', 0)],
-    window: { logPresent: true, busiestSaved: 9, windowDays: 30, windowCovered: true },
+    window: { logPresent: true, busiestSaved: 9, windowDays: 30, windowCovered: true, savesWindowDays: 7 },
     savePulse: { events: 113, lowerBound: true, capped: true, byToolFloor: true, windowSeconds: 604800, coversWholeWindow: true,
       byTool: [{ id: 'claude-code', label: 'Claude Code', events: 113, lastSeenAt: ago(60) }, { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: '2026-09-12T08:00:00Z' }] } };
   const html = across(P);
   ok(/settings-block-num" aria-hidden="true">4</.test(html) && /<h2 class="settings-job-title">Across projects<\/h2>/.test(html), 'block ④ "Across projects"');
-  ok(/Last 30 days: which projects’ agents saved a handoff, and when\./.test(html), 'the window is in the lede, from the payload');
+  ok(/Last 7 days: which projects’ agents saved a handoff, and when\./.test(html), 'the window is in the lede, from the payload (`savesWindowDays`)');
+  // ONE WINDOW FOR THE WHOLE BLOCK (v3.88.0 polish): saves per project and
+  // per app are both counted over `savesWindowDays`, so it is said once.
+  // Counted over what the block SHOWS (lede and body), not its ⓘ panel.
+  const shown = (x) => ((x.match(/<p class="settings-job-lede[^]*?<\/p>/) || [''])[0] + x.slice(x.indexOf('<div class="mcp-across">')));
+  const windows = (x) => (shown(x).replace(/<[^>]+>/g, ' ').match(/\b(?:last|under) (?:a |\d+ )?days?\b|\bLast \d+ days\b/gi) || []);
+  ok(windows(html).length === 1 && !/30 days/.test(html), '★ ONE window in block ④, stated once (got ' + JSON.stringify(windows(html)) + ')');
   const lines = [...html.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span>(?:<span class="cur-mon-sub">([^<]*)<\/span>)?<\/div>/g)]
     .map((m) => ({ key: m[1], val: m[2], sub: m[3] || '' }));
   const txt = (v) => v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  ok(lines.map((l) => l.key).join('|') === 'business / alpha|posts / curator|no save|Claude Code|Antigravity',
+  ok(lines.map((l) => l.key).join('|') === 'business / alpha|posts / curator|Claude Code|Antigravity',
     'projects that saved, busiest first; the idle ones on ONE line; then one line per agent app (got ' + lines.map((l) => l.key).join('|') + ')');
   const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
   ok(w(lines[0].val) === 100 && w(lines[1].val) === 41.7, 'the bar is SAVES against the busiest project (12 → 100%, 5 → 41.7%) — the owner’s decision 5');
   ok(/12\+/.test(txt(lines[0].val)) && !/5\+/.test(txt(lines[1].val)), '"12+" when a journal was read only in part (`savesCapped`), plain otherwise');
   ok(lines[0].sub === 'last save ' + formatAge(Math.round((Date.now() - Date.parse(P.byProject[0].lastSaveAt)) / 1000)), 'each row says its last save, in the shared age words', lines[0].sub);
-  ok(txt(lines[2].val) === 'research / quiet · posts / ott', 'the projects with no save are named on one line');
+  const idle = [...html.matchAll(/<p class="tx-note mcp-foot mcp-idle">([^<]*)<\/p>/g)].map((m) => m[1]);
+  ok(JSON.stringify(idle) === JSON.stringify(['No save: research / quiet, posts / ott']),
+    '★ the projects with no save: ONE left-aligned muted line, "No save: a / b, c / d" (got ' + JSON.stringify(idle) + ')');
+  ok(html.indexOf('mcp-idle') > html.indexOf('id="mcp-across-projects"') && html.indexOf('mcp-idle') < html.indexOf('id="mcp-across-apps"'),
+    '…directly under the projects panel, never a monitor line with the names right-aligned');
   ok(/cur-sb-dot cur-sb-dot-4"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-12"/.test(lines[1].val), '★ each project carries its DOMAIN’s RECORDED identity dot');
-  ok(/113\+/.test(txt(lines[3].val)) && txt(lines[4].val) === 'none' && lines[4].sub === 'last save 12 Sep', 'per app: "113+", and "none · last save 12 Sep"');
+  ok(/113\+/.test(txt(lines[2].val)) && txt(lines[3].val) === 'none' && lines[3].sub === 'last save 12 Sep', 'per app: "113+", and "none · last save 12 Sep"');
+  // A store younger than the window: the ONE window says where its records begin.
+  const young = across({ ...P, savePulse: { ...P.savePulse, coversWholeWindow: false, oldestEventAt: new Date(Date.now() - 5 * 86400000).toISOString() } });
+  ok(/Last 5 days \(records begin \d+ \w{3}\): which projects’ agents saved a handoff, and when\./.test(young)
+    && windows(young).length === 1 && !/records begin[^]*records begin/.test(shown(young).replace(/<[^>]+>/g, " ")),
+    '★ a store younger than the window: "Last 5 days (records begin …)" once, in the lede — the per-app panel does not repeat it', shown(young).replace(/<[^>]+>/g, ' ').slice(0, 600));
   ok(!/all agent apps/.test(html), 'no total line while only one app saved — it would repeat that app');
   ok(/“\+” means at least: long journals are read from their newest part only\./.test(html) && !/16 KB/.test(html), 'the "+" note is one plain sentence (the precision caveat is in the ⓘ)');
   ok(!/cur-depth-danger/.test(html), 'NEVER red');

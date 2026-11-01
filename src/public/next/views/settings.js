@@ -9110,7 +9110,7 @@ function renderSelfTestResult() {
     ],
     loud: [...folderLoud, ...failLoud, ...orphanLoud],
   }) + '<div class="settings-btn-row mcp-bridge-acts">'
-    + '<button type="button" class="btn btn-ghost btn-xs" id="btn-mcp-self-test"' + (busy ? ' disabled' : '') + '>'
+    + '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (busy ? ' disabled' : '') + '>'
     + (busy ? 'Testing…' : 'Run self-test') + '</button></div></div>';
 }
 
@@ -9250,6 +9250,18 @@ function usageWindowWords(logStartedAt, now, windowDays) {
   }
   return { covered: true, short: days + ' days', last: 'last ' + days + ' days',
     inWords: 'in the last ' + days + ' days', begins: '' };
+}
+
+/**
+ * A window as the short footnote words (v3.88.0 polish): "Last 7 days", or
+ * "Last 5 days (log begins 27 Oct)" when the log is younger than the window.
+ * `win` is usageWindowWords' result.
+ */
+function footWindowWords(win) {
+  const w = win && typeof win === 'object' ? win : {};
+  const last = typeof w.last === 'string' && w.last ? w.last : '';
+  const head = last ? last.charAt(0).toUpperCase() + last.slice(1) : '';
+  return head + (!w.covered && w.begins ? ' (log begins ' + w.begins + ')' : '');
 }
 
 /**
@@ -9426,7 +9438,6 @@ function renderToolMapBody(now) {
   const readings = tools.map(agentReading);
   // v3.76.0 (truth audit F8): the window is the one the log REALLY covers.
   const win = usageWindowWords(u.logStartedAt, at, u.countWindowDays);
-  const winWords = win.covered && win.short === '7 days' ? 'this week' : win.inWords;
 
   // ── AGENT USE ───────────────────────────────────────────────────────────
   // `count7dAgent`, never `count7d`: the latter counts this page's own test
@@ -9455,20 +9466,21 @@ function renderToolMapBody(now) {
     }
     const more = called.length - shown.length;
     const notCalled = readings.length - called.length;
-    const bits = [];
-    if (!win.covered) bits.push('Counted over the ' + win.last + ' — the log begins ' + win.begins);
-    if (more > 0) bits.push(more + ' more ' + (more === 1 ? 'tool' : 'tools') + ' called less');
-    if (notCalled > 0) bits.push(notCalled + ' of ' + readings.length + ' not called by an agent ' + winWords);
-    note = shown.length
-      ? (bits.length ? bits.join(' · ') + '. ' : '') + 'Test runs are not counted.'
-      : 'No agent called a tool ' + winWords + (win.covered ? '' : ' (the log begins ' + win.begins + ')') + '. Test runs are not counted.';
+    // ONE SHORT LINE, in the page's muted text, never a mono paragraph
+    // (v3.88.0 polish): "Last 5 days (log begins 27 Oct) · 21 tools unused ·
+    // test runs not counted". The window is stated here, once.
+    const bits = [footWindowWords(win)];
+    if (!shown.length) bits.push('no agent called a tool');
+    if (more > 0) bits.push(more + ' more called less');
+    if (shown.length && notCalled > 0) bits.push(notCalled + (notCalled === 1 ? ' tool' : ' tools') + ' unused');
+    bits.push('test runs not counted');
+    note = bits.join(' · ');
   }
   const useMon = '<div class="mcp-busiest">' + renderMonitor({
     id: 'mcp-agent-use',
     label: 'Agent use, ' + win.last,
     lines,
-    note,
-  }) + '</div>';
+  }) + (note ? '<p class="tx-note mcp-foot">' + escapeHtml(note) + '</p>' : '') + '</div>';
 
   // ── ALL N TOOLS — one fold, closed by default ───────────────────────────
   const logBegins = (() => {
@@ -9489,12 +9501,14 @@ function renderToolMapBody(now) {
     : '');
   const reads = readings.filter((r) => r.group !== 'write');
   const writes = readings.filter((r) => r.group === 'write');
-  const hint = (counted ? 'agent calls ' + winWords + ' · ' : '') + 'last agent use'
-    + (logBegins ? ' · — = none since ' + logBegins : '');
+  // The column legend lives INSIDE the fold, one muted line; the summary is
+  // only its name.
+  const legend = (counted ? 'Each line: agent calls · last agent use' : 'Each line: last agent use')
+    + (logBegins ? ' · — none since ' + logBegins : '');
   const fold = '<details class="settings-setup-fold mcp-all-tools" data-mcp-fold="all-tools"' + (state.mcpAllToolsOpen ? ' open' : '') + '>'
-    + '<summary class="settings-setup-summary"><span class="settings-setup-name">All ' + readings.length + ' tools</span>'
-    + '<span class="cur-setup-hint mcp-all-tools-hint">' + escapeHtml(hint) + '</span></summary>'
-    + '<div class="settings-setup-body"><div class="mcp-tool-cols">' + group('READ', reads) + group('WRITE', writes) + '</div></div>'
+    + '<summary class="settings-setup-summary"><span class="settings-setup-name">All ' + readings.length + ' tools</span></summary>'
+    + '<div class="settings-setup-body"><p class="tx-note mcp-foot mcp-all-tools-legend">' + escapeHtml(legend) + '</p>'
+    + '<div class="mcp-tool-cols">' + group('READ', reads) + group('WRITE', writes) + '</div></div>'
     + '</details>';
 
   return runner + useMon + fold;
@@ -9574,12 +9588,42 @@ function adaptProjects(P) {
   return { logPresent, unit: savesKnown ? 'saves' : 'connections', rows };
 }
 
-/** "Last 30 days: which projects’ agents saved a handoff, and when." — the window from the payload, never typed. */
+/**
+ * THE ONE WINDOW OF BLOCK ④ (v3.88.0 polish), as words: "Last 7 days", or
+ * "Last 5 days (records begin 27 Oct)" when the working-state store is younger
+ * than the window. Both readings in the block — saves per project and saves
+ * per agent app — are counted over the route's `savesWindowDays` (the pulse's
+ * window), so it is stated ONCE, in the lede. An older server that sends no
+ * `saves` gets the connections' log window instead, and the per-app reading
+ * then names its own window. '' when the payload does not say.
+ */
+function acrossWindowWords(P, now) {
+  if (!P) return '';
+  const at = typeof now === 'number' ? now : Date.now();
+  const A = adaptProjects(P);
+  const cap = (w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : '');
+  if (A.unit !== 'saves') return cap(logWindowWords(P.window));
+  const w = P.window && typeof P.window === 'object' ? P.window : {};
+  const pulse = P.savePulse && typeof P.savePulse === 'object' ? P.savePulse : null;
+  const days = Number.isFinite(w.savesWindowDays) ? w.savesWindowDays
+    : (pulse && Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
+  const oldest = pulse && pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string'
+    ? Date.parse(pulse.oldestEventAt) : NaN;
+  if (Number.isFinite(oldest)) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const n = Math.round(Math.max(0, at - oldest) / 86400000);
+    const d = new Date(oldest);
+    return (n < 1 ? 'Under a day' : 'Last ' + (n === 1 ? 'day' : n + ' days'))
+      + ' (records begin ' + d.getDate() + ' ' + MONTHS[d.getMonth()] + ')';
+  }
+  return cap(windowDaysWords(days));
+}
+
+/** "Last 7 days: which projects’ agents saved a handoff, and when." — the window from the payload, never typed. */
 function acrossProjectsLede() {
-  const P = state.mcpProjects;
-  const win = P ? logWindowWords(P.window) : '';
+  const win = acrossWindowWords(state.mcpProjects);
   const rest = 'which projects’ agents saved a handoff, and when.';
-  return win ? win.charAt(0).toUpperCase() + win.slice(1) + ': ' + rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+  return win ? win + ': ' + rest : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 /**
@@ -9590,11 +9634,12 @@ function acrossProjectsLede() {
  * DOMAIN identity dot (its RECORDED slot, rule 5), `domain / project`, its
  * handoff saves with a depth bar against the busiest project (rule 6, a named
  * denominator), and its last save. Projects with no save share ONE line,
- * "no save", that names them — still on screen, because a project whose
+ * "No save: a / b, c / d", under the panel, that names them — still on screen, because a project whose
  * agents never save is the one a reader most needs to find.
  *
- * Then "Handoff saves, last 7 days", one line per agent app; "+" means at
- * least (a long journal is read from its newest part only).
+ * Then the handoff saves per agent app, over the SAME window (stated once,
+ * in the lede); "+" means at least (a long journal is read from its newest
+ * part only).
  *
  * ABSENT IS NOT ZERO: with no reading the block says so, never a column of
  * zeros. NEVER RED: `max`, never `budget`.
@@ -9637,9 +9682,12 @@ function renderAcrossProjectsBody() {
         : undefined,
     };
   });
-  if (idle.length) {
-    lines.push({ key: A.unit === 'saves' ? 'no save' : 'no connection', value: idle.map((r) => r.key).join(' · ') });
-  }
+  // The projects with no save: ONE left-aligned muted line under the panel,
+  // "No save: early-computing / lecture-series, posts / ott".
+  const idleHtml = idle.length
+    ? '<p class="tx-note mcp-foot mcp-idle">' + escapeHtml((A.unit === 'saves' ? 'No save: ' : 'No connection: ')
+      + idle.map((r) => r.key).join(', ')) + '</p>'
+    : '';
   const notes = [];
   if (!A.logPresent) {
     notes.push('No usage log on this computer yet — projects appear here once an agent uses the bridge.');
@@ -9688,23 +9736,29 @@ function renderAcrossProjectsBody() {
     if (!apps.length && !saveLines.length) {
       saveLines.push({ key: 'handoff saves', value: pulse.events + (floor ? '+' : '') });
     }
-    const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
-    const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string' ? day(pulse.oldestEventAt) : '';
-    const bits = ['Handoff saves' + (pw ? ', ' + pw : '') + (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '') + '.'];
-    if (floor) bits.push('“+” means at least: long journals are read from their newest part only.');
-    saveNote = bits.join(' ');
+    // The window is the block's ONE window, stated in the lede. Only an older
+    // server (connections, a 30-day window) leaves this reading's own window
+    // to be named here, in the same short style.
+    const bits = [];
+    if (A.unit !== 'saves') {
+      const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
+      const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string' ? day(pulse.oldestEventAt) : '';
+      if (pw) bits.push('Saves per app: ' + pw + (since ? ' (records begin ' + since + ')' : ''));
+    }
+    if (floor) bits.push('“+” means at least: long journals are read from their newest part only');
+    saveNote = bits.length ? bits.join(' · ') + '.' : '';
   }
+  const foot = (t) => (t ? '<p class="tx-note mcp-foot">' + escapeHtml(t) + '</p>' : '');
+  const winWords = acrossWindowWords(P, now);
   return '<div class="mcp-across">' + renderMonitor({
     id: 'mcp-across-projects',
-    label: 'Handoff saves per project' + (logWindowWords(P.window) ? ', ' + logWindowWords(P.window) : ''),
+    label: 'Handoff saves per project' + (winWords ? ', ' + winWords.charAt(0).toLowerCase() + winWords.slice(1) : ''),
     lines,
-    note: notes.join(' '),
-  }) + (saveLines.length ? renderMonitor({
+  }) + idleHtml + foot(notes.join(' ')) + (saveLines.length ? renderMonitor({
     id: 'mcp-across-apps',
     label: 'Handoff saves per agent app',
     lines: saveLines,
-    note: saveNote,
-  }) : '') + '</div>';
+  }) + foot(saveNote) : '') + '</div>';
 }
 
 /**

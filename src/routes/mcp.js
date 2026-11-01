@@ -38,7 +38,7 @@ import {
   readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST, RECENT_WINDOW_MS,
 } from '../brain/mcp-usage.js';
 import {
-  getStoreActivity, captureFor, captureWindowFacts, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS,
+  getStoreActivity, captureFor, captureWindowFacts, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS, PULSE_WINDOW_SECONDS,
 } from '../brain/tray-summary.js';
 import { detectBridgeProcesses, STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { exerciseAllTools } from '../brain/mcp-exercise.js';
@@ -801,6 +801,12 @@ async function acrossProjects() {
   let activity = { ok: false, projects: null, total: null, truncated: false, pulse: null };
   try { activity = await getStoreActivity({ now }); } catch { /* stays not-measured */ }
 
+  // v3.88.0 — HANDOFF SAVES are counted over the PULSE's window (7 days),
+  // the same window as the per-app "Handoff saves" reading beside them, so
+  // the block states ONE window. The connections stay on the 30-day log
+  // window (the widget's).
+  const savesWindowMs = PULSE_WINDOW_SECONDS * 1000;
+  const savesSince = now - savesWindowMs;
   const byName = new Map(sum ? sum.projects.map((r) => [r.project, r]) : []);
   const storeProjects = Array.isArray(activity.projects) ? activity.projects : [];
   const nameCount = new Map();
@@ -810,7 +816,7 @@ async function acrossProjects() {
   for (const p of storeProjects) {
     seenNames.add(p.project);
     const c = captureFor(byName, logPresent, p.domain, p.project);
-    const sv = savesFor(p, since);
+    const sv = savesFor(p, savesSince);
     rows.push({
       domain: p.domain,
       project: p.project,
@@ -825,7 +831,7 @@ async function acrossProjects() {
       // two store projects sharing one name share one reading. Said, not hidden.
       sharedName: (nameCount.get(p.project) || 0) > 1,
       // v3.88.0 — HANDOFF SAVES, from the working-state store (never the
-      // usage log), in the same 30-day window. `savesCapped`: a journal was
+      // usage log), in the pulse's 7-day window. `savesCapped`: a journal was
       // read only from its newest 16 KB, so `saves` is a floor ("12+").
       saves: sv.saves,
       lastSaveAt: sv.lastSaveAt,
@@ -870,6 +876,10 @@ async function acrossProjects() {
       // support "last 30 days", so the view states `windowDaysCovered` and
       // where the log begins whenever `windowCovered` is false.
       windowDays: TRAY_CAPTURE_WINDOW_DAYS,
+      // v3.88.0 — the window `saves` is counted over (the pulse's), stated
+      // so a view names it from data.
+      savesWindowDays: savesWindowMs / 86400000,
+      savesSince: new Date(savesSince).toISOString(),
       logStartsAt: win.logStartsAt,
       windowStartsAt: win.windowStartsAt,
       windowDaysCovered: win.windowDaysCovered,
