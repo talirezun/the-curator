@@ -91,6 +91,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { readdirSync } from 'fs';
+// v3.89.0: a health row is the section kit's fold item (real function).
+import { SECTION_KIT } from './test-helpers/section-kit.js';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // THE MAPPING AND THE ROW ARE IMPORTED, NOT LIFTED (v3.65.1). Both are
 // exported from a module this suite can simply load; rebuilding either from
@@ -855,9 +857,10 @@ let renderIssueRow = null, HEALTH_KEYS = [];
   ok(fnSrc !== null, 'renderIssueRow extracted from views/domains.js');
   if (fnSrc) {
     renderIssueRow = new Function(
-      'escapeHtml',
+      'escapeHtml', 'renderFoldItem',
       `${fnSrc}\nreturn renderIssueRow;`
-    )((s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+    )((s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+      SECTION_KIT.renderFoldItem);
   }
   ok(typeof renderIssueRow === 'function', 'renderIssueRow runs in a sandbox');
 
@@ -952,10 +955,17 @@ if (renderIssueRow && HEALTH_KEYS.length) {
   // Every SOURCE emission of dm-issue-main carries mono — the executed check
   // above only covers rows renderIssueRow builds, and there are others
   // (the dismissed list, the semantic-dupe handled rows).
+  // v3.89.0: every such row is the section kit's renderFoldItem now, which
+  // writes `mono` into the one class list it emits for the main cell — so
+  // the source check is: no hand-written dm-issue-main left in this view,
+  // three or more kit calls, and the kit's own emission carries mono.
   const classAttrs = js.match(/class="([^"]*dm-issue-main[^"]*)"/g) || [];
-  ok(classAttrs.length >= 3, `${classAttrs.length} dm-issue-main emission sites found in source`);
-  const sansSites = classAttrs.filter((a) => !/\bmono\b/.test(a));
-  eq(sansSites.length, 0, `every dm-issue-main emission carries mono${sansSites.length ? `: ${sansSites.join(' | ')}` : ''}`);
+  eq(classAttrs.length, 0, `no hand-written dm-issue-main class list is left in views/domains.js${classAttrs.length ? `: ${classAttrs.join(' | ')}` : ''}`);
+  const kitCalls = (js.match(/renderFoldItem\(\{/g) || []).length;
+  ok(kitCalls >= 3, `${kitCalls} renderFoldItem emission sites found in source`);
+  const kitSrc = readFileSync(path.join(ROOT, 'src/public/next/shared/section.js'), 'utf8');
+  ok(/cls\('mono cur-fold-item-main', a\.itemMain\)/.test(kitSrc),
+    "shared/section.js renderFoldItem's main cell carries mono beside its kit name and the dm-issue-main alias");
 }
 
 // ── §7b the cascade half of the mono rule ──────────────────────────────────
@@ -987,9 +997,14 @@ section('§7b — nothing in views/domains.css can out-declare shell.css\'s .mon
     }
   }
   ok(monoPartners.size > 0, `${monoPartners.size} class(es) ride alongside mono on health rows: ${[...monoPartners].join(', ')}`);
+  // v3.89.0: shared/section.css is linked after shell.css too, so it is held
+  // to the same rule.
+  const kitCss = readFileSync(path.join(ROOT, 'src/public/next/shared/section.css'), 'utf8');
   for (const cls of monoPartners) {
     const ff = declFor(domainsCss, `.${cls}`, 'font-family');
     ok(ff === null, `views/domains.css declares no font-family for .${cls}${ff ? ` (found "${ff}", which would beat .mono)` : ''}`);
+    const kf = declFor(kitCss, `.${cls}`, 'font-family');
+    ok(kf === null, `shared/section.css declares no font-family for .${cls}${kf ? ` (found "${kf}", which would beat .mono)` : ''}`);
   }
 }
 

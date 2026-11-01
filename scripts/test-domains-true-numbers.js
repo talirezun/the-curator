@@ -59,6 +59,8 @@ const { EST_TOKENS_PER_PAIR, scanSemanticDuplicates } = await import(path.join(R
 const { addDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
 const { formatDayAge, formatAge } = await import(path.join(REPO, 'src/public/next/shared/age.js'));
 const { ageWordsFor } = await import(path.join(REPO, 'src/public/next/shared/age-ticker.js'));
+// v3.89.0: the Dismissed group is the section kit's fold row (real functions).
+const { SECTION_KIT } = await import('./test-helpers/section-kit.js');
 const { formatUsdHonest } = await import(path.join(REPO, 'src/public/next/shared/format-usd.js'));
 
 const SRC = readFileSync(path.join(REPO, 'src/public/next/views/domains.js'), 'utf8');
@@ -360,6 +362,7 @@ section('7. F5 — the Dismissed group counts records');
   const fns = sandbox(['renderIssueGroups', 'renderDismissedGroup'], {
     state, escapeHtml, icon: () => '', gatedLoader: () => '', loadGate: null,
     HEALTH_CATEGORIES: [], renderIssueGroup: () => '', describeDismissed: (r) => r.type,
+    ...SECTION_KIT,
   });
   const report = { counts: { dismissed: 0 }, dismissedRecords: 3 };
   const html = fns.renderIssueGroups(report, false, false);

@@ -16,6 +16,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
+// v3.89.0: the fold items and action chips are the section kit's (real functions).
+import { SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rd = (p) => readFileSync(path.join(ROOT, p), 'utf8');
@@ -52,7 +54,7 @@ function build() {
     ${FUNCS.map((f) => src[f]).join('\n')}
     return { HEALTH_CATEGORIES, AUTO_FIX_TYPES, ${FUNCS.join(', ')} };`;
   const api = new Function('state', 'escapeHtml', 'icon', 'render', 'myMountToken', 'GIT_UNDO_NOTE', 'GIT_UNDO_WARN', 'deletedPageCount', 'isCurrentMount',
-    body)(state, esc, () => '<svg/>', () => {}, 1, 'NOTE', 'WARN', () => 0, () => true);
+    ...SECTION_KIT_NAMES, body)(state, esc, () => '<svg/>', () => {}, 1, 'NOTE', 'WARN', () => 0, () => true, ...SECTION_KIT_VALUES);
   return { api, state };
 }
 const ROW = { summary: 'summaries/foo.md', duplicateLines: 12, conceptsToMove: 40, entitiesToMove: 3, sampleConcepts: ['rag'], sampleEntities: [] };
@@ -72,7 +74,7 @@ section('§2 issue row');
 {
   const { api } = build();
   const row = api.renderIssueRow('summaryLinkSections', ROW, false);
-  ok(/<span class="mono dm-issue-main">summaries\/foo\.md<\/span>/.test(row), 'path alone in the mono column');
+  ok(/<span class="mono cur-fold-item-main dm-issue-main">summaries\/foo\.md<\/span>/.test(row), 'path alone in the mono column');
   ok(row.includes('12 repeated lines · 40 concepts filed under Entities · 3 entities filed under Concepts — tidied without removing any link.'), 'counts in prose in the meta column');
   ok(!/dm-dismiss-btn/.test(row) && !/dm-dismiss-btn/.test(api.renderIssueRow('summaryLinkSections', ROW, true)), 'never a Dismiss button');
   const one = api.renderIssueRow('summaryLinkSections', { summary: 'summaries/a.md', duplicateLines: 1, conceptsToMove: 0, entitiesToMove: 1 }, false);

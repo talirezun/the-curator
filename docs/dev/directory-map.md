@@ -158,6 +158,15 @@ src/
                     classes `cur-ov-*` carry every rule, the domain page's nine historical `dm-*`
                     tokens ride the same elements as opt-in ALIASES (`alias: 'dm'`), never the
                     kit's own names
+    next/shared/section.js + section.css — the SECTION KIT (v3.89.0): renderSectionHead /
+                    renderSectionTitle, renderCard, renderControlRow, renderFoldRows / renderFoldRow /
+                    renderFoldItem, renderActionCard + actionChip, renderStatusLine — the Domain page's
+                    section head, card, fold rows, Quick-maintenance card and the Shared Brain section's
+                    status card, moved UNCHANGED (pixel-compared) so Settings › MCP bridge draws the same
+                    objects; `cur-section/card/fold/action/status-line` carry every rule, `dm-*` /
+                    `sb-sec-*` ride as opt-in aliases. Guarded by scripts/test-next-section-kit.js and,
+                    for a page's rendered markup, scripts/test-helpers/page-contract.js
+                    (scripts/test-next-page-contract.js holds the per-page registry)
     next/shared/sidebar.js — renderSidebarHead/Group/Row() (v3.65.0): the ONE sidebar, rendered by
                     Domains, Context and Settings; `cur-sb-*` classes carry every rule, Domains'
                     historical `dm-row-*` tokens ride as an opt-in ALIAS (`alias: 'dm'`), matched

@@ -23,6 +23,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
+// v3.89.0: the fold items and action chips are the section kit's (real functions).
+import { SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const raw = readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -86,6 +88,7 @@ function build(fetchStub) {
     'state', 'escapeHtml', 'icon', 'buttonRingHtml', 'renderRunsOn', 'renderSpent', 'renderStatus', 'renderDescription',
     'quickAiButton', 'fetch', 'render', 'loadHealth', 'beginDomainWrite', 'inFlightWriteSlugs', 'isCurrentMount',
     'myMountToken', 'emptyPlanNotice', 'confirmFixSafe', 'confirmAiAction', 'GIT_UNDO_WARN',
+    ...SECTION_KIT_NAMES,
     body
   )(
     state, esc, () => '<svg/>', () => '<i class="ring"></i>', () => '', () => '', (o) => '<div>' + o.title + '</div>', (t) => '<p>' + t + '</p>',
@@ -93,7 +96,7 @@ function build(fetchStub) {
     async (url, opts) => { calls.fetch.push({ url, opts }); return fetchStub(url, opts); },
     () => { calls.renders++; }, async () => { calls.loadHealth++; },
     (slug, label) => { calls.gates.push(label); return () => { calls.gates.push('release:' + label); }; },
-    inFlight, () => true, 1, () => 'empty', () => {}, () => {}, 'WARN'
+    inFlight, () => true, 1, () => 'empty', () => {}, () => {}, 'WARN', ...SECTION_KIT_VALUES
   );
   return { api, state, calls };
 }
@@ -143,7 +146,7 @@ section('§2 Quick maintenance button');
   const btn = m ? m[0] : '';
   ok(/Rebuild index · 2,705 pages missing/.test(btn), 'label reads "Rebuild index · 2,705 pages missing"');
   ok(!/btn-ai/.test(btn) && !/sparkles/.test(btn) && !/dm-quick-cost/.test(btn), 'free: not btn-ai, no sparkles, no cost badge');
-  ok(/btn btn-secondary btn-xs dm-quick-btn/.test(btn), 'the shared secondary quick-button chrome');
+  ok(/btn btn-secondary btn-xs cur-action-chip dm-quick-btn/.test(btn), 'the shared secondary quick-button chrome');
   const stale = api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [{ ...DRIFT, missing: 0, stale: 1 }] }), false);
   ok(/Rebuild index · 1 stale row</.test(stale), 'stale-only: "Rebuild index · 1 stale row"');
   const none = api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [] }), false);
@@ -159,8 +162,8 @@ section('§3 issue row');
 {
   const { api } = build(okFetch(200, {}));
   const row = api.renderIssueRow('indexDrift', DRIFT, false);
-  ok(/<span class="mono dm-issue-main">index\.md<\/span>/.test(row), 'main cell is exactly the mono path index.md');
-  ok(/<span class="dm-issue-meta">Missing 2,705 pages, and 39 rows point to pages that no longer exist\./.test(row), 'prose sits in the meta column (with stale)');
+  ok(/<span class="mono cur-fold-item-main dm-issue-main">index\.md<\/span>/.test(row), 'main cell is exactly the mono path index.md');
+  ok(/<span class="cur-fold-item-meta dm-issue-meta">Missing 2,705 pages, and 39 rows point to pages that no longer exist\./.test(row), 'prose sits in the meta column (with stale)');
   const noStale = api.renderIssueRow('indexDrift', { ...DRIFT, stale: 0 }, false);
   ok(noStale.includes('Missing 2,705 pages. Rebuilt') && !/no longer/.test(noStale), 'row prose without stale');
   ok(row.includes('Rebuilt from the files on disk — free, previewed first.'), 'meta line');

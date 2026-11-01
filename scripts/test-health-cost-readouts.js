@@ -49,6 +49,8 @@ import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 // markup that ships.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 import { renderStatus, renderDescription } from '../src/public/next/shared/text.js';
+// v3.89.0: the action card and its chips are the section kit's (real functions).
+import { SECTION_KIT } from './test-helpers/section-kit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -245,6 +247,7 @@ function quickSandbox(state) {
     state, formatUsdHonest, renderRunsOn, renderSpent, aiActionDisabledAttrs, renderStatus, renderDescription,
     GIT_UNDO_NOTE, escapeHtml: (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
     icon: (n) => '<svg data-icon="' + n + '"></svg>', buttonRingHtml: () => '<RING/>',
+    ...SECTION_KIT,
   };
   return buildSandbox(domainsSrc, ['formatUsd', 'costReadout', 'pluralize', 'countSafeFixable',
     'quickAiButton', 'renderQuickMaintenance', 'renderConfirmCard'], kit);
@@ -253,7 +256,7 @@ const REPORT = { brokenLinks: [{}, {}, {}], orphans: [{}, {}], crossFolderDupes:
   folderPrefixLinks: [], missingBacklinks: [] };
 const EMPTY_REPORT = { brokenLinks: [], orphans: [], crossFolderDupes: [], hyphenVariants: [],
   folderPrefixLinks: [], missingBacklinks: [] };
-const aiButtons = (html) => [...html.matchAll(/<button class="btn btn-ai btn-xs dm-quick-btn" data-action="([a-zA-Z]+)"([^>]*)>/g)]
+const aiButtons = (html) => [...html.matchAll(/<button class="btn btn-ai btn-xs cur-action-chip dm-quick-btn" data-action="([a-zA-Z]+)"([^>]*)>/g)]
   .map((m) => ({ key: m[1], attrs: m[2] }));
 
 section('16. No key → the three ✨ AI actions are disabled, never hidden (v3.67.0)');
@@ -304,7 +307,7 @@ section('17. A key → one run line under the bar; the per-button cost badges st
     'ONE line under the bar, the kit\'s group form (region B)');
   ok(/title="Gemini · gemini-2\.5-flash-lite"/.test(line), '…the model by its label, Provider · id in the title');
   eq((html.match(/class="ai-run"/g) || []).length, 1, 'exactly one run line for the three actions, never one per button');
-  ok(/<span class="dm-quick-cost">≈ \$0\.0040<\/span>/.test(html) && /<span class="dm-quick-cost">≈ \$0\.0020<\/span>/.test(html),
+  ok(/<span class="cur-action-cost dm-quick-cost">≈ \$0\.0040<\/span>/.test(html) && /<span class="cur-action-cost dm-quick-cost">≈ \$0\.0020<\/span>/.test(html),
     'each button keeps its compact cost badge (costReadout)');
   ok(!/<details/.test(html), 'the line is not behind a chevron (v3.16.1)');
   // The route may not have sent runsOn (an older backend): the probe then

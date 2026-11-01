@@ -96,6 +96,9 @@ import {
   renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
 } from '../src/public/next/shared/sidebar.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
+// v3.89.0: the health card, its fold rows and the Quick maintenance card are
+// the section kit's; every lifted body gets the REAL functions (makeCallable).
+import { SECTION_KIT, SECTION_KIT_NAMES } from './test-helpers/section-kit.js';
 import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
 // v3.67.0 (package SD): Quick maintenance renders the shared run line.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
@@ -202,7 +205,12 @@ function extractConstText(source, name) {
  * So a missing dependency here becomes a NAMED failing assertion instead.
  */
 function makeCallable(names, body, returnName) {
-  return new Function(...names, `${body}\nreturn ${returnName};`);
+  // The section kit (v3.89.0) is bound in first, so every caller's own
+  // argument list is unchanged and a body that calls renderCard & co. finds
+  // the real function rather than dying with a ReferenceError.
+  return new Function('__SECTION_KIT', ...names,
+    `const { ${SECTION_KIT_NAMES.join(', ')} } = __SECTION_KIT;\n${body}\nreturn ${returnName};`)
+    .bind(null, SECTION_KIT);
 }
 function callOrFail(label, thunk) {
   try { return thunk(); } catch (err) {
@@ -341,10 +349,18 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
   // v3.67.0 (package SD): `dm-quick-empty-text` went with the no-key row it
   // spaced (the AI actions now stay visible and disabled); `dm-quick-run`,
   // the run line's wrapper under the action bar, took its place.
-  for (const w of ['dm-sidebar-status', 'dm-health-summary', 'dm-quick-footnote',
-                   'dm-quick-run', 'dm-browse-lead']) {
+  for (const w of ['dm-sidebar-status', 'dm-health-summary', 'dm-browse-lead']) {
     ok(domainsCode.includes(w) && domainsCssCode.includes('.' + w),
        `.${w} exists in BOTH the markup and the stylesheet — a wrapper in one and not the other is dead spacing`);
+  }
+  // v3.89.0: the run line's and the footnote's wrappers moved with the action
+  // card into the section kit — the markup in shared/section.js, the rule in
+  // shared/section.css — and this view draws them through renderActionCard.
+  const kitJs = readFileSync(join(ROOT, 'src/public/next/shared/section.js'), 'utf8');
+  const kitCss = stripCssComments(readFileSync(join(ROOT, 'src/public/next/shared/section.css'), 'utf8'));
+  for (const w of ['cur-action-footnote', 'cur-action-run']) {
+    ok(kitJs.includes("'" + w + "'") && kitCss.includes('.' + w + ' {') && /renderActionCard\(\{/.test(domainsCode),
+       `.${w} exists in BOTH the kit's markup and its stylesheet, and this view draws the card through it`);
   }
 }
 

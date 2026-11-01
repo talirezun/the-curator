@@ -59,6 +59,9 @@ import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
 import { identitySlotClass } from '../src/public/next/shared/sidebar.js';
+// v3.89.0: the section body's fold rows and status card are the section kit's.
+import { SECTION_KIT } from './test-helpers/section-kit.js';
+const SB_KIT = ['renderStatusLine', 'renderFoldRows', 'renderFoldRow'];
 
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const shared = R('src/public/next/views/shared.js');
@@ -805,7 +808,7 @@ const SEC_FNS = [
   // v3.72.1
   'ageTickAttrs',
 ];
-const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'formatAge',
+const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'formatAge', ...SB_KIT,
   'let state = {};\n' +
   'let loadGate = null;\n' +
   'let busyDomains = new Set();\n' +
@@ -823,7 +826,7 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass
   SEC_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; },
      __setBusy: (list) => { busyDomains = new Set(list); }, __setDescribe: (fn) => { hostCtx.describeDomain = fn; } };`
-)(renderMonitor, freshnessTier, identitySlotClass, formatAge);
+)(renderMonitor, freshnessTier, identitySlotClass, formatAge, ...SB_KIT.map((n) => SECTION_KIT[n]));
 
 {
   // ── D-H: the lens, EXECUTED over every shape the wire can send ────────
@@ -1281,7 +1284,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     // v3.72.1
     'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
   ];
-  const cBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'explainerMark', 'formatAge',
+  const cBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'explainerMark', 'formatAge', ...SB_KIT,
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
     'let busyDomains = new Set();\n' +
     'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ slot: ({ research: 7, notes: 4, "shared-cohort": 10 })[s], pages: null }) };\n' +
@@ -1296,7 +1299,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     C_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
     `return { ${C_FNS.join(', ')}, __card: (id) => ensureCard(id), __state: () => state,
        __setBusy: (l) => { busyDomains = new Set(l); } };`
-  )(renderMonitor, freshnessTier, identitySlotClass, explainerMark, formatAge);
+  )(renderMonitor, freshnessTier, identitySlotClass, explainerMark, formatAge, ...SB_KIT.map((n) => SECTION_KIT[n]));
 
   const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const c = conn({ id: 'c1', label: 'Research_Group 2026', shared_brain_slug: 'cohort', local_domains: ['research'],
@@ -1321,13 +1324,13 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   ok(/cur-mon-key">contributes<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-7"/.test(html),
     '…and so is the contributing domain');
   // LOUD: the cost and the skips — always rendered, never behind a chevron.
-  const loudPart = html.split('<div class="sb-sec-rows">')[0];
+  const loudPart = html.split('<div class="cur-folds sb-sec-rows">')[0];
   ok(/cur-mon-loud[^"]*" role="status">50 pages ready to push — Push summarises each with your AI provider, which spends API credits/.test(loudPart),
     'C: the pending COST is a loud entry, above every fold row (v3.16.1)');
   ok(/role="status">3 pages skipped after repeated failures\. <strong>Retry them from Skipped pages below\.<\/strong>/.test(loudPart),
     'C: the skips are a loud entry too, pointing at the row that fixes them');
   // ONE action row: Push primary-ish (btn-ai, sparkles), Pull, Synthesis for an admin, the ghost door last.
-  const actions = (/<div class="sb-sec-actions">([\s\S]*?)<\/div><div class="sb-sec-rows">/.exec(html) || [, ''])[1];
+  const actions = (/<div class="sb-sec-actions">([\s\S]*?)<\/div><div class="cur-folds sb-sec-rows">/.exec(html) || [, ''])[1];
   ok(/^<button type="button" class="btn btn-ai" data-sb-action="push-open">/.test(actions), 'C: Push comes first, btn-ai with the sparkles (it spends)');
   ok(/data-sb-action="pull"/.test(actions) && /data-sb-action="synthesize-open"[^>]*>[^<]*<svg[^>]*><\/svg> Run synthesis</.test(actions),
     'C: then Pull, then "Run synthesis" — for an admin');
@@ -1335,7 +1338,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'C: and the door LAST, ghost, md (never xs)');
   eq((html.match(/btn-primary/g) || []).length, 0, 'C: no btn-primary competes with Push');
   // Fold rows, closed, in the design's order.
-  const rows = [...html.matchAll(/<details class="sb-sec-row" data-sb-sec-row="c1:([a-z]+)"( open)?>[\s\S]*?class="sb-sec-row-label">([^<]+)<\/span><span class="sb-sec-row-meta">([^<]*)</g)]
+  const rows = [...html.matchAll(/<details class="cur-fold sb-sec-row" data-sb-sec-row="c1:([a-z]+)"( open)?>[\s\S]*?class="cur-fold-label sb-sec-row-label">([^<]+)<\/span><span class="cur-fold-meta sb-sec-row-meta">([^<]*)</g)]
     .map((m) => [m[1], !!m[2], m[3], m[4]]);
   eq(JSON.stringify(rows.map((r) => r[0])), JSON.stringify(['token', 'cohort', 'skips', 'admin', 'leave']),
     'C: fold rows — Access token, Cohort & sharing, Skipped pages, Admin controls, Leave');
@@ -1380,7 +1383,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   // A dead token and a held write are LOUD, never folded.
   cBox.__card('c1').tokenCheck = { kind: 'rejected', message: 'GitHub rejected the stored token.' };
   cBox.__setBusy(['shared-cohort']);
-  const hurt = cBox.renderSectionConnection(c, true).split('<div class="sb-sec-rows">')[0];
+  const hurt = cBox.renderSectionConnection(c, true).split('<div class="cur-folds sb-sec-rows">')[0];
   ok(/cur-mon-loud cur-mon-danger" role="status">GitHub rejected the stored token\./.test(hurt) || /role="status">GitHub rejected the stored token\./.test(hurt),
     'C: a rejected token is a loud (danger) entry above the rows');
   ok(/Another write is already running for shared-cohort/.test(hurt), 'C: a held write is loud too');
@@ -1398,7 +1401,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     return secBox.renderSection();
   };
   const A = at({ enabled: false }, 'research');
-  ok(/<div class="sb-sec-empty"><p class="sb-sec-line sb-sec-empty-text">Shared Brain is off on this install\. Turning it on connects you to nothing — it lets you join a cohort or set one up\.<\/p><button type="button" class="btn btn-secondary sb-sec-door-btn" id="btn-sb-open-view">/.test(A),
+  ok(/<div class="cur-status-line sb-sec-empty"><p class="cur-status-line-text sb-sec-line sb-sec-empty-text">Shared Brain is off on this install\. Turning it on connects you to nothing — it lets you join a cohort or set one up\.<\/p><button type="button" class="btn btn-secondary sb-sec-door-btn" id="btn-sb-open-view">/.test(A),
     'A: Quick-maintenance empty anatomy — the sentence left, the door right, secondary md');
   const B = at({}, 'lectures');
   ok(/This domain isn’t part of a Shared Brain\. Your 1 Shared Brain draws on <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-7"[^>]*><\/span>research<\/span>, <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-4"/.test(B),
@@ -1486,11 +1489,14 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'both are installed — the click in the CAPTURE phase, so it runs before the rail\'s own navigate()');
 }
 {
-  // The section's two anatomies are COPIED BY VALUE from views/domains.css
-  // (a view stylesheet may not name another view's prefix). Pinned property
-  // by property against the source, so neither can drift silently.
+  // v3.89.0: the section's two anatomies USED to be copied by value from
+  // views/domains.css and pinned property by property. They are ONE source
+  // now — shared/section.css's `.cur-status-line` and `.cur-fold*`, which the
+  // Domain page draws too — so what is pinned is that no copy came back, that
+  // the kit holds the values the copies held, and that the section draws
+  // through the kit.
   const sCss = stripComments(R('src/public/next/views/shared.css'));
-  const dCss = stripComments(R('src/public/next/views/domains.css'));
+  const kCss = stripComments(R('src/public/next/shared/section.css'));
   const decls = (css, sel) => {
     const re = new RegExp('(^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g');
     const out = {};
@@ -1499,21 +1505,41 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     }
     return out;
   };
-  const pairs = [
-    ['.sb-sec-empty', ['.dm-quick', ['padding', 'border-radius', 'border', 'background']]],
-    ['.sb-sec-empty', ['.dm-quick-empty', ['display', 'align-items', 'justify-content', 'gap', 'flex-wrap']]],
-    ['.sb-sec-row-summary', ['.dm-group-summary', ['display', 'align-items', 'gap', 'padding', 'list-style']]],
-    ['.sb-sec-row-meta', ['.dm-group-meta', ['margin-left', 'min-width', 'font-size', 'color', 'text-align']]],
-    ['.sb-sec-row-body', ['.dm-group-body', ['padding']]],
-    ['.sb-sec-row', ['.dm-group', ['border-top']]],
+  // The values the v3.65.3 copies carried, written out (not read from the
+  // code under test), so a retune of the kit is a decision this suite sees.
+  const expected = [
+    ['.cur-status-line', { padding: '14px', 'border-radius': 'var(--radius-lg)', border: '1px solid var(--accent-border)',
+      background: 'var(--accent-tint)', display: 'flex', 'align-items': 'center', 'justify-content': 'space-between',
+      gap: '12px', 'flex-wrap': 'wrap' }],
+    ['.cur-fold-summary', { display: 'flex', 'align-items': 'center', gap: '8px', padding: '10px 2px',
+      'list-style': 'none', 'flex-wrap': 'wrap' }],
+    ['.cur-fold-meta', { 'margin-left': 'auto', 'min-width': '12ch', 'font-size': 'var(--text-2xs)',
+      color: 'var(--text-2)', 'text-align': 'right' }],
+    ['.cur-fold-body', { padding: '2px 2px 10px 21px' }],
+    ['.cur-fold', { 'border-top': '1px solid var(--border-subtle)' }],
   ];
-  for (const [mine, [theirs, props]] of pairs) {
-    const a = decls(sCss, mine), b = decls(dCss, theirs);
-    for (const prop of props) {
-      ok(a[prop] !== undefined && a[prop] === b[prop],
-        `${mine} { ${prop} } equals ${theirs}'s (${a[prop]} vs ${b[prop]})`);
+  for (const [sel, want] of expected) {
+    const got = decls(kCss, sel);
+    for (const [prop, v] of Object.entries(want)) {
+      ok(got[prop] === v, `shared/section.css ${sel} { ${prop}: ${v} } (got ${got[prop]})`);
     }
   }
+  // No copy came back: this view's own rules carry only its three context
+  // differences from the kit (no row gap, a hairline above the first row, a
+  // gap inside a row's body).
+  for (const sel of ['.sb-sec-empty', '.sb-sec-empty-text', '.sb-sec-row-summary', '.sb-sec-row-meta',
+    '.sb-sec-row-label', '.sb-sec-row']) {
+    eq(JSON.stringify(decls(sCss, sel)), '{}', `views/shared.css carries no copy of ${sel}'s anatomy any more`);
+  }
+  eq(JSON.stringify(decls(sCss, '.sb-sec-rows')), JSON.stringify({ gap: '0' }),
+    '.sb-sec-rows keeps only its no-gap difference');
+  eq(JSON.stringify(decls(sCss, '.sb-sec-row-body')), JSON.stringify({ gap: 'var(--space-5)' }),
+    '.sb-sec-row-body keeps only its body gap');
+  ok(/\.sb-sec-row:first-child\s*\{\s*border-top:\s*1px solid var\(--border-subtle\);\s*\}/.test(sCss),
+    '…and the hairline above its FIRST row, which the kit drops');
+  ok(/renderFoldRow\(\{[^}]*alias: 'sb'/.test(sharedCode) && /renderStatusLine\([^;]*alias: 'sb'/.test(sharedCode)
+    && /renderFoldRows\(rows, \{ alias: 'sb' \}\)/.test(sharedCode),
+    'the section draws its rows and its status card through the kit, with its own names as the alias');
   ok(!/\.dm-/.test(sCss), 'views/shared.css names no .dm- selector — the anatomy is copied, not borrowed');
 }
 {

@@ -1,0 +1,233 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/section.css — A NUMBERED SECTION AND WHAT GOES IN IT (v3.89.0)
+   ═══════════════════════════════════════════════════════════════════════════
+   The rules behind shared/section.js. Every rule here MOVED out of
+   views/domains.css (and the Shared Brain section's by-value copies in
+   views/shared.css) UNCHANGED IN VALUE; scripts/test-next-section-kit.js pins
+   the values, and a before/after pixel comparison of the Domain page measured
+   the move as invisible. Owns the `cur-section`, `cur-card`, `cur-fold`,
+   `cur-action` and `cur-status-line` prefixes outright.
+
+   The hosts' historical names (`dm-*`, `sb-sec-*`) are still on the same
+   elements (shared/section.js `alias`), so a host's CONTEXT rules — the column
+   rhythm between `.dm-section`s, `.sb-sec-row-body`'s gap — stay in the
+   host's own stylesheet and keep working. Linked after every shared kit sheet
+   and before the view sheets, so each moved rule keeps the cascade position
+   it had relative to shell.css and the kits (it came from a view sheet).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── THE SECTION HEAD ─────────────────────────────────────────────────────
+   The numeral + title row. The values were copied from shell.css's
+   `.settings-block-hd` / `.settings-block-num` / `.settings-job-title`
+   (v3.64.1); scripts/test-next-domain-sections.js pins them equal. */
+.cur-section-hd {
+  display: flex;
+  align-items: baseline;
+  /* --space-6 between the numeral and the title: the 20px numeral plus this
+     gap is the 32px indent the prose under a block head uses. */
+  gap: var(--space-6);
+  margin: 0 0 var(--space-4);
+}
+.cur-section-num {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: var(--numeric-tabular);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-border);
+  /* `align-items: baseline` sits a filled circle high against a 16px title;
+     2px brings its centre onto the title's x-height, exactly where
+     shell.css's numeral is. */
+  transform: translateY(2px);
+}
+/* A TITLE, not an eyebrow: not uppercase and not mono. */
+.cur-section-hd .cur-section-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+}
+/* The head block: the head row and its ⓘ panel, ONE sibling above the card. */
+.cur-section-head { margin-bottom: var(--space-4); }
+.cur-section-head .cur-section-hd { margin-bottom: 0; }
+/* The mark's own class belongs to shared/text.css and is not named here; the
+   alignment lives on the row. --space-2 is renderViewHeader's title-to-mark
+   gap. */
+.cur-section-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The section's one reading, right-aligned in the head row. It WRAPS below
+   the title rather than shrinking into a column one word wide (measured at
+   568px: `margin-left: auto` alone handed it 52px). */
+.cur-section-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 12ch;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── THE CARD ─────────────────────────────────────────────────────────────
+   The kit group's chrome (see views/domains.css's ONE CARD CHROME block). */
+.cur-card {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow: var(--elev-1);
+  margin-bottom: 24px;
+}
+/* The card's control row: its first child, for the section's plain action. */
+.cur-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+/* ── FOLD ROWS ────────────────────────────────────────────────────────────
+   A chevron, a label, then a count pill and/or a one-line reading; a hairline
+   between rows. */
+.cur-folds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cur-fold { border-top: 1px solid var(--border-subtle); }
+.cur-fold:first-child { border-top: none; }
+.cur-fold-summary {
+  display: flex;
+  align-items: center;
+  /* The row wraps, so a long reading goes under the label instead of
+     squeezing it. */
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 2px;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  list-style: none;
+}
+.cur-fold-summary::-webkit-details-marker { display: none; }
+.cur-fold-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.cur-fold[open] > .cur-fold-summary svg { transform: rotate(90deg); }
+.cur-fold-label {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+/* The reading: pushed right, --text-2xs, tabular, and a basis that cannot
+   fit beside a label, so it wraps under it (measured at 568px). */
+.cur-fold-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 12ch;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: var(--numeric-tabular);
+}
+.cur-fold-pill {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  font-variant-numeric: var(--numeric-tabular);
+}
+.cur-fold-body {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 10px 21px;
+}
+/* One row inside a fold: a mono identifier, a sans fact, a ghost action. */
+.cur-fold-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cur-fold-item:last-child { border-bottom: none; }
+.cur-fold-item-main {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.cur-fold-item-meta {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+
+/* ── THE TINTED ACTION CARD ───────────────────────────────────────────────
+   Quick maintenance's anatomy: eyebrow, chips with a cost slot, a run line,
+   the footnote as the card's last line. */
+.cur-action {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  margin-bottom: 16px;
+}
+.cur-action-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  margin-bottom: 10px;
+}
+.cur-action-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Layout only: the chip's chrome is the button tier's (`btn-secondary` /
+   `btn-ai`), so a chip is a real button of the system. */
+.cur-action-chip { gap: 6px; }
+.cur-action-label { font-weight: var(--weight-medium); }
+/* The cost reads one step quieter than the label it follows. */
+.cur-action-cost {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.cur-action-run { margin-top: 4px; }
+.cur-action-footnote { margin-top: 10px; }
+
+/* ── THE ONE-LINE STATUS CARD ─────────────────────────────────────────────
+   One sentence left, one door right, one tinted panel. EMPTY / OFF states
+   only. */
+.cur-status-line {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cur-status-line-text { flex: 1 1 auto; min-width: 0; }

@@ -62,6 +62,8 @@ const CSS = readFileSync(join(NEXT, 'views/domains.css'), 'utf8');
 // the same card; only the three ink classes stayed in views/domains.css.
 // The assertions below follow the rule rather than re-describing it.
 const OV_CSS = readFileSync(join(NEXT, 'shared/overview.css'), 'utf8');
+// v3.89.0: the health card's chrome moved to the section kit, unchanged in value.
+const SECTION_CSS = readFileSync(join(NEXT, 'shared/section.css'), 'utf8');
 const SHELL_CSS = readFileSync(join(NEXT, 'shell.css'), 'utf8');
 const TEXT_JS = readFileSync(join(NEXT, 'shared/text.js'), 'utf8');
 
@@ -324,6 +326,7 @@ const { COPY_SUCCESS_BANNER, TEMPLATE } =
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+const { SECTION_KIT_NAMES, SECTION_KIT_VALUES } = await import('./test-helpers/section-kit.js');
 // v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
 // from the real kit, the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs.
@@ -351,7 +354,7 @@ let box;
 try {
   box = new Function(
     'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview', 'explainerMark',
-    'explainerHtml', 'explainerLabel',
+    'explainerHtml', 'explainerLabel', ...SECTION_KIT_NAMES,
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
@@ -373,7 +376,7 @@ try {
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
+  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel, ...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -451,7 +454,7 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
   // v3.64.2: Title case, like the Context view's steps — the second half of
   // the maintainer's "one rule for all five headings" report.
   ok('...with its own eyebrow, reading Wiki health',
-    /class="cur-group-title dm-section-eyebrow">Wiki health</.test(wrapped));
+    /class="cur-group-title cur-section-title dm-section-eyebrow">Wiki health</.test(wrapped));
   // AN EMPTY BODY RENDERS NOTHING AT ALL. renderHealthPanel returns '' when
   // there is no report, and a heading over nothing looks like a failure.
   eq('an empty body renders no section and no eyebrow', healthSection(''), '');
@@ -477,7 +480,9 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
   const grid = /\.cur-ov-grid\s*\{([^}]*)\}/.exec(stripComments(OV_CSS));
   ok('...and the stat grid no longer owns the gap BELOW it either',
     grid && !/margin-bottom/.test(grid[1]), grid && grid[1]);
-  const healthCard = /\n\.dm-health-card\s*\{([^}]*)\}/.exec(bare);
+  // v3.89.0: the card's rule is the section kit's `.cur-card` (the element
+  // carries both names), moved unchanged out of this file.
+  const healthCard = /\n\.cur-card\s*\{([^}]*)\}/.exec(stripComments(SECTION_CSS));
   // margin-TOP only. The health card is the LAST section and keeps a
   // margin-BOTTOM, which is breathing room at the end of the column and not a
   // gap between two sections — the gap this release is about is the one ABOVE
@@ -498,8 +503,8 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
   };
   const group = ['background', 'border', 'box-shadow'].map((p) => decl(SHELL_CSS, '.cur-group', p));
   ok('CONTROL -- shell.css does declare the kit group’s chrome', group.every(Boolean), JSON.stringify(group));
-  for (const sel of ['.dm-browse-card', '.dm-health-card']) {
-    const got = ['background', 'border', 'box-shadow'].map((p) => decl(CSS, sel, p));
+  for (const [sel, sheet] of [['.dm-browse-card', CSS], ['.cur-card', SECTION_CSS]]) {
+    const got = ['background', 'border', 'box-shadow'].map((p) => decl(sheet, sel, p));
     ok(sel + ' takes the SAME chrome as the kit group Projects uses',
       JSON.stringify(got) === JSON.stringify(group), JSON.stringify(got) + ' vs ' + JSON.stringify(group));
   }

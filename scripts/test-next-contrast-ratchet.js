@@ -433,12 +433,15 @@ section('§5  Deliberate NON-TEXT survivors — present, and above the 3:1 floor
 // test-next-domains-text.js's own ratchet depends on.
 const SURVIVORS = [
   ['domains', /\.dm-browse-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.dm-browse-dot background — a 6px dot, 6.16 / 5.60 against a 3:1 floor (4.27 / 4.14 before the ramp change)'],
-  ['domains', /\.dm-group-summary svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.dm-group-summary svg — a chevron glyph, 6.16 / 5.60'],
+  // v3.89.0: the fold-row chevron moved, unchanged, into the section kit.
+  ['shared/section', /\.cur-fold-summary svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.cur-fold-summary svg — a chevron glyph, 6.16 / 5.60 (was .dm-group-summary svg)'],
   ['sync',    /\.sync-domain-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.sync-domain-dot background — was --text-faint at 2.26 / 2.34, UNDER the 3:1 non-text floor at the time; --text-3 cleared it then at 4.27 / 4.14 and clears it now at 6.16 / 5.60'],
   ['shared',  /\.sbw-note-block svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.sbw-note-block svg — an icon, 6.24 / 5.24 on --surface-inset'],
 ];
 for (const [file, re, why] of SURVIVORS) {
-  ok(re.test(stripComments(FILES[file])), `views/${file}.css KEEPS ${why}`);
+  const kit = file.startsWith('shared/');
+  const css = kit ? readFileSync(join(NEXT, `${file}.css`), 'utf8') : FILES[file];
+  ok(re.test(stripComments(css)), `${kit ? '' : 'views/'}${file}.css KEEPS ${why}`);
 }
 ok(worst('--text-3', '--surface') >= NONTEXT_FLOOR,
    `and --text-3 genuinely clears the ${NONTEXT_FLOOR} non-text floor (${C(D, '--text-3', '--surface')} / ` +
