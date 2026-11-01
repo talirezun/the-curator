@@ -2796,7 +2796,7 @@ that setter, so its own resolution is unchanged. See
 | `GET /api/mcp/claude-full-config` | *(Legacy — no longer called by the app; kept for compatibility.)* Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
 | `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
 | `POST /api/mcp/write-config` | *(Legacy — no longer called by the app; kept for compatibility.)* **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
-| `GET /api/mcp/config` *(two additive fields, v3.64.0)* | `bridge_processes: {checked, reason, running, stale: [{pid, startedAt, ageMs}], codeChangedAt, serverPath}` and `bridge_stale_remedy`. A **read-only** reading, taken from `ps` over a fixed argv with no shell: it lists processes running *this install's own* `mcp/server.js` and calls one **stale** when it started before the code on disk last changed. An MCP client keeps its bridge alive until the client itself is restarted, so a bridge launched before an update carries on serving the tools it was launched with — measured on one machine as two days and five updates, offering 22 tools while the files on disk offered 24. **`checked: false` means the reading was not taken** (not macOS, `ps` unavailable, an error) and carries `reason`; it must never be rendered as "no stale bridge". `bridge_stale_remedy` names the act and the actor — restart the app that launched it, usually Claude Desktop — and deliberately does not name The Curator, because restarting The Curator is exactly what does not help. |
+| `GET /api/mcp/config` *(`bridge_processes`, v3.64.0; reshaped v3.88.0)* | `bridge_processes: {checked, reason, running, stale, codeChangedAt, serverPath, current, bridges}` and `bridge_stale_remedy` (unchanged). A **read-only** reading from `ps` over a fixed argv with no shell (Windows: PowerShell `Get-CimInstance`; both unmeasured on real machines). **`checked: false` means the reading was not taken** and carries `reason`; it must never be rendered as "no stale bridge". **v3.88.0: `stale` keeps its shape (`[{pid, startedAt, ageMs}]`) but now lists ONLY bridges whose tool list is proven different** (`tools: "different"`); it used to list every bridge started before the files' mtime. `current` is `{version, toolsHash, toolCount}`. Each `bridges[]` entry: `{pid, startedAt, ageMs, app:{id, label, via, checked, bundle?}, client, version, toolsHash, tools, olderThanCode, notice, remedy}`. `app.id` is a harness id or `null`; `via` is `"app"`, `"cli"` or `"self-test"`; `checked:false` gives label "an app". `tools` is `"same"`, `"different"` or `"unknown"` (a bridge started before v3.88.0 has no hash), decided from the tool-list hash, never mtimes. `notice` is decided by the backend: `"warn"` (different), `"soft"` (unknown and started before the code changed), `"quiet"` (same tools, other version), `"none"`. `remedy` (from `staleRemedyFor`) names the quit step — macOS "Quit {App} (⌘Q — closing the window is not enough) and reopen it." (Claude Desktop adds that this ends Claude Code sessions in its Code tab); a CLI parent gets "End that Claude Code session…"; it is `null` for `quiet` and `none`. Each bridge writes `pid`, `version` and `toolsHash` on its content-free session line. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
 | `GET /api/mcp/usage` *(v3.60.0)* | Backs **Settings → MCP bridge → The tool map**. Reads the local, content-free call log at `getMcpUsageLogPath()` (`<user-data>/.mcp-usage.jsonl`, never under `domains/`) and returns per-tool aggregates plus two session-level readings. Cheap by construction — the log is capped at ~1 MB before it rotates, so a full parse on every call stays inexpensive; the route additionally caches its result by the log file's mtime + size. See the response shape below. |
@@ -2805,7 +2805,7 @@ that setter, so its own resolution is unchanged. See
 
 ### One-click install routes (`/api/mcp/install`, v3.85.0; Windows Claude Desktop, v3.86.0)
 
-Back **Settings › MCP bridge › 5 Tools on this Mac**. They add, update or remove the `my-curator`
+Back **Settings › MCP bridge › 1 Connect your agent apps** (the page was five blocks before v3.88.0). They add, update or remove the `my-curator`
 entry in a tool's own user-level MCP file, and nothing else (the rule is in
 [decisions-app.md](dev/decisions-app.md#security-credentials-and-user-data-paths)). Install-capable
 tools: `claude-desktop`, `cursor`, `antigravity` — the fixed allow-list; every other tool is
@@ -2846,12 +2846,30 @@ origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **4
     "reason": { "code": "…", "message": "…" } | null,
     "note": "…" | null, "usedAt": "<ISO>" | null,   // usedAt labels a row; it never changes a status
     "restartHint": "…" | null,
-    "restorable": true | false                       // a backup exists and the file is still what we wrote
+    "restorable": true | false,                      // a backup exists and the file is still what we wrote
+    // added in v3.88.0 (all additive):
+    "verdict": "connected" | "to-fix" | "not-connected", "toFix": 1,
+    "bridges": { "count": 2, "notice": "warn|soft|quiet|none", "oldestStartedAt": "<ISO>", "version": "3.86.0",
+                 "tools": "same|different|unknown", "remedy": "…" | null, "toolCount": 24 } | null,
+    "skill": { "reason": "outdated", "skills": ["my-curator"], "folder": "/abs", "folderDisplay": "~/…",
+               "text": "…", "detail": "…", "differs": ["SKILL.md"],
+               "fixes": [{ "kind": "download-skill" | "reveal", "label": "…", "href"?: "…", "path"?: "…" }] } | null,
+    "connectedVia": { "id": "claude-desktop", "label": "Claude Desktop", "display": "~/…", "text": "Uses Claude Desktop’s entry." } | null,
+    "usedWithoutEntry": { "usedAt": "<ISO>", "text": "…" } | null,
+    "setupFix": { "word": "…" } | null, "hooksFix": { "word": "…" } | null
   }],
-  "notFound": [{ "id": "…", "label": "…" }],          // tools not detected on this Mac
-  "manualSnippets": { "<id>": "<text to copy>" }
+  "notFound": [{ "id": "…", "label": "…" }],          // agent apps not detected on this computer
+  "manualSnippets": { "<id>": "<text to copy>" },
+  // top level, added in v3.88.0:
+  "counts": { "connected": 3, "toFix": 1, "notConnected": 2 },
+  "install": { "available": 0, "disabledReason": null | "nothing_to_install" | "not_writable" | "platform_unsupported",
+               "disabledText": "Nothing to install" | "Can't install here" | "Copy-only on this computer" },
+  "bridgeCheck": { "checked": true, "reason": null, "current": { "version": "3.88.0", "toolsHash": "…", "toolCount": 24 } },
+  "otherBridges": []                                  // bridge objects (as in GET /api/mcp/config) whose app is not a row; self-test excluded
 }
 ```
+
+**v3.88.0 notes.** `counts` is the source for the overview line and counts a row as `connected` (status `connected` or `connectedVia`) even when it is also to-fix; a row's own `verdict` stays exclusive. `toFix` covers needs-update, can't-read, a `skill` fix, a `setupFix`, a `hooksFix` and `bridges.notice === "warn"`; "can be added", `soft` and `quiet` are not fixes. `connectedVia` is set only when the row's own status is neither `connected` nor `needs-update` (today: Claude Code through Claude Desktop's file). `skill.fixes` Reveal goes through `POST /api/setup/reveal`, which opens only paths `GET /api/setup/machine` listed. The Setup fix label is now "Open Settings › MCP bridge".
 
 `manual` rows (a CLI or manual tool, or any platform where the app does not write) carry `files: []`.
 
@@ -3042,6 +3060,8 @@ the two calls belonged to the same session, only the most recent instance of eac
 all tools" lines (`via: "self-test"`) excluded — the figure the "busiest tools" comparison
 draws its bars from. `count7d` itself is unchanged, and still includes self-test calls.
 
+**`lastAgentAt`, `lastExercise` (v3.88.0).** Each `tools[]` row gains `lastAgentAt` (newest non-self-test call, or `null`); the top level gains `lastExercise` — `{at, total, answered, refused, durationMs, failed, refusals:[{tool, note:null}]}` read back from the newest self-test run, or `null`.
+
 **`countWindowDays` (v3.76.0).** The window `count7d` and `count7dAgent` count over, in days (`7`),
 sent so the view does not type it. When `logStartedAt` falls inside that window, the app states the
 shorter span the log really covers ("last 5 days — the log begins 20 Sep") rather than "7 days".
@@ -3114,6 +3134,8 @@ denominator of an untaken reading is not `0`. `totals` is `{sessions, sessionsSa
 every project in the window, or `null` without a log. `storeProjects`/`storeTruncated` report how many
 store projects were walked and whether that walk was capped; `error` carries a short message when the
 usage log itself could not be read, `null` otherwise.
+
+**Per-project saves (v3.88.0).** Each `byProject[]` row gains `saves` (handoff saves in the project's journals within `byProjectWindow.since`, read from the working-state store and never the usage log; `null` when the store was not read, `0` when read with none; rows with `inStore: false` carry `null`), `lastSaveAt` (newest save of any age, or `null`) and `savesCapped` (`true` when a journal was read only from its newest 16 KB, so `saves` is a floor — render "12+"). `savePulse` gains `capped`, the same boolean as `lowerBound`; render the "+" from the flag, not from the prose.
 
 **`savePulse`** is the widget pulse strip's own facts — saves in the last 7 days (`windowSeconds`
 `604800`), `null` when nothing could be read. `lowerBound` is `true` when any work-stream's journal
@@ -3217,7 +3239,7 @@ at 500 chars) when it sent one.
 
 ## Setup check (`/api/setup`) *(v3.77.0)*
 
-Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Tools on this Mac**. The
+Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Connect your agent apps**. The
 GETs read this machine's agent-tool config files (only whether each names `my-curator`, plus our
 own entry's command and `--domains-path` — never file text, another server's name or an `env`
 value), the project's repository folder (its `.curator-project`, instruction files, and read-only

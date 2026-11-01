@@ -701,13 +701,13 @@ The MCP bridge lets an AI client read and write your wiki directly. Since versio
 
 | Step | What to do |
 |---|---|
-| 1 | In block 1, *Connect a client*, click **Install in your tools**. It takes you to block 5, **Tools on this Mac**. |
-| 2 | Tick the tools you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Plan ready — nothing written yet** and shows each file's path, the exact entry, the names of your other servers (which stay unchanged), and the backup it will keep. |
+| 1 | In block 1, *Connect your agent apps*, read the overview ("N connected · N to fix · N not connected"). Agent apps means Claude Desktop, Cursor, Antigravity and the like. |
+| 2 | Tick the agent apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Plan ready — nothing written yet** and shows each file's path, the exact entry, the names of your other servers (which stay unchanged), and the backup it will keep. |
 | 3 | Click **Apply**. One result line per file stays on screen, for example "Cursor — added to ~/.cursor/mcp.json · original kept · restart Cursor". |
-| 4 | Fully quit and reopen the tool (Command-Q for Claude Desktop; closing the window is not enough), because a tool reads its MCP list only when it starts. If Claude Desktop is running, quit it before you apply: it rewrites its own file. |
-| 5 | Click **Check again**. The tool's row should read **connected**. **Run self-test** in block 1 re-checks the bridge itself. |
+| 4 | Fully quit and reopen the agent app (Command-Q for Claude Desktop; closing the window is not enough), because an app reads its MCP list only when it starts. If Claude Desktop is running, quit it before you apply: it rewrites its own file. |
+| 5 | Click **Check again**. The app's row should read **connected**. **Run self-test** in the same block re-checks the bridge itself. When nothing can be written, **Install for me** says **Nothing to install**. A row warns about an old bridge only when the app is running a different tool list than the files on disk; it names the app and the quit step (Command-Q on a Mac; quitting Claude Desktop also ends Claude Code sessions in its Code tab). An older bridge with the same tools gets one quiet line. |
 
-Which tools can be installed this way depends on the computer. Every other tool is **copy only**: its row has a **Copy** button.
+Which agent apps can be installed this way depends on the computer. Every other tool is **copy only**: its row has a **Copy** button.
 
 | Computer | Install for me writes | Copy only |
 |---|---|---|
@@ -737,7 +737,7 @@ The bridge works with any MCP client that runs local servers — Claude Desktop,
 
 The bridge itself costs you nothing in API fees. It is a local bridge to your own markdown files and never calls an AI model. The frontier model you connect to it bills you on its own plan.
 
-If you move your knowledge folder in the browser install, the entry names an absolute path, so the tool's row reads **needs an update**; click **Install for me**. In the Mac app the bridge starts through a launcher the app writes for itself, so moving the folder no longer makes the entry go stale.
+If you move your knowledge folder in the browser install, the entry names an absolute path, so the agent app's row reads **needs an update**; click **Install for me**. In the Mac app the bridge starts through a launcher the app writes for itself, so moving the folder no longer makes the entry go stale.
 
 ## What does the MCP bridge's tool map show?
 
@@ -767,7 +767,7 @@ handoff before stopping.
 | **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
 | **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder; and, since version 3.65.2, a **GitHub read-only token** field — see the next question. |
-| **MCP bridge** | Five numbered blocks: connect a client (a status card with **Install in your tools**, **Run self-test**, and a note naming any bridge process still running older code), the default write domain, the tool map, across projects, and **Tools on this Mac** — each agent tool's config files, skills and hooks on this computer, **Install for me** for the MCP entry, and the skills' `.zip` files for the Claude app. |
+| **MCP bridge** | Four numbered blocks: connect your agent apps (an overview, **Install for me** or **Copy it myself**, one row per agent app with its warnings, config files, skills and hooks, a folded "Not on this Mac" list, and the bridge self-test), the default write domain, the tool map (24 tools), and across projects (saves per project and the last save).
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
 Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.68.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
@@ -802,7 +802,7 @@ System check answers "is the app working?". A domain's **Wiki health** panel ans
 
 ## What does the Setup step on the Context page check?
 
-**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. The check itself is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository — every fix is a button that copies, reveals a file in Finder, or runs Sync now, and you paste. The one exception is **Install for me** on a bridge line for Claude Desktop, Cursor or Antigravity (version 3.85.0), which opens the installer and writes only the `my-curator` entry, after a preview. The machine-wide half is **Settings → MCP bridge → Tools on this Mac**.
+**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. The check itself is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository — every fix is a button that copies, reveals a file in Finder, or runs Sync now, and you paste. The one exception is **Install for me** on a bridge line for Claude Desktop, Cursor or Antigravity (version 3.85.0), which opens the installer and writes only the `my-curator` entry, after a preview. The machine-wide half is **Settings → MCP bridge → Connect your agent apps**.
 
 It checks, for this project on this computer: each tool's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` — present, naming this project, current, and not past what the tool reads; `.curator-project` — present, naming this project, committed and pushed; whether each tool has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
 

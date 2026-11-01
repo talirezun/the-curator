@@ -467,7 +467,7 @@ the first real update is the first real test.
 
 Your knowledge is plain markdown in a folder you chose, so nothing above affects it. Coming
 from the shell installer below? Your wiki comes across untouched; you re-paste your API key and
-press **Install for me** in Settings → MCP bridge → Tools on this Mac — and point the app at your existing folder, which is
+press **Install for me** in Settings → MCP bridge → Connect your agent apps — and point the app at your existing folder, which is
 [one button and one trap](docs/user-guide.md#pick-the-folder-that-contains-your-domains). The
 decisions behind the packaging — and, for each, whether code exists yet — are in
 [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
@@ -518,10 +518,10 @@ Then open **http://localhost:3333**. Stop it with **Ctrl+C**. To update, stop it
 > `CURATOR_NO_OPEN=1` keeps the server from trying to open a browser for you.
 >
 > **Connecting your AI tools:** in Settings → MCP bridge, the **Install for me** button writes The
-> Curator's entry into your tools' config files on a Mac (Claude Desktop, Cursor, Antigravity) and
+> Curator's entry into your agent apps' config files on a Mac (Claude Desktop, Cursor, Antigravity) and
 > into **Claude Desktop only** on Windows (labelled "New on Windows — tell us if it works").
 > It refuses with a reason rather than guess which settings file Claude Desktop reads. On Linux, and
-> for every other tool on Windows, copy the entry from the same screen and paste it in yourself.
+> for every other agent app on Windows, copy the entry from the same screen and paste it in yourself.
 
 > **Install with a coding agent** — Claude Code, Cursor, Cline and friends can do the whole thing
 > from one pasted prompt: [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent).
