@@ -67,7 +67,7 @@ ok(JSON.stringify(Object.keys(M.STATUS_WORDS)) === JSON.stringify(['connected', 
 const c = M.countStatuses(SAMPLE);
 ok(c.connected === 1 && c.needsUpdate === 1 && c.canAdd === 1 && c.cantRead === 1 && c.manual === 1, 'counts per status', JSON.stringify(c));
 ok(M.overviewLine([...SAMPLE.slice(0, 3)]) === 'My Curator in your tools — 1 connected · 1 needs an update · 1 can be added', 'overview line', M.overviewLine(SAMPLE.slice(0, 3)));
-ok(M.overviewLine([]) === 'My Curator in your tools — no tool found on this Mac', 'overview line with no tools');
+ok(M.overviewLine([], 'darwin') === 'My Curator in your tools — no tool found on this Mac' && M.overviewLine([]) === 'My Curator in your tools — no tool found on this computer', 'overview line with no tools: Mac on darwin, computer when the platform is unknown');
 const t = M.defaultTicks(SAMPLE);
 ok(t.cursor === true && t.antigravity === true, 'needs-update and not-installed start ticked');
 ok(!('claude-desktop' in t) && !('windsurf' in t) && !('opencode' in t), 'connected / cant-read / manual rows have no tick');
@@ -321,7 +321,8 @@ section('§9 platform gating: darwin, win32, linux');
   // darwin and linux: byte-identical to the platform-less render
   const dsPanel = M.renderInstallPanel({ status: status(SAMPLE) });
   ok(!/data-mcpi-new-windows|data-mcpi-windows|data-mcpi-restart-windows/.test(dsPanel) && /data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: status([{ ...SAMPLE[3], files: [{ display: '~/w', file: '/h/w', state: 'jsonc' }] }]) })), 'darwin: no Windows element, Reveal kept');
-  ok(M.overviewLine(SAMPLE) === M.overviewLine(SAMPLE, 'darwin') && M.overviewLine([], 'linux') === 'My Curator in your tools — no tool found on this Mac', 'darwin/linux overview line unchanged');
+  ok(M.overviewLine(SAMPLE) === M.overviewLine(SAMPLE, 'darwin') && M.overviewLine([], 'linux') === 'My Curator in your tools — no tool found on this computer' && M.overviewLine([], 'win32') === 'My Curator in your tools — no tool found on this PC', 'overview line: Mac on darwin, PC on win32, computer on linux');
+  ok(M.machineWord('darwin') === 'Mac' && M.machineWord('win32') === 'PC' && M.machineWord('linux') === 'computer' && M.machineWord() === 'computer' && M.machineWord('') === 'computer', 'machineWord: the block title "Tools on this <word>" and the rail hint use it');
   ok(M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'darwin') && M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'linux'), 'darwin/linux results unchanged');
   const linX = M.renderInstallPanel({ status: status(SAMPLE.map((x) => ({ ...x, status: 'manual' })), { platform: 'linux', writable: false }) });
   ok(/on Linux/.test(linX) && !/data-mcpi-new-windows|data-mcpi-windows/.test(linX) && !/data-mcpi-tick/.test(linX), 'linux: copy-only, no Windows label');

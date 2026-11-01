@@ -16,7 +16,8 @@
  * matter. This module is the real thing the comments were describing.
  *
  * ── WHERE IT WRITES, AND WHY IT DOES NOT FORK ON INSTALL MODE ────────────────
- * `getLogsDir()` in paths.js always resolves to `~/Library/Logs/The Curator/`
+ * `getLogsDir()` in paths.js always resolves to `~/Library/Logs/The Curator/` on macOS
+ * (`%LOCALAPPDATA%\TheCurator\logs` on win32)
  * — see that function's own docblock for why this deliberately does NOT
  * follow getUserDataDir()'s repo-vs-bundle split. Short version: a repo
  * install is still a live git working tree, and this project has already

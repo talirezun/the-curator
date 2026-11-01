@@ -69,6 +69,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // The REAL sidebar kit, injected into the lifted `renderSidebar` (see §3).
+import { machineWord } from '../src/public/next/views/mcp-install.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -365,7 +366,7 @@ function mainHarness(initialState) {
     // crashes the suite instead of failing an assertion. Injected REAL, so
     // §3's "an unchanged render writes nothing" is still a statement about the
     // HTML that actually ships.
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, machineWord, installPlatform: () => '',
   };
   const S = build(['renderSidebar'], deps, 'renderSidebar');
   ok(S.renderSidebar(1) === true && written.length === 1, 'the sidebar paints on first render');

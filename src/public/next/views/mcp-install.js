@@ -1,4 +1,4 @@
-// Settings › MCP bridge › 5 "Tools on this Mac" › "My Curator in your tools"
+// Settings › MCP bridge › 5 "Tools on this Mac" (this PC on Windows, this computer elsewhere) › "My Curator in your tools"
 // (v3.85.0) — the status check and the one-click install, the words.
 //
 // DOM-FREE AT IMPORT (the setup-machine.js / setup-step.js rule):
@@ -98,7 +98,7 @@ export function overviewLine(tools, platform) {
   if (c.canAdd) parts.push(c.canAdd + ' can be added');
   if (c.cantRead) parts.push(c.cantRead + ' can’t be read');
   if (c.manual) parts.push(c.manual + ' copy only');
-  return 'My Curator in your tools — ' + (parts.length ? parts.join(' · ') : 'no tool found on this ' + (platform === 'win32' ? 'PC' : 'Mac'));
+  return 'My Curator in your tools — ' + (parts.length ? parts.join(' · ') : 'no tool found on this ' + machineWord(platform));
 }
 
 /** Which tool ids start ticked. `overrides` (id → boolean) are the person's own ticks. Pure. */
@@ -347,7 +347,7 @@ export function renderToolRow(tool, ctx = {}) {
 }
 
 /** "PC" on Windows, "Mac" elsewhere (darwin and linux keep today's word). */
-export function machineWord(platform) { return platform === 'win32' ? 'PC' : 'Mac'; }
+export function machineWord(platform) { return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer'; }
 
 /**
  * Windows only (v3.86.0 audit): the backend REFUSES to write Claude Desktop's
@@ -361,7 +361,7 @@ function appRunningLine(tool, platform) {
     ? '<p class="mcpi-reason" data-mcpi-app-running>' + escapeHtml(APP_RUNNING_WORDS) + '</p>' : '';
 }
 
-/** The rows and the "Not found on this Mac (N)" fold. */
+/** The rows and the "Not found on this Mac/PC/computer (N)" fold. */
 export function renderToolRows(status, ctx = {}) {
   const data = status && status.data;
   if (!data) return '';

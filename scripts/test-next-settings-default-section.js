@@ -54,6 +54,7 @@ import { stripComments, functionSource } from './test-helpers/source-scan.js';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 // The REAL sidebar kit, injected into the lifted `renderSidebar` below.
+import { machineWord } from '../src/public/next/views/mcp-install.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -218,13 +219,24 @@ if (renderSidebarSrc) {
   // i.e. a suite that CRASHES instead of asserting. They are passed through
   // the constructor rather than stubbed so what is executed below is the
   // shipped component, exactly as it is on the screen.
-  const fn = new Function(
-    'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
-    renderSidebarSrc + '\nreturn renderSidebar;'
-  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
-  fn(1);
+  const railFor = (platform) => {
+    const st = { section: 'general', version: null, mcpInstall: platform ? { status: { data: { platform } } } : null };
+    const fn = new Function(
+      'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
+      'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'machineWord', 'installPlatform',
+      renderSidebarSrc + '\nreturn renderSidebar;'
+    )(SETTINGS_SECTIONS, st, (x) => String(x), (html) => { captured = html; }, null,
+      renderSidebarHead, renderSidebarGroup, renderSidebarRow, machineWord, () => (st.mcpInstall ? st.mcpInstall.status.data.platform : ''));
+    fn(1);
+    return captured;
+  };
+  railFor('darwin');
+  ok(/My Curator, tools on this Mac/.test(captured), 'rail hint on darwin: "tools on this Mac" exactly');
+  railFor('win32');
+  ok(/My Curator, tools on this PC/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: "tools on this PC", no "this Mac"');
+  railFor('');
+  ok(/My Curator, tools on this computer/.test(captured), 'rail hint before the platform is known: "this computer"');
+  railFor('darwin');
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
 ok(renderedIds !== null && renderedIds.length === SETTINGS_SECTIONS.length,
@@ -478,10 +490,10 @@ console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
     let captured = '';
     new Function(
       'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
-      'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+      'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'machineWord', 'installPlatform',
       renderSidebarSrc + '\nreturn renderSidebar;'
     )(SETTINGS_SECTIONS, state, (x) => String(x), (html) => { captured = html; }, null,
-      renderSidebarHead, renderSidebarGroup, renderSidebarRow)(1);
+      renderSidebarHead, renderSidebarGroup, renderSidebarRow, machineWord, () => '')(1);
     return captured;
   };
   out = paint({ section: 'mcp', version: { version: '3.65.0', restartRequired: false } });

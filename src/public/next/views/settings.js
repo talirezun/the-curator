@@ -156,7 +156,7 @@ import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/li
 import { renderToolsOnThisMacBody, toolsOnThisMacHead } from './setup-machine.js';
 // v3.85.0 — "My Curator in your tools": the status check and the one-click install.
 import {
-  focusInstallPanel, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds,
+  focusInstallPanel, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds, machineWord,
 } from './mcp-install.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
@@ -301,7 +301,7 @@ const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter'], // v3.72.1 (audit F14): no local provider exists yet
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
-  ['mcp',       'MCP bridge',           'My Curator, tools on this Mac'],
+  ['mcp',       'MCP bridge',           'My Curator, tools on this Mac'], // the hint is platform-worded at draw time (railHint)
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
   // v3.76.0: last, because it is the least often visited — a place you go
   // to after a delete, not a setting. See views/trash-list.js.
@@ -1815,6 +1815,12 @@ async function applyInstall(token) {
   render(token);
 }
 
+/** The platform the install status reported ('darwin' | 'win32' | 'linux'); '' before it is known, which words as "this computer". */
+function installPlatform() {
+  const d = state.mcpInstall && state.mcpInstall.status && state.mcpInstall.status.data;
+  return (d && typeof d.platform === 'string') ? d.platform : '';
+}
+
 /** Block ⑤. The head's controls ride at the top of the body (a settings block has no head slot). */
 function renderToolsOnThisMac() {
   const m = state.setupMachine;
@@ -1829,7 +1835,7 @@ function renderToolsOnThisMac() {
       machineFiles: installMachineFiles(),
     })
     + '<div id="mcpi-detail" class="mcpi-detail"><h3 class="mcpi-detail-head">Each tool in detail — every file it reads</h3>' + renderToolsOnThisMacBody(m, state.setupMachineFolds) + '</div>';
-  return settingsBlock(5, 'mcp-tools', 'Tools on this Mac', lede, body, 'settings.mcp-tools', '');
+  return settingsBlock(5, 'mcp-tools', 'Tools on this ' + machineWord(installPlatform()), lede, body, 'settings.mcp-tools', '');
 }
 
 /**
@@ -2229,7 +2235,7 @@ function renderSidebar(token, force) {
   const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => renderSidebarRow({
     alias: 'settings',
     name: label,
-    event: hint,
+    event: id === 'mcp' ? 'My Curator, tools on this ' + machineWord(installPlatform()) : hint,
     active: state.section === id,
     data: { section: id },
   })).join('');

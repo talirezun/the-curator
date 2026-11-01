@@ -81,7 +81,8 @@
  * ── The shared location, and why getUserDataDir() is NOT it ─────────────────
  *
  * `getUserDataDir()` forks on install form: APP_ROOT for a checkout,
- * `~/Library/Application Support/The Curator` for a bundle. Two installs
+ * `~/Library/Application Support/The Curator` for a bundle on macOS
+ * (`%LOCALAPPDATA%\TheCurator` on win32). Two installs
  * therefore have two different user-data directories, and each would register
  * itself somewhere the other never looks — a registry in which nobody can
  * ever see anybody.
@@ -213,7 +214,7 @@ function isolatedUserDataDir() {
  *   __setInstanceRegistryRootOverride  → that (test seam)
  *   CURATOR_TEST_INSTANCE_DIR          → that (test seam, crosses processes)
  *   an ISOLATED user-data dir          → <that>/instances
- *   otherwise                          → ~/Library/Application Support/The Curator/instances
+ *   otherwise                          → ~/Library/Application Support/The Curator/instances  (macOS; win32: %LOCALAPPDATA%\TheCurator\instances)
  *
  * Pure resolver — creates nothing.
  */
