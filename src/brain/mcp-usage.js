@@ -132,7 +132,7 @@
  *
  * Appends are O_APPEND writes of ~150 bytes — or, on the first call of a
  * process, ONE write carrying the session line AND the first tool line, worst
- * case 131 + 291 = 422 bytes — still under PIPE_BUF, so two processes
+ * case 182 + 291 = 473 bytes (v3.88.0; was 131 + 291) — still under PIPE_BUF, so two processes
  * appending concurrently interleave whole writes but never corrupt one. That
  * one-write shape is also what guarantees a process's session line lands
  * BEFORE its first tool line without any ordering machinery.
@@ -175,7 +175,43 @@ export const LINE_KEYS_ALWAYS = LINE_KEYS.slice(0, 7);
 export const LINE_KEYS_OPTIONAL = LINE_KEYS.slice(7);
 
 /** The SESSION line's keys, in emission order. `via` is optional here too. */
-export const SESSION_LINE_KEYS = ['ts', 'ev', 'sid', 'client', 'via'];
+export const SESSION_LINE_KEYS = ['ts', 'ev', 'sid', 'client', 'via', 'pid', 'v', 'tsig'];
+
+/**
+ * THE BRIDGE'S IDENTITY ON ITS SESSION LINE (v3.88.0): `pid`, `v` (the
+ * package version) and `tsig` (the tool-list signature, `mcp/tool-signature.js`).
+ * All three describe the PROCESS and the shipped code, never anything a user
+ * wrote, so the line stays content-free. They are what lets the app say which
+ * open bridge serves which tool list — compared by signature, never by file
+ * mtimes (see `src/brain/mcp-bridge-status.js`). Each is bounded, so the byte
+ * ceiling stays a proof (MAX_LINE_BYTES).
+ */
+export const BRIDGE_PID_MAX = 99_999_999;
+export const BRIDGE_VERSION_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+export const BRIDGE_TSIG_RE = /^[0-9a-f]{8}$/;
+
+/** The identity fields, normalised: an unusable value is DROPPED, never coerced. */
+export function normaliseBridgeIdentity(o) {
+  const out = {};
+  if (!o || typeof o !== 'object') return out;
+  if (Number.isInteger(o.pid) && o.pid > 0 && o.pid <= BRIDGE_PID_MAX) out.pid = o.pid;
+  if (typeof o.v === 'string' && BRIDGE_VERSION_RE.test(o.v)) out.v = o.v;
+  if (typeof o.tsig === 'string' && BRIDGE_TSIG_RE.test(o.tsig)) out.tsig = o.tsig;
+  return out;
+}
+
+let _identity = {};
+
+/**
+ * Set by `mcp/server.js` at startup, before any session line can be written.
+ * Never set in the web server, so the app's own lines carry none of it.
+ */
+export function setSessionIdentity(o) {
+  _identity = normaliseBridgeIdentity(o);
+}
+
+/** TEST-ONLY: forget the identity, as a process that never set one. */
+export function __resetSessionIdentity() { _identity = {}; }
 
 /** The only value `ev` may hold, and the only line kind that is not a call. */
 export const SESSION_EV = 'session';
@@ -293,6 +329,16 @@ export function __newSessionIdForTest() {
  *
  *   { + "ts" + ,"ev":"session" + ,"sid" + ,"client":"…" + ,"via" + }
  *   1 +  31  +      15         +   21   + 44 (10+2+32)  +  18   + 1  = 131
+ *
+ * v3.88.0 adds the bridge's identity to it:
+ *
+ *   ,"pid":…      15   (7 + 8 digits, BRIDGE_PID_MAX)
+ *   ,"v":"…"      18   (6 + 11, BRIDGE_VERSION_RE's 3+1+3+1+3, + 1 quote)
+ *   ,"tsig":"…"   18   (9 + 8 hex, BRIDGE_TSIG_RE, + 1 quote)
+ *                 ───
+ *   131 + 51 = 182, still far under 300. The coupled first write (session line
+ *   + tool line + 2 newlines) is 182 + 291 + 2 = 475 bytes, under the 512-byte
+ *   PIPE_BUF floor, so the O_APPEND atomicity argument still holds.
  *
  * **THIS NUMBER MOVED IN v3.63.0: 200 → 300**, and it had to. `sid` is 21
  * bytes and `project` is 77, so the v3.61.0 worst case of 193 becomes 291
@@ -418,6 +464,17 @@ export function buildSessionLine(entry, nowIso) {
   if (e.client !== undefined) rec.client = labelForClient(e.client);
   const via = normaliseVia(e.via);
   if (via) rec.via = via;
+  // The bridge identity (v3.88.0): the entry's own values win (the suites'
+  // seam), else what `setSessionIdentity` recorded for this process. Every
+  // value is re-normalised here, so nothing unbounded reaches the line.
+  const id = normaliseBridgeIdentity({
+    pid: e.pid !== undefined ? e.pid : _identity.pid,
+    v: e.v !== undefined ? e.v : _identity.v,
+    tsig: e.tsig !== undefined ? e.tsig : _identity.tsig,
+  });
+  if (id.pid !== undefined) rec.pid = id.pid;
+  if (id.v !== undefined) rec.v = id.v;
+  if (id.tsig !== undefined) rec.tsig = id.tsig;
   return JSON.stringify(rec);
 }
 
@@ -466,7 +523,7 @@ export function __resetSessionLine() {
  * honesty meter exists to prevent, reproduced inside the instrument.
  *
  * A single startup line needs none of the coupling: one line is atomic on its
- * own (131 bytes, far under the 512-byte PIPE_BUF floor), and there is no
+ * own (182 bytes since v3.88.0, far under the 512-byte PIPE_BUF floor), and there is no
  * second line for it to be ordered against.
  *
  * Called TWICE at most per process, and the second time only to supply a
@@ -510,7 +567,7 @@ export async function appendSessionLine(entry = {}) {
  * On a process's FIRST call this writes TWO lines in ONE `appendFile`: the
  * session line, then the tool line. One write, so the order is guaranteed
  * without any ordering machinery and the O_APPEND atomicity argument still
- * holds (worst case 131 + 291 + 2 newlines = 424 bytes, under PIPE_BUF).
+ * holds (worst case 182 + 291 + 2 newlines = 475 bytes since v3.88.0, under PIPE_BUF).
  */
 export async function appendUsage(entry) {
   // SYNCHRONOUS claims — see _sessionLinePending. Nothing may await above this.
@@ -696,6 +753,13 @@ function parseLines(text) {
         client: rec.client === undefined || rec.client === null
           ? null
           : normaliseStoredClient(rec.client),
+        // v3.88.0 — the bridge identity, re-checked on read like every field
+        // here. ABSENT on any line written before v3.88.0, which is exactly
+        // what makes a bridge's tool list "unknown" rather than "same".
+        ...(() => {
+          const id = normaliseBridgeIdentity(rec);
+          return { pid: id.pid ?? null, v: id.v ?? null, tsig: id.tsig ?? null };
+        })(),
       });
       continue;
     }

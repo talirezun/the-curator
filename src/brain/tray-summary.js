@@ -1775,8 +1775,29 @@ export async function getStoreActivity(opts = {}) {
     let idx;
     try { idx = await store.listScopes(entry.domain, entry.project, { withSaveTimes: true }); } catch { continue; }
     if (!idx || !idx.ok || !Array.isArray(idx.scopes)) continue;
+    // v3.88.0 (Settings › Across projects): this project's own save times,
+    // across every work-stream, for the route to count in ITS window. Read
+    // from the same listing the pulse reads — no second pass over the store.
+    // `saveTimesCapped`: a journal was read only from its newest 16 KB, so a
+    // count over these times is a floor. `savedAtMax`: the newest handoff
+    // write, which a truncated journal cannot hide.
+    const own = projects[projects.length - 1];
+    own.saveTimes = [];
+    own.saveTimesCapped = false;
+    own.savedAtMax = null;
+    own.cappedFrom = null;
     for (const p of idx.scopes) {
       if (!p || typeof p.scope !== 'string' || typeof p.machine !== 'string') continue;
+      if (Array.isArray(p.saveTimes)) for (const t of p.saveTimes) if (Number.isFinite(t)) own.saveTimes.push(t);
+      // The oldest save a TRUNCATED journal still showed: anything older may
+      // be missing, so a window that starts before it is a floor.
+      if (p.journalTailTruncated === true) {
+        own.saveTimesCapped = true;
+        const first = Array.isArray(p.saveTimes) && p.saveTimes.length ? Math.min(...p.saveTimes.filter(Number.isFinite)) : Infinity;
+        if (!Number.isFinite(own.cappedFrom) || first > own.cappedFrom) own.cappedFrom = first;
+      }
+      const w = typeof p.writtenAt === 'string' ? Date.parse(p.writtenAt) : NaN;
+      if (Number.isFinite(w) && (own.savedAtMax === null || w > own.savedAtMax)) own.savedAtMax = w;
       pulseInput.push({
         saveTimes: Array.isArray(p.saveTimes) ? p.saveTimes : null,
         saveHarnesses: Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null,

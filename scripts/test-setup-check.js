@@ -669,7 +669,7 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
     mkdirSync(miss, { recursive: true });
     const m = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: miss, source: 'set' }, addedTools: ['antigravity'] });
     const bm = m.toFix.find((f) => f.kind === 'block-missing');
-    ok(bm && bm.text === `AGENTS.md in ${S.tildeUnder(ROOT, miss)} has no Curator instructions, so Antigravity doesn’t know this project and may overwrite another tool’s handoff.`
+    ok(bm && bm.text === `AGENTS.md in ${S.tildeUnder(ROOT, miss)} has no Curator instructions, so Antigravity doesn’t know this project and may overwrite another agent app’s handoff.`
       && /Paste them at the very top \(create the file if it isn’t there\), then commit and push\.$/.test(bm.detail), 'block-missing: the contract\'s two lines', bm);
   }
 
@@ -714,7 +714,7 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
         const g = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: path.join(ROOT, 'nope-repo'), source: 'set', exists: false } });
         const t = g.toFix.find((f) => f.kind === 'repo-missing')?.text;
         ok(t === `${S.tildeUnder(ROOT, path.join(ROOT, 'nope-repo'))} isn’t on this ${word}.`, `${plat}: the folder line says "this ${word}"`, t);
-        ok(S.FIX.settings().label === `Open Tools on this ${word}`, `${plat}: the settings fix reads "Open Tools on this ${word}"`, S.FIX.settings());
+        ok(S.FIX.settings().label === "Open Settings › MCP bridge", `${plat}: the settings fix reads "Open Settings › MCP bridge" (v3.88.0: Tools on this Mac merged into it)`, S.FIX.settings());
         if (plat !== 'darwin') ok(!/this Mac/.test(JSON.stringify(g)), `${plat}: no "this Mac" anywhere in the result`, g);
       } finally { S.__setSetupPlatform('darwin'); }
     }
