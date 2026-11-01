@@ -101,9 +101,10 @@ These are not two products, and you do not have to pick. A book, a thesis or a r
 |---|---|---|
 | Mac | A downloadable application, a `.dmg` from the Releases page, in two builds: `arm64` for Apple Silicon and `x64` for Intel. About 140 MB, because the app carries its own runtime | Supported |
 | Mac | A one-command shell installer that fetches Node.js if needed, clones the repo, installs dependencies and builds the Dock application | Supported |
-| Windows, Linux and Mac | Manual setup: Node.js 18 or newer, `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
+| Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts (The Curator, Stop The Curator). No administrator rights | Supported |
+| Linux and Mac | Manual setup: git, Node.js 22 LTS (18 minimum), `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
 
-There is no Windows application and no Linux application. On those platforms the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health all work identically. What is Mac-only is the packaging, not the features.
+On Windows there is a one-line installer but no `.exe` app yet, and there is no Linux application. On those platforms the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health all work identically. What is Mac-only is the packaging, not the features.
 
 The Mac application is **not yet notarised by Apple.** Developer enrolment is in progress. Until it completes, macOS cannot verify who built it, so the very first launch needs an explicit one-time approval through System Settings, Privacy and Security, using the **Open Anyway** button. That is a signing status, not a verdict on the app. The exception is remembered afterwards, and updates the app installs for itself never ask again. Builds from version 3.30.0 and earlier had a different and worse problem — a broken signature that made macOS call the app damaged — and the fix for those is to download version 3.31.0 or later.
 

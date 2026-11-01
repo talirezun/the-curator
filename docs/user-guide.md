@@ -250,7 +250,8 @@ flowchart TD
 | A computer running macOS, Windows, or Linux | See the platform notes below | — |
 | An AI provider API key | Powers ingest, chat, and AI-assisted Wiki Health | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
 | Obsidian (optional) | Visualises the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
-| Node.js 18+ | Runtime that powers the local server | **Not needed for the Mac app** — it ships with its own. For the browser install: auto-installed on Mac by the one-line installer; on Windows/Linux install manually from [nodejs.org](https://nodejs.org) |
+| Node.js (22 LTS recommended, 18 is the minimum) | Runtime that powers the local server | **Not needed for the Mac app** — it ships with its own. For the browser install: auto-installed on Mac by the one-line installer, and **on Windows by the one-line installer too** (it keeps its own private copy). On Linux install it yourself from [nodejs.org](https://nodejs.org) |
+| git | Downloads the app and applies updates | **Not needed for the Mac app.** Installed for you by the Mac one-line installer and — privately, as its own copy — by the Windows one-line installer. On Linux install it yourself ([git-scm.com](https://git-scm.com) or your package manager) |
 
 ### Two ways to run it — and they are the same program
 
@@ -262,23 +263,23 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 |---|---|---|
 | What you get | A `.dmg` you drag to Applications | A folder on your disk running a local server |
 | Platforms | macOS only | macOS, Windows, Linux |
-| Node.js | Bundled — nothing to install | You install it |
+| Node.js | Bundled — nothing to install | Installed for you on Mac and Windows by the one-line installers; on Linux you install it |
 | Where the UI appears | Its own window, with its own title bar | A tab at `http://localhost:3333` |
-| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu — which since v3.41.0 opens its own small progress window | Applied in place from **Settings**, or `git pull` |
+| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu — which since v3.41.0 opens its own small progress window | Applied in place from **Settings**, or `git pull` (on Windows: also the one-line installer again) |
 | Your data lives in | `~/Library/Application Support/The Curator/` | Your install folder (default `~/the-curator/`) |
 | Status today | **Preview.** No Apple identity yet, so macOS asks you to allow it once — on the **first** install only | Mature, fully supported, and **not** being retired |
 
 ### Platform support
 
-| Platform | Mac app (`.dmg`) | One-line installer | Manual `npm install` |
+| Platform | Mac app (`.dmg`) | One-line installer | Manual setup |
 |---|---|---|---|
-| **macOS** | ✅ Preview — see [§3](#the-mac-app-macos-only) | ✅ Recommended | ✅ Works |
-| **Linux** | ❌ | ❌ — script checks for Darwin | ✅ Works (`node src/server.js`) |
-| **Windows** | ❌ | ❌ | ✅ Works (PowerShell or WSL2; set `CURATOR_NO_OPEN=1`) |
+| **macOS** | ✅ Preview — see [§3](#the-mac-app-macos-only) | ✅ Recommended (`install.sh`, in Terminal) | ✅ Works |
+| **Linux** | ❌ | ❌ — the Mac script checks for Darwin | ✅ Works (`CURATOR_NO_OPEN=1 npm start`) |
+| **Windows** | ❌ (no `.exe` app yet) | ✅ **Recommended** (`install.ps1`, in PowerShell) — see [Windows: one-line installer](#windows-one-line-installer) | ✅ Works for technical users (you install Node and git yourself) |
 
-> The one-line installer is macOS-only because it builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users clone the repo and run `node src/server.js` directly. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. **Install for me** (MCP bridge) works on macOS and, for Claude Desktop only, on Windows. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
+> There is no Windows or Linux *app*: on those systems The Curator is a local server you open in your browser. The Mac installer builds a `.app` Dock launcher; the Windows installer instead makes two shortcuts, **The Curator** and **Stop The Curator**. The Curator's *core* (Express + Node) is fully cross-platform. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. **Install for me** (MCP bridge) works on macOS and, for Claude Desktop only, on Windows. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
 
-> **Don't have a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
+> **Prefer a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
 
 ---
 
@@ -354,9 +355,111 @@ When it finishes, the app opens automatically in your browser. A **Getting start
 
 > You only need to run the install command **once**. After that, click The Curator in your Dock to launch the app.
 
-### Manual setup (alternative — works on Mac, Linux, Windows)
+### Windows: one-line installer
 
-If you prefer to set things up yourself, or you're on Linux/Windows:
+For people on their own Windows 10 or 11 PC. You copy **one command**, paste it into PowerShell, press Enter, and wait a few minutes. The app opens in your browser and its own [Getting started panel](#5-first-run--the-getting-started-panel) takes over. You do not need to install Node.js or git first, and you do not need administrator rights.
+
+**Step 1 — open PowerShell** (not Command Prompt):
+
+| Do this | You should see |
+|---|---|
+| Click **Start** (or press the Windows key) | The Start menu |
+| Type `PowerShell` | **Windows PowerShell** in the results |
+| Click **Windows PowerShell** | A window with a **blue** background and a prompt starting with `PS` |
+
+> ⚠️ Use **Windows PowerShell**, not **Command Prompt** (`cmd`, the black window). The command below only works in PowerShell. If the prompt does not start with `PS`, close the window and open the right one.
+
+**Step 2 — paste the command and press Enter:**
+
+```powershell
+irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex
+```
+
+To paste: **right-click** inside the PowerShell window (that pastes whatever you copied) or press **Ctrl + V**. Then press **Enter**.
+
+**Step 3 — wait.** It takes about **2 to 5 minutes**, depending on your connection and your antivirus. The installer prints plain-language progress as it goes:
+
+| What it is doing | What you will see |
+|---|---|
+| Telling you the plan | A short banner: what will happen, where, and roughly how long |
+| Checking your PC | A quick check of Windows, free disk space (about 500 MB) and your connection |
+| Downloading its own Node.js and git | Progress lines. Each download is checked against a fixed checksum; if one does not match, it stops and says so |
+| Downloading The Curator | The app is placed in `%USERPROFILE%\the-curator` |
+| Installing the app's parts | A quieter stretch with no output; this is the slowest step, so do not close the window |
+| Making the two icons | Shortcuts on your Desktop and in the Start menu |
+| Starting the app | Your browser opens The Curator at `http://localhost:3333`, and the installer's last message tells you what to do next time |
+
+When it finishes, the **Getting started** panel appears in the browser. From here, follow [§4 (API key)](#4-get-your-api-key-gemini-claude-or-openrouter) and [§5](#5-first-run--the-getting-started-panel).
+
+**The two icons**
+
+| Icon | Where | What it does |
+|---|---|---|
+| **The Curator** | Desktop, and Start menu → **The Curator** | Starts the app if it is not already running, then opens it in your browser. If it is already running, it just opens the browser |
+| **Stop The Curator** | Desktop, and Start menu → **The Curator** | Stops the app. A small message confirms: "The Curator has stopped." (or "The Curator was not running.") |
+
+**Day to day**
+
+| You do… | What happens |
+|---|---|
+| Double-click **The Curator** | The app starts (no console window appears) and your browser opens. Allow up to about 45 seconds the first time after a reboot |
+| Close the browser tab | The app **keeps running** in the background at near-zero CPU. Double-click **The Curator** to open it again |
+| Double-click **Stop The Curator** | The app stops. Do this when you want it fully off — and **not in the middle of an ingest**, because stopping loses the rest of a document you have already paid to have read |
+| Restart your PC | The app is stopped. Double-click **The Curator** to start it again |
+
+There is no Stop button inside the app itself, on any platform. On Windows, **Stop The Curator** is what quitting is on a Mac.
+
+**Updating.** Either press **Update** in the app's **Settings**, or run the same one-line command again in PowerShell. Running it again **repairs and updates** the install (it re-downloads anything missing, brings the app up to date and recreates the icons) and **never touches your knowledge, your `.env` file or your saved settings**.
+
+**Where your data lives**
+
+| What | Where |
+|---|---|
+| Your knowledge (all domains, wiki pages, conversations) | `%USERPROFILE%\the-curator\domains` — open this folder in [Obsidian](https://obsidian.md) as a vault to see the graph |
+| The app itself | `%USERPROFILE%\the-curator` |
+| The private Node.js and git the installer downloaded | `%LOCALAPPDATA%\TheCurator\runtime` (nothing is added to your system PATH) |
+| The log, if something goes wrong | `%LOCALAPPDATA%\TheCurator\logs\server.log` (the previous run is kept as `server.log.1`) |
+
+Type `%USERPROFILE%\the-curator\domains` into the address bar of File Explorer to jump straight to your knowledge folder.
+
+**Connecting Claude Desktop.** Once the app is running: **Settings → MCP bridge → Tools on this Mac → Install for me** writes The Curator's entry into Claude Desktop's settings file (new on Windows in v3.86.0, labelled "New on Windows — tell us if it works"). Quit Claude Desktop fully first (system tray → Quit); the app will not write the file while it runs. Details, and what every refusal means, are in [§13](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp). For other tools on Windows, copy the entry from the same screen and paste it in yourself.
+
+**Windows security messages you might meet**
+
+The installer is a PowerShell command, not a downloaded `.exe` file, so you should **not** see the blue "Windows protected your PC" (SmartScreen) screen. Two things can still appear:
+
+| You see | What it means | What to do |
+|---|---|---|
+| A Windows Security / Defender notice while it installs, or the install is slower than expected | Defender is scanning the many small files being unpacked. This is normal and only slows things down | Wait. Do not close the window |
+| Your antivirus (Defender or another product) **blocks or removes** a file such as `node.exe` | Some security products, especially on work or school PCs, distrust unfamiliar programs that start in the background | Allow the folder `%LOCALAPPDATA%\TheCurator` in your antivirus, then run the one-line command again. On a managed PC, ask your IT department |
+
+**Troubleshooting**
+
+| Symptom | What to do |
+|---|---|
+| `irm : The term 'irm' is not recognized…` | You are in **Command Prompt** (`cmd`), not PowerShell. Close it and open **Windows PowerShell** (Start → type `PowerShell`) |
+| "Running scripts is disabled on this system" | The one-line command is **not** affected (it is not a script file). The two icons are not affected either: they start PowerShell with `-ExecutionPolicy Bypass`. If you see this when running something yourself, you do not need to change any Windows setting |
+| The command does nothing, or says it cannot be downloaded / connect | Check your internet connection, then run the command again. Running it again is safe |
+| A download failed or a checksum did not match | Run the command again. If it keeps happening, the network is altering the download (a hotel, school or company network); try another network |
+| You are behind a company or school proxy | The installer uses your Windows proxy settings. If it still fails, ask your IT department to allow `raw.githubusercontent.com`, `github.com` and `nodejs.org` |
+| The installer stops with a message and a block to "copy and send" | Copy that block and send it to your teacher or support. Then run the command again — a re-run fixes a half-finished install |
+| **The Curator** icon does nothing / the page does not open | Double-click **The Curator** again and wait up to a minute. If the page still does not open, read the end of `%LOCALAPPDATA%\TheCurator\logs\server.log`, or run the one-line command again |
+| "Port 3333 is already used by another program" | Another program is using the port (or a second copy of The Curator is). Double-click **Stop The Curator**, then **The Curator**. Still stuck: close the other program, or set `PORT=4000` in the `.env` file inside `%USERPROFILE%\the-curator` |
+| The message box says `node.exe` is missing or was blocked | Your antivirus probably removed it (see above). Allow `%LOCALAPPDATA%\TheCurator`, then run the one-line command again: it re-downloads what is missing |
+| An update from Settings fails | Run the one-line command again; it updates the app the same way and explains any problem in words |
+| The folder `the-curator` already exists but is not The Curator | The installer stops and names the folder rather than touch it. Rename or move that folder, then run the command again |
+
+**Uninstalling.** Nothing is installed system-wide, so removal is deleting folders:
+
+1. Double-click **Stop The Curator**.
+2. **Back up `%USERPROFILE%\the-curator\domains` first** — that folder is your knowledge, and deleting `the-curator` deletes it. Copy it somewhere safe (or into Obsidian's vault location) before you continue.
+3. Delete the **The Curator** and **Stop The Curator** icons from the Desktop, and the **The Curator** folder from the Start menu.
+4. Delete the folder `%LOCALAPPDATA%\TheCurator`.
+5. Delete the folder `%USERPROFILE%\the-curator`.
+
+### Manual setup (alternative — Linux, or technical users on Mac and Windows)
+
+If you prefer to set things up yourself, or you're on Linux. **You need git and Node.js first** (Node 22 LTS is recommended; 18 is the minimum). On Windows, the [one-line installer](#windows-one-line-installer) above is the easier route.
 
 ```bash
 # 1. Clone the project
@@ -367,18 +470,18 @@ cd the-curator
 npm install
 
 # 3. Start the server
-node src/server.js                         # macOS / Linux
-# Windows PowerShell:
-# $env:CURATOR_NO_OPEN=1; node src\server.js
+CURATOR_NO_OPEN=1 npm start               # Linux (on a Mac, plain `node src/server.js`)
+# Windows PowerShell, if you set it up by hand:
+# $env:CURATOR_NO_OPEN=1; npm start
 ```
 
-Open **http://localhost:3333** in your browser. The Getting started panel will guide you through the rest.
+Open **http://localhost:3333** in your browser. The Getting started panel will guide you through the rest. To stop the server, press **Ctrl + C** in that terminal.
 
-**Linux / Windows specifics**
+**Linux specifics**
 
-- Set `CURATOR_NO_OPEN=1` to skip the macOS-only `open` browser-launch on startup (the server still binds to `localhost:3333`; just open it manually).
-- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS. If you've also set a folder in **Settings → Knowledge base**, that value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, re-run its setup wizard after changing the knowledge base folder so Claude Desktop picks up the new location too — see [mcp-user-guide.md](mcp-user-guide.md).)
-- Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. See [§16 → Version and updates](#version-and-updates) for how updating works on macOS, where it is a button in Settings.
+- Set `CURATOR_NO_OPEN=1` to stop the server trying to open a browser for you (it still binds to `localhost:3333`; just open it manually).
+- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS. If you've also set a folder in **Settings → Knowledge base**, that value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, press **Install for me** again after changing the knowledge base folder — Settings → MCP bridge → Tools on this Mac — so Claude Desktop picks up the new location too; the old setup wizard was retired in v3.85.0. See [mcp-user-guide.md](mcp-user-guide.md).)
+- Updating the app on Linux: stop the server, run `git pull && npm install` from the `the-curator` directory, then start it again. (On Windows with the one-line installer, press Update in Settings or run the one-line command again.) See [§16 → Version and updates](#version-and-updates) for how updating works on macOS, where it is a button in Settings.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
 
@@ -653,14 +756,16 @@ Click **The Curator** icon in your Dock. It starts the local server and opens in
 
 > If The Curator is not yet in your Dock, open Finder → `~/the-curator/` → drag the app icon down into your Dock first (one-time step).
 
-### The browser install — manual / Linux / Windows
+### The browser install — Windows
+
+Double-click **The Curator** (Desktop or Start menu). To stop it, double-click **Stop The Curator**. Full detail in [§3 → Windows: one-line installer](#windows-one-line-installer).
+
+### The browser install — manual / Linux
 
 Open a terminal in the project folder and run:
 
 ```bash
-node src/server.js                            # macOS / Linux
-# Windows PowerShell:
-# $env:CURATOR_NO_OPEN=1; node src\server.js
+CURATOR_NO_OPEN=1 npm start                   # Linux (macOS: node src/server.js)
 ```
 
 Then open **http://localhost:3333** in your browser.
@@ -674,6 +779,7 @@ It is a **local web app** — a small Express server runs on your machine and re
 | Close the browser tab | The server **keeps running** in the background, idling at near-zero CPU. Nothing is lost. |
 | Click the Dock icon again (Mac) | The browser tab reopens and reconnects to the already-running server. Fast — there is no restart. |
 | Right-click Dock icon → **Quit** (Mac) | The server actually stops. Use this when you want the process gone. |
+| Double-click **Stop The Curator** (Windows) | The server stops. |
 | Press `Ctrl + C` in the terminal (manual mode) | The server stops. |
 | Reboot your computer | The server is gone; relaunch it (Dock click or `node src/server.js`). |
 
@@ -8364,7 +8470,17 @@ For a typical 10-page article on a small or fresh domain:
 
 Don't want to run a single terminal command? If you already have a CLI-aware AI coding agent — **Claude Code**, **Cursor**, **Augment**, **Cline**, **Aider**, **GitHub Copilot CLI**, or any other agent that can run shell commands — paste the prompt below into the agent and let it do the install for you.
 
-This is the **easiest way to install on Linux and Windows**, where the one-line `curl | bash` installer doesn't apply.
+This is the **easiest way to install on Linux**, where the one-line installers don't apply. **On Windows you may not need an agent at all:** the [one-line installer](#windows-one-line-installer) is a single paste into PowerShell. If you prefer an agent, give it this instead:
+
+```
+Please install "The Curator" on this Windows PC for me. Open Windows PowerShell (not cmd) and run exactly this one command, then wait for it to finish (2 to 5 minutes):
+
+irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex
+
+It installs everything itself (its own Node.js and git, no admin rights) and opens the app in the browser. Do not install Node.js or git separately. Do not ask me for my API key — I will paste it into the app's Settings myself. Afterwards tell me where it was installed and which two icons were created.
+```
+
+For Linux and macOS, use the prompt below.
 
 ### Copy-paste prompt
 
@@ -8375,11 +8491,11 @@ Project: https://github.com/talirezun/the-curator
 User Guide: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md
 
 Steps:
-1. Verify Node.js 18+ is installed; if not, install it (Homebrew on macOS, nodejs.org installer on Windows, system package manager on Linux).
+1. Verify git and Node.js are installed (Node 22 LTS recommended, 18 is the minimum); if not, install them (Homebrew on macOS, system package manager on Linux).
 2. git clone https://github.com/talirezun/the-curator.git into the user's home directory.
 3. cd the-curator && npm install
 4. On macOS: bash scripts/build-app.sh to build "The Curator.app", then move/copy it to /Applications and remind me to drag it from Finder into my Dock.
-5. On Linux/Windows: skip the .app build; explain how to start the server (`node src/server.js`, with CURATOR_NO_OPEN=1 on Windows) and remind me to open http://localhost:3333.
+5. On Linux: skip the .app build; explain how to start the server (`CURATOR_NO_OPEN=1 npm start`, stopped with Ctrl+C) and remind me to open http://localhost:3333.
 6. Open the URL once the server is running so I can complete the in-app setup (API key + first domain).
 7. Tell me what to do if I want to enable GitHub sync (point me to docs/sync.md).
 
@@ -8395,11 +8511,12 @@ Do not edit any files outside ~/the-curator. Do not commit anything to my git co
 
 ### Updating with a coding agent
 
-The Mac Settings → Update button is `git pull && npm install && bash scripts/build-app.sh`. Any coding agent can do the equivalent on any platform:
+On a Mac, the Settings → Update button is `git pull && npm install && bash scripts/build-app.sh`. Any coding agent can do the equivalent on any platform:
 
 ```
 Please update The Curator at ~/the-curator: cd into it, run `git pull && npm install`,
 and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
+(On Windows with the one-line installer, just run the one-line install command again.)
 ```
 
 ---

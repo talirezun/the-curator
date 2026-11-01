@@ -73,7 +73,7 @@ Each row links straight to that section.
 
 ## Where do I read about installing on Windows or Linux?
 
-Go here: section 3 of the user guide carries the manual setup that works on macOS, Linux and Windows, and the platform table that says which parts are macOS only. https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#3-installation
+Go here: section 3 of the user guide carries the Windows one-line installer (with troubleshooting and uninstalling), the manual setup for Linux, and the platform table that says which parts are macOS only. https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#3-installation
 
 ## Where is the guide to project context, agent memory and working state?
 

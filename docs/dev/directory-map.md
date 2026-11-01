@@ -7,6 +7,18 @@
 ## Directory Structure
 
 ```
+install.sh          — the macOS one-command installer (curl | bash); builds the Dock .app
+install.ps1         — the WINDOWS one-line installer (v3.87.0): `irm .../install.ps1 | iex`. Downloads a
+                      pinned, SHA256-verified Node LTS and MinGit into a private per-user runtime
+                      (%LOCALAPPDATA%\TheCurator\runtime\), clones or fast-forwards the checkout at
+                      %USERPROFILE%\the-curator, runs npm, makes the two shortcuts, starts the app.
+                      Re-running it is repair + update and never touches domains\, .env or
+                      .curator-config.json. Parameters: -Branch (default main), -NoStart, -InstallDir (CI)
+scripts/windows/    — what the Windows shortcuts run (in the repo, so an update refreshes them):
+                      start-curator.ps1 (start hidden + open the browser), stop-curator.ps1 (stop the
+                      server by command line), curator-common.ps1 (shared helpers),
+                      assets/curator-start.ico + curator-stop.ico (multi-size), make-icons.py (dev-time
+                      only, Pillow)
 bin/
   curator.js      — `my-curator`, the neutral command (v3.63.0). argv → a subcommand module; works
                     with the app NOT running, no network, no credential. ONE bin name, namespaced —

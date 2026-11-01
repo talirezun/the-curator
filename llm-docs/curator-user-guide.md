@@ -55,32 +55,40 @@ The installer detects and installs Node.js and git if they are missing, download
 
 It does not add the app to your Dock for you. Open Finder, go to `~/the-curator/`, and drag **The Curator** into your Dock. From then on one click launches everything. You run the install command once.
 
-## How do I install it on Windows or Linux?
+## How do I install it on Windows?
 
-The Mac app is macOS only, so on Windows and Linux you run the browser install. It is the same program.
+Use the one-line installer. It needs no administrator rights, and you do not install Node.js or git first. Press Start, type `PowerShell`, and open **Windows PowerShell** (not Command Prompt). Paste this and press Enter:
+
+```
+irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex
+```
+
+It takes about 2 to 5 minutes. It downloads its own private Node.js and git (checked against fixed checksums), puts the app in `%USERPROFILE%\the-curator`, and opens The Curator in your browser, where the first-run panel takes over. It leaves two icons on the Desktop and in the Start menu: **The Curator** starts the app and opens it, and **Stop The Curator** stops it. Your knowledge lives in `%USERPROFILE%\the-curator\domains`. To update, press Update in Settings or run the same command again; that repairs and updates the install and never touches your data. If `irm` is "not recognized", you are in Command Prompt instead of PowerShell. There is no Windows `.exe` app yet.
+
+## How do I install it on Linux?
+
+The Mac app is macOS only, so on Linux you run the browser install. It is the same program. You need git and Node.js (22 LTS is recommended, 18 is the minimum).
 
 ```
 git clone https://github.com/talirezun/the-curator.git
 cd the-curator
 npm install
-node src/server.js
+CURATOR_NO_OPEN=1 npm start
 ```
 
-On Windows PowerShell, start it as `$env:CURATOR_NO_OPEN=1; node src\server.js`.
-
-Then open **http://localhost:3333** in any browser.
+Then open **http://localhost:3333** in any browser. Stop it with Ctrl+C.
 
 | Setting | What it does |
 |---|---|
-| `CURATOR_NO_OPEN=1` | Skips the macOS-only automatic browser launch on startup. The server still binds to `localhost:3333`; open it yourself. |
+| `CURATOR_NO_OPEN=1` | Stops the server trying to open a browser for you. The server still binds to `localhost:3333`; open it yourself. |
 | `DOMAINS_PATH=/path/to/your/knowledge` | Puts your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker button in Settings is macOS only, but this environment variable works everywhere. A folder set in **Settings → Knowledge base** takes priority over it. |
 | `PORT=4000` | Changes the port if 3333 is taken. |
 
-To update a browser install on Windows or Linux, run `git pull && npm install` in the `the-curator` folder and restart the server.
+To update a Linux install, run `git pull && npm install` in the `the-curator` folder and restart the server.
 
 ## Can my coding agent install it for me?
 
-Yes, and on Windows and Linux it is the easiest route. Any CLI-aware coding agent — Claude Code, Cursor, Cline, Aider, GitHub Copilot CLI — can do the clone, the `npm install`, the Mac app build and the first launch. The user guide on GitHub carries a copy-paste prompt written for exactly this, including the instruction not to ask you for your API key, which you paste into the app's Settings yourself.
+Yes, and on Linux it is the easiest route. On Windows you can tell the agent to run the one-line PowerShell installer. Any CLI-aware coding agent — Claude Code, Cursor, Cline, Aider, GitHub Copilot CLI — can do the clone, the `npm install`, the Mac app build and the first launch. The user guide on GitHub carries a copy-paste prompt written for exactly this, including the instruction not to ask you for your API key, which you paste into the app's Settings yourself.
 
 ## Where do I get an API key, and which provider should I pick?
 
