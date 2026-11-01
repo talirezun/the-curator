@@ -9476,14 +9476,14 @@ function renderToolMapBody(now) {
     }
     const more = called.length - shown.length;
     const notCalled = readings.length - called.length;
-    // ONE SHORT LINE, the monitor's own note: "Last 5 days (log begins 27
-    // Oct) · 3 more called less · 16 unused · test runs not counted".
+    // ONE SHORT LINE, the monitor's own note: "Last 5 days (from 27 Oct)
+    // · 3 more called less · 16 unused · tests excluded".
     const bits = [footWindowWords(win)];
     if (!shown.length) bits.push('no agent called a tool');
     if (more > 0) bits.push(more + ' more called less');
-    if (shown.length && notCalled > 0) bits.push(notCalled + (notCalled === 1 ? ' tool' : ' tools') + ' unused');
-    bits.push('test runs not counted');
-    note = bits.join(' · ');
+    if (shown.length && notCalled > 0) bits.push(notCalled + ' unused');
+    bits.push('tests excluded');
+    note = bits.join(' · ').replace('(log begins ', '(from ');
   }
   const useMon = renderMonitor({ id: 'mcp-agent-use', label: 'Agent use, ' + win.last, keys: 'identifier', lines, note });
 

@@ -304,7 +304,9 @@ try {
   {
     // Cursor has no entry: its row carries the copy line and Copy entry.
     await openRow('cursor');
-    const line = await text('#mcpi-rows [data-mcpi-tool="cursor"] [data-mcpi-copyline]');
+    const line = await page.evaluate(() => document.querySelector('#mcpi-rows [data-mcpi-tool="cursor"] [data-mcpi-act="copy"]').getAttribute('aria-label'));
+    const cursorFiles = await page.evaluate(() => [...document.querySelectorAll('#mcpi-rows [data-mcpi-tool="cursor"] .cur-fold-item-main')].map((e) => e.textContent.trim()).filter((t) => /mcp\.json$/.test(t)));
+    step('one fold row per file (Cursor lists its mcp.json once)', cursorFiles.length === 1, cursorFiles.join(' | '));
     await click('#mcpi-rows [data-mcpi-tool="cursor"] [data-mcpi-act="copy"]');
     await until('the copy status', () => !!document.querySelector('[data-mcpi-copied]'));
     const copied = await page.evaluate(() => window.__copied[window.__copied.length - 1] || '');

@@ -88,8 +88,8 @@ section('2. Agent use counts agents, not test runs, and states its true window o
   const young = baseState();
   young.mcpUsage = { ...young.mcpUsage, logStartedAt: ago(5 * 86400) };
   const ym = card(renderMcpPage(young).html, 'use');
-  ok(/<div class="cur-mon-note">Last 5 days \(log begins \d+ \w{3}\) · [^<]*test runs not counted<\/div>/.test(ym) && !/this week|7 days/i.test(ym),
-    'a 5-day log says "Last 5 days (log begins …)" in the monitor’s own note, and nothing about a week');
+  ok(/<div class="cur-mon-note">Last 5 days \(from \d+ \w{3}\) · [^<]*tests excluded<\/div>/.test(ym) && !/this week|7 days/i.test(ym),
+    'a 5-day log says "Last 5 days (from …)" in the monitor’s own note, and nothing about a week');
   const fresh = baseState({ mcpUsage: { present: false, tools: baseState().mcpUsage.tools.map((t) => ({ ...t, lastUsedAt: null, lastAgentAt: null })), sessions: {} } });
   ok(/cur-status-line[^]*No calls recorded yet/.test(card(renderMcpPage(fresh).html, 'use')), 'a fresh install says so on the one-line status card — no empty monitor');
   const failedLog = card(renderMcpPage(baseState({ mcpUsage: null, mcpUsageError: 'disk' })).html, 'use');

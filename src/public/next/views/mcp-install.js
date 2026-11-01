@@ -747,18 +747,18 @@ export function healthWords(m, now = Date.now()) {
   return '';
 }
 
-/** One copy line as a fold item: the file (mono), what to do with the entry, Copy entry. */
-function copyItem(m, plan) {
-  const tid = ' data-tool="' + escapeHtml(m.id) + '"';
-  const how = !plan.file ? 'add it to the app’s own MCP config file'
+/** What to do with the entry, as words (the Copy entry button's title). */
+function copyHow(plan) {
+  return !plan.file ? 'add it to the app’s own MCP config file'
     : plan.whole && /^Save as /.test(plan.line) ? 'save the copied text as this new file'
       : !plan.whole && /inside "([^"]+)"/.test(plan.line) ? 'paste it inside "' + plan.line.match(/inside "([^"]+)"/)[1] + '"'
         : 'add it to this file';
-  return withAttrs(renderFoldItem({
-    main: plan.file || undefined,
-    meta: how + (plan.note ? ' — ' + plan.note : ''),
-    actionHtml: btnG('copy', 'Copy entry', tid),
-  }), ' data-mcpi-copyline');
+}
+
+/** The Copy entry button; the paste/save hint rides in its aria-label. */
+function copyBtn(m, plan) {
+  const how = copyHow(plan) + (plan.note ? ' — ' + plan.note : '');
+  return btnG('copy', 'Copy entry', ' data-tool="' + escapeHtml(m.id) + '" aria-label="Copy entry — ' + escapeHtml(how) + '"');
 }
 
 /**
@@ -775,17 +775,24 @@ export function appBodyHtml(m, ctx = {}) {
   if (health || checkBtn) {
     items.push(withAttrs(renderFoldItem({ meta: health || 'Start the command in its entry, as ' + m.label + ' would', actionHtml: checkBtn }), ' data-mcpi-health'));
   }
-  if (m.copy) items.push(copyItem(m, m.copy));
   for (const q of m.quiet) items.push(withAttrs(renderFoldItem({ meta: q.text }), ' data-mcpi-quiet="' + escapeHtml(q.kind) + '"'));
   // The evidence: the machine reading when there is one, else the status's files.
   const ev = m.h ? appDetailItems(m.h, ctx.machine ? ctx.machine.raw : null, { platform: m.platform })
     : (Array.isArray(m.tool.files) ? m.tool.files : []).map((f) => ({ main: f && (f.display || f.file) || '', meta: FILE_STATE_WORDS[f && f.state] || '' }));
+  // ONE row per file: when the copy line names a file the evidence also lists,
+  // the Copy entry button joins that row (state, then its actions).
+  let copyDone = !m.copy;
+  if (m.copy && !m.copy.file) { items.push(withAttrs(renderFoldItem({ meta: copyHow(m.copy) + (m.copy.note ? ' — ' + m.copy.note : ''), actionHtml: copyBtn(m, m.copy) }), ' data-mcpi-copyline')); copyDone = true; }
   for (const it of ev) {
-    const act = it.reveal && canReveal(m.platform)
+    const reveal = it.reveal && canReveal(m.platform)
       ? '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(it.reveal) + '">Reveal</button>'
       : (it.actionHtml || '');
-    items.push(renderFoldItem({ main: it.main, meta: it.meta, actionHtml: act }));
+    const isCopy = !copyDone && m.copy.file && it.main === m.copy.file;
+    if (isCopy) copyDone = true;
+    const row = renderFoldItem({ main: it.main, meta: it.meta, actionHtml: (isCopy ? copyBtn(m, m.copy) : '') + reveal });
+    items.push(isCopy ? withAttrs(row, ' data-mcpi-copyline') : row);
   }
+  if (!copyDone) items.push(withAttrs(renderFoldItem({ main: m.copy.file, actionHtml: copyBtn(m, m.copy) }), ' data-mcpi-copyline'));
   if (isStr(m.tool.note)) items.push(renderFoldItem({ meta: m.tool.note }));
   const acts = [];
   if (m.status === 'connected' && m.canWrite) acts.push(btnG('remove', 'Remove from ' + m.label, tid));

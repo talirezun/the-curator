@@ -132,8 +132,10 @@ section('§4 copy lines');
   const p2 = M.copyPlanFor('cursor', st2.data, {});
   ok(p2 && p2.line === 'Paste into ~/.cursor/mcp.json inside "mcpServers"' && /^"my-curator": \{/.test(p2.text), 'an existing JSON file: only our entry, "Paste into <file> inside "mcpServers""');
   const h = M.renderAgentApps({ status: st2, folds: { 'app-cursor': true } });
-  ok(/data-mcpi-copyline><span class="mono cur-fold-item-main">~\/\.cursor\/mcp\.json<\/span><span class="cur-fold-item-meta">paste it inside &quot;mcpServers&quot;<\/span><button[^>]*data-mcpi-act="copy" data-tool="cursor">Copy entry/.test(h),
-    'the row’s copy line: the file (mono), where it goes, Copy entry — no mono inside a sentence');
+  const cnt = (re) => (h.match(re) || []).length;
+  ok(cnt(/cur-fold-item-main">~\/\.cursor\/mcp\.json</g) === 1, 'ONE fold row per file: Cursor’s mcp.json is listed once');
+  ok(/data-mcpi-copyline><span class="mono cur-fold-item-main">~\/\.cursor\/mcp\.json<\/span><span class="cur-fold-item-meta">[^<]*<\/span><button[^>]*data-mcpi-act="copy" data-tool="cursor" aria-label="Copy entry — paste it inside &quot;mcpServers&quot;">Copy entry/.test(h),
+    'that row: the file (mono), its state, then Copy entry carrying the paste hint in its aria-label');
   ok(/Goose — add this to/i.test(M.notFoundFoldRow(st.data)) || /Goose/.test(M.notFoundFoldRow(st.data)), '"Not on this Mac": one copy line per app');
   ok(/<span class="cur-fold-label">Not on this Mac<\/span><span class="cur-fold-pill">1<\/span>/.test(M.notFoundFoldRow(st.data)), '…a fold row with a count');
 }
