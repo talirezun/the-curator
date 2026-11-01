@@ -158,12 +158,26 @@ const serverSrc = fs.readFileSync(path.join(ROOT, 'src/server.js'), 'utf8');
 const restartAt = serverSrc.indexOf("app.post('/api/restart'");
 const restartBody = restartAt === -1 ? null : braceSlice(serverSrc, serverSrc.indexOf('(_req, res) => {', restartAt));
 ok(!!restartBody, 'extracted the /api/restart handler from src/server.js');
-function runRestart(platform, env) {
+// The REAL windowsRestartStdio from server.js, compiled against the real fs
+// and path, with getLogsDir pointed wherever the case needs.
+const stdioAt = serverSrc.indexOf('function windowsRestartStdio()');
+const stdioSrc = stdioAt === -1 ? null : braceSlice(serverSrc, stdioAt);
+ok(!!stdioSrc, 'extracted windowsRestartStdio from src/server.js');
+function makeStdio(logsDir) {
+  // eslint-disable-next-line no-new-func
+  return new Function('getLogsDir', 'mkdirSync', 'openSync', 'path', `${stdioSrc}; return windowsRestartStdio;`)(
+    () => logsDir, fs.mkdirSync, fs.openSync, path);
+}
+const restartLogs = path.join(tmp, 'restart-logs', 'TheCurator', 'logs');
+const openedFds = [];
+function runRestart(platform, env, logsDir = restartLogs) {
   const spawns = [];
+  const realStdio = makeStdio(logsDir);
+  const stdioSpy = () => { const s = realStdio(); if (Array.isArray(s)) openedFds.push(s[1]); return s; };
   // eslint-disable-next-line no-new-func
   const make = new Function(
     'hasActiveWrites', 'conflictResponse', 'logInfo', 'logWarn', 'logError',
-    'spawn', 'path', 'PROJECT_ROOT', 'process', 'server', 'setTimeout', 'planRestart',
+    'spawn', 'path', 'PROJECT_ROOT', 'process', 'server', 'setTimeout', 'planRestart', 'windowsRestartStdio',
     `return function restartRoute(_req, res) ${restartBody.slice(restartBody.indexOf('{'))};`,
   );
   const fn = make(
@@ -174,6 +188,7 @@ function runRestart(platform, env) {
     { closeAllConnections() {}, close() {} },
     (cb) => { cb(); return 0; },
     () => ({ ok: true, style: 'respawn-node', body: { ok: true, restarting: true } }),
+    stdioSpy,
   );
   fn({}, fakeRes());
   return spawns;
@@ -191,8 +206,25 @@ function runRestart(platform, env) {
   const wenv = { Path: 'C:\\rt\\node;C:\\rt\\git\\cmd;C:\\Windows', LOCALAPPDATA: 'C:\\L' };
   const w = runRestart('win32', wenv)[0];
   eq(w && [w.bin, w.args[0]], ['/opt/node', '/APP/src/server.js'], 'win32: process.execPath with the server entry');
-  eq(w && [w.opts.windowsHide, w.opts.detached, w.opts.stdio], [true, true, 'ignore'], 'win32: hidden, detached, stdio ignored');
+  eq(w && [w.opts.windowsHide, w.opts.detached], [true, true], 'win32: hidden, detached');
   eq(w && w.opts.env, { ...wenv, CURATOR_NO_OPEN: '1' }, 'win32: the env (with the private runtime PATH) is kept, plus CURATOR_NO_OPEN');
+  // stdio: stdin ignored, stdout + stderr the SAME descriptor, appending to server.log.
+  const st = w && w.opts.stdio;
+  ok(Array.isArray(st) && st[0] === 'ignore' && Number.isInteger(st[1]) && st[1] === st[2],
+    'win32: stdio is [\'ignore\', fd, fd]');
+  const logFile = path.join(restartLogs, 'server.log');
+  ok(fs.existsSync(logFile), 'win32: the open created <logs>\\server.log (and its folder)');
+  const before = 'first server output\n';
+  fs.writeFileSync(logFile, before);
+  if (Array.isArray(st)) fs.writeSync(st[1], 'restarted server output\n');
+  eq(fs.readFileSync(logFile, 'utf8'), before + 'restarted server output\n',
+    'win32: the restarted server\'s output is APPENDED to <logs>\\server.log (the start script\'s log), not truncating it');
+  // An unopenable log folder (its parent is a regular file) → 'ignore', and the restart still happens.
+  const blocker = path.join(tmp, 'not-a-dir');
+  fs.writeFileSync(blocker, 'x');
+  const wf = runRestart('win32', wenv, path.join(blocker, 'logs'));
+  eq([wf.length, wf[0] && wf[0].opts.stdio], [1, 'ignore'], 'win32: if the log cannot be opened, stdio falls back to \'ignore\' and the restart still spawns');
+  for (const fd of openedFds) { try { fs.closeSync(fd); } catch { /* already closed */ } }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

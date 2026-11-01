@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { readFileSync, chmodSync, existsSync } from 'fs';
+import { readFileSync, chmodSync, existsSync, openSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
 import { planBrowserOpen } from './brain/subprocess-env.js';
@@ -26,7 +26,7 @@ import trashRouter from './routes/trash.js';
 import setupRouter from './routes/setup.js';
 import { getProviderInfo, migrateRetiredModelSelections } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
-import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
+import { APP_ROOT, getCredentialFiles, getLogsDir } from './brain/paths.js';
 import { ensureDefaultDomainsDir, getDomainsDir } from './brain/config.js';
 import { registerInstance, listOtherInstances, describeOthers } from './brain/instance-probe.js';
 import { describeInstall } from './brain/install-mode.js';
@@ -252,6 +252,27 @@ app.get('/api/version', (req, res) => {
 // stdio and lifecycle. Paired with EADDRINUSE retry on the listen call
 // at startup (see startListenWithRetry below) so the child waits if
 // the parent hasn't released the port yet.
+/**
+ * v3.87.0, Windows only: the restarted server's stdio. start-curator.ps1
+ * sends the first server's output to %LOCALAPPDATA%\TheCurator\logs\server.log,
+ * which is getLogsDir() on win32 (src/brain/paths.js — same %LOCALAPPDATA%
+ * base, same TheCurator\logs). Opened for APPEND; the parent exits moments
+ * later, so its copy of the descriptor closes with it. Any failure falls back
+ * to 'ignore' — a restart must never fail because a log could not be opened.
+ * Module scope, called only on win32, so test-install-mode.js §5c (which
+ * compiles the route with a fixed set of names and no platform) never reaches it.
+ */
+function windowsRestartStdio() {
+  try {
+    const dir = getLogsDir();
+    mkdirSync(dir, { recursive: true });
+    const fd = openSync(path.join(dir, 'server.log'), 'a');
+    return ['ignore', fd, fd];
+  } catch {
+    return 'ignore';
+  }
+}
+
 app.post('/api/restart', (_req, res) => {
   // v3.0.1-beta.8: refuse to restart while any wiki write is in flight.
   // The spawn-and-exit dance kills the current process; an in-flight ingest
@@ -306,7 +327,11 @@ app.post('/api/restart', (_req, res) => {
       {
         cwd: PROJECT_ROOT,
         detached: true,
-        stdio: 'ignore',
+        // win32: stdout/stderr append to the same server.log start-curator.ps1
+        // redirects the first server into, so its failure explanation keeps
+        // reading the RUNNING server's output after a restart. Elsewhere,
+        // and if that log cannot be opened: 'ignore', as always.
+        stdio: process.platform === 'win32' ? windowsRestartStdio() : 'ignore',
         env: { ...process.env, CURATOR_NO_OPEN: '1' },
         ...(process.platform === 'win32' ? { windowsHide: true } : {}),
       }
