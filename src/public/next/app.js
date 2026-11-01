@@ -280,6 +280,11 @@ import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 import { docsUrl } from './shared/docs-links.js';
 import { createSidebarDrawer } from './shared/sidebar-drawer.js';
 import { checkModelRetirement } from './shared/model-retirement.js';
+// v3.89.2: the personal-sync run lives in the shell, so the RAIL shows it
+// running and then its outcome wherever the user has gone. Neither module
+// imports app.js, so this creates no cycle.
+import { currentSyncRun, lastSyncOutcome, onSyncRunChange } from './shared/sync-run.js';
+import { showToast } from './shared/toast.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -2128,7 +2133,11 @@ function applySyncBadge() {
   // _syncPendingCount for itself and paints the badge from it.
   if (!btn) return;
   const existing = btn.querySelector('.rail-badge');
-  btn.title = syncBadgeTitle(_syncPendingCount, _syncBehindCount);
+  // v3.89.2: a running push/pull/sync spins the rail icon and owns the
+  // title, on every view — leaving the Sync page never hides that it runs.
+  const run = currentSyncRun();
+  btn.classList.toggle('is-syncing', !!run);
+  btn.title = run ? syncRunTitle(run.kind) : syncBadgeTitle(_syncPendingCount, _syncBehindCount);
   const label = syncBadgeLabel(_syncPendingCount, _syncBehindCount);
   if (label) {
     if (existing) {
@@ -2143,6 +2152,41 @@ function applySyncBadge() {
     existing.remove();
   }
 }
+
+// ── The rail while a sync runs (v3.89.2) ────────────────────────────────
+//
+// The owner's report: "If you press the Sync button and then move from Sync
+// to another section, the sync gets cancelled." It never was — the server
+// finished every time — but nothing outside the Sync page said so, and the
+// page itself forgot the run on leaving. The run now lives in
+// shared/sync-run.js; this is the rail's half: the icon spins while it runs
+// (applySyncBadge above), and when it settles while the user is somewhere
+// else a toast says how it ended. The full sentence also waits on the Sync
+// page until it has been seen there (seedFromSyncRun in views/sync.js), so a
+// failure is never ONLY a toast.
+function syncRunTitle(kind) {
+  if (kind === 'push') return 'Sync — pushing to GitHub now';
+  if (kind === 'pull') return 'Sync — pulling from GitHub now';
+  return 'Sync — syncing with GitHub now';
+}
+
+let _syncRunActive = false;
+function onShellSyncRunChange() {
+  const run = currentSyncRun();
+  try { applySyncBadge(); } catch { /* rail missing/detached */ }
+  if (_syncRunActive && !run && state.view !== 'sync') {
+    const o = lastSyncOutcome();
+    if (o && !o.seen) {
+      try {
+        showToast(o.ok
+          ? { key: 'sync-run', tone: 'success', title: 'Sync finished', lines: [o.message || 'Sync complete.'] }
+          : { key: 'sync-run', tone: 'attention', title: 'Sync did not complete', lines: [o.error || 'Open Sync for details.'] });
+      } catch { /* no toast region — the Sync page still shows it */ }
+    }
+  }
+  _syncRunActive = !!run;
+}
+onSyncRunChange(onShellSyncRunChange);
 
 // Fire-and-forget. NEVER throws and never rejects — every call site below
 // invokes it without awaiting, and one of them is inside boot(), where a

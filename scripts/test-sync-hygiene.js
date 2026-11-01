@@ -2168,12 +2168,26 @@ try {
     //     guard rather than a browser drive, and scoped to the one ordering
     //     property: the awaited badge refresh must PRECEDE the line that
     //     re-enables the controls.
+    //     v3.89.2: the run moved to the shell (shared/sync-run.js) so it
+    //     survives navigation; the badge refresh is the runner's
+    //     `beforeSettle` hook, which settle() awaits BEFORE it clears the run
+    //     (the moment every Sync button comes back). Behaviourally pinned in
+    //     scripts/test-sync-run-survives-navigation.js §2h; this is the
+    //     wiring half.
     const viewSrc = await readFile(path.join(ROOT, 'src/public/next/views/sync.js'), 'utf8');
-    const awaitAt = viewSrc.indexOf('await refreshSyncRemoteBadge()');
-    const enableAt = viewSrc.indexOf('state.acting = null;', viewSrc.indexOf('async function onAction'));
-    assertTrue(awaitAt > 0, 'the Sync view AWAITS the remote badge refresh');
-    assertTrue(enableAt > 0 && awaitAt < enableAt,
-      'and does so BEFORE clearing `acting`, so no button is live while our own fetch runs');
+    const runSrc = await readFile(path.join(ROOT, 'src/public/next/shared/sync-run.js'), 'utf8');
+    const settleBadges = extractFn(viewSrc, 'settleSyncBadges', 'views/sync.js');
+    assertTrue(/await refreshSyncRemoteBadge\(\)/.test(settleBadges), 'the Sync view AWAITS the remote badge refresh');
+    assertTrue(/beforeSettle:\s*settleSyncBadges/.test(viewSrc),
+      'that refresh is the runner\'s beforeSettle hook');
+    // settle() is nested inside createSyncRunner(), so it is sliced by its
+    // own header up to the next nested function rather than by extractFn.
+    const settleStart = runSrc.indexOf('async function settle(');
+    const settleFn = settleStart < 0 ? '' : runSrc.slice(settleStart, runSrc.indexOf('function schedulePoll(', settleStart));
+    const awaitAt = settleFn.indexOf('await hooks.beforeSettle()');
+    const enableAt = settleFn.indexOf('run = null;');
+    assertTrue(awaitAt > 0 && enableAt > 0 && awaitAt < enableAt,
+      'and the runner awaits it BEFORE clearing the run, so no button is live while our own fetch runs');
     assertTrue(!/^\s*refreshSyncRemoteBadge\(\);/m.test(viewSrc),
       'no un-awaited remote badge refresh remains in the view');
   }
@@ -2298,11 +2312,16 @@ try {
     // fire — a call made unreachable by some future early return would still
     // pass. Added because a mutation deleting both lines left this suite
     // fully GREEN, i.e. the wiring had no coverage at all.
-    const onActionFn = extractFn(syncViewSrcForWiring, 'onAction', 'views/sync.js');
+    // v3.89.2: the refresh lives in settleSyncBadges(), the shell-level
+    // runner's beforeSettle hook — so it runs even when the user has left
+    // the Sync page before the action completes.
+    const onActionFn = extractFn(syncViewSrcForWiring, 'settleSyncBadges', 'views/sync.js');
     assertTrue(/refreshSyncBadge\(\)/.test(onActionFn),
       'views/sync.js repaints the LOCAL badge half after a completed sync action');
     assertTrue(/refreshSyncRemoteBadge\(\)/.test(onActionFn),
       'views/sync.js repaints the REMOTE badge half after a completed sync action');
+    assertTrue(/beforeSettle:\s*settleSyncBadges/.test(syncViewSrcForWiring),
+      'settleSyncBadges is wired as the runner\'s beforeSettle hook');
     assertTrue(/refreshSyncBadge,\s*refreshSyncRemoteBadge/.test(syncViewSrcForWiring),
       'both refreshers are imported from the shell, not re-implemented as a second fetch path');
   }

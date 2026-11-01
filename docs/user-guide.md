@@ -6385,6 +6385,8 @@ Here is the recommended way to use The Curator day-to-day:
 route when you work on one project from two computers, see
 [What travels between your computers, and how](#what-travels-between-your-computers-and-how).
 
+A sync keeps running until it finishes when you leave the Sync page: the Sync icon in the rail spins while it runs, a short note says how it ended if you are on another page, and the Sync page shows the result when you come back. Only one sync runs at a time.
+
 ### First-time setup (~3 minutes)
 
 You only do this once. After that, syncing is two button clicks.

@@ -6,7 +6,8 @@
 //   GET    /api/sync/status                    → {configured, changesCount, uncommittedCount,
 //                                                  unpushedCommits, lastSync, repoUrl}
 //   POST   /api/sync/setup {repoUrl, token, mode}
-//   POST   /api/sync/push | /pull | /sync
+//   POST   /api/sync/push | /pull | /sync      (through shared/sync-run.js, v3.89.2)
+//   GET    /api/sync/job                       → {running, last} — a run this page did not start
 //   DELETE /api/sync/disconnect
 // Plus two read-only calls used ONLY to render honest context, not owned
 // by this view's write surface:
@@ -98,6 +99,13 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 import { renderViewHeader, renderStatus } from '../shared/text.js';
 // v3.71.1: the ONE ⓘ on this view — the main header's `sync.page` explainer.
 import { explainerHtml } from '../shared/explainer.js';
+// v3.89.2: a push/pull/sync run belongs to the SHELL, not to this mount —
+// leaving the page used to drop it (see shared/sync-run.js for the measured
+// report). This view only starts runs there and paints what it says.
+import {
+  SYNC_RUN_KINDS, currentSyncRun, lastSyncOutcome, markOutcomeSeen,
+  onSyncRunChange, configureSyncRun, startSyncRun, adoptServerSyncJob,
+} from '../shared/sync-run.js';
 // ── THE MONITOR ─────────────────────────────────────────────
 // `.sync-status-card` was a HAND COPY of views/settings.js's bridge status
 // card — the same status pill, the same mono `<code>` identity
@@ -154,10 +162,60 @@ let loadGate = null;
 // would refuse the paint, but there is no reason to even try).
 let unsubscribeWriteGate = null;
 
+// This mount's subscription to the shell-level sync run (shared/sync-run.js).
+let unsubscribeSyncRun = null;
+
+// Module level, NOT per mount: these hooks run when a run settles, whichever
+// view is on screen by then. `beforeSettle` is awaited BEFORE the run clears,
+// so the remote badge's fetch finishes before any Sync button is live again.
+configureSyncRun({
+  beforeSettle: settleSyncBadges,
+  describe: (kind, data) => (data && data.message) || describeResult(kind, data),
+});
+
+// Repaint the RAIL badge after a push/pull/sync — both halves become wrong at
+// exactly that moment (the local count just dropped; a pull consumed what was
+// waiting on GitHub). Awaited by the runner BEFORE it clears the run, and the
+// ordering is the fix, not an aesthetic choice: refreshSyncRemoteBadge()
+// issues a real `git fetch`, and a button handed back while it runs let the
+// user's own pull race it (reproduced against real git, 11 failures in 12).
+// brain/sync.js also serialises its fetches, so this is the second of two
+// layers; a UI that hands back a button while it is still working is worth
+// removing on its own merits. Awaiting is safe: refreshSyncRemoteBadge()
+// never throws or rejects. Ungated on any mount token: the rail outlives
+// every view.
+async function settleSyncBadges() {
+  refreshSyncBadge();
+  await refreshSyncRemoteBadge();
+}
+
+// PURE over the state object it is handed: paint the shell-level run (or its
+// outcome) into a mount's `state`. A running run shows as this view's own
+// `acting`; a finished one clears that and shows its sentence — unless a
+// mounted Sync page already showed it and the user then left (`seen`).
+export function seedFromSyncRun(st, run, outcome) {
+  if (run) {
+    st.acting = run.kind;
+    st.actionMessage = null;
+    st.actionError = null;
+    return st;
+  }
+  if (st.acting && SYNC_RUN_KINDS.indexOf(st.acting) !== -1) st.acting = null;
+  if (outcome && !outcome.seen) {
+    st.actionMessage = outcome.ok ? outcome.message : null;
+    st.actionError = outcome.ok ? null : outcome.error;
+  }
+  return st;
+}
+
 registerView('sync', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    // A run started on an earlier mount (or another view) is still going, or
+    // finished while the user was elsewhere: show it, never an idle page.
+    seedFromSyncRun(state, currentSyncRun(), lastSyncOutcome());
+    unsubscribeSyncRun = onSyncRunChange(() => onSyncRunChanged(mountToken));
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });
@@ -185,9 +243,33 @@ registerView('sync', {
       // this teardown would paint a loader into whatever view comes next.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+      // Leaving does NOT touch the run — it keeps going in the shell. Only
+      // this mount stops listening; an outcome it already showed is spent.
+      if (unsubscribeSyncRun) { unsubscribeSyncRun(); unsubscribeSyncRun = null; }
+      if (state.actionMessage || state.actionError) markOutcomeSeen(lastSyncOutcome());
     };
   },
 });
+
+// The shell-level run started, or settled. Re-read the counts after a
+// settle: the pending count, "last synced" and the domain list all changed.
+// The render() AFTER the re-read is load-bearing (HIGH-1, third re-audit
+// round): loadStatus() only mutates state, and without a paint the button
+// stayed on "Pushing…" forever after a push that had succeeded on disk.
+// The domain list is re-read too (v3.72.1, F4): a pull can bring a domain in
+// or prune one, and the sidebar must not name a folder that is gone.
+function onSyncRunChanged(mountToken) {
+  if (!isCurrentMount(mountToken)) return;
+  const wasActing = state.acting;
+  const run = currentSyncRun();
+  seedFromSyncRun(state, run, lastSyncOutcome());
+  render(mountToken);
+  if (!run && wasActing && SYNC_RUN_KINDS.indexOf(wasActing) !== -1) {
+    Promise.all([loadStatus(mountToken), loadDomains(mountToken)])
+      .then(() => { if (isCurrentMount(mountToken)) render(mountToken); })
+      .catch(reportAsyncActionFailure);
+  }
+}
 
 // A write-gate change while this view is mounted (v3.72.1, F3). It always
 // repaints (the buttons' busy state). When every write has settled it also
@@ -260,7 +342,7 @@ async function loadAll(token) {
   // loader that is legitimately up. A cancelled gate ignores settle(), so
   // the stale path becomes a no-op instead.
   const gate = loadGate;
-  await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token)]);
+  await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token), loadJob(token)]);
   if (!isCurrentMount(token)) return;
   // Delay-gated: settle() paints immediately when no loader was ever shown
   // (the measured case here — this load lands in ~3 ms), and holds the
@@ -289,6 +371,19 @@ async function loadStatus(token) {
     state.status = { configured: false };
     state.statusError = err.message;
   }
+}
+
+// A run this page did not start — a reload mid-sync, or the Context page's
+// Sync button — is still the user's sync: follow it (shared/sync-run.js
+// polls GET /api/sync/job until it ends). Read-only and local.
+async function loadJob(token) {
+  try {
+    const res = await fetch('/api/sync/job');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!isCurrentMount(token)) return;
+    adoptServerSyncJob(data);
+  } catch { /* no job information — the page shows what it knows */ }
 }
 
 async function loadDomains(token) {
@@ -637,7 +732,13 @@ function renderConfigured(s) {
       renderMonitor({
         id: 'sync-status-monitor',
         label: 'Sync connection',
-        head: { stateWord: 'Connected', tone: 'ok' },
+        // The live state of the connection: a running push/pull/sync is the
+        // reading while it runs (v3.89.2) — also after leaving and coming
+        // back, because `acting` is seeded from the shell-level run.
+        head: {
+          stateWord: acting === 'sync' ? 'Syncing…' : acting === 'push' ? 'Pushing…' : acting === 'pull' ? 'Pulling…' : 'Connected',
+          tone: 'ok',
+        },
         lines: [
           { key: 'repo', value: s.repoUrl || '' },
           { key: 'last synced', value: lastSyncLabel },
@@ -1026,76 +1127,28 @@ async function runSetup(mode, confirmOverwrite, token) {
 }
 
 async function onAction(kind, token) {
+  // ONE sync at a time. A run started on an earlier mount, or by another
+  // view, is still running in the shell; this click must not start a second
+  // one beside it (that second run used to die with "Another sync check was
+  // running at the same time" — what the owner read as "cancelled").
+  if (currentSyncRun()) return;
   state.acting = kind;
   state.actionMessage = null;
   state.actionError = null;
   render(token);
-  try {
-    const res = await fetch('/api/sync/' + kind, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'That didn’t work.');
-    if (isCurrentMount(token)) state.actionMessage = data.message || describeResult(kind, data);
-  } catch (err) {
-    if (isCurrentMount(token)) state.actionError = err.message;
-  } finally {
-    // Gated, not unconditional — see onConnect's comment above: this
-    // view's `state` is reassigned wholesale on every mount, so an
-    // ungated reset here would reach into the CURRENT (possibly already
-    // mid-action) mount's own state object and wrongly clear its
-    // genuinely-in-flight `acting` flag. A fresh mount already starts
-    // with `acting: null` via freshState() regardless.
-    // Repaint the RAIL badge, and do it BEFORE this view's buttons come
-    // back — the ordering is the fix, not an aesthetic choice. A push/pull/
-    // sync is exactly the moment both halves of the badge become wrong: the
-    // local count just dropped, and a pull just consumed whatever was
-    // waiting on GitHub. Without this the rail could keep showing "↓5
-    // waiting to pull" for up to the 10-minute remote interval AFTER the
-    // user pulled it — telling them to do work they have already done.
-    //
-    // WHY IT MOVED ABOVE `state.acting = null` (release-blocker fix). It
-    // used to run at the END of this block, unawaited, AFTER render() had
-    // already re-enabled every button. refreshSyncRemoteBadge() issues a
-    // real `git fetch`, so that left a live fetch running against controls
-    // the user could click: Push → buttons re-enable → Sync now → the
-    // user's own pull raced our own background fetch over
-    // refs/remotes/origin/main and died before merging (reproduced against
-    // real git, 11 failures in 12). brain/sync.js now serialises its
-    // fetches and pull() survives a lost race, so this is the second of two
-    // layers — but a UI that hands the user a button while it is still
-    // working is worth removing on its own merits, and relying on the
-    // backend to absorb a window we deliberately opened is how the next
-    // one gets opened.
-    //
-    // Awaiting is safe by contract: refreshSyncRemoteBadge() NEVER throws
-    // and never rejects (see its definition — boot() depends on that).
-    // Ungated on the mount token, deliberately: both update module-level
-    // shell state and the rail, which outlive this view, so there is no
-    // stale-mount hazard. refreshSyncBadge() is local-only and instant, so
-    // it stays fire-and-forget.
-    if (isCurrentMount(token)) {
-      refreshSyncBadge();
-      await refreshSyncRemoteBadge();
-    }
-    if (isCurrentMount(token)) {
-      state.acting = null;
-      // HIGH-1 fix (third re-audit round): this used to `await loadStatus()`
-      // in the finally with NO render() afterward — loadStatus() only
-      // MUTATES state, it never paints anything (see its own doc comment
-      // above; unlike settings.js's loadKeys(), which does end with
-      // render()). Verified with a real click + real response: the button
-      // stayed showing "Pushing…" forever, no confirmation message ever
-      // appeared, and the stale pending-change count never updated — a
-      // push/pull that succeeded ON DISK looked, from the UI, exactly like
-      // a hang. The only way out was Disconnect (the one still-enabled
-      // control) or leaving the view entirely.
-      // v3.72.1 (F4): a pull or sync can bring a domain in or prune one
-      // deleted on another machine, so the "domains backed up" list is
-      // re-read here too — the result sentence could otherwise name a
-      // removed folder the sidebar still listed.
-      await Promise.all([loadStatus(token), loadDomains(token)]);
-      if (isCurrentMount(token)) render(token);
-    }
-  }
+  // The run belongs to the SHELL (shared/sync-run.js), not to this mount:
+  // the request is never aborted, and its result is NOT dropped when the
+  // user navigates away. Whichever mount is current when it settles paints
+  // it through onSyncRunChanged() — this one, a later one, or none (the
+  // rail and a toast show it then). The runner awaits settleSyncBadges()
+  // BEFORE it clears the run, so every button comes back only after both
+  // badge halves are re-read; onSyncRunChanged() then clears `acting`,
+  // shows the sentence and re-reads the status and the domain list.
+  //
+  // Before v3.89.2 this function awaited the request itself and dropped the
+  // result on a stale mount token, so a sync that finished while the user
+  // was on another page left the Sync page idle, enabled and unchanged.
+  await startSyncRun(kind);
 }
 
 // ── Result copy ─────────────────────────────────────────────────────────
