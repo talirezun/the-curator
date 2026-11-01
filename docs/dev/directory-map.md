@@ -222,6 +222,7 @@ domains/
                         most 12)
     conversations/    — saved chat threads (gitignored)
 docs/               — user-facing documentation
+  install-windows.md — one-page Windows install handout (v3.87.0); the full text stays in user-guide.md
   spec/working-state-v1.md — the PUBLIC on-disk format (v3.63.0), versioned `working-state/1`: a
                     promise to people who cannot read this source, and therefore pinned to the live
                     constants BY EXECUTION in scripts/test-spec-working-state.js. Change the store's

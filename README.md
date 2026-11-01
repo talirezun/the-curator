@@ -21,6 +21,8 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
+<p align="center"><b>On Windows?</b> Open PowerShell, paste one line, press Enter → <a href="docs/install-windows.md">Install on Windows</a></p>
+
 <p align="center"><strong>Build a second brain from what you read, share it with a team, and give it to your agents.</strong></p>
 
 <p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
@@ -355,6 +357,8 @@ one shell around `src/`, not a fork, so the browser install is **not** a legacy 
 supported everywhere.
 
 ### Windows — one-line install
+
+**On Windows?** Open PowerShell, paste one line, press Enter → [Install on Windows](docs/install-windows.md) (a one-page handout).
 
 1. Press **Start**, type **PowerShell**, and open **Windows PowerShell** (not "Command Prompt").
 2. Paste this, then press **Enter**:

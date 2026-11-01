@@ -357,6 +357,8 @@ When it finishes, the app opens automatically in your browser. A **Getting start
 
 ### Windows: one-line installer
 
+In a hurry, or handing this to students? The one-page handout is [Install The Curator on Windows](install-windows.md).
+
 For people on their own Windows 10 or 11 PC. You copy **one command**, paste it into PowerShell, press Enter, and wait a few minutes. The app opens in your browser and its own [Getting started panel](#5-first-run--the-getting-started-panel) takes over. You do not need to install Node.js or git first, and you do not need administrator rights.
 
 **Step 1 — open PowerShell** (not Command Prompt):
