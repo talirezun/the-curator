@@ -282,6 +282,9 @@ jobs:
           if ($code -ne 1 -or $out -notmatch 'already used by another program') { throw "port-in-use start: exit $code" }
           if (@(Get-Servers).Count -ne 0) { throw 'a server was left running after the port-in-use refusal' }
           Stop-Process -Id $decoy.Id -Force
+          # The runner exits the step with $LASTEXITCODE, which is still the 1 of
+          # the refusal above (the expected outcome).
+          $global:LASTEXITCODE = 0
 
       - name: Second install = repair (PowerShell 7, without -NoStart)
         shell: pwsh
