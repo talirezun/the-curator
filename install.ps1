@@ -360,13 +360,42 @@ function Install-TheCurator {
   # Install one private runtime (node or git) into runtime\<Name>, atomically:
   # unpack to <Name>.new, test it, then swap. A marker file records what is
   # installed, so a re-run with the same pins only re-tests the program.
+  #
+  # Two phases, so a failed download never stops a running Curator: without
+  # -Commit it downloads, verifies and tests into <Name>.new (nothing in use is
+  # touched); with -Commit it swaps a prepared <Name>.new into place.
   function Install-Runtime {
-    param([string]$Name, [string]$Label, [string]$Url, [string]$Sha256, [string]$ExeRel, [string]$Expect, [bool]$HasTopFolder)
+    param([string]$Name, [string]$Label, [string]$Url, [string]$Sha256, [string]$ExeRel, [string]$Expect, [bool]$HasTopFolder, [switch]$Commit)
     $root = Join-Path $dataRoot 'runtime'
     $target = Join-Path $root $Name
     $marker = Join-Path $target '.curator-runtime.txt'
     $want = "$Name $Expect $Sha256"
     $exe = Join-Path $target $ExeRel
+    $stage = Join-Path $root ($Name + '.new')
+    $dlDir = Join-Path $dataRoot 'downloads'
+    $zip = Join-Path $dlDir ([System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath))
+    if ($Commit) {
+      if (-not (Test-Path -LiteralPath $stage -PathType Container)) { return }
+      if (Test-Path -LiteralPath $target) {
+        # A unique name: an older leftover that is still locked cannot block this.
+        $old = Join-Path $root ($Name + '.old-' + [DateTime]::UtcNow.Ticks)
+        try {
+          Move-Dir -From $target -To $old
+        } catch {
+          $users = Get-RuntimeUsers -Dir $target
+          $who = ''
+          if ($users.Count -gt 0) { $who = ' It is in use by: ' + ($users -join ', ') + '.' }
+          Stop-Install ("The old copy of $Label in $target could not be replaced because a program is still using it.$who") `
+            'Quit the programs that use The Curator (for example Claude Desktop: right-click its icon near the clock and choose Quit), then run the installer again.'
+        }
+        [void](Remove-Dir $old)
+      }
+      Move-Dir -From $stage -To $target
+      [System.IO.File]::WriteAllText($marker, $want, (New-Object System.Text.UTF8Encoding($false)))
+      Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+      Say "        $Label $Expect is ready."
+      return
+    }
     if ((Test-Path -LiteralPath $marker -PathType Leaf) -and (([System.IO.File]::ReadAllText($marker)).Trim() -eq $want)) {
       if (Test-Exe -Exe $exe -Expect $Expect) {
         Say "        $Label $Expect is already installed and works."
@@ -374,13 +403,10 @@ function Install-TheCurator {
       }
       Say "        $Label is damaged or incomplete; repairing it." 'Yellow'
     }
-    $dlDir = Join-Path $dataRoot 'downloads'
     [void][System.IO.Directory]::CreateDirectory($dlDir)
-    $zip = Join-Path $dlDir ([System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath))
     Get-VerifiedFile -Url $Url -Dest $zip -Sha256 $Sha256 -Label "$Label $Expect"
 
     Say "        Unpacking $Label..."
-    $stage = Join-Path $root ($Name + '.new')
     $extract = Join-Path $root ($Name + '.extract')
     if (-not (Remove-Dir $stage) -or -not (Remove-Dir $extract)) {
       Stop-Install "An old temporary folder in $root could not be removed." 'Restart your PC and run the installer again.'
@@ -397,24 +423,7 @@ function Install-TheCurator {
     if (-not (Test-Exe -Exe (Join-Path $stage $ExeRel) -Expect $Expect)) {
       Stop-Install "$Label was downloaded but does not run on this PC." 'Windows Security or your antivirus may be blocking it: open Windows Security > Virus and threat protection > Protection history, allow the item, and run the installer again.'
     }
-    if (Test-Path -LiteralPath $target) {
-      # A unique name: an older leftover that is still locked cannot block this.
-      $old = Join-Path $root ($Name + '.old-' + [DateTime]::UtcNow.Ticks)
-      try {
-        Move-Dir -From $target -To $old
-      } catch {
-        $users = Get-RuntimeUsers -Dir $target
-        $who = ''
-        if ($users.Count -gt 0) { $who = ' It is in use by: ' + ($users -join ', ') + '.' }
-        Stop-Install ("The old copy of $Label in $target could not be replaced because a program is still using it.$who") `
-          'Quit the programs that use The Curator (for example Claude Desktop: right-click its icon near the clock and choose Quit), then run the installer again.'
-      }
-      [void](Remove-Dir $old)
-    }
-    Move-Dir -From $stage -To $target
-    [System.IO.File]::WriteAllText($marker, $want, (New-Object System.Text.UTF8Encoding($false)))
-    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-    Say "        $Label $Expect is ready."
+    Say "        $Label $Expect is downloaded and checked."
   }
 
   # Our git's own system config (MinGit reads <git>\etc\gitconfig): trust the
@@ -440,7 +449,7 @@ function Install-TheCurator {
 
   function Get-GitArgs {
     param([string[]]$More)
-    $a = @('-c', ('safe.directory=' + $installDirFwd))
+    $a = @('-c', ('safe.directory=' + $targetDirFwd))
     if ($state.Proxy) { $a += @('-c', ('http.proxy=' + $state.Proxy)) }
     return ($a + $More)
   }
@@ -484,7 +493,7 @@ function Install-TheCurator {
     $lnk = $sh.CreateShortcut($Path)
     $lnk.TargetPath = $ps
     $lnk.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $Script + '"'
-    $lnk.WorkingDirectory = $installDir
+    $lnk.WorkingDirectory = $targetDir
     $lnk.Description = $Description
     # 7 = start minimised: keeps the brief PowerShell flash out of the way.
     $lnk.WindowStyle = 7
@@ -494,8 +503,8 @@ function Install-TheCurator {
 
   # =============================================================== main body ==
   $dataRoot = $null
-  $installDir = $null
-  $installDirFwd = $null
+  $targetDir = $null
+  $targetDirFwd = $null
   try {
     if ($PSVersionTable.PSVersion.Major -lt 5) {
       Stop-Install 'This PowerShell is too old (version 5.1 or newer is needed).' 'Run Windows Update, then try again.'
@@ -514,9 +523,9 @@ function Install-TheCurator {
       if (-not $env:USERPROFILE) { Stop-Install 'Windows did not say where your user folder is (USERPROFILE).' 'Sign out of Windows and back in, then run the installer again.' }
       $InstallDir = Join-Path $env:USERPROFILE 'the-curator'
     }
-    $installDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
-    if ($installDir.Length -le 3) { Stop-Install "The install folder cannot be the root of a drive ($installDir)." 'Leave out -InstallDir to use the normal folder.' }
-    $installDirFwd = $installDir.Replace('\', '/')
+    $targetDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    if ($targetDir.Length -le 3) { Stop-Install "The install folder cannot be the root of a drive ($targetDir)." 'Leave out -InstallDir to use the normal folder.' }
+    $targetDirFwd = $targetDir.Replace('\', '/')
     $cloneUrl = $OfficialRepo
     if ($RepoUrl) { $cloneUrl = $RepoUrl }
 
@@ -528,12 +537,12 @@ function Install-TheCurator {
     Write-Host '  This will:'
     Write-Host '    - download a private copy of Node.js and Git, used only by The Curator'
     Write-Host '      (nothing else on your PC changes)'
-    Write-Host "    - put The Curator in  $installDir"
+    Write-Host "    - put The Curator in  $targetDir"
     Write-Host "    - add 'The Curator' and 'Stop The Curator' to your desktop and Start menu"
     Write-Host '    - open The Curator in your web browser'
     Write-Host ''
     Write-Host '  It takes about 2 to 5 minutes. Please keep this window open until it says Done.'
-    Write-Log ("The Curator installer started " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " branch=$Branch dir=$installDir repo=$cloneUrl")
+    Write-Log ("The Curator installer started " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + " branch=$Branch dir=$targetDir repo=$cloneUrl")
 
     # ------------------------------------------------------------- 1. checks --
     Start-Step 1 'Checking your PC'
@@ -587,7 +596,7 @@ function Install-TheCurator {
     if (-not (Test-Path -LiteralPath $tar -PathType Leaf)) { Write-Log 'tar.exe not found; will use .NET ZipFile' }
 
     $drives = @{}
-    foreach ($p in @($dataRoot, $installDir)) {
+    foreach ($p in @($dataRoot, $targetDir)) {
       try { $drives[[System.IO.Path]::GetPathRoot($p).ToUpperInvariant()] = $true } catch { }
     }
     foreach ($d in $drives.Keys) {
@@ -606,15 +615,6 @@ function Install-TheCurator {
 
     $state.Proxy = Get-SystemProxy 'https://github.com'
     if ($state.Proxy) { Say ("        Using this PC's proxy: " + $state.Proxy) }
-
-    # A Curator started from this folder must not run while its files change.
-    $running = Get-CuratorServerProcs -Checkout $installDir
-    if ($running.Count -gt 0) {
-      Say '        The Curator is running; stopping it for the update (it starts again at the end).' 'Yellow'
-      foreach ($p in $running) { try { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction Stop } catch { } }
-      Start-Sleep -Seconds 2
-      $state.StoppedApp = $true
-    }
 
     # Leftovers of an interrupted earlier run.
     $rtRoot = Join-Path $dataRoot 'runtime'
@@ -637,7 +637,20 @@ function Install-TheCurator {
     $gitUrl = "https://github.com/git-for-windows/git/releases/download/$MinGitTag/$gitAsset"
     $gitExpect = $MinGitTag.TrimStart('v')
     Install-Runtime -Name 'git' -Label 'Git' -Url $gitUrl -Sha256 $gitSha -ExeRel 'cmd\git.exe' -Expect $gitExpect -HasTopFolder $false
-    Set-RuntimeGitConfig -Checkout $installDir
+
+    # Both downloads are verified; only now stop a running Curator, so a
+    # failed download leaves it running. It must not run while its files change.
+    $running = Get-CuratorServerProcs -Checkout $targetDir
+    if ($running.Count -gt 0) {
+      Say '        The Curator is running; stopping it for the update (it starts again at the end).' 'Yellow'
+      foreach ($p in $running) { try { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction Stop } catch { } }
+      Start-Sleep -Seconds 2
+      $state.StoppedApp = $true
+    }
+
+    Install-Runtime -Name 'node' -Label 'Node.js' -Url $nodeUrl -Sha256 $nodeSha -ExeRel 'node.exe' -Expect ('v' + $NodeVersion) -HasTopFolder $true -Commit
+    Install-Runtime -Name 'git' -Label 'Git' -Url $gitUrl -Sha256 $gitSha -ExeRel 'cmd\git.exe' -Expect $gitExpect -HasTopFolder $false -Commit
+    Set-RuntimeGitConfig -Checkout $targetDir
 
     $nodeDir = Join-Path (Join-Path $dataRoot 'runtime') 'node'
     $nodeExe = Join-Path $nodeDir 'node.exe'
@@ -650,21 +663,23 @@ function Install-TheCurator {
     # ---------------------------------------------------------- 4. checkout --
     Start-Step 4 'Getting The Curator'
     $kind = 'absent'
-    if (Test-Path -LiteralPath $installDir -PathType Leaf) {
+    if (Test-Path -LiteralPath $targetDir -PathType Leaf) {
       $kind = 'foreign'
-    } elseif (Test-Path -LiteralPath $installDir -PathType Container) {
-      if (@(Get-ChildItem -LiteralPath $installDir -Force).Count -eq 0) {
+    } elseif (Test-Path -LiteralPath $targetDir -PathType Container) {
+      if (@(Get-ChildItem -LiteralPath $targetDir -Force).Count -eq 0) {
         $kind = 'empty'
-      } elseif (-not (Test-Path -LiteralPath (Join-Path $installDir '.git'))) {
+      } elseif (-not (Test-Path -LiteralPath (Join-Path $targetDir '.git'))) {
         $kind = 'foreign'
       } else {
-        $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'config', '--get', 'remote.origin.url'))
+        $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'config', '--get', 'remote.origin.url'))
         $origin = $r.Last
         $norm = { param($u) ("" + $u).Trim().Replace('\', '/').TrimEnd('/') -replace '(?i)\.git$', '' }
         if ($r.Code -eq 0 -and ($origin -match '(?i)github\.com[:/]+talirezun/(the-curator|second-brain)(\.git)?/?$')) {
           $kind = 'ours'
         } elseif ($r.Code -eq 0 -and $RepoUrl -and ((& $norm $origin) -ieq (& $norm $RepoUrl))) {
           $kind = 'ours'
+        } elseif ($r.Code -eq 0 -and $origin -match '(?i)github\.com[:/]+[^/]+/the-curator(\.git)?/?$') {
+          $kind = 'fork'
         } else {
           $kind = 'foreign'
         }
@@ -672,13 +687,17 @@ function Install-TheCurator {
     }
     Write-Log "checkout state: $kind"
 
+    if ($kind -eq 'fork') {
+      Stop-Install ("The folder $targetDir already holds a copy of The Curator from a different GitHub account ($origin), so the installer did not touch it.") `
+        "If that is what you want, keep using it as it is. To install the official version, rename or move that folder (for example to 'the-curator-old'; your notes are in its domains folder), then run the installer again."
+    }
     if ($kind -eq 'foreign') {
-      Stop-Install ("The folder $installDir already exists, but it is not a copy of The Curator, so the installer did not touch it.") `
+      Stop-Install ("The folder $targetDir already exists and holds something other than The Curator's official copy, so the installer did not touch it.") `
         "Rename or move that folder (for example to 'the-curator-old'), then run the installer again."
     }
 
     if ($kind -eq 'absent' -or $kind -eq 'empty') {
-      $parent = Split-Path -Parent $installDir
+      $parent = Split-Path -Parent $targetDir
       [void][System.IO.Directory]::CreateDirectory($parent)
       $stage = Join-Path $parent '.the-curator-download'
       if (-not (Remove-Dir $stage)) { Stop-Install "A temporary folder from an earlier attempt could not be removed: $stage" 'Restart your PC and run the installer again.' }
@@ -690,17 +709,17 @@ function Install-TheCurator {
         if (-not $advice) { $advice = 'Check that this PC is online and run the installer again.' }
         Stop-Install ("The Curator could not be downloaded from GitHub.") $advice
       }
-      if ($kind -eq 'empty') { [void](Remove-Dir $installDir) }
-      try { Move-Dir -From $stage -To $installDir } catch {
-        Stop-Install ("The download finished but could not be moved into $installDir.") 'Close any window showing that folder, wait a minute (antivirus may still be scanning), and run the installer again.'
+      if ($kind -eq 'empty') { [void](Remove-Dir $targetDir) }
+      try { Move-Dir -From $stage -To $targetDir } catch {
+        Stop-Install ("The download finished but could not be moved into $targetDir.") 'Close any window showing that folder, wait a minute (antivirus may still be scanning), and run the installer again.'
       }
-      Say "        The Curator is in $installDir"
+      Say "        The Curator is in $targetDir"
     } else {
-      Say "        The Curator is already in $installDir; checking it..."
-      $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'status', '--porcelain=v1', '--untracked-files=no'))
+      Say "        The Curator is already in $targetDir; checking it..."
+      $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'status', '--porcelain=v1', '--untracked-files=no'))
       if ($r.Code -ne 0) {
-        Stop-Install ("The copy of The Curator in $installDir is damaged (git cannot read it).") `
-          "Your notes are in $installDir\domains. Rename the folder (for example to 'the-curator-old'), run the installer again, then copy the old 'domains' folder into the new one. Ask support if you are unsure."
+        Stop-Install ("The copy of The Curator in $targetDir is damaged (git cannot read it).") `
+          "Your notes are in $targetDir\domains. Rename the folder (for example to 'the-curator-old'), run the installer again, then copy the old 'domains' folder into the new one. Ask support if you are unsure."
       }
       # Only real status lines ("XY path"); git warnings share the stream.
       $changes = @($r.Text -split "`n" | Where-Object { $_ -match '^[ MADRCUT?!]{2} \S' })
@@ -716,26 +735,26 @@ function Install-TheCurator {
       $clean = ($changes.Count -eq 0)
       if (-not $clean -and $restorable) {
         Say '        Restoring missing or regenerated files...'
-        $r2 = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'checkout', '--', '.'))
+        $r2 = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'checkout', '--', '.'))
         if ($r2.Code -eq 0) { $clean = $true }
       }
       if (-not $clean) {
-        Say ("        Some of The Curator's own files in $installDir were changed on this PC, so they were left exactly as they are and The Curator was not updated.") 'Yellow'
+        Say ("        Some of The Curator's own files in $targetDir were changed on this PC, so they were left exactly as they are and The Curator was not updated.") 'Yellow'
         Write-Log ("changed files:`n" + ($changes -join "`n"))
       } else {
-        $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'fetch', '--quiet', 'origin', ("+refs/heads/" + $Branch + ":refs/remotes/origin/" + $Branch)))
+        $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'fetch', '--quiet', 'origin', ("+refs/heads/" + $Branch + ":refs/remotes/origin/" + $Branch)))
         if ($r.Code -ne 0) {
           Say '        Could not check GitHub for a newer version; keeping the version you have.' 'Yellow'
         } else {
-          $before = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'rev-parse', '--short', 'HEAD'))).Last
-          $cur = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'rev-parse', '--abbrev-ref', 'HEAD'))).Last
+          $before = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'rev-parse', '--short', 'HEAD'))).Last
+          $cur = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'rev-parse', '--abbrev-ref', 'HEAD'))).Last
           if ($cur -eq $Branch) {
-            $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'merge', '--ff-only', '--quiet', ("origin/" + $Branch)))
+            $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'merge', '--ff-only', '--quiet', ("origin/" + $Branch)))
           } else {
             Say "        Switching from '$cur' to '$Branch'."
-            $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'checkout', '--quiet', '-B', $Branch, ("origin/" + $Branch)))
+            $r = Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'checkout', '--quiet', '-B', $Branch, ("origin/" + $Branch)))
           }
-          $after = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'rev-parse', '--short', 'HEAD'))).Last
+          $after = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'rev-parse', '--short', 'HEAD'))).Last
           if ($r.Code -ne 0) {
             Say '        This copy could not be updated automatically; keeping the version you have. Use Settings > Check for updates inside The Curator.' 'Yellow'
           } elseif ($before -eq $after) {
@@ -746,10 +765,10 @@ function Install-TheCurator {
         }
       }
     }
-    $state.Commit = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $installDir, 'rev-parse', '--short', 'HEAD'))).Last
+    $state.Commit = (Invoke-Tool -Exe $git -ArgList (Get-GitArgs @('-C', $targetDir, 'rev-parse', '--short', 'HEAD'))).Last
 
     # The app reads .env; create an empty one, never overwrite.
-    $envFile = Join-Path $installDir '.env'
+    $envFile = Join-Path $targetDir '.env'
     if (-not (Test-Path -LiteralPath $envFile)) { [System.IO.File]::WriteAllText($envFile, '', (New-Object System.Text.UTF8Encoding($false))) }
 
     # -------------------------------------------------------------- 5. npm --
@@ -759,12 +778,12 @@ function Install-TheCurator {
     # in a user name).
     $npmCli = Join-Path $nodeDir 'node_modules\npm\bin\npm-cli.js'
     if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) { Stop-Install 'The private Node.js is missing its npm tool.' 'Run the installer again.' }
-    $lock = Join-Path $installDir 'package-lock.json'
+    $lock = Join-Path $targetDir 'package-lock.json'
     $lockHash = 'none'
     if (Test-Path -LiteralPath $lock -PathType Leaf) { $lockHash = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash.ToLowerInvariant() }
-    $nmMarker = Join-Path $installDir 'node_modules\.curator-installed.txt'
+    $nmMarker = Join-Path $targetDir 'node_modules\.curator-installed.txt'
     $nmWant = "node=$NodeVersion lock=$lockHash"
-    $nmOk = (Test-Path -LiteralPath $nmMarker -PathType Leaf) -and (([System.IO.File]::ReadAllText($nmMarker)).Trim() -eq $nmWant) -and (Test-Path -LiteralPath (Join-Path $installDir 'node_modules\express\package.json') -PathType Leaf)
+    $nmOk = (Test-Path -LiteralPath $nmMarker -PathType Leaf) -and (([System.IO.File]::ReadAllText($nmMarker)).Trim() -eq $nmWant) -and (Test-Path -LiteralPath (Join-Path $targetDir 'node_modules\express\package.json') -PathType Leaf)
     if ($nmOk) {
       Say '        Components are already installed.'
     } else {
@@ -779,7 +798,7 @@ function Install-TheCurator {
       $first = 'ci'
       if ($lockHash -eq 'none') { $first = 'install' }
       Say '        This can take a minute or two...'
-      $r = Invoke-Tool -Exe $nodeExe -ArgList ($base + @($first, '--no-audit', '--no-fund', '--loglevel=error')) -Cwd $installDir
+      $r = Invoke-Tool -Exe $nodeExe -ArgList ($base + @($first, '--no-audit', '--no-fund', '--loglevel=error')) -Cwd $targetDir
       if ($r.Code -ne 0) {
         Write-Log 'npm failed once; retrying'
         if ($r.Text -match '(?i)SELF_SIGNED|UNABLE_TO_GET_ISSUER|unable to verify|CERT_') {
@@ -787,10 +806,10 @@ function Install-TheCurator {
           $env:NODE_OPTIONS = '--use-system-ca'
         }
         if ($r.Text -match '(?i)EINTEGRITY') {
-          [void](Invoke-Tool -Exe $nodeExe -ArgList ($base + @('cache', 'clean', '--force')) -Cwd $installDir)
+          [void](Invoke-Tool -Exe $nodeExe -ArgList ($base + @('cache', 'clean', '--force')) -Cwd $targetDir)
         }
         if ($r.Text -match '(?i)EPERM|EBUSY') { Start-Sleep -Seconds 5 }
-        $r = Invoke-Tool -Exe $nodeExe -ArgList ($base + @('install', '--no-audit', '--no-fund', '--loglevel=error')) -Cwd $installDir
+        $r = Invoke-Tool -Exe $nodeExe -ArgList ($base + @('install', '--no-audit', '--no-fund', '--loglevel=error')) -Cwd $targetDir
       }
       if ($r.Code -ne 0) {
         $advice = Get-NetworkAdvice $r.Text
@@ -803,13 +822,13 @@ function Install-TheCurator {
 
     # --------------------------------------------------------- 6. shortcuts --
     Start-Step 6 'Adding icons to your desktop and Start menu'
-    $startPs1 = Join-Path $installDir 'scripts\windows\start-curator.ps1'
-    $stopPs1 = Join-Path $installDir 'scripts\windows\stop-curator.ps1'
+    $startPs1 = Join-Path $targetDir 'scripts\windows\start-curator.ps1'
+    $stopPs1 = Join-Path $targetDir 'scripts\windows\stop-curator.ps1'
     if (-not (Test-Path -LiteralPath $startPs1 -PathType Leaf) -or -not (Test-Path -LiteralPath $stopPs1 -PathType Leaf)) {
-      Stop-Install ("The start and stop scripts are missing from $installDir\scripts\windows.") 'Run the installer again. If your copy was changed on this PC, rename the folder first (your notes are in its domains folder).'
+      Stop-Install ("The start and stop scripts are missing from $targetDir\scripts\windows.") 'Run the installer again. If your copy was changed on this PC, rename the folder first (your notes are in its domains folder).'
     }
-    $startIco = Join-Path $installDir 'scripts\windows\assets\curator-start.ico'
-    $stopIco = Join-Path $installDir 'scripts\windows\assets\curator-stop.ico'
+    $startIco = Join-Path $targetDir 'scripts\windows\assets\curator-start.ico'
+    $stopIco = Join-Path $targetDir 'scripts\windows\assets\curator-stop.ico'
     $places = @()
     $desktop = [Environment]::GetFolderPath('Desktop')
     if (-not $desktop) {
@@ -869,7 +888,7 @@ function Install-TheCurator {
     Write-Host "  Next time, double-click 'The Curator' on your desktop."
     Write-Host "  To stop it, double-click 'Stop The Curator'."
     Write-Host ''
-    Write-Host "  Your notes are kept in:  $installDir\domains"
+    Write-Host "  Your notes are kept in:  $targetDir\domains"
     Write-Host '  Running this installer again is safe: it repairs and updates, and keeps your notes.'
     Write-Host ''
     Write-Log 'install finished OK'
@@ -911,3 +930,7 @@ function Install-TheCurator {
 }
 
 Install-TheCurator -Branch $Branch -NoStart:$NoStart -InstallDir $InstallDir -RepoUrl $RepoUrl
+# Under `irm | iex` the function and the four parameters land in the user's
+# own session: tidy them away ($LASTEXITCODE is global and stays).
+Remove-Item -Path 'Function:\Install-TheCurator' -ErrorAction SilentlyContinue
+Remove-Variable -Name 'Branch', 'NoStart', 'InstallDir', 'RepoUrl' -ErrorAction SilentlyContinue

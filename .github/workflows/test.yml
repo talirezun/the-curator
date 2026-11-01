@@ -160,7 +160,7 @@ jobs:
         run: |
           $z = [string][char]0x017D
           $root = Join-Path $env:RUNNER_TEMP ('Curator User ' + $z + 'iga')
-          $dir = Join-Path $root 'the curator'
+          $dir = Join-Path $root 'the curator %TEMP% x'
           $lad = Join-Path $root 'AppData Local'
           [void][System.IO.Directory]::CreateDirectory($lad)
           if ('${{ github.event_name }}' -ne 'pull_request' -and '${{ github.ref_type }}' -eq 'branch') {

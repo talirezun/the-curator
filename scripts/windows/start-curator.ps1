@@ -107,7 +107,14 @@ if ($existing.Count -eq 0) {
   # handles, only this process's environment, which is why PATH is set above.
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
-  $psi.Arguments = '/d /s /c ""' + $runtime.NodeExe + '" "' + $serverJs + '" >> "' + $logPath + '" 2>&1"'
+  # The three paths go to cmd.exe as VARIABLES, never as text: cmd expands
+  # %NAME% even inside quotes, so a folder called "a %TEMP% b" typed into the
+  # command line would be rewritten. cmd expands each variable once and never
+  # re-expands the result, so the paths reach node exactly as they are.
+  $env:CURATOR_NODE_EXE = $runtime.NodeExe
+  $env:CURATOR_SERVER_JS = $serverJs
+  $env:CURATOR_LOG = $logPath
+  $psi.Arguments = '/d /s /c ""%CURATOR_NODE_EXE%" "%CURATOR_SERVER_JS%" >> "%CURATOR_LOG%" 2>&1"'
   $psi.WorkingDirectory = $checkout
   $psi.UseShellExecute = $true
   $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden

@@ -98,6 +98,28 @@ check(!/\bexit\b/i.test(installCode), 'install.ps1: never calls exit (it would c
 check(/^param\(/m.test(install), 'install.ps1: has a top-level param() block (-Branch, -NoStart, -InstallDir)');
 for (const p of ['Branch', 'NoStart', 'InstallDir', 'RepoUrl']) check(new RegExp(`\\$${p}\\b`).test(install), `install.ps1: parameter -${p}`);
 check(/\[string\]\$Branch = 'main'/.test(install), "install.ps1: -Branch defaults to 'main'");
+// PowerShell variable names are CASE-INSENSITIVE: `$installDir = $null` once
+// wiped the -InstallDir parameter (the first Windows CI run installed into the
+// default folder). Only the param blocks and the one defaulting line may
+// assign a parameter, in any spelling.
+{
+  const allowed = new Set(["$InstallDir = Join-Path $env:USERPROFILE 'the-curator'"]);
+  const offenders = [];
+  for (const raw of install.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('#') || /^\[(string|switch)\]\$/i.test(line)) continue;
+    for (const p of ['Branch', 'NoStart', 'InstallDir', 'RepoUrl']) {
+      if (new RegExp(`\\$${p}\\s*=(?!=)`, 'i').test(line) && !allowed.has(line)) offenders.push(line);
+    }
+  }
+  check(offenders.length === 0, `install.ps1: nothing assigns a parameter under another case spelling${offenders.length ? ' (' + offenders.join(' | ') + ')' : ''}`);
+}
+check(/Remove-Variable -Name 'Branch', 'NoStart', 'InstallDir', 'RepoUrl'/.test(install), 'install.ps1: tidies its parameters out of the user\'s session after an iex run');
+{
+  const st = text('scripts/windows/start-curator.ps1');
+  check(st.includes('"%CURATOR_NODE_EXE%" "%CURATOR_SERVER_JS%" >> "%CURATOR_LOG%" 2>&1') && !/\/c ""' \+/.test(st),
+    'start-curator.ps1: paths reach cmd.exe as %VARIABLES%, never as text cmd would expand');
+}
 check(/\$global:LASTEXITCODE = 1/.test(install) && /\$global:LASTEXITCODE = 0/.test(install), 'install.ps1: reports success and failure through $LASTEXITCODE');
 
 // 3. Pinned downloads.
