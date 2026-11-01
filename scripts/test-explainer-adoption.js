@@ -340,7 +340,7 @@ ok(/'<p class="settings-block-footnote">' \+ escapeHtml\(SCAN_LIMIT_REFUSAL\) \+
   '…and renderHealthLimits prints it in the block body');
 ok(!/over the ceiling/.test(allExplainerText), '…and no explainer carries it');
 // Default domain: the consequence.
-ok(/const MCP_DOMAIN_CONSEQUENCE = [\s\S]{0,200}wrong domain lands in that wiki and is hard to spot/.test(settingsCode) &&
+ok(/const MCP_DOMAIN_CONSEQUENCE = [\s\S]{0,200}Ask every time[\s\S]{0,60}name the domain/.test(settingsCode) &&
    /renderDescription\(MCP_DOMAIN_CONSEQUENCE\)/.test(settingsCode),
   'MCP default domain: the mis-aimed-write consequence is printed under the listbox');
 // Shared Brain token: expiry.

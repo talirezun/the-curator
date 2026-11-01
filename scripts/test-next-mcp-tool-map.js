@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *  test-next-mcp-tool-map.js — Settings → MCP bridge → ③ "Agent use" and the
- *  runner ("Test all N tools", in ② Bridge's control row), rebuilt on the
- *  section kit in v3.89.0. EXECUTED: the real page through
+ *  test-next-mcp-tool-map.js — Settings → MCP bridge → ④ "Tool activity" and
+ *  the runner ("Test all N tools", in ③ Connection test's control row) —
+ *  v3.89.0's section kit, v3.90.0's copy deck. EXECUTED: the real page through
  *  scripts/test-helpers/mcp-page-sandbox.js, and the real poll / clock
  *  functions lifted out of views/settings.js.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -11,20 +11,17 @@
  *   1. A TOOL DISAPPEARING: "All N tools" lists the WHOLE catalogue, used or
  *      not, N read from the payload (never a literal), and it is CLOSED by
  *      default (the owner's decision 6) — open only when the person opened it.
- *   2. THE WORD "NEVER": a tool with no line says "none since <log begins>".
+ *   2. THE WORD "NEVER": an unused tool says "not used this week" (v3.90.0).
  *   3. A TEST RUN COUNTED AS AGENT USE: the busiest list reads `count7dAgent`,
  *      never `count7d`.
- *   4. A WINDOW THE LOG DOES NOT COVER: "Last 5 days (log begins …)", once,
- *      in the monitor's own note.
- *   5. THE RUNNER'S OUTCOME FOLDED OR UNNAMED: it is a status in ② Bridge's
- *      card, unfolded, with the tools that did not answer BY NAME.
+ *   4. A TOOL WITHOUT A PLAIN LINE: each says what it does (`purpose`).
+ *   5. THE RUNNER'S OUTCOME FOLDED OR UNNAMED: it is the result line in ③,
+ *      unfolded, with the tools that did not answer BY NAME.
  *   6. THE POLL REPAINTING WHAT IT SHOULD NOT: an unchanged payload writes
  *      nothing; a moved one replaces ③'s CARD only (never the column); a dead
  *      mount paints nothing; a failed poll keeps the last reading.
  *   7. A LEAKING TIMER, and a clock that calls render() or writes a wrapper.
- *   8. ④ Across projects: identity dots before the key, depth bars with a
- *      `max`, "+" explained in the monitor's own note, idle projects in ONE
- *      fold with a count.
+ *   8. The handoff section gone (v3.90.0, the owner's amendment).
  * OFFLINE. No network, no browser.
  */
 import { formatAge } from '../src/public/next/shared/age.js';
@@ -47,90 +44,91 @@ const card = (html, key) => {
 const ago = (secs) => new Date(Date.now() - secs * 1000).toISOString();
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('1. "All N tools": the whole catalogue, closed by default, N from the payload');
+section('1. "All N tools": the whole catalogue, closed by default, N from the payload, one plain line each');
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const st = baseState();
+  st.mcpUsage = { ...st.mcpUsage, tools: st.mcpUsage.tools.map((t) => ({ ...t, purpose: 'What ' + t.name + ' does.' })) };
   const N = st.mcpUsage.tools.length;
   const use = card(renderMcpPage(st).html, 'use');
   const fold = (use.match(/<details class="cur-fold" data-fold-key="all-tools"[\s\S]*?<\/details>/) || [''])[0];
-  ok(new RegExp('<span class="cur-fold-label">All ' + N + ' tools</span><span class="cur-fold-pill">' + N + '</span>').test(fold),
-    'the fold row reads "All ' + N + ' tools" with its count pill — N is the payload’s own length');
+  ok(new RegExp('<span class="cur-fold-label">All ' + N + ' tools</span>').test(fold),
+    'the fold row reads "All ' + N + ' tools" — N is the payload’s own length');
   ok(/data-fold-key="all-tools">/.test(fold), '…CLOSED by default (the owner’s decision 6)');
-  const items = fold.match(/class="cur-fold-item"/g) || [];
+  const items = fold.match(/class="cur-fold-item cur-fold-item-wrap"/g) || [];
   ok(items.length === N, 'one fold item per tool, used or not (' + items.length + ' of ' + N + ')');
   const missing = st.mcpUsage.tools.filter((t) => !fold.includes('<span class="mono cur-fold-item-main">' + t.name + '</span>'));
-  ok(missing.length === 0, 'every tool is listed by its own name', missing.map((t) => t.name).join(','));
+  ok(missing.length === 0, 'every tool is listed by its own name, in mono', missing.map((t) => t.name).join(','));
+  ok(st.mcpUsage.tools.every((t) => fold.includes('What ' + t.name + ' does. · ')),
+    'every tool says what it does in one plain line — the catalogue’s `purpose` from GET /api/mcp/usage');
   const opened = card(renderMcpPage(baseState({ setupMachineFolds: { 'all-tools': true } })).html, 'use');
   ok(/data-fold-key="all-tools" open>/.test(opened), 'with the person’s own open recorded in state, the repaint keeps it open');
-  const begins = new Date(Date.parse(st.mcpUsage.logStartedAt));
-  const day = begins.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][begins.getMonth()];
-  ok(fold.includes('none since ' + day) && !/\bnever\b/i.test(fold.replace(/<[^>]+>/g, ' ')),
-    'an unused tool says "none since ' + day + '" — the word "never" appears nowhere');
-  ok(/<span class="mono cur-fold-item-main">save_working_state<\/span><span class="cur-fold-item-meta">write · 177 calls · last <span data-mcp-age-at=/.test(fold),
-    'a used tool: its group, its AGENT calls in the window and its last agent use, ticking');
+  ok(/save_working_state<\/span><span class="cur-fold-item-meta">What save_working_state does\. · 177 uses · last <span data-mcp-age-at=/.test(fold),
+    'a used tool: its AGENT uses this week and its last agent use, ticking');
+  ok(/get_tags<\/span><span class="cur-fold-item-meta">What get_tags does\. · not used this week<\/span>/.test(fold)
+    && !/\bnever\b/i.test(fold.replace(/<[^>]+>/g, ' ')), 'an unused tool says "not used this week" — the word "never" appears nowhere');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('2. Agent use counts agents, not test runs, and states its true window once');
+section('2. Tool activity counts AI apps, not test runs');
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const st = baseState();
   st.mcpUsage = { ...st.mcpUsage, tools: st.mcpUsage.tools.map((t) => (t.name === 'get_node' ? { ...t, count7d: 500, count7dAgent: 2 } : t)) };
   const use = card(renderMcpPage(st).html, 'use');
   const mon = use.slice(use.indexOf('id="mcp-agent-use"'), use.indexOf('<div class="cur-folds"'));
-  ok(/cur-mon-key">save_working_state<\/span><span class="cur-mon-value">[^]*177/.test(mon), 'the busiest tool is the agents’ busiest (177 saves)');
+  ok(/cur-mon-key">save_working_state<\/span><span class="cur-mon-value">[^]*177/.test(mon), 'the busiest tool is the AI apps’ busiest (177 saves)');
   ok(!/500/.test(mon), 'a test run’s 500 calls on get_node count for nothing (count7dAgent wins)');
   ok(/class="cur-depth/.test(mon) && !/cur-depth-over|budget/.test(mon), 'depth bars against the busiest — a max, never a budget (never red)');
-  ok(/cur-mon-key">last session start<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+"/.test(mon),
-    'the session readings carry the app’s freshness dot before the age');
+  ok(/cur-mon-key">last time an AI app started My Curator<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+"/.test(mon),
+    'the deck’s first line: the last time an AI app started My Curator, with the app’s freshness dot');
+  ok(!/last save|handoff saved/.test(mon), 'no handoff line (the owner, 2026-11-01: handoffs are the Context page’s)');
+  ok(/<div class="cur-mon-note">16 tools not used this week\.<\/div>/.test(mon), 'its last line: how many tools went unused this week');
   ok(/class="cur-mon cur-mon-ident" id="mcp-agent-use"/.test(use), 'the keys are identifiers (`keys: \'identifier\'`): a tool name keeps its own case');
-  const young = baseState();
-  young.mcpUsage = { ...young.mcpUsage, logStartedAt: ago(5 * 86400) };
-  const ym = card(renderMcpPage(young).html, 'use');
-  ok(/<div class="cur-mon-note">Last 5 days \(from \d+ \w{3}\) · [^<]*tests excluded<\/div>/.test(ym) && !/this week|7 days/i.test(ym),
-    'a 5-day log says "Last 5 days (from …)" in the monitor’s own note, and nothing about a week');
-  const fresh = baseState({ mcpUsage: { present: false, tools: baseState().mcpUsage.tools.map((t) => ({ ...t, lastUsedAt: null, lastAgentAt: null })), sessions: {} } });
-  ok(/cur-status-line[^]*No calls recorded yet/.test(card(renderMcpPage(fresh).html, 'use')), 'a fresh install says so on the one-line status card — no empty monitor');
+  ok(/id="mcp-meta-use">last use 17 min ago</.test(renderMcpPage(baseState()).html), 'the head reads "last use {age}"');
+  const fresh = baseState({ mcpUsage: { present: false, tools: baseState().mcpUsage.tools.map((t) => ({ ...t, count7dAgent: 0, lastUsedAt: null, lastAgentAt: null })), sessions: {} },
+    mcpInstall: { ...baseState().mcpInstall, status: { data: { ...baseState().mcpInstall.status.data, tools: [] } } } });
+  const f = card(renderMcpPage(fresh).html, 'use');
+  ok(/last time an AI app started My Curator<\/span><span class="cur-mon-value">—/.test(f) && /24 tools not used this week/.test(f),
+    'a fresh install: a dash, and every tool not used this week — the deck’s own words, no invented empty state');
   const failedLog = card(renderMcpPage(baseState({ mcpUsage: null, mcpUsageError: 'disk' })).html, 'use');
-  ok(/tx-status tx-status-danger[^]*The call log could not be read[^]*disk/.test(failedLog), 'an unreadable log is a danger status with the reason');
+  ok(/tx-status tx-status-danger[^]*Could not read which tools were used[^]*disk/.test(failedLog), 'an unreadable log is a danger status with the reason');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('3. The runner: in Bridge’s control row; its outcome unfolded, failures by name');
+section('3. The runner: in Connection test’s control row; its outcome is the result line');
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const st = baseState();
   const bridge = card(renderMcpPage(st).html, 'bridge');
   const top = bridge.slice(bridge.indexOf('<div class="cur-card-top">'), bridge.indexOf('<div class="cur-folds"'));
-  ok(/id="btn-mcp-self-test"/.test(top) && new RegExp('id="btn-mcp-exercise"[^>]*>[^]*Test all ' + st.mcpUsage.tools.length + ' tools').test(top),
-    'Run self-test and "Test all N tools" share Bridge’s control row (the owner’s decision 2: the self-test keeps its own button)');
+  ok(/id="btn-mcp-self-test"[^>]*>[^]*Test connection/.test(top) && new RegExp('id="btn-mcp-exercise"[^>]*>[^]*Test all ' + st.mcpUsage.tools.length + ' tools').test(top),
+    'Test connection and "Test all N tools" share the control row');
   const busy = card(renderMcpPage(baseState({ mcpExerciseBusy: true })).html, 'bridge');
-  ok(/id="btn-mcp-exercise" disabled/.test(busy) && /Testing every tool against a throwaway copy/.test(busy), 'while it runs: disabled, and said');
+  ok(/id="btn-mcp-exercise" disabled/.test(busy) && /Testing…/.test(busy), 'while it runs: disabled, and said on the button');
   const ran = baseState({ mcpExercise: { ranAt: new Date().toISOString(), durationMs: 1100, results: [
     { tool: 'get_node', ok: true }, { tool: 'search_wiki', ok: false }, { tool: 'save_foundation', refused: true, note: 'read-only mirror' }] } });
   const out = card(renderMcpPage(ran).html, 'bridge').replace(/<details[\s\S]*?<\/details>/g, '');
-  ok(/tx-status tx-status-danger[^]*Last full test just now: 2 of 3 answered · 1 refused · 1\.1 s/.test(out),
-    'the outcome is a status OUTSIDE every fold: answered, refused, seconds');
-  ok(/No answer from: search_wiki\./.test(out) && /save_foundation refused — read-only mirror\./.test(out), '…naming the tool that did not answer and the refusal’s reason');
+  ok(/cur-status-line[^]*<strong>Not working:<\/strong> no answer from search_wiki\./.test(out),
+    'a run with a silent tool: "Not working: no answer from search_wiki." OUTSIDE every fold');
   const clean = card(renderMcpPage(baseState({ mcpExercise: { ranAt: new Date().toISOString(), durationMs: 500, results: [{ tool: 'a', ok: true }] } })).html, 'bridge');
-  ok(/tx-status tx-status-success[^]*1 of 1 answered/.test(clean), 'a clean run is a success status');
+  ok(/<strong>Works\.<\/strong> My Curator started and answered with all 1 tools \(\d\d:\d\d\)\./.test(clean), 'a clean run: "Works." with the time');
   const logged = card(renderMcpPage(baseState({ mcpUsage: { ...baseState().mcpUsage, lastExercise: { at: ago(9 * 60), total: 24, answered: 24, refused: 0, durationMs: 900 } } })).html, 'bridge');
-  ok(/Last full test 9 min ago: 24 of 24 answered/.test(logged), 'after a reload the last run is read back from the log, and says when');
-  const err = card(renderMcpPage(baseState({ mcpExerciseError: 'The bridge may not be reachable.' })).html, 'bridge');
-  ok(/tx-status tx-status-danger[^]*Test all tools did not finish[^]*not be reachable/.test(err), 'a run that did not finish says so, with the reason');
+  ok(/Works\.<\/strong> My Curator started and answered with all 24 tools/.test(logged), 'after a reload the last run is read back from the log');
+  const err = card(renderMcpPage(baseState({ mcpExerciseError: 'It may not be reachable.' })).html, 'bridge');
+  ok(/<strong>Not working:<\/strong> It may not be reachable\./.test(err), 'a run that did not finish: "Not working:" with the reason');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('4. The poll: nothing, or ONE card, never the column');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const FNS = ['refreshMcpUsage', 'paintMcpCard', 'paintMcpOverview', 'usageSignature', 'acrossProjectsStamp', 'applyUsageVerdict'];
+  const FNS = ['refreshMcpUsage', 'paintMcpCard', 'paintMcpOverview', 'usageSignature', 'applyUsageVerdict'];
   function harness(stateOver, verdict, alive = true) {
     const writes = [];
     const node = (sel) => ({ set innerHTML(v) { writes.push({ sel, v }); }, querySelectorAll: () => [] });
     const doc = {
-      querySelector: (s) => (s === '#mcp-card-use' || s === '#mcp-card-projects' ? node(s) : null),
+      querySelector: (s) => (s === '#mcp-card-use' ? node(s) : null),
       querySelectorAll: () => [], getElementById: () => null,
     };
     const state = Object.assign({ section: 'mcp', mcpUsage: null, mcpUsageSig: null, mcpUsageError: null, mcpProjects: null }, stateOver);
@@ -213,22 +211,12 @@ section('6. The age clock writes words into named nodes only, and never renders'
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('7. ④ Across projects');
+section('7. The handoff section is gone (the owner, 2026-11-01)');
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const html = renderMcpPage(baseState()).html;
-  const p = card(html, 'projects');
-  ok(/id="mcp-meta-projects">last 30 days</.test(html), 'the ONE window is the section head’s reading');
-  ok(/<span class="cur-mon-key"><span class="cur-mon-lead"><span class="cur-sb-dot cur-sb-dot-5" aria-hidden="true"><\/span><\/span>projects \/ agentlink<\/span>/.test(p),
-    'the domain’s RECORDED identity slot (projects = 5) dots the line, before the key (rule 5)', p.slice(0, 600));
-  ok(/projects \/ curator[^]*12\+/.test(p) && /<div class="cur-mon-note">[^<]*“\+” means at least/.test(p), 'a floor reads "12+", and the monitor’s own note says what "+" means');
-  ok(/cur-depth/.test(p) && !/budget|cur-depth-over/.test(p), 'depth bars with a max (rule 6, never red)');
-  ok(/<span class="cur-fold-label">No save in the last 30 days<\/span><span class="cur-fold-pill">1<\/span>/.test(p)
-    && /cur-sb-dot-2[^]*articles \/ field-notes/.test(p), 'projects with no save: ONE fold row with a count, each with its dot');
-  ok(/<span class="cur-fold-label">Saves per agent app<\/span><span class="cur-fold-meta">Claude Code 53 · Antigravity none since 25 Oct<\/span>/.test(p),
-    'saves per agent app: its reading is the fold row’s meta, visible closed');
-  const none = card(renderMcpPage(baseState({ mcpProjects: null, mcpProjectsError: 'This server does not report connections per project.' })).html, 'projects');
-  ok(/tx-status tx-status-attention[^]*does not report/.test(none), 'an older server is said, not shown as zero');
+  ok(!/mcp-card-projects|mcp-sec-projects|Across projects|Handoffs saved/.test(html), 'no ⑤ section, no per-project handoff reading on the page');
+  ok((html.match(/class="cur-section-head"/g) || []).length === 4, 'four sections: Your AI apps · Skills · Connection test · Tool activity');
 }
 
 console.log('\n' + '─'.repeat(60));

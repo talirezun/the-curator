@@ -171,6 +171,9 @@ try {
     write({ command: NODE, args: [path.join(TMP, 'gone', 'mcp', 'server.js')] });
     const r3 = await call({ id: 'claude-desktop' });
     ok('an entry whose server is gone: "no longer on this Mac", nothing started', r3.body.results[0].code === 'launch_file_missing' && /no longer on this Mac/.test(r3.body.results[0].message) && !ran);
+    ok('…and the missing file rides in `path` (v3.90.0), so the page names it without reading the sentence',
+      r3.body.results[0].path === path.join(TMP, 'gone', 'mcp', 'server.js'), JSON.stringify(r3.body.results[0]));
+    ok('…while a refusal with no file names no `path`', !('path' in r2.body.results[0]));
     R.__setCheckRunner(null);
     writeFileSync(CD, JSON.stringify({ mcpServers: { other: {} } }));
     const r4 = await call({ id: 'claude-desktop' });

@@ -426,7 +426,7 @@ There is no Stop button inside the app itself, on any platform. On Windows, **St
 
 Type `%USERPROFILE%\the-curator\domains` into the address bar of File Explorer to jump straight to your knowledge folder.
 
-**Connecting Claude Desktop.** Once the app is running: **Settings → MCP bridge → Agent apps → Install for me** writes The Curator's entry into Claude Desktop's settings file (new on Windows in v3.86.0, labelled "New on Windows — tell us if it works"). Quit Claude Desktop fully first (system tray → Quit); the app will not write the file while it runs. Details, and what every refusal means, are in [§13](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp). For other tools on Windows, copy the entry from the same screen and paste it in yourself.
+**Connecting Claude Desktop.** Once the app is running: **Settings → MCP bridge → Your AI apps → Install for me** writes The Curator's entry into Claude Desktop's settings file (new on Windows in v3.86.0, labelled "New on Windows — tell us if it works"). Quit Claude Desktop fully first (system tray → Quit); the app will not write the file while it runs. Details, and what every refusal means, are in [§13](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp). For other tools on Windows, copy the entry from the same screen and paste it in yourself.
 
 **Windows security messages you might meet**
 
@@ -542,7 +542,7 @@ the same code.
 | **1 · How it launches** | Open it from Applications or the Dock. It opens **its own window**; no browser tab is opened, and the address it uses is chosen fresh each launch rather than being a fixed `localhost:3333`. | The Dock launcher (or `node src/server.js`) starts the server and opens your browser at `http://localhost:3333`. |
 | **2 · How it updates** | **Settings → General → Check for updates → Download and install.** The app fetches a new copy of itself, checks it, swaps it in and restarts — with no Gatekeeper prompt. The git-based update does not apply and refuses. See [§16 → Version and updates](#version-and-updates). | **Settings → General → Check for updates** replaces the source in place (`git` + `npm install`), then restarts. |
 | **3 · Where its data lives** | `~/Library/Application Support/The Curator/` — settings, sync configuration, and the default `domains/` folder. | Your install folder, default `~/the-curator/`. |
-| **4 · How the MCP bridge starts** | Through a small launcher the app writes for itself on every start. Because of that, **moving your knowledge folder no longer makes the Claude Desktop entry go stale.** | Through a direct command naming your Node binary, the bridge script, and your knowledge folder path — so moving that folder *does* make it stale: the tool's row in **Settings → MCP bridge → Agent apps** then reads **needs an update**, and **Install for me** fixes it. |
+| **4 · How the MCP bridge starts** | Through a small launcher the app writes for itself on every start. Because of that, **moving your knowledge folder no longer makes the Claude Desktop entry go stale.** | Through a direct command naming your Node binary, the bridge script, and your knowledge folder path — so moving that folder *does* make it stale: the tool's row in **Settings → MCP bridge → Your AI apps** then reads **needs an update**, and **Install for me** fixes it. |
 
 Two things that follow from #3 and are worth knowing:
 
@@ -602,7 +602,7 @@ already used. That trade was made on purpose, and it is
 
 **Why the Claude Desktop entry has to be updated.** The Claude Desktop entry names the bridge by an
 absolute path, and the app's bridge is somewhere different from your checkout's. Open
-**Settings → MCP bridge → Agent apps**; the row reads **needs an update** and **Install for
+**Settings → MCP bridge → Your AI apps**; the row reads **needs an update** and **Install for
 me** rewrites just that entry. See
 [mcp-user-guide.md](mcp-user-guide.md).
 
@@ -4473,44 +4473,77 @@ Everything stays local — the MCP server only sees your wiki folder, and writes
 | **Windows** (the browser install) | **Claude Desktop** only, labelled **New on Windows — tell us if it works** | **Copy** |
 | **Linux** | Nothing | **Copy**, for every tool |
 
-Open **Settings → MCP bridge**. Since v3.89.0 the page is built like a domain page: an **OVERVIEW** —
-**CONNECTED**, **TO FIX**, **TOOLS ANSWER**, **SAVES** and **LAST SAVE**, each a door to its section —
-then four sections, each one card: **① Agent apps**, **② Bridge**, **③ Agent use** and **④ Across
-projects**. In ① the card opens with **Check again**, then ONE tinted card with whatever needs you —
-*NEXT STEP · N TO FIX* (each fix with its buttons, for example **Download my-curator.zip** and **Reveal
-folder** for an outdated skill), or *CONNECT* when there is only something to add — holding **Install for
-me** (with the apps it will write to, ticked) and **Copy an entry myself**. Under it is one row per agent
-app it found on this computer, closed: open a row for its files, its copy line ("paste it inside
-"mcpServers"", with **Copy entry**), **Remove** / **Restore original**, and its health line — *"Claude
-Desktop last started it 2 hr ago"*, or *"Claude Desktop hasn't started My Curator since the entry was
-written …"* when the app has not been restarted since — with **Check entry**, which starts the exact
-command in that app's file, the way the app would, and says *"Claude Desktop's entry starts · 24 tools"*
-or, in plain words, what stopped it. It only ever starts The Curator's own bridge: an entry naming any
-other program is reported, not run. (*Agent apps* is the word for the programs that talk to your wiki —
-Claude Desktop, Cursor, Antigravity and the like — everywhere in the app, Context → Setup included;
-*tools* means the 24 MCP tools.) **② Bridge** holds **Run self-test** and **Test all 24 tools**, their
-results, the bridge's own reading and **Default domain for writes**. The same button, **Install for me**,
-appears on a Context → Setup to-fix line about an agent app's bridge. When there is nothing for it to
-write, it is disabled and its note says *nothing to install* (or *can't install here* / *copy-only on this
-computer*).
+Open **Settings → MCP bridge** (its rail line reads *Connect your AI apps to My Curator*). Since
+v3.90.0 the page says what each thing is, or what to do, in plain words. Under the title one line says
+what the page is for; then an **OVERVIEW** — **CONNECTED**, **NEEDS ATTENTION**, **TOOLS WORKING**
+(*24 of 24* from the last test, *—* if never tested) and **LAST USED** (when an AI app last used a
+tool; tests do not count), each a door to its section — then four sections, each one card:
+**① Your AI apps**, **② Skills**, **③ Connection test** and **④ Tool activity**. A closing line
+repeats the promise: *"The Curator only reads your AI apps' settings files. It changes one only when
+you press Install for me, Remove or Restore, and it always keeps a backup first."* (*AI app* is the
+page's word for a program that talks to your wiki — Claude Desktop, Cursor, Antigravity and the
+like; *tool* means one of the 24 My Curator tools; *skill* means an instruction file for an AI app.)
+
+**① Your AI apps** opens with **Check again**. When something needs doing, a tinted **Next step · N
+to do** card lists each thing on one line — *"Cursor isn't connected yet."*, *"Claude Desktop's
+connection is out of date — it points at …, which is no longer on this Mac."*, *"Antigravity's
+my-curator skill is out of date. Download the new version and replace the old one — see Skills
+below."* with **Download my-curator** — then **Install for me** and **Copy the setup text**, the apps
+it will write to (ticked), and its safety line. When everything is connected, there is no card, only
+*"Everything is connected."* Under it is one closed row per AI app found on this computer, its state
+on the right (**connected**, **needs attention**, **not connected** or **can't read its settings**).
+Opening a row shows ONE sentence and at most one button — *"Connected. Claude Desktop last used My
+Curator 2 hr ago."* with **Test connection**, *"Connected. Claude Desktop hasn't used My Curator since
+it was set up 2 hr ago — quit and reopen Claude Desktop if it doesn't show up."*, *"Not connected
+yet. Tick it in Next step and press Install for me."*, or for an app that cannot be set up
+automatically *"… Copy the setup text and paste it into ‹file›, inside "mcpServers"."* with **Copy the
+setup text**. **Test connection** starts My Curator exactly the way that app's settings start it, and
+the sentence then reads *"Connected. Works — My Curator starts the way Claude Desktop starts it and
+answers with all 24 tools."* or, in plain words, what stopped it. It only ever starts The Curator's
+own setup line: anything else is reported, not run. Everything else is in the row's own **Details**
+fold: each **Settings file** that exists (plus the one Install for me would create) with *has The
+Curator's line*, *no Curator line*, *not there yet* or *not used on this computer* and **Show the
+file** (Mac only); **Remove The Curator from ‹app›** with the red **Remove**; **Put back the original
+settings file** with **Restore original** (only while a backup is valid); and, for Claude Code and
+Antigravity, *Automatic saves: on/off*. The same button, **Install for me**, appears on a Context →
+Setup to-fix line about an AI app's connection.
+
+**② Skills** has one row per skill — `my-curator` (how to read and write your knowledge) and
+`curator-continuity` (how to save and resume work between sessions) — with *N of M apps up to date*.
+**Skills don't update on their own**: when The Curator updates its skills, open the row, press
+**Download ‹skill›.zip** and replace your copy. For Claude (Desktop and Code read one copy, held by your
+Claude account) the row says to upload it in Claude: **Customize → Skills**; The Curator cannot see
+your account, so it cannot tell whether that copy is current. For Antigravity (and any app whose skill
+folder is on this computer) the row says *up to date*, *out of date* or *not installed*, names the
+folder, and offers **Show the folder**.
+
+**③ Connection test** starts My Curator the way your AI apps do: **Test connection** and **Test all
+24 tools** (every tool, against a throwaway copy), then one result line — *"Works. My Curator started
+and answered with all 24 tools (14:02)."* or *"Not working: …"*. Its **Details** fold gives the version,
+the knowledge folder and how many are open right now; **Default project for writes** is where a
+write lands when an AI app does not name a domain (leave it on **Ask every time** to make the AI
+app name it). **④ Tool activity** is described in [the tool map](#the-tool-map--what-your-agents-used).
 
 | Step | What you do | What happens |
 |---|---|---|
-| 1 | Press **Install for me** | A **Plan ready — nothing written yet** card shows, per file: its path, the exact entry, the names of your other servers (which stay unchanged), and the name the backup will have |
-| 2 | Press **Apply** (or **Cancel**) | The file is written; one result line per file stays on screen, e.g. *"Cursor — added to ~/.cursor/mcp.json · original kept · restart Cursor"* |
+| 1 | Press **Install for me** | A **Check the change · nothing written yet** card shows, per file: *‹app› — ‹path›*, **Adds:** with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›* |
+| 2 | Press **Apply** (or **Cancel**) | The file is written; one result line per file stays on screen, e.g. *"✓ Cursor is set up. Quit Cursor completely and open it again to use My Curator. (⌘Q — closing the window is not enough)"*; a file left alone says *"✗ ‹app› was not changed: ‹why›."* with **Copy the setup text** |
 | 3 | Quit and reopen the tool | A tool reads its MCP list only when it starts. If it was running, a line names it. Claude Desktop is the one to quit **before** you apply, because it rewrites its own file |
 | 4 | Press **Check again** | The row should now read **connected** |
 
-Only the agent apps in the table above can be installed this way. Every other agent app shows
-**copy only**, with a **Copy** button.
+Only the AI apps in the table above can be installed this way. Every other AI app reads **not
+connected** and says *"‹app› can't be set up automatically yet. Copy the setup text …"*, with **Copy
+the setup text**.
+
+The installer's own status behind each row's word (since v3.90.0 the row shows the word in brackets):
 
 | Status | Meaning | Ticked for you? | Buttons |
 |---|---|---|---|
-| **connected** | The tool's file names `my-curator` and the entry is the one this install would write | No | **Remove**, and **Restore original** while a backup of the previous file is still valid |
-| **needs an update** | An entry exists but differs: it launches a missing file (the row then names it — "Its entry points at C:\Program Files\nodejs\node.exe, which is no longer on this PC." — for example after Node.js or an older copy of The Curator was uninstalled; such an entry never reads **connected**, since 3.88.1), points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
-| **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
-| **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
-| **copy only** | A tool the app does not write for, a computer it does not write on (Linux; on Windows, every tool but Claude Desktop), or a Windows Claude Desktop whose settings file the app will not pick (see below) | No | **Copy** |
+| **connected** (*connected*) | The tool's file names `my-curator` and the entry is the one this install would write | No | **Test connection**; in Details **Remove**, and **Restore original** while a backup of the previous file is still valid |
+| **needs an update** (*needs attention*) | An entry exists but differs: it launches a missing file (the row then names it — "Its entry points at C:\Program Files\nodejs\node.exe, which is no longer on this PC." — for example after Node.js or an older copy of The Curator was uninstalled; such an entry never reads **connected**, since 3.88.1), points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
+| **can be added** (*not connected*) | The tool is on this Mac but has no entry | Yes | **Install for me** |
+| **can't read** (*can't read its settings*) | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy the setup text**, **Show the file** |
+| **copy only** (*not connected*) | A tool the app does not write for, a computer it does not write on (Linux; on Windows, every tool but Claude Desktop), or a Windows Claude Desktop whose settings file the app will not pick (see below) | No | **Copy** |
 
 > **On Windows (new in v3.86.0 — please tell us if it works)**
 >
@@ -4538,15 +4571,12 @@ Only the agent apps in the table above can be installed this way. Every other ag
 > kept exactly as it was (this now also holds on a Mac, where such a file used to be refused).
 > Report what you see on Windows: it has not been confirmed on every kind of Claude Desktop install.
 
-Agent apps not found on this computer sit in a folded **Not on this Mac (N)** group, each with **Copy**.
-Each row carries its own warning unfolded (never behind a chevron), and a **Files, skills and hooks**
-fold with the files the check read. Two things a row can say that it could not before: an **outdated
-skill** (for example Antigravity's `my-curator`) shows the Setup sentence and **Download** / **Reveal**
-buttons on that app's row, and **Claude Code** reads *"Uses Claude Desktop's entry"* when it is
-connected through Claude Desktop's file. A row may also say **running**, or *used 2 days ago* (from the local usage log; a label only — it never
-changes a status). **Copy it myself** takes you to the copy buttons: a line under each says **Save as
-‹file›** when the tool's file does not exist yet (copy the whole small file), or **Paste into ‹file›
-inside "mcpServers"** when it does (copy only the entry).
+AI apps not found on this computer sit in a folded **Not on this Mac (N)** row: *"‹names›. If you
+install one of these, press Check again."* A row never hides what needs doing: the same sentence is
+in the Next step card, unfolded. **Copy the setup text** in the Next step card copies it for the
+first ticked app and says where it goes — **Save as ‹file›** when the file does not exist yet (the
+whole small file), or **Paste into ‹file› inside "mcpServers"** when it does (only The Curator's
+line).
 
 > **What it writes, and how to undo it**
 >
@@ -5829,7 +5859,7 @@ tool needs on a computer is set up **on that computer**, once per computer.*
 | Your **source files** (`raw/`: the PDFs and text files you ingested) | Your knowledge folder | **Never synced** — they stay on the computer you ingested on | Copy them yourself if you need them elsewhere | — |
 | **The code**, **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**, and **`.curator-project`** | The project folder (a git clone) | ② The project's own git | Commit and `git push` here; `git pull` there (the first time, `git clone`) | *"AGENTS.md in ‹folder› has no Curator instructions…"* · *"‹folder› has no .curator-project…"* · *".curator-project isn't committed…"* · *"…is committed but not pushed"* |
 | **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | Setup (step ⑤) → **Use** a folder it found, or **Choose the folder** | The SETUP tile reads *repository not set*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
-| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Settings → MCP bridge → Agent apps → Install for me** (Claude Desktop, Cursor, Antigravity, on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
+| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Settings → MCP bridge → Your AI apps → Install for me** (Claude Desktop, Cursor, Antigravity, on a Mac; Claude Desktop on Windows), or **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
 | **The two skills** (`my-curator`, `curator-continuity`) | The tool's skills folder — or, for the Claude app, your Claude account | ③ Nothing (skills uploaded to your Claude account follow the account) | Download the two `.zip` files from step ② of the tool's setup guide and unzip them into the tool's skills folder (for the Claude app, upload them to your account) | *"‹tool›'s … skill is older than the copy this app carries"* · *"‹tool› has the … skill but not …"* · *can't check here* for skills held by your Claude account |
 | **Hooks** (optional) | The tool's hook settings | ③ Nothing | `my-curator install-hooks <tool>` on each computer (source install) | The row's hooks mark reads *not wired (optional)* — never a to-fix line |
 | **Tools you added** to Setup, and custom tools | This computer's app settings | ③ Nothing | **+ Add a tool** again on the other computer | The tool is simply not listed there |
@@ -5868,7 +5898,7 @@ of its three folds with a small grey tag naming its route: **Tools** — *set up
 | # | Do this | When | How | How to check | Where Setup shows it |
 |---|---|---|---|---|---|
 | 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent tool, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update | **Computers** fold: the Curator version each computer last saved with (*not recorded* for a save made before v3.77.0) |
-| 2 | **The Curator's MCP configured in every agent tool** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop, Cursor, Antigravity (Mac): **Settings → MCP bridge → Agent apps → Install for me**. Other tools: **+ Add a tool** in Setup, then **Copy MCP entry** in its guide (or **Copy** on its row in Connect your agent apps), pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | **Tools** fold: the row's **MCP** mark, and step ① of its guide. A to-fix line for a broken file or a stale entry |
+| 2 | **The Curator's MCP configured in every agent tool** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop, Cursor, Antigravity (Mac): **Settings → MCP bridge → Your AI apps → Install for me**. Other tools: **+ Add a tool** in Setup, then **Copy MCP entry** in its guide (or **Copy** on its row in Connect your agent apps), pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | **Tools** fold: the row's **MCP** mark, and step ① of its guide. A to-fix line for a broken file or a stale entry |
 | 3 | **Both skills, current, in every agent tool** | Once per tool, per computer — and again after every release that changes a skill | Download the two `.zip` files from step ② of the tool's guide, or copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders, to where that tool reads skills (below) | Ask *"what skills are available?"* | **Tools** fold: the row's **skills** mark, and step ② of its guide. A to-fix line when a skill is older than the app's copy, or one of the two is missing; *can't check here* for skills held by your Claude account |
 | 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | **Copy agent instructions** for **this** project (Project context's header, or **Copy instructions** in Setup), paste at the very top of each file, then commit and push | The agent's first reply names the rules from your brief | **Repository on this computer**: each file's state — *block current · at the top*, *no Curator block*, *names ‹other project›*, *block outdated*, *block past what it reads*. Press a file to read it, block framed |
 | 5 | **Commit `.curator-project`** | Once per project repository | **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it. Setup's to-fix line hands you one command that does all three | `git ls-files .curator-project` prints the name | **Repository on this computer**: *names ‹project› · committed and pushed*, or a to-fix line — missing, names another project, not committed, not pushed |
@@ -5888,7 +5918,7 @@ scope. A computer still on an older version plays by the older rules. After an u
 reopen each agent tool: a bridge that was already running keeps running the old code
 ([§16, Version and updates](#version-and-updates)).
 
-**2 — The MCP, per tool.** On a Mac, **Settings → MCP bridge → Agent apps → Install for me**
+**2 — The MCP, per tool.** On a Mac, **Settings → MCP bridge → Your AI apps → Install for me**
 writes the entry for **Claude Desktop, Cursor and Antigravity** for you (preview first, original
 kept, one-click **Remove** and **Restore original** — see [what it writes](#connecting-your-tools-install-for-me-v3850)).
 On Windows it does the same for **Claude Desktop only** (new in v3.86.0; it refuses and tells you
@@ -5911,7 +5941,7 @@ missing one is incomplete.
 
 | Tool | Where the skills go | Keeping them current |
 |---|---|---|
-| Claude app (Desktop, or the web) | Uploaded by hand ([MCP guide](mcp-user-guide.md#install--claude-desktop)) | Re-upload after each release that changes a skill. Nothing checks this for you |
+| Claude app (Desktop, or the web) | Uploaded by hand to your Claude account: **Customize → Skills** → **+** → upload the `.zip` from **Settings → MCP bridge → Skills** | Re-upload after each release that changes a skill. Nothing checks this for you |
 | Claude Code | `~/.claude/skills/<skill>/` | Copy the folders again; `diff -r` against the repository's `skills/` folder shows any difference |
 | Antigravity | `~/.gemini/config/plugins/the-curator/skills/<skill>/` (or `~/.gemini/config/skills/`, or `.agents/` in the project) | **Re-copy after each release that changes a skill.** `my-curator doctor` names any file that differs or is missing |
 | opencode | `.agents/skills/<skill>/` in the project (from opencode's documentation) | Copy the folders again |
@@ -6041,7 +6071,7 @@ see things like **Copy instructions**, **Copy marker line**, **Copy the git comm
 pushes it**, **Copy the git command that commits and pushes it, then run `git pull` there**,
 **Reveal AGENTS.md** (opens the exact file in Finder), **Sync now**, **Choose the folder**, **Open
 Connect your agent apps**, or — on a bridge line for Claude Desktop, Cursor or Antigravity (Claude Desktop only, on Windows) — **Install for me**
-(v3.85.0), which opens Settings → MCP bridge → Agent apps, the one place that writes. A line can carry more than one button — for example a missing block offers
+(v3.85.0), which opens Settings → MCP bridge → Your AI apps, the one place that writes. A line can carry more than one button — for example a missing block offers
 **Copy instructions**, **Reveal AGENTS.md** *and* the git command, in that order, because there is
 more than one safe next action. A note that names a bad config file (below) also says what to do
 about *that* file specifically, by name.
@@ -6296,7 +6326,7 @@ its own per-machine settings — the folder you set and the tools you added or n
 **Skills.** For tools whose skills live on this computer (Antigravity; opencode and Claude Code when
 installed locally), each installed file is compared with the copy this app carries. Skills added to
 your Claude account reach the Claude app from the account and leave no local copy, so Claude's row
-says *can't check here*. **Settings → MCP bridge → Agent apps** offers `my-curator.zip` and
+says *can't check here*. **Settings → MCP bridge → Your AI apps** offers `my-curator.zip` and
 `curator-continuity.zip` of the current skills for that upload (the Mac app ships the skills since
 v3.77.0).
 
@@ -6581,7 +6611,7 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 | **General** | Four blocks: **Software update** (first), **Appearance** (theme / text size / menu bar), **System check**, **Setup guide** |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read what chat starts on, browse the whole catalogue ([§16b](#16b-choosing-your-ai-model)) |
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
-| **MCP bridge** | Agent apps (status, **Install for me**, **Check entry**), Bridge (self-test, Test all tools, default write domain), Agent use, and Across projects |
+| **MCP bridge** | Your AI apps (Next step, **Install for me**, **Test connection**, Details), Skills (download, per-app state), Connection test (**Test connection**, **Test all 24 tools**, default project for writes) and Tool activity |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
 | **Trash** | Deleted domains, projects and handoffs — **Restore** or **Delete forever** ([Trash](#trash), v3.76.0) |
 
@@ -7006,46 +7036,40 @@ version](mac-app.md#going-back-to-an-earlier-version).
 
 ### MCP bridge — connect a client
 
-**Settings → MCP bridge** is four numbered blocks — ① Connect your agent apps, ② Default domain for MCP
-writes, ③ Tool map, ④ Across projects — and the numbers mean what they say: you connect
-an agent app first, and only then can *"which domain does ‘my wiki’ mean?"* be a question you have. (Before
-v3.88.0 there were five blocks; *Connect a client* and *Tools on this Mac* are now one.) There is a [picture of it](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252)
-in §13, captioned as predating v3.88.0.
+**Settings → MCP bridge** (since v3.90.0) is an overview and four numbered sections — **① Your AI
+apps**, **② Skills**, **③ Connection test**, **④ Tool activity** — described in full in
+[§13 → Connecting your tools](#connecting-your-tools-install-for-me-v3850). The ⓘ beside ① says it
+works with Claude Desktop, Claude Code, Cursor and Antigravity (any program that runs local MCP
+servers), and that ChatGPT's web app cannot connect because it cannot run a local server — the limit
+is the transport, not the vendor. My Curator is a separate program your AI app starts on demand, so
+The Curator itself need not be running.
 
-Block ① opens with the one fact a newcomer needs — **"Works with any MCP client
-running local servers: Claude Desktop, Claude Code, Cursor."** Under the **ⓘ** beside it: the link to
-the [MCP guide](mcp-user-guide.md), that ChatGPT's web app cannot connect because it cannot run a
-local server (the limit is the transport, not the vendor), and that the bridge is a separate process
-the agent app launches on demand, so The Curator need not be running.
-
-Block ① is the whole connection, top to bottom, and the wizard is long retired:
-
-| Part | What it is |
+| Section | What it is |
 |---|---|
-| **Overview** | *"N connected · N to fix · N not connected"*, with **Install for me** and **Copy it myself** ([how it works](#connecting-your-tools-install-for-me-v3850)) |
-| **One row per agent app** | Its status, its own warning shown unfolded, and a **Files, skills and hooks** fold |
-| **Not on this Mac (N)** | The agent apps not found here, folded, each with **Copy** |
-| **Bridge answers** | A recessed **monitor** (the terminal-like component every live reading uses) with the server name and the knowledge folder the bridge is pointed at, and **Run self-test**, which spawns the bridge exactly the way an app's saved entry does and reports the tool count and how many domains it can see |
+| **① Your AI apps** | **Check again**; a **Next step** card only when something needs doing (**Install for me**, **Copy the setup text**); one row per AI app: one sentence, at most one button, and a **Details** fold |
+| **② Skills** | One row per skill, **Download ‹skill›.zip**, and each AI app's copy: *up to date*, *out of date* or *not installed* |
+| **③ Connection test** | **Test connection** (starts My Curator the way your AI apps do), **Test all 24 tools**, one result line, **Details**, **Default project for writes** |
+| **④ Tool activity** | The last time an AI app started My Curator, the five busiest tools this week, and **All 24 tools** with one plain line each |
 
-Three things here are **never** folded, because two are outcomes of something you just did and the
-third is a warning: the **self-test result**, the **stale-bridge warning** on an app's row
-([what it means](#connecting-your-tools-install-for-me-v3850)) and any inline error. The remedy sentence
-comes from the app itself so it can never drift from what the code can actually do.
+Never folded: the result of what you just pressed, and anything that needs you (it is in the Next
+step card). Before v3.90.0 the page also had *Across projects* (handoffs per project); handoffs are
+project memory and the **Context** page shows them.
 
 Full walkthrough: [mcp-user-guide.md](mcp-user-guide.md).
 
 ### Default domain for MCP writes
 
-Block ②. When you talk to Claude Desktop via My Curator MCP and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to use. **Settings → MCP bridge → Default domain for MCP writes** sets that fallback. Its lede is exactly that one line — *"Used when a client says ‘my wiki’ without naming a domain."*
+In ③ Connection test, the **Default project for writes** fold. When you talk to Claude Desktop via My
+Curator and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to
+use: *"When an AI app says "save this to my wiki" without naming a domain, it goes to:"* — pick a
+domain, or leave it on **Ask every time**, which makes the AI app name the domain.
 
-Pick a domain from the dropdown, or leave it on *"— none (require an explicit domain) —"*. Claude's write tools will use it whenever you don't specify; if it's unset, Claude must explicitly ask you which domain to write to.
-
-> Multi-domain users: leaving this unset is the safer default — every MCP write requires you to confirm the domain, and that is what the block's **ⓘ** says: a mis-aimed compile writes its pages into the wrong wiki, and nothing about that is obvious afterwards. Single-domain users can set the default for smoother conversation flow.
+> Multi-domain users: **Ask every time** is the safer default — a mis-aimed compile writes its pages into the wrong wiki, and nothing about that is obvious afterwards. Single-domain users can set the default for smoother conversation flow.
 
 ### The tool map — what your agents used
 
-Block ③, under the same hairline. Where blocks ① and ② are about *connecting* the bridge, this
-one is about what has actually happened over it since — every tool call any client has made,
+Section ④, *Tool activity*. Where ①–③ are about *connecting* your AI apps, this one is about
+what has actually happened since — every tool call any client has made,
 one small local log.
 
 **Privacy first, because that is the question a log like this raises before anything else does:**
@@ -7085,14 +7109,12 @@ last 5 days — the log begins 20 Sep"* when it is younger — the same words Ag
 Each tile's *"N uses · 7 days"* follows the same rule (*"· 5 days"*), and the tools nobody called are
 *"not called by an agent in the last 5 days"*, never "this week".
 
-**Across projects** (block ④), the block's own depth bar, reads the same figure the Mac menu bar widget's
-own Projects section shows, one bar per project, scaled to the busiest project. Since v3.88.0 each
-project row shows its **saves** (handoffs saved, read from the handoff journals) and the time of its
-**last save**, and the bar shows saves. Both readings in the block, saves per project and saves per agent
-app beneath them, are counted over the **same last 7 days**, and that window is stated once, in the
-block's opening line (*"Last 7 days: …"*, or *"Last 5 days (records begin 27 Oct)"* when the records are
-younger). A trailing **+** means *at least*: a long journal was read only from its newest part. Projects
-with no save in the window share one line, *"No save: early-computing / lecture-series, posts / ott"*.
+**Since v3.90.0** this is section **④ Tool activity**: *"Which of My Curator's 24 tools your AI apps
+used in the last 7 days. Tests are not counted."* Its reading shows *last time an AI app started My
+Curator* and the five busiest tools, then *"N tools not used this week."*; the closed **All 24 tools**
+fold lists every tool with one plain line of what it does and *"N uses · last ‹age›"* or *"not used
+this week"*. The older tiles, session readings and *Across projects* described above are gone from
+this page (handoffs are on the Context page).
 
 #### "Test all 24 tools" — lighting the map yourself
 

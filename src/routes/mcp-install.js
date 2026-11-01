@@ -732,7 +732,10 @@ export async function checkEntryHandler(req, res) {
         continue;
       }
       if (!vet.ok) {
-        results.push({ file: f.display, ran: false, starts: false, code: vet.code, message: vet.message });
+        // v3.90.0 — `path`: the missing file a launch_file_missing refusal names, so
+        // the page can say which file is gone without reading the message.
+        results.push({ file: f.display, ran: false, starts: false, code: vet.code, message: vet.message,
+          ...(typeof vet.path === 'string' && vet.path ? { path: vet.path } : {}) });
         continue;
       }
       const out = await (_checkRunner || runEntryCheck)(vet);

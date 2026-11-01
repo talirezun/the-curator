@@ -119,17 +119,17 @@ function compliantPage(over) {
   const mon = renderMonitor({ lines: [{ key: 'tools', value: '24' }], note: 'A monitor\'s own note.', ...(o.monitorExtra || {}) });
   const card1 = K.renderCard(
     K.renderControlRow('<button class="btn btn-secondary" id="b1">Check again</button>') +
-    K.renderActionCard({ eyebrow: 'NEXT STEP', chipsHtml: K.actionChip({ label: 'Install for me', cost: 'nothing to add' }),
-      runHtml: 'Runs on this Mac.', footnoteHtml: renderDescription('Writes only the my-curator entry.') }) +
+    K.renderActionCard({ eyebrow: 'Next step · 1 to do', eyebrowCase: 'sentence', chipsHtml: K.actionChip({ label: 'Install for me' }),
+      runHtml: 'Runs on this Mac.', footnoteHtml: renderDescription('Install for me changes only The Curator’s own line.') }) +
     K.renderFoldRows(K.renderFoldRow({ key: 'app', label: 'Claude Desktop', meta: 'connected', bodyHtml:
-      K.renderFoldItem({ main: '~/Library/x.json', meta: 'has the entry', actionHtml: '<button class="btn btn-ghost">Remove</button>' }) })) +
+      K.renderFoldItem({ main: '~/Library/x.json', meta: 'has The Curator’s line', actionHtml: '<button class="btn btn-danger btn-xs">Remove</button>' }) })) +
     (o.cardTail || ''));
   const card2 = K.renderCard(mon + renderDescription('The card\'s last line.'));
   return renderViewHeader({ eyebrow: 'configuration', title: 'MCP bridge' }) +
     renderOverview({ id: 'mcp-ov', eyebrow: 'OVERVIEW', cards: [{ label: 'CONNECTED', value: '3' }] }) +
     head(1, 'Agent apps', 'checked just now') + card1 +
     (o.between || '') +
-    head(2, 'Bridge', 'self-test 37 min ago') + card2 +
+    head(2, 'Connection test', 'last test 37 min ago') + card2 +
     (o.after || '');
 }
 {
@@ -161,6 +161,20 @@ function compliantPage(over) {
   red('a mono span inside a sentence',
     compliantPage({ cardTail: '<p class="tx-desc">Paste into <span class="mono">~/.cline/mcp.json</span> now.</p>' }), 'mono span inside a sentence');
   red('a section with two cards', compliantPage({ after: K.renderCard('x') }), 'column sequence');
+  // v3.90.0 — the copy deck's principles, one positive control each.
+  red('a ghost button (reads as plain text)', base.replace('class="btn btn-secondary" id="b1"', 'class="btn btn-ghost" id="b1"'), 'not a real button');
+  red('a bare link', compliantPage({ cardTail: '<a href="/x">Download</a>' }), 'link that is not a real button');
+  red('a span with an action hook', compliantPage({ cardTail: '<span data-mcpi-act="copy">Copy</span>' }), 'clickable element that is not a <button>');
+  red('"entry" on screen', base.replace('has The Curator’s line', 'has the entry'), 'mechanism word on screen ("entry")');
+  red('"bridge" outside the title', base.replace("'Connection test'", "'Bridge'").replace('Connection test', 'Bridge'), 'mechanism word on screen ("bridge")');
+  red('"launcher" on screen', compliantPage({ cardTail: '<p class="tx-desc">The launcher is missing.</p>' }), 'mechanism word on screen ("launcher")');
+  red('an ALL-CAPS eyebrow', base.replace('Next step · 1 to do', 'NEXT STEP · 1 TO DO'), 'ALL-CAPS text outside the overview');
+  ok(checkPageContract(compliantPage({ cardTail: '<pre class="mono">{"command": "/x/launcher"}</pre>' }), MCP_CONTRACT).length === 0,
+    'NEGATIVE CONTROL — the exact setup text in a <pre> is data, not a mechanism word');
+  ok(checkPageContract(base, MCP_CONTRACT).every((x) => !/ALL-CAPS/.test(x)) && /CONNECTED/.test(base),
+    'NEGATIVE CONTROL — the overview\'s own figure labels are uppercase and pass');
+  ok(checkPageContract(base, MCP_CONTRACT).every((x) => !/"bridge"/.test(x)) && /MCP bridge/.test(base),
+    'NEGATIVE CONTROL — "MCP bridge" in the page title passes');
   // NEGATIVE controls: the exemptions are exemptions, not holes.
   ok(checkPageContract(base, MCP_CONTRACT).every((x) => !x.includes('tx-vh-info')),
     'the ⓘ mark in a head is not "a button outside every card"');
@@ -257,7 +271,8 @@ function mcpArms() {
   const mi = (over) => ({ ...b().mcpInstall, ...over });
   const data = (over) => ({ ...b().mcpInstall.status.data, ...over });
   const allOpen = { 'app-claude-desktop': true, 'app-antigravity': true, 'app-cursor': true, 'app-cline': true, 'mcpi-notfound': true,
-    'bridge-answers': true, 'default-domain': true, 'all-tools': true, 'no-save': true, 'saves-per-app': true };
+    'app-details-claude-desktop': true, 'app-details-antigravity': true, 'app-details-cursor': true,
+    'skill-my-curator': true, 'skill-curator-continuity': true, 'bridge-answers': true, 'default-domain': true, 'all-tools': true };
   const plan = { action: 'install', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', action: 'add', basis: 'absent',
     entryText: '{\n  "command": "/x/launcher"\n}', preserved: [] }, { id: 'claude-desktop', label: 'Claude Desktop',
     file: '~/Library/Application Support/Claude/claude_desktop_config.json', action: 'update', basis: 'abc', entryText: '{}', preserved: ['github'],
@@ -269,7 +284,7 @@ function mcpArms() {
     ['every fold open', b({ setupMachineFolds: allOpen })],
     ['the install preview', b({ mcpInstall: mi({ plan }) })],
     ['the results', b({ mcpInstall: mi({ results }) })],
-    ['a copy confirmation and an install error', b({ mcpInstall: mi({ copied: 'The entry copied.', error: 'Could not reach The Curator.' }) })],
+    ['a copy confirmation and an install error', b({ mcpInstall: mi({ copied: 'Setup text copied. Save as ~/.cursor/mcp.json.', error: 'Could not reach The Curator.' }) })],
     ['Check entry outcomes', b({ mcpChecks: { 'claude-desktop': { result: { results: [{ file: '~/a.json', ran: true, starts: true, toolCount: 24 }] } },
       antigravity: { result: { results: [{ file: '~/b.json', ran: false, starts: false, code: 'not_allowed', message: 'No.' }] } } } })],
     ['everything connected', b({ mcpInstall: mi({ status: { data: data({ counts: { connected: 1, toFix: 0, notConnected: 0 }, notFound: [],
@@ -331,8 +346,8 @@ section('§4  THE MCP PAGE\'S GUARD, PROVED BY MUTATING THE REAL CODE (PROPOSAL 
   const real = renderMcpPage(baseState({ setupMachineFolds: { 'bridge-answers': true } })).column;
   ok(/class="cur-ov settings-ov-section"/.test(real) && (real.match(/class="cur-section-head"/g) || []).length === 4
     && (real.match(/<div class="cur-card"/g) || []).length === 4 && /id="btn-mcp-self-test"/.test(real) && /class="cur-action"/.test(real)
-    && /class="cur-mon/.test(real) && /class="tx-desc/.test(real),
-  'CONTROL — the real page holds the overview, four heads, four cards, the self-test button, the action card, a monitor and a footnote');
+    && /class="cur-mon/.test(real) && /class="tx-desc/.test(real) && /class="cur-section-foot"/.test(real),
+  'CONTROL — the real page holds the overview, four heads, four cards, the self-test button, the action card, a monitor, a footnote and the closing line');
   const mutant = (label, from, to, needle) => {
     ok(SETTINGS_SRC.includes(from), label + ': the code being mutated exists (the mutation is not vacuous)');
     const v = checkPageContract(renderMcpPage(baseState(), { source: SETTINGS_SRC.replace(from, to) }).column, MCP_CONTRACT);
@@ -341,22 +356,83 @@ section('§4  THE MCP PAGE\'S GUARD, PROVED BY MUTATING THE REAL CODE (PROPOSAL 
   // (a) a floating footnote: the default-domain consequence printed BETWEEN
   // sections ② and ③ instead of as its fold body's last line.
   mutant('(a) a footnote floated between two cards',
-    "    + mcpSection(3, 'use',", "    + renderDescription(MCP_DOMAIN_CONSEQUENCE) + mcpSection(3, 'use',", 'unclassified block in the column');
+    "    + mcpSection(4, 'use',", "    + renderDescription('A floating foot.') + mcpSection(4, 'use',", 'unclassified block in the column');
   // (b) the self-test button moved out of its card's control row, between sections.
   mutant('(b) the self-test button moved out of its card',
-    "    + mcpSection(2, 'bridge',", "    + '<div><button type=\"button\" class=\"btn btn-secondary\" id=\"btn-mcp-self-test\">Run self-test</button></div>' + mcpSection(2, 'bridge',",
+    "    + mcpSection(3, 'bridge',", "    + '<div><button type=\"button\" class=\"btn btn-secondary\" id=\"btn-mcp-self-test\">Test connection</button></div>' + mcpSection(3, 'bridge',",
     'button outside every card');
   // (b2) the footnote inside a card, but no longer its last line.
   mutant('(b2) the Next step footnote moved above the fold rows',
-    "  return control + (notes.length ? '<div class=\"cur-card-notes\">' + notes.join('') + '</div>' : '') + folds;",
+    "  return control + (line ? '<div class=\"cur-card-notes\">' + line + '</div>' : '') + folds;",
     "  return control + renderDescription('A floating foot.') + folds;", 'not the last line');
   // (c) an inline margin on a card.
   mutant('(c) an inline margin', "'<div class=\"cur-card\" id=\"mcp-card-' + key + '\"'",
     "'<div class=\"cur-card\" style=\"margin-top:8px\" id=\"mcp-card-' + key + '\"'", 'inline style');
   // (d) the Bridge monitor given its old head word back.
-  mutant('(d) the Bridge monitor given a head', "    label: 'This bridge',", "    label: 'This bridge', head: { stateWord: 'Not tested yet', tone: 'quiet' },", 'a monitor with a head');
+  mutant('(d) the Tool activity monitor given a head', "label: 'Tool activity', keys: 'identifier',", "label: 'Tool activity', head: { stateWord: 'Not tested yet', tone: 'quiet' }, keys: 'identifier',", 'a monitor with a head');
   // (e) a page-private class back on a section.
   mutant('(e) a page-private class', "renderCard(innerHtml)", "renderCard(innerHtml, { hostClass: 'mcp-busiest' })", 'forbidden class: .mcp-busiest');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§5  THE COPY DECK\'S PRINCIPLES, PROVED BY MUTATING THE REAL CODE (v3.90.0)');
+// ═════════════════════════════════════════════════════════════════════════
+// Each check is proved the way §4's are: the real page passes; the real code,
+// edited back toward v3.89.0's shapes, goes red by name. mcp-install.js is a
+// module, so its mutants are loaded from a temporary copy of the file.
+{
+  const { readFileSync: rf, writeFileSync: wf, mkdtempSync, copyFileSync, rmSync, mkdirSync } = await import('node:fs');
+  const os = await import('node:os');
+  const MI_PATH = join(ROOT, 'src/public/next/views/mcp-install.js');
+  const MI_SRC = rf(MI_PATH, 'utf8');
+  const open = { 'app-claude-desktop': true, 'app-antigravity': true, 'app-cursor': true, 'app-cline': true, 'mcpi-notfound': true,
+    'app-details-claude-desktop': true, 'app-details-antigravity': true, 'skill-my-curator': true, 'all-tools': true };
+  const st = () => baseState({ setupMachineFolds: open, mcpInstall: { ...baseState().mcpInstall, copied: 'Setup text copied. Paste into ~/.cursor/mcp.json inside "mcpServers".' } });
+  const real = renderMcpPage(st()).column;
+  ok(checkPageContract(real, MCP_CONTRACT).length === 0, 'CONTROL — the real page, every fold open, passes the deck checks',
+    checkPageContract(real, MCP_CONTRACT).join(' | '));
+  ok(/class="btn btn-danger btn-xs" data-mcpi-act="remove"/.test(real) && /<a class="btn btn-secondary btn-xs" href="\/api\/setup\/skills\/my-curator.zip"/.test(real)
+    && /Next step · 2 to do/.test(real) && /Test connection/.test(real),
+  'CONTROL — the real page holds Remove (danger), a Download link as a button, the sentence-case eyebrow and Test connection (the checks are not vacuous)');
+  const dir = mkdtempSync(join(os.tmpdir(), 'curator-contract-'));
+  // A copy of the views/shared tree the module imports, so its relative imports resolve.
+  const SHARED = join(ROOT, 'src/public/next/shared');
+  mkdirSync(join(dir, 'views'));
+  mkdirSync(join(dir, 'shared'));
+  for (const f of (await import('node:fs')).readdirSync(SHARED)) if (f.endsWith('.js')) copyFileSync(join(SHARED, f), join(dir, 'shared', f));
+  let n = 0;
+  const miMutant = async (label, from, to, needle) => {
+    ok(MI_SRC.includes(from), label + ': the code being mutated exists (the mutation is not vacuous)');
+    const file = join(dir, 'views', 'mcp-install-' + (++n) + '.js');
+    wf(file, MI_SRC.replace(from, to));
+    const M = await import(file);
+    const v = checkPageContract(renderMcpPage(st(), { deps: { renderAgentApps: M.renderAgentApps, renderSkills: M.renderSkills } }).column, MCP_CONTRACT);
+    ok(v.some((x) => x.includes(needle)), label + ' → red, by name ("' + needle + '")', v.join(' | ') || '(no violation)');
+  };
+  try {
+    // (f) every action is a real button: the shared secondary button back to v3.89.0's ghost.
+    await miMutant('(f) the per-app buttons drawn as ghosts again', "const btnS = (act, label, extra = '') => '<button type=\"button\" class=\"btn btn-secondary btn-xs\"",
+      "const btnS = (act, label, extra = '') => '<button type=\"button\" class=\"btn btn-ghost btn-xs\"", 'not a real button');
+    // (g) a Download that is a bare link.
+    await miMutant('(g) a skill download as a bare link', "return '<a class=\"btn btn-secondary btn-xs\" href=\"/api/setup/skills/' + s + '",
+      "return '<a href=\"/api/setup/skills/' + s + '", 'link that is not a real button');
+    // (h) a mechanism word back on screen: v3.89.0's "Copy entry".
+    await miMutant('(h) "Copy entry" back on the per-app button', "const copyBtn = m.copy ? btnS('copy', 'Copy the setup text', tid) : '';",
+      "const copyBtn = m.copy ? btnS('copy', 'Copy entry', tid) : '';", 'mechanism word on screen ("entry")');
+    // (i) ALL-CAPS outside the overview: v3.89.0's "NEXT STEP · N TO FIX".
+    await miMutant('(i) the Next step eyebrow in capitals again', "eyebrow: 'Next step · ' + items.length + ' to do',",
+      "eyebrow: 'NEXT STEP · ' + items.length + ' TO DO',", 'ALL-CAPS text outside the overview');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // (j) a mechanism word in settings.js: the v3.89.0 section title.
+  const mutantS = (label, from, to, needle) => {
+    ok(SETTINGS_SRC.includes(from), label + ': the code being mutated exists (the mutation is not vacuous)');
+    const v = checkPageContract(renderMcpPage(baseState(), { source: SETTINGS_SRC.replace(from, to) }).column, MCP_CONTRACT);
+    ok(v.some((x) => x.includes(needle)), label + ' → red, by name ("' + needle + '")', v.join(' | ') || '(no violation)');
+  };
+  mutantS('(j) section ③ called "Bridge" again', "mcpSection(3, 'bridge', 'Connection test',", "mcpSection(3, 'bridge', 'Bridge',", 'mechanism word on screen ("bridge")');
+  mutantS('(k) "Run self-test" said as "Start the launcher"', "(busy ? 'Testing…' : 'Test connection')", "(busy ? 'Testing…' : 'Start the launcher')", 'mechanism word on screen ("launcher")');
 }
 
 console.log('\n' + '─'.repeat(60));

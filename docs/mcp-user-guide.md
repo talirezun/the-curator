@@ -175,11 +175,11 @@ A frontier model can always get the full picture — it just has to ask in piece
 checks the tools it can find, shows you exactly what it would write, keeps a copy of your original
 file, and changes nothing but its own `my-curator` entry.
 
-1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Agent apps**): an overview, then one row per agent app found on this computer. Press **Install for me** there.
-2. Tick the tools you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Plan ready — nothing written yet** and shows, per file, its path, the exact entry, the names of your other servers (which stay unchanged), and the name of the backup it will keep.
-3. Click **Apply**. One result line per file stays on screen, for example *"Cursor — added to ~/.cursor/mcp.json · original kept · restart Cursor"*.
-4. **Fully quit and reopen the tool** (⌘Q for Claude Desktop — closing the window is not enough). A tool reads its list of MCP servers only when it starts. If Claude Desktop is running when you apply, the preview says so: quit it first for the safest install, because it rewrites its own file.
-5. Click **Check again** — the tool's row should read **connected**. Then, in Claude Desktop:
+1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Your AI apps**): a **Next step** card when something needs doing, then one row per AI app found on this computer.
+2. Tick the apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Check the change · nothing written yet** and shows, per file, *‹app› — ‹path›*, **Adds:** with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›*.
+3. Click **Apply**. One result line per file stays on screen, for example *"✓ Cursor is set up. Quit Cursor completely and open it again to use My Curator. (⌘Q — closing the window is not enough)"*.
+4. **Fully quit and reopen the app** (⌘Q on a Mac; on Windows right-click its icon by the clock → Quit). An AI app reads its list of MCP servers only when it starts. Claude Desktop rewrites its own file, so quitting it first is the safest install.
+5. Click **Check again** — the app's row should read **connected**; open it and press **Test connection** (*"Works — My Curator starts the way Claude Desktop starts it and answers with all 24 tools."*). Then, in Claude Desktop:
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
 
@@ -191,7 +191,7 @@ file, and changes nothing but its own `my-curator` entry.
 | **Windows** | Claude Desktop, labelled **New on Windows — tell us if it works** | Every other tool |
 | **Linux** | Nothing | Every tool |
 
-A copy-only row has a **Copy** button and a line saying where to put the entry.
+A copy-only row says *"‹app› can't be set up automatically yet. Copy the setup text and paste it into ‹file›, inside "mcpServers"."* with a **Copy the setup text** button.
 
 > **On Windows (new in v3.86.0 — please tell us if it works).** Claude Desktop keeps its settings
 > file in one of several folders, shown as `%LOCALAPPDATA%\…` or `%APPDATA%\…`. The app writes only into
@@ -251,21 +251,23 @@ A tool whose file is not JSON (TOML or YAML) gets the snippet as that tool write
 A rewrite saves the whole file with its existing indentation, so a compact one-line object can end
 up spread over several lines. The values are identical, and the backup keeps the original bytes.
 
-### The status card (block ①)
+### The page, section by section (v3.90.0)
 
-Block ① writes nothing. **The connection reads as a monitor (v3.65.0)**: a recessed, terminal-like
-panel carrying one fact per line — the client, the server name, and the knowledge folder the bridge
-is pointed at — with the connection's state as a word above them (**Configured**, **Needs an
-update**, **Not connected**, or **Config unreadable**) and two buttons beneath it, **Install in
-your tools** and **Run self-test**. (The older wizard, with its Re-connect, View config and Copy
-snippet buttons, was retired in v3.85.0.) Pressing **Run self-test** paints a *second* monitor
-underneath, headed **Bridge self-test**, reporting whether the bridge responded, how many tools it
-exposes and how many domains it can see. The screenshot below was taken before v3.85.0 and still
-shows the retired buttons:
+| Section | What you see |
+|---|---|
+| **Overview** | **CONNECTED** · **NEEDS ATTENTION** · **TOOLS WORKING** (*24 of 24* from the last test) · **LAST USED** (when an AI app last used a tool; tests do not count) |
+| **① Your AI apps** | **Check again**; a **Next step · N to do** card only when something needs doing; one row per AI app — one sentence, at most one button (**Test connection** or **Copy the setup text**), and a **Details** fold with each settings file that exists, **Remove** (red) and **Restore original** |
+| **② Skills** | `my-curator` and `curator-continuity`: **Download ‹skill›.zip**, and each AI app's copy — Claude's is uploaded to your account (**Customize → Skills**), Antigravity's is *up to date*, *out of date* or *not installed*, with **Show the folder**. Skills don't update on their own |
+| **③ Connection test** | **Test connection**, **Test all 24 tools**, one result line (*"Works. …"* / *"Not working: …"*), **Details** (version, knowledge folder, how many are open right now), **Default project for writes** |
+| **④ Tool activity** | The last time an AI app started My Curator, the five busiest tools this week, *N tools not used this week*, and **All 24 tools** |
+
+The page writes nothing on its own: only **Install for me**, **Remove** and **Restore** change an
+app's settings file, always after a preview and a backup. **Test connection** starts My Curator the
+way the app's settings start it and writes nothing. The screenshot below predates v3.85.0:
 
 ![Settings → MCP bridge on the demo workspace. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The main column reads CONFIGURATION over MCP bridge. (Screenshot predates v3.88.0.) Step 1, Connect a client: 'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.' over a recessed monitor reading CONFIGURED, CLIENT Claude Desktop, SERVER my-curator and DOMAINS /tmp/curator-demo-…/domains, then Re-run setup (filled), Run self-test, View config and Copy snippet. Step 2, Default domain for MCP writes, with a picker reading '— none (require an explicit domain) —' and a line on what leaving it unset means. Step 3, Tool map: 'What your agents used, and when — kept on this machine only.', a Test all 24 tools button, a monitor with LAST SESSION START 38 min ago and LAST SAVE 8 min ago, and BUSIEST · LAST 5 DAYS · AGENTS ONLY — get_project_context 8, save_working_state 7, search_wiki 7.](images/curator-mcp-bridge.png)
 
-**A stale bridge is reported on the agent app's own row (v3.88.0).** When an agent app still has a bridge process
+**An older connection is reported on the AI app's own row (v3.88.0; v3.90.0 words: *"‹app› is still using the previous version of My Curator. Quit ‹app› completely and open it again."*).** When an agent app still has a bridge process
 open from before your last update, a warning line appears on that app's row, in its
 own colour, naming the app that opened the bridge and the exact quit step. It appears **only when the
 tool list differs** (each bridge records its pid, version and a signature of its tool list). The same
@@ -358,7 +360,12 @@ You should see `my-curator` in the list. Edits to the file take effect mid-sessi
 
 ### Install — Claude Desktop
 
-Claude Desktop doesn't have first-class "skills" yet, but you can use the same content via the **Project knowledge** mechanism in any Claude Desktop project:
+**Since v3.90.0:** download `my-curator.zip` from **Settings → MCP bridge → Skills** and upload it to
+your Claude account in Claude: **Customize → Skills** → **+** → upload the `.zip`. Claude Desktop and
+Claude Code then read the same copy. Skills don't update on their own: download and upload again
+after a release that changes the skill.
+
+The older way, still working, is the **Project knowledge** mechanism in any Claude Desktop project:
 
 1. In Claude Desktop, open the project where you do most of your second-brain work (or create one — *e.g.* `My Second Brain`).
 2. Open **Project knowledge**.
@@ -793,7 +800,7 @@ Composing every answer from raw source text instead of the compiled wiki would q
 | | **Source install** (git checkout) | **The packaged Mac app** |
 |---|---|---|
 | The entry Claude Desktop gets | your Node binary, `mcp/server.js`, **and `--domains-path <your folder>`** | a small launcher script the app writes for itself, with **no arguments at all** |
-| Move the knowledge folder | **The entry goes stale.** The tool's row in **Settings → MCP bridge → Agent apps** reads **needs an update**: click **Install for me**, then restart Claude Desktop. The status card shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
+| Move the knowledge folder | **The entry goes stale.** The tool's row in **Settings → MCP bridge → Your AI apps** reads **needs an update**: click **Install for me**, then restart Claude Desktop. The status card shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
 | Move the app itself | Rebuild the Dock launcher (`bash scripts/build-app.sh`) | The launcher script is **regenerated at every app launch**, so it repairs itself — with one honest gap: between moving the app and next opening it, the script still names the old location for one session. Launching The Curator once fixes it |
 
 The flag was dropped in the app deliberately. It is a **snapshot** taken when the config was written, and it outranks your live Settings choice — so under the app it would silently point the bridge at a folder you had already moved on from. The source install keeps it, equally deliberately: removing it there would mark every existing user's config stale overnight.

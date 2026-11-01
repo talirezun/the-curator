@@ -136,6 +136,24 @@ const CC_MACHINE = {
     S.machineRowVerdicts({ ...CC_MACHINE, bridge: { state: S.STATES.FIX, via: 'readAlso', word: 'reads a different knowledge folder' } }, HOME).connectedVia === null);
   ok('no machine row → nothing', JSON.stringify(S.machineRowVerdicts(null)) === JSON.stringify({ skill: null, connectedVia: null, named: false }));
 
+  // v3.90.0 — Settings › MCP bridge › ② Skills: each skill, one line per AI app.
+  const CD_MACHINE = { id: 'claude-desktop', label: 'Claude Desktop', skills: { state: S.STATES.CANT, installed: [], roots: [] }, files: [] };
+  const CC_LOCAL = { ...CC_MACHINE, skills: { state: S.STATES.OK, roots: [path.join(HOME, '.claude')],
+    installed: [{ skill: 'curator-continuity', dir: path.join(HOME, '.claude/skills/curator-continuity'), match: true, differs: [], missing: [] }] } };
+  const NO_SKILLS = { id: 'cursor', label: 'Cursor', skills: { state: S.STATES.CANT, installed: [], roots: [] }, files: [] };
+  const by = S.skillsByName([CD_MACHINE, CC_MACHINE, AG_MACHINE, NO_SKILLS]);
+  eq('skillsByName: one entry per skill this app carries, in order', by.map((x) => x.skill).join(','), 'my-curator,curator-continuity');
+  const mc = by[0];
+  eq('…Claude Desktop and Claude Code (account-held, no local copy) are ONE "Claude" line, first', mc.apps.map((a) => a.label + ':' + a.kind).join(','), 'Claude:account,Antigravity:folder');
+  eq('…Antigravity’s stale copy is "outdated", with its folder', mc.apps[1].state + ' ' + mc.apps[1].dir, 'outdated ' + SKILL_DIR);
+  ok('…an app with no known skill folder is left out (Cursor)', !mc.apps.some((a) => a.id === 'cursor'));
+  eq('…"0 of 1 apps up to date": only folder apps are counted', mc.upToDate + ' of ' + mc.checkable, '0 of 1');
+  eq('…an app whose folder lacks the skill reads "not-installed"', by[1].apps.find((a) => a.id === 'antigravity').state, 'not-installed');
+  const local = S.skillsByName([CD_MACHINE, CC_LOCAL]);
+  eq('a Claude Code with a LOCAL copy of a skill is its own folder line for that skill', local[1].apps.map((a) => a.id + ':' + a.state).join(','), 'claude:unknown,claude-code:current');
+  eq('…and for the skill it has no local copy of, it is the account line', local[0].apps.map((a) => a.id).join(','), 'claude');
+  eq('nothing in → each skill with no apps', JSON.stringify(S.skillsByName([]).map((x) => x.apps.length)), '[0,0]');
+
   const V = R.rowVerdict;
   eq('rowVerdict: connected + nothing to fix → connected', V({ status: 'connected' }).verdict, 'connected');
   eq('rowVerdict: connected + an outdated skill → to-fix', V({ status: 'connected', skill: {} }).verdict, 'to-fix');

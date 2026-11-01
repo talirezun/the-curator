@@ -64,11 +64,11 @@ function extractConst(src, name) {
 }
 
 export const PAGE_FUNCTIONS = ['renderMcp', 'mcpSection', 'mcpOverviewHtml', 'mcpInstallCtx', 'metaAge', 'appsMetaWords',
-  'bridgeMetaWords', 'agentUseMetaWords', 'acrossMetaWords', 'renderAgentAppsCard', 'renderBridgeCard', 'renderExerciseOutcome',
-  'renderToolMapBody', 'renderAcrossProjectsBody', 'installRevealPaths', 'installMachineFiles', 'currentBridgeFacts', 'lastSelfTest',
-  'lastExerciseRun', 'installWords', 'installPlatform', 'ageSecondsOf', 'usageWindowWords', 'footWindowWords', 'agentReading',
-  'tickedAgeHtml', 'sessionLine', 'adaptProjects', 'acrossWindowWords', 'windowDaysWords', 'logWindowWords'];
-const CONSTS = ['mcpMetaAges', 'AGENT_USE_TOP', 'ACROSS_PROJECTS_MAX_ROWS', 'MCP_DOMAIN_CONSEQUENCE'];
+  'bridgeMetaWords', 'agentUseMetaWords', 'skillsMetaWords', 'renderAgentAppsCard', 'renderBridgeCard', 'renderSkillsCard',
+  'renderToolMapBody', 'installRevealPaths', 'installMachineFiles', 'currentBridgeFacts', 'lastSelfTest',
+  'lastExerciseRun', 'installWords', 'installPlatform', 'ageSecondsOf', 'agentReading',
+  'tickedAgeHtml', 'sessionLine', 'mcpToolCount', 'lastConnectionTest', 'lastAgentUseAt', 'lastAppStartAt'];
+const CONSTS = ['mcpMetaAges', 'AGENT_USE_TOP', 'MCP_LEDE', 'MCP_FOOT', 'SKILLS_LEDE_HTML', 'MCP_DOMAIN_CONSEQUENCE'];
 
 function bodyOf(src) {
   const code = stripComments(src);
@@ -87,6 +87,7 @@ const DEPS = {
   renderStatus, renderDescription, formatAge, freshnessTier, domainIdentityClass, gatedLoader,
   machineWord: MI.machineWord, adaptMachine: MI.adaptMachine, adaptBridges: MI.adaptBridges, tildePath: MI.tildePath,
   renderAgentApps: MI.renderAgentApps, countsFor: MI.countsFor, appRowModels: MI.appRowModels,
+  renderSkills: MI.renderSkills, clockWords: MI.clockWords, renderFoldLine: K.renderFoldLine, renderPageFoot: K.renderPageFoot, renderPageLede: K.renderPageLede,
   renderSectionHead: K.renderSectionHead, renderCard: K.renderCard, renderControlRow: K.renderControlRow,
   renderFoldRows: K.renderFoldRows, renderFoldRow: K.renderFoldRow, renderFoldItem: K.renderFoldItem, renderStatusLine: K.renderStatusLine,
 };
@@ -156,6 +157,22 @@ export function baseState(over = {}) {
           skills: { state: 'cant-check', word: 'can’t check here', note: 'held by your Claude account', installed: [] },
           hooks: { state: 'none', format: 'none', files: [] },
           files: [{ file: '/Users/ann/Library/Application Support/Claude/claude_desktop_config.json', display: '~/Library/Application Support/Claude/claude_desktop_config.json', via: 'own', present: true, named: true, status: 'ok' }] },
+        { id: 'antigravity', label: 'Antigravity', bridge: { state: 'ok', word: 'configured' },
+          skills: { state: 'fix', word: 'my-curator outdated', roots: ['/Users/ann/.gemini/config'],
+            installed: [{ skill: 'my-curator', dir: '/Users/ann/.gemini/config/skills/my-curator', dirDisplay: '~/.gemini/config/skills/my-curator', match: false, differs: ['SKILL.md'], missing: [] },
+              { skill: 'curator-continuity', dir: '/Users/ann/.gemini/config/skills/curator-continuity', dirDisplay: '~/.gemini/config/skills/curator-continuity', match: true, differs: [], missing: [] }] },
+          hooks: { state: 'ok', format: 'json', files: [{ file: '/Users/ann/work/.agents/hooks.json', display: '~/work/.agents/hooks.json', present: true, ours: true }] },
+          files: [{ file: '/Users/ann/.gemini/config/mcp_config.json', display: '~/.gemini/config/mcp_config.json', via: 'own', present: true, named: true, status: 'ok' },
+            { file: '/Users/ann/.gemini/antigravity/mcp_config.json', display: '~/.gemini/antigravity/mcp_config.json', via: 'own', present: false, named: false, status: 'missing' }] },
+      ],
+      // v3.90.0 — GET /api/setup/machine `skills` (setup-check.js skillsByName).
+      skills: [
+        { skill: 'my-curator', checkable: 1, upToDate: 0, apps: [
+          { id: 'claude', label: 'Claude', kind: 'account', state: 'unknown', dir: null },
+          { id: 'antigravity', label: 'Antigravity', kind: 'folder', state: 'outdated', dir: '/Users/ann/.gemini/config/skills/my-curator', dirDisplay: '~/.gemini/config/skills/my-curator' }] },
+        { skill: 'curator-continuity', checkable: 1, upToDate: 1, apps: [
+          { id: 'claude', label: 'Claude', kind: 'account', state: 'unknown', dir: null },
+          { id: 'antigravity', label: 'Antigravity', kind: 'folder', state: 'current', dir: '/Users/ann/.gemini/config/skills/curator-continuity', dirDisplay: '~/.gemini/config/skills/curator-continuity' }] },
       ] } },
     mcpInstall: { status: { data: {
       platform: 'darwin', writable: true,
@@ -169,7 +186,7 @@ export function baseState(over = {}) {
           verdict: 'connected', toFix: 0 },
         { id: 'antigravity', label: 'Antigravity', status: 'connected', installer: 'file', running: { checked: true, running: false },
           usedAt: iso(7 * 86400e3), checkEntry: true, verdict: 'to-fix', toFix: 1,
-          skill: { text: 'Its my-curator skill is older than this app’s copy (1 file differs).', detail: 'Download it, replace …/skills/my-curator with it, then start a new Antigravity session.',
+          skill: { reason: 'outdated', skills: ['my-curator'], text: 'Its my-curator skill is older than this app’s copy (1 file differs).', detail: 'Download it, replace …/skills/my-curator with it, then start a new Antigravity session.',
             fixes: [{ kind: 'download-skill', skill: 'my-curator' }, { kind: 'reveal', path: '/Users/ann/.gemini/skills/my-curator', label: 'Reveal folder' }] },
           files: [{ file: '/Users/ann/.gemini/config/mcp_config.json', display: '~/.gemini/config/mcp_config.json', state: 'connected' }] },
         { id: 'cursor', label: 'Cursor', status: 'not-installed', installer: 'file', running: { checked: true, running: false },

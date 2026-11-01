@@ -185,6 +185,61 @@ export function checkPageContract(html, contract) {
     const n = els.filter((el) => has(el, 'btn-primary')).length;
     if (n > c.maxPrimary) out.push(n + ' primary buttons (at most ' + c.maxPrimary + ')');
   }
+  // ── v3.90.0: THE COPY DECK'S PRINCIPLES, on the rendered markup ─────────
+  if (c.realButtons) {
+    // Every action is a REAL button: a <button> of the shared system
+    // (btn + a filled tier — never a ghost, which reads as plain text), or an
+    // <a> carrying the same classes. A control with an action hook that is
+    // neither is a violation. The ⓘ panel's own guide link and the shared
+    // listbox / overview / ⓘ triggers are their components' own buttons.
+    const rb = c.realButtons;
+    const exemptIn = (el) => !!ancestor(el, (p) => hasAny(p, rb.exemptIn || []));
+    const tierOk = (el) => has(el, 'btn') && hasAny(el, rb.tiers || []);
+    for (const el of els) {
+      if (exemptIn(el)) continue;
+      if (el.tag === 'a') {
+        if (!tierOk(el)) out.push('a link that is not a real button: ' + label(el));
+        continue;
+      }
+      if (el.tag === 'button') {
+        if (hasAny(el, rb.exemptClasses || [])) continue;
+        if (!tierOk(el)) out.push('a button that is not a real button (no shared tier): ' + label(el));
+        continue;
+      }
+      const hook = Object.keys(el.attrs).some((k) => /^data-[a-z-]*act$/.test(k)) || el.attrs.role === 'button' || 'onclick' in el.attrs;
+      if (hook) out.push('a clickable element that is not a <button> or a button-styled <a>: ' + label(el));
+    }
+  }
+  if (c.bannedWords || c.noAllCaps) {
+    // The VISIBLE words: text nodes outside anything `hidden` (the closed ⓘ
+    // panels), outside <script>/<style>, and — for the banned list — outside
+    // data shown as data (`.mono`, <pre>: a path, a tool name, the exact
+    // setup text an install writes).
+    const hidden = (n) => !!ancestor(n, (p) => 'hidden' in p.attrs || p.tag === 'script' || p.tag === 'style');
+    const texts = [];
+    walk(root, (n) => { if (n.tag === '#text' && n.text.trim() && !hidden(n)) texts.push(n); });
+    const decode = (t) => t.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    if (c.bannedWords) {
+      const bw = c.bannedWords;
+      for (const n of texts) {
+        if (ancestor(n, (p) => p.tag === 'pre' || hasAny(p, bw.dataClasses || []))) continue;
+        const allowed = ancestor(n, (p) => hasAny(p, bw.allowIn || []));
+        for (const [name, re] of bw.words) {
+          if (allowed && (bw.allowWords || []).includes(name)) continue;
+          if (re.test(decode(n.text))) out.push('a mechanism word on screen ("' + name + '"): "' + n.text.trim().slice(0, 60) + '" in ' + label(n.parent));
+        }
+      }
+    }
+    if (c.noAllCaps) {
+      const nc = c.noAllCaps;
+      const acr = new Set(nc.acronyms || []);
+      for (const n of texts) {
+        if (ancestor(n, (p) => hasAny(p, nc.exemptIn || []) || p.tag === 'pre' || has(p, 'mono'))) continue;
+        const words = decode(n.text).split(/[^A-Za-z]+/).filter((w) => w.length >= 2 && w === w.toUpperCase() && !acr.has(w));
+        if (words.length) out.push('ALL-CAPS text outside the overview: "' + n.text.trim().slice(0, 60) + '" in ' + label(n.parent));
+      }
+    }
+  }
   if (c.monoInProse) {
     for (const el of els) {
       if (!has(el, 'mono')) continue;
@@ -216,6 +271,17 @@ export const KIT_CLASSES = Object.freeze([
 export const DEPTH_BAR_WIDTH = /^width:\d+(\.\d+)?%$/;
 
 /**
+ * The mechanism words the MCP page never shows (COPY-DECK-v3.90.0 principle
+ * 1, and the owner's list): `[name, RegExp]`. "bridge" is allowed only in the
+ * page title (`allowIn: view-title`).
+ */
+export const MCP_BANNED_WORDS = Object.freeze([
+  ['bridge', /\bbridges?\b/i], ['session line', /session lines?/i], ['journal', /\bjournals?\b/i],
+  ['signature', /\bsignatures?\b/i], ['stdio', /\bstdio\b/i], ['launcher', /\blaunchers?\b/i],
+  ['entry', /\bentry\b|\bentries\b/i], ['MCP server', /\bMCP servers?\b/i], ['hooks', /\bhooks?\b/i],
+]);
+
+/**
  * SETTINGS › MCP BRIDGE (v3.89.0) — the page rebuilt on the section kit, held
  * to PROPOSAL §4's rules. Its host list is SHORT and each name is a slot a
  * shared component documents: the overview's two inks (`toneClass`) and its
@@ -229,10 +295,21 @@ export const MCP_PAGE_CONTRACT = Object.freeze({
   allow: [...KIT_CLASSES, 'settings-ov-ok', 'settings-ov-attn', 'settings-ov-section', 'cur-check', 'cur-check-sm'],
   forbid: ['mcpi-*', 'mcp-*', 'settings-block-footnote', 'settings-btn-row', 'settings-block*', 'settings-setup-*', 'settings-inline-error'],
   column: {
-    kinds: [['header', ['tx-vh']], ['overview', ['cur-ov']], ['head', ['cur-section-head']],
-      ['card', ['cur-card']]],
-    pattern: /^header overview( head card)+$/,
+    // v3.90.0 — the page's one-line lede (`cur-section-intro`) may follow the
+    // header, and its closing line (`cur-section-foot`) the last card.
+    kinds: [['header', ['tx-vh']], ['lede', ['cur-section-intro']], ['overview', ['cur-ov']], ['head', ['cur-section-head']],
+      ['card', ['cur-card']], ['footer', ['cur-section-foot']]],
+    pattern: /^header( lede)? overview( head card)+( footer)?$/,
   },
+  // v3.90.0 — the copy deck's principles (COPY-DECK-v3.90.0 §Principles).
+  realButtons: { tiers: ['btn-secondary', 'btn-primary', 'btn-danger'],
+    exemptIn: ['tx-vh-panel', 'cur-ov'], exemptClasses: ['tx-vh-info', 'lb-btn', 'lb-option'] },
+  bannedWords: {
+    words: MCP_BANNED_WORDS,
+    allowIn: ['view-title'], allowWords: ['bridge'],
+    dataClasses: ['mono'],
+  },
+  noAllCaps: { exemptIn: ['cur-ov'], acronyms: ['MCP', 'AI', 'PC', 'UTC', 'JSON', 'OK', 'HTTP', 'URL', 'ID', 'CLI', 'IDE', 'API'] },
   buttonHomes: ['cur-card', 'cur-ov'],
   foldClass: 'cur-fold',
   noMonitorHead: true,

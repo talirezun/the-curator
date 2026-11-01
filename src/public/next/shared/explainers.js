@@ -643,82 +643,79 @@ const E = {
     guide: { key: 'settings.system-check-guide', heading: 'System check' },
   },
 
-  // SECTION_INFO.mcp · the MCP bridge header.
+  // SECTION_INFO.mcp · the MCP bridge header (v3.90.0: the copy deck's four sections).
   'settings.mcp': {
     label: 'About MCP bridge',
     title: 'MCP bridge',
-    lead: 'The **MCP bridge** lets your agents read and write your wiki and your projects’ memory.',
-    visual: { type: 'flow', caption: 'Four sections', steps: ['Agent apps', 'Bridge', 'Agent use', 'Across projects'] },
+    lead: 'This page connects your AI apps to your knowledge and shows whether the connection works.',
+    visual: { type: 'flow', caption: 'Four sections', steps: ['Your AI apps', 'Skills', 'Connection test', 'Tool activity'] },
     points: [
-      { icon: 'agent', text: 'It works with Claude Code, Claude Desktop and Cursor.' },
+      { icon: 'agent', text: 'Claude, Cursor, Antigravity and other AI apps can use My Curator.' },
       { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
     ],
     guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
   },
 
-  // MCP section 1 · Agent apps — `mcp-sec-apps-info` (v3.89.0).
+  // MCP section 1 · Your AI apps — `mcp-sec-apps-info` (v3.90.0).
   'settings.mcp-connect': {
-    label: 'About Agent apps',
-    title: 'Agent apps',
-    lead: '**Agent apps** shows which agent apps reach your wiki; **Check entry** starts an entry as its app would.',
+    label: 'About Your AI apps',
+    title: 'Your AI apps',
+    lead: 'One row per AI app found on this computer, and whether it reaches My Curator.',
     points: [
-      { icon: 'computer', text: 'Works with Claude Desktop, Claude Code, Cursor: any local MCP client.' },
-      { icon: 'check', text: '**Install for me** writes only the my-curator entry, after a preview.' },
+      { icon: 'computer', text: 'Works with Claude Desktop, Claude Code, Cursor and Antigravity.' },
+      { icon: 'check', text: 'Install for me changes only The Curator’s own line, keeping a backup.' },
       { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
-  // MCP section 2 · Bridge — `mcp-sec-bridge-info` (v3.89.0).
-  'settings.mcp-bridge': {
-    label: 'About Bridge',
-    title: 'Bridge',
-    lead: 'The **Bridge** is the My Curator server your agent apps start. Test it from here.',
+  // MCP section 2 · Skills — `mcp-sec-skills-info` (v3.90.0).
+  'settings.mcp-skills': {
+    label: 'About Skills',
+    title: 'Skills',
+    lead: 'Skills teach an AI app how to use My Curator well. Download them again after an update.',
     points: [
-      { icon: 'check', text: '**Run self-test** starts a fresh bridge and asks for its tools.' },
-      { icon: 'lock', text: 'Testing every tool uses a throwaway copy: nothing of yours changes.' },
-      { icon: 'folder', text: '**Default domain for writes**: where an unnamed write lands.' },
+      { icon: 'refresh', text: 'A skill never updates itself: replace the old copy.' },
+      { icon: 'agent', text: 'Claude keeps skills in your Claude account, out of sight here.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
-  // v3.89.0 — Settings › MCP bridge's OVERVIEW.
+  // MCP section 3 · Connection test — `mcp-sec-bridge-info` (v3.90.0).
+  'settings.mcp-bridge': {
+    label: 'About Connection test',
+    title: 'Connection test',
+    lead: 'Starts My Curator the way your AI apps do and checks that it answers.',
+    points: [
+      { icon: 'check', text: 'Test all tools runs every tool on a throwaway copy.' },
+      { icon: 'lock', text: 'Nothing of yours changes during a test.' },
+      { icon: 'folder', text: 'Default project for writes: where an unnamed write goes.' },
+    ],
+    guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
+  },
+
+  // Settings › MCP bridge's OVERVIEW.
   'settings.mcp-overview': {
     label: 'About the overview',
     title: 'Overview',
     lead: 'Is everything working? Each figure opens its section.',
     points: [
-      { icon: 'agent', text: 'Connected counts the agent apps with a working my-curator entry.' },
-      { icon: 'check', text: 'Tools answer is what the last self-test listed.' },
-      { icon: 'lock', text: 'Saves come from the bridge’s own log, kept on this computer.' },
+      { icon: 'agent', text: 'Connected counts the AI apps that reach My Curator.' },
+      { icon: 'check', text: 'Tools working comes from the last test on this page.' },
+      { icon: 'clock', text: 'Last used: an AI app’s newest tool call. Tests never count.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
-  // MCP block 3 · Tool map — `settings-block-info-mcp-tool-map`.
+  // MCP section 4 · Tool activity — `mcp-sec-use-info` (v3.90.0).
   'settings.mcp-tool-map': {
-    label: 'About Agent use',
-    title: 'Agent use',
-    lead: '**Agent use** shows which tools your agents used, and when. It stays on this computer.',
+    label: 'About Tool activity',
+    title: 'Tool activity',
+    lead: 'Tool activity shows which tools your AI apps used, and when. It stays on this computer.',
     points: [
-      { icon: 'lock', text: 'It keeps tool names and times, never what agents read or wrote.' },
-      { icon: 'computer', text: 'It is never synced; deleting it only restarts the map.' },
-      { icon: 'check', text: 'A test run from this page never counts as a connection.' },
-    ],
-    guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
-  },
-
-  // MCP block 4 · Across projects — `settings-block-info-mcp-across`.
-  // v3.77.0 — MCP bridge block 5.
-
-  'settings.mcp-across': {
-    label: 'About Across projects',
-    title: 'Across projects',
-    lead: '**Across projects** shows which projects’ agents saved a Handoff, and when: the last 7 days.',
-    points: [
-      { icon: 'agent', text: 'Each bar counts the Handoff saves in that project’s journals.' },
-      { icon: 'clock', text: 'The second reading: the same saves, per agent app.' },
-      { icon: 'search', text: '“+” means at least: a long journal is read only partly.' },
+      { icon: 'lock', text: 'It keeps tool names and times, never what was read or written.' },
+      { icon: 'computer', text: 'It is never synced; deleting it only restarts the count.' },
+      { icon: 'check', text: 'A test from this page is never counted.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
   },
@@ -934,8 +931,8 @@ export const SCREEN_WORDS = [
   // v3.79.0 — step 5's other two fold titles (the travels-by table's row
   // names) and step 4's renamed picker.
   'Agent apps', 'Repository on this computer', 'Your tool’s share',
-  // v3.89.0 — Settings › MCP bridge rebuilt: its section titles and buttons.
-  'Bridge', 'Agent use', 'Run self-test', 'Check entry', 'Default domain for writes',
+  // v3.90.0 — Settings › MCP bridge from the copy deck: its section titles and buttons.
+  'Your AI apps', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default project for writes',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

@@ -272,3 +272,70 @@
   flex-wrap: wrap;
 }
 .cur-status-line-text { flex: 1 1 auto; min-width: 0; }
+
+/* ── ADDED IN v3.90.0 (not moved): plain sentences, and nothing wider than
+   its card. Settings › MCP bridge's copy deck: every line says what a thing
+   is or what to do, in sans, and long text WRAPS inside its card (v3.89.0's
+   Claude Desktop line ran outside it, from `.cur-fold-item-meta`'s
+   `flex: none`, which stays as it is for the Domain page). */
+/* A section's one-sentence lede, under its head row. */
+.cur-section-lede {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+/* A page's one-line lede, between its view header and its overview. */
+.cur-section-intro {
+  margin: -10px 0 18px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+/* The page's closing line, after the last card. */
+.cur-section-foot {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+/* An action card's eyebrow as written: a sans sentence, not an uppercase
+   mono caption (the deck's "no ALL-CAPS outside the overview"). */
+.cur-action-eyebrow-sentence {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* A sentence with its buttons, inside a fold body or a card: the sentence
+   takes the width it can and wraps; the buttons wrap under it when narrow. */
+.cur-fold-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 0;
+  min-width: 0;
+}
+.cur-fold-line-text {
+  flex: 1 1 18rem;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.cur-fold-line-quiet .cur-fold-line-text { color: var(--text-2); font-size: var(--text-xs); }
+.cur-fold-line-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+/* A fold item whose fact or buttons may not fit beside the path: they wrap
+   under it instead of running past the card's edge. */
+.cur-fold-item-wrap { flex-wrap: wrap; }
+.cur-fold-item-wrap .cur-fold-item-main { flex: 1 1 14rem; }
+.cur-fold-item-wrap .cur-fold-item-meta { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* A fold inside a fold body (an app's Details). */
+.cur-fold-body .cur-folds { margin-top: 6px; }
+/* The run line's sentences wrap inside the tinted card. */
+.cur-action-run p { margin: 0 0 6px; overflow-wrap: anywhere; }

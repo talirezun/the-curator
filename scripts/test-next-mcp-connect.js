@@ -8,10 +8,9 @@
  *   §2 Check entry (v3.89.0): the request carries the app's id ONLY — never a
  *      path, a command or an entry — and the click handler sends the id the
  *      button names; the outcome lands in state and is rendered unfolded
- *   §3 ② Bridge: version, knowledge folder, open now, self-test, full test —
- *      a monitor with NO head word, in a fold whose reading is visible closed;
- *      the self-test and Test all buttons in the card's control row
- *   §4 one bridge The Curator cannot name: one neutral status, not a fix
+ *   §3 ③ Connection test (v3.90.0): the result line, Details (version ·
+ *      knowledge folder · open right now), the buttons in the control row
+ *   §4 a connection The Curator cannot name: counted in Details, no sentence
  *   §5 the client list and the ChatGPT exclusion live in the ⓘ, and the docs
  *      name the same clients
  */
@@ -95,36 +94,41 @@ section('§2 Check entry sends an id and nothing else');
   const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
   const html = renderMcpPage(baseState({ mcpChecks: st.mcpChecks })).html;
   const apps = html.slice(html.indexOf('id="mcp-card-apps"'), html.indexOf('id="mcp-card-apps"') + 6000).replace(/<details[\s\S]*?<\/details>/g, '');
-  ok(/Claude Desktop’s entry starts · 24 tools/.test(apps), 'the outcome is rendered in ① OUTSIDE every fold');
+  const cd = html.slice(html.indexOf('data-fold-key="app-claude-desktop"'), html.indexOf('data-fold-key="app-antigravity"'));
+  ok(/Connected\. Works — My Curator starts the way Claude Desktop starts it and answers with all 24 tools\./.test(cd),
+    'the outcome replaces the second half of the app’s one sentence (v3.90.0, the copy deck)');
+  ok(!/Works — /.test(apps), '…said once, in its own app’s fold, not as a separate status');
 }
 
 // ── §3 ─────────────────────────────────────────────────────────────────────
-section('§3 ② Bridge');
+section('§3 ③ Connection test (v3.90.0, the copy deck)');
 {
   const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
   const h = renderMcpPage(baseState({ setupMachineFolds: { 'bridge-answers': true } })).html;
   const b = h.slice(h.indexOf('id="mcp-card-bridge"'), h.indexOf('id="mcp-card-use"'));
-  ok(/id="mcp-bridge-monitor"/.test(b) && !/cur-mon-head|cur-mon-state/.test(b), 'the bridge is a monitor with NO head word (no "NOT TESTED YET")');
-  for (const k of ['version', 'knowledge folder', 'open now', 'self-test', 'full test']) ok(new RegExp('cur-mon-key">' + k + '<').test(b), 'a line: ' + k);
-  ok(/<span class="cur-fold-label">Bridge answers<\/span><span class="cur-fold-meta">3\.89\.0 · 24 tools · none open<\/span>/.test(b), 'its summary is the fold row’s reading, visible closed');
-  ok(/~\/second-brain\/domains|\/Users\/ann\/second-brain\/domains/.test(b), 'the knowledge folder is named');
+  ok(!/cur-mon-head|cur-mon-state/.test(b), 'no monitor head word (no "NOT TESTED YET")');
+  ok(/<span class="cur-fold-label">Details<\/span>/.test(b) && /Version 3\.89\.0 · knowledge folder ~\/second-brain\/domains/.test(b),
+    'Details: "Version {v} · knowledge folder {path}"');
+  ok(/<strong>Works\.<\/strong> My Curator started and answered with all 24 tools/.test(b), 'the result line: "Works. …"');
   ok(b.indexOf('id="btn-mcp-self-test"') < b.indexOf('<div class="cur-folds"') && b.indexOf('<div class="cur-card-top">') < b.indexOf('id="btn-mcp-self-test"'),
-    'Run self-test is in the card’s control row, above the folds (the owner’s decision 2)');
-  ok(!/cur-mon-key">client</.test(b), 'no hard-coded "client" line');
+    'Test connection is in the card’s control row, above the folds');
+  const s = baseState();
+  s.mcp = { ...s.mcp, bridge_processes: { ...s.mcp.bridge_processes, running: 2, bridges: [
+    { pid: 3, startedAt: new Date().toISOString(), app: { id: 'claude-desktop', label: 'Claude Desktop' }, version: '3.89.0', tools: 'same', notice: 'none' },
+    { pid: 4, startedAt: new Date().toISOString(), app: { id: 'cursor', label: 'Cursor' }, version: '3.89.0', tools: 'same', notice: 'none' }] } };
+  ok(/ · 2 open right now in Claude Desktop, Cursor/.test(renderMcpPage(s).html), '…and "{n} open right now in {apps}" when any are');
 }
 
 // ── §4 ─────────────────────────────────────────────────────────────────────
-section('§4 a bridge nobody can name');
+section('§4 a connection nobody can name says nothing on the page');
 {
   const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
   const s = baseState();
   s.mcp = { ...s.mcp, bridge_processes: { ...s.mcp.bridge_processes, running: 1, bridges: [{ pid: 3, startedAt: new Date().toISOString(), app: null,
     version: '3.80.0', tools: 'unknown', notice: 'soft', remedy: 'Quit the app that opened it.' }] } };
   const h = renderMcpPage(s).html;
-  const b = h.slice(h.indexOf('id="mcp-card-bridge"'), h.indexOf('id="mcp-card-use"'));
-  ok(/tx-status tx-status-neutral[^]*One bridge was opened before this version by an agent app The Curator could not name[^]*Quit the app that opened it\./.test(b),
-    'one neutral status in ② — said, not a fix, with the route’s remedy');
-  ok(!/could not name/.test(h.slice(h.indexOf('id="mcp-card-apps"'), h.indexOf('id="mcp-card-bridge"'))), '…and nothing about it in ① (no app to put it on)');
+  ok(!/could not name|bridge/i.test(h.replace(/<[^>]+>/g, ' ').replace(/MCP bridge/g, '')), 'no mechanism sentence about an unnamed connection (the copy deck has none)');
+  ok(/ · 1 open right now/.test(h), '…it is counted in Details only');
 }
 
 // ── §5 ─────────────────────────────────────────────────────────────────────
@@ -135,7 +139,7 @@ section('§5 the client list lives in the ⓘ, and the docs back it');
   const guide = readFileSync(path.join(ROOT, 'docs/mcp-user-guide.md'), 'utf8');
   for (const c of ['Claude Desktop', 'Claude Code', 'Cursor']) { ok(all.includes(c), `the ⓘ names ${c}`); ok(guide.includes(c), `CONTROL: docs/mcp-user-guide.md names ${c} too`); }
   ok(/ChatGPT[^.]*cannot run (?:a )?local server/.test(all), '…and the honest exclusion, as a MECHANISM');
-  ok(e.title === 'Agent apps', 'the ⓘ is titled like the section');
+  ok(e.title === 'Your AI apps', 'the ⓘ is titled like the section');
   const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
   ok(/class="tx-vh-panel" id="mcp-sec-apps-info"[^>]*hidden/.test(renderMcpPage(baseState()).html), 'the explanation is a closed panel in the shipped markup');
 }

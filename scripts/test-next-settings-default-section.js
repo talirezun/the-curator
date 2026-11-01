@@ -230,12 +230,13 @@ if (renderSidebarSrc) {
     fn(1);
     return captured;
   };
+  // v3.90.0 — the copy deck's rail hint, the same on every platform.
   railFor('darwin');
-  ok(/My Curator, agent apps on this Mac/.test(captured), 'rail hint on darwin: "agent apps on this Mac" exactly');
+  ok(/Connect your AI apps to My Curator/.test(captured), 'rail hint on darwin: "Connect your AI apps to My Curator" exactly');
   railFor('win32');
-  ok(/My Curator, agent apps on this PC/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: "agent apps on this PC", no "this Mac"');
+  ok(/Connect your AI apps to My Curator/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: the same words, no "this Mac"');
   railFor('');
-  ok(/My Curator, agent apps on this computer/.test(captured), 'rail hint before the platform is known: "this computer"');
+  ok(/Connect your AI apps to My Curator/.test(captured), 'rail hint before the platform is known: the same words');
   railFor('darwin');
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }

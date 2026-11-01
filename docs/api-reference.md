@@ -2972,7 +2972,7 @@ anything. The entry's own `env` is never used; the child runs with an allow-list
     "stderr": null, "shape": "node" } ] }
 ```
 
-A refusal is `{ "ran": false, "starts": false, "code": "not_allowed" | "other_install" | "launch_file_missing", "message": "…" }`;
+A refusal is `{ "ran": false, "starts": false, "code": "not_allowed" | "other_install" | "launch_file_missing", "message": "…" }` (since v3.90.0 a `launch_file_missing` refusal also carries `path`, the missing file);
 a start that fails is `{ "ran": true, "starts": false, "message": "It stopped before it answered (exit code 1). It said: …", "stderr": "…" }`.
 The status rows gain two labels for the same section: `lastStartedAt` (the newest session START of that
 app in the usage log) and `entryWrittenAt` (when The Curator last wrote that app's entry, from the
@@ -3279,7 +3279,7 @@ harness config, a skill folder, a repository file or a git ref; the two PUTs wri
 
 | Method & path | What it does |
 |---|---|
-| `GET /api/setup/machine` | Per tool with something on this machine (or added): `files[]` (`file`, `display`, `via: own\|readAlso`, `present`, `named`, `at`, `jsonc`, `parseError`, `commandMissing`, `otherFolder`), `bridge`, `skills` (`installed[]` compared by sha256 with the copy this app carries), `hooks` (`files[]`, `format`, `evidence` from the hook activity log). Plus `version`, `install`, `skillsShipped`, `machine.{ids,split}`, `bridgeProcesses`, `copyEntries` (each tool's entry in its own format), `addable` |
+| `GET /api/setup/machine` | Per tool with something on this machine (or added): `files[]` (`file`, `display`, `via: own\|readAlso`, `present`, `named`, `at`, `jsonc`, `parseError`, `commandMissing`, `otherFolder`), `bridge`, `skills` (`installed[]` compared by sha256 with the copy this app carries), `hooks` (`files[]`, `format`, `evidence` from the hook activity log). Plus `version`, `install`, `skillsShipped`, `machine.{ids,split}`, `bridgeProcesses`, `copyEntries` (each tool's entry in its own format), `addable`, and (v3.90.0, Settings › MCP bridge › Skills) `skills[]`: per skill `{skill, apps[{id, label, kind: folder\|account, state: current\|outdated\|not-installed\|unknown, dir, dirDisplay}], checkable, upToDate}` — Claude Desktop and Claude Code with no local copy are one `account` line, `claude` |
 | `GET /api/setup/projects/:domain/:project` | `tools[]` × `saved` (from the project's handoffs, every computer) · `bridge` · `skills` · `block` · `hooks`; `repo` (`path`, `exists`, `marker` with `git.{repo,tracked,uncommitted,unpushed,upstream}`); `computers[]` (`machine`, `thisMachine`, `tools`, `newestAt`, `curator`, `waiting`); `sync`; `toFix[]` (`kind`, `text`, `detail`, `fix`); `repoSuggestions`; `markerLine`; `addedTools`. 400 bad name · 404 unknown domain |
 | `PUT /api/setup/projects/:domain/:project/repo` | `{path}` (absolute, an existing folder; `~/` expanded) or `{path: null}` to clear. 400 relative/junk · 409 no such folder |
 | `PUT /api/setup/tools` | `{ids: [...]}` — the "+ Add a tool" choice; ids must be known harnesses |

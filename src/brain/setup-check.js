@@ -1556,6 +1556,46 @@ function skillsItem(id, label, skills, home) {
 }
 
 /**
+ * Settings › MCP bridge › ② Skills (v3.90.0): each skill this app carries,
+ * with ONE line per AI app on this computer that uses skills — read from the
+ * same machine rows (`collectMachineSetup`'s `skills` cell, `inspectSkills`'
+ * file-by-file comparison) that `skillsItem` reads, so the two never differ.
+ *
+ *   → [{ skill, apps: [{ id, label, kind: 'folder'|'account', state:
+ *        'current'|'outdated'|'not-installed'|'unknown', dir }],
+ *        checkable, upToDate }]
+ *
+ * `account`: Claude Desktop and Claude Code read skills uploaded to the
+ * Claude account (adapter `skillsTree.accountHeld`) and leave no local copy
+ * to compare, so they are ONE line, "Claude", whose state is unknown. A Claude
+ * Code with a local copy of the skill is a folder line of its own. An app with
+ * no known skill folder is left out. `checkable` counts the folder lines.
+ */
+export function skillsByName(rows) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r.id === 'string' && r.skills) : [];
+  return SKILL_NAMES.map((skill) => {
+    const apps = [];
+    let account = false;
+    for (const r of list) {
+      const s = r.skills;
+      const installed = (s.installed || []).filter((x) => x && x.skill === skill);
+      const held = adapterFor(r.id)?.skillsTree?.accountHeld === true;
+      const roots = Array.isArray(s.roots) ? s.roots : [];
+      if (held && !installed.length) { account = true; continue; }
+      if (!roots.length && !installed.length) continue;
+      // The stale copy decides (it is the one to replace); else the first found.
+      const pick = installed.find((x) => x.match === false) || installed[0] || null;
+      const state = !pick ? 'not-installed' : pick.match === true ? 'current' : pick.match === false ? 'outdated' : 'unknown';
+      apps.push({ id: r.id, label: r.label || r.id, kind: 'folder', state, dir: pick ? pick.dir : null });
+    }
+    // Claude Desktop and Claude Code read ONE copy, held by the Claude account.
+    if (account) apps.unshift({ id: 'claude', label: 'Claude', kind: 'account', state: 'unknown', dir: null });
+    const checkable = apps.filter((a) => a.kind === 'folder');
+    return { skill, apps, checkable: checkable.length, upToDate: checkable.filter((a) => a.state === 'current').length };
+  });
+}
+
+/**
  * The per-app verdicts Settings › MCP bridge prints on each app's row
  * (v3.88.0), from ONE machine row of `collectMachineSetup`. Reuses the
  * sentences Context › Setup already shows, so the two pages cannot disagree:

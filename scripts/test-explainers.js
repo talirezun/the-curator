@@ -216,7 +216,7 @@ const REQUIRED = [
   'settings.measured', 'settings.fetched-models', 'settings.update', 'settings.update-recovery',
   'settings.update-recovery-installer', 'settings.appearance', 'settings.system-check',
   'settings.mcp', 'settings.mcp-connect', 'settings.mcp-bridge', 'settings.mcp-overview', 'settings.mcp-tool-map',
-  'settings.mcp-across', 'settings.health', 'settings.storage', 'settings.vault-folder',
+  'settings.mcp-skills', 'settings.health', 'settings.storage', 'settings.vault-folder',
   'settings.trash',
   'settings.github-token',
   'shared.enable', 'shared.token-check', 'shared.wizard-repo', 'shared.wizard-token',

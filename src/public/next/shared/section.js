@@ -141,6 +141,7 @@ export function renderSectionTitle(o) {
  *   info?: { btn: string, panel: string },   // TRUSTED: an explainer pair
  *   meta?: string,                           // the right-hand reading ('' keeps the slot)
  *   metaId?: string,                         // so a host can rewrite the reading in place
+ *   lede?: string, ledeIsHtml?: boolean,     // v3.90.0: one sentence under the row (ledeIsHtml: TRUSTED)
  *   hostClass?: string, alias?: 'dm' }} o
  * @returns {string}
  */
@@ -159,6 +160,10 @@ export function renderSectionHead(o) {
               escapeHtml(opts.meta) + '</span>'
           : '') +
       '</div>' +
+      // v3.90.0 — a section's one-sentence lede, under the head row (an
+      // optional field: absent, the head is byte-identical to before).
+      (typeof opts.lede === 'string' && opts.lede
+        ? '<p class="cur-section-lede">' + (opts.ledeIsHtml === true ? opts.lede : escapeHtml(opts.lede)) + '</p>' : '') +
       (typeof info.panel === 'string' ? info.panel : '') +
     '</div>';
 }
@@ -204,6 +209,7 @@ export function renderFoldRows(rowsHtml, o) {
  *
  * @param {{ key?: string,          // the host's open-state key (data-group-key / data-sb-sec-row)
  *   label: string, labelClass?: string,
+ *   labelHtml?: string,            // v3.90.0, TRUSTED: replaces `label` (a mono name beside its sans words)
  *   pill?: string|number,          // a count
  *   meta?: string, metaHtml?: string,   // the reading (metaHtml is TRUSTED)
  *   actionHtml?: string,           // TRUSTED: a control at the summary's end
@@ -219,7 +225,8 @@ export function renderFoldRow(o) {
     : opts.meta != null ? escapeHtml(opts.meta) : null;
   return '<details class="' + cls('cur-fold', a.fold, opts.hostClass) + '"' + key + (opts.open ? ' open' : '') + '>' +
       '<summary class="' + cls('cur-fold-summary', a.summary) + '">' + FOLD_CHEVRON +
-        '<span class="' + cls('cur-fold-label', a.label, opts.labelClass) + '">' + escapeHtml(opts.label) + '</span>' +
+        '<span class="' + cls('cur-fold-label', a.label, opts.labelClass) + '">' +
+          (typeof opts.labelHtml === 'string' ? opts.labelHtml : escapeHtml(opts.label)) + '</span>' +
         (opts.pill != null ? '<span class="' + cls('cur-fold-pill', a.pill) + '">' + escapeHtml(opts.pill) + '</span>' : '') +
         (meta != null ? '<span class="' + cls('cur-fold-meta', a.foldMeta) + '">' + meta + '</span>' : '') +
         (typeof opts.actionHtml === 'string' ? opts.actionHtml : '') +
@@ -289,6 +296,7 @@ export function actionChip(o) {
  *   chipsHtml?: string,            // TRUSTED: actionChip outputs, joined
  *   runHtml?: string,              // TRUSTED: the run line under the chips ('' omits it)
  *   footnoteHtml?: string,         // TRUSTED: the card's last line ('' omits it)
+ *   eyebrowCase?: 'sentence',      // v3.90.0: the eyebrow as written (sans, no uppercase)
  *   hostClass?: string, alias?: 'dm' }} o
  */
 export function renderActionCard(o) {
@@ -296,11 +304,17 @@ export function renderActionCard(o) {
   const a = aliasOf(opts);
   const run = typeof opts.runHtml === 'string' ? opts.runHtml : '';
   const foot = typeof opts.footnoteHtml === 'string' ? opts.footnoteHtml : '';
+  // v3.90.0 — a SENTENCE-case card (eyebrowCase: 'sentence') leaves out an
+  // empty eyebrow and an empty chip row; every other caller is byte-identical.
+  const sentence = opts.eyebrowCase === 'sentence';
+  const chips = typeof opts.chipsHtml === 'string' ? opts.chipsHtml : '';
+  const eyebrowDiv = sentence && !opts.eyebrow ? ''
+    : '<div class="' + (sentence ? cls('cur-action-eyebrow', 'cur-action-eyebrow-sentence', a.eyebrow)
+      : cls('cur-action-eyebrow', a.eyebrow, 'cur-eyebrow')) + '">' +
+      (typeof opts.iconHtml === 'string' ? opts.iconHtml + ' ' : '') + escapeHtml(opts.eyebrow) + '</div>';
   return '<div class="' + cls('cur-action', a.action, opts.hostClass) + '">' +
-      '<div class="' + cls('cur-action-eyebrow', a.eyebrow, 'cur-eyebrow') + '">' +
-        (typeof opts.iconHtml === 'string' ? opts.iconHtml + ' ' : '') + escapeHtml(opts.eyebrow) + '</div>' +
-      '<div class="' + cls('cur-action-chips', a.chips) + '">' +
-        (typeof opts.chipsHtml === 'string' ? opts.chipsHtml : '') + '</div>' +
+      eyebrowDiv +
+      (sentence && !chips ? '' : '<div class="' + cls('cur-action-chips', a.chips) + '">' + chips + '</div>') +
       (run ? '<div class="' + cls('cur-action-run', a.run) + '">' + run + '</div>' : '') +
       (foot ? '<div class="' + cls('cur-action-footnote', a.foot) + '">' + foot + '</div>' : '') +
     '</div>';
@@ -323,4 +337,38 @@ export function renderStatusLine(text, buttonHtml, o) {
         (opts.textIsHtml ? String(text == null ? '' : text) : escapeHtml(text)) + '</p>' +
       (typeof buttonHtml === 'string' ? buttonHtml : '') +
     '</div>';
+}
+
+/**
+ * v3.90.0 — a SENTENCE with its buttons, in a fold body or a card: the text
+ * wraps inside its card, the buttons wrap under it when the card is narrow.
+ * `textHtml` and `actionHtml` are TRUSTED; `text` is escaped.
+ * @param {{ text?: string, textHtml?: string, actionHtml?: string, quiet?: boolean }} o
+ */
+export function renderFoldLine(o) {
+  const opts = o && typeof o === 'object' ? o : {};
+  const text = typeof opts.textHtml === 'string' ? opts.textHtml : escapeHtml(opts.text);
+  const acts = typeof opts.actionHtml === 'string' && opts.actionHtml ? opts.actionHtml : '';
+  return '<div class="' + cls('cur-fold-line', opts.quiet ? 'cur-fold-line-quiet' : '') + '">' +
+      '<p class="cur-fold-line-text">' + text + '</p>' +
+      (acts ? '<span class="cur-fold-line-acts">' + acts + '</span>' : '') +
+    '</div>';
+}
+
+/**
+ * v3.90.0 — a page's one-line lede: the column's first block under the view
+ * header (renderViewHeader keeps no prose slot — scripts/test-next-view-header.js).
+ * @param {string} text  escaped
+ */
+export function renderPageLede(text) {
+  return '<p class="cur-section-intro">' + escapeHtml(text) + '</p>';
+}
+
+/**
+ * v3.90.0 — the page's closing line: one muted sentence after the last
+ * section's card, a block of the column of its own (never inside a card).
+ * @param {string} text  escaped
+ */
+export function renderPageFoot(text) {
+  return '<p class="cur-section-foot">' + escapeHtml(text) + '</p>';
 }

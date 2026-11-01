@@ -48,7 +48,7 @@ import { listDomains } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import {
   analyseInstructionText, collectMachineSetup, collectProjectSetup, findRepoCandidates, inspectGitFile, inspectMarker,
-  readJsonFile, SKILL_NAMES, STATES, TRAVELS,
+  readJsonFile, SKILL_NAMES, STATES, TRAVELS, skillsByName,
 } from '../brain/setup-check.js';
 import { adapterFor, displayTemplate, listHarnesses, mcpEntryFor, MCP_SERVER_NAME } from '../brain/harness-adapters.js';
 import { normaliseHarness } from '../brain/harness-names.js';
@@ -362,6 +362,9 @@ router.get('/machine', async (_req, res) => {
       machine: { ids: mf.ids, split: mf.ids.length > 1, installIds: mf.installIds, installs: mf.installs },
       bridgeProcesses,
       harnesses: shown,
+      // v3.90.0 — Settings › MCP bridge › ② Skills: each skill, one line per
+      // AI app shown here that uses skills (setup-check.js skillsByName).
+      skills: skillsByName(shown),
       copyEntries: copyEntries(shown),
       customTools: getSetupCustomTools(),
       addable: addableFor(shown.map((r) => r.id)),
