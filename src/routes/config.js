@@ -288,8 +288,11 @@ export function classifyNpmError(rawMessage, beforeSha = '', afterSha = '') {
 
   // PATH issue is handled separately by the caller (returns a different
   // shape — partial success rather than failure). Surface it for
-  // completeness so test coverage stays explicit.
-  if (msg.includes('npm: command not found') || msg.includes('npm: not found')) {
+  // completeness so test coverage stays explicit. The third form is cmd.exe's
+  // (v3.87.0, Windows): "'npm' is not recognized as an internal or external
+  // command".
+  if (msg.includes('npm: command not found') || msg.includes('npm: not found') ||
+      msg.includes("'npm' is not recognized as an internal or external command")) {
     return { kind: 'path', actionable: null };
   }
 
@@ -4786,7 +4789,9 @@ export async function updateHandler(_req, res, deps = null) {
       // up the fixed version. Since v2.3.4→v2.3.5 added no dependencies, the
       // existing node_modules is still correct and a restart is sufficient.
       const msg = (npmErr.message || '').toLowerCase();
-      const pathIssue = msg.includes('npm: command not found') || msg.includes('npm: not found');
+      // The third form is cmd.exe's wording on Windows (v3.87.0).
+      const pathIssue = msg.includes('npm: command not found') || msg.includes('npm: not found') ||
+        msg.includes("'npm' is not recognized as an internal or external command");
       if (pathIssue) {
         return res.json({
           ok: true,

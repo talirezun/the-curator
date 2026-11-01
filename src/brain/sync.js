@@ -109,6 +109,9 @@ function looksLikeGitDir(dir) {
 // off Windows; on Windows ';'-joined, no POSIX folders, one `Path` key.
 const SUBPROCESS_ENV = buildSubprocessEnv();
 
+/** TEST-ONLY: the env every git() call here runs with (scripts/test-subprocess-env.js §1). */
+export function __subprocessEnvForTest() { return SUBPROCESS_ENV; }
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // ── The single fetch chokepoint ───────────────────────────────────────────────

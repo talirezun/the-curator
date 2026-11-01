@@ -261,8 +261,31 @@ export function isRepoInstall() {
  * The macOS Application Support location used in bundle mode. Exported for
  * tests and for error messages; callers should use getUserDataDir().
  */
-export function getAppSupportDir() {
-  return path.join(os.homedir(), 'Library', 'Application Support', APP_SUPPORT_DIR_NAME);
+export function getAppSupportDir({
+  platform = process.platform,
+  env = process.env,
+  homedir = os.homedir(),
+} = {}) {
+  // v3.87.0: Windows has no ~/Library. Reachable there in REPO mode (the
+  // instance registry writes <this>/instances at boot; mcp-usage reads a
+  // candidate here), so it resolves to the one-line install's own per-user
+  // folder, %LOCALAPPDATA%\TheCurator — beside runtime\ and logs\. Off Windows
+  // this is byte-identical to every earlier version.
+  if (platform === 'win32') return path.win32.join(windowsLocalAppData(env, homedir), WINDOWS_APP_DIR_NAME);
+  return path.join(homedir, 'Library', 'Application Support', APP_SUPPORT_DIR_NAME);
+}
+
+/** The per-user folder name under %LOCALAPPDATA% on Windows (v3.87.0). */
+export const WINDOWS_APP_DIR_NAME = 'TheCurator';
+
+/**
+ * %LOCALAPPDATA%, or <home>\AppData\Local when it is unset or not an absolute
+ * path (a relative value would resolve against whatever the cwd happens to be).
+ */
+function windowsLocalAppData(env, homedir) {
+  const v = env && env.LOCALAPPDATA;
+  if (typeof v === 'string' && /^(?:[A-Za-z]:\\|\\\\)/.test(v)) return v;
+  return path.win32.join(homedir, 'AppData', 'Local');
 }
 
 // Test-only override for the log directory. Separate from
@@ -320,7 +343,11 @@ export function __setLogDirOverride(p) {
  * failed mkdir here must never be allowed to throw through a caller that
  * only wanted to log an error).
  */
-export function getLogsDir() {
+export function getLogsDir({
+  platform = process.platform,
+  env = process.env,
+  homedir = os.homedir(),
+} = {}) {
   if (_logDirOverride) return _logDirOverride;
   if (process.env.CURATOR_TEST_LOG_DIR) {
     return path.resolve(process.env.CURATOR_TEST_LOG_DIR);
@@ -333,7 +360,10 @@ export function getLogsDir() {
   if (process.env.CURATOR_TEST_USER_DATA_DIR) {
     return path.join(path.resolve(process.env.CURATOR_TEST_USER_DATA_DIR), 'logs');
   }
-  return path.join(os.homedir(), 'Library', 'Logs', APP_LOGS_DIR_NAME);
+  // v3.87.0: on Windows, %LOCALAPPDATA%\TheCurator\logs — the contract's log
+  // folder, beside the one-line install's server.log. Never ~\Library there.
+  if (platform === 'win32') return path.win32.join(getAppSupportDir({ platform, env, homedir }), 'logs');
+  return path.join(homedir, 'Library', 'Logs', APP_LOGS_DIR_NAME);
 }
 
 // Test-only override for the MCP launcher directory. Separate from the other

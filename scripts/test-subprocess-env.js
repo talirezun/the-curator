@@ -80,6 +80,11 @@ if (process.platform !== 'win32') {
   const liveEnv = se.buildSubprocessEnv();
   eq(Object.keys(liveEnv).sort(), Object.keys({ ...process.env, PATH: '' }).sort(),
     'LIVE: the env carries exactly the inherited keys (plus PATH)');
+  const syncMod = await import(path.join(ROOT, 'src/brain/sync.js'));
+  const syncEnv = syncMod.__subprocessEnvForTest();
+  eq(syncEnv.PATH, legacyPath(process.execPath, process.env.PATH),
+    'LIVE: sync.js runs git with the v3.86.0 PATH on this machine');
+  eq(syncEnv, liveEnv, 'LIVE: ...and its whole env is the helper\'s (sync.js uses buildSubprocessEnv)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -235,6 +240,69 @@ const EXPECTED_COMMON = [
   }
   ok(mac.calls.every((c) => c.env && c.env.PATH === se.buildSubprocessPath()),
     'every updater command runs with the PATH subprocess-env.js builds (config.js uses the helper)');
+}
+{
+  // cmd.exe's wording when npm is not on PATH, as exec() reports it.
+  const WIN_NPM = "Command failed: npm install --silent --no-audit --no-fund\r\n'npm' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n";
+  eq(configRoute.classifyNpmError(WIN_NPM).kind, 'path', 'classifyNpmError: the Windows "not recognized" text is the PATH kind');
+  eq(configRoute.classifyNpmError('sh: npm: command not found').kind, 'path', 'classifyNpmError CONTROL: the POSIX text still is');
+  eq(configRoute.classifyNpmError("'git' is not recognized as an internal or external command").kind === 'path', false,
+    'classifyNpmError: a different missing program is not read as npm');
+  async function runNpmFail(message) {
+    const res = fakeRes();
+    await configRoute.updateHandler({}, res, {
+      caps: { canSelfUpdateViaGit: true, canRunNpmInstall: true, updateStyle: 'git-pull' },
+      releaseRef: { channel: 'stable', branch: 'main' }, platform: 'win32',
+      execAsync: async (cmd) => {
+        if (cmd.startsWith('npm install')) throw new Error(message);
+        return { stdout: /rev-parse/.test(cmd) ? 'abc1234\n' : '', stderr: '' };
+      },
+    });
+    return res;
+  }
+  const r = await runNpmFail(WIN_NPM);
+  eq([r.statusCode, r.body.ok, r.body.partial, r.body.restarting], [200, true, true, true],
+    'updater win32: npm "not recognized" → the same partial success as "npm: command not found"');
+  const p = await runNpmFail('/bin/sh: npm: command not found');
+  eq([p.statusCode, p.body.partial], [200, true], 'updater CONTROL: the POSIX text still gives partial success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5b  App folders on Windows: %LOCALAPPDATA%\\TheCurator, never ~\\Library');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
+  // The seams this suite set would win; clear them for the resolver arm and restore.
+  const saved = { L: process.env.CURATOR_TEST_LOG_DIR, U: process.env.CURATOR_TEST_USER_DATA_DIR };
+  delete process.env.CURATOR_TEST_LOG_DIR; delete process.env.CURATOR_TEST_USER_DATA_DIR;
+  try {
+    const home = 'C:\\Users\\Ana Žagar';
+    const env = { LOCALAPPDATA: 'C:\\Users\\Ana Žagar\\AppData\\Local' };
+    eq(paths.getAppSupportDir({ platform: 'win32', env, homedir: home }), 'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator',
+      'win32: app folder is %LOCALAPPDATA%\\TheCurator');
+    eq(paths.getLogsDir({ platform: 'win32', env, homedir: home }), 'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator\\logs',
+      'win32: logs are %LOCALAPPDATA%\\TheCurator\\logs (the contract\'s folder)');
+    eq(paths.getLogsDir({ platform: 'win32', env: {}, homedir: home }), 'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator\\logs',
+      'win32: LOCALAPPDATA unset → <home>\\AppData\\Local');
+    eq(paths.getLogsDir({ platform: 'win32', env: { LOCALAPPDATA: 'relative\\x' }, homedir: home }),
+      'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator\\logs', 'win32: a non-absolute LOCALAPPDATA is not trusted');
+    ok(!/Library/.test(paths.getLogsDir({ platform: 'win32', env, homedir: home })), 'win32: no Library folder anywhere');
+    // macOS / Linux: byte-identical to the v3.86.0 expressions, transcribed.
+    for (const platform of ['darwin', 'linux']) {
+      eq(paths.getAppSupportDir({ platform, env, homedir: '/Users/a' }), '/Users/a/Library/Application Support/The Curator',
+        `${platform}: app folder unchanged`);
+      eq(paths.getLogsDir({ platform, env, homedir: '/Users/a' }), '/Users/a/Library/Logs/The Curator', `${platform}: logs unchanged`);
+    }
+    if (process.platform !== 'win32') {
+      eq(paths.getLogsDir(), path.join(os.homedir(), 'Library', 'Logs', 'The Curator'), 'LIVE: this Mac\'s logs folder unchanged');
+      eq(paths.getAppSupportDir(), path.join(os.homedir(), 'Library', 'Application Support', 'The Curator'),
+        'LIVE: this Mac\'s app folder unchanged');
+    }
+  } finally {
+    process.env.CURATOR_TEST_LOG_DIR = saved.L; process.env.CURATOR_TEST_USER_DATA_DIR = saved.U;
+  }
+  eq(paths.getLogsDir({ platform: 'win32', env: {}, homedir: 'C:\\h' }), path.resolve(saved.L),
+    'win32: the test seam still wins over the Windows folder');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
