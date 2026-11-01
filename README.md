@@ -364,11 +364,11 @@ irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | i
 ```
 
 That is the whole install. It takes about **2 to 5 minutes**, needs **no administrator rights**
-and installs nothing on your system: it downloads its own private copy of Node.js and git (each
+and installs nothing on your system: it downloads its own private copy of Node.js (version 24 LTS) and git (each
 download is checked against a fixed checksum), puts the app in `%USERPROFILE%\the-curator`, and
-opens The Curator in your browser. The app's own first-run panel takes over from there.
+opens The Curator in your browser. It needs Windows 10 (version 1809 or newer) or Windows 11, 64-bit, and about 500 MB of free disk space. The app's own first-run panel takes over from there.
 
-Afterwards you have two icons, on your Desktop and in the Start menu:
+Afterwards you have two icons, each in two places (four shortcuts in all): on your Desktop and in the Start menu folder **The Curator**:
 
 | Icon | What it does |
 |---|---|
@@ -377,7 +377,7 @@ Afterwards you have two icons, on your Desktop and in the Start menu:
 
 Your knowledge lives in `%USERPROFILE%\the-curator\domains` (open that folder in Obsidian).
 To **update**, press Update in the app's Settings, or run the same command again — it repairs and
-updates, and never touches your data. Step-by-step help, troubleshooting and uninstalling:
+updates (and restarts the app if it was running), and never touches your notes, keys or settings. Step-by-step help, troubleshooting and uninstalling:
 [User Guide § 3 → Windows](docs/user-guide.md#windows-one-line-installer).
 
 ### Option A — Download the Mac app (`.dmg`)
@@ -492,7 +492,7 @@ chat, wiki, MCP, sync and Health are all here. (On Windows use the
 prefer to manage Node and git yourself.) The Node server runs anywhere Node 18+ runs; only the
 `.dmg`, the Mac one-command installer and the auto-built `.app` Dock launcher are macOS-specific.
 
-**Prerequisites:** [git](https://git-scm.com) · [Node.js](https://nodejs.org) — **22 LTS
+**Prerequisites:** [git](https://git-scm.com) · [Node.js](https://nodejs.org) — **the current LTS
 recommended**, 18 is the minimum · an API key from
 [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available),
 [Anthropic](https://console.anthropic.com/) (paid only) or

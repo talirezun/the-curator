@@ -101,8 +101,8 @@ These are not two products, and you do not have to pick. A book, a thesis or a r
 |---|---|---|
 | Mac | A downloadable application, a `.dmg` from the Releases page, in two builds: `arm64` for Apple Silicon and `x64` for Intel. About 140 MB, because the app carries its own runtime | Supported |
 | Mac | A one-command shell installer that fetches Node.js if needed, clones the repo, installs dependencies and builds the Dock application | Supported |
-| Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts (The Curator, Stop The Curator). No administrator rights | Supported |
-| Linux and Mac | Manual setup: git, Node.js 22 LTS (18 minimum), `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
+| Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts, each on the Desktop and in the Start menu (The Curator, Stop The Curator). No administrator rights | Supported |
+| Linux and Mac | Manual setup: git, Node.js, current LTS recommended (18 minimum), `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
 
 On Windows there is a one-line installer but no `.exe` app yet, and there is no Linux application. On those platforms the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health all work identically. What is Mac-only is the packaging, not the features.
 

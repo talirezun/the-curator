@@ -250,7 +250,7 @@ flowchart TD
 | A computer running macOS, Windows, or Linux | See the platform notes below | — |
 | An AI provider API key | Powers ingest, chat, and AI-assisted Wiki Health | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
 | Obsidian (optional) | Visualises the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
-| Node.js (22 LTS recommended, 18 is the minimum) | Runtime that powers the local server | **Not needed for the Mac app** — it ships with its own. For the browser install: auto-installed on Mac by the one-line installer, and **on Windows by the one-line installer too** (it keeps its own private copy). On Linux install it yourself from [nodejs.org](https://nodejs.org) |
+| Node.js (the current LTS recommended, 18 is the minimum) | Runtime that powers the local server | **Not needed for the Mac app** — it ships with its own. For the browser install: auto-installed on Mac by the one-line installer, and **on Windows by the one-line installer too** (it keeps its own private copy). On Linux install it yourself from [nodejs.org](https://nodejs.org) |
 | git | Downloads the app and applies updates | **Not needed for the Mac app.** Installed for you by the Mac one-line installer and — privately, as its own copy — by the Windows one-line installer. On Linux install it yourself ([git-scm.com](https://git-scm.com) or your package manager) |
 
 ### Two ways to run it — and they are the same program
@@ -382,21 +382,21 @@ To paste: **right-click** inside the PowerShell window (that pastes whatever you
 | What it is doing | What you will see |
 |---|---|
 | Telling you the plan | A short banner: what will happen, where, and roughly how long |
-| Checking your PC | A quick check of Windows, free disk space (about 500 MB) and your connection |
-| Downloading its own Node.js and git | Progress lines. Each download is checked against a fixed checksum; if one does not match, it stops and says so |
-| Downloading The Curator | The app is placed in `%USERPROFILE%\the-curator` |
-| Installing the app's parts | A quieter stretch with no output; this is the slowest step, so do not close the window |
-| Making the two icons | Shortcuts on your Desktop and in the Start menu |
-| Starting the app | Your browser opens The Curator at `http://localhost:3333`, and the installer's last message tells you what to do next time |
+| Checking your PC | Step 1 of 7. A quick check of Windows (10 version 1809 or newer, or 11; 64-bit), free disk space (about 500 MB) and your connection. If The Curator is already running, you see "The Curator is running; stopping it for the update (it starts again at the end)." |
+| Downloading its own Node.js and git | Steps 2 and 3 of 7: progress lines such as "Unpacking…" and "… is ready." Each download is checked against a fixed checksum; if one does not match, it stops and says so |
+| Downloading The Curator | Step 4 of 7. The app is placed in `%USERPROFILE%\the-curator` |
+| Installing the app's parts | Step 5 of 7: "This can take a minute or two…". A quieter stretch with no output; this is the slowest step, so do not close the window |
+| Making the icons | Step 6 of 7: "Added to …" for your Desktop and for the Start menu folder |
+| Starting the app | Step 7 of 7. Your browser opens The Curator at `http://localhost:3333` (or the port you set, see below). A green banner says **"Done. The Curator is installed."**, then: "Next time, double-click 'The Curator' on your desktop. To stop it, double-click 'Stop The Curator'." and where your notes are kept |
 
 When it finishes, the **Getting started** panel appears in the browser. From here, follow [§4 (API key)](#4-get-your-api-key-gemini-claude-or-openrouter) and [§5](#5-first-run--the-getting-started-panel).
 
-**The two icons**
+**The two icons** (each appears twice, so four shortcuts: on the Desktop, and in the Start menu folder **The Curator**)
 
 | Icon | Where | What it does |
 |---|---|---|
-| **The Curator** | Desktop, and Start menu → **The Curator** | Starts the app if it is not already running, then opens it in your browser. If it is already running, it just opens the browser |
-| **Stop The Curator** | Desktop, and Start menu → **The Curator** | Stops the app. A small message confirms: "The Curator has stopped." (or "The Curator was not running.") |
+| **The Curator** | Desktop, and Start menu → **The Curator** → **The Curator** | Starts the app if it is not already running, then opens it in your browser. If it is already running, it just opens the browser |
+| **Stop The Curator** | Desktop, and Start menu → **The Curator** → **Stop The Curator** | Stops the app. A small message confirms: "The Curator has stopped." (or "The Curator was not running.") |
 
 **Day to day**
 
@@ -409,7 +409,9 @@ When it finishes, the **Getting started** panel appears in the browser. From her
 
 There is no Stop button inside the app itself, on any platform. On Windows, **Stop The Curator** is what quitting is on a Mac.
 
-**Updating.** Either press **Update** in the app's **Settings**, or run the same one-line command again in PowerShell. Running it again **repairs and updates** the install (it re-downloads anything missing, brings the app up to date and recreates the icons) and **never touches your knowledge, your `.env` file or your saved settings**.
+**Updating.** Either press **Update** in the app's **Settings**, or run the same one-line command again in PowerShell. Running it again **repairs and updates** the install: it re-downloads anything missing, brings the app up to date, recreates the icons, and **restarts The Curator if it was running** (it stops it first, because its files change). It **never touches your knowledge, your `.env` file or your saved settings**. If you have edited The Curator's own program files, the installer leaves them exactly as they are and does not update (it says so in yellow); a file that is merely missing is put back.
+
+**If you use a different port.** The Curator uses port 3333. If you put a line such as `PORT=3334` in the `.env` file in `%USERPROFILE%\the-curator` (or set a `PORT` variable in Windows), the icons use that port instead; a `PORT` set in Windows wins over the `.env` file.
 
 **Where your data lives**
 
@@ -418,7 +420,7 @@ There is no Stop button inside the app itself, on any platform. On Windows, **St
 | Your knowledge (all domains, wiki pages, conversations) | `%USERPROFILE%\the-curator\domains` — open this folder in [Obsidian](https://obsidian.md) as a vault to see the graph |
 | The app itself | `%USERPROFILE%\the-curator` |
 | The private Node.js and git the installer downloaded | `%LOCALAPPDATA%\TheCurator\runtime` (nothing is added to your system PATH) |
-| The log, if something goes wrong | `%LOCALAPPDATA%\TheCurator\logs\server.log` (the previous run is kept as `server.log.1`) |
+| The logs, if something goes wrong | `%LOCALAPPDATA%\TheCurator\logs\server.log` for the app (the previous run is kept as `server.log.1`) and `%LOCALAPPDATA%\TheCurator\logs\install.log` for the installer |
 
 Type `%USERPROFILE%\the-curator\domains` into the address bar of File Explorer to jump straight to your knowledge folder.
 
@@ -438,28 +440,36 @@ The installer is a PowerShell command, not a downloaded `.exe` file, so you shou
 | Symptom | What to do |
 |---|---|
 | `irm : The term 'irm' is not recognized…` | You are in **Command Prompt** (`cmd`), not PowerShell. Close it and open **Windows PowerShell** (Start → type `PowerShell`) |
-| "Running scripts is disabled on this system" | The one-line command is **not** affected (it is not a script file). The two icons are not affected either: they start PowerShell with `-ExecutionPolicy Bypass`. If you see this when running something yourself, you do not need to change any Windows setting |
+| "Running scripts is disabled on this system" | The one-line command is **not** affected (it is not a script file). The icons are not affected either: they start PowerShell with `-ExecutionPolicy Bypass`. But if your **organisation's policy** blocks scripts, the installer stops with "Your organisation's settings block PowerShell scripts on this PC" and you need your IT department |
+| "PowerShell is locked down here ('Constrained Language Mode')" | Your work or school has locked PowerShell down, which blocks installers like this one. Ask your IT department to install The Curator, or use a personal PC |
+| "needs 64-bit Windows" or "This version of Windows is too old" | The Curator needs 64-bit Windows 10 (version 1809 or newer) or Windows 11. Run Windows Update; a 32-bit PC cannot run it |
+| "There is not enough free disk space on drive …" | About 500 MB is needed. Empty the Recycle Bin or delete large downloads, then run the command again |
+| "This PowerShell runs as … but … is signed in to Windows" | You opened PowerShell with "Run as administrator" using a different account than the one you are signed in with. Close it, open PowerShell normally and paste the command again |
+| "could not be replaced because a program is still using it" | Another program is using The Curator's Node.js, for example **Claude Desktop** (it runs the My Curator connection). Quit it (right-click its icon near the clock → Quit), then run the command again |
 | The command does nothing, or says it cannot be downloaded / connect | Check your internet connection, then run the command again. Running it again is safe |
 | A download failed or a checksum did not match | Run the command again. If it keeps happening, the network is altering the download (a hotel, school or company network); try another network |
 | You are behind a company or school proxy | The installer uses your Windows proxy settings. If it still fails, ask your IT department to allow `raw.githubusercontent.com`, `github.com` and `nodejs.org` |
-| The installer stops with a message and a block to "copy and send" | Copy that block and send it to your teacher or support. Then run the command again — a re-run fixes a half-finished install |
+| The installer stops with a red **"The installation stopped."** banner | It says "What happened" and "What to do", and "Nothing you had before was deleted." Below is a block between "----- copy from here -----" and "----- copy to here -----": copy it and send it to whoever helps you. Then run the command again, which fixes a half-finished install |
 | **The Curator** icon does nothing / the page does not open | Double-click **The Curator** again and wait up to a minute. If the page still does not open, read the end of `%LOCALAPPDATA%\TheCurator\logs\server.log`, or run the one-line command again |
-| "Port 3333 is already used by another program" | Another program is using the port (or a second copy of The Curator is). Double-click **Stop The Curator**, then **The Curator**. Still stuck: close the other program, or set `PORT=4000` in the `.env` file inside `%USERPROFILE%\the-curator` |
-| The message box says `node.exe` is missing or was blocked | Your antivirus probably removed it (see above). Allow `%LOCALAPPDATA%\TheCurator`, then run the one-line command again: it re-downloads what is missing |
+| "Port 3333 is already used by another program" | The message names the program. Close it, or if it is a second copy of The Curator double-click **Stop The Curator** first. Still stuck: add `PORT=3334` to the `.env` file in `%USERPROFILE%\the-curator` (open it in Notepad), save, and double-click **The Curator** again |
+| "Windows does not allow The Curator to use port …" | Windows sometimes reserves a block of ports for Hyper-V, WSL or Docker. Add a different port, such as `PORT=3456`, to the `.env` file as above |
+| The message box says `node.exe` is missing, or "Windows or your antivirus blocked it" | Your antivirus probably removed or blocked it (see above). In Windows Security → Virus and threat protection → Protection history, allow `node.exe`, then run the one-line command again: it re-downloads what is missing |
+| "The Curator is taking longer than usual to start" | Wait a minute and double-click **The Curator** again; if it still does not open, restart your PC |
 | An update from Settings fails | Run the one-line command again; it updates the app the same way and explains any problem in words |
+| The installer says some files "were changed on this PC, so they were left exactly as they are" | You (or a tool) edited The Curator's own program files, so it will not overwrite them or update. Your notes are unaffected. To update anyway, rename the `the-curator` folder, run the command again, and copy your old `domains` folder into the new one |
 | The folder `the-curator` already exists but is not The Curator | The installer stops and names the folder rather than touch it. Rename or move that folder, then run the command again |
 
 **Uninstalling.** Nothing is installed system-wide, so removal is deleting folders:
 
 1. Double-click **Stop The Curator**.
 2. **Back up `%USERPROFILE%\the-curator\domains` first** — that folder is your knowledge, and deleting `the-curator` deletes it. Copy it somewhere safe (or into Obsidian's vault location) before you continue.
-3. Delete the **The Curator** and **Stop The Curator** icons from the Desktop, and the **The Curator** folder from the Start menu.
+3. Delete the **The Curator** and **Stop The Curator** icons from the Desktop, and the **The Curator** folder from the Start menu (it holds the same two icons).
 4. Delete the folder `%LOCALAPPDATA%\TheCurator`.
 5. Delete the folder `%USERPROFILE%\the-curator`.
 
 ### Manual setup (alternative — Linux, or technical users on Mac and Windows)
 
-If you prefer to set things up yourself, or you're on Linux. **You need git and Node.js first** (Node 22 LTS is recommended; 18 is the minimum). On Windows, the [one-line installer](#windows-one-line-installer) above is the easier route.
+If you prefer to set things up yourself, or you're on Linux. **You need git and Node.js first** (the current Node LTS is recommended; 18 is the minimum). On Windows, the [one-line installer](#windows-one-line-installer) above is the easier route.
 
 ```bash
 # 1. Clone the project
@@ -470,7 +480,7 @@ cd the-curator
 npm install
 
 # 3. Start the server
-CURATOR_NO_OPEN=1 npm start               # Linux (on a Mac, plain `node src/server.js`)
+CURATOR_NO_OPEN=1 npm start               # Linux (npm start runs `node src/server.js`)
 # Windows PowerShell, if you set it up by hand:
 # $env:CURATOR_NO_OPEN=1; npm start
 ```
@@ -8491,7 +8501,7 @@ Project: https://github.com/talirezun/the-curator
 User Guide: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md
 
 Steps:
-1. Verify git and Node.js are installed (Node 22 LTS recommended, 18 is the minimum); if not, install them (Homebrew on macOS, system package manager on Linux).
+1. Verify git and Node.js are installed (the current Node LTS recommended, 18 is the minimum); if not, install them (Homebrew on macOS, system package manager on Linux).
 2. git clone https://github.com/talirezun/the-curator.git into the user's home directory.
 3. cd the-curator && npm install
 4. On macOS: bash scripts/build-app.sh to build "The Curator.app", then move/copy it to /Applications and remind me to drag it from Finder into my Dock.
