@@ -2949,3 +2949,13 @@ body.guide-docked .main {
 /* v3.85.0's `.mcpi-*` rules (Settings › MCP bridge) are gone (v3.89.0): the
    page is drawn with the section kit (shared/section.css) and holds no class
    of its own beyond the overview's two inks (views/settings.css). */
+
+/* v3.89.2: a push/pull/sync is running (shared/sync-run.js) — the rail's Sync
+   icon spins on every view, at the app's one spin cadence (the same as
+   .sync-now-icon.is-spinning in views/sync.css). The title says it in words.
+   At the foot of the file on purpose: test-next-view-enter-motion.js reads
+   the FIRST reduced-motion block in this file as the view-enter one. */
+.rail-btn.is-syncing svg { animation: curator-spin 1.15s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .rail-btn.is-syncing svg { animation: none; }
+}

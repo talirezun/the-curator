@@ -302,6 +302,8 @@ This is the Sync view once a repository is connected:
 
 The **Sync now** button is what you use 95% of the time. It pulls anything new from GitHub, then pushes anything new from this machine. You don't have to remember which computer is "ahead" — the button handles both directions.
 
+A sync keeps running until it finishes when you leave the Sync page (since v3.89.2): the Sync icon in the rail spins while it runs, and the Sync page shows the result when you come back. Only one sync runs at a time — a second click while one runs starts nothing.
+
 ### Advanced — one-way operations
 
 **Push only** and **Pull only** sit beside **Sync now**. Use them only when you're certain about direction:

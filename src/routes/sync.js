@@ -8,6 +8,9 @@ import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
 // v3.76.0: a pull can bring domains this Mac has never seen — record their
 // identity colour (src/brain/domain-identity.js). Never throws.
 import { recordDomainIdentities } from '../brain/domain-identity.js';
+// v3.89.2: one sync at a time, and a record of it that outlives the request
+// that started it — see src/brain/sync-job.js for the measured report.
+import { runSyncJob, getSyncJob, SyncBusyError } from '../brain/sync-job.js';
 
 const router = Router();
 
@@ -28,6 +31,21 @@ function guardConcurrent(action) {
     next();
   };
 }
+
+// A second start while a sync is running is REFUSED, never run beside the
+// first (two concurrent syncs race each other's refs, and the loser used to
+// tell the user it "stopped early" — read as "cancelled").
+function busyResponse(res, err) {
+  return res.status(409).json({ error: err.message, code: err.code, running: err.running });
+}
+const JOB_OPTS = { describeError: (err) => friendlyError(err) || err.message };
+
+// The running job and the last finished one. Read by the Sync view when it
+// mounts and while it waits on a run it did not start (a reload, another
+// view's Sync button). Local and instant: no repository call.
+router.get('/job', (req, res) => {
+  res.json(getSyncJob());
+});
 
 router.get('/status', async (req, res) => {
   try {
@@ -157,10 +175,14 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     // the refusal instead. That was always the point: a frozen connect form
     // that cannot be taught a new dialog means the safety has to live on
     // this side of the wire, and that still holds for any client today.
-    const result = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
-    await recordDomainIdentities();
+    const result = await runSyncJob('setup', async () => {
+      const r = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
+      await recordDomainIdentities();
+      return r;
+    }, JOB_OPTS);
     res.json({ success: true, ...result, ...(await getStatus()) });
   } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
     // A REFUSAL IS NOT A CRASH. setup()'s guards raise a written sentence
     // plus a machine-readable code and the numbers behind it; answering 409
     // with all three lets the UI render a decision panel instead of a red
@@ -175,8 +197,9 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
 router.post('/push', guardConcurrent('push to sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    res.json(await push());
+    res.json(await runSyncJob('push', () => push(), JOB_OPTS));
   } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
     res.status(500).json({ error: friendlyError(err) || err.message });
   }
 });
@@ -184,10 +207,14 @@ router.post('/push', guardConcurrent('push to sync'), async (req, res) => {
 router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    const pulled = await pull();
-    await recordDomainIdentities();
+    const pulled = await runSyncJob('pull', async () => {
+      const r = await pull();
+      await recordDomainIdentities();
+      return r;
+    }, JOB_OPTS);
     res.json(pulled);
   } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
     res.status(500).json({ error: friendlyError(err) || err.message });
   }
 });
@@ -195,19 +222,24 @@ router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
 router.post('/sync', guardConcurrent('sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    const synced = await sync();
-    await recordDomainIdentities();
+    const synced = await runSyncJob('sync', async () => {
+      const r = await sync();
+      await recordDomainIdentities();
+      return r;
+    }, JOB_OPTS);
     res.json(synced);
   } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
     res.status(500).json({ error: friendlyError(err) || err.message });
   }
 });
 
 router.delete('/disconnect', guardConcurrent('disconnect sync'), async (req, res) => {
   try {
-    await disconnect();
+    await runSyncJob('disconnect', () => disconnect(), JOB_OPTS);
     res.json({ success: true });
   } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
     res.status(500).json({ error: err.message });
   }
 });

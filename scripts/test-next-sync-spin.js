@@ -240,7 +240,15 @@ section('6. Source-level guard — onAction() repaints on BOTH the start and the
 {
   const onAction = extractFunction(syncSrc, 'onAction', 'views/sync.js');
   ok(/state\.acting\s*=\s*kind;[\s\S]{0,80}render\(token\)/.test(onAction), 'render(token) is called immediately after state.acting is set — the spin starts on click, not on response');
-  ok(/finally\s*\{[\s\S]*state\.acting\s*=\s*null;[\s\S]*render\(token\)/.test(onAction), 'a finally block clears state.acting and repaints — reached on success AND on a caught error, never left spinning after a failed sync');
+  // v3.89.2: the settle moved out of onAction — the run belongs to the shell
+  // (shared/sync-run.js) so it survives navigation, and the CURRENT mount
+  // clears `acting` and repaints in onSyncRunChanged() via seedFromSyncRun().
+  // The runner settles on success AND on a caught error (its try/catch always
+  // reaches settle()); both behaviours are driven for real in
+  // scripts/test-sync-run-survives-navigation.js §2d/§2j and §3b/§3c.
+  ok(/await startSyncRun\(kind\)/.test(onAction), 'onAction hands the run to the shell-level runner');
+  const changed = extractFunction(syncSrc, 'onSyncRunChanged', 'views/sync.js');
+  ok(/seedFromSyncRun\(state,[\s\S]*render\(mountToken\)/.test(changed), 'a settle clears state.acting (seedFromSyncRun) and repaints — never left spinning after a failed sync');
 }
 
 // ── The CSS half, from disk (test-next-reduced-motion.js already proves

@@ -2705,6 +2705,22 @@ where the local side has by construction never been pushed anywhere, so preferri
 origin would prefer a revision that provably lacks the user's newest work.
 `pull()` was not touched by v3.32.0.
 
+**One sync at a time (v3.89.2).** `/push`, `/pull`, `/sync`, `/setup` and `/disconnect`
+run through a single-flight gate (`src/brain/sync-job.js`). A second start while one runs
+is refused with **409** `{error, code: "sync_running", running: {id, kind, startedAt}}` —
+never queued and never run beside the first (two concurrent syncs race each other's refs,
+and the loser used to report "Another sync check was running at the same time"). A
+request whose client goes away mid-sync is not cancelled: the server finishes it.
+
+### GET /api/sync/job
+
+`{running, last}` — the running job (`{id, kind, startedAt}`) or `null`, and the last
+finished one (`{id, kind, startedAt, finishedAt, state: "done"|"failed", result?, error?}`,
+where `result` is what the POST returned) or `null`. Process-local and instant; no git
+call. The Sync page reads it on entry and polls it while it follows a run it did not
+start (a reload mid-sync, the Context page's Sync button), so the run and its result show
+whatever page the user was on when it started.
+
 ---
 
 ## Shared Brain endpoints (`v3.0.0-beta+`)

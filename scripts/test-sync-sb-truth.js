@@ -340,6 +340,17 @@ section('§5  Render helpers — the Sync view and the Shared Brain labels');
     'async function refreshSyncRemoteBadge() {}\n' +
     'function describeResult() { return "done"; }\n' +
     'const fetch = async () => ({ ok: true, json: async () => ({ pulled: true }) });\n' +
+    // v3.89.2: the run belongs to the shell (shared/sync-run.js) and the
+    // re-read happens when it SETTLES, in onSyncRunChanged(). The stand-in
+    // runner below does what the real one does to its subscribers: notify
+    // on start, then on settle.
+    'const SYNC_RUN_KINDS = ["sync", "push", "pull"];\n' +
+    'let run = null;\n' +
+    'function currentSyncRun() { return run; }\n' +
+    'function lastSyncOutcome() { return { kind: "pull", ok: true, message: "done", error: null, seen: false }; }\n' +
+    'async function startSyncRun(k) { run = { kind: k }; onSyncRunChanged(1); await Promise.resolve(); run = null; onSyncRunChanged(1); }\n' +
+    extractFunction(syncSrc, 'seedFromSyncRun', 'sync.js') + '\n' +
+    extractFunction(syncSrc, 'onSyncRunChanged', 'sync.js') + '\n' +
     extractFunction(syncSrc, 'onGateChange', 'sync.js') + '\n' +
     extractFunction(syncSrc, 'onAction', 'sync.js') + '\n' +
     'return { onGateChange, onAction };'
@@ -355,6 +366,7 @@ section('§5  Render helpers — the Sync view and the Shared Brain labels');
   ok(calls.includes('loadStatus'), '5p: F3 THE FIX — when the last write settles, the pending count is re-read (as the rail badge is)', calls.join(','));
   calls.length = 0;
   await h.onAction('pull', 1);
+  await new Promise((r) => setTimeout(r, 0));
   ok(calls.includes('loadStatus') && calls.includes('loadDomains'),
     '5q: F4 — after a pull the "domains backed up" list is re-read with the status', calls.join(','));
 
