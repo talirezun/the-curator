@@ -492,7 +492,7 @@ Open **http://localhost:3333** in your browser. The Getting started panel will g
 **Linux specifics**
 
 - Set `CURATOR_NO_OPEN=1` to stop the server trying to open a browser for you (it still binds to `localhost:3333`; just open it manually).
-- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder picker works on macOS and, since v3.87.1, on Windows (Windows' own folder dialog); on Linux there is no picker, but if it cannot open you can paste the folder's full path into the field that appears, and the env var works on every OS. If you've also set a folder in **Settings → Knowledge base**, that value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, press **Install for me** again after changing the knowledge base folder — Settings → MCP bridge → Agent apps — so Claude Desktop picks up the new location too; the old setup wizard was retired in v3.85.0. See [mcp-user-guide.md](mcp-user-guide.md).)
+- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder picker works on macOS and, since v3.87.1, on Windows (Windows' own folder dialog); on Linux (since v3.89.1) it uses `zenity`, `kdialog` or `yad` if one is installed, and if it cannot open you can paste the folder's full path into the field that appears, and the env var works on every OS. If you've also set a folder in **Settings → Knowledge base**, that value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, press **Install for me** again after changing the knowledge base folder — Settings → MCP bridge → Agent apps — so Claude Desktop picks up the new location too; the old setup wizard was retired in v3.85.0. See [mcp-user-guide.md](mcp-user-guide.md).)
 - Updating the app on Linux: stop the server, run `git pull && npm install` from the `the-curator` directory, then start it again. (On Windows with the one-line installer, press Update in Settings or run the one-line command again.) See [§16 → Version and updates](#version-and-updates) for how updating works on macOS, where it is a button in Settings.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
@@ -7213,9 +7213,10 @@ moves an established wiki into the Mac app** — it is step one of the three in
 the same action, labelled **Use existing folder**, in its sidebar and on the empty-state
 card.
 
-> **On macOS and Windows a folder picker opens** (on Windows since v3.87.1: Windows' own
-> folder dialog, brought in front of the browser). **If a picker cannot open or does not
-> finish** — on Linux, or on a PC where the dialog fails — the message that says so comes
+> **On macOS, Windows and Linux a folder picker opens** (on Windows since v3.87.1: Windows' own
+> folder dialog, brought in front of the browser; on Linux since v3.89.1: `zenity`, `kdialog` or
+> `yad`, whichever is installed). **If a picker cannot open or does not
+> finish** — on a Linux computer with none of those tools, or on a PC where the dialog fails — the message that says so comes
 > with a field: paste the folder's full path (File Explorer's address bar shows it; a path
 > copied with *Copy as path*, quotes and all, works too) and press **Use this folder**. The
 > path must be a full path to an existing folder you can read, and not one of the app's own

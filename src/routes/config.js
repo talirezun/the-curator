@@ -36,6 +36,7 @@ import { getDesktopHook } from '../brain/desktop-host.js';
 import { buildSubprocessEnv } from '../brain/subprocess-env.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { pickFolderWin32 } from '../brain/win-folder-dialog.js';
+import { pickFolderLinux, LINUX_NO_DIALOG_MESSAGE } from '../brain/linux-folder-dialog.js';
 import { validateKnowledgeFolderPath } from '../brain/knowledge-folder-path.js';
 // NAMESPACE import, the same degradation contract as `llmModule` above: a
 // not-yet-shipped export resolves to undefined and the route reports it, rather
@@ -906,6 +907,23 @@ export async function pickFolderHandler(_req, res, deps = null) {
     });
   }
 
+  // v3.89.1: Linux shows the desktop's own folder dialog (zenity, kdialog or
+  // yad — src/brain/linux-folder-dialog.js). No tool or no display is the
+  // `no-dialog` FACT (501); the macOS hint below is never shown off darwin.
+  if (((deps && deps.platform) || process.platform) === 'linux') {
+    const linuxPick = (deps && deps.pickFolderLinux) || pickFolderLinux;
+    const got = await linuxPick({ prompt: 'Select your Knowledge Base folder:' });
+    if (got && got.kind === 'picked') return accept(String(got.path || '').trim());
+    if (got && got.kind === 'cancelled') return res.json({ cancelled: true });
+    const none = !got || got.kind === 'unavailable';
+    return res.status(none ? 501 : 500).json({
+      ok: false,
+      reason: none ? 'no-dialog' : 'failed',
+      error: none ? LINUX_NO_DIALOG_MESSAGE : (got.message || 'The folder dialog failed.'),
+      hint: 'Paste the folder\'s full path instead.',
+    });
+  }
+
   try {
     const { stdout } = await execAsync(
       `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
@@ -1046,6 +1064,28 @@ export async function pickPathHandler(req, res, deps = null) {
     return res.status(500).json({
       ok: false, reason: 'failed',
       message: (got && got.message) || 'The folder dialog failed.',
+      hint: 'You can type the path instead.',
+    });
+  }
+
+  // v3.89.1: Linux's own folder dialog (see pickFolderHandler).
+  if (((deps && deps.platform) || process.platform) === 'linux') {
+    const linuxPick = (deps && deps.pickFolderLinux) || pickFolderLinux;
+    const got = await linuxPick({ prompt });
+    if (got && got.kind === 'picked' && String(got.path || '').trim()) {
+      return res.json({ ok: true, path: String(got.path).trim() });
+    }
+    if (got && got.kind === 'cancelled') return res.json({ ok: false, reason: 'cancelled' });
+    if (!got || got.kind === 'unavailable') {
+      return res.status(501).json({
+        ok: false, reason: 'no-dialog',
+        message: LINUX_NO_DIALOG_MESSAGE,
+        hint: 'Type or paste the full path to the folder instead.',
+      });
+    }
+    return res.status(500).json({
+      ok: false, reason: 'failed',
+      message: got.message || 'The folder dialog failed.',
       hint: 'You can type the path instead.',
     });
   }
