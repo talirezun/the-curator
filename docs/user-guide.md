@@ -7075,10 +7075,12 @@ Each tile's *"N uses · 7 days"* follows the same rule (*"· 5 days"*), and the 
 
 **Across projects** (block ④), the block's own depth bar, reads the same figure the Mac menu bar widget's
 own Projects section shows, one bar per project, scaled to the busiest project. Since v3.88.0 each
-project row shows its **saves** (handoffs saved in the last 30 days, read from the handoff journals; a
-trailing **+** means the count is a floor because a long journal was read only from its newest part) and
-the time of its **last save**, and the bar shows saves. Beneath the rows, separately, are the per-tool saves
-over the last 7 days. The window note sits under the reading it describes, not under both.
+project row shows its **saves** (handoffs saved, read from the handoff journals) and the time of its
+**last save**, and the bar shows saves. Both readings in the block, saves per project and saves per agent
+app beneath them, are counted over the **same last 7 days**, and that window is stated once, in the
+block's opening line (*"Last 7 days: …"*, or *"Last 5 days (records begin 27 Oct)"* when the records are
+younger). A trailing **+** means *at least*: a long journal was read only from its newest part. Projects
+with no save in the window share one line, *"No save: early-computing / lecture-series, posts / ott"*.
 
 #### "Test all 24 tools" — lighting the map yourself
 

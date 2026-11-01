@@ -3117,7 +3117,7 @@ in `src/routes/mcp.js`:
 own — see [working-state.md](working-state.md)), plus a trailing row for any project the log names
 that the store does not hold (deleted, renamed, or living on another machine's store, `inStore:
 false`). `sessions`/`sessionsRead`/`sessionsSaved`/`lastSessionAt` are counted over the window named
-in `byProjectWindow` (30 days by default). `sessionsSaved` is `null` when there is no usage log at
+in `byProjectWindow` (30 days by default; the connections only, handoff `saves` use the 7-day window below). `sessionsSaved` is `null` when there is no usage log at
 all, and a measured `0` when there is a log and genuinely no session — the same "no log" vs "a
 measured zero" distinction the menubar widget and the Context capture meter both make.
 `domainMismatch` and `sharedName` flag a project name the log cannot uniquely attribute (the log is
@@ -3135,7 +3135,7 @@ every project in the window, or `null` without a log. `storeProjects`/`storeTrun
 store projects were walked and whether that walk was capped; `error` carries a short message when the
 usage log itself could not be read, `null` otherwise.
 
-**Per-project saves (v3.88.0).** Each `byProject[]` row gains `saves` (handoff saves in the project's journals within `byProjectWindow.since`, read from the working-state store and never the usage log; `null` when the store was not read, `0` when read with none; rows with `inStore: false` carry `null`), `lastSaveAt` (newest save of any age, or `null`) and `savesCapped` (`true` when a journal was read only from its newest 16 KB, so `saves` is a floor — render "12+"). `savePulse` gains `capped`, the same boolean as `lowerBound`; render the "+" from the flag, not from the prose.
+**Per-project saves (v3.88.0).** Each `byProject[]` row gains `saves` (handoff saves in the project's journals within the last 7 days, the pulse's window, stated by `byProjectWindow.savesWindowDays` (`7`) and `savesSince`, the same window as `savePulse`; the connection fields above keep their 30-day window; read from the working-state store and never the usage log; `null` when the store was not read, `0` when read with none; rows with `inStore: false` carry `null`), `lastSaveAt` (newest save of any age, or `null`) and `savesCapped` (`true` when a journal was read only from its newest 16 KB, so `saves` is a floor — render "12+"). `savePulse` gains `capped`, the same boolean as `lowerBound`; render the "+" from the flag, not from the prose.
 
 **`savePulse`** is the widget pulse strip's own facts — saves in the last 7 days (`windowSeconds`
 `604800`), `null` when nothing could be read. `lowerBound` is `true` when any work-stream's journal
