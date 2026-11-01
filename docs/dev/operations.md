@@ -84,3 +84,16 @@ node scripts/bulk-reingest.js articles --delay=5000  # slower, for rate limits
 # Rebuild The Curator.app (called automatically by update, or run manually)
 bash scripts/build-app.sh
 ```
+
+### Windows scripts (v3.87.0)
+
+| File | What it is |
+|---|---|
+| `install.ps1` (repo root) | The one-line installer: `irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 \| iex`. Pinned Node LTS + MinGit, each verified by a SHA256 written into the script; installs into `%LOCALAPPDATA%\TheCurator\runtime\{node,git}` (no admin, nothing on the system PATH); checkout at `%USERPROFILE%\the-curator`; `npm ci` (falls back to `npm install`) via `npm.cmd` by absolute path; shortcuts `The Curator.lnk` and `Stop The Curator.lnk` on the Desktop and in the Start menu folder `The Curator`. Parameters: `-Branch` (default `main`), `-NoStart` (CI), `-InstallDir` (CI only). Idempotent: a re-run repairs the runtime, fast-forwards a clean checkout and recreates the shortcuts, and never touches `domains\`, `.env` or `.curator-config.json`. |
+| `scripts/windows/start-curator.ps1` | If a server already answers on the port, only opens the browser; otherwise starts `node.exe src\server.js` hidden with `CURATOR_NO_OPEN=1` and the runtime node + git first on `PATH`, logs to `%LOCALAPPDATA%\TheCurator\logs\server.log` (previous file kept as `server.log.1`), polls `/api/version` for about 45 s, opens the browser. On failure shows a message box that names the log. |
+| `scripts/windows/stop-curator.ps1` | Stops node processes whose command line contains `<checkout>\src\server.js` (so a server re-spawned by the in-app Restart is caught too) and never any other node process. |
+| `scripts/windows/curator-common.ps1` | Shared helpers. |
+| Shortcut target | `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<checkout>\scripts\windows\start-curator.ps1"` (same for stop). |
+| `CURATOR_WIN_NONINTERACTIVE=1` | Suppresses the message boxes (CI). |
+
+**CI.** The job "Windows one-line install" (windows-latest, in `.github/workflows/test.yml`) runs `install.ps1` from the checked-out branch with `-Branch <branch> -NoStart -InstallDir <temp>`, starts the app, asserts `/api/version` answers, runs the stop script and asserts the process is gone and the port free, asserts both shortcuts exist with the right icon, and re-runs the installer to prove a planted `domains\x\wiki\a.md` stays byte-identical. It gates the release like the existing "Windows installer tests" job.
