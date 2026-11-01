@@ -81,7 +81,7 @@ Then open **http://localhost:3333** in any browser. Stop it with Ctrl+C.
 | Setting | What it does |
 |---|---|
 | `CURATOR_NO_OPEN=1` | Stops the server trying to open a browser for you. The server still binds to `localhost:3333`; open it yourself. |
-| `DOMAINS_PATH=/path/to/your/knowledge` | Puts your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker button in Settings is macOS only, but this environment variable works everywhere. A folder set in **Settings → Knowledge base** takes priority over it. |
+| `DOMAINS_PATH=/path/to/your/knowledge` | Puts your wiki folder somewhere other than `~/the-curator/domains`. The folder picker opens on macOS and Windows; anywhere it cannot open, you can paste the folder's full path instead, and this environment variable works everywhere. A folder set in **Settings → Knowledge base** takes priority over it. |
 | `PORT=4000` | Changes the port if 3333 is taken. |
 
 To update a Linux install, run `git pull && npm install` in the `the-curator` folder and restart the server.
@@ -275,7 +275,7 @@ If one of these is refused because something else is writing to that domain — 
 
 ## How do I point The Curator at wiki files I already have?
 
-Two entrances to the same action: **Use existing folder** in the Domains sidebar and on the empty-state card, or **Choose folder** in **Settings → Knowledge base**.
+Two entrances to the same action: **Use existing folder** in the Domains sidebar and on the empty-state card, or **Choose folder** in **Settings → Knowledge base**. Both open a folder picker (on Windows since version 3.87.1). If the picker cannot open, the message comes with a field: paste the folder's full path (File Explorer's address bar shows it) and press **Use this folder**.
 
 **Pick the folder that CONTAINS your domains, not a domain.** A knowledge folder holds one folder per domain, and each of those holds a `CLAUDE.md` and a `wiki/`.
 

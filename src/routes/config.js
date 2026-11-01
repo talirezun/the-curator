@@ -35,6 +35,8 @@ import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { getDesktopHook } from '../brain/desktop-host.js';
 import { buildSubprocessEnv } from '../brain/subprocess-env.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
+import { pickFolderWin32 } from '../brain/win-folder-dialog.js';
+import { validateKnowledgeFolderPath } from '../brain/knowledge-folder-path.js';
 // NAMESPACE import, the same degradation contract as `llmModule` above: a
 // not-yet-shipped export resolves to undefined and the route reports it, rather
 // than failing this file's load and taking every config endpoint down.
@@ -750,23 +752,35 @@ router.put('/context-window', (req, res) => {
   }
 });
 
-/** POST /api/config/domains-path — set a new domains folder path */
-router.post('/domains-path', guardConcurrent('change the knowledge folder'), (req, res) => {
-  const { path: newPath } = req.body;
+/**
+ * POST /api/config/domains-path — set a new domains folder path.
+ *
+ * v3.87.1: this is now ALSO the typed-path fallback beside the folder picker
+ * (Domains → "Paste the folder's full path"), so the path is whatever a person
+ * pasted. It goes through `validateKnowledgeFolderPath` first — absolute,
+ * normalised, exists, a directory, listable, not inside the app's own code
+ * folders — and the NORMALISED path is what is applied and returned. The
+ * refusal keeps the route's `{error}` field (every caller reads it) and adds
+ * a `reason`. Guarded by guardConcurrent like pick-folder; Origin/Host are
+ * guarded app-wide (src/server.js). `deps` is the test seam, null in production.
+ */
+export function domainsPathHandler(req, res, deps = null) {
+  const newPath = req && req.body ? req.body.path : undefined;
   if (!newPath || typeof newPath !== 'string' || !newPath.trim()) {
     return res.status(400).json({ error: 'path is required' });
   }
-  const trimmed = newPath.trim();
-  if (!existsSync(trimmed)) {
-    return res.status(400).json({ error: `Folder does not exist: ${trimmed}` });
+  const checked = validateKnowledgeFolderPath(newPath, (deps && deps.validate) || {});
+  if (!checked.ok) {
+    return res.status(400).json({ ok: false, reason: checked.reason, error: checked.error });
   }
   try {
-    setDomainsDir(trimmed);
-    res.json({ ok: true, domainsPath: trimmed });
+    ((deps && deps.setDomainsDir) || setDomainsDir)(checked.path);
+    res.json({ ok: true, domainsPath: checked.path });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+router.post('/domains-path', guardConcurrent('change the knowledge folder'), (req, res) => domainsPathHandler(req, res));
 
 /**
  * POST /api/config/pick-folder — ask the user for their knowledge folder.
@@ -778,7 +792,9 @@ router.post('/domains-path', guardConcurrent('change the knowledge folder'), (re
  * ── FORKED on `folderPickerStyle` (see src/brain/install-mode.js) ───────────
  *
  * REPO ARM ('osascript') — byte-identical to every version that has shipped.
- * `osascript … choose folder` on the server's own machine.
+ * `osascript … choose folder` on the server's own machine. On win32 (v3.87.1)
+ * the repo arm shows Windows' own FolderBrowserDialog instead
+ * (src/brain/win-folder-dialog.js); its folder goes through the same accept().
  *
  * BUNDLE ARM ('native-dialog') — the desktop shell's `pickFolder` hook, from
  * `src/brain/desktop-host.js`. The route can reach Electron's own dialog
@@ -871,24 +887,22 @@ export async function pickFolderHandler(_req, res, deps = null) {
     return accept(typeof picked === 'string' ? picked.trim() : '');
   }
 
-  // v3.87.0: a repo install on Windows (the one-line installer) has no
-  // osascript. Say so in words and name the one way that works without a
-  // dialog (DOMAINS_PATH in .env — there is no typed-path field in Settings),
-  // rather than running a command that cannot exist there and reporting a
-  // macOS privacy hint. 501 is what domains.js renders as "cannot open a
-  // folder picker"; Settings renders only `error`, so the remedy is in it.
-  // Never `cancelled`: the frontend checks that field before the status.
+  // v3.87.1: a repo install on Windows (the one-line installer) has no
+  // osascript, so it shows Windows' own folder dialog through PowerShell
+  // (src/brain/win-folder-dialog.js — absolute powershell.exe, execFile, no
+  // shell, a TopMost owner so the dialog is not hidden behind the browser).
+  // A chosen folder goes through `accept()`, the same post-pick rules as the
+  // macOS arm. Never `cancelled` on a failure: the frontend reads that first.
   if (((deps && deps.platform) || process.platform) === 'win32') {
-    return res.status(501).json({
+    const winPick = (deps && deps.pickFolderWin32) || pickFolderWin32;
+    const got = await winPick({ prompt: 'Select your Knowledge Base folder:' });
+    if (got && got.kind === 'picked') return accept(String(got.path || '').trim());
+    if (got && got.kind === 'cancelled') return res.json({ cancelled: true });
+    return res.status(got && got.kind === 'unavailable' ? 501 : 500).json({
       ok: false,
-      reason: 'no-dialog',
-      // The whole remedy is in `error` (Settings shows only that field).
-      error: 'The Curator cannot open a folder picker on Windows yet, so your ' +
-             'knowledge folder stays where it is. ' +
-             'To use a different folder: double-click "Stop The Curator", add the line ' +
-            'DOMAINS_PATH=<the folder\'s full path> to the .env file in your the-curator ' +
-            'folder (create the file if it is not there; File Explorer\'s address bar ' +
-            'shows a folder\'s full path), then start The Curator again.',
+      reason: got && got.kind === 'unavailable' ? 'no-dialog' : 'failed',
+      error: (got && got.message) || 'The folder dialog failed.',
+      hint: 'Paste the folder\'s full path instead (File Explorer\'s address bar shows it).',
     });
   }
 
@@ -1019,10 +1033,21 @@ export async function pickPathHandler(req, res, deps = null) {
     return p ? res.json({ ok: true, path: p }) : res.json({ ok: false, reason: 'cancelled' });
   }
 
-  // v3.87.0: no osascript on Windows — the `no-dialog` FACT, so the UI shows
-  // the typed field instead of a button that fails on every press.
+  // v3.87.1: Windows' own folder dialog (see pickFolderHandler). PowerShell
+  // that cannot start is the `no-dialog` FACT, so the UI shows the typed field.
   if (((deps && deps.platform) || process.platform) === 'win32') {
-    return noDialog('not available on Windows yet');
+    const winPick = (deps && deps.pickFolderWin32) || pickFolderWin32;
+    const got = await winPick({ prompt });
+    if (got && got.kind === 'picked' && String(got.path || '').trim()) {
+      return res.json({ ok: true, path: String(got.path).trim() });
+    }
+    if (got && got.kind === 'cancelled') return res.json({ ok: false, reason: 'cancelled' });
+    if (got && got.kind === 'unavailable') return noDialog(got.message ? got.message.replace(/\.$/, '') : '');
+    return res.status(500).json({
+      ok: false, reason: 'failed',
+      message: (got && got.message) || 'The folder dialog failed.',
+      hint: 'You can type the path instead.',
+    });
   }
 
   try {

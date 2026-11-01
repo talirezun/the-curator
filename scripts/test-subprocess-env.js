@@ -13,7 +13,7 @@
  *       spawn options identical off Windows, windowsHide on Windows.
  *   §5  The updater (the REAL updateHandler through its deps seam — nothing
  *       runs): build-app.sh off Windows only, and its exec env IS the helper's.
- *   §6  The folder pickers refuse on Windows without running osascript.
+ *   §6  The folder pickers use Windows' own dialog, never osascript (v3.87.1).
  *   §7  The two reveal routes are macOS-only.
  *
  * Isolation: CURATOR_TEST_USER_DATA_DIR, CURATOR_TEST_DOMAINS_DIR and
@@ -338,10 +338,13 @@ section('§5b  App folders on Windows: %LOCALAPPDATA%\\TheCurator, never ~\\Libr
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§6  Folder pickers on Windows: a clear refusal, no osascript');
+section('§6  Folder pickers on Windows: Windows\' own dialog, never osascript (v3.87.1)');
 // ═══════════════════════════════════════════════════════════════════════════
-async function runPick(handler, platform, body = {}) {
-  let execs = 0, set = 0;
+// v3.87.0 refused here with 501; v3.87.1 shows the native dialog through
+// src/brain/win-folder-dialog.js. The dialog itself is FAKED (deps.pickFolderWin32);
+// scripts/test-win-folder-picker.js pins its argv, timeout and decoding.
+async function runPick(handler, platform, body = {}, win = { kind: 'picked', path: 'C:\\Users\\Žiga\\Znanje' }) {
+  let execs = 0, set = 0, winCalls = 0;
   const res = fakeRes();
   const deps = {
     caps: { folderPickerStyle: 'osascript' },
@@ -350,26 +353,30 @@ async function runPick(handler, platform, body = {}) {
     hasActiveWrites: () => false,
     setDomainsDir: () => { set++; },
     pickFolderHook: null,
+    pickFolderWin32: async () => { winCalls++; return win; },
   };
   if (platform) deps.platform = platform;
   await handler({ body }, res, deps);
-  return { res, execs, set };
+  return { res, execs, set, winCalls };
 }
 {
   const w = await runPick(configRoute.pickFolderHandler, 'win32');
-  eq(w.res.statusCode, 501, 'pick-folder win32: 501 (domains.js renders it as "cannot open a folder picker")');
-  eq(w.execs, 0, 'pick-folder win32: osascript is never run');
-  eq(w.set, 0, 'pick-folder win32: the knowledge folder is not changed');
-  ok(!('cancelled' in (w.res.body || {})), 'pick-folder win32: no `cancelled` field (the frontend reads that first)');
-  ok(/DOMAINS_PATH/.test(w.res.body.error) && /\.env/.test(w.res.body.error),
-    'pick-folder win32: `error` itself carries the remedy (Settings shows only that field)');
+  eq([w.res.statusCode, w.res.body && w.res.body.path, w.set, w.winCalls, w.execs], [200, 'C:\\Users\\Žiga\\Znanje', 1, 1, 0],
+    'pick-folder win32: the Windows dialog runs once, its folder is applied, osascript is never run');
+  const u = await runPick(configRoute.pickFolderHandler, 'win32', {}, { kind: 'unavailable', message: 'no PowerShell.' });
+  eq([u.res.statusCode, u.res.body.reason, u.set, u.execs], [501, 'no-dialog', 0, 0],
+    'pick-folder win32, PowerShell missing: 501 no-dialog, nothing applied, no osascript');
+  ok(!('cancelled' in (u.res.body || {})), 'pick-folder win32: a refusal has no `cancelled` field (the frontend reads that first)');
+  ok(!/cannot open a folder picker on Windows yet/.test(JSON.stringify(u.res.body)),
+    'pick-folder win32: the v3.87.0 "cannot open a folder picker on Windows yet" text is gone');
   const m = await runPick(configRoute.pickFolderHandler, 'darwin');
-  eq([m.res.statusCode, m.execs, m.set, m.res.body && m.res.body.path], [200, 1, 1, '/Users/x/kb'],
-    'pick-folder darwin CONTROL: osascript runs once and the folder is applied, as before');
+  eq([m.res.statusCode, m.execs, m.set, m.winCalls, m.res.body && m.res.body.path], [200, 1, 1, 0, '/Users/x/kb'],
+    'pick-folder darwin CONTROL: osascript runs once and the folder is applied, as before; no Windows dialog');
   const pw = await runPick(configRoute.pickPathHandler, 'win32', { prompt: 'foundations' });
-  eq([pw.res.statusCode, pw.res.body.reason, pw.execs], [501, 'no-dialog', 0], 'pick-path win32: the no-dialog fact, nothing run');
+  eq([pw.res.statusCode, pw.res.body.ok, pw.res.body.path, pw.execs, pw.set], [200, true, 'C:\\Users\\Žiga\\Znanje', 0, 0],
+    'pick-path win32: the Windows dialog\'s folder is returned, nothing run through osascript, nothing applied');
   const pm = await runPick(configRoute.pickPathHandler, 'darwin', { prompt: 'foundations' });
-  eq([pm.res.statusCode, pm.res.body.ok, pm.execs], [200, true, 1], 'pick-path darwin CONTROL: unchanged');
+  eq([pm.res.statusCode, pm.res.body.ok, pm.execs, pm.winCalls], [200, true, 1, 0], 'pick-path darwin CONTROL: unchanged');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -278,6 +278,10 @@ function lift(name, state, over) {
     myMountToken: 1,
     onSaveDefaultDomain: () => {},
     crossWriteBusy: () => false,
+    // v3.87.1: the typed-path fallback (rendered only after a picker failure,
+    // measured in test-win-folder-picker.js) and the platform word.
+    renderTypedFolderFallback: () => '',
+    browserPlatform: () => 'darwin',
     crossWriteTitle: (c) => 'A write is in flight — ' + c,
     renderCrossWriteBanner: () => '',
     // General's collaborators that are NOT part of what is measured: the

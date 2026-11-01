@@ -2958,8 +2958,11 @@ GET  /api/config               → current app configuration, including the reso
 POST /api/config/background-mode → set 'window' | 'tray' | 'tray-only'. NOT guardConcurrent'd — nothing
                                  on any write path reads it, so a 409 would only refuse to let a user
                                  turn off a menu bar icon while the app is busy with something else
-POST /api/config/domains-path  → set domains folder path
-POST /api/config/pick-folder   → macOS native folder picker (osascript); MUTATES — calls setDomainsDir()
+POST /api/config/domains-path  → set domains folder path; since v3.87.1 also the typed-path fallback,
+                                 validated by src/brain/knowledge-folder-path.js (absolute, exists, a
+                                 folder, readable, not inside the app's own files)
+POST /api/config/pick-folder   → native folder picker (macOS osascript; Windows FolderBrowserDialog via
+                                 src/brain/win-folder-dialog.js, v3.87.1); MUTATES — calls setDomainsDir()
 POST /api/config/pick-path     → native folder picker that mutates NOTHING — hands back a path only
                                  (v3.61.1; the Foundations chooser's "Choose folder…")
 GET  /api/config/api-keys      → masked keys + active provider info, plus (v3.12.0+) `offerable`

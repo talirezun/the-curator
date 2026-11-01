@@ -5894,7 +5894,7 @@ fresh install — the wiki is plain markdown on disk, so naming the folder *is* 
 
 | Parameter | Description |
 |---|---|
-| `path` | Absolute path to an **existing** folder. Required, non-empty |
+| `path` | Absolute path to an **existing**, readable folder. Required, non-empty. One pair of surrounding quotes is removed (File Explorer's *Copy as path*) |
 
 **Success response** `200 OK`
 
@@ -5902,9 +5902,14 @@ fresh install — the wiki is plain markdown on disk, so naming the folder *is* 
 { "ok": true, "domainsPath": "/Users/you/Documents/curator-domains" }
 ```
 
-**Error response** `400` — `{"error": "path is required"}`, or
-`{"error": "Folder does not exist: /nope"}`. The folder must already exist; this route does not
-create one.
+The path is normalised (`..` resolved) and the **normalised** path is what is applied and returned.
+
+**Error response** `400` — `{"error": "path is required"}`, or, since v3.87.1 (when this became the
+typed-path fallback beside the folder picker), `{"ok": false, "reason", "error"}` with `reason` one of
+`empty` · `invalid` (a NUL byte) · `not-absolute` (on Windows: no drive letter or UNC prefix) ·
+`missing` (`"Folder does not exist: /nope"`, the original sentence) · `not-a-folder` · `unreadable` ·
+`inside-app` (the app's own checkout or anything in it, judged on the real path, except the checkout's
+own `domains` folder). The folder must already exist; this route does not create one.
 
 **Refusal response** `409` — behind `guardConcurrent('change the knowledge folder')`, so it refuses
 while an ingest, sync or update is in flight. Moving the knowledge folder out from under a running
@@ -5914,9 +5919,14 @@ write is exactly the case that guard exists for.
 
 ## POST /api/config/pick-folder
 
-Open the native macOS folder picker (`osascript`) and, if the user chooses a folder, persist it.
-**macOS only** — on Windows and Linux use [`POST /api/config/domains-path`](#post-apiconfigdomains-path)
-with a path you obtained some other way. No body.
+Open a native folder picker and, if the user chooses a folder, persist it. macOS: `osascript`
+(the Mac app: Electron's own dialog). **Windows (v3.87.1):** `System.Windows.Forms.FolderBrowserDialog`
+through `powershell.exe` by absolute path (`-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass
+-EncodedCommand`, no shell), owned by an invisible TopMost form so it opens in front of the browser,
+with a 10-minute timeout (read as a cancel). If PowerShell cannot start: `501 {ok:false, reason:'no-dialog', error, hint}`;
+if the dialog reports an error: `500 {ok:false, reason:'failed', error, hint}`. Linux has no picker
+(`osascript` fails → `500`); use [`POST /api/config/domains-path`](#post-apiconfigdomains-path) with a
+typed path — the app offers that field beside every picker refusal. No body.
 
 **Success response** `200 OK` — a folder was chosen
 
@@ -5972,6 +5982,9 @@ the opposite behaviour.
 ```json
 { "ok": false, "reason": "cancelled" }
 ```
+
+On Windows (v3.87.1) the picker is Windows' own folder dialog, run exactly as `pick-folder` above
+runs it; `no-dialog` there means PowerShell itself could not start.
 
 **Refusal response** `501 Not Implemented` — this build/platform has no picker at all
 

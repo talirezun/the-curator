@@ -631,7 +631,11 @@ section('7. The monospace face is spent on LITERALS, not on facts');
          · 1 `mono` span in the index-rebuild plan card — the page path (or
            [[wikilink]]) of each example addition / removal, which is exactly
            what the Health rows beside it set in the code face. */
-    'views/domains.js': 28,
+    /* v3.87.1 RAISED IT FROM 28 TO 29, for one span and the same rule:
+         · 1 `mono` input — the typed-path fallback under a folder-picker
+           refusal, where the user pastes a full filesystem path (a path the
+           user types is the case this budget exists for). */
+    'views/domains.js': 29,
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string

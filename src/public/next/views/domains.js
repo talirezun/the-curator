@@ -552,6 +552,11 @@ const state = {
   // `undoPath` is the folder we were pointed at BEFORE the switch, present
   // only when there is somewhere to go back to and going back is useful.
   kbNotice: null,
+  // v3.87.1: the typed-path fallback shown under a picker refusal or failure
+  // (`kbNotice.typedPath`). The last refusal of a typed path, or null, and
+  // the text the person typed, kept across re-renders.
+  kbTypedError: null,
+  kbTypedValue: '',
 
   // ── Projects inside the active domain (v3.48.0) ────────────────────────
   //
@@ -2138,7 +2143,12 @@ async function onChooseKnowledgeFolder(token) {
         title: verdict.title,
         detail: verdict.detail,
         undoPath: null,
+        // v3.87.1: when the picker itself could not run, the person can still
+        // paste the path. Not for `refused` (a write is in progress — the
+        // typed route would be refused for the same reason).
+        typedPath: verdict.kind === 'unsupported' || verdict.kind === 'error',
       };
+      state.kbTypedError = null;
       return;
     }
     // SWITCHED. The mutation already happened server-side; from here we are
@@ -2146,7 +2156,52 @@ async function onChooseKnowledgeFolder(token) {
     await applySwitchedFolder(verdict.path, previousPath, token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.kbNotice = { state: 'danger', title: 'The folder picker did not finish', detail: err.message, undoPath: null };
+    state.kbNotice = { state: 'danger', title: 'The folder picker did not finish', detail: err.message, undoPath: null, typedPath: true };
+    state.kbTypedError = null;
+  } finally {
+    if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
+  }
+}
+
+/**
+ * v3.87.1 — THE TYPED-PATH FALLBACK. Use the folder whose full path the person
+ * pasted, through the EXISTING POST /api/config/domains-path — the route the
+ * undo below uses, which now validates a typed path (absolute, exists, a
+ * folder, readable, not inside the app's own files) and answers with the
+ * normalised path it applied. Nothing is validated here: the server's
+ * sentence is shown as-is, beside the field, so the person can correct it.
+ */
+async function onTypedKnowledgeFolder(typed, token) {
+  if (state.kbBusy) return;
+  const value = typeof typed === 'string' ? typed : '';
+  state.kbTypedValue = value;
+  if (!value.trim()) {
+    state.kbTypedError = 'Paste the full path of your knowledge folder first.';
+    render(token);
+    return;
+  }
+  const previousPath = (state.kb && state.kb.domainsPath) || null;
+  state.kbBusy = true;
+  state.kbTypedError = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/domains-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: value }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON error page */ }
+    if (!isCurrentMount(token)) return;
+    if (!res.ok) {
+      state.kbTypedError = (body && body.error) || ('Request failed (' + res.status + ')');
+      return;
+    }
+    state.kbTypedValue = '';
+    await applySwitchedFolder((body && body.domainsPath) || value.trim(), previousPath, token);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.kbTypedError = err.message;
   } finally {
     if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
   }
@@ -3315,6 +3370,30 @@ function renderKnowledgeNotice() {
     : '';
   return '<div class="dm-kb-notice">' +
     renderStatus({ state: n.state, title: n.title, detail: n.detail }) + undo +
+    (n.typedPath ? renderTypedKnowledgePath() : '') +
+  '</div>';
+}
+
+/**
+ * v3.87.1 — the typed-path fallback, under a picker that could not open or
+ * did not finish. Built only from parts this view already uses: the
+ * lifecycle form's `.dm-lc-input`, a plain primary `.btn`, the renderDescription
+ * line, and renderStatus for a refusal (a refusal is never behind a chevron).
+ */
+function renderTypedKnowledgePath() {
+  const busy = state.kbBusy;
+  return '<div class="dm-kb-typed">' +
+    '<div class="dm-kb-typed-row">' +
+      '<input class="dm-lc-input mono" id="dm-kb-typed-input" type="text" autocomplete="off" spellcheck="false"' +
+        ' placeholder="Paste the folder\u2019s full path" aria-label="The knowledge folder\u2019s full path"' +
+        ' value="' + escapeHtml(state.kbTypedValue || '') + '"' + (busy ? ' disabled' : '') + ' />' +
+      '<button class="btn btn-primary" id="dm-kb-typed-btn"' + (busy ? ' disabled' : '') + '>Use this folder</button>' +
+    '</div>' +
+    renderDescription('File Explorer\u2019s address bar (or Finder\u2019s Get Info) shows a folder\u2019s full path \u2014 ' +
+      'use the folder that contains your domains.') +
+    (state.kbTypedError
+      ? renderStatus({ state: 'danger', title: 'That folder cannot be used', detail: state.kbTypedError })
+      : '') +
   '</div>';
 }
 
@@ -3357,6 +3436,21 @@ function bindKnowledgeListeners() {
     // card's captured conversation id.
     const target = state.kbNotice.undoPath;
     undo.addEventListener('click', () => onUndoKnowledgeFolder(target, myMountToken).catch(reportAsyncActionFailure));
+  }
+  // v3.87.1: the typed-path fallback. The value is read from the field when
+  // the click lands — it is what the person typed, not a captured target.
+  const typedBtn = document.getElementById('dm-kb-typed-btn');
+  const typedInput = document.getElementById('dm-kb-typed-input');
+  const submitTyped = () => onTypedKnowledgeFolder(typedInput ? typedInput.value : '', myMountToken)
+    .catch(reportAsyncActionFailure);
+  if (typedBtn && !typedBtn.__dmBound) {
+    typedBtn.__dmBound = true;
+    typedBtn.addEventListener('click', submitTyped);
+  }
+  if (typedInput && !typedInput.__dmBound) {
+    typedInput.__dmBound = true;
+    typedInput.addEventListener('keydown', (e) => { if (e && e.key === 'Enter') submitTyped(); });
+    typedInput.addEventListener('input', () => { state.kbTypedValue = typedInput.value; });
   }
 }
 
@@ -9520,6 +9614,8 @@ registerView('domains', {
       // NOT cleared: it is a fact about this install, not an event.
       state.kbBusy = false;
       state.kbNotice = null;
+      state.kbTypedError = null;
+      state.kbTypedValue = '';
     state.aiProgress = null;
       // A one-shot fade token that nothing consumed is a fade waiting to
       // happen on a block that has been on screen since before the user left

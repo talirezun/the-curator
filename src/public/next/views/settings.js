@@ -207,6 +207,8 @@ import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 // because `.tx-readout` is a COLUMN (label above value) and no stylesheet but
 // shared/text.css may declare a `.tx-` rule to turn it into a row.
 import { renderViewHeader } from '../shared/text.js';
+// v3.87.1: "Waiting for Finder…" is a Mac word; other platforms say "folder picker".
+import { browserPlatform } from '../shared/platform.js';
 // G5 (v3.71.0, COPY.md §3): `general` was the one section with no entry in
 // SECTION_INFO — Settings is where setup starts, and nothing said "begin in
 // Providers & keys". Adds exactly that one entry; every other section keeps
@@ -1140,6 +1142,13 @@ function freshState() {
     vaultDomainsError: null,
     pickingFolder: false,
     pathCopyFeedback: null,
+    // v3.87.1: a folder picker that could not open or did not finish. Shown
+    // INLINE under the path row, with the typed-path fallback, instead of
+    // replacing the whole block through `configError`.
+    folderPickError: null,
+    typedFolderValue: '',
+    typedFolderError: null,
+    typedFolderBusy: false,
 
     // Knowledge base → GitHub read-only token (v3.65.2). `ghToken` is the
     // route's STATUS — `{present, last4, kind}` — and never a value; the
@@ -10406,7 +10415,7 @@ function renderStorage(domainsMonitorHtml) {
     '<div class="storage-path-row">' +
       '<code class="mono storage-path">' + escapeHtml(state.config.domainsPath) + '</code>' +
       '<button type="button" class="btn btn-primary btn-xs" id="btn-choose-folder"' + (chooseDisabled ? ' disabled' : '') + chooseTitle + '>' +
-        (state.pickingFolder ? 'Waiting for Finder…' : 'Choose folder') +
+        (state.pickingFolder ? (browserPlatform() === 'darwin' ? 'Waiting for Finder…' : 'Waiting for the folder picker…') : 'Choose folder') +
       '</button>' +
       // "Copy" is a clipboard-only read — deliberately not gated (see file-header comment).
       '<button type="button" class="btn btn-ghost btn-xs" id="btn-copy-path">Copy' + (state.pathCopyFeedback ? ' — ' + escapeHtml(state.pathCopyFeedback) : '') + '</button>' +
@@ -10415,11 +10424,35 @@ function renderStorage(domainsMonitorHtml) {
       icon('folder', 15) +
       '<span>Moving this folder loses nothing; the graph is picked up as-is.</span>' +
     '</div>' +
+    renderTypedFolderFallback() +
     // v3.66.0: "Domains in this folder", composed by the caller (see renderMain).
     (typeof domainsMonitorHtml === 'string' ? domainsMonitorHtml : '');
 
   return settingsBlock(null, 'storage-folder', 'Vault folder', lede, body, 'settings.vault-folder',
     renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.'));
+}
+
+/**
+ * v3.87.1 — the typed-path fallback, shown only after the folder picker could
+ * not open or did not finish. The field is the provider row's replace row
+ * (`.provider-replace-row` / `.provider-replace-input`), the hint `.settings-hint-text`, the button a plain
+ * primary `.btn`, the error the block's own `.settings-inline-error`. The path
+ * goes to the EXISTING POST /api/config/domains-path, which validates it.
+ */
+function renderTypedFolderFallback() {
+  if (!state.folderPickError) return '';
+  const busy = state.typedFolderBusy || state.pickingFolder || crossWriteBusy();
+  return '<div class="settings-inline-error">' + escapeHtml(state.folderPickError) + '</div>' +
+    '<div class="provider-replace-row">' +
+      '<input type="text" class="provider-replace-input mono" id="typed-folder-input"' +
+        ' placeholder="Paste the folder\u2019s full path" autocomplete="off" spellcheck="false"' +
+        ' aria-label="The knowledge folder\u2019s full path" value="' + escapeHtml(state.typedFolderValue || '') + '"' +
+        (busy ? ' disabled' : '') + '>' +
+      '<button type="button" class="btn btn-primary btn-xs" id="typed-folder-use"' + (busy ? ' disabled' : '') + '>' +
+        (state.typedFolderBusy ? 'Checking\u2026' : 'Use this folder') + '</button>' +
+    '</div>' +
+    '<p class="settings-hint-text">File Explorer\u2019s address bar (or Finder\u2019s Get Info) shows a folder\u2019s full path.</p>' +
+    (state.typedFolderError ? '<div class="settings-inline-error">' + escapeHtml(state.typedFolderError) + '</div>' : '');
 }
 
 /**
@@ -11100,6 +11133,15 @@ function wireStorageListeners() {
   if (chooseBtn) chooseBtn.addEventListener('click', () => onChooseFolder(myMountToken));
   const copyBtn = document.getElementById('btn-copy-path');
   if (copyBtn) copyBtn.addEventListener('click', () => onCopyPath(myMountToken));
+  // v3.87.1: the typed-path fallback (rendered only after a picker failure).
+  const typedInput = document.getElementById('typed-folder-input');
+  const typedUse = document.getElementById('typed-folder-use');
+  const submitTyped = () => onUseTypedFolder(typedInput ? typedInput.value : '', myMountToken);
+  if (typedUse) typedUse.addEventListener('click', submitTyped);
+  if (typedInput) {
+    typedInput.addEventListener('input', () => { state.typedFolderValue = typedInput.value; });
+    typedInput.addEventListener('keydown', (e) => { if (e && e.key === 'Enter') submitTyped(); });
+  }
 
   // ── GitHub read-only token ──────────────────────────────────────────────
   const editBtn = document.getElementById('gh-token-edit');
@@ -13028,12 +13070,54 @@ async function onChooseFolder(token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return;
     if (data.cancelled) { /* user hit Cancel in Finder — nothing to do */ }
-    else if (data.error) { state.configError = data.error; }
-    else { await loadConfig(token); }
+    // v3.87.1: a picker failure is shown INLINE with the typed-path fallback
+    // (renderTypedFolderFallback), never by replacing the block — the old
+    // `configError` route hid the path row and every control with it.
+    else if (data.error) {
+      state.folderPickError = [data.error, data.hint].filter((x) => typeof x === 'string' && x.trim()).join(' ');
+      state.typedFolderError = null;
+    }
+    else { state.folderPickError = null; await loadConfig(token); }
   } catch (err) {
-    if (isCurrentMount(token)) state.configError = err.message;
+    if (isCurrentMount(token)) { state.folderPickError = err.message; state.typedFolderError = null; }
   } finally {
     if (isCurrentMount(token)) { state.pickingFolder = false; render(token); }
+  }
+}
+
+/** v3.87.1 — use a typed folder path, through the EXISTING POST /api/config/domains-path. */
+async function onUseTypedFolder(typed, token) {
+  if (state.typedFolderBusy) return;
+  const value = typeof typed === 'string' ? typed : '';
+  state.typedFolderValue = value;
+  if (!value.trim()) {
+    state.typedFolderError = 'Paste the full path of your knowledge folder first.';
+    render(token);
+    return;
+  }
+  state.typedFolderBusy = true;
+  state.typedFolderError = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/domains-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: value }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (!isCurrentMount(token)) return;
+    if (!res.ok) {
+      state.typedFolderError = (data && data.error) || ('Request failed (' + res.status + ')');
+      return;
+    }
+    state.folderPickError = null;
+    state.typedFolderValue = '';
+    await loadConfig(token);
+  } catch (err) {
+    if (isCurrentMount(token)) state.typedFolderError = err.message;
+  } finally {
+    if (isCurrentMount(token)) { state.typedFolderBusy = false; render(token); }
   }
 }
 

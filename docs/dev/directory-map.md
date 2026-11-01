@@ -84,6 +84,11 @@ src/
                     Fails closed (no home) under CURATOR_TEST_USER_DATA_DIR unless CURATOR_TEST_INSTALL_HOME
     harness-detect.js— v3.85.0: which tools are on this Mac (app bundle, CLI on the login-shell PATH,
                     or a config file) and which are running (one `ps` over a fixed argv). Read-only
+    win-folder-dialog.js— v3.87.1: Windows' own folder dialog for pick-folder / pick-path —
+                    absolute powershell.exe, -STA, a constant -EncodedCommand script, a TopMost owner,
+                    UTF-8 base64 answer, 10-minute timeout. Never throws
+    knowledge-folder-path.js— v3.87.1: validates a TYPED knowledge-folder path for
+                    POST /api/config/domains-path (absolute, exists, folder, readable, not app code)
     github-read-client.js— READ-ONLY GitHub plumbing (v3.63.0), EXTRACTED from
                     sharedbrain-github-adapter.js so there is one implementation; GET only, the
                     token read from a FILE and never logged. MIT by ENTERPRISE-FILES.txt's own rule

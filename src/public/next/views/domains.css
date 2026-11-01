@@ -95,6 +95,17 @@
   min-width: 0;
 }
 
+/* v3.87.1: the typed-path fallback under a picker refusal. The input is the
+   lifecycle form's `.dm-lc-input`; the field and its button wrap on a phone. */
+.dm-kb-typed > * + * { margin-top: 8px; }
+.dm-kb-typed-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dm-kb-typed-row .dm-lc-input { flex: 1 1 260px; min-width: 0; }
+
 /* "Looking in <path>" — the last line inside `.empty-body`, so it inherits
    that role's type and needs only separation from the prose above it. */
 .dm-kb-lookedin { margin-top: 12px; }

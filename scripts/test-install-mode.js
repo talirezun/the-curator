@@ -690,7 +690,8 @@ eq((workConfigSrc.match(/osascript -e 'POSIX path of/g) || []).length, 2,
   ok(regAt > pfAt && regAt < ppAt, '§5b-a PRECONDITION: pick-folder\'s registration bounds its handler');
   const pickFolderBody = workConfigSrc.slice(pfAt, regAt);
   const rest = workConfigSrc.slice(0, pfAt) + workConfigSrc.slice(regAt);
-  eq((pickFolderBody.match(/Select your Knowledge Base folder:/g) || []).length, 2,
+  // v3.87.1: THREE arms — the desktop hook, Windows' own dialog, osascript.
+  eq((pickFolderBody.match(/Select your Knowledge Base folder:/g) || []).length, 3,
     '§5b-a ...the KNOWLEDGE-BASE prompt sits in pickFolderHandler, once per arm of the fork');
   eq((rest.match(/Select your Knowledge Base folder:/g) || []).length, 0,
     '§5b-a ...and NOWHERE else in the file — a second route wearing that wording would tell a ' +
