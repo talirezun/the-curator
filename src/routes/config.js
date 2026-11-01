@@ -33,6 +33,7 @@ import {
 import { APP_ROOT } from '../brain/paths.js';
 import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { getDesktopHook } from '../brain/desktop-host.js';
+import { buildSubprocessEnv } from '../brain/subprocess-env.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 // NAMESPACE import, the same degradation contract as `llmModule` above: a
 // not-yet-shipped export resolves to undefined and the route reports it, rather
@@ -83,8 +84,12 @@ const defaultFetch = (...args) => globalThis.fetch(...args);
  * asserts BOTH carry `xcode-select --install` and that NEITHER can be answered
  * with sync.js's "Repository not found" catch-all.
  */
-const GIT_MISSING_MESSAGE =
-  'Git is not available to The Curator, so it cannot update itself. ' +
+const GIT_MISSING_MESSAGE = process.platform === 'win32'
+  ? 'Git is not available to The Curator, so it cannot update itself. ' +
+    'Quit The Curator (double-click "Stop The Curator"), then paste the one-line ' +
+    'install command into PowerShell again: it repairs the private copy of git and ' +
+    'keeps your knowledge folder as it is.'
+  : 'Git is not available to The Curator, so it cannot update itself. ' +
   'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
   'If git is installed somewhere unusual, launching The Curator from a terminal ' +
   '(`npm start`) will pick up your shell PATH.';
@@ -254,19 +259,12 @@ const PROJECT_ROOT = APP_ROOT;
  * the updater spawns inherits this bare PATH, so `npm install` fails with
  * "npm: command not found". We prepend the node binary's directory plus the
  * common Homebrew / system prefixes so the child shells can resolve everything.
+ *
+ * v3.87.0: built per platform by src/brain/subprocess-env.js — the same string
+ * as before off Windows; on Windows ';'-joined with the node folder first, no
+ * POSIX folders, and the existing `Path` key kept (never a `Path`/`PATH` pair).
  */
-const NODE_BIN_DIR = path.dirname(process.execPath);
-const SUBPROCESS_PATH = [
-  NODE_BIN_DIR,
-  '/usr/local/bin',
-  '/opt/homebrew/bin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin',
-  process.env.PATH || '',
-].filter(Boolean).join(':');
-const SUBPROCESS_ENV = { ...process.env, PATH: SUBPROCESS_PATH };
+const SUBPROCESS_ENV = buildSubprocessEnv();
 
 /**
  * Classify an `npm install` failure into one of a handful of well-known
@@ -870,6 +868,27 @@ export async function pickFolderHandler(_req, res, deps = null) {
     return accept(typeof picked === 'string' ? picked.trim() : '');
   }
 
+  // v3.87.0: a repo install on Windows (the one-line installer) has no
+  // osascript. Say so in words and name the one way that works without a
+  // dialog (DOMAINS_PATH in .env — there is no typed-path field in Settings),
+  // rather than running a command that cannot exist there and reporting a
+  // macOS privacy hint. 501 is what domains.js renders as "cannot open a
+  // folder picker"; Settings renders only `error`, so the remedy is in it.
+  // Never `cancelled`: the frontend checks that field before the status.
+  if (((deps && deps.platform) || process.platform) === 'win32') {
+    return res.status(501).json({
+      ok: false,
+      reason: 'no-dialog',
+      // The whole remedy is in `error` (Settings shows only that field).
+      error: 'The Curator cannot open a folder picker on Windows yet, so your ' +
+             'knowledge folder stays where it is. ' +
+             'To use a different folder: double-click "Stop The Curator", add the line ' +
+            'DOMAINS_PATH=<the folder\'s full path> to the .env file in your the-curator ' +
+            'folder (create the file if it is not there; File Explorer\'s address bar ' +
+            'shows a folder\'s full path), then start The Curator again.',
+    });
+  }
+
   try {
     const { stdout } = await execAsync(
       `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
@@ -995,6 +1014,12 @@ export async function pickPathHandler(req, res, deps = null) {
     }
     const p = typeof picked === 'string' ? picked.trim() : '';
     return p ? res.json({ ok: true, path: p }) : res.json({ ok: false, reason: 'cancelled' });
+  }
+
+  // v3.87.0: no osascript on Windows — the `no-dialog` FACT, so the UI shows
+  // the typed field instead of a button that fails on every press.
+  if (((deps && deps.platform) || process.platform) === 'win32') {
+    return noDialog('not available on Windows yet');
   }
 
   try {
@@ -4802,7 +4827,13 @@ export async function updateHandler(_req, res, deps = null) {
     }
 
     // 5. Rebuild the .app so the AppleScript stays current with the code (non-fatal).
-    await execAsync('bash scripts/build-app.sh', execOpts({ timeout: 30000 })).catch(() => {});
+    //    Not on Windows (v3.87.0): there is no .app and no bash there; the
+    //    one-line install's Start / Stop scripts live in the checkout and are
+    //    refreshed by the reset above.
+    const platform = (deps && deps.platform) || process.platform;
+    if (platform !== 'win32') {
+      await execAsync('bash scripts/build-app.sh', execOpts({ timeout: 30000 })).catch(() => {});
+    }
 
     res.json({
       ok: true,

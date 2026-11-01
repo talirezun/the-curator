@@ -955,17 +955,31 @@ router.post('/exercise', exerciseHandler);
 /** TEST-ONLY: is a run in flight? The 409 arm is otherwise a race to observe. */
 export function __exerciseInFlight() { return exerciseInFlight; }
 
-router.post('/reveal-config', (_req, res) => {
+export function revealConfigHandler(_req, res, deps = null) {
+  // v3.87.0: macOS-only, the v3.86.0 rule ("Reveal is macOS-only"). `open -R`
+  // is Finder's; on Windows and Linux it is not a reveal command at all.
+  const platform = (deps && deps.platform) || process.platform;
+  if (platform !== 'darwin') {
+    return res.status(501).json({
+      ok: false,
+      reason: 'unsupported',
+      error: 'Showing a file in the file manager is only supported on macOS. ' +
+             'In Claude Desktop, Settings > Developer > Edit Config opens its config file.',
+    });
+  }
+  const run = (deps && deps.execFile) || execFile;
   // Use execFile (no shell) so the target path is never interpreted by the shell.
   // If the file doesn't exist yet, reveal the parent directory instead.
   const fileExists = existsSync(CLAUDE_CONFIG_PATH);
   const args = fileExists
     ? ['-R', CLAUDE_CONFIG_PATH]                    // reveal file in Finder
     : [path.dirname(CLAUDE_CONFIG_PATH)];           // open parent directory
-  execFile('open', args, (err) => {
+  run('open', args, (err) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
     res.json({ ok: true, revealed: fileExists ? CLAUDE_CONFIG_PATH : path.dirname(CLAUDE_CONFIG_PATH) });
   });
-});
+}
+
+router.post('/reveal-config', (req, res) => revealConfigHandler(req, res));
 
 export default router;

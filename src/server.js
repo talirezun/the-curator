@@ -3,7 +3,8 @@ import express from 'express';
 import path from 'path';
 import { readFileSync, chmodSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { exec, spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
+import { planBrowserOpen } from './brain/subprocess-env.js';
 import domainsRouter from './routes/domains.js';
 import ingestRouter from './routes/ingest.js';
 import queryRouter from './routes/query.js';
@@ -294,6 +295,11 @@ app.post('/api/restart', (_req, res) => {
     // makes the child fully independent — survives our process.exit.
     // The child inherits PATH and env vars (so npm and friends resolve
     // correctly under the .app wrapper).
+    // v3.87.0: on Windows a detached child gets a console window of its own;
+    // windowsHide keeps it hidden (the one-line install starts the server with
+    // no window, and a restart must not grow one). Off Windows the options are
+    // exactly what they were. The env — the private runtime's PATH included —
+    // is inherited either way.
     const child = spawn(
       process.execPath,
       [path.join(PROJECT_ROOT, 'src/server.js')],
@@ -302,6 +308,7 @@ app.post('/api/restart', (_req, res) => {
         detached: true,
         stdio: 'ignore',
         env: { ...process.env, CURATOR_NO_OPEN: '1' },
+        ...(process.platform === 'win32' ? { windowsHide: true } : {}),
       }
     );
     child.unref();
@@ -501,8 +508,13 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
       .catch(() => {});
 
     // Auto-open the browser when server starts (skip during restart — frontend reloads itself)
-    if (!process.env.CURATOR_NO_OPEN) {
-      exec(`open http://localhost:${PORT}`);
+    // v3.87.0: per platform, as a program + argv (never a shell string) —
+    // `open` on macOS, rundll32's URL handler on Windows, `xdg-open` on Linux.
+    // planBrowserOpen returns null when CURATOR_NO_OPEN is set (it still wins)
+    // or PORT is not a plain number. The callback swallows a missing opener.
+    const openPlan = planBrowserOpen({ url: `http://localhost:${PORT}` });
+    if (openPlan) {
+      execFile(openPlan.file, openPlan.args, openPlan.options || {}, () => {});
     }
 
     // ── Refresh the OpenRouter model catalogue if it is absent or stale ──────

@@ -22,7 +22,7 @@
  *                                      (it changes nothing on disk).
  */
 import express from 'express';
-import { execFile } from 'child_process';
+import { execFile as childExecFile } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
 import { runQuickDiagnostics, runLiveApiCheck, describeLiveCheck } from '../brain/diagnostics.js';
@@ -53,8 +53,22 @@ router.post('/live', async (_req, res) => {
   }
 });
 
-router.post('/reveal-log', (_req, res) => {
+export function revealLogHandler(_req, res, deps = null) {
   const logPath = getLogFilePath();
+  // v3.87.0: macOS-only, the v3.86.0 rule ("Reveal is macOS-only"). `open -R`
+  // is Finder's; elsewhere the refusal names the file so it can be opened.
+  const platform = (deps && deps.platform) || process.platform;
+  if (platform !== 'darwin') {
+    return res.status(501).json({
+      ok: false,
+      reason: 'unsupported',
+      error: 'Showing a file in the file manager is only supported on macOS. ' +
+             `The log file is: ${logPath}`,
+      path: logPath,
+    });
+  }
+  // The test seam: a suite passes a recorder; production gets child_process's.
+  const execFile = (deps && deps.execFile) || childExecFile;
   // Same shape as POST /api/mcp/reveal-config: execFile (no shell), reveal
   // the file if it exists, otherwise its parent directory — a fresh install
   // that has never logged anything still has somewhere to point Finder at.
@@ -64,6 +78,8 @@ router.post('/reveal-log', (_req, res) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
     res.json({ ok: true, revealed: fileExists ? logPath : path.dirname(logPath) });
   });
-});
+}
+
+router.post('/reveal-log', (req, res) => revealLogHandler(req, res));
 
 export default router;
