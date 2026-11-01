@@ -227,9 +227,9 @@ try {
     eq('...and status says restorable: false', tool(s2.body, 'cursor').restorable, false);
   }
 
-  section('§R5 — usedAt is a LABEL: a usage log changes nothing else');
+  section('§R5 — usedAt and lastStartedAt are LABELS: a usage log changes nothing else');
   {
-    const strip = (b) => JSON.stringify(b.tools.map((t) => ({ ...t, usedAt: null })));
+    const strip = (b) => JSON.stringify(b.tools.map((t) => ({ ...t, usedAt: null, lastStartedAt: null })));
     const before = await call('GET', '/api/mcp/install/status');
     const sid = 'abcdef012345';
     writeFileSync(path.join(UD, '.mcp-usage.jsonl'), [
@@ -238,7 +238,10 @@ try {
     ].join('\n') + '\n');
     const after = await call('GET', '/api/mcp/install/status');
     eq('Claude Desktop gains usedAt from its canonical client id', tool(after.body, 'claude-desktop').usedAt, '2026-10-30T10:05:00.000Z');
-    eq('every status, offer and field other than usedAt is identical', strip(after.body), strip(before.body));
+    // v3.89.0 — the session's START is the health line's reading ("Claude
+    // Desktop last started it …"): the session line's own stamp.
+    eq('…and lastStartedAt from that session\'s first line', tool(after.body, 'claude-desktop').lastStartedAt, '2026-10-30T10:00:00.000Z');
+    eq('every status, offer and field other than usedAt and lastStartedAt is identical', strip(after.body), strip(before.body));
   }
 
   section('§X — the REAL server, fake HOME');

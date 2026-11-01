@@ -93,7 +93,10 @@ function section(t) { console.log('\n[1m' + t + '[0m'); }
  * four are already executed by test-next-model-gone-ui.js and
  * test-next-providers-page.js.
  */
-const SECTION_RENDERERS = ['renderMcp', 'renderHealthLimits', 'renderStorage', 'renderGeneral'];
+// v3.89.0: Settings › MCP bridge left the block pattern for the section kit;
+// its shape is held by scripts/test-next-page-contract.js and its behaviour by
+// scripts/test-next-mcp-bridge-page.js, so it is no longer measured here.
+const SECTION_RENDERERS = ['renderHealthLimits', 'renderStorage', 'renderGeneral'];
 
 // ── Extraction: brace-matched, loud on desync ─────────────────────────────
 // The same matcher test-next-ui-polish.js and test-next-mcp-wizard.js use. A
@@ -179,13 +182,6 @@ const REAL = [
   // v3.88.0 — block ①, "Connect your agent apps", lifted REAL: the rows come
   // from the real DOM-free builders (views/mcp-install.js, injected below), so
   // a warning asserted here is the warning the page ships.
-  extractFunction(src, 'installPlatform'),
-  extractFunction(src, 'installRevealPaths'),
-  extractFunction(src, 'installMachineFiles'),
-  extractFunction(src, 'currentBridgeFacts'),
-  extractFunction(src, 'installWords'),
-  extractFunction(src, 'lastSelfTest'),
-  extractFunction(src, 'renderConnectApps'),
   extractFunction(src, 'installUpdateStyle'),
   extractFunction(src, 'renderTextSize'),
   extractFunction(src, 'renderBackgroundMode'),
@@ -194,16 +190,6 @@ const REAL = [
   // lifted rather than stubbed because G3 measures the lede block ③ paints
   // and G3b measures the gap above its body — both of which `settingsBlock`
   // emits from arguments these functions supply.
-  extractFunction(src, 'ageSecondsOf'),
-  extractFunction(src, 'usageWindowWords'),
-  extractFunction(src, 'agentReading'),
-  extractFunction(src, 'tickedAgeHtml'),
-  extractFunction(src, 'sessionLine'),
-  extractFunction(src, 'lastExerciseRun'),
-  extractFunction(src, 'renderExerciseOutcome'),
-  extractFunction(src, 'renderExerciseRunner'),
-  extractFunction(src, 'renderToolMapBody'),
-  extractFunction(src, 'renderToolMap'),
   // v3.72.1 (truth audit F7): the scan-limits hint reads the default and its
   // price off the route; formatTokenCount groups the figure.
   extractFunction(src, 'scanCeilingHint'),
@@ -483,7 +469,8 @@ function visibleWords(fragment) {
   // lede the cheapest way to pass, and a deleted lede is not a shorter lede —
   // it is a block that no longer says what it is for. This number must not
   // fall when the ceiling does.
-  ok(total >= 8, `CONTROL: ${total} ledes measured across the four sections (a collapse to 0 would pass everything)`);
+  // v3.89.0: 8 → 6, the MCP page's blocks left this pattern (exactly what it counted).
+  ok(total >= 6, `CONTROL: ${total} ledes measured across the three sections (a collapse to 0 would pass everything)`);
 
   // …AND THE UPDATE LEDE IN ALL THREE INSTALL MODES. See INSTALL_MODES above.
   let modeLedes = 0;
@@ -569,7 +556,8 @@ section('G3b  No loose sentence between a block heading and its body  (EXECUTED)
         ? `${name}: loose markup between a heading and its body — it is a lede, an ⓘ, a .tx-note in the body, or it is cut:\n      ${loose.map((l) => l.slice(0, 160).replace(/\n/g, ' ')).join('\n      ')}`
         : `${name}: nothing but the lede and its ⓘ fold sits between each heading and its body`);
   }
-  ok(gapsSeen >= 8, `CONTROL: ${gapsSeen} gaps measured (a parser that found none would pass everything)`);
+  // v3.89.0: 8 → 6 for the same reason.
+  ok(gapsSeen >= 6, `CONTROL: ${gapsSeen} gaps measured (a parser that found none would pass everything)`);
 
   // POSITIVE CONTROL. A detector that can never say "loose" is the same green
   // as a clean page. Inject the exact shape the rule forbids — a bare
@@ -634,21 +622,6 @@ function insideHiddenContainer(html, marker) {
     }
   }
   return hiddenDepths.length > 0;
-}
-{
-  // v3.88.0: the saved-config "reconciliation note" is retired (truth audit T8);
-  // the finding that must never fold now is an app's WARNING, on its row.
-  const diff = baseState();
-  diff.mcp = { ...diff.mcp, bridge_processes: { checked: true, running: 1, stale: [], current: { version: '3.88.0', toolCount: 24 },
-    bridges: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), app: { id: 'claude-desktop', label: 'Claude Desktop' },
-      version: '3.86.0', tools: 'different', notice: 'warn', remedy: 'Quit Claude Desktop and reopen it.' }] } };
-  const html = run('renderMcp', diff);
-  ok(html.includes('data-mcpi-warn="bridge"') && html.includes('is still using My Curator 3.86.0'),
-    'renderMcp: an open bridge whose tools changed renders a warning on its app’s row');
-  ok(insideHiddenContainer(html, 'is still using My Curator') === false,
-    '…and it is NOT inside any hidden container or ⓘ fold panel');
-  ok(insideHiddenContainer(html, 'ChatGPT') !== false,
-    'CONTROL: the ChatGPT sentence IS inside the fold — so the detector can tell the two apart');
 }
 {
   const bad = baseState();
@@ -754,80 +727,6 @@ section('G5  Every <details> in this view carries a data- hook');
     unhooked.length
       ? `<details> with no data- hook (render() cannot restore it after a repaint):\n      ${unhooked.join('\n      ')}`
       : 'every <details> carries a data- attribute, so render()\'s capture/restore can key on it');
-}
-
-// ═════════════════════════════════════════════════════════════
-section('G6  The MCP bridge\u2019s live readings are MONITORS, and a warning is never a reading');
-// ═════════════════════════════════════════════════════════════
-//
-// v3.65.0 (M7–M10). The status card, the stale-bridge note, the self-test
-// result and the two session readings were four hand-built shapes for one
-// idea; they are `renderMonitor()` calls now. What is asserted here is what a
-// class name alone cannot say: that the STATE WORD is the pill’s own label and
-// its tone is the one `deriveMcpStatus` derived, and — the v3.16.1 rule — that
-// every warning lands OUTSIDE the line list, where it cannot be skimmed past
-// as one more figure.
-//
-// `renderSelfTestResult` is lifted REAL for this section rather than taking
-// run()’s stub, because M9 is precisely what that stub stands in for.
-function linesBlockOf(html) {
-  const a = html.indexOf('cur-mon-lines');
-  if (a < 0) return '';
-  const b = html.indexOf('</div><div class="cur-mon-loud', a);
-  const c = html.indexOf('cur-mon-note', a);
-  const end = [b, c].filter((x) => x > 0).sort((x, y) => x - y)[0];
-  return end ? html.slice(a, end) : html.slice(a);
-}
-
-{
-  // v3.88.0 — "Bridge answers" is the bridge's one monitor (version · knowledge
-  // folder · open now · self-test); the hard-coded Claude Desktop pill is gone.
-  const st = baseState();
-  const html = run('renderMcp', st, { renderSelfTestResult: lift('renderSelfTestResult', st) });
-  ok(/id="mcp-bridge-monitor"/.test(html) && /cur-mon-state cur-mon-quiet[^]*Not tested yet/.test(html),
-    'renderMcp: the bridge is a MONITOR whose head word claims nothing before a self-test ("Not tested yet", quiet)');
-  ok(html.includes('/tmp/d') && /cur-mon-key">open now</.test(html) && /cur-mon-key">self-test</.test(html),
-    '…its lines are the knowledge folder, open now and the self-test');
-  ok(!html.includes('Configured') && !/cur-mon-key">client</.test(html), '…and no "Configured" pill or "client" line survives');
-}
-{
-  // THE STALE-BRIDGE WARNING — loud, on its row, outside every monitor's readings and every fold.
-  const st = baseState();
-  st.mcp = { ...st.mcp, bridge_processes: { checked: true, running: 1, stale: [], current: { version: '3.88.0', toolCount: 24 },
-    bridges: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), app: { id: 'claude-desktop', label: 'Claude Desktop' },
-      version: '3.86.0', tools: 'different', notice: 'warn', remedy: 'Restart the app that launched it.' }] } };
-  const html = run('renderMcp', st, { renderSelfTestResult: lift('renderSelfTestResult', st) });
-  ok(/class="cur-mon-loud cur-mon-warn mcpi-warn"/.test(html), 'the warning is a loud entry');
-  ok(html.includes('<strong>Restart the app that launched it.</strong>'), '…carrying the remedy sentence the ROUTE supplied, verbatim');
-  ok(!linesBlockOf(html).includes('is still using'), '…and it is NOT in a monitor’s line list: a warning is never one more reading');
-  const same = baseState();
-  same.mcp = { ...same.mcp, bridge_processes: { ...st.mcp.bridge_processes, bridges: [{ ...st.mcp.bridge_processes.bridges[0], tools: 'same', notice: 'quiet', remedy: null }] } };
-  const sh = run('renderMcp', same, { renderSelfTestResult: lift('renderSelfTestResult', same) });
-  ok(!/cur-mon-loud/.test(sh) && sh.includes('the same 24 tools as 3.88.0'), 'the SAME tools: no loud entry anywhere, one quiet line');
-}
-{
-  // THE SELF-TEST OUTCOME, both arms, through the REAL renderer.
-  const okState = baseState();
-  okState.selfTest = { ok: true, tool_count: 24, tool_names: ['get_index'], domains: ['alpha'] };
-  okState.selfTestAt = new Date().toISOString();
-  const good = run('renderMcp', okState, { renderSelfTestResult: lift('renderSelfTestResult', okState) });
-  ok(/cur-mon-state cur-mon-ok[^]*Bridge answers/.test(good), 'a passing self-test: the head word is the outcome, "Bridge answers"');
-  ok(/24 tools · /.test(good), '…with the tool count as a reading');
-  const failState = baseState();
-  failState.selfTest = { ok: false, error: 'spawn ENOENT' };
-  const bad = run('renderMcp', failState, { renderSelfTestResult: lift('renderSelfTestResult', failState) });
-  ok(/cur-mon-state cur-mon-danger[^]*Self-test failed/.test(bad), 'a failing one says so in its head word, in the danger tone');
-  ok(/cur-mon-loud[^]*spawn ENOENT/.test(bad) && !linesBlockOf(bad.slice(bad.indexOf('mcp-bridge-monitor'))).includes('spawn ENOENT'),
-    '…and the server’s own message is LOUD, not a reading');
-}
-{
-  // THE SESSION READINGS — lines of the "Agent use" monitor; the 1 s clock reaches them through `markHtml`.
-  const stamp = new Date(Date.now() - 45 * 60e3).toISOString();
-  const line = lift('sessionLine', baseState())('last session start', stamp, Date.now());
-  ok(line.value === '' && line.markHtml.includes('data-mcp-age-at="' + stamp + '"') && line.markHtml.includes('mcp-age-words'),
-    'a stamped reading carries the tick hook and the element the clock writes into');
-  const none = lift('sessionLine', baseState())('last save', null, Date.now());
-  ok(none.value === 'none since this log began' && !none.markHtml, '…while an absent one says so in words and takes no hook');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

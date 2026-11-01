@@ -2820,6 +2820,7 @@ is `manual`. [The Windows additions](#windows-claude-desktop-v3860) are below. S
 | `GET /api/mcp/install/status` | Read-only; no `Origin` needed; writes nothing. Called when the section loads and on **Check again**, never on a poll. |
 | `POST /api/mcp/install/plan` | Writes nothing. Returns the exact plan and a single-use token. |
 | `POST /api/mcp/install/apply` | Writes. Takes only the token from a plan. |
+| `POST /api/mcp/install/check-entry` | Writes nothing. Starts the `my-curator` command one app's own file names — only if it is The Curator's own bridge (v3.89.0). |
 
 **The gate on both POSTs.** An `Origin` header is **required** and must be the app's own loopback
 origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **403** `origin_required`
@@ -2951,6 +2952,31 @@ Errors are **per item** — one bad file never turns the whole call into a 500.
 | `backup_failed` · `write_failed` | The backup could not be made (nothing replaced) · the write failed |
 | `changed_since` | Restore only: the file was edited after our write — Remove the entry instead |
 | `no_backup` · `backup_missing` · `backup_mismatch` | Restore only: no usable backup |
+
+#### `POST /api/mcp/install/check-entry` (v3.89.0)
+
+Body: exactly `{ "id": "<claude-desktop | cursor | antigravity>" }` — a path, a command, an entry or any
+other key is **400** `bad_request`. Same gate as plan and apply (`Origin` required, macOS and Windows
+only), one check at a time (**409** `busy`). The server resolves the app's own config file(s), reads
+`mcpServers["my-curator"]` from each (no other server in the file is touched), and starts it with
+`initialize` + `tools/list` — but only when the command is The Curator's own launcher with no arguments,
+or an absolute `node` / `node.exe` whose arguments are exactly THIS install's `mcp/server.js` and,
+optionally, `--domains-path <absolute path>`. Anything else is refused in words without starting
+anything. The entry's own `env` is never used; the child runs with an allow-listed environment and
+`CURATOR_MCP_VIA=self-test`, a timeout of 8 s, capped output, and is killed as soon as it answers.
+
+```json
+{ "ok": true, "id": "claude-desktop", "label": "Claude Desktop", "checkedAt": "2026-11-01T16:44:20.000Z",
+  "results": [ { "file": "~/Library/Application Support/Claude/claude_desktop_config.json", "ran": true,
+    "starts": true, "toolCount": 24, "serverVersion": "1.0.0", "durationMs": 132, "message": null,
+    "stderr": null, "shape": "node" } ] }
+```
+
+A refusal is `{ "ran": false, "starts": false, "code": "not_allowed" | "other_install" | "launch_file_missing", "message": "…" }`;
+a start that fails is `{ "ran": true, "starts": false, "message": "It stopped before it answered (exit code 1). It said: …", "stderr": "…" }`.
+The status rows gain two labels for the same section: `lastStartedAt` (the newest session START of that
+app in the usage log) and `entryWrittenAt` (when The Curator last wrote that app's entry, from the
+install manifest), plus `checkEntry: true` where this route can check.
 
 #### Windows: Claude Desktop (v3.86.0)
 
@@ -3243,7 +3269,7 @@ at 500 chars) when it sent one.
 
 ## Setup check (`/api/setup`) *(v3.77.0)*
 
-Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Connect your agent apps**. The
+Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Agent apps**. The
 GETs read this machine's agent-tool config files (only whether each names `my-curator`, plus our
 own entry's command and `--domains-path` — never file text, another server's name or an `env`
 value), the project's repository folder (its `.curator-project`, instruction files, and read-only

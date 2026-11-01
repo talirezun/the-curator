@@ -899,11 +899,14 @@ section('§9 — THE BRIDGE PAGE\'S PRIVACY SENTENCE IS A CONTRACT');
   // user guide's "The tool map — what your agents used" lead to:
   // docs/mcp-user-guide.md's "The usage log" paragraphs. So the pin now holds
   // THAT text to the module's number — and holds the app to stating none.
-  const fn = settingsSrc.slice(settingsSrc.indexOf('function renderToolMap()'));
-  const toolMapSrc = fn.slice(0, fn.indexOf('\n}\n') + 3)
+  // v3.89.0: the section is "③ Agent use", composed in renderMcp; its ⓘ is
+  // the same explainer, and its body is renderToolMapBody.
+  const fn = settingsSrc.slice(settingsSrc.indexOf('function renderMcp()'));
+  const body = settingsSrc.slice(settingsSrc.indexOf('function renderToolMapBody('));
+  const toolMapSrc = (fn.slice(0, fn.indexOf('\n}\n') + 3) + body.slice(0, body.indexOf('\n}\n') + 3))
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   ok(toolMapSrc.includes("'settings.mcp-tool-map'"),
-    'CONTROL: renderToolMap was really located, and its ⓘ is the settings.mcp-tool-map explainer');
+    'CONTROL: the Agent use section was really located, and its ⓘ is the settings.mcp-tool-map explainer');
   ok(!/\d+\s*bytes/.test(toolMapSrc),
     '...and the app itself states no byte figure any more (outside comments) — the number lives in the docs, pinned below');
   const ugSrc = readFileSync(path.join(ROOT, 'docs/user-guide.md'), 'utf8');

@@ -648,7 +648,7 @@ const E = {
     label: 'About MCP bridge',
     title: 'MCP bridge',
     lead: 'The **MCP bridge** lets your agents read and write your wiki and your projects’ memory.',
-    visual: { type: 'flow', caption: 'Four steps', steps: ['Connect your agent apps', 'Default domain for MCP writes', 'Tool map', 'Across projects'] },
+    visual: { type: 'flow', caption: 'Four sections', steps: ['Agent apps', 'Bridge', 'Agent use', 'Across projects'] },
     points: [
       { icon: 'agent', text: 'It works with Claude Code, Claude Desktop and Cursor.' },
       { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
@@ -656,35 +656,50 @@ const E = {
     guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
   },
 
-  // MCP block 1 · Connect a client — `settings-block-info-mcp-connect`.
+  // MCP section 1 · Agent apps — `mcp-sec-apps-info` (v3.89.0).
   'settings.mcp-connect': {
-    label: 'About Connect your agent apps',
-    title: 'Connect your agent apps',
-    lead: '**Connect your agent apps** shows which agent apps can reach your wiki, and what each needs.',
+    label: 'About Agent apps',
+    title: 'Agent apps',
+    lead: '**Agent apps** shows which agent apps reach your wiki; **Check entry** starts an entry as its app would.',
     points: [
-      { icon: 'computer', text: 'Any MCP client running local servers works: Claude Desktop, Claude Code, Cursor.' },
+      { icon: 'computer', text: 'Works with Claude Desktop, Claude Code, Cursor: any local MCP client.' },
+      { icon: 'check', text: '**Install for me** writes only the my-curator entry, after a preview.' },
       { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
-      { icon: 'lock', text: 'The check reads only whether a file names my-curator, never its contents.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
-  // MCP block 2 · Default domain for MCP writes — `settings-block-info-mcp-domain`.
-  'settings.mcp-domain': {
-    label: 'About Default domain for MCP writes',
-    title: 'Default domain',
-    lead: '**Default domain for MCP writes** is where an agent saves when it names no domain.',
+  // MCP section 2 · Bridge — `mcp-sec-bridge-info` (v3.89.0).
+  'settings.mcp-bridge': {
+    label: 'About Bridge',
+    title: 'Bridge',
+    lead: 'The **Bridge** is the My Curator server your agent apps start. Test it from here.',
     points: [
-      { icon: 'check', text: 'Left unset, each agent must name a domain: safest with several.' },
+      { icon: 'check', text: '**Run self-test** starts a fresh bridge and asks for its tools.' },
+      { icon: 'lock', text: 'Testing every tool uses a throwaway copy: nothing of yours changes.' },
+      { icon: 'folder', text: '**Default domain for writes**: where an unnamed write lands.' },
     ],
-    guide: { key: 'settings.mcp-default-domain', heading: 'Default domain for MCP writes' },
+    guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
+  },
+
+  // v3.89.0 — Settings › MCP bridge's OVERVIEW.
+  'settings.mcp-overview': {
+    label: 'About the overview',
+    title: 'Overview',
+    lead: 'Is everything working? Each figure opens its section.',
+    points: [
+      { icon: 'agent', text: 'Connected counts the agent apps with a working my-curator entry.' },
+      { icon: 'check', text: 'Tools answer is what the last self-test listed.' },
+      { icon: 'lock', text: 'Saves come from the bridge’s own log, kept on this computer.' },
+    ],
+    guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
   // MCP block 3 · Tool map — `settings-block-info-mcp-tool-map`.
   'settings.mcp-tool-map': {
-    label: 'About Tool map',
-    title: 'Tool map',
-    lead: 'The **Tool map** shows which tools your agents used, and when. It stays on this computer.',
+    label: 'About Agent use',
+    title: 'Agent use',
+    lead: '**Agent use** shows which tools your agents used, and when. It stays on this computer.',
     points: [
       { icon: 'lock', text: 'It keeps tool names and times, never what agents read or wrote.' },
       { icon: 'computer', text: 'It is never synced; deleting it only restarts the map.' },
@@ -919,6 +934,8 @@ export const SCREEN_WORDS = [
   // v3.79.0 — step 5's other two fold titles (the travels-by table's row
   // names) and step 4's renamed picker.
   'Agent apps', 'Repository on this computer', 'Your tool’s share',
+  // v3.89.0 — Settings › MCP bridge rebuilt: its section titles and buttons.
+  'Bridge', 'Agent use', 'Run self-test', 'Check entry', 'Default domain for writes',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

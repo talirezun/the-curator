@@ -8,6 +8,12 @@
  *                                   → a preview and a single-use token. READS ONLY.
  *   POST /api/mcp/install/apply   → {token} → re-plans from disk, verifies every
  *                                   basis, writes, reports one line per file.
+ *   POST /api/mcp/install/check-entry → {id} → starts the my-curator command
+ *                                   that app's own file names — ONLY if it is
+ *                                   this app's launcher or node + this
+ *                                   install's mcp/server.js (v3.89.0; the rule
+ *                                   is src/brain/mcp-check-entry.js). WRITES
+ *                                   NOTHING.
  *
  * The write rules live in `src/brain/mcp-install.js` (read its header first).
  * This file adds the HTTP gate:
@@ -34,7 +40,7 @@
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { getDomainsDir } from '../brain/config.js';
-import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
+import { getMcpLauncherPath, getMcpServerPath } from '../brain/mcp-launcher.js';
 import { adapterFor, mcpEntryFor } from '../brain/harness-adapters.js';
 import { tildeUnder, machineWord, collectMachineSetup, machineRowVerdicts, STATES } from '../brain/setup-check.js';
 import { detectBridgeProcesses, bridgesByApp } from '../brain/mcp-bridge-status.js';
@@ -46,9 +52,10 @@ import {
 import {
   ACTIONS, INSTALL_IDS, TOKEN_RE, TOKEN_TTL_MS, executeItem, inspectTool, installActionFor, installAppsDirs,
   installHome, installPlatform, isInstallCapableOn, mcpHarnessIds, newToken, planTool, publicItem, readManifest,
-  reasonText, restoreCandidate, statusFor, targetsFor, defaultIO, displayFor, resolveWinClaude, winRoots,
+  reasonText, restoreCandidate, statusFor, targetsFor, defaultIO, displayFor, resolveWinClaude, winRoots, ourEntryIn,
 } from '../brain/mcp-install.js';
 import { buildCuratorEntry } from './mcp.js';
+import { MAX_ENTRIES_PER_CHECK, runEntryCheck, vetEntry } from '../brain/mcp-check-entry.js';
 
 const router = express.Router();
 
@@ -213,19 +220,43 @@ function restartHint(id, label, running) {
   return `Quit and reopen ${label} if it is open`;
 }
 
-/** Last time a session from this harness's canonical client id used the bridge. LABEL ONLY. */
-async function usedAtById() {
+/**
+ * Per canonical client id: the last time one of its sessions used the bridge
+ * (`used`, a session's END) and the last time it STARTED one (`started`, a
+ * session's first line — the session line a bridge writes at startup carries
+ * the client since v3.88.0). LABELS ONLY: neither changes a status or an offer.
+ */
+async function sessionStampsById() {
   try {
     const u = await readUsageLinesUnion();
-    if (!u.present) return {};
+    if (!u.present) return { used: {}, started: {} };
     const { sessions } = summariseSessions(u.records || []);
-    const out = {};
+    const used = {};
+    const started = {};
     for (const s of sessions || []) {
-      if (!s.client || !s.endedAt) continue;
-      if (!out[s.client] || s.endedAt > out[s.client]) out[s.client] = s.endedAt;
+      if (!s.client) continue;
+      if (s.endedAt && (!used[s.client] || s.endedAt > used[s.client])) used[s.client] = s.endedAt;
+      if (s.startedAt && (!started[s.client] || s.startedAt > started[s.client])) started[s.client] = s.startedAt;
     }
-    return out;
-  } catch { return {}; }
+    return { used, started };
+  } catch { return { used: {}, started: {} }; }
+}
+
+/**
+ * When The Curator last WROTE this app's entry (an install or an update in
+ * the manifest, on one of the row's files), or null. With the session stamps
+ * this says "Claude Desktop hasn't started My Curator since the entry was
+ * written" (v3.89.0) — the reading v3.88.1's investigation asked for.
+ */
+export function entryWrittenAtFor(manifestRows, id, files) {
+  const set = new Set((files || []).map((f) => f && f.file).filter(Boolean));
+  let at = null;
+  for (const r of manifestRows || []) {
+    if (!r || r.harness !== id || !['install', 'update', 'restore'].includes(r.action)) continue;
+    if (set.size && !set.has(r.file)) continue;
+    if (typeof r.at === 'string' && (!at || r.at > at)) at = r.at;
+  }
+  return at;
 }
 
 /**
@@ -267,10 +298,10 @@ export async function buildStatus() {
       : windows ? (wc ? wc.win.candidates.map((c) => c.file) : [])
         : targetsFor(id, home, theIO).map((t) => t.file);
   }
-  const [detected, running, used, bp] = await Promise.all([
+  const [detected, running, stamps, bp] = await Promise.all([
     detectTools({ home, configFiles, deps }),
     mac ? detectRunning(deps) : Promise.resolve({ checked: false, byId: {} }),
-    usedAtById(),
+    sessionStampsById(),
     bridgeReading(),
   ]);
   const byApp = bridgesByApp(bp.bridges || []);
@@ -302,7 +333,10 @@ export async function buildStatus() {
       files: [],
       reason: null,
       note: null,
-      usedAt: used[id] || null,
+      usedAt: stamps.used[id] || null,
+      lastStartedAt: stamps.started[id] || null,
+      entryWrittenAt: null,
+      checkEntry: false,
       restartHint: null,
       restorable: false,
     };
@@ -397,6 +431,11 @@ export async function buildStatus() {
   // ── v3.88.0: each row's verdict, from Setup's own sentences and the open
   //    bridges. Every field is ADDED; nothing above changes. ──
   for (const row of tools) {
+    // v3.89.0 — "Check entry" is offered where the server can resolve the
+    // app's own file and that file holds an entry (POST /check-entry).
+    row.checkEntry = INSTALL_IDS.includes(row.id) && isInstallCapableOn(row.id, platform) && canWriteHere()
+      && (row.files || []).some((f) => f.state === 'connected' || f.state === 'differs');
+    row.entryWrittenAt = entryWrittenAtFor(manifestRows, row.id, row.files);
     const m = machine.get(row.id) || null;
     const v = machineRowVerdicts(m, home);
     row.skill = v.skill;
@@ -623,7 +662,100 @@ export async function applyHandler(req, res) {
 /** TEST-ONLY: hold the in-flight flag to observe the 409. */
 export function __setApplyInFlight(v) { applyInFlight = !!v; }
 
+// ─────────────────────────────────────────────────────────────────────────
+// POST /check-entry (v3.89.0) — start the entry an app's own file names
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The same gate as plan and apply (a same-origin Origin header, macOS and
+// Windows only), a body of exactly {id} with id from INSTALL_IDS, and NEVER
+// a path or a command from the client: the file is the one this server
+// resolves for that app, and the command is read from it. What may run is
+// decided by vetEntry (src/brain/mcp-check-entry.js — read its header): this
+// app's own launcher, or an absolute node with this install's own
+// mcp/server.js. One check in flight.
+
+let checkInFlight = false;
+let _checkRunner = null;
+/** TEST-ONLY: replace the runner (the vetting still runs for real). */
+export function __setCheckRunner(fn) { _checkRunner = fn || null; }
+/** TEST-ONLY. */
+export function __setCheckInFlight(v) { checkInFlight = !!v; }
+
+export function validateCheckBody(body) {
+  if (!isPlainObject(body)) return 'The request body must be a JSON object.';
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== 'id') return 'The request body must be {id}.';
+  if (typeof body.id !== 'string' || !INSTALL_IDS.includes(body.id)) return 'id may only name an agent app The Curator can check.';
+  return null;
+}
+
+/** The files this server resolves for `id`, with our entry from each (or none). */
+async function entriesFor(id) {
+  const home = installHome();
+  const platform = installPlatform();
+  const { launch } = launchNow();
+  const theIO = io();
+  if (!home) return { home, platform, files: [] };
+  let insp;
+  if (platform === 'win32') {
+    if (id !== 'claude-desktop') return { home, platform, files: [] };
+    const wc = await winClaude(home, theIO, detectDeps(home));
+    if (!wc.win || !wc.win.decision || !wc.win.decision.ok) return { home, platform, files: [], reason: wc.win && wc.win.decision };
+    insp = inspectTool(id, { home, launch, io: theIO, platform, roots: wc.roots, win: wc.win });
+    return { home, platform, roots: wc.roots, files: insp.files.map((f) => ({ ...f, display: displayFor(home, f.file, platform, wc.roots) })), key: insp.key };
+  }
+  insp = inspectTool(id, { home, launch, io: theIO });
+  return { home, platform, files: insp.files.map((f) => ({ ...f, display: tildeUnder(home, f.file) })), key: insp.key };
+}
+
+export async function checkEntryHandler(req, res) {
+  const err = validateCheckBody(req.body);
+  if (err) return badRequest(res, err);
+  if (checkInFlight) return res.status(409).json({ ok: false, reason: 'busy', error: 'A check is already running.' });
+  checkInFlight = true;
+  try {
+    const id = req.body.id;
+    const label = adapterFor(id)?.label || id;
+    const r = await entriesFor(id);
+    const ctx = { platform: r.platform, launcherPath: getMcpLauncherPath(), serverPath: getMcpServerPath() };
+    const results = [];
+    const seen = new Map();
+    for (const f of r.files) {
+      if (!f.read || f.read.state !== 'ok') continue;
+      const ours = ourEntryIn(f.read.doc, r.key);
+      if (ours === undefined) continue;
+      const vet = vetEntry(ours, ctx);
+      const sig = JSON.stringify([ours && ours.command, ours && ours.args]);
+      if (vet.ok && seen.has(sig)) { results.push({ ...seen.get(sig), file: f.display }); continue; }
+      if (vet.ok && seen.size >= MAX_ENTRIES_PER_CHECK) {
+        results.push({ file: f.display, ran: false, starts: false, code: 'too_many', message: 'Not started: one press checks at most three entries.' });
+        continue;
+      }
+      if (!vet.ok) {
+        results.push({ file: f.display, ran: false, starts: false, code: vet.code, message: vet.message });
+        continue;
+      }
+      const out = await (_checkRunner || runEntryCheck)(vet);
+      const row = { file: f.display, ran: true, starts: out.starts === true, toolCount: Number.isInteger(out.toolCount) ? out.toolCount : null,
+        serverVersion: out.serverVersion || null, durationMs: out.durationMs, message: out.message || null,
+        stderr: out.starts ? null : (out.stderr || null), shape: vet.shape };
+      seen.set(sig, row);
+      results.push(row);
+    }
+    if (!results.length) {
+      return res.json({ ok: true, id, label, checkedAt: new Date().toISOString(), results: [],
+        message: `${label} has no my-curator entry in a file The Curator can read here.` });
+    }
+    res.json({ ok: true, id, label, checkedAt: new Date().toISOString(), results });
+  } catch (e) {
+    res.status(500).json({ ok: false, reason: 'check_failed', error: e && e.message });
+  } finally {
+    checkInFlight = false;
+  }
+}
+
 router.post('/plan', gate, planHandler);
 router.post('/apply', gate, applyHandler);
+router.post('/check-entry', gate, checkEntryHandler);
 
 export default router;

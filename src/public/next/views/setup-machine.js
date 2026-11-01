@@ -120,6 +120,84 @@ function hookRows(h) {
   return files + evRow;
 }
 
+// ── v3.89.0: THE SAME EVIDENCE AS DATA, for the section kit ────────────────
+// Settings › MCP bridge draws each app's evidence as kit fold items (a mono
+// path · a sentence · Reveal). The words are the ones the rows above print —
+// one verdict rule per cell, read here from the same payload fields.
+
+/** One config file's verdict, in words. Pure. */
+export function fileVerdictWords(f, missingIsFix = false, toolFix = false) {
+  const bad = typeof f.status === 'string' && f.status !== 'ok' && Object.hasOwn(FILE_STATUS_WORDS, f.status) ? f.status : null;
+  let w;
+  if (bad === 'missing') w = FILE_STATUS_WORDS.missing;
+  else if (bad) {
+    w = FILE_STATUS_WORDS[bad] + (toolFix ? '' : ' — another file of this app names my-curator, so the app is not affected');
+  } else if (!f.present) w = 'absent';
+  else if (f.parseError) w = 'present · could not be read';
+  else if (f.opaque) w = 'present · format not read';
+  else if (f.named) {
+    w = f.commandMissing ? 'names my-curator · its launch file is missing'
+      : f.otherFolder ? 'names my-curator · reads a different knowledge folder'
+        : 'names my-curator' + (f.at === 'project' ? ' (for this folder)' : '');
+  } else w = 'present · no my-curator entry' + (missingIsFix && f.via !== 'readAlso' ? ' — to fix' : '');
+  if (f.via === 'readAlso') w += ' · another app’s file, read for this app';
+  if (f.jsonc) w += ' · read with comments allowed';
+  return w;
+}
+
+/**
+ * The evidence under one app, as `[{main, meta, reveal?}]` — files, then
+ * skills, then hooks, each group left out exactly when renderAppDetail leaves
+ * it out. `reveal` is the absolute path a Reveal button may name (only for
+ * something that exists); the caller decides whether Reveal works here.
+ */
+export function appDetailItems(h, data, opts = {}) {
+  if (!h) return [];
+  const missingIsFix = !!(h.bridge && h.bridge.state === 'fix' && /^not in /.test(h.bridge.word || ''));
+  const toolFix = !!(h.bridge && h.bridge.state === 'fix');
+  const out = [];
+  for (const f of h.files || []) {
+    if (!f) continue;
+    const bad = typeof f.status === 'string' && f.status !== 'ok' && f.status !== 'missing';
+    out.push({ main: f.display || f.file || '', meta: fileVerdictWords(f, missingIsFix, toolFix),
+      reveal: f.present || bad ? f.file : null });
+  }
+  if (h.bridge && h.bridge.note) out.push({ meta: h.bridge.note });
+  const s = h.skills || {};
+  const noSkillFolder = s.state === 'cant-check' && !(s.installed || []).length && /no known skill folder/.test(s.note || '');
+  if (!noSkillFolder) {
+    const inst = s.installed || [];
+    for (const x of inst) {
+      const v = x.match === null ? 'skill installed · not compared'
+        : x.match ? 'skill matches this version'
+          : 'skill older — ' + [x.differs && x.differs.length ? x.differs.join(', ') + (x.differs.length === 1 ? ' differs' : ' differ') : '',
+            x.missing && x.missing.length ? x.missing.join(', ') + ' missing' : ''].filter(Boolean).join(' · ');
+      out.push({ main: x.dirDisplay || x.dir || '', meta: v, reveal: x.dir || null });
+    }
+    if (!inst.length) {
+      const zips = data && data.skillsShipped && s.state === 'cant-check'
+        ? '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/my-curator.zip" download>my-curator.zip</a><a class="btn btn-ghost btn-xs" href="/api/setup/skills/curator-continuity.zip" download>curator-continuity.zip</a>'
+        : '';
+      out.push({ meta: 'skills: ' + (s.word || 'not installed') + (s.note ? ' — ' + s.note : ''), actionHtml: zips });
+    }
+  }
+  const k = h.hooks || {};
+  if (k.format !== 'none') {
+    const files = (k.files || []).filter((f) => f && f.present);
+    for (const f of files) {
+      out.push({ main: f.display || f.file || '', meta: (f.ours ? 'Curator hooks present' : 'no Curator hooks') + (f.ours && f.observation ? ' — ' + f.observation : ''), reveal: f.file });
+    }
+    const ev = k.evidence || null;
+    const evWords = [];
+    if (ev && ev.start) evWords.push('start hook observed firing ' + when(ev.start.at));
+    if (ev && ev.stop) evWords.push('stop hook observed firing ' + when(ev.stop.at) + ' — ' + (ev.stop.decision === 'ask' ? 'asked for a save' : 'did not ask: ' + (ev.stop.why || 'no reason recorded')));
+    if (!evWords.length && (k.files || []).some((f) => f && f.ours)) evWords.push('installed, not yet observed firing');
+    if (evWords.length) out.push({ meta: 'hooks: ' + evWords.join(' · ') });
+    if (!files.length && !evWords.length) out.push({ meta: 'hooks: ' + (k.word || 'not wired (optional)') });
+  }
+  return out;
+}
+
 /** The fix count for one app over its three cells, and its word. Pure. */
 export function toolVerdict(h) {
   const fixes = [h.bridge, h.skills, h.hooks].filter((c) => c && c.state === 'fix').length;

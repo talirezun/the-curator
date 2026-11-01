@@ -335,7 +335,7 @@ section('§4  The pill and its reconciliation note are retired');
   const renderMcpBody = extractFunction(settingsJs, 'renderMcp');
   ok(!/settings-mcp-stale-note/.test(renderMcpBody) && !/Install in your tools/.test(renderMcpBody),
     'renderMcp() builds no stale-config note and names no "Install in your tools" button');
-  ok(/renderConnectApps\s*\(\)/.test(renderMcpBody), 'CONTROL: renderMcp() still composes block 1 (renderConnectApps)');
+  ok(/renderAgentAppsCard\s*\(\)/.test(renderMcpBody), 'CONTROL: renderMcp() still composes section 1 (renderAgentAppsCard)');
 }
 
 console.log(`\n────────────────────────────────────────────────────────────`);

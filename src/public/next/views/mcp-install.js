@@ -1,6 +1,6 @@
-// Settings › MCP bridge › 1 "Connect your agent apps" (v3.88.0; v3.85.0's block 5
-// "Tools on this Mac" merged in) — the overview, one row per agent app, the
-// one-click install, and the words for all of it.
+// Settings › MCP bridge › ① "Agent apps" (v3.88.0; rebuilt on the section kit
+// in v3.89.0) — one fold row per agent app, the Next step card, the one-click
+// install's preview and results, and the words for all of it.
 //
 // DOM-FREE AT IMPORT (the setup-machine.js / setup-step.js rule):
 // scripts/test-next-mcp-install.js imports these builders in plain Node.
@@ -11,14 +11,16 @@
 // WHAT THE PANEL MAY DO. The app may write ANOTHER app's config file only to
 // add, update or remove its OWN `my-curator` entry — on a click, after a
 // preview of the exact entry, with a copy of the original kept. The status
-// check itself is read-only. Nothing in this file fires a request on its own:
-// every request function is called from a click handler (or the one status
-// read when the section loads), never from a render.
+// check itself is read-only; Check entry (v3.89.0) starts the command an
+// app's entry names, under the server's vetting rule, and writes nothing.
+// Nothing in this file fires a request on its own: every request function is
+// called from a click handler (or the one status read when the section
+// loads), never from a render.
 //
 // THE WORD (v3.88.0, the owner's decision 1): a harness is an "agent app".
-// "tool" means one of the bridge's MCP tools (block 3) and nothing else on
-// screen. On-disk names, payload fields and ids (`tools`, `data-mcpi-tool`)
-// do not change.
+// "tool" means one of the bridge's MCP tools and nothing else on screen.
+// On-disk names, payload fields and ids (`tools`, `data-mcpi-tool`) do not
+// change.
 //
 // ONE ROW PER AGENT APP, ONE VERDICT PER APP (v3.88.0). Three readings feed a
 // row — the install status (GET /api/mcp/install/status), the machine reading
@@ -26,22 +28,25 @@
 // /api/mcp/config `bridge_processes`) — each through ONE adapter below, so a
 // payload shape is read in exactly one place.
 //
-// THE RULES THIS FILE CARRIES
-//   · a status tag is GREYSCALE — a shape, never a colour (colour is a
-//     domain's; the `mcpi-st-*` rules draw dots in --text-2 / --text-3 only);
-//     the one inked mark is the Setup kit's "N to fix", which names a fault;
-//   · a WARNING is never behind a chevron: it sits unfolded under its row,
-//     with its own buttons (rule 3's exception). Only evidence (files, skills,
-//     hooks) folds, and that fold is CLOSED by default;
+// THE PAGE CONTRACT (v3.89.0, scripts/test-next-page-contract.js) — this file
+// draws ONLY with the section kit (shared/section.js) and shared/text.js:
+//   · an app is a FOLD ROW: label · a "N to fix" pill · its one reading;
+//     its body (closed by default) is the evidence and the row's own actions;
+//   · a FAULT WITH ACTIONS is the ONE tinted Next step card at the top of ①,
+//     never a warning behind a chevron; the plan and the results take that
+//     card's place while they are on screen;
+//   · an outcome or error with no action is `renderStatus`, unfolded;
 //   · an older bridge serving the SAME tool list is one quiet line, never a
 //     warning (the owner's decision 3);
-//   · explanations live in the block's ⓘ (explainers.js), never inline;
+//   · mono only for a path, inside a fold item — never inside a sentence;
+//   · explanations live in the section's ⓘ (explainers.js), never inline;
 //   · every path, app name and server name is escaped.
 
-import { renderOverview } from '../shared/overview.js';
 import { ageWordsFor } from '../shared/age-ticker.js';
 import { machineWord as platformMachineWord } from '../shared/platform.js';
-import { renderAppDetail, toolVerdict } from './setup-machine.js';
+import { renderStatus, renderDescription } from '../shared/text.js';
+import { renderFoldRows, renderFoldRow, renderFoldItem, renderActionCard, renderStatusLine } from '../shared/section.js';
+import { appDetailItems } from './setup-machine.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -307,50 +312,17 @@ export function adaptInstallTool(t, machine) {
   return { ...tool, via };
 }
 
-// ── tags ───────────────────────────────────────────────────────────────────
+// ── words ─────────────────────────────────────────────────────────────────
 
-/** A greyscale status tag: the word, and a dot whose SHAPE (not colour) differs. */
-export function statusTag(status) {
-  const s = normStatus(status);
-  return '<span class="mcpi-st mcpi-st-' + s + '" data-mcpi-status="' + s + '">' + escapeHtml(STATUS_WORDS[s]) + '</span>';
-}
-
-/** The tag of an app that reaches My Curator through another app's entry. */
+/** The reading of an app that reaches My Curator through another app's entry. */
 export function viaWord(tool) {
   const v = tool && tool.via;
   if (!v) return '';
-  return v.id === 'claude-desktop' ? 'connected in the Claude app' : 'connected through ' + (v.label || 'another app');
+  return 'through ' + (v.id === 'claude-desktop' ? 'Claude Desktop' : (v.label || 'another app'));
 }
 
-function viaTag(tool) {
-  return '<span class="mcpi-st mcpi-st-connected" data-mcpi-status="via">' + escapeHtml(viaWord(tool)) + '</span>';
-}
-
-/** The Setup kit's inked mark — used ONLY for a fault ("1 to fix", "restart needed"). */
-const fixMark = (word, attr) => '<span class="cur-setup-st cur-setup-st-fix"' + (attr || '') + '>' + escapeHtml(word) + '</span>';
-
-function newOnWindowsTag(tool, platform) {
-  return platform === 'win32' && tool && WINDOWS_INSTALLABLE.includes(tool.id) && tool.installer === 'file'
-    ? '<span class="mcpi-note mcpi-new" data-mcpi-new-windows>' + escapeHtml(WINDOWS_NEW_LABEL) + '</span>' : '';
-}
-
-function runningTag(tool) {
-  const r = tool && tool.running;
-  return r && r.checked === true && r.running === true
-    ? '<span class="mcpi-st mcpi-st-running" data-mcpi-running>running</span>' : '';
-}
-
-function usedNote(tool, now = Date.now()) {
-  if (!tool || !isStr(tool.usedAt)) return '';
-  const words = ageWordsFor(tool.usedAt, now, 'used');
-  if (!words) return '';
-  return '<span class="mcpi-note" data-age-at="' + escapeHtml(tool.usedAt) + '" data-age-prefix="used" data-age-text>'
-    + escapeHtml(words) + '</span>';
-}
-
-const btnP = (act, label, extra = '') => '<button type="button" class="btn btn-primary btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
-const btnS = (act, label, extra = '') => '<button type="button" class="btn btn-secondary btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
 const btnG = (act, label, extra = '') => '<button type="button" class="btn btn-ghost btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
+
 // ── copying an entry by hand ───────────────────────────────────────────────
 
 /** A refusal reason as one sentence: the status sends `{code, message}`; older shapes send a string. */
@@ -399,19 +371,6 @@ export function copyPlanFor(id, data, machineFiles) {
 }
 
 
-/** An escaped path that may wrap only after a slash or a backslash (Windows). */
-function wbrPath(p) { return escapeHtml(p).replace(/[\/\\]/g, '$&<wbr>'); }
-
-/** A copy plan's line with its file set in mono: 'Paste into <file> inside "mcpServers"'. */
-function planLineHtml(plan, lowerFirstWord) {
-  if (!plan || !isStr(plan.line)) return '';
-  // The caller ends the sentence, so a line that already ends one loses its stop.
-  const bare = plan.line.replace(/\.$/, '');
-  const line = lowerFirstWord ? lowerFirst(bare) : bare;
-  if (!isStr(plan.file) || !line.includes(plan.file)) return wbrPath(line);
-  const at = line.indexOf(plan.file);
-  return escapeHtml(line.slice(0, at)) + '<span class="mono">' + wbrPath(plan.file) + '</span>' + escapeHtml(line.slice(at + plan.file.length));
-}
 
 /**
  * The reason an app is not connected, in words. `config_not_found` and
@@ -435,11 +394,6 @@ export function reasonWords(tool) {
 /** The installer codes whose sentence the row's own copy line replaces (v3.88.0). */
 const INSTALLER_REASONS = new Set(['installer_cli', 'installer_manual']);
 
-function fileLines(tool) {
-  const files = Array.isArray(tool.files) ? tool.files : [];
-  if (!files.length) return '';
-  return files.map((f) => '<span class="mcpi-path mono">' + wbrPath(f && (f.display || f.file) || '') + '</span>').join('');
-}
 
 /** The absolute path to reveal for a file's display path, or '' (the status read does not send it). */
 function revealPathFor(tool, paths) {
@@ -458,10 +412,10 @@ function revealPathFor(tool, paths) {
  * macOS keeps its warn-and-allow lines unchanged.
  */
 export const APP_RUNNING_WORDS = 'Claude Desktop is running. Quit Claude Desktop fully (system tray → Quit), then press Install for me.';
-function appRunningLine(tool, platform) {
+/** Windows only: Claude Desktop is running, so Install for me is refused until it is quit. */
+function appRunningHere(tool, platform) {
   const r = tool && tool.running;
-  return platform === 'win32' && tool.id === 'claude-desktop' && r && r.checked === true && r.running === true
-    ? '<p class="mcpi-reason" data-mcpi-app-running>' + escapeHtml(APP_RUNNING_WORDS) + '</p>' : '';
+  return platform === 'win32' && !!tool && tool.id === 'claude-desktop' && !!r && r.checked === true && r.running === true;
 }
 
 // ── the warnings a row can carry ───────────────────────────────────────────
@@ -580,29 +534,23 @@ function fixAct(f, ctx) {
   return null;
 }
 
-/** A warning, unfolded under its row: the text, its strong step, its buttons. */
-function warnHtml(w) {
-  const tone = w.tone === 'quiet' ? 'cur-mon-quiet' : 'cur-mon-warn';
-  return '<div class="cur-mon-loud ' + tone + ' mcpi-warn" role="status" data-mcpi-warn="' + escapeHtml(w.kind || 'warn') + '">'
-    + (w.html ? w.html : escapeHtml(w.text))
-    + (isStr(w.strong) ? ' <strong>' + escapeHtml(w.strong) + '</strong>' : '')
-    + (w.acts && w.acts.length ? '<div class="mcpi-warn-acts">' + w.acts.join('') + '</div>' : '')
-    + '</div>';
-}
-
 // ── one row per agent app ──────────────────────────────────────────────────
 
 /**
  * Everything one row says, as data. Pure — the overview counts it and
- * `renderToolRow` draws it, so the two can never disagree.
+ * `appFoldRow` / `nextStepCard` draw it, so the three can never disagree.
  *
  * `ctx`: `{platform, writable, ticks, data (status payload), machine (adaptMachine),
  * bridges (adaptBridges), paths, machineFiles, current: {version, toolCount}, now}`.
  *
- * Verdict flags (one app, one verdict per card): `connected` — the app has a
+ * Verdict flags (one app, one verdict per row): `connected` — the app has a
  * working entry (its own, or another app's it reads); `fix` — something on
  * this row needs the person (an entry to update, a file that can't be read, an
  * outdated skill, a bridge whose tools changed); otherwise not connected.
+ *
+ * v3.89.0 — `warnings` carry the FIX (shown in the Next step card, never
+ * behind a chevron); `quiet` are plain sentences for the row's own body
+ * (`{kind, text}`), never markup.
  */
 export function appRowModel(rawTool, ctx = {}) {
   const machine = ctx.machine || null;
@@ -620,26 +568,30 @@ export function appRowModel(rawTool, ctx = {}) {
 
   const warnings = [];
   const quiet = [];
-  // The install status's own reason. A fault (can't read, needs an update) is
-  // a warning; the Windows file-finding reasons are quiet facts; the installer
-  // sentences ("has its own command…") are replaced by the copy line below.
+  // The install status's own reason. A fault (can't read, needs an update —
+  // v3.88.1's launch_file_missing among them) is a warning; the Windows
+  // file-finding reasons are quiet facts; the installer sentences ("has its
+  // own command…") are replaced by the copy line below.
   const reason = reasonWords(tool);
   const code = tool.reason && typeof tool.reason === 'object' ? tool.reason.code : '';
   if (reason && (status === 'cant-read' || status === 'needs-update')) {
     const p = status === 'cant-read' && canReveal(platform) ? revealPathFor(tool, ctx.paths) : '';
-    warnings.push({ kind: 'entry', tone: 'warn', severity: 'fix', text: reason,
-      html: '<span data-mcpi-reason>' + escapeHtml(reason) + '</span>',
-      acts: p ? [btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"')] : [] });
+    warnings.push({ kind: 'entry', code: code || '', tone: 'warn', severity: 'fix', text: reason,
+      acts: p ? [btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"')] : [],
+      install: status === 'needs-update' && installable });
   } else if (reason && !INSTALLER_REASONS.has(code) && !(isStr(tool.reason) && status === 'manual' && plan)) {
-    quiet.push('<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reason) + '</p>');
+    quiet.push({ kind: 'reason', text: reason });
   }
 
   // The open bridge, once, on THIS app's row.
   // The row's own `bridges` summary (BE amendment 1 §B) wins; else the config's list.
   const fact = rowBridgeFact(tool.bridges) || bridgeFactFor(id, ctx.bridges);
   const bfact = bridgeRowFact(label, fact, ctx.current || {}, ctx.now);
-  if (bfact.warn) warnings.push({ ...bfact.warn, severity: bfact.warn.soft ? 'soft' : 'fix' });
-  if (bfact.quiet) quiet.push('<p class="mcpi-sub" data-mcpi-bridge="same">' + escapeHtml(bfact.quiet) + '</p>');
+  if (bfact.warn && !bfact.warn.soft) warnings.push({ ...bfact.warn, severity: 'fix', acts: [] });
+  // A bridge whose tools nobody recorded is a SOFT reading, not a fix: it is
+  // said in the row's meta ("open since before this version") and in its body.
+  if (bfact.warn && bfact.warn.soft) quiet.push({ kind: 'bridge-unknown', text: bfact.warn.text });
+  if (bfact.quiet) quiet.push({ kind: 'bridge-same', text: bfact.quiet });
 
   // The skill-staleness line: the payload's `skill` (setup-check's own
   // sentences and fix list) wins; else it is read from the machine cells.
@@ -660,36 +612,32 @@ export function appRowModel(rawTool, ctx = {}) {
   for (const w of mw) warnings.push({ ...w, severity: 'fix' });
 
   // Quiet lines: how an unconnected app gets its entry.
+  let copy = null;
   if (via) {
-    const rest = plan ? (id === 'claude-code' ? ' For <span class="mono">claude</span> in a terminal, ' + planLineHtml(plan, true) + '.'
-      : ' To give it its own entry, ' + planLineHtml(plan, true) + '.') : '';
-    const first = isStr(via.text) ? via.text : 'Uses ' + via.label + '’s entry.';
-    quiet.push('<p class="mcpi-sub" data-mcpi-copyline>' + escapeHtml(first) + rest + '</p>');
+    quiet.push({ kind: 'via', text: isStr(via.text) ? via.text : 'Uses ' + via.label + '’s entry.' });
+    if (plan) copy = { ...plan, note: id === 'claude-code' ? 'for claude in a terminal' : 'to give it its own entry' };
   } else if (plan) {
     const uwe = tool.usedWithoutEntry && typeof tool.usedWithoutEntry === 'object' && isStr(tool.usedWithoutEntry.text)
       ? tool.usedWithoutEntry.text : '';
     const usedElsewhere = !uwe && status === 'manual' && isStr(tool.usedAt) && h && !(h.files || []).some((f) => f && f.named);
     const used = usedElsewhere ? ageWordsFor(tool.usedAt, ctx.now || Date.now(), '') : '';
     const usedText = uwe || (used ? 'No entry in your user settings — the use ' + used + ' came from another file.' : '');
-    quiet.push('<p class="mcpi-sub" data-mcpi-copyline>'
-      + (usedText ? escapeHtml(usedText + ' ') + planLineHtml(plan)
-        : planLineHtml(plan))
-      + (status === 'manual' && tool.installer === 'cli' ? '. One-click comes in a later version.' : '.')
-      + '</p>');
+    if (usedText) quiet.push({ kind: 'used-elsewhere', text: usedText });
+    copy = { ...plan, note: status === 'manual' && tool.installer === 'cli' ? 'one-click comes in a later version' : '' };
   }
   // The safe-install hint, only where an install is about to happen.
-  if (isStr(tool.restartHint) && ticked && tool.running && tool.running.running === true && !appRunningLine(tool, platform)) {
-    quiet.push('<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>');
-  }
+  const hint = isStr(tool.restartHint) && ticked && tool.running && tool.running.running === true && !appRunningHere(tool, platform)
+    ? tool.restartHint : '';
 
-  const fixN = mw.length;
+  const fixN = Number.isInteger(tool.toFix) && tool.toFix > 0 ? tool.toFix : warnings.filter((w) => w.severity === 'fix').length;
   const connected = status === 'connected' || !!via;
   // The backend's row `verdict` decides "to fix" when it is sent (one rule for
   // the rows and the overview); an older payload falls back to the warnings.
   const fix = isStr(tool.verdict) ? tool.verdict === 'to-fix'
     : status === 'needs-update' || status === 'cant-read' || warnings.some((w) => w.severity === 'fix');
-  return { tool, id, label, status, via, h, installable, canWrite, ticked, plan, warnings, quiet, fixN,
-    bridgeTag: bfact.tag || '', connected, fix, platform };
+  return { tool, id, label, status, via, h, installable, canWrite, ticked, plan, copy, warnings, quiet, fixN: fix ? Math.max(1, fixN) : 0,
+    hint, appRunning: appRunningHere(tool, platform), bridgeTag: bfact.tag || '', bridgeSoft: !!(bfact.warn && bfact.warn.soft),
+    connected, fix, platform };
 }
 
 /**
@@ -729,7 +677,8 @@ export function appRowModels(status, ctx = {}) {
 
 /**
  * "My Curator in your agent apps — 3 connected · 1 to fix · 2 not connected".
- * Zero counts are left out; nothing to say says so.
+ * Zero counts are left out; nothing to say says so. The overview cards'
+ * accessible summary.
  */
 export function overviewLine(tools, platform, ctx = {}) {
   const models = (Array.isArray(tools) ? tools : []).map((t) => appRowModel(t, { ...ctx, platform }));
@@ -741,148 +690,242 @@ export function overviewLine(tools, platform, ctx = {}) {
   return 'My Curator in your agent apps — ' + (parts.length ? parts.join(' · ') : 'no agent app found on this ' + machineWord(platform));
 }
 
+// ── the row, drawn with the section kit (v3.89.0) ──────────────────────────
+
+/** Put attributes on the FIRST tag of a kit fragment (the kit takes no data-attributes). */
+function withAttrs(html, attrs) {
+  return attrs ? String(html).replace(/^(<[a-z]+[^>]*)>/, (_, open) => open + attrs + '>') : html;
+}
+
+/** "used 6 hr ago", ticking (shared/age-ticker.js), or ''. */
+function usedHtml(tool, now) {
+  if (!tool || !isStr(tool.usedAt)) return '';
+  const words = ageWordsFor(tool.usedAt, now || Date.now(), 'used');
+  if (!words) return '';
+  return '<span data-age-at="' + escapeHtml(tool.usedAt) + '" data-age-prefix="used" data-age-text>' + escapeHtml(words) + '</span>';
+}
+
 /**
- * The per-row disclosure: the files, skills and hooks the check read, and
- * Remove / Restore. CLOSED unless the person opened it (`folds`).
+ * The fold row's one-line reading: "connected · running · used 6 hr ago",
+ * "through Claude Desktop · used 17 min ago", "needs an update", "not
+ * connected · last used 5 weeks ago". HTML (the age ticks). Pure.
  */
-function detailHtml(m, ctx) {
+export function appMetaHtml(m, now) {
+  const t = m.tool;
+  const bits = [escapeHtml(m.via ? viaWord(m) : STATUS_WORDS[m.status])];
+  const r = t.running;
+  if (r && r.checked === true && r.running === true) bits.push('running');
+  if (m.bridgeSoft) bits.push('open since before this version');
+  const used = usedHtml(t, now);
+  if (used) bits.push(m.connected ? used : used.replace('>used ', '>last used '));
+  return bits.join(' · ');
+}
+
+/** "31 Oct, 09:58"-style day words for a stamp (keptOnWords without the time when not today). */
+function sinceWords(iso, now) {
+  const age = ageWordsFor(iso, now || Date.now(), '');
+  return age || keptOnWords(iso);
+}
+
+/**
+ * THE PER-APP HEALTH LINE (v3.89.0) — from the usage log's session lines,
+ * which carry the client since v3.88.0, and the install manifest:
+ *   "Claude Desktop last started it 2 hr ago", or
+ *   "Claude Desktop hasn't started My Curator since the entry was written 2 hr ago"
+ * when no session of that app has been seen since The Curator wrote the
+ * entry. '' when there is nothing honest to say. Pure.
+ */
+export function healthWords(m, now = Date.now()) {
+  if (!m.connected && m.status !== 'needs-update') return '';
+  const t = m.tool;
+  const started = isStr(t.lastStartedAt) && Number.isFinite(Date.parse(t.lastStartedAt)) ? t.lastStartedAt : null;
+  const written = isStr(t.entryWrittenAt) && Number.isFinite(Date.parse(t.entryWrittenAt)) ? t.entryWrittenAt : null;
+  if (written && (!started || Date.parse(started) < Date.parse(written))) {
+    return m.label + ' hasn’t started My Curator since the entry was written ' + sinceWords(written, now);
+  }
+  if (started) return m.label + ' last started it ' + sinceWords(started, now);
+  return '';
+}
+
+/** One copy line as a fold item: the file (mono), what to do with the entry, Copy entry. */
+function copyItem(m, plan) {
   const tid = ' data-tool="' + escapeHtml(m.id) + '"';
+  const how = !plan.file ? 'add it to the app’s own MCP config file'
+    : plan.whole && /^Save as /.test(plan.line) ? 'save the copied text as this new file'
+      : !plan.whole && /inside "([^"]+)"/.test(plan.line) ? 'paste it inside "' + plan.line.match(/inside "([^"]+)"/)[1] + '"'
+        : 'add it to this file';
+  return withAttrs(renderFoldItem({
+    main: plan.file || undefined,
+    meta: how + (plan.note ? ' — ' + plan.note : ''),
+    actionHtml: btnG('copy', 'Copy entry', tid),
+  }), ' data-mcpi-copyline');
+}
+
+/**
+ * The row's body — the evidence and the row's own actions, CLOSED by default:
+ * the health line with Check entry, the copy line, the quiet facts, the files
+ * / skills / hooks the check read, the Antigravity note, Remove / Restore.
+ */
+export function appBodyHtml(m, ctx = {}) {
+  const tid = ' data-tool="' + escapeHtml(m.id) + '"';
+  const items = [];
+  const health = healthWords(m, ctx.now);
+  const checkBtn = m.tool.checkEntry === true
+    ? btnG('check-entry', ctx.checkBusy === m.id ? 'Checking…' : 'Check entry', tid + (ctx.checkBusy ? ' disabled' : '')) : '';
+  if (health || checkBtn) {
+    items.push(withAttrs(renderFoldItem({ meta: health || 'Start the command in its entry, as ' + m.label + ' would', actionHtml: checkBtn }), ' data-mcpi-health'));
+  }
+  if (m.copy) items.push(copyItem(m, m.copy));
+  for (const q of m.quiet) items.push(withAttrs(renderFoldItem({ meta: q.text }), ' data-mcpi-quiet="' + escapeHtml(q.kind) + '"'));
+  // The evidence: the machine reading when there is one, else the status's files.
+  const ev = m.h ? appDetailItems(m.h, ctx.machine ? ctx.machine.raw : null, { platform: m.platform })
+    : (Array.isArray(m.tool.files) ? m.tool.files : []).map((f) => ({ main: f && (f.display || f.file) || '', meta: FILE_STATE_WORDS[f && f.state] || '' }));
+  for (const it of ev) {
+    const act = it.reveal && canReveal(m.platform)
+      ? '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(it.reveal) + '">Reveal</button>'
+      : (it.actionHtml || '');
+    items.push(renderFoldItem({ main: it.main, meta: it.meta, actionHtml: act }));
+  }
+  if (isStr(m.tool.note)) items.push(renderFoldItem({ meta: m.tool.note }));
   const acts = [];
   if (m.status === 'connected' && m.canWrite) acts.push(btnG('remove', 'Remove from ' + m.label, tid));
   if (m.tool.restorable === true && m.canWrite) acts.push(btnG('restore', 'Restore original', tid));
-  const note = isStr(m.tool.note) ? '<p class="mcpi-hint">' + escapeHtml(m.tool.note) + '</p>' : '';
-  const actsHtml = acts.length ? '<div class="settings-setup-acts mcpi-detail-acts">' + acts.join('') + '</div>' : '';
-  // An app with no entry and nothing to fix needs only its copy line: its
-  // files would only say "no my-curator entry" again.
-  if (!m.connected && !m.fix && !acts.length) return '';
-  let label; let body;
-  if (m.h) {
-    const d = renderAppDetail(m.h, ctx.machine ? ctx.machine.raw : null, { platform: m.platform });
-    label = d.label; body = d.html;
-  } else if (fileLines(m.tool) || acts.length) {
-    label = 'Files'; body = fileLines(m.tool) ? '<div class="mcpi-files">' + fileLines(m.tool) + '</div>' : '';
-  } else return '';
-  const key = 'tool-' + m.id;
-  const open = ctx.folds && ctx.folds[key];
-  return '<details class="mcpi-more" data-setup-fold="' + escapeHtml(key) + '"' + (open ? ' open' : '') + '>'
-    + '<summary>' + escapeHtml(label) + '</summary>'
-    + '<div class="settings-setup-body">' + body + note + actsHtml + '</div></details>';
+  if (acts.length) {
+    items.push(withAttrs(renderFoldItem({
+      meta: m.tool.restorable === true ? 'Undo what The Curator wrote here' : 'Take only the my-curator entry out',
+      actionHtml: acts.join(''),
+    }), ' data-mcpi-undo'));
+  }
+  return items.join('');
 }
 
-/**
- * One app's row: checkbox · name · status tag · running · used · "N to fix",
- * then its one action; under it the quiet lines, then — OPEN — its warnings
- * with their buttons, then the closed "Files, skills and hooks" disclosure.
- */
-export function renderToolRow(tool, ctx = {}) {
-  const m = tool && tool.tool && tool.id !== undefined && Array.isArray(tool.warnings) ? tool : appRowModel(tool, ctx);
-  const t = m.tool;
-  const nameHtml = '<span class="mcpi-name">' + escapeHtml(m.label) + '</span>';
-  const head = m.installable
-    ? '<label class="mcpi-pick"><input type="checkbox" class="cur-check cur-check-sm" data-mcpi-tick="' + escapeHtml(m.id) + '"' + (m.ticked ? ' checked' : '')
-      + ' aria-label="' + escapeHtml('Include ' + m.label + ' in the install') + '">' + nameHtml + '</label>'
-    : '<span class="mcpi-pick">' + nameHtml + '</span>';
-  const tid = ' data-tool="' + escapeHtml(m.id) + '"';
-  const acts = [];
-  if (m.status !== 'connected' && m.plan) acts.push(btnG('copy', 'Copy entry', tid));
-  const tags = (m.via ? viaTag(m) : statusTag(m.status)) + runningTag(t) + usedNote(t, ctx.now)
-    + (m.fixN ? fixMark(m.fixN + ' to fix', ' data-mcpi-fixn') : '')
-    + (m.bridgeTag ? fixMark(m.bridgeTag, ' data-mcpi-restart-needed') : '')
-    + (ctx.writable !== false ? newOnWindowsTag(t, m.platform) : '');
-  const files = m.installable && fileLines(t) ? '<div class="mcpi-files">' + fileLines(t) + '</div>' : '';
-  return '<div class="mcpi-row mcpi-row-' + (m.via ? 'via' : m.status) + '" data-mcpi-tool="' + escapeHtml(m.id) + '">'
-    + '<div class="mcpi-l1">' + head
-    + '<span class="mcpi-tags">' + tags + '</span>'
-    + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
-    + files
-    + appRunningLine(t, m.platform)
-    + m.quiet.join('')
-    + m.warnings.map(warnHtml).join('')
-    + detailHtml(m, ctx)
-    + '</div>';
+/** What the status's own file states read as, when there is no machine reading. */
+const FILE_STATE_WORDS = Object.freeze({
+  connected: 'has the my-curator entry', differs: 'has an older my-curator entry', 'no-entry': 'no my-curator entry',
+  missing: 'not there yet', 'cant-read': 'can’t be read',
+});
+
+/** One app as a fold row: label · "N to fix" pill · its reading, over its body. */
+export function appFoldRow(m, ctx = {}) {
+  const key = 'app-' + m.id;
+  return withAttrs(renderFoldRow({
+    key,
+    label: m.label,
+    pill: m.fix ? m.fixN + ' to fix' : undefined,
+    metaHtml: appMetaHtml(m, ctx.now),
+    open: !!(ctx.folds && ctx.folds[key]),
+    bodyHtml: appBodyHtml(m, ctx),
+  }), ' data-mcpi-tool="' + escapeHtml(m.id) + '" data-mcpi-status="' + escapeHtml(m.via ? 'via' : m.status) + '"');
 }
 
-/** The rows and the "Not on this Mac/PC/computer (N)" fold. */
-export function renderToolRows(status, ctx = {}) {
-  const data = status && status.data;
-  if (!data) return '';
-  const tools = Array.isArray(data.tools) ? data.tools : [];
-  const c2 = { ...ctx, writable: data.writable, data, platform: data.platform };
-  const rows = tools.map((t) => renderToolRow(appRowModel(t, c2), c2)).join('');
-  const nf = Array.isArray(data.notFound) ? data.notFound : [];
-  const open = ctx.folds && ctx.folds['mcpi-notfound'];
-  const snippets = data.manualSnippets || {};
-  const names = nf.map((t) => t && (t.label || t.id)).filter(isStr);
-  const fold = nf.length
-    ? '<details class="settings-setup-fold mcpi-notfound" data-setup-fold="mcpi-notfound"' + (open ? ' open' : '') + '>'
-      + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not on this ' + machineWord(data.platform) + ' (' + nf.length + ')</span>'
-      + '<span class="cur-setup-hint mcpi-nf-names">' + escapeHtml(names.join(' · ')) + '</span></summary>'
-      + '<div class="mcpi-nf-body">' + nf.map((t) => '<div class="mcpi-row mcpi-row-nf" data-mcpi-tool="' + escapeHtml(t.id) + '">'
-        + '<div class="mcpi-l1"><span class="mcpi-pick"><span class="mcpi-name">' + escapeHtml(t.label || t.id) + '</span></span>'
-        + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy entry', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span></div>'
-        + (() => { const pl = copyPlanFor(t.id, data, ctx.machineFiles); return pl ? '<p class="mcpi-sub" data-mcpi-copyline>' + planLineHtml(pl) + '</p>' : ''; })()
-        + '</div>').join('') + '</div></details>'
-    : '';
-  const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent app was found on this ' + machineWord(data.platform) + '.</p>' : '';
-  return (rows ? '<div class="mcpi-rows" id="mcpi-rows">' + rows + '</div>' : '') + fold + none;
+/** "Not on this Mac" — one fold row with a count, one copy line per app. */
+export function notFoundFoldRow(data, ctx = {}) {
+  const nf = Array.isArray(data && data.notFound) ? data.notFound.filter((t) => t && isStr(t.id)) : [];
+  if (!nf.length) return '';
+  const snippets = (data && data.manualSnippets) || {};
+  const body = nf.map((t) => {
+    const pl = copyPlanFor(t.id, data, ctx.machineFiles);
+    const label = t.label || t.id;
+    return withAttrs(renderFoldItem({
+      meta: label + (pl ? ' — ' + lowerFirst(pl.line.replace(/\.$/, '')) : ''),
+      actionHtml: isStr(snippets[t.id]) ? btnG('copy', 'Copy entry', ' data-tool="' + escapeHtml(t.id) + '"') : '',
+    }), ' data-mcpi-tool="' + escapeHtml(t.id) + '" data-mcpi-copyline');
+  }).join('');
+  return renderFoldRow({ key: 'mcpi-notfound', label: 'Not on this ' + machineWord(data.platform), pill: nf.length,
+    open: !!(ctx.folds && ctx.folds['mcpi-notfound']), bodyHtml: body });
 }
 
-// ── the overview card + the two buttons ────────────────────────────────────
+// ── the Next step card (v3.89.0) ───────────────────────────────────────────
 
-/**
- * ONE overview (rule 1) — three readings and the two buttons under it. The
- * sentence is also the card's accessible summary. `busy` is 'plan' | 'apply' |
- * 'status' | null. `ctx` carries the machine and bridge readings so the
- * cards count the same verdicts the rows show.
- */
-export function renderInstallOverview(status, ticks, busy, ctx = {}) {
-  const data = status && status.data;
-  if (!data) return '';
-  const tools = Array.isArray(data.tools) ? data.tools : [];
-  const models = appRowModels(status, { ...ctx, ticks });
-  const c = countsFor(data, models);
-  const card = renderOverview({
-    id: 'settings-mcpi-overview',
-    eyebrow: 'MY CURATOR IN YOUR AGENT APPS',
-    minTrack: 130,
-    cards: [
-      { label: 'CONNECTED', value: String(c.connected) },
-      { label: 'TO FIX', value: String(c.fix) },
-      { label: 'NOT CONNECTED', value: String(c.notConnected) },
-    ],
-  });
-  const b = installButtonState(status, ticks, busy);
-  const installLabel = busy === 'plan' ? 'Preparing…' : b.label;
-  return '<div class="mcpi-overview">'
-    + '<p class="visually-hidden" role="status">' + escapeHtml(overviewLine(tools, data.platform, { ...ctx, data, writable: data.writable, ticks })) + '</p>'
-    + card
-    + '<div class="mcpi-buttons">'
-    + '<button type="button" class="btn btn-primary" id="mcpi-install-btn" data-mcpi-act="install"' + (b.disabled ? ' disabled' : '') + '>' + escapeHtml(installLabel) + '</button>'
-    + '<button type="button" class="btn btn-secondary" data-mcpi-act="copy-myself">Copy it myself</button>'
-    + '</div>'
-    + (data.writable ? (data.platform === 'win32' ? windowsLine() : '') : nonMacLine(data))
-    + '</div>';
-}
-
-/** Said OPEN whenever one-click install is not available on this computer. */
+/** Said whenever one-click install is not available on this computer. Words only. */
 export function nonMacLine(data) {
   const p = data && isStr(data.platform) ? data.platform : '';
-  if (p === 'win32') {
-    return '<p class="mcpi-line" data-mcpi-nonmac>One-click install on Windows is not available right now — copy the entry for each agent app instead.</p>';
-  }
+  if (p === 'win32') return 'One-click install on Windows is not available right now — copy the entry for each agent app instead.';
   const where = p && p !== 'darwin' ? ' on ' + (p === 'linux' ? 'Linux' : p) : '';
-  return '<p class="mcpi-line" data-mcpi-nonmac>One-click install works on a Mac in this version' + escapeHtml(where)
-    + ' — copy the entry for each agent app instead.</p>';
+  return 'One-click install works on a Mac in this version' + where + ' — copy the entry for each agent app instead.';
 }
 
-/** Said OPEN on Windows when install works: one app only. */
+/** Said on Windows when install works: one app only. Words only. */
 export function windowsLine() {
-  return '<p class="mcpi-line" data-mcpi-windows>On Windows, one-click install covers Claude Desktop only — copy the entry for each other agent app.</p>';
+  return 'On Windows, one-click install covers Claude Desktop only — copy the entry for each other agent app.';
 }
+
+/** The Install chip — the page's one primary action. */
+function installChip(b, busy, data) {
+  const n = b.n;
+  const label = busy === 'plan' ? 'Preparing…' : (n > 1 ? 'Install for me' : b.label.replace(/ \(\d+ apps\)$/, ''));
+  const cost = busy === 'plan' ? '' : n === 1 ? '1 app · previewed first' : n > 1 ? n + ' apps · previewed first'
+    : (data && data.install && isStr(data.install.disabledText) ? lowerFirst(data.install.disabledText) : 'nothing to add');
+  const lab = label === 'Nothing to install' || /^Copy-only/.test(label) || label === 'Can’t install here' ? 'Install for me' : label;
+  return '<button type="button" class="btn btn-primary btn-xs cur-action-chip" id="mcpi-install-btn" data-mcpi-act="install"'
+    + (b.disabled ? ' disabled' : '') + '>'
+    + '<span class="cur-action-label">' + escapeHtml(lab) + '</span>'
+    + (cost ? '<span class="cur-action-cost">' + escapeHtml(cost) + '</span>' : '') + '</button>';
+}
+
+/** A fix action as a chip: Download is a link to this app's own copy, Reveal a button. */
+function fixChip(actHtml, appLabel) {
+  // fixAct's markup, re-dressed as a chip with the app in the cost slot.
+  const cost = '<span class="cur-action-cost">for ' + escapeHtml(appLabel) + '</span>';
+  return String(actHtml)
+    .replace(/class="btn btn-(?:secondary|ghost) btn-xs"/, 'class="btn btn-secondary btn-xs cur-action-chip"')
+    .replace(/>([^<]*)<\/(a|button)>$/, (_, txt, tag) => '><span class="cur-action-label">' + txt + '</span>' + cost + '</' + tag + '>');
+}
+
+/**
+ * THE ONE OBVIOUS NEXT ACTION (PROPOSAL §3): whatever needs the person, in
+ * ONE tinted card at the top of ① — the fixes as chips with their app in the
+ * cost slot, Install for me (disabled, never hidden) with its consequence,
+ * Copy an entry myself; the sentences in the run line; the safety promise as
+ * its footnote. When nothing needs the person and nothing can be installed,
+ * the one-line status card instead. `st` as renderAgentApps'.
+ */
+export function nextStepCard(models, data, st = {}) {
+  const fixes = [];
+  for (const m of models) for (const w of m.warnings) if (w.severity === 'fix') fixes.push({ m, w });
+  const b = installButtonState({ data }, st.ticks, st.busy);
+  const installables = models.filter((m) => m.installable);
+  const manual = models.some((m) => !m.connected && m.copy) || (Array.isArray(data.notFound) && data.notFound.length > 0);
+  if (!fixes.length && !installables.length && data.writable) {
+    return renderStatusLine('Every agent app The Curator can install into on this ' + machineWord(data.platform) + ' is connected.',
+      manual ? '<button type="button" class="btn btn-secondary btn-xs" data-mcpi-act="copy-myself">Copy an entry myself</button>' : '');
+  }
+  const chips = [];
+  for (const { m, w } of fixes) for (const a of w.acts || []) chips.push(fixChip(a, m.label));
+  chips.push(installChip(b, st.busy, data));
+  chips.push('<button type="button" class="btn btn-secondary btn-xs cur-action-chip" data-mcpi-act="copy-myself"><span class="cur-action-label">Copy an entry myself</span></button>');
+  const run = [];
+  for (const { m, w } of fixes) {
+    const text = (w.kind === 'entry' ? m.label + ': ' + w.text : w.text.replace(/^Its /, m.label + '’s '))
+      + (isStr(w.strong) ? ' ' + w.strong : '') + (w.install ? ' Install for me rewrites it.' : '');
+    run.push('<p data-mcpi-warn="' + escapeHtml(w.kind || 'warn') + '"' + (w.code ? ' data-mcpi-reason="' + escapeHtml(w.code) + '"' : '') + '>' + escapeHtml(text) + '</p>');
+  }
+  for (const m of models) {
+    if (m.appRunning) run.push('<p data-mcpi-app-running>' + escapeHtml(APP_RUNNING_WORDS) + '</p>');
+    else if (m.hint) run.push('<p data-mcpi-hint="' + escapeHtml(m.id) + '">' + escapeHtml(m.hint) + '</p>');
+  }
+  if (!data.writable) run.push('<p data-mcpi-nonmac>' + escapeHtml(nonMacLine(data)) + '</p>');
+  else if (data.platform === 'win32') {
+    run.push('<p data-mcpi-windows>' + escapeHtml(windowsLine()) + '</p>');
+    if (installables.some((m) => WINDOWS_INSTALLABLE.includes(m.id))) run.push('<p data-mcpi-new-windows>' + escapeHtml(WINDOWS_NEW_LABEL) + '</p>');
+  }
+  const picks = installables.length
+    ? '<div class="cur-action-picks" role="group" aria-label="Install into">' + installables.map((m) => '<label class="cur-action-pick">'
+      + '<input type="checkbox" class="cur-check cur-check-sm" data-mcpi-tick="' + escapeHtml(m.id) + '"' + (m.ticked ? ' checked' : '')
+      + ' aria-label="' + escapeHtml('Include ' + m.label + ' in the install') + '">' + escapeHtml(m.label) + '</label>').join('') + '</div>'
+    : '';
+  return withAttrs(renderActionCard({
+    eyebrow: fixes.length ? 'NEXT STEP · ' + fixes.length + ' TO FIX' : 'CONNECT',
+    chipsHtml: chips.join(''),
+    runHtml: run.join('') + picks,
+    footnoteHtml: renderDescription('Install for me writes only the my-curator entry, after a preview, and keeps a copy of the file first. The check itself only reads.'),
+  }), ' id="mcpi-next-step" data-mcpi-next');
+}
+
 // ── the preview ────────────────────────────────────────────────────────────
 
-const PLAN_TITLE = Object.freeze({ install: 'Plan ready — nothing written yet', remove: 'Plan ready — nothing written yet', restore: 'Plan ready — nothing written yet' });
-const ITEM_VERB = Object.freeze({ add: 'Add to', update: 'Update in', remove: 'Remove from', restore: 'Restore', none: 'No change in' });
+const PLAN_TITLE = 'PLAN READY · NOTHING WRITTEN YET';
+const ITEM_VERB = Object.freeze({ add: 'add the entry to', update: 'update the entry in', remove: 'remove the entry from', restore: 'put back the original of', none: 'no change in' });
 
 function itemVerb(item, action) {
   if (action === 'remove') return ITEM_VERB.remove;
@@ -920,44 +963,41 @@ export function restoreWords(item) {
 /** The backend's literal stand-in for the apply time in a copy's name (never shown as-is). */
 export const BACKUP_AT_APPLY = '<UTC time of apply>';
 
+/** One planned file: what happens to it, the exact entry, what is kept. */
 function planItem(item, action, tool) {
-  const label = escapeHtml(item.label || item.id || '');
-  const file = '<span class="mono">' + escapeHtml(item.file || '') + '</span>';
+  const label = item.label || item.id || '';
   if (item.refused) {
-    return '<div class="mcpi-plan-item mcpi-plan-refused" data-mcpi-plan-item="' + escapeHtml(item.id) + '">'
-      + '<div class="mcpi-plan-head"><strong>' + label + '</strong> — not changed</div>'
-      + '<p class="mcpi-line">' + escapeHtml(item.refused.message || item.refused.reason || 'This file was left as it is.') + '</p></div>';
+    return withAttrs(renderFoldItem({ main: item.file || undefined,
+      meta: label + ' — not changed: ' + (item.refused.message || item.refused.reason || 'this file was left as it is.') }),
+    ' data-mcpi-plan-item="' + escapeHtml(item.id) + '" data-mcpi-plan-refused');
   }
-  const entry = isStr(item.entryText)
-    ? '<div class="mcpi-plan-cap">' + (action === 'remove' ? 'This entry is removed:' : action === 'restore' ? 'After the restore its My Curator entry reads:' : 'The entry written:') + '</div>'
-      + '<pre class="mcpi-entry" data-mcpi-entry>' + escapeHtml(item.entryText) + '</pre>' : '';
-  const restoreLine = action === 'restore' ? '<p class="mcpi-line" data-mcpi-restore-from>' + escapeHtml(restoreWords(item)) + '</p>' : '';
+  const head = withAttrs(renderFoldItem({ main: item.file || '', meta: label + ' — ' + itemVerb(item, action) + ' this file' }),
+    ' data-mcpi-plan-item="' + escapeHtml(item.id) + '"');
+  const parts = [head];
+  if (action === 'restore') parts.push('<p data-mcpi-restore-from>' + escapeHtml(restoreWords(item)) + '</p>');
+  if (isStr(item.entryText)) {
+    parts.push('<p>' + escapeHtml(action === 'remove' ? 'This entry is removed:' : action === 'restore' ? 'After the restore its My Curator entry reads:' : 'The entry written:') + '</p>');
+    parts.push('<pre class="mono cur-action-entry" data-mcpi-entry>' + escapeHtml(item.entryText) + '</pre>');
+  }
+  if (action !== 'restore') parts.push('<p data-mcpi-preserved>' + escapeHtml(preservedLine(item.preserved)) + '</p>');
   const absent = item.basis === 'absent';
   const placeholder = isStr(item.backupWillBe) && item.backupWillBe.includes(BACKUP_AT_APPLY);
-  // The backend names the copy by a literal placeholder (the time is known only at apply). Said for a person.
-  const dated = placeholder ? wbrPath(item.backupWillBe.replace(BACKUP_AT_APPLY, '…')).replace(/<wbr>/g, '') : '';
-  const keeps = absent
-    ? '<p class="mcpi-line">This file does not exist yet — it is created, so there is no original to keep.</p>'
-    : (placeholder
-      ? '<p class="mcpi-line" data-mcpi-backup>' + (action === 'restore'
-        ? 'Your current file is kept as a new dated copy first.'
-        : 'A dated copy of the current file is kept beside it (<span class="mono">' + dated + '</span>).') + '</p>'
-      : (isStr(item.backupWillBe) ? '<p class="mcpi-line">' + (action === 'restore' ? 'Your current file is kept as a new copy first: ' : 'A new copy of the current file is kept beside it as ')
-        + '<span class="mono">' + wbrPath(item.backupWillBe).replace(/<wbr>/g, '') + '</span>.</p>'
-        : (action === 'restore' ? '<p class="mcpi-line">Your current file is kept as a new copy first.</p>' : '')));
+  if (absent) parts.push('<p>This file does not exist yet — it is created, so there is no original to keep.</p>');
+  else if (placeholder) {
+    parts.push(withAttrs(renderFoldItem({ main: item.backupWillBe.replace(BACKUP_AT_APPLY, '…'),
+      meta: action === 'restore' ? 'your current file, kept as a new dated copy first' : 'a dated copy of the current file, kept beside it first' }), ' data-mcpi-backup'));
+  } else if (isStr(item.backupWillBe)) {
+    parts.push(withAttrs(renderFoldItem({ main: item.backupWillBe,
+      meta: action === 'restore' ? 'your current file, kept as a new copy first' : 'a new copy of the current file, kept beside it first' }), ' data-mcpi-backup'));
+  } else if (action === 'restore') parts.push('<p>Your current file is kept as a new copy first.</p>');
   const running = tool && tool.running && tool.running.running === true;
-  const quit = running && item.id === 'claude-desktop'
-    ? '<p class="mcpi-line mcpi-quit" data-mcpi-quit>' + escapeHtml((item.label || 'Claude Desktop') + ' is running. Quit it first for the safest install — it rewrites its own file.') + '</p>'
-    : (running ? '<p class="mcpi-line">' + escapeHtml((item.label || item.id) + ' is running — it needs a restart to pick this up.') + '</p>' : '');
-  return '<div class="mcpi-plan-item" data-mcpi-plan-item="' + escapeHtml(item.id) + '">'
-    + '<div class="mcpi-plan-head"><strong>' + label + '</strong> — ' + escapeHtml(itemVerb(item, action)) + ' ' + file + '</div>'
-    + restoreLine + entry
-    + (action === 'restore' ? '' : '<p class="mcpi-line">' + escapeHtml(preservedLine(item.preserved)) + '</p>')
-    + keeps + quit
-    + '</div>';
+  if (running && item.id === 'claude-desktop') {
+    parts.push('<p data-mcpi-quit>' + escapeHtml((label || 'Claude Desktop') + ' is running. Quit it first for the safest install — it rewrites its own file.') + '</p>');
+  } else if (running) parts.push('<p>' + escapeHtml(label + ' is running — it needs a restart to pick this up.') + '</p>');
+  return parts.join('');
 }
 
-/** The preview card — the exact entry, the preserved servers' names, the backup. Apply · Cancel. */
+/** The preview — the exact entry, the preserved servers' names, the backup. Apply · Cancel. An action card. */
 export function renderPlanCard(plan, tools, busy) {
   if (!plan || !Array.isArray(plan.items)) return '';
   const action = ['install', 'remove', 'restore'].includes(plan.action) ? plan.action : 'install';
@@ -966,50 +1006,56 @@ export function renderPlanCard(plan, tools, busy) {
   const doable = plan.items.filter((i) => !i.refused).length;
   const applyWord = action === 'remove' ? 'Remove' : action === 'restore' ? 'Restore' : 'Apply';
   const applyLabel = busy === 'apply' ? 'Writing…' : applyWord;
-  return '<div class="dm-plan-card mcpi-plan" data-mcpi-plan role="region" aria-label="Plan">'
-    + '<div class="dm-plan-title">' + PLAN_TITLE[action] + '</div>'
-    + plan.items.map((i) => planItem(i, action, byId[i.id])).join('')
-    + '<div class="dm-plan-actions">'
-    + '<button type="button" class="btn btn-primary" data-mcpi-act="apply"' + (doable === 0 || busy ? ' disabled' : '') + '>' + escapeHtml(applyLabel) + '</button>'
-    + '<button type="button" class="btn btn-ghost" data-mcpi-act="cancel"' + (busy === 'apply' ? ' disabled' : '') + '>Cancel</button>'
-    + '</div></div>';
+  const chips = '<button type="button" class="btn btn-primary btn-xs cur-action-chip" data-mcpi-act="apply"' + (doable === 0 || busy ? ' disabled' : '') + '>'
+    + '<span class="cur-action-label">' + escapeHtml(applyLabel) + '</span>'
+    + (doable ? '<span class="cur-action-cost">' + escapeHtml(doable === 1 ? '1 file' : doable + ' files') + '</span>' : '') + '</button>'
+    + '<button type="button" class="btn btn-secondary btn-xs cur-action-chip" data-mcpi-act="cancel"' + (busy === 'apply' ? ' disabled' : '') + '>'
+    + '<span class="cur-action-label">Cancel</span></button>';
+  return withAttrs(renderActionCard({
+    eyebrow: PLAN_TITLE,
+    chipsHtml: chips,
+    runHtml: plan.items.map((i) => planItem(i, action, byId[i.id])).join(''),
+    footnoteHtml: renderDescription('Only the my-curator entry changes. Nothing is written until you press ' + applyWord + '.'),
+  }), ' id="mcpi-next-step" data-mcpi-plan role="region" aria-label="Plan"');
 }
 
 // ── results ────────────────────────────────────────────────────────────────
 
 const RESULT_VERB = Object.freeze({
-  install: { written: 'added to', created: 'created', unchanged: 'already up to date in' },
-  update: { written: 'updated in', created: 'created', unchanged: 'already up to date in' },
-  remove: { written: 'removed from', created: 'removed from', unchanged: 'was not in' },
-  restore: { written: 'original put back in', created: 'original put back in', unchanged: 'already the original in' },
+  install: { written: 'added', created: 'created with the My Curator entry', unchanged: 'already up to date' },
+  update: { written: 'updated', created: 'created with the My Curator entry', unchanged: 'already up to date' },
+  remove: { written: 'entry removed', created: 'entry removed', unchanged: 'had no entry' },
+  restore: { written: 'original put back', created: 'original put back', unchanged: 'already the original' },
 });
 
 function lowerFirst(s) { return s ? s.charAt(0).toLowerCase() + s.slice(1) : s; }
 
 /**
- * One line per result, ALWAYS visible: "Cursor — added to ~/.cursor/mcp.json ·
- * original kept · quit and reopen Cursor". `planItems` (id+file → plan item)
- * tell an add from an update; the action is the plan's.
+ * One result as data: `{outcome, file, text}` — "Claude Desktop — added ·
+ * original kept · quit and reopen Claude Desktop". `planItems` (id+file →
+ * plan item) tell an add from an update; the action is the plan's. Pure.
  */
-export function resultLine(r, action, planItems) {
-  const label = escapeHtml(r.label || r.id || '');
-  const file = '<span class="mono">' + escapeHtml(r.file || '') + '</span>';
+export function resultWords(r, action, planItems) {
+  const label = r.label || r.id || '';
   const outcome = ['written', 'created', 'unchanged', 'refused'].includes(r.outcome) ? r.outcome : 'refused';
   if (outcome === 'refused') {
-    return '<div class="mcpi-result mcpi-result-refused" data-mcpi-result="refused"><strong>' + label + '</strong> — not changed'
-      + (isStr(r.message) ? ': ' + escapeHtml(r.message) : (isStr(r.reason) ? ': ' + escapeHtml(r.reason) : ''))
-      + ' <span class="mcpi-hint-inline">Nothing was written to ' + file + '.</span></div>';
+    return { outcome, file: r.file || '', text: label + ' — not changed'
+      + (isStr(r.message) ? ': ' + r.message : (isStr(r.reason) ? ': ' + r.reason : '')) + ' Nothing was written to this file.' };
   }
   const item = (Array.isArray(planItems) ? planItems : []).find((i) => i && i.id === r.id && (!r.file || i.file === r.file));
   const kind = action === 'install' && item && item.action === 'update' ? 'update' : action;
   const verbs = RESULT_VERB[kind] || RESULT_VERB.install;
-  const bits = [escapeHtml(verbs[outcome]) + ' ' + file];
-  if (outcome === 'created') bits[0] = escapeHtml(verbs.created) + ' ' + file + ' with the My Curator entry';
+  const bits = [verbs[outcome]];
   if (isStr(r.backup)) bits.push('original kept');
   else if (outcome === 'created') bits.push('no original to keep');
-  if (isStr(r.restart) && outcome !== 'unchanged') bits.push(escapeHtml(lowerFirst(r.restart)));
-  return '<div class="mcpi-result mcpi-result-' + outcome + '" data-mcpi-result="' + outcome + '"><strong>' + label + '</strong> — '
-    + bits.join(' · ') + '</div>';
+  if (isStr(r.restart) && outcome !== 'unchanged') bits.push(lowerFirst(r.restart));
+  return { outcome, file: r.file || '', text: label + ' — ' + bits.join(' · ') };
+}
+
+/** Back-compat name: one result as a fold item. */
+export function resultLine(r, action, planItems) {
+  const w = resultWords(r, action, planItems);
+  return withAttrs(renderFoldItem({ main: w.file || undefined, meta: w.text }), ' data-mcpi-result="' + w.outcome + '"');
 }
 
 /** The restart sentence: names the running tools that were changed. '' when none. */
@@ -1025,51 +1071,94 @@ export function restartLine(results, tools, platform) {
     + (names.length === 1 ? 'it' : 'them') + ' to load My Curator.';
 }
 
-/** The results block: every line, the restart line, and Check again. Never folded. */
+/** The results: every line, the restart line, Check again · Dismiss. Never folded. An action card. */
 export function renderResults(res, tools, platform) {
   if (!res || !Array.isArray(res.items)) return '';
   const lines = res.items.map((r) => resultLine(r, res.action || 'install', res.planItems)).join('');
   const rs = restartLine(res.items, tools, platform);
   const win = platform === 'win32' && res.items.some((r) => r && r.id === 'claude-desktop' && (r.outcome === 'written' || r.outcome === 'created'));
-  return '<div class="mcpi-results" data-mcpi-results role="status">'
-    + lines
-    + (rs ? '<p class="mcpi-line mcpi-restart" data-mcpi-restart>' + escapeHtml(rs) + '</p>' : '')
-    + (win ? '<p class="mcpi-line mcpi-restart" data-mcpi-restart-windows>' + escapeHtml(WINDOWS_RESTART_LINE) + '</p>' : '')
-    + '<div class="mcpi-result-acts">' + (win ? btnP : btnS)('check-again', 'Check again') + btnG('dismiss', 'Dismiss') + '</div>'
-    + '</div>';
+  const any = res.items.some((r) => r && (r.outcome === 'written' || r.outcome === 'created'));
+  const chips = '<button type="button" class="btn btn-' + (any ? 'primary' : 'secondary') + ' btn-xs cur-action-chip" data-mcpi-act="check-again">'
+    + '<span class="cur-action-label">Check again</span>'
+    + (any ? '<span class="cur-action-cost">reads the files back</span>' : '') + '</button>'
+    + '<button type="button" class="btn btn-secondary btn-xs cur-action-chip" data-mcpi-act="dismiss"><span class="cur-action-label">Dismiss</span></button>';
+  return withAttrs(renderActionCard({
+    eyebrow: any ? 'DONE · RESTART THE APP TO LOAD IT' : 'NOTHING WAS WRITTEN',
+    chipsHtml: chips,
+    runHtml: lines
+      + (rs ? '<p data-mcpi-restart>' + escapeHtml(rs) + '</p>' : '')
+      + (win ? '<p data-mcpi-restart-windows>' + escapeHtml(WINDOWS_RESTART_LINE) + '</p>' : ''),
+  }), ' id="mcpi-next-step" data-mcpi-results role="status"');
 }
 
-// ── the panel ──────────────────────────────────────────────────────────────
+// ── the ① card's body ──────────────────────────────────────────────────────
 
 /**
- * The agent-apps panel of block 1: the overview, the plan or results, then
- * one row per app and the "Not on this Mac" fold.
+ * Section ① "Agent apps", after its control row: the statuses (an error, a
+ * copy, a Check entry outcome — each `renderStatus`, never folded), then ONE
+ * action card (Next step, the plan, or the results), then one fold row per
+ * app and the "Not on this Mac" row.
  * `st` = `{status:{data,error,loading}, ticks, plan, results, busy, error,
- * copied, folds, paths, machineFiles, machine, bridges, current, now}`.
+ * copied, folds, paths, machineFiles, machine, bridges, current, now,
+ * checks: {id: {busy, result, error}}, checkBusy}`.
  */
-export function renderInstallPanel(st) {
+export function renderAgentApps(st) {
   const s = st || {};
   const status = s.status || null;
   const data = status && status.data;
   if (!data) {
-    if (status && status.error) {
-      return '<p class="settings-inline-error" role="alert">Could not check your agent apps: ' + escapeHtml(status.error) + '</p>';
-    }
-    return '<p class="cur-setup-hint" aria-busy="true">Checking your agent apps…</p>';
+    if (status && status.error) return renderStatus({ state: 'danger', title: 'Could not check your agent apps', detail: status.error });
+    return renderStatus({ state: 'neutral', title: 'Checking your agent apps…' });
   }
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const ctx = { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles,
-    machine: s.machine || null, bridges: s.bridges || null, current: s.current || {}, now: s.now };
-  const err = isStr(s.error) ? '<p class="settings-inline-error" role="alert" data-mcpi-error>' + escapeHtml(s.error) + '</p>' : '';
-  const stale = status.error ? '<p class="settings-inline-error" role="alert">Could not re-check: ' + escapeHtml(status.error) + '</p>' : '';
-  return '<div class="mcpi-panel" id="mcpi-panel" data-mcpi-panel>'
-    + renderInstallOverview(status, s.ticks, s.busy, ctx)
-    + err + stale
-    + (s.plan ? renderPlanCard(s.plan, tools, s.busy) : '')
-    + renderResults(s.results, tools, data.platform)
-    + (isStr(s.copied) ? '<p class="mcpi-line" role="status">' + escapeHtml(s.copied) + '</p>' : '')
-    + renderToolRows(status, ctx)
-    + '</div>';
+    machine: s.machine || null, bridges: s.bridges || null, current: s.current || {}, now: s.now, checkBusy: s.checkBusy || null };
+  const models = appRowModels(status, ctx);
+  const out = [];
+  if (isStr(s.error)) out.push(withAttrs(renderStatus({ state: 'danger', title: s.error }), ' data-mcpi-error'));
+  if (status.error) out.push(renderStatus({ state: 'danger', title: 'Could not re-check', detail: status.error }));
+  if (isStr(s.copied)) out.push(withAttrs(renderStatus({ state: 'success', title: s.copied }), ' data-mcpi-copied'));
+  for (const [id, c] of Object.entries(s.checks || {})) {
+    const m = models.find((x) => x.id === id);
+    const html = checkStatusHtml(m ? m.label : id, c);
+    if (html) out.push(html);
+  }
+  const notes = out.splice(0, out.length);
+  if (notes.length) out.push('<div class="cur-card-notes">' + notes.join('') + '</div>');
+  out.push(s.plan ? renderPlanCard(s.plan, tools, s.busy)
+    : s.results ? renderResults(s.results, tools, data.platform)
+      : nextStepCard(models, data, { ticks: s.ticks, busy: s.busy }));
+  const rows = models.map((m) => appFoldRow(m, ctx)).join('') + notFoundFoldRow(data, ctx);
+  if (rows) out.push(withAttrs(renderFoldRows(rows), ' id="mcpi-rows"'));
+  else out.push(renderStatus({ state: 'neutral', title: 'No agent app was found on this ' + machineWord(data.platform) + '.' }));
+  return out.join('');
+}
+
+/**
+ * A Check entry outcome as a status (v3.89.0): "Claude Desktop's entry
+ * starts · 24 tools", or what stopped it in plain words. Never folded.
+ */
+export function checkStatusHtml(label, c) {
+  if (!c) return '';
+  const attr = (k) => ' data-mcpi-check="' + k + '"';
+  if (c.busy) return withAttrs(renderStatus({ state: 'neutral', title: 'Starting ' + label + '’s entry…' }), attr('busy'));
+  if (isStr(c.error)) return withAttrs(renderStatus({ state: 'danger', title: 'Could not check ' + label + '’s entry', detail: c.error }), attr('error'));
+  const r = c.result;
+  if (!r || typeof r !== 'object') return '';
+  const list = Array.isArray(r.results) ? r.results : [];
+  if (!list.length) return withAttrs(renderStatus({ state: 'attention', title: r.message || label + ' has no entry to start.' }), attr('none'));
+  const ok = list.every((x) => x && x.starts === true);
+  if (ok) {
+    const n = list[0].toolCount;
+    const files = [...new Set(list.map((x) => x.file).filter(isStr))];
+    return withAttrs(renderStatus({ state: 'success', title: label + '’s entry starts' + (Number.isInteger(n) ? ' · ' + n + (n === 1 ? ' tool' : ' tools') : ''),
+      detail: 'Started exactly as ' + label + ' starts it, from ' + files.join(' and ') + '.' }), attr('starts'));
+  }
+  const bad = list.filter((x) => !(x && x.starts === true));
+  const notRun = bad.every((x) => x.ran === false);
+  const detail = bad.map((x) => (x.file ? x.file + ': ' : '') + (x.message || 'it did not answer as My Curator.')).join(' ');
+  return withAttrs(renderStatus({ state: notRun ? 'attention' : 'danger',
+    title: notRun ? label + '’s entry was not started' : label + '’s entry does not start', detail }), attr(notRun ? 'refused' : 'fails'));
 }
 
 // ── requests (the only network code; every one is called from a click) ─────
@@ -1104,6 +1193,11 @@ export function fetchInstallStatus() {
 /** POST /api/mcp/install/plan — writes nothing. */
 export function requestPlan(action, ids) {
   return call('/api/mcp/install/plan', { action, ids }).then((r) => (r.ok && !Array.isArray(r.data.items)
+    ? { ok: false, code: 'shape', message: 'The server answered in an unexpected shape.' } : r));
+}
+/** POST /api/mcp/install/check-entry (v3.89.0) — starts this app's own entry; writes nothing. Click only. */
+export function requestCheckEntry(id) {
+  return call('/api/mcp/install/check-entry', { id }).then((r) => (r.ok && !Array.isArray(r.data.results)
     ? { ok: false, code: 'shape', message: 'The server answered in an unexpected shape.' } : r));
 }
 /** POST /api/mcp/install/apply — the only call that writes. Click only. */

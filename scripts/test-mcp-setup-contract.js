@@ -547,25 +547,34 @@ function functionBody(src, signature) {
   return null;
 }
 
-// v3.88.0: the self-test is read by lastSelfTest() (this page's press, or the
-// usage log's last run) and said by renderSelfTestResult() ("Bridge answers").
-const describeFn = (functionBody(settingsSrc, 'function lastSelfTest(') || '') + '\n' + (functionBody(settingsSrc, 'function renderSelfTestResult(') || '');
-check('frontend: block 1\'s renderSelfTestResult() was located',
+// v3.89.0: the self-test is read by lastSelfTest() (this page's press, or the
+// usage log's last run) and said by renderBridgeCard() (section ② Bridge) —
+// EXECUTED below through the real page (scripts/test-helpers/mcp-page-sandbox.js).
+const describeFn = (functionBody(settingsSrc, 'function lastSelfTest(') || '') + '\n' + (functionBody(settingsSrc, 'function renderBridgeCard(') || '');
+check('frontend: section ②\'s renderBridgeCard() was located',
   typeof describeFn === 'string' && describeFn.length > 500);
 const describeCode = stripC(describeFn);
 check('  (control) the comment strip left real code behind',
   /r\.tool_count/.test(describeCode) && /renderMonitor\(/.test(describeCode));
 check('  (control) …and it did remove commentary',
   describeCode.length < String(describeFn || '').length);
-
 check('frontend: it reads domains_status in CODE, not only in a comment',
   /r\.domains_status/.test(describeCode));
-check('frontend: it branches on missing_folder specifically', /'missing_folder'/.test(describeCode));
-check('frontend: …and on empty separately', /'empty'/.test(describeCode));
-check('frontend: a missing folder is named as missing, and as a loud (never folded) warning',
-  /knowledge folder is missing/i.test(describeCode) && /folderLoud/.test(describeCode) && /loud: \[\.\.\.folderLoud/.test(describeCode));
-check('frontend: the missing-folder sentence says it is NOT a tool config mistake',
-  /not a mistake in an agent app/i.test(describeCode));
+{
+  const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
+  const at = new Date().toISOString();
+  const strip = (h) => h.replace(/<details[\s\S]*?<\/details>/g, '');   // what shows with every fold closed
+  const missing = renderMcpPage(baseState({ selfTest: { ok: true, tool_count: 24, domains_status: 'missing_folder', domains_dir: '/Users/ann/gone' }, selfTestAt: at })).html;
+  check('frontend: a missing folder is named as missing, UNFOLDED (a danger status, never behind a chevron)',
+    /tx-status tx-status-danger[^]*Your knowledge folder is missing/.test(strip(missing)));
+  check('frontend: the missing-folder sentence says it is NOT a tool config mistake',
+    /not a mistake in an agent app/i.test(strip(missing)));
+  const empty = renderMcpPage(baseState({ selfTest: { ok: true, tool_count: 24, domains_status: 'empty' }, selfTestAt: at })).html;
+  check('frontend: …and an EMPTY folder is a different sentence, with no missing-folder warning',
+    /knowledge folder is empty \(normal on a fresh install\)/.test(empty) && !/knowledge folder is missing/.test(empty));
+  const plain = renderMcpPage(baseState({ selfTest: { ok: true, tool_count: 24, domains_status: 'ok' }, selfTestAt: at })).html;
+  check('frontend: CONTROL — a healthy folder says neither', !/knowledge folder is (missing|empty)/.test(plain));
+}
 
 // D1 residue — the whole-file route has no UI consumer any more, so a corrupt
 // file can never be rendered as "{}" by this app: nothing in /next calls it.

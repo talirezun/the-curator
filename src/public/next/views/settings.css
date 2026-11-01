@@ -2634,8 +2634,6 @@
    --space-6 clear of the card's edge, which is the same step the card uses
    between its own rows — so the button is outside the form, visibly.
    ═════════════════════════════════════════════════════════════════════════ */
-.settings-block-mcp-connect > .settings-block-body,
-.settings-block-mcp-domain > .settings-block-body,
 .settings-block-health-limits > .settings-block-body,
 .settings-block-storage-folder > .settings-block-body,
 .settings-block-storage-github-token > .settings-block-body {
@@ -2651,9 +2649,7 @@
    which is how a 12px design becomes a 36px one without anybody choosing it.
    Zeroed here, scoped, so the global rules stay correct for their other
    consumers (`.settings-note-row` is also rendered by Providers' block 1). */
-.settings-block-mcp-connect > .settings-block-body > .settings-btn-row,
 .settings-block-health-limits > .settings-block-body > .settings-btn-row,
-.settings-block-mcp-connect > .settings-block-body > .settings-mcp-stale-note,
 .settings-block-storage-folder > .settings-block-body > .storage-path-row,
 .settings-block-storage-folder > .settings-block-body > .settings-note-row,
 .settings-block-storage-github-token > .settings-block-body > .provider-row-list,
@@ -2704,143 +2700,21 @@
    General's rows put in the same slot. */
 .cur-group-fields > .settings-field-block > .settings-input-suffix { flex: none; }
 
-/* ══ BLOCK ③ — THE TOOL MAP ═══════════════════════════════════════════════
-   A GRID OF TILES, NOT A TABLE. The question this block answers is a shape —
-   "what did my agents use, and what have they never touched" — and a shape is
-   read by scanning, not by comparing rows cell by cell. `auto-fill` with a
-   220px floor means the column count is decided by the main column's own
-   width rather than by a viewport breakpoint: the same call v3.55.0's Ingest
-   confirm gate records, and for the same reason (the thing that must fit is
-   the container, which `auto-fill` measures and a media query guesses at).
-
-   NOTHING HERE IS PRESSABLE, so nothing carries the press family. A tile is a
-   reading; there is no drill-down this release. */
-
-/* ── THE RUN CONTROL, ITS NOTE AND ITS OUTCOME (v3.61.0) ──────────────────
-   FIRST IN THE BODY, because on a fresh install the rest of the block is
-   twenty-four dashed rings and this button is the only thing that can change
-   that.
-
-   The button is `btn-secondary` at the body's own md size — it INSPECTS rather
-   than completes, which is the taxonomy's own test (the note above `.btn` in
-   shell.css) and the same call block ① makes for "Run self-test".
-
-   NO NEW COLOUR ANYWHERE IN THESE RULES. The outcome's ink is `--text`, its
-   rows `--text-2`, its failure arm the `--danger-*` pair the inline error
-   already uses on this surface, and the `self-test` marker is `--text-3` — the
-   exact pairing `.mcp-tool-uses` has carried on `--surface` since v3.60.0. So
-   there is nothing here whose contrast has not already been measured. */
-.mcp-runner-row { margin-top: 0; }
-/* The note's own top margin comes from `.tx-note`; this only closes the gap to
-   the button it qualifies, which the shared value opens to --space-4. */
-.mcp-runner-note { margin-top: var(--space-2); }
-
-/* THE OUTCOME IS NEVER FOLDED (v3.16.1: the outcome of something the user just
-   pressed is on the never-fold list). A sunken well rather than a card: it is
-   a reading about the block it sits in, not a thing of its own. */
-.mcp-runner-outcome {
-  margin: var(--space-5) 0 var(--space-8);
-  padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--hairline);
-  background: var(--surface-sunken);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-/* A run with a tool that did not answer is a real failure and reads as one —
-   the same danger pair `.settings-inline-error` uses two hundred lines above,
-   so the treatment is one decision rather than two. */
-.mcp-runner-outcome-bad {
-  border-color: var(--danger-text);
-  background: var(--danger-tint);
-}
-.mcp-runner-line + .mcp-runner-line { margin-top: var(--space-2); }
-.mcp-runner-line > strong { color: var(--text); font-weight: var(--weight-medium); }
-.mcp-runner-bad { color: var(--danger-text); }
-/* An error the outcome renders INSTEAD of a reading keeps the inline-error
-   chrome; it only needs the rhythm the well has. */
-.settings-inline-error.mcp-runner-outcome {
-  background: var(--danger-tint);
-  border-color: var(--danger-text);
-  color: var(--danger-text);
-}
-
-/* The group caption takes the MONO face, because `--type-eyebrow` IS the mono
-   idiom in this system (typography.css defines it as one) and v3.56.0 §11
-   settled that every eyebrow in the app wears it. It names the group and
-   counts it; it carries no prose — §3 of docs/design-system-source.md. */
-.mcp-group-eyebrow {
-  font: var(--type-eyebrow);
-  letter-spacing: var(--track-eyebrow);
-  color: var(--text-2);
-  margin-bottom: var(--space-4);
-}
-
-/* ── v3.88.0 — THE COMPACT TOOL MAP ──────────────────────────────────────
-   The 24 tiles became one fold, "All N tools", CLOSED by default (the owner's
-   decision 6): two monitors side by side, READ and WRITE, one line per tool —
-   agent calls in the window · last agent use. One column below 900px. */
-.mcp-busiest { margin-top: var(--space-6); }
-.mcp-all-tools { margin-top: var(--space-6); }
-.mcp-all-tools .settings-setup-summary { flex-wrap: wrap; row-gap: var(--space-2); }
-.mcp-all-tools-legend { margin: 0 0 var(--space-4); }
-.mcp-all-tools .settings-setup-body { padding-top: var(--space-2); }
-.mcp-tool-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--space-6);
-  align-items: start;
-}
-.mcp-tool-col { min-width: 0; }
-@media (max-width: 900px) { .mcp-tool-cols { grid-template-columns: minmax(0, 1fr); } }
-
-.mcp-map-empty {
-  margin: 0;
-  font-size: var(--text-md);
-  color: var(--text-2);
-}
-
-/* ── v3.66.0 — THE DEPTH-BAR MONITORS ON THIS SCREEN ─────────────────────
-   Three monitors whose KEYS are names a user typed or a tool carries — a tool
-   name (`get_project_context`), a `domain / project`, a domain folder — rather
-   than the kit's captions ("last save", "open issues"). The kit sets its
-   captions in eyebrow capitals; a NAME keeps its own case, because
-   `GET_PROJECT_CONTEXT` is not the tool's name and a reader copying it back
-   into a prompt would be copying the wrong string. Host placement, scoped to
-   these three wrappers — shared/monitor.css is linked first precisely so a
-   host can place what it owns. */
-.mcp-busiest,
-.mcp-across,
-.mcp-tool-cols,
+/* ── v3.66.0 — THE "DOMAINS IN THIS FOLDER" MONITOR ──────────────────────
+   Its KEYS are domain folder names a user typed, so a NAME keeps its own case
+   (the kit sets its captions in eyebrow capitals). Settings › MCP bridge's
+   monitors, which this block once shared, use the monitor kit's own
+   `keys: 'identifier'` option since v3.89.0 and carry no rule here. */
 .settings-vault-domains { min-width: 0; }
-.mcp-busiest .cur-mon-key,
-.mcp-across .cur-mon-key,
-.mcp-tool-cols .cur-mon-key,
 .settings-vault-domains .cur-mon-key {
   text-transform: none;
   letter-spacing: normal;
   font-size: var(--text-xs);
 }
-/* ④ is two readings since v3.76.0 (truth audit F12): the connections, then
-   the journal-based saves, each with its own note. A gap between them so
-   the second does not read as a continuation of the first's note. */
-.mcp-across > .cur-mon + .cur-mon,
-.mcp-across > .mcp-foot + .cur-mon { margin-top: var(--space-4); }
-/* v3.88.0 polish — a footnote under a panel is ONE short line in the page's
-   muted text (.tx-note), never a mono paragraph inside the monitor. */
-.mcp-foot { margin-top: var(--space-2); }
-
-/* THE IDENTITY DOT BEFORE THE NAME. The monitor's one trusted slot
-   (`markHtml`) renders INSIDE the value, beside the figure; on these two
-   per-domain monitors the dot names the ROW, so it is placed at the line's
-   leading edge, before the key, where every other surface puts a domain's dot
-   (the sidebar row, the Knowledge row, a Chat chip). The key is indented by
-   the dot's width plus the sidebar row's own 8px gap. The glyph itself is the
-   kit's `.cur-sb-dot` untouched — 8px, round, `--id-N` — only its PLACE is
-   this host's. */
-.mcp-across .cur-mon-line,
+/* THE IDENTITY DOT BEFORE THE NAME, at the line's leading edge, where every
+   other surface puts a domain's dot. The glyph is the kit's `.cur-sb-dot`
+   untouched — only its PLACE is this host's. */
 .settings-vault-domains .cur-mon-line { position: relative; }
-#mcp-across-projects .cur-mon-key,
 .settings-vault-domains .cur-mon-key { padding-left: 16px; }
 .settings-id-mark { display: contents; }
 .settings-id-mark .cur-sb-dot {
@@ -2848,11 +2722,9 @@
   left: var(--space-4);
   top: 0.48em; /* measured: dot centre within 1.05px of the key's text centre, with and without a bar on the line */
 }
-/* A project with no session in 30 days: its figure in the quiet ink, the
-   kit's own `quiet` value colour (--text-2, 8.72 light / 8.34 dark). Not a
-   tone — being idle is not an outcome — and never an opacity, which would
-   take the words under the 4.5 floor. */
-.mcp-across .cur-mon-line:has(.settings-id-idle) .cur-mon-value { color: var(--text-2); }
+@media (max-width: 640px) {
+  .settings-vault-domains .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
+}
 
 /* "Domains in this folder": the Vault folder block's second reading, under
    the path row and its note, captioned like the tool map's groups. */
@@ -2867,15 +2739,6 @@
   margin: var(--space-6) 0 0;
   font-size: var(--text-sm);
   color: var(--text-2);
-}
-/* NARROW: the kit keeps a key on one line; a project or tool NAME can be
-   longer than a 224px column, so below 640px it wraps (the session strip's
-   own measured fix above, extended to these three hosts). */
-@media (max-width: 640px) {
-  .mcp-busiest .cur-mon-key,
-  .mcp-across .cur-mon-key,
-  .mcp-tool-cols .cur-mon-key,
-  .settings-vault-domains .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
 }
 
 /* ── BLOCK 2 · "Used by · N jobs" (v3.67.0) ───────────────────────────────
@@ -3154,3 +3017,14 @@
   .settings-setup-acts { justify-content: flex-start; }
 }
 .settings-setup-copyrow { justify-content: flex-start; align-items: center; padding-top: var(--space-4); }
+
+/* ── Settings › MCP bridge's overview ink (v3.89.0) ─────────────────────────
+   The overview kit's documented `toneClass` slot: the host owns the ink.
+   Status colour, always beside its word (the card label): CONNECTED in the
+   success ink, TO FIX in the attention ink — and only when above 0, which the
+   view decides. The owner's decision: keep green and amber. */
+.settings-ov-ok   { color: var(--success-text); }
+.settings-ov-attn { color: var(--attention-text); }
+/* The overview is the column's first block; the section rhythm (--space-12,
+   the Domain page's `.dm-section + .dm-section`) separates it from ①. */
+.settings-ov-section { margin-bottom: var(--space-12); }

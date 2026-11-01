@@ -182,7 +182,7 @@ function countJsEntries(span) {
         str += span[j];
         j += 1;
       }
-      if (/\.js$/.test(str)) entries.push(str);
+      if (/\.m?js$/.test(str)) entries.push(str);  // v3.89.0: a browser e2e is a .mjs
       i = j;
       continue;
     }

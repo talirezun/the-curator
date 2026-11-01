@@ -652,7 +652,7 @@ the pinned model disappears, the next one is used and the app tells you which on
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
 reads your markdown directly and **does not need the web app to be running**.
 
-**Connecting it.** On a Mac, **Settings → MCP bridge → Connect your agent apps → Install for me** adds the `my-curator` entry to Claude Desktop, Cursor and Antigravity after a preview, keeping a copy of the original file and changing nothing else; every other agent app is copy-and-paste. Quit and reopen the agent app afterwards.
+**Connecting it.** On a Mac, **Settings → MCP bridge → Agent apps → Install for me** adds the `my-curator` entry to Claude Desktop, Cursor and Antigravity after a preview, keeping a copy of the original file and changing nothing else; every other agent app is copy-and-paste. Quit and reopen the agent app afterwards.
 
 **Twenty-four tools ship** (a reading taken at v3.59.0; the authoritative list is the server's own
 tool registration). Fourteen read; ten sit in the write block, of which **seven actually change

@@ -588,9 +588,12 @@ console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
   // column. Measured at 568: "Last session start" is 133px in a 110px track,
   // and the line, the list and the block each reported an overflow that main
   // did not have.
-  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.mcp-busiest\s+\.cur-mon-key[^{]*\{[^}]*white-space:\s*normal/.test(css),
-    'the session monitor\u2019s captions may WRAP once the pair has stacked \u2014 scoped to that one '
-    + 'strip, at equal specificity, because the kit is linked before this file');
+  // v3.89.0: promoted into the monitor kit as the identifier-keys option
+  // (`keys: 'identifier'`), which the MCP page's monitors now pass.
+  const monCss = readFileSync(join(ROOT, 'src/public/next/shared/monitor.css'), 'utf8');
+  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.cur-mon-ident\s+\.cur-mon-key[^{]*\{[^}]*white-space:\s*normal/.test(monCss),
+    'the session monitor\u2019s captions may WRAP once the pair has stacked \u2014 the monitor kit\u2019s '
+    + 'identifier-keys option, which the MCP page passes');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

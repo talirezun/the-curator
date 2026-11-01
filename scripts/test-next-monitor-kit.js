@@ -318,9 +318,17 @@ const ATTR = '" onmouseover="alert(1)';
     markHtml: '<span class="fresh-dot fresh-live"></span>' }] })
     .includes('<span class="fresh-dot fresh-live"></span>'),
   '`markHtml` is TRUSTED, pre-rendered markup — the contract renderReadout carries');
-  eq('...and it is the ONLY field the module passes through untouched',
+  // v3.89.0 — `leadHtml` (an identity dot BEFORE the key) is the second,
+  // for the same reason and with the same producer shape: a kit dot.
+  ok(renderMonitor({ lines: [{ key: 'k', value: 'v', leadHtml: '<span class="cur-sb-dot cur-sb-dot-2"></span>' }] })
+    .includes('<span class="cur-mon-key"><span class="cur-mon-lead"><span class="cur-sb-dot cur-sb-dot-2"></span></span>k</span>'),
+  '`leadHtml` is TRUSTED too, and sits before the key inside the key span');
+  ok(/cur-mon cur-mon-ident/.test(renderMonitor({ keys: 'identifier', lines: [{ key: 'get_node', value: 1 }] }))
+    && !/cur-mon-ident/.test(renderMonitor({ lines: [{ key: 'k', value: 1 }] })),
+  '`keys: \'identifier\'` marks the monitor so its keys keep their case; absent, nothing changes');
+  eq('...and these two are the ONLY fields the module passes through untouched',
     [...new Set([...BARE_JS.matchAll(/trusted\((?:l|w|opts)\.(\w+)\)/g)].map((m) => m[1]))]
-      .sort().join(','), 'markHtml');
+      .sort().join(','), 'leadHtml,markHtml');
   // `strongText` is NOT trusted: its one producer is a ROUTE PAYLOAD.
   ok(/<strong>R&lt;img/.test(hostile),
     '`strongText` is ESCAPED and wrapped by the kit — its one producer is a route '

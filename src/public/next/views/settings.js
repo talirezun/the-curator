@@ -150,14 +150,20 @@ import {
   trashRestoreBody, trashRestoreOutcomeText, trashDeleteOutcomeText,
 } from './trash-list.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-// v3.77.0 — the machine reading's evidence (v3.88.0: each agent app's row disclosure); the words live in a
-// DOM-free module (its suite imports the real builders); this file owns the
-// state, the one request (GET /api/setup/machine) and the listeners.
-import { checkHead } from './setup-machine.js';
-// v3.85.0 — the status check and the one-click install; v3.88.0 — one row per agent app, and the three adapters.
+// v3.85.0 — the status check and the one-click install; v3.88.0 — one row per
+// agent app, and the three adapters; v3.89.0 — drawn with the section kit,
+// and Check entry. The words live in a DOM-free module (its suite imports the
+// real builders); this file owns the state, the requests and the listeners.
 import {
-  adaptBridges, adaptMachine, tildePath, clockWords, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds, machineWord,
+  adaptBridges, adaptMachine, tildePath, copyPlanFor, renderAgentApps, fetchInstallStatus, requestPlan, requestApply,
+  requestCheckEntry, failureWords, installButtonState, tickedIds, machineWord, countsFor, appRowModels,
 } from './mcp-install.js';
+// v3.89.0 — the Domain page's building blocks, shared: Settings › MCP bridge
+// is drawn with them (scripts/test-next-page-contract.js holds it there).
+import {
+  renderSectionHead, renderCard, renderControlRow, renderFoldRows, renderFoldRow, renderFoldItem, renderStatusLine,
+} from '../shared/section.js';
+import { renderOverview } from '../shared/overview.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
@@ -206,7 +212,7 @@ import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 // call sites — the monitor emits its own line rather than re-laying-out one,
 // because `.tx-readout` is a COLUMN (label above value) and no stylesheet but
 // shared/text.css may declare a `.tx-` rule to turn it into a row.
-import { renderViewHeader } from '../shared/text.js';
+import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
 // v3.87.1: "Waiting for Finder…" is a Mac word; other platforms say "folder picker".
 import { browserPlatform } from '../shared/platform.js';
 // G5 (v3.71.0, COPY.md §3): `general` was the one section with no entry in
@@ -253,6 +259,7 @@ import { renderMonitor } from '../shared/monitor.js';
 // is written at the top of age.js: a second threshold table is how a mark
 // comes to say "today" while the words next to it say "1 week ago".
 import { formatAge, freshnessTier } from '../shared/age.js';
+import { tickAges } from '../shared/age-ticker.js';
 // The design system's own progress component. REUSED rather than replaced by a
 // new linear bar: it refuses to fill a phase that reports nothing, it carries
 // the liveness cue during a long download, and its reduced-motion behaviour is
@@ -1074,7 +1081,6 @@ function freshState() {
     selfTest: null,
     selfTestLoading: false,
     selfTestAt: null,       // when this page's own self-test answered (v3.88.0)
-    mcpAllToolsOpen: false, // block ③'s "All N tools" fold — closed by default (v3.88.0)
     defaultDomainInfo: null, // { defaultDomain, domains }
     defaultDomainSaving: false,
     defaultDomainError: null,
@@ -1119,6 +1125,9 @@ function freshState() {
     // NOTHING here is written by a load: only a click on Install / Remove /
     // Restore asks for a plan, and only a click on Apply writes.
     mcpInstall: { status: null, ticks: {}, plan: null, results: null, busy: null, error: null, copied: null },
+    // v3.89.0 — Check entry: id → {busy, result, error}, and the one in flight.
+    mcpChecks: {},
+    mcpCheckBusy: null,
     mcpExerciseBusy: false,
     mcpExerciseError: null,
 
@@ -1845,44 +1854,18 @@ function currentBridgeFacts() {
   return { version: cur.version || (mm && mm.version) || null, toolCount: cur.toolCount || tools || null };
 }
 
-/**
- * ① CONNECT YOUR AGENT APPS (v3.88.0 — v3.85.0's blocks 1 and 5 merged).
- *
- * One block, read top to bottom: "checked · Check again"; the overview card
- * with Install for me / Copy it myself; ONE ROW PER AGENT APP, each with its
- * one verdict, its warnings UNFOLDED under it, and its evidence in a closed
- * per-row disclosure; the "Not on this Mac (N)" fold; then the "Bridge
- * answers" monitor (version · knowledge folder · open bridges · self-test,
- * with its own Run self-test button — the owner's decision 2).
- *
- * THE STALE-BRIDGE FACT APPEARS EXACTLY ONCE: a warning (tools changed) or a
- * quiet line (same tools) on the row of the app that opened it, and a count in
- * "open now". The three wordings v3.87.1 printed (block 1's loud, the
- * self-test's "…but not the one already open", block 5's monitor) are gone.
- * No machine name (the owner's decision 4).
- */
-function renderConnectApps() {
+function renderAgentAppsCard() {
   const m = state.setupMachine;
-  const lede = 'Which agent apps on this ' + machineWord(installPlatform()) + ' reach My Curator, and what each needs.';
-  const machine = adaptMachine(m);
-  const bridges = adaptBridges(state.mcp);
-  const copied = state.setupMachineCopied || null;
-  const body = '<div class="settings-setup-head">' + checkHead(m)
-    + (copied ? '<span class="settings-setup-copied" role="status">' + escapeHtml(copied) + '</span>' : '')
-    + '</div>'
-    + '<div class="mcp-connect-stack">'
-    + (m && m.error && !m.data ? '<p class="settings-inline-error" role="alert">Could not check this computer: ' + escapeHtml(m.error) + '</p>' : '')
-    + renderInstallPanel({
-      status: state.mcpInstall.status, ticks: state.mcpInstall.ticks, plan: state.mcpInstall.plan,
-      results: state.mcpInstall.results, busy: state.mcpInstall.busy, error: state.mcpInstall.error,
-      copied: state.mcpInstall.copied, folds: state.setupMachineFolds, paths: installRevealPaths(),
-      machineFiles: installMachineFiles(), machine, bridges, current: currentBridgeFacts(),
-    })
-    + renderSelfTestResult()
-    + '<p class="settings-block-footnote">The check only reads whether each file names my-curator. '
-    + 'Install for me writes only that entry, after a preview, and keeps a copy of the file first.</p>'
-    + '</div>';
-  return settingsBlock(1, 'mcp-connect', 'Connect your agent apps', lede, body, 'settings.mcp-connect', '');
+  const mi = state.mcpInstall;
+  const busy = !!(m && m.loading) || !!(mi.status && mi.status.loading);
+  const ctx = mcpInstallCtx();
+  return renderControlRow('<button type="button" class="btn btn-secondary" data-setup-act="machine-check"' + (busy ? ' disabled' : '') + '>'
+      + icon('refresh', 14) + '<span>' + (busy ? 'Checking…' : 'Check again') + '</span></button>')
+    + (m && m.error && !m.data ? renderStatus({ state: 'danger', title: 'Could not check this computer', detail: m.error }) : '')
+    + renderAgentApps({
+      status: mi.status, ticks: mi.ticks, plan: mi.plan, results: mi.results, busy: mi.busy, error: mi.error,
+      copied: mi.copied, checks: state.mcpChecks, checkBusy: state.mcpCheckBusy, ...ctx,
+    });
 }
 
 /**
@@ -1919,8 +1902,8 @@ async function loadAcrossProjects(token, opts) {
   // exactly as block ③'s tool map is repainted, so an open ⓘ or fold stays.
   if (state.section !== 'mcp') return;
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
-  const body = document.querySelector(ACROSS_PROJECTS_BODY_SEL);
-  if (body) body.innerHTML = renderAcrossProjectsBody();
+  paintMcpCard(ACROSS_PROJECTS_BODY_SEL, renderAcrossProjectsBody(), 'mcp-meta-projects', acrossMetaWords());
+  paintMcpOverview();
 }
 
 async function loadAiHealth(token) {
@@ -2332,10 +2315,8 @@ function renderMain(token, force) {
   let body;
   if (state.section === 'general') body = renderGeneral();
   else if (state.section === 'providers') body = renderProviders();
-  // Block ④ Across projects (v3.66.0) is composed HERE, beside renderMcp, for
-  // the reason the token block below is: suites lift renderMcp into sandboxes,
-  // and a new free identifier inside a lifted body is a crash there.
-  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() : '');
+  // v3.89.0: the whole page — overview and its four sections — is renderMcp's.
+  else if (state.section === 'mcp') body = renderMcp();
   else if (state.section === 'health') body = renderHealthLimits();
   else if (state.section === 'trash') body = renderTrash();
   // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
@@ -8949,29 +8930,219 @@ function lastSelfTest() {
   };
 }
 
-/**
- * ── THREE NUMBERED BLOCKS, AND A FOURTH, BECAUSE THEY REALLY ARE STEPS ─────
- *
- * The numerals are an ARGUMENT, not decoration: you connect your agent apps,
- * and THEN — once something is calling write tools — the question of which
- * domain an unqualified "my wiki" means can arise at all; only after that is
- * there anything for the tool map (③) and Across projects (④) to observe.
- *
- * ── WHAT IS VISIBLE, AND WHAT IS NOT ───────────────────────────────────────
- * The client list, the ChatGPT exclusion, the transport and the "the app need
- * not be running" fact are TRUE and still rendered — behind ①'s ⓘ, because
- * none of them is needed to read a row. Every warning, the self-test result
- * and the inline errors are NOT folded and must never be: explanations fold,
- * findings do not (v3.16.1).
- */
 function renderMcp() {
+  // THE PAGE (v3.89.0, rebuilt on the section kit — PROPOSAL direction A):
+  // OVERVIEW, then four numbered sections, each a head + ONE card. The view
+  // header is renderMain's. Held to scripts/test-next-page-contract.js.
+  if (!state.mcp && !state.mcpError) {
+    // Nothing yet: the overview and section ① only, so the page does not
+    // jump when the readings land — and only once the gate says a loader is
+    // worth showing (no flash on a fast load).
+    if (!(loadGate && loadGate.visible)) return '';
+    return mcpOverviewHtml() + mcpSection(1, 'apps', 'Agent apps', explainerMark('mcp-sec-apps-info', 'settings.mcp-connect'), '',
+      gatedLoader(loadGate, 'Loading MCP status…', 'tx-note'));
+  }
   if (state.mcpError) {
-    return '<div class="settings-inline-error">' + escapeHtml(state.mcpError) + '</div>';
+    return mcpOverviewHtml() + mcpSection(1, 'apps', 'Agent apps', explainerMark('mcp-sec-apps-info', 'settings.mcp-connect'), '',
+      renderStatus({ state: 'danger', title: 'Could not load MCP status', detail: state.mcpError }));
   }
-  if (!state.mcp) {
-    return gatedLoader(loadGate, 'Loading MCP status…');
-  }
+  return mcpOverviewHtml()
+    + mcpSection(1, 'apps', 'Agent apps', explainerMark('mcp-sec-apps-info', 'settings.mcp-connect'), appsMetaWords(), renderAgentAppsCard())
+    + mcpSection(2, 'bridge', 'Bridge', explainerMark('mcp-sec-bridge-info', 'settings.mcp-bridge'), bridgeMetaWords(), renderBridgeCard())
+    + mcpSection(3, 'use', 'Agent use', explainerMark('mcp-sec-use-info', 'settings.mcp-tool-map'), agentUseMetaWords(), renderToolMapBody())
+    + mcpSection(4, 'projects', 'Across projects', explainerMark('mcp-sec-projects-info', 'settings.mcp-across'), acrossMetaWords(), renderAcrossProjectsBody());
+}
 
+/**
+ * One numbered section: the head (numeral · title · ⓘ · its one reading) and
+ * ONE card, siblings (rule 2). The card carries an id so the 30 s revalidate
+ * can repaint ITS insides and nothing else.
+ */
+function mcpSection(num, key, title, info, meta, innerHtml) {
+  return renderSectionHead({ num, title, titleId: 'mcp-sec-' + key, focusable: true, info,
+      meta: meta || '', metaId: 'mcp-meta-' + key })
+    + renderCard(innerHtml).replace(/^<div class="cur-card"/, '<div class="cur-card" id="mcp-card-' + key + '"');
+}
+
+/**
+ * THE OVERVIEW (rule 1): is everything working, in one glance — and every
+ * figure is a door to its section. Status ink (the owner's decision: keep
+ * green / amber) only through the host's own `toneClass`, and always beside
+ * its word, the card label.
+ */
+function mcpOverviewHtml() {
+  const mi = state.mcpInstall;
+  const data = mi && mi.status && mi.status.data;
+  const c = data ? countsFor(data, appRowModels(mi.status, mcpInstallCtx())) : null;
+  const r = lastSelfTest();
+  const u = state.mcpUsage;
+  const tools = u && Array.isArray(u.tools) ? u.tools : [];
+  const save = tools.find((t) => t && t.name === 'save_working_state');
+  const saves = save && Number.isInteger(save.count7dAgent) ? save.count7dAgent : null;
+  const win = u ? usageWindowWords(u.logStartedAt, Date.now(), u.countWindowDays) : null;
+  const lastSave = u && u.sessions && typeof u.sessions.lastSaveAt === 'string' ? u.sessions.lastSaveAt : null;
+  const secs = ageSecondsOf(lastSave, Date.now());
+  const saveWords = secs === null ? null : formatAge(secs);
+  const dash = '—';
+  return renderOverview({
+    id: 'mcp-overview',
+    eyebrow: 'OVERVIEW',
+    sectionClass: 'settings-ov-section',
+    infoText: explainerHtml('settings.mcp-overview'),
+    infoHtml: true,
+    minTrack: 120,
+    cards: [
+      { label: 'CONNECTED', value: c ? String(c.connected) : dash, toneClass: c && c.connected > 0 ? 'settings-ov-ok' : '',
+        jump: 'mcp-sec-apps', name: c ? c.connected + ' agent apps connected — open Agent apps' : 'Agent apps' },
+      { label: 'TO FIX', value: c ? String(c.fix) : dash, toneClass: c && c.fix > 0 ? 'settings-ov-attn' : '',
+        jump: c && c.fix > 0 ? 'mcpi-next-step' : 'mcp-sec-apps', name: c ? c.fix + ' to fix — open the next step' : 'Agent apps' },
+      { label: 'TOOLS ANSWER', value: r ? (r.ok && Number.isInteger(r.toolCount) ? String(r.toolCount) : (r.ok ? 'yes' : 'failed')) : dash,
+        toneClass: r && !r.ok ? 'settings-ov-attn' : '', sub: r ? '' : 'not tested yet', jump: 'mcp-sec-bridge', name: 'Tools answer — open Bridge' },
+      { label: 'SAVES · ' + (win ? win.short.toUpperCase() : '7 DAYS'), value: saves === null ? dash : String(saves),
+        jump: 'mcp-sec-use', name: 'Handoff saves — open Agent use' },
+      { label: 'LAST SAVE', value: saveWords || (u ? 'none yet' : dash),
+        markHtml: saveWords ? '<span class="fresh-dot fresh-' + freshnessTier(secs) + '" aria-hidden="true"></span>' : '',
+        ageAt: saveWords ? lastSave : undefined, jump: 'mcp-sec-projects', name: 'Last save — open Across projects' },
+    ],
+  });
+}
+
+/** The install panel's context (the readings every row model needs). */
+function mcpInstallCtx() {
+  return { ticks: state.mcpInstall.ticks, folds: state.setupMachineFolds, paths: installRevealPaths(),
+    machineFiles: installMachineFiles(), machine: adaptMachine(state.setupMachine), bridges: adaptBridges(state.mcp),
+    current: currentBridgeFacts() };
+}
+
+/** The section heads' readings, ticking in place (tickMcpAges): id → {iso, prefix}. */
+const mcpMetaAges = {};
+function metaAge(key, iso, prefix, otherwise) {
+  const secs = ageSecondsOf(iso, Date.now());
+  const words = secs === null ? null : formatAge(secs);
+  if (!words) { delete mcpMetaAges['mcp-meta-' + key]; return otherwise; }
+  mcpMetaAges['mcp-meta-' + key] = { iso, prefix };
+  return prefix + ' ' + words;
+}
+function appsMetaWords() {
+  const at = state.setupMachine && state.setupMachine.data && state.setupMachine.data.checkedAt;
+  return metaAge('apps', at, 'checked', state.mcpInstall.status && state.mcpInstall.status.loading ? 'checking…' : '');
+}
+function bridgeMetaWords() {
+  const r = lastSelfTest();
+  if (!r) return 'self-test not run yet';
+  return metaAge('bridge', r.at, r.ok ? 'self-test' : 'self-test failed', r.ok ? 'self-test passed' : 'self-test failed');
+}
+function agentUseMetaWords() {
+  const u = state.mcpUsage;
+  const tools = u && Array.isArray(u.tools) ? u.tools : [];
+  let last = null;
+  for (const t of tools) {
+    const a = t ? agentReading(t).lastAgentAt : null;
+    if (a && (!last || Date.parse(a) > Date.parse(last))) last = a;
+  }
+  return metaAge('use', last, 'last call', u ? 'no agent call yet' : '');
+}
+function acrossMetaWords() {
+  const w = acrossWindowWords(state.mcpProjects);
+  return w ? w.charAt(0).toLowerCase() + w.slice(1) : '';
+}
+
+function renderBridgeCard() {
+  const cfg = state.mcp || {};
+  const r = lastSelfTest();
+  const mm = adaptMachine(state.setupMachine);
+  const bridges = adaptBridges(state.mcp);
+  const home = mm && mm.home;
+  const facts = currentBridgeFacts();
+  const u = state.mcpUsage;
+  const toolN = u && Array.isArray(u.tools) ? u.tools.length : 0;
+  const busy = !!state.selfTestLoading;
+  const exBusy = state.mcpExerciseBusy === true;
+
+  const control = renderControlRow('<div class="cur-card-top-group">'
+    + '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (busy ? ' disabled' : '') + '>'
+      + icon('activity', 14) + '<span>' + (busy ? 'Testing…' : 'Run self-test') + '</span></button>'
+    + (toolN ? '<button type="button" class="btn btn-secondary" id="btn-mcp-exercise"' + (exBusy ? ' disabled' : '') + '>'
+      + icon('check', 14) + '<span>' + escapeHtml(exBusy ? 'Testing…' : 'Test all ' + toolN + ' tools') + '</span></button>' : '')
+    + '</div>');
+
+  // ── WHAT IS SAID UNFOLDED: faults, and the outcome of what was pressed ──
+  const statuses = [];
+  if (cfg.mcp_server_exists === false) {
+    statuses.push(renderStatus({ state: 'danger', title: 'The bridge file is missing',
+      detail: 'The Curator’s own mcp/server.js is not where it should be. Update or reinstall The Curator.' }));
+  }
+  const domainsStatus = r && typeof r.domainsStatus === 'string' ? r.domainsStatus
+    : (cfg.domains_dir_exists === false ? 'missing_folder' : null);
+  const folderPath = (r && typeof r.domainsDir === 'string' && r.domainsDir.trim()) || (typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '');
+  if (domainsStatus === 'missing_folder') {
+    statuses.push(renderStatus({ state: 'danger', title: 'Your knowledge folder is missing',
+      detail: 'The bridge works, but ' + (folderPath ? tildePath(folderPath, home) : 'the configured folder')
+        + ' does not exist, so an agent app will connect and see nothing. This is not a mistake in an agent app’s config file. '
+        + 'Open Settings → Knowledge base and point The Curator at the folder your knowledge lives in.' }));
+  }
+  if (r && !r.ok) statuses.push(renderStatus({ state: 'danger', title: 'Self-test failed', detail: r.error || 'The bridge did not respond as expected.' }));
+  else if (r && state.selfTest) {
+    // Pressed on this page: the outcome, said once, unfolded.
+    statuses.push(renderStatus({ state: 'success',
+      title: 'The bridge answers' + (Number.isInteger(r.toolCount) ? ' · ' + r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') : ''),
+      detail: 'A fresh bridge started and listed its tools.'
+        + (r.domainsStatus === 'empty' ? ' The knowledge folder is empty (normal on a fresh install).' : '') }));
+  }
+  const orphans = bridges.list.filter((b) => !b.appId && (b.notice === 'warn' || b.notice === 'soft'));
+  if (orphans.length) {
+    statuses.push(renderStatus({ state: 'neutral',
+      title: (orphans.length === 1 ? 'One bridge was' : orphans.length + ' bridges were') + ' opened before this version by an agent app The Curator could not name',
+      detail: 'So it can’t tell whether ' + (orphans.length === 1 ? 'its' : 'their') + ' tools changed.'
+        + (orphans[0].remedy ? ' If an agent is missing a tool: ' + orphans[0].remedy : '') }));
+  }
+  statuses.push(renderExerciseOutcome());
+
+  // ── BRIDGE ANSWERS — the reading, folded, its summary in the meta ───────
+  let openLine;
+  let openWords = '';
+  if (!bridges.checked) {
+    openLine = { key: 'open now', value: 'not checked', sub: bridges.reason || '' };
+  } else {
+    const n = Number.isInteger(bridges.running) ? bridges.running : bridges.list.length;
+    const apps = [...new Set(bridges.list.map((b) => b.appLabel).filter((x) => typeof x === 'string' && x))];
+    const changed = bridges.list.filter((b) => b.notice === 'warn').length;
+    const unknown = bridges.list.filter((b) => b.notice === 'soft').length;
+    const sub = n === 0 ? ''
+      : changed ? changed + (changed === 1 ? ' serves older tools — see its app in Agent apps' : ' serve older tools — see their apps in Agent apps')
+        : unknown ? 'started before this version — can’t tell whether ' + (unknown === 1 ? 'its' : 'their') + ' tools changed'
+          : 'same tools as this version';
+    openLine = { key: 'open now', value: n === 0 ? 'none' : n + (n === 1 ? ' bridge' : ' bridges') + (apps.length ? ' · ' + apps.join(', ') : ''), sub };
+    openWords = n === 0 ? 'none open' : n + ' open' + (unknown && !changed ? ', started before ' + (facts.version || 'this version') : '');
+  }
+  let testLine;
+  if (!r) testLine = { key: 'self-test', value: 'not run yet' };
+  else if (!r.ok) testLine = { key: 'self-test', value: 'failed' };
+  else {
+    const count = Number.isInteger(r.toolCount) ? r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') : 'answered';
+    testLine = r.at && ageSecondsOf(r.at, Date.now()) !== null
+      ? { key: 'self-test', value: '', markHtml: tickedAgeHtml(count + ' · ', r.at, Date.now()) }
+      : { key: 'self-test', value: count };
+  }
+  const ex = lastExerciseRun();
+  const exLine = ex
+    ? { key: 'full test', value: '', markHtml: ex.at ? tickedAgeHtml((ex.answered === null ? ex.total + ' run' : ex.answered + ' of ' + ex.total) + ' · ', ex.at, Date.now())
+      : escapeHtml((ex.answered === null ? ex.total + ' run' : ex.answered + ' of ' + ex.total)) }
+    : { key: 'full test', value: 'not run yet' };
+  const version = (facts.version || 'unknown') + (mm && installWords(mm.install) ? ' · ' + installWords(mm.install) : '');
+  const mon = renderMonitor({
+    id: 'mcp-bridge-monitor',
+    label: 'This bridge',
+    lines: [
+      { key: 'version', value: version },
+      { key: 'knowledge folder', value: tildePath(typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '', home) || 'unknown' },
+      openLine, testLine, exLine,
+    ],
+    note: 'Test all runs every tool against a throwaway copy — nothing of yours is touched.',
+  });
+  const answersMeta = [facts.version || '', Number.isInteger(facts.toolCount) ? facts.toolCount + ' tools' : '', openWords].filter(Boolean).join(' · ');
+
+  // ── DEFAULT DOMAIN FOR WRITES — the owner's decision: a fold row here ───
   const domains = (state.defaultDomainInfo && state.defaultDomainInfo.domains) || [];
   const defaultDomain = state.defaultDomainInfo ? state.defaultDomainInfo.defaultDomain : null;
   // ONE cfg, rendered below and hydrated from pendingListboxes — never
@@ -8983,135 +9154,29 @@ function renderMcp() {
     ariaLabel: 'Default domain for MCP writes',
     value: defaultDomain || '',
     disabled: !!state.defaultDomainSaving,
-    triggerClass: 'settings-select mono',
+    triggerClass: 'mono',
     minWidth: 280,
     options: [{ value: '', label: '— none (require an explicit domain) —', typeahead: 'none' }]
       .concat(domains.map((d) => ({ value: d, label: d }))),
     onChange: (value) => onSaveDefaultDomain(value, myMountToken),
   };
   pendingListboxes.push(defaultDomainCfg);
-
-  // ── ② DEFAULT DOMAIN FOR MCP WRITES ──────────────────────────────────────
-  // The listbox is the whole body; the rule is the lede, and its consequence
-  // — the safer setting and why — is the footnote.
-  const domainLede = 'Used when a client says “my wiki” without naming a domain.';
-
-  const domainBody =
-    // The shared listbox (shared/listbox.js). No wrapper: the component draws
-    // its own indicator INSIDE the trigger.
-    renderListboxHtml(defaultDomainCfg) +
-    (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
+  const domainBody = renderListboxHtml(defaultDomainCfg)
+    + (state.defaultDomainSaving ? renderStatus({ state: 'neutral', title: 'Saving…' }) : '')
     // v3.72.1 (truth audit F11): a refused save says so, here, beside the
     // control — never through state.mcpError, which blanks the whole section.
-    (state.defaultDomainError ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.defaultDomainError) + '</div>' : '') +
-    // THE CONSEQUENCE IS ON THE PAGE (v3.71.1; it was only in the ⓘ): a
-    // write aimed at the wrong domain is a real, quiet mistake.
-    '<p class="settings-block-footnote">' + escapeHtml(MCP_DOMAIN_CONSEQUENCE) + '</p>';
+    + (state.defaultDomainError ? renderStatus({ state: 'danger', title: 'Not saved', detail: state.defaultDomainError }) : '')
+    // THE CONSEQUENCE IS ON THE PAGE (v3.71.1): a write aimed at the wrong
+    // domain is a real, quiet mistake. The fold body's last line.
+    + renderDescription(MCP_DOMAIN_CONSEQUENCE);
 
-  return (
-    renderConnectApps() +
-    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, 'settings.mcp-domain', '') +
-    renderToolMap()
-  );
-}
-
-/**
- * ① › "BRIDGE ANSWERS" — the bridge itself, as one monitor (v3.88.0).
- *
- * version · knowledge folder · open now · self-test, and the Run self-test
- * button under it (the owner's decision 2: the self-test keeps its own button).
- *
- * WHAT IT NEVER SAYS: that an OPEN bridge serves older tools. The self-test
- * spawns a FRESH bridge and reports only that one; an open bridge's tool list
- * is its app's row's fact (a warning only when the list differs) and a count
- * on "open now" here. Bridges the app cannot attribute to any app, whose tools
- * it cannot compare, get one SOFT line here — the only stale wording left
- * outside a row.
- *
- * The missing knowledge folder IS loud here: it is true for every app at once.
- */
-function renderSelfTestResult() {
-  const cfg = state.mcp || {};
-  const r = lastSelfTest();
-  const mm = adaptMachine(state.setupMachine);
-  const bridges = adaptBridges(state.mcp);
-  const home = mm && mm.home;
-  const facts = currentBridgeFacts();
-
-  // A MISSING knowledge folder and an EMPTY one are different sentences, and
-  // the missing one is a `loud` warning — it is not a mistake in any agent
-  // app's config file. The config payload says so before any self-test.
-  const domainsStatus = r && typeof r.domainsStatus === 'string' ? r.domainsStatus
-    : (cfg.domains_dir_exists === false ? 'missing_folder' : null);
-  const folderPath = (r && typeof r.domainsDir === 'string' && r.domainsDir.trim()) || (typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '');
-  const folderLoud = domainsStatus === 'missing_folder'
-    ? [{ tone: 'warn',
-         text: 'The bridge works, but your knowledge folder is missing — '
-          + (folderPath ? tildePath(folderPath, home) : 'the configured folder')
-          + ' does not exist, so an agent app will connect and see nothing. This is not a mistake in an agent app’s config file. '
-          + 'Open Settings → Knowledge base and point The Curator at the folder your knowledge lives in.' }]
-    : [];
-  const failLoud = r && !r.ok ? [{ tone: 'danger', text: r.error || 'The bridge did not respond as expected.' }] : [];
-
-  // ── OPEN NOW ──────────────────────────────────────────────────────────
-  let openLine;
-  if (!bridges.checked) {
-    openLine = { key: 'open now', value: 'not checked', sub: bridges.reason || '' };
-  } else {
-    const n = Number.isInteger(bridges.running) ? bridges.running : bridges.list.length;
-    const apps = [...new Set(bridges.list.map((b) => b.appLabel).filter((x) => typeof x === 'string' && x))];
-    const changed = bridges.list.filter((b) => b.notice === 'warn').length;
-    const unknown = bridges.list.filter((b) => b.notice === 'soft').length;
-    const sub = n === 0 ? ''
-      : changed ? changed + (changed === 1 ? ' serves older tools — see its app above' : ' serve older tools — see their apps above')
-        : unknown ? 'started before this version — can’t tell whether ' + (unknown === 1 ? 'its' : 'their') + ' tools changed'
-          : 'same tools as this version';
-    openLine = { key: 'open now', value: n === 0 ? 'none' : n + (n === 1 ? ' bridge' : ' bridges') + (apps.length ? ' · ' + apps.join(', ') : ''), sub };
-  }
-  const orphans = bridges.list.filter((b) => !b.appId && (b.notice === 'warn' || b.notice === 'soft'));
-  const orphanLoud = orphans.length
-    ? [{ tone: 'quiet',
-         text: (orphans.length === 1 ? 'One bridge was' : orphans.length + ' bridges were') + ' opened before this version'
-          + ' by an agent app The Curator could not name, so it can’t tell whether ' + (orphans.length === 1 ? 'its' : 'their') + ' tools changed.'
-          + (orphans[0].remedy ? ' If an agent is missing a tool: ' + orphans[0].remedy : '') }]
-    : [];
-
-  // ── SELF-TEST ─────────────────────────────────────────────────────────
-  let testLine;
-  if (!r) testLine = { key: 'self-test', value: 'not run yet' };
-  else if (!r.ok) testLine = { key: 'self-test', value: 'failed' };
-  else {
-    const count = Number.isInteger(r.toolCount) ? r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') : 'answered';
-    const secs = ageSecondsOf(r.at, Date.now());
-    const words = secs === null ? null : formatAge(secs);
-    const empty = r.domainsStatus === 'empty' ? 'the knowledge folder is empty (normal on a fresh install)' : '';
-    testLine = words
-      ? { key: 'self-test', value: '', sub: empty,
-          markHtml: '<span class="mcp-session-reading">' + escapeHtml(count + ' · ') + '<span data-mcp-age-at="' + escapeHtml(r.at) + '">'
-            + '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span></span>' }
-      : { key: 'self-test', value: count, sub: empty };
-  }
-
-  const version = (facts.version || 'unknown') + (mm && installWords(mm.install) ? ' · ' + installWords(mm.install) : '');
-  const head = cfg.mcp_server_exists === false ? { stateWord: 'Bridge file missing', tone: 'danger' }
-    : !r ? { stateWord: 'Not tested yet', tone: 'quiet' }
-      : r.ok ? { stateWord: 'Bridge answers', tone: 'ok' }
-        : { stateWord: 'Self-test failed', tone: 'danger' };
-  const busy = !!state.selfTestLoading;
-  return '<div class="mcp-bridge-panel">' + renderMonitor({
-    id: 'mcp-bridge-monitor',
-    label: 'This bridge',
-    head,
-    lines: [
-      { key: 'version', value: version },
-      { key: 'knowledge folder', value: tildePath(typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '', home) || 'unknown' },
-      openLine,
-      testLine,
-    ],
-    loud: [...folderLoud, ...failLoud, ...orphanLoud],
-  }) + '<div class="settings-btn-row mcp-bridge-acts">'
-    + '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (busy ? ' disabled' : '') + '>'
-    + (busy ? 'Testing…' : 'Run self-test') + '</button></div></div>';
+  const folds = renderFoldRows(
+    renderFoldRow({ key: 'bridge-answers', label: 'Bridge answers', meta: answersMeta,
+      open: !!state.setupMachineFolds['bridge-answers'], bodyHtml: mon })
+    + renderFoldRow({ key: 'default-domain', label: 'Default domain for writes', meta: defaultDomain || 'none — the agent names one',
+      open: !!state.setupMachineFolds['default-domain'], bodyHtml: domainBody }));
+  const notes = statuses.filter(Boolean);
+  return control + (notes.length ? '<div class="cur-card-notes">' + notes.join('') + '</div>' : '') + folds;
 }
 
 // ══ BLOCK ③ — THE TOOL MAP ═══════════════════════════════════════════════
@@ -9147,8 +9212,8 @@ const USAGE_POLL_MS = 30000;
  * body — the 30 s revalidate and the "Test all N tools" run — and a selector
  * typed in two places is a selector that can come to mean two elements.
  */
-const TOOL_MAP_BODY_SEL = '.settings-block-mcp-tool-map .settings-block-body';
-const ACROSS_PROJECTS_BODY_SEL = '.settings-block-mcp-across .settings-block-body';
+const TOOL_MAP_BODY_SEL = '#mcp-card-use';
+const ACROSS_PROJECTS_BODY_SEL = '#mcp-card-projects';
 
 /**
  * The revalidate timer's handle, in an OBJECT rather than in a bare `let`.
@@ -9292,8 +9357,10 @@ function tickedAgeHtml(before, iso, now) {
   const secs = ageSecondsOf(iso, now);
   const words = secs === null ? null : formatAge(secs);
   if (!words) return escapeHtml(before || '');
-  return '<span class="mcp-session-reading">' + escapeHtml(before || '') + '<span data-mcp-age-at="' + escapeHtml(iso) + '">'
-    + '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span></span>';
+  // No class of this view's own (the page contract): the hook is the data
+  // attribute, and the one target the clock writes is `[data-mcp-age-words]`.
+  return escapeHtml(before || '') + '<span data-mcp-age-at="' + escapeHtml(iso) + '">'
+    + '<span data-mcp-age-words>' + escapeHtml(words) + '</span></span>';
 }
 
 /**
@@ -9303,40 +9370,9 @@ function tickedAgeHtml(before, iso, now) {
 function sessionLine(key, iso, now) {
   const secs = ageSecondsOf(iso, now);
   if (secs === null || formatAge(secs) === null) return { key, value: 'none since this log began' };
-  return { key, value: '', markHtml: tickedAgeHtml('', iso, now) };
+  // The app's freshness dot before the age (the monitor kit's one mark).
+  return { key, value: '', markHtml: '<span class="fresh-dot fresh-' + freshnessTier(secs) + '" aria-hidden="true"></span>' + tickedAgeHtml('', iso, now) };
 }
-
-/**
- * THE RUNNER — "Test all N tools", its one-line note, and its outcome.
- *
- * ── N IS READ, NEVER TYPED ─────────────────────────────────────────────────
- * From `state.mcpUsage.tools.length`, which IS the catalogue (the route maps
- * one row per `TOOL_CATALOGUE` entry, used or not). A literal here would be a
- * third list of the same tools, after `mcp/tools/index.js` and
- * `mcp/tools/catalogue.js`.
- *
- * ── THE OUTCOME IS NEVER FOLDED, AND IT OUTLIVES THE PAGE (v3.88.0) ────────
- * The outcome of something the user pressed is a plain reading on the page.
- * It used to vanish on reload; it is now read back from the usage log's last
- * run (`lastExercise`) when this page has not run one, and says when.
- */
-function renderExerciseRunner(toolCount) {
-  const n = Number.isFinite(toolCount) && toolCount > 0 ? toolCount : null;
-  if (!n) return '';
-  const busy = state.mcpExerciseBusy === true;
-  const label = busy ? 'Testing…' : 'Test all ' + n + ' tools';
-  const control =
-    '<div class="settings-btn-row mcp-runner-row">' +
-      '<button type="button" class="btn btn-secondary" id="btn-mcp-exercise"' +
-        (busy ? ' disabled' : '') + '>' + escapeHtml(label) + '</button>' +
-    '</div>' +
-    // 12 words: Runs / every / tool / against / a / throwaway / copy / nothing
-    // / of / yours / is / touched.
-    '<p class="tx-note mcp-runner-note">Runs every tool against a throwaway ' +
-      'copy — nothing of yours is touched.</p>';
-  return control + renderExerciseOutcome();
-}
-
 /**
  * ADAPTER — THE LAST "Test all N tools" RUN. This page's own run wins; else
  * the usage log's record of the last one (GET /api/mcp/usage `lastExercise`,
@@ -9370,12 +9406,12 @@ function lastExerciseRun() {
   };
 }
 
-/** The outcome line: "Last run 9 min ago: 24 of 24 answered · 0 refused · 1.1 s". */
+/** The last "Test all N tools" outcome, UNFOLDED: what was pressed is said on the page. */
 function renderExerciseOutcome() {
   if (state.mcpExerciseError) {
-    return '<div class="settings-inline-error mcp-runner-outcome">' +
-      escapeHtml(state.mcpExerciseError) + '</div>';
+    return renderStatus({ state: 'danger', title: 'Test all tools did not finish', detail: state.mcpExerciseError });
   }
+  if (state.mcpExerciseBusy) return renderStatus({ state: 'neutral', title: 'Testing every tool against a throwaway copy…' });
   const r = lastExerciseRun();
   if (!r) return '';
   const secs = (Number.isFinite(r.durationMs) ? (r.durationMs / 1000).toFixed(1) : '?');
@@ -9383,57 +9419,31 @@ function renderExerciseOutcome() {
   const whenWords = when === null ? null : formatAge(when);
   const headline = (r.answered === null ? '' : r.answered + ' of ') + r.total + (r.answered === null ? ' tools run' : ' answered')
     + ' · ' + r.refused + ' refused · ' + secs + ' s';
-  const lead = whenWords
-    ? '<span class="mcp-session-reading">Last run <span data-mcp-age-at="' + escapeHtml(r.at) + '"><span class="mcp-age-words">'
-      + escapeHtml(whenWords) + '</span></span>: </span>'
-    : 'Last run: ';
-  const parts = ['<div class="mcp-runner-line"><strong>' + lead + escapeHtml(headline) + '</strong></div>'];
   // The tools that did not answer, BY NAME: "23 of 24" without the name is a
   // reading nobody can act on. A refusal is named with its reason — it is a
   // legitimate answer, and the reason is the useful half.
-  if (r.failed.length) {
-    parts.push('<div class="mcp-runner-line mcp-runner-bad">' +
-      escapeHtml('No answer from: ' + r.failed.join(', ')) + '</div>');
-  }
-  for (const row of r.refusals) {
-    parts.push('<div class="mcp-runner-line">' +
-      '<code class="mono">' + escapeHtml(row.tool) + '</code> refused — ' +
-      escapeHtml(row.note || 'no reason given') + '</div>');
-  }
-  const cls = r.failed.length ? ' mcp-runner-outcome-bad' : '';
-  return '<div class="mcp-runner-outcome' + cls + '" role="status">' + parts.join('') + '</div>';
+  const detail = [];
+  if (r.failed.length) detail.push('No answer from: ' + r.failed.join(', ') + '.');
+  for (const row of r.refusals) detail.push(row.tool + ' refused — ' + (row.note || 'no reason given') + '.');
+  return renderStatus({ state: r.failed.length ? 'danger' : 'success',
+    title: (whenWords ? 'Last full test ' + whenWords + ': ' : 'Last full test: ') + headline,
+    detail: detail.join(' ') });
 }
 
 /** How many busiest tools the "Agent use" monitor names (the rest are counted in words). */
 const AGENT_USE_TOP = 5;
 
-/**
- * The block's BODY, and it is its own function because the 30 s revalidate
- * repaints exactly this and nothing else — a `render()` would close every ⓘ
- * and `<details>` on the section every thirty seconds (v3.53.1).
- *
- * v3.88.0 — COMPACT: the runner and its last outcome; ONE monitor, "Agent
- * use", holding the last session start, the last save and the top five tools
- * with depth bars against the busiest (rule 6, a named denominator); then the
- * whole catalogue in a fold, "All N tools", CLOSED by default (the owner's
- * decision 6), one line per tool: agent calls in the window · last agent use.
- *
- * THE RUNNER IS IN EVERY ARM that has a tool count, including the empty one:
- * on a fresh install it is the only thing on the screen that can act.
- */
 function renderToolMapBody(now) {
   const at = typeof now === 'number' ? now : Date.now();
   if (state.mcpUsageError && !state.mcpUsage) {
-    return '<div class="settings-inline-error">' + escapeHtml(state.mcpUsageError) + '</div>';
+    return renderStatus({ state: 'danger', title: 'The call log could not be read', detail: state.mcpUsageError });
   }
   const u = state.mcpUsage;
-  if (!u) return gatedLoader(loadGate, 'Loading the tool map…');
+  if (!u) return gatedLoader(loadGate, 'Loading the call log…', 'tx-note');
   const tools = (Array.isArray(u.tools) ? u.tools : []).filter((t) => t && typeof t === 'object');
-  const runner = renderExerciseRunner(tools.length);
   const anyUsed = tools.some((t) => typeof t.lastUsedAt === 'string' && t.lastUsedAt);
   if (!u.present || !anyUsed) {
-    return runner + '<p class="mcp-map-empty">No calls recorded yet. The map fills as your ' +
-      'agents use the bridge.</p>';
+    return renderStatusLine('No calls recorded yet. This fills as your agents use the bridge.');
   }
   const readings = tools.map(agentReading);
   // v3.76.0 (truth audit F8): the window is the one the log REALLY covers.
@@ -9450,7 +9460,7 @@ function renderToolMapBody(now) {
     sessionLine('last session start', sessions.lastBootstrapAt, at),
     sessionLine('last save', sessions.lastSaveAt, at),
   ];
-  let note = '';
+  let note = footWindowWords(win);
   if (counted) {
     const called = readings.filter((r) => r.calls > 0)
       .sort((a, b) => (b.calls - a.calls) || a.name.localeCompare(b.name));
@@ -9466,9 +9476,8 @@ function renderToolMapBody(now) {
     }
     const more = called.length - shown.length;
     const notCalled = readings.length - called.length;
-    // ONE SHORT LINE, in the page's muted text, never a mono paragraph
-    // (v3.88.0 polish): "Last 5 days (log begins 27 Oct) · 21 tools unused ·
-    // test runs not counted". The window is stated here, once.
+    // ONE SHORT LINE, the monitor's own note: "Last 5 days (log begins 27
+    // Oct) · 3 more called less · 16 unused · test runs not counted".
     const bits = [footWindowWords(win)];
     if (!shown.length) bits.push('no agent called a tool');
     if (more > 0) bits.push(more + ' more called less');
@@ -9476,52 +9485,29 @@ function renderToolMapBody(now) {
     bits.push('test runs not counted');
     note = bits.join(' · ');
   }
-  const useMon = '<div class="mcp-busiest">' + renderMonitor({
-    id: 'mcp-agent-use',
-    label: 'Agent use, ' + win.last,
-    lines,
-  }) + (note ? '<p class="tx-note mcp-foot">' + escapeHtml(note) + '</p>' : '') + '</div>';
+  const useMon = renderMonitor({ id: 'mcp-agent-use', label: 'Agent use, ' + win.last, keys: 'identifier', lines, note });
 
-  // ── ALL N TOOLS — one fold, closed by default ───────────────────────────
+  // ── ALL N TOOLS — one fold row, closed by default (the owner's decision 6)
   const logBegins = (() => {
     const t = typeof u.logStartedAt === 'string' ? Date.parse(u.logStartedAt) : NaN;
     if (!Number.isFinite(t)) return '';
     const d = new Date(t);
     return d.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
   })();
-  const toolLine = (r) => ({
-    key: r.name,
-    value: '',
-    markHtml: r.lastAgentAt ? tickedAgeHtml((r.calls ? r.calls : '—') + ' · ', r.lastAgentAt, at)
-      : escapeHtml(r.calls ? String(r.calls) : '—'),
+  // One fold item per tool: the tool's name (mono) · agent calls · last
+  // agent use. NEVER "never": a tool with no line says "none since <log begins>".
+  const item = (r) => renderFoldItem({
+    main: r.name,
+    metaHtml: (r.group === 'write' ? 'write · ' : 'read · ')
+      + (counted ? escapeHtml((r.calls ? r.calls : 0) + (r.calls === 1 ? ' call' : ' calls')) + ' · ' : '')
+      + (r.lastAgentAt ? tickedAgeHtml('last ', r.lastAgentAt, at) : escapeHtml(logBegins ? 'none since ' + logBegins : 'none since this log began')),
   });
-  const group = (label, list) => (list.length
-    ? '<div class="mcp-tool-col"><div class="mcp-group-eyebrow">' + escapeHtml(label + ' · ' + list.length) + '</div>'
-      + renderMonitor({ label: label + ' tools', lines: list.map(toolLine) }) + '</div>'
-    : '');
   const reads = readings.filter((r) => r.group !== 'write');
   const writes = readings.filter((r) => r.group === 'write');
-  // The column legend lives INSIDE the fold, one muted line; the summary is
-  // only its name.
-  const legend = (counted ? 'Each line: agent calls · last agent use' : 'Each line: last agent use')
-    + (logBegins ? ' · — none since ' + logBegins : '');
-  const fold = '<details class="settings-setup-fold mcp-all-tools" data-mcp-fold="all-tools"' + (state.mcpAllToolsOpen ? ' open' : '') + '>'
-    + '<summary class="settings-setup-summary"><span class="settings-setup-name">All ' + readings.length + ' tools</span></summary>'
-    + '<div class="settings-setup-body"><p class="tx-note mcp-foot mcp-all-tools-legend">' + escapeHtml(legend) + '</p>'
-    + '<div class="mcp-tool-cols">' + group('READ', reads) + group('WRITE', writes) + '</div></div>'
-    + '</details>';
-
-  return runner + useMon + fold;
+  const fold = renderFoldRows(renderFoldRow({ key: 'all-tools', label: 'All ' + readings.length + ' tools', pill: readings.length,
+    open: !!state.setupMachineFolds['all-tools'], bodyHtml: reads.concat(writes).map(item).join('') }));
+  return useMon + fold;
 }
-
-/** Block ③ itself. */
-function renderToolMap() {
-  const lede = 'What your agents used, and when — kept on this machine only.';
-  // The usage log's byte ceiling is stated in the ⓘ (`settings.mcp-tool-map`)
-  // and pinned against MAX_LINE_BYTES by scripts/test-next-capture-meter.js §5.
-  return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), 'settings.mcp-tool-map', '');
-}
-
 const ACROSS_PROJECTS_MAX_ROWS = 12;
 
 /**
@@ -9618,40 +9604,12 @@ function acrossWindowWords(P, now) {
   }
   return cap(windowDaysWords(days));
 }
-
-/** "Last 7 days: which projects’ agents saved a handoff, and when." — the window from the payload, never typed. */
-function acrossProjectsLede() {
-  const win = acrossWindowWords(state.mcpProjects);
-  const rest = 'which projects’ agents saved a handoff, and when.';
-  return win ? win + ': ' + rest : rest.charAt(0).toUpperCase() + rest.slice(1);
-}
-
-/**
- * ── BLOCK ④ · ACROSS PROJECTS (v3.66.0, P8; v3.88.0 compact) ──────────────
- *
- * THE APP TWIN OF THE MENUBAR WIDGET'S PER-PROJECT BARS (the parity rule: no
- * widget-only fact). One monitor line per project that saved: the project's
- * DOMAIN identity dot (its RECORDED slot, rule 5), `domain / project`, its
- * handoff saves with a depth bar against the busiest project (rule 6, a named
- * denominator), and its last save. Projects with no save share ONE line,
- * "No save: a / b, c / d", under the panel, that names them — still on screen, because a project whose
- * agents never save is the one a reader most needs to find.
- *
- * Then the handoff saves per agent app, over the SAME window (stated once,
- * in the lede); "+" means at least (a long journal is read from its newest
- * part only).
- *
- * ABSENT IS NOT ZERO: with no reading the block says so, never a column of
- * zeros. NEVER RED: `max`, never `budget`.
- */
-function renderAcrossProjects() {
-  return settingsBlock(4, 'mcp-across', 'Across projects', acrossProjectsLede(), renderAcrossProjectsBody(), 'settings.mcp-across', '');
-}
-
 function renderAcrossProjectsBody() {
   const P = state.mcpProjects;
   if (!P) {
-    return '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
+    return state.mcpProjectsError
+      ? renderStatus({ state: 'attention', title: state.mcpProjectsError })
+      : renderStatus({ state: 'neutral', title: 'Reading the usage logs…' });
   }
   const now = Date.now();
   const A = adaptProjects(P);
@@ -9664,15 +9622,18 @@ function renderAcrossProjectsBody() {
   const busiestName = shown.length ? shown[0].project : '';
   const unitOne = A.unit === 'saves' ? ' save' : ' connection that saved';
   const unitMany = A.unit === 'saves' ? ' saves' : ' connections that saved';
+  const identity = state.defaultDomainInfo && state.defaultDomainInfo.identity;
+  const dotFor = (r) => {
+    const c = r.domain ? domainIdentityClass(identity, r.domain) : '';
+    return c ? '<span class="cur-sb-dot ' + c + '" aria-hidden="true"></span>' : '';
+  };
   const lines = shown.map((r) => {
-    const dotCls = r.domain ? domainIdentityClass(state.defaultDomainInfo && state.defaultDomainInfo.identity, r.domain) : '';
     const secs = ageSecondsOf(r.lastAt, now);
     const age = secs === null ? null : formatAge(secs);
     return {
       key: r.key,
       value: r.floor ? r.count + '+' : r.count,
-      markHtml: '<span class="settings-id-mark">' +
-        (dotCls ? '<span class="cur-sb-dot ' + dotCls + '" aria-hidden="true"></span>' : '') + '</span>',
+      leadHtml: dotFor(r),
       sub: (age ? r.lastWord + ' ' + age : '') + (r.inStore ? '' : (age ? ' · ' : '') + 'not in this folder'),
       depth: busiest > 0
         ? { amount: r.count, max: busiest,
@@ -9682,12 +9643,6 @@ function renderAcrossProjectsBody() {
         : undefined,
     };
   });
-  // The projects with no save: ONE left-aligned muted line under the panel,
-  // "No save: early-computing / lecture-series, posts / ott".
-  const idleHtml = idle.length
-    ? '<p class="tx-note mcp-foot mcp-idle">' + escapeHtml((A.unit === 'saves' ? 'No save: ' : 'No connection: ')
-      + idle.map((r) => r.key).join(', ')) + '</p>'
-    : '';
   const notes = [];
   if (!A.logPresent) {
     notes.push('No usage log on this computer yet — projects appear here once an agent uses the bridge.');
@@ -9704,8 +9659,10 @@ function renderAcrossProjectsBody() {
   const saveLines = [];
   const pulse = P.savePulse;
   let saveNote = '';
+  let floor = false;
+  const metaBits = [];
   if (pulse && Number.isInteger(pulse.events)) {
-    const floor = pulse.capped === true || pulse.byToolFloor === true || pulse.lowerBound === true;
+    floor = pulse.capped === true || pulse.byToolFloor === true || pulse.lowerBound === true;
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const day = (iso) => {
       const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
@@ -9725,6 +9682,7 @@ function renderAcrossProjectsBody() {
           ? { amount: t.events, max: top, label: (floor ? 'at least ' : '') + t.events + (t.events === 1 ? ' save' : ' saves') }
           : undefined,
       });
+      metaBits.push(t.label + ' ' + (t.events === 0 ? 'none' + (day(t.lastSeenAt) ? ' since ' + day(t.lastSeenAt) : '') : t.events + (floor ? '+' : '')));
     }
     // The total only says something new when more than one app saved.
     if (apps.filter((t) => t.events > 0).length >= 2) {
@@ -9735,30 +9693,41 @@ function renderAcrossProjectsBody() {
     }
     if (!apps.length && !saveLines.length) {
       saveLines.push({ key: 'handoff saves', value: pulse.events + (floor ? '+' : '') });
+      metaBits.push(pulse.events + (floor ? '+' : '') + ' saves');
     }
-    // The window is the block's ONE window, stated in the lede. Only an older
-    // server (connections, a 30-day window) leaves this reading's own window
-    // to be named here, in the same short style.
-    const bits = [];
+    // The window is the section's ONE window, stated in its head. Only an
+    // older server (connections, a 30-day window) leaves this reading's own
+    // window to be named here.
     if (A.unit !== 'saves') {
       const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
       const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string' ? day(pulse.oldestEventAt) : '';
-      if (pw) bits.push('Saves per app: ' + pw + (since ? ' (records begin ' + since + ')' : ''));
+      if (pw) saveNote = 'Saves per app: ' + pw + (since ? ' (records begin ' + since + ')' : '') + '.';
     }
-    if (floor) bits.push('“+” means at least: long journals are read from their newest part only');
-    saveNote = bits.length ? bits.join(' · ') + '.' : '';
   }
-  const foot = (t) => (t ? '<p class="tx-note mcp-foot">' + escapeHtml(t) + '</p>' : '');
+  // "+" is said where a "+" can appear: the project monitor's own note.
+  if (floor || shown.some((r) => r.floor)) notes.push('“+” means at least: long journals are read from their newest part only.');
   const winWords = acrossWindowWords(P, now);
-  return '<div class="mcp-across">' + renderMonitor({
+  const projMon = renderMonitor({
     id: 'mcp-across-projects',
     label: 'Handoff saves per project' + (winWords ? ', ' + winWords.charAt(0).toLowerCase() + winWords.slice(1) : ''),
+    keys: 'identifier',
     lines,
-  }) + idleHtml + foot(notes.join(' ')) + (saveLines.length ? renderMonitor({
-    id: 'mcp-across-apps',
-    label: 'Handoff saves per agent app',
-    lines: saveLines,
-  }) + foot(saveNote) : '') + '</div>';
+    note: notes.join(' '),
+  });
+  const folds = [];
+  if (idle.length) {
+    const inWin = winWords.replace(/ \(.*\)$/, '');
+    folds.push(renderFoldRow({ key: 'no-save', label: (A.unit === 'saves' ? 'No save' : 'No connection')
+        + (inWin ? ' in the ' + inWin.charAt(0).toLowerCase() + inWin.slice(1) : ''),
+      pill: idle.length, open: !!state.setupMachineFolds['no-save'],
+      bodyHtml: idle.map((r) => renderFoldItem({ mainHtml: dotFor(r) + escapeHtml(r.key), meta: r.inStore ? (A.unit === 'saves' ? 'no handoff saved' : 'no connection') : 'not in this folder' })).join('') }));
+  }
+  if (saveLines.length) {
+    folds.push(renderFoldRow({ key: 'saves-per-app', label: 'Saves per agent app', meta: metaBits.join(' · '),
+      open: !!state.setupMachineFolds['saves-per-app'],
+      bodyHtml: renderMonitor({ id: 'mcp-across-apps', label: 'Handoff saves per agent app', lines: saveLines, note: saveNote }) }));
+  }
+  return (projMon || renderStatusLine(notes.join(' ') || 'No handoff saves yet.')) + (folds.length ? renderFoldRows(folds.join('')) : '');
 }
 
 /**
@@ -9841,9 +9810,20 @@ function tickMcpAges() {
     if (!Number.isFinite(t)) continue;
     const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
     if (words === null) continue;
-    const target = el.querySelector('.mcp-age-words');
+    const target = el.querySelector('[data-mcp-age-words]');
     if (target && target.textContent !== words) target.textContent = words;
   }
+  // v3.89.0 — the section heads' readings ("checked 2 min ago"), by id …
+  for (const [id, v] of Object.entries(mcpMetaAges)) {
+    const el = document.getElementById(id);
+    const t = v && Date.parse(v.iso);
+    if (!el || !Number.isFinite(t)) continue;
+    const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
+    if (words && el.textContent !== v.prefix + ' ' + words) el.textContent = v.prefix + ' ' + words;
+  }
+  // … and the shared clock's own hooks (the overview's LAST SAVE, an app's "used …").
+  const body = document.getElementById('settings-view-body');
+  if (body) tickAges(body, now);
 }
 
 /**
@@ -9876,30 +9856,62 @@ async function refreshMcpUsage(token) {
   if (sessionsMoved && state.mcpProjects) loadAcrossProjects(token, { bodyOnly: true }).catch(() => {});
   if (state.section !== 'mcp') return;
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
-  const body = document.querySelector(TOOL_MAP_BODY_SEL);
-  if (!body) return;
-  body.innerHTML = renderToolMapBody();
-  // THE REPAINT REPLACED THE BUTTON, so its listener went with it. Re-bound
-  // here rather than delegated from the document: a delegated handler would
-  // outlive the view, and `wireMcpListeners` is already the one place this
-  // section binds from — this is the same call, on the one element the
-  // revalidate can destroy.
-  wireExerciseControl(token);
+  paintMcpCard(TOOL_MAP_BODY_SEL, renderToolMapBody(), 'mcp-meta-use', agentUseMetaWords());
+  paintMcpOverview();
 }
 
-/** Bind (or re-bind) block ③'s run control. Idempotent by construction: the
- *  element is new every time the body is painted, so there is nothing to
- *  unbind. A no-op when the control is not on screen. */
-function wireExerciseControl(token) {
-  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
-  const btn = document.getElementById('btn-mcp-exercise');
-  if (btn) btn.addEventListener('click', () => onMcpExercise(token));
-  // "All N tools" (v3.88.0): its open state is STATE, because the 30 s
-  // revalidate replaces this body — a fold the person opened must stay open.
-  if (typeof document.querySelector === 'function') {
-    const fold = document.querySelector('details[data-mcp-fold="all-tools"]');
-    if (fold) fold.addEventListener('toggle', () => { state.mcpAllToolsOpen = fold.open; });
+/**
+ * The poll's repaint of ONE section card (v3.89.0): its insides, its head's
+ * reading, and the fold toggles inside it re-bound — nothing else on the page
+ * is touched, so a listbox, a caret or an open ⓘ elsewhere stays exactly as
+ * the person left it. Every fold's open state is STATE, so a fold the person
+ * opened is drawn open again.
+ */
+function paintMcpCard(sel, html, metaId, metaWords) {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const card = document.querySelector(sel);
+  if (!card) return;
+  card.innerHTML = html;
+  wireMcpFolds(card);
+  const meta = document.getElementById(metaId);
+  if (meta && typeof metaWords === 'string' && meta.textContent !== metaWords) meta.textContent = metaWords;
+}
+
+/** The overview moves with the same readings: swapped whole, its jumps re-bound. */
+function paintMcpOverview() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const ov = document.querySelector('#settings-view-body > .cur-ov');
+  if (!ov) return;
+  const wasOpen = !!document.querySelector('#mcp-overview:not([hidden])');
+  ov.outerHTML = mcpOverviewHtml();
+  if (wasOpen) {
+    const panel = document.getElementById('mcp-overview');
+    const btn = document.getElementById('mcp-overview-btn');
+    if (panel && btn) { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
   }
+  wireMcpJumps();
+}
+
+/** Every MCP fold row records its open state (key → open) — record, never re-render. */
+function wireMcpFolds(root) {
+  const scope = root || document;
+  scope.querySelectorAll('details.cur-fold[data-fold-key]').forEach((d) => {
+    d.addEventListener('toggle', () => { state.setupMachineFolds[d.dataset.foldKey] = d.open; });
+  });
+}
+
+/** The overview's figures are doors: each scrolls to (and focuses) its section or card. */
+function wireMcpJumps() {
+  document.querySelectorAll('#settings-view-body .cur-ov [data-ov-jump]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const el = document.getElementById(b.dataset.ovJump);
+      if (!el) return;
+      if (typeof el.scrollIntoView === 'function') {
+        try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { el.scrollIntoView(); }
+      }
+      if (typeof el.focus === 'function' && el.hasAttribute('tabindex')) el.focus({ preventScroll: true });
+    });
+  });
 }
 
 /**
@@ -10848,12 +10860,19 @@ function focusReplaceInput() {
 /** v3.85.0 — the install panel's controls. Every write starts at a click here. */
 function wireInstallListeners(token) {
   const mi = state.mcpInstall;
-  const root = '.settings-block-mcp-connect ';
+  const root = '#mcp-card-apps ';
   document.querySelectorAll(root + '[data-mcpi-tick]').forEach((el) => {
     el.addEventListener('change', () => {
       mi.ticks[el.dataset.mcpiTick] = el.checked;
+      // The chip's words follow the ticks without a repaint (the card would
+      // otherwise lose the focus the person just put on the checkbox).
       const b = document.getElementById('mcpi-install-btn');
-      if (b) { const s = installButtonState(mi.status, mi.ticks, mi.busy); b.disabled = s.disabled; b.textContent = s.label; }
+      if (b) {
+        const st = installButtonState(mi.status, mi.ticks, mi.busy);
+        b.disabled = st.disabled;
+        const cost = b.querySelector('.cur-action-cost');
+        if (cost) cost.textContent = st.n === 1 ? '1 app · previewed first' : st.n > 1 ? st.n + ' apps · previewed first' : 'nothing ticked';
+      }
     });
   });
   document.querySelectorAll(root + '[data-mcpi-act]').forEach((el) => {
@@ -10867,9 +10886,17 @@ function wireInstallListeners(token) {
       if (act === 'cancel') { mi.plan = null; mi.error = null; render(token); return; }
       if (act === 'dismiss') { mi.results = null; render(token); return; }
       if (act === 'check-again') { mi.results = null; recheckAgentApps(token); return; }
+      if (act === 'check-entry') { checkEntry(token, el.dataset.tool); return; }
       if (act === 'copy-myself') {
-        const d = document.getElementById('mcpi-rows') || document.querySelector('.mcpi-notfound');
-        if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Opens the first app that takes its entry by hand, so its copy line
+        // and Copy entry button are on screen — the fold's state is recorded.
+        const row = document.querySelector('#mcpi-rows details.cur-fold:not([data-mcpi-status="connected"]):not([data-mcpi-status="via"])')
+          || document.querySelector('#mcpi-rows details.cur-fold');
+        if (row) {
+          row.open = true;
+          if (row.dataset.foldKey) state.setupMachineFolds[row.dataset.foldKey] = true;
+          if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
         return;
       }
       if (act === 'copy') {
@@ -10894,26 +10921,33 @@ function wireInstallListeners(token) {
   });
 }
 
+/**
+ * Check entry (v3.89.0) — POST /api/mcp/install/check-entry with the app's
+ * id ONLY. The server reads the command from the file it resolves itself and
+ * starts it only if it is this app's own launcher or node with this install's
+ * own server (src/brain/mcp-check-entry.js). The outcome is a status on the
+ * card, unfolded.
+ */
+async function checkEntry(token, id) {
+  if (!id || state.mcpCheckBusy) return;
+  state.mcpCheckBusy = id;
+  state.mcpChecks = { ...state.mcpChecks, [id]: { busy: true } };
+  render(token);
+  const r = await requestCheckEntry(id);
+  if (!isCurrentMount(token)) return;
+  state.mcpCheckBusy = null;
+  state.mcpChecks = { ...state.mcpChecks, [id]: r.ok ? { result: r.data } : { error: failureWords(r) } };
+  render(token);
+}
+
 function wireMcpListeners() {
-  // ── ① Connect your agent apps (v3.77.0 / v3.88.0): reveal, copy an entry, check again,
-  // and the folds' open state (kept in memory for this mount only).
+  // ── ① Agent apps: Check again, reveal, and the install panel.
   {
     const token = myMountToken;
-    document.querySelectorAll('.settings-block-mcp-connect [data-setup-act]').forEach((el) => {
+    document.querySelectorAll('#mcp-card-apps [data-setup-act]').forEach((el) => {
       el.addEventListener('click', async () => {
         const act = el.dataset.setupAct;
         if (act === 'machine-check') { recheckAgentApps(token); return; }
-        if (act === 'copy-entry') {
-          const text = state.setupMachine && state.setupMachine.data && state.setupMachine.data.copyEntries
-            ? state.setupMachine.data.copyEntries[el.dataset.tool] : null;
-          if (!text) return;
-          try { await copyToClipboard(text); state.setupMachineCopied = 'Entry copied — paste it into that app’s config file.'; }
-          catch { state.setupMachineCopied = 'Could not copy.'; }
-          if (!isCurrentMount(token)) return;
-          render(token);
-          setTimeout(() => { if (isCurrentMount(token)) { state.setupMachineCopied = null; render(token); } }, 4000);
-          return;
-        }
         if (act === 'reveal') {
           try {
             await fetch('/api/setup/reveal', {
@@ -10925,26 +10959,21 @@ function wireMcpListeners() {
       });
     });
     wireInstallListeners(token);
-    document.querySelectorAll('.settings-block-mcp-connect details[data-setup-fold]').forEach((d) => {
-      d.addEventListener('toggle', () => { state.setupMachineFolds[d.dataset.setupFold] = d.open; });
-    });
   }
-
-  // `myMountToken` is read here, synchronously at bind time, exactly as
-  // every other binding in this file does — wireGlobalListeners() re-runs
-  // after each render on freshly-created nodes, so there is nothing to
-  // removeEventListener.
-  //
-  // v3.88.0: block ① holds the one installer itself, so the v3.85.0 "Install
-  // in your tools" scroll button (a second door to the same rows) is gone.
+  // Every fold row on the page records its open state; the overview's figures jump.
+  wireMcpFolds(document.getElementById('settings-view-body') || document);
+  wireMcpJumps();
+  // ② Bridge's control row: the self-test keeps its own button (the owner's
+  // decision 2), beside Test all N tools. `myMountToken` is read here,
+  // synchronously at bind time — wireGlobalListeners() re-runs after each
+  // render on freshly-created nodes, so there is nothing to removeEventListener.
   const testBtn = document.getElementById('btn-mcp-self-test');
   if (testBtn) testBtn.addEventListener('click', () => onMcpSelfTest(myMountToken));
-  // Block ③'s run control. Also re-bound by the 30 s revalidate, which
-  // replaces the body this button lives in.
-  wireExerciseControl(myMountToken);
-  // The default-domain picker is the shared listbox now — mounted from
+  const exBtn = document.getElementById('btn-mcp-exercise');
+  if (exBtn) exBtn.addEventListener('click', () => onMcpExercise(myMountToken));
+  // The default-domain picker is the shared listbox — mounted from
   // pendingListboxes in wireGlobalListeners, with its onChange built beside
-  // the markup in renderMcp(). Nothing to wire here.
+  // the markup in renderBridgeCard(). Nothing to wire here.
 }
 
 function wireHealthListeners() {
@@ -12726,7 +12755,7 @@ async function onMcpExercise(token) {
   state.mcpExerciseBusy = true;
   state.mcpExerciseError = null;
   state.mcpExercise = null;
-  paintToolMapBody();
+  render(token);
   try {
     const res = await fetch('/api/mcp/exercise', { method: 'POST' });
     const data = await res.json().catch(() => null);
@@ -12752,23 +12781,12 @@ async function onMcpExercise(token) {
   } finally {
     if (isCurrentMount(token)) {
       state.mcpExerciseBusy = false;
-      paintToolMapBody();
+      render(token);
       // The run just moved every row in the log, so this repaints once more
       // with the real readings and the new markers.
       refreshMcpUsage(token).catch(() => {});
     }
   }
-}
-
-/** Repaint block ③'s body from state, and nothing else. The shared half of
- *  the revalidate's DOM write, so a run and a tick cannot disagree about which
- *  element is replaced or about re-binding the control inside it. */
-function paintToolMapBody() {
-  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
-  const body = document.querySelector(TOOL_MAP_BODY_SEL);
-  if (!body) return;
-  body.innerHTML = renderToolMapBody();
-  wireExerciseControl(myMountToken);
 }
 
 /**

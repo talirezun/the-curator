@@ -341,7 +341,7 @@ ok(/'<p class="settings-block-footnote">' \+ escapeHtml\(SCAN_LIMIT_REFUSAL\) \+
 ok(!/over the ceiling/.test(allExplainerText), '…and no explainer carries it');
 // Default domain: the consequence.
 ok(/const MCP_DOMAIN_CONSEQUENCE = [\s\S]{0,200}wrong domain lands in that wiki and is hard to spot/.test(settingsCode) &&
-   /escapeHtml\(MCP_DOMAIN_CONSEQUENCE\)/.test(settingsCode),
+   /renderDescription\(MCP_DOMAIN_CONSEQUENCE\)/.test(settingsCode),
   'MCP default domain: the mis-aimed-write consequence is printed under the listbox');
 // Shared Brain token: expiry.
 ok(/const TOKEN_EXPIRY_NOTE = 'When the token expires, Push and Pull stop working, and GitHub sends no warning\.'/.test(sharedCode) &&

@@ -104,6 +104,7 @@ llm-docs/            — self-contained markdown written for language models (th
 - JSON mode for ingest, text mode for chat. UI auto-refreshes after every mutation.
 - First run is a non-blocking, dismissible two-door panel (`views/onboarding.js`), never a wizard; its trigger reads config keys only, never `.env`.
 - No `--text-dim` token; use `--text-2`. Undefined `var(--x)` fails silently — `test-css-tokens.js` guards it.
+- Settings › MCP bridge is the section kit (overview + four head·card sections) held to `scripts/test-next-page-contract.js`; no page-private class.
 - The boot guard lives in `index.html`, not `app.js`.
 
 ### App lifecycle → [decisions-app.md#app-lifecycle-install-and-update](docs/dev/decisions-app.md#app-lifecycle-install-and-update)
@@ -122,6 +123,7 @@ llm-docs/            — self-contained markdown written for language models (th
 - The server binds 127.0.0.1 only, with a cross-origin guard on mutating requests and a Host-header guard on all.
 - Credential files are written 0600 and atomically; any new secret file joins the startup sweep.
 - Every user-data path resolves through `src/brain/paths.js`; bundle detection is POSITIVE and fail-safe (unrecognised ⇒ repo mode).
+- Check entry (`POST /api/mcp/install/check-entry`) runs a command from ANOTHER app's file, so only this app's launcher, or an absolute `node` + THIS install's `mcp/server.js` [+ `--domains-path <abs>`], ever runs (`vetEntry`); never the entry's `env`; body `{id}` only, the install gate.
 
 ### Tests and CI → [decisions-app.md#tests-and-ci](docs/dev/decisions-app.md#tests-and-ci)
 - `npm test` = offline suites only (manifest: `scripts/run-tests.js`); every new suite goes in its OFFLINE or LIVE array. Live suites retry once and report transient provider errors as inconclusive.

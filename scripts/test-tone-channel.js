@@ -162,7 +162,12 @@ const BASELINE = {
   'views/ingest.css':     { okwarn: 0, danger: 4 },   // v3.66.0 D: .ing-queue-done-fail-reason converted
   'views/mcp-wizard.css': { okwarn: 0, danger: 1 },
   'views/memory.css':     { okwarn: 0, danger: 0 },
-  'views/settings.css':   { okwarn: 0, danger: 5 },
+  // v3.89.0: +2, the owner's decision (keep green / amber on the MCP page's
+  // overview): `.settings-ov-ok` / `.settings-ov-attn` ink the overview's
+  // FIGURE only (--text-2xl, 600 — AA large text), each beside its word.
+  // Measured on the light surface #FFFFFF: teal-600 4.05, summary-600 3.58
+  // (≥ 3:1); dark #0C0C14: 10.37 / 11.03.
+  'views/settings.css':   { okwarn: 2, danger: 5 },
   'views/shared.css':     { okwarn: 6, danger: 10 },
 };
 const files = walk(NEXT);

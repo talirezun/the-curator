@@ -19,10 +19,13 @@
  *       private class, a bare <details>, stray text, a second primary, a mono
  *       span in a sentence) turns it red, by name;
  *   §3  runs the PAGE REGISTRY: one entry per page, each with its own
- *       allow-list. An entry is ENFORCED or not yet — Settings › MCP bridge's
- *       contract is written here and is enforced by the step that rebuilds
- *       that page; the Domain page's ⑤ Wiki health card is the first enforced
- *       client, rendered from the real views/domains.js.
+ *       allow-list, every one ENFORCED: Settings › MCP bridge (v3.89.0 step
+ *       2) in sixteen arms rendered from the real views/settings.js, and the
+ *       Domain page's ⑤ Wiki health card from the real views/domains.js;
+ *   §4  proves the MCP guard by MUTATING THE REAL CODE (PROPOSAL §5): a
+ *       footnote floated between cards, the self-test button moved out of
+ *       its card, a footnote no longer its card's last line, an inline
+ *       margin, the monitor head back, a page-private class.
  *
  * OFFLINE. No network, no browser, no user data.
  */
@@ -30,7 +33,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkPageContract, parseHtml, walk, KIT_CLASSES } from './test-helpers/page-contract.js';
+import { checkPageContract, parseHtml, walk, KIT_CLASSES, MCP_PAGE_CONTRACT, DEPTH_BAR_WIDTH } from './test-helpers/page-contract.js';
 import { SECTION_KIT, SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { renderOverview } from '../src/public/next/shared/overview.js';
@@ -39,6 +42,7 @@ import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
 import { explainerMark } from '../src/public/next/shared/explainer.js';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
+import { renderMcpPage, baseState, SETTINGS_SRC } from './test-helpers/mcp-page-sandbox.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOMAINS_JS = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -58,29 +62,10 @@ function section(t) { console.log('\n\x1b[1m' + t + '\x1b[0m'); }
 //  THE CONTRACTS — one per page, each with its own allow-list
 // ═════════════════════════════════════════════════════════════════════════
 
-// The depth bar's fill is its one documented inline style (shared/monitor.js
-// renderDepthCell writes a computed percentage); nothing else may carry one.
-const DEPTH_BAR_WIDTH = /^width:\d+(\.\d+)?%$/;
-
-/** A section-kit page (the MCP bridge page's target shape, PROPOSAL §4–§5). */
-const MCP_CONTRACT = Object.freeze({
-  name: 'Settings › MCP bridge',
-  allow: [...KIT_CLASSES, 'settings-ov-ok', 'settings-ov-attn'],
-  forbid: ['mcpi-*', 'mcp-*', 'settings-block-footnote', 'settings-btn-row', 'settings-block*'],
-  column: {
-    kinds: [['header', ['tx-vh']], ['overview', ['cur-ov']], ['head', ['cur-section-head']],
-      ['card', ['cur-card']]],
-    pattern: /^header overview( head card)+$/,
-  },
-  buttonHomes: ['cur-card', 'cur-ov'],
-  foldClass: 'cur-fold',
-  noMonitorHead: true,
-  footnotes: { classes: ['tx-desc', 'tx-note'], lastIn: ['cur-card', 'cur-fold-body'],
-    slots: ['cur-action-footnote', 'cur-mon-note', 'tx-vh-panel'] },
-  styleAllow: [/^--cur-ov-min:\d+px$/, DEPTH_BAR_WIDTH],
-  maxPrimary: 1,
-  monoInProse: { prose: ['p', 'tx-desc', 'tx-note', 'cur-action-run'] },
-});
+/** Settings › MCP bridge (PROPOSAL §4–§5) — lives in the helper so the
+ *  browser e2e (scripts/e2e-mcp-bridge.mjs) checks the LIVE page against the
+ *  very same contract. */
+const MCP_CONTRACT = MCP_PAGE_CONTRACT;
 
 /** The Domain page's ⑤ Wiki health section, as it ships. Its own names
  *  (`dm-*`) ride beside the kit's, and the contract records the two places
@@ -265,9 +250,50 @@ function renderDomainHealth(stateOver) {
   return fn(state, ...names.map((n) => deps[n]), ...SECTION_KIT_VALUES)({ slug: 'early-computing' }, false);
 }
 
+
+/** Every arm of the MCP page a person can reach: [label, state, opts]. */
+function mcpArms() {
+  const b = baseState;
+  const mi = (over) => ({ ...b().mcpInstall, ...over });
+  const data = (over) => ({ ...b().mcpInstall.status.data, ...over });
+  const allOpen = { 'app-claude-desktop': true, 'app-antigravity': true, 'app-cursor': true, 'app-cline': true, 'mcpi-notfound': true,
+    'bridge-answers': true, 'default-domain': true, 'all-tools': true, 'no-save': true, 'saves-per-app': true };
+  const plan = { action: 'install', token: 't', items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', action: 'add', basis: 'absent',
+    entryText: '{\n  "command": "/x/launcher"\n}', preserved: [] }, { id: 'claude-desktop', label: 'Claude Desktop',
+    file: '~/Library/Application Support/Claude/claude_desktop_config.json', action: 'update', basis: 'abc', entryText: '{}', preserved: ['github'],
+    backupWillBe: '~/Library/Application Support/Claude/claude_desktop_config.json.curator-backup-<UTC time of apply>' }] };
+  const results = { action: 'install', planItems: plan.items, items: [{ id: 'cursor', label: 'Cursor', file: '~/.cursor/mcp.json', outcome: 'created', restart: 'Quit and reopen Cursor' },
+    { id: 'claude-desktop', label: 'Claude Desktop', file: '~/x.json', outcome: 'refused', message: 'It changed.' }] };
+  return [
+    ['connected + to fix, folds closed', b()],
+    ['every fold open', b({ setupMachineFolds: allOpen })],
+    ['the install preview', b({ mcpInstall: mi({ plan }) })],
+    ['the results', b({ mcpInstall: mi({ results }) })],
+    ['a copy confirmation and an install error', b({ mcpInstall: mi({ copied: 'The entry copied.', error: 'Could not reach The Curator.' }) })],
+    ['Check entry outcomes', b({ mcpChecks: { 'claude-desktop': { result: { results: [{ file: '~/a.json', ran: true, starts: true, toolCount: 24 }] } },
+      antigravity: { result: { results: [{ file: '~/b.json', ran: false, starts: false, code: 'not_allowed', message: 'No.' }] } } } })],
+    ['everything connected', b({ mcpInstall: mi({ status: { data: data({ counts: { connected: 1, toFix: 0, notConnected: 0 }, notFound: [],
+      tools: [b().mcpInstall.status.data.tools[0]] }) } }) })],
+    ['Windows', b({ mcpInstall: mi({ status: { data: data({ platform: 'win32' }) } }) })],
+    ['Linux, copy-only', b({ mcpInstall: mi({ status: { data: data({ platform: 'linux', writable: false,
+      tools: b().mcpInstall.status.data.tools.map((t) => ({ ...t, status: 'manual', checkEntry: false })) }) } }) })],
+    ['a self-test and a full test just ran', b({ selfTest: { ok: true, tool_count: 24 }, selfTestAt: new Date().toISOString(),
+      mcpExercise: { ranAt: new Date().toISOString(), durationMs: 900, results: [{ tool: 'get_node', ok: true }, { tool: 'save_foundation', refused: true, note: 'read-only' }] } })],
+    ['a failed self-test and a missing folder', b({ selfTest: { ok: false, error: 'spawn ENOENT', domains_status: 'missing_folder' }, selfTestAt: new Date().toISOString() })],
+    ['a fresh install (no calls, no projects)', b({ mcpUsage: { present: false, tools: b().mcpUsage.tools.map((t) => ({ ...t, lastUsedAt: null, lastAgentAt: null })), sessions: {} },
+      mcpProjects: { byProject: [], window: { windowDays: 30, logPresent: false }, savePulse: null } })],
+    ['readings still loading', b({ mcpUsage: null, mcpProjects: null, setupMachine: null, mcpInstall: mi({ status: null }) })],
+    ['the status failed', b({ mcpInstall: mi({ status: { data: null, error: 'HTTP 500' } }), mcpUsage: null, mcpUsageError: 'nope', mcpProjectsError: 'old server', mcpProjects: null })],
+    ['the section failed', b({ mcp: null, mcpError: 'Could not load' })],
+    ['first paint (gate visible)', b({ mcp: null })],
+  ];
+}
+
 const PAGES = [
-  { id: 'settings.mcp', contract: MCP_CONTRACT, enforced: false,
-    why: 'the contract the rebuilt MCP bridge page must pass; enforced by the step that rebuilds it' },
+  // ── SETTINGS › MCP BRIDGE — ENFORCED (v3.89.0, step 2), rendered from the
+  // REAL views/settings.js renderMcp in every arm a person can reach.
+  ...mcpArms().map(([id, st, opts]) => ({ id: 'settings.mcp (' + id + ')', contract: MCP_CONTRACT, enforced: true,
+    render: () => renderMcpPage(st, opts).column })),
   { id: 'domains.health', contract: DOMAIN_HEALTH_CONTRACT, enforced: true, render: () => renderDomainHealth() },
   { id: 'domains.health (loading, with a reserve)', contract: DOMAIN_HEALTH_CONTRACT, enforced: true,
     render: () => renderDomainHealth({ healthLoading: true, health: null, reserve: { health: 452 } }) },
@@ -296,6 +322,41 @@ for (const p of PAGES) {
   const mutated = html.replace('<div class="cur-card-top dm-health-top">', '</div><div class="cur-card-top dm-health-top">');
   ok(checkPageContract(mutated, DOMAIN_HEALTH_CONTRACT).length > 0,
     'CONTROL — the same render with Rescan moved out of its card goes red');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§4  THE MCP PAGE\'S GUARD, PROVED BY MUTATING THE REAL CODE (PROPOSAL §5)');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const real = renderMcpPage(baseState({ setupMachineFolds: { 'bridge-answers': true } })).column;
+  ok(/class="cur-ov settings-ov-section"/.test(real) && (real.match(/class="cur-section-head"/g) || []).length === 4
+    && (real.match(/<div class="cur-card"/g) || []).length === 4 && /id="btn-mcp-self-test"/.test(real) && /class="cur-action"/.test(real)
+    && /class="cur-mon/.test(real) && /class="tx-desc/.test(real),
+  'CONTROL — the real page holds the overview, four heads, four cards, the self-test button, the action card, a monitor and a footnote');
+  const mutant = (label, from, to, needle) => {
+    ok(SETTINGS_SRC.includes(from), label + ': the code being mutated exists (the mutation is not vacuous)');
+    const v = checkPageContract(renderMcpPage(baseState(), { source: SETTINGS_SRC.replace(from, to) }).column, MCP_CONTRACT);
+    ok(v.some((x) => x.includes(needle)), label + ' → red, by name ("' + needle + '")', v.join(' | ') || '(no violation)');
+  };
+  // (a) a floating footnote: the default-domain consequence printed BETWEEN
+  // sections ② and ③ instead of as its fold body's last line.
+  mutant('(a) a footnote floated between two cards',
+    "    + mcpSection(3, 'use',", "    + renderDescription(MCP_DOMAIN_CONSEQUENCE) + mcpSection(3, 'use',", 'unclassified block in the column');
+  // (b) the self-test button moved out of its card's control row, between sections.
+  mutant('(b) the self-test button moved out of its card',
+    "    + mcpSection(2, 'bridge',", "    + '<div><button type=\"button\" class=\"btn btn-secondary\" id=\"btn-mcp-self-test\">Run self-test</button></div>' + mcpSection(2, 'bridge',",
+    'button outside every card');
+  // (b2) the footnote inside a card, but no longer its last line.
+  mutant('(b2) the Next step footnote moved above the fold rows',
+    "  return control + (notes.length ? '<div class=\"cur-card-notes\">' + notes.join('') + '</div>' : '') + folds;",
+    "  return control + renderDescription('A floating foot.') + folds;", 'not the last line');
+  // (c) an inline margin on a card.
+  mutant('(c) an inline margin', "'<div class=\"cur-card\" id=\"mcp-card-' + key + '\"'",
+    "'<div class=\"cur-card\" style=\"margin-top:8px\" id=\"mcp-card-' + key + '\"'", 'inline style');
+  // (d) the Bridge monitor given its old head word back.
+  mutant('(d) the Bridge monitor given a head', "    label: 'This bridge',", "    label: 'This bridge', head: { stateWord: 'Not tested yet', tone: 'quiet' },", 'a monitor with a head');
+  // (e) a page-private class back on a section.
+  mutant('(e) a page-private class', "renderCard(innerHtml)", "renderCard(innerHtml, { hostClass: 'mcp-busiest' })", 'forbidden class: .mcp-busiest');
 }
 
 console.log('\n' + '─'.repeat(60));

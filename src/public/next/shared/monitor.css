@@ -135,6 +135,22 @@
   color: var(--text-2);
   white-space: nowrap;
 }
+/* IDENTIFIER KEYS (v3.89.0, `keys: 'identifier'`): a tool or project name
+   is read as itself, so it keeps its case and its letter spacing — the rule
+   Settings' MCP page carried privately until it was promoted here. */
+.cur-mon-ident .cur-mon-key {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--text-xs);
+}
+/* A NAME can be longer than the stacked key track (measured at 568 px: "Last
+   session start" 133 px in a 110 px track), so below 640 px an identifier
+   key WRAPS rather than overflowing the line. */
+@media (max-width: 640px) {
+  .cur-mon-ident .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
+}
+/* The lead mark (an identity dot) before a key. */
+.cur-mon-lead { display: inline-flex; vertical-align: middle; margin-right: var(--space-3); }
 /* THE READING. Tabular figures so a column of counts lines up digit for
    digit instead of drifting with their glyph widths — the same property
    `.cur-ov-value` and `.cur-sb-meta` take, for the same reason.

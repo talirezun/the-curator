@@ -210,3 +210,35 @@ export const KIT_CLASSES = Object.freeze([
   // shell.css's screen-reader-only utility.
   'visually-hidden',
 ]);
+
+// The depth bar's fill is its one documented inline style (shared/monitor.js
+// renderDepthCell writes a computed percentage); nothing else may carry one.
+export const DEPTH_BAR_WIDTH = /^width:\d+(\.\d+)?%$/;
+
+/**
+ * SETTINGS › MCP BRIDGE (v3.89.0) — the page rebuilt on the section kit, held
+ * to PROPOSAL §4's rules. Its host list is SHORT and each name is a slot a
+ * shared component documents: the overview's two inks (`toneClass`) and its
+ * section class (the column rhythm below it, `sectionClass`), the checkbox
+ * kit an install tick uses. Nothing page-private, nothing `mcp-*`.
+ * The column is the view header, then `.settings-view-body`'s children (a
+ * bare display:block wrapper settings.js owns for its section reveal).
+ */
+export const MCP_PAGE_CONTRACT = Object.freeze({
+  name: 'Settings › MCP bridge',
+  allow: [...KIT_CLASSES, 'settings-ov-ok', 'settings-ov-attn', 'settings-ov-section', 'cur-check', 'cur-check-sm'],
+  forbid: ['mcpi-*', 'mcp-*', 'settings-block-footnote', 'settings-btn-row', 'settings-block*', 'settings-setup-*', 'settings-inline-error'],
+  column: {
+    kinds: [['header', ['tx-vh']], ['overview', ['cur-ov']], ['head', ['cur-section-head']],
+      ['card', ['cur-card']]],
+    pattern: /^header overview( head card)+$/,
+  },
+  buttonHomes: ['cur-card', 'cur-ov'],
+  foldClass: 'cur-fold',
+  noMonitorHead: true,
+  footnotes: { classes: ['tx-desc', 'tx-note'], lastIn: ['cur-card', 'cur-fold-body'],
+    slots: ['cur-action-footnote', 'cur-mon-note', 'tx-vh-panel'] },
+  styleAllow: [/^--cur-ov-min:\d+px$/, DEPTH_BAR_WIDTH],
+  maxPrimary: 1,
+  monoInProse: { prose: ['p', 'tx-desc', 'tx-note', 'cur-action-run'] },
+});

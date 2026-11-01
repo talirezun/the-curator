@@ -478,7 +478,7 @@ the 32px indent that exists only to clear a numeral.
 | **General** | Software update · Appearance · System check · Setup guide | No — none of them is step 1 of anything |
 | **Providers & keys** | ① Connect a provider · ② What builds your wiki · ③ Chat · ④ All models | **Yes** — the page reads top to bottom as a sequence |
 | **Knowledge base** | Vault folder | No |
-| **MCP bridge** | ① Connect your agent apps · ② Default domain for MCP writes · ③ Tool map | **Yes** — ② answers a question ① has to raise first, and ③ has nothing to show until both are settled |
+| **MCP bridge** | ① Agent apps · ② Bridge · ③ Agent use · ④ Across projects (v3.89.0, the section kit) | **Yes** — ② answers a question ① has to raise first, and ③ has nothing to show until both are settled |
 | **Health & scan limits** | Semantic-duplicate scan limits | No |
 
 The 32px indent is **derived, not chosen**: 20px numeral + the 12px

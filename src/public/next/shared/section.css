@@ -215,6 +215,47 @@
 }
 .cur-action-run { margin-top: 4px; }
 .cur-action-footnote { margin-top: 10px; }
+/* ── ADDED IN v3.89.0 (not moved): what a card needs when its action
+   writes another app's file — the exact text it will write, and which apps
+   it will write to. */
+/* The exact entry, as the preview shows it: mono, on the inset surface,
+   scrolled sideways rather than wrapped (a wrapped JSON line is a different
+   line). */
+.cur-action-entry {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-inset);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+/* NARROW (measured at 375 px): a chip with a long cost ("3 apps · previewed
+   first") was wider than its card. Below 640 px a chip may wrap inside
+   itself rather than poke out of the tinted card. */
+@media (max-width: 640px) {
+  .cur-action-chips > .cur-action-chip { max-width: 100%; height: auto; min-height: var(--control-sm); white-space: normal; flex-wrap: wrap; text-align: left; }
+}
+/* Two plain actions side by side in a control row (Run self-test · Test all). */
+.cur-card-top-group { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The card's messages (an outcome, an error): stacked, under the control row,
+   clear of the instrument below them. */
+.cur-card-notes { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
+/* The apps an install will write to, one tick each. */
+.cur-action-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+}
+.cur-action-pick { display: inline-flex; align-items: center; gap: 6px; }
+/* The run line may hold several sentences, one per fault. */
+.cur-action-run + .cur-action-run { margin-top: 6px; }
+/* A preview or result lists its files as fold items inside the card. */
+.cur-action .cur-fold-item:first-child { padding-top: 4px; }
 
 /* ── THE ONE-LINE STATUS CARD ─────────────────────────────────────────────
    One sentence left, one door right, one tinted panel. EMPTY / OFF states

@@ -362,8 +362,13 @@ export function renderMonitor(o) {
         const figure = depth
           ? renderDepthCell({ ...depth, value: scalar(l.value) })
           : escapeHtml(scalar(l.value));
+        // A LEAD MARK (v3.89.0): an identity dot BEFORE the key, for a line
+        // whose key is a domain or project. TRUSTED, like `markHtml`; the
+        // caller passes the kit's own dot. It sits inside the key's span so
+        // the key column still sizes to content.
+        const lead = trusted(l.leadHtml);
         return '<div class="cur-mon-line' + (tone ? ' ' + tone : '') + '">' +
-          '<span class="cur-mon-key">' + escapeHtml(l.key) + '</span>' +
+          '<span class="cur-mon-key">' + (lead ? '<span class="cur-mon-lead">' + lead + '</span>' : '') + escapeHtml(l.key) + '</span>' +
           // The mark rides INSIDE the value, before the figure, so the dot
           // sits beside the reading it qualifies rather than floating in a
           // column of its own — the placement `renderReadout` already uses.
@@ -396,7 +401,10 @@ export function renderMonitor(o) {
   const id = typeof opts.id === 'string' && opts.id ? opts.id.trim() : '';
   const label = typeof opts.label === 'string' && opts.label.trim()
     ? opts.label.trim() : '';
-  return '<div class="cur-mon"' +
+  // `keys: 'identifier'` (v3.89.0): the keys are names — tools, projects —
+  // so they are not uppercased (a tool called `get_node` must read as itself).
+  const ident = opts.keys === 'identifier';
+  return '<div class="cur-mon' + (ident ? ' cur-mon-ident' : '') + '"' +
       (id ? ' id="' + escapeHtml(id) + '"' : '') +
       (label ? ' role="group" aria-label="' + escapeHtml(label) + '"' : '') + '>' +
     headHtml + lineHtml + loudHtml + noteHtml +
