@@ -8,6 +8,7 @@ import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { clearStaleLock } from './write-registry.js';
 import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
+import { buildSubprocessEnv } from './subprocess-env.js';
 
 // v3.1.0+: the git dir and the stored PAT are USER DATA — they resolve through
 // paths.js so they can live outside a read-only .app bundle. In a repo install
@@ -104,13 +105,12 @@ function looksLikeGitDir(dir) {
 
 // AppleScript's `do shell script` launches us with a minimal PATH. Prepend the
 // usual locations for git/node/npm so subprocesses resolve them reliably.
-const NODE_BIN_DIR = path.dirname(process.execPath);
-const SUBPROCESS_PATH = [
-  NODE_BIN_DIR, '/usr/local/bin', '/opt/homebrew/bin',
-  '/usr/bin', '/bin', '/usr/sbin', '/sbin',
-  process.env.PATH || '',
-].filter(Boolean).join(':');
-const SUBPROCESS_ENV = { ...process.env, PATH: SUBPROCESS_PATH };
+// Built per platform by src/brain/subprocess-env.js (v3.87.0): byte-identical
+// off Windows; on Windows ';'-joined, no POSIX folders, one `Path` key.
+const SUBPROCESS_ENV = buildSubprocessEnv();
+
+/** TEST-ONLY: the env every git() call here runs with (scripts/test-subprocess-env.js §1). */
+export function __subprocessEnvForTest() { return SUBPROCESS_ENV; }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
