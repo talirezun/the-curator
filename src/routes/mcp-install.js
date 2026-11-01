@@ -228,6 +228,21 @@ async function usedAtById() {
   } catch { return {}; }
 }
 
+/**
+ * v3.88.1 — an entry whose command or server script is gone reads "needs an
+ * update" (inspectTool never calls it a match) and says WHY, in words, with
+ * the first missing path. A can't-read reason, set first, wins.
+ */
+export function launchMissingReason(row, files, platform) {
+  const gone = (files || []).find((f) => Array.isArray(f.missing) && f.missing.length);
+  if (!gone || row.reason) return;
+  row.reason = {
+    code: 'launch_file_missing',
+    message: `Its entry points at ${gone.missing[0]}, which is no longer on this ${machineWord(platform)}.`,
+    missing: gone.missing.slice(),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // GET /status
 // ─────────────────────────────────────────────────────────────────────────
@@ -323,6 +338,7 @@ export async function buildStatus() {
       row.status = statusFor(insp.files);
       const bad = insp.files.find((f) => f.read.state === 'cant-read');
       if (bad) row.reason = { code: bad.read.reason, message: `${disp(bad.file)} ${reasonText(bad.read.reason) || 'could not be read'}.` };
+      launchMissingReason(row, insp.files, platform);
       if (row.status !== 'cant-read' && launcherState.required && !launcherState.present) {
         row.reason = { code: 'launcher_missing', message: launcherState.message };
       }
@@ -354,6 +370,7 @@ export async function buildStatus() {
       row.status = statusFor(insp.files);
       const bad = insp.files.find((f) => f.read.state === 'cant-read');
       if (bad) row.reason = { code: bad.read.reason, message: `${tildeUnder(home, bad.file)} ${reasonText(bad.read.reason) || 'could not be read'}.` };
+      launchMissingReason(row, insp.files, platform);
       if (row.status !== 'cant-read' && launcherState.required && !launcherState.present) {
         row.reason = { code: 'launcher_missing', message: launcherState.message };
       }

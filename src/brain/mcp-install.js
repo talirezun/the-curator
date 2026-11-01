@@ -68,7 +68,7 @@ import path from 'node:path';
 import {
   MCP_SERVER_NAME, adapterFor, listHarnesses, mcpEntryFor, resolveTemplate,
 } from './harness-adapters.js';
-import { stripJsonComments, tildeUnder } from './setup-check.js';
+import { missingLaunchFiles, stripJsonComments, tildeUnder } from './setup-check.js';
 import { writeFileAtomicSync } from './atomic-write.js';
 import { getMcpInstallManifestPath } from './paths.js';
 
@@ -767,13 +767,43 @@ export function inspectTool(id, { home, launch, io = defaultIO(), platform, root
   const files = targetsFor(id, home, io, { platform: plat, roots, win, appx }).map((t) => {
     const read = readTargetOn(plat, t.file, m.key, io, m.jsonc === true);
     let entryState = null;
+    let missing = [];
     if (read.state === 'ok') {
       const ours = ourEntryIn(read.doc, m.key);
-      entryState = ours === undefined ? 'none' : (mcp.ok && entryMatches(ours, mcp.entry, m.requiresType) ? 'match' : 'differs');
+      // v3.88.1: an entry whose launch files are gone can never be
+      // "connected", whatever its text matches (see `entryLaunchMissing`).
+      missing = ours === undefined ? [] : entryLaunchMissing(ours);
+      entryState = ours === undefined ? 'none'
+        : (mcp.ok && !missing.length && entryMatches(ours, mcp.entry, m.requiresType) ? 'match' : 'differs');
     }
-    return { ...t, read, entryState };
+    return { ...t, read, entryState, missing };
   });
   return { files, mcp, key: m.key, requiresType: m.requiresType };
+}
+
+/** TEST-ONLY: the launch-file probe seam lives in setup-check.js (one rule, one seam). */
+export { __setLaunchExists } from './setup-check.js';
+
+/**
+ * THE LAUNCH FILES OUR ENTRY NAMES THAT ARE NOT ON DISK (v3.88.1).
+ *
+ * MEASURED 2026-11-01 on the owner's Windows PC: Claude Desktop's my-curator
+ * entry, written by v3.86.0 from an earlier manual install, still launched
+ * `C:\Program Files\nodejs\node.exe` with that install's `mcp\server.js`
+ * after both were uninstalled; Claude Desktop said "My Curator could not
+ * start". The launch files are probed on the REAL disk (they are programs,
+ * not config files, so the config IO seam does not apply), through
+ * `missingLaunchFiles` — the same rule the Setup check uses. Returns the
+ * missing absolute paths (command first), `[]` when the entry can launch as
+ * far as a file check can tell.
+ */
+export function entryLaunchMissing(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+  let command = entry.command;
+  let args = entry.args;
+  if (Array.isArray(command)) { args = command.slice(1); command = command[0]; }
+  if (command === undefined && typeof entry.cmd === 'string') command = entry.cmd;
+  return missingLaunchFiles(typeof command === 'string' ? command : null, Array.isArray(args) ? args : []);
 }
 
 /** The status word for an install-capable tool on macOS (contract §1). */

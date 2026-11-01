@@ -2844,6 +2844,10 @@ origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **4
                 "state": "missing" | "no-entry" | "connected" | "differs" | "cant-read",
                 "reason": "<code>" | null }],
     "reason": { "code": "…", "message": "…" } | null,
+    // v3.88.1: an entry whose absolute command or `…/mcp/server.js` argument is not on disk is
+    // never "connected": the file is "differs", the row "needs-update", and the reason is
+    // { "code": "launch_file_missing", "message": "Its entry points at <path>, which is no longer
+    //   on this PC.", "missing": ["<path>", …] } (a can't-read reason, or launcher_missing, wins)
     "note": "…" | null, "usedAt": "<ISO>" | null,   // usedAt labels a row; it never changes a status
     "restartHint": "…" | null,
     "restorable": true | false,                      // a backup exists and the file is still what we wrote

@@ -4495,7 +4495,7 @@ Only the agent apps in the table above can be installed this way. Every other ag
 | Status | Meaning | Ticked for you? | Buttons |
 |---|---|---|---|
 | **connected** | The tool's file names `my-curator` and the entry is the one this install would write | No | **Remove**, and **Restore original** while a backup of the previous file is still valid |
-| **needs an update** | An entry exists but differs: it launches a missing file, points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
+| **needs an update** | An entry exists but differs: it launches a missing file (the row then names it — "Its entry points at C:\Program Files\nodejs\node.exe, which is no longer on this PC." — for example after Node.js or an older copy of The Curator was uninstalled; such an entry never reads **connected**, since 3.88.1), points at another knowledge folder, or is in only some of Antigravity's files | Yes | **Install for me** (updates it) |
 | **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
 | **copy only** | A tool the app does not write for, a computer it does not write on (Linux; on Windows, every tool but Claude Desktop), or a Windows Claude Desktop whose settings file the app will not pick (see below) | No | **Copy** |

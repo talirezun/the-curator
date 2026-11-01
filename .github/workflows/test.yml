@@ -222,6 +222,58 @@ jobs:
             }
           }
 
+      # v3.88.1: the bridge must start the way Claude Desktop starts it — the
+      # private node.exe, the ABSOLUTE server.js, a foreign working folder and
+      # only the environment the MCP SDK's stdio client passes on Windows — and
+      # answer `initialize` and `tools/list`. (2026-11-01: an owner's Claude
+      # Desktop said "My Curator could not start"; the check that settled it
+      # ran this exact launch on windows-latest, before and after an in-app
+      # update.)
+      - name: MCP bridge starts as Claude Desktop starts it
+        shell: powershell
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CI_CURATOR_DIR
+          $node = Join-Path $env:LOCALAPPDATA 'TheCurator\runtime\node\node.exe'
+          $server = Join-Path $dir 'mcp\server.js'
+          $domains = Join-Path $env:RUNNER_TEMP 'mcp-start-domains'
+          [void][System.IO.Directory]::CreateDirectory($domains)
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $node
+          $psi.Arguments = '"' + $server + '" --domains-path "' + $domains + '"'
+          $psi.WorkingDirectory = (Join-Path $env:SystemRoot 'System32')
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          # The MCP SDK's DEFAULT_INHERITED_ENV_VARS on win32, nothing else.
+          $keep = @('APPDATA', 'HOMEDRIVE', 'HOMEPATH', 'LOCALAPPDATA', 'PATH', 'PROCESSOR_ARCHITECTURE', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERNAME', 'USERPROFILE', 'PROGRAMFILES')
+          $saved = @{}
+          foreach ($k in $keep) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+          $psi.EnvironmentVariables.Clear()
+          foreach ($k in $keep) { if ($saved[$k]) { $psi.EnvironmentVariables[$k] = $saved[$k] } }
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $outTask = $p.StandardOutput.ReadToEndAsync()
+          $errTask = $p.StandardError.ReadToEndAsync()
+          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1"}}}')
+          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","method":"notifications/initialized"}')
+          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
+          $p.StandardInput.Flush()
+          Start-Sleep -Seconds 8
+          $p.StandardInput.Close()
+          if (-not $p.WaitForExit(15000)) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(5000) }
+          $out = $outTask.Result; $err = $errTask.Result
+          Write-Host "exit code: $($p.ExitCode)"
+          Write-Host '----- stderr -----'; Write-Host $err
+          $lines = @($out -split "`n" | Where-Object { $_.Trim() })
+          $init = $null; $list = $null
+          foreach ($l in $lines) { $m = $l | ConvertFrom-Json; if ($m.id -eq 1) { $init = $m }; if ($m.id -eq 2) { $list = $m } }
+          if (-not $init -or $init.result.serverInfo.name -ne 'my-curator') { Write-Host '----- stdout -----'; Write-Host $out; throw 'the bridge did not answer initialize' }
+          $n = @($list.result.tools).Count
+          if ($n -lt 1) { Write-Host '----- stdout -----'; Write-Host $out; throw 'the bridge listed no tools' }
+          Write-Host "initialize answered by $($init.result.serverInfo.name); tools/list: $n tools (private node, absolute server.js, cwd System32, SDK default env)"
+
       - name: Start, check, stop (the desktop-icon scripts)
         shell: powershell
         timeout-minutes: 8

@@ -81,6 +81,10 @@ const M = await import('../src/brain/mcp-install.js');
 const A = await import('../src/brain/harness-adapters.js');
 const D = await import('../src/brain/harness-detect.js');
 const R = await import('../src/routes/mcp-install.js');
+
+// v3.88.1: these fixtures name made-up launch paths (/app/mcp/server.js, …);
+// treat them as present. The launch-file rule is proved in test-mcp-install-windows.js §4 and test-setup-check.js.
+M.__setLaunchExists(() => true);
 const express = (await import('express')).default;
 
 const OTHER = { command: 'npx', args: ['-y', 'other'], env: { API_KEY: 'sk-PLANTED-WIN' } };
@@ -679,6 +683,37 @@ try {
       cd = cdOf(s);
       eq(`[${K}] Check again → connected`, cd.status, 'connected');
       ok(`[${K}] …restorable`, cd.restorable === true);
+
+      // ── v3.88.1: THE OWNER'S PC, 2026-11-01. An entry written by v3.86.0
+      //    from an earlier manual install (system Node + that checkout), both
+      //    since uninstalled. Claude Desktop said "My Curator could not
+      //    start"; the page must say "needs an update", why, and offer Install.
+      {
+        const written = w.read(L.c[1]);
+        M.__setLaunchExists(null); // the REAL disk from here: the app's own launch files exist
+        s = await call('GET', '/api/mcp/install/status');
+        eq(`[${K}] launch files probed on the real disk: the entry we just wrote is still connected`, cdOf(s).status, 'connected');
+        const OLD = { command: 'C:\\Program Files\\nodejs-uninstalled\\node.exe', args: ['C:\\Users\\Tester Name\\the-curator-old\\mcp\\server.js', '--domains-path', DOM] };
+        w.put(L.c[1], doc({ mcpServers: { 'my-curator': OLD, other: OTHER } }));
+        s = await call('GET', '/api/mcp/install/status');
+        cd = cdOf(s);
+        eq(`[${K}] an entry whose node.exe is gone → needs-update, never connected`, cd.status, 'needs-update');
+        ok(`[${K}] …the reason in words, naming the missing node.exe and "this PC"`, cd.reason && cd.reason.code === 'launch_file_missing'
+          && cd.reason.message === 'Its entry points at C:\\Program Files\\nodejs-uninstalled\\node.exe, which is no longer on this PC.', JSON.stringify(cd.reason));
+        ok(`[${K}] …both missing files listed (command first, then the old server.js)`, cd.reason.missing.length === 2 && cd.reason.missing[1].endsWith('mcp\\server.js'));
+        ok(`[${K}] …and the file is planned for an update (ticked for Install for me)`, cd.files.length === 1 && cd.files[0].action === 'update' && cd.files[0].state === 'differs');
+        ok(`[${K}] …counted as to fix`, cd.verdict === 'to-fix' && s.body.install.available >= 1);
+        // The TEXT of the entry matches what Install would write, but one of
+        // its files is gone: still never "connected".
+        const same = JSON.parse(written.toString('utf8').replace(/^\uFEFF/, '')).mcpServers['my-curator'];
+        w.put(L.c[1], doc({ mcpServers: { 'my-curator': same } }));
+        M.__setLaunchExists((p) => !/[\\/]mcp[\\/]server\.js$/i.test(p) && existsSync(p));
+        s = await call('GET', '/api/mcp/install/status');
+        cd = cdOf(s);
+        ok(`[${K}] the planned entry itself, with its server.js gone → needs-update with the reason`, cd.status === 'needs-update' && cd.reason && cd.reason.code === 'launch_file_missing', JSON.stringify({ status: cd.status, reason: cd.reason }));
+        M.__setLaunchExists(() => true);
+        w.put(L.c[1], written);
+      }
 
       const pr = await call('POST', '/api/mcp/install/plan', { action: 'remove', ids: ['claude-desktop'] });
       const ar = await call('POST', '/api/mcp/install/apply', { token: pr.body.token });

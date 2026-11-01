@@ -56,7 +56,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
+  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,6 +74,11 @@ const ok = (cond, label, detail) => {
 const section = (t) => console.log(`\n${t}`);
 
 const S = await import('../src/brain/setup-check.js');
+
+// v3.88.1: the fixtures' server scripts (/x/mcp/server.js) are made up; a
+// COMMAND is still probed on the real disk, as before. The launch-file rule
+// itself is proved at the end of this suite (missingLaunchFiles).
+S.__setLaunchExists((p) => /(^|[\\/])mcp[\\/]server\.js$/i.test(p) || existsSync(p));
 // v3.87.0: the user-visible machine word follows the platform. This suite's
 // wording assertions are the macOS strings, so pin darwin — they then hold on
 // a Linux CI runner and on Windows too. The per-platform words are tested below.
@@ -826,6 +831,31 @@ section('§10 a read writes nothing');
   // mtime-identical, git's own directory excepted (the §8 commits).
   const changed = Object.keys(before).filter((f) => after[f] !== before[f] && !f.startsWith(path.join(REPO, '.curator-project')));
   ok(changed.length === 0, 'no pre-existing fixture file was modified by a collector', changed);
+}
+
+section('§12 an entry whose launch files are gone (v3.88.1, the owner\'s Windows PC)');
+{
+  const OLD_NODE = 'C:\\Program Files\\nodejs-uninstalled\\node.exe';
+  const OLD_SRV = 'C:\\Users\\Tester\\the-curator-old\\mcp\\server.js';
+  const none = () => false;
+  const all = () => true;
+  ok(JSON.stringify(S.missingLaunchFiles(OLD_NODE, [OLD_SRV, '--domains-path', 'C:\\d'], none)) === JSON.stringify([OLD_NODE, OLD_SRV]),
+    'a Windows command AND its server.js argument are both judged (command first)');
+  ok(S.missingLaunchFiles(OLD_NODE, [OLD_SRV], all).length === 0, '…and nothing is missing when both exist');
+  ok(S.missingLaunchFiles('/opt/gone/node', ['/x/mcp/server.js'], (p) => p !== '/opt/gone/node').join() === '/opt/gone/node', 'a POSIX command is still judged');
+  ok(S.missingLaunchFiles('node', ['relative/mcp/server.js'], none).length === 0, 'a bare command and a relative script are never judged (PATH / cwd decide)');
+  ok(S.missingLaunchFiles(OLD_NODE, ['--domains-path', 'C:\\gone'], none).join() === OLD_NODE, 'the knowledge folder is not a launch file');
+  ok(S.missingLaunchFiles(OLD_NODE, [], () => { throw new Error('EACCES'); }).join() === OLD_NODE, 'a probe that throws counts as missing');
+  // Through the Setup check itself, on the real disk.
+  S.__setLaunchExists(null);
+  const H = path.join(ROOT, 'home-launch');
+  mkdirSync(path.join(H, 'Library', 'Application Support', 'Claude'), { recursive: true });
+  writeFileSync(path.join(H, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+    JSON.stringify({ mcpServers: { 'my-curator': { command: OLD_NODE, args: [OLD_SRV, '--domains-path', DOMAINS] } } }));
+  const cdRow = S.collectMachineSetup({ home: H, repo: REPO, skillsDir: null, domainsDir: DOMAINS }).find((x) => x.id === 'claude-desktop');
+  const f = cdRow && cdRow.files.find((x) => x.named);
+  ok(f && f.commandMissing === true && f.missingFiles.join() === `${OLD_NODE},${OLD_SRV}`, 'Setup flags a Windows launch line whose files are gone', f);
+  ok(cdRow && cdRow.bridge.state === S.STATES.FIX && cdRow.bridge.word === 'launch line points at a missing file', 'Setup\'s bridge cell says so', cdRow && cdRow.bridge);
 }
 
 rmSync(ROOT, { recursive: true, force: true });

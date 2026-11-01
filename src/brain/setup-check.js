@@ -272,7 +272,51 @@ function entryFacts(entry) {
   // install this tool launches, so the Setup check can find that install's
   // machine id on this Mac (v3.78.0). Our own entry's argument, never another's.
   const serverScript = args.find((x) => /(^|\/)mcp\/server\.js$/.test(x)) || null;
-  return { command, domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null, serverScript };
+  return { command, domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null, serverScript, launchArgs: args };
+}
+
+let _launchExists = null;
+/**
+ * TEST-ONLY: replace the launch-file probe (a function of an absolute path),
+ * or null for the disk. Suites whose fixtures name made-up install paths set
+ * it; the launch-file rule itself is proved with it set both ways.
+ */
+export function __setLaunchExists(fn) { _launchExists = typeof fn === 'function' ? fn : null; }
+
+/** Our server script as an argument, in either separator (v3.88.1). */
+const LAUNCH_SCRIPT_RE = /(^|[\\/])mcp[\\/]server\.js$/i;
+
+function isAbsoluteAnywhere(p) {
+  return typeof p === 'string' && p !== '' && (path.posix.isAbsolute(p) || path.win32.isAbsolute(p));
+}
+
+/**
+ * THE LAUNCH FILES AN ENTRY NAMES THAT ARE NOT ON DISK (v3.88.1).
+ *
+ * MEASURED 2026-11-01 on the owner's Windows PC: Claude Desktop's my-curator
+ * entry still named `C:\Program Files\nodejs\node.exe` and an old checkout's
+ * `mcp\server.js` after both had been uninstalled, so Claude Desktop said "My
+ * Curator could not start" — and the Setup check never said why, because it
+ * only recognised a POSIX absolute path (`startsWith('/')`) and never looked
+ * at the script argument at all.
+ *
+ * Returns the ABSOLUTE paths among the entry's `command` and its
+ * `…/mcp/server.js` argument that do not exist, in either path syntax (a
+ * Windows path on a Mac is missing, which is true). A bare command (`node`,
+ * `npx`) is resolved by the client's PATH and is never judged here. `exists`
+ * is the seam; a throwing probe counts as missing (it cannot be launched).
+ */
+export function missingLaunchFiles(command, args, exists = _launchExists || existsSync) {
+  const out = [];
+  const check = (p) => {
+    if (!isAbsoluteAnywhere(p) || out.includes(p)) return;
+    let ok = false;
+    try { ok = !!exists(p); } catch { ok = false; }
+    if (!ok) out.push(p);
+  };
+  if (typeof command === 'string') check(command);
+  for (const a of Array.isArray(args) ? args : []) if (typeof a === 'string' && LAUNCH_SCRIPT_RE.test(a)) check(a);
+  return out;
 }
 
 /** The line a Cordis patch carries for our server — `serverName: my-curator`, quoted or not, not commented. */
@@ -794,7 +838,8 @@ export function collectMachineSetup(o = {}) {
       if (r.at) rec.at = r.at;
       if (r.named) {
         if (r.domainsPath && o.domainsDir && r.domainsPath !== o.domainsDir) rec.otherFolder = true;
-        if (r.command && r.command.startsWith('/') && !existsSync(r.command)) rec.commandMissing = true;
+        const missing = missingLaunchFiles(r.command, r.launchArgs);
+        if (missing.length) { rec.commandMissing = true; rec.missingFiles = missing; }
         rec.command = r.command || null;
         if (r.serverScript) rec.serverScript = r.serverScript;
       }

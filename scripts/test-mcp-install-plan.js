@@ -33,6 +33,10 @@ process.env.CURATOR_TEST_USER_DATA_DIR = path.join(TMP, 'ud');
 const M = await import('../src/brain/mcp-install.js');
 const A = await import('../src/brain/harness-adapters.js');
 
+// v3.88.1: these fixtures name made-up launch paths (/app/mcp/server.js, …);
+// treat them as present. The launch-file rule is proved in test-mcp-install-windows.js §4 and test-setup-check.js.
+M.__setLaunchExists(() => true);
+
 const HOME = '/fakehome/u';
 
 // ── An in-memory filesystem, shaped like the IO the module injects ─────────

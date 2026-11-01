@@ -54,6 +54,10 @@ process.env.CURATOR_TEST_DOMAINS_DIR = DOM;
 const M = await import('../src/brain/mcp-install.js');
 const A = await import('../src/brain/harness-adapters.js');
 const { getMcpInstallManifestPath } = await import('../src/brain/paths.js');
+
+// v3.88.1: these fixtures name made-up launch paths (/app/mcp/server.js, …);
+// treat them as present. The launch-file rule is proved in test-mcp-install-windows.js §4 and test-setup-check.js.
+M.__setLaunchExists(() => true);
 M.__setHomeOverride(HOME);
 
 const REPO = { command: '/usr/local/bin/node', args: ['/app/mcp/server.js', '--domains-path', DOM] };
