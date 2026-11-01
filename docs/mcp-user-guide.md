@@ -258,7 +258,7 @@ up spread over several lines. The values are identical, and the backup keeps the
 | **Overview** | **CONNECTED** · **NEEDS ATTENTION** · **TOOLS WORKING** (*24 of 24* from the last test) · **LAST USED** (when an AI app last used a tool; tests do not count) |
 | **① Your AI apps** | **Check again**; a **Next step · N to do** card only when something needs doing; one row per AI app — one sentence, at most one button (**Test connection** or **Copy the setup text**), and a **Details** fold with each settings file that exists, **Remove** (red) and **Restore original** |
 | **② Skills** | `my-curator` and `curator-continuity`: **Download ‹skill›.zip**, and each AI app's copy — Claude's is uploaded to your account (**Customize → Skills**), Antigravity's is *up to date*, *out of date* or *not installed*, with **Show the folder**. Skills don't update on their own |
-| **③ Connection test** | **Test connection**, **Test all 24 tools**, one result line (*"Works. …"* / *"Not working: …"*), **Details** (version, knowledge folder, how many are open right now), **Default project for writes** |
+| **③ Connection test** | **Test connection**, **Test all 24 tools**, one result line (*"Works. …"* / *"Not working: …"*), **Details** (version, knowledge folder, how many are open right now), **Default domain for writes** |
 | **④ Tool activity** | The last time an AI app started My Curator, the five busiest tools this week, *N tools not used this week*, and **All 24 tools** |
 
 The page writes nothing on its own: only **Install for me**, **Remove** and **Restore** change an

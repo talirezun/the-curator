@@ -689,7 +689,7 @@ const E = {
     points: [
       { icon: 'check', text: 'Test all tools runs every tool on a throwaway copy.' },
       { icon: 'lock', text: 'Nothing of yours changes during a test.' },
-      { icon: 'folder', text: 'Default project for writes: where an unnamed write goes.' },
+      { icon: 'folder', text: 'Default domain for writes: where an unnamed write goes.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
@@ -932,7 +932,7 @@ export const SCREEN_WORDS = [
   // names) and step 4's renamed picker.
   'Agent apps', 'Repository on this computer', 'Your tool’s share',
   // v3.90.0 — Settings › MCP bridge from the copy deck: its section titles and buttons.
-  'Your AI apps', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default project for writes',
+  'Your AI apps', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default domain for writes',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

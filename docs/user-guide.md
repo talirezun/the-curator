@@ -4520,7 +4520,7 @@ folder, and offers **Show the folder**.
 **③ Connection test** starts My Curator the way your AI apps do: **Test connection** and **Test all
 24 tools** (every tool, against a throwaway copy), then one result line — *"Works. My Curator started
 and answered with all 24 tools (14:02)."* or *"Not working: …"*. Its **Details** fold gives the version,
-the knowledge folder and how many are open right now; **Default project for writes** is where a
+the knowledge folder and how many are open right now; **Default domain for writes** is where a
 write lands when an AI app does not name a domain (leave it on **Ask every time** to make the AI
 app name it). **④ Tool activity** is described in [the tool map](#the-tool-map--what-your-agents-used).
 
@@ -7048,7 +7048,7 @@ The Curator itself need not be running.
 |---|---|
 | **① Your AI apps** | **Check again**; a **Next step** card only when something needs doing (**Install for me**, **Copy the setup text**); one row per AI app: one sentence, at most one button, and a **Details** fold |
 | **② Skills** | One row per skill, **Download ‹skill›.zip**, and each AI app's copy: *up to date*, *out of date* or *not installed* |
-| **③ Connection test** | **Test connection** (starts My Curator the way your AI apps do), **Test all 24 tools**, one result line, **Details**, **Default project for writes** |
+| **③ Connection test** | **Test connection** (starts My Curator the way your AI apps do), **Test all 24 tools**, one result line, **Details**, **Default domain for writes** |
 | **④ Tool activity** | The last time an AI app started My Curator, the five busiest tools this week, and **All 24 tools** with one plain line each |
 
 Never folded: the result of what you just pressed, and anything that needs you (it is in the Next
@@ -7059,7 +7059,7 @@ Full walkthrough: [mcp-user-guide.md](mcp-user-guide.md).
 
 ### Default domain for MCP writes
 
-In ③ Connection test, the **Default project for writes** fold. When you talk to Claude Desktop via My
+In ③ Connection test, the **Default domain for writes** fold. When you talk to Claude Desktop via My
 Curator and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to
 use: *"When an AI app says "save this to my wiki" without naming a domain, it goes to:"* — pick a
 domain, or leave it on **Ask every time**, which makes the AI app name the domain.

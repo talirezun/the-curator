@@ -707,7 +707,7 @@ The MCP bridge lets an AI client read and write your wiki directly. Since versio
 | 4 | Fully quit and reopen the AI app (Command-Q on a Mac; closing the window is not enough), because an app reads its MCP list only when it starts. |
 | 5 | Click **Check again**. Each app has one row with its state (connected, needs attention, not connected, can't read its settings). Open it for one sentence ("Connected. Claude Desktop last used My Curator 2 days ago.") and at most one button: **Test connection** starts My Curator the way the app does and answers "Works — … all 24 tools", or why not. The row's **Details** fold lists each settings file that exists, **Remove** and **Restore original**. |
 
-The page has four sections: ① *Your AI apps*, ② *Skills*, ③ *Connection test* (**Test connection**, **Test all 24 tools**, one result line, and **Default project for writes** — leave it on "Ask every time" to make the AI app name the domain) and ④ *Tool activity*.
+The page has four sections: ① *Your AI apps*, ② *Skills*, ③ *Connection test* (**Test connection**, **Test all 24 tools**, one result line, and **Default domain for writes** — leave it on "Ask every time" to make the AI app name the domain) and ④ *Tool activity*.
 
 **Skills (since version 3.90.0).** Section ② lists the two skills, `my-curator` and `curator-continuity`, with **Download** for each and every AI app's copy. Skills don't update on their own: after an update, download them again. For Claude, upload the .zip in Claude under **Customize → Skills**; The Curator cannot see your Claude account, so it cannot tell whether that copy is current. For Antigravity the row says "up to date", "out of date" or "not installed" and offers **Show the folder**.
 

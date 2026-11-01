@@ -9129,7 +9129,7 @@ function renderBridgeCard() {
   // value is a real, selectable option: "Ask every time" is a decision.
   const defaultDomainCfg = {
     id: 'select-default-domain',
-    ariaLabel: 'Default project for writes',
+    ariaLabel: 'Default domain for writes',
     value: defaultDomain || '',
     disabled: !!state.defaultDomainSaving,
     triggerClass: 'mono',
@@ -9149,7 +9149,7 @@ function renderBridgeCard() {
   const folds = renderFoldRows(
     renderFoldRow({ key: 'bridge-answers', label: 'Details',
       open: !!state.setupMachineFolds['bridge-answers'], bodyHtml: renderFoldLine({ text: bits.join(' · ') }) })
-    + renderFoldRow({ key: 'default-domain', label: 'Default project for writes', meta: defaultDomain || 'Ask every time',
+    + renderFoldRow({ key: 'default-domain', label: 'Default domain for writes', meta: defaultDomain || 'Ask every time',
       open: !!state.setupMachineFolds['default-domain'], bodyHtml: domainBody }));
   return control + (line ? '<div class="cur-card-notes">' + line + '</div>' : '') + folds;
 }

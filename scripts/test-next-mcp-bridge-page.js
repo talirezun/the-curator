@@ -118,8 +118,8 @@ section('§6 the section heads');
   ok(/id="mcp-meta-use">last use 17 min ago</.test(h), '④ last use: the newest call by an AI app');
   const titles = [...h.matchAll(/<div class="cur-group-title cur-section-title" id="mcp-sec-(\w+)" tabindex="-1">([^<]+)</g)].map((m) => m[2]);
   ok(titles.join(' · ') === 'Your AI apps · Skills · Connection test · Tool activity', 'four sections, the deck’s words: ' + titles.join(' · '));
-  ok(/<span class="cur-fold-label">Default project for writes<\/span><span class="cur-fold-meta">projects<\/span>/.test(h), 'the default project is a fold row in ③, its domain the reading');
-  ok(/<span class="cur-fold-label">Default project for writes<\/span><span class="cur-fold-meta">Ask every time<\/span>/.test(
+  ok(/<span class="cur-fold-label">Default domain for writes<\/span><span class="cur-fold-meta">projects<\/span>/.test(h), 'the default project is a fold row in ③, its domain the reading');
+  ok(/<span class="cur-fold-label">Default domain for writes<\/span><span class="cur-fold-meta">Ask every time<\/span>/.test(
     page({ defaultDomainInfo: { domains: ['projects'], defaultDomain: null, identity: {} } })), '…"Ask every time" when none is set');
   ok(/^<p class="cur-section-intro">This page connects your AI apps — Claude, Cursor, Antigravity and others — to your knowledge, and shows whether the connection works\.<\/p>/.test(h),
     'the lede, the column’s first line under the title');
