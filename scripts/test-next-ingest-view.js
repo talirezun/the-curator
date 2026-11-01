@@ -2330,10 +2330,13 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
     const d = new RegExp('(?:^|[;\\s])' + prop + ':\\s*([^;]+);').exec(m[1]);
     return d ? d[1].trim() : null;
   };
-  for (const [prop, from] of [['padding', '.dm-quick'], ['border-radius', '.dm-quick'],
-    ['border', '.dm-quick'], ['background', '.dm-quick'],
-    ['justify-content', '.dm-quick-empty'], ['gap', '.dm-quick-empty'], ['flex-wrap', '.dm-quick-empty']]) {
-    const theirs = declOf(domCss, from, prop);
+  // v3.89.0: Quick maintenance's card rule moved, unchanged in value, into the
+  // section kit as `.cur-action` (shared/section.css); `.dm-quick-empty` stays.
+  const kitCss = readFileSync(path.join(ROOT, 'src/public/next/shared/section.css'), 'utf8');
+  for (const [prop, from, sheet] of [['padding', '.cur-action', kitCss], ['border-radius', '.cur-action', kitCss],
+    ['border', '.cur-action', kitCss], ['background', '.cur-action', kitCss],
+    ['justify-content', '.dm-quick-empty', domCss], ['gap', '.dm-quick-empty', domCss], ['flex-wrap', '.dm-quick-empty', domCss]]) {
+    const theirs = declOf(sheet, from, prop);
     const mine = declOf(css, '.ing-verbatim-note', prop);
     ok(theirs !== null && mine === theirs,
       '§16e3 the callout’s `' + prop + '` is Quick maintenance’s (' + from + ': ' + theirs

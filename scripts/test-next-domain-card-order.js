@@ -62,6 +62,7 @@ import { fileURLToPath } from 'node:url';
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+const { SECTION_KIT, SECTION_KIT_NAMES, SECTION_KIT_VALUES } = await import('./test-helpers/section-kit.js');
 // v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
 // from the REAL kit, the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs — a mistyped explainer key THROWS.
@@ -221,7 +222,7 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
-    'docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel',
+    'docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel', ...SECTION_KIT_NAMES,
     // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
     // so the legend text and the shared docs table are collaborators of it.
     // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
@@ -256,7 +257,7 @@ try {
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
+  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel, ...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -463,6 +464,8 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
     // the REAL functions rather than stubs, because this section renders the
     // shipped panel and a stub could let the figures say anything.
     renderMonitor, freshnessTier,
+    // v3.89.0: the section kit (card, control row, fold rows), the REAL functions.
+    ...SECTION_KIT,
     // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
     // computed from the real kit — `explainerMark` is injected for the SAME
     // reason renderMonitor/freshnessTier are: not visible inside a lifted body.

@@ -62,6 +62,8 @@
 
 import { readFileSync } from 'fs';
 import path from 'path';
+// v3.89.0: the fold items are the section kit's (real functions).
+import { SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 
 const REPO = path.resolve(new URL('..', import.meta.url).pathname);
 const SRC = path.join(REPO, 'src/public/next/views/domains.js');
@@ -253,6 +255,7 @@ async function fetch(url, opts) {
 let sandbox;
 try {
   sandbox = new Function(
+    ...SECTION_KIT_NAMES,
     PREAMBLE +
     CONSTS.map((c) => extractConst(src, c)).join('\n') + '\n' +
     FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
@@ -261,7 +264,7 @@ try {
        __net: () => net, __gates: () => gates,
        __setMount: (t) => { myMountToken = t; },
        __inFlight: () => inFlightWriteSlugs };`
-  )();
+  )(...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
   process.exit(1);

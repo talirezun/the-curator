@@ -60,6 +60,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
 const CSS = readFileSync(join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+// v3.89.0: the section head's rules moved, unchanged in value, into the section
+// kit; the elements carry the kit's names beside this view's (alias 'dm').
+const KIT_CSS = readFileSync(join(ROOT, 'src/public/next/shared/section.css'), 'utf8');
 // v3.64.2 — the OVERVIEW card's own rules moved to the shared component's
 // stylesheet when the Project-context view adopted the same card.
 const OV_CSS = readFileSync(join(ROOT, 'src/public/next/shared/overview.css'), 'utf8');
@@ -164,6 +167,9 @@ function docOrder(root) {
 // ═════════════════════════════════════════════════════════════════════════
 const { docsLinkHtml } = await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+// v3.89.0: the section head, card and fold rows are the section kit's; every
+// lifted body gets the REAL functions (scripts/test-helpers/section-kit.js).
+const { SECTION_KIT, SECTION_KIT_NAMES, SECTION_KIT_VALUES } = await import('./test-helpers/section-kit.js');
 // v3.71.0 (G3/G4): PAGES_INFO and HEALTH_INFO are module consts computed
 // from the real kit — the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs.
@@ -217,7 +223,7 @@ const document = { getElementById: () => null, querySelector: () => null, queryS
 
 let box;
 try {
-  box = new Function('docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel',
+  box = new Function('docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel', ...SECTION_KIT_NAMES,
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
@@ -251,7 +257,7 @@ try {
        __setState: (s) => { state = s; }, __state: () => state, __calls: () => calls,
        __setRender: (fn) => { render = fn; },
        __reset: () => { calls.setMain.length = 0; calls.jumps.length = 0; } };`
-  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
+  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel, ...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -332,7 +338,7 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       ok('...with nothing inside it a <summary> or a chevron',
         !!sh && !flatten(sh).some((n) => n.tagName === 'SUMMARY' || n.tagName === 'SVG'));
       ok('④\'s head carries an ⓘ, and the reading slot right after it',
-        /id="dm-shared-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">/.test(html));
+        /id="dm-shared-info-btn"[^]*?<\/button><span class="cur-section-meta dm-fold-meta dm-section-meta" id="dm-shared-reading">/.test(html));
       // v3.71.1: the panel IS the `domains.shared-brain` explainer, byte for
       // byte, named by its own label; its table is the Push / Pull contrast.
       ok('...whose panel IS the domains.shared-brain explainer',
@@ -365,8 +371,8 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       ok('there is NO <summary> on the page now — ④ followed ① out of the fold (v3.65.3)',
         (html.match(/<summary /g) || []).length === 0, String((html.match(/<summary /g) || []).length));
       ok('the reading moved into ①\'s HEAD ROW, right after the ⓘ, in the fold-meta face',
-        /id="dm-ingest-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta">(last ingest |nothing ingested yet)/
-          .test(html), (/<span class="dm-fold-meta dm-section-meta">[^<]*/.exec(html) || ['(none)'])[0]);
+        /id="dm-ingest-info-btn"[^]*?<\/button><span class="cur-section-meta dm-fold-meta dm-section-meta">(last ingest |nothing ingested yet)/
+          .test(html), (/<span class="cur-section-meta dm-fold-meta dm-section-meta">[^<]*/.exec(html) || ['(none)'])[0]);
     }
     // The panels own these elements and this page never writes into them again.
     ok('each fold carries exactly one empty host element for its panel',
@@ -394,8 +400,8 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       && /PDF, Markdown or text file/.test(explainerHtml('ingest.page')),
       (/<div class="tx-vh-panel" id="dm-ingest-info"[^]{0,160}/.exec(html) || ['(none)'])[0]);
     ok('...and the mark that opens it sits in the head row, beside the title',
-      /<div class="dm-section-head-row"><div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),
-      (/<div class="dm-section dm-section-hd-block dm-sources-hd">[^]{0,300}/.exec(html) || ['(none)'])[0]);
+      /<div class="cur-section-head-row dm-section-head-row"><div class="cur-section-hd dm-section-hd"><span class="cur-section-num dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title cur-section-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),
+      (/<div class="cur-section-head dm-section dm-section-hd-block dm-sources-hd">[^]{0,300}/.exec(html) || ['(none)'])[0]);
     // ── AND THE HEAD BLOCK IS STILL ONE TOP-LEVEL SIBLING ───────────────
     // D-J: `patchMainAroundHosts` finds a hosted fold by `before.id` over the
     // TOP-LEVEL children of `.main-inner`. A head that WRAPPED the `<details>`
@@ -430,26 +436,27 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // so three of the five numerals are visible here; ③ is pinned against the
     // literal that emits it and ⑤ is driven for real below, through the
     // `healthSection` wrapper the other suites also lift.
-    const nums = [...html.matchAll(/<span class="dm-section-num" aria-hidden="true">(\d)<\/span>/g)]
+    const nums = [...html.matchAll(/<span class="cur-section-num dm-section-num" aria-hidden="true">(\d)<\/span>/g)]
       .map((m) => m[1]);
     eq('the three sections this sandbox renders carry a numeral', nums.length, 3);
     eq('...in reading order', nums.join(''), '124');
+    // v3.89.0: ③'s numeral and title are the section kit's renderSectionTitle.
     ok('③ is emitted immediately above the PROJECTS title',
-      /<span class="dm-section-num" aria-hidden="true">3<\/span>' \+\s*\n\s*'<div class="cur-group-title dm-section-eyebrow">Projects in this domain<\/div>/
+      /renderSectionTitle\(\{ num: 3, title: 'Projects in this domain', alias: 'dm' \}\)/
         .test(SRC), 'not found in domains.js');
     {
       // ⑤ WIKI HEALTH, EXECUTED — the wrapper is a pure function of its inner
       // markup, so it can be lifted on its own. v3.71.0 (G4): it now carries
       // its own ⓘ, `HEALTH_INFO`, a module const computed from the real kit.
-      const wrap = new Function('explainerMark',
+      const wrap = new Function('explainerMark', 'renderSectionTitle',
         extractConstText(SRC, 'HEALTH_INFO') + '\n' +
-        extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')(explainerMark);
+        extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')(explainerMark, SECTION_KIT.renderSectionTitle);
       const out = wrap('<div class="dm-health-card">x</div>');
       ok('the health section carries numeral 5 beside its title',
-        /<span class="dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title dm-section-eyebrow">Wiki health<\/div>/
+        /<span class="cur-section-num dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title cur-section-title dm-section-eyebrow">Wiki health<\/div>/
           .test(out), out);
       ok('...and the title keeps the classes an unowned suite pins by name',
-        /class="cur-group-title dm-section-eyebrow">Wiki health</.test(out), out);
+        /class="cur-group-title cur-section-title dm-section-eyebrow">Wiki health</.test(out), out);
       // ── THE CARD NO LONGER TITLES ITSELF (v3.64.2) ────────────────────
       // "Wiki health" written twice, eight pixels apart, was the duplicate
       // the maintainer reported. The SECTION names the card; the card's own
@@ -468,8 +475,7 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     ok('no numeral sits inside a fold summary any more',
       !/dm-fold-summary[\s\S]{0,200}dm-section-num/.test(html), html.slice(0, 900));
     eq('...and every numeral opens a head row',
-      (html.match(/<div class="dm-section[^"]*dm-section-hd"><span class="dm-section-num"/g) || []).length
-      + (html.match(/<div class="dm-section-hd"><span class="dm-section-num"/g) || []).length,
+      (html.match(/<div class="cur-section-hd dm-section-hd"><span class="cur-section-num dm-section-num"/g) || []).length,
       3);
     for (const [n, word] of [['1', 'Ingest'], ['2', 'Pages'], ['4', 'Shared Brain']]) {
       const at = html.indexOf('>' + n + '</span>');
@@ -485,21 +491,22 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // THE NUMERAL IS aria-hidden ON EVERY SITE. A screen reader reads
     // "INGEST", never "1 INGEST" — the same call shared/block.js makes.
     eq('every numeral is aria-hidden',
-      (html.match(/class="dm-section-num"/g) || []).length,
-      (html.match(/class="dm-section-num" aria-hidden="true"/g) || []).length);
+      (html.match(/class="cur-section-num dm-section-num"/g) || []).length,
+      (html.match(/class="cur-section-num dm-section-num" aria-hidden="true"/g) || []).length);
+    ok('CONTROL -- that count is not vacuous', (html.match(/class="cur-section-num dm-section-num"/g) || []).length === 3);
     // THE TITLE ELEMENT KEPT ITS CLASSES: three suites this package does not
     // own pin `.cur-group-title.dm-section-eyebrow` and `.dm-recent-eyebrow`
     // by name, so the numeral and the larger face are added AROUND the
     // element rather than by replacing it.
     ok('the Pages title still carries the classes two other suites pin by name',
-      /class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</.test(html), html.slice(0, 600));
+      /class="cur-group-title cur-section-title dm-recent-eyebrow dm-section-eyebrow">Pages</.test(html), html.slice(0, 600));
     // v3.71.0 (G3): the Pages head row also carries its own ⓘ now — the
     // button sits inside the SAME head, after the title, so the property
     // this proves ("one head, not two eyebrows") still holds; only the
     // literal closing sequence gained the button between the title and the
     // head's own closing tag.
     ok('...and the two eyebrow classes are now ONE treatment, inside one head',
-      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages<\/div><button[^>]*class="tx-vh-info"[^>]*>[\s\S]*?<\/button><\/div>/
+      /<div class="cur-section-hd dm-section-hd"><span class="cur-section-num dm-section-num"[^>]*>2<\/span><div class="cur-group-title cur-section-title dm-recent-eyebrow dm-section-eyebrow">Pages<\/div><button[^>]*class="tx-vh-info"[^>]*>[\s\S]*?<\/button><\/div>/
         .test(html), html.slice(0, 600));
     // TITLE CASE, LIKE THE CONTEXT VIEW'S STEPS. An ALL-CAPS title beside
     // "① Foundations" next door is two designs for one heading — the second
@@ -528,13 +535,13 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     return d ? d[1].trim() : null;
   };
   for (const prop of ['width', 'height', 'font-size', 'font-weight', 'background', 'color', 'border']) {
-    const mine = decl(CSS, '.dm-section-num', prop);
+    const mine = decl(KIT_CSS, '.cur-section-num', prop);
     const theirs = decl(shellCss, '.settings-block-num', prop);
     ok('CONTROL -- both stylesheets declare ' + prop + ' on their numeral',
       mine !== null && theirs !== null, mine + ' / ' + theirs);
     eq('the numeral\'s ' + prop + ' matches the Context view\'s', mine, theirs);
   }
-  eq('the head\'s gap matches too', decl(CSS, '.dm-section-hd', 'gap'),
+  eq('the head\'s gap matches too', decl(KIT_CSS, '.cur-section-hd', 'gap'),
     decl(shellCss, '.settings-block-hd', 'gap'));
 
   // ── THE RHYTHM SURVIVES THE HEAD LEAVING THE SUMMARY (v3.64.2) ─────────
@@ -561,7 +568,8 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     decl(CSS, '.dm-sources > .dm-fold-body', 'padding-top'), 'var(--space-7)');
   eq('①\'s head row wraps', decl(CSS, '.dm-sources-hd .dm-section-head-row', 'flex-wrap'), 'wrap');
   eq('CONTROL -- and no other head row does', decl(CSS, '.dm-section-head-row', 'flex-wrap'), null);
-  const titleRule = /\n\.dm-section-hd \.dm-section-eyebrow,\n\.dm-section-hd \.dm-fold-title\s*\{([^}]*)\}/.exec(CSS);
+  eq('CONTROL -- ...nor the kit\'s head row', decl(KIT_CSS, '.cur-section-head-row', 'flex-wrap'), null);
+  const titleRule = /\n\.cur-section-hd \.cur-section-title\s*\{([^}]*)\}/.exec(KIT_CSS);
   ok('CONTROL -- one rule paints every section title', !!titleRule, String(titleRule));
   const titleProp = (p2) => {
     const m = new RegExp(p2 + ':\\s*([^;]+);').exec(titleRule ? titleRule[1] : '');
@@ -603,15 +611,15 @@ const hostPresent = (html) =>
   eq('...where it is NOT a fold that happens to be open: it has no `open` at all',
     foldOpen(mature, 'dm-sources-fold'), false);
   ok('the fresh domain reads "nothing ingested yet" in ①\'s head row',
-    /<span class="dm-fold-meta dm-section-meta">nothing ingested yet<\/span>/.test(fresh));
+    /<span class="cur-section-meta dm-fold-meta dm-section-meta">nothing ingested yet<\/span>/.test(fresh));
   ok('...and the mature one "last ingest …"',
-    /<span class="dm-fold-meta dm-section-meta">last ingest [^<]+<\/span>/.test(mature));
+    /<span class="cur-section-meta dm-fold-meta dm-section-meta">last ingest [^<]+<\/span>/.test(mature));
   eq('④ is not a fold that happens to be closed: it has no `open` at all',
     foldOpen(mature, 'dm-shared-fold'), false);
   ok('...and its host renders on every domain page',
     flatten(parseHtmlToChildren(mature)).some((x) => x.attrs.id === 'dm-shared-host'));
   ok('its head reading is EMPTY before the panel has reported — never a guess (D6)',
-    /<span class="dm-fold-meta dm-section-meta" id="dm-shared-reading"><\/span>/.test(mature));
+    /<span class="cur-section-meta dm-fold-meta dm-section-meta" id="dm-shared-reading"><\/span>/.test(mature));
   ok('...and is the recorded reading once it has',
     /id="dm-shared-reading">contributes to Cohort<\/span>/.test(renderCard({ sharedReading: 'contributes to Cohort' })));
 }
@@ -1822,7 +1830,9 @@ function stage(sourcesOpen, sharedOpen, ids) {
   ok('a missing title is not an error', callOrFail('landOnSection with no title',
     () => { landBox.landOnSection('.dm-sources-hd', 'dm-sources-title'); return true; }) === true);
   ok('the title that is focused is focusable without joining the tab order',
-    /id="dm-sources-title" tabindex="-1"/.test(SRC));
+    /titleId: 'dm-sources-title', focusable: true/.test(SRC)
+    && /idAttr\(opts\.titleId\) \+ \(opts\.focusable \? ' tabindex="-1"' : ''\)/.test(
+      readFileSync(join(ROOT, 'src/public/next/shared/section.js'), 'utf8')));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -2347,6 +2357,8 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     renderMonitor, freshnessTier, renderStatus, renderDescription,
     // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`.
     explainerMark,
+    // v3.89.0: the card, control row and fold rows are the section kit's.
+    ...SECTION_KIT,
   };
   const names = Object.keys(deps);
   const build = () => new Function(

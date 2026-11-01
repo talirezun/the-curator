@@ -91,6 +91,8 @@ import { fileURLToPath } from 'node:url';
 // const computed from the real kit — injected the same way every other
 // free identifier this sandbox's PREAMBLE cannot see is.
 import { explainerMark } from '../src/public/next/shared/explainer.js';
+// v3.89.0: the section kit, real functions (scripts/test-helpers/section-kit.js).
+import { SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -214,7 +216,7 @@ const FNS = [
 let box;
 try {
   box = new Function(
-    'explainerMark',
+    'explainerMark', ...SECTION_KIT_NAMES,
     PREAMBLE +
     extractConstText(SRC, 'PAGES_INFO') + '\n' +
     extractConstText(SRC, 'HEALTH_INFO') + '\n' +
@@ -266,7 +268,7 @@ ${(() => {
        __setMounted: (v) => { mounted = v; },
        __setSwapDom: (d) => { swapDom = d; },
        __resetTaskFlag: () => { reserveCapturedThisTask = false; } };`
-  )(explainerMark);
+  )(explainerMark, ...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the SWR sandbox from domains.js -- ' + err.message);
   process.exit(1);

@@ -203,6 +203,11 @@ import { freshnessTier, formatAge } from '../shared/age.js';
 // touched by it.
 import { subscribeAgeTicker } from '../shared/age-ticker.js';
 import { identitySlotClass } from '../shared/sidebar.js';
+// v3.89.0: the section body's fold rows and its one-line status card are the
+// kit's (shared/section.js), the same objects the Domain page draws — no
+// longer copies by value. `alias: 'sb'` keeps this view's own class names on
+// them, which its listeners and its context rules address.
+import { renderFoldRows, renderFoldRow, renderStatusLine } from '../shared/section.js';
 
 function freshState() {
   return {
@@ -1267,26 +1272,17 @@ function sectionRepoCell(conn) {
  *  the door right, one tinted panel. `trusted` marks a sentence the caller
  *  has already escaped (B carries identity-dot markup). */
 function renderSectionEmpty(sentence, trusted) {
-  return '<div class="sb-sec-empty">' +
-    '<p class="sb-sec-line sb-sec-empty-text">' + (trusted ? sentence : escapeHtml(sentence)) + '</p>' +
-    renderSectionDoor('secondary') +
-  '</div>';
+  return renderStatusLine(sentence, renderSectionDoor('secondary'), { textIsHtml: !!trusted, alias: 'sb' });
 }
 
-/** One fold row — the `.dm-group` anatomy (title left, one-line reading
+/** One fold row — shared/section.js renderFoldRow (title left, one-line reading
  *  right, chevron), closed by default, held open across a render by
  *  `state.expandedSecRows`. `forceOpen` covers a row an ACTION opened (the
  *  revoke panel). */
 function sectionFoldRow(connId, key, title, reading, bodyHtml, forceOpen) {
   const k = connId + ':' + key;
   const open = state.expandedSecRows.has(k) || !!forceOpen;
-  return '<details class="sb-sec-row" data-sb-sec-row="' + escapeHtml(k) + '"' + (open ? ' open' : '') + '>' +
-    '<summary class="sb-sec-row-summary">' + icon('chevronRight', 13) +
-      '<span class="sb-sec-row-label">' + escapeHtml(title) + '</span>' +
-      '<span class="sb-sec-row-meta">' + escapeHtml(reading) + '</span>' +
-    '</summary>' +
-    '<div class="sb-sec-row-body">' + bodyHtml + '</div>' +
-  '</details>';
+  return renderFoldRow({ key: k, label: title, meta: reading, open, bodyHtml, alias: 'sb' });
 }
 
 // v3.71.1: the one sentence the token-check ⓘ used to carry that is a
@@ -1447,7 +1443,7 @@ function renderSectionConnection(conn, last) {
       '</div>' +
       renderMonitor({ label: 'Shared Brain connection', lines, loud }) +
       '<div class="sb-sec-actions">' + actions + '</div>' +
-      '<div class="sb-sec-rows">' + rows + '</div>' +
+      renderFoldRows(rows, { alias: 'sb' }) +
     '</div>'
   );
 }

@@ -246,6 +246,7 @@ const {
 const { docsLinkHtml, DOCS_LINKS } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+const { SECTION_KIT_NAMES, SECTION_KIT_VALUES } = await import('./test-helpers/section-kit.js');
 // v3.71.1: THE REAL EXPLAINER KIT. It is import-free of the DOM (headless), so
 // every ⓘ this suite renders is the one the browser renders; the entries
 // themselves are read from shared/explainers.js so a panel can be asserted to
@@ -286,6 +287,8 @@ try {
     // which a stub would quietly stop being.
     'renderOverview',
     'explainerHtml', 'explainerMark', 'explainerLabel',
+    // v3.89.0: the section kit, real functions (scripts/test-helpers/section-kit.js).
+    ...SECTION_KIT_NAMES,
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
@@ -312,7 +315,7 @@ try {
     null,
     docsLinkHtml,
     renderOverview,
-    explainerHtml, explainerMark, explainerLabel);
+    explainerHtml, explainerMark, explainerLabel, ...SECTION_KIT_VALUES);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);

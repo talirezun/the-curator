@@ -125,6 +125,9 @@ import {
 // bag below the same way renderReadoutGroup already does.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
+// v3.89.0: the health card, its control row and its fold rows are the
+// section kit's; the panel is rendered with the REAL functions.
+import { SECTION_KIT } from './test-helpers/section-kit.js';
 // v3.71.0: chat.js's CHAT_INFO (G2) and domains.js's HEALTH_INFO (G4) are
 // module consts computed from the real kit — same blind spot, same fix as
 // renderViewHeader/renderMonitor above: a new module-level identifier makes
@@ -644,6 +647,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
     // computed from the real kit.
     explainerMark,
+    ...SECTION_KIT,
   };
   const names = Object.keys(deps);
   const fn = new Function(

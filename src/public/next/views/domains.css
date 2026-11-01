@@ -41,7 +41,6 @@
 /* Quick maintenance: replaces `.dm-quick-note`'s margin-top, for BOTH the
    cost/recovery description and the in-flight-write status that used to
    share its class and differ only by a colour modifier. */
-.dm-quick-footnote { margin-top: 10px; }
 
 /* v3.67.0: the no-key variant (prose + an "Open Settings" button that landed
    on General) is gone — the AI actions stay visible and disabled, and the run
@@ -49,7 +48,6 @@
    `.dm-quick-empty-text` and `.dm-quick-settings-btn` went with it
    (`.dm-quick-empty` stays, as a reference — see its own note). The run line itself sits directly under the action bar it prices,
    with the after-line under it when a run has finished. */
-.dm-quick-run { margin-top: 4px; }
 
 /* Browse card: replaces `.dm-browse-empty`'s 10px bottom margin for the
    pre-load blurb and the listing error. The no-matches line sits inside
@@ -321,40 +319,21 @@
    pinned by name in suites this package does not own. What changes is that
    ONE rule now paints every section title, so the two eyebrow classes stop
    being two treatments for one role.
+
+   v3.89.0: THE HEAD'S OWN RULES MOVED, unchanged in value, into
+   shared/section.css — `.dm-section-hd` → `.cur-section-hd`, `.dm-section-num`
+   → `.cur-section-num`, the title rule → `.cur-section-hd .cur-section-title`,
+   `.dm-section-head-row` → `.cur-section-head-row`, the head block's margins →
+   `.cur-section-head`, `.dm-fold-meta` → `.cur-section-meta` — so another page
+   can draw the same head (shared/section.js). The elements carry both names;
+   what stays in this file is the column rhythm and ①/④'s own context rules.
    ═══════════════════════════════════════════════════════════════════════ */
-.dm-section-hd {
-  display: flex;
-  align-items: baseline;
-  /* shell.css's own gap, and the same arithmetic: 20px numeral + 12px = the
-     32px indent the prose under a block head uses. */
-  gap: var(--space-6);
-  margin: 0 0 var(--space-4);
-}
-.dm-section-num {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-full);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: var(--numeric-tabular);
-  background: var(--accent-tint);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-border);
-  /* Optically centred against a baseline-aligned heading, exactly as
-     shell.css's numeral is. */
-  transform: translateY(2px);
-}
 /* THE SECTION TITLE, AT THE BLOCK-TITLE FACE. `.dm-section-eyebrow`'s own
    rule above still owns the left offset for a heading that is NOT in a head
    (there is none left on this page, but the rule is shared with the OVERVIEW
    head row); inside a head the flex row owns the spacing, so the margin goes.
    Not uppercase and not mono: this is a TITLE now, and the eyebrow face is
    what made six headings indistinguishable. */
-.dm-section-hd .dm-section-eyebrow,
 .dm-section-hd .dm-fold-title {
   margin: 0;
   font-family: var(--font-sans);
@@ -388,8 +367,6 @@
    `patchMainAroundHosts` replace it on every paint (the v3.46.0 shape D-J
    exists to prevent). So this block takes the adjacency rule `.dm-section-hd`
    had, and the head row inside it keeps the numeral at the one x position. */
-.dm-section-hd-block { margin-bottom: var(--space-4); }
-.dm-section-hd-block .dm-section-hd { margin-bottom: 0; }
 .dm-section-hd-block + .dm-section,
 .dm-section-hd-block + .dm-fold { margin-top: 0; }
 /* And the card hands the gap back to the section AFTER it, which used to come
@@ -402,11 +379,6 @@
    outright, and this view's suite fails on any appearance of it in this
    stylesheet — so the alignment lives on the wrapper instead. --space-2 is the
    same gap renderViewHeader's own row uses between a title and its mark. */
-.dm-section-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
 /* The eyebrow's bottom margin belongs to the HEADER when it is in one — the
    ⓘ panel and the caption come next, and a gap here would open between the
    eyebrow and its own fold. */
@@ -461,15 +433,6 @@
    meta whatever was left, which was 52px, and a six-clause line stacked into
    nine lines one word wide. `flex-wrap` on the row plus a basis that cannot
    fit beside a title is the whole fix. */
-.dm-fold-meta {
-  margin-left: auto;
-  flex: 0 1 auto;
-  min-width: 12ch;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  text-align: right;
-  font-variant-numeric: var(--numeric-tabular);
-}
 .dm-fold-body { padding: 0 var(--space-7) var(--space-7); }
 /* ── ① INGEST IS NOT A FOLD ANY MORE (v3.65.2, I1) ────────────────────────
    It keeps `.dm-fold`'s card chrome and both adjacency rules above (the head
@@ -525,9 +488,7 @@
    in shared/sidebar.css declares the same property, on the same element, and
    restating it here would be the duplication the move removes. */
 .dm-browse-tab-count,
-.dm-quick-cost,
 .dm-plan-detail,
-.dm-group-pill,
 .dm-issue-more { font-variant-numeric: var(--numeric-tabular); }
 /* A slug, a folder or a path named inside a sentence. Emphasised by colour
    and weight rather than by a change of face mid-line — the same decision as
@@ -569,25 +530,11 @@
 .dm-stat-other   { color: var(--text-2); }
 
 /* ── Health card ──────────────────────────────────────────────────────── */
+/* v3.89.0: `.dm-health-card` and `.dm-health-top` MOVED, unchanged in value,
+   into shared/section.css as `.cur-card` / `.cur-card-top` (the element
+   carries both names). What stays below is this view's own. */
 
-.dm-health-card {
-  padding: 16px;
-  border-radius: var(--radius-lg);
-  /* See the ONE CARD CHROME block by `.dm-browse-card`. */
-  border: 1px solid var(--hairline);
-  background: var(--surface);
-  box-shadow: var(--elev-1);
-  margin-bottom: 24px;
-}
 
-.dm-health-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
 .dm-health-head {
   display: flex;
   align-items: center;
@@ -711,14 +658,10 @@
    to `.dm-health-summary` at the top of this file. */
 
 /* ── Quick maintenance block ──────────────────────────────────────────── */
+/* v3.89.0: the card, its eyebrow, chip row, chips, label, cost, run line and
+   footnote MOVED, unchanged in value, into shared/section.css (`.cur-action*`).
+   `.dm-quick-empty` and `.dm-quick-note-busy` stay here. */
 
-.dm-quick {
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--accent-border);
-  background: var(--accent-tint);
-  margin-bottom: 16px;
-}
 /* `.dm-quick-empty` has had no markup since v3.67.0 (the no-key row it drew
    is gone — see `.dm-quick-run` at the top of this file). The rule is KEPT
    because it is a named reference: Ingest's verbatim-note callout copies this
@@ -733,18 +676,6 @@
   flex-wrap: wrap;
   font-size: var(--text-sm);
   color: var(--text-2);
-}
-.dm-quick-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent-text);
-  margin-bottom: 10px;
-}
-.dm-quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 /* ── `.dm-quick-btn` IS LAYOUT NOW, AND `.dm-quick-btn-ai` IS GONE ────────
    These were the app's THIRD "this spends money" treatment: a 30px box with
@@ -769,14 +700,11 @@
    --text-xs on the button and a child restating --text-sm would put 13px
    type in a 28px control — the one thing a size token cannot fix from
    outside. The weight stays, which is what the span was really for. */
-.dm-quick-btn { gap: 6px; }
-.dm-quick-label { font-weight: var(--weight-medium); }
 /* The cost readout stays one step quieter than the label it follows.
    MEASURED on the tinted face it now sits on: --text-2 over --accent-tint
    composited on --surface is 9.32 dark / 8.25 light, and on --surface-raised
    8.96 / 8.25 — above the 4.5 text floor in both themes on both backdrops
    the quick bar can render against. */
-.dm-quick-cost { font-size: var(--text-2xs); color: var(--text-2); }
 /* `.dm-quick-note` (the base rule) is GONE — zero users. It carried the
    cost-and-recovery promise, which is now the description role; its 10px top margin
    moved to `.dm-quick-footnote` at the top of this file.
@@ -853,38 +781,14 @@
 .dm-plan-actions { margin-top: 10px; }
 
 /* ── Issue groups ─────────────────────────────────────────────────────── */
+/* v3.89.0: the fold-row stack, the row, its summary, chevron, label, reading,
+   pill and body, and the row inside a fold MOVED, unchanged in value, into
+   shared/section.css (`.cur-folds`, `.cur-fold*`, `.cur-fold-item*`). The
+   fix-all button, the Scan body gap and the more-line stay here. */
 
-.dm-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 
-.dm-group { border-top: 1px solid var(--border-subtle); }
-.dm-group:first-child { border-top: none; }
 
-.dm-group-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 2px;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  list-style: none;
-}
-.dm-group-summary::-webkit-details-marker { display: none; }
-.dm-group-summary svg {
-  flex: none;
-  color: var(--text-3);
-  transition: transform var(--t-state);
-}
-.dm-group[open] > .dm-group-summary svg { transform: rotate(90deg); }
 
-.dm-group-label {
-  font-size: var(--text-sm);
-  color: var(--text);
-}
 .dm-group-dismissed .dm-dismissed-label { color: var(--text-2); }
 
 /* ── THE FOLD ROW'S META (v3.65.0) ────────────────────────────────────────
@@ -896,23 +800,7 @@
    whatever was left, which was 52px, and a two-clause line stacked into one
    word per line. `flex-wrap` on the summary plus a basis that cannot fit
    beside a label is the whole fix; `.dm-group-summary` already wraps. */
-.dm-group-meta {
-  margin-left: auto;
-  flex: 0 1 auto;
-  min-width: 12ch;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  text-align: right;
-  font-variant-numeric: var(--numeric-tabular);
-}
 
-.dm-group-pill {
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  background: var(--surface-inset);
-  border-radius: var(--radius-full);
-  padding: 1px 8px;
-}
 
 /* 26 -> --control-sm (28px). A real <button class="btn btn-secondary"> that
    applies every fix in a category at once, and it was the smallest pointer
@@ -924,11 +812,6 @@
   font-size: var(--text-xs);
 }
 
-.dm-group-body {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 2px 10px 21px;
-}
 /* ── THE SCAN ROW'S BODY (v3.65.0; v3.66.0) ─────────────────────────────
    Two monitors — the scan's totals, then its issues per category with a
    depth bar each — which are the same scan's readings at two grains. `gap`
@@ -936,28 +819,7 @@
 .dm-scan-body { gap: var(--space-5); }
 /* The summary's own row wraps, so a long meta line goes under the label
    instead of squeezing it — see `.dm-group-meta`. */
-.dm-group-summary { flex-wrap: wrap; }
 
-.dm-issue-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.dm-issue-row:last-child { border-bottom: none; }
-.dm-issue-main {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-.dm-issue-meta {
-  flex: none;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-}
 .dm-issue-more {
   font-size: var(--text-2xs);
   color: var(--text-2);

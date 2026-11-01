@@ -124,6 +124,17 @@ import { goToChatScoped } from '../shared/chat-scope.js';
 // REAL function rather than a stub, which is what makes their assertions
 // about this card assertions about the shipped component.
 import { renderOverview } from '../shared/overview.js';
+// ── THE SECTION KIT (v3.89.0) ──────────────────────────────────────────────
+// This page's section head, card, fold rows and tinted action card moved
+// into shared/section.js + shared/section.css UNCHANGED (a before/after pixel
+// comparison of this page measured the move as invisible), so Settings ›
+// MCP bridge can draw the same objects. `alias: 'dm'` keeps this page's
+// historical class names on the same elements — its listeners and its
+// context rules address them. Like renderOverview, these are free
+// identifiers inside functions several suites lift by brace-matching, so
+// those sandboxes inject the REAL functions.
+import { renderSectionHead, renderSectionTitle, renderCard, renderControlRow,
+  renderFoldRows, renderFoldRow, renderFoldItem, renderActionCard, actionChip } from '../shared/section.js';
 // ── THE SIDEBAR (v3.65.0) ──────────────────────────────────────────────────
 // THIS view's sidebar is the reference design — the maintainer's own words,
 // against the Context one: *"I suggest we go with the Domains design, which is
@@ -4136,19 +4147,9 @@ function renderMain(token) {
     // for a section's one reading — and because the head block is an
     // ordinary child it is patched like one when the domain changes.
     (readonly ? '' :
-      '<div class="dm-section dm-section-hd-block dm-sources-hd">' +
-        '<div class="dm-section-head-row">' +
-          '<div class="dm-section-hd">' +
-            '<span class="dm-section-num" aria-hidden="true">1</span>' +
-            '<div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest</div>' +
-          '</div>' +
-          INGEST_INFO.btn +
-          '<span class="dm-fold-meta dm-section-meta">' +
-            escapeHtml(lastWriteReading(domain, Date.now()).meta) +
-          '</span>' +
-        '</div>' +
-        INGEST_INFO.panel +
-      '</div>' +
+      renderSectionHead({ num: 1, title: 'Ingest', titleId: 'dm-sources-title', focusable: true,
+        info: INGEST_INFO, meta: lastWriteReading(domain, Date.now()).meta,
+        hostClass: 'dm-sources-hd', alias: 'dm' }) +
       '<section class="dm-fold dm-sources" id="dm-sources-fold" aria-labelledby="dm-sources-title">' +
         '<div class="dm-fold-body">' +
           '<div class="dm-host" id="dm-sources-host"></div>' +
@@ -4201,17 +4202,9 @@ function renderMain(token) {
     // THE READING is `state.sharedReading`, which onSharedLensChange() also
     // writes straight into `#dm-shared-reading` with no repaint; '' until
     // the panel has reported, never a guess (D6).
-    '<div class="dm-section dm-section-hd-block dm-shared-hd">' +
-      '<div class="dm-section-head-row">' +
-        '<div class="dm-section-hd">' +
-          '<span class="dm-section-num" aria-hidden="true">4</span>' +
-          '<div class="cur-group-title dm-section-eyebrow" id="dm-shared-title" tabindex="-1">Shared Brain</div>' +
-        '</div>' +
-        sharedInfo.btn +
-        '<span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">' + escapeHtml(state.sharedReading || '') + '</span>' +
-      '</div>' +
-      sharedInfo.panel +
-    '</div>' +
+    renderSectionHead({ num: 4, title: 'Shared Brain', titleId: 'dm-shared-title', focusable: true,
+      info: sharedInfo, meta: state.sharedReading || '', metaId: 'dm-shared-reading',
+      hostClass: 'dm-shared-hd', alias: 'dm' }) +
     '<section class="dm-fold dm-shared" id="dm-shared-fold" aria-labelledby="dm-shared-title">' +
       '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
     '</section>' +
@@ -4545,11 +4538,8 @@ function renderProjectsPanel(readonly) {
       // exists to hold it. The eyebrow stays: a group that does not name
       // itself is worse than one with a sentence too many.
       '<div class="dm-proj-head">' +
-        '<div class="dm-section-head-row">' +
-          '<div class="dm-section-hd">' +
-            '<span class="dm-section-num" aria-hidden="true">3</span>' +
-            '<div class="cur-group-title dm-section-eyebrow">Projects in this domain</div>' +
-          '</div>' +
+        '<div class="cur-section-head-row dm-section-head-row">' +
+          renderSectionTitle({ num: 3, title: 'Projects in this domain', alias: 'dm' }) +
           info.btn +
         '</div>' +
         info.panel +
@@ -5470,7 +5460,7 @@ async function loadBrowse(slug, token) {
 // its three call sites (loading, error, loaded) so the mark and its panel
 // always travel together.
 const PAGES_INFO = explainerMark('dm-pages-info', 'domains.pages');
-const BROWSE_EYEBROW = '<div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">2</span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</div>' + PAGES_INFO.btn + '</div>' + PAGES_INFO.panel;
+const BROWSE_EYEBROW = renderSectionTitle({ num: 2, title: 'Pages', titleClass: 'dm-recent-eyebrow', infoBtnHtml: PAGES_INFO.btn, alias: 'dm' }) + PAGES_INFO.panel;
 
 function renderBrowsePanel() {
   const b = activeBrowse();
@@ -7056,11 +7046,7 @@ function healthSection(inner) {
   if (!inner) return '';
   return (
     '<section class="dm-section dm-health">' +
-      '<div class="dm-section-hd">' +
-        '<span class="dm-section-num" aria-hidden="true">5</span>' +
-        '<div class="cur-group-title dm-section-eyebrow">Wiki health</div>' +
-        HEALTH_INFO.btn +
-      '</div>' +
+      renderSectionTitle({ num: 5, title: 'Wiki health', infoBtnHtml: HEALTH_INFO.btn, alias: 'dm' }) +
       HEALTH_INFO.panel +
       inner +
     '</section>'
@@ -7099,38 +7085,32 @@ function renderHealthPanel(domain, readonly) {
     // measured exemption from the delay-gate rule. Only the card around it
     // gains the reserved height.
     const reserve = state.reserve && state.reserve.health;
-    return healthSection(
-      '<div class="dm-health-card" aria-busy="true"' +
-        (reserve ? ' style="min-height:' + reserve + 'px"' : '') + '>' +
+    return healthSection(renderCard(
         // ── THE CARD NO LONGER TITLES ITSELF (v3.64.2) ──────────────────
         // "⑤ Wiki health" is written directly above this card by
         // `healthSection`, at the same x and in the same face as the other
         // four section headings. A second "Wiki health" inside the card was
         // the same words twice, eight pixels apart. This branch has no
         // control in its head row either, so the row goes with the title.
-        '<div class="dm-health-body">Scanning…</div>' +
-      '</div>'
-    );
+        '<div class="dm-health-body">Scanning…</div>',
+      { alias: 'dm', busy: true, minHeight: reserve }));
   }
   if (state.healthError) {
-    return healthSection(
-      '<div class="dm-health-card">' +
-        '<div class="dm-health-top">' +
-          // The title is the SECTION's (see the loading branch); this row
-          // exists for its one control.
-          // `usable` is the same predicate the readout branch uses: it is
-          // true only when a report for THIS domain is in hand. A first
-          // scan that failed leaves none, and this is the branch where the
-          // old always-"Rescan" label was actually wrong.
-          '<button class="btn btn-secondary" id="dm-rescan-btn">' + healthScanLabel(usable) + '</button>' +
-        '</div>' +
+    return healthSection(renderCard(
+        // The title is the SECTION's (see the loading branch); this row
+        // exists for its one control.
+        // `usable` is the same predicate the readout branch uses: it is
+        // true only when a report for THIS domain is in hand. A first
+        // scan that failed leaves none, and this is the branch where the
+        // old always-"Rescan" label was actually wrong.
+        renderControlRow('<button class="btn btn-secondary" id="dm-rescan-btn">' + healthScanLabel(usable) + '</button>',
+          { alias: 'dm' }) +
         // Third meaning of `.dm-health-body`, after the loading placeholder
         // above and the readout below: a runtime error. It is a STATE, so it
         // is renderStatus, and the server's message is the DETAIL rather than
         // being glued onto the end of our sentence with an em dash.
-        renderStatus({ state: 'danger', title: 'Could not scan this domain', detail: state.healthError }) +
-      '</div>'
-    );
+        renderStatus({ state: 'danger', title: 'Could not scan this domain', detail: state.healthError }),
+      { alias: 'dm' }));
   }
   const report = usable ? state.health : null;
   if (!report) return '';
@@ -7263,25 +7243,18 @@ function renderHealthPanel(domain, readonly) {
   // maintenance bar. A warning, a COST or an outcome may never sit behind a
   // chevron, and that bar carries a price on every button.
   const scanOpen = state.expandedGroups.has('scan');
-  const scanRow =
-    '<details class="dm-group dm-group-scan"' + (scanOpen ? ' open' : '') + ' data-group-key="scan">' +
-      '<summary class="dm-group-summary">' +
-        icon('chevronRight', 13) +
-        '<span class="dm-group-label">Scan</span>' +
-        '<span class="dm-group-meta">' +
-          escapeHtml(pluralize(total, 'open issue')) +
-          // Ticks (F12): the ONE clock rewrites this span's text in place.
-          (report.scannedAt
-            ? ' · <span data-age-at="' + escapeHtml(report.scannedAt) + '" data-age-text>' +
-                escapeHtml(relTime(report.scannedAt)) + '</span>'
-            : '') +
-        '</span>' +
-      '</summary>' +
-      '<div class="dm-group-body dm-scan-body">' +
-        healthMonitor +
-        categoryMonitor +
-      '</div>' +
-    '</details>';
+  const scanRow = renderFoldRow({
+    key: 'scan', hostClass: 'dm-group-scan', label: 'Scan', open: scanOpen, alias: 'dm',
+    metaHtml:
+      escapeHtml(pluralize(total, 'open issue')) +
+      // Ticks (F12): the ONE clock rewrites this span's text in place.
+      (report.scannedAt
+        ? ' · <span data-age-at="' + escapeHtml(report.scannedAt) + '" data-age-text>' +
+            escapeHtml(relTime(report.scannedAt)) + '</span>'
+        : ''),
+    bodyClass: 'dm-scan-body',
+    bodyHtml: healthMonitor + categoryMonitor,
+  });
 
   // Same one-shot token as the page list's, same reason: a report that lands
   // after a 750 ms scan has missed the view-enter animation entirely, so it
@@ -7295,15 +7268,13 @@ function renderHealthPanel(domain, readonly) {
     healthRevealCls = ' content-reveal';
   }
 
-  return healthSection(
-    '<div class="dm-health-card' + healthRevealCls + '">' +
-      '<div class="dm-health-top">' +
-        // The title is the SECTION's (see the loading branch); this row
-        // exists for its one control.
+  return healthSection(renderCard(
+      // The title is the SECTION's (see the loading branch); this row
+      // exists for its one control.
+      renderControlRow(
         '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
           ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : healthScanLabel(!!report)) +
-        '</button>' +
-      '</div>' +
+        '</button>', { alias: 'dm' }) +
       // Honesty: while revalidating, these counts are the PREVIOUS scan's.
       // Saying so is the price of not collapsing the panel — the figures
       // stay useful, and nothing claims they are current. It is now a STATUS
@@ -7325,16 +7296,15 @@ function renderHealthPanel(domain, readonly) {
                            detail: 'The figures below are the last completed scan’s until this one finishes.' }) +
           '</div>'
         : '') +
-      '<div class="dm-groups dm-groups-scan">' + scanRow + '</div>' +
+      renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (state.banner ? renderBanner() : '') +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
       (readonly ? '' : renderAiProgressRing()) +
       (state.confirm ? renderConfirmCard() : '') +
       (state.pendingPlan ? renderPendingPlan(crossMountBusy) : '') +
       (activeSemanticScan() ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
-      renderIssueGroups(report, readonly, crossMountBusy) +
-    '</div>'
-  );
+      renderIssueGroups(report, readonly, crossMountBusy),
+    { alias: 'dm', hostClass: healthRevealCls.trim() }));
 }
 
 function renderBanner(banner) {
@@ -7464,12 +7434,9 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
 
   const safeTotal = countSafeFixable(report);
   if (safeTotal > 0) {
-    items.push(
-      '<button class="btn btn-secondary btn-xs dm-quick-btn" data-action="fixSafe"' + (disableAll ? ' disabled' : '') + '>' +
-        (busy === 'fixSafe' ? buttonRingHtml() : '') +
-        '<span class="dm-quick-label">' + (busy === 'fixSafe' ? 'Fixing…' : 'Fix ' + pluralize(safeTotal, 'safe issue')) + '</span>' +
-      '</button>'
-    );
+    items.push(actionChip({ action: 'fixSafe', disabled: disableAll, alias: 'dm',
+      leadHtml: busy === 'fixSafe' ? buttonRingHtml() : '',
+      label: busy === 'fixSafe' ? 'Fixing…' : 'Fix ' + pluralize(safeTotal, 'safe issue') }));
   }
 
   // v3.83.0 — the index rebuild: deterministic, free, previewed. Deliberately
@@ -7479,12 +7446,9 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   if (drift) {
     const missing = Number(drift.missing) || 0;
     const what = missing > 0 ? countOf(missing, 'page', 'pages') + ' missing' : countOf(drift.stale, 'stale row', 'stale rows');
-    items.push(
-      '<button class="btn btn-secondary btn-xs dm-quick-btn" data-action="indexPlan"' + (disableAll ? ' disabled' : '') + '>' +
-        (busy === 'indexRebuildPlan' ? buttonRingHtml() : '') +
-        '<span class="dm-quick-label">' + (busy === 'indexRebuildPlan' ? 'Planning…' : 'Rebuild index · ' + escapeHtml(what)) + '</span>' +
-      '</button>'
-    );
+    items.push(actionChip({ action: 'indexPlan', disabled: disableAll, alias: 'dm',
+      leadHtml: busy === 'indexRebuildPlan' ? buttonRingHtml() : '',
+      label: busy === 'indexRebuildPlan' ? 'Planning…' : 'Rebuild index · ' + what }));
   }
 
   // ── THE AI ACTIONS ARE NEVER HIDDEN (v3.67.0) ──────────────────────────
@@ -7521,11 +7485,11 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   const spent = state.aiSpent && domain && state.aiSpent.slug === domain.slug
     ? renderSpent(state.aiSpent.spent, { id: 'dm-quick-spent' }) : '';
 
-  return (
-    '<div class="dm-quick">' +
-      '<div class="dm-quick-eyebrow cur-eyebrow">' + icon('sparkles', 12) + ' QUICK MAINTENANCE</div>' +
-      '<div class="dm-quick-actions">' + items.join('') + '</div>' +
-      (runLine || spent ? '<div class="dm-quick-run">' + runLine + spent + '</div>' : '') +
+  return renderActionCard({
+    alias: 'dm', iconHtml: icon('sparkles', 12), eyebrow: 'QUICK MAINTENANCE',
+    chipsHtml: items.join(''),
+    runHtml: runLine || spent ? runLine + spent : '',
+    footnoteHtml:
       // Wording nit found during live verification: `crossMountBusy` is
       // true for BOTH "some earlier, abandoned mount's write is still
       // running" AND "this exact mount's own action, which it just
@@ -7554,14 +7518,11 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
       // the cost promise and the git-recovery note are the disclosure that
       // makes a spend gate a gate, and v3.16.1's rule is that a warning behind
       // a click is not a warning.
-      '<div class="dm-quick-footnote">' +
-        (crossMountBusy && !busy
-          ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running',
-                           detail: 'Please wait for it to finish before starting another.' })
-          : renderDescription('Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE)) +
-      '</div>' +
-    '</div>'
-  );
+      (crossMountBusy && !busy
+        ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running',
+                         detail: 'Please wait for it to finish before starting another.' })
+        : renderDescription('Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE)),
+  });
 }
 
 function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
@@ -7576,18 +7537,17 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   // `aiActionDisabledAttrs` is '' whenever a run is possible, so the ordinary
   // busy/estimate reasons keep their own plain `disabled`.
   const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
-  return (
-    '<button class="btn btn-ai btn-xs dm-quick-btn" data-action="' + key + '"' +
-      (noKeyAttrs || (disabled ? ' disabled' : '')) + '>' +
-      // The sparkles mark (token spend) gives way to the ring only while
-      // THIS action is the one running — the spend has already happened by
-      // then, and liveness is the useful signal. Every other button keeps
-      // its sparkles so the cost warning never disappears from the bar.
-      (running ? buttonRingHtml() : icon('sparkles', 12)) +
-      '<span class="dm-quick-label">' + escapeHtml(label2) + '</span>' +
-      (costText ? '<span class="dm-quick-cost">' + escapeHtml(costText) + '</span>' : '') +
-    '</button>'
-  );
+  return actionChip({
+    tier: 'ai', action: key, alias: 'dm',
+    attrs: noKeyAttrs, disabled: !!disabled,
+    // The sparkles mark (token spend) gives way to the ring only while
+    // THIS action is the one running — the spend has already happened by
+    // then, and liveness is the useful signal. Every other button keeps
+    // its sparkles so the cost warning never disappears from the bar.
+    leadHtml: running ? buttonRingHtml() : icon('sparkles', 12),
+    label: label2,
+    cost: costText || '',
+  });
 }
 
 function renderConfirmCard() {
@@ -7728,12 +7688,11 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   );
 
   const cards = open.map((p) => renderSemanticPairCard(p, readonly, busy)).join('');
-  const handledRows = handled.map((p) => (
-    '<div class="dm-issue-row dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : '') + '">' +
-      '<span class="mono dm-issue-main">' + escapeHtml(p.removeFolder + '/' + p.removeSlug) + ' → ' + escapeHtml(p.keepFolder + '/' + p.keepSlug) + '</span>' +
-      '<span class="dm-issue-meta">' + escapeHtml(semanticHandledLabel(p)) + '</span>' +
-    '</div>'
-  )).join('');
+  const handledRows = handled.map((p) => renderFoldItem({
+    alias: 'dm', hostClass: 'dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : ''),
+    main: p.removeFolder + '/' + p.removeSlug + ' → ' + p.keepFolder + '/' + p.keepSlug,
+    meta: semanticHandledLabel(p),
+  })).join('');
 
   return (
     '<div class="dm-plan-card">' +
@@ -7863,7 +7822,7 @@ function renderIssueGroups(report, readonly, crossMountBusy) {
   // back to the old figure.
   const dismissedGroup = renderDismissedGroup(
     Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed);
-  return '<div class="dm-groups">' + groups + dismissedGroup + '</div>';
+  return renderFoldRows(groups + dismissedGroup, { alias: 'dm' });
 }
 
 function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
@@ -7879,21 +7838,15 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   const disabled = busy || crossMountBusy;
   const rows = issues.slice(0, 50).map((issue) => renderIssueRow(cat.key, issue, readonly)).join('');
   const more = issues.length > 50 ? '<div class="dm-issue-more">…and ' + (issues.length - 50) + ' more</div>' : '';
-  return (
-    '<details class="dm-group"' + (open ? ' open' : '') + ' data-group-key="' + cat.key + '">' +
-      '<summary class="dm-group-summary">' +
-        icon('chevronRight', 13) +
-        '<span class="dm-group-label">' + escapeHtml(cat.label) + '</span>' +
-        '<span class="dm-group-pill">' + issues.length + '</span>' +
-        (canFixAll && fixAllCount > 0 ? (
-          '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (disabled ? ' disabled' : '') + '>' +
-            (busy ? 'Fixing…' : 'Fix all ' + fixAllCount) +
-          '</button>'
-        ) : '') +
-      '</summary>' +
-      '<div class="dm-group-body">' + rows + more + '</div>' +
-    '</details>'
-  );
+  return renderFoldRow({
+    key: cat.key, label: cat.label, pill: issues.length, open, alias: 'dm',
+    actionHtml: canFixAll && fixAllCount > 0 ? (
+      '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (disabled ? ' disabled' : '') + '>' +
+        (busy ? 'Fixing…' : 'Fix all ' + fixAllCount) +
+      '</button>'
+    ) : '',
+    bodyHtml: rows + more,
+  });
 }
 
 function renderIssueRow(type, issue, readonly) {
@@ -7955,7 +7908,7 @@ function renderIssueRow(type, issue, readonly) {
       meta = 'Missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
         + (stale > 0 ? ', and ' + num(stale) + (stale === 1 ? ' row points' : ' rows point') + ' to ' + (stale === 1 ? 'a page' : 'pages') + ' that no longer ' + (stale === 1 ? 'exists' : 'exist') : '')
         + '. Rebuilt from the files on disk — free, previewed first. '
-        + '<button class="btn btn-ghost btn-xs dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
+        + '<button class="btn btn-ghost btn-xs cur-action-chip dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
       break;
     }
     default:
@@ -7967,13 +7920,10 @@ function renderIssueRow(type, issue, readonly) {
       main = escapeHtml(JSON.stringify(issue));
   }
   const canDismiss = !readonly && dismissible;
-  return (
-    '<div class="dm-issue-row">' +
-      '<span class="mono dm-issue-main">' + main + '</span>' +
-      '<span class="dm-issue-meta">' + meta + '</span>' +
-      (canDismiss ? '<button class="btn btn-ghost dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'>Dismiss</button>' : '') +
-    '</div>'
-  );
+  return renderFoldItem({
+    alias: 'dm', mainHtml: main, metaHtml: meta,
+    actionHtml: canDismiss ? '<button class="btn btn-ghost dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'>Dismiss</button>' : '',
+  });
 }
 
 function renderDismissedGroup(count) {
@@ -7983,26 +7933,20 @@ function renderDismissedGroup(count) {
   if (!open) {
     body = '';
   } else if (state.dismissedRecords === null) {
-    body = gatedLoader(loadGate, 'Loading…', 'dm-issue-row dm-issue-meta');
+    // The loader paints as a fold item's quiet fact, so it carries the kit's
+    // names beside this view's (shared/section.css owns the rules).
+    body = gatedLoader(loadGate, 'Loading…', 'cur-fold-item cur-fold-item-meta dm-issue-row dm-issue-meta');
   } else {
-    body = state.dismissedRecords.map((r) => (
-      '<div class="dm-issue-row">' +
-        '<span class="mono dm-issue-main">' + escapeHtml(describeDismissed(r)) + '</span>' +
-        '<button class="btn btn-ghost dm-restore-btn" data-restore-key=\'' + escapeHtml(JSON.stringify(r)) + '\'>Restore</button>' +
-      '</div>'
-    )).join('') || '<div class="dm-issue-row"><span class="dm-issue-meta">Nothing dismissed.</span></div>';
+    body = state.dismissedRecords.map((r) => renderFoldItem({
+      alias: 'dm', main: describeDismissed(r),
+      actionHtml: '<button class="btn btn-ghost dm-restore-btn" data-restore-key=\'' + escapeHtml(JSON.stringify(r)) + '\'>Restore</button>',
+    })).join('') || renderFoldItem({ alias: 'dm', meta: 'Nothing dismissed.' });
   }
-  return (
-    '<details class="dm-group dm-group-dismissed"' + (open ? ' open' : '') + ' data-group-key="dismissed">' +
-      '<summary class="dm-group-summary">' +
-        icon('chevronRight', 13) +
-        '<span class="dm-group-label dm-dismissed-label">Dismissed</span>' +
-        '<span class="dm-group-pill">' +
-          (open && Array.isArray(state.dismissedRecords) ? state.dismissedRecords.length : count) + '</span>' +
-      '</summary>' +
-      '<div class="dm-group-body">' + body + '</div>' +
-    '</details>'
-  );
+  return renderFoldRow({
+    key: 'dismissed', hostClass: 'dm-group-dismissed', label: 'Dismissed', labelClass: 'dm-dismissed-label',
+    pill: open && Array.isArray(state.dismissedRecords) ? state.dismissedRecords.length : count,
+    open, alias: 'dm', bodyHtml: body,
+  });
 }
 
 function describeDismissed(r) {
