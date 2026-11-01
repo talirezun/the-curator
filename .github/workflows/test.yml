@@ -253,22 +253,30 @@ jobs:
           foreach ($k in $keep) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
           $psi.EnvironmentVariables.Clear()
           foreach ($k in $keep) { if ($saved[$k]) { $psi.EnvironmentVariables[$k] = $saved[$k] } }
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $psi.StandardOutputEncoding = $utf8
+          $psi.StandardErrorEncoding = $utf8
           $p = [System.Diagnostics.Process]::Start($psi)
           $outTask = $p.StandardOutput.ReadToEndAsync()
           $errTask = $p.StandardError.ReadToEndAsync()
-          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1"}}}')
-          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","method":"notifications/initialized"}')
-          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
-          $p.StandardInput.Flush()
+          # Raw UTF-8 bytes on the base stream: Windows PowerShell's stdin
+          # writer puts a byte-order mark before the first line, which turns
+          # `initialize` into a line no JSON-RPC client would ever send.
+          $msgs = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1"}}}' + "`n" +
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' + "`n" +
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' + "`n"
+          $bytes = $utf8.GetBytes($msgs)
+          $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+          $p.StandardInput.BaseStream.Flush()
           Start-Sleep -Seconds 8
-          $p.StandardInput.Close()
+          $p.StandardInput.BaseStream.Close()
           if (-not $p.WaitForExit(15000)) { Stop-Process -Id $p.Id -Force; [void]$p.WaitForExit(5000) }
           $out = $outTask.Result; $err = $errTask.Result
           Write-Host "exit code: $($p.ExitCode)"
           Write-Host '----- stderr -----'; Write-Host $err
           $lines = @($out -split "`n" | Where-Object { $_.Trim() })
           $init = $null; $list = $null
-          foreach ($l in $lines) { $m = $l | ConvertFrom-Json; if ($m.id -eq 1) { $init = $m }; if ($m.id -eq 2) { $list = $m } }
+          foreach ($l in $lines) { try { $m = $l | ConvertFrom-Json } catch { Write-Host "not JSON on stdout: $($l.Substring(0, [Math]::Min(200, $l.Length)))"; continue }; if ($m.id -eq 1) { $init = $m }; if ($m.id -eq 2) { $list = $m } }
           if (-not $init -or $init.result.serverInfo.name -ne 'my-curator') { Write-Host '----- stdout -----'; Write-Host $out; throw 'the bridge did not answer initialize' }
           $n = @($list.result.tools).Count
           if ($n -lt 1) { Write-Host '----- stdout -----'; Write-Host $out; throw 'the bridge listed no tools' }
