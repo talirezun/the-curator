@@ -651,6 +651,12 @@ export function appRowModel(rawTool, ctx = {}) {
   }
   // The machine reading's other faults (hooks, an entry the status called fine).
   for (const w of machineWarnings(h, { platform, status })) if (!(sk && w.kind === 'skill')) mw.push(w);
+  // A Setup-check bridge fix the install status does not carry (BE amendment 2
+  // `setupFix`, e.g. a copy-only app whose launch line points at a missing
+  // file). The backend counts it in TO FIX, so the row says it.
+  if (tool.setupFix && typeof tool.setupFix === 'object' && !mw.some((w) => w.kind === 'bridge-file')) {
+    mw.push({ kind: 'bridge-file', tone: 'warn', text: 'Its MCP entry needs attention: ' + (isStr(tool.setupFix.word) ? tool.setupFix.word : 'see the files below') + '.', strong: '', acts: [] });
+  }
   for (const w of mw) warnings.push({ ...w, severity: 'fix' });
 
   // Quiet lines: how an unconnected app gets its entry.
@@ -678,12 +684,30 @@ export function appRowModel(rawTool, ctx = {}) {
 
   const fixN = mw.length;
   const connected = status === 'connected' || !!via;
-  const fix = status === 'needs-update' || status === 'cant-read' || warnings.some((w) => w.severity === 'fix');
+  // The backend's row `verdict` decides "to fix" when it is sent (one rule for
+  // the rows and the overview); an older payload falls back to the warnings.
+  const fix = isStr(tool.verdict) ? tool.verdict === 'to-fix'
+    : status === 'needs-update' || status === 'cant-read' || warnings.some((w) => w.severity === 'fix');
   return { tool, id, label, status, via, h, installable, canWrite, ticked, plan, warnings, quiet, fixN,
     bridgeTag: bfact.tag || '', connected, fix, platform };
 }
 
-/** `{connected, fix, notConnected}` over row models — the overview's three cards. Pure. */
+/**
+ * `{connected, fix, notConnected}` — the overview's three cards. Pure.
+ * THE SOURCE IS THE BACKEND: when the status payload carries `counts`
+ * (v3.88.0), those numbers are rendered as sent; only an older payload is
+ * counted here, from the row models, by the same rule the route uses.
+ */
+export function countsFor(data, models) {
+  const c = data && data.counts;
+  const n = (v) => Number.isInteger(v) && v >= 0;
+  if (c && n(c.connected) && n(c.toFix) && n(c.notConnected)) {
+    return { connected: c.connected, fix: c.toFix, notConnected: c.notConnected };
+  }
+  return countVerdicts(models);
+}
+
+/** `{connected, fix, notConnected}` over row models (the fallback). Pure. */
 export function countVerdicts(models) {
   const c = { connected: 0, fix: 0, notConnected: 0 };
   for (const m of Array.isArray(models) ? models : []) {
@@ -709,7 +733,7 @@ export function appRowModels(status, ctx = {}) {
  */
 export function overviewLine(tools, platform, ctx = {}) {
   const models = (Array.isArray(tools) ? tools : []).map((t) => appRowModel(t, { ...ctx, platform }));
-  const c = countVerdicts(models);
+  const c = countsFor(ctx.data, models);
   const parts = [];
   if (c.connected) parts.push(c.connected + ' connected');
   if (c.fix) parts.push(c.fix + ' to fix');
@@ -816,7 +840,7 @@ export function renderInstallOverview(status, ticks, busy, ctx = {}) {
   if (!data) return '';
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const models = appRowModels(status, { ...ctx, ticks });
-  const c = countVerdicts(models);
+  const c = countsFor(data, models);
   const card = renderOverview({
     id: 'settings-mcpi-overview',
     eyebrow: 'MY CURATOR IN YOUR AGENT APPS',

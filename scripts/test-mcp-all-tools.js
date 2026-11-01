@@ -373,9 +373,13 @@ eq(agg.sessions.lastSaveAt, null,
   eq(body.present, true, 'present is true over a real log');
   const row = (n) => body.tools.find((t) => t.name === n) || {};
   eq(JSON.stringify(Object.keys(row('get_node')).sort()),
-    JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
+    JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastAgentAt', 'lastOk', 'lastUsedAt', 'lastVia',
       'mutates', 'name', 'purpose', 'refusedTotal', 'selfTestTotal'].sort()),
-    'every row carries exactly the twelve contracted fields (nine, plus lastVia and selfTestTotal, plus v3.66.0 count7dAgent)');
+    'every row carries exactly the thirteen contracted fields (nine, plus lastVia and selfTestTotal, plus v3.66.0 count7dAgent, plus v3.88.0 lastAgentAt)');
+  ok(body.tools.every((t) => t.lastAgentAt === null),
+    'after only the button\u2019s run, no tool has an AGENT use (lastAgentAt null on every row; v3.88.0)');
+  ok(body.lastExercise && body.lastExercise.total === body.tools.length && body.lastExercise.answered === body.tools.length,
+    'and the log reads back the run as lastExercise: every tool, every one answered (v3.88.0)', body.lastExercise);
   ok(body.tools.every((t) => t.count7d === 1 && t.count7dAgent === 0),
     'v3.66.0: a whole "Test all tools" run lights count7d on every tool and leaves count7dAgent at 0 — a busiest-tools bar cannot be drawn from it');
   ok(body.tools.every((t) => typeof t.lastUsedAt === 'string'),

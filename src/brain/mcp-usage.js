@@ -851,10 +851,14 @@ export async function readUsage(opts = {}) {
       agg = byTool[r.tool] = {
         lastUsedAt: null, lastOk: null, lastVia: null,
         count7d: 0, countTotal: 0, refusedTotal: 0, selfTestTotal: 0,
-        count7dAgent: 0,
+        count7dAgent: 0, lastAgentAt: null,
       };
     }
     agg.countTotal++;
+    // v3.88.0 — the newest call that was NOT the app's own test run: "when
+    // did an AGENT last use this tool", which `lastUsedAt` cannot answer once
+    // a "Test all N tools" press has touched every tool.
+    if (r.via !== VIA_SELF_TEST && (agg.lastAgentAt === null || r.at >= Date.parse(agg.lastAgentAt))) agg.lastAgentAt = r.ts;
     if (r.refused) agg.refusedTotal++;
     if (r.via === VIA_SELF_TEST) agg.selfTestTotal++;
     if (r.at >= since) agg.count7d++;
@@ -898,12 +902,49 @@ export async function readUsage(opts = {}) {
     present,
     path: file,
     logBytes,
+    lastExercise: lastExerciseOf(toolLines),
     logStartedAt: lines.length ? lines[0].ts : null,
     lineCount: toolLines.length,
     sessionLineCount,
     malformedLines,
     byTool,
     sessions: { lastBootstrapAt, lastSaveAt },
+  };
+}
+
+/**
+ * The last "Test all N tools" run, read back from the log (v3.88.0), so the
+ * tool map's outcome line survives a reload. One run is one bridge child, so
+ * it is the self-test tool lines sharing the sid of the NEWEST self-test line.
+ *
+ *   {at, total, answered, refused, durationMs, failed: [tool], refusals: [{tool, note: null}]}
+ *   or null when the log holds no self-test line with a sid.
+ *
+ * `at` is the run's first call; `durationMs` spans its first call to the end
+ * of its last one (the calls, not the child's start-up). The log is
+ * content-free, so a refusal's reason is not in it: `note` is null. Pure.
+ */
+export function lastExerciseOf(toolLines) {
+  let newest = null;
+  for (const r of toolLines || []) {
+    if (r && r.via === VIA_SELF_TEST && r.sid && (!newest || r.at >= newest.at)) newest = r;
+  }
+  if (!newest) return null;
+  const run = toolLines.filter((r) => r.via === VIA_SELF_TEST && r.sid === newest.sid);
+  // The last line per tool decides it (a tool called twice in one run).
+  const byTool = new Map();
+  for (const r of run) { const p = byTool.get(r.tool); if (!p || r.at >= p.at) byTool.set(r.tool, r); }
+  const last = [...byTool.values()];
+  const first = Math.min(...run.map((r) => r.at));
+  const end = Math.max(...run.map((r) => r.at + (Number.isFinite(r.ms) ? r.ms : 0)));
+  return {
+    at: new Date(first).toISOString(),
+    total: last.length,
+    answered: last.filter((r) => r.ok || r.refused).length,
+    refused: last.filter((r) => r.refused).length,
+    durationMs: Math.max(0, end - first),
+    failed: last.filter((r) => !r.ok && !r.refused).map((r) => r.tool),
+    refusals: last.filter((r) => r.refused).map((r) => ({ tool: r.tool, note: null })),
   };
 }
 

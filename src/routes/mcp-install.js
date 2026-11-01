@@ -114,6 +114,7 @@ export function rowVerdict(row) {
   if (FIX_STATUSES.has(row.status)) toFix++;
   if (row.skill) toFix++;
   if (row.setupFix) toFix++;
+  if (row.hooksFix) toFix++;
   if (row.bridges && row.bridges.notice === 'warn') toFix++;
   const verdict = toFix > 0 ? 'to-fix'
     : row.status === 'connected' || row.connectedVia ? 'connected' : 'not-connected';
@@ -387,6 +388,9 @@ export async function buildStatus() {
     // carry (a copy-only app whose launch line points at a missing file).
     row.setupFix = m && m.bridge && m.bridge.state === STATES.FIX && !FIX_STATUSES.has(row.status)
       ? { word: m.bridge.word } : null;
+    // The Setup check's hooks FIX (the page shows it as a warning on the row,
+    // so it is counted here too — the overview and the rows read one rule).
+    row.hooksFix = m && m.hooks && m.hooks.state === STATES.FIX ? { word: m.hooks.word || null } : null;
     const b = byApp[row.id];
     row.bridges = b ? { ...b, toolCount: bp.current ? bp.current.toolCount : null } : null;
     // "used 4 weeks ago" beside "no entry": the use was real (the usage log
@@ -397,10 +401,17 @@ export async function buildStatus() {
       : null;
     Object.assign(row, rowVerdict(row));
   }
+  // The overview's three cards (v3.88.0 integration, the acceptance picture):
+  // CONNECTED counts every row with a working entry — its own or another
+  // app's — EVEN when it also has something to fix, so a connected app with
+  // an outdated skill is "3 connected · 1 to fix". TO FIX counts the to-fix
+  // verdicts; NOT CONNECTED the rows that are neither. The page renders these
+  // numbers as sent; `verdict` on each row stays the single bucket.
+  const isConnected = (r) => r.status === 'connected' || !!r.connectedVia;
   const counts = {
-    connected: tools.filter((r) => r.verdict === 'connected').length,
+    connected: tools.filter(isConnected).length,
     toFix: tools.filter((r) => r.verdict === 'to-fix').length,
-    notConnected: tools.filter((r) => r.verdict === 'not-connected').length,
+    notConnected: tools.filter((r) => !isConnected(r) && r.verdict !== 'to-fix').length,
   };
   const writable = (mac || (windows && !!wc && !!wc.roots)) && !!home && !(launcherState.required && !launcherState.present);
   const available = tools.filter((r) => isInstallCapableOn(r.id, platform) && installable(r)).length;

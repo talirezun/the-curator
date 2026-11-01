@@ -219,6 +219,15 @@ R.__setBridgeDeps({
   eq('…disabledReason nothing_to_install', st2.install.disabledReason, 'nothing_to_install');
   eq('…and the button’s words', st2.install.disabledText, 'Nothing to install');
   eq('…while Claude Desktop’s changed-tools bridge still makes it to-fix', st2.tools.find((t) => t.id === 'claude-desktop').verdict, 'to-fix');
+  // The overview's cards (integration, per the acceptance picture): a CONNECTED
+  // app that also has something to fix counts in BOTH cards; NOT CONNECTED is
+  // the rows that are neither. Claude Desktop (bridge warn) and Antigravity
+  // (outdated skill) are connected AND to fix; Claude Code connected via; OpenCode neither.
+  eq('counts after connecting: connected includes the connected rows that are also to fix', st2.counts.connected, 3);
+  eq('…to fix', st2.counts.toFix, 2);
+  eq('…not connected is neither', st2.counts.notConnected, 1);
+  eq('a Setup hooks fix makes a connected row to-fix', R.rowVerdict({ status: 'connected', hooksFix: { word: 'x' } }).verdict, 'to-fix');
+  eq('CONTROL: without it the connected row is connected', R.rowVerdict({ status: 'connected' }).verdict, 'connected');
 
   M.__setPlatformOverride('linux');
   const st3 = await R.buildStatus();
@@ -231,6 +240,42 @@ R.__setBridgeDeps({
   const st4 = await R.buildStatus();
   eq('without a seam, under test isolation, the bridge reading is "not looked"', st4.bridgeCheck.checked, false);
   ok('…and no row claims a bridge', st4.tools.every((t) => t.bridges === null));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§3b  The tool map\u2019s readings from the usage log (integration): lastAgentAt and lastExercise');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  const L = (o) => ({ ok: true, refused: false, ms: 10, via: null, sid: 'a'.repeat(12), ...o, at: Date.parse(o.ts) });
+  const lines = [
+    L({ ts: '2026-11-01T09:00:00.000Z', tool: 'list_domains', sid: 'b'.repeat(12) }),
+    L({ ts: '2026-11-01T10:00:00.000Z', tool: 'list_domains', via: 'self-test', sid: 'c'.repeat(12) }),
+    L({ ts: '2026-11-01T11:00:00.000Z', tool: 'list_domains', via: 'self-test' }),
+    L({ ts: '2026-11-01T11:00:00.400Z', tool: 'get_index', via: 'self-test', ok: false, refused: true }),
+    L({ ts: '2026-11-01T11:00:01.000Z', tool: 'get_node', via: 'self-test', ok: false, ms: 100 }),
+  ];
+  const x = U.lastExerciseOf(lines);
+  eq('lastExercise: the NEWEST run only (by its sid)', x && x.total, 3);
+  eq('…started at its first call', x.at, '2026-11-01T11:00:00.000Z');
+  eq('…answered counts ok and refused', x.answered, 2);
+  eq('…refused', x.refused, 1);
+  eq('…the tool that did not answer, by name', x.failed.join(','), 'get_node');
+  eq('…the duration spans first call to the end of the last', x.durationMs, 1100);
+  eq('…a refusal carries no invented reason', x.refusals[0].note, null);
+  eq('no self-test line → null', U.lastExerciseOf(lines.slice(0, 1)), null);
+  // lastAgentAt through the real route, over a real log file.
+  const log = (await import('../src/brain/paths.js')).getMcpUsageLogPath();
+  put(log, [
+    '{"ts":"2026-10-30T08:00:00.000Z","tool":"search_wiki","domain":null,"ok":true,"refused":false,"ms":1,"sid":"dddddddddddd"}',
+    '{"ts":"2026-11-01T08:00:00.000Z","tool":"search_wiki","domain":null,"ok":true,"refused":false,"ms":1,"sid":"eeeeeeeeeeee","via":"self-test"}',
+  ].join('\n') + '\n');
+  let body = null;
+  await MCP.usageHandler({ query: {} }, { json: (b) => { body = b; }, status() { return this; } });
+  const sw = body && body.tools.find((t) => t.name === 'search_wiki');
+  eq('lastAgentAt: the newest NON-self-test call', sw && sw.lastAgentAt, '2026-10-30T08:00:00.000Z');
+  eq('CONTROL: lastUsedAt is the self-test call', sw && sw.lastUsedAt, '2026-11-01T08:00:00.000Z');
+  eq('…an unused tool has lastAgentAt null', body.tools.find((t) => t.name === 'get_tags').lastAgentAt, null);
+  ok('the route carries lastExercise from the log', body.lastExercise && body.lastExercise.total === 1, body.lastExercise);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

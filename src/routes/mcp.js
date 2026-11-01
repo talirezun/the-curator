@@ -706,6 +706,8 @@ export async function usageHandler(req, res) {
       // comparison is drawn from: one "Test all N tools" press would otherwise
       // put a call on every tool for seven days. `count7d` keeps its meaning.
       count7dAgent: agg && Number.isInteger(agg.count7dAgent) ? agg.count7dAgent : 0,
+      // v3.88.0 — the newest call by an agent (self-test lines excluded), or null.
+      lastAgentAt: agg && typeof agg.lastAgentAt === 'string' ? agg.lastAgentAt : null,
     };
   });
   const body = {
@@ -717,6 +719,9 @@ export async function usageHandler(req, res) {
     countWindowDays: RECENT_WINDOW_MS / 86400000,
     logBytes: usage.logBytes || 0,
     tools,
+    // v3.88.0 — the last "Test all N tools" run as the log records it, or null.
+    // (No `lastSelfTest`: the one-call self-test leaves no record of its own.)
+    lastExercise: usage.lastExercise ?? null,
     sessions: {
       lastBootstrapAt: usage.sessions?.lastBootstrapAt ?? null,
       lastSaveAt: usage.sessions?.lastSaveAt ?? null,

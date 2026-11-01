@@ -495,9 +495,9 @@ eq(body.sessions.lastSaveAt, ago(60 * 1000), 'the two session readings are forwa
 // below, not throw a TypeError and take §6 and §7 down with it.
 const rowFor = (n) => body.tools.find(t => t.name === n) ?? {};
 eq(JSON.stringify(Object.keys(rowFor('search_wiki')).sort()),
-  JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
+  JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastAgentAt', 'lastOk', 'lastUsedAt', 'lastVia',
     'mutates', 'name', 'purpose', 'refusedTotal', 'selfTestTotal'].sort()),
-  'every row carries exactly the twelve contracted fields (v3.61.0 added lastVia + selfTestTotal, v3.66.0 count7dAgent)');
+  'every row carries exactly the thirteen contracted fields (v3.61.0 added lastVia + selfTestTotal, v3.66.0 count7dAgent, v3.88.0 lastAgentAt)');
 eq(rowFor('search_wiki').countTotal, 4, 'a used tool carries its counts');
 eq(rowFor('get_node').lastUsedAt, null, 'an unused tool reports lastUsedAt: null…');
 eq(rowFor('get_node').countTotal, 0, '…with zero counts — never omitted from the map');

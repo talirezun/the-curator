@@ -225,6 +225,17 @@ section('§6 older payloads, and "did not look"');
   ok(sentences.every((x) => typeof x === 'string' && x.length > 20), 'CONTROL: the backend\u2019s remedy sentences are read');
   ok(sentences.every((x) => !views.includes(x)), 'no backend remedy sentence is typed into the view\u2019s source');
 }
+// The overview renders the BACKEND's counts when it sends them (integration).
+{
+  const withCounts = status(LIVE(), { counts: { connected: 7, toFix: 5, notConnected: 3 } });
+  const h = M.renderInstallOverview(withCounts, {}, null, { machine: machine() });
+  ok(/>7</.test(h) && />5</.test(h) && />3</.test(h), 'the overview cards show the payload’s `counts`, as sent');
+  ok(M.countsFor({ counts: { connected: 1, toFix: 0, notConnected: 2 } }, []).notConnected === 2, 'countsFor: payload counts win');
+  ok(M.countsFor({}, [{ connected: true, fix: true }, { connected: false, fix: false }]).connected === 1
+    && M.countsFor({}, [{ connected: true, fix: true }]).fix === 1, 'countsFor: an older payload is counted from the rows (connected and to-fix overlap)');
+  const row = M.appRowModel({ id: 'cline', label: 'Cline', status: 'manual', installer: 'cli', verdict: 'to-fix', setupFix: { word: 'launch file missing' }, files: [] }, { platform: 'darwin' });
+  ok(row.fix === true && row.warnings.some((w) => w.kind === 'bridge-file' && /launch file missing/.test(w.text)), 'a `setupFix` the backend counts is said on its row');
+}
 ok(net === 0, 'no builder fired a request', net);
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-mcp-bridge-page: ${passed} passed, ${failed} failed`);
