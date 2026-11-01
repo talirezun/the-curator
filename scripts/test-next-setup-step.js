@@ -917,20 +917,17 @@ section('§24 the Tools fold says what "ready" takes, in one sentence');
 // v3.87.0 — the machine word follows the platform: Mac on darwin (byte-identical), PC on win32, computer otherwise.
 {
   const P = await import('../src/public/next/shared/platform.js');
-  const none = { data: { toFix: [], repo: null } };
-  const bridge = { fix: { kind: 'reveal', path: '/x/mcp_config.json', label: 'Reveal mcp_config.json' } };
-  const probe = () => S.fixButtons({ ...bridge, text: 't', detail: 'd' }, null) + S.renderSetupBody({ data: { project: 'curator', repo: null } }, {});
+  const door = { fix: { kind: 'skills' } }; // renders the "Open Tools on this <word>" settings door
   for (const [plat, word] of [['darwin', 'Mac'], ['win32', 'PC'], ['linux', 'computer'], ['', 'computer']]) {
     P.setPlatform(plat);
-    const html = probe();
-    ok(html.includes('Open Tools on this ' + word + '<') || !/Open Tools on this/.test(html), plat + ': button says this ' + word);
-    ok(!/this (Mac|PC|computer)/.test(html.replace(new RegExp('this ' + word, 'g'), '')), plat + ': no other machine word in the setup body');
+    const html = S.fixButtons(door, null);
+    ok(html.includes('>Open Tools on this ' + word + '<'), (plat || 'unknown') + ': button says "Open Tools on this ' + word + '"');
+    ok(!/this (Mac|PC|computer)/.test(html.replace('this ' + word, '')), (plat || 'unknown') + ': no other machine word in the buttons');
   }
   P.setPlatform('win32');
-  ok(/Open Tools on this PC</.test(S.fixButtons(bridge, null)) && !/this Mac/.test(S.fixButtons(bridge, null)), 'win32: "Open Tools on this PC", no "this Mac"');
-  P.setPlatform('darwin');
-  ok(/Open Tools on this Mac</.test(S.fixButtons(bridge, null)), 'darwin: "Open Tools on this Mac" exactly');
+  ok(!/this Mac/.test(S.fixButtons(door, null)), 'win32: no "this Mac"');
   P.setPlatform(null);
+  ok(/>Open Tools on this Mac</.test(S.fixButtons(door, null)), 'default (DOM-free) is darwin: "Open Tools on this Mac" exactly');
 }
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-step: ${passed} passed, ${failed} failed`);
