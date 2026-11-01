@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.87.0` | One-line Windows install (`irm …/install.ps1 \| iex`): no admin, a private pinned and hash-verified Node and MinGit, Start/Stop desktop icons, re-run = repair; Windows subprocess PATH fix; a gating CI job "Windows one-line install". |
 | `v3.86.0` | One-click install of the My Curator MCP into Claude Desktop on Windows ("New on Windows"): writes only a single live, verified config candidate, refuses while Claude Desktop runs, PowerShell by absolute path; a Windows CI job gates releases. |
 | `v3.85.0` | One-click install of the My Curator MCP into Claude Desktop, Cursor and Antigravity on macOS (status check, preview, backup, Remove/Restore); the MCP wizard retired; the narrowed "writes another tool's config only for its own entry" rule. |
 | `v3.84.1` | The per-harness MCP registry corrected against each vendor's own source (goose's broken copy snippet fixed, Copilot `tools`, Codex `env`, verified paths) and data-only `installer`/`cli`/`verifiedOn`/`jsonc` fields: the groundwork for the one-click installer. |
