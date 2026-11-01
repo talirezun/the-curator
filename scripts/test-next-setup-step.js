@@ -297,10 +297,10 @@ section('§6  the fix buttons');
     fix: { kind: 'reveal', path: '/Users/t/.gemini/antigravity/mcp_config.json', label: 'Reveal mcp_config.json' } };
   const b = S.fixButtons(bridge, null);
   ok(/data-setup-act="reveal" data-path="\/Users\/t\/\.gemini\/antigravity\/mcp_config\.json">Reveal mcp_config\.json</.test(b), 'a contract reveal: its own absolute path and label, no repository needed', b);
-  ok(/data-setup-act="settings">Open Tools on this Mac</.test(b), '…and "Open Tools on this Mac" beside it');
+  ok(/data-setup-act="settings">Open Settings › MCP bridge</.test(b), '…and "Open Settings › MCP bridge" beside it');
   const nh = S.toFixNotes({ toFix: [bridge], repo: null });
   ok(/<span class="mem-setup-inline-path">~\/\.gemini\/antigravity\/mcp_config\.json<\/span>/.test(nh), 'the file path in the sentence is set in mono', nh);
-  ok(/href="\/api\/setup\/skills\/my-curator\.zip" download/.test(S.fixButtons({ fix: { kind: 'skills' } }, null)), 'outdated skills → Open Tools on this Mac and the two .zip downloads');
+  ok(/href="\/api\/setup\/skills\/my-curator\.zip" download/.test(S.fixButtons({ fix: { kind: 'skills' } }, null)), 'outdated skills → Open Settings › MCP bridge and the two .zip downloads');
   ok(/data-setup-act="change-repo">Change folder</.test(S.fixButtons({ fix: { kind: 'change-repo' } }, null)), 'a folder not on this computer → Change folder');
   ok(/data-setup-act="copy-marker">Copy marker line</.test(S.fixButtons({ fix: { kind: 'copy-marker' } }, null)), 'a missing marker → Copy marker line');
 }
@@ -316,20 +316,20 @@ section('§7  the Tools table');
   ok(/talis-macbook-pro-acb035<\/span><span class="mem-ws-mine">this computer</.test(body), 'saved from this computer: the machine and the chip');
   ok(/data-setup-act="tool-open" data-tool="claude-code"/.test(body), 'a row opens the tool\'s evidence (in the reader)');
   ok(/<span class="cur-setup-st cur-setup-st-ok">MCP<span class="visually-hidden"> configured<\/span>/.test(body), 'a part that is fine: its name, the word only for a screen reader');
-  ok(metaOf(html, 'setup-tools') === '2 tools', 'fold meta with nothing to fix: "2 tools"', metaOf(html, 'setup-tools'));
+  ok(metaOf(html, 'setup-tools') === '2 agent apps', 'fold meta with nothing to fix: "2 agent apps"', metaOf(html, 'setup-tools'));
   // Derived from a v3.77.0 row.
   const o = S.renderSetupBody({ data: old() }, { openFolds: ALL_OPEN });
   const ob = foldNamed(o, 'setup-tools').body;
   ok(/cur-setup-st-fix">1 to fix</.test(ob) && /cur-setup-st-q">partly checked</.test(ob), 'v3.77.0 shape: "1 to fix" for Antigravity, "partly checked" for Claude Code (skills can\'t check here)');
   ok(/cur-setup-st-fix">skills: my-curator outdated</.test(ob) && /cur-setup-st-fix">block: missing</.test(ob), 'a failing part shows its word');
-  ok(metaOf(o, 'setup-tools') === '2 tools · 1 to fix', 'fold meta: "2 tools · 1 to fix"');
+  ok(metaOf(o, 'setup-tools') === '2 agent apps · 1 to fix', 'fold meta: "2 agent apps · 1 to fix"');
   const st = (t, d) => S.toolStatus(t, d || { toFix: [] }).word;
   const base = { id: 'x', saved: { at: iso(1000), thisMachine: true }, bridge: { state: 'ok' }, skills: { state: 'ok' }, block: { state: 'ok' }, hooks: { state: 'none' } };
   ok(st(base) === 'ready', 'derived: all parts fine and a save from here → ready');
   ok(st({ ...base, saved: { at: iso(1000), thisMachine: false } }) === 'no save from here', 'derived: saved only elsewhere → no save from here');
   ok(st({ ...base, block: { state: 'not-checked' } }) === 'partly checked', 'derived: a part not checked → partly checked');
   ok(st(base, { toFix: [{ tool: 'x' }, { tool: 'x' }] }) === '2 to fix', 'derived: two to-fix lines name it → 2 to fix');
-  ok(/No agent tool has saved/.test(S.renderSetupBody({ data: { ...maint(), tools: [] } }, { openFolds: ALL_OPEN })), 'no tools: said in words');
+  ok(/No agent app has saved/.test(S.renderSetupBody({ data: { ...maint(), tools: [] } }, { openFolds: ALL_OPEN })), 'no tools: said in words');
 }
 
 section('§8  computers are PHYSICAL — two installs on one Mac are one row');
@@ -369,8 +369,8 @@ section('§8  computers are PHYSICAL — two installs on one Mac are one row');
 section('§9  "+ Add a tool" — the shared listbox cfg, and custom tools');
 {
   const cfg = S.setupToolPickerCfg(maint());
-  ok(cfg.id === 'mem-setup-add' && cfg.triggerText === '+ Add a tool' && cfg.triggerClass === 'btn btn-secondary btn-xs', 'the trigger is an action: "+ Add a tool", step ③\'s button face');
-  ok(JSON.stringify(cfg.options.map((o) => o.group)) === JSON.stringify(['Known tools', 'Known tools', 'Other', 'Other']), 'groups: Known tools, then Other', JSON.stringify(cfg.options));
+  ok(cfg.id === 'mem-setup-add' && cfg.triggerText === '+ Add an agent app' && cfg.triggerClass === 'btn btn-secondary btn-xs', 'the trigger is an action: "+ Add an agent app", step ③\'s button face');
+  ok(JSON.stringify(cfg.options.map((o) => o.group)) === JSON.stringify(['Known agent apps', 'Known agent apps', 'Other', 'Other']), 'groups: Known agent apps, then Other', JSON.stringify(cfg.options));
   const last = cfg.options[cfg.options.length - 1];
   ok(last.value === S.CUSTOM_TOOL_VALUE && last.label === 'Custom tool…' && last.action === true && cfg.actionValues.includes(S.CUSTOM_TOOL_VALUE),
     '"Custom tool…" is the LAST row and an action row (declared in the cfg too)');
@@ -380,7 +380,7 @@ section('§9  "+ Add a tool" — the shared listbox cfg, and custom tools');
   ok(/class="mr-fact">not measured</.test(dshOpt.html), 'an adapter whose config location is not measured says so, at the right', dshOpt.html);
   ok(/class="mr-meta">MCP · AGENTS\.md</.test(cfg.options.find((o) => o.value === 'codex').html), 'a v3.79.0 row carries its detail as line 2');
   const oc = S.setupToolPickerCfg(old());
-  ok(oc.options.length === 1 && oc.options[0].group === 'Known tools' && !oc.options.some((o) => o.action) && oc.actionValues.length === 0,
+  ok(oc.options.length === 1 && oc.options[0].group === 'Known agent apps' && !oc.options.some((o) => o.action) && oc.actionValues.length === 0,
     'v3.77.0 shape: one known tool, NO custom row (that server would refuse it)');
   ok(S.setupToolPickerCfg({ ...old(), addable: [] }).disabled === true, 'nothing to add: disabled');
   ok(S.setupToolPickerCfg(maint(), true).disabled === true && S.setupToolPickerCfg(maint(), true).triggerText === 'Adding…', 'while adding: disabled, "Adding…"');
@@ -443,7 +443,7 @@ section('§12 the head');
   ok(/class="mem-setup-checked" data-age-at="[^"]+" data-age-prefix="checked" data-age-text>checked 2 min ago</.test(h), '"checked 2 min ago", a ticking age', h);
   ok(/class="btn btn-ghost btn-xs" data-setup-act="check">Re-check</.test(h), 'a ghost "Re-check"');
   ok(/disabled>Checking…</.test(S.setupHeadHtml({ data: maint(), loading: true })), 'while checking: disabled, "Checking…"');
-  ok(!/Add a tool/.test(h), '"+ Add a tool" is not in the head any more (it is the body\'s picker row)');
+  ok(!/Add an agent app/.test(h), '"+ Add an agent app" is not in the head any more (it is the body\'s picker row)');
   ok(/Checking this computer…/.test(S.renderSetupBody({ loading: true }, {})) && /role="alert">Could not check this computer: boom/.test(S.renderSetupBody({ error: 'boom' }, {})),
     'first check in flight, and a first check that failed');
   ok(/The last re-check did not finish: boom/.test(S.renderSetupBody({ data: maint(), error: 'boom' }, {})), 'a failed RE-check keeps the reading and says so');
@@ -454,14 +454,14 @@ section('§13 the explainer');
   const e = EXPLAINERS['context.setup'];
   ok(!!e && e.title === 'Setup', 'context.setup is an explainer titled Setup');
   const all = [e.lead, ...(e.points || []).map((p) => p.text), e.try || '', ...((e.visual && e.visual.rows) || []).flat()].join(' ');
-  ok(/\*\*Re-check\*\* reads the files; tools needn’t run/.test(all), 'Re-check reads the files again; the tools need not be running');
+  ok(/\*\*Re-check\*\* reads the files; apps needn’t run/.test(all), 'Re-check reads the files again; the agent apps need not be running');
   ok(/code checkout, not your knowledge folder; set per computer/.test(all), 'the repository: a code checkout, separate from the knowledge folder, per computer');
   ok(/two installs on one Mac count once/.test(all), 'Computers: installs on one Mac are grouped');
   ok(/whole knowledge folder, every domain/.test(all), 'Sync now syncs the whole knowledge folder');
-  ok(/\*\*Custom tool…\*\*/.test(all), 'custom tools');
+  ok(/\*\*Custom agent app…\*\*/.test(all), 'custom agent apps');
   // v3.79.0 (contract §B): the marks table became HOW EACH PART TRAVELS; what
   // each mark means moved to the user guide.
-  ok(JSON.stringify(e.visual.rows.map((r) => r[0])) === JSON.stringify(['Computers', 'Repository on this computer', 'Tools']),
+  ok(JSON.stringify(e.visual.rows.map((r) => r[0])) === JSON.stringify(['Computers', 'Repository on this computer', 'Agent apps']),
     'the table: Computers · Repository on this computer · Tools — the three folds', JSON.stringify(e.visual.rows));
   ok(e.visual.rows[0][2] === 'Sync now' && /handoffs, the brief/.test(e.visual.rows[0][1])
     && e.visual.rows[1][2] === 'your project’s own git' && /instruction files, the marker/.test(e.visual.rows[1][1])
@@ -553,8 +553,8 @@ section('§15 every button is labelled with what it does — fixes[] in order (a
   ok(!/\bscope\b/i.test(textOf(S.renderSetupBody({ data: d }, {})).replace(/data-[a-z-]+="[^"]*"/g, '')), 'no "scope" anywhere in the step\'s to-fix copy');
   const b2 = S.fixButtons(d.toFix[2], d.repo);
   ok(/data-setup-act="reveal" data-path="\/Users\/t\/\.gemini\/antigravity\/mcp_config\.json">Reveal file</.test(b2)
-    && /data-setup-act="check">Re-check</.test(b2) && /data-setup-act="settings">Open Tools on this Mac</.test(b2),
-  'bridge-file: Reveal file · Re-check · Open Tools on this Mac', b2);
+    && /data-setup-act="check">Re-check</.test(b2) && /data-setup-act="settings">Open Settings › MCP bridge</.test(b2),
+  'bridge-file: Reveal file · Re-check · Open Settings › MCP bridge (an older server\'s "Open Tools on this Mac" label is re-worded)', b2);
   ok(/data-setup-act="copy-snippet" data-tool="antigravity">Copy MCP entry</.test(S.fixButtons(d.toFix[3], d.repo)), 'copy-snippet: "Copy MCP entry", naming its tool');
   const b4 = S.fixButtons(d.toFix[4], d.repo);
   ok(/<a class="btn btn-secondary btn-xs" href="\/api\/setup\/skills\/my-curator\.zip" download>Download my-curator\.zip<\/a>/.test(b4)
@@ -782,7 +782,7 @@ section('§21 "+ Add a tool" is the composer\'s model menu: two-line rows, a sen
 {
   const cfg = S.setupToolPickerCfg({ ...maint(), addable: addable380() });
   ok(cfg.menuClass === 'lb-rich mr-menu' && cfg.minWidth === 360, 'the model menu\'s surface: `lb-rich mr-menu` (360–420 px), never full-bleed', JSON.stringify([cfg.menuClass, cfg.minWidth]));
-  ok(/^<p class="mr-foot">Adding a tool only tells Setup to check it on this computer — you connect it yourself\.<\/p>$/.test(cfg.footHtml), 'the foot line, the model menu\'s `.mr-foot`', cfg.footHtml);
+  ok(/^<p class="mr-foot">Adding an agent app only tells Setup to check it on this computer — you connect it yourself\.<\/p>$/.test(cfg.footHtml), 'the foot line, the model menu\'s `.mr-foot`', cfg.footHtml);
   const row = (v) => cfg.options.find((o) => o.value === v);
   ok(cfg.options.every((o) => typeof o.html === 'string' && o.html.startsWith('<span class="mr-body">')), 'every row owns its body: the model row\'s `.mr-body`');
   ok(/<span class="mr-title">OpenAI Codex CLI<\/span><span class="mr-meta">reads AGENTS\.md<span class="mr-sep" aria-hidden="true"> · <\/span>MCP config in ~\/\.codex<\/span>/.test(row('codex').html),
@@ -914,20 +914,22 @@ section('§24 the Tools fold says what "ready" takes, in one sentence');
   ok(tools.includes(S.TRAVELS_LINES['setup-tools']), '…beside the fold\'s own travels line');
 }
 
-// v3.87.0 — the machine word follows the platform: Mac on darwin (byte-identical), PC on win32, computer otherwise.
+// v3.88.0 — the settings door names the place, Settings › MCP bridge, on every platform:
+// the v3.87 "Open Tools on this <machine>" block it pointed at is merged into block 1.
 {
   const P = await import('../src/public/next/shared/platform.js');
-  const door = { fix: { kind: 'skills' } }; // renders the "Open Tools on this <word>" settings door
-  for (const [plat, word] of [['darwin', 'Mac'], ['win32', 'PC'], ['linux', 'computer'], ['', 'computer']]) {
+  const door = { fix: { kind: 'skills' } };
+  for (const plat of ['darwin', 'win32', 'linux', '']) {
     P.setPlatform(plat);
     const html = S.fixButtons(door, null);
-    ok(html.includes('>Open Tools on this ' + word + '<'), (plat || 'unknown') + ': button says "Open Tools on this ' + word + '"');
-    ok(!/this (Mac|PC|computer)/.test(html.replace('this ' + word, '')), (plat || 'unknown') + ': no other machine word in the buttons');
+    ok(html.includes('>Open Settings › MCP bridge<'), (plat || 'unknown') + ': button says "Open Settings › MCP bridge"');
+    ok(!/this (Mac|PC|computer)|Tools on this/.test(html), (plat || 'unknown') + ': no machine word and no "Tools on this" in the buttons');
   }
-  P.setPlatform('win32');
-  ok(!/this Mac/.test(S.fixButtons(door, null)), 'win32: no "this Mac"');
   P.setPlatform(null);
-  ok(/>Open Tools on this Mac</.test(S.fixButtons(door, null)), 'default (DOM-free) is darwin: "Open Tools on this Mac" exactly');
+  ok(/>Open Settings › MCP bridge</.test(S.fixButtons({ fix: { kind: 'settings', label: 'Open Tools on this Mac' } }, null)),
+    'an older server\'s label "Open Tools on this Mac" reads as the door that exists now');
+  ok(/>Open the bridge page</.test(S.fixButtons({ fix: { kind: 'settings', label: 'Open the bridge page' } }, null)),
+    'CONTROL: any other server label is kept verbatim');
 }
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-step: ${passed} passed, ${failed} failed`);

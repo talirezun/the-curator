@@ -1,29 +1,47 @@
-// Settings › MCP bridge › 5 "Tools on this Mac" (this PC on Windows, this computer elsewhere) › "My Curator in your tools"
-// (v3.85.0) — the status check and the one-click install, the words.
+// Settings › MCP bridge › 1 "Connect your agent apps" (v3.88.0; v3.85.0's block 5
+// "Tools on this Mac" merged in) — the overview, one row per agent app, the
+// one-click install, and the words for all of it.
 //
 // DOM-FREE AT IMPORT (the setup-machine.js / setup-step.js rule):
 // scripts/test-next-mcp-install.js imports these builders in plain Node.
 // settings.js owns the state, the listeners and what happens on a click; this
-// file owns what is SAID, and the four small request functions at the bottom
-// (the only code here that touches the network, and only when called).
+// file owns what is SAID, and the small request functions at the bottom (the
+// only code here that touches the network, and only when called).
 //
-// WHAT THE PANEL MAY DO. The app may write ANOTHER tool's config file only to
+// WHAT THE PANEL MAY DO. The app may write ANOTHER app's config file only to
 // add, update or remove its OWN `my-curator` entry — on a click, after a
 // preview of the exact entry, with a copy of the original kept. The status
 // check itself is read-only. Nothing in this file fires a request on its own:
 // every request function is called from a click handler (or the one status
 // read when the section loads), never from a render.
 //
+// THE WORD (v3.88.0, the owner's decision 1): a harness is an "agent app".
+// "tool" means one of the bridge's MCP tools (block 3) and nothing else on
+// screen. On-disk names, payload fields and ids (`tools`, `data-mcpi-tool`)
+// do not change.
+//
+// ONE ROW PER AGENT APP, ONE VERDICT PER APP (v3.88.0). Three readings feed a
+// row — the install status (GET /api/mcp/install/status), the machine reading
+// (GET /api/setup/machine: files, skills, hooks) and the open bridges (GET
+// /api/mcp/config `bridge_processes`) — each through ONE adapter below, so a
+// payload shape is read in exactly one place.
+//
 // THE RULES THIS FILE CARRIES
 //   · a status tag is GREYSCALE — a shape, never a colour (colour is a
 //     domain's; the `mcpi-st-*` rules draw dots in --text-2 / --text-3 only);
-//   · a refusal reason, a preview's entry text and every result line are
-//     rendered OPEN — nothing a person must read sits behind a chevron;
+//     the one inked mark is the Setup kit's "N to fix", which names a fault;
+//   · a WARNING is never behind a chevron: it sits unfolded under its row,
+//     with its own buttons (rule 3's exception). Only evidence (files, skills,
+//     hooks) folds, and that fold is CLOSED by default;
+//   · an older bridge serving the SAME tool list is one quiet line, never a
+//     warning (the owner's decision 3);
 //   · explanations live in the block's ⓘ (explainers.js), never inline;
-//   · every path, tool name and server name is escaped.
+//   · every path, app name and server name is escaped.
 
 import { renderOverview } from '../shared/overview.js';
 import { ageWordsFor } from '../shared/age-ticker.js';
+import { machineWord as platformMachineWord } from '../shared/platform.js';
+import { renderAppDetail, toolVerdict } from './setup-machine.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -31,15 +49,22 @@ function escapeHtml(s) {
 }
 const isStr = (v) => typeof v === 'string' && v.length > 0;
 
+/** "PC" on Windows, "Mac" on macOS, "computer" elsewhere — shared/platform.js's words. */
+export function machineWord(platform) { return platformMachineWord(platform); }
+
 // ── the vocabulary ─────────────────────────────────────────────────────────
 
-/** One word per status (contract §1). Frozen; an unknown status reads as copy-only. */
+/**
+ * One word per install status. Frozen; an unknown status reads as not connected.
+ * `manual` is "not connected" (v3.88.0): "copy only" described the installer,
+ * not the app's state.
+ */
 export const STATUS_WORDS = Object.freeze({
   connected: 'connected',
   'needs-update': 'needs an update',
   'not-installed': 'can be added',
   'cant-read': 'can’t read',
-  manual: 'copy only',
+  manual: 'not connected',
 });
 export const STATUSES = Object.freeze(Object.keys(STATUS_WORDS));
 
@@ -48,31 +73,31 @@ export const DEFAULT_TICKED = Object.freeze(['needs-update', 'not-installed']);
 
 const normStatus = (s) => (Object.hasOwn(STATUS_WORDS, s) ? s : 'manual');
 
-/** v3.86.0 — on Windows only Claude Desktop can be written; every other tool is copy-only. */
+/** v3.86.0 — on Windows only Claude Desktop can be written; every other app is copy-only. */
 export const WINDOWS_INSTALLABLE = Object.freeze(['claude-desktop']);
 /** The small greyscale label on the one Windows row that can be installed. */
 export const WINDOWS_NEW_LABEL = 'New on Windows — tell us if it works';
 /** Said OPEN after Claude Desktop is changed on Windows. */
 export const WINDOWS_RESTART_LINE = 'Quit Claude Desktop fully (system tray → Quit), reopen it, then press Check again';
 
-/** Whether a click may write this tool's file on this platform ('' / darwin / linux: the status decides). */
+/** Whether a click may write this app's file on this platform ('' / darwin / linux: the status decides). */
 function writableHere(tool, platform) {
   return platform !== 'win32' || (!!tool && WINDOWS_INSTALLABLE.includes(tool.id));
 }
 
-/** The tools whose row offers a checkbox: the ones a click may write to. */
+/** The apps whose row offers a checkbox: the ones a click may write to. */
 export function isInstallable(tool, platform) {
   return !!tool && (tool.status === 'needs-update' || tool.status === 'not-installed') && tool.installer === 'file'
     && writableHere(tool, platform);
 }
 
-/** A tool's status as this platform shows it: a Windows row that cannot be written reads "copy only". */
+/** An app's status as this platform shows it: a Windows row that cannot be written reads "not connected". */
 function effStatus(tool, platform) {
   const s = normStatus(tool && tool.status);
   return (s === 'needs-update' || s === 'not-installed') && !writableHere(tool, platform) ? 'manual' : s;
 }
 
-/** `{connected, needsUpdate, canAdd, cantRead, manual}` over a status payload's tools. Pure. */
+/** `{connected, needsUpdate, canAdd, cantRead, manual}` over a status payload's apps. Pure. */
 export function countStatuses(tools, platform) {
   const c = { connected: 0, needsUpdate: 0, canAdd: 0, cantRead: 0, manual: 0 };
   for (const t of Array.isArray(tools) ? tools : []) {
@@ -86,22 +111,7 @@ export function countStatuses(tools, platform) {
   return c;
 }
 
-/**
- * "My Curator in your tools — 2 connected · 1 needs an update · 1 can be added".
- * Zero counts are left out; nothing to say says so.
- */
-export function overviewLine(tools, platform) {
-  const c = countStatuses(tools, platform);
-  const parts = [];
-  if (c.connected) parts.push(c.connected + ' connected');
-  if (c.needsUpdate) parts.push(c.needsUpdate + (c.needsUpdate === 1 ? ' needs an update' : ' need an update'));
-  if (c.canAdd) parts.push(c.canAdd + ' can be added');
-  if (c.cantRead) parts.push(c.cantRead + ' can’t be read');
-  if (c.manual) parts.push(c.manual + ' copy only');
-  return 'My Curator in your tools — ' + (parts.length ? parts.join(' · ') : 'no tool found on this ' + machineWord(platform));
-}
-
-/** Which tool ids start ticked. `overrides` (id → boolean) are the person's own ticks. Pure. */
+/** Which app ids start ticked. `overrides` (id → boolean) are the person's own ticks. Pure. */
 export function defaultTicks(tools, overrides, platform) {
   const out = {};
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
@@ -118,17 +128,183 @@ export function tickedIds(tools, overrides, platform) {
   return (Array.isArray(tools) ? tools : []).filter((t) => t && ticks[t.id] === true).map((t) => t.id);
 }
 
-/** The Install button's label and whether it is disabled. */
+/**
+ * The Install button's label and whether it is disabled. When nothing on a
+ * computer that CAN write needs installing, the label says so — "Nothing to
+ * install" (v3.88.0, truth audit T7: a disabled primary button with no word).
+ */
 export function installButtonState(status, ticks, busy) {
   const data = status && status.data;
   const tools = data && Array.isArray(data.tools) ? data.tools : [];
   const n = tickedIds(tools, ticks, data && data.platform).length;
   const writable = !!(data && data.writable);
+  const anyInstallable = tools.some((t) => isInstallable(t, data && data.platform));
+  const disabled = !writable || n === 0 || !!busy;
+  // The backend's words for a disabled button win (BE amendment 1 §B, `install.disabledText`).
+  const said = data && data.install && typeof data.install === 'object' && isStr(data.install.disabledText) ? data.install.disabledText : '';
   return {
     n,
-    label: n > 1 ? 'Install for me (' + n + ' tools)' : 'Install for me',
-    disabled: !writable || n === 0 || !!busy,
+    label: n > 1 ? 'Install for me (' + n + ' apps)'
+      : (disabled && !busy && said && !anyInstallable ? said
+        : (writable && !anyInstallable ? 'Nothing to install' : 'Install for me')),
+    disabled,
   };
+}
+
+// ── the three adapters — ONE function per data source ──────────────────────
+
+/** "10:01" when the stamp is today on this clock, else "31 Oct". '' when it cannot be read. */
+export function clockWords(iso, now = Date.now()) {
+  const t = isStr(iso) ? new Date(iso) : null;
+  if (!t || !Number.isFinite(t.getTime())) return '';
+  const n = new Date(now);
+  const pad = (x) => String(x).padStart(2, '0');
+  if (t.toDateString() === n.toDateString()) return pad(t.getHours()) + ':' + pad(t.getMinutes());
+  return t.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][t.getMonth()];
+}
+
+const BRIDGE_TOOLS = new Set(['same', 'changed', 'unknown']);
+
+/**
+ * ADAPTER 1 — the bridges open right now, from GET /api/mcp/config's
+ * `bridge_processes`. The ONLY function in the app that reads that field.
+ *
+ * Returns `{checked, reason, running, list}`; each entry is
+ * `{pid, appId, appLabel, version, startedAt, tools: 'same'|'changed'|'unknown',
+ *   missing: [MCP tool names], remedy}`.
+ *
+ *   · `checked: false` — the app did not look. Never read as "none open".
+ *   · A payload older than v3.88.0 lists only `stale` processes, with no app
+ *     and no tool comparison: each reads `tools: 'unknown'`, `appId: null` —
+ *     the honest reading of a bridge whose tool list nobody recorded.
+ *   · `remedy` is the PAYLOAD's sentence (per process, else the route's one
+ *     sentence) — the view never authors the quit step.
+ */
+export function adaptBridges(cfg) {
+  const bp = cfg && cfg.bridge_processes;
+  if (!bp || typeof bp !== 'object' || bp.checked !== true) {
+    return { checked: false, reason: bp && isStr(bp.reason) ? bp.reason : null, running: null, list: [] };
+  }
+  // v3.88.0 (BE amendment 1 §A): `bridges[]` is every open bridge with its
+  // parent app, its tool comparison (by hash, never by mtime) and the
+  // backend's own `notice`. An older payload has only `stale[]`, whose entries
+  // carry no app and no comparison, and the route's one remedy sentence.
+  const modern = Array.isArray(bp.bridges);
+  const fallbackRemedy = modern ? '' : (isStr(cfg.bridge_stale_remedy) ? cfg.bridge_stale_remedy : '');
+  const src = modern ? bp.bridges : (Array.isArray(bp.stale) ? bp.stale : []);
+  const list = src.filter((p) => p && typeof p === 'object').map((p) => {
+    const app = p.app && typeof p.app === 'object' ? p.app : null;
+    const appId = app && isStr(app.id) ? app.id : null;
+    const appLabel = app && isStr(app.label) ? app.label : null;
+    const tools = p.tools === 'different' ? 'changed' : (BRIDGE_TOOLS.has(p.tools) ? p.tools : 'unknown');
+    return {
+      pid: Number.isInteger(p.pid) ? p.pid : null,
+      appId, appLabel,
+      version: isStr(p.version) ? p.version : null,
+      startedAt: isStr(p.startedAt) ? p.startedAt : null,
+      tools,
+      // The backend decides what is worth saying; an older payload's stale
+      // entries are "can't tell", softly.
+      notice: NOTICES.has(p.notice) ? p.notice : (modern ? noticeFor(tools) : 'soft'),
+      missing: Array.isArray(p.missing) ? p.missing.filter(isStr) : [],
+      remedy: isStr(p.remedy) ? p.remedy : fallbackRemedy,
+    };
+  });
+  const cur = bp.current && typeof bp.current === 'object' ? bp.current : {};
+  return {
+    checked: true, reason: null, running: Number.isInteger(bp.running) ? bp.running : list.length, list,
+    current: { version: isStr(cur.version) ? cur.version : null, toolCount: Number.isInteger(cur.toolCount) ? cur.toolCount : null },
+  };
+}
+
+const NOTICES = new Set(['warn', 'soft', 'quiet', 'none']);
+function noticeFor(tools) { return tools === 'changed' ? 'warn' : tools === 'unknown' ? 'soft' : 'quiet'; }
+
+/**
+ * An install-status row's own `bridges` summary (BE amendment 1 §B) as the
+ * same fact shape `adaptBridges` gives one bridge. null when there is none.
+ */
+export function rowBridgeFact(b) {
+  if (!b || typeof b !== 'object') return null;
+  const tools = b.tools === 'different' ? 'changed' : (BRIDGE_TOOLS.has(b.tools) ? b.tools : 'unknown');
+  return {
+    pid: null, appId: null, appLabel: null,
+    version: isStr(b.version) ? b.version : null,
+    startedAt: isStr(b.oldestStartedAt) ? b.oldestStartedAt : null,
+    tools, notice: NOTICES.has(b.notice) ? b.notice : noticeFor(tools),
+    missing: Array.isArray(b.missing) ? b.missing.filter(isStr) : [],
+    remedy: isStr(b.remedy) ? b.remedy : '',
+    count: Number.isInteger(b.count) ? b.count : null,
+    toolCount: Number.isInteger(b.toolCount) ? b.toolCount : null,
+  };
+}
+
+/**
+ * ADAPTER 2 — the machine reading, GET /api/setup/machine `{data, error, loading}`.
+ * `{byId, harnesses, home, version, install, checkedAt, skillsShipped,
+ * copyEntries}`, or null before it lands. `home` is the home folder as the
+ * payload itself shows it (a file's absolute path beside its "~/…" display),
+ * so a path elsewhere on the page can be shortened the same way — never guessed.
+ */
+export function adaptMachine(m) {
+  const d = m && m.data;
+  if (!d || !Array.isArray(d.harnesses)) return null;
+  const byId = {};
+  let home = '';
+  for (const h of d.harnesses) {
+    if (!h || !isStr(h.id)) continue;
+    byId[h.id] = h;
+    for (const f of Array.isArray(h.files) ? h.files : []) {
+      if (!home && f && isStr(f.file) && isStr(f.display) && f.display.startsWith('~/')
+          && f.file.endsWith(f.display.slice(1)) && f.file.length > f.display.length - 1) {
+        home = f.file.slice(0, f.file.length - (f.display.length - 1));
+      }
+    }
+  }
+  return {
+    byId, harnesses: d.harnesses.filter((h) => h && isStr(h.id)), home,
+    version: isStr(d.version) ? d.version : null,
+    install: isStr(d.install) ? d.install : null,
+    checkedAt: isStr(d.checkedAt) ? d.checkedAt : null,
+    skillsShipped: d.skillsShipped === true,
+    copyEntries: d.copyEntries && typeof d.copyEntries === 'object' ? d.copyEntries : {},
+    raw: d,
+  };
+}
+
+/** `/Users/x/second-brain` → `~/second-brain` when the machine reading named the home. */
+export function tildePath(p, home) {
+  if (!isStr(p)) return '';
+  const h = isStr(home) ? home.replace(/[/\\]$/, '') : '';
+  if (!h) return p;
+  return p === h ? '~' : (p.startsWith(h + '/') ? '~' + p.slice(h.length) : p);
+}
+
+/**
+ * ADAPTER 3 — one app's install-status row, with the relation "this app
+ * reaches My Curator through ANOTHER app's entry" (Claude Code inside the
+ * Claude app reads Claude Desktop's file — truth audit T2). The payload's own
+ * `connectedVia` wins; otherwise it is read from the machine reading: the
+ * app's bridge cell is ok only through a `readAlso` file, and that file is the
+ * OWN file of another app on the reading.
+ */
+export function adaptInstallTool(t, machine) {
+  const tool = t && typeof t === 'object' ? t : {};
+  let via = null;
+  const cv = tool.connectedVia;
+  const labelOf = (id) => (machine && machine.byId[id] && machine.byId[id].label) || id;
+  if (cv && typeof cv === 'object' && isStr(cv.id)) via = { id: cv.id, label: isStr(cv.label) ? cv.label : labelOf(cv.id), text: isStr(cv.text) ? cv.text : null };
+  else if (isStr(cv)) via = { id: cv, label: labelOf(cv) };
+  else if (machine && machine.byId[tool.id]) {
+    const h = machine.byId[tool.id];
+    if (h.bridge && h.bridge.state === 'ok' && h.bridge.via === 'readAlso') {
+      const f = (h.files || []).find((x) => x && x.via === 'readAlso' && x.named);
+      const owner = f && machine.harnesses.find((o) => o.id !== h.id
+        && (o.files || []).some((x) => x && x.via !== 'readAlso' && x.file === f.file));
+      via = owner ? { id: owner.id, label: owner.label || owner.id } : { id: null, label: 'another app' };
+    }
+  }
+  return { ...tool, via };
 }
 
 // ── tags ───────────────────────────────────────────────────────────────────
@@ -138,6 +314,20 @@ export function statusTag(status) {
   const s = normStatus(status);
   return '<span class="mcpi-st mcpi-st-' + s + '" data-mcpi-status="' + s + '">' + escapeHtml(STATUS_WORDS[s]) + '</span>';
 }
+
+/** The tag of an app that reaches My Curator through another app's entry. */
+export function viaWord(tool) {
+  const v = tool && tool.via;
+  if (!v) return '';
+  return v.id === 'claude-desktop' ? 'connected in the Claude app' : 'connected through ' + (v.label || 'another app');
+}
+
+function viaTag(tool) {
+  return '<span class="mcpi-st mcpi-st-connected" data-mcpi-status="via">' + escapeHtml(viaWord(tool)) + '</span>';
+}
+
+/** The Setup kit's inked mark — used ONLY for a fault ("1 to fix", "restart needed"). */
+const fixMark = (word, attr) => '<span class="cur-setup-st cur-setup-st-fix"' + (attr || '') + '>' + escapeHtml(word) + '</span>';
 
 function newOnWindowsTag(tool, platform) {
   return platform === 'win32' && tool && WINDOWS_INSTALLABLE.includes(tool.id) && tool.installer === 'file'
@@ -161,59 +351,7 @@ function usedNote(tool, now = Date.now()) {
 const btnP = (act, label, extra = '') => '<button type="button" class="btn btn-primary btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
 const btnS = (act, label, extra = '') => '<button type="button" class="btn btn-secondary btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
 const btnG = (act, label, extra = '') => '<button type="button" class="btn btn-ghost btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
-
-// ── the overview card + the two buttons ────────────────────────────────────
-
-/**
- * ONE overview (rule 1) — three readings and the two buttons under it. The
- * sentence is also the card's accessible summary. `busy` is 'plan' | 'apply' |
- * 'status' | null.
- */
-export function renderInstallOverview(status, ticks, busy) {
-  const data = status && status.data;
-  if (!data) return '';
-  const tools = Array.isArray(data.tools) ? data.tools : [];
-  const c = countStatuses(tools, data.platform);
-  const card = renderOverview({
-    id: 'settings-mcpi-overview',
-    eyebrow: 'MY CURATOR IN YOUR TOOLS',
-    minTrack: 130,
-    cards: [
-      { label: 'CONNECTED', value: String(c.connected) },
-      { label: 'NEEDS AN UPDATE', value: String(c.needsUpdate) },
-      { label: 'CAN BE ADDED', value: String(c.canAdd) },
-    ],
-  });
-  const b = installButtonState(status, ticks, busy);
-  const installLabel = busy === 'plan' ? 'Preparing…' : b.label;
-  return '<div class="mcpi-overview">'
-    + '<p class="visually-hidden" role="status">' + escapeHtml(overviewLine(tools, data.platform)) + '</p>'
-    + card
-    + '<div class="mcpi-buttons">'
-    + '<button type="button" class="btn btn-primary" id="mcpi-install-btn" data-mcpi-act="install"' + (b.disabled ? ' disabled' : '') + '>' + escapeHtml(installLabel) + '</button>'
-    + '<button type="button" class="btn btn-secondary" data-mcpi-act="copy-myself">Copy it myself</button>'
-    + '</div>'
-    + (data.writable ? (data.platform === 'win32' ? windowsLine() : '') : nonMacLine(data))
-    + '</div>';
-}
-
-/** Said OPEN whenever one-click install is not available on this computer. */
-export function nonMacLine(data) {
-  const p = data && isStr(data.platform) ? data.platform : '';
-  if (p === 'win32') {
-    return '<p class="mcpi-line" data-mcpi-nonmac>One-click install on Windows is not available right now — copy the entry for each tool instead.</p>';
-  }
-  const where = p && p !== 'darwin' ? ' on ' + (p === 'win32' ? 'Windows' : p === 'linux' ? 'Linux' : p) : '';
-  return '<p class="mcpi-line" data-mcpi-nonmac>One-click install works on a Mac in this version' + escapeHtml(where)
-    + ' — copy the entry for each tool instead.</p>';
-}
-
-/** Said OPEN on Windows when install works: one tool only. */
-export function windowsLine() {
-  return '<p class="mcpi-line" data-mcpi-windows>On Windows, one-click install covers Claude Desktop only — copy the entry for each other tool.</p>';
-}
-
-// ── tool rows ──────────────────────────────────────────────────────────────
+// ── copying an entry by hand ───────────────────────────────────────────────
 
 /** A refusal reason as one sentence: the status sends `{code, message}`; older shapes send a string. */
 export function reasonText(r) {
@@ -253,18 +391,30 @@ export function copyPlanFor(id, data, machineFiles) {
     if (top && name) { key = top; inner = JSON.stringify({ [name]: group[name] }, null, 2).replace(/^\{\n?/, '').replace(/\n?\}$/, '').replace(/^ {2}/gm, ''); }
   } catch { /* not JSON: copied as the tool writes it */ }
   if (!file) {
-    return { text: whole, whole: true, file: null, line: 'Add this to the tool’s own MCP config file.' };
+    return { text: whole, whole: true, file: null, line: 'Add this to the app’s own MCP config file.' };
   }
   if (exists === false) return { text: whole, whole: true, file, line: 'Save as ' + file };
   if (inner && key) return { text: inner, whole: false, file, line: 'Paste into ' + file + ' inside "' + key + '"' };
   return { text: whole, whole: true, file, line: 'Add this to ' + file };
 }
 
+
 /** An escaped path that may wrap only after a slash or a backslash (Windows). */
 function wbrPath(p) { return escapeHtml(p).replace(/[\/\\]/g, '$&<wbr>'); }
 
+/** A copy plan's line with its file set in mono: 'Paste into <file> inside "mcpServers"'. */
+function planLineHtml(plan, lowerFirstWord) {
+  if (!plan || !isStr(plan.line)) return '';
+  // The caller ends the sentence, so a line that already ends one loses its stop.
+  const bare = plan.line.replace(/\.$/, '');
+  const line = lowerFirstWord ? lowerFirst(bare) : bare;
+  if (!isStr(plan.file) || !line.includes(plan.file)) return wbrPath(line);
+  const at = line.indexOf(plan.file);
+  return escapeHtml(line.slice(0, at)) + '<span class="mono">' + wbrPath(plan.file) + '</span>' + escapeHtml(line.slice(at + plan.file.length));
+}
+
 /**
- * The reason a row is copy-only, in words. `config_not_found` and
+ * The reason an app is not connected, in words. `config_not_found` and
  * `config_ambiguous` (v3.86.0) are said for a person; any other reason is the
  * backend's own message. Candidate files come from the reason, else the row's files.
  */
@@ -281,6 +431,9 @@ export function reasonWords(tool) {
   }
   return reasonText(r);
 }
+
+/** The installer codes whose sentence the row's own copy line replaces (v3.88.0). */
+const INSTALLER_REASONS = new Set(['installer_cli', 'installer_manual']);
 
 function fileLines(tool) {
   const files = Array.isArray(tool.files) ? tool.files : [];
@@ -300,56 +453,6 @@ function revealPathFor(tool, paths) {
 }
 
 /**
- * One tool's row. Checkbox · label · file(s) · status tag · running tag · used
- * note, then the actions, then — OPEN — the reason a tool can't be read and
- * the restart hint.
- */
-export function renderToolRow(tool, ctx = {}) {
-  const platform = ctx.platform;
-  const status = effStatus(tool, platform);
-  const ticks = ctx.ticks || {};
-  const id = String(tool.id || '');
-  const installable = isInstallable(tool, platform) && ctx.writable !== false;
-  const canWrite = tool.installer === 'file' && ctx.writable !== false && writableHere(tool, platform);
-  const ticked = installable && defaultTicks([tool], ticks, platform)[id] === true;
-  const label = '<span class="mcpi-name">' + escapeHtml(tool.label || id) + '</span>';
-  const head = installable
-    ? '<label class="mcpi-pick"><input type="checkbox" class="cur-check cur-check-sm" data-mcpi-tick="' + escapeHtml(id) + '"' + (ticked ? ' checked' : '')
-      + ' aria-label="' + escapeHtml('Include ' + (tool.label || id) + ' in the install') + '">' + label + '</label>'
-    : '<span class="mcpi-pick">' + label + '</span>';
-  const tid = ' data-tool="' + escapeHtml(id) + '"';
-  const acts = [];
-  const plan = status !== 'connected' && ctx.data ? copyPlanFor(id, ctx.data, ctx.machineFiles) : null;
-  const snippet = !!plan;
-  if (status === 'connected' && canWrite) acts.push(btnG('remove', 'Remove', tid));
-  if (tool.restorable === true && canWrite) acts.push(btnG('restore', 'Restore original', tid));
-  if (status === 'cant-read') {
-    // Reveal is `open -R` (macOS only): never a dead button on Windows or Linux.
-    const p = isStr(platform) && platform !== 'darwin' ? '' : revealPathFor(tool, ctx.paths);
-    if (p) acts.push(btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"'));
-  }
-  if ((status === 'manual' || status === 'cant-read' || status === 'not-installed' || status === 'needs-update') && snippet) {
-    acts.push(btnG('copy', 'Copy', tid));
-  }
-  const reason = reasonWords(tool) ? '<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reasonWords(tool)) + '</p>' : '';
-  const copyLine = plan ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(plan.line) + '</p>' : '';
-  // On Windows a running Claude Desktop gets the refusal line instead (appRunningLine).
-  const hint = isStr(tool.restartHint) && tool.running && tool.running.running === true && !appRunningLine(tool, platform)
-    ? '<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>' : '';
-  const extra = isStr(tool.note) ? '<p class="mcpi-hint">' + escapeHtml(tool.note) + '</p>' : '';
-  return '<div class="mcpi-row mcpi-row-' + status + '" data-mcpi-tool="' + escapeHtml(id) + '">'
-    + '<div class="mcpi-l1">' + head
-    + '<span class="mcpi-tags">' + statusTag(status) + runningTag(tool) + usedNote(tool, ctx.now) + (ctx.writable !== false ? newOnWindowsTag(tool, platform) : '') + '</span>'
-    + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
-    + (fileLines(tool) ? '<div class="mcpi-files">' + fileLines(tool) + '</div>' : '')
-    + appRunningLine(tool, platform) + reason + copyLine + hint + extra
-    + '</div>';
-}
-
-/** "PC" on Windows, "Mac" elsewhere (darwin and linux keep today's word). */
-export function machineWord(platform) { return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer'; } // same words as shared/platform.js
-
-/**
  * Windows only (v3.86.0 audit): the backend REFUSES to write Claude Desktop's
  * file while it runs (`app_running`), so the row says so before anyone clicks.
  * macOS keeps its warn-and-allow lines unchanged.
@@ -361,29 +464,397 @@ function appRunningLine(tool, platform) {
     ? '<p class="mcpi-reason" data-mcpi-app-running>' + escapeHtml(APP_RUNNING_WORDS) + '</p>' : '';
 }
 
-/** The rows and the "Not found on this Mac/PC/computer (N)" fold. */
+// ── the warnings a row can carry ───────────────────────────────────────────
+
+/** Reveal is `open -R` (macOS only): never a dead button on Windows or Linux. */
+const canReveal = (platform) => !isStr(platform) || platform === 'darwin';
+
+/**
+ * The open bridges of ONE app, reduced to the one fact worth saying.
+ * changed > unknown > same; within a kind, the oldest. Pure.
+ */
+export function bridgeFactFor(appId, bridges) {
+  const list = bridges && Array.isArray(bridges.list) ? bridges.list.filter((b) => b.appId && b.appId === appId) : [];
+  if (!list.length) return null;
+  const rank = { warn: 0, soft: 1, quiet: 2, none: 3 };
+  return list.slice().sort((a, b) => ((rank[a.notice] ?? 3) - (rank[b.notice] ?? 3))
+    || String(a.startedAt || '').localeCompare(String(b.startedAt || '')))[0];
+}
+
+/**
+ * The STALE-BRIDGE RULE (v3.88.0, the owner's decision 3), as data. Pure.
+ *   · tools changed → a WARNING, naming what is missing, with the payload's quit step;
+ *   · unknown (no tool list recorded) → ONE soft warning, "can't tell";
+ *   · same tools on an older version → one QUIET line, never a warning;
+ *   · same tools, same version → nothing.
+ * Returns `{warn?: {...}, quiet?: string, tag?: string}`.
+ */
+export function bridgeRowFact(label, fact, current = {}, now = Date.now()) {
+  if (!fact) return {};
+  const at = clockWords(fact.startedAt, now);
+  const v = fact.version;
+  // The backend's `notice` decides (BE amendment 1 §A); without one it is
+  // derived from the comparison the same way.
+  const notice = NOTICES.has(fact.notice) ? fact.notice : noticeFor(fact.tools);
+  if (notice === 'none') return {};
+  if (notice === 'warn') {
+    const lacks = fact.missing.length ? ' — it lacks ' + fact.missing.join(' and ') + '.'
+      : ' — its tool list differs from this version’s.';
+    return {
+      tag: 'restart needed',
+      warn: { kind: 'bridge', tone: 'warn', text: label + ' is still using ' + (v ? 'My Curator ' + v : 'an older My Curator')
+        + (at ? ', opened at ' + at : '') + lacks, strong: fact.remedy || '' },
+    };
+  }
+  if (notice === 'soft') {
+    return {
+      warn: { kind: 'bridge-unknown', tone: 'quiet', soft: true, text: label + ' has had My Curator open'
+        + (at ? ' since ' + at : '') + ', from before this version, so The Curator can’t tell whether its tools changed.'
+        + (fact.remedy ? ' If its agent is missing a tool: ' + fact.remedy : '') },
+    };
+  }
+  // quiet: the same tools, an older (or unrecorded) version. Never a warning.
+  if (v && isStr(current.version) && v === current.version) return {};
+  const tc = Number.isInteger(fact.toolCount) ? fact.toolCount : current.toolCount;
+  const n = Number.isInteger(tc) ? 'the same ' + tc + ' tools' : 'the same tools';
+  const cv = isStr(current.version) ? current.version : 'this version';
+  return { quiet: 'Running ' + (v ? 'My Curator ' + v : 'an older My Curator') + (at ? ' since ' + at : '') + ' — ' + n + ' as ' + cv
+    + '. It moves to ' + cv + ' the next time you quit ' + label + '.' };
+}
+
+/**
+ * The machine reading's faults for one app, as warnings with their own
+ * buttons. The payload's own to-fix items win when it sends them (`toFix`:
+ * `{kind, text, detail, fixes:[{kind, label, path?, skill?}]}`, setup-check's
+ * `item()` shape — the same sentence Context › Setup prints); otherwise they
+ * are read from the cells. Pure.
+ */
+export function machineWarnings(h, ctx = {}) {
+  if (!h) return [];
+  const label = h.label || h.id;
+  const out = [];
+  if (Array.isArray(h.toFix) && h.toFix.length) {
+    for (const it of h.toFix) {
+      if (!it || !isStr(it.text)) continue;
+      out.push({ kind: isStr(it.kind) ? it.kind : 'setup', tone: 'warn', text: it.text, strong: isStr(it.detail) ? it.detail : '',
+        acts: (Array.isArray(it.fixes) ? it.fixes : []).map((f) => fixAct(f, ctx)).filter(Boolean) });
+    }
+    return out;
+  }
+  const s = h.skills || {};
+  if (s.state === 'fix') {
+    for (const x of Array.isArray(s.installed) ? s.installed : []) {
+      if (!x || x.match !== false) continue;
+      const nd = (x.differs || []).length; const nm = (x.missing || []).length;
+      const how = [nd ? nd + (nd === 1 ? ' file differs' : ' files differ') : '', nm ? nm + (nm === 1 ? ' file missing' : ' files missing') : ''].filter(Boolean).join(', ');
+      const name = isStr(x.skill) ? x.skill : 'my-curator';
+      out.push({ kind: 'skill', tone: 'warn',
+        text: 'Its ' + name + ' skill is older than this app’s copy' + (how ? ' (' + how + ').' : '.'),
+        strong: 'Download it, replace ' + (x.dirDisplay || x.dir || 'the skill folder') + ' with it, then start a new ' + label + ' session.',
+        acts: [fixAct({ kind: 'download-skill', skill: name }, ctx), x.dir ? fixAct({ kind: 'reveal', path: x.dir, label: 'Reveal folder' }, ctx) : null].filter(Boolean) });
+    }
+  }
+  if (h.hooks && h.hooks.state === 'fix') {
+    out.push({ kind: 'hooks', tone: 'warn', text: 'Its Curator hooks need attention: ' + (h.hooks.word || 'see the files below') + '.', strong: '', acts: [] });
+  }
+  if (ctx.status === 'connected' && h.bridge && h.bridge.state === 'fix') {
+    out.push({ kind: 'bridge-file', tone: 'warn', text: 'Its MCP entry needs attention: ' + (h.bridge.word || 'see the files below') + '.', strong: '', acts: [] });
+  }
+  return out;
+}
+
+/** One fix button. Download is a plain link to this app's own copy; Reveal is macOS only. */
+function fixAct(f, ctx) {
+  if (!f || typeof f !== 'object') return null;
+  const kind = f.kind;
+  if (kind === 'download-skill' || kind === 'downloadSkill') {
+    // Only this app's own zip route — a payload `href` elsewhere is never followed.
+    const skill = isStr(f.skill) ? f.skill.replace(/[^A-Za-z0-9_-]/g, '') : 'my-curator';
+    return '<a class="btn btn-secondary btn-xs" href="/api/setup/skills/' + skill + '.zip" download data-mcpi-download="' + skill + '">'
+      + escapeHtml(isStr(f.label) && !/^Download$/i.test(f.label) ? f.label : 'Download ' + skill + '.zip') + '</a>';
+  }
+  if (kind === 'reveal' && isStr(f.path) && canReveal(ctx.platform)) {
+    return '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(f.path) + '">'
+      + escapeHtml(isStr(f.label) ? f.label.replace(/^Reveal the folder$/, 'Reveal folder') : 'Reveal') + '</button>';
+  }
+  return null;
+}
+
+/** A warning, unfolded under its row: the text, its strong step, its buttons. */
+function warnHtml(w) {
+  const tone = w.tone === 'quiet' ? 'cur-mon-quiet' : 'cur-mon-warn';
+  return '<div class="cur-mon-loud ' + tone + ' mcpi-warn" role="status" data-mcpi-warn="' + escapeHtml(w.kind || 'warn') + '">'
+    + (w.html ? w.html : escapeHtml(w.text))
+    + (isStr(w.strong) ? ' <strong>' + escapeHtml(w.strong) + '</strong>' : '')
+    + (w.acts && w.acts.length ? '<div class="mcpi-warn-acts">' + w.acts.join('') + '</div>' : '')
+    + '</div>';
+}
+
+// ── one row per agent app ──────────────────────────────────────────────────
+
+/**
+ * Everything one row says, as data. Pure — the overview counts it and
+ * `renderToolRow` draws it, so the two can never disagree.
+ *
+ * `ctx`: `{platform, writable, ticks, data (status payload), machine (adaptMachine),
+ * bridges (adaptBridges), paths, machineFiles, current: {version, toolCount}, now}`.
+ *
+ * Verdict flags (one app, one verdict per card): `connected` — the app has a
+ * working entry (its own, or another app's it reads); `fix` — something on
+ * this row needs the person (an entry to update, a file that can't be read, an
+ * outdated skill, a bridge whose tools changed); otherwise not connected.
+ */
+export function appRowModel(rawTool, ctx = {}) {
+  const machine = ctx.machine || null;
+  const tool = adaptInstallTool(rawTool, machine);
+  const platform = ctx.platform;
+  const status = effStatus(tool, platform);
+  const via = status === 'manual' && tool.via ? tool.via : null;
+  const id = String(tool.id || '');
+  const label = tool.label || id;
+  const h = machine && machine.byId[id] ? machine.byId[id] : null;
+  const installable = isInstallable(tool, platform) && ctx.writable !== false;
+  const canWrite = tool.installer === 'file' && ctx.writable !== false && writableHere(tool, platform);
+  const ticked = installable && defaultTicks([tool], ctx.ticks || {}, platform)[id] === true;
+  const plan = status !== 'connected' && ctx.data ? copyPlanFor(id, ctx.data, ctx.machineFiles) : null;
+
+  const warnings = [];
+  const quiet = [];
+  // The install status's own reason. A fault (can't read, needs an update) is
+  // a warning; the Windows file-finding reasons are quiet facts; the installer
+  // sentences ("has its own command…") are replaced by the copy line below.
+  const reason = reasonWords(tool);
+  const code = tool.reason && typeof tool.reason === 'object' ? tool.reason.code : '';
+  if (reason && (status === 'cant-read' || status === 'needs-update')) {
+    const p = status === 'cant-read' && canReveal(platform) ? revealPathFor(tool, ctx.paths) : '';
+    warnings.push({ kind: 'entry', tone: 'warn', severity: 'fix', text: reason,
+      html: '<span data-mcpi-reason>' + escapeHtml(reason) + '</span>',
+      acts: p ? [btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(p) + '"')] : [] });
+  } else if (reason && !INSTALLER_REASONS.has(code) && !(isStr(tool.reason) && status === 'manual' && plan)) {
+    quiet.push('<p class="mcpi-reason" data-mcpi-reason>' + escapeHtml(reason) + '</p>');
+  }
+
+  // The open bridge, once, on THIS app's row.
+  // The row's own `bridges` summary (BE amendment 1 §B) wins; else the config's list.
+  const fact = rowBridgeFact(tool.bridges) || bridgeFactFor(id, ctx.bridges);
+  const bfact = bridgeRowFact(label, fact, ctx.current || {}, ctx.now);
+  if (bfact.warn) warnings.push({ ...bfact.warn, severity: bfact.warn.soft ? 'soft' : 'fix' });
+  if (bfact.quiet) quiet.push('<p class="mcpi-sub" data-mcpi-bridge="same">' + escapeHtml(bfact.quiet) + '</p>');
+
+  // The skill-staleness line: the payload's `skill` (setup-check's own
+  // sentences and fix list) wins; else it is read from the machine cells.
+  const mw = [];
+  const sk = tool.skill && typeof tool.skill === 'object' && isStr(tool.skill.text) ? tool.skill : null;
+  if (sk) {
+    mw.push({ kind: 'skill', tone: 'warn', text: sk.text, strong: isStr(sk.detail) ? sk.detail : '',
+      acts: (Array.isArray(sk.fixes) ? sk.fixes : []).map((f) => fixAct(f, { platform })).filter(Boolean) });
+  }
+  // The machine reading's other faults (hooks, an entry the status called fine).
+  for (const w of machineWarnings(h, { platform, status })) if (!(sk && w.kind === 'skill')) mw.push(w);
+  for (const w of mw) warnings.push({ ...w, severity: 'fix' });
+
+  // Quiet lines: how an unconnected app gets its entry.
+  if (via) {
+    const rest = plan ? (id === 'claude-code' ? ' For <span class="mono">claude</span> in a terminal, ' + planLineHtml(plan, true) + '.'
+      : ' To give it its own entry, ' + planLineHtml(plan, true) + '.') : '';
+    const first = isStr(via.text) ? via.text : 'Uses ' + via.label + '’s entry.';
+    quiet.push('<p class="mcpi-sub" data-mcpi-copyline>' + escapeHtml(first) + rest + '</p>');
+  } else if (plan) {
+    const uwe = tool.usedWithoutEntry && typeof tool.usedWithoutEntry === 'object' && isStr(tool.usedWithoutEntry.text)
+      ? tool.usedWithoutEntry.text : '';
+    const usedElsewhere = !uwe && status === 'manual' && isStr(tool.usedAt) && h && !(h.files || []).some((f) => f && f.named);
+    const used = usedElsewhere ? ageWordsFor(tool.usedAt, ctx.now || Date.now(), '') : '';
+    const usedText = uwe || (used ? 'No entry in your user settings — the use ' + used + ' came from another file.' : '');
+    quiet.push('<p class="mcpi-sub" data-mcpi-copyline>'
+      + (usedText ? escapeHtml(usedText + ' ') + planLineHtml(plan)
+        : planLineHtml(plan))
+      + (status === 'manual' && tool.installer === 'cli' ? '. One-click comes in a later version.' : '.')
+      + '</p>');
+  }
+  // The safe-install hint, only where an install is about to happen.
+  if (isStr(tool.restartHint) && ticked && tool.running && tool.running.running === true && !appRunningLine(tool, platform)) {
+    quiet.push('<p class="mcpi-hint">' + escapeHtml(tool.restartHint) + '</p>');
+  }
+
+  const fixN = mw.length;
+  const connected = status === 'connected' || !!via;
+  const fix = status === 'needs-update' || status === 'cant-read' || warnings.some((w) => w.severity === 'fix');
+  return { tool, id, label, status, via, h, installable, canWrite, ticked, plan, warnings, quiet, fixN,
+    bridgeTag: bfact.tag || '', connected, fix, platform };
+}
+
+/** `{connected, fix, notConnected}` over row models — the overview's three cards. Pure. */
+export function countVerdicts(models) {
+  const c = { connected: 0, fix: 0, notConnected: 0 };
+  for (const m of Array.isArray(models) ? models : []) {
+    if (m.connected) c.connected++;
+    if (m.fix) c.fix++;
+    if (!m.connected && !m.fix) c.notConnected++;
+  }
+  return c;
+}
+
+/** The row models for a status payload (and the machine and bridge readings). */
+export function appRowModels(status, ctx = {}) {
+  const data = status && status.data;
+  if (!data) return [];
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const c2 = { ...ctx, writable: data.writable, data, platform: data.platform };
+  return tools.map((t) => appRowModel(t, c2));
+}
+
+/**
+ * "My Curator in your agent apps — 3 connected · 1 to fix · 2 not connected".
+ * Zero counts are left out; nothing to say says so.
+ */
+export function overviewLine(tools, platform, ctx = {}) {
+  const models = (Array.isArray(tools) ? tools : []).map((t) => appRowModel(t, { ...ctx, platform }));
+  const c = countVerdicts(models);
+  const parts = [];
+  if (c.connected) parts.push(c.connected + ' connected');
+  if (c.fix) parts.push(c.fix + ' to fix');
+  if (c.notConnected) parts.push(c.notConnected + ' not connected');
+  return 'My Curator in your agent apps — ' + (parts.length ? parts.join(' · ') : 'no agent app found on this ' + machineWord(platform));
+}
+
+/**
+ * The per-row disclosure: the files, skills and hooks the check read, and
+ * Remove / Restore. CLOSED unless the person opened it (`folds`).
+ */
+function detailHtml(m, ctx) {
+  const tid = ' data-tool="' + escapeHtml(m.id) + '"';
+  const acts = [];
+  if (m.status === 'connected' && m.canWrite) acts.push(btnG('remove', 'Remove from ' + m.label, tid));
+  if (m.tool.restorable === true && m.canWrite) acts.push(btnG('restore', 'Restore original', tid));
+  const note = isStr(m.tool.note) ? '<p class="mcpi-hint">' + escapeHtml(m.tool.note) + '</p>' : '';
+  const actsHtml = acts.length ? '<div class="settings-setup-acts mcpi-detail-acts">' + acts.join('') + '</div>' : '';
+  // An app with no entry and nothing to fix needs only its copy line: its
+  // files would only say "no my-curator entry" again.
+  if (!m.connected && !m.fix && !acts.length) return '';
+  let label; let body;
+  if (m.h) {
+    const d = renderAppDetail(m.h, ctx.machine ? ctx.machine.raw : null, { platform: m.platform });
+    label = d.label; body = d.html;
+  } else if (fileLines(m.tool) || acts.length) {
+    label = 'Files'; body = fileLines(m.tool) ? '<div class="mcpi-files">' + fileLines(m.tool) + '</div>' : '';
+  } else return '';
+  const key = 'tool-' + m.id;
+  const open = ctx.folds && ctx.folds[key];
+  return '<details class="mcpi-more" data-setup-fold="' + escapeHtml(key) + '"' + (open ? ' open' : '') + '>'
+    + '<summary>' + escapeHtml(label) + '</summary>'
+    + '<div class="settings-setup-body">' + body + note + actsHtml + '</div></details>';
+}
+
+/**
+ * One app's row: checkbox · name · status tag · running · used · "N to fix",
+ * then its one action; under it the quiet lines, then — OPEN — its warnings
+ * with their buttons, then the closed "Files, skills and hooks" disclosure.
+ */
+export function renderToolRow(tool, ctx = {}) {
+  const m = tool && tool.tool && tool.id !== undefined && Array.isArray(tool.warnings) ? tool : appRowModel(tool, ctx);
+  const t = m.tool;
+  const nameHtml = '<span class="mcpi-name">' + escapeHtml(m.label) + '</span>';
+  const head = m.installable
+    ? '<label class="mcpi-pick"><input type="checkbox" class="cur-check cur-check-sm" data-mcpi-tick="' + escapeHtml(m.id) + '"' + (m.ticked ? ' checked' : '')
+      + ' aria-label="' + escapeHtml('Include ' + m.label + ' in the install') + '">' + nameHtml + '</label>'
+    : '<span class="mcpi-pick">' + nameHtml + '</span>';
+  const tid = ' data-tool="' + escapeHtml(m.id) + '"';
+  const acts = [];
+  if (m.status !== 'connected' && m.plan) acts.push(btnG('copy', 'Copy entry', tid));
+  const tags = (m.via ? viaTag(m) : statusTag(m.status)) + runningTag(t) + usedNote(t, ctx.now)
+    + (m.fixN ? fixMark(m.fixN + ' to fix', ' data-mcpi-fixn') : '')
+    + (m.bridgeTag ? fixMark(m.bridgeTag, ' data-mcpi-restart-needed') : '')
+    + (ctx.writable !== false ? newOnWindowsTag(t, m.platform) : '');
+  const files = m.installable && fileLines(t) ? '<div class="mcpi-files">' + fileLines(t) + '</div>' : '';
+  return '<div class="mcpi-row mcpi-row-' + (m.via ? 'via' : m.status) + '" data-mcpi-tool="' + escapeHtml(m.id) + '">'
+    + '<div class="mcpi-l1">' + head
+    + '<span class="mcpi-tags">' + tags + '</span>'
+    + '<span class="mcpi-acts">' + acts.join('') + '</span></div>'
+    + files
+    + appRunningLine(t, m.platform)
+    + m.quiet.join('')
+    + m.warnings.map(warnHtml).join('')
+    + detailHtml(m, ctx)
+    + '</div>';
+}
+
+/** The rows and the "Not on this Mac/PC/computer (N)" fold. */
 export function renderToolRows(status, ctx = {}) {
   const data = status && status.data;
   if (!data) return '';
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const c2 = { ...ctx, writable: data.writable, data, platform: data.platform };
-  const rows = tools.map((t) => renderToolRow(t, c2)).join('');
+  const rows = tools.map((t) => renderToolRow(appRowModel(t, c2), c2)).join('');
   const nf = Array.isArray(data.notFound) ? data.notFound : [];
   const open = ctx.folds && ctx.folds['mcpi-notfound'];
   const snippets = data.manualSnippets || {};
+  const names = nf.map((t) => t && (t.label || t.id)).filter(isStr);
   const fold = nf.length
     ? '<details class="settings-setup-fold mcpi-notfound" data-setup-fold="mcpi-notfound"' + (open ? ' open' : '') + '>'
-      + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not found on this ' + machineWord(data.platform) + ' (' + nf.length + ')</span></summary>'
+      + '<summary class="settings-setup-summary"><span class="settings-setup-name">Not on this ' + machineWord(data.platform) + ' (' + nf.length + ')</span>'
+      + '<span class="cur-setup-hint mcpi-nf-names">' + escapeHtml(names.join(' · ')) + '</span></summary>'
       + '<div class="mcpi-nf-body">' + nf.map((t) => '<div class="mcpi-row mcpi-row-nf" data-mcpi-tool="' + escapeHtml(t.id) + '">'
         + '<div class="mcpi-l1"><span class="mcpi-pick"><span class="mcpi-name">' + escapeHtml(t.label || t.id) + '</span></span>'
-        + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span></div>'
-        + (() => { const pl = copyPlanFor(t.id, data, ctx.machineFiles); return pl ? '<p class="mcpi-copyline" data-mcpi-copyline>' + wbrPath(pl.line) + '</p>' : ''; })()
+        + '<span class="mcpi-acts">' + (isStr(snippets[t.id]) ? btnG('copy', 'Copy entry', ' data-tool="' + escapeHtml(t.id) + '"') : '') + '</span></div>'
+        + (() => { const pl = copyPlanFor(t.id, data, ctx.machineFiles); return pl ? '<p class="mcpi-sub" data-mcpi-copyline>' + planLineHtml(pl) + '</p>' : ''; })()
         + '</div>').join('') + '</div></details>'
     : '';
-  const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent tool was found on this ' + machineWord(data.platform) + '.</p>' : '';
-  return '<div class="mcpi-rows" id="mcpi-rows">' + rows + '</div>' + fold + none;
+  const none = !tools.length && !nf.length ? '<p class="mcpi-line">No agent app was found on this ' + machineWord(data.platform) + '.</p>' : '';
+  return (rows ? '<div class="mcpi-rows" id="mcpi-rows">' + rows + '</div>' : '') + fold + none;
 }
 
+// ── the overview card + the two buttons ────────────────────────────────────
+
+/**
+ * ONE overview (rule 1) — three readings and the two buttons under it. The
+ * sentence is also the card's accessible summary. `busy` is 'plan' | 'apply' |
+ * 'status' | null. `ctx` carries the machine and bridge readings so the
+ * cards count the same verdicts the rows show.
+ */
+export function renderInstallOverview(status, ticks, busy, ctx = {}) {
+  const data = status && status.data;
+  if (!data) return '';
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const models = appRowModels(status, { ...ctx, ticks });
+  const c = countVerdicts(models);
+  const card = renderOverview({
+    id: 'settings-mcpi-overview',
+    eyebrow: 'MY CURATOR IN YOUR AGENT APPS',
+    minTrack: 130,
+    cards: [
+      { label: 'CONNECTED', value: String(c.connected) },
+      { label: 'TO FIX', value: String(c.fix) },
+      { label: 'NOT CONNECTED', value: String(c.notConnected) },
+    ],
+  });
+  const b = installButtonState(status, ticks, busy);
+  const installLabel = busy === 'plan' ? 'Preparing…' : b.label;
+  return '<div class="mcpi-overview">'
+    + '<p class="visually-hidden" role="status">' + escapeHtml(overviewLine(tools, data.platform, { ...ctx, data, writable: data.writable, ticks })) + '</p>'
+    + card
+    + '<div class="mcpi-buttons">'
+    + '<button type="button" class="btn btn-primary" id="mcpi-install-btn" data-mcpi-act="install"' + (b.disabled ? ' disabled' : '') + '>' + escapeHtml(installLabel) + '</button>'
+    + '<button type="button" class="btn btn-secondary" data-mcpi-act="copy-myself">Copy it myself</button>'
+    + '</div>'
+    + (data.writable ? (data.platform === 'win32' ? windowsLine() : '') : nonMacLine(data))
+    + '</div>';
+}
+
+/** Said OPEN whenever one-click install is not available on this computer. */
+export function nonMacLine(data) {
+  const p = data && isStr(data.platform) ? data.platform : '';
+  if (p === 'win32') {
+    return '<p class="mcpi-line" data-mcpi-nonmac>One-click install on Windows is not available right now — copy the entry for each agent app instead.</p>';
+  }
+  const where = p && p !== 'darwin' ? ' on ' + (p === 'linux' ? 'Linux' : p) : '';
+  return '<p class="mcpi-line" data-mcpi-nonmac>One-click install works on a Mac in this version' + escapeHtml(where)
+    + ' — copy the entry for each agent app instead.</p>';
+}
+
+/** Said OPEN on Windows when install works: one app only. */
+export function windowsLine() {
+  return '<p class="mcpi-line" data-mcpi-windows>On Windows, one-click install covers Claude Desktop only — copy the entry for each other agent app.</p>';
+}
 // ── the preview ────────────────────────────────────────────────────────────
 
 const PLAN_TITLE = Object.freeze({ install: 'Plan ready — nothing written yet', remove: 'Plan ready — nothing written yet', restore: 'Plan ready — nothing written yet' });
@@ -547,8 +1018,10 @@ export function renderResults(res, tools, platform) {
 // ── the panel ──────────────────────────────────────────────────────────────
 
 /**
- * The whole "My Curator in your tools" panel for block 5.
- * `st` = `{status:{data,error,loading}, ticks, plan, results, busy, error, copied, folds, paths}`.
+ * The agent-apps panel of block 1: the overview, the plan or results, then
+ * one row per app and the "Not on this Mac" fold.
+ * `st` = `{status:{data,error,loading}, ticks, plan, results, busy, error,
+ * copied, folds, paths, machineFiles, machine, bridges, current, now}`.
  */
 export function renderInstallPanel(st) {
   const s = st || {};
@@ -556,53 +1029,30 @@ export function renderInstallPanel(st) {
   const data = status && status.data;
   if (!data) {
     if (status && status.error) {
-      return '<p class="settings-inline-error" role="alert">Could not check your tools: ' + escapeHtml(status.error) + '</p>';
+      return '<p class="settings-inline-error" role="alert">Could not check your agent apps: ' + escapeHtml(status.error) + '</p>';
     }
-    return '<p class="cur-setup-hint" aria-busy="true">Checking your tools…</p>';
+    return '<p class="cur-setup-hint" aria-busy="true">Checking your agent apps…</p>';
   }
   const tools = Array.isArray(data.tools) ? data.tools : [];
+  const ctx = { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles,
+    machine: s.machine || null, bridges: s.bridges || null, current: s.current || {}, now: s.now };
   const err = isStr(s.error) ? '<p class="settings-inline-error" role="alert" data-mcpi-error>' + escapeHtml(s.error) + '</p>' : '';
   const stale = status.error ? '<p class="settings-inline-error" role="alert">Could not re-check: ' + escapeHtml(status.error) + '</p>' : '';
   return '<div class="mcpi-panel" id="mcpi-panel" data-mcpi-panel>'
-    + renderInstallOverview(status, s.ticks, s.busy)
+    + renderInstallOverview(status, s.ticks, s.busy, ctx)
     + err + stale
     + (s.plan ? renderPlanCard(s.plan, tools, s.busy) : '')
     + renderResults(s.results, tools, data.platform)
     + (isStr(s.copied) ? '<p class="mcpi-line" role="status">' + escapeHtml(s.copied) + '</p>' : '')
-    + renderToolRows(status, { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles })
+    + renderToolRows(status, ctx)
     + '</div>';
-}
-
-// ── the door from elsewhere ────────────────────────────────────────────────
-
-/**
- * Scroll to the "My Curator in your tools" panel and mark one tool's row
- * (default Claude Desktop) — the single target Settings block 1 and the MCP
- * wizard point at, so there is ONE installer. Writes and requests nothing.
- * Falls back to the panel, then to block 5, while the status is still loading.
- * Returns the element it scrolled to, or null.
- */
-export function focusInstallPanel(toolId = 'claude-desktop', doc = globalThis.document) {
-  if (!doc || typeof doc.querySelector !== 'function') return null;
-  const safe = String(toolId).replace(/[^A-Za-z0-9_-]/g, '');
-  const row = doc.querySelector('[data-mcpi-tool="' + safe + '"]');
-  const target = row || doc.getElementById('mcpi-panel') || doc.querySelector('.settings-block-mcp-tools');
-  if (!target) return null;
-  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (row && row.classList) {
-    row.classList.add('mcpi-flash');
-    if (typeof setTimeout === 'function') setTimeout(() => row.classList.remove('mcpi-flash'), 2400);
-    const f = row.querySelector('input, button');
-    if (f && typeof f.focus === 'function') { try { f.focus({ preventScroll: true }); } catch { /* not focusable */ } }
-  }
-  return target;
 }
 
 // ── requests (the only network code; every one is called from a click) ─────
 
 async function readJson(res) {
   const ct = String(res.headers && res.headers.get ? res.headers.get('content-type') || '' : '').toLowerCase();
-  if (ct.includes('text/html')) return { ok: false, code: 'stale', message: 'This version of The Curator can’t install into tools yet — update the app.' };
+  if (ct.includes('text/html')) return { ok: false, code: 'stale', message: 'This version of The Curator can’t install into agent apps yet — update the app.' };
   let j = null;
   try { j = await res.json(); } catch { /* not JSON */ }
   if (res.ok && j) return { ok: true, data: j };

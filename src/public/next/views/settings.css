@@ -2765,38 +2765,6 @@
   color: var(--danger-text);
 }
 
-/* ── AND ITS CAPTIONS MAY WRAP ONCE THE PAIR HAS STACKED ───────────────
-   MEASURED at 568 (rail 72 + the view sidebar 272 leave 224px of column, and
-   this block sits two boxes further in at 136px): shared/monitor.css stacks a
-   line into one column below 640px, but `.cur-mon-key` keeps
-   `white-space: nowrap` — correct while the key is the stable LEFT column of a
-   two-column grid, and pointless once there is no second column to protect.
-   "Last session start" is 133px in a 110px track, so the line, the list and
-   the block each reported an overflow (0 on main, which drew a flex strip of
-   two readouts here).
-
-   It is a HOST placement, at equal specificity, scoped to this one strip:
-   shared/monitor.css is linked before the view sheets precisely so a host can
-   place what it owns. The kit-side version is `white-space: normal` inside
-   that same media query — P1's file; stated here so it can move up.
-
-   Document overflow was 0 at 568 before and after; what this closes is three
-   elements overflowing their own boxes inside a column that already does. */
-@media (max-width: 640px) {
-  .mcp-session-strip .cur-mon-key { white-space: normal; }
-}
-
-/* THE TWO SESSION READINGS ARE ONE MONITOR NOW (M10). The strip was a flex
-   row of two `renderReadout`s; the monitor is a block of two key/value lines,
-   so the row's own layout rules went with them and this wrapper keeps only
-   the gap to the tool groups below. `.mcp-session-reading` survives as the
-   AGE HOOK's element — it carries `data-mcp-age-at` inside the line's
-   `markHtml` so `tickMcpAges` can re-word it without a render (see
-   renderSessionStrip) — and it needs no box of its own for that. */
-.mcp-session-strip { margin-bottom: var(--space-10); }
-
-.mcp-tool-group + .mcp-tool-group { margin-top: var(--space-10); }
-
 /* The group caption takes the MONO face, because `--type-eyebrow` IS the mono
    idiom in this system (typography.css defines it as one) and v3.56.0 §11
    settled that every eyebrow in the app wears it. It names the group and
@@ -2808,136 +2776,23 @@
   margin-bottom: var(--space-4);
 }
 
-.mcp-tool-grid {
+/* ── v3.88.0 — THE COMPACT TOOL MAP ──────────────────────────────────────
+   The 24 tiles became one fold, "All N tools", CLOSED by default (the owner's
+   decision 6): two monitors side by side, READ and WRITE, one line per tool —
+   agent calls in the window · last agent use. One column below 900px. */
+.mcp-busiest { margin-top: var(--space-6); }
+.mcp-all-tools { margin-top: var(--space-6); }
+.mcp-all-tools .settings-setup-summary { flex-wrap: wrap; row-gap: var(--space-2); }
+.mcp-all-tools-hint { margin-left: auto; text-align: right; }
+.mcp-all-tools .settings-setup-body { padding-top: var(--space-2); }
+.mcp-tool-cols {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
 }
-
-/* ONE CHROME, the kit group's — --surface + --hairline + --elev-1 — so a tile
-   sits in the same register as every other card in /next rather than
-   inventing a fourth. */
-.mcp-tool-tile {
-  min-width: 0;
-  padding: var(--space-5) var(--space-6);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  box-shadow: var(--elev-1);
-}
-/* A TOOL NOBODY HAS CALLED IS NOT A FAILURE, and it must not look like one.
-   No tint, no warning ink: the only difference is that its mark is the
-   dashed `unknown` ring (shared/freshness.css) and its words say so. */
-.mcp-tool-unused { background: var(--surface-sunken); }
-
-.mcp-tool-hd {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-/* A tool NAME is a literal — the identifier a client shows and a user types
-   into a prompt — which is the one case the monospace budget exists for
-   (scripts/test-next-views-kit.js §7 states the rule). `anywhere` because
-   `search_cross_domain` is 19 characters in a 220px column. */
-.mcp-tool-name {
-  font: var(--type-mono);
-  color: var(--text);
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-/* ── THE `writes` CHIP ─────────────────────────────────────────────────────
-   TONE IN THE TINT AND THE BORDER, LABEL AT --text — the treatment
-   `.model-badge-lane` records and for the identical measured reason: an
-   accent as a badge LABEL drops under the 4.5 text floor on its own tint,
-   while --text clears it comfortably. Its own class rather than a reuse of
-   `.model-badge-lane`, because that name means BUILD LANE and this one means
-   "this tool can change your files" — two facts that happen to share a
-   recipe.
-
-   ON A MINORITY ONLY (the 7 mutators of 24). v3.16.1: a flag carried by every
-   row of a list carries nothing. */
-.mcp-writes-chip {
-  flex: none;
-  padding: 0 6px;
-  border-radius: var(--radius-full);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-  background: var(--accent-tint);
-  color: var(--text);
-  border: 1px solid var(--accent);
-}
-
-.mcp-tool-purpose {
-  margin: var(--space-2) 0 0;
-  font-size: var(--text-md);
-  color: var(--text-2);
-}
-
-.mcp-tool-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-/* The dot and the words are ONE reading and must not be separated by a wrap.
-   The gap lives here rather than on `.fresh-dot`, which shared/freshness.css
-   owns outright — no other stylesheet may declare a `.fresh-` rule. */
-.mcp-age {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  white-space: nowrap;
-}
-/* ── THE UNUSED READING WRAPS, AND ITS MARK KEEPS ITS COLUMN ──────────────
-   FOUND BY RENDERING IT: "not used since this log began · 1 week ago" does not
-   fit a 220px tile on one line, and as an inline-flex row it wrapped after the
-   separator — a tile ending in a dangling "·" with a dot and a date on the
-   line below.
-
-   A two-column GRID instead: the mark in an `auto` column, the sentence in the
-   rest, so every wrapped line stays inside the text column and the mark cannot
-   be carried along with it. `baseline` rather than `center` because a mark
-   centred against a two-line block floats between the lines; a dot with no
-   text of its own synthesises its baseline from its bottom edge, which puts it
-   on the first line's baseline exactly where a bullet belongs.
-
-   THE GEOMETRY IS HERE AND NOT ON `.fresh-dot`: shared/freshness.css owns the
-   `fresh-` prefix outright and no other stylesheet may declare a rule on it —
-   so the column comes from this container, which is this file's to own. */
-.mcp-age-unused {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  white-space: normal;
-}
-/* The separator and the age are ONE clause and never break apart: "began ·"
-   at the end of a line reads as a sentence that lost its ending. */
-.mcp-age-tail { white-space: nowrap; }
-/* ── THE `self-test` MARKER (v3.61.0) ────────────────────────────────────
-   Inside the reading, before the age: "self-test · 2 min". A word rather than
-   a chip, because it is not a flag on the tool — it says whose call produced
-   the age standing next to it, and a chip beside a chip (`writes` is already
-   on seven tiles) would read as a second property of the tool itself.
-
-   `--text-3` on `--surface`, which is EXACTLY `.mcp-tool-uses`'s pairing three
-   rules above — so no contrast pair here is new and none needed measuring.
-   It is one rung dimmer than the age it qualifies, which is the right
-   subordination: the reading is the fact, the marker is its provenance. */
-.mcp-via-mark {
-  font: var(--type-mono);
-  color: var(--text-3);
-}
-.mcp-via-sep { color: var(--text-3); }
-.mcp-tool-uses { color: var(--text-3); }
-/* "not used since this log began · 4 days ago" — the phrase and the log's own
-   age are one sentence, so the age is NOT dimmed further than the phrase. */
-.mcp-tool-unused-words { color: var(--text-2); }
+.mcp-tool-col { min-width: 0; }
+@media (max-width: 900px) { .mcp-tool-cols { grid-template-columns: minmax(0, 1fr); } }
 
 .mcp-map-empty {
   margin: 0;
@@ -2956,9 +2811,11 @@
    host can place what it owns. */
 .mcp-busiest,
 .mcp-across,
+.mcp-tool-cols,
 .settings-vault-domains { min-width: 0; }
 .mcp-busiest .cur-mon-key,
 .mcp-across .cur-mon-key,
+.mcp-tool-cols .cur-mon-key,
 .settings-vault-domains .cur-mon-key {
   text-transform: none;
   letter-spacing: normal;
@@ -2968,9 +2825,6 @@
    the journal-based saves, each with its own note. A gap between them so
    the second does not read as a continuation of the first's note. */
 .mcp-across > .cur-mon + .cur-mon { margin-top: var(--space-4); }
-/* ③'s busiest-tools monitor sits between the session strip and the tiles,
-   at the strip's own gap. */
-.mcp-busiest { margin-bottom: var(--space-10); }
 
 /* THE IDENTITY DOT BEFORE THE NAME. The monitor's one trusted slot
    (`markHtml`) renders INSIDE the value, beside the figure; on these two
@@ -2982,7 +2836,7 @@
    this host's. */
 .mcp-across .cur-mon-line,
 .settings-vault-domains .cur-mon-line { position: relative; }
-.mcp-across .cur-mon-key,
+#mcp-across-projects .cur-mon-key,
 .settings-vault-domains .cur-mon-key { padding-left: 16px; }
 .settings-id-mark { display: contents; }
 .settings-id-mark .cur-sb-dot {
@@ -3016,6 +2870,7 @@
 @media (max-width: 640px) {
   .mcp-busiest .cur-mon-key,
   .mcp-across .cur-mon-key,
+  .mcp-tool-cols .cur-mon-key,
   .settings-vault-domains .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
 }
 

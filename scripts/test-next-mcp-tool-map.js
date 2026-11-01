@@ -80,8 +80,8 @@ function extractFunction(source, name) {
   throw new Error(`extractFunction: unbalanced braces in ${name}`);
 }
 
-const RENDER_CHAIN = ['ageSecondsOf', 'ageMarkHtml', 'usageWindowWords', 'renderToolTile', 'renderToolGroup',
-  'renderSessionStrip', 'renderExerciseOutcome', 'renderExerciseRunner',
+const RENDER_CHAIN = ['ageSecondsOf', 'usageWindowWords', 'agentReading', 'tickedAgeHtml', 'sessionLine', 'lastExerciseRun',
+  'renderExerciseOutcome', 'renderExerciseRunner',
   'renderToolMapBody', 'renderToolMap', 'usageSignature',
   // v3.72.1 (truth audit F9): the poll compares the save/session stamp to
   // decide whether block ④ is re-read on the same tick.
@@ -111,6 +111,7 @@ function build(extra, over, alsoReturn) {
     renderMonitor,
     gatedLoader: () => '<LOADER/>',
     loadGate: null,
+    AGENT_USE_TOP: 5,
     document: undefined,
     Date,
     settingsBlock: null,
@@ -186,144 +187,95 @@ const MAP = build(null, { state: { mcpUsage: FIXTURE, mcpUsageError: null } });
 const HTML = MAP.renderToolMapBody(NOW);
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('1. Every tool in the payload gets a tile, in the group it belongs to');
+section('1. Every tool in the payload gets a line in "All N tools", in its group (v3.88.0)');
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// THE COUNT COMES FROM THE FIXTURE, not from a literal: "24" written here
-// would be a second catalogue, and the thing under test is that the view drops
-// nothing. The 17/7 split IS asserted as a literal, because that split is the
-// fixture's own shape and a renderer that put a write tool in the read group
-// would otherwise pass on the total alone.
+// The 24 tiles became ONE fold of two monitors, READ and WRITE, one line per
+// tool. The count comes from the fixture, never a literal; the 17/7 split is
+// the fixture's own shape.
 {
-  const tiles = HTML.match(/class="mcp-tool-tile/g) || [];
-  ok(tiles.length === FIXTURE.tools.length,
-    `${tiles.length} tiles for ${FIXTURE.tools.length} tools — the map shows the WHOLE catalogue`);
-  const groups = HTML.match(/class="mcp-group-eyebrow">([^<]*)</g) || [];
-  ok(groups.length === 2, `two groups rendered (${groups.length})`);
-  ok(/READ · 17 tools/.test(HTML), 'the READ group names itself and counts 17');
-  ok(/WRITE · 7 tools/.test(HTML), 'the WRITE group names itself and counts 7');
-  // …and the split is REAL, not just a caption: the write tools' tiles must
-  // all sit after the WRITE caption.
-  const writeAt = HTML.indexOf('WRITE · 7 tools');
-  const readPart = HTML.slice(0, writeAt);
-  const writePart = HTML.slice(writeAt);
-  ok(!/save_working_state/.test(readPart) && /save_working_state/.test(writePart),
-    'a write tool’s tile is under the WRITE caption, not merely counted by it');
-  ok(/search_wiki/.test(readPart), '…and a read tool’s tile is under the READ caption');
-  // CONTROL: a payload one tool short renders one tile fewer. Without this a
-  // renderer that hard-coded 24 tiles would pass everything above.
+  const fold = (HTML.match(/<details class="settings-setup-fold mcp-all-tools"[\s\S]*?<\/details>/) || [''])[0];
+  const lines = fold.match(/class="cur-mon-line[" ]/g) || [];
+  ok(lines.length === FIXTURE.tools.length,
+    `${lines.length} lines for ${FIXTURE.tools.length} tools — the fold shows the WHOLE catalogue`);
+  ok(new RegExp('All ' + FIXTURE.tools.length + ' tools<').test(fold), 'the fold is titled "All 24 tools" — the count read from the payload');
+  ok(/mcp-group-eyebrow">READ · 17</.test(fold), 'the READ group names itself and counts 17');
+  ok(/mcp-group-eyebrow">WRITE · 7</.test(fold), 'the WRITE group names itself and counts 7');
+  const writeAt = fold.indexOf('WRITE · 7');
+  ok(!/save_working_state/.test(fold.slice(0, writeAt)) && /save_working_state/.test(fold.slice(writeAt)),
+    'a write tool’s line is under the WRITE caption, not merely counted by it');
+  ok(/search_wiki/.test(fold.slice(0, writeAt)), '…and a read tool’s line is under the READ caption');
   const short = build(null, { state: { mcpUsage: payload({ tools: FIXTURE.tools.slice(0, 23) }) } });
-  const shortTiles = (short.renderToolMapBody(NOW).match(/class="mcp-tool-tile/g) || []).length;
-  ok(shortTiles === 23, `CONTROL: 23 tools in → ${shortTiles} tiles out — the count is read, not assumed`);
+  const shortFold = (short.renderToolMapBody(NOW).match(/<details class="settings-setup-fold mcp-all-tools"[\s\S]*?<\/details>/) || [''])[0];
+  ok((shortFold.match(/class="cur-mon-line[" ]/g) || []).length === 23 && /All 23 tools</.test(shortFold),
+    'CONTROL: 23 tools in → 23 lines and "All 23 tools" out — the count is read, not assumed');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('2. The freshness WORD and the DOT are the same band of one ladder');
+section('2. "All N tools" is CLOSED by default, and an opened fold survives the repaint');
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// Both are recomputed here from `shared/age.js` directly — the module the view
-// imports — so this is a claim about the view USING that ladder rather than a
-// restatement of a table typed twice. A view that grew its own thresholds
-// fails here on the first tool whose age crosses a band.
 {
-  for (const t of USED) {
-    const secs = Math.round((NOW - Date.parse(t.lastUsedAt)) / 1000);
-    const words = formatAge(secs);
-    const tier = freshnessTier(secs);
-    // The tile, isolated, so one tool's reading cannot be satisfied by another's.
-    const tile = MAP.renderToolTile(t, LOG_STARTED, NOW);
-    ok(tile.includes('>' + words + '<'),
-      `${t.name}: the words are formatAge's own — "${words}"`);
-    ok(tile.includes('fresh-dot fresh-' + tier),
-      `${t.name}: …and the dot wears the SAME band — fresh-${tier}`);
-    ok(tile.includes('data-mcp-age-at="' + t.lastUsedAt + '"'),
-      `${t.name}: …on a tick hook carrying the stamp, so the clock can recount it`);
-  }
-  // The four ages really do land on four different rungs — otherwise the loop
-  // above would be four copies of one assertion.
-  const tiers = new Set(USED.map((t) =>
-    freshnessTier(Math.round((NOW - Date.parse(t.lastUsedAt)) / 1000))));
-  ok(tiers.size === 4, `CONTROL: the fixture's four ages land on ${tiers.size} distinct bands`);
-  // …and the uses line states its own window rather than a bare number.
-  ok(MAP.renderToolTile(USED[1], LOG_STARTED, NOW).includes('88 uses · 7 days'),
-    'the count names the window it counts over — "88 uses · 7 days"');
-  ok(MAP.renderToolTile({ ...USED[1], count7d: 1 }, LOG_STARTED, NOW).includes('1 use · 7 days'),
-    '…and it is singular at one');
+  ok(/<details class="settings-setup-fold mcp-all-tools" data-mcp-fold="all-tools">/.test(HTML),
+    'the fold renders without `open` (the owner’s decision 6)');
+  const opened = build(null, { state: { mcpUsage: FIXTURE, mcpAllToolsOpen: true } }).renderToolMapBody(NOW);
+  ok(/data-mcp-fold="all-tools" open>/.test(opened), 'with the person’s own open recorded in state, the repaint keeps it open');
+  ok(!/<details[^>]*>[\s\S]*?mcp-runner-outcome[\s\S]*?<\/details>/.test(HTML) && !/<details[^>]*>(?:(?!<\/details>)[\s\S])*mcp-agent-use/.test(HTML),
+    'neither the outcome nor the Agent use monitor sits inside the fold');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('3. A tool with no line is "not used since this log began" — never "never"');
+section('3. Each line is AGENT use: calls in the window · last agent use; "—" for none (truth audit T4)');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const tile = MAP.renderToolTile(UNUSED_READ[0], LOG_STARTED, NOW);
-  ok(/mcp-tool-tile mcp-tool-unused/.test(tile), 'an unused tile is marked as one');
-  ok(tile.includes('fresh-dot fresh-unknown'),
-    'its mark is the DASHED unknown ring — a state that differs in kind, not in degree');
-  ok(/not used since this log began/.test(tile), 'and it says exactly that');
-  ok(tile.includes('>' + formatAge(9 * 86400) + '<'),
-    `…with the LOG's own age beside it ("${formatAge(9 * 86400)}") — the phrase means nothing without it`);
-  ok(tile.includes('data-mcp-age-at="' + LOG_STARTED + '"'),
-    '…on a tick hook, so that age keeps moving too');
+  const agent = payload({ tools: FIXTURE.tools.map((t, i) => ({ ...t, count7dAgent: t.name === 'search_wiki' ? 11 : 0,
+    lastAgentAt: t.name === 'search_wiki' ? ago(2 * 86400) : null,
+    // the test run lit every tool a minute ago — that must NOT read as agent use
+    lastUsedAt: ago(60), lastVia: 'self-test' })) });
+  const h = build(null, { state: { mcpUsage: agent } }).renderToolMapBody(NOW);
+  const line = (name) => (h.slice(h.indexOf('mcp-all-tools')).match(new RegExp('cur-mon-key">' + name + '</span>[\\s\\S]*?(?=<div class="cur-mon-line|</div></div>)')) || [''])[0];
+  ok(/11 · <span data-mcp-age-at="[^"]+"><span class="mcp-age-words">2 days ago</.test(line('search_wiki')),
+    'search_wiki: "11 · 2 days ago" — agent calls and the last AGENT use, on the tick hook', line('search_wiki'));
+  ok(/cur-mon-value">—</.test(line('get_tags')), 'a tool no agent called: "—", with no age');
+  ok(!/1 min ago/.test(h.slice(h.indexOf('mcp-all-tools'))), 'the test run’s "1 min ago" appears on NO line');
+  ok(/— = none since \d+ \w{3}/.test(h), 'the fold’s hint says what "—" means, and since when (the log’s own start)');
+  // An older server (no lastAgentAt field) may stand its lastUsedAt in ONLY when that use was not a test run.
+  const older = build(null, { state: { mcpUsage: payload() } }).agentReading;
+  ok(older({ name: 'a', lastUsedAt: ago(30), lastVia: 'self-test' }).lastAgentAt === null, 'older server: a test run’s use is never passed off as an agent’s');
+  ok(older({ name: 'a', lastUsedAt: ago(30) }).lastAgentAt === ago(30), '…an agent’s use is');
+  ok(older({ name: 'a', lastUsedAt: ago(30), lastAgentAt: null }).lastAgentAt === null, 'a server that sends lastAgentAt: null is believed');
   ok(!/\bnever\b/i.test(HTML), 'the word "never" appears NOWHERE in the rendered map');
-  // CONTROL: the used tile does NOT carry the unused treatment, so the two
-  // arms are really distinguished.
-  ok(!/mcp-tool-unused/.test(MAP.renderToolTile(USED[0], LOG_STARTED, NOW)),
-    'CONTROL: a used tile carries neither the dashed ring nor the phrase');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('4. The `writes` chip is on the mutators, and only on them');
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// v3.16.1: a flag carried by 100% of a list carries nothing. The chip is the
-// one fact a reader deciding what to let an agent do needs, so it must mark
-// exactly the minority that can change files.
-{
-  const chips = (HTML.match(/class="mcp-writes-chip"/g) || []).length;
-  const mutators = FIXTURE.tools.filter((t) => t.mutates).length;
-  ok(chips === mutators, `${chips} chips for ${mutators} mutators`);
-  ok(mutators < FIXTURE.tools.length / 2,
-    `CONTROL: the mutators are a MINORITY (${mutators} of ${FIXTURE.tools.length}) — a chip on every tile would carry nothing`);
-  ok(MAP.renderToolTile(USED[2], LOG_STARTED, NOW).includes('>writes<'),
-    'a mutator’s own tile carries it');
-  ok(!MAP.renderToolTile(USED[1], LOG_STARTED, NOW).includes('mcp-writes-chip'),
-    '…and a read tool’s does not');
-  // A tool that merely SITS in the write block without mutating takes no chip:
-  // `scan_wiki_health` is read-only and is in the read group by capability.
-  ok(!MAP.renderToolTile({ ...USED[2], mutates: false }, LOG_STARTED, NOW).includes('mcp-writes-chip'),
-    'the chip keys on `mutates`, not on the group — a read-only tool in the write block takes none');
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-section('5. The two session readings, and the empty state');
+section('4. The Agent use monitor: two session readings, then the busiest five');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  ok(/Last session start/.test(HTML), 'the strip reads "Last session start"');
-  ok(/Last save/.test(HTML), '…and "Last save"');
-  const strip = MAP.renderSessionStrip(FIXTURE.sessions, NOW);
-  ok(strip.includes('data-mcp-age-at="' + FIXTURE.sessions.lastBootstrapAt + '"'),
-    'each reading carries the tick hook');
-  ok(strip.includes('cur-mon-line'),
-    '…and paints through the shared MONITOR, one line per reading');
-  ok(strip.includes('mcp-age-words'),
-    '…whose words live in the element the clock writes into');
-  const none = MAP.renderSessionStrip({ lastBootstrapAt: null, lastSaveAt: null }, NOW);
-  ok(/none since this log began/.test(none) && !/\bnever\b/i.test(none),
-    'an absent reading says "none since this log began", never "never"');
-  ok(!/data-mcp-age-at/.test(none), '…and carries no tick hook, because there is no stamp to recount');
-
+  const use = (HTML.match(/<div class="cur-mon" id="mcp-agent-use"[\s\S]*?(?=<details)/) || [''])[0];
+  ok(/cur-mon-key">last session start</.test(use) && /cur-mon-key">last save</.test(use), 'the monitor opens on last session start and last save');
+  ok(use.includes('data-mcp-age-at="' + FIXTURE.sessions.lastBootstrapAt + '"') && /mcp-age-words/.test(use),
+    'each reading carries the tick hook and the element the clock writes into');
+  const none = build(null, { state: { mcpUsage: payload({ sessions: { lastBootstrapAt: null, lastSaveAt: null } }) } }).renderToolMapBody(NOW);
+  ok(/none since this log began/.test(none) && !/\bnever\b/i.test(none), 'an absent reading says "none since this log began"');
+  const many = payload({ tools: FIXTURE.tools.map((t, i) => ({ ...t, count7dAgent: i < 8 ? 20 - i : 0 })) });
+  const h = build(null, { state: { mcpUsage: many } }).renderToolMapBody(NOW);
+  const mon = (h.match(/<div class="cur-mon" id="mcp-agent-use"[\s\S]*?(?=<details)/) || [''])[0];
+  ok((mon.match(/cur-depth/g) || []).length >= 5 && (mon.match(/class="cur-mon-line[" ]/g) || []).length === 7, 'two readings + FIVE tools with depth bars, never more');
+  ok(/3 more tools called less/.test(mon) && /16 of 24 not called by an agent/.test(mon) && /Test runs are not counted\./.test(mon),
+    'the note counts the rest in words and says test runs are not counted');
   // THE EMPTY STATE — the log absent entirely.
-  const empty = build(null, { state: { mcpUsage: { present: false, tools: [], sessions: {} } } });
-  const emptyHtml = empty.renderToolMapBody(NOW);
-  ok(/No calls recorded yet/.test(emptyHtml), 'log absent → "No calls recorded yet"');
-  ok(/The map fills as your agents use the bridge/.test(emptyHtml), '…and says what would fill it');
-  ok(!/mcp-tool-tile/.test(emptyHtml), '…and draws no tiles');
-  // A payload that is PRESENT but has no used tool is the same screen: a map of
-  // 24 dashed rings is not a reading, it is a wall.
-  const nothingUsed = build(null, {
-    state: { mcpUsage: payload({ tools: UNUSED_READ.concat(UNUSED_WRITE) }) } });
-  ok(/No calls recorded yet/.test(nothingUsed.renderToolMapBody(NOW)),
-    'a present log with nothing used yet shows the same empty state, not 20 dashed rings');
+  const emptyHtml = build(null, { state: { mcpUsage: { present: false, tools: [], sessions: {} } } }).renderToolMapBody(NOW);
+  ok(/No calls recorded yet/.test(emptyHtml) && /The map fills as your agents use the bridge/.test(emptyHtml) && !/mcp-all-tools/.test(emptyHtml),
+    'log absent → "No calls recorded yet", and no fold');
+  const nothingUsed = build(null, { state: { mcpUsage: payload({ tools: UNUSED_READ.concat(UNUSED_WRITE) }) } });
+  ok(/No calls recorded yet/.test(nothingUsed.renderToolMapBody(NOW)), 'a present log with nothing used yet shows the same empty state');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('5. The tiles, the busiest eyebrow and the self-test marker are gone');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  ok(!/mcp-tool-tile|mcp-writes-chip|mcp-via-mark|BUSIEST ·/.test(HTML), 'no tile, no writes chip, no "self-test ·" marker, no BUSIEST eyebrow');
+  ok(!/\.mcp-tool-tile|\.mcp-writes-chip|\.mcp-via-mark/.test(css.replace(/\/\*[\s\S]*?\*\//g, '')), 'and their rules are gone from the stylesheet');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -619,23 +571,14 @@ section('10. The stylesheet: the shared scale, and no `.fresh-` rule of its own'
   const ownFresh = (css.replace(/\/\*[\s\S]*?\*\//g, '').match(/^\s*\.fresh-[^{]*\{/gm) || []);
   ok(ownFresh.length === 0,
     `views/settings.css declares no .fresh- rule (${ownFresh.length}) — the scale stays in one file`);
-  for (const cls of ['.mcp-tool-tile', '.mcp-tool-grid', '.mcp-writes-chip', '.mcp-group-eyebrow',
-    '.mcp-age', '.mcp-map-empty']) {
+  for (const cls of ['.mcp-tool-cols', '.mcp-tool-col', '.mcp-all-tools', '.mcp-group-eyebrow', '.mcp-map-empty']) {
     ok(css.includes(cls + ' ') || css.includes(cls + ','), `${cls} has a rule`);
   }
-  ok(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(220px,\s*1fr\)\)/.test(css),
-    'the grid is auto-fill/minmax(220px) — the COLUMN decides the column count, not a breakpoint');
-  // THE UNUSED READING'S OWN GEOMETRY, and both halves of it. Found by
-  // rendering the grid: as an inline-flex row the sentence wrapped after the
-  // separator, so a tile ended in a dangling "·".
-  const unusedRule = (css.replace(/\/\*[\s\S]*?\*\//g, '').match(/\.mcp-age-unused\s*\{[^}]*\}/) || [''])[0];
-  ok(/display:\s*grid/.test(unusedRule) && /grid-template-columns:\s*auto/.test(unusedRule),
-    'the unused reading is a two-column grid, so a wrapped line cannot carry the mark with it');
-  ok(/white-space:\s*normal/.test(unusedRule),
-    '…and it is allowed to wrap at all (the used reading’s nowrap is overridden)');
-  const tailRule = (css.replace(/\/\*[\s\S]*?\*\//g, '').match(/\.mcp-age-tail\s*\{[^}]*\}/) || [''])[0];
-  ok(/white-space:\s*nowrap/.test(tailRule),
-    '…and "· <age>" is one unbreakable clause: "began ·" ending a line is a sentence that lost its ending');
+  // v3.88.0 — the fold's two monitors sit side by side, and stack on a narrow column.
+  const nc = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/\.mcp-tool-cols\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)/.test(nc), 'READ and WRITE side by side, each able to shrink');
+  ok(/@media \(max-width: 900px\)\s*\{\s*\.mcp-tool-cols\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(nc), '…one column below 900px');
+  ok(/\.mcp-tool-cols \.cur-mon-key/.test(nc), 'a tool NAME keeps its own case in the fold (the identifier-key rule the busiest list already has)');
   // No px literal on a font-size in the new rules: the text-size setting has to
   // reach them (v3.56.0 moved two frozen literals out for exactly this).
   const block = css.slice(css.indexOf('BLOCK ③'));
@@ -654,43 +597,25 @@ section('11. "Test all N tools": the marker, the control, and the outcome (v3.61
 // identical to one an agent lit, the map has stopped being an observation and
 // become a mirror of the last button press.
 {
-  // ── 11a  THE MARKER IS ON THE READING, and it is the literal or nothing ──
-  const selfTested = { ...USED[1], lastVia: 'self-test', selfTestTotal: 3 };
-  const marked = MAP.renderToolTile(selfTested, LOG_STARTED, NOW);
-  const secs = Math.round((NOW - Date.parse(USED[1].lastUsedAt)) / 1000);
-  ok(/class="mcp-via-mark">self-test</.test(marked),
-    'a tile whose newest call came from the run says "self-test"');
-  ok(marked.includes('>' + formatAge(secs) + '<'),
-    `…and the age beside it is still formatAge's own ("${formatAge(secs)}")`);
-  // The marker is INSIDE the reading: between the dot and the words, so the
-  // two cannot be read as separate facts on the meta row.
-  const dotAt = marked.indexOf('fresh-dot');
-  const markAt = marked.indexOf('mcp-via-mark');
-  const wordsAt = marked.indexOf('mcp-age-words');
-  ok(dotAt < markAt && markAt < wordsAt,
-    'the marker sits INSIDE the reading, between the dot and the age words');
-  ok(/class="mcp-age-words">/.test(marked),
-    '…and the age still has its own named element, so the clock cannot erase the marker');
-  // CONTROLS. Without these the assertions above pass on a renderer that
-  // prints "self-test" on every tile.
-  ok(!/mcp-via-mark/.test(MAP.renderToolTile(USED[1], LOG_STARTED, NOW)),
-    'CONTROL: a tile with no `lastVia` carries no marker');
-  ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...USED[1], lastVia: null }, LOG_STARTED, NOW)),
-    'CONTROL: an explicit null carries none either');
-  // THE LITERAL, not a truthiness test: `lastVia` reaches the view from a file
-  // on disk, and "an MCP client" must never be spelled with a word the log
-  // cannot support.
-  for (const junk of ['agent', 'Self-Test', 'self-test-2', true, 1]) {
-    ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...USED[1], lastVia: junk }, LOG_STARTED, NOW)),
-      `CONTROL: lastVia=${JSON.stringify(junk)} is not the literal, so no marker`);
+  // ── 11a  THE OUTCOME OUTLIVES THE PAGE (v3.88.0) ───────────────────────
+  // The tile marker is gone with the tiles; what a person needs from a run is
+  // its outcome, and it now stays on screen after a reload — read back from
+  // the usage log's last run when the server sends it, with WHEN it ran.
+  {
+    const logged = build(null, { state: { mcpUsage: payload({
+      lastExercise: { at: ago(9 * 60), total: 24, answered: 24, refused: 0, durationMs: 1100 } }) } });
+    const h = logged.renderToolMapBody(NOW);
+    ok(/Last run <span data-mcp-age-at="[^"]+"><span class="mcp-age-words">[^<]+<\/span><\/span>: <\/span>24 of 24 answered · 0 refused · 1\.1 s/.test(h),
+      'after a reload: "Last run <age>: 24 of 24 answered · 0 refused · 1.1 s", the age on the tick hook');
+    ok(!/Last run/.test(build(null, { state: { mcpUsage: payload() } }).renderToolMapBody(NOW)),
+      'CONTROL: with no run recorded (an older server) there is no outcome line — nothing is invented');
+    const mine = build(null, { state: { mcpUsage: payload({ lastExercise: { at: ago(86400), total: 24, answered: 1, refused: 0 } }),
+      mcpExercise: { ranAt: ago(5), durationMs: 300, results: FIXTURE.tools.map((t) => ({ tool: t.name, ok: true })) } } });
+    ok(/24 of 24 answered/.test(mine.renderToolMapBody(NOW)) && !/1 of 24/.test(mine.renderToolMapBody(NOW)), 'this page’s own run wins over the log’s older one');
+    const markedMap = build(null, { state: { mcpUsage: payload({
+      tools: [{ ...USED[1], lastVia: 'self-test' }].concat(FIXTURE.tools.slice(1)) }) } }).renderToolMapBody(NOW);
+    ok(!/\bnever\b/i.test(markedMap) && !/self-test ·/.test(markedMap), 'the word "never" appears nowhere, and no line is marked "self-test ·"');
   }
-  // An UNUSED tile never carries it — there is no reading to qualify.
-  ok(!/mcp-via-mark/.test(MAP.renderToolTile({ ...UNUSED_READ[0], lastVia: 'self-test' }, LOG_STARTED, NOW)),
-    'an unused tile carries no marker even with lastVia set — it has no age of its own to qualify');
-  // And the never-say-never rule survives the new word.
-  const markedMap = build(null, { state: { mcpUsage: payload({
-    tools: [selfTested].concat(FIXTURE.tools.slice(1)) }) } }).renderToolMapBody(NOW);
-  ok(!/\bnever\b/i.test(markedMap), 'the word "never" still appears nowhere in the rendered map');
 
   // ── 11b  THE CLOCK LEAVES THE MARKER ALONE ─────────────────────────────
   {
@@ -871,15 +796,14 @@ section('12. The runner’s stylesheet: no new colour, no frozen px size');
 {
   const clean2 = css.replace(/\/\*[\s\S]*?\*\//g, '');
   for (const cls of ['.mcp-runner-row', '.mcp-runner-note', '.mcp-runner-outcome',
-    '.mcp-runner-outcome-bad', '.mcp-runner-line', '.mcp-via-mark', '.mcp-via-sep']) {
+    '.mcp-runner-outcome-bad', '.mcp-runner-line']) {
     ok(clean2.includes(cls + ' ') || clean2.includes(cls + ','),
       `${cls} has a rule`);
   }
   // EVERY COLOUR IN THE NEW RULES IS AN EXISTING TOKEN — the claim "no new
   // colour, so nothing new to measure" is asserted rather than left in prose.
   const newRules = ['\\.mcp-runner-row', '\\.mcp-runner-note', '\\.mcp-runner-outcome',
-    '\\.mcp-runner-outcome-bad', '\\.mcp-runner-line', '\\.mcp-runner-bad',
-    '\\.mcp-via-mark', '\\.mcp-via-sep']
+    '\\.mcp-runner-outcome-bad', '\\.mcp-runner-line', '\\.mcp-runner-bad']
     .map((c) => (clean2.match(new RegExp(c + '[^{]*\\{[^}]*\\}', 'g')) || []).join('\n'))
     .join('\n');
   ok(newRules.length > 200, 'CONTROL: the new rules were really located in the stylesheet');
@@ -902,159 +826,117 @@ section('12. The runner’s stylesheet: no new colour, no frozen px size');
   ok(px.length === 0, `no frozen px font-size in the new rules (${px.length})`);
   // The tokens NAMED, so a future edit that swaps one for an unmeasured
   // colour has to move this line too.
-  ok(/var\(--text-3\)/.test(newRules), 'the marker uses --text-3, the pairing `.mcp-tool-uses` already carries on --surface');
   ok(/var\(--danger-text\)/.test(newRules) && /var\(--danger-tint\)/.test(newRules),
     'the failure arm uses the danger pair `.settings-inline-error` already uses on this surface');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('13. The busiest tools this week (v3.66.0, P7): agents only, bars against the busiest');
+section('13. Agent use: agents only, the busiest five, bars against the busiest');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  // Agent calls differ from all calls on purpose: a "Test all" run put one
-  // call on EVERY tool (count7d), and none of those is an agent's.
   const withAgent = (over) => payload({ tools: USED.map((t) => ({ ...t,
     count7dAgent: ({ get_project_context: 41, save_working_state: 37, search_wiki: 12, compile_to_wiki: 0 })[t.name],
     count7d: 50 })).concat(UNUSED_READ, UNUSED_WRITE).map((t) => ('count7dAgent' in t) ? t : { ...t, count7dAgent: 0, count7d: 1 }), ...(over || {}) });
   const P = withAgent();
   const html = build(null, { state: { mcpUsage: P, mcpUsageError: null } }).renderToolMapBody(NOW);
-  const mon = html.slice(html.indexOf('class="mcp-busiest"'), html.indexOf('class="mcp-tool-group"'));
-  ok(html.indexOf('class="mcp-busiest"') > html.indexOf('class="mcp-session-strip"')
-     && html.indexOf('class="mcp-busiest"') < html.indexOf('class="mcp-tool-group"'),
-    'the monitor sits AFTER the session strip and BEFORE the READ/WRITE tiles');
+  const mon = html.slice(html.indexOf('class="mcp-busiest"'), html.indexOf('mcp-all-tools'));
+  ok(html.indexOf('class="mcp-busiest"') > html.indexOf('mcp-runner-note') && html.indexOf('class="mcp-busiest"') < html.indexOf('mcp-all-tools'),
+    'the monitor sits after the runner and before the "All N tools" fold');
   const lines = [...mon.matchAll(/<span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span><\/div>/g)]
     .map((m) => ({ key: m[1], val: m[2] }));
-  ok(lines.map((l) => l.key).join(',') === 'get_project_context,save_working_state,search_wiki',
-    'one line per tool AGENTS called, busiest first; a tool at 0 agent calls is omitted (got ' + lines.map((l) => l.key).join(',') + ')');
+  ok(lines.map((l) => l.key).join(',') === 'last session start,last save,get_project_context,save_working_state,search_wiki',
+    'two session readings, then one line per tool AGENTS called, busiest first; a tool at 0 agent calls is omitted (got ' + lines.map((l) => l.key).join(',') + ')');
   const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
-  ok(w(lines[0] && lines[0].val) === 100 && w(lines[2] && lines[2].val) === 29.3,
-    'the busiest fills its cell, 12 of 41 draws 29.3% — the denominator is the busiest tool (' +
-    w(lines[0] && lines[0].val) + ', ' + w(lines[2] && lines[2].val) + ')');
-  ok(/>41<\/span>/.test(lines[0] ? lines[0].val : ''),
-    'the figure printed is count7dAgent (41), NOT count7d (50) — a self-test call is never an agent’s');
+  ok(w(lines[2] && lines[2].val) === 100 && w(lines[4] && lines[4].val) === 29.3,
+    'the busiest fills its cell, 12 of 41 draws 29.3% — the denominator is the busiest tool');
+  ok(/>41<\/span>/.test(lines[2] ? lines[2].val : ''), 'the figure printed is count7dAgent (41), NOT count7d (50) — a test call is never an agent’s');
   ok(!/cur-depth-danger/.test(mon), 'NEVER red: the busiest tool is not a fault');
-  ok(/visually-hidden"> 12 calls · bar scaled to get_project_context’s 41</.test(mon),
-    '★ every bar names its scale as the BUSIEST TOOL, by name — never "12 of 41 calls", which read as a share of this tool\'s own calls (v3.76.0 F8a)', mon);
-  ok(/visually-hidden"> 41 calls — the busiest tool</.test(mon), '…and the busiest one says it is the scale');
-  ok(/21 tools not called by an agent in the last 7 days\./.test(mon),
-    'the tools left out are COUNTED in words, not silently dropped — over the window the log covers');
-  ok(/BUSIEST · LAST 7 DAYS · AGENTS ONLY/.test(mon), 'CONTROL — a log older than 7 days says 7 days');
+  ok(/visually-hidden"> 12 calls · bar scaled to get_project_context’s 41</.test(mon), '★ every bar names its scale as the BUSIEST TOOL, by name (v3.76.0 F8a)');
+  ok(/21 of 24 not called by an agent this week\. Test runs are not counted\./.test(mon), 'the tools left out are COUNTED in words; test runs are said not to count', mon.slice(-400));
 
-  // ── v3.76.0 (F8b): A LOG YOUNGER THAN THE WINDOW STATES ITS TRUE SPAN ──
-  // The maintainer's log began 5.4 days before the reading; "7 DAYS", "this
-  // week" and "uses · 7 days" claimed a week nobody logged.
+  // A LOG YOUNGER THAN THE WINDOW STATES ITS TRUE SPAN (v3.76.0 F8b).
   const young = withAgent({ logStartedAt: ago(5.4 * 86400), countWindowDays: 7 });
   const yh = build(null, { state: { mcpUsage: young, mcpUsageError: null } }).renderToolMapBody(NOW);
-  const ym = yh.slice(yh.indexOf('class="mcp-busiest"'), yh.indexOf('class="mcp-tool-group"'));
-  const begins = new Date(NOW - 5.4 * 86400000);
-  const day = begins.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][begins.getMonth()];
-  ok(/BUSIEST · LAST 5 DAYS · AGENTS ONLY/.test(ym), '★ the eyebrow states the span the log covers, not "7 DAYS" [F8b]', ym);
-  ok(ym.includes('Counted over the last 5 days — the log begins ' + day + '.') || ym.includes('Counted over the last 5 days — the log begins ' + day + ' ·'),
-    '★ …and says where the log begins, in Agent connections\' own words [F8b]', ym);
-  ok(/not called by an agent in the last 5 days/.test(ym) && !/this week|7 days/i.test(ym),
-    '★ …and no "this week" or "7 days" survives in the monitor [F8b]', ym);
-  ok(/50 uses · 5 days/.test(yh) && !/uses · 7 days/.test(yh),
-    '★ each tile\'s count names the window the log covers ("50 uses · 5 days") [F8b]');
+  const ym = yh.slice(yh.indexOf('class="mcp-busiest"'), yh.indexOf('mcp-all-tools'));
+  ok(/Counted over the last 5 days — the log begins \d+ \w{3}/.test(ym) && /not called by an agent in the last 5 days/.test(ym) && !/this week|7 days/i.test(ym),
+    '★ a 5-day log says "last 5 days" and where it begins; no "this week" or "7 days" [F8b]', ym);
+  ok(/aria-label="Agent use, last 5 days"/.test(yh), '…and the monitor’s name carries the same window');
+  ok(/agent calls in the last 5 days · last agent use/.test(yh), '…and so does the fold’s hint');
 
-  // Eight at most, and the rest are said.
+  // Five at most, and the rest are said.
   const many = payload({ tools: Array.from({ length: 11 }, (_, i) => ({ name: 't' + String(i).padStart(2, '0'),
     group: 'read', mutates: false, purpose: 'x', lastUsedAt: ago(60), lastOk: true,
     count7d: 20 - i, count7dAgent: 20 - i, countTotal: 1, refusedTotal: 0 })) });
   const mh = build(null, { state: { mcpUsage: many, mcpUsageError: null } }).renderToolMapBody(NOW);
-  const mm = mh.slice(mh.indexOf('class="mcp-busiest"'), mh.indexOf('class="mcp-tool-group"'));
-  ok((mm.match(/class="cur-mon-line[ "]/g) || []).length === 8, 'at most eight lines');
-  ok(/3 more tools called less\./.test(mm), '...and the three past the cap are said in words');
+  const mm = mh.slice(mh.indexOf('class="mcp-busiest"'), mh.indexOf('mcp-all-tools'));
+  ok((mm.match(/cur-depth-bar/g) || []).length === 5, 'at most five bars');
+  ok(/6 more tools called less/.test(mm), '...and the six past the cap are said in words');
 
-  // A self-test-only week: every count7dAgent 0 → no bar at all, one sentence.
+  // A test-run-only week: no bar, one sentence.
   const selfOnly = payload({ tools: USED.concat(UNUSED_READ, UNUSED_WRITE).map((t) => ({ ...t, count7d: 1, count7dAgent: 0 })) });
   const sh = build(null, { state: { mcpUsage: selfOnly, mcpUsageError: null } }).renderToolMapBody(NOW);
-  ok(/No agent called a tool in the last 7 days\. Test runs from this page are not counted\./.test(sh)
-     && !/class="mcp-busiest"[^]*cur-depth-bar[^]*class="mcp-tool-group"/.test(sh),
-    'a week with only test runs draws NO bar and says why');
+  const sm = sh.slice(sh.indexOf('class="mcp-busiest"'), sh.indexOf('mcp-all-tools'));
+  ok(/No agent called a tool this week\. Test runs are not counted\./.test(sm) && !/cur-depth-bar/.test(sm), 'a week with only test runs draws NO bar and says why');
 
-  // ABSENT IS NOT ZERO: an older server sends no count7dAgent → no monitor at all.
+  // ABSENT IS NOT ZERO: an older server sends no count7dAgent → no busiest list.
   const old = build(null, { state: { mcpUsage: FIXTURE, mcpUsageError: null } }).renderToolMapBody(NOW);
-  ok(!/mcp-busiest/.test(old), 'a payload WITHOUT count7dAgent (an older server) gets no busiest-tools monitor — never a column of zeros');
+  const om = old.slice(old.indexOf('class="mcp-busiest"'), old.indexOf('mcp-all-tools'));
+  ok(!/cur-depth-bar/.test(om) && /last session start/.test(om), 'a payload WITHOUT count7dAgent gets the session readings and no busiest list — never a column of zeros');
 
-  // The revalidate repaints when ONLY count7dAgent moved: it is painted.
   const api = build(null, {});
-  const a = api.usageSignature(P);
-  const b = api.usageSignature(withAgent({ tools: P.tools.map((t) => t.name === 'search_wiki' ? { ...t, count7dAgent: 13 } : t) }));
-  ok(a !== b, 'usageSignature moves when only count7dAgent moved — a painted field must be able to repaint');
-
-  // Names keep their case.
+  ok(api.usageSignature(P) !== api.usageSignature(withAgent({ tools: P.tools.map((t) => t.name === 'search_wiki' ? { ...t, count7dAgent: 13 } : t) })),
+    'usageSignature moves when only count7dAgent moved — a painted field must be able to repaint');
+  ok(api.usageSignature(P) !== api.usageSignature({ ...P, tools: P.tools.map((t, i) => i ? t : { ...t, lastAgentAt: ago(9) }) }), '…and when only lastAgentAt moved');
+  ok(api.usageSignature(P) !== api.usageSignature({ ...P, lastExercise: { at: ago(1), total: 24 } }), '…and when only the last run moved');
   ok(/\.mcp-busiest \.cur-mon-key[^{]*\{[^}]*text-transform:\s*none/.test(css.replace(/\/\*[^]*?\*\//g, '')),
-    'a tool NAME keeps its own case in the monitor key (get_project_context, never GET_PROJECT_CONTEXT)');
+    'a tool NAME keeps its own case in the monitor key');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars, in the app');
+section('14. ④ Across projects: handoff saves per project, the last save, idle projects on one line');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const { identitySlotClass, domainIdentityClass } = await import('../src/public/next/shared/sidebar.js');
-  // v3.72.1: the body is its own function (the 30 s poll repaints it alone)
-  // and the windows are words built from the route's own figures.
+  const { domainIdentityClass } = await import('../src/public/next/shared/sidebar.js');
   const across = (projects) => build([extractFunction(src, 'renderAcrossProjects'),
     extractFunction(src, 'renderAcrossProjectsBody'), extractFunction(src, 'windowDaysWords'),
-    extractFunction(src, 'logWindowWords'),
-    extractFunction(src, 'formatSyncedAt')], {
+    extractFunction(src, 'logWindowWords'), extractFunction(src, 'adaptProjects'), extractFunction(src, 'acrossProjectsLede')], {
     state: { mcpProjects: projects, mcpProjectsError: null,
-      // v3.76.0: `identity` is each domain's RECORDED slot — the colour.
       defaultDomainInfo: { domains: ['business', 'posts', 'research'], identity: { business: 4, posts: 12, research: 7 } } },
-    identitySlotClass, domainIdentityClass, ACROSS_PROJECTS_MAX_ROWS: 12,
+    domainIdentityClass, ACROSS_PROJECTS_MAX_ROWS: 12,
   }, ['renderAcrossProjects']).renderAcrossProjects();
-  const row = (domain, project, sessions, saved, extra) => ({ domain, project, projectLabel: project,
-    inStore: true, sessions, sessionsRead: sessions, sessionsSaved: saved, lastSessionAt: null,
-    domainMismatch: false, sharedName: false, ...(extra || {}) });
-  const P = { byProject: [row('business', 'alpha', 11, 9), row('posts', 'curator', 6, 4), row('research', 'quiet', 0, 0),
-      row('gone', 'old', 2, 1, { inStore: false })],
-    window: { logPresent: true, busiestSaved: 9, windowDays: 30 },
-    // v3.72.1: the route sends the pulse window; the label is built from it.
-    savePulse: { events: 79, lowerBound: false, windowSeconds: 604800, coversWholeWindow: true } };
+  const row = (domain, project, saves, extra) => ({ domain, project, projectLabel: project, inStore: true,
+    sessions: 3, sessionsRead: 3, sessionsSaved: 3, lastSessionAt: ago(60),
+    saves, lastSaveAt: saves ? ago(2 * 86400) : null, savesCapped: false, domainMismatch: false, sharedName: false, ...(extra || {}) });
+  const P = { byProject: [row('business', 'alpha', 12, { savesCapped: true }), row('posts', 'curator', 5), row('research', 'quiet', 0), row('posts', 'ott', 0)],
+    window: { logPresent: true, busiestSaved: 9, windowDays: 30, windowCovered: true },
+    savePulse: { events: 113, lowerBound: true, capped: true, byToolFloor: true, windowSeconds: 604800, coversWholeWindow: true,
+      byTool: [{ id: 'claude-code', label: 'Claude Code', events: 113, lastSeenAt: ago(60) }, { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: '2026-09-12T08:00:00Z' }] } };
   const html = across(P);
-  ok(/settings-block-mcp-across/.test(html) && /settings-block-num" aria-hidden="true">4</.test(html)
-     && /<h2 class="settings-job-title">Across projects<\/h2>/.test(html),
-    'block ④ "Across projects", numbered after the tool map');
+  ok(/settings-block-num" aria-hidden="true">4</.test(html) && /<h2 class="settings-job-title">Across projects<\/h2>/.test(html), 'block ④ "Across projects"');
+  ok(/Last 30 days: which projects’ agents saved a handoff, and when\./.test(html), 'the window is in the lede, from the payload');
   const lines = [...html.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span>(?:<span class="cur-mon-sub">([^<]*)<\/span>)?<\/div>/g)]
     .map((m) => ({ key: m[1], val: m[2], sub: m[3] || '' }));
-  ok(lines.map((l) => l.key).join('|') === 'business / alpha|posts / curator|research / quiet|gone / old|saves, last 7 days',
-    'one line per project in the route’s order, then the save pulse (got ' + lines.map((l) => l.key).join('|') + ')');
-  const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
-  ok(w(lines[0].val) === 100 && w(lines[1].val) === 44.4,
-    'sessions that SAVED, against the busiest project (9 → 100%, 4 of 9 → 44.4%)');
-  // v3.74.0 — the bar's label names the row's OWN share and, for every other
-  // row, the busiest project BY NAME as the bar's scale — never "N of 9 …, the
-  // busiest project", which read as if this row were the busiest.
   const txt = (v) => v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  ok(/9 of 11 connections saved — the busiest project/.test(txt(lines[0].val)),
-    '★ the busiest row: "9 of 11 connections saved — the busiest project"', txt(lines[0].val));
-  ok(/4 of 6 connections saved · bar scaled to alpha’s 9/.test(txt(lines[1].val))
-    && !/the busiest project/.test(txt(lines[1].val)),
-    '★ another row: "4 of 6 connections saved · bar scaled to alpha’s 9" — never "the busiest project"', txt(lines[1].val));
-  ok(lines[0].sub === '11 connections' && lines[1].sub === '6 connections', 'all connections under the figure (v3.74.0 D5: a bridge run is not a session)');
-  ok(/cur-sb-dot cur-sb-dot-4"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-12"/.test(lines[1].val)
-     && /cur-sb-dot cur-sb-dot-7"/.test(lines[2].val),
-    '★ each line carries its DOMAIN’s identity dot — its RECORDED slot (v3.76.0), not its position');
-  ok(domainIdentityClass({ posts: 12 }, 'posts') === 'cur-sb-dot-12', 'CONTROL: that is the kit’s own mapping');
-  ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 connections · not in this folder',
-    'a project whose domain this install does not hold gets NO dot — never a guessed one — and says it is not here');
-  ok(/settings-id-idle/.test(lines[2].val) && w(lines[2].val) === null && /^.*>0$/.test(lines[2].val.replace(/<[^>]+>/g, '>').replace(/>+/g, '>'))
-     && lines[2].sub === 'no connection, last 30 days',
-    'a project with NO session is shown, as 0, marked idle, with no bar — so a reader can see which never save');
-  ok(/\.mcp-across \.cur-mon-line:has\(\.settings-id-idle\) \.cur-mon-value\s*\{[^}]*color:\s*var\(--text-2\)/.test(css),
-    '...and the idle figure takes the quiet ink, never an opacity');
-  ok(lines[4].val === '79' && w(lines[4].val) === null, 'the save pulse is a number with no bar (no denominator)');
+  ok(lines.map((l) => l.key).join('|') === 'business / alpha|posts / curator|no save|Claude Code|Antigravity',
+    'projects that saved, busiest first; the idle ones on ONE line; then one line per agent app (got ' + lines.map((l) => l.key).join('|') + ')');
+  const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
+  ok(w(lines[0].val) === 100 && w(lines[1].val) === 41.7, 'the bar is SAVES against the busiest project (12 → 100%, 5 → 41.7%) — the owner’s decision 5');
+  ok(/12\+/.test(txt(lines[0].val)) && !/5\+/.test(txt(lines[1].val)), '"12+" when a journal was read only in part (`savesCapped`), plain otherwise');
+  ok(lines[0].sub === 'last save ' + formatAge(Math.round((Date.now() - Date.parse(P.byProject[0].lastSaveAt)) / 1000)), 'each row says its last save, in the shared age words', lines[0].sub);
+  ok(txt(lines[2].val) === 'research / quiet · posts / ott', 'the projects with no save are named on one line');
+  ok(/cur-sb-dot cur-sb-dot-4"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-12"/.test(lines[1].val), '★ each project carries its DOMAIN’s RECORDED identity dot');
+  ok(/113\+/.test(txt(lines[3].val)) && txt(lines[4].val) === 'none' && lines[4].sub === 'last save 12 Sep', 'per app: "113+", and "none · last save 12 Sep"');
+  ok(!/all agent apps/.test(html), 'no total line while only one app saved — it would repeat that app');
+  ok(/“\+” means at least: long journals are read from their newest part only\./.test(html) && !/16 KB/.test(html), 'the "+" note is one plain sentence (the precision caveat is in the ⓘ)');
   ok(!/cur-depth-danger/.test(html), 'NEVER red');
-
-  // ABSENT IS NOT ZERO: no usage log → no project row at all, and said.
-  const none = across({ byProject: [row('business', 'alpha', null, null)],
-    window: { logPresent: false, busiestSaved: null }, savePulse: null });
-  ok(!/cur-mon-line[ "]/.test(none) && /No usage log on this computer yet/.test(none),
-    'with no usage log every row reads null — the block draws NO row and says so, never a column of zeros');
-  // lowerBound pulse.
-  const lb = across({ ...P, savePulse: { events: 23, lowerBound: true, windowSeconds: 604800, coversWholeWindow: true } });
-  ok(/cur-mon-value">at least 23</.test(lb), 'a pulse past the journal tail reads "at least N"');
-  // Loading and a server that cannot say.
+  ok(!/connections saved|N of N/.test(txt(html)), 'no "N of N connections saved" (truth audit T5)');
+  // An older server: no `saves` → the connections that saved, and the row says "last connection".
+  const oldP = { ...P, byProject: P.byProject.map((r) => { const { saves, lastSaveAt, savesCapped, ...rest } = r; return rest; }) };
+  const oh = across(oldP);
+  ok(/last connection/.test(oh) && !/last save \d/.test(oh.replace(/last save 12 Sep/, '')), 'an older server: the fallback says "last connection", never "last save"');
+  // ABSENT IS NOT ZERO.
+  const none = across({ byProject: [{ domain: 'business', project: 'alpha', sessions: null, sessionsSaved: null }], window: { logPresent: false }, savePulse: null });
+  ok(/No usage log on this computer yet/.test(none), 'with nothing measured the block says so, never a column of zeros');
   ok(/Reading the usage logs…/.test(across(null)), 'before the reading lands the block says so');
 }
 

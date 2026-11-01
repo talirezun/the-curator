@@ -37,7 +37,6 @@
 // `title` is the name in the panel's head (the thing, as the screen names
 // it); `label` is the ⓘ button's accessible name.
 
-import { machineWord as thisMachine } from './platform.js';
 const E = {
   // ── Context (views/memory.js) ──────────────────────────────────────────
   'context.page': {
@@ -117,7 +116,7 @@ const E = {
     },
     points: [
       { icon: 'computer', text: 'Each computer keeps its own Handoffs, so syncing never overwrites them.' },
-      { icon: 'search', text: '**Agent connections** counts agent tools that connected through the MCP tools.' },
+      { icon: 'search', text: '**Agent connections** counts agent apps that connected through the MCP bridge.' },
     ],
     guide: { key: 'context.memory', heading: 'Memory — the brief, Handoffs and the Journal' },
   },
@@ -158,7 +157,7 @@ const E = {
   'context.setup': {
     label: 'About Setup',
     title: 'Setup',
-    lead: '**Setup** checks each agent tool can reach this project. **Re-check** reads the files; tools needn’t run.',
+    lead: '**Setup** checks each agent app can reach this project. **Re-check** reads the files; apps needn’t run.',
     visual: {
       type: 'table',
       caption: 'How each part reaches another computer',
@@ -166,7 +165,7 @@ const E = {
       rows: [
         ['Computers', 'handoffs, the brief', 'Sync now'],
         ['Repository on this computer', 'instruction files, the marker', 'your project’s own git'],
-        ['Tools', 'MCP, skills, hooks', 'set up per computer'],
+        ['Agent apps', 'MCP, skills, hooks', 'set up per computer'],
       ],
     },
     points: [
@@ -174,7 +173,7 @@ const E = {
       { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
       { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'An added tool opens its setup steps in the reader. Unlisted? **Custom tool…**',
+    try: 'An added agent app opens its setup steps. Unlisted? **Custom agent app…**',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 
@@ -649,7 +648,7 @@ const E = {
     label: 'About MCP bridge',
     title: 'MCP bridge',
     lead: 'The **MCP bridge** lets your agents read and write your wiki and your projects’ memory.',
-    visual: { type: 'flow', caption: 'Four steps', steps: ['Connect a client', 'Default domain for MCP writes', 'Tool map', 'Across projects'] },
+    visual: { type: 'flow', caption: 'Four steps', steps: ['Connect your agent apps', 'Default domain for MCP writes', 'Tool map', 'Across projects'] },
     points: [
       { icon: 'agent', text: 'It works with Claude Code, Claude Desktop and Cursor.' },
       { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
@@ -659,13 +658,13 @@ const E = {
 
   // MCP block 1 · Connect a client — `settings-block-info-mcp-connect`.
   'settings.mcp-connect': {
-    label: 'About Connect a client',
-    title: 'Connect a client',
-    lead: '**Connect a client** shows whether your agent apps can reach your wiki.',
+    label: 'About Connect your agent apps',
+    title: 'Connect your agent apps',
+    lead: '**Connect your agent apps** shows which agent apps can reach your wiki, and what each needs.',
     points: [
-      { icon: 'computer', text: 'The Curator need not be running; your agent app starts the bridge.' },
-      { icon: 'refresh', text: 'Install in your tools adds the entry for you, after a preview.' },
+      { icon: 'computer', text: 'Any MCP client running local servers works: Claude Desktop, Claude Code, Cursor.' },
       { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
+      { icon: 'lock', text: 'The check reads only whether a file names my-curator, never its contents.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
@@ -696,26 +695,15 @@ const E = {
 
   // MCP block 4 · Across projects — `settings-block-info-mcp-across`.
   // v3.77.0 — MCP bridge block 5.
-  'settings.mcp-tools': {
-    label: 'About Tools on this ' + thisMachine(),
-    title: 'Tools on this ' + thisMachine(),
-    lead: 'Each agent tool set up on this computer: its config files, its skills and its hooks.',
-    points: [
-      { icon: 'lock', text: 'Only whether a file names my-curator is read.' },
-      { icon: 'pencil', text: 'Install for me adds only the my-curator entry, after a preview.' },
-      { icon: 'check', text: 'Skills are compared with the copy this app carries.' },
-    ],
-    guide: { key: 'settings.mcp-tools', heading: 'The Setup check in the app' },
-  },
 
   'settings.mcp-across': {
     label: 'About Across projects',
     title: 'Across projects',
-    lead: '**Across projects** shows which projects’ agent connections saved a Handoff: the last 30 days, or since the usage log began.',
+    lead: '**Across projects** shows which projects’ agents saved a Handoff, and when: the last 30 days.',
     points: [
-      { icon: 'agent', text: 'Claude Code connects once per session; Claude Desktop once for many chats.' },
-      { icon: 'clock', text: 'The note under the connections names the window they cover.' },
-      { icon: 'search', text: 'The second reading counts saves in the last 7 days, per tool.' },
+      { icon: 'agent', text: 'Each bar counts the Handoff saves in that project’s journals.' },
+      { icon: 'clock', text: 'The second reading: saves in the last 7 days, per agent app.' },
+      { icon: 'search', text: '“+” means at least: a long journal is read only partly.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
   },
@@ -917,20 +905,20 @@ export const SCREEN_WORDS = [
   'Connect a provider', 'Your AI model', 'Chat', 'All models', 'Wiki health',
   'measured for the build lane', 'measured on your wiki', 'not measured', 'Worth testing for this job',
   'Software update', 'Appearance', 'Text size', 'Menu bar', 'System check',
-  'Connect a client', 'Default domain for MCP writes', 'Tool map', 'Across projects',
+  'Connect your agent apps', 'Default domain for MCP writes', 'Tool map', 'Across projects',
   'Maximum candidate pairs per scan', 'Vault folder', 'GitHub read-only token', 'Choose folder', 'Test',
   'Access token', 'Check now', 'Sync', 'Sync now',
   // v3.76.0 — Settings › Trash.
   'Restore',
   // v3.77.0 — Context step 5 and MCP bridge block 5.
-  'Setup', 'SETUP', 'Saved', 'Tools on this Mac', 'Check again',
+  'Setup', 'SETUP', 'Saved', 'Check again', 'Install for me',
   // v3.78.0 — step 5 rebuilt: its head control, its marks, its folds and its
   // picker, each as printed.
   'Re-check', 'ready', 'to fix', 'can’t check here', 'not checked', 'repository',
-  'Computers', 'Custom tool…', '+ Add a tool',
+  'Computers', 'Custom agent app…', '+ Add an agent app',
   // v3.79.0 — step 5's other two fold titles (the travels-by table's row
   // names) and step 4's renamed picker.
-  'Tools', 'Repository on this computer', 'Your tool’s share',
+  'Agent apps', 'Repository on this computer', 'Your tool’s share',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

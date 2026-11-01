@@ -231,11 +231,11 @@ if (renderSidebarSrc) {
     return captured;
   };
   railFor('darwin');
-  ok(/My Curator, tools on this Mac/.test(captured), 'rail hint on darwin: "tools on this Mac" exactly');
+  ok(/My Curator, agent apps on this Mac/.test(captured), 'rail hint on darwin: "agent apps on this Mac" exactly');
   railFor('win32');
-  ok(/My Curator, tools on this PC/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: "tools on this PC", no "this Mac"');
+  ok(/My Curator, agent apps on this PC/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: "agent apps on this PC", no "this Mac"');
   railFor('');
-  ok(/My Curator, tools on this computer/.test(captured), 'rail hint before the platform is known: "this computer"');
+  ok(/My Curator, agent apps on this computer/.test(captured), 'rail hint before the platform is known: "this computer"');
   railFor('darwin');
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
@@ -588,7 +588,7 @@ console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
   // column. Measured at 568: "Last session start" is 133px in a 110px track,
   // and the line, the list and the block each reported an overflow that main
   // did not have.
-  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.mcp-session-strip\s+\.cur-mon-key\s*\{[^}]*white-space:\s*normal/.test(css),
+  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.mcp-busiest\s+\.cur-mon-key[^{]*\{[^}]*white-space:\s*normal/.test(css),
     'the session monitor\u2019s captions may WRAP once the pair has stacked \u2014 scoped to that one '
     + 'strip, at equal specificity, because the kit is linked before this file');
 }

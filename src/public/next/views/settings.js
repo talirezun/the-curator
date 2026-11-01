@@ -150,13 +150,13 @@ import {
   trashRestoreBody, trashRestoreOutcomeText, trashDeleteOutcomeText,
 } from './trash-list.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-// v3.77.0 — MCP bridge block 5 "Tools on this Mac": the words live in a
+// v3.77.0 — the machine reading's evidence (v3.88.0: each agent app's row disclosure); the words live in a
 // DOM-free module (its suite imports the real builders); this file owns the
 // state, the one request (GET /api/setup/machine) and the listeners.
-import { renderToolsOnThisMacBody, toolsOnThisMacHead } from './setup-machine.js';
-// v3.85.0 — "My Curator in your tools": the status check and the one-click install.
+import { checkHead } from './setup-machine.js';
+// v3.85.0 — the status check and the one-click install; v3.88.0 — one row per agent app, and the three adapters.
 import {
-  focusInstallPanel, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds, machineWord,
+  adaptBridges, adaptMachine, tildePath, clockWords, copyPlanFor, renderInstallPanel, fetchInstallStatus, requestPlan, requestApply, failureWords, installButtonState, tickedIds, machineWord,
 } from './mcp-install.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
@@ -303,7 +303,7 @@ const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter'], // v3.72.1 (audit F14): no local provider exists yet
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
-  ['mcp',       'MCP bridge',           'My Curator, tools on this Mac'], // the hint is platform-worded at draw time (railHint)
+  ['mcp',       'MCP bridge',           'My Curator, agent apps on this Mac'], // the hint is platform-worded at draw time (railHint)
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
   // v3.76.0: last, because it is the least often visited — a place you go
   // to after a delete, not a setting. See views/trash-list.js.
@@ -1073,6 +1073,8 @@ function freshState() {
     mcpError: null,
     selfTest: null,
     selfTestLoading: false,
+    selfTestAt: null,       // when this page's own self-test answered (v3.88.0)
+    mcpAllToolsOpen: false, // block ③'s "All N tools" fold — closed by default (v3.88.0)
     defaultDomainInfo: null, // { defaultDomain, domains }
     defaultDomainSaving: false,
     defaultDomainError: null,
@@ -1830,21 +1832,57 @@ function installPlatform() {
   return (d && typeof d.platform === 'string') ? d.platform : '';
 }
 
-/** Block ⑤. The head's controls ride at the top of the body (a settings block has no head slot). */
-function renderToolsOnThisMac() {
+/**
+ * What "this version" is, for an older bridge's quiet line: the version this
+ * install runs (the machine reading's) and how many tools the bridge serves
+ * (the tool map's catalogue — one row per tool, used or not). Either may be
+ * unknown, and the line then says less rather than guessing.
+ */
+function currentBridgeFacts() {
+  const mm = adaptMachine(state.setupMachine);
+  const cur = adaptBridges(state.mcp).current || {};
+  const tools = state.mcpUsage && Array.isArray(state.mcpUsage.tools) ? state.mcpUsage.tools.length : null;
+  return { version: cur.version || (mm && mm.version) || null, toolCount: cur.toolCount || tools || null };
+}
+
+/**
+ * ① CONNECT YOUR AGENT APPS (v3.88.0 — v3.85.0's blocks 1 and 5 merged).
+ *
+ * One block, read top to bottom: "checked · Check again"; the overview card
+ * with Install for me / Copy it myself; ONE ROW PER AGENT APP, each with its
+ * one verdict, its warnings UNFOLDED under it, and its evidence in a closed
+ * per-row disclosure; the "Not on this Mac (N)" fold; then the "Bridge
+ * answers" monitor (version · knowledge folder · open bridges · self-test,
+ * with its own Run self-test button — the owner's decision 2).
+ *
+ * THE STALE-BRIDGE FACT APPEARS EXACTLY ONCE: a warning (tools changed) or a
+ * quiet line (same tools) on the row of the app that opened it, and a count in
+ * "open now". The three wordings v3.87.1 printed (block 1's loud, the
+ * self-test's "…but not the one already open", block 5's monitor) are gone.
+ * No machine name (the owner's decision 4).
+ */
+function renderConnectApps() {
   const m = state.setupMachine;
-  const lede = 'Each agent tool set up on this computer, and whether it can reach The Curator.';
-  const body = '<div class="settings-setup-head">' + toolsOnThisMacHead(m)
-    + (state.setupMachineCopied ? '<span class="settings-setup-copied" role="status">' + escapeHtml(state.setupMachineCopied) + '</span>' : '')
+  const lede = 'Which agent apps on this ' + machineWord(installPlatform()) + ' reach My Curator, and what each needs.';
+  const machine = adaptMachine(m);
+  const bridges = adaptBridges(state.mcp);
+  const copied = state.setupMachineCopied || null;
+  const body = '<div class="settings-setup-head">' + checkHead(m)
+    + (copied ? '<span class="settings-setup-copied" role="status">' + escapeHtml(copied) + '</span>' : '')
     + '</div>'
+    + '<div class="mcp-connect-stack">'
+    + (m && m.error && !m.data ? '<p class="settings-inline-error" role="alert">Could not check this computer: ' + escapeHtml(m.error) + '</p>' : '')
     + renderInstallPanel({
       status: state.mcpInstall.status, ticks: state.mcpInstall.ticks, plan: state.mcpInstall.plan,
       results: state.mcpInstall.results, busy: state.mcpInstall.busy, error: state.mcpInstall.error,
       copied: state.mcpInstall.copied, folds: state.setupMachineFolds, paths: installRevealPaths(),
-      machineFiles: installMachineFiles(),
+      machineFiles: installMachineFiles(), machine, bridges, current: currentBridgeFacts(),
     })
-    + '<div id="mcpi-detail" class="mcpi-detail"><h3 class="mcpi-detail-head">Each tool in detail — every file it reads</h3>' + renderToolsOnThisMacBody(m, state.setupMachineFolds) + '</div>';
-  return settingsBlock(5, 'mcp-tools', 'Tools on this ' + machineWord(installPlatform()), lede, body, 'settings.mcp-tools', '');
+    + renderSelfTestResult()
+    + '<p class="settings-block-footnote">The check only reads whether each file names my-curator. '
+    + 'Install for me writes only that entry, after a preview, and keeps a copy of the file first.</p>'
+    + '</div>';
+  return settingsBlock(1, 'mcp-connect', 'Connect your agent apps', lede, body, 'settings.mcp-connect', '');
 }
 
 /**
@@ -2244,7 +2282,7 @@ function renderSidebar(token, force) {
   const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => renderSidebarRow({
     alias: 'settings',
     name: label,
-    event: id === 'mcp' ? 'My Curator, tools on this ' + machineWord(installPlatform()) : hint,
+    event: id === 'mcp' ? 'My Curator, agent apps on this ' + machineWord(installPlatform()) : hint,
     active: state.section === id,
     data: { section: id },
   })).join('');
@@ -2297,7 +2335,7 @@ function renderMain(token, force) {
   // Block ④ Across projects (v3.66.0) is composed HERE, beside renderMcp, for
   // the reason the token block below is: suites lift renderMcp into sandboxes,
   // and a new free identifier inside a lifted body is a crash there.
-  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() + renderToolsOnThisMac() : '');
+  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() : '');
   else if (state.section === 'health') body = renderHealthLimits();
   else if (state.section === 'trash') body = renderTrash();
   // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
@@ -8869,161 +8907,62 @@ function renderModelOption(m, index, defaultId, ctx) {
 
 // ── MCP bridge ────────────────────────────────────────────────────────────
 
-/**
- * Pure derivation of the connection pill from GET /api/mcp/config's payload.
- * Split out of renderMcp() so it can be extracted and driven standalone by
- * scripts/test-next-ui-polish.js — same reasoning as PROVIDER_ROWS/
- * renderProviderRow living apart from the DOM-touching code around them.
- *
- * A corrupt claude_desktop_config.json is its OWN state, not "not
- * connected": src/routes/mcp.js computes installed/stale inside its
- * `!parseError` branch, so both come back false for a file it could not
- * parse — reporting that as "Not connected" would be asserting something we
- * do not know. The wizard's blocked panel is where this is explained and
- * where the whole-file payload is withheld; here it only has to stop
- * claiming a status it cannot have.
- */
-function deriveMcpStatus(m) {
-  const unreadable = m.claude_config_parse_error === true;
-  const connected = !unreadable && m.installed === true && m.stale !== true;
-  // THE TONE, NOT A CLASS LIST (v3.65.0). This returned
-  // `'status-pill status-pill-ok'` — two class names that no longer resolve
-  // anywhere in /next, because the pill and its card are a monitor now
-  // (shared/monitor.js, M7). A pure derivation returning a dead selector is
-  // the rot this file has a dozen comments about, so it derives the STATE
-  // WORD'S TONE instead and the kit owns what that looks like.
-  //
-  // `quiet` for "Not connected" rather than `warn`: a bridge nobody has set
-  // up yet is not a fault, and an amber gutter on a fresh install would be
-  // the app reporting a problem it invented. `danger` is reserved for the one
-  // case the app genuinely cannot read — a config file it could not parse.
-  const pillTone = unreadable ? 'danger' : (connected ? 'ok' : 'quiet');
-  // v3.72.1 (truth audit F13): 'Configured', not 'Connected'. `connected`
-  // here means only that Claude Desktop's config file holds today's launch
-  // line — not that any client has connected, and v3.64.0 measured a live
-  // bridge serving old code under a "Connected" pill. The word states what
-  // was checked; the tool map below states what agents actually called.
-  const pillLabel = unreadable
-    ? 'Config unreadable'
-    : (connected ? 'Configured' : (m.installed ? 'Needs an update' : 'Not connected'));
-  return { unreadable, connected, pillTone, pillLabel };
+/** The install kind in a person's words: "Mac app" / "PC app" / "app", or "source install". */
+function installWords(label) {
+  if (typeof label !== 'string' || !label) return '';
+  if (/packaged/i.test(label)) {
+    const w = machineWord(installPlatform());
+    return w === 'computer' ? 'app' : w + ' app';
+  }
+  if (/source|git/i.test(label)) return 'source install';
+  return label;
 }
 
 /**
- * THE BRIDGE THAT IS STILL RUNNING YESTERDAY'S CODE (v3.64.0).
- *
- * A third thing this screen can be wrong about, and until now the only one it
- * could not see at all. `installed`/`stale` are about the launch line SAVED in
- * a client's config; the self-test is about a bridge spawned FRESH, half a
- * second ago. Neither says anything about the long-lived child process the
- * client actually has open — and that process keeps running the code it was
- * started with until its client is restarted.
- *
- * Measured on the maintainer's Mac, 2026-09-20: a bridge alive since 2026-09-18
- * across five in-app updates, serving 22 tools (pre-v3.59.0 — no
- * `get_project_context`, no `save_foundation`) to Claude Desktop while the
- * files on disk were v3.63.0. The pill read Connected. The self-test passed.
- * Both were true, and the user's agent was still missing two tools.
- *
- * The app cannot fix it: the process's parent is the client, not The Curator,
- * so nothing here may signal it and nothing here does. The only honest move is
- * to name the fact and the remedy, and `src/routes/mcp.js` supplies the
- * remedy SENTENCE in the payload rather than this file authoring a second copy
- * of it — the same rule `agent-instructions.js` follows for text a model
- * reads, applied to text a user acts on.
- *
- * Returns null when there is nothing to say, which is every one of:
- *   - the route did not look (`checked: false`) — "we did not look" is NOT
- *     "there is none", and a note that conflated them would be the exact
- *     defect this reading exists to prevent;
- *   - it looked and every running bridge postdates the current code;
- *   - the payload predates this release and carries no such field.
+ * ADAPTER — THE LAST SELF-TEST. This page's own press (`state.selfTest`, with
+ * the moment it answered) wins; otherwise the usage log's record of the last
+ * one, which GET /api/mcp/usage carries as `lastSelfTest` (v3.88.0) — so the
+ * reading survives a reload instead of vanishing with the page. Returns
+ * `{ok, toolCount, at, error, domainsStatus, domainsDir, toolNames}` or null.
  */
-function deriveStaleBridgeNote(m, now = Date.now()) {
-  const bp = m && m.bridge_processes;
-  if (!bp || bp.checked !== true || !Array.isArray(bp.stale) || !bp.stale.length) return null;
-  const n = bp.stale.length;
-  const oldest = bp.stale[0];
-  const secs = Number.isFinite(oldest && oldest.ageMs)
-    ? Math.max(0, Math.round(oldest.ageMs / 1000))
-    : ageSecondsOf(oldest && oldest.startedAt, now);
-  const age = formatAge(secs);
+function lastSelfTest() {
+  const r = state.selfTest;
+  if (r && typeof r === 'object') {
+    return {
+      ok: r.ok === true, toolCount: Number.isInteger(r.tool_count) ? r.tool_count : null,
+      at: typeof state.selfTestAt === 'string' ? state.selfTestAt : null,
+      error: r.ok === true ? null : (r.error || 'The bridge did not respond as expected.'),
+      domainsStatus: typeof r.domains_status === 'string' ? r.domains_status : null,
+      domainsDir: typeof r.domains_dir === 'string' ? r.domains_dir : null,
+      domains: Array.isArray(r.domains) ? r.domains : null,
+    };
+  }
+  const u = state.mcpUsage;
+  const L = u && u.lastSelfTest && typeof u.lastSelfTest === 'object' ? u.lastSelfTest : null;
+  if (!L) return null;
+  const at = typeof L.at === 'string' ? L.at : (typeof L.ranAt === 'string' ? L.ranAt : null);
   return {
-    count: n,
-    ageWords: age,
-    text: (n === 1
-      ? 'One bridge process is still running from before this version'
-      : n + ' bridge processes are still running from before this version')
-      + (age ? ' — the oldest started ' + age : '')
-      + (n === 1
-        ? '. It was launched by an MCP client and keeps serving the tools it started with, so an '
-          + 'update to The Curator does not reach it.'
-        : '. They were launched by MCP clients and keep serving the tools they started with, so an '
-          + 'update to The Curator does not reach them.'),
-    remedy: typeof m.bridge_stale_remedy === 'string' ? m.bridge_stale_remedy : null,
+    ok: L.ok !== false,
+    toolCount: Number.isInteger(L.toolCount) ? L.toolCount : (Number.isInteger(L.tools) ? L.tools : null),
+    at, error: L.ok === false ? (typeof L.error === 'string' ? L.error : 'The last self-test failed.') : null,
+    domainsStatus: null, domainsDir: null, domains: null,
   };
 }
 
 /**
- * Defect 2 fix — the pill and the self-test result answer DIFFERENT
- * questions, and nothing on screen used to say so.
+ * ── THREE NUMBERED BLOCKS, AND A FOURTH, BECAUSE THEY REALLY ARE STEPS ─────
  *
- * `stale` (src/routes/mcp.js) is a strict equality check on the launch
- * command Claude Desktop actually has SAVED on disk, in its own config
- * file, against the command The Curator would generate today. It goes true
- * when the knowledge folder moved, when the app itself moved, or when the
- * Node binary path changed (an nvm/Homebrew upgrade) — none of which touch
- * anything the self-test spawns.
- *
- * The self-test (POST /api/mcp/self-test, see that handler's own comment)
- * never reads Claude Desktop's saved file at all. It always spawns
- * `buildCuratorEntry(getDomainsDir())` — the CORRECT, freshly computed
- * command — on purpose, so a self-test failure can never be "your saved
- * file happens to be wrong" (that was the pre-v3.6.1 bug: spawning a
- * path-less command gave a green pass against the wrong folder). That
- * means a self-test can be green — the bridge software genuinely works
- * with today's settings — while the pill is still "Needs an update" —
- * Claude Desktop is still launching the OLD command until the user re-runs
- * setup. Both are true; they are not in tension. Only the combination is
- * worth a note, so this returns false in the far more common case where
- * the two already agree (including: no self-test run yet, or the self-test
- * itself failed — that failure gets its own card and no note here would
- * add anything but noise).
- */
-function shouldShowMcpStaleNote(status, m, selfTest) {
-  return !status.unreadable && m.installed === true && m.stale === true &&
-    !!selfTest && selfTest.ok === true;
-}
-
-/**
- * ── TWO NUMBERED BLOCKS, BECAUSE THEY REALLY ARE STEPS ─────────────────────
- *
- * The numerals are not decoration and they are not applied to every block in
- * this file (Health and Knowledge base below take none — see
- * `.settings-block-unnumbered` in views/settings.css). They are an ARGUMENT:
- * you connect a client, and THEN — once something is calling write tools —
- * the question of which domain an unqualified "my wiki" means can arise at
- * all. Reading ② before ① is reading the answer to a question you have not
- * asked yet.
- *
- * Everything here used to be a bare concatenation of a status card, a
- * paragraph, a button row and a `.settings-field-block` carrying
- * `style="margin-top:22px"` — a hand-picked number that existed because
- * nothing else on the screen supplied a rhythm. `settingsBlock` supplies one
- * (24 | hairline | 24, pinned by scripts/test-next-model-gone-ui.js), so the
- * inline style is DELETED rather than converted to a token.
+ * The numerals are an ARGUMENT, not decoration: you connect your agent apps,
+ * and THEN — once something is calling write tools — the question of which
+ * domain an unqualified "my wiki" means can arise at all; only after that is
+ * there anything for the tool map (③) and Across projects (④) to observe.
  *
  * ── WHAT IS VISIBLE, AND WHAT IS NOT ───────────────────────────────────────
- * The visible lede names the three clients docs/mcp-user-guide.md names and
- * carries the guide link, because that is the sentence a newcomer needs in
- * order to know this is a standard rather than a Claude integration. The
- * ChatGPT exclusion, the transport, and the "the app need not be running"
- * fact are all TRUE and all still rendered — behind the ⓘ, because none of
- * them is needed in order to press the button underneath.
- *
- * The self-test result, the stale note and the inline error are NOT folded
- * and must never be: two of them are outcomes of something the user just
- * did, and the third is a warning. Explanations fold; findings do not.
+ * The client list, the ChatGPT exclusion, the transport and the "the app need
+ * not be running" fact are TRUE and still rendered — behind ①'s ⓘ, because
+ * none of them is needed to read a row. Every warning, the self-test result
+ * and the inline errors are NOT folded and must never be: explanations fold,
+ * findings do not (v3.16.1).
  */
 function renderMcp() {
   if (state.mcpError) {
@@ -9032,22 +8971,6 @@ function renderMcp() {
   if (!state.mcp) {
     return gatedLoader(loadGate, 'Loading MCP status…');
   }
-  const m = state.mcp;
-  const status = deriveMcpStatus(m);
-  const { pillTone, pillLabel } = status;
-
-  const selfTestHtml = state.selfTest ? renderSelfTestResult() : '';
-  const staleNoteHtml = shouldShowMcpStaleNote(status, m, state.selfTest)
-    ? '<div class="settings-mcp-stale-note" role="status">' +
-        icon('alertTriangle', 15) +
-        '<span>This confirms the bridge software itself works with your current ' +
-        'settings — it does not check what Claude Desktop has saved. That saved ' +
-        'copy is out of date (your knowledge folder, the app, or Node itself has ' +
-        'moved since you last connected), so Claude Desktop is still launching the ' +
-        'old one. Click <strong>Install in your tools</strong> above to ' +
-        'update it — nothing else here needs fixing.</span>' +
-      '</div>'
-    : '';
 
   const domains = (state.defaultDomainInfo && state.defaultDomainInfo.domains) || [];
   const defaultDomain = state.defaultDomainInfo ? state.defaultDomainInfo.defaultDomain : null;
@@ -9068,98 +8991,14 @@ function renderMcp() {
   };
   pendingListboxes.push(defaultDomainCfg);
 
-  // ── ① CONNECT A CLIENT ───────────────────────────────────────────────────
-  //
-  // WHICH CLIENTS THIS ACTUALLY WORKS WITH (v3.49.0, re-cut here).
-  // Reported by a power user: every string on this screen and in the wizard
-  // said "Claude Desktop", so a newcomer could not tell whether the bridge is
-  // a Claude integration or a standard they can point anything at. It is the
-  // latter — a stdio JSON-RPC server, spawned as a local process — and the
-  // honest limit is the TRANSPORT, not the vendor.
-  //
-  // THE THREE CLIENTS NAMED HERE ARE THE THREE docs/mcp-user-guide.md NAMES,
-  // and no others: a settings screen is not the place to guess at another
-  // company's roadmap. scripts/test-next-mcp-wizard.js §11 checks each name
-  // against the real markdown, so this list cannot drift from what the docs
-  // can back.
-  //
-  // THE LINK IS IN THE FOLD: block ①'s ⓘ is the `settings.mcp-connect`
-  // explainer, whose guide card is the one docs link this block carries.
-  //
-  // "that runs" → "running" is the one word that got the sentence to 13. The
-  // claim, the three client names and the ChatGPT exclusion in the fold are
-  // untouched — scripts/test-next-mcp-wizard.js §11 checks each name against
-  // docs/mcp-user-guide.md itself, so this list still cannot drift.
-  const connectLede =
-    'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.';
-
-  // ── M7 + M8 — THE BRIDGE MONITOR ─────────────────────────────────
-  //
-  // This was a `.settings-status-card` holding a pill and one `<code>` line,
-  // and views/sync.js held a near-byte copy of the same shape. It is a LIVE
-  // READING — is a client connected, to which server, over which folder — so
-  // it is a monitor (shared/monitor.js), and sync.js now makes the same call.
-  // *"These cards show specific data, the data that is changing ... it's
-  // really hard to understand that this is like a monitor into the specific
-  // data and changing state."*
-  //
-  // THE TONE COMES FROM `deriveMcpStatus`, which is where the pill's whole
-  // derivation already lived and is the reason that function is separable and
-  // driven standalone by four suites. See its own comment for why "Not
-  // connected" is `quiet` and not `warn`.
-  //
-  // M8 — THE STALE-BRIDGE NOTE IS A `loud` ENTRY INSIDE THIS MONITOR, not a
-  // line and not a separate card underneath. It qualifies the state word
-  // directly: "Connected" is true, and what is connected is running older
-  // code. v3.16.1 is why it is `loud` — a warning is never collapsed in with
-  // the readings — and `renderMonitor` builds `loud` from a different array
-  // into a different container, so no later edit can demote it to a line.
-  //
-  // THE REMEDY SENTENCE STILL COMES FROM THE ROUTE, VERBATIM, and the view
-  // still never authors a second copy: `deriveStaleBridgeNote` returns
-  // `remedy: null` when the payload carries none. `strongText` is ESCAPED by
-  // the component, because its one producer is a payload and a payload is
-  // data. scripts/test-mcp-stale-bridge.js §7 holds all of that.
-  const bridgeNote = deriveStaleBridgeNote(m);
-
-  const connectBody =
-    renderMonitor({
-      id: 'mcp-bridge-monitor',
-      label: 'MCP bridge connection',
-      head: { stateWord: pillLabel, tone: pillTone },
-      lines: [
-        { key: 'client', value: 'Claude Desktop' },
-        { key: 'server', value: m.mcp_server_name },
-        { key: 'domains', value: m.domains_dir },
-      ],
-      loud: bridgeNote
-        ? [{ tone: 'warn', text: bridgeNote.text, strongText: bridgeNote.remedy || '' }]
-        : [],
-    }) +
-    // Body-level buttons, so md (32px): the SIZE is the container's decision,
-    // per the taxonomy comment above `.btn` in shell.css. Exactly one primary
-    // — "Install in your tools" points at block ⑤, the one installer (this
-    // block writes nothing). Self-test is secondary: it inspects.
-    '<div class="settings-btn-row">' +
-      '<button type="button" class="btn btn-primary" id="btn-mcp-install-tools">Install in your tools</button>' +
-      '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (state.selfTestLoading ? ' disabled' : '') + '>' +
-        (state.selfTestLoading ? 'Testing…' : 'Run self-test') +
-      '</button>' +
-    '</div>' +
-    selfTestHtml +
-    staleNoteHtml;
-
   // ── ② DEFAULT DOMAIN FOR MCP WRITES ──────────────────────────────────────
-  // The listbox is the whole body. The paragraph that used to sit above it
-  // stated the rule and then its inverse in the same breath; the rule is the
-  // lede, and the inverse — which is the interesting half, because it is the
-  // safer setting and nobody would guess why — is the fold.
+  // The listbox is the whole body; the rule is the lede, and its consequence
+  // — the safer setting and why — is the footnote.
   const domainLede = 'Used when a client says “my wiki” without naming a domain.';
 
   const domainBody =
     // The shared listbox (shared/listbox.js). No wrapper: the component draws
-    // its own indicator INSIDE the trigger, so there is nothing left to
-    // position a chevron against.
+    // its own indicator INSIDE the trigger.
     renderListboxHtml(defaultDomainCfg) +
     (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
     // v3.72.1 (truth audit F11): a refused save says so, here, beside the
@@ -9170,85 +9009,110 @@ function renderMcp() {
     '<p class="settings-block-footnote">' + escapeHtml(MCP_DOMAIN_CONSEQUENCE) + '</p>';
 
   return (
-    settingsBlock(1, 'mcp-connect', 'Connect a client', connectLede, connectBody, 'settings.mcp-connect', '') +
+    renderConnectApps() +
     settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, 'settings.mcp-domain', '') +
-    // ── ③ THE TOOL MAP ─────────────────────────────────────────────────────
-    // THIRD, AND NUMBERED, BECAUSE THE SEQUENCE IS STILL AN ARGUMENT: you
-    // connect a client, you decide where an unqualified write lands, and only
-    // THEN is there anything to observe. A map above either of those would be
-    // an empty grid on every fresh install.
     renderToolMap()
   );
 }
 
+/**
+ * ① › "BRIDGE ANSWERS" — the bridge itself, as one monitor (v3.88.0).
+ *
+ * version · knowledge folder · open now · self-test, and the Run self-test
+ * button under it (the owner's decision 2: the self-test keeps its own button).
+ *
+ * WHAT IT NEVER SAYS: that an OPEN bridge serves older tools. The self-test
+ * spawns a FRESH bridge and reports only that one; an open bridge's tool list
+ * is its app's row's fact (a warning only when the list differs) and a count
+ * on "open now" here. Bridges the app cannot attribute to any app, whose tools
+ * it cannot compare, get one SOFT line here — the only stale wording left
+ * outside a row.
+ *
+ * The missing knowledge folder IS loud here: it is true for every app at once.
+ */
 function renderSelfTestResult() {
-  const r = state.selfTest;
-  // ── M9 — THE OUTCOME OF A LIVE PROBE IS A MONITOR ────────────────────
-  // This was three `.check-row`s in a `.settings-check-results` — the shape
-  // System Check's own results use, and that surface KEEPS it: a checklist of
-  // pass/fail rows is a different thing from a reading of one live probe. What
-  // this block reports is a state that changes under you (did the bridge
-  // answer, with how many tools, over how many domains), so it joins the one
-  // instrument. `head.stateWord` is the outcome itself.
-  if (!r.ok) {
-    return renderMonitor({
-      label: 'Bridge self-test',
-      head: { stateWord: 'Self-test failed', tone: 'danger' },
-      // THE SERVER'S OWN MESSAGE IS `loud`, NOT A LINE. It is the outcome of
-      // something the user just pressed and the only thing on screen they can
-      // act on; v3.16.1 keeps it unfolded and in its own tone.
-      lines: [],
-      loud: [{ tone: 'danger',
-               text: r.error || 'The bridge did not respond as expected.' }],
-    });
-  }
-  const names = (r.tool_names || []).slice(0, 6).join(', ') + ((r.tool_names || []).length > 6 ? ', …' : '');
-  // v3.85.0: this is now the ONLY place the self-test's `domains_status` reaches
-  // the user (the MCP wizard that used to say it is retired). A MISSING
-  // knowledge folder and an EMPTY one are different sentences, and the missing
-  // one is a `loud` warning — it is not a mistake in any tool's config file.
-  const domainsStatus = typeof r.domains_status === 'string' ? r.domains_status : null;
-  const domainsNote = domainsStatus === 'missing_folder' ? 'knowledge folder is missing'
-    : domainsStatus === 'empty' ? 'none yet — the folder is empty (normal on a fresh install)'
-      : (Array.isArray(r.domains) ? r.domains.length + ' domain(s) visible' : 'no domains found yet');
+  const cfg = state.mcp || {};
+  const r = lastSelfTest();
+  const mm = adaptMachine(state.setupMachine);
+  const bridges = adaptBridges(state.mcp);
+  const home = mm && mm.home;
+  const facts = currentBridgeFacts();
+
+  // A MISSING knowledge folder and an EMPTY one are different sentences, and
+  // the missing one is a `loud` warning — it is not a mistake in any agent
+  // app's config file. The config payload says so before any self-test.
+  const domainsStatus = r && typeof r.domainsStatus === 'string' ? r.domainsStatus
+    : (cfg.domains_dir_exists === false ? 'missing_folder' : null);
+  const folderPath = (r && typeof r.domainsDir === 'string' && r.domainsDir.trim()) || (typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '');
   const folderLoud = domainsStatus === 'missing_folder'
     ? [{ tone: 'warn',
          text: 'The bridge works, but your knowledge folder is missing — '
-          + (typeof r.domains_dir === 'string' && r.domains_dir.trim() ? r.domains_dir.trim() : 'the configured folder')
-          + ' does not exist, so a tool will connect and see nothing. This is not a mistake in a tool’s config file. '
+          + (folderPath ? tildePath(folderPath, home) : 'the configured folder')
+          + ' does not exist, so an agent app will connect and see nothing. This is not a mistake in an agent app’s config file. '
           + 'Open Settings → Knowledge base and point The Curator at the folder your knowledge lives in.' }]
     : [];
-  // WHAT A GREEN PASS DOES NOT COVER (v3.64.0). This spawned a NEW child a
-  // moment ago; the tool count above is that child's. A bridge a client has
-  // had open since before the last update is a different process running
-  // different code, and saying "N tools" without qualifying it is how a user
-  // concludes their agent must be able to see all N. The row is added only
-  // when the route actually found one — never as a standing disclaimer.
-  //
-  // IT IS A `loud` ENTRY NOW, for the reason it was a `check-warn` row before:
-  // it QUALIFIES the pass, so it must not be readable as one more reading.
-  const bridge = state.mcp ? deriveStaleBridgeNote(state.mcp) : null;
-  const bridgeLoud = bridge
-    ? [{ tone: 'warn',
-         text: '…but not the one already open. This spawned a fresh bridge. '
-          + (bridge.count === 1
-            ? 'A bridge your client already had open started before this version'
-            : bridge.count + ' bridges your client already had open started before this version')
-          + (bridge.ageWords ? ' (the oldest ' + bridge.ageWords + ')' : '')
-          + (bridge.count === 1 ? ' and still offers' : ' and still offer')
-          + ' the older tool list.' }]
-    : [];
-  return renderMonitor({
-    label: 'Bridge self-test',
-    head: { stateWord: 'Bridge responds', tone: 'ok' },
-    lines: [
-      { key: 'tools', value: String(r.tool_count), sub: names },
-      { key: 'domains', value: domainsNote },
-    ],
-    loud: [...folderLoud, ...bridgeLoud],
-  });
-}
+  const failLoud = r && !r.ok ? [{ tone: 'danger', text: r.error || 'The bridge did not respond as expected.' }] : [];
 
+  // ── OPEN NOW ──────────────────────────────────────────────────────────
+  let openLine;
+  if (!bridges.checked) {
+    openLine = { key: 'open now', value: 'not checked', sub: bridges.reason || '' };
+  } else {
+    const n = Number.isInteger(bridges.running) ? bridges.running : bridges.list.length;
+    const apps = [...new Set(bridges.list.map((b) => b.appLabel).filter((x) => typeof x === 'string' && x))];
+    const changed = bridges.list.filter((b) => b.notice === 'warn').length;
+    const unknown = bridges.list.filter((b) => b.notice === 'soft').length;
+    const sub = n === 0 ? ''
+      : changed ? changed + (changed === 1 ? ' serves older tools — see its app above' : ' serve older tools — see their apps above')
+        : unknown ? 'started before this version — can’t tell whether ' + (unknown === 1 ? 'its' : 'their') + ' tools changed'
+          : 'same tools as this version';
+    openLine = { key: 'open now', value: n === 0 ? 'none' : n + (n === 1 ? ' bridge' : ' bridges') + (apps.length ? ' · ' + apps.join(', ') : ''), sub };
+  }
+  const orphans = bridges.list.filter((b) => !b.appId && (b.notice === 'warn' || b.notice === 'soft'));
+  const orphanLoud = orphans.length
+    ? [{ tone: 'quiet',
+         text: (orphans.length === 1 ? 'One bridge was' : orphans.length + ' bridges were') + ' opened before this version'
+          + ' by an agent app The Curator could not name, so it can’t tell whether ' + (orphans.length === 1 ? 'its' : 'their') + ' tools changed.'
+          + (orphans[0].remedy ? ' If an agent is missing a tool: ' + orphans[0].remedy : '') }]
+    : [];
+
+  // ── SELF-TEST ─────────────────────────────────────────────────────────
+  let testLine;
+  if (!r) testLine = { key: 'self-test', value: 'not run yet' };
+  else if (!r.ok) testLine = { key: 'self-test', value: 'failed' };
+  else {
+    const count = Number.isInteger(r.toolCount) ? r.toolCount + (r.toolCount === 1 ? ' tool' : ' tools') : 'answered';
+    const secs = ageSecondsOf(r.at, Date.now());
+    const words = secs === null ? null : formatAge(secs);
+    const empty = r.domainsStatus === 'empty' ? 'the knowledge folder is empty (normal on a fresh install)' : '';
+    testLine = words
+      ? { key: 'self-test', value: '', sub: empty,
+          markHtml: '<span class="mcp-session-reading">' + escapeHtml(count + ' · ') + '<span data-mcp-age-at="' + escapeHtml(r.at) + '">'
+            + '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span></span>' }
+      : { key: 'self-test', value: count, sub: empty };
+  }
+
+  const version = (facts.version || 'unknown') + (mm && installWords(mm.install) ? ' · ' + installWords(mm.install) : '');
+  const head = cfg.mcp_server_exists === false ? { stateWord: 'Bridge file missing', tone: 'danger' }
+    : !r ? { stateWord: 'Not tested yet', tone: 'quiet' }
+      : r.ok ? { stateWord: 'Bridge answers', tone: 'ok' }
+        : { stateWord: 'Self-test failed', tone: 'danger' };
+  const busy = !!state.selfTestLoading;
+  return '<div class="mcp-bridge-panel">' + renderMonitor({
+    id: 'mcp-bridge-monitor',
+    label: 'This bridge',
+    head,
+    lines: [
+      { key: 'version', value: version },
+      { key: 'knowledge folder', value: tildePath(typeof cfg.domains_dir === 'string' ? cfg.domains_dir : '', home) || 'unknown' },
+      openLine,
+      testLine,
+    ],
+    loud: [...folderLoud, ...failLoud, ...orphanLoud],
+  }) + '<div class="settings-btn-row mcp-bridge-acts">'
+    + '<button type="button" class="btn btn-ghost btn-xs" id="btn-mcp-self-test"' + (busy ? ' disabled' : '') + '>'
+    + (busy ? 'Testing…' : 'Run self-test') + '</button></div></div>';
+}
 
 // ══ BLOCK ③ — THE TOOL MAP ═══════════════════════════════════════════════
 //
@@ -9335,12 +9199,15 @@ function usageSignature(data) {
       // v3.66.0 — PAINTED (the busiest-tools monitor is drawn from it), so it
       // belongs here: a week of agent calls that moved only this must repaint.
       t && t.count7dAgent,
-      // v3.61.0 — PAINTED (it is the tile's marker), so it belongs here: a
-      // run that only changed whose reading a tile shows must still repaint.
+      // `lastVia` decides whether `lastUsedAt` may stand in for an agent's
+      // last use (an older server); `lastAgentAt` (v3.88.0) is that use.
       // `selfTestTotal` is deliberately NOT here: the envelope carries it and
       // nothing on this screen draws it, and a field nobody draws must not be
       // able to cost a repaint — the rule this projection exists for.
-      t && t.lastVia]),
+      t && t.lastVia, t && t.lastAgentAt]),
+    // v3.88.0 — PAINTED: the runner's "Last run …" and Bridge answers' self-test line.
+    data.lastExercise || null,
+    data.lastSelfTest || null,
   ]);
 }
 
@@ -9351,45 +9218,6 @@ function ageSecondsOf(iso, now) {
   const t = typeof iso === 'string' && iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(t)) return null;
   return Math.max(0, Math.round((now - t) / 1000));
-}
-
-/**
- * The age of a stamp, as a dot and the words beside it, inside one element
- * carrying the tick hook.
- *
- * THE DOT AND THE WORD ARE CUT ON THE SAME BANDS, because both come from
- * shared/age.js — `freshnessTier` reads its boundaries off `formatAge`'s own
- * ladder. That is the whole reason this view does not own a threshold table.
- *
- * `data-mcp-age-at` is what `tickMcpAges` walks; `.mcp-age-words` is the one
- * element it writes into. The dot's CLASS is deliberately not re-derived by
- * the tick: a tier boundary is exactly where the payload signature moves
- * anyway on the next revalidate, and a clock that rewrote classes would be one
- * step away from being a render.
- *
- * `markerWord` (v3.61.0) puts a word INSIDE the reading, before the age and
- * separated by a "·" — "self-test · 2 min". Inside rather than beside it
- * because the word qualifies THIS reading and nothing else on the line, and
- * `.mcp-tool-meta` is a wrapping flex row whose items are separated by a gap:
- * a third sibling would read as a third fact. The clock still writes only
- * `.mcp-age-words`, so a tick cannot erase the marker.
- */
-function ageMarkHtml(iso, now, extraClass, markerWord) {
-  const secs = ageSecondsOf(iso, now);
-  const words = secs === null ? null : formatAge(secs);
-  const tier = secs === null ? 'unknown' : freshnessTier(secs);
-  const marker = markerWord
-    ? '<span class="mcp-via-mark">' + escapeHtml(markerWord) + '</span>' +
-      '<span class="mcp-via-sep" aria-hidden="true">·</span>'
-    : '';
-  return (
-    '<span class="mcp-age' + (extraClass ? ' ' + extraClass : '') + '"' +
-      (words ? ' data-mcp-age-at="' + escapeHtml(iso) + '"' : '') + '>' +
-      '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
-      marker +
-      '<span class="mcp-age-words">' + escapeHtml(words || 'unknown') + '</span>' +
-    '</span>'
-  );
 }
 
 /**
@@ -9425,124 +9253,45 @@ function usageWindowWords(logStartedAt, now, windowDays) {
 }
 
 /**
- * ONE TILE.
+ * ADAPTER — ONE MCP TOOL'S AGENT READING (v3.88.0, truth audit T4).
  *
- * The chip is on the MUTATORS ONLY, and that is the v3.53.1 rule rather than a
- * preference: a flag carried by 100% of a list carries nothing. Six or seven
- * of twenty-four is a minority, and it is the minority a reader deciding what
- * to let an agent do actually needs.
- *
- * A tile is NOT a button and takes no press family: there is nothing to press.
- * The map is a reading.
+ * The tiles this replaced showed `lastUsedAt` — which a "Test all N tools"
+ * run moves for every tool — so every tile read "self-test · 9 min ago". What
+ * a person asks is when an AGENT last used it. `lastAgentAt` (GET
+ * /api/mcp/usage, v3.88.0) is that; a server that does not send it gives the
+ * last use only when that use was not a test run, else nothing — never a
+ * test run's age passed off as an agent's.
+ *   → `{name, group, purpose, calls (agent calls in the window, or null), lastAgentAt}`
  */
-function renderToolTile(t, logStartedAt, now, windowDays) {
-  const name = typeof t.name === 'string' ? t.name : '(unnamed)';
-  const purpose = typeof t.purpose === 'string' ? t.purpose : '';
-  const used = typeof t.lastUsedAt === 'string' && t.lastUsedAt;
-  const uses = Number.isFinite(t.count7d) ? t.count7d : 0;
-  const chip = t.mutates === true
-    ? '<span class="mcp-writes-chip">writes</span>' : '';
-  // NOT USED IS NOT NEVER USED. The log's own start age is printed beside the
-  // phrase, because "not used since this log began" means nothing without it —
-  // a log that began four minutes ago says nothing about a user's habits.
-  // ── WHOSE READING THIS IS ───────────────────────────────────────────────
-  // A tile lit by the user's own "Test all N tools" run must never be read as
-  // agent use — that is the whole reason the log carries `via`. The marker is
-  // on the READING, so it is impossible to see the age without it. Absent
-  // `lastVia` means an MCP client and nothing more specific: no marker, rather
-  // than a word like "agent" that the log cannot support.
-  const viaWord = t.lastVia === 'self-test' ? 'self-test' : null;
-  const meta = used
-    ? ageMarkHtml(t.lastUsedAt, now, null, viaWord) +
-      '<span class="mcp-tool-uses">' + escapeHtml(uses + (uses === 1 ? ' use' : ' uses') + ' · '
-        + usageWindowWords(logStartedAt, now, windowDays).short) + '</span>'
-    // ── THE UNUSED READING IS ONE SENTENCE, AND IT WRAPS AS ONE ────────────
-    // FOUND BY LOOKING at the rendered grid: with the phrase and the age as
-    // two siblings the 220px column broke the line after the separator, so a
-    // tile ended with a dangling "·" and opened the next line with a dot and a
-    // date. Built here as the mark followed by ONE text run instead, with the
-    // "· <age>" clause held together by `white-space: nowrap` — so the break,
-    // when it comes, falls inside the sentence where a reader expects one.
-    : '<span class="mcp-age mcp-age-unused"' +
-        (logStartedAt ? ' data-mcp-age-at="' + escapeHtml(logStartedAt) + '"' : '') + '>' +
-        '<span class="fresh-dot fresh-unknown" aria-hidden="true"></span>' +
-        '<span class="mcp-tool-unused-words">not used since this log began' +
-          '<span class="mcp-age-tail"> · <span class="mcp-age-words">' +
-            escapeHtml(formatAge(ageSecondsOf(logStartedAt, now)) || 'unknown') +
-          '</span></span>' +
-        '</span>' +
-      '</span>';
-  return (
-    '<div class="mcp-tool-tile' + (used ? '' : ' mcp-tool-unused') + '">' +
-      '<div class="mcp-tool-hd">' +
-        '<code class="mono mcp-tool-name">' + escapeHtml(name) + '</code>' + chip +
-      '</div>' +
-      (purpose ? '<p class="mcp-tool-purpose">' + escapeHtml(purpose) + '</p>' : '') +
-      '<div class="mcp-tool-meta">' + meta + '</div>' +
-    '</div>'
-  );
+function agentReading(t) {
+  const lastAgentAt = typeof t.lastAgentAt === 'string' && t.lastAgentAt ? t.lastAgentAt
+    : (!('lastAgentAt' in t) && t.lastVia !== 'self-test' && typeof t.lastUsedAt === 'string' && t.lastUsedAt ? t.lastUsedAt : null);
+  return {
+    name: typeof t.name === 'string' ? t.name : '(unnamed)',
+    group: t.group === 'write' ? 'write' : 'read',
+    purpose: typeof t.purpose === 'string' ? t.purpose : '',
+    calls: Number.isInteger(t.count7dAgent) && t.count7dAgent >= 0 ? t.count7dAgent : null,
+    lastAgentAt,
+  };
 }
 
-/** One group — the caption names it and counts it, the tiles fill the row. */
-function renderToolGroup(label, tools, logStartedAt, now, windowDays) {
-  if (!tools.length) return '';
-  return (
-    '<div class="mcp-tool-group">' +
-      '<div class="mcp-group-eyebrow">' + escapeHtml(label + ' · ' + tools.length + ' tools') + '</div>' +
-      '<div class="mcp-tool-grid">' +
-        tools.map((t) => renderToolTile(t, logStartedAt, now, windowDays)).join('') +
-      '</div>' +
-    '</div>'
-  );
+/** A reading the 1 s clock can re-word: `<before>` then the age words, inside the tick hook. */
+function tickedAgeHtml(before, iso, now) {
+  const secs = ageSecondsOf(iso, now);
+  const words = secs === null ? null : formatAge(secs);
+  if (!words) return escapeHtml(before || '');
+  return '<span class="mcp-session-reading">' + escapeHtml(before || '') + '<span data-mcp-age-at="' + escapeHtml(iso) + '">'
+    + '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span></span>';
 }
 
 /**
- * M10 — THE TWO SESSION READINGS, AS ONE MONITOR.
- *
- * They are the map's headline and they are not a tile: "when did a session
- * last bootstrap" and "when did one last save" are the two questions the whole
- * tier exists to answer, and a reader should not have to find two particular
- * tiles among twenty-four to answer them.
- *
- * This was two `renderReadout`s in a flex strip — the app's THIRD treatment of
- * a live reading, beside the bridge's status card and the capture block on the
- * Context view. It is the same thing all three were: a reading of changing
- * state, which is a monitor (shared/monitor.js).
- *
- * ── THE AGE HOOK RIDES IN `markHtml`, AND THAT IS DELIBERATE ────────────
- * `tickMcpAges` re-words every age on this block once a second without a
- * render, by walking `[data-mcp-age-at]` and writing `textContent` into ONE
- * named child. A monitor LINE carries no data attribute of its own — the
- * component takes none, and giving it one would be inventing a hook in a
- * shared kit for a single caller. `markHtml` is its one TRUSTED field, so the
- * hook and the words it owns are composed HERE, by the view that owns the
- * clock, and `value` is left empty because the mark IS the reading. The
- * alternative was two one-line monitors (a hook per block) or dropping the
- * tick and living with the 30s revalidate; the first draws two instruments
- * where there is one reading, and the second silently loses a live clock.
+ * A session reading for the "Agent use" monitor. NOT a blank and not "never":
+ * an absent reading says the log has nothing since it began.
  */
-function renderSessionStrip(sessions, now) {
-  const s = sessions && typeof sessions === 'object' ? sessions : {};
-  const reading = (key, iso) => {
-    const secs = ageSecondsOf(iso, now);
-    const words = secs === null ? null : formatAge(secs);
-    // NOT a blank and not "never": the same rule the tiles keep. An absent
-    // reading takes no hook either, because there is no stamp to recount.
-    if (!words) return { key, value: 'none since this log began' };
-    return {
-      key,
-      value: '',
-      markHtml: '<span class="mcp-session-reading" data-mcp-age-at="' + escapeHtml(iso) + '">' +
-        '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span>',
-    };
-  };
-  return '<div class="mcp-session-strip">' + renderMonitor({
-    label: 'Bridge sessions',
-    lines: [
-      reading('Last session start', s.lastBootstrapAt),
-      reading('Last save', s.lastSaveAt),
-    ],
-  }) + '</div>';
+function sessionLine(key, iso, now) {
+  const secs = ageSecondsOf(iso, now);
+  if (secs === null || formatAge(secs) === null) return { key, value: 'none since this log began' };
+  return { key, value: '', markHtml: tickedAgeHtml('', iso, now) };
 }
 
 /**
@@ -9552,22 +9301,12 @@ function renderSessionStrip(sessions, now) {
  * From `state.mcpUsage.tools.length`, which IS the catalogue (the route maps
  * one row per `TOOL_CATALOGUE` entry, used or not). A literal here would be a
  * third list of the same tools, after `mcp/tools/index.js` and
- * `mcp/tools/catalogue.js` — and CLAUDE.md records twice that the number in
- * prose is the copy that goes stale.
+ * `mcp/tools/catalogue.js`.
  *
- * ── THE SENTENCE IS A `.tx-note`, NOT A SECOND LEDE ────────────────────────
- * The block already has its lede, and §3 of docs/design-system-source.md
- * allows a block one: a heading, at most one lede, the ⓘ, and the body. This
- * sentence qualifies the CONTROL directly, which is exactly what `.tx-note` is
- * for, and it is one line by that component's contract — 12 visible words,
- * under the 13-word ceiling a lede would have had to meet anyway.
- *
- * ── THE OUTCOME IS NEVER FOLDED ────────────────────────────────────────────
- * v3.16.1's never-fold list names "the outcome of something the user just
- * pressed" outright. It is a plain reading on the page: how many answered, how
- * many refused, how long it took — and, when something did not answer, the
- * tools BY NAME, because "23 of 24" without the name is a reading nobody can
- * act on.
+ * ── THE OUTCOME IS NEVER FOLDED, AND IT OUTLIVES THE PAGE (v3.88.0) ────────
+ * The outcome of something the user pressed is a plain reading on the page.
+ * It used to vanish on reload; it is now read back from the usage log's last
+ * run (`lastExercise`) when this page has not run one, and says when.
  */
 function renderExerciseRunner(toolCount) {
   const n = Number.isFinite(toolCount) && toolCount > 0 ? toolCount : null;
@@ -9586,51 +9325,89 @@ function renderExerciseRunner(toolCount) {
   return control + renderExerciseOutcome();
 }
 
-/** The outcome line. Empty until a run has happened on this page. */
+/**
+ * ADAPTER — THE LAST "Test all N tools" RUN. This page's own run wins; else
+ * the usage log's record of the last one (GET /api/mcp/usage `lastExercise`,
+ * v3.88.0). `{at, total, answered, refused, durationMs, failed: [names],
+ * refusals: [{tool, note}]}` or null.
+ */
+function lastExerciseRun() {
+  const r = state.mcpExercise;
+  if (r && Array.isArray(r.results)) {
+    return {
+      at: typeof r.ranAt === 'string' ? r.ranAt : null,
+      total: r.results.length,
+      answered: r.results.filter((x) => x && (x.ok === true || x.refused === true)).length,
+      refused: r.results.filter((x) => x && x.refused === true).length,
+      durationMs: Number.isFinite(r.durationMs) ? r.durationMs : null,
+      failed: r.results.filter((x) => x && x.ok !== true && x.refused !== true).map((x) => x.tool).filter((x) => typeof x === 'string'),
+      refusals: r.results.filter((x) => x && x.refused === true).map((x) => ({ tool: x.tool, note: x.note })),
+    };
+  }
+  const u = state.mcpUsage;
+  const L = u && u.lastExercise && typeof u.lastExercise === 'object' ? u.lastExercise : null;
+  if (!L || !Number.isInteger(L.total)) return null;
+  return {
+    at: typeof L.at === 'string' ? L.at : (typeof L.ranAt === 'string' ? L.ranAt : null),
+    total: L.total,
+    answered: Number.isInteger(L.answered) ? L.answered : null,
+    refused: Number.isInteger(L.refused) ? L.refused : 0,
+    durationMs: Number.isFinite(L.durationMs) ? L.durationMs : null,
+    failed: Array.isArray(L.failed) ? L.failed.filter((x) => typeof x === 'string') : [],
+    refusals: Array.isArray(L.refusals) ? L.refusals.filter((x) => x && typeof x.tool === 'string') : [],
+  };
+}
+
+/** The outcome line: "Last run 9 min ago: 24 of 24 answered · 0 refused · 1.1 s". */
 function renderExerciseOutcome() {
   if (state.mcpExerciseError) {
     return '<div class="settings-inline-error mcp-runner-outcome">' +
       escapeHtml(state.mcpExerciseError) + '</div>';
   }
-  const r = state.mcpExercise;
-  if (!r || !Array.isArray(r.results)) return '';
-  const total = r.results.length;
-  const answered = r.results.filter((x) => x && (x.ok === true || x.refused === true)).length;
-  const refused = r.results.filter((x) => x && x.refused === true).length;
-  const secs = Number.isFinite(r.durationMs) ? (r.durationMs / 1000).toFixed(1) : '?';
-  const failed = r.results.filter((x) => x && x.ok !== true && x.refused !== true)
-    .map((x) => x.tool).filter((x) => typeof x === 'string');
-  // The refusals are NAMED too, with their reason, when there are any: a
-  // refusal is a legitimate answer from a tool and the reason is the useful
-  // half. (`scan_semantic_duplicates` refuses its cost estimate on an install
-  // with no provider key, which is a fact about the install, not a fault.)
-  const refusedRows = r.results.filter((x) => x && x.refused === true);
-  const headline = escapeHtml(answered + ' of ' + total + ' answered · ' +
-    refused + ' refused · ' + secs + ' s');
-  const parts = ['<div class="mcp-runner-line"><strong>' + headline + '</strong></div>'];
-  if (failed.length) {
+  const r = lastExerciseRun();
+  if (!r) return '';
+  const secs = (Number.isFinite(r.durationMs) ? (r.durationMs / 1000).toFixed(1) : '?');
+  const when = ageSecondsOf(r.at, Date.now());
+  const whenWords = when === null ? null : formatAge(when);
+  const headline = (r.answered === null ? '' : r.answered + ' of ') + r.total + (r.answered === null ? ' tools run' : ' answered')
+    + ' · ' + r.refused + ' refused · ' + secs + ' s';
+  const lead = whenWords
+    ? '<span class="mcp-session-reading">Last run <span data-mcp-age-at="' + escapeHtml(r.at) + '"><span class="mcp-age-words">'
+      + escapeHtml(whenWords) + '</span></span>: </span>'
+    : 'Last run: ';
+  const parts = ['<div class="mcp-runner-line"><strong>' + lead + escapeHtml(headline) + '</strong></div>'];
+  // The tools that did not answer, BY NAME: "23 of 24" without the name is a
+  // reading nobody can act on. A refusal is named with its reason — it is a
+  // legitimate answer, and the reason is the useful half.
+  if (r.failed.length) {
     parts.push('<div class="mcp-runner-line mcp-runner-bad">' +
-      escapeHtml('No answer from: ' + failed.join(', ')) + '</div>');
+      escapeHtml('No answer from: ' + r.failed.join(', ')) + '</div>');
   }
-  for (const row of refusedRows) {
+  for (const row of r.refusals) {
     parts.push('<div class="mcp-runner-line">' +
       '<code class="mono">' + escapeHtml(row.tool) + '</code> refused — ' +
       escapeHtml(row.note || 'no reason given') + '</div>');
   }
-  const cls = failed.length ? ' mcp-runner-outcome-bad' : '';
+  const cls = r.failed.length ? ' mcp-runner-outcome-bad' : '';
   return '<div class="mcp-runner-outcome' + cls + '" role="status">' + parts.join('') + '</div>';
 }
 
+/** How many busiest tools the "Agent use" monitor names (the rest are counted in words). */
+const AGENT_USE_TOP = 5;
+
 /**
- * The block's BODY, and it is its own function because the 30s revalidate
- * repaints exactly this and nothing else. A repaint that had to go through
- * `render()` would replace the whole column — closing every ⓘ, every
- * `<details>` and the user's focus — once every thirty seconds, which is the
- * v3.53.1 defect with a slower clock.
+ * The block's BODY, and it is its own function because the 30 s revalidate
+ * repaints exactly this and nothing else — a `render()` would close every ⓘ
+ * and `<details>` on the section every thirty seconds (v3.53.1).
  *
- * THE RUNNER IS FIRST AND IT IS IN EVERY ARM that has a tool count, INCLUDING
- * the empty one: a fresh install's map is twenty-four dashed rings, and the
- * button is the only thing on the screen that can do anything about that.
+ * v3.88.0 — COMPACT: the runner and its last outcome; ONE monitor, "Agent
+ * use", holding the last session start, the last save and the top five tools
+ * with depth bars against the busiest (rule 6, a named denominator); then the
+ * whole catalogue in a fold, "All N tools", CLOSED by default (the owner's
+ * decision 6), one line per tool: agent calls in the window · last agent use.
+ *
+ * THE RUNNER IS IN EVERY ARM that has a tool count, including the empty one:
+ * on a fresh install it is the only thing on the screen that can act.
  */
 function renderToolMapBody(now) {
   const at = typeof now === 'number' ? now : Date.now();
@@ -9639,156 +9416,99 @@ function renderToolMapBody(now) {
   }
   const u = state.mcpUsage;
   if (!u) return gatedLoader(loadGate, 'Loading the tool map…');
-  const tools = Array.isArray(u.tools) ? u.tools : [];
+  const tools = (Array.isArray(u.tools) ? u.tools : []).filter((t) => t && typeof t === 'object');
   const runner = renderExerciseRunner(tools.length);
   const anyUsed = tools.some((t) => typeof t.lastUsedAt === 'string' && t.lastUsedAt);
   if (!u.present || !anyUsed) {
     return runner + '<p class="mcp-map-empty">No calls recorded yet. The map fills as your ' +
       'agents use the bridge.</p>';
   }
-  const reads = tools.filter((t) => t.group !== 'write');
-  const writes = tools.filter((t) => t.group === 'write');
+  const readings = tools.map(agentReading);
+  // v3.76.0 (truth audit F8): the window is the one the log REALLY covers.
+  const win = usageWindowWords(u.logStartedAt, at, u.countWindowDays);
+  const winWords = win.covered && win.short === '7 days' ? 'this week' : win.inWords;
 
-  // ── THE BUSIEST TOOLS (v3.66.0, placement P7) ───────────────────────────
-  // A monitor of the tools AGENTS called most in the count window (7 days, or
-  // less when the log is younger — v3.76.0 F8), each count with a
-  // depth bar against the busiest one — a column of peers, the named
-  // denominator (design rule 6). The tiles below stay as they are: a grid of
-  // cards has no numeric column to anchor a bar to (v3.65.1's own refusal).
-  //
-  // `count7dAgent`, never `count7d`: the latter counts this page's own "Test
-  // all N tools" run, one call on every tool, so a bar drawn from it would
-  // show a tie across all twenty-four for a week after one press. A server
-  // that does not send the field (older than v3.66.0) gets NO monitor — an
-  // absent reading is not a column of zeros. Inlined rather than a helper:
-  // suites lift this function into sandboxes, and a new free identifier in a
-  // lifted body is a crash there.
-  //
-  // NEVER RED (max, not budget). Tools at 0 are omitted and counted in words.
-  const agentCounted = tools.filter((t) => Number.isInteger(t && t.count7dAgent) && t.count7dAgent >= 0);
-  let busiestHtml = '';
-  if (tools.length && agentCounted.length === tools.length) {
-    const called = agentCounted.filter((t) => t.count7dAgent > 0)
-      .sort((a, b) => (b.count7dAgent - a.count7dAgent)
-        || String(a.name).localeCompare(String(b.name)));
-    const shown = called.slice(0, 8);
-    const busiest = shown.length ? shown[0].count7dAgent : 0;
-    const notCalled = tools.length - called.length;
-    const moreCalled = called.length - shown.length;
-    // v3.76.0 (truth audit F8b): the window is the one the log REALLY covers,
-    // never a typed "7 days" / "this week" over a log that began 5 days ago.
-    const win = usageWindowWords(u.logStartedAt, at, u.countWindowDays);
-    // v3.76.0 (F8a): the busiest tool is NAMED as the bar's scale, so a row's
-    // "8 of 151 calls" can no longer read as a share of its own calls — the
-    // wording Across projects already uses ("· bar scaled to curator's 6").
-    const busiestName = shown.length ? String(shown[0].name) : '';
-    const noteParts = [];
-    if (!win.covered) noteParts.push('Counted over the ' + win.last + ' — the log begins ' + win.begins);
-    if (moreCalled > 0) noteParts.push(moreCalled + ' more ' + (moreCalled === 1 ? 'tool' : 'tools') + ' called less');
-    if (notCalled > 0) noteParts.push(notCalled + ' ' + (notCalled === 1 ? 'tool' : 'tools') + ' not called by an agent ' + win.inWords);
-    // Captioned like the READ / WRITE groups below it, because the caption
-    // is what says whose calls these are: a tile's "18 uses · 7 days" counts
-    // a test run, this column does not, and the two must not read as a
-    // disagreement.
-    busiestHtml = '<div class="mcp-busiest">' +
-      '<div class="mcp-group-eyebrow">' + escapeHtml('BUSIEST · ' + win.last.toUpperCase() + ' · AGENTS ONLY') + '</div>' + renderMonitor({
-      label: 'Busiest tools, ' + win.last + ', agents only',
-      lines: shown.map((t) => ({
-        key: String(t.name),
-        value: t.count7dAgent,
-        depth: { amount: t.count7dAgent, max: busiest,
-          label: t.count7dAgent === busiest
-            ? t.count7dAgent + (t.count7dAgent === 1 ? ' call' : ' calls') + ' — the busiest tool'
-            : t.count7dAgent + (t.count7dAgent === 1 ? ' call' : ' calls') + ' · bar scaled to '
-              + busiestName + '’s ' + busiest },
-      })),
-      note: shown.length
-        ? (noteParts.length ? noteParts.join(' · ') + '.' : '')
-        : 'No agent called a tool ' + win.inWords + (win.covered ? '' : ' (the log begins ' + win.begins + ')')
-          + '. Test runs from this page are not counted.',
-    }) + '</div>';
+  // ── AGENT USE ───────────────────────────────────────────────────────────
+  // `count7dAgent`, never `count7d`: the latter counts this page's own test
+  // run, one call on every tool. A server that does not send the field gets
+  // the two session readings and no busiest list — an absent reading is not a
+  // column of zeros. NEVER RED (max, not budget).
+  const counted = readings.every((r) => r.calls !== null);
+  const sessions = u.sessions && typeof u.sessions === 'object' ? u.sessions : {};
+  const lines = [
+    sessionLine('last session start', sessions.lastBootstrapAt, at),
+    sessionLine('last save', sessions.lastSaveAt, at),
+  ];
+  let note = '';
+  if (counted) {
+    const called = readings.filter((r) => r.calls > 0)
+      .sort((a, b) => (b.calls - a.calls) || a.name.localeCompare(b.name));
+    const shown = called.slice(0, AGENT_USE_TOP);
+    const busiest = shown.length ? shown[0].calls : 0;
+    const busiestName = shown.length ? shown[0].name : '';
+    for (const r of shown) {
+      lines.push({ key: r.name, value: r.calls,
+        depth: { amount: r.calls, max: busiest,
+          label: r.calls === busiest
+            ? r.calls + (r.calls === 1 ? ' call' : ' calls') + ' — the busiest tool'
+            : r.calls + (r.calls === 1 ? ' call' : ' calls') + ' · bar scaled to ' + busiestName + '’s ' + busiest } });
+    }
+    const more = called.length - shown.length;
+    const notCalled = readings.length - called.length;
+    const bits = [];
+    if (!win.covered) bits.push('Counted over the ' + win.last + ' — the log begins ' + win.begins);
+    if (more > 0) bits.push(more + ' more ' + (more === 1 ? 'tool' : 'tools') + ' called less');
+    if (notCalled > 0) bits.push(notCalled + ' of ' + readings.length + ' not called by an agent ' + winWords);
+    note = shown.length
+      ? (bits.length ? bits.join(' · ') + '. ' : '') + 'Test runs are not counted.'
+      : 'No agent called a tool ' + winWords + (win.covered ? '' : ' (the log begins ' + win.begins + ')') + '. Test runs are not counted.';
   }
-  return (
-    runner +
-    renderSessionStrip(u.sessions, at) +
-    busiestHtml +
-    renderToolGroup('READ', reads, u.logStartedAt, at, u.countWindowDays) +
-    renderToolGroup('WRITE', writes, u.logStartedAt, at, u.countWindowDays)
-  );
+  const useMon = '<div class="mcp-busiest">' + renderMonitor({
+    id: 'mcp-agent-use',
+    label: 'Agent use, ' + win.last,
+    lines,
+    note,
+  }) + '</div>';
+
+  // ── ALL N TOOLS — one fold, closed by default ───────────────────────────
+  const logBegins = (() => {
+    const t = typeof u.logStartedAt === 'string' ? Date.parse(u.logStartedAt) : NaN;
+    if (!Number.isFinite(t)) return '';
+    const d = new Date(t);
+    return d.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  })();
+  const toolLine = (r) => ({
+    key: r.name,
+    value: '',
+    markHtml: r.lastAgentAt ? tickedAgeHtml((r.calls ? r.calls : '—') + ' · ', r.lastAgentAt, at)
+      : escapeHtml(r.calls ? String(r.calls) : '—'),
+  });
+  const group = (label, list) => (list.length
+    ? '<div class="mcp-tool-col"><div class="mcp-group-eyebrow">' + escapeHtml(label + ' · ' + list.length) + '</div>'
+      + renderMonitor({ label: label + ' tools', lines: list.map(toolLine) }) + '</div>'
+    : '');
+  const reads = readings.filter((r) => r.group !== 'write');
+  const writes = readings.filter((r) => r.group === 'write');
+  const hint = (counted ? 'agent calls ' + winWords + ' · ' : '') + 'last agent use'
+    + (logBegins ? ' · — = none since ' + logBegins : '');
+  const fold = '<details class="settings-setup-fold mcp-all-tools" data-mcp-fold="all-tools"' + (state.mcpAllToolsOpen ? ' open' : '') + '>'
+    + '<summary class="settings-setup-summary"><span class="settings-setup-name">All ' + readings.length + ' tools</span>'
+    + '<span class="cur-setup-hint mcp-all-tools-hint">' + escapeHtml(hint) + '</span></summary>'
+    + '<div class="settings-setup-body"><div class="mcp-tool-cols">' + group('READ', reads) + group('WRITE', writes) + '</div></div>'
+    + '</details>';
+
+  return runner + useMon + fold;
 }
 
 /** Block ③ itself. */
 function renderToolMap() {
   const lede = 'What your agents used, and when — kept on this machine only.';
-  // ── THE FILENAME IS PLAIN TEXT, NOT A `<code>` ─────────────────────────
-  // FOUND BY OPENING THE FOLD: `.tx-vh-panel` is a one-column GRID (its own
-  // comment says WHY — `renderInfoMark` emits its prose as a BARE TEXT NODE,
-  // and a grid is what can lay one out without a wrapper. The track itself
-  // used to carry the MEASURE, which is what this line said; v3.65.0 made it
-  // `minmax(0, 1fr)`, so the prose now takes the card and the card takes the
-  // column — the grid stayed, the cap went), and CSS wraps each contiguous run
-  // of text in an ANONYMOUS grid item. An inline element inside it therefore becomes a row of its own: the
-  // filename sat on its own line and the sentence resumed underneath with a
-  // leading comma. So the name is written as text, and the sentence is built
-  // so nothing depends on it being set apart. The trailing link is the one
-  // element here, and it is SUPPOSED to take its own row.
-  // ── THE NUMBER AND THE FIELD LIST ARE A CONTRACT (corrected v3.63.0) ───
-  // This sentence said "under 200 bytes" and named four fields. Both became
-  // FALSE the moment the log grew `sid`, `project` and its session line: the
-  // ceiling is MAX_LINE_BYTES in src/brain/mcp-usage.js and it is 300. The app
-  // telling a user a number is a contract, so it moves when the number does.
-  //
-  // WRITTEN OUT RATHER THAN IMPORTED, and the reason is a real constraint, not
-  // laziness: `src/brain/mcp-usage.js` imports `crypto`, `fs/promises` and
-  // `./paths.js`, so it cannot be loaded in a browser — and `GET
-  // /api/mcp/usage`, which is the only payload this block has, does not carry
-  // the ceiling either (the capture route added for the memory view does, but
-  // that route is per project and this block is app-wide). The literal is
-  // therefore pinned against the module's own export by
-  // scripts/test-next-capture-meter.js §5, which fails the day MAX_LINE_BYTES
-  // moves and this sentence does not.
+  // The usage log's byte ceiling is stated in the ⓘ (`settings.mcp-tool-map`)
+  // and pinned against MAX_LINE_BYTES by scripts/test-next-capture-meter.js §5.
   return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), 'settings.mcp-tool-map', '');
 }
 
-/**
- * ── BLOCK ④ · ACROSS PROJECTS (v3.66.0, placement P8) ─────────────────────
- *
- * THE APP TWIN OF THE MENUBAR WIDGET'S PER-PROJECT BARS (the parity rule: no
- * widget-only fact — a Windows or Linux user has no widget). One monitor line
- * per project: the project's DOMAIN identity dot, `domain / project`, the
- * sessions that SAVED a handoff in 30 days with a depth bar against the
- * busiest project (a column of peers — `byProjectWindow.busiestSaved`, the
- * named denominator), and how many sessions there were under it. Then the
- * widget pulse strip's fact: saves in the last 7 days.
- *
- * ZERO-SESSION PROJECTS ARE SHOWN, AS 0, DIMMED — a project whose agents never
- * saved is the one a reader most needs to find, and hiding it would make the
- * list read as "every project saves". They sort last (the route's own order)
- * and their figure takes --text-2 via `.settings-id-idle`.
- *
- * ABSENT IS NOT ZERO: with no usage log on this computer the route sends
- * `sessions: null` on every row, and this block draws no row at all and says
- * so, rather than a column of zeros.
- *
- * NEVER RED: `max`, never `budget` — being the busiest project is not a fault.
- *
- * The identity slot is `state.defaultDomainInfo.identity` (v3.76.0 — each
- * domain's RECORDED slot, the one every other surface paints from). A row
- * whose domain this install does not hold gets NO dot — never a guessed one
- * (v3.65.3's own rule for an unindexed domain).
- */
 const ACROSS_PROJECTS_MAX_ROWS = 12;
-function renderAcrossProjects() {
-  // v3.72.1 (truth audit F6/F10): no window length in the lede. It read "last
-  // 30 days" — typed, while the route sends the window it counted over
-  // (`byProjectWindow.windowDays`). The body states the window from the
-  // payload, and the lede stays true whatever that window is.
-  // v3.74.0 (D5): CONNECTIONS. The figure counts MCP bridge processes — one
-  // per Claude Code session, but ONE for many Claude Desktop conversations —
-  // so "sessions" over-claimed; the ⓘ says what a connection is.
-  const lede = 'Which projects’ agent connections saved a handoff.';
-  return settingsBlock(4, 'mcp-across', 'Across projects', lede, renderAcrossProjectsBody(), 'settings.mcp-across', '');
-}
 
 /**
  * The window a payload counted over, as words: "last 30 days". From the
@@ -9803,12 +9523,8 @@ function windowDaysWords(days) {
 }
 
 /**
- * THE WINDOW THE USAGE LOG REALLY COVERS, as words (v3.74.0, D5).
- *
- * The route asks for 30 days; a log that began five days ago cannot support
- * that. When `windowCovered === false` this says the span the log does cover
- * and the day it begins — "last 5 days — the log begins 20 Sep" — from the
- * route's `captureWindowFacts` (the widget's own derivation). Otherwise it is
+ * THE WINDOW THE READING REALLY COVERS, as words (v3.74.0, D5): "last 5 days
+ * — the log begins 20 Sep" when `windowCovered === false`, else
  * `windowDaysWords` of the window asked for. '' when neither is known.
  */
 function logWindowWords(w) {
@@ -9825,128 +9541,170 @@ function logWindowWords(w) {
   return windowDaysWords(win.windowDays);
 }
 
+/**
+ * ADAPTER — ACROSS PROJECTS, from GET /api/mcp/usage?include=projects
+ * (`state.mcpProjects` = `{byProject, window, savePulse}`). The only reader
+ * of that payload's rows.
+ *
+ * The owner's decision 5 (v3.88.0): the bar shows HANDOFF SAVES per project,
+ * and each row says its last save. The route's `saves` / `lastSaveAt`
+ * (v3.88.0) are those. A server that sends neither falls back to the
+ * connections that saved (`sessionsSaved`) and the last connection's time —
+ * and the row then SAYS "last connection", never "last save".
+ *   → `{measured, logPresent, unit: 'saves'|'connections', rows: [{key, domain,
+ *       project, count, lastAt, lastWord, inStore, sharedName}]}`
+ */
+function adaptProjects(P) {
+  const w = P && P.window && typeof P.window === 'object' ? P.window : {};
+  const all = P && Array.isArray(P.byProject) ? P.byProject.filter((r) => r && typeof r === 'object') : [];
+  const savesKnown = all.some((r) => Number.isInteger(r.saves));
+  const rows = all.map((r) => {
+    const name = typeof r.project === 'string' && r.project ? r.project : '(unnamed)';
+    const key = typeof r.domain === 'string' && r.domain && r.domain !== name ? r.domain + ' / ' + name : name;
+    const count = savesKnown ? (Number.isInteger(r.saves) ? r.saves : null)
+      : (Number.isInteger(r.sessionsSaved) ? r.sessionsSaved : null);
+    const lastAt = savesKnown ? (typeof r.lastSaveAt === 'string' ? r.lastSaveAt : null)
+      : (typeof r.lastSessionAt === 'string' ? r.lastSessionAt : null);
+    // `savesCapped`: a journal was read from its newest part only, so the count is a floor ("12+").
+    return { key, domain: typeof r.domain === 'string' ? r.domain : null, project: name, count, lastAt,
+      floor: savesKnown && r.savesCapped === true,
+      lastWord: savesKnown ? 'last save' : 'last connection', inStore: r.inStore !== false, sharedName: r.sharedName === true };
+  }).filter((r) => r.count !== null);
+  const logPresent = savesKnown ? true : w.logPresent === true;
+  return { logPresent, unit: savesKnown ? 'saves' : 'connections', rows };
+}
+
+/** "Last 30 days: which projects’ agents saved a handoff, and when." — the window from the payload, never typed. */
+function acrossProjectsLede() {
+  const P = state.mcpProjects;
+  const win = P ? logWindowWords(P.window) : '';
+  const rest = 'which projects’ agents saved a handoff, and when.';
+  return win ? win.charAt(0).toUpperCase() + win.slice(1) + ': ' + rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/**
+ * ── BLOCK ④ · ACROSS PROJECTS (v3.66.0, P8; v3.88.0 compact) ──────────────
+ *
+ * THE APP TWIN OF THE MENUBAR WIDGET'S PER-PROJECT BARS (the parity rule: no
+ * widget-only fact). One monitor line per project that saved: the project's
+ * DOMAIN identity dot (its RECORDED slot, rule 5), `domain / project`, its
+ * handoff saves with a depth bar against the busiest project (rule 6, a named
+ * denominator), and its last save. Projects with no save share ONE line,
+ * "no save", that names them — still on screen, because a project whose
+ * agents never save is the one a reader most needs to find.
+ *
+ * Then "Handoff saves, last 7 days", one line per agent app; "+" means at
+ * least (a long journal is read from its newest part only).
+ *
+ * ABSENT IS NOT ZERO: with no reading the block says so, never a column of
+ * zeros. NEVER RED: `max`, never `budget`.
+ */
+function renderAcrossProjects() {
+  return settingsBlock(4, 'mcp-across', 'Across projects', acrossProjectsLede(), renderAcrossProjectsBody(), 'settings.mcp-across', '');
+}
+
 function renderAcrossProjectsBody() {
-  let body;
   const P = state.mcpProjects;
   if (!P) {
-    body = '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
-  } else {
-    const w = P.window || {};
-    const capWindow = logWindowWords(w);
-    const busiest = Number.isInteger(w.busiestSaved) && w.busiestSaved > 0 ? w.busiestSaved : 0;
-    const measured = w.logPresent === true
-      ? P.byProject.filter((r) => r && Number.isInteger(r.sessions) && Number.isInteger(r.sessionsSaved))
-      : [];
-    const shown = measured.slice(0, ACROSS_PROJECTS_MAX_ROWS);
-    // v3.74.0 — THE BAR'S SCALE, NAMED AS A COMPARISON. A row's own figure is
-    // "N of its M connections saved"; the bar is scaled to the busiest
-    // project, and that project is NAMED, so "2 of 6 …, the busiest project"
-    // can no longer read as if this row were the busiest.
-    const top = measured.find((r) => r.sessionsSaved === busiest) || null;
-    const busiestName = top && typeof top.project === 'string' && top.project ? top.project : 'the busiest project';
-    const lines = shown.map((r) => {
-      const dotCls = typeof r.domain === 'string'
-        ? domainIdentityClass(state.defaultDomainInfo && state.defaultDomainInfo.identity, r.domain) : '';
-      const name = typeof r.project === 'string' && r.project ? r.project : '(unnamed)';
-      const key = typeof r.domain === 'string' && r.domain && r.domain !== name
-        ? r.domain + ' / ' + name : name;
-      const idle = r.sessions === 0;
-      const sub = (idle ? (capWindow ? 'no connection, ' + capWindow : 'no connection')
-        : r.sessions + (r.sessions === 1 ? ' connection' : ' connections')) +
-        (r.inStore === false ? ' · not in this folder' : '');
-      return {
-        key,
-        value: r.sessionsSaved,
-        markHtml: '<span class="settings-id-mark' + (idle ? ' settings-id-idle' : '') + '">' +
-          (dotCls ? '<span class="cur-sb-dot ' + dotCls + '" aria-hidden="true"></span>' : '') +
-          '</span>',
-        sub,
-        depth: r.sessionsSaved > 0 && busiest > 0
-          ? { amount: r.sessionsSaved, max: busiest,
-              label: r.sessionsSaved === busiest
-                ? r.sessionsSaved + ' of ' + r.sessions + ' connections saved — the busiest project'
-                : r.sessionsSaved + ' of ' + r.sessions + ' connections saved · bar scaled to '
-                  + busiestName + '’s ' + busiest }
-          : undefined,
-      };
-    });
-    // v3.76.0 (truth audit F12): TWO READINGS, TWO MONITORS. The lines above
-    // count usage-log CONNECTIONS over `capWindow`; the saves below count
-    // handoff JOURNAL entries over the pulse window. They were one monitor
-    // with one note, so "Counted over the last 5 days — the log begins
-    // 20 Sep" sat under "saves, last 7 days", which it does not describe.
-    // Each note now sits under the reading it is about.
-    const saveLines = [];
-    const pulse = P.savePulse;
-    if (pulse && Number.isInteger(pulse.events)) {
-      const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
-      // A store younger than the window has not been observed for all of it,
-      // so "saves, last 7 days: 3" would claim a week nobody watched. Say
-      // where the record begins instead (`coversWholeWindow === false`).
-      const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string'
-        ? formatSyncedAt(pulse.oldestEventAt) : '';
-      const key = 'saves' + (pw ? ', ' + pw : '') +
-        (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '');
-      saveLines.push({ key, value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
-      // ── SAVES BY TOOL (v3.74.0, the parity rule) ────────────────────────
-      // The widget's "Saves by tool": the same pulse, one lane per tool
-      // (normalised by the data layer, so one tool typed two ways is one
-      // line). A count is "at least" whenever any journal was read only from
-      // its tail (`byToolFloor`); a tool with no save in the window reads
-      // "none" and says the day it was LAST SEEN in what was read — never
-      // "last save", which a tail cannot promise.
-      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const seen = (iso) => {
-        const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
-        if (!Number.isFinite(t)) return '';
-        const d = new Date(t);
-        return d.getDate() + ' ' + MONTHS[d.getMonth()];
-      };
-      for (const t of Array.isArray(pulse.byTool) ? pulse.byTool : []) {
-        if (!t || typeof t.label !== 'string' || !t.label || !Number.isInteger(t.events)) continue;
-        saveLines.push({
-          key: 'by ' + t.label,
-          value: t.events === 0 ? 'none'
-            : (pulse.byToolFloor === true || pulse.lowerBound ? 'at least ' : '') + t.events,
-          sub: t.events === 0 && seen(t.lastSeenAt) ? 'last seen ' + seen(t.lastSeenAt) : '',
-        });
-      }
-      if (Number.isInteger(pulse.eventsWithoutTool) && pulse.eventsWithoutTool > 0) {
-        saveLines.push({ key: 'named no tool', value: pulse.eventsWithoutTool });
-      }
-    }
-    const notes = [];
-    // THE WINDOW, VISIBLE (v3.74.0, D5). The monitor's label is its accessible
-    // name, not a line on screen, so a busy row's "7 connections" had no
-    // window beside it at all. Said once, first, in the same words.
-    if (w.logPresent === true && measured.length && capWindow) {
-      notes.push('Counted over the ' + capWindow + '.');
-    }
-    if (w.logPresent !== true) {
-      notes.push('No usage log on this computer yet — connections appear here once an agent uses the bridge.');
-    } else if (!measured.length) {
-      notes.push('No project in this folder has a saved handoff yet.');
-    }
-    if (measured.length > shown.length) {
-      const more = measured.length - shown.length;
-      notes.push(more + ' more ' + (more === 1 ? 'project' : 'projects') + ' with fewer saves.');
-    }
-    if (shown.some((r) => r.sharedName)) {
-      notes.push('Projects that share a name share one reading.');
-    }
-    const saveNote = pulse && pulse.byToolFloor === true && typeof pulse.byToolNote === 'string' && pulse.byToolNote
-      ? pulse.byToolNote : '';
-    body = '<div class="mcp-across">' + renderMonitor({
-      label: 'Connections that saved, per project' + (capWindow ? ', ' + capWindow : ''),
-      lines,
-      note: notes.join(' '),
-    }) + (saveLines.length ? renderMonitor({
-      label: 'Handoff saves, from the journals',
-      lines: saveLines,
-      note: saveNote,
-    }) : '') + '</div>';
+    return '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
   }
-  return body;
+  const now = Date.now();
+  const A = adaptProjects(P);
+  const measured = A.logPresent ? A.rows : [];
+  const active = measured.filter((r) => r.count > 0)
+    .sort((a, b) => (b.count - a.count) || a.key.localeCompare(b.key));
+  const idle = measured.filter((r) => r.count === 0);
+  const shown = active.slice(0, ACROSS_PROJECTS_MAX_ROWS);
+  const busiest = shown.length ? shown[0].count : 0;
+  const busiestName = shown.length ? shown[0].project : '';
+  const unitOne = A.unit === 'saves' ? ' save' : ' connection that saved';
+  const unitMany = A.unit === 'saves' ? ' saves' : ' connections that saved';
+  const lines = shown.map((r) => {
+    const dotCls = r.domain ? domainIdentityClass(state.defaultDomainInfo && state.defaultDomainInfo.identity, r.domain) : '';
+    const secs = ageSecondsOf(r.lastAt, now);
+    const age = secs === null ? null : formatAge(secs);
+    return {
+      key: r.key,
+      value: r.floor ? r.count + '+' : r.count,
+      markHtml: '<span class="settings-id-mark">' +
+        (dotCls ? '<span class="cur-sb-dot ' + dotCls + '" aria-hidden="true"></span>' : '') + '</span>',
+      sub: (age ? r.lastWord + ' ' + age : '') + (r.inStore ? '' : (age ? ' · ' : '') + 'not in this folder'),
+      depth: busiest > 0
+        ? { amount: r.count, max: busiest,
+            label: r.count === busiest
+              ? r.count + (r.count === 1 ? unitOne : unitMany) + ' — the busiest project'
+              : r.count + (r.count === 1 ? unitOne : unitMany) + ' · bar scaled to ' + busiestName + '’s ' + busiest }
+        : undefined,
+    };
+  });
+  if (idle.length) {
+    lines.push({ key: A.unit === 'saves' ? 'no save' : 'no connection', value: idle.map((r) => r.key).join(' · ') });
+  }
+  const notes = [];
+  if (!A.logPresent) {
+    notes.push('No usage log on this computer yet — projects appear here once an agent uses the bridge.');
+  } else if (!measured.length) {
+    notes.push('No project in this folder has a saved handoff yet.');
+  }
+  if (active.length > shown.length) {
+    const more = active.length - shown.length;
+    notes.push(more + ' more ' + (more === 1 ? 'project' : 'projects') + ' with fewer saves.');
+  }
+  if (shown.some((r) => r.sharedName)) notes.push('Projects that share a name share one reading.');
+
+  // ── HANDOFF SAVES, PER AGENT APP ────────────────────────────────────────
+  const saveLines = [];
+  const pulse = P.savePulse;
+  let saveNote = '';
+  if (pulse && Number.isInteger(pulse.events)) {
+    const floor = pulse.capped === true || pulse.byToolFloor === true || pulse.lowerBound === true;
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = (iso) => {
+      const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
+      if (!Number.isFinite(t)) return '';
+      const d = new Date(t);
+      return d.getDate() + ' ' + MONTHS[d.getMonth()];
+    };
+    const apps = (Array.isArray(pulse.byTool) ? pulse.byTool : [])
+      .filter((t) => t && typeof t.label === 'string' && t.label && Number.isInteger(t.events));
+    const top = apps.reduce((m, t) => Math.max(m, t.events), 0);
+    for (const t of apps) {
+      saveLines.push({
+        key: t.label,
+        value: t.events === 0 ? 'none' : t.events + (floor ? '+' : ''),
+        sub: t.events === 0 && day(t.lastSeenAt) ? 'last save ' + day(t.lastSeenAt) : '',
+        depth: t.events > 0 && top > 0
+          ? { amount: t.events, max: top, label: (floor ? 'at least ' : '') + t.events + (t.events === 1 ? ' save' : ' saves') }
+          : undefined,
+      });
+    }
+    // The total only says something new when more than one app saved.
+    if (apps.filter((t) => t.events > 0).length >= 2) {
+      saveLines.push({ key: 'all agent apps', value: pulse.events + (floor ? '+' : '') });
+    }
+    if (Number.isInteger(pulse.eventsWithoutTool) && pulse.eventsWithoutTool > 0) {
+      saveLines.push({ key: 'named no app', value: pulse.eventsWithoutTool });
+    }
+    if (!apps.length && !saveLines.length) {
+      saveLines.push({ key: 'handoff saves', value: pulse.events + (floor ? '+' : '') });
+    }
+    const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
+    const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string' ? day(pulse.oldestEventAt) : '';
+    const bits = ['Handoff saves' + (pw ? ', ' + pw : '') + (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '') + '.'];
+    if (floor) bits.push('“+” means at least: long journals are read from their newest part only.');
+    saveNote = bits.join(' ');
+  }
+  return '<div class="mcp-across">' + renderMonitor({
+    id: 'mcp-across-projects',
+    label: 'Handoff saves per project' + (logWindowWords(P.window) ? ', ' + logWindowWords(P.window) : ''),
+    lines,
+    note: notes.join(' '),
+  }) + (saveLines.length ? renderMonitor({
+    id: 'mcp-across-apps',
+    label: 'Handoff saves per agent app',
+    lines: saveLines,
+    note: saveNote,
+  }) : '') + '</div>';
 }
 
 /**
@@ -10011,7 +9769,7 @@ function renderVaultDomains() {
  * ONE NAMED TARGET, never `el.textContent`: every hooked element on this block
  * carries a `.mcp-age-words` span this view owns — a tool tile's meta line
  * writes one directly, and the session monitor's two lines compose one inside
- * the `markHtml` they hand the kit (see renderSessionStrip for why the hook
+ * the `markHtml` they hand the kit (see tickedAgeHtml for why the hook
  * lives there). Writing the wrapper's own text would delete the caption beside
  * it. It WAS two targets: `.tx-readout-value` was the first, back when the
  * session strip painted through shared/text.js's readout, and that branch went
@@ -10082,6 +9840,33 @@ function wireExerciseControl(token) {
   if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
   const btn = document.getElementById('btn-mcp-exercise');
   if (btn) btn.addEventListener('click', () => onMcpExercise(token));
+  // "All N tools" (v3.88.0): its open state is STATE, because the 30 s
+  // revalidate replaces this body — a fold the person opened must stay open.
+  if (typeof document.querySelector === 'function') {
+    const fold = document.querySelector('details[data-mcp-fold="all-tools"]');
+    if (fold) fold.addEventListener('toggle', () => { state.mcpAllToolsOpen = fold.open; });
+  }
+}
+
+/**
+ * "Check again" (v3.88.0): re-reads the three readings block ① is made of —
+ * the files (machine), the install status, AND the open bridges (GET
+ * /api/mcp/config), so a bridge closed by quitting its app leaves the row on
+ * the next press rather than the next section load.
+ */
+function recheckAgentApps(token) {
+  loadSetupMachine(token);
+  loadInstallStatus(token);
+  (async () => {
+    try {
+      const res = await fetch('/api/mcp/config');
+      const cfg = res.ok ? await res.json() : null;
+      if (!isCurrentMount(token) || !cfg || typeof cfg !== 'object') return;
+      state.mcp = cfg;
+      if (state.section === 'mcp') render(token);
+    } catch { /* the last reading stays on screen */ }
+  })();
+  render(token);
 }
 
 /** Arm the revalidate. A setTimeout CHAIN, not setInterval: a slow answer must
@@ -11009,7 +10794,7 @@ function focusReplaceInput() {
 /** v3.85.0 — the install panel's controls. Every write starts at a click here. */
 function wireInstallListeners(token) {
   const mi = state.mcpInstall;
-  const root = '.settings-block-mcp-tools ';
+  const root = '.settings-block-mcp-connect ';
   document.querySelectorAll(root + '[data-mcpi-tick]').forEach((el) => {
     el.addEventListener('change', () => {
       mi.ticks[el.dataset.mcpiTick] = el.checked;
@@ -11027,9 +10812,9 @@ function wireInstallListeners(token) {
       if (act === 'apply') { applyInstall(token); return; }
       if (act === 'cancel') { mi.plan = null; mi.error = null; render(token); return; }
       if (act === 'dismiss') { mi.results = null; render(token); return; }
-      if (act === 'check-again') { mi.results = null; loadInstallStatus(token); loadSetupMachine(token); render(token); return; }
+      if (act === 'check-again') { mi.results = null; recheckAgentApps(token); return; }
       if (act === 'copy-myself') {
-        const d = document.getElementById('mcpi-rows') || document.getElementById('mcpi-detail');
+        const d = document.getElementById('mcpi-rows') || document.querySelector('.mcpi-notfound');
         if (d) d.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
@@ -11056,19 +10841,19 @@ function wireInstallListeners(token) {
 }
 
 function wireMcpListeners() {
-  // ── ⑤ Tools on this Mac (v3.77.0): reveal, copy an entry, check again,
+  // ── ① Connect your agent apps (v3.77.0 / v3.88.0): reveal, copy an entry, check again,
   // and the folds' open state (kept in memory for this mount only).
   {
     const token = myMountToken;
-    document.querySelectorAll('.settings-block-mcp-tools [data-setup-act]').forEach((el) => {
+    document.querySelectorAll('.settings-block-mcp-connect [data-setup-act]').forEach((el) => {
       el.addEventListener('click', async () => {
         const act = el.dataset.setupAct;
-        if (act === 'machine-check') { loadSetupMachine(token); loadInstallStatus(token); render(token); return; }
+        if (act === 'machine-check') { recheckAgentApps(token); return; }
         if (act === 'copy-entry') {
           const text = state.setupMachine && state.setupMachine.data && state.setupMachine.data.copyEntries
             ? state.setupMachine.data.copyEntries[el.dataset.tool] : null;
           if (!text) return;
-          try { await copyToClipboard(text); state.setupMachineCopied = 'Entry copied — paste it into that tool’s config file.'; }
+          try { await copyToClipboard(text); state.setupMachineCopied = 'Entry copied — paste it into that app’s config file.'; }
           catch { state.setupMachineCopied = 'Could not copy.'; }
           if (!isCurrentMount(token)) return;
           render(token);
@@ -11086,7 +10871,7 @@ function wireMcpListeners() {
       });
     });
     wireInstallListeners(token);
-    document.querySelectorAll('.settings-block-mcp-tools details[data-setup-fold]').forEach((d) => {
+    document.querySelectorAll('.settings-block-mcp-connect details[data-setup-fold]').forEach((d) => {
       d.addEventListener('toggle', () => { state.setupMachineFolds[d.dataset.setupFold] = d.open; });
     });
   }
@@ -11096,23 +10881,8 @@ function wireMcpListeners() {
   // after each render on freshly-created nodes, so there is nothing to
   // removeEventListener.
   //
-  // onDone: state.mcp is CACHED (ensureSectionData only fetches when it is
-  // null, see its guard above), so a plain re-render after the wizard has
-  // changed something would redraw the PRE-setup status. Nulling it and
-  // calling loadMcp() forces the refetch; loadMcp re-checks isCurrentMount
-  // itself and calls render(), so this is safe even if the user navigated
-  // away while the wizard was open.
-  // v3.85.0: block ① writes NOTHING. "Install in your tools" takes the person
-  // to block ⑤'s "My Curator in your tools" panel — the one installer — and,
-  // when Claude Desktop is not connected, marks that row.
-  const installBtn = document.getElementById('btn-mcp-install-tools');
-  if (installBtn) {
-    installBtn.addEventListener('click', () => {
-      const tools = (state.mcpInstall.status && state.mcpInstall.status.data && state.mcpInstall.status.data.tools) || [];
-      const cd = tools.find((t) => t && t.id === 'claude-desktop');
-      focusInstallPanel(cd && cd.status !== 'connected' ? 'claude-desktop' : '');
-    });
-  }
+  // v3.88.0: block ① holds the one installer itself, so the v3.85.0 "Install
+  // in your tools" scroll button (a second door to the same rows) is gone.
   const testBtn = document.getElementById('btn-mcp-self-test');
   if (testBtn) testBtn.addEventListener('click', () => onMcpSelfTest(myMountToken));
   // Block ③'s run control. Also re-bound by the 30 s revalidate, which
@@ -12868,9 +12638,11 @@ async function onMcpSelfTest(token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return;
     state.selfTest = data;
+    state.selfTestAt = new Date().toISOString();
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.selfTest = { ok: false, error: err.message };
+    state.selfTestAt = new Date().toISOString();
   } finally {
     if (isCurrentMount(token)) { state.selfTestLoading = false; render(token); }
   }

@@ -5,7 +5,7 @@
 // imports the REAL builders in plain Node (scripts/test-next-setup-step.js)
 // instead of lifting them out of memory.js by brace-matching. memory.js owns
 // the state, the requests and the listeners; this module owns what the step
-// SAYS. It imports nothing that touches a DOM — the "+ Add a tool" listbox is
+// SAYS. It imports nothing that touches a DOM — the "+ Add an agent app" listbox is
 // rendered by memory.js from `setupToolPickerCfg` and handed in as a string.
 //
 // ── WHAT IT IS FOR ─────────────────────────────────────────────────────────
@@ -20,8 +20,8 @@
 //   button(s) beside it, above every fold (a warning never sits behind a
 //   chevron, v3.16.1). A repository that is not set is one quiet note naming
 //   what did not get checked, with "Use <folder>" when exactly one was found.
-// · "+ Add a tool" is the SHARED listbox (step ③'s "+ Add a domain"), groups
-//   "Known tools" / "Other", its last row "Custom tool…".
+// · "+ Add an agent app" is the SHARED listbox (step ③'s "+ Add a domain"), groups
+//   "Known agent apps" / "Other", its last row "Custom agent app…".
 // · Three folds, each the Handoffs table's parts (`.mem-ws-table`,
 //   `.mem-ws-row`, `.mem-ws-mine`, `.mem-ws-count`): Tools, Repository on
 //   this computer, Computers. A tool row opens the tool's full evidence in the
@@ -46,12 +46,12 @@
 // Every v3.78.0 field is optional here: no `physical` → computers are grouped
 // from `computers[].thisMachine`; no `status`/`parts`/`evidence` on a tool →
 // they are derived from the v3.77.0 cells; no `repoCandidates` → the reachable
-// `repoSuggestions`; no `group` on `addable` → one "Known tools" group and no
-// "Custom tool…" row (the old server would refuse the custom PUT).
+// `repoSuggestions`; no `group` on `addable` → one "Known agent apps" group and no
+// "Custom agent app…" row (the old server would refuse the custom PUT).
 
 import { ageWordsFor } from '../shared/age-ticker.js';
 import { freshnessTier } from '../shared/age.js';
-// v3.80.0: the "+ Add a tool" rows are the composer's model rows' anatomy
+// v3.80.0: the "+ Add an agent app" rows are the composer's model rows' anatomy
 // (import-free, DOM-free — the suite still imports this module in Node).
 import { listRowBodyHtml } from '../shared/model-row.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
@@ -78,7 +78,7 @@ export const SETUP_RECHECK_AFTER_MS = 10000;
 /** The custom-tool name rule, the route's own (contract §5). */
 export const CUSTOM_TOOL_RE = /^[A-Za-z0-9 ._-]{1,40}$/;
 
-/** The listbox value of the "Custom tool…" row. */
+/** The listbox value of the "Custom agent app…" row. */
 export const CUSTOM_TOOL_VALUE = '__custom';
 
 /** A ticking age, with its words already written (age-ticker keeps them current). */
@@ -194,7 +194,7 @@ export function setupTile(data) {
   // ran (v3.77.0 screen review).
   const repoChecked = !!(data.repo && data.repo.exists !== false);
   const sub = [
-    tools.length ? tools.join(' · ') : 'no agent tool yet',
+    tools.length ? tools.join(' · ') : 'no agent app yet',
     comps ? plural(comps, 'computer') : null,
   ].filter(Boolean).join(' · ');
   if (n) return { value: n + ' to fix', sub, warn: true };
@@ -312,12 +312,12 @@ export function removableOf(t) {
 }
 
 /** The Tools fold's count line: how its parts travel, and what "ready" takes, in one sentence each. */
-export const TOOLS_COUNT_LINE = 'A tool is ready once it is connected here, reads the Curator instructions and has saved this project from this computer — press one for its setup steps.';
+export const TOOLS_COUNT_LINE = 'An agent app is ready once it is connected here, reads the Curator instructions and has saved this project from this computer — press one for its setup steps.';
 
 function toolsTable(data) {
   const tools = (data.tools || []).filter((t) => t && isStr(t.id));
   if (!tools.length) {
-    return '<p class="mem-setup-empty">No agent tool has saved to this project or is set up on this computer.</p>';
+    return '<p class="mem-setup-empty">No agent app has saved to this project or is set up on this computer.</p>';
   }
   return '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table">'
     + '<thead><tr><th scope="col">Tool</th><th scope="col">Status</th><th scope="col">Last saved</th>'
@@ -330,11 +330,11 @@ function toolsTable(data) {
 function toolsMeta(data) {
   const tools = (data.tools || []).filter(Boolean);
   const fixN = tools.filter((t) => toolStatus(t, data).status === 'to-fix').length;
-  return [plural(tools.length, 'tool'), fixN ? fixN + ' to fix' : null].filter(Boolean).join(' · ');
+  return [plural(tools.length, 'agent app'), fixN ? fixN + ' to fix' : null].filter(Boolean).join(' · ');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// THE "+ Add a tool" PICKER — a cfg for the shared listbox
+// THE "+ Add an agent app" PICKER — a cfg for the shared listbox
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -379,11 +379,11 @@ export function toolMenuMeta(a) {
 }
 
 /** The menu's foot, the model menu's `.mr-foot` line. */
-export const TOOL_MENU_FOOT = 'Adding a tool only tells Setup to check it on this computer — you connect it yourself.';
+export const TOOL_MENU_FOOT = 'Adding an agent app only tells Setup to check it on this computer — you connect it yourself.';
 
 /**
  * ONE cfg, for both `renderListboxHtml` and `mountListbox` (memory.js calls
- * both with it). Groups "Known tools" / "Other"; "Custom tool…" is an ACTION
+ * both with it). Groups "Known agent apps" / "Other"; "Custom agent app…" is an ACTION
  * row (it opens a name field and never becomes the control's value). A
  * v3.77.0 server sends no groups and no custom row: every option is a known
  * tool and there is no custom row to offer.
@@ -412,9 +412,9 @@ export function setupToolPickerCfg(data, busy = false) {
       html: listRowBodyHtml({ title: label, fact, meta }),
     };
   };
-  const options = [...known.map((a) => opt(a, 'Known tools')), ...other.map((a) => opt(a, 'Other'))];
+  const options = [...known.map((a) => opt(a, 'Known agent apps')), ...other.map((a) => opt(a, 'Other'))];
   if (custom) {
-    const label = isStr(custom.label) ? custom.label : 'Custom tool…';
+    const label = isStr(custom.label) ? custom.label : 'Custom agent app…';
     const meta = ['any other MCP client', 'you name it'];
     options.push({ value: CUSTOM_TOOL_VALUE, label, group: 'Other', action: true,
       detail: meta.join(' · '), html: listRowBodyHtml({ title: label, meta }) });
@@ -422,9 +422,9 @@ export function setupToolPickerCfg(data, busy = false) {
   return {
     id: 'mem-setup-add',
     value: null,
-    placeholder: '+ Add a tool',
-    triggerText: busy ? 'Adding…' : '+ Add a tool',
-    ariaLabel: 'Add an agent tool to check on this computer',
+    placeholder: '+ Add an agent app',
+    triggerText: busy ? 'Adding…' : '+ Add an agent app',
+    ariaLabel: 'Add an agent app to check on this computer',
     disabled: busy === true || options.length === 0,
     triggerClass: 'btn btn-secondary btn-xs',
     menuClass: 'lb-rich mr-menu',
@@ -487,7 +487,8 @@ export function fixListOf(f) {
 /** One button for one fix entry, or '' when the entry cannot be acted on here. */
 function fixButton(fx, f, repo, primary) {
   const b = primary ? btn2 : btnG;
-  const label = (dflt) => (isStr(fx.label) ? fx.label : dflt);
+  // A label from an older server that still names v3.87's "Tools on this Mac" block reads as the door that exists now.
+  const label = (dflt) => (isStr(fx.label) && !/^Open Tools on this /.test(fx.label) ? fx.label : dflt);
   switch (fx.kind) {
     case 'copy-block':
       return b('copy-block', label('Copy instructions'));
@@ -518,12 +519,12 @@ function fixButton(fx, f, repo, primary) {
     case 'choose-folder':
       return b('choose-repo', label('Choose the folder'));
     case 'settings':
-      return b('settings', label('Open Tools on this ' + thisMachine()));
+      return b('settings', label('Open Settings › MCP bridge'));
     case 'recheck':
       return b('check', label('Re-check'));
     case 'skills':
       // v3.78.0's one "skills" fix: the settings door and both downloads.
-      return b('settings', label('Open Tools on this ' + thisMachine())) + ZIPS;
+      return b('settings', label('Open Settings › MCP bridge')) + ZIPS;
     case 'reveal': {
       if (isStr(fx.path)) return b('reveal', label('Reveal ' + baseName(fx.path)), ' data-path="' + escapeHtml(fx.path) + '"');
       const name = isStr(fx.reveal) ? fx.reveal : f.file;
@@ -552,7 +553,7 @@ export function fixButtons(f, repo) {
     if (fix.kind !== 'reveal' && isStr(fix.reveal) && repo && isStr(repo.path)) {
       out.push(btnG('reveal', 'Reveal ' + fix.reveal, ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + fix.reveal) + '"'));
     }
-    if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Tools on this ' + thisMachine()));
+    if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Settings › MCP bridge'));
   }
   // v3.85.0: a bridge line for a tool The Curator can write for opens the one
   // installer (Settings › MCP bridge › Tools on this Mac) — no second writer
@@ -937,7 +938,7 @@ export function renderSetupBody(s, ui = {}) {
   return '<div class="mem-ss-stack mem-setup-stack">'
     + recheckErr + toFixNotes(data) + repoNote
     + picker
-    + fold('setup-tools', 'Tools', toolsMeta(data), toolsTable(data), !!folds['setup-tools'])
+    + fold('setup-tools', 'Agent apps', toolsMeta(data), toolsTable(data), !!folds['setup-tools'])
     + fold('setup-repo', 'Repository on this computer', repoMeta(data), repoBody,
       !!folds['setup-repo'] || !!ui.forceRepoOpen || !!ui.editRepo)
     + fold('setup-computers', 'Computers', computersMeta(data), computersBody(data), !!folds['setup-computers'])
@@ -996,7 +997,7 @@ export function toolEvidence(t) {
 // THE SETUP GUIDE — a tool that is not ready, as four numbered steps (v3.80.0)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// The maintainer, 2026-09-28: after "+ Add a tool" nobody knows what to do
+// The maintainer, 2026-09-28: after "+ Add an agent app" nobody knows what to do
 // next. So the reader of a tool that is not ready opens on the four things
 // "ready" takes, in the order they are done, each built from what the check
 // already read and each carrying its own state and its own doors:
@@ -1096,7 +1097,7 @@ export function toolGuideSteps(t, data) {
         + (snip ? '<pre class="mem-setup-snippet"><code>' + escapeHtml(snip.text) + '</code></pre>' : '');
       if (got.length) doors = fromItems(got).doors;
       if (snip && !/data-setup-act="copy-snippet"/.test(doors)) doors = btn2('copy-snippet', 'Copy MCP entry', ' data-tool="' + escapeHtml(t.id) + '"') + doors;
-      if (!snip && !doors) doors = btn2('settings', 'Open Tools on this ' + thisMachine());
+      if (!snip && !doors) doors = btn2('settings', 'Open Settings › MCP bridge');
       if (target && isStr(target.file) && !doors.includes('data-path="' + escapeHtml(target.file) + '"')) {
         doors += btnG('reveal', 'Reveal ' + baseName(target.file), ' data-path="' + escapeHtml(target.file) + '"');
       }
@@ -1235,7 +1236,7 @@ function removeSection(t) {
   const label = t.label || t.id;
   if (r.ok) {
     return '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">On this computer’s list</h3>'
-      + '<p class="mem-setup-ev-p">' + escapeHtml('You added ' + label + ' here. Removing it only stops Setup checking it on this computer — nothing is uninstalled, and “+ Add a tool” brings it back.') + '</p>'
+      + '<p class="mem-setup-ev-p">' + escapeHtml('You added ' + label + ' here. Removing it only stops Setup checking it on this computer — nothing is uninstalled, and “+ Add an agent app” brings it back.') + '</p>'
       + '<span class="mem-k-doors">' + btnG('remove-tool', 'Remove from this list', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>';
   }
   if (t.userAdded !== true) return '';
@@ -1306,7 +1307,7 @@ export function toolReaderContent(data, toolId) {
   return {
     slug: 'Setup › ' + t.label,
     title: t.label,
-    typeLabel: 'agent tool',
+    typeLabel: 'agent app',
     bodyHtml,
     hideBacklinks: true,
     returnFocusTo: 'mem-setup-tool-' + t.id,
@@ -1467,7 +1468,7 @@ export function fileReaderContent(data, name, resp, opts = {}) {
       + (isMarker
         ? escapeHtml('.curator-project holds one line — ' + (data.domain ? data.domain + '/' : '') + who
           + ' — so agents and hooks in this folder know which project it is. Create it at the top of the folder, then commit and push.')
-        : escapeHtml((row.readBy && row.readBy !== '—' ? row.readBy : 'An agent tool') + ' reads ' + name
+        : escapeHtml((row.readBy && row.readBy !== '—' ? row.readBy : 'An agent app') + ' reads ' + name
           + ' at the start of every session. Create it at the top of ' + (repoWhere || 'the folder')
           + ', paste the Curator instructions at its very top, then commit and push.'))
       + '</p></section>';
@@ -1572,7 +1573,7 @@ export function computerReaderContent(data, idx) {
         + (isStr(s.curator) ? ' · <span class="cur-setup-mono">' + escapeHtml('Curator ' + s.curator) + '</span>' : '');
     })));
   } else {
-    savesHtml = sec('Saves', ul([escapeHtml((g.tools.length ? g.tools.join(', ') : 'No tool') + ' saved this project here')
+    savesHtml = sec('Saves', ul([escapeHtml((g.tools.length ? g.tools.join(', ') : 'No agent app') + ' saved this project here')
       + (g.at ? escapeHtml('; newest ' + shortDate(g.at) + ' (') + ageSpan(g.at, null) + ')' : '') + '.']));
   }
   let syncLines;

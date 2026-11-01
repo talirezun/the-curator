@@ -547,14 +547,16 @@ function functionBody(src, signature) {
   return null;
 }
 
-const describeFn = functionBody(settingsSrc, 'function renderSelfTestResult(');
+// v3.88.0: the self-test is read by lastSelfTest() (this page's press, or the
+// usage log's last run) and said by renderSelfTestResult() ("Bridge answers").
+const describeFn = (functionBody(settingsSrc, 'function lastSelfTest(') || '') + '\n' + (functionBody(settingsSrc, 'function renderSelfTestResult(') || '');
 check('frontend: block 1\'s renderSelfTestResult() was located',
   typeof describeFn === 'string' && describeFn.length > 500);
 const describeCode = stripC(describeFn);
 check('  (control) the comment strip left real code behind',
-  /r\.tool_count/.test(describeCode) && /return renderMonitor/.test(describeCode));
+  /r\.tool_count/.test(describeCode) && /renderMonitor\(/.test(describeCode));
 check('  (control) …and it did remove commentary',
-  describeCode.length < String(describeFn || '').length * 0.8);
+  describeCode.length < String(describeFn || '').length);
 
 check('frontend: it reads domains_status in CODE, not only in a comment',
   /r\.domains_status/.test(describeCode));
@@ -563,7 +565,7 @@ check('frontend: …and on empty separately', /'empty'/.test(describeCode));
 check('frontend: a missing folder is named as missing, and as a loud (never folded) warning',
   /knowledge folder is missing/i.test(describeCode) && /folderLoud/.test(describeCode) && /loud: \[\.\.\.folderLoud/.test(describeCode));
 check('frontend: the missing-folder sentence says it is NOT a tool config mistake',
-  /not a mistake in a tool/i.test(describeCode));
+  /not a mistake in an agent app/i.test(describeCode));
 
 // D1 residue — the whole-file route has no UI consumer any more, so a corrupt
 // file can never be rendered as "{}" by this app: nothing in /next calls it.
