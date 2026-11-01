@@ -895,6 +895,7 @@ eq(pickDiffers, PICK_INPUTS.length,
   const rec = recordingExec({});
   const res = fakeRes();
   await configRoute.pickFolderHandler({}, res, {
+    platform: 'darwin', // host-independent: this probe is the osascript arm
     execAsync: async (cmd) => { rec.calls.push(cmd); return { stdout: '\n' }; },
     setDomainsDir: () => { throw new Error('the live probe must never mutate the domains dir'); },
   });

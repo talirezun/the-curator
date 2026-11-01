@@ -516,7 +516,7 @@ section('§6  The ESCAPE HATCH — the folder picker must work in a packaged app
   let execCalls = 0;
   res = fakeRes();
   await cfgRoutes.pickFolderHandler({}, res, {
-    ...baseDeps, caps: REPO_CAPS,
+    ...baseDeps, caps: REPO_CAPS, platform: 'darwin',
     execAsync: async () => { execCalls++; return { stdout: chosen + '\n' }; },
   });
   eq(execCalls, 1, 'repo arm still runs osascript exactly once — unchanged by this release');
