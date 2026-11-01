@@ -74,6 +74,10 @@ const ok = (cond, label, detail) => {
 const section = (t) => console.log(`\n${t}`);
 
 const S = await import('../src/brain/setup-check.js');
+// v3.87.0: the user-visible machine word follows the platform. This suite's
+// wording assertions are the macOS strings, so pin darwin — they then hold on
+// a Linux CI runner and on Windows too. The per-platform words are tested below.
+S.__setSetupPlatform('darwin');
 const { TEMPLATE } = await import('../src/public/next/shared/agent-instructions.js');
 
 // ── Fixture ────────────────────────────────────────────────────────────────
@@ -712,7 +716,7 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
         ok(t === `${S.tildeUnder(ROOT, path.join(ROOT, 'nope-repo'))} isn’t on this ${word}.`, `${plat}: the folder line says "this ${word}"`, t);
         ok(S.FIX.settings().label === `Open Tools on this ${word}`, `${plat}: the settings fix reads "Open Tools on this ${word}"`, S.FIX.settings());
         if (plat !== 'darwin') ok(!/this Mac/.test(JSON.stringify(g)), `${plat}: no "this Mac" anywhere in the result`, g);
-      } finally { S.__setSetupPlatform(null); }
+      } finally { S.__setSetupPlatform('darwin'); }
     }
     ok(S.machineWord('win32') === 'PC' && S.machineWord('darwin') === 'Mac' && S.machineWord('') === 'computer', 'machineWord: PC / Mac / computer');
   }

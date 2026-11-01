@@ -45,7 +45,9 @@ let _platformOverride = null;
 /** Test seam: pin the platform for the strings below; null clears. */
 export function __setSetupPlatform(p) { _platformOverride = p || null; }
 /** 'Mac' | 'PC' | 'computer'. */
-export function machineWord(platform = _platformOverride || process.platform) {
+// CURATOR_TEST_SETUP_PLATFORM is the cross-process test seam (never set in
+// production); the in-process override beats it.
+export function machineWord(platform = _platformOverride || process.env.CURATOR_TEST_SETUP_PLATFORM || process.platform) {
   return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer';
 }
 const thisMachineText = () => `this ${machineWord()}`;

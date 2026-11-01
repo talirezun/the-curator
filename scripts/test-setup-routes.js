@@ -69,6 +69,9 @@ const store = await import('../src/brain/working-state.js');
 const express = (await import('express')).default;
 const R = await import('../src/routes/setup.js');
 R.__setSetupHomeOverride(HOME);
+// v3.87.0: the route's text says "this Mac" only on macOS; this suite asserts
+// the macOS wording, so pin darwin (the same module instance the route uses).
+(await import('../src/brain/setup-check.js')).__setSetupPlatform('darwin');
 const revealed = [];
 R.__setRevealer((target, cb) => { revealed.push(target); cb(null); });
 
