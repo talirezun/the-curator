@@ -230,7 +230,7 @@ jobs:
       # ran this exact launch on windows-latest, before and after an in-app
       # update.)
       - name: MCP bridge starts as Claude Desktop starts it
-        shell: powershell
+        shell: pwsh
         timeout-minutes: 3
         run: |
           $ErrorActionPreference = 'Stop'
@@ -259,9 +259,11 @@ jobs:
           $p = [System.Diagnostics.Process]::Start($psi)
           $outTask = $p.StandardOutput.ReadToEndAsync()
           $errTask = $p.StandardError.ReadToEndAsync()
-          # Raw UTF-8 bytes on the base stream: Windows PowerShell's stdin
-          # writer puts a byte-order mark before the first line, which turns
-          # `initialize` into a line no JSON-RPC client would ever send.
+          # PowerShell 7 and raw UTF-8 bytes on the base stream: under Windows
+          # PowerShell 5.1 (.NET Framework) the stdin writer writes a
+          # byte-order mark the moment the process starts, which turned
+          # `initialize` into a line no JSON-RPC client would send (measured
+          # on this job: tools/list answered, initialize did not).
           $msgs = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1"}}}' + "`n" +
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' + "`n" +
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' + "`n"
