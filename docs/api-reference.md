@@ -5950,9 +5950,12 @@ Open a native folder picker and, if the user chooses a folder, persist it. macOS
 through `powershell.exe` by absolute path (`-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass
 -EncodedCommand`, no shell), owned by an invisible TopMost form so it opens in front of the browser,
 with a 10-minute timeout (read as a cancel). If PowerShell cannot start: `501 {ok:false, reason:'no-dialog', error, hint}`;
-if the dialog reports an error: `500 {ok:false, reason:'failed', error, hint}`. Linux has no picker
-(`osascript` fails → `500`); use [`POST /api/config/domains-path`](#post-apiconfigdomains-path) with a
-typed path — the app offers that field beside every picker refusal. No body.
+if the dialog reports an error: `500 {ok:false, reason:'failed', error, hint}`. **Linux (v3.88.2):** the
+first of `zenity`, `kdialog` or `yad` found on `PATH` (absolute `PATH` entries only, run by absolute path, no
+shell) opens a folder chooser, with a 10-minute timeout read as a cancel. With none installed, or with no
+`DISPLAY`/`WAYLAND_DISPLAY`, the answer is `501 {ok:false, reason:'no-dialog'}`; use
+[`POST /api/config/domains-path`](#post-apiconfigdomains-path) with a typed path — the app offers that
+field beside every picker refusal. No body.
 
 **Success response** `200 OK` — a folder was chosen
 
@@ -6010,7 +6013,8 @@ the opposite behaviour.
 ```
 
 On Windows (v3.87.1) the picker is Windows' own folder dialog, run exactly as `pick-folder` above
-runs it; `no-dialog` there means PowerShell itself could not start.
+runs it; `no-dialog` there means PowerShell itself could not start. On Linux (v3.88.2) it is zenity,
+kdialog or yad as `pick-folder` runs them; `no-dialog` there means none is installed or no display is set.
 
 **Refusal response** `501 Not Implemented` — this build/platform has no picker at all
 
