@@ -64,18 +64,25 @@ const B = await import(path.join(ROOT, 'src/brain/mcp-bridge-status.js'));
 
 // ── The fake process table ─────────────────────────────────────────────────
 //
-// Byte-shaped like real `ps -axo pid=,lstart=,command=` output on macOS,
-// including the leading column padding and the five-token `lstart`. Taken
-// from the real listing on 2026-09-20 rather than invented, so the parser is
-// exercised against the thing it has to read.
+// Byte-shaped like real `ps -axo pid=,ppid=,lstart=,command=` output on macOS,
+// including the leading column padding and the five-token `lstart`. The
+// chain is the one measured on 2026-11-01: each of Claude Desktop's bridges
+// is a child of Claude.app's `Helpers/disclaimer`, whose parent is
+// `Claude.app/Contents/MacOS/Claude` — and the bridge itself is ALSO inside a
+// bundle (`The Curator.app`), which is why the walk starts at the parent.
 const SERVER = '/Applications/The Curator.app/Contents/Resources/app/mcp/server.js';
 const NODE = '/Applications/The Curator.app/Contents/MacOS/The Curator';
-const psRow = (pid, when, command) => `${String(pid).padStart(6)} ${when} ${command}`;
+const CLAUDE = '/Applications/Claude.app/Contents/MacOS/Claude';
+const DISCLAIMER = '/Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- /Users/x/Library/Application Support/The Curator/bin/my-curator-mcp';
+const psRow = (pid, ppid, when, command) => `${String(pid).padStart(6)} ${String(ppid).padStart(6)} ${when} ${command}`;
 const REAL_TABLE = [
-  psRow(29123, 'Fri Sep 18 10:10:34 2026', `${NODE} ${SERVER}`),
-  psRow(97330, 'Sun Sep 20 08:54:17 2026', `${NODE} ${SERVER}`),
-  psRow(1, 'Mon Sep  1 09:00:00 2026', '/sbin/launchd'),
-  psRow(4242, 'Sun Sep 20 08:00:00 2026', '/usr/bin/node /somewhere/else/mcp/server.js'),
+  psRow(1, 0, 'Mon Sep  1 09:00:00 2026', '/sbin/launchd'),
+  psRow(29000, 1, 'Fri Sep 18 10:10:00 2026', CLAUDE),
+  psRow(29120, 29000, 'Fri Sep 18 10:10:34 2026', DISCLAIMER),
+  psRow(29123, 29120, 'Fri Sep 18 10:10:34 2026', `${NODE} ${SERVER}`),
+  psRow(97320, 29000, 'Sun Sep 20 08:54:17 2026', DISCLAIMER),
+  psRow(97330, 97320, 'Sun Sep 20 08:54:17 2026', `${NODE} ${SERVER}`),
+  psRow(4242, 1, 'Sun Sep 20 08:00:00 2026', '/usr/bin/node /somewhere/else/mcp/server.js'),
 ].join('\n') + '\n';
 
 /** A fake `execFile` that answers `ps` with `stdout`, or fails with `err`. */
@@ -88,6 +95,9 @@ function fakePs({ stdout, err, spy }) {
 
 const CODE_AT = Date.parse('Sat Sep 19 13:48:42 2026');   // the .app's mtime
 const NOW = Date.parse('Sun Sep 20 09:20:00 2026');
+const CURRENT = { version: '3.88.0', toolsHash: 'aaaa1111', toolCount: 24 };
+/** A session line as `parseLines` returns it. */
+const sess = (pid, when, tsig, v = '3.88.0', client = 'claude-desktop') => ({ ev: 'session', pid, at: Date.parse(when), tsig, v, client });
 
 const baseDeps = {
   platform: 'darwin',
@@ -95,65 +105,103 @@ const baseDeps = {
   serverMtimeMs: CODE_AT,
   packageMtimeMs: CODE_AT - 1000,
   now: NOW,
+  current: CURRENT,
+  sessions: [],
+  selfPid: 999999,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-section('§1  The real table — one stale, one fresh, two irrelevant');
+section('§1  The real table — two bridges, both Claude Desktop\'s, classified by SIGNATURE');
 // ─────────────────────────────────────────────────────────────────────────
 {
   const spy = [];
-  const r = await B.detectBridgeProcesses({ ...baseDeps, execFile: fakePs({ stdout: REAL_TABLE, spy }) });
+  // 29123: started before the code changed, serves the SAME tools (an older
+  // version). 97330: started after it, serves a DIFFERENT tool list.
+  const sessions = [
+    sess(29123, 'Fri Sep 18 10:10:35 2026', CURRENT.toolsHash, '3.86.0'),
+    sess(97330, 'Sun Sep 20 08:54:18 2026', 'bbbb2222', '3.87.1', 'other'),
+  ];
+  const r = await B.detectBridgeProcesses({ ...baseDeps, sessions, execFile: fakePs({ stdout: REAL_TABLE, spy }) });
   eq(r.checked, true, 'the reading was taken');
   eq(r.reason, null, '…with no reason, because nothing refused');
   eq(r.running, 2, 'both bridges launched from THIS install are counted');
-  eq(r.stale.length, 1, 'exactly one of them predates the code on disk');
-  eq(r.stale[0].pid, 29123, '…and it is the 2026-09-18 one, by pid');
-  eq(r.stale[0].startedAt, new Date(Date.parse('Fri Sep 18 10:10:34 2026')).toISOString(),
-    '…with its start time, read as LOCAL time exactly as ps prints it');
-  ok(r.stale[0].ageMs > 0 && r.stale[0].ageMs === NOW - Date.parse('Fri Sep 18 10:10:34 2026'),
-    '…and an age measured against the injected clock, not the wall clock');
-  eq(r.codeChangedAt, new Date(CODE_AT).toISOString(), 'the comparison point is disclosed');
-  eq(r.serverPath, SERVER, '…and so is what was matched, so a report can show its work');
+  const [a, b] = r.bridges;
+  eq(a.pid, 29123, 'oldest first');
+  eq(a.app.id, 'claude-desktop', 'the walk from the bridge\'s PARENT (disclaimer) reaches Claude.app → Claude Desktop');
+  eq(a.app.label, 'Claude Desktop', '…by the adapter\'s own label');
+  eq(a.tools, 'same', 'its signature equals the code on disk → "same", although it predates the code (the v3.87 false alarm)');
+  eq(a.olderThanCode, true, '…the mtime fact is still reported, as a fact');
+  eq(a.notice, 'quiet', '…so it gets ONE quiet line (older version, same tools) — never a warning');
+  eq(a.remedy, null, '…and no remedy');
+  eq(a.version, '3.86.0', '…naming the version it was started from');
+  eq(b.tools, 'different', 'a different signature → "different", although it STARTED AFTER the code changed');
+  eq(b.notice, 'warn', '…which is the only warning');
+  eq(b.client, 'other', '…and its own client label rides along (Claude Desktop\'s Code tab reads `other`)');
+  ok(/^Quit Claude Desktop \(Claude › Quit, or ⌘Q — closing the window is not enough\) and reopen it\. This also ends Claude Code sessions in its Code tab\.$/.test(b.remedy),
+    '…with the remedy naming the app, the exact quit step, and what the quit costs', b.remedy);
+  eq(r.stale.length, 1, '`stale` (the old field) now lists ONLY the proven-different bridge');
+  eq(r.stale[0].pid, 97330, '…by pid');
+  eq(JSON.stringify(Object.keys(r.stale[0])), JSON.stringify(['pid', 'startedAt', 'ageMs']), '…in its old shape, so old readers still work');
+  eq(r.codeChangedAt, new Date(CODE_AT).toISOString(), 'the mtime point is still disclosed');
+  eq(r.serverPath, SERVER, '…and so is what was matched');
+  eq(JSON.stringify(r.current), JSON.stringify(CURRENT), 'and what the code on disk serves');
 
-  // The OTHER install's `mcp/server.js` must not be counted: two checkouts on
-  // one machine is an ordinary setup and the app ships --domains-path for it.
-  ok(!REAL_TABLE.includes(SERVER.replace('/Applications', '/nope')), 'fixture control');
   const other = await B.detectBridgeProcesses({
-    ...baseDeps, serverPath: '/somewhere/else/mcp/server.js',
-    execFile: fakePs({ stdout: REAL_TABLE }),
+    ...baseDeps, serverPath: '/somewhere/else/mcp/server.js', execFile: fakePs({ stdout: REAL_TABLE }),
   });
   eq(other.running, 1, 'a different install sees only ITS own bridge');
-  eq(other.stale.length, 0, '…which is newer than its code, so nothing is stale');
+  eq(other.bridges[0].app.label, 'another app', '…whose parent (launchd) is no app');
 
   eq(spy.length, 1, 'ps was run exactly once');
   eq(spy[0].file, 'ps', '…as the program `ps`');
-  eq(JSON.stringify(spy[0].args), JSON.stringify(['-axo', 'pid=,lstart=,command=']),
-    '…with the fixed argv ARRAY — no shell, nothing interpolated');
+  eq(JSON.stringify(spy[0].args), JSON.stringify(['-axo', 'pid=,ppid=,lstart=,command=']),
+    '…with the fixed argv ARRAY, ppid included — no shell, nothing interpolated');
   ok(spy[0].opts && spy[0].opts.timeout > 0, '…under a timeout, so a wedged ps cannot hang a route');
+
+  const byApp = B.bridgesByApp(r.bridges);
+  eq(byApp['claude-desktop'].count, 2, 'per app: both bridges belong to Claude Desktop');
+  eq(byApp['claude-desktop'].notice, 'warn', '…and the WORST notice is the app\'s');
+  eq(byApp['claude-desktop'].oldestStartedAt, a.startedAt, '…with the oldest start');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-section('§2  The boundary — a bridge started AFTER the code is not stale');
+section('§2  Unknown, pid reuse, and the mtime used for ONE decision only');
 // ─────────────────────────────────────────────────────────────────────────
 {
-  const at = 'Sat Sep 19 13:48:43 2026';   // one second after the mtime
-  const table = psRow(555, at, `${NODE} ${SERVER}`) + '\n';
-  const r = await B.detectBridgeProcesses({ ...baseDeps, execFile: fakePs({ stdout: table }) });
-  eq(r.running, 1, 'it is counted as running');
-  eq(r.stale.length, 0, '…and one second on the right side of the boundary is FRESH');
+  // No session line at all: a bridge started before v3.88.0.
+  const r = await B.detectBridgeProcesses({ ...baseDeps, execFile: fakePs({ stdout: REAL_TABLE }) });
+  eq(r.bridges[0].tools, 'unknown', 'no signature → "unknown", never "same"');
+  eq(r.bridges[0].notice, 'soft', '…and started before the code changed → ONE soft warning');
+  ok(/^Quit Claude Desktop/.test(r.bridges[0].remedy), '…which carries the remedy');
+  eq(r.bridges[1].notice, 'none', 'unknown but started AFTER the code changed → nothing (it loaded the files on disk)');
+  eq(r.stale.length, 0, 'unknown is never in `stale`: only a PROVEN difference is');
 
-  const before = psRow(556, 'Sat Sep 19 13:48:41 2026', `${NODE} ${SERVER}`) + '\n';
-  const r2 = await B.detectBridgeProcesses({ ...baseDeps, execFile: fakePs({ stdout: before }) });
-  eq(r2.stale.length, 1, 'one second on the wrong side of it is STALE');
-
-  // `package.json` alone moving is enough: a release that changes no MCP
-  // source still bumps the version, and a bridge from before it is old code.
-  const r3 = await B.detectBridgeProcesses({
-    ...baseDeps, serverMtimeMs: CODE_AT - 86400_000, packageMtimeMs: CODE_AT,
-    execFile: fakePs({ stdout: before }),
+  // A REUSED pid: a line written by a dead process with the same pid, BEFORE
+  // this one started, must not be inherited.
+  const reused = await B.detectBridgeProcesses({
+    ...baseDeps, execFile: fakePs({ stdout: REAL_TABLE }),
+    sessions: [sess(97330, 'Sat Sep 19 07:00:00 2026', 'bbbb2222')],
   });
-  eq(r3.stale.length, 1, 'the NEWER of server.js and package.json is what counts');
-  eq(r3.codeChangedAt, new Date(CODE_AT).toISOString(), '…and it is the one disclosed');
+  eq(reused.bridges[1].tools, 'unknown', 'a session line older than the process is a DEAD process\'s — not joined');
+  eq(reused.stale.length, 0, '…so no false "different"');
+  // …and the newest signature-bearing line of the live process wins.
+  const two = await B.detectBridgeProcesses({
+    ...baseDeps, execFile: fakePs({ stdout: REAL_TABLE }),
+    sessions: [sess(97330, 'Sun Sep 20 08:54:18 2026', 'bbbb2222'), sess(97330, 'Sun Sep 20 09:00:00 2026', CURRENT.toolsHash, '3.88.0')],
+  });
+  eq(two.bridges[1].tools, 'same', 'the NEWEST line with a signature wins');
+  eq(two.bridges[1].notice, 'none', 'same tools and the same version → nothing to say');
+
+  // The code on disk could not be signed: every bridge is unknown, never same.
+  const noCur = await B.detectBridgeProcesses({
+    ...baseDeps, current: { version: null, toolsHash: null, toolCount: null }, execFile: fakePs({ stdout: REAL_TABLE }),
+    sessions: [sess(29123, 'Fri Sep 18 10:10:35 2026', 'aaaa1111')],
+  });
+  eq(noCur.bridges[0].tools, 'unknown', 'with no current signature, a bridge\'s signature proves nothing → unknown');
+
+  eq(B.classifyTools('aaaa1111', 'aaaa1111'), 'same', 'classifyTools: equal → same');
+  eq(B.classifyTools('aaaa1111', 'bbbb2222'), 'different', 'classifyTools: unequal → different');
+  eq(B.classifyTools(null, 'bbbb2222'), 'unknown', 'classifyTools: missing → unknown');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -161,24 +209,28 @@ section('§3  Every refusal answers `checked: false` with an EMPTY stale list');
 // ─────────────────────────────────────────────────────────────────────────
 {
   const arms = [
-    ['a platform whose ps spelling is unmeasured',
-      { ...baseDeps, platform: 'linux', execFile: fakePs({ stdout: REAL_TABLE }) }, 'linux'],
+    ['a platform the listing is not read on',
+      { ...baseDeps, platform: 'freebsd', execFile: fakePs({ stdout: REAL_TABLE }) }, 'freebsd'],
     ['ps missing or refusing',
       { ...baseDeps, execFile: fakePs({ err: 'spawn ps ENOENT' }) }, 'ENOENT'],
-    ['neither file readable, so there is nothing to compare against',
-      { ...baseDeps, serverMtimeMs: null, packageMtimeMs: null, execFile: fakePs({ stdout: REAL_TABLE }) }, 'package.json'],
   ];
   for (const [label, deps, needle] of arms) {
     const r = await B.detectBridgeProcesses(deps);
     eq(r.checked, false, `${label} → checked false`);
     eq(r.running, 0, '…running 0');
     eq(r.stale.length, 0, '…stale empty');
+    eq(r.bridges.length, 0, '…bridges empty');
     ok(typeof r.reason === 'string' && r.reason.includes(needle),
       `…and a reason naming ${needle} (${JSON.stringify(r.reason)})`);
   }
+  // Neither mtime readable is no longer a refusal: the signature does the
+  // classifying. `olderThanCode` is then null, and an unknown bridge warns softly.
+  const noMtime = await B.detectBridgeProcesses({ ...baseDeps, serverMtimeMs: null, packageMtimeMs: null, execFile: fakePs({ stdout: REAL_TABLE }) });
+  eq(noMtime.checked, true, 'no readable mtime → still checked (the classification no longer needs one)');
+  eq(noMtime.codeChangedAt, null, '…with no comparison point disclosed');
+  eq(noMtime.bridges[0].olderThanCode, null, '…and olderThanCode null, not false');
+  eq(noMtime.bridges[0].notice, 'soft', '…so an unknown bridge still gets its one soft warning');
 
-  // An execFile that THROWS synchronously (a stubbed-out child_process in a
-  // locked-down environment) must also refuse rather than reject.
   const thrown = await B.detectBridgeProcesses({
     ...baseDeps, execFile: () => { throw new Error('spawning is not permitted here'); },
   });
@@ -191,12 +243,14 @@ section('§4  The parser — junk in, nothing out');
 // ─────────────────────────────────────────────────────────────────────────
 {
   ok(B.parsePsRow('') === null, 'an empty line is not a process');
-  ok(B.parsePsRow('  PID STARTED COMMAND') === null, 'a header row is not a process');
-  ok(B.parsePsRow('   123 not a date at all /bin/thing') === null,
+  ok(B.parsePsRow('  PID  PPID STARTED COMMAND') === null, 'a header row is not a process');
+  ok(B.parsePsRow('   123   1 not a date at all /bin/thing') === null,
     'a row whose start time cannot be read is DROPPED, never reported with a guessed time');
-  ok(B.parsePsRow('     0 Fri Sep 18 10:10:34 2026 /bin/x') === null, 'pid 0 is refused');
-  const good = B.parsePsRow(psRow(42, 'Fri Sep 18 10:10:34 2026', '/bin/x --with args'));
+  ok(B.parsePsRow('     0     1 Fri Sep 18 10:10:34 2026 /bin/x') === null, 'pid 0 is refused');
+  ok(B.parsePsRow('    42 Fri Sep 18 10:10:34 2026 /bin/x') === null, 'a row without a ppid column is refused');
+  const good = B.parsePsRow(psRow(42, 7, 'Fri Sep 18 10:10:34 2026', '/bin/x --with args'));
   eq(good.pid, 42, 'a good row yields its pid');
+  eq(good.ppid, 7, '…its parent');
   eq(good.command, '/bin/x --with args', '…and the whole command, spaces and all');
 
   const garbage = await B.detectBridgeProcesses({
@@ -204,6 +258,90 @@ section('§4  The parser — junk in, nothing out');
   });
   eq(garbage.checked, true, 'an unparseable table is still a reading that was TAKEN');
   eq(garbage.running, 0, '…answering zero, because no row parsed');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§4b The parent walk — CLI before bundle, the self-test, a broken chain, a loop');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  const t = (rows) => new Map(rows.map((r) => [r.pid, r]));
+  const row = (pid, ppid, command) => ({ pid, ppid, command, startedAtMs: 0 });
+  // Claude Code in Cursor's terminal: claude → zsh → Cursor.app. The CLI is
+  // reached first, so it is Claude Code, not Cursor.
+  const cli = t([row(10, 1, '/Applications/Cursor.app/Contents/MacOS/Cursor'), row(11, 10, '/bin/zsh -l'), row(12, 11, 'claude --resume'), row(13, 12, `${NODE} ${SERVER}`)]);
+  const a = B.parentAppFor(cli.get(13), cli, 'darwin', 999);
+  eq(a.id, 'claude-code', 'a `claude` CLI ancestor is Claude Code');
+  eq(a.via, 'cli', '…started from a terminal');
+  eq(B.staleRemedyFor(a, 'darwin'), 'End that Claude Code session (type /exit, or close its terminal) and start a new one.',
+    '…and its remedy is to end THAT session, not to quit an app');
+  // `node …/bin/claude` (an npm install) is the same CLI.
+  const npm = t([row(20, 1, '/usr/local/bin/node /usr/local/bin/claude'), row(21, 20, `${NODE} ${SERVER}`)]);
+  eq(B.parentAppFor(npm.get(21), npm, 'darwin', 999).id, 'claude-code', 'a runtime running the `claude` script is the CLI too');
+  const cur = t([row(30, 1, '/Applications/Cursor.app/Contents/MacOS/Cursor'), row(31, 30, '/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/Contents/MacOS/Cursor Helper (Plugin)'), row(32, 31, `${NODE} ${SERVER}`)]);
+  const c = B.parentAppFor(cur.get(32), cur, 'darwin', 999);
+  eq(c.id, 'cursor', 'the FIRST `.app/Contents/` is the outer bundle — Cursor, not its helper');
+  eq(B.staleRemedyFor(c, 'darwin'), 'Quit Cursor (⌘Q — closing the window is not enough) and reopen it.', '…and its remedy has no Code-tab clause');
+  // The self-test: a bridge spawned by this very process, or by The Curator's own bundle.
+  const self = t([row(40, 1, 'node src/server.js'), row(41, 40, `${NODE} ${SERVER}`)]);
+  ok(B.parentAppFor(self.get(41), self, 'darwin', 40).selfTest === true, 'a bridge whose parent is THIS process is the self-test');
+  const app = t([row(50, 1, NODE), row(51, 50, `${NODE} ${SERVER}`)]);
+  ok(B.parentAppFor(app.get(51), app, 'darwin', 999).selfTest === true, '…and so is one under The Curator.app (the installed app\'s Test all)');
+  // Claude Desktop's OWN binary is `…/Claude.app/Contents/MacOS/Claude`, whose
+  // base name lower-cased is the CLI's `claude`. A bridge that is its direct
+  // child is Claude Desktop's, not Claude Code's (a real bug, caught here).
+  const direct = t([row(90, 1, CLAUDE), row(91, 90, `${NODE} ${SERVER}`)]);
+  eq(B.parentAppFor(direct.get(91), direct, 'darwin', 999).id, 'claude-desktop', 'Claude.app\u2019s own `Claude` binary is Claude Desktop, never the `claude` CLI');
+  // A parent missing from the table: we could not look.
+  const broken = t([row(61, 60, `${NODE} ${SERVER}`)]);
+  const br = B.parentAppFor(broken.get(61), broken, 'darwin', 999);
+  eq(br.checked, false, 'a parent not in the table → checked false');
+  eq(br.id, null, '…and no app is guessed');
+  eq(B.staleRemedyFor(br, 'darwin'), 'Quit the app that started it and reopen it.', '…the remedy names no app');
+  // A loop terminates.
+  const loop = t([row(70, 71, '/bin/a'), row(71, 70, '/bin/b'), row(72, 70, `${NODE} ${SERVER}`)]);
+  eq(B.parentAppFor(loop.get(72), loop, 'darwin', 999).label, 'another app', 'a ppid loop ends the walk');
+  // Unknown bundle.
+  const term = t([row(80, 1, '/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal'), row(81, 80, '/bin/zsh'), row(82, 81, `${NODE} ${SERVER}`)]);
+  const tm = B.parentAppFor(term.get(82), term, 'darwin', 999);
+  eq(tm.id, null, 'an unmapped bundle is no agent app');
+  eq(tm.bundle, 'Terminal.app', '…but its bundle is named');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+section('§4c Windows and Linux — best effort, same shapes');
+// ─────────────────────────────────────────────────────────────────────────
+{
+  const WSRV = 'C:\\Users\\a\\AppData\\Local\\TheCurator\\app\\mcp\\server.js';
+  const desk = 'C:\\Users\\a\\AppData\\Local\\AnthropicClaude\\app-1.2.3\\claude.exe';
+  const winOut = [
+    `P|500|4|2026-09-18T08:00:00.0000000Z|${desk}|`,
+    'P|510|500|2026-09-18T08:10:34.0000000Z|C:\\Program Files\\nodejs\\node.exe|"C:\\Program Files\\nodejs\\node.exe" "C:\\USERS\\a\\AppData\\Local\\TheCurator\\app\\mcp\\server.js" --domains-path C:\\d',
+    'P|520|4|2026-09-18T08:10:34.0000000Z|C:\\Program Files\\nodejs\\node.exe|"C:\\Program Files\\nodejs\\node.exe" "C:\\other\\mcp\\server.js"',
+    'garbage line',
+  ].join('\r\n');
+  const spy = [];
+  const r = await B.detectBridgeProcesses({ ...baseDeps, platform: 'win32', serverPath: WSRV, execFile: fakePs({ stdout: winOut, spy }) });
+  eq(r.checked, true, 'Windows: a reading is taken');
+  ok(/powershell\.exe$/i.test(spy[0].file) && /System32/i.test(spy[0].file), '…through PowerShell by ABSOLUTE path, never a bare `powershell`', spy[0].file);
+  eq(JSON.stringify(spy[0].args.slice(0, 3)), JSON.stringify(['-NoProfile', '-NonInteractive', '-Command']), '…non-interactive, no profile');
+  eq(spy[0].args[3], B.WIN_PROCS_SCRIPT, '…running the ONE constant script');
+  eq(r.running, 1, '…a quoted, differently-cased path matches; another install\'s does not');
+  eq(r.bridges[0].app.id, 'claude-desktop', '…and its parent claude.exe at the AnthropicClaude path is Claude Desktop');
+  ok(/system tray → Quit/.test(r.bridges[0].remedy) && /Code tab/.test(r.bridges[0].remedy), '…with the Windows quit step', r.bridges[0].remedy);
+  const cliExe = B.parseWinRow('P|9|1|2026-09-18T08:00:00Z|C:\\Users\\a\\.local\\bin\\claude.exe|');
+  const tw = new Map([[9, cliExe], [10, { pid: 10, ppid: 9, command: '', exe: '' }]]);
+  eq(B.parentAppFor(tw.get(10), tw, 'win32', 999).id, 'claude-code', 'Windows: claude.exe OUTSIDE Claude Desktop\'s paths is the Claude Code CLI');
+  ok(B.parseWinRow('P|x|1|||') === null && B.parseWinRow('nope') === null, 'Windows: junk rows are dropped');
+
+  const linOut = [
+    psRow(300, 1, 'Fri Sep 18 10:00:00 2026', '/usr/bin/zsh'),
+    psRow(301, 300, 'Fri Sep 18 10:00:01 2026', 'claude'),
+    psRow(302, 301, 'Fri Sep 18 10:10:34 2026', `/usr/bin/node ${SERVER}`),
+  ].join('\n');
+  const spy2 = [];
+  const l = await B.detectBridgeProcesses({ ...baseDeps, platform: 'linux', execFile: fakePs({ stdout: linOut, spy: spy2 }) });
+  eq(JSON.stringify(spy2[0].args), JSON.stringify(['-eo', 'pid=,ppid=,lstart=,args=']), 'Linux: the procps spelling');
+  eq(l.bridges[0].app.id, 'claude-code', 'Linux: the CLI ancestor is found the same way');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -261,6 +399,9 @@ section('§6  The route field — GET /api/mcp/config carries it, and its remedy
   ok(body.bridge_processes && typeof body.bridge_processes.checked === 'boolean',
     '…with a boolean `checked`, so a consumer can tell "did not look" from "found none"');
   ok(Array.isArray(body.bridge_processes.stale), '…and an array `stale`');
+  ok(Array.isArray(body.bridge_processes.bridges), '…and (v3.88.0) an array `bridges`');
+  ok(body.bridge_processes.current && typeof body.bridge_processes.current.toolCount === 'number' && /^[0-9a-f]{8}$/.test(body.bridge_processes.current.toolsHash || ''),
+    '…and `current`: the code on disk\u2019s tool count and 8-hex signature, read from the REAL tool list', body.bridge_processes.current);
   // AND IT IS THE REAL DETECTOR'S ANSWER, not a canned one. `serverPath` is a
   // fact only `detectBridgeProcesses` supplies — it is what was MATCHED — so
   // a handler that short-circuits to a clean bill of health reds here. Checked
@@ -296,7 +437,13 @@ section('§7  The two notes on the bridge page');
   const fs = await import('node:fs');
   const viewSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
   const start = viewSrc.indexOf('function deriveStaleBridgeNote(');
-  ok(start !== -1, 'deriveStaleBridgeNote was found in the view');
+  // v3.88.0: the bridge page is being rebuilt (the stale fact moves onto the
+  // app's row, from `bridges[].notice`). While the old derivation still
+  // exists it must keep its guarantees; once it is gone, the view suites own
+  // the rendering and this section has nothing to read.
+  if (start === -1) {
+    ok(true, 'deriveStaleBridgeNote is gone from the view (v3.88.0 redesign) — its rendering is the view suites\u2019');
+  } else {
   const end = viewSrc.indexOf('\n}\n', start) + 3;
   const body = viewSrc.slice(start, end);
   const make = new Function('formatAge', 'ageSecondsOf', `${body}; return deriveStaleBridgeNote;`);
@@ -400,6 +547,7 @@ section('§7  The two notes on the bridge page');
     + 'and became a `loud` entry inside it');
   ok(!/bridge_processes/.test(viewSrc.replace(/function deriveStaleBridgeNote[\s\S]*?\n}\n/, '')),
     'nothing outside the derivation reads bridge_processes directly');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

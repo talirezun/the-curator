@@ -36,7 +36,9 @@ import { existsSync } from 'node:fs';
 import { getDomainsDir } from '../brain/config.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { adapterFor, mcpEntryFor } from '../brain/harness-adapters.js';
-import { tildeUnder, machineWord } from '../brain/setup-check.js';
+import { tildeUnder, machineWord, collectMachineSetup, machineRowVerdicts, STATES } from '../brain/setup-check.js';
+import { detectBridgeProcesses, bridgesByApp } from '../brain/mcp-bridge-status.js';
+import { appPath } from '../brain/paths.js';
 import { readUsageLinesUnion, summariseSessions } from '../brain/mcp-usage.js';
 import {
   detectRunning, detectTools, detectWinAppx, detectWinClaudeRunning,
@@ -58,7 +60,71 @@ export function __setDetectDeps(d) { _detectDeps = d || null; }
 /** TEST-ONLY: inject the executor's IO (e.g. a backup write that throws). */
 export function __setInstallIO(io) { _io = io || null; }
 
+let _bridgeDeps = null;
+let _machineRows = null;
+/** TEST-ONLY: inject the bridge reading's deps (execFile, sessions, current, …). */
+export function __setBridgeDeps(d) { _bridgeDeps = d || null; }
+/** TEST-ONLY: replace the Setup check's machine rows (an array, or a function of home). */
+export function __setMachineRows(r) { _machineRows = r || null; }
+
 function io() { return _io || defaultIO(); }
+
+/**
+ * The open bridges (v3.88.0). An isolated test process never lists the real
+ * processes: without an injected seam it answers "not looked", exactly as
+ * harness-detect's probes do under CURATOR_TEST_INSTALL_HOME.
+ */
+async function bridgeReading() {
+  if (_bridgeDeps) return detectBridgeProcesses(_bridgeDeps);
+  // Any isolated test process (either isolation variable) answers "not looked":
+  // a real process list would make a suite's answer move with what is open.
+  if (process.env.CURATOR_TEST_INSTALL_HOME || process.env.CURATOR_TEST_USER_DATA_DIR) {
+    return { checked: false, reason: 'not read under test', running: 0, stale: [], bridges: [], current: null };
+  }
+  try { return await detectBridgeProcesses(); } catch (err) {
+    return { checked: false, reason: err && err.message, running: 0, stale: [], bridges: [], current: null };
+  }
+}
+
+/** Context › Setup's per-app rows for this home — the source of the skill and readAlso verdicts. */
+function machineRowsFor(home) {
+  if (typeof _machineRows === 'function') return _machineRows(home);
+  if (Array.isArray(_machineRows)) return _machineRows;
+  if (!home) return [];
+  try {
+    const skills = appPath('skills');
+    return collectMachineSetup({ home, repo: '', skillsDir: existsSync(skills) ? skills : null, domainsDir: getDomainsDir() });
+  } catch { return []; }
+}
+
+const FIX_STATUSES = new Set(['needs-update', 'cant-read']);
+
+/**
+ * One row's verdict for the overview card and its row (v3.88.0). Decided
+ * here, from facts already on the row, so the view never counts on its own:
+ *
+ *   to-fix        — needs an update, can't be read, a skill to replace, a
+ *                   Setup-check bridge fix, or an open bridge whose tools
+ *                   are PROVEN different (`bridges.notice === 'warn'`)
+ *   connected     — connected, or connected through another app's file
+ *   not-connected — everything else
+ */
+export function rowVerdict(row) {
+  let toFix = 0;
+  if (FIX_STATUSES.has(row.status)) toFix++;
+  if (row.skill) toFix++;
+  if (row.setupFix) toFix++;
+  if (row.bridges && row.bridges.notice === 'warn') toFix++;
+  const verdict = toFix > 0 ? 'to-fix'
+    : row.status === 'connected' || row.connectedVia ? 'connected' : 'not-connected';
+  return { verdict, toFix };
+}
+
+/** Can Install for me write anything on this row? */
+function installable(row) {
+  return (row.status === 'needs-update' || row.status === 'not-installed')
+    && Array.isArray(row.files) && row.files.some((f) => f.action === 'add' || f.action === 'update');
+}
 
 function detectDeps(home) {
   if (_detectDeps) return _detectDeps;
@@ -185,11 +251,14 @@ export async function buildStatus() {
       : windows ? (wc ? wc.win.candidates.map((c) => c.file) : [])
         : targetsFor(id, home, theIO).map((t) => t.file);
   }
-  const [detected, running, used] = await Promise.all([
+  const [detected, running, used, bp] = await Promise.all([
     detectTools({ home, configFiles, deps }),
     mac ? detectRunning(deps) : Promise.resolve({ checked: false, byId: {} }),
     usedAtById(),
+    bridgeReading(),
   ]);
+  const byApp = bridgesByApp(bp.bridges || []);
+  const machine = new Map((machineRowsFor(home) || []).map((m) => [m.id, m]));
   if (winRun) running.byId = { ...(running.byId || {}), 'claude-desktop': winRun.running };
   const manifestRows = readManifest(theIO).rows;
 
@@ -307,9 +376,47 @@ export async function buildStatus() {
     tools.push(row);
   }
 
+  // ── v3.88.0: each row's verdict, from Setup's own sentences and the open
+  //    bridges. Every field is ADDED; nothing above changes. ──
+  for (const row of tools) {
+    const m = machine.get(row.id) || null;
+    const v = machineRowVerdicts(m, home);
+    row.skill = v.skill;
+    row.connectedVia = row.status !== 'connected' && row.status !== 'needs-update' ? v.connectedVia : null;
+    // A Setup-check bridge FIX the installer's own status does not already
+    // carry (a copy-only app whose launch line points at a missing file).
+    row.setupFix = m && m.bridge && m.bridge.state === STATES.FIX && !FIX_STATUSES.has(row.status)
+      ? { word: m.bridge.word } : null;
+    const b = byApp[row.id];
+    row.bridges = b ? { ...b, toolCount: bp.current ? bp.current.toolCount : null } : null;
+    // "used 4 weeks ago" beside "no entry": the use was real (the usage log
+    // says so), but nothing this check reads names my-curator any more.
+    row.usedWithoutEntry = row.usedAt && row.status !== 'connected' && row.status !== 'needs-update'
+      && !row.connectedVia && !v.named && !(row.files || []).some((f) => f.state === 'connected' || f.state === 'differs')
+      ? { usedAt: row.usedAt, text: 'No entry in your user settings — that use came from a file this check does not read (a project’s own settings, or an entry since removed).' }
+      : null;
+    Object.assign(row, rowVerdict(row));
+  }
+  const counts = {
+    connected: tools.filter((r) => r.verdict === 'connected').length,
+    toFix: tools.filter((r) => r.verdict === 'to-fix').length,
+    notConnected: tools.filter((r) => r.verdict === 'not-connected').length,
+  };
+  const writable = (mac || (windows && !!wc && !!wc.roots)) && !!home && !(launcherState.required && !launcherState.present);
+  const available = tools.filter((r) => isInstallCapableOn(r.id, platform) && installable(r)).length;
+  const disabledReason = !canWriteHere() ? 'platform_unsupported'
+    : !writable ? 'not_writable'
+      : available === 0 ? 'nothing_to_install' : null;
+  const DISABLED_TEXT = { platform_unsupported: `Copy-only on this ${machineWord(platform)}`, not_writable: 'Can’t install here', nothing_to_install: 'Nothing to install' };
+  const otherBridges = (bp.bridges || []).filter((b) => b.app && b.app.via !== 'self-test' && !(b.app.id && tools.some((r) => r.id === b.app.id)));
+
   return {
     platform,
-    writable: (mac || (windows && !!wc && !!wc.roots)) && !!home && !(launcherState.required && !launcherState.present),
+    counts,
+    install: { available, disabledReason, disabledText: disabledReason ? DISABLED_TEXT[disabledReason] : null },
+    bridgeCheck: { checked: bp.checked === true, reason: bp.reason || null, current: bp.current || null },
+    otherBridges,
+    writable,
     launch: { style, command: launch.command, argsCount: Array.isArray(launch.args) ? launch.args.length : 0 },
     tools,
     notFound,
@@ -321,7 +428,7 @@ router.get('/status', async (_req, res) => {
   try {
     res.json(await buildStatus());
   } catch (err) {
-    res.status(500).json({ error: `Could not read the tools on this ${installPlatform() === 'win32' ? 'PC' : 'Mac'}: ${err && err.message}` });
+    res.status(500).json({ error: `Could not read the agent apps on this ${installPlatform() === 'win32' ? 'PC' : 'Mac'}: ${err && err.message}` });
   }
 });
 
@@ -357,8 +464,8 @@ export function validatePlanBody(body) {
   const extra = Object.keys(body).filter((k) => k !== 'action' && k !== 'ids');
   if (extra.length) return `Unexpected field${extra.length > 1 ? 's' : ''}: ${extra.slice(0, 5).join(', ')}.`;
   if (!ACTIONS.includes(body.action)) return 'action must be install, remove or restore.';
-  if (!Array.isArray(body.ids) || body.ids.length === 0 || body.ids.length > INSTALL_IDS.length) return 'ids must list one or more tools.';
-  if (!body.ids.every((x) => typeof x === 'string' && INSTALL_IDS.includes(x))) return 'ids may only name tools The Curator can install for.';
+  if (!Array.isArray(body.ids) || body.ids.length === 0 || body.ids.length > INSTALL_IDS.length) return 'ids must list one or more agent apps.';
+  if (!body.ids.every((x) => typeof x === 'string' && INSTALL_IDS.includes(x))) return 'ids may only name agent apps The Curator can install for.';
   return null;
 }
 

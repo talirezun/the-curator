@@ -833,6 +833,11 @@ same family and because a reader may encounter the file: The Curator's MCP bridg
   is an **allow-listed label** for reporting only. The MCP specification's
   revision `2026-07-28` makes `clientInfo` optional, per-request and self-reported, and says a
   server **SHOULD NOT** change behaviour on it. Nothing does.
+- Since v3.88.0 the session line also carries the bridge's own identity, each field optional and
+  bounded: `pid` (the process id, at most 8 digits), `v` (the package version, `^\d{1,3}\.\d{1,3}\.\d{1,3}$`)
+  and `tsig` (an 8-hex signature of the tool list it serves: the tool names and their input schemas).
+  All three describe the process and the shipped code, never anything a user wrote. They let the app
+  tell which open bridge serves an older tool list, by comparing `tsig`, never by file times.
 - Every line is at most `300` bytes (`MAX_LINE_BYTES`), which is arithmetic over each field's bound
   rather than a measurement.
 

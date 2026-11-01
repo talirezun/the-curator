@@ -754,6 +754,28 @@ function includesProjects(raw) {
  *
  * Never throws: each half degrades to its own "not measured" (null) value.
  */
+/**
+ * One store project's handoff saves (v3.88.0): how many fell in the window,
+ * the newest one at any age, and whether the count is a floor. `saveTimes`
+ * absent = the project's scopes were not listed (null, never 0).
+ */
+export function savesFor(p, sinceMs) {
+  if (!p || !Array.isArray(p.saveTimes)) return { saves: null, lastSaveAt: null, savesCapped: false };
+  let n = 0;
+  let newest = Number.isFinite(p.savedAtMax) ? p.savedAtMax : null;
+  for (const t of p.saveTimes) {
+    if (!Number.isFinite(t)) continue;
+    if (t >= sinceMs) n++;
+    if (newest === null || t > newest) newest = t;
+  }
+  // A floor only when a truncated journal's oldest readable save is INSIDE
+  // the window: then saves older than it, but still in the window, may exist.
+  // (`cappedFrom` is Infinity for a truncated journal that showed no save.)
+  const capped = p.saveTimesCapped === true
+    && (p.cappedFrom === null || p.cappedFrom === undefined || !(p.cappedFrom < sinceMs));
+  return { saves: n, lastSaveAt: newest === null ? null : new Date(newest).toISOString(), savesCapped: capped };
+}
+
 async function acrossProjects() {
   const now = Date.now();
   const since = now - TRAY_CAPTURE_WINDOW_MS;
@@ -783,6 +805,7 @@ async function acrossProjects() {
   for (const p of storeProjects) {
     seenNames.add(p.project);
     const c = captureFor(byName, logPresent, p.domain, p.project);
+    const sv = savesFor(p, since);
     rows.push({
       domain: p.domain,
       project: p.project,
@@ -796,6 +819,12 @@ async function acrossProjects() {
       // The log is keyed by project NAME (as the capture meter filters), so
       // two store projects sharing one name share one reading. Said, not hidden.
       sharedName: (nameCount.get(p.project) || 0) > 1,
+      // v3.88.0 — HANDOFF SAVES, from the working-state store (never the
+      // usage log), in the same 30-day window. `savesCapped`: a journal was
+      // read only from its newest 16 KB, so `saves` is a floor ("12+").
+      saves: sv.saves,
+      lastSaveAt: sv.lastSaveAt,
+      savesCapped: sv.savesCapped,
     });
   }
   // A project the log names that this store does not hold (deleted, renamed,
@@ -814,6 +843,10 @@ async function acrossProjects() {
         lastSessionAt: r.lastSessionAt,
         domainMismatch: false,
         sharedName: false,
+        // Not in this store, so its saves were not read: null, never 0.
+        saves: null,
+        lastSaveAt: null,
+        savesCapped: false,
       });
     }
   }
@@ -872,6 +905,9 @@ async function acrossProjects() {
           lastSeenAt: pulse.byHarness[id].lastSeenAt })),
       byToolFloor: pulse.byHarnessFloor === true,
       byToolNote: typeof pulse.byHarnessNote === 'string' ? pulse.byHarnessNote : null,
+      // v3.88.0 — the floor as a FLAG, so a view renders "+" from data and
+      // the sentence above can live in an ⓘ. The same fact as lowerBound.
+      capped: pulse.pairsTruncated > 0,
       eventsWithoutTool: Number.isInteger(pulse.eventsWithoutHarness) ? pulse.eventsWithoutHarness : 0,
     } : null,
   };

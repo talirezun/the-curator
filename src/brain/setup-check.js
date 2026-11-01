@@ -864,7 +864,7 @@ export function collectMachineSetup(o = {}) {
     else if (installed.length && haveBoth) skills = { state: STATES.OK, word: `${SKILL_NAMES.length} of ${SKILL_NAMES.length} current` };
     else if (installed.length) skills = { state: STATES.FIX, word: `${SKILL_NAMES.filter((n) => !installed.some((s) => s.skill === n)).join(', ')} missing` };
     else if (accountHeld) skills = { state: STATES.CANT, word: 'can’t check here', note: 'held by your Claude account' };
-    else if (!roots.length) skills = { state: STATES.CANT, word: 'can’t check here', note: 'no known skill folder for this tool' };
+    else if (!roots.length) skills = { state: STATES.CANT, word: 'can’t check here', note: 'no known skill folder for this agent app' };
     else skills = { state: STATES.NONE, word: 'not installed' };
     skills.roots = roots;
     skills.installed = installed;
@@ -1054,11 +1054,11 @@ export function collectProjectSetup(o) {
       ] });
     } else {
       row.saved = { state: STATES.NONE, at: null };
-      evidence.push({ heading: 'Saved', lines: [`${label} has not saved to this project yet. A tool is ready only once it has saved from this computer under its own name.`] });
+      evidence.push({ heading: 'Saved', lines: [`${label} has not saved to this project yet. An agent app is ready only once it has saved from this computer under its own name.`] });
     }
 
     // Bridge (this machine), with evidence overriding an absent entry
-    if (!m) row.bridge = { state: STATES.CANT, word: a ? 'this tool has no config file The Curator knows' : 'config location not known — copy the entry by hand' };
+    if (!m) row.bridge = { state: STATES.CANT, word: a ? 'this agent app has no config file The Curator knows' : 'config location not known — copy the entry by hand' };
     else if (m.bridge.state === STATES.NONE && s && s.thisMachine) {
       row.bridge = { state: STATES.OK, word: 'working', note: 'entry not found in the files read — a save from this computer proves it works' };
     } else row.bridge = { ...m.bridge };
@@ -1082,7 +1082,7 @@ export function collectProjectSetup(o) {
       const lines = [row.bridge.word + (row.bridge.note ? ` — ${row.bridge.note}` : '')];
       let reveal = null;
       for (const f of m?.files || []) {
-        const where = f.via === 'readAlso' ? ' (read for this tool; another app owns it)' : '';
+        const where = f.via === 'readAlso' ? ' (read for this agent app; another app owns it)' : '';
         let what;
         if (f.status === 'missing') what = 'not found';
         else if (BAD_FILE_STATES.has(f.status)) what = BAD_FILE_WORDS[f.status];
@@ -1113,7 +1113,7 @@ export function collectProjectSetup(o) {
         if (!reveal) reveal = sk.dir;
       }
       if (!m?.skills?.installed?.length && m?.skills?.roots?.length) lines.push(`Looked in: ${m.skills.roots.map((r) => tildeUnder(o.home || '', r)).join(', ')}.`);
-      if (!a) lines.push('Where this tool keeps skills is not known; download the skill .zip files and install them the way the tool documents.');
+      if (!a) lines.push('Where this agent app keeps skills is not known; download the skill .zip files and install them the way the app documents.');
       evidence.push({ heading: 'Skills', lines, ...(reveal ? { reveal } : {}) });
     }
 
@@ -1146,13 +1146,13 @@ export function collectProjectSetup(o) {
       if (!a) {
         // An ASSUMPTION (the common convention), so never a to-fix line.
         Object.assign(row.block, best && best.current && !best.wrongProject
-          ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most tools read AGENTS.md' }
-          : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this tool reads is not known' });
+          ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most agent apps read AGENTS.md' }
+          : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this agent app reads is not known' });
       } else if (!best) {
         const f = names[0];
         Object.assign(row.block, { state: STATES.FIX, word: 'missing', note: `${fileWord} has no Curator block` });
         blockItem = item({ ...at, kind: 'block-missing', file: f,
-          text: `${f} in ${repoDisplay} has no Curator instructions, so ${label} doesn’t know this project and may overwrite another tool’s handoff.`,
+          text: `${f} in ${repoDisplay} has no Curator instructions, so ${label} doesn’t know this project and may overwrite another agent app’s handoff.`,
           detail: `${names.includes('CLAUDE.md') ? '' : `${label} reads ${names.join(' and ')}, not CLAUDE.md. `}Paste them at the very top (create the file if it isn’t there), then commit and push.`,
         }, blockFixes(f, 'Add The Curator instructions'));
       } else if (best.wrongProject) {
@@ -1424,7 +1424,7 @@ export const FIX = Object.freeze({
   downloadSkill: (skill) => ({ kind: 'download-skill', skill, href: `/api/setup/skills/${skill}.zip`, label: `Download ${skill}.zip` }),
   sync: () => ({ kind: 'sync', label: 'Sync now' }),
   changeRepo: (label = 'Choose the folder') => ({ kind: 'change-repo', label }),
-  settings: () => ({ kind: 'settings', label: `Open Tools on ${thisMachineText()}` }),
+  settings: () => ({ kind: 'settings', label: 'Open Settings › MCP bridge' }),
   recheck: () => ({ kind: 'recheck', label: 'Re-check' }),
 });
 
@@ -1484,7 +1484,7 @@ function bridgeItem(id, label, m) {
   }
   return item({ ...base, reason: 'other',
     text: `${label}’s MCP entry: ${m.bridge.word}.`,
-    detail: `Open Tools on ${thisMachineText()} to see each file it read.`,
+    detail: 'Open Settings › MCP bridge to see each file it read.',
   }, [FIX.settings()]);
 }
 
@@ -1508,6 +1508,42 @@ function skillsItem(id, label, skills, home) {
     text: `${label} has the ${have.join(' and ')} skill but not ${missing.join(' or ')} (in ${tildeUnder(home, folder)}).`,
     detail: `Download it and unzip it beside the other one, then start a new ${label} session.`,
   }, [...missing.map((n) => FIX.downloadSkill(n)), FIX.reveal(folder, 'Reveal the folder')]);
+}
+
+/**
+ * The per-app verdicts Settings › MCP bridge prints on each app's row
+ * (v3.88.0), from ONE machine row of `collectMachineSetup`. Reuses the
+ * sentences Context › Setup already shows, so the two pages cannot disagree:
+ *
+ *   skill         — `skillsItem`'s item (text, detail, fixes: Download .zip,
+ *                   Reveal the folder) plus the file names that differ, or null.
+ *   connectedVia  — the app's bridge is configured only through ANOTHER app's
+ *                   file (`readAlso`: Claude Code through Claude Desktop's), or
+ *                   null. Its `text` is the row's quiet line.
+ *   named         — some file this check reads names my-curator.
+ */
+export function machineRowVerdicts(m, home = '') {
+  if (!m || typeof m !== 'object') return { skill: null, connectedVia: null, named: false };
+  let skill = null;
+  if (m.skills && m.skills.state === STATES.FIX) {
+    const it = skillsItem(m.id, m.label, m.skills, home);
+    if (it) {
+      const differs = [...new Set((m.skills.installed || []).filter((x) => x.match === false)
+        .flatMap((x) => [...(x.differs || []), ...(x.missing || [])]))];
+      skill = { reason: it.reason, skills: it.skills, folder: it.folder, folderDisplay: it.folderDisplay,
+        text: it.text, detail: it.detail, differs, fixes: it.fixes };
+    }
+  }
+  let connectedVia = null;
+  const b = m.bridge || {};
+  if (b.state === STATES.OK && b.via === 'readAlso') {
+    const f = (m.files || []).find((x) => x.via === 'readAlso' && x.named);
+    // Today the only `readAlso` is Claude Desktop's file (harness-adapters.js).
+    const owner = f && /[\\/]Claude[\\/]claude_desktop_config\.json$/.test(f.file) ? { id: 'claude-desktop', label: 'Claude Desktop' } : { id: null, label: 'another app' };
+    connectedVia = { ...owner, display: f ? f.display : null,
+      text: `Uses ${owner.label}’s entry.`, note: b.note || null, observation: b.observation || null };
+  }
+  return { skill, connectedVia, named: (m.files || []).some((f) => f.named) };
 }
 
 /**

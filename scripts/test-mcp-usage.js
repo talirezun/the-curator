@@ -308,6 +308,33 @@ const maxSession = JSON.stringify({
 eq(Buffer.byteLength(maxSession, 'utf8'), 131,
   `the widest session line the shape allows is 131 bytes (got ${Buffer.byteLength(maxSession, 'utf8')})`);
 ok(Buffer.byteLength(maxSession, 'utf8') < usage.MAX_LINE_BYTES, '…under the same one ceiling');
+// v3.88.0 — THE BRIDGE IDENTITY (pid, v, tsig), at each field's own bound.
+// The arithmetic in mcp-usage.js says 131 + 51 = 182; this is that line.
+const maxSessionId = usage.buildSessionLine({
+  sid: '0123456789ab', client: undefined, via: 'self-test',
+  pid: usage.BRIDGE_PID_MAX, v: '999.999.999', tsig: 'ffffffff',
+}, '2026-09-18T12:34:56.789Z').replace('"ev":"session"', `"ev":"session","client":"${'y'.repeat(32)}"`);
+eq(Buffer.byteLength(maxSessionId, 'utf8'), 182,
+  `the widest session line WITH the bridge identity is 182 bytes (got ${Buffer.byteLength(maxSessionId, 'utf8')})`);
+ok(Buffer.byteLength(maxSessionId, 'utf8') + 291 + 2 < 512,
+  '…and the coupled first write (session + worst tool line + 2 newlines) stays under the 512-byte PIPE_BUF floor');
+{
+  const k = JSON.parse(usage.buildSessionLine({ sid: '0123456789ab', pid: 4242, v: '3.88.0', tsig: 'abcd0123' }, 'T'));
+  eq(Object.keys(k).join(','), 'ts,ev,sid,pid,v,tsig', 'the identity follows the session keys, in SESSION_LINE_KEYS order');
+  // Unusable values are DROPPED, never coerced or truncated into the line.
+  for (const [field, junk] of [['pid', 0], ['pid', -1], ['pid', 1.5], ['pid', usage.BRIDGE_PID_MAX + 1], ['pid', '4242'],
+    ['v', '3.88'], ['v', '3.88.0-beta'], ['v', '1234.1.1'], ['v', 'x'.repeat(5000)], ['tsig', 'ABCD0123'], ['tsig', 'abcd012'], ['tsig', 'abcd01234'], ['tsig', {}]]) {
+    const rec = JSON.parse(usage.buildSessionLine({ sid: '0123456789ab', [field]: junk }, 'T'));
+    ok(!(field in rec), `${field}: ${JSON.stringify(junk).slice(0, 20)} is dropped`);
+  }
+  // …and the identity set for the PROCESS rides on every session line it writes.
+  usage.setSessionIdentity({ pid: 77, v: '3.88.0', tsig: '0badf00d' });
+  const viaProc = JSON.parse(usage.buildSessionLine({ sid: '0123456789ab' }, 'T'));
+  eq(`${viaProc.pid}|${viaProc.v}|${viaProc.tsig}`, '77|3.88.0|0badf00d', 'setSessionIdentity → every session line carries it');
+  usage.__resetSessionIdentity();
+  ok(!('pid' in JSON.parse(usage.buildSessionLine({ sid: '0123456789ab' }, 'T'))), '…and a process that set none writes none (the web server)');
+  ok(!('pid' in JSON.parse(usage.buildUsageLine({ tool: 'x', ms: 1 }, 'T'))), 'a TOOL line never carries it');
+}
 // A 65-character project is over the store's own bound and is DROPPED, never
 // truncated — the same trade DOMAIN_SLUG_RE makes, and what keeps 291 a proof.
 ok(!('project' in JSON.parse(usage.buildUsageLine({ tool: 'x', ms: 1, project: 'p'.repeat(65) }, 'T'))),
@@ -649,6 +676,18 @@ ok(childRecs[0].sid !== usage.getSessionId(),
 // The self-test client above sent clientInfo.name "curator-usage", which is in
 // no allow-list row, so it is recorded as `other` — never the caller's string.
 eq(childSession[0].client, 'other', 'an unrecognised clientInfo.name is recorded as "other"');
+// v3.88.0 — the REAL bridge wrote its own identity on its session line.
+{
+  const { tools: realTools } = await import(path.join(ROOT, 'mcp/tools/index.js'));
+  const { toolSignature } = await import(path.join(ROOT, 'mcp/tool-signature.js'));
+  const pkgV = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  const withId = childSession.find((l) => l.tsig);
+  ok(!!withId, 'the child bridge’s session line carries a tool-list signature');
+  eq(withId && withId.pid, child.pid, '…its OWN pid (the join key the app uses)');
+  eq(withId && withId.v, pkgV, '…the package version it was started from');
+  eq(withId && withId.tsig, toolSignature(realTools.map((t) => t.definition)),
+    '…and the signature of the tools on disk — the value the app compares against');
+}
 ok(!childAll.some((l) => l.includes('curator-usage')),
   'the client-supplied name itself is NOWHERE in the file');
 ok(childAll.every(l => Buffer.byteLength(l, 'utf8') < usage.MAX_LINE_BYTES), 'every child line is under the ceiling');
@@ -700,7 +739,7 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
   eq(usage.LINE_KEYS_ALWAYS.join(','), 'ts,tool,domain,ok,refused,ms,sid',
     'LINE_KEYS_ALWAYS is the seven every tool line carries');
   eq(usage.LINE_KEYS_OPTIONAL.join(','), 'project,via', 'and the two optional ones are named apart');
-  eq(usage.SESSION_LINE_KEYS.join(','), 'ts,ev,sid,client,via', 'a session line has its own five');
+  eq(usage.SESSION_LINE_KEYS.join(','), 'ts,ev,sid,client,via,pid,v,tsig', 'a session line has its own eight (v3.88.0: + pid, v, tsig)');
   eq(usage.VIA_SELF_TEST, 'self-test', 'the literal is "self-test"');
   eq(usage.VIA_ENV_VAR, 'CURATOR_MCP_VIA', 'the environment variable is CURATOR_MCP_VIA');
 

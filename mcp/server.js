@@ -19,9 +19,11 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createStorageAdapter } from './storage/local.js';
-import { registerTools } from './tools/index.js';
+import { readFileSync } from 'node:fs';
+import { registerTools, tools } from './tools/index.js';
+import { toolSignature } from './tool-signature.js';
 import { setCliDomainsDir } from '../src/brain/config.js';
-import { appendSessionLine } from '../src/brain/mcp-usage.js';
+import { appendSessionLine, setSessionIdentity } from '../src/brain/mcp-usage.js';
 import { readClientName } from '../src/brain/mcp-clients.js';
 
 const args = process.argv.slice(2);
@@ -96,6 +98,22 @@ const server = new Server(
 // bridge over stdio and SENDS `initialize` — it is an initialize-era client,
 // so it exercises the deprecated arm and never the `_meta` one.
 registerTools(server, storage);
+
+// ── WHAT THIS BRIDGE SERVES, ON ITS SESSION LINE (v3.88.0) ─────────────────
+//
+// Its pid, the package version it was started from, and the signature of the
+// tool list it serves. Set BEFORE any session line can be written, so the
+// line written at `oninitialized` (or folded into the first tool call) carries
+// them. It is what lets Settings say "running 3.86.0 — the same 24 tools" or
+// "its tools changed" about a long-lived bridge, by comparing signatures
+// rather than file mtimes. Content-free: three facts about the process and the
+// shipped code. Any failure leaves a field out; nothing here can fail a launch
+// or write to stdout (the JSON-RPC stream).
+try {
+  let v = null;
+  try { v = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || null; } catch { /* left out */ }
+  setSessionIdentity({ pid: process.pid, v, tsig: toolSignature(tools.map((t) => t.definition)) });
+} catch { /* never fatal */ }
 
 // ── THE SESSION LINE IS WRITTEN WHEN THE CLIENT ARRIVES, NOT AT THE FIRST
 //    TOOL CALL ───────────────────────────────────────────────────────────────
