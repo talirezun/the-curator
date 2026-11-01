@@ -4,12 +4,12 @@ Three steps. It takes about 5 minutes. You do not need to be an administrator.
 
 ## 1. Open PowerShell
 
-Click **Start**, type **PowerShell**, and click **Windows PowerShell**. A blue window opens.
-Do **not** use "Command Prompt" (the black window): the line below does not work there.
+Click **Start**, type **PowerShell**, and click **Windows PowerShell**. A window opens whose title says **PowerShell**.
+Do **not** use "Command Prompt" (its title says Command Prompt): the line below does not work there.
 
 ## 2. Copy this line, paste it, press Enter
 
-Paste with a **right-click** in the blue window (or **Ctrl + V**), then press **Enter**.
+Paste with a **right-click** in that window (or **Ctrl + V**), then press **Enter**.
 
 ```powershell
 irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex
