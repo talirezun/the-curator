@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.84.1` | The per-harness MCP registry corrected against each vendor's own source (goose's broken copy snippet fixed, Copilot `tools`, Codex `env`, verified paths) and data-only `installer`/`cli`/`verifiedOn`/`jsonc` fields: the groundwork for the one-click installer. |
 | `v3.84.0` | Summaries stop piling up Key Takeaways (Phase-2 batch replies filtered to their own pages), link lists sort themselves by folder with a new Health "Summary link lists" fix, and a malformed summary now warns. |
 | `v3.83.2` | Electron 43.5.0 → 43.8.3 in the desktop shell (eight advisories); built arm64 app launched isolated and checked through the DevTools protocol. |
 | `v3.83.1` | Dependency security updates — nine packages (body-parser, multer, zod and others, three HIGH) via `npm audit fix` with no `--force`; Electron in `desktop/` left HIGH, fixed in v3.83.2. |
