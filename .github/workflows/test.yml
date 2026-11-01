@@ -249,7 +249,7 @@ jobs:
           $v = Get-Version '127.0.0.1'
           if ($v -ne $want) { Show-Log; throw "/api/version answered '$v', expected '$want'" }
           if ((Get-Version 'localhost') -ne $want) { throw '/api/version did not answer on localhost' }
-          $s = Get-Servers
+          $s = @(Get-Servers)
           if ($s.Count -ne 1) { throw "expected 1 server process, found $($s.Count)" }
           $privNode = Join-Path $env:LOCALAPPDATA 'TheCurator\runtime\node\node.exe'
           if ($s[0].ExecutablePath -ne $privNode) { throw "the server runs on $($s[0].ExecutablePath), not the private node $privNode" }
@@ -258,11 +258,11 @@ jobs:
           # Double-click again: no second server.
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start
           if ($LASTEXITCODE -ne 0) { throw "second start failed ($LASTEXITCODE)" }
-          if ((Get-Servers).Count -ne 1) { throw 'a second start launched a second server' }
+          if (@(Get-Servers).Count -ne 1) { throw 'a second start launched a second server' }
 
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stop
           if ($LASTEXITCODE -ne 0) { throw "stop-curator.ps1 failed ($LASTEXITCODE)" }
-          if ((Get-Servers).Count -ne 0) { throw 'a server process is still running after Stop' }
+          if (@(Get-Servers).Count -ne 0) { throw 'a server process is still running after Stop' }
           if (Get-Version '127.0.0.1') { throw 'The Curator still answers after Stop' }
           if (-not (Test-Free)) { throw "port $port is not free after Stop" }
           if ($decoy.HasExited) { throw 'Stop killed a node process that is not The Curator' }
@@ -280,7 +280,7 @@ jobs:
           } finally { $blocker.Stop() }
           Write-Host $out
           if ($code -ne 1 -or $out -notmatch 'already used by another program') { throw "port-in-use start: exit $code" }
-          if ((Get-Servers).Count -ne 0) { throw 'a server was left running after the port-in-use refusal' }
+          if (@(Get-Servers).Count -ne 0) { throw 'a server was left running after the port-in-use refusal' }
           Stop-Process -Id $decoy.Id -Force
 
       - name: Second install = repair (PowerShell 7, without -NoStart)
