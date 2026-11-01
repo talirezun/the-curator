@@ -318,134 +318,24 @@ section('§3  settings.css — the WORD stays on the neutral ramp; the ICON alon
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// FIX 2 — MCP badge / self-test reconciliation note
+// FIX 2 — RETIRED in v3.88.0 (truth audit T1/T8)
 // ══════════════════════════════════════════════════════════════════════════
+// Block 1's "Configured / Needs an update" pill (deriveMcpStatus) read Claude
+// Desktop's file only — wrong for anyone on Cursor alone — and the
+// reconciliation note told the user to press a button that only scrolled.
+// Both are gone: each agent app's row carries its own status, and a saved
+// entry that is out of date reads "needs an update" on THAT row with its own
+// Install. scripts/test-next-mcp-install.js drives the rows; this only pins
+// that neither piece of the old pair came back.
 
-section('§4  Extraction sanity — deriveMcpStatus, shouldShowMcpStaleNote');
-
-let deriveMcpStatus, shouldShowMcpStaleNote;
-try {
-  const body =
-    extractFunction(settingsJs, 'deriveMcpStatus') + '\n' +
-    extractFunction(settingsJs, 'shouldShowMcpStaleNote') + '\n' +
-    'return { deriveMcpStatus, shouldShowMcpStaleNote };';
-  const factory = new Function(body);
-  const built = factory();
-  deriveMcpStatus = built.deriveMcpStatus;
-  shouldShowMcpStaleNote = built.shouldShowMcpStaleNote;
-  ok(typeof deriveMcpStatus === 'function', 'deriveMcpStatus extracted as a function');
-  ok(typeof shouldShowMcpStaleNote === 'function', 'shouldShowMcpStaleNote extracted as a function');
-} catch (err) {
-  ok(false, `extraction did not throw (got: ${err.message})`);
-  process.exit(1);
-}
-
-section('§5  deriveMcpStatus() — the pill, unchanged in behaviour by this fix');
-
+section('§4  The pill and its reconciliation note are retired');
 {
-  const s = deriveMcpStatus({ installed: true, stale: false, claude_config_parse_error: false });
-  ok(s.connected === true, 'installed + not stale -> connected');
-  // v3.72.1 (truth audit F13): the word says what was checked — the saved
-  // config is current — not that a client connected.
-  ok(s.pillLabel === 'Configured', 'pillLabel "Configured"');
-  ok(s.pillLabel !== 'Connected', 'never "Connected": nothing here observed a client connecting');
-  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
-}
-{
-  const s = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
-  ok(s.connected === false, 'installed + stale -> NOT connected');
-  ok(s.pillLabel === 'Needs an update', 'pillLabel "Needs an update" — names no button (the Re-connect button is gone)');
-  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
-}
-{
-  const s = deriveMcpStatus({ installed: false, stale: false, claude_config_parse_error: false });
-  ok(s.connected === false, 'not installed -> not connected');
-  ok(s.pillLabel === 'Not connected', 'pillLabel "Not connected"');
-  ok(!('wizardLabel' in s), 'no wizardLabel: block 1 has one fixed button, "Install in your tools", and the wizard is retired');
-}
-{
-  const s = deriveMcpStatus({ installed: false, stale: false, claude_config_parse_error: true });
-  ok(s.unreadable === true, 'a parse error is reported as unreadable');
-  ok(s.connected === false, 'a parse error is never reported as connected');
-  ok(s.pillLabel === 'Config unreadable', 'pillLabel "Config unreadable" — not "Not connected", which would assert something unknown');
-}
-
-section('§6  shouldShowMcpStaleNote() — the note appears ONLY for the exact contradiction, never its neighbours');
-
-const okSelfTest = { ok: true, tool_count: 20 };
-const failedSelfTest = { ok: false, error: 'boom' };
-
-{
-  const status = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: true }, okSelfTest) === true,
-    'THE reported contradiction: installed + stale + a successful self-test -> note shown');
-}
-{
-  const status = deriveMcpStatus({ installed: true, stale: false, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: false }, okSelfTest) === false,
-    'connected (not stale) + successful self-test -> no note (nothing to reconcile)');
-}
-{
-  const status = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: true }, null) === false,
-    'stale, but self-test has not been run yet -> no note (nothing to contradict the pill yet)');
-}
-{
-  const status = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: true }, failedSelfTest) === false,
-    'stale + a FAILED self-test -> no note (the two already agree: something needs attention)');
-}
-{
-  const status = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: true }, { tool_count: 20 }) === false,
-    'stale + a self-test result with no explicit `ok:true` -> no note (never infer success)');
-}
-{
-  const status = deriveMcpStatus({ installed: false, stale: false, claude_config_parse_error: false });
-  ok(shouldShowMcpStaleNote(status, { installed: false, stale: false }, okSelfTest) === false,
-    'never installed at all -> no note (a different, already-clear state)');
-}
-{
-  // Defense in depth: the route only computes installed/stale inside its
-  // !parseError branch, so this combination should not occur in practice —
-  // but the note must not fire on it regardless, since "unreadable" is its
-  // own distinct, already-explained state.
-  const status = deriveMcpStatus({ installed: true, stale: true, claude_config_parse_error: true });
-  ok(shouldShowMcpStaleNote(status, { installed: true, stale: true }, okSelfTest) === false,
-    'an unreadable config never shows the reconciliation note, even if installed/stale were somehow both true');
-}
-
-section('§7  Wiring — renderMcp() actually consults shouldShowMcpStaleNote(), not a hardcoded value');
-
-// The DOM-touching renderMcp() cannot be extracted standalone (see the file
-// header's NOT ENFORCED note) so this is a source-level guard, same
-// limitation and same remedy test-next-provider-rows.js documents for
-// renderProviders(). It still catches the two obvious ways to silently
-// disconnect the fix: never calling the decision function, or calling it
-// but ignoring the result.
-{
+  ok(!/function deriveMcpStatus\s*\(/.test(settingsJs), 'deriveMcpStatus() is gone: no hard-coded "client: Claude Desktop" pill');
+  ok(!/function shouldShowMcpStaleNote\s*\(/.test(settingsJs), 'shouldShowMcpStaleNote() is gone');
   const renderMcpBody = extractFunction(settingsJs, 'renderMcp');
-  ok(/shouldShowMcpStaleNote\s*\(/.test(renderMcpBody), 'renderMcp() calls shouldShowMcpStaleNote()');
-  ok(/staleNoteHtml\s*=\s*shouldShowMcpStaleNote/.test(renderMcpBody), 'renderMcp() assigns staleNoteHtml FROM shouldShowMcpStaleNote()\'s result, not independently of it');
-  ok(/\+\s*staleNoteHtml\s*[;+]/.test(renderMcpBody) || /staleNoteHtml\s*[;+]/.test(renderMcpBody),
-    'renderMcp() actually concatenates staleNoteHtml into its returned markup');
-}
-{
-  ok(/\.settings-mcp-stale-note/.test(settingsCss), 'settings.css defines .settings-mcp-stale-note');
-  const ruleMatch = /\.settings-mcp-stale-note\s*\{([^}]*)\}/.exec(settingsCss);
-  const ruleBody = ruleMatch ? ruleMatch[1] : '';
-  ok(/border:[^;]*var\(--attention-text\)/.test(ruleBody) && /background:[^;]*var\(--attention-tint\)/.test(ruleBody),
-    '.settings-mcp-stale-note: border + tint carry the ATTENTION tone (same pattern as .settings-write-busy-note / .settings-activation-note)');
-  // Checked SEPARATELY from the div's own border above — a mutation that
-  // strips ONLY the svg rule's colour (leaving the div's border untouched)
-  // was verified, by mutation, to slip past a combined "div-or-svg" check:
-  // the div's own border still matches, so the combined regex stayed green
-  // while the icon silently lost its colour. Each carrier is now its own
-  // named assertion.
-  const svgRuleMatch = /\.settings-mcp-stale-note svg\s*\{([^}]*)\}/.exec(settingsCss);
-  const svgRuleBody = svgRuleMatch ? svgRuleMatch[1] : '';
-  ok(/color:\s*var\(--attention-text\)/.test(svgRuleBody),
-    '.settings-mcp-stale-note svg: the icon ITSELF carries --attention-text (checked independently of the div\'s border)');
+  ok(!/settings-mcp-stale-note/.test(renderMcpBody) && !/Install in your tools/.test(renderMcpBody),
+    'renderMcp() builds no stale-config note and names no "Install in your tools" button');
+  ok(/renderConnectApps\s*\(\)/.test(renderMcpBody), 'CONTROL: renderMcp() still composes block 1 (renderConnectApps)');
 }
 
 console.log(`\n────────────────────────────────────────────────────────────`);

@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * test-next-setup-machine.js — v3.77.0. Settings › MCP bridge › 5 "Tools on
- * this Mac", through the REAL DOM-free builders (views/setup-machine.js),
- * fed payloads of GET /api/setup/machine's shape.
+ * test-next-setup-machine.js — v3.77.0, re-cut v3.88.0. The EVIDENCE under
+ * each agent app's row in Settings › MCP bridge › 1 "Connect your agent apps"
+ * (views/setup-machine.js renderAppDetail), fed payloads of GET
+ * /api/setup/machine's shape. The row itself — its verdict and its unfolded
+ * warnings — is scripts/test-next-mcp-install.js's.
  *
  * Exists to stop:
- *   §1 a running-old-bridge warning behind a chevron (it is a loud entry,
- *      outside every tool fold).
- *   §2 a tool's verdict disagreeing with its cells (N to fix = its fix cells).
- *   §3 the wrong action: Copy entry only where the bridge is not configured;
- *      Reveal only for a file that exists; the two skill zips only where the
- *      skills cannot be checked here and this app carries a copy.
- *   §4 an observation stated more strongly than it was made (Antigravity's
- *      user-level hook file: "not seen used", never "not loaded").
- *   §5 unescaped payload text; the privacy sentence missing.
+ *   §1 the disclosure naming the wrong contents ("Files, skills and hooks"
+ *      when it holds no hooks), or a group shown for something the app lacks;
+ *   §2 a verdict disagreeing with its cells (N to fix = its fix cells);
+ *   §3 the wrong action: Reveal only for a file that exists (and only on
+ *      macOS); the two skill zips only where skills cannot be checked here;
+ *   §4 an observation stated more strongly than it was made;
+ *   §5 unescaped payload text.
  */
 let passed = 0;
 let failed = 0;
@@ -54,46 +54,57 @@ const payload = () => ({
       hooks: { state: 'none', word: 'hooks cannot carry the ask', files: [] } },
   ],
 });
-function folds(html) { return [...html.matchAll(/<details\b[^>]*>([\s\S]*?)<\/details>/g)].map((m) => m[1]); }
+const D = (h, data = payload(), opts = {}) => M.renderAppDetail(h, data, opts);
+const byId = (id, d = payload()) => d.harnesses.find((h) => h.id === id);
 
-section('§1  the old-bridge warning is loud, outside the folds');
+section('§1  what the disclosure holds, and says it holds');
 {
-  const html = M.renderToolsOnThisMacBody({ data: payload() }, {});
-  ok(/class="cur-mon-loud[^"]*"[^>]*>1 bridge started before the code on disk is still running\. <strong>Quit and reopen/.test(html), 'loud entry with the remedy');
-  ok(folds(html).every((f) => !f.includes('cur-mon-loud')), '…not inside any tool fold');
-  ok(folds(html).length === 3, 'one fold per tool');
-  ok(/two installs on this computer, so two names/.test(html), 'the identity split is said');
+  const cc = D(byId('claude-code'));
+  ok(cc.label === 'Files, skills and hooks', 'Claude Code: files, skills (held by the account) and hooks', cc.label);
+  const ag = D(byId('antigravity'));
+  ok(ag.label === 'Files, skills and hooks' && /settings-setup-cap">MCP entry</.test(ag.html) && /settings-setup-cap">Skills</.test(ag.html) && /settings-setup-cap">Hooks</.test(ag.html),
+    'Antigravity: the three groups, captioned MCP entry · Skills · Hooks');
+  const desk = { id: 'claude-desktop', label: 'Claude Desktop', files: [], bridge: { state: 'ok' },
+    skills: { state: 'cant-check', word: 'can’t check here', note: 'held by your Claude account', installed: [] },
+    hooks: { state: 'none', word: 'no hook mechanism', format: 'none', files: [] } };
+  const dd = D(desk);
+  ok(dd.label === 'Files and skills' && !/settings-setup-cap">Hooks</.test(dd.html), 'an app with no hook mechanism: "Files and skills", no Hooks group');
+  const cline = { id: 'cline', label: 'Cline', files: [], bridge: { state: 'none' },
+    skills: { state: 'cant-check', word: 'can’t check here', note: 'no known skill folder for this tool', installed: [] },
+    hooks: { state: 'none', word: 'not wired (optional)', format: 'unverified', files: [] } };
+  ok(D(cline).label === 'Files and hooks' && !/settings-setup-cap">Skills</.test(D(cline).html), 'an app with no known skill folder: no Skills group');
+  ok(!/<details/.test(ag.html) && !/cur-mon-loud/.test(ag.html), 'the evidence holds no fold of its own and no warning — a warning is the row’s, unfolded');
 }
 
 section('§2  verdicts');
 {
   const [cc, ag, oc] = payload().harnesses;
   ok(M.toolVerdict(cc).word === 'configured', 'Claude Code configured via another app\'s file: configured');
-  ok(M.toolVerdict(ag).word === '2 to fix' && M.toolVerdict(ag).state === 'fix', 'Antigravity: bridge + skills = 2 to fix (hooks never count)');
+  ok(M.toolVerdict(ag).word === '2 to fix' && M.toolVerdict(ag).state === 'fix' && M.toolVerdict(ag).fixes === 2, 'Antigravity: bridge + skills = 2 to fix (hooks never count)');
   ok(M.toolVerdict(oc).word === 'no entry found', 'OpenCode: its own words');
-  const html = M.renderToolsOnThisMacBody({ data: payload() }, {});
-  ok(/class="cur-mon-state[^"]*"><span class="cur-mon-state-dot" aria-hidden="true"><\/span>2 to fix</.test(html), 'the monitor head counts the fix cells: 2 to fix', html.slice(0, 400));
 }
 
 section('§3  actions');
 {
-  const html = M.renderToolsOnThisMacBody({ data: payload() }, { 'tool-opencode': true, 'tool-antigravity': true, 'tool-claude-code': true });
-  const f = folds(html);
-  ok(/data-setup-act="copy-entry" data-tool="opencode"/.test(f[2]), 'OpenCode (not configured): Copy entry');
-  ok(!/copy-entry/.test(f[0]), 'Claude Code (configured): no Copy entry');
-  ok(!/data-path="\/h\/\.config\/opencode\/opencode\.json"/.test(f[2]), 'no Reveal for a file that is absent');
-  ok(/data-path="\/h\/\.config\/opencode\/opencode\.jsonc"/.test(f[2]) && /read with comments allowed/.test(f[2]), 'Reveal for the .jsonc, which was read with comments allowed');
-  ok(/href="\/api\/setup\/skills\/my-curator\.zip" download/.test(f[0]) && /curator-continuity\.zip/.test(f[0]), 'Claude (can\'t check here, app carries a copy): the two zips');
-  const noCopy = M.renderToolsOnThisMacBody({ data: { ...payload(), skillsShipped: false } }, { 'tool-claude-code': true });
-  ok(!/\.zip/.test(noCopy), 'no zips when this app carries no copy');
-  ok(/outdated — differs: SKILL\.md/.test(f[1]), 'a stale skill names the file that differs');
-  ok(/cur-setup-st-none">present · no my-curator entry/.test(f[0]), 'Claude Code configured via another file: its own entry-less file is NOT inked to fix');
-  ok(/cur-setup-st-fix">present · no my-curator entry/.test(f[1]), 'Antigravity "not in 1 of 2 files": the entry-less file IS inked to fix');
+  const d = payload();
+  const oc = D(byId('opencode', d), d).html;
+  const cc = D(byId('claude-code', d), d).html;
+  const ag = D(byId('antigravity', d), d).html;
+  ok(!/data-path="\/h\/\.config\/opencode\/opencode\.json"/.test(oc), 'no Reveal for a file that is absent');
+  ok(/data-path="\/h\/\.config\/opencode\/opencode\.jsonc"/.test(oc) && /read with comments allowed/.test(oc), 'Reveal for the .jsonc, which was read with comments allowed');
+  ok(/href="\/api\/setup\/skills\/my-curator\.zip" download/.test(cc) && /curator-continuity\.zip/.test(cc), 'Claude (can\'t check here, app carries a copy): the two zips');
+  ok(!/\.zip/.test(D(byId('claude-code'), { ...payload(), skillsShipped: false }).html), 'no zips when this app carries no copy');
+  ok(/older — SKILL\.md differs/.test(ag), 'a stale skill names the file that differs ("older — SKILL.md differs")', ag.match(/older[^<]*/)?.[0]);
+  ok(/cur-setup-st-none">present · no my-curator entry/.test(cc), 'Claude Code configured via another file: its own entry-less file is NOT inked to fix');
+  ok(/cur-setup-st-fix">present · no my-curator entry/.test(ag), 'Antigravity "not in 1 of 2 files": the entry-less file IS inked to fix');
+  ok(/another app’s file, read for this app/.test(cc), 'the readAlso file says whose file it is');
+  ok(/data-setup-act="reveal"/.test(ag) && !/data-setup-act="reveal"/.test(D(byId('antigravity'), payload(), { platform: 'win32' }).html)
+    && !/data-setup-act="reveal"/.test(D(byId('antigravity'), payload(), { platform: 'linux' }).html), 'Reveal (open -R) on macOS only — never a dead button on Windows or Linux');
 }
 
 section('§4  observations, no stronger than made');
 {
-  const html = M.renderToolsOnThisMacBody({ data: payload() }, { 'tool-antigravity': true });
+  const html = D(byId('antigravity')).html;
   ok(/ran once \(2026-09-26\) but its injection was not seen used/.test(html) && !/not loaded|ignored/i.test(html), 'the user hook file: "not seen used", never "not loaded"');
   ok(/stop hook observed firing .* — did not ask: rung 4/.test(html) && /start hook observed firing/.test(html), 'the hook activity log\'s evidence is shown');
 }
@@ -102,38 +113,33 @@ section('§4b v3.78.0 — each config file\'s own status, in words, beside its p
 {
   const d = payload();
   const ag = d.harnesses[1];
-  // One file names my-curator, the other is empty/invalid/unopenable: the
-  // tool works, so the bad file is a NOTE (not inked to fix) — contract §1.
   ag.bridge = { state: 'ok', word: 'configured' };
   const words = {};
   for (const [status, want] of [['empty', 'empty'], ['invalid', 'not valid JSON'], ['unopenable', 'can’t open'], ['missing', 'missing']]) {
     ag.files[1] = { ...ag.files[1], status, present: status !== 'missing' && status !== 'unopenable', named: false };
-    const f = folds(M.renderToolsOnThisMacBody({ data: d }, { 'tool-antigravity': true }))[1];
+    const f = D(ag, d).html;
     words[status] = f;
     ok(new RegExp('~/\\.gemini/antigravity/mcp_config\\.json</span><span><span class="cur-setup-st cur-setup-st-(q|none)">' + want + '<').test(f),
-      status + ': the file\'s path, then "' + want + '", not inked to fix while another file names my-curator', f.slice(f.indexOf('antigravity/mcp_config'), f.indexOf('antigravity/mcp_config') + 300));
+      status + ': the file\'s path, then "' + want + '", not inked to fix while another file names my-curator');
   }
-  ok(/is empty — another file of this tool names my-curator, so the tool is not affected/.test(words.empty), 'the note says why it is not a to-fix, naming the file');
+  ok(/is empty — another file of this app names my-curator, so the app is not affected/.test(words.empty), 'the note says why it is not a to-fix, naming the file');
   ok(/data-path="\/h\/\.gemini\/antigravity\/mcp_config\.json"/.test(words.unopenable), 'a file that cannot be opened is still revealable');
-  // The only file that could carry the entry: the tool is to fix, and so is the file.
   ag.bridge = { state: 'fix', word: 'can’t read its config' };
   ag.files[1] = { ...ag.files[1], status: 'unopenable', present: true };
-  const f = folds(M.renderToolsOnThisMacBody({ data: d }, { 'tool-antigravity': true }))[1];
-  ok(/cur-setup-st-fix">can’t open</.test(f) && !/so the tool is not affected/.test(f), 'when the tool itself is to fix, the unopenable file is inked to fix');
+  const f = D(ag, d).html;
+  ok(/cur-setup-st-fix">can’t open</.test(f) && !/so the app is not affected/.test(f), 'when the app itself is to fix, the unopenable file is inked to fix');
   ok(M.FILE_STATUS_WORDS.invalid === 'not valid JSON' && Object.isFrozen(M.FILE_STATUS_WORDS), 'the four words, frozen');
 }
 
-section('§5  escaping and privacy');
+section('§5  escaping, and the head');
 {
   const d = payload();
-  d.harnesses[0].label = '<img src=x onerror=1>';
   d.harnesses[1].files[0].display = '<script>x</script>';
-  const html = M.renderToolsOnThisMacBody({ data: d }, { 'tool-antigravity': true });
-  ok(!/<img|<script>/.test(html), 'no payload string becomes a tag');
-  ok(/Only whether each file names my-curator is read — never its contents/.test(html), 'the privacy sentence is on the page');
-  ok(/Checking this computer/.test(M.renderToolsOnThisMacBody(null)), 'loading state');
-  ok(/role="alert">Could not check this computer: boom/.test(M.renderToolsOnThisMacBody({ error: 'boom' })), 'error state');
-  ok(/data-setup-act="machine-check"/.test(M.toolsOnThisMacHead({ data: payload() })), 'Check again');
+  d.harnesses[1].skills.installed[0].dirDisplay = '<img src=x onerror=1>';
+  const html = D(d.harnesses[1], d).html;
+  ok(!/<img|<script>/.test(html) && /&lt;script&gt;/.test(html), 'no payload string becomes a tag; the text is still shown');
+  ok(/data-setup-act="machine-check"/.test(M.checkHead({ data: payload() })) && /checked/.test(M.checkHead({ data: payload() })), 'the head: "checked … · Check again"');
+  ok(/disabled/.test(M.checkHead({ data: payload(), loading: true })), 'Check again is disabled while a check runs');
 }
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-machine: ${passed} passed, ${failed} failed`);

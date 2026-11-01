@@ -83,13 +83,14 @@ const FNS = ['browseBandPass', 'formatIsoDay', 'formatSyncedAt', 'formatModelPri
   'priceAsOfText', 'livePriceText', 'renderQuickSummary', 'markSystemCheckStale', 'setLiveRunsOn',
   'openLiveConfirm', 'windowDaysWords', 'logWindowWords', 'renderAcrossProjectsBody', 'acrossProjectsStamp',
   'refreshMcpUsage', 'onSaveDefaultDomain', 'scanCeilingHint', 'formatTokenCount', 'renderHealthLimits',
-  'deriveMcpStatus'];
+  'adaptProjects', 'acrossProjectsLede', 'ageSecondsOf'];
 const CONSTS = ['MODEL_PRICE_BANDS', 'SETTINGS_SECTIONS', 'ACROSS_PROJECTS_MAX_ROWS',
   'SCAN_LIMIT_REFUSAL', 'MCP_DOMAIN_CONSEQUENCE'];
 const state = {};
 const H = { fetches: [], renders: 0, acrossLoads: [], fetchImpl: null };
 const INJECT = {
   escapeHtml, state, formatPricePerM,
+  formatAge: (await import('../src/public/next/shared/age.js')).formatAge,
   formatUsdHonest: (await import('../src/public/next/shared/format-usd.js')).formatUsdHonest,
   icon: (n) => `<i data-icon="${n}"></i>`,
   render: () => { H.renders++; },
@@ -230,89 +231,72 @@ section('§4. The Verify confirm re-reads its model; old check results say they 
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-section('§5. Across projects states the windows it was sent, and moves with the saves [F9, F10, tray F6]');
+section('§5. Across projects states the windows it was sent, and moves with the saves [F9, F10, tray F6; v3.88.0 saves per project]');
 {
   const mk = (windowDays, pulse) => ({
-    byProject: [{ domain: 'projects', project: 'curator', sessions: 3, sessionsSaved: 2 },
-      { domain: 'projects', project: 'idle', sessions: 0, sessionsSaved: 0 }],
+    byProject: [{ domain: 'projects', project: 'curator', sessions: 3, sessionsSaved: 2, saves: 4, lastSaveAt: '2026-09-25T09:00:00Z' },
+      { domain: 'projects', project: 'idle', sessions: 0, sessionsSaved: 0, saves: 0, lastSaveAt: null }],
     window: { windowDays, logPresent: true, busiestSaved: 2 },
     savePulse: pulse,
   });
   Object.assign(state, { defaultDomainInfo: { domains: ['projects'] }, mcpProjectsError: null });
-  state.mcpProjects = mk(14, { events: 3, windowSeconds: 3 * 86400, lowerBound: false, coversWholeWindow: true, oldestEventAt: null });
+  state.mcpProjects = mk(14, { events: 3, windowSeconds: 3 * 86400, lowerBound: false, coversWholeWindow: true, oldestEventAt: null,
+    byTool: [{ id: 'claude-code', label: 'Claude Code', events: 3, lastSeenAt: null }] });
   const a = S.renderAcrossProjectsBody();
-  ok(/label="Connections that saved, per project, last 14 days"/.test(a),
-    '★ the window is the one the ROUTE sent (14 here), not a typed 30 [F10]');
-  ok(/sub="no connection, last 14 days"/.test(a), '…in the idle row too');
-  ok(/key="saves, last 3 days"/.test(a), '★ …and the pulse window from `windowSeconds` (3 days here), not a typed 7');
+  ok(/label="Handoff saves per project, last 14 days"/.test(a), '★ the window is the one the ROUTE sent (14 here), not a typed 30 [F10]', a);
+  ok(/key="projects \/ curator" value="4"/.test(a), '★ the figure is the project’s handoff SAVES (4), not its connections (the owner’s decision 5)');
+  ok(/key="no save" value="projects \/ idle"/.test(a), 'a project with no save is named on the one "no save" line');
+  ok(/<note>Handoff saves, last 3 days\./.test(a), '★ …and the pulse window from `windowSeconds` (3 days here), not a typed 7', a);
   ok(!/30 days|7 days/.test(a), 'no typed 30 or 7 survives in the body');
   state.mcpProjects = mk(30, { events: 2, windowSeconds: 604800, lowerBound: true, coversWholeWindow: false,
-    oldestEventAt: '2026-09-22T10:00:00.000Z' });
+    oldestEventAt: '2026-09-22T10:00:00.000Z', byTool: [{ id: 'claude-code', label: 'Claude Code', events: 2, lastSeenAt: null }] });
   const b = S.renderAcrossProjectsBody();
-  ok(/key="saves, last 7 days \(records begin [^"]*2026[^"]*\)"/.test(b),
-    '★ a store younger than the window says where its record begins, rather than claiming a whole observed week');
-  ok(/value="at least 2"/.test(b), 'CONTROL: the lower-bound disclosure is unchanged');
+  ok(/<note>Handoff saves, last 7 days \(records begin 22 Sep\)\./.test(b),
+    '★ a store younger than the window says where its record begins, rather than claiming a whole observed week', b);
+  ok(/key="Claude Code" value="2\+"/.test(b), 'CONTROL: the lower-bound disclosure is "+" on the number');
   eq(S.windowDaysWords(undefined), '', 'an absent window drops the clause — never invented');
 
-  // ── v3.74.0 (D5): THE WINDOW THE LOG REALLY COVERS ────────────────────
-  // The route asks for 30 days; a log that began five days ago cannot
-  // support that. The label and the idle row state the span the log covers
-  // and the day it begins, from the route's captureWindowFacts.
   const begins = new Date(2026, 8, 20, 9, 0, 0).toISOString();          // 20 Sep, local
   state.mcpProjects = { ...mk(30, null),
-    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
-      windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins } };
+    window: { windowDays: 30, logPresent: true, busiestSaved: 2, windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins } };
   const young = S.renderAcrossProjectsBody();
-  ok(/label="Connections that saved, per project, last 5 days — the log begins 20 Sep"/.test(young),
+  ok(/label="Handoff saves per project, last 5 days — the log begins 20 Sep"/.test(young),
     '★ a log younger than the window states its true span and where it begins, never "last 30 days"', young);
-  ok(/sub="no connection, last 5 days — the log begins 20 Sep"/.test(young), '…in the idle row too');
-  ok(/<note>Counted over the last 5 days — the log begins 20 Sep\./.test(young),
-    '★ …and in a VISIBLE line — the monitor label is only an accessible name', young);
   ok(!/30 days/.test(young), '…and no "30 days" survives anywhere in the body');
-  // ── v3.76.0 (truth audit F12): THE NOTE SITS UNDER THE READING IT DESCRIBES ──
-  // The connections are counted from the usage log over "last 5 days — the
-  // log begins 20 Sep"; the saves are counted from the handoff journals over
-  // 7 days. One note under both read as if it described the saves.
-  state.mcpProjects = { ...mk(30, { events: 12, windowSeconds: 604800, lowerBound: false, coversWholeWindow: true,
-      byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: null }],
-      byToolFloor: false, byToolNote: null, eventsWithoutTool: 0 }),
-    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
-      windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins } };
-  const split = S.renderAcrossProjectsBody();
-  const mons = split.split('<monitor ').slice(1);
-  eq(mons.length, 2, '★ two readings, two monitors: connections, then saves [F12]', split);
-  ok(/<note>Counted over the last 5 days — the log begins 20 Sep\./.test(mons[0] || '')
-     && /key="projects \/ curator"|key="curator"/.test(mons[0] || ''),
-    '★ the window note is under the CONNECTIONS it describes [F12]', mons[0]);
-  ok(/key="saves, last 7 days"/.test(mons[1] || '') && !/Counted over|the log begins/.test(mons[1] || ''),
-    '★ …and NOT under the journal-based saves lines, which are counted over their own 7 days [F12]', mons[1]);
-  ok(!/key="saves/.test(mons[0] || ''), '…and no saves line sits in the connections monitor');
-  state.mcpProjects = { ...mk(30, null),
-    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
-      windowCovered: true, windowDaysCovered: 30, logStartsAt: '2026-08-01T00:00:00.000Z' } };
-  ok(/label="Connections that saved, per project, last 30 days"/.test(S.renderAcrossProjectsBody()),
-    'CONTROL: a log that covers the window says the window asked for');
+  ok(S.acrossProjectsLede() === 'Last 5 days — the log begins 20 Sep: which projects’ agents saved a handoff, and when.',
+    '★ the lede carries the window the payload covers', S.acrossProjectsLede());
+  state.mcpProjects = { ...mk(30, null), window: { windowDays: 30, logPresent: true, busiestSaved: 2, windowCovered: true } };
+  eq(S.acrossProjectsLede(), 'Last 30 days: which projects’ agents saved a handoff, and when.', 'CONTROL: a covered window reads "Last 30 days"');
+  state.mcpProjects = null;
+  eq(S.acrossProjectsLede(), 'Which projects’ agents saved a handoff, and when.', 'before the reading lands the lede names no window at all');
   eq(S.logWindowWords({ windowDays: 30, windowCovered: false, windowDaysCovered: 0.4, logStartsAt: begins }),
     'under a day — the log begins 20 Sep', 'a log begun today says "under a day", never "last 0 days"');
-  ok(!/\bsessions?\b/.test(young.replace(/<[^>]+>/g, ' ')), '★ the body never calls a bridge run a "session" (D5)', young);
+  state.mcpProjects = { ...mk(30, null), window: { windowDays: 30, logPresent: true } };
+  ok(!/\bsessions?\b/.test(S.renderAcrossProjectsBody().replace(/<[^>]+>/g, ' ')), '★ the body never calls a bridge run a "session" (D5)');
 
-  // ── v3.74.0 (parity): SAVES BY TOOL, the widget's lanes ────────────────
+  // An older server (no `saves`): the connections that saved, said as such.
+  state.mcpProjects = { byProject: [{ domain: 'projects', project: 'curator', sessions: 3, sessionsSaved: 2, lastSessionAt: '2026-09-25T09:00:00Z' }],
+    window: { windowDays: 30, logPresent: true }, savePulse: null };
+  ok(/sub="last connection /.test(S.renderAcrossProjectsBody()) && !/last save/.test(S.renderAcrossProjectsBody()),
+    '★ an older server’s fallback says "last connection", never "last save"');
+
+  // ── SAVES PER AGENT APP, the widget's lanes ──────────────────────────
   state.mcpProjects = mk(30, { events: 12, windowSeconds: 604800, lowerBound: false, coversWholeWindow: true,
     byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: '2026-09-25T09:00:00Z' },
       { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: new Date(2026, 8, 1, 12).toISOString() }],
     byToolFloor: false, byToolNote: null, eventsWithoutTool: 0 });
   const tools = S.renderAcrossProjectsBody();
-  ok(/key="by Claude Code" value="12"/.test(tools), '★ one line per tool, with its count', tools);
-  ok(/key="by Antigravity" value="none" sub="last seen 1 Sep"/.test(tools),
-    '★ a tool with no save in the window reads "none" and when it was LAST SEEN — never "last save"', tools);
-  state.mcpProjects = mk(30, { events: 12, windowSeconds: 604800, lowerBound: true, coversWholeWindow: true,
-    byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: null }],
-    byToolFloor: true, byToolNote: 'At least these counts: 2 journals were read only from the newest 16 KB.',
-    eventsWithoutTool: 1 });
+  ok(/key="Claude Code" value="12"/.test(tools), '★ one line per agent app, with its count', tools);
+  ok(/key="Antigravity" value="none" sub="last save 1 Sep"/.test(tools), '★ an app with no save in the window reads "none" and its last save', tools);
+  ok(!/key="all agent apps"/.test(tools), 'no total while only one app saved — it would repeat that app');
+  state.mcpProjects = mk(30, { events: 13, windowSeconds: 604800, lowerBound: true, capped: true, coversWholeWindow: true,
+    byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: null }, { id: 'antigravity', label: 'Antigravity', events: 1, lastSeenAt: null }],
+    byToolFloor: true, byToolNote: 'At least these counts: 2 journals were read only from the newest 16 KB.', eventsWithoutTool: 1 });
   const floor = S.renderAcrossProjectsBody();
-  ok(/key="by Claude Code" value="at least 12"/.test(floor), '★ a floor reads "at least" on each tool line');
-  ok(/<note>[^<]*At least these counts: 2 journals/.test(floor), '…and the data layer\'s own note says why');
-  ok(/key="named no tool" value="1"/.test(floor), 'saves that named no tool are counted, not dropped');
+  ok(/key="Claude Code" value="12\+"/.test(floor), '★ a floor reads "12+" — from the flag, never from the prose');
+  ok(/“\+” means at least: long journals are read from their newest part only\./.test(floor) && !/16 KB/.test(floor), '…and one plain sentence says what "+" means');
+  ok(/key="all agent apps" value="13\+"/.test(floor), 'two apps saved: the total line appears');
+  ok(/key="named no app" value="1"/.test(floor), 'saves that named no app are counted, not dropped');
 
   // F9: the 30 s tick re-reads block ④ when the save stamp moved, not otherwise.
   H.acrossLoads.length = 0;
@@ -320,17 +304,15 @@ section('§5. Across projects states the windows it was sent, and moves with the
   state.mcpUsage = { sessions: { lastSaveAt: '2026-09-25T09:00:00Z', lastBootstrapAt: 'b1' }, tools: [] };
   state.mcpUsageSig = 'old';
   H.usageVerdict = { ok: true, data: { sessions: { lastSaveAt: '2026-09-25T09:00:00Z', lastBootstrapAt: 'b1' }, tools: [1] } };
+  state.mcpProjects = mk(30, null);
   await S.refreshMcpUsage(1);
   eq(H.acrossLoads.length, 0, 'a tick where only a tool count moved does not re-read Across projects');
   H.usageVerdict = { ok: true, data: { sessions: { lastSaveAt: '2026-09-25T09:05:00Z', lastBootstrapAt: 'b1' }, tools: [1] } };
   await S.refreshMcpUsage(1);
   eq(H.acrossLoads.length, 1, '★ a tick where an agent SAVED re-reads Across projects on the same tick [F9]');
   ok(H.acrossLoads[0] && H.acrossLoads[0].bodyOnly === true, '…repainting its body only, like block ③');
-  ok(!/last 30 days/.test(extractFunction(settings, 'renderAcrossProjects')), 'the lede carries no typed window');
+  ok(!/last 30 days/.test(extractFunction(settings, 'acrossProjectsLede')), 'the lede carries no typed window');
 
-  // The ⓘ is static prose (shared/explainers.js, not this package's file), so
-  // its two windows are PINNED to the constants the route counts with: a
-  // change to either window turns this red until the prose moves with it.
   const { TRAY_CAPTURE_WINDOW_DAYS, PULSE_WINDOW_SECONDS } = await import('../src/brain/tray-summary.js');
   const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
   const xp = JSON.stringify(EXPLAINERS['settings.mcp-across'] || {});
@@ -368,8 +350,10 @@ section('§7. The MCP pill and the providers subtitle say what is true [F12, F13
   // writer count now, so the thing to guard is that nothing reintroduces a stale one.
   ok(!/\b(22|24) tools\b|\b17 that read\b/.test(settings.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')), 'no stale tool-count sentence in settings.js [F12]');
 
-  const s = S.deriveMcpStatus({ installed: true, stale: false, claude_config_parse_error: false });
-  eq(s.pillLabel, 'Configured', '★ a current saved config reads "Configured", not "Connected" — no client was observed [F13]');
+  // F13's pill ("Configured", never "Connected") is retired with block 1's hard-coded Claude Desktop monitor (v3.88.0):
+  // each agent app's row now says its own status, and "Bridge answers" says only what the self-test observed.
+  ok(!/function deriveMcpStatus\s*\(/.test(settings) && !/'Connected'/.test(extractFunction(settings, 'renderSelfTestResult')),
+    '★ no pill claims a client "Connected"; "Bridge answers" reports only the self-test [F13]');
 
   const prov = S.SETTINGS_SECTIONS.find(([id]) => id === 'providers');
   ok(prov && !/local/i.test(prov[2]), '★ the Providers subtitle advertises no "local" provider — none exists [F14]');

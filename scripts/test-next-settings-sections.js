@@ -176,14 +176,16 @@ const REAL = [
   extractFunction(src, 'settingsBlock'),
   // (v3.71.1: `infoMark` is gone from settings.js; the REAL explainer kit is
   // injected in lift() instead — see `explainerMark` there.)
-  extractFunction(src, 'deriveMcpStatus'),
-  extractFunction(src, 'shouldShowMcpStaleNote'),
-  // v3.64.0. Lifted REAL for the same reason its two neighbours are: the
-  // bridge-process note fires from a real decision function, and a stub would
-  // make any assertion about it an assertion about this file's fixture. With
-  // no `bridge_processes` on the fixture payload it correctly renders nothing,
-  // which is also the arm that proves an older server's payload is survivable.
-  extractFunction(src, 'deriveStaleBridgeNote'),
+  // v3.88.0 — block ①, "Connect your agent apps", lifted REAL: the rows come
+  // from the real DOM-free builders (views/mcp-install.js, injected below), so
+  // a warning asserted here is the warning the page ships.
+  extractFunction(src, 'installPlatform'),
+  extractFunction(src, 'installRevealPaths'),
+  extractFunction(src, 'installMachineFiles'),
+  extractFunction(src, 'currentBridgeFacts'),
+  extractFunction(src, 'installWords'),
+  extractFunction(src, 'lastSelfTest'),
+  extractFunction(src, 'renderConnectApps'),
   extractFunction(src, 'installUpdateStyle'),
   extractFunction(src, 'renderTextSize'),
   extractFunction(src, 'renderBackgroundMode'),
@@ -193,11 +195,13 @@ const REAL = [
   // and G3b measures the gap above its body — both of which `settingsBlock`
   // emits from arguments these functions supply.
   extractFunction(src, 'ageSecondsOf'),
-  extractFunction(src, 'ageMarkHtml'),
   extractFunction(src, 'usageWindowWords'),
-  extractFunction(src, 'renderToolTile'),
-  extractFunction(src, 'renderToolGroup'),
-  extractFunction(src, 'renderSessionStrip'),
+  extractFunction(src, 'agentReading'),
+  extractFunction(src, 'tickedAgeHtml'),
+  extractFunction(src, 'sessionLine'),
+  extractFunction(src, 'lastExerciseRun'),
+  extractFunction(src, 'renderExerciseOutcome'),
+  extractFunction(src, 'renderExerciseRunner'),
   extractFunction(src, 'renderToolMapBody'),
   extractFunction(src, 'renderToolMap'),
   // v3.72.1 (truth audit F7): the scan-limits hint reads the default and its
@@ -212,10 +216,18 @@ const SCAN_LIMIT_REFUSAL_REAL = new Function(
 
 const { formatUsdHonest: FORMAT_USD_HONEST } = await import('../src/public/next/shared/format-usd.js');
 
+const MI = await import('../src/public/next/views/mcp-install.js');
+const SM = await import('../src/public/next/views/setup-machine.js');
+
 function baseState() {
   return {
     mcpError: null,
-    mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', installed: true, stale: false },
+    mcp: { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', installed: true, stale: false, domains_dir_exists: true, mcp_server_exists: true },
+    setupMachine: null, setupMachineFolds: {}, setupMachineCopied: null, selfTestAt: null,
+    mcpInstall: { status: { data: { platform: 'darwin', writable: true, notFound: [], manualSnippets: {},
+      tools: [{ id: 'claude-desktop', label: 'Claude Desktop', status: 'connected', installer: 'file',
+        running: { checked: true, running: false }, files: [{ display: '~/c.json', state: 'connected' }] }] } },
+      ticks: {}, plan: null, results: null, busy: null, error: null, copied: null },
     selfTest: null, selfTestLoading: false, configSnippetOpen: false, configSnippet: null,
     copyFeedback: null,
     defaultDomainInfo: { domains: ['alpha', 'beta'], defaultDomain: 'alpha' },
@@ -273,6 +285,14 @@ function lift(name, state, over) {
     renderSelfTestResult: () =>
       '<div class="settings-check-results"><div class="check-row check-ok">Bridge responds</div></div>',
     renderListboxHtml: () => '<LISTBOX/>',
+    // v3.88.0 — block ①'s real builders and adapters.
+    checkHead: SM.checkHead,
+    renderInstallPanel: MI.renderInstallPanel,
+    adaptMachine: MI.adaptMachine,
+    adaptBridges: MI.adaptBridges,
+    tildePath: MI.tildePath,
+    machineWord: MI.machineWord,
+    AGENT_USE_TOP: 5,
     pendingListboxes: [],
     MCP_GUIDE_URL: 'https://example.invalid/guide',
     myMountToken: 1,
@@ -616,16 +636,16 @@ function insideHiddenContainer(html, marker) {
   return hiddenDepths.length > 0;
 }
 {
-  const stale = baseState();
-  stale.mcp = { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', installed: true, stale: true,
-                claude_config_parse_error: false };
-  stale.selfTest = { ok: true, tool_count: 22, tool_names: ['get_index'], domains: ['alpha'] };
-  const html = run('renderMcp', stale);
-  ok(html.includes('settings-mcp-stale-note'),
-    'renderMcp: a stale saved config plus a PASSING self-test renders the reconciliation note');
-  ok(html.includes('still launching the'),
-    '…with the sentence that explains the contradiction, not just a class name');
-  ok(insideHiddenContainer(html, 'settings-mcp-stale-note') === false,
+  // v3.88.0: the saved-config "reconciliation note" is retired (truth audit T8);
+  // the finding that must never fold now is an app's WARNING, on its row.
+  const diff = baseState();
+  diff.mcp = { ...diff.mcp, bridge_processes: { checked: true, running: 1, stale: [], current: { version: '3.88.0', toolCount: 24 },
+    bridges: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), app: { id: 'claude-desktop', label: 'Claude Desktop' },
+      version: '3.86.0', tools: 'different', notice: 'warn', remedy: 'Quit Claude Desktop and reopen it.' }] } };
+  const html = run('renderMcp', diff);
+  ok(html.includes('data-mcpi-warn="bridge"') && html.includes('is still using My Curator 3.86.0'),
+    'renderMcp: an open bridge whose tools changed renders a warning on its app’s row');
+  ok(insideHiddenContainer(html, 'is still using My Curator') === false,
     '…and it is NOT inside any hidden container or ⓘ fold panel');
   ok(insideHiddenContainer(html, 'ChatGPT') !== false,
     'CONTROL: the ChatGPT sentence IS inside the fold — so the detector can tell the two apart');
@@ -760,86 +780,54 @@ function linesBlockOf(html) {
 }
 
 {
-  const html = run('renderMcp', baseState());
-  ok(html.includes('cur-mon'), 'renderMcp: the connection strip is a MONITOR, not a hand-built status card');
-  // v3.72.1 (truth audit F13): the pill says "Configured" — the saved config
-  // is current — not "Connected", which nothing here observes.
-  ok(html.includes('cur-mon-state') && html.includes('Configured'),
-    '\u2026whose head word is the pill\u2019s own label');
-  ok(/cur-mon-state cur-mon-ok/.test(html),
-    '\u2026carrying the tone deriveMcpStatus derived (connected \u2192 ok)');
-  ok(html.includes('my-curator') && html.includes('/tmp/d'),
-    '\u2026and the server name and domains folder are its lines');
-  ok(!html.includes('status-pill') && !html.includes('mcp-path-line'),
-    '\u2026and neither retired class name is written any more');
-}
-{
-  const off = baseState();
-  off.mcp = { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', installed: false, stale: false };
-  const html = run('renderMcp', off);
-  ok(/cur-mon-state cur-mon-quiet/.test(html) && html.includes('Not connected'),
-    'a bridge nobody has set up is QUIET, never warn \u2014 an amber mark on a fresh install '
-    + 'reports a fault the app invented');
-}
-{
-  const bad = baseState();
-  bad.mcp = { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', claude_config_parse_error: true };
-  const html = run('renderMcp', bad);
-  ok(/cur-mon-state cur-mon-danger/.test(html) && html.includes('Config unreadable'),
-    '\u2026and a config the app could not PARSE is the one danger state');
-}
-{
-  // THE STALE-BRIDGE WARNING (M8) \u2014 loud, and outside the readings.
+  // v3.88.0 — "Bridge answers" is the bridge's one monitor (version · knowledge
+  // folder · open now · self-test); the hard-coded Claude Desktop pill is gone.
   const st = baseState();
-  st.mcp = { ...st.mcp,
-    bridge_processes: { checked: true, running: 2,
-      stale: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), ageMs: 36e5 }] },
-    bridge_stale_remedy: 'Restart the app that launched it.' };
-  const html = run('renderMcp', st);
-  ok(html.includes('cur-mon-loud'), 'the stale-bridge note is a `loud` entry inside the monitor');
-  ok(html.includes('Restart the app that launched it.'),
-    '\u2026carrying the remedy sentence the ROUTE supplied, verbatim');
-  ok(!linesBlockOf(html).includes('still running from before this version'),
-    '\u2026and it is NOT in the line list: v3.16.1 \u2014 a warning is never one more reading');
-  ok(insideHiddenContainer(html, 'still running from before this version') === false,
-    '\u2026nor inside any fold');
+  const html = run('renderMcp', st, { renderSelfTestResult: lift('renderSelfTestResult', st) });
+  ok(/id="mcp-bridge-monitor"/.test(html) && /cur-mon-state cur-mon-quiet[^]*Not tested yet/.test(html),
+    'renderMcp: the bridge is a MONITOR whose head word claims nothing before a self-test ("Not tested yet", quiet)');
+  ok(html.includes('/tmp/d') && /cur-mon-key">open now</.test(html) && /cur-mon-key">self-test</.test(html),
+    '…its lines are the knowledge folder, open now and the self-test');
+  ok(!html.includes('Configured') && !/cur-mon-key">client</.test(html), '…and no "Configured" pill or "client" line survives');
 }
 {
-  // THE SELF-TEST OUTCOME (M9), both arms, through the REAL renderer.
+  // THE STALE-BRIDGE WARNING — loud, on its row, outside every monitor's readings and every fold.
+  const st = baseState();
+  st.mcp = { ...st.mcp, bridge_processes: { checked: true, running: 1, stale: [], current: { version: '3.88.0', toolCount: 24 },
+    bridges: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), app: { id: 'claude-desktop', label: 'Claude Desktop' },
+      version: '3.86.0', tools: 'different', notice: 'warn', remedy: 'Restart the app that launched it.' }] } };
+  const html = run('renderMcp', st, { renderSelfTestResult: lift('renderSelfTestResult', st) });
+  ok(/class="cur-mon-loud cur-mon-warn mcpi-warn"/.test(html), 'the warning is a loud entry');
+  ok(html.includes('<strong>Restart the app that launched it.</strong>'), '…carrying the remedy sentence the ROUTE supplied, verbatim');
+  ok(!linesBlockOf(html).includes('is still using'), '…and it is NOT in a monitor’s line list: a warning is never one more reading');
+  const same = baseState();
+  same.mcp = { ...same.mcp, bridge_processes: { ...st.mcp.bridge_processes, bridges: [{ ...st.mcp.bridge_processes.bridges[0], tools: 'same', notice: 'quiet', remedy: null }] } };
+  const sh = run('renderMcp', same, { renderSelfTestResult: lift('renderSelfTestResult', same) });
+  ok(!/cur-mon-loud/.test(sh) && sh.includes('the same 24 tools as 3.88.0'), 'the SAME tools: no loud entry anywhere, one quiet line');
+}
+{
+  // THE SELF-TEST OUTCOME, both arms, through the REAL renderer.
   const okState = baseState();
   okState.selfTest = { ok: true, tool_count: 24, tool_names: ['get_index'], domains: ['alpha'] };
-  const good = run('renderMcp', okState,
-    { renderSelfTestResult: lift('renderSelfTestResult', okState) });
-  ok(/cur-mon-state cur-mon-ok[^]*Bridge responds/.test(good),
-    'a passing self-test is a monitor whose head word is the outcome');
-  ok(good.includes('24'), '\u2026with the tool count as a reading');
-
+  okState.selfTestAt = new Date().toISOString();
+  const good = run('renderMcp', okState, { renderSelfTestResult: lift('renderSelfTestResult', okState) });
+  ok(/cur-mon-state cur-mon-ok[^]*Bridge answers/.test(good), 'a passing self-test: the head word is the outcome, "Bridge answers"');
+  ok(/24 tools · /.test(good), '…with the tool count as a reading');
   const failState = baseState();
   failState.selfTest = { ok: false, error: 'spawn ENOENT' };
-  const bad = run('renderMcp', failState,
-    { renderSelfTestResult: lift('renderSelfTestResult', failState) });
-  ok(/cur-mon-state cur-mon-danger[^]*Self-test failed/.test(bad),
-    'a failing one says so in its head word, in the danger tone');
-  ok(/cur-mon-loud[^]*spawn ENOENT/.test(bad) && !linesBlockOf(bad).includes('spawn ENOENT'),
-    '\u2026and the server\u2019s own message is LOUD, not a reading \u2014 it is the outcome of a press '
-    + 'and the only thing on screen the user can act on');
+  const bad = run('renderMcp', failState, { renderSelfTestResult: lift('renderSelfTestResult', failState) });
+  ok(/cur-mon-state cur-mon-danger[^]*Self-test failed/.test(bad), 'a failing one says so in its head word, in the danger tone');
+  ok(/cur-mon-loud[^]*spawn ENOENT/.test(bad) && !linesBlockOf(bad.slice(bad.indexOf('mcp-bridge-monitor'))).includes('spawn ENOENT'),
+    '…and the server’s own message is LOUD, not a reading');
 }
 {
-  // THE SESSION READINGS (M10) \u2014 one monitor, and the 1s clock still reaches
-  // both lines through the hook composed inside `markHtml`.
+  // THE SESSION READINGS — lines of the "Agent use" monitor; the 1 s clock reaches them through `markHtml`.
   const stamp = new Date(Date.now() - 45 * 60e3).toISOString();
-  const strip = lift('renderSessionStrip', baseState())(
-    { lastBootstrapAt: stamp, lastSaveAt: null }, Date.now());
-  ok((strip.match(/class="cur-mon"/g) || []).length === 1
-     && (strip.match(/class="cur-mon-line"/g) || []).length === 2,
-    'the two session readings are TWO LINES of ONE monitor, not two blocks \u2014 found by '
-    + 'mutation: counting the LINES alone is satisfied by two one-line monitors side by side, '
-    + 'which is the ad-hoc strip this replaced wearing the kit\u2019s classes');
-  ok(strip.includes('data-mcp-age-at="' + stamp + '"') && strip.includes('mcp-age-words'),
-    '\u2026and a stamped reading carries the tick hook and the element the clock writes into');
-  ok(!/data-mcp-age-at[^>]*>\s*<span class="mcp-age-words">none since/.test(strip)
-     && strip.includes('none since this log began'),
-    '\u2026while an absent one says so in words and takes no hook, because there is nothing to recount');
+  const line = lift('sessionLine', baseState())('last session start', stamp, Date.now());
+  ok(line.value === '' && line.markHtml.includes('data-mcp-age-at="' + stamp + '"') && line.markHtml.includes('mcp-age-words'),
+    'a stamped reading carries the tick hook and the element the clock writes into');
+  const none = lift('sessionLine', baseState())('last save', null, Date.now());
+  ok(none.value === 'none since this log began' && !none.markHtml, '…while an absent one says so in words and takes no hook');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

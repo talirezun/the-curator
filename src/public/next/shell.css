@@ -2968,10 +2968,6 @@ body.guide-docked .main {
 .mcpi-l1 .mcpi-pick { flex: 0 1 auto; }
 .mcpi-l1 .mcpi-name { overflow-wrap: normal; word-break: keep-all; white-space: nowrap; }
 .mcpi-l1 .mcpi-acts { margin-left: auto; }
-.mcpi-detail-head {
-  margin: var(--space-7) 0 var(--space-4); font: var(--type-mono); font-size: var(--text-2xs);
-  letter-spacing: var(--track-mono); text-transform: uppercase; color: var(--text-3); font-weight: 400;
-}
 .mcpi-row:first-child { border-top: 0; }
 .mcpi-pick { display: inline-flex; align-items: center; gap: var(--space-4); min-width: 0; }
 .mcpi-name { font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
@@ -3009,7 +3005,6 @@ body.guide-docked .main {
 .mcpi-nf-body { display: flex; flex-direction: column; padding: 0 var(--space-4) var(--space-4); }
 .mcpi-notfound { margin-top: var(--space-4); }
 .mcpi-row-nf { padding: var(--space-4) var(--space-4); }
-.mcpi-detail { min-width: 0; }
 @media (max-width: 900px) {
   .mcpi-row { padding: var(--space-5); }
   .mcpi-l1 .mcpi-acts { margin-left: 0; justify-content: flex-start; }
@@ -3017,3 +3012,27 @@ body.guide-docked .main {
 
 .mcpi-flash { box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
 .mcpi-copyline { margin: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
+/* v3.88.0 — one row per agent app. A quiet fact is one small line; a warning
+   is the monitor kit's loud entry, UNFOLDED under its row with its own buttons
+   (rule 3's exception); the evidence is a closed per-row disclosure. */
+.mcpi-sub { margin: 0; font-size: var(--text-xs); color: var(--text-3); overflow-wrap: anywhere; }
+.mcpi-sub .mono { color: var(--text-2); }
+.mcpi-warn { margin: var(--space-2) 0 0; max-width: 72ch; }
+.mcpi-warn-acts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+.mcpi-more { margin-top: var(--space-1); }
+.mcpi-more > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-xs); color: var(--text-3); border-radius: var(--radius-sm);
+}
+.mcpi-more > summary::-webkit-details-marker { display: none; }
+.mcpi-more > summary::before { content: "▸"; font-size: var(--text-2xs); }
+.mcpi-more[open] > summary::before { content: "▾"; }
+.mcpi-more > summary:hover { color: var(--text-2); }
+.mcpi-more > summary:focus-visible { box-shadow: var(--ring-focus); outline: none; }
+.mcpi-more .settings-setup-body { padding: var(--space-4) 0 0; gap: var(--space-5); }
+.mcpi-detail-acts { justify-content: flex-start; }
+.mcpi-nf-names { margin-left: auto; text-align: right; }
+.mcpi-notfound .settings-setup-summary { flex-wrap: wrap; row-gap: var(--space-2); }
+.mcp-connect-stack { display: flex; flex-direction: column; gap: var(--space-6); min-width: 0; }
+.mcp-connect-stack > .mcpi-panel { margin-bottom: 0; }
+.mcp-bridge-acts { margin-top: var(--space-3); }

@@ -222,7 +222,7 @@ const REQUIRED = [
   'shared.enable', 'shared.token-check', 'shared.wizard-repo', 'shared.wizard-token',
   'shared.wizard-attribution', 'sync.page',
   // v3.77.0 — Context step 5 and MCP bridge block 5.
-  'context.setup', 'settings.mcp-tools',
+  'context.setup',
 ];
 for (const k of REQUIRED) ok(keys.includes(k), `COPY.md §2–§3 entry "${k}" is present`);
 ok(keys.every((k) => REQUIRED.includes(k)), `…and nothing else (${keys.length} entries) — a new entry is added here as well, on purpose`);

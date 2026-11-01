@@ -160,7 +160,6 @@ export const DOCS_LINKS = {
   'context.session-start': { file: 'user-guide.md', anchor: 'session-start-and-the-context-window' },
   // v3.77.0 — Context step 5 "Setup" and MCP bridge "Tools on this Mac".
   'context.setup': { file: 'user-guide.md', anchor: '13e-the-setup-check-in-the-app' },
-  'settings.mcp-tools': { file: 'user-guide.md', anchor: '13e-the-setup-check-in-the-app' },
   'settings.github-token': { file: 'user-guide.md', anchor: 'github-read-only-token' },
   'app.what-is-this': { file: 'user-guide.md', anchor: '1-what-is-this-app' },
   'app.first-run': { file: 'user-guide.md', anchor: '5-first-run--the-getting-started-panel' },

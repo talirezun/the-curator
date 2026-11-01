@@ -374,7 +374,7 @@ import {
 // v3.77.0 — step 5 "Setup": the words live in a DOM-free module (its suite
 // imports the real builders); this view owns the state, the request and the
 // listeners. See views/setup-step.js for the six-rules walk-through.
-// v3.78.0: rebuilt — to-fix notes, "+ Add a tool" through the shared listbox,
+// v3.78.0: rebuilt — to-fix notes, "+ Add an agent app" through the shared listbox,
 // the Handoffs table's parts, and a tool's evidence in the right-hand reader.
 import {
   renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP, setupToolPickerCfg, customToolNameError,
@@ -4464,7 +4464,7 @@ function renderLayerStrip(read) {
   cards.push({
     label: 'SETUP',
     value: stpValue,
-    sub: stpS ? [stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
+    sub: stpS ? [stpTools.length ? stpTools.join(' · ') : 'no agent app yet',
       stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null].filter(Boolean).join(' · ') : null,
     hidden: !stpS,
     jump: 'context-setup',
@@ -12026,7 +12026,7 @@ function renderSetupStep() {
       repoError: state.setupRepoError, editRepo: state.setupEditRepo,
       forceRepoOpen: state.setupRepoForceOpen, pickUnavailable: state.setupPickUnavailable,
       customOpen: state.setupCustomOpen, customDraft: state.setupCustomDraft, customError: state.setupCustomError,
-      // "+ Add a tool" — the SHARED listbox, from the one cfg `bindSetup` mounts.
+      // "+ Add an agent app" — the SHARED listbox, from the one cfg `bindSetup` mounts.
       pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
     }),
   });
@@ -12216,7 +12216,7 @@ function openSetupComputerReader(idx, token) {
 
 /**
  * Re-read the check now and, when it lands, open one tool's reader (v3.80.0):
- * right after "+ Add a tool" the owner is shown that tool's setup guide
+ * right after "+ Add an agent app" the owner is shown that tool's setup guide
  * instead of being left to find the new row. Nothing opens if the project
  * changed meanwhile or the tool is not in the new reading.
  */
@@ -12232,7 +12232,7 @@ async function reloadSetupThenOpen(toolId, token) {
 }
 
 /**
- * THIS COMPUTER'S LIST OF KNOWN TOOLS, written whole — "+ Add a tool" adds
+ * THIS COMPUTER'S LIST OF KNOWN TOOLS, written whole — "+ Add an agent app" adds
  * an id, Remove (v3.80.0) takes one out. The ONE `{ids}` call site.
  */
 async function putSetupToolIds(ids, token) {
@@ -12266,8 +12266,8 @@ async function addSetupTool(id, token) {
 /**
  * REMOVE A TOOL FROM THIS COMPUTER'S LIST (v3.80.0). Offered only where the
  * payload says it would take the row away (`removableOf`). No confirm, on
- * purpose: it stops a check and deletes nothing, and "+ Add a tool" brings it
- * back — the toast says both. Focus goes to "+ Add a tool", since the row it
+ * purpose: it stops a check and deletes nothing, and "+ Add an agent app" brings it
+ * back — the toast says both. Focus goes to "+ Add an agent app", since the row it
  * was on is gone.
  */
 async function removeSetupTool(toolId, token) {
@@ -12280,7 +12280,7 @@ async function removeSetupTool(toolId, token) {
   if (!ok || !isCurrentMount(token)) return;
   if (setupReader && setupReader.kind === 'tool' && setupReader.key === toolId && isCurrentReader(setupReader.epoch)) closeReader();
   showToast({ key: 'setup-tools', tone: 'success', title: 'Removed ' + (t.label || t.id) + ' from this computer’s list',
-    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add a tool” brings it back.'] });
+    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add an agent app” brings it back.'] });
   await reloadSetupThenOpen(null, token);
   const add = typeof document !== 'undefined' ? document.getElementById('mem-setup-add') : null;
   if (add && typeof add.focus === 'function') { try { add.focus({ preventScroll: true }); } catch { add.focus(); } }
@@ -12340,7 +12340,7 @@ async function saveSetupRepo(p, token) {
 /** Every control step 5 draws (on the page, or in the reader), bound once per node. */
 function bindSetup(root, token) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
-  // "+ Add a tool" — the ONE cfg the markup was rendered from.
+  // "+ Add an agent app" — the ONE cfg the markup was rendered from.
   const s0 = setupFor();
   if (s0 && s0.data && typeof document !== 'undefined' && document.getElementById('mem-setup-add')) {
     const cfg = setupToolPickerCfg(s0.data, state.setupAdding === true);
@@ -12398,7 +12398,7 @@ function bindSetup(root, token) {
         const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
         const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
         if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Re-check here.');
-        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Tools on this ' + thisMachine() + ' for this tool’s entry.'] });
+        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Settings › MCP bridge for this agent app’s entry.'] });
         return;
       }
       if (act === 'reveal') {

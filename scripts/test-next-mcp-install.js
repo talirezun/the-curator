@@ -62,12 +62,12 @@ const SAMPLE = [
 section('§1 statuses, counts, default ticks');
 ok(M.STATUS_WORDS.connected === 'connected' && M.STATUS_WORDS['needs-update'] === 'needs an update'
   && M.STATUS_WORDS['not-installed'] === 'can be added' && M.STATUS_WORDS['cant-read'] === 'can’t read'
-  && M.STATUS_WORDS.manual === 'copy only', 'one word per status');
+  && M.STATUS_WORDS.manual === 'not connected', 'one word per status ("not connected", never the installer\'s "copy only")');
 ok(JSON.stringify(Object.keys(M.STATUS_WORDS)) === JSON.stringify(['connected', 'needs-update', 'not-installed', 'cant-read', 'manual']), 'exactly the five contract statuses');
 const c = M.countStatuses(SAMPLE);
 ok(c.connected === 1 && c.needsUpdate === 1 && c.canAdd === 1 && c.cantRead === 1 && c.manual === 1, 'counts per status', JSON.stringify(c));
-ok(M.overviewLine([...SAMPLE.slice(0, 3)]) === 'My Curator in your tools — 1 connected · 1 needs an update · 1 can be added', 'overview line', M.overviewLine(SAMPLE.slice(0, 3)));
-ok(M.overviewLine([], 'darwin') === 'My Curator in your tools — no tool found on this Mac' && M.overviewLine([]) === 'My Curator in your tools — no tool found on this computer', 'overview line with no tools: Mac on darwin, computer when the platform is unknown');
+ok(M.overviewLine([...SAMPLE.slice(0, 3)]) === 'My Curator in your agent apps — 1 connected · 1 to fix · 1 not connected', 'overview line: one verdict per app', M.overviewLine(SAMPLE.slice(0, 3)));
+ok(M.overviewLine([], 'darwin') === 'My Curator in your agent apps — no agent app found on this Mac' && M.overviewLine([]) === 'My Curator in your agent apps — no agent app found on this computer', 'overview line with no apps: Mac on darwin, computer when the platform is unknown');
 const t = M.defaultTicks(SAMPLE);
 ok(t.cursor === true && t.antigravity === true, 'needs-update and not-installed start ticked');
 ok(!('claude-desktop' in t) && !('windsurf' in t) && !('opencode' in t), 'connected / cant-read / manual rows have no tick');
@@ -75,7 +75,7 @@ ok(M.defaultTicks(SAMPLE, { cursor: false }).cursor === false, 'a person’s own
 ok(M.defaultTicks([tool({ id: 'x', status: 'not-installed', installer: 'cli' })]).x === undefined, 'a cli row is never installable');
 ok(JSON.stringify(M.tickedIds(SAMPLE)) === JSON.stringify(['cursor', 'antigravity']), 'tickedIds in payload order');
 let b = M.installButtonState(status(SAMPLE), {}, null);
-ok(b.n === 2 && b.label === 'Install for me (2 tools)' && !b.disabled, 'install button counts the ticks', JSON.stringify(b));
+ok(b.n === 2 && b.label === 'Install for me (2 apps)' && !b.disabled, 'install button counts the ticks', JSON.stringify(b));
 b = M.installButtonState(status(SAMPLE), { cursor: false, antigravity: false }, null);
 ok(b.n === 0 && b.disabled, 'nothing ticked → Install disabled');
 ok(M.installButtonState(status(SAMPLE, { writable: false }), {}, null).disabled, 'not writable → Install disabled');
@@ -101,10 +101,10 @@ ok(/data-mcpi-act="reveal" data-path="\/Users\/x\/\.codeium\/windsurf\/mcp_confi
 ok(!/data-mcpi-act="reveal"/.test(panel), '…and offers no Reveal when it cannot name the file');
 ok(/Restore original/.test(M.renderInstallPanel({ status: status([tool({ id: 'cursor', status: 'connected', restorable: true })]) })), 'a restorable tool offers Restore original');
 ok(!/Restore original/.test(panel), 'no Restore original without a kept copy');
-ok(/<details[^>]*data-setup-fold="mcpi-notfound"[^>]*>[\s\S]*Not found on this Mac \(1\)[\s\S]*Goose[\s\S]*data-mcpi-act="copy" data-tool="goose"/.test(panel), 'Not found fold: count, name and Copy per tool');
+ok(/<details[^>]*data-setup-fold="mcpi-notfound"[^>]*>[\s\S]*Not on this Mac \(1\)[\s\S]*mcpi-nf-names">Goose<[\s\S]*data-mcpi-act="copy" data-tool="goose"/.test(panel), 'Not on this Mac fold: count, the names in its summary, and Copy per app');
 ok(/data-setup-fold="mcpi-notfound" open/.test(M.renderInstallPanel({ status: st, folds: { 'mcpi-notfound': true } })), 'fold open state is honoured');
 ok(/Copy it myself/.test(panel) && /id="mcpi-install-btn"/.test(panel), 'both overview buttons present');
-ok(/MY CURATOR IN YOUR TOOLS/.test(panel) && (panel.match(/cur-ov-card/g) || []).length === 3, 'one overview card with three readings');
+ok(/MY CURATOR IN YOUR AGENT APPS/.test(panel) && (panel.match(/cur-ov-card/g) || []).length === 3 && /CONNECTED[\s\S]*TO FIX[\s\S]*NOT CONNECTED/.test(panel), 'one overview card with three readings: connected · to fix · not connected');
 
 // ── §2 greyscale ───────────────────────────────────────────────────────────
 section('§2 status tags carry no colour class');
@@ -213,11 +213,11 @@ ok((await M.fetchInstallStatus()).code === 'network', 'a network failure never t
 // ── §7 non-macOS, the setup link ───────────────────────────────────────────
 section('§7 non-macOS and the Setup link');
 const lin = M.renderInstallPanel({ status: status(SAMPLE.map((x) => ({ ...x, status: x.status === 'connected' ? 'manual' : x.status === 'not-installed' || x.status === 'needs-update' ? 'manual' : x.status, installer: 'file' })), { platform: 'linux', writable: false }) });
-ok(/data-mcpi-nonmac/.test(lin) && /on Linux/.test(lin) && /copy the entry for each tool/.test(lin), 'non-macOS: said open, copy instead');
+ok(/data-mcpi-nonmac/.test(lin) && /on Linux/.test(lin) && /copy the entry for each agent app/.test(lin), 'non-macOS: said open, copy instead');
 ok(!/data-mcpi-tick/.test(lin) && !/data-mcpi-act="remove"/.test(lin) && !/data-mcpi-act="restore"/.test(lin), 'non-macOS: no checkbox, no Remove, no Restore');
 ok(/id="mcpi-install-btn"[^>]*disabled/.test(lin), 'non-macOS: Install for me disabled');
 ok(/data-mcpi-act="copy"/.test(lin), 'non-macOS: Copy is there');
-ok(/aria-busy="true"/.test(M.renderInstallPanel({ status: null })) && /Could not check your tools: boom/.test(M.renderInstallPanel({ status: { data: null, error: 'boom' } })), 'loading and failed-to-load states');
+ok(/aria-busy="true"/.test(M.renderInstallPanel({ status: null })) && /Could not check your agent apps: boom/.test(M.renderInstallPanel({ status: { data: null, error: 'boom' } })), 'loading and failed-to-load states');
 
 const bridge = (tool) => S.fixButtons({ tool, fixes: [{ kind: 'copy-snippet', tool, label: 'Copy MCP entry' }] }, null);
 ok(['claude-desktop', 'cursor', 'antigravity'].every((id) => /data-setup-act="settings">Install for me</.test(bridge(id))), 'Setup bridge line links to the installer for the three writable tools');
@@ -247,7 +247,7 @@ section('§8 Copy it myself');
   ok(toml.whole === true && toml.line === 'Add this to ~/.config/goose/config.yaml' && toml.text.startsWith('extensions:'), 'a non-JSON tool: the snippet as written, “Add this to <file>”');
   ok(M.copyPlanFor('cursor', { manualSnippets: {}, tools: [] }, {}) === null, 'no snippet, no Copy');
   const html = M.renderInstallPanel({ status: { data: { platform: 'darwin', writable: true, notFound: [], ...data, tools: [t_({ id: 'cursor', label: 'Cursor', files: [{ display: '~/.cursor/mcp.json', state: 'missing' }] })] } } });
-  ok(/data-mcpi-copyline>Save as ~\/<wbr>\.cursor\/<wbr>mcp\.json</.test(html) && /data-mcpi-act="copy" data-tool="cursor"/.test(html), 'the line sits under the row, visible, beside a Copy button');
+  ok(/data-mcpi-copyline>Save as <span class="mono">~\/<wbr>\.cursor\/<wbr>mcp\.json<\/span>\./.test(html) && /data-mcpi-act="copy" data-tool="cursor"/.test(html), 'the line sits under the row, visible, beside a Copy button');
   const cr = M.renderInstallPanel({ status: { data: { platform: 'darwin', writable: true, notFound: [], ...data, tools: [t_({ id: 'cursor', label: 'Cursor', status: 'cant-read', reason: { code: 'corrupt', message: '~/.cursor/mcp.json is not valid JSON.' }, files: [{ display: '~/.cursor/mcp.json', file: '/Users/x/.cursor/mcp.json', state: 'cant-read' }] })] } } });
   ok(/data-mcpi-reason>~\/\.cursor\/mcp\.json is not valid JSON\./.test(cr) && /data-mcpi-act="reveal" data-path="\/Users\/x\/\.cursor\/mcp\.json"/.test(cr) && /data-mcpi-act="copy"/.test(cr), 'can’t-read: the reason (object form) in words, Reveal on the absolute path, and Copy');
   ok(!/\[object Object\]/.test(cr), 'a {code, message} reason never prints as [object Object]');
@@ -266,9 +266,6 @@ section('§8 Copy it myself');
   ok(/Your current file is kept as a new dated copy first\./.test(rst) && !/UTC time|&lt;/.test(rst), 'restore: “kept as a new dated copy first”, no placeholder');
   ok(M.STATUS_WORDS['not-installed'] === 'can be added' && /can be added<\/span>/.test(M.statusTag('not-installed')), 'a not-installed row’s tag uses the overview’s word');
 }
-const SM = await import('../src/public/next/views/setup-machine.js');
-const foot = SM.renderToolsOnThisMacBody({ data: { harnesses: [], version: 'x' } }, {});
-ok(/The checks only read\. Install for me writes only the my-curator entry, after a preview/.test(foot) && !/Nothing here writes a file/.test(foot), 'the block’s footer no longer says nothing is written');
 
 // ── §9 Windows (v3.86.0) ───────────────────────────────────────────────────
 section('§9 platform gating: darwin, win32, linux');
@@ -287,7 +284,7 @@ section('§9 platform gating: darwin, win32, linux');
   ok(/data-mcpi-new-windows>New on Windows — tell us if it works</.test(row(html, 'claude-desktop')) && (html.match(/data-mcpi-new-windows/g) || []).length === 1, 'win32: the label sits on the Claude Desktop row only');
   ok(/data-mcpi-status="manual"/.test(row(html, 'cursor')) && !/data-mcpi-new-windows/.test(row(html, 'cursor')), 'win32: another tool reads "copy only" and keeps Copy', row(html, 'cursor'));
   ok(M.countStatuses(WIN, 'win32').canAdd === 1 && M.countStatuses(WIN, 'win32').needsUpdate === 0 && M.countStatuses(WIN, 'win32').manual === 2, 'win32: the counts follow what can be written', JSON.stringify(M.countStatuses(WIN, 'win32')));
-  ok(M.overviewLine(WIN, 'win32') === 'My Curator in your tools — 1 can be added · 1 can’t be read · 2 copy only', 'win32: overview line', M.overviewLine(WIN, 'win32'));
+  ok(M.overviewLine(WIN, 'win32') === 'My Curator in your agent apps — 1 to fix · 3 not connected', 'win32: overview line (the can’t-read app is to fix; the rest are not connected)', M.overviewLine(WIN, 'win32'));
   ok(M.installButtonState(wst(), {}, null).n === 1 && M.installButtonState(wst(), {}, null).label === 'Install for me', 'win32: Install for me counts one tool');
   ok(JSON.stringify(M.tickedIds(WIN, {}, 'win32')) === JSON.stringify(['claude-desktop']) && JSON.stringify(M.tickedIds(WIN, {})) === JSON.stringify(['claude-desktop', 'cursor', 'antigravity']), 'win32 gates ticks; no platform keeps today’s');
   ok(/data-mcpi-windows/.test(html), 'win32: said open that install covers Claude Desktop only');
@@ -321,8 +318,8 @@ section('§9 platform gating: darwin, win32, linux');
   // darwin and linux: byte-identical to the platform-less render
   const dsPanel = M.renderInstallPanel({ status: status(SAMPLE) });
   ok(!/data-mcpi-new-windows|data-mcpi-windows|data-mcpi-restart-windows/.test(dsPanel) && /data-mcpi-act="reveal"/.test(M.renderInstallPanel({ status: status([{ ...SAMPLE[3], files: [{ display: '~/w', file: '/h/w', state: 'jsonc' }] }]) })), 'darwin: no Windows element, Reveal kept');
-  ok(M.overviewLine(SAMPLE) === M.overviewLine(SAMPLE, 'darwin') && M.overviewLine([], 'linux') === 'My Curator in your tools — no tool found on this computer' && M.overviewLine([], 'win32') === 'My Curator in your tools — no tool found on this PC', 'overview line: Mac on darwin, PC on win32, computer on linux');
-  ok(M.machineWord('darwin') === 'Mac' && M.machineWord('win32') === 'PC' && M.machineWord('linux') === 'computer' && M.machineWord() === 'computer' && M.machineWord('') === 'computer', 'machineWord: the block title "Tools on this <word>" and the rail hint use it');
+  ok(M.overviewLine(SAMPLE) === M.overviewLine(SAMPLE, 'darwin') && M.overviewLine([], 'linux') === 'My Curator in your agent apps — no agent app found on this computer' && M.overviewLine([], 'win32') === 'My Curator in your agent apps — no agent app found on this PC', 'overview line: Mac on darwin, PC on win32, computer on linux');
+  ok(M.machineWord('darwin') === 'Mac' && M.machineWord('win32') === 'PC' && M.machineWord('linux') === 'computer' && M.machineWord() === 'computer' && M.machineWord('') === 'computer', 'machineWord: the lede, the Not-on-this fold and the rail hint use it');
   ok(M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'darwin') && M.renderResults(res, SAMPLE) === M.renderResults(res, SAMPLE, 'linux'), 'darwin/linux results unchanged');
   const linX = M.renderInstallPanel({ status: status(SAMPLE.map((x) => ({ ...x, status: 'manual' })), { platform: 'linux', writable: false }) });
   ok(/on Linux/.test(linX) && !/data-mcpi-new-windows|data-mcpi-windows/.test(linX) && !/data-mcpi-tick/.test(linX), 'linux: copy-only, no Windows label');
@@ -335,8 +332,8 @@ section('§9 platform gating: darwin, win32, linux');
   const macRunning = M.renderInstallPanel({ status: status([{ ...WIN[0], files: [{ display: '~/Library/Application Support/Claude/claude_desktop_config.json', action: 'add', state: 'absent' }] }]) });
   ok(!/data-mcpi-app-running/.test(macRunning) && /mcpi-hint/.test(macRunning), 'darwin: a running Claude Desktop keeps warn-and-allow (its hint, no refusal line)');
   // audit fix 3d: "on this Mac" never shows on Windows.
-  ok(/Not found on this PC \(1\)/.test(html) && !/on this Mac/.test(html), 'win32: the Not found fold says "this PC", and no "this Mac" anywhere', (html.match(/[^>]*on this Mac[^<]*/) || [''])[0]);
-  ok(/No agent tool was found on this PC\./.test(M.renderToolRows(wst([], { notFound: [] }))) && /No agent tool was found on this Mac\./.test(M.renderToolRows(status([], { notFound: [] }))), 'the empty line says PC on win32, Mac on darwin');
+  ok(/Not on this PC \(1\)/.test(html) && !/on this Mac/.test(html), 'win32: the Not on this PC fold says "this PC", and no "this Mac" anywhere', (html.match(/[^>]*on this Mac[^<]*/) || [''])[0]);
+  ok(/No agent app was found on this PC\./.test(M.renderToolRows(wst([], { notFound: [] }))) && /No agent app was found on this Mac\./.test(M.renderToolRows(status([], { notFound: [] }))), 'the empty line says PC on win32, Mac on darwin');
   const wOff = M.renderInstallPanel({ status: wst(WIN, { writable: false }) });
   ok(/data-mcpi-nonmac>One-click install on Windows is not available right now/.test(wOff) && !/data-mcpi-tick/.test(wOff) && !/data-mcpi-new-windows/.test(wOff), 'win32 not writable: said open, copy instead');
   ok(!/data-mcpi-tick/.test(wOff) && /id="mcpi-install-btn"[^>]*disabled/.test(wOff), 'win32 not writable: no checkbox, Install disabled');
