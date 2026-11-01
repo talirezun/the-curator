@@ -243,6 +243,7 @@ import {
   // four and send three.
   pickedFiles,
 } from '../shared/foundations-init.js';
+import { machineWord as thisMachine } from '../shared/platform.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -3860,7 +3861,7 @@ function renderMain(token) {
         // stops being the only thing the eye lands on.
         body:
           '<div class="dm-empty-lines">' +
-            '<div>Already have a knowledge base? If you have used The Curator before — on this Mac, ' +
+            '<div>Already have a knowledge base? If you have used The Curator before — on this ' + thisMachine() + ', ' +
             'another machine, or a synced folder — point it at that folder and every domain, page and ' +
             'link comes back exactly as it was. Nothing is copied, moved or converted.</div>' +
             '<div>Starting fresh? Create a domain: name it, pick a starting schema, and it is ready to ' +

@@ -347,7 +347,7 @@ export function renderToolRow(tool, ctx = {}) {
 }
 
 /** "PC" on Windows, "Mac" elsewhere (darwin and linux keep today's word). */
-export function machineWord(platform) { return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer'; }
+export function machineWord(platform) { return platform === 'win32' ? 'PC' : platform === 'darwin' ? 'Mac' : 'computer'; } // same words as shared/platform.js
 
 /**
  * Windows only (v3.86.0 audit): the backend REFUSES to write Claude Desktop's

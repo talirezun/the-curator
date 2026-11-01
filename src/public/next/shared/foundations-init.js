@@ -48,6 +48,7 @@ import { formatAge, freshnessTier } from './age.js';
 // total as a DEPTH BAR against the project budget (design rule 6) — a second
 // hand-built bar here is the shape rule 6 exists to prevent.
 import { renderMonitor } from './monitor.js';
+import { machineWord as thisMachine } from './platform.js';
 //
 // ── NO NATIVE <select>, AND NO LISTBOX EITHER ────────────────────────────
 // /next purged the native `<select>` in v3.18.0 (shell.css records why: the
@@ -974,7 +975,7 @@ export function renderFoundationsChooser(cfg) {
       // Both stay within the 13-word ceiling: 13 and 11.
       opt('curator', 'The Curator keeps them',
         'Four skeletons to fill — by you or an agent. Or your own files.') +
-      opt('repo', 'Mirror a folder on this Mac',
+      opt('repo', 'Mirror a folder on this ' + thisMachine(),
         'Copied byte for byte from a folder. You pick which files.') +
       // ── THE THIRD SOURCE (v3.65.0, record §D.7) ──────────────────────
       // The maintainer asked for this twice. Until now a project could only
@@ -1266,7 +1267,7 @@ function repoArm(id, choice, busy, hostOpts) {
         ? '<div class="tx-note fnd-init-why"><span>Reading the folder…</span></div>' : '')
     : '<div class="fnd-init-field">' +
     '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-root">' +
-      'Folder on this Mac</label>' +
+      'Folder on this ' + thisMachine() + '</label>' +
     '<div class="fnd-init-row">' +
       '<input class="fnd-init-path" id="' + escapeHtml(id) + '-root" type="text"' +
         ' autocomplete="off" spellcheck="false" placeholder="/Users/you/code/your-project"' +

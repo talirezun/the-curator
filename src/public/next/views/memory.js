@@ -382,6 +382,7 @@ import {
   // v3.79.0 (contract §C): a Repository file and a computer, in the reader.
   fileReaderContent, computerReaderContent,
 } from './setup-step.js';
+import { machineWord as thisMachine } from '../shared/platform.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -12397,7 +12398,7 @@ function bindSetup(root, token) {
         const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
         const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
         if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Re-check here.');
-        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Tools on this Mac for this tool’s entry.'] });
+        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Tools on this ' + thisMachine() + ' for this tool’s entry.'] });
         return;
       }
       if (act === 'reveal') {

@@ -107,6 +107,7 @@ import { explainerHtml } from '../shared/explainer.js';
 // unified design AND a distinguished design, so this can be distinguished from
 // other sections, other cards."* Both call sites are now the same call.
 import { renderMonitor } from '../shared/monitor.js';
+import { machineWord as thisMachine } from '../shared/platform.js';
 
 function freshState() {
   return {
@@ -521,7 +522,7 @@ function renderSetupDecision(f) {
     return (
       '<div class="sync-decision sync-decision-info">' +
         '<div class="sync-decision-title">This folder is already synced</div>' +
-        '<p class="sync-decision-body">Another Curator install on this Mac already syncs this domains folder ' +
+        '<p class="sync-decision-body">Another Curator install on this ' + thisMachine() + ' already syncs this domains folder ' +
         'to the same repository. This install will use that same sync history instead of starting a second ' +
         'one \u2014 nothing in your folder is changed.</p>' +
         '<div class="sync-decision-actions">' +
@@ -657,7 +658,7 @@ function renderConfigured(s) {
         ? renderStatus({
             state: 'attention',
             title: 'Two sync histories over one folder',
-            detail: 'Another Curator install on this Mac also syncs this domains folder, through its own ' +
+            detail: 'Another Curator install on this ' + thisMachine() + ' also syncs this domains folder, through its own ' +
                     'separate sync history. Both push to the same repository, so each one\u2019s changes ' +
                     'arrive at the other as a merge \u2014 which can silently replace edited pages. ' +
                     'To fix it: Disconnect below, then Connect again with the same repository. The ' +

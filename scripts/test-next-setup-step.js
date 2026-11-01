@@ -914,5 +914,24 @@ section('§24 the Tools fold says what "ready" takes, in one sentence');
   ok(tools.includes(S.TRAVELS_LINES['setup-tools']), '…beside the fold\'s own travels line');
 }
 
+// v3.87.0 — the machine word follows the platform: Mac on darwin (byte-identical), PC on win32, computer otherwise.
+{
+  const P = await import('../src/public/next/shared/platform.js');
+  const none = { data: { toFix: [], repo: null } };
+  const bridge = { fix: { kind: 'reveal', path: '/x/mcp_config.json', label: 'Reveal mcp_config.json' } };
+  const probe = () => S.fixButtons({ ...bridge, text: 't', detail: 'd' }, null) + S.renderSetupBody({ data: { project: 'curator', repo: null } }, {});
+  for (const [plat, word] of [['darwin', 'Mac'], ['win32', 'PC'], ['linux', 'computer'], ['', 'computer']]) {
+    P.setPlatform(plat);
+    const html = probe();
+    ok(html.includes('Open Tools on this ' + word + '<') || !/Open Tools on this/.test(html), plat + ': button says this ' + word);
+    ok(!/this (Mac|PC|computer)/.test(html.replace(new RegExp('this ' + word, 'g'), '')), plat + ': no other machine word in the setup body');
+  }
+  P.setPlatform('win32');
+  ok(/Open Tools on this PC</.test(S.fixButtons(bridge, null)) && !/this Mac/.test(S.fixButtons(bridge, null)), 'win32: "Open Tools on this PC", no "this Mac"');
+  P.setPlatform('darwin');
+  ok(/Open Tools on this Mac</.test(S.fixButtons(bridge, null)), 'darwin: "Open Tools on this Mac" exactly');
+  P.setPlatform(null);
+}
+
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-step: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

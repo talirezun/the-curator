@@ -37,6 +37,7 @@
 // `title` is the name in the panel's head (the thing, as the screen names
 // it); `label` is the ⓘ button's accessible name.
 
+import { machineWord as thisMachine } from './platform.js';
 const E = {
   // ── Context (views/memory.js) ──────────────────────────────────────────
   'context.page': {
@@ -696,8 +697,8 @@ const E = {
   // MCP block 4 · Across projects — `settings-block-info-mcp-across`.
   // v3.77.0 — MCP bridge block 5.
   'settings.mcp-tools': {
-    label: 'About Tools on this Mac',
-    title: 'Tools on this Mac',
+    label: 'About Tools on this ' + thisMachine(),
+    title: 'Tools on this ' + thisMachine(),
     lead: 'Each agent tool set up on this computer: its config files, its skills and its hooks.',
     points: [
       { icon: 'lock', text: 'Only whether a file names my-curator is read.' },

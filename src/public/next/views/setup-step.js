@@ -54,6 +54,7 @@ import { freshnessTier } from '../shared/age.js';
 // v3.80.0: the "+ Add a tool" rows are the composer's model rows' anatomy
 // (import-free, DOM-free — the suite still imports this module in Node).
 import { listRowBodyHtml } from '../shared/model-row.js';
+import { machineWord as thisMachine } from '../shared/platform.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -517,12 +518,12 @@ function fixButton(fx, f, repo, primary) {
     case 'choose-folder':
       return b('choose-repo', label('Choose the folder'));
     case 'settings':
-      return b('settings', label('Open Tools on this Mac'));
+      return b('settings', label('Open Tools on this ' + thisMachine()));
     case 'recheck':
       return b('check', label('Re-check'));
     case 'skills':
       // v3.78.0's one "skills" fix: the settings door and both downloads.
-      return b('settings', label('Open Tools on this Mac')) + ZIPS;
+      return b('settings', label('Open Tools on this ' + thisMachine())) + ZIPS;
     case 'reveal': {
       if (isStr(fx.path)) return b('reveal', label('Reveal ' + baseName(fx.path)), ' data-path="' + escapeHtml(fx.path) + '"');
       const name = isStr(fx.reveal) ? fx.reveal : f.file;
@@ -551,7 +552,7 @@ export function fixButtons(f, repo) {
     if (fix.kind !== 'reveal' && isStr(fix.reveal) && repo && isStr(repo.path)) {
       out.push(btnG('reveal', 'Reveal ' + fix.reveal, ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + fix.reveal) + '"'));
     }
-    if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Tools on this Mac'));
+    if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Tools on this ' + thisMachine()));
   }
   // v3.85.0: a bridge line for a tool The Curator can write for opens the one
   // installer (Settings › MCP bridge › Tools on this Mac) — no second writer
@@ -688,17 +689,17 @@ export function repoCheckedFiles(data) {
 export function repoNotSetNote(data) {
   const cands = repoCandidatesOf(data);
   const who = isStr(data && data.project) ? data.project : 'this project';
-  const l1 = escapeHtml('Where is ' + who + '’s code on this Mac? Set its folder so Setup can check ' + repoCheckedFiles(data) + '.');
+  const l1 = escapeHtml('Where is ' + who + '’s code on this ' + thisMachine() + '? Set its folder so Setup can check ' + repoCheckedFiles(data) + '.');
   if (cands.length === 1) {
-    return noteHtml(ICON_CIRC, l1, 'Found on this Mac: <span class="mem-setup-inline-path">' + escapeHtml(cands[0].display) + '</span>',
+    return noteHtml(ICON_CIRC, l1, 'Found on this ' + thisMachine() + ': <span class="mem-setup-inline-path">' + escapeHtml(cands[0].display) + '</span>',
       btn2('use-repo', 'Use ' + cands[0].display, ' data-path="' + escapeHtml(cands[0].path) + '"')
         + btnG('choose-repo', 'Choose another folder'), 'mem-setup-repo-note');
   }
   if (cands.length > 1) {
-    return noteHtml(ICON_CIRC, l1, escapeHtml(cands.length + ' folders on this Mac look like it — choose one.'),
+    return noteHtml(ICON_CIRC, l1, escapeHtml(cands.length + ' folders on this ' + thisMachine() + ' look like it — choose one.'),
       btn2('choose-repo', 'Choose a folder'), 'mem-setup-repo-note');
   }
-  return noteHtml(ICON_CIRC, l1, escapeHtml('Not on this Mac yet? Clone it first.'), btn2('choose-repo', 'Set the folder'), 'mem-setup-repo-note');
+  return noteHtml(ICON_CIRC, l1, escapeHtml('Not on this ' + thisMachine() + ' yet? Clone it first.'), btn2('choose-repo', 'Set the folder'), 'mem-setup-repo-note');
 }
 
 function pathRow(data, ui, draft) {
@@ -1095,7 +1096,7 @@ export function toolGuideSteps(t, data) {
         + (snip ? '<pre class="mem-setup-snippet"><code>' + escapeHtml(snip.text) + '</code></pre>' : '');
       if (got.length) doors = fromItems(got).doors;
       if (snip && !/data-setup-act="copy-snippet"/.test(doors)) doors = btn2('copy-snippet', 'Copy MCP entry', ' data-tool="' + escapeHtml(t.id) + '"') + doors;
-      if (!snip && !doors) doors = btn2('settings', 'Open Tools on this Mac');
+      if (!snip && !doors) doors = btn2('settings', 'Open Tools on this ' + thisMachine());
       if (target && isStr(target.file) && !doors.includes('data-path="' + escapeHtml(target.file) + '"')) {
         doors += btnG('reveal', 'Reveal ' + baseName(target.file), ' data-path="' + escapeHtml(target.file) + '"');
       }
@@ -1582,13 +1583,13 @@ export function computerReaderContent(data, idx) {
         escapeHtml(Number.isInteger(sync.pending) && sync.pending > 0
           ? plural(sync.pending, 'file') + ' here not on GitHub yet, across all domains.' : 'Nothing here waiting to be sent.')];
       const waiting = Array.isArray(sync.incoming) ? sync.incoming.length : null;
-      if (waiting !== null) syncLines.push(escapeHtml(waiting ? plural(waiting, 'file') + ' waiting on GitHub for this Mac.' : 'Nothing waiting on GitHub.'));
+      if (waiting !== null) syncLines.push(escapeHtml(waiting ? plural(waiting, 'file') + ' waiting on GitHub for this ' + thisMachine() + '.' : 'Nothing waiting on GitHub.'));
       syncLines.push(escapeHtml('Sync now pulls and pushes your whole knowledge folder — every domain.'));
     }
   } else {
     syncLines = [escapeHtml(g.waiting
       ? 'A newer handoff from it is waiting in your Personal Sync on GitHub. Sync now before you start the agent.'
-      : 'Its saves reach this Mac after it syncs and you Sync now here. Its own sync time is not recorded here.')];
+      : 'Its saves reach this ' + thisMachine() + ' after it syncs and you Sync now here. Its own sync time is not recorded here.')];
   }
   const syncDoors = sync.configured && (g.thisComputer || g.waiting) ? '<span class="mem-k-doors">' + btn2('sync', 'Sync now') + '</span>' : '';
   const bodyHtml = '<div class="mem-setup-reader">' + head + installs + savesHtml
