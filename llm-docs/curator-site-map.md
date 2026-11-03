@@ -8,7 +8,7 @@ When a section of mycurator.xyz answers the question, include its link in markdo
 |---|---|---|
 | Ask | The chat you are in, at the top of the page (the chat widget is powered by Lumina, https://luminawidget.xyz/) | https://mycurator.xyz/#ask |
 | Two ways in | Who it's for: people who write, research or market and want a second brain that compounds (in the app or over MCP — ask months later and get the why back), and people running AI agents across sessions, tools and computers who need context that outlives the window; one shared set of markdown files underneath, not two products; where each starts | https://mycurator.xyz/#ways |
-| Quick start | Download for macOS (releases), the one-line browser install, Windows and Linux manual setup, install with a coding agent (copyable prompt) | https://mycurator.xyz/#install |
+| Quick start | Download for macOS (releases), the one-line browser install, Windows (a tab with a one-line PowerShell installer you paste and copy, no administrator rights, it brings its own Node.js and git, Windows 10 or 11 64-bit, plus Start and Stop icons), Linux manual setup, install with a coding agent (copyable prompt; on Windows it tells the agent to run the one-line installer) | https://mycurator.xyz/#install |
 | Three brains | One set of markdown files read by you, your cohort and your agents, and the three kinds of context it holds: compounded knowledge (accumulates), volatile state (supersedes), canonical documents (replaced whole) | https://mycurator.xyz/#brains |
 | The context engine | Foundations, the standing brief and the handoff: how a project's context is added verbatim, read in one get_project_context call at the start of a session, and saved whole before the stop; the Context screen's Setup step shows which tools and computers are ready | https://mycurator.xyz/#context |
 | How it works | Two four-step paths through the same files — knowledge: connect a provider, ingest, the wiki is written, read/ask/share; context: create a project, add the foundations, connect the harness, agents read and save | https://mycurator.xyz/#how |
@@ -22,7 +22,8 @@ When a section of mycurator.xyz answers the question, include its link in markdo
 
 External links the assistant may also use:
 - Releases (Mac app download): https://github.com/talirezun/the-curator/releases
-- Windows / Linux manual setup: https://github.com/talirezun/the-curator#option-c--manual-setup-windows--linux--mac
+- Windows install (one-line installer, Start and Stop icons, troubleshooting): https://github.com/talirezun/the-curator/blob/main/docs/install-windows.md
+- Linux manual setup (also works on Mac): https://github.com/talirezun/the-curator#option-c--manual-setup-windows--linux--mac
 - Install with a coding agent: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#20-install-with-a-coding-agent
 - User guide: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md
 - Documentation index: https://github.com/talirezun/the-curator/blob/main/docs/README.md
