@@ -1460,7 +1460,11 @@ try {
       });
       // The batch runs only a spelling variant with a remembered high-confidence
       // answer about these openings (see test-duplicate-checks.js).
+      // Its file lives in the user-data dir, which this suite otherwise never
+      // touches, so that is isolated here too and put back below.
       const dc = await import('../src/brain/duplicate-checks.js');
+      const pathsMod = await import('../src/brain/paths.js');
+      pathsMod.__setUserDataDirOverride(path.join(work, 'userdata'));
       await dc.saveDuplicateChecks(d.name, new Map([[dc.pairKey('concepts', 'a-one', 'concepts', 'aone'), {
         provider: 'p', model: 'm', prompt: 'x', verdict: 'yes', confidence: 'high',
         keep: 'concepts/a-one', remove: 'concepts/aone', at: 'now',
@@ -1472,6 +1476,7 @@ try {
       ]);
       assert(r.merged === 1, '8d #13: fixSemanticDuplicatesBatch merges a valid pair (the "Merge all N" bulk path)', JSON.stringify(r));
       assert(!existsSync(path.join(d.w, 'concepts/aone.md')), '8d #14: …and really deletes the duplicate');
+      pathsMod.__setUserDataDirOverride(null);
     }
 
     // ── findSemanticCandidatePairs — had ZERO coverage in any suite ─────────
