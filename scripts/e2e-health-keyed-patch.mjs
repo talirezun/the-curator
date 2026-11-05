@@ -67,6 +67,9 @@ function buildDomain(name, { readonly = false } = {}) {
   }
   // Spelling variants, for the batch.
   for (const [a, b] of [['hand-off', 'handoff'], ['e-mail', 'email'], ['open-ai', 'openai']]) { concept(a); concept(b); linked.push(a, b); }
+  // One name in two folders, for the Fix all that deletes a page and so still asks.
+  concept('shared-name'); linked.push('shared-name');
+  writeFileSync(path.join(w, 'entities', 'shared-name.md'), '---\ntype: entity\n---\n\n# Shared name\n\nA company.\n\n## Related\n\n- [[wiki-hub]]\n');
   // Pages nothing links to, for Dismiss and Rescue.
   const orphans = ['stray-one', 'stray-two', 'stray-three', 'stray-four'];
   for (const s of orphans) writeFileSync(path.join(w, 'concepts', s + '.md'), `---\ntype: concept\n---\n\n# ${s}\n\nAlone.\n\n## Key Facts\n\n- A fact about ${s}.\n`);
@@ -219,26 +222,40 @@ try {
   ok((await reqs(/\/api\/health\/alpha(\?|$)/, 'GET')).length === 1, 'one press, one scan');
 
   await mark();
-  const fixAll = '[data-group-key="missingBacklinks"] .dm-group-fixall-btn';
-  const hasFixAll = await page.evaluate((s) => !!document.querySelector(s), fixAll);
-  const FA = hasFixAll ? fixAll : '.dm-group-fixall-btn';
-  const foldOpenBefore = await page.evaluate((s) => document.querySelector(s).closest('details').open, FA);
-  await press(FA, { y: 500 });
+  // A Fix all that deletes pages still asks; a free one runs on the press (the press
+  // rule, owner's decision 2026-11-05). So the question is asked here of the former.
+  const askFA = '[data-group-key="crossFolderDupes"] .dm-group-fixall-btn';
+  const canAsk = await page.evaluate((s) => !!document.querySelector(s), askFA);
+  ok(canAsk, 'this wiki has a Fix all that deletes pages, to ask about');
+  const foldOpenBefore = await page.evaluate((s) => document.querySelector(s).closest('details').open, askFA);
+  await press(askFA, { y: 500 });
+  await delay(300);
   k = await kept();
-  ok(k.section && !!(await text('.dm-confirm-card')), 'Fix all: the confirm opens, nothing was replaced');
-  ok(await page.evaluate((s) => document.querySelector(s) === document.activeElement, FA), 'focus stays on Fix all');
-  ok(await page.evaluate((s, o) => document.querySelector(s).closest('details').open === o, FA, foldOpenBefore), 'the press did not toggle the fold it sits in');
+  ok(k.section && !!(await text('.dm-confirm-card')), 'a deleting Fix all: the question opens, nothing was replaced');
+  ok((await focus()) === 'dm-confirm-no', 'focus moves into it, onto Cancel, so a held Enter cannot answer it', await focus());
+  ok(await page.evaluate((s, o) => document.querySelector(s).closest('details').open === o, askFA, foldOpenBefore), 'the press did not toggle the fold it sits in');
   await press('#dm-confirm-no');
+  await delay(400);
   ok(!(await text('.dm-confirm-card')), 'Cancel closes it');
+  ok(await page.evaluate((s) => document.querySelector(s) === document.activeElement, askFA), 'and focus returns to the Fix all that asked');
 
   section('§3 One press is one request, after many paints');
-  await press(FA, { y: 500 });
+  await press(askFA, { y: 500 });
+  await delay(300);
   await press('#dm-confirm-yes');
-  ok((await reqs(/\/api\/health\/alpha\/fix$/, 'POST')).length === 1, 'Fix all, after six paints of the same section: exactly one POST', JSON.stringify(await reqs(/\/fix$/)));
+  await delay(1600);
+  ok((await reqs(/\/api\/health\/alpha\/fix$/, 'POST')).length === 1, 'a deleting Fix all, answered, after many paints of the same section: exactly one POST', JSON.stringify(await reqs(/\/fix$/)));
+  const FA = '[data-group-key="missingBacklinks"] .dm-group-fixall-btn';
+  if (await page.evaluate((s) => !!document.querySelector(s), FA)) {
+    await press(FA, { y: 500 });
+    await delay(1600);
+    ok((await reqs(/\/api\/health\/alpha\/fix$/, 'POST')).length === 1, 'a free Fix all: one press, one POST, no question');
+  }
   await press('.dm-quick-btn[data-action="fixSafe"]');
-  await press('#dm-confirm-yes');
+  if (await page.evaluate(() => !!document.getElementById('dm-confirm-yes'))) await press('#dm-confirm-yes');
+  await delay(1600);
   ok((await reqs(/\/fix-all-safe$/, 'POST')).length === 1, 'Fix N safe issues: exactly one POST');
-  ok((await kept()).section, 'and the section survived both');
+  ok((await kept()).section, 'and the section survived all of it');
 
   section('§4 A press inside a disabled button');
   const control = await page.evaluate(() => {
@@ -319,8 +336,11 @@ try {
   ok(!existsSync(path.join(ws.domains, 'alpha/wiki', removeSlug + '.md')), 'the page it said it deletes is gone');
   ok(existsSync(path.join(ws.domains, 'alpha/wiki', keepSlug + '.md')), 'the page it said it keeps is there');
   ok((await kept()).section, 'and the section survived all of it');
+  // A row holds its outcome for about a second, then closes (the press rule).
+  await delay(1600);
   await press(CARD(3) + ' [data-sem-action="skip"]');
   ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Skip: one POST');
+  await delay(1600);
   await press('#dm-semantic-merge-btn');
   await press('#dm-confirm-yes');
   ok((await reqs(/merge-batch/, 'POST')).length === 1, 'Merge N spelling variants: one POST');
@@ -349,6 +369,7 @@ try {
   await mark();
   await press('[data-group-key="orphans"] .dm-issue-row:nth-child(2) .dm-dismiss-btn', { y: 450 });
   ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Dismiss: one POST');
+  await delay(1600);
   ok(await page.evaluate((n) => document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row').length === n - 1, rowsBefore), 'the row left');
   ok(await page.evaluate(() => { const rows = [...document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row')]; return rows.length > 0 && rows.every((r) => r.__mark === 1); }), 'and the other rows are the same nodes');
   await press('[data-group-key="dismissed"] > summary');
