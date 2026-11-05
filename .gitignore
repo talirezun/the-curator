@@ -190,6 +190,11 @@ AuthKey_*.p8
 # same change that creates the file.
 .health-summary.json
 
+# What "Find duplicate pages" remembers, per domain (src/brain/paths.js
+# getDuplicateChecksDir()). Machine-local cache; in REPO mode it lands beside
+# tracked source, and it names the owner's pages.
+.duplicate-checks/
+
 # MCP install manifest (v3.85.0, src/brain/paths.js getMcpInstallManifestPath()) —
 # every write the app made to another tool's MCP config, with ABSOLUTE paths on
 # this Mac and its backup names. Machine-local; in REPO mode it lands beside

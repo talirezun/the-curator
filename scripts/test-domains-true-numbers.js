@@ -317,10 +317,14 @@ section('5. F4 — the duplicate-scan confirm and the ceiling');
   const under = semanticScanConfirmText({ candidatePairs: 100, totalCandidates: 100, truncated: false,
     estimatedTokens: 40000, costCeilingTokens: 50000 }, 'gemini/flash', '$0.01');
   ok(under.refused === false && /Estimated cost \$0\.01/.test(under.body), '5.4 CONTROL — under the ceiling it is the ordinary priced confirm');
-  const capped = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, truncated: true, maxPairs: 500,
+  const capped = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, leftPairs: 2300, checkedPairs: 0, truncated: true, maxPairs: 500,
     estimatedTokens: 200000, costCeilingTokens: 200000 }, 'x', '$0.03');
-  ok(/capped at your 500-pair limit/.test(capped.body) && !/pre-filtered locally from/.test(capped.body),
-    '5.5 a capped list names the user\'s max-pairs setting, not a "local pre-filter"', capped.body);
+  ok(capped.body === 'Checks the next 500 of 2,300 pairs not checked yet, using x. Estimated cost $0.03. This only finds pairs — nothing is merged yet.',
+    '5.5 a capped list says it checks the next N of what is left, in the agreed words', capped.body);
+  const cappedOver = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, leftPairs: 1800, checkedPairs: 500, truncated: true, maxPairs: 500,
+    estimatedTokens: 200000, costCeilingTokens: 100000 }, 'x', '$0.03');
+  ok(/capped at your 500-pair limit/.test(cappedOver.body) && /most similar of 1,800/.test(cappedOver.body),
+    '5.5b a refused capped run names the user\'s setting and what is left, not every pair', cappedOver.body);
   ok(capped.refused === false, '5.6 exactly AT the ceiling runs (the server refuses only when over)');
 
   // The card: a refused confirm has no yes button.
@@ -476,8 +480,8 @@ section('13. F11 — the semantic header');
   const src = lift('renderSemanticScanResult');
   ok(/'likely duplicate pair'/.test(src) && !/'candidate pair'\) \+ ' found'/.test(src),
     '13.1 the header counts likely duplicates, not "candidate pairs"');
-  ok(/checked = ev\.candidatePairs/.test(lift('runSemanticScan')) && /\bchecked,/.test(lift('runSemanticScan')),
-    '13.2 the scan\'s own start frame supplies "(of N checked)"');
+  ok(/renderSemanticCoverage/.test(src) && !/ checked\)'/.test(src),
+    '13.2 how much was checked is the coverage line\'s, over the whole domain, not "(of N checked)" for one run');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

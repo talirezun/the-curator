@@ -19,6 +19,7 @@ import {
   suggestOrphanHomes,
   estimateSemanticDuplicateScan,
   scanSemanticDuplicates,
+  semanticScanStatus,
   estimateBrokenLinkFix,
   planBrokenLinkFixes,
   estimateOrphanRescue,
@@ -26,6 +27,7 @@ import {
   describeHealthRun,
 } from '../brain/health-ai.js';
 import { describeRun } from '../brain/ai-run.js';
+import { forgetDuplicateChecks } from '../brain/duplicate-checks.js';
 import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings, DEFAULT_AI_HEALTH } from '../brain/config.js';
@@ -256,6 +258,38 @@ router.get('/:domain/semantic-dupes/estimate', async (req, res) => {
   } catch (err) {
     if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[semantic-dupes estimate]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// What this machine already knows: coverage and the pairs found earlier and not
+// yet decided, so the panel can open with them after a reload. No provider call.
+// With nothing remembered it answers at once, so opening a domain nobody has
+// scanned never derives the candidate list.
+router.get('/:domain/semantic-dupes/status', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const settings = getAiHealthSettings();
+    res.json({ ok: true, ...(await semanticScanStatus(domain, settings.semanticDupeMaxPairs)) });
+  } catch (err) {
+    if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
+    console.error('[semantic-dupes status]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Forget which pairs have been checked in this domain, so the next scan starts
+// over. The wiki and the dismissals are untouched, so this is allowed on a
+// read-only mirror too: what it clears is this machine's, not the mirror's.
+router.post('/:domain/semantic-dupes/forget', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    await forgetDuplicateChecks(domain);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[semantic-dupes forget]', err);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
@@ -619,9 +653,11 @@ router.post('/:domain/fix-all-safe', async (req, res) => {
 });
 
 // Batch-merge a caller-supplied list of semantic-duplicate pairs over SSE
-// (v3.0.1-beta.15). Powers the "Merge all high-confidence" button. The
-// frontend sends the exact pairs to merge (already filtered to high
-// confidence); the server validates each pair inside fixSemanticDuplicate.
+// (v3.0.1-beta.15). Powers the "Merge N spelling variants" button. The frontend
+// sends the exact pairs to merge; the server decides which of them may run
+// (fixSemanticDuplicatesBatch: names are spelling variants AND a remembered
+// high-confidence answer about the pages as they are now) and validates each
+// pair inside fixSemanticDuplicate. An ineligible pair is reported, never run.
 // Registered as a write op + file lock like fix-all so a concurrent
 // sync/update/delete refuses with 409. Streams one `progress` event per pair
 // plus a final `done`.

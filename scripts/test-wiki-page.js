@@ -1458,6 +1458,15 @@ try {
         'concepts/a-one.md': '# A One\n\n## Key Facts\n- x\n',
         'concepts/aone.md':  '# AOne\n\n## Key Facts\n- y\n',
       });
+      // The batch runs only a spelling variant with a remembered high-confidence
+      // answer about these openings (see test-duplicate-checks.js).
+      const dc = await import('../src/brain/duplicate-checks.js');
+      await dc.saveDuplicateChecks(d.name, new Map([[dc.pairKey('concepts', 'a-one', 'concepts', 'aone'), {
+        provider: 'p', model: 'm', prompt: 'x', verdict: 'yes', confidence: 'high',
+        keep: 'concepts/a-one', remove: 'concepts/aone', at: 'now',
+        openings: dc.openingsHash('concepts', 'a-one', dc.pageOpening(d.read('concepts/a-one.md')),
+          'concepts', 'aone', dc.pageOpening(d.read('concepts/aone.md'))),
+      }]]));
       const r = await fixSemanticDuplicatesBatch(d.name, [
         { keepSlug: 'a-one', keepFolder: 'concepts', removeSlug: 'aone', removeFolder: 'concepts' },
       ]);

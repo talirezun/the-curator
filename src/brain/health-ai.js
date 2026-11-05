@@ -19,11 +19,16 @@
  */
 import { readFile, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
+import { createHash } from 'crypto';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
 import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates } from './llm.js';
-import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from './health.js';
+import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
+import { loadDismissed } from './health-dismissed.js';
+import {
+  loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant,
+} from './duplicate-checks.js';
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
 // run and an ingest are summed and priced by the same code.
@@ -359,7 +364,6 @@ export async function suggestOrphanHomes(domain, issue) {
 // ── Phase 3 (v2.4.5) — Semantic near-duplicate detection ────────────────────
 
 const SEMANTIC_BATCH_SIZE = 20;
-const FIRST_PARA_MAX = 500;     // per-page content sample sent to the LLM
 export const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
 
 /**
@@ -523,20 +527,147 @@ function costFields(provider, model, inputTokens, outputTokens) {
 }
 
 /**
- * Extract the first ~500 chars of prose from a wiki page, skipping YAML
- * frontmatter and the title line. Small samples are enough for the LLM to
- * judge whether two pages describe the same concept.
+ * The instructions for judging a batch. A module constant because an answer is
+ * only good for the instructions that produced it: its hash is part of what a
+ * remembered answer is bound to, so tightening these rules re-checks the pairs
+ * answered under the old ones without anybody having to remember a version.
  */
-function firstParagraph(content) {
-  let body = content;
-  // Strip frontmatter
-  if (body.startsWith('---')) {
-    const closeIdx = body.indexOf('\n---', 3);
-    if (closeIdx !== -1) body = body.slice(closeIdx + 4).trimStart();
+const SEMANTIC_SYSTEM_PROMPT =
+  `You are auditing a personal knowledge wiki for semantic duplicate pages — ` +
+  `pages that describe the same concept under different slugs (e.g. "rag" vs ` +
+  `"retrieval-augmented-generation", or "email" vs "e-mail"). You read a batch of ` +
+  `candidate pairs, each with both pages' slug + title + first paragraph, and ` +
+  `decide whether they are true duplicates.\n\n` +
+  `RULES:\n` +
+  `1. A pair is a duplicate ONLY if both pages describe the SAME underlying ` +
+  `concept/entity. Related-but-distinct pages (e.g. "gpt-4" vs "gpt-4-turbo") ` +
+  `are NOT duplicates.\n` +
+  `2. A page about a part, subtopic, specific version or instance of another ` +
+  `page is NOT a duplicate of it. A person and their website or product are NOT ` +
+  `duplicates. Two names that merely look alike are not evidence: judge by what ` +
+  `the text says.\n` +
+  `3. For duplicates, pick the canonical slug — prefer the more descriptive, ` +
+  `readable form (e.g. "retrieval-augmented-generation" over "rag"; ` +
+  `"neural-networks" over "neural-network"; full name over acronym).\n` +
+  `4. Set confidence honestly: "high" = unambiguous same concept; ` +
+  `"medium" = likely but some doubt; "low" = speculative.\n` +
+  `5. If unsure, mark as non-duplicate. Precision over recall — a missed dupe ` +
+  `is cheap; a wrong merge is expensive.\n` +
+  `6. Respond with ONLY valid JSON. No markdown fences, no prose outside JSON.`;
+const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).digest('hex').slice(0, 16);
+
+/**
+ * The live candidate list, with the last answer kept for one domain.
+ *
+ * The list is a pure function of the page NAMES and the dismissals, and it takes
+ * ~15 s of wall clock on a 3,300-page domain. With remembered answers it is asked
+ * for far more often (the estimate, then the scan, then coverage after a merge and
+ * on returning to the page), so it is worth not re-deriving when neither input
+ * moved. One entry, so a large domain's list is the most this ever holds.
+ */
+let candidateMemo = null;
+async function liveCandidates(domain) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+  const [entities, concepts, dismissed] = await Promise.all([
+    listMd(wikiDir, 'entities'), listMd(wikiDir, 'concepts'), loadDismissed(domain),
+  ]);
+  const sig = createHash('sha256')
+    .update(JSON.stringify([[...entities].sort(), [...concepts].sort(), [...dismissed.keys].sort()]))
+    .digest('hex');
+  if (candidateMemo && candidateMemo.domain === domain && candidateMemo.sig === sig) return candidateMemo.result;
+  const result = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER);
+  candidateMemo = { domain, sig, result };
+  return result;
+}
+
+/** Reads each page's opening once per pass. A page that cannot be read has an empty opening. */
+function openingReader(wikiDir) {
+  const cache = new Map();
+  return async (folder, slug) => {
+    const key = `${folder}/${slug}`;
+    if (cache.has(key)) return cache.get(key);
+    let text = '';
+    try { text = pageOpening(await readFile(path.join(wikiDir, folder, slug + '.md'), 'utf8')); }
+    catch { text = ''; }
+    cache.set(key, text);
+    return text;
+  };
+}
+
+function coverageFields(total, checked, remembered, maxPairs) {
+  const left = Math.max(0, total - checked);
+  return {
+    totalPairs: total, checkedPairs: checked, leftPairs: left,
+    nextPairs: Math.min(left, maxPairs), rememberedPairs: remembered,
+  };
+}
+
+/** A remembered `yes`, in the shape a scan reports a pair. Null when it no longer names this pair's two pages. */
+function pairFromRecord(rec, p) {
+  const a = `${p.folderA}/${p.slugA}`;
+  const b = `${p.folderB}/${p.slugB}`;
+  const keepIsA = rec.keep === a && rec.remove === b;
+  const keepIsB = rec.keep === b && rec.remove === a;
+  if (!keepIsA && !keepIsB) return null;
+  const keep = keepIsA ? { slug: p.slugA, folder: p.folderA } : { slug: p.slugB, folder: p.folderB };
+  const remove = keepIsA ? { slug: p.slugB, folder: p.folderB } : { slug: p.slugA, folder: p.folderA };
+  return {
+    keepSlug: keep.slug, keepFolder: keep.folder,
+    removeSlug: remove.slug, removeFolder: remove.folder,
+    confidence: rec.confidence,
+    rationale: typeof rec.rationale === 'string' && rec.rationale ? rec.rationale : 'No rationale provided.',
+    spellingVariant: isSpellingVariant(keep.slug, remove.slug),
+    remembered: true,
+  };
+}
+
+/**
+ * Sort the live pairs into already answered and still to check. This is the one
+ * layer that knows about remembered answers; findSemanticCandidatePairs stays
+ * free of them. No provider call and no write.
+ */
+async function planSemanticScan(domain, maxPairs, readOpening) {
+  const { pairs: live, pageCount } = await liveCandidates(domain);
+  let info = null;
+  try { info = getProviderInfo(); } catch { info = null; }
+  const checks = await loadDuplicateChecks(domain);
+  const toCheck = [];
+  const remembered = [];
+  let checked = 0;
+  let work = 0;
+  for (const p of live) {
+    const rec = checks.get(pairKey(p.folderA, p.slugA, p.folderB, p.slugB));
+    let applies = false;
+    if (rec && info && rec.provider === info.provider && rec.model === info.model && rec.prompt === SEMANTIC_PROMPT_ID) {
+      const [a, b] = await Promise.all([readOpening(p.folderA, p.slugA), readOpening(p.folderB, p.slugB)]);
+      applies = rec.openings === openingsHash(p.folderA, p.slugA, a, p.folderB, p.slugB, b);
+      if (applies && rec.verdict === 'yes') {
+        const pair = pairFromRecord(rec, p);
+        if (pair) remembered.push(pair); else applies = false;
+      }
+    }
+    if (applies) checked++; else toCheck.push(p);
+    if (++work >= 2000) { work = 0; await new Promise((resolve) => setImmediate(resolve)); }
   }
-  // Strip the title line
-  body = body.replace(/^#\s+.*\n/, '').trimStart();
-  return body.slice(0, FIRST_PARA_MAX).replace(/\s+/g, ' ').trim();
+  return { live, pageCount, toCheck, remembered, checked, send: toCheck.slice(0, maxPairs), info };
+}
+
+/**
+ * Coverage and the remembered pairs, for the panel to open with after a reload.
+ * Free: no provider call, and with nothing remembered it answers without even
+ * deriving the candidate list, so a domain nobody has scanned costs one file read.
+ */
+export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
+  const checks = await loadDuplicateChecks(domain);
+  if (checks.size === 0) return { hasChecks: false };
+  const plan = await planSemanticScan(domain, maxPairs, openingReader(wikiPath(domain)));
+  if (!plan.info) return { hasChecks: false }; // no provider: nothing can be said to apply
+  return {
+    hasChecks: true,
+    pairs: plan.remembered,
+    ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
+  };
 }
 
 /**
@@ -549,16 +680,18 @@ function firstParagraph(content) {
  * @returns {Promise<{pageCount, candidatePairs, totalCandidates, truncated, estimatedTokens, estimatedUsd, provider, model}>}
  */
 export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
-  const { pairs, pageCount, truncated, totalCandidates } =
-    await findSemanticCandidatePairs(domain, maxPairs);
-  const estimatedTokens = pairs.length * EST_TOKENS_PER_PAIR;
+  const plan = await planSemanticScan(domain, maxPairs, openingReader(wikiPath(domain)));
+  // Only the pairs that will really be sent are priced. `candidatePairs` keeps
+  // its meaning (what this scan sends); `totalCandidates` is every live pair.
+  const estimatedTokens = plan.send.length * EST_TOKENS_PER_PAIR;
   const { provider, model } = getProviderInfo();
   // Rough 60/40 input/output split
   return {
-    pageCount,
-    candidatePairs: pairs.length,
-    totalCandidates,
-    truncated,
+    pageCount: plan.pageCount,
+    candidatePairs: plan.send.length,
+    totalCandidates: plan.live.length,
+    truncated: plan.toCheck.length > maxPairs,
+    ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
     estimatedTokens,
     ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
     provider,
@@ -571,17 +704,23 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
  * `onEvent({type, ...})` so the HTTP layer can forward them over SSE.
  *
  * Event shapes:
- *   { type: 'start', candidatePairs, batches }
+ *   { type: 'start', candidatePairs, batches, ...coverage } — `candidatePairs` is what will be SENT
  *   { type: 'progress', processed, total, found }
- *   { type: 'pair', pair }                       — one accepted duplicate pair
- *   { type: 'done', pairs, cost, spent }         — final summary (`spent` v3.67.0)
+ *   { type: 'pair', pair }                       — one duplicate pair, new or remembered
+ *   { type: 'done', pairs, cost, spent, failedPairs, ...coverage } — final summary (`spent` v3.67.0)
+ *
+ * `coverage` is {totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}.
+ * A pair already answered for these two openings by this model is not sent
+ * again; a remembered `yes` comes back free. Nothing to send: no provider call.
  *
  * The LLM is asked, per batch, to judge each pair as duplicate / not-duplicate
  * and pick the canonical slug. Low-confidence and non-duplicate verdicts are
  * filtered out; only medium+high duplicates survive to the UI.
  *
- * NO FILESYSTEM WRITES. Application is through POST /api/health/:domain/fix
- * with type: 'semanticDupe'.
+ * NO WIKI WRITES. Application is through POST /api/health/:domain/fix with
+ * type: 'semanticDupe'. The one write is the machine-local record of the
+ * answers, outside domains/, saved after EACH batch so a scan that dies keeps
+ * what it paid for (src/brain/duplicate-checks.js).
  */
 export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => {}) {
   // The ceiling's default is config's own (v3.72.1) — every production caller
@@ -598,9 +737,12 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
-  const { pairs: candidatePairs } = await findSemanticCandidatePairs(domain, maxPairs);
+  const readOpening = openingReader(wikiDir);
+  const plan = await planSemanticScan(domain, maxPairs, readOpening);
+  const candidatePairs = plan.send;
 
-  // Hard ceiling: abort before any LLM call if we'd exceed the user's budget
+  // Hard ceiling: abort before any LLM call if we'd exceed the user's budget.
+  // Counts only what will really be sent.
   const estimatedTokens = candidatePairs.length * EST_TOKENS_PER_PAIR;
   if (estimatedTokens > costCeilingTokens) {
     const err = new Error(
@@ -617,45 +759,28 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
     batches.push(candidatePairs.slice(i, i + SEMANTIC_BATCH_SIZE));
   }
 
-  onEvent({ type: 'start', candidatePairs: candidatePairs.length, batches: batches.length });
+  const totalPairs = plan.live.length;
+  const rememberedPairs = plan.remembered.length;
+  let checkedPairs = plan.checked;
+  let failedPairs = 0;
 
-  // Pre-load first-paragraph samples for every slug we'll mention in prompts,
-  // to avoid re-reading the same file multiple times.
-  const sampleCache = new Map();
-  async function getSample(folder, slug) {
-    const key = `${folder}/${slug}`;
-    if (sampleCache.has(key)) return sampleCache.get(key);
-    const full = path.join(wikiDir, folder, slug + '.md');
-    if (!existsSync(full)) { sampleCache.set(key, ''); return ''; }
-    const content = await readFile(full, 'utf8');
-    const sample = firstParagraph(content);
-    sampleCache.set(key, sample);
-    return sample;
+  onEvent({
+    type: 'start', candidatePairs: candidatePairs.length, batches: batches.length,
+    ...coverageFields(totalPairs, checkedPairs, rememberedPairs, maxPairs),
+  });
+
+  // Listed again, at no cost, so a found pair neither vanishes nor flips between runs.
+  const acceptedPairs = [];
+  for (const pair of plan.remembered) {
+    acceptedPairs.push(pair);
+    onEvent({ type: 'pair', pair });
   }
 
-  const acceptedPairs = [];
   let processed = 0;
   let totalInputChars = 0;
   let totalOutputChars = 0;
 
-  const systemPrompt =
-    `You are auditing a personal knowledge wiki for semantic duplicate pages — ` +
-    `pages that describe the same concept under different slugs (e.g. "rag" vs ` +
-    `"retrieval-augmented-generation", or "email" vs "e-mail"). You read a batch of ` +
-    `candidate pairs, each with both pages' slug + title + first paragraph, and ` +
-    `decide whether they are true duplicates.\n\n` +
-    `RULES:\n` +
-    `1. A pair is a duplicate ONLY if both pages describe the SAME underlying ` +
-    `concept/entity. Related-but-distinct pages (e.g. "gpt-4" vs "gpt-4-turbo") ` +
-    `are NOT duplicates.\n` +
-    `2. For duplicates, pick the canonical slug — prefer the more descriptive, ` +
-    `readable form (e.g. "retrieval-augmented-generation" over "rag"; ` +
-    `"neural-networks" over "neural-network"; full name over acronym).\n` +
-    `3. Set confidence honestly: "high" = unambiguous same concept; ` +
-    `"medium" = likely but some doubt; "low" = speculative.\n` +
-    `4. If unsure, mark as non-duplicate. Precision over recall — a missed dupe ` +
-    `is cheap; a wrong merge is expensive.\n` +
-    `5. Respond with ONLY valid JSON. No markdown fences, no prose outside JSON.`;
+  const systemPrompt = SEMANTIC_SYSTEM_PROMPT;
 
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi];
@@ -663,8 +788,8 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i];
       const [sampleA, sampleB] = await Promise.all([
-        getSample(p.folderA, p.slugA),
-        getSample(p.folderB, p.slugB),
+        readOpening(p.folderA, p.slugA),
+        readOpening(p.folderB, p.slugB),
       ]);
       batchInfo.push({
         index: i,
@@ -691,37 +816,72 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       raw = await llm(systemPrompt, userPrompt, 2048, 'json', null, { onUsage: usage.onUsage });
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
+      // jsonrepair turns prose into a JSON string, so "it parsed" is no answer.
+      if (!parsed || !Array.isArray(parsed.results)) throw new Error('The AI reply was not in the expected shape.');
     } catch (err) {
+      failedPairs += batch.length;
       onEvent({ type: 'batch-error', batch: bi, error: err.message });
       processed += batch.length;
       onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
       continue;
     }
 
-    const results = Array.isArray(parsed.results) ? parsed.results : [];
-    for (const r of results) {
+    // parseJSON is lenient: its output is validated here, never truth-tested,
+    // and only an explicit answer for a valid index is remembered.
+    if (!plan.info) plan.info = getProviderInfo();
+    const now = new Date().toISOString();
+    const answered = new Map();
+    const seenIndex = new Set();
+    for (const r of parsed.results) {
       if (!r || typeof r !== 'object') continue;
-      if (!r.isDuplicate) continue;
-      const conf = String(r.confidence || 'low').toLowerCase();
-      if (conf === 'low') continue;   // require at least medium confidence
       const idx = Number(r.index);
-      if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length) continue;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length || seenIndex.has(idx)) continue;
+      const isDup = r.isDuplicate === true || r.isDuplicate === 'true' ? true
+        : (r.isDuplicate === false || r.isDuplicate === 'false' ? false : null);
+      if (isDup === null) continue;
+      const conf = String(r.confidence || '').toLowerCase();
       const pair = batch[idx];
+      const info = batchInfo[idx];
+      const record = {
+        provider: plan.info.provider, model: plan.info.model, prompt: SEMANTIC_PROMPT_ID,
+        openings: openingsHash(pair.folderA, pair.slugA, info.sampleA, pair.folderB, pair.slugB, info.sampleB),
+        at: now,
+      };
+      const key = pairKey(pair.folderA, pair.slugA, pair.folderB, pair.slugB);
+      if (isDup === false || conf === 'low') {
+        seenIndex.add(idx);
+        answered.set(key, { ...record, verdict: 'no' });
+        continue;
+      }
+      if (conf !== 'high' && conf !== 'medium') continue; // no usable answer: not remembered, not listed
       const canonical = String(r.canonicalSlug || '').trim().replace(/^(entities|concepts)\//, '');
       if (canonical !== pair.slugA && canonical !== pair.slugB) continue; // must match one side
+      seenIndex.add(idx);
       const keepSlug = canonical;
       const keepFolder = keepSlug === pair.slugA ? pair.folderA : pair.folderB;
       const removeSlug = keepSlug === pair.slugA ? pair.slugB : pair.slugA;
       const removeFolder = keepSlug === pair.slugA ? pair.folderB : pair.folderA;
+      const rationale = String(r.rationale || '').trim() || 'No rationale provided.';
+      answered.set(key, {
+        ...record, verdict: 'yes',
+        keep: `${keepFolder}/${keepSlug}`, remove: `${removeFolder}/${removeSlug}`,
+        confidence: conf, rationale: rationale.slice(0, 500),
+      });
       const accepted = {
         keepSlug, keepFolder,
         removeSlug, removeFolder,
         confidence: conf,
-        rationale: String(r.rationale || '').trim() || 'No rationale provided.',
+        rationale,
+        spellingVariant: isSpellingVariant(keepSlug, removeSlug),
+        remembered: false,
       };
       acceptedPairs.push(accepted);
       onEvent({ type: 'pair', pair: accepted });
     }
+
+    // BEFORE the progress event: an interrupted scan keeps what it paid for.
+    await saveDuplicateChecks(domain, answered);
+    checkedPairs += answered.size;
 
     processed += batch.length;
     onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
@@ -741,8 +901,9 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   // `cost` is unchanged (chars ÷ 4, kept for every existing reader); `spent`
   // (v3.67.0) is the provider-reported figure, in the one actual shape.
   const spent = (await aiRun()).spentFromUsage(usage.totals);
-  onEvent({ type: 'done', pairs: acceptedPairs, cost, spent });
-  return { pairs: acceptedPairs, cost, spent };
+  const coverage = coverageFields(totalPairs, checkedPairs, rememberedPairs, maxPairs);
+  onEvent({ type: 'done', pairs: acceptedPairs, cost, spent, failedPairs, ...coverage });
+  return { pairs: acceptedPairs, cost, spent, failedPairs, ...coverage };
 }
 
 // ── Phase 4 (v3.0.1-beta.16) — Bulk AI broken-link resolution ───────────────
@@ -1358,7 +1519,7 @@ export async function planOrphanRescue(domain, opts = {}, onEvent = () => {}) {
     const infos = await Promise.all(batch.map(async (o) => {
       let content = '';
       try { content = await readFile(path.join(wikiDir, o.path), 'utf8'); } catch { /* unreadable */ }
-      return { slug: o.slug, type: o.type, path: o.path, excerpt: firstParagraph(content).slice(0, ORPHAN_RESCUE_EXCERPT) };
+      return { slug: o.slug, type: o.type, path: o.path, excerpt: pageOpening(content).slice(0, ORPHAN_RESCUE_EXCERPT) };
     }));
 
     const userPrompt =

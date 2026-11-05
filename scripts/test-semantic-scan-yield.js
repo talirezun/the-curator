@@ -205,7 +205,12 @@ const ALL = 1_000_000;
  * it, but only after confirming the new pair list is what you intended: this
  * function decides which pages a destructive merge is offered for.
  */
-const GOLDEN_SHA256 = 'e59c7fb55a23275cceb821208ffc5324132410f46f0dd0bc628a831c3c786dd3';
+// RE-PINNED deliberately when spelling variants and acronyms began to outrank
+// everything: the fixture's hyphen/underscore pairs (quorum-ledger-N vs
+// quorum_ledger_N) moved to the head of the ranking with score 1. The pair SET
+// and its count did not change, only that order and those scores, and
+// test-duplicate-checks.js pins what the new head of the list must be.
+const GOLDEN_SHA256 = '91251142b24f03a7d66899a386d54915957ca8f92d38f62e8d097922e842db86';
 const GOLDEN_PAIR_COUNT = 6493;
 
 let health;

@@ -33,6 +33,10 @@ import {
 } from './wiki-index.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
+import {
+  loadDuplicateChecks, pairKey, openingsHash, pageOpening,
+  isSpellingVariant, spellingVariantIndexPairs, acronymIndexPairs,
+} from './duplicate-checks.js';
 // Path chokepoint — see the comment above the fix handlers below. Imported,
 // not re-implemented: this module and wiki-read.js each had their own copy,
 // and only one of them ever got hardened (v3.2.0 audit finding H1).
@@ -1884,9 +1888,10 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
     if (work >= tokenPassChunk) { work = 0; await yieldToEventLoop(); }
   }
 
-  // Also add prefix-subsequence candidates (e.g. "rag" vs "retrieval-augmented-generation"
-  // share no tokens but one is an acronym of the other — handled via JW only
-  // where JW ≥ 0.8 as a secondary pass.
+  // Also add character-similar pairs that share no token, via JW only, as a
+  // secondary pass. (Acronyms are NOT found here, despite what this comment
+  // used to say: rag / retrieval-augmented-generation scores nowhere near the
+  // threshold. See acronymIndexPairs below.)
   //
   // This pass is 97 % of the runtime (14.8 s of 15.2 s measured on a real
   // 3,288-page domain), so it is where the yielding has to bite. The inner
@@ -1918,7 +1923,22 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
     // data, we'll add locality-sensitive hashing. Currently acceptable.
   }
 
-  const ranked = [...pairMap.values()].sort((a, b) => b.score - a.score);
+  // Spelling variants and acronyms are found by their shape, in linear time,
+  // and outrank everything: neural-network / neural-networks scores 0.735 and
+  // sat behind thousands of look-alikes (a JW pair's biased score starts at
+  // 0.925), while rag / retrieval-augmented-generation was never a candidate at
+  // all. Ranked by TIER rather than by a larger number so a score stays a score;
+  // the tiers carry 1 so the list still reads in non-increasing score order.
+  const names = allSlugs.map((s) => s.slug);
+  for (const [i, j] of acronymIndexPairs(names, STOPWORDS)) {
+    if (names[i] !== names[j]) pairMap.set(`${i}|${j}`, { i, j, score: 1, tier: 1 });
+  }
+  for (const [i, j] of spellingVariantIndexPairs(names)) {
+    pairMap.set(`${i}|${j}`, { i, j, score: 1, tier: 0 });
+  }
+
+  const tierOf = (p) => (p.tier === undefined ? 2 : p.tier);
+  const ranked = [...pairMap.values()].sort((a, b) => (tierOf(a) - tierOf(b)) || (b.score - a.score));
 
   // Lift the ranked pairs into the public shape, then filter out any pairs the
   // user has previously dismissed (v2.5.1+). We filter BEFORE truncating so a
@@ -2234,24 +2254,61 @@ async function fixSemanticDuplicate(wikiDir, issue) {
  * `fixSemanticDuplicate` (slug regex, folder allowlist, existence) so a crafted
  * request cannot escape the wiki folder.
  *
- * NOTE for anyone summing the counts: `merged + stale + skipped + errors ===
- * total`. `stale` was carved OUT of `skipped` in this release, so a caller
- * asserting the old three-term sum will be short by the stale count.
+ * ELIGIBILITY IS DECIDED HERE, ON THE SERVER, BEFORE THE FIRST MERGE. A batch
+ * deletes pages with nobody reading a preview, and measured "high" answers
+ * included transaction-costs-of-ai / transportation-sector-ai. So a pair runs
+ * only if its names are spelling variants AND this machine remembers a `yes`,
+ * high-confidence answer about the two openings on disk now. The list comes
+ * from the client, so nothing it says about confidence is read. Anything else is
+ * reported as `ineligible` and never run. Decided up front, because an earlier
+ * merge in this batch legitimately rewrites a kept page's opening. Pairs that
+ * cannot be resolved or whose page is gone pass through: fixSemanticDuplicate
+ * refuses them with their own reasons and writes nothing. A Flip is honoured:
+ * the answer is about the pair, in either direction.
+ *
+ * NOTE for anyone summing the counts: `merged + stale + skipped + ineligible +
+ * errors === total`. `stale` was carved OUT of `skipped` in v3.53.0.
  *
  * @param {string}   domain
  * @param {object[]} pairs       [{keepSlug, keepFolder, removeSlug, removeFolder}]
  * @param {function} onProgress  ({done, total, pair, status, missing?}) => void
- * @returns {Promise<{merged:number, stale:number, skipped:number, errors:number, total:number, results:object[]}>}
+ * @returns {Promise<{merged:number, stale:number, skipped:number, ineligible:number, errors:number, total:number, results:object[]}>}
  */
+async function batchRefusals(wikiDir, domain, list) {
+  const refusals = new Map();
+  const checks = await loadDuplicateChecks(domain);
+  for (let i = 0; i < list.length; i++) {
+    const resolved = resolveSemanticDupePair(wikiDir, list[i]);
+    if (!resolved || resolved.missingReason) continue; // refused later, with its own reason
+    if (!isSpellingVariant(resolved.keepSlug, resolved.removeSlug)) { refusals.set(i, 'names-differ'); continue; }
+    const rec = checks.get(pairKey(resolved.keepFolder, resolved.keepSlug, resolved.removeFolder, resolved.removeSlug));
+    if (!rec || rec.verdict !== 'yes' || rec.confidence !== 'high') { refusals.set(i, 'not-high-confidence'); continue; }
+    const { keepPath, removePath } = resolved;
+    const [keepText, removeText] = await Promise.all([readFile(keepPath, 'utf8'), readFile(removePath, 'utf8')]);
+    const now = openingsHash(resolved.keepFolder, resolved.keepSlug, pageOpening(keepText),
+      resolved.removeFolder, resolved.removeSlug, pageOpening(removeText));
+    if (rec.openings !== now) refusals.set(i, 'page-changed');
+  }
+  return refusals;
+}
+
 export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () => {}) {
   const wikiDir = wikiPath(domain);
   const list = Array.isArray(pairs) ? pairs : [];
   const total = list.length;
   const results = [];
-  let merged = 0, stale = 0, skipped = 0, errors = 0;
+  let merged = 0, stale = 0, skipped = 0, ineligible = 0, errors = 0;
+  const refusals = await batchRefusals(wikiDir, domain, list);
 
   for (let i = 0; i < total; i++) {
     const pair = list[i] || {};
+    if (refusals.has(i)) {
+      const reason = refusals.get(i);
+      ineligible++;
+      results.push({ keepSlug: pair.keepSlug, removeSlug: pair.removeSlug, status: 'ineligible', reason });
+      try { onProgress({ done: i + 1, total, pair, status: 'ineligible', reason }); } catch { /* best-effort */ }
+      continue;
+    }
     let status = 'skipped';
     let reason = null;
     let missing = null;
@@ -2287,7 +2344,7 @@ export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () 
     } catch { /* progress is best-effort */ }
   }
 
-  return { merged, stale, skipped, errors, total, results };
+  return { merged, stale, ineligible, skipped, errors, total, results };
 }
 
 /**

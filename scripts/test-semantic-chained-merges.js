@@ -102,6 +102,18 @@ function page(title, body = '') {
   return `---\ntype: entity\ntags: [type/entity]\n---\n\n# ${title}\n\n## Key Facts\n\n- a fact about ${title}\n${body}`;
 }
 
+const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+/** A remembered yes/high answer for two pages, about their openings on disk now. */
+async function remember(d, a, b) {
+  const [fa, sa] = a.split('/');
+  const [fb, sb] = b.split('/');
+  const open = (rel) => dc.pageOpening(readFileSync(path.join(d.wiki, rel + '.md'), 'utf8'));
+  await dc.saveDuplicateChecks(d.name, new Map([[dc.pairKey(fa, sa, fb, sb), {
+    provider: 'p', model: 'm', prompt: 'x', verdict: 'yes', confidence: 'high', keep: a, remove: b, at: 'now',
+    openings: dc.openingsHash(fa, sa, open(a), fb, sb, open(b)),
+  }]]));
+}
+
 let domainSeq = 0;
 function mkDomain(files) {
   const name = 'chain' + (++domainSeq);
@@ -194,18 +206,29 @@ section('2. fixIssue on a stale pair reports a REASON, not a bare refusal');
 // ═══════════════════════════════════════════════════════════════════════════
 section('3. The batch splits `stale` from `skipped`');
 {
-  const d = familyFixture();
+  // The batch only runs spelling variants with a remembered high-confidence
+  // answer, so the family here is three spellings of one name.
+  const d = mkDomain({
+    'entities/hand-off.md': page('Hand-off'),
+    'entities/handoff.md': page('Handoff'),
+    'entities/handoffs.md': page('Handoffs'),
+    'entities/hub.md': page('Hub', '- [[handoff]]\n'),
+  });
+  await remember(d, 'entities/hand-off', 'entities/handoff');
+  await remember(d, 'entities/handoff', 'entities/handoffs');
+  const VARIANT_1 = { keepSlug: 'hand-off', keepFolder: 'entities', removeSlug: 'handoff', removeFolder: 'entities' };
+  const VARIANT_2 = { keepSlug: 'handoff', keepFolder: 'entities', removeSlug: 'handoffs', removeFolder: 'entities' };
   const progress = [];
   const res = await fixSemanticDuplicatesBatch(d.name, [
-    PAIR_1,                                   // merges, deleting claude-opus-5
-    PAIR_2,                                   // now stale — its keep page is gone
+    VARIANT_1,                                // merges, deleting handoff
+    VARIANT_2,                                // now stale — its keep page is gone
     { keepSlug: 'hub', keepFolder: 'summaries', removeSlug: 'nope', removeFolder: 'entities' }, // invalid folder
   ], (p) => progress.push(p));
 
   ok(res.results[0].status === 'merged', '3.1 pair 1 merges', JSON.stringify(res.results[0]));
   ok(res.results[1].status === 'stale',
      '3.2 THE FIX — a pair the batch itself invalidated is `stale`, not `skipped`', JSON.stringify(res.results[1]));
-  ok(res.results[1].missing === 'entities/claude-opus-5',
+  ok(res.results[1].missing === 'entities/handoff',
      '3.3 …and the result names the page that went', JSON.stringify(res.results[1]));
   ok(res.results[2].status === 'skipped',
      '3.4 NEGATIVE CONTROL — a genuinely invalid pair is still `skipped`, so the split means something',
@@ -216,7 +239,7 @@ section('3. The batch splits `stale` from `skipped`');
      '3.6 …and they still sum to total');
   ok(progress.map((p) => p.status).join(',') === 'merged,stale,skipped',
      '3.7 the SSE progress frames carry the same three statuses', progress.map((p) => p.status).join(','));
-  ok(progress[1].missing === 'entities/claude-opus-5',
+  ok(progress[1].missing === 'entities/handoff',
      '3.8 …and the stale frame carries the missing page, so the UI can cascade on it');
 
   // The truthiness trap: fixSemanticDuplicate now returns an OBJECT on a

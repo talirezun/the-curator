@@ -525,7 +525,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
       const done = events.find(e => e.type === 'done') || {};
       ok(llm.seen.length >= 1, `semantic scan: precondition — it made ${llm.seen.length} call(s)`);
       ok(same(done.spent, expectedSpent(llm.seen)), 'semantic scan: done.spent equals spentFromUsage of its calls');
-      eq(Object.keys(done).join(','), 'type,pairs,cost,spent', 'semantic scan: done keeps pairs/cost, plus spent');
+      eq(Object.keys(done).slice(0, 4).join(','), 'type,pairs,cost,spent', 'semantic scan: done keeps pairs/cost, plus spent (coverage is additive after them)');
       ok(typeof done.spent.usd === 'number' && done.spent.model === 'gemini-2.5-flash-lite', 'semantic scan: spent is priced on the model that billed');
     }
     // (d) no call at all → spent is the nothing-ran shape, usd null (never $0).

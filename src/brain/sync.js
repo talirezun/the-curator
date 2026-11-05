@@ -394,6 +394,7 @@ const DOMAINS_GITIGNORE_RULES = [
   // user-data dir — where a deleted domain moved to the trash would otherwise
   // be committed right back to GitHub on the next Sync.
   '.curator-trash/',
+  '.duplicate-checks/',
   // v3.5.1: Obsidian's workspace state — rewritten on essentially every pane
   // move/resize/tab switch, so tracking it produces a pending change on
   // almost every Obsidian interaction (same class of noise as .DS_Store).

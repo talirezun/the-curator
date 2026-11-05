@@ -766,6 +766,7 @@
 .dm-confirm-actions,
 .dm-plan-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .dm-plan-summary {
@@ -1263,6 +1264,12 @@
   font-size: var(--text-2xs);
   color: var(--text-2);
   line-height: var(--leading-normal);
+}
+.dm-sem-batch > .btn { max-width: 100%; white-space: normal; }
+/* The coverage line is where the user is in the domain, not a footnote. */
+.dm-sem-coverage .dm-sem-batch-note {
+  font-size: var(--text-sm);
+  color: var(--text);
 }
 
 .dm-sem-list { display: flex; flex-direction: column; gap: 10px; }

@@ -658,6 +658,20 @@ export function getHealthSummaryPath() {
 }
 
 /**
+ * What "Find duplicate pages" remembers, one JSON file per domain, written by
+ * `src/brain/duplicate-checks.js`.
+ *
+ * OUTSIDE `domains/` for the same reason as the health summary above: it is a
+ * per-machine cache, and `getDomainsDir()` is Personal Sync's git work-tree. It
+ * also keeps a scan from writing inside the wiki. Lost, it costs a re-check.
+ *
+ * Pure resolver — never creates the directory.
+ */
+export function getDuplicateChecksDir() {
+  return userDataPath('.duplicate-checks');
+}
+
+/**
  * The Curator's trash (v3.73.0) — where a deleted DOMAIN or a deleted PROJECT
  * goes instead of being `rm -rf`'d. Two subfolders, created on first use:
  *

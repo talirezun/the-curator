@@ -116,7 +116,7 @@ const FNS = [
   'isSemanticPreviewed',
   'canMergeSemanticPair',
   'flipSemanticPair',
-  'liveHighConfidencePairs',
+  'liveBatchPairs',
   'markSemanticPairStatus',
   'setSemanticPairMessage',
   // v3.53.0 — the chained-merge cascade. A semantic scan pairs EVERY
@@ -129,6 +129,11 @@ const FNS = [
   'semanticStaleFromError',
   'semanticHandledLabel',
   'renderSemanticScanResult',
+  'renderSemanticCoverage',
+  'renderSemanticReset',
+  'semanticPrimaryAction',
+  'semanticCoverageFrom',
+  'newSemanticScan',
   'renderSemanticPairCard',
   'renderSemanticPreview',
   // A real dependency of runSemanticScan and runMergeSemanticDuplicates,
@@ -272,7 +277,7 @@ try {
 
 const {
   semanticPairKey, activeSemanticScan, rawPreviewedKeys, markSemanticPreviewed,
-  isSemanticPreviewed, canMergeSemanticPair, flipSemanticPair, liveHighConfidencePairs,
+  isSemanticPreviewed, canMergeSemanticPair, flipSemanticPair, liveBatchPairs,
   markSemanticPairStatus, toWirePair, loadHealth, selectDomain, runSemanticScan,
   previewSemanticPair, mergeOneSemanticPair, skipSemanticPair, runMergeSemanticDuplicates,
   mergeSemanticDuplicates,
@@ -285,7 +290,7 @@ function pair(over) {
   return Object.assign({
     keepFolder: 'entities', keepSlug: 'openai',
     removeFolder: 'concepts', removeSlug: 'open-ai',
-    confidence: 'high', rationale: 'same company', status: 'open',
+    confidence: 'high', rationale: 'same company', status: 'open', spellingVariant: true,
   }, over || {});
 }
 
@@ -466,25 +471,27 @@ const p3 = pair({ keepSlug: 'e', removeSlug: 'f', confidence: 'medium' });
 
 // 5a. baseline
 __setState(stateWithScan('alpha', [p1, p2, p3]));
-ok(liveHighConfidencePairs().length === 2, '5a: only high-confidence pairs are batch-eligible (medium is not)');
+ok(liveBatchPairs().length === 2, '5a: only high-confidence pairs are batch-eligible (medium is not)');
+__setState(stateWithScan('alpha', [p1, pair({ keepSlug: 'g', removeSlug: 'h', spellingVariant: false })]));
+ok(liveBatchPairs().length === 1, '5a2: a high-confidence pair whose names differ is NOT batch-eligible');
 
 // 5b. a FLIP before the batch must change the direction that gets merged
 __setState(stateWithScan('alpha', [p1, p2]));
 flipSemanticPair(__state().semanticScan.pairs[0]);
-let live = liveHighConfidencePairs();
+let live = liveBatchPairs();
 ok(live[0].keepSlug === 'b' && live[0].removeSlug === 'a',
    '5b: after a Flip the batch list carries the FLIPPED direction — merging the pre-flip direction deletes the page the user chose to keep');
 
 // 5c. a SKIP before the batch must exclude the pair
 __setState(stateWithScan('alpha', [p1, p2]));
 markSemanticPairStatus(__state().semanticScan.pairs[1], 'skipped');
-live = liveHighConfidencePairs();
+live = liveBatchPairs();
 ok(live.length === 1 && live[0].keepSlug === 'a', '5c: a skipped pair is excluded from the batch');
 
 // 5d. an already-merged pair must not be re-attempted
 __setState(stateWithScan('alpha', [p1, p2]));
 markSemanticPairStatus(__state().semanticScan.pairs[0], 'merged');
-ok(liveHighConfidencePairs().length === 1, '5d: an already-merged pair is excluded from the batch');
+ok(liveBatchPairs().length === 1, '5d: an already-merged pair is excluded from the batch');
 
 // 5e. END-TO-END: open the confirm, THEN flip, THEN confirm. This is the
 // reported v3.0.1-beta.15 sequence, and the reason `run` takes no captured
@@ -576,13 +583,13 @@ __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai'
 ok(rawPreviewedKeys().length === 1, 'rawPreviewedKeys reports a NON-empty set when one exists (so "empty" above means something)');
 ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'the gate reports allowed=true when it should (so allowed=false above means something)');
 __setState(stateWithScan('alpha', [p1, p2]));
-ok(liveHighConfidencePairs().length === 2, 'liveHighConfidencePairs returns pairs when there are pairs (so an empty result above means something)');
+ok(liveBatchPairs().length === 2, 'liveBatchPairs returns pairs when there are pairs (so an empty result above means something)');
 // And the flip detector must not "pass" on an unflipped pair.
-ok(liveHighConfidencePairs()[0].keepSlug === 'a',
+ok(liveBatchPairs()[0].keepSlug === 'a',
    'an UNflipped pair keeps its original direction — the 5b assertion is detecting the flip, not a constant');
 
 console.log('\n=== 8. Structure that keeps the invariants from drifting back ===');
-const scanSrc = extractFunction(src, 'runSemanticScan');
+const scanSrc = extractFunction(src, 'newSemanticScan');
 ok(/previewed: new Set\(\)/.test(scanSrc),
    'a new scan builds a NEW previewed Set inside the scan object — structural, so it cannot inherit an old one');
 ok(/slug,/.test(scanSrc), 'a new scan records the slug it was scanned for');
@@ -590,10 +597,10 @@ const confirmSrc = extractFunction(src, 'mergeSemanticDuplicates');
 ok(/run: \(\) => runMergeSemanticDuplicates\(slug\),/.test(confirmSrc),
    'the confirm passes NO pair list — capturing one is the v3.0.1-beta.15 bug');
 const batchSrc = extractFunction(src, 'runMergeSemanticDuplicates');
-ok(/liveHighConfidencePairs\(\)\.map\(toWirePair\)/.test(batchSrc), 'the batch derives its list inside itself, at execution');
+ok(/liveBatchPairs\(\)\.map\(toWirePair\)/.test(batchSrc), 'the batch derives its list inside itself, at execution');
 ok(!/state\.semanticScan\.pairs\.filter/.test(batchSrc), 'the batch never reads the raw pairs array directly');
 // Every reader/writer of the previewed set must go through the accessor.
-for (const fn of ['markSemanticPreviewed', 'isSemanticPreviewed', 'canMergeSemanticPair', 'flipSemanticPair', 'liveHighConfidencePairs', 'markSemanticPairStatus', 'setSemanticPairMessage']) {
+for (const fn of ['markSemanticPreviewed', 'isSemanticPreviewed', 'canMergeSemanticPair', 'flipSemanticPair', 'liveBatchPairs', 'markSemanticPairStatus', 'setSemanticPairMessage']) {
   ok(/activeSemanticScan\(\)/.test(extractFunction(src, fn)),
      `${fn} reaches the scan ONLY through activeSemanticScan() (LAYER 2 cannot be bypassed)`);
 }

@@ -425,6 +425,7 @@ export const scanSemanticDuplicatesDefinition = {
   description:
     "Find pages in the user's second brain that describe the same concept under different slugs — like [[email]] vs [[e-mail]], or [[rag]] vs [[retrieval-augmented-generation]]. " +
     "OPT-IN AND COSTED: this calls the LLM and has a small cost ($0.005–$0.03 typical on Gemini Flash Lite). Only run when the user explicitly asks. " +
+    "A large domain takes several runs: each checks only the next max_pairs pairs and remembers its answers on this computer, so a repeat run sends only pairs not checked yet and lists earlier finds again for free. Report total_pairs, checked_pairs and left_pairs to the user; left_pairs 0 means no call and no spend. " +
     "Returns candidate duplicate pairs with confidence scores. Merging them goes through fix_wiki_issue with type=semanticDupe (which has its own preview/confirm gate). " +
     "Use the estimate_only: true flag first to show the user the cost before paying it.",
   inputSchema: {
@@ -485,14 +486,18 @@ export async function scanSemanticDuplicatesHandler(args, storage) {
         ? est.costNote
         : (typeof est.estimatedUsd === 'number' ? `~$${est.estimatedUsd.toFixed(4)}` : 'cost unknown');
       const scope = est.truncated
-        ? `${n(est.candidatePairs)} of ${n(est.totalCandidates)} candidate pairs (capped)`
-        : `${n(est.candidatePairs)} candidate pairs`;
+        ? `the next ${n(est.candidatePairs)} of ${n(est.leftPairs)} pairs not checked yet`
+        : `${n(est.candidatePairs)} pairs not checked yet`;
       return {
         ok: true,
         domain: domain.value,
         estimate_only: true,
         estimate: est,
-        report: `Estimate for '${domain.value}': ${scope} across ${n(est.pageCount)} pages. `
+        total_pairs: est.totalPairs,
+        checked_pairs: est.checkedPairs,
+        left_pairs: est.leftPairs,
+        report: `Estimate for '${domain.value}': ${scope} across ${n(est.pageCount)} pages `
+          + `(${n(est.checkedPairs)} of ${n(est.totalPairs)} possible pairs already checked). `
           + `Approx ${n(est.estimatedTokens)} tokens on ${est.model || 'the configured model'}. ${cost}`,
       };
     } catch (err) {
@@ -516,14 +521,26 @@ export async function scanSemanticDuplicatesHandler(args, storage) {
     return { ok: false, error: `Scan failed: ${err.message}` };
   }
 
+  const total = lastEvent?.totalPairs ?? 0;
+  const checked = lastEvent?.checkedPairs ?? 0;
+  const left = lastEvent?.leftPairs ?? 0;
+  const failed = lastEvent?.failedPairs ?? 0;
+  const coverage = `Checked ${checked} of ${total} possible pairs, ${left} still to check.`
+    + (failed > 0 ? ` ${failed} could not be checked this run because the AI call failed.` : '');
   return {
     ok: true,
     domain: domain.value,
     pairs,
     cost: lastEvent?.cost || null,
-    report: pairs.length === 0
-      ? `No semantic duplicates found in '${domain.value}'.`
-      : `Found ${pairs.length} candidate duplicate pair${pairs.length === 1 ? '' : 's'} in '${domain.value}'. Use fix_wiki_issue with type=semanticDupe (preview required first) to merge.`,
+    total_pairs: total,
+    checked_pairs: checked,
+    left_pairs: left,
+    remembered_pairs: lastEvent?.rememberedPairs ?? 0,
+    failed_pairs: failed,
+    report: (pairs.length === 0
+      ? `No semantic duplicates found in '${domain.value}' so far.`
+      : `Found ${pairs.length} candidate duplicate pair${pairs.length === 1 ? '' : 's'} in '${domain.value}'. Use fix_wiki_issue with type=semanticDupe (preview required first) to merge.`)
+      + ' ' + coverage,
   };
 }
 

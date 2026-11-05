@@ -1075,6 +1075,8 @@ const HEALTH_GUARD_CLASSES = [
         'runs the LLM scan and streams candidate pairs; read-only (health-ai.js), no wiki write.' },
       { method: 'POST', path: '/:domain/semantic-dupes/preview', reason:
         'computes and returns a merge diff preview; read-only, no wiki write.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
+        'removes one machine-local cache file in the user-data dir, outside domains/; no wiki page, sidecar or lock involved.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'runs the deterministic pre-pass + AI batches and streams the plan; read-only — the write happens in the separate, guarded /broken-links/apply route.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1124,6 +1126,8 @@ const HEALTH_GUARD_CLASSES = [
         'read-only scan; writes nothing to the domain.' },
       { method: 'POST', path: '/:domain/semantic-dupes/preview', reason:
         'read-only diff preview; writes nothing to the domain.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
+        'writes nothing into domains/<domain>/: the cache it clears is this machine\'s and a Pull never touches it.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'read-only planning stage; the write is in /broken-links/apply, which carries the guard.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1337,7 +1341,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 16, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply
+    expectedMutatingCount: 17, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via
