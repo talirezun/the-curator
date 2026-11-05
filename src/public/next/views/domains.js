@@ -7775,7 +7775,7 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   const batchBar = (readonly || batch.length === 0) ? '' : (
     '<div class="dm-sem-batch">' +
       '<button class="btn ' + (primary && primary.kind === 'batch' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-merge-btn"' + (busy ? ' disabled' : '') + '>' +
-        (busy === 'semanticMerge' ? 'Merging…' : 'Merge ' + batch.length + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants')) +
+        (busy === 'semanticMerge' ? 'Merging…' : 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants')) +
       '</button>' +
       '<span class="dm-sem-batch-note">Merges only pairs whose names are spelling variants, such as hand-off and handoff. Every other pair needs your Preview.</span>' +
     '</div>'
@@ -9096,7 +9096,7 @@ function mergeSemanticDuplicates(slug) {
   const batch = liveBatchPairs();
   if (batch.length === 0) return;
   state.confirm = {
-    title: 'Merge ' + batch.length + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants') + '?',
+    title: 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants') + '?',
     // DELIBERATELY INLINE, and must stay inline — do not "tidy" this into
     // GIT_UNDO_WARN. test-next-semantic-gate.js builds a sandbox from this
     // file's source with a FIXED const allow-list it extracts (`CONSTS`), and

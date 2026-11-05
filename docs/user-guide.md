@@ -8185,6 +8185,9 @@ Each candidate comes back as its own card showing `remove-slug → keep-slug`, a
 | *Checked 500 of 36,333 possible pairs. 35,833 still to check.* | This computer has answers for those 500 | **Check the next 500**, when you have dealt with the pairs on screen |
 | *All 943 possible pairs have been checked.* | Nothing left to send. Running it again costs nothing | Work through what is listed |
 | *12 found by earlier scans and not yet decided are listed again, at no cost.* | Pairs from earlier runs that you have not merged or skipped | Nothing special: they are ordinary cards |
+| *Counting the pairs…* | You came back, or a merge changed the list. The pairs are already there and the figures are on their way; on a large domain that takes about 15 seconds | Carry on: everything still works |
+| *20 pairs could not be checked because the AI call failed. They will be tried again next time.* | Part of the run failed | **Check the next** tries them again |
+| *None found so far* | No duplicates yet, with pairs still to check | **Check the next** |
 
 ```mermaid
 flowchart LR
@@ -8195,11 +8198,23 @@ flowchart LR
     E --> C
 ```
 
-A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Check everything again**, at the end of the card, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
+A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. A long list shows 50 pairs at a time with **Show 50 more**; the counts and the batch button always cover all of them. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Check everything again**, at the end of the card, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
 
 The answers live in your app data folder, not in your wiki, so they do not travel through Sync: each computer keeps its own, and losing them costs a re-check, never any data.
 
-**What it does not catch.** A pair is only considered if the two page names share a word, look alike, are spelling variants, or one is the initials of the other. `car` and `automobile` are never compared. On a large domain the AI also sees only each page's opening, so two pages that open differently can be missed.
+**How careful it is, and how that depends on the model.** The scan asks how two pages relate (the same subject, a part of the other, a version of it, an overlap, or unrelated) and only "the same subject" counts. An earlier yes-or-no question produced about a thousand cards on one large domain, about half of them not duplicates by the reference below. Measured:
+
+| Asked on 100 real pairs | Called the same | Not the same, by the reference | Missed, by the reference | Changed between two runs |
+|---|---|---|---|---|
+| **Now**, Gemini 2.5 Flash Lite | 19–25 | 4–6 | 9–17 | 20 of 100 |
+| **Now**, Claude Haiku 5.5 | 32 | 6 | 4 | not measured |
+| **Before** (a yes-or-no question), Flash Lite | 61–68 | 31–38 | 0 | 13 of 100 |
+
+The reference is Claude Opus 5.5, which called 30 of the 100 the same. It is a stronger reader to compare against, not the truth, and this is one sample from one wiki.
+
+In plain words: the scan is much more careful now, and it misses more as a result. Flash Lite misses more than Haiku and changes its mind more often, so a pair can appear on one run and not on another. If that matters on a domain, use **Change model** to choose a stronger model. Answers belong to the model that gave them, so after a change every pair is checked again by the new model, and pairs the old model found leave the list until it has. That costs money again, and **Check everything again** is not needed for it.
+
+**What it does not catch.** A pair is only considered if the two page names share a word, look alike, are spelling variants, or one is the initials of the other. `car` and `automobile` are never compared. A page whose name has `| [ ] #`, starts with a dot, contains `..`, or has a space at either end is left out too, because it could not be linked or merged safely. The AI also sees only each page's opening, so two pages that open differently can be missed.
 
 The preview gate is per pair, and it resets whenever you re-scan, switch domains, or flip a pair — a preview you looked at for one arrangement never authorises a different one. If a merge is refused (because something else is writing to that domain), the refusal appears **inside the card you are looking at**, not somewhere you'd have to scroll to find it.
 

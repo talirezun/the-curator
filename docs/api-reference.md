@@ -2313,6 +2313,8 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
 
 What this computer already knows, for the panel to open with after a reload. **No LLM call and no wiki read beyond page openings.** With nothing remembered it answers `{ok: true, hasChecks: false}` at once, without deriving the candidate list. Otherwise `{ok: true, hasChecks: true, pairs, totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}`, where `pairs` are the remembered, undecided duplicates (same shape as the scan's). It also answers `hasChecks: false` when no provider is configured, because whether an answer applies depends on the model.
 
+With `?quick=1` it returns only `{ok: true, hasChecks, pairs}`, with **no candidate pass**, so the panel can show the pairs at once on a large domain and fetch the figures with a second, plain call.
+
 ---
 
 ## POST /api/health/:domain/semantic-dupes/forget
@@ -2323,7 +2325,7 @@ Forgets which pairs were checked in this domain: removes `<user data>/.duplicate
 
 ## POST /api/health/:domain/semantic-dupes/scan
 
-Phase 3. Streams the real scan over **Server-Sent Events (SSE)**. A pair already answered for the same two page openings, by the same provider and model and under the same instructions, is not sent again; answers are saved after each batch, outside `domains/`. Nothing left to send means no provider call.
+Phase 3. Streams the real scan over **Server-Sent Events (SSE)**. A pair already answered for the same two page openings, by the same provider and model and under the same instructions, is not sent again; answers are saved after each batch, outside `domains/`. Nothing left to send means no provider call. Each result names a `relation` (`same`, `part`, `version`, `overlap` or `different`). Only `same` with medium or high confidence and a `canonicalSlug` naming one side becomes a pair; any other valid relation is remembered as not a duplicate; an unknown one is not remembered. Output limit: 6,000 tokens per batch.
 
 Each event is emitted as `event: <type>\ndata: <json>\n\n`.
 

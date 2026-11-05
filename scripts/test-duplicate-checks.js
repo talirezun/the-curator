@@ -681,9 +681,19 @@ section('14. Real page names can be previewed and merged');
   ok(existsSync(outside) && readFileSync(outside, 'utf8') === 'secret\n', '14. the file outside the wiki was never touched');
   ok(!dc.isMergeableSlug(null) && !dc.isMergeableSlug(7), '14. a name must be a string');
 
+  // Real files that only the name test stops: each resolves inside the wiki, so
+  // resolveInsideWiki alone would let a merge delete them.
+  const real = mkDomain({ 'concepts/inside.md': page('Inside'), 'concepts/.hidden.md': page('Hidden'), 'concepts/a..b.md': page('Dots'), 'concepts/c#d.md': page('Hash') });
+  mkdirSync(path.join(real.wiki, 'concepts/sub'));
+  writeFileSync(path.join(real.wiki, 'concepts/sub/nested.md'), page('Nested'));
+  for (const slug of ['.hidden', 'a..b', 'c#d', 'sub/nested']) {
+    const r = await health.fixIssue(real.name, 'semanticDupe', { keepSlug: 'inside', keepFolder: 'concepts', removeSlug: slug, removeFolder: 'concepts' });
+    ok(r.fixed === 0 && existsSync(path.join(real.wiki, 'concepts', slug + '.md')), `14. a real file named "${slug}" is not merged away`, JSON.stringify(r));
+  }
+
   // Never offered a Merge it cannot perform.
-  const odd = mkDomain({ 'concepts/a#b.md': page('Odd'), 'concepts/a-b.md': page('Odd 2'), 'concepts/ab.md': page('Fine'),
-    'concepts/x..y.md': page('Dots'), 'concepts/x-y.md': page('Plain'), 'concepts/xy.md': page('Plain 2') });
+  const odd = mkDomain({ 'concepts/quorum-store#notes.md': page('Odd'), 'concepts/quorum-store-notes.md': page('Odd 2'), 'concepts/quorumstorenotes.md': page('Fine'),
+    'concepts/quorum..store..notes.md': page('Dots') });
   const { pairs: oddPairs } = await health.findSemanticCandidatePairs(odd.name, 1000);
   ok(oddPairs.length > 0 && oddPairs.every((q) => dc.isMergeableSlug(q.slugA) && dc.isMergeableSlug(q.slugB)), '14. a name that can never merge is never a candidate', JSON.stringify(oddPairs.map((q) => q.slugA + '+' + q.slugB)));
   for (const q of oddPairs) {
@@ -712,6 +722,12 @@ section('15. The pairs at once, with no candidate pass');
   ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 1, '15.5 a changed opening stays out');
   rmSync(path.join(d.wiki, 'concepts/handoff.md'));
   ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 0, '15.6 a page gone stays out');
+  // Two pages with no opening hash the same with one gone, so the hash cannot be what notices.
+  const empty = mkDomain({ 'concepts/hand-off.md': '# Hand-off\n', 'concepts/handoff.md': '# Handoff\n' });
+  await scan(empty.name, fakeLLM(yesAll()));
+  ok((await ai.semanticRememberedPairs(empty.name)).pairs.length === 1, '15.5b CONTROL — two empty pages can be remembered');
+  rmSync(path.join(empty.wiki, 'concepts/handoff.md'));
+  ok((await ai.semanticRememberedPairs(empty.name)).pairs.length === 0, '15.6b a page gone stays out even when its opening was empty');
   process.env.LLM_MODEL = 'gemini-2.5-flash';
   const d2 = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
   delete process.env.LLM_MODEL;

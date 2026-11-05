@@ -143,10 +143,26 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 1. **Local pre-filter** (no LLM). An inverted token index finds slug pairs that share ≥1 non-stopword token or have high character-level similarity (Jaro-Winkler ≥ 0.85), and two linear passes add spelling variants (`hand-off` / `handoff`, `neural-network` / `neural-networks`) and acronyms (`rag` / `retrieval-augmented-generation`). Those two rank above everything else; the rest by a combined score.
 2. **Remembered answers are set aside.** A pair answered before, by the same model, about the same two page openings, is not sent again. A remembered duplicate is listed again for free. The top of what is left, up to your configured maximum (default 500 pairs), is what this run sends. See [What a scan remembers](#what-a-scan-remembers).
 3. **Cost estimate** is shown in a confirm dialog: how many pairs will really be sent, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
-4. **You click Scan now**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM is asked to judge each pair as duplicate / not-duplicate and pick the more canonical slug.
-5. **Only `medium` and `high` confidence duplicates surface** in the UI. Low-confidence and non-dupe verdicts are dropped silently.
+4. **You click Scan now**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM names the difference in subject and classifies each pair as `same`, `part`, `version`, `overlap` or `different`; for `same` it also picks the more canonical slug and a confidence.
+5. **Only `same`, at `medium` or `high` confidence, surfaces** in the UI. Everything else is remembered as not a duplicate. A long list renders 50 cards at a time; the counts and the batch cover all of them.
 6. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
 7. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
+
+### How careful it is, measured
+
+A yes-or-no question gave far too many cards on real data: Flash Lite accepted 217 of 500 pairs, then 765 of 2,000. The scan now asks for the relation and for the difference first. On 100 sampled real pairs:
+
+| Asked on 100 real pairs | Called the same | Not the same, by the reference | Missed, by the reference | Changed between two runs |
+|---|---|---|---|---|
+| **Now**, Gemini 2.5 Flash Lite | 19–25 | 4–6 | 9–17 | 20 of 100 |
+| **Now**, Claude Haiku 5.5 | 32 | 6 | 4 | not measured |
+| **Before** (a yes-or-no question), Flash Lite | 61–68 | 31–38 | 0 | 13 of 100 |
+
+The reference is Claude Opus 5.5, which called 30 of the 100 the same. It is a stronger reader to compare against, not the truth, and this is one sample from one wiki.
+
+So it is much more careful and it misses more, and Flash Lite misses more and flips more than Haiku. No model is hidden and nothing on screen steers the choice: **Change model** is the route. The output limit for a batch is 6,000 tokens, because Haiku overflowed the earlier 2,048 on a batch of 20, which fails the whole batch.
+
+The estimate stays at 400 tokens per pair, split 60/40. Measured on Haiku 5.5, a pair cost about 383 input and 72 output tokens, before the extra fields a `same` answer carries. Worked from those counts, the **token** figure runs about 10–15% low and the **price** about 30–40% high, because the split assumes more output than this reply uses. It is an estimate, not a measurement of every model.
 
 ### What a scan remembers
 
@@ -155,6 +171,8 @@ On a large domain one run reaches only a small part of the possible pairs (measu
 - **It is a cache, on this computer only.** It sits outside `domains/`, so a scan still writes nothing into the wiki and Sync never carries it. A missing or corrupt file behaves as a first scan. Losing it costs money, never data.
 - **An answer applies** while both pages exist, the provider and model are the same, the instructions to the model are the same, and the sha256 of the two openings the model read (500 characters each) is the same. Folders are part of a pair's identity: `entities/x` and `concepts/x` are different pages.
 - **Only an explicit answer is remembered**: not a duplicate, low confidence, or an accepted pair, for a valid index. A failed batch, a reply with no `results`, a missing index, an unusable confidence or a canonical slug that matches neither side remembers nothing, so that pair is sent again.
+- **Page names.** Any name a wikilink can carry can be previewed and merged, including dots and underscores (`claude-opus-4.6`, `foo_bar`). `isMergeableSlug` refuses a slash, a backslash, `..`, a leading dot, a control character, `| [ ] #` and a space at either end. The candidate list uses the same test, so a pair never shows a Merge it cannot perform, and the path is still resolved inside the wiki afterwards.
+- **Coming back.** `status?quick=1` returns the remembered pairs with no candidate pass, and the line reads *Counting the pairs…* until a second call brings the figures. A merge or a Skip re-counts the same way.
 - **Limits, stated.** There is one answer per pair, so switching model and back re-checks. Two scans saving in the same instant can lose one batch (a re-check, nothing worse). The model recorded is the one configured, not a fallback that may have answered for it. Domain rename leaves the old file behind, so a renamed domain starts over.
 
 ### One merge can resolve several pairs (v3.53.0)
