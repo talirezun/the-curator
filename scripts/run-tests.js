@@ -440,6 +440,8 @@ const LIVE_LOCAL = [
   // agent-app configs fingerprinted before and after. Here for the browser,
   // like its neighbours; self-skips at exit 0 when none is installed.
   'e2e-mcp-bridge.mjs',
+  // e2e-wiki-health.mjs: the Wiki health measuring stick — every Health action driven with real mouse events against a STUBBED model on an isolated workspace and a fake HOME, a per-frame sampler over named landmarks (time to a visible change, landmark movement, scrollTop, outcome in view, focus, node identity, live region, overflow) judged against scripts/e2e-wiki-health.baseline.json (a stage config tightens each metric to its required threshold). Self-skips at exit 0 without a browser.
+  'e2e-wiki-health.mjs',
   'test-visual-regression.js',
   // test-info-panel-reachability: here for the SAME reason as its neighbour
   // above — a browser, not an API key. It is the only suite that proves the
