@@ -227,6 +227,7 @@ globalThis.fetch = async (url, opts) => {
     return reply(JSON.stringify({ results: pairs.map((p) => {
       const why = lookup(p.a, p.b);
       if (why) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.b.length >= p.a.length ? p.b : p.a, rationale: why };
+      if (p.a.replace(/-guides$/, '-guide') === p.b.replace(/-guides$/, '-guide')) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: 'One page and its plural.' };
       if (p.a.replace(/-fundamentals$/, '') === p.b.replace(/-fundamentals$/, '')) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: 'Both pages describe the same subject.' };
       return { index: p.index, difference: 'different subjects', relation: 'overlap' };
     }) }));
@@ -264,7 +265,8 @@ function buildLabDomain(root, name, opts = {}) {
   for (const s of Object.keys(OPENINGS)) concept(s, orphans.includes(s) ? `---\ntype: concept\ntags: [type/concept]\n---\n\n# ${s}\n\n${OPENINGS[s]}\n\n## Key Facts\n\n- A fact about ${s}.\n` : undefined);
   let x = 7; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
   const WORDS = ['ledger', 'quorum', 'tidal', 'sonar', 'prism', 'cobalt', 'meridian', 'harbor', 'lattice', 'ember', 'vector', 'glacier', 'orbit', 'canopy', 'saffron', 'basalt', 'quartz', 'willow', 'falcon', 'marble', 'onyx', 'juniper', 'aurora', 'cedar', 'delta', 'fjord', 'gantry', 'hollow', 'indigo', 'jasper', 'kelvin', 'lumen', 'mosaic', 'nimbus', 'opal', 'pylon', 'quill', 'rivet', 'summit', 'thistle', 'umbra', 'vellum', 'wharf', 'xenon', 'yarrow', 'zephyr', 'anvil', 'beacon', 'cinder', 'dune'];
-  for (let i = 0; i < (opts.topicPairs ?? 45); i++) { const a = opts.distinct ? WORDS[i % WORDS.length] + i : WORDS[i % WORDS.length] + '-method'; linked.push(a, a + '-fundamentals'); concept(a); concept(a + '-fundamentals'); }
+  for (let i = 0; i < (opts.topicPairs ?? 45); i++) { let tag = ''; if (opts.distinct) for (let k = 0; k < 7; k++) tag += 'bcdfghjklmnpqrstvwxz'[Math.floor(rnd() * 20)];
+    const a = opts.distinct ? tag + '-guide' : WORDS[i % WORDS.length] + '-method'; const twin = opts.distinct ? a + 's' : a + '-fundamentals'; linked.push(a, twin); concept(a); concept(twin); }
   for (let i = 0; i < (opts.filler ?? 150); i++) { let s = ''; for (let k = 0; k < 9; k++) s += 'bcdfghjklmnpqrstvwxz'[Math.floor(rnd() * 20)]; linked.push(s); concept(s); }
   writeFileSync(path.join(w, 'concepts', 'wiki-hub.md'), `---\ntype: concept\n---\n\n# Hub\n\nAn index page.\n\n## Related\n\n${linked.map((s) => `- [[${s}]]`).join('\n')}\n- [[entities/acme-labs]]\n- [[context-windowz]]\n- [[model-trainingx]]\n- [[customer-satisfactionx]]\n`);
   writeFileSync(path.join(w, 'entities', 'acme-labs.md'), `---\ntype: entity\n---\n\n# Acme Labs\n\nA company.\n\n## Related\n\n- [[wiki-hub]]\n- [[concepts/ai-agents]]\n`);
@@ -288,12 +290,12 @@ async function startApp(profile) {
   if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,
-    geminiApiKey: 'AIza-E2E-FAKE-KEY-not-a-credential', aiHealth: { semanticDupeMaxPairs: profile.big ? 500 : 40, costCeilingTokens: 20000000 } }, null, 2), { mode: 0o600 });
+    geminiApiKey: 'AIza-E2E-FAKE-KEY-not-a-credential', aiHealth: { semanticDupeMaxPairs: profile.big ? 3000 : 40, costCeilingTokens: 20000000 } }, null, 2), { mode: 0o600 });
   const port = await new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
   const env = { ...process.env };
   for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'GITHUB_TEST_REPO', 'GITHUB_TEST_PAT', 'DOMAINS_PATH', 'LLM_MODEL']) delete env[k];
   Object.assign(env, { PORT: String(port), CURATOR_NO_OPEN: '1', HOME: ws.home, CURATOR_TEST_INSTALL_HOME: ws.home, CURATOR_TEST_USER_DATA_DIR: ws.userData,
-    CURATOR_TEST_DOMAINS_DIR: ws.domains, HEALTH_STUB_LOG: stubLog });
+    CURATOR_TEST_DOMAINS_DIR: ws.domains, HEALTH_STUB_LOG: stubLog, HEALTH_STUB_LATENCY_MS: profile.big ? '10' : '250' });
   const server = spawn(process.execPath, ['--import', stubFile, path.join(REPO, 'src', 'server.js')], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let serverLog = ''; server.stdout.on('data', (d) => { serverLog += d; }); server.stderr.on('data', (d) => { serverLog += d; });
   const origin = `http://localhost:${port}`;

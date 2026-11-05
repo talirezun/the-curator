@@ -610,8 +610,25 @@ for (const fn of ['markSemanticPreviewed', 'isSemanticPreviewed', 'canMergeSeman
 // layer 2 so layer 1 can be asserted on its own.
 ok(!/activeSemanticScan\(\)/.test(extractFunction(src, 'rawPreviewedKeys')),
    'rawPreviewedKeys deliberately bypasses the accessor — that is what makes the LAYER 1 assertions independent');
-ok(/if \(!\(opts && opts\.keepSemanticScan\)\) state\.semanticScan = null;/.test(extractFunction(src, 'resetDomainScopedHealthState')),
-   'the scan is cleared by default and kept only on an explicit opt-in');
+// Run, not read. A domain switch clears the list; a quiet reading of the same domain
+// keeps the paid list but RE-ARMS the gate, because a repair may have changed the very
+// pages a preview showed (the press rule; a quiet reading used to clear it and fetch
+// it back, taking a whole card out from above the row just pressed).
+{
+  const st = { estimates: {}, semanticScan: null, activeSlug: 'a', pendingPlan: null, dismissedRecords: [] };
+  const resetFn = new Function('state', extractFunction(src, 'resetDomainScopedHealthState') + '\nreturn resetDomainScopedHealthState;')(st);
+  const armed = () => ({ slug: 'a', pairs: [], previewed: new Set(['x']), preview: { key: 'x' } });
+  st.semanticScan = armed(); resetFn();
+  ok(st.semanticScan === null, 'the scan is cleared by default');
+  st.semanticScan = armed(); resetFn({ keepSemanticScan: true });
+  ok(st.semanticScan && st.semanticScan.previewed.size === 1, 'an explicit opt-in (the merge paths) keeps it as it was');
+  st.semanticScan = armed(); resetFn({ silent: true });
+  ok(st.semanticScan && st.semanticScan.previewed.size === 0 && st.semanticScan.preview === null, 'a quiet reading keeps the list and empties the previewed set: Merge is disabled until previewed again');
+  st.semanticScan = armed(); resetFn({ keepHealth: true });
+  ok(st.semanticScan && st.semanticScan.previewed.size === 0, 'a rescan behind a kept report does the same');
+  st.semanticScan = { ...armed(), slug: 'other' }; resetFn({ silent: true });
+  ok(st.semanticScan === null, 'and another domain\'s list is never kept, quiet or not');
+}
 const perPairKeeps = extractFunction(src, 'mergeOneSemanticPair') + extractFunction(src, 'skipSemanticPair');
 ok((perPairKeeps.match(/keepSemanticScan: true/g) || []).length === 2,
    'exactly the two per-pair actions opt into keeping the scan');
