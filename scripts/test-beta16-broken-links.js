@@ -992,7 +992,11 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   // fail here. That is the enforcement — thirteen copies of a false sentence is
   // how this defect happened, and thirteen copies of a true one is how the next
   // one would.
-  const scrubHonest = (src) => [NOTE, WARN].reduce((s, h) => s.split(h).join(' [honest-copy] '), src);
+  // The third honest sentence is the duplicate card's, byte for byte, in the words
+  // the maintainer chose. It is conditional on GitHub Sync and promises a recovery
+  // tool, not a revert. Any other wording still reds below.
+  const CARD_NOTE = 'The app has no Undo button; with GitHub Sync, a git client can recover it.';
+  const scrubHonest = (src) => [NOTE, WARN, CARD_NOTE].reduce((s, h) => s.split(h).join(' [honest-copy] '), src);
   // One entry since v3.41.0 deleted the /old shell — see the readers array
   // above for why the loop shape is kept.
   const frontends = [
