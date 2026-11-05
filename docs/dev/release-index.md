@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.89.1` | "Use existing folder" on Linux opens the desktop's own folder dialog (zenity, kdialog or yad), and never shows macOS advice off a Mac. |
 | `v3.89.0` | Settings › MCP bridge rebuilt from the Domain page's components (section kit + page contract), Install for me end to end, and Check entry, which runs only this app's own launch line. |
 | `v3.88.1` | An MCP entry whose launch files are gone reads "needs an update" with the reason, never "connected" (Windows paths now judged too); Windows CI starts the bridge as Claude Desktop does. |
 | `v3.88.0` | Settings › MCP bridge first redesign (four blocks, "agent apps"); the stale-bridge warning decided by tool-list signature + parent app instead of file mtimes; per-app fix lines; per-project saves. |
