@@ -1,0 +1,62 @@
+# The Curator
+
+> A local app that turns PDFs and Markdown sources into a compounding interlinked wiki on your computer, and carries documents, memory and knowledge context for AI agents.
+
+Runs as a Mac or Windows app (one-line PowerShell install on Windows), or as a local browser server on Linux. Stores plain markdown files in one domain folder on your computer, no account or database. Local MCP clients like Claude Desktop, Claude Code and Cursor read and write the files; since v3.59.0 projects also carry foundations. Official site with an assistant that answers questions about it is mycurator.xyz.
+
+## Docs
+
+- [The Curator](https://raw.githubusercontent.com/talirezun/the-curator/main/README.md): What The Curator is, what you can do with it, and how it builds a second brain from what you read.
+- [Domains](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/domains.md): What domains are, how to manage them, how their schema and templates work, and how domains relate.
+- [Architecture](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/architecture.md): How the system works internally: the compiling wiki pattern, markdown storage, and the three LLM providers.
+- [Working state — carrying build context between sessions](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/working-state.md): How the context store carries briefs, handoffs, journals, foundations and projects across sessions and machines.
+- [The Curator — Product Overview](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/product-overview.md): Every capability, what it is for, the scenarios it serves, and what it does not do.
+- [User Guide — The Curator](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/user-guide.md): Full walkthrough from first-time setup to daily use: installation, API keys, ingesting, chatting and domains.
+- [Sync across computers](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/sync.md): Free sync across computers using a private GitHub repository, what gets synced, and conflict resolution.
+- [Set up GitHub sync with a coding agent (automated)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/sync-via-coding-agent.md): Handing sync setup to a coding agent like Claude Code: empty repo creation, token handling, and end-to-end steps.
+- [My Curator — Private MCP Bridge](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/mcp-user-guide.md): Local stdio MCP bridge for querying the wiki from MCP clients like Claude Desktop, without cloud uploads.
+- [Shared Brain — User Guide](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/shared-brain-user-guide.md): Step-by-step setup, daily contributor and admin workflow, and troubleshooting for the opt-in Shared Brain beta.
+- [Shared Brain — Concept & Architecture](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/shared-brain.md): How a collective wiki works: opting domains into a shared repo, LLM synthesis, security model, and roadmap.
+- [Shared Brain — Admin Operations](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/shared-brain-admin.md): Post-setup admin duties: inviting collaborators, periodic synthesis, revoking contributors, and health monitoring.
+- [Shared Brain — Compliance reference](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/shared-brain-compliance.md): What contributor data is stored in the shared repo, what never leaves their machine, and consent rules for display names.
+- [Mac App — The Curator](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/mac-app.md): The two Mac app shapes, how to identify them, differences in where the server runs, and downloading the packaged .dmg.
+- [The native Mac app — decision record](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/desktop-app-decisions.md): Status of the native Mac app: what is shipped, what is unproven or untested, including notarization, x64 builds and update UI.
+- [Use Cases](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/use-cases.md): Detailed workflows for content creators, teams and agents, grouped by the personal, Shared Brain and working state layers.
+- [System Check](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/system-check.md): One-click checks of the app setup in Settings, and how System check differs from Wiki health and health scan limits.
+- [AI Wiki Health](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/ai-health.md): Opt-in, pay-as-you-go AI layer for Wiki Health issues needing semantic judgement, like broken links and orphans.
+- [Monetizing your Shared Brain](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/shared-brain-monetization.md): How to charge subscription prices for access to a Shared Brain you built, with no-code tools and zero code changes.
+- [Project brief template (`state/project.md`)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/project-brief-template.md): Template for hand-written project briefs, and how to write operating directives that fail loudly when silently dropped.
+- [The Curator — Changelog Archive](https://raw.githubusercontent.com/talirezun/the-curator/main/CHANGELOG-ARCHIVE.md): 232 changelog rows moved from CLAUDE.md, recording why guards, prompt and money paths are shaped as they are.
+- [The Curator — Documentation](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/README.md): Overview of The Curator as a context engine keeping knowledge, state and canonical documents as plain markdown files on your machine.
+- [Roadmap — Chat UI Modes 3 & 4 (planned, not yet implemented)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/roadmap-chat-modes.md): Planned design context for Chat tab Modes 3 (Dictate) and 4 (Curate), never built as of v3.24.1.
+- [Roadmap — the context engine (v3.61.0 → v3.65.0)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/roadmap-context-engine.md): Planned and in-flight context engine work for v3.61.0 to v3.65.0, with per-row build statuses and cited claims.
+- [Roadmap — menubar widget: background running + a live view of agent memory (Phase 1 SHIPPED; Phase 3 PARTLY; Phase 2 not](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/roadmap-menubar-widget.md): Menubar widget roadmap: Phase 1 menu-bar icon shipped, Phase 2 popover unbuilt, Phase 3 event strip partly built.
+- [Roadmap — automatic sync (researched, recommended in part, not built)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/roadmap-automatic-sync.md): Research and hazard analysis on automatic sync; nothing shipped, all sync currently human-triggered, with measured timings.
+- [The Ingestion Pipeline — Technical Deep Dive](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/ingestion-pipeline.md): How raw source documents become a structured wiki: architectural decisions, safeguards, LLM-failure modes, and the write-time quality contract.
+- [Chat streaming (SSE)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/chat-streaming.md): How chat streams incrementally over SSE, and the load-bearing authoritative-return and commit-at-first-delta rules.
+- [API Reference](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/api-reference.md): REST endpoints at localhost:3333/api, with request parameters, JSON responses, null-handling rules, and error cases.
+- [Model Lifecycle & Fallback Safety Net](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/model-lifecycle.md): What happens when providers retire models: pinned defaults, fallback behaviour in src/brain/llm.js, and user actions.
+- [Design-system patch — the dim text ramp](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/design-system-text-ramp-patch.md): Approved change to the three dim text-ramp token values, reasons, and how the design-system bundle will re-converge.
+- [Where the design system lives](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/design-system-source.md): Location of the design-system bundle, its three copies and the master, how to refresh the mirror, and divergences.
+- [Trademark Policy](https://raw.githubusercontent.com/talirezun/the-curator/main/TRADEMARK.md): Trademark ownership of the name and logo, rules for forks, permitted nominative use, and enforcement approach.
+- [Install The Curator on Windows](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/install-windows.md): Three-step PowerShell install, daily Desktop icons, updating, troubleshooting, and where notes live.
+
+## Dev
+
+- [docs/dev — the development guide's full text](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/README.md): The development guide's full text, split from the auto-loaded CLAUDE.md, including active development decisions.
+- [Release index — one line per archived release](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/release-index.md): One-line index of every archived release, with links to full rows in CHANGELOG-ARCHIVE.md and its ordering.
+- [Development decisions — agents (MCP and the memory layer)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/decisions-agents.md): The My Curator MCP bridge and the working-state memory layer: tool census, spawning via stdio, and what recent versions changed.
+- [Development decisions — the app](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/decisions-app.md): Standing decisions for the app: product shape and UI, install/update lifecycle, models and money, security, user-data, test/CI.
+- [Development decisions — knowledge](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/decisions-knowledge.md): Wiki write pipeline and Health, ingest, chat and compile decisions, plus sync / Shared Brain invariants.
+- [Directory map (full)](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/directory-map.md): The annotated directory structure; the full map, while CLAUDE.md carries a condensed one.
+- [Operations — environment, config and scripts](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/operations.md): Environment and config: key priorities between .curator-config.json and .env, LLM provider selection, build model choice, scripts.
+- [Wiki pipeline — key functions, ingest flow, LLM failures, checklists](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/dev/wiki-pipeline.md): Key functions, ingest pipeline flow, known LLM compliance failures, post-ingest checklists and wiki file conventions.
+
+## Audits
+
+- [Curator September Review](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/audits/2026-09-02-six-area-review.md): Seven read-only audits of v3.39.0 across framework, features, and correctness, with a prioritized fix proposal.
+
+## Optional
+
+- [Contributing to The Curator](https://raw.githubusercontent.com/talirezun/the-curator/main/CONTRIBUTING.md): How to set up Node.js 18+, run tests, add a test, cut a release, and keep zero devDependencies.
+- [working-state/1` — the on-disk format](https://raw.githubusercontent.com/talirezun/the-curator/main/docs/spec/working-state-v1.md): The version-1 on-disk format specification for agent working state, so external tools can read and write it.
