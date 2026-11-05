@@ -49,7 +49,7 @@
  * THE SELECTORS are all in SEL, below. A redesign changes them there.
  *
  *   node scripts/e2e-wiki-health.mjs [--stage <name>] [--profiles 1280,375,1280-light,375-light,1280-rm,375-rm,800,big-1280,big-375]
- *        [--only S1,S2,S4,S5,S6,S7,S8,S9] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
+ *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
  *
  * SINCE STAGE 1 the default stage is `s1`, the press rule: every metric below is
  * REQUIRED except the review desk's, which belong to a later stage.
@@ -275,7 +275,7 @@ function buildLabDomain(root, name, opts = {}) {
 }
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
-const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8'];
+const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10'];
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -374,6 +374,7 @@ const SAMPLER = String.raw`(() => {
         const p = s.pressSig ? [...document.querySelectorAll(s.pressTag)].find((e) => sigOf(e) === s.pressSig) : null;
         f.p = p ? s.html(p) : null;
         f.pw = p ? p.getBoundingClientRect().width : null;
+        f.pt = p ? label(p) : null;
         f.busy = !!(p && p.getAttribute('aria-busy') === 'true');
         for (const sel of cfg.outcome || []) { const e = document.querySelector(sel); if (e) { const r = e.getBoundingClientRect(); if (r.height > 0) { f.out = { top: r.top, bottom: r.bottom }; break; } } }
         for (const lm of s.lms) { const el = resolve(lm); if (!el) { f.lm.push(null); continue; } const r = el.getBoundingClientRect(); f.lm.push([Math.round(r.top * 10) / 10, Math.round(r.height * 10) / 10]); }
@@ -406,7 +407,10 @@ function analyse(raw, ctx) {
   const t0 = raw.tDown ?? raw.frames[0]?.t ?? 0;
   const fr = raw.frames.filter((f) => f.t >= t0 - 1);
   const m = {};
-  const changed = fr.find((f) => f.p !== null && f.p !== raw.pressHtml);
+  // An action that runs must answer in its LABEL. An attribute is not an answer
+  // anyone can see. A press that only opens a question keeps its words and stays
+  // visibly pressed, so for that one the markup is what counts.
+  const changed = ctx.runs ? fr.find((f) => f.pt !== null && f.pt !== raw.pressLabel) : fr.find((f) => f.p !== null && f.p !== raw.pressHtml);
   m.changeMs = changed ? Math.round(changed.t - t0) : 9999;
   const gone = fr.find((f) => f.p === null);
   const goneMs = gone ? Math.round(gone.t - t0) : null;
@@ -477,9 +481,10 @@ async function act(app, profile, name, o) {
   const { page } = app;
   const store = (RESULTS[profile.name] ||= {});
   await inject(page);
-  if (o.place) await place(page, o.press, o.place);
+  if (o.edge) await page.evaluate((s, mainSel, h) => { const e = document.querySelector(s); const m = document.querySelector(mainSel); m.scrollTop += e.getBoundingClientRect().top - (h - 60); }, o.press, SEL.main, profile.h);
+  else if (o.place) await place(page, o.press, o.place);
   // A control the user cannot see is one they scroll to first (setup, before the sampler starts).
-  else if (await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.top < 0 || r.bottom > innerHeight; }, o.press)) await place(page, o.press, 300);
+  else if (!o.stay && await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.top < 0 || r.bottom > innerHeight; }, o.press)) await place(page, o.press, 300);
   const r = await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, disabled: !!e.disabled }; }, o.press);
   if (!r) { step(`[${profile.name}] ${name}: target present (${o.press})`, !!o.optional, 'no element'); return null; }
   let x = Math.round(r.left + Math.min(r.width / 2, 40)); let y = Math.round(r.top + r.height / 2);
@@ -607,12 +612,17 @@ async function scenarios(app, profile) {
   }
   // S7 — at the very end of the page, shrinking must not clamp the scroll.
   if (run('S7') && sub('S7')) {
-    await openDomain(app, 'h7'); await openFoldsOn(page, ['orphans', 'brokenLinks', 'folderPrefixLinks', 'missingBacklinks']); await delay(200);
+    await openDomain(app, 'h7'); await openFoldsOn(page, ['orphans']); await delay(200);
     const toEnd = () => page.evaluate((m) => { const e = document.querySelector(m); e.scrollTop = e.scrollHeight; window.scrollTo(0, document.documentElement.scrollHeight); }, SEL.main);
     await toEnd(); await delay(150);
-    await act(app, profile, 'end-dismiss', { press: `${SEL.fold('orphans')} .dm-dismiss-btn`, outcome: [SEL.done], settle: HELD, runs: true, stay: true });
+    await act(app, profile, 'end-dismiss', { press: `${SEL.fold('orphans')} .dm-issue-row:last-child .dm-dismiss-btn`, outcome: [SEL.done], settle: HELD, runs: true, stay: true });
     await toEnd(); await delay(150);
     await act(app, profile, 'end-fixall', { press: SEL.fixAll('folderPrefixLinks'), outcome: [SEL.done], settle: HELD, runs: true, stay: true });
+    // Pressed at the viewport's bottom edge: the next control is off-screen, and
+    // moving focus to it must not scroll the page there.
+    await openFoldsOn(page, ['orphans']); await delay(150);
+    await act(app, profile, 'edge-dismiss', { press: `${SEL.fold('orphans')} .dm-dismiss-btn`, edge: true, outcome: [SEL.done], settle: HELD, runs: true });
+    await toEnd(); await delay(150);
     const floor = await page.evaluate((m) => document.querySelector(m).style.getPropertyValue('--dm-health-floor'), SEL.main);
     note(`[${profile.name}] floor under the section after the end-of-page repairs: ${floor || '0'}`);
     const after = await page.evaluate((m) => { const e = document.querySelector(m); e.scrollTop = 0; return e.scrollTop; }, SEL.main);
@@ -635,6 +645,17 @@ async function scenarios(app, profile) {
     await act(app, profile, 'try-again', { press: SEL.retry, outcome: [SEL.done], settle: HELD, runs: false });
     step(`[${profile.name}] Try again clears it and repairs`, await page.evaluate((o) => !document.querySelector(o), SEL.outcome));
   }
+  // S10 — a row above the press is settled by the reading that follows it. It must
+  // not move what was pressed: it stays, marked, until the user scrolls.
+  if (run('S10') && sub('S10')) {
+    await openDomain(app, 'h10'); await openFoldsOn(page, ['orphans', 'missingBacklinks']); await delay(200);
+    rmSync(path.join(app.ws.domains, 'h10', 'wiki', 'concepts', 'gartner.md'));
+    await act(app, profile, 'row-above-settled', { press: SEL.fixAll('missingBacklinks'), place: 500, outcome: [SEL.done], settle: HELD, runs: true });
+    const waiting = await page.evaluate(() => { const e = document.querySelector('[data-row-deferred]'); return e ? e.innerText : null; });
+    step(`[${profile.name}] the settled row above the press stays and says so`, !!waiting && /Resolved/.test(waiting), String(waiting));
+    await page.evaluate((m) => { document.querySelector(m).scrollTop -= 200; }, SEL.main); await delay(600);
+    step(`[${profile.name}] and it goes when you scroll`, await page.evaluate(() => !document.querySelector('[data-row-deferred]')));
+  }
   // S4 — duplicate pages: find, next, preview, flip, merge, skip, batch
   if (run('S4') && sub('S4')) {
     await openDomain(app, 'h4');
@@ -643,7 +664,7 @@ async function scenarios(app, profile) {
     const ncards = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     note(`[${profile.name}] pair cards after the first scan: ${ncards}`);
     if (await page.evaluate((s) => !!document.querySelector(s), SEL.checkNext)) {
-      await act(app, profile, 'next-press', { press: SEL.checkNext, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
+      await act(app, profile, 'next-press', { press: SEL.checkNext, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300 });
       const before = ncards;
       await act(app, profile, 'next-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: (s, n) => document.querySelectorAll(s).length > n || !document.querySelector('#dm-confirm-yes'), args: [SEL.card, before], untilTries: 800, settle: 1800, runs: true });
     } else step(`[${profile.name}] "Check the next" is offered after a partial scan`, false, 'button absent');
