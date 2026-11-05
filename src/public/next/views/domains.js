@@ -9291,7 +9291,9 @@ async function runFixSafe(slug) {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — see the module-level comment above
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix-all-safe', { method: 'POST' });
     {
-      const whole = result.fixed === result.total;
+      // `distinct`, not `total`: one fix rewrites every occurrence of a link in a page.
+      const wanted = Number.isInteger(result.distinct) ? result.distinct : result.total;
+      const whole = result.fixed >= wanted;
       state.rowNoteFrom = { slug, token };
       state.rowNote = whole
         ? { key: 'chip:fixSafe', held: true, tone: 'success', text: 'Repaired ' + result.fixed, drop: { safe: true } }
@@ -9431,7 +9433,7 @@ async function fixAllOfType(slug, type) {
       state.rowNoteFrom = { slug, token };
       state.rowNote = result.total === 0
         ? { tone: 'info', text: merges ? 'Nothing left to merge.' : 'Nothing left to repair.' }
-        : result.fixed === result.total
+        : result.fixed >= (Number.isInteger(result.distinct) ? result.distinct : result.total)
         ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, drop: { type } }
         : { key: 'group:' + type, tone: 'error',
             text: (merges ? 'Merged ' : 'Repaired ') + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) +

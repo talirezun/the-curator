@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { isDomainReadonly, assertKnownDomain, readSchema, extractDomainDisplayName } from '../brain/files.js';
-import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild } from '../brain/health.js';
+import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild, collapseRepeatedLinks } from '../brain/health.js';
 import {
   suggestBrokenLinkTarget,
   suggestOrphanHomes,
@@ -129,7 +129,7 @@ router.get('/:domain', async (req, res) => {
   try {
     const { domain } = req.params;
     await assertDomain(domain);
-    const report = await scanWiki(domain);
+    const report = collapseRepeatedLinks(await scanWiki(domain));
     // v3.77: the scan's summary outlives this session — GET /api/domains/stats
     // serves it, so a restart does not turn every unopened domain back into
     // "Health not checked yet". Awaited (one small file write) so a stats read

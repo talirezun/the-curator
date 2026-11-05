@@ -194,16 +194,22 @@ section('§1d A page writing one link twice is one row');
   writeFileSync(path.join(wiki, 'concepts', 'one.md'), '---\ntype: concept\n---\n\n# One\n\nSee [[mac-os]] and again [[mac-os]], and [[entities/two]] and [[entities/two]].\n\n[[two]]\n');
   writeFileSync(path.join(wiki, 'concepts', 'three.md'), '---\ntype: concept\n---\n\n# Three\n\nAlso [[mac-os]].\n\n[[one]]\n');
   writeFileSync(path.join(wiki, 'entities', 'two.md'), '---\ntype: entity\n---\n\n# Two\n\n[[three]]\n');
-  const { scanWiki } = await import('../src/brain/health.js');
+  const { scanWiki, collapseRepeatedLinks } = await import('../src/brain/health.js');
   const { keyForIssue } = await import('../src/brain/health-dismissed.js');
-  const r = await scanWiki('d');
+  const raw = await scanWiki('d');
+  ok(raw.brokenLinks.filter((i) => i.linkText === 'mac-os').length === 3, 'CONTROL: the scan itself, and so the MCP, still lists each occurrence');
+  const r = collapseRepeatedLinks(raw);
+  ok(raw.brokenLinks.filter((i) => i.linkText === 'mac-os').length === 3, 'and collapsing for the screen does not change it');
   const mac = r.brokenLinks.filter((i) => i.linkText === 'mac-os');
-  ok(mac.length === 2, 'the same link on two pages is two rows, and the same link twice on one page is not', JSON.stringify(mac));
+  ok(mac.length === 2, 'on screen, the same link on two pages is two rows, and the same link twice on one page is not', JSON.stringify(mac));
   const twice = mac.find((i) => i.sourceFile.endsWith('one.md'));
   ok(twice && twice.occurrences === 2, 'that row says how many times the page writes it');
   const once = mac.find((i) => i.sourceFile.endsWith('three.md'));
-  ok(once && once.occurrences === undefined, 'a link written once carries nothing extra: every other reader sees the same row as before');
+  ok(once && once.occurrences === undefined, 'a link written once carries nothing extra');
   ok(new Set(mac.map((i) => keyForIssue('brokenLinks', i))).size === mac.length, 'so one Dismiss hides exactly the one row it was pressed on');
+  const { fixIssue } = await import('../src/brain/health.js');
+  const all = await fixIssue('d', 'folderPrefixLinks');
+  ok(all.fixed === 1 && all.total === 2 && all.distinct === 1, 'a repair of a link written twice is one fix of one link, not 1 of 2', JSON.stringify(all));
   ok(r.folderPrefixLinks.filter((i) => i.linkText === 'entities/two').length === 1, 'folder-prefix links likewise');
 }
 

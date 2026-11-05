@@ -1816,7 +1816,7 @@ read.
 
 | Type | Auto-fixable | Description |
 |------|:-:|-------------|
-| `brokenLinks` | ✓¹ | `[[wikilink]]` that points to a non-existent page, one row per link per page. Includes a `suggestedTarget` when a prefix-tolerant match exists, and `occurrences` when the page writes the same link more than once. |
+| `brokenLinks` | ✓¹ | `[[wikilink]]` that points to a non-existent page, one row per link per page on this route (the MCP lists each occurrence). Includes a `suggestedTarget` when a prefix-tolerant match exists, and `occurrences` when the page writes the same link more than once. |
 | `orphans` | — | Entity or concept pages with zero incoming links. |
 | `folderPrefixLinks` | ✓ | Links like `[[concepts/rag]]` that should be `[[rag]]`. |
 | `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |
