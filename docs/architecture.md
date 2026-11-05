@@ -1937,14 +1937,14 @@ src/brain/health.js  →  fixIssue(domain, type, issue?)
       └─ Dispatch by type:
          brokenLinks       → regex rewrite [[old]] → [[issue.suggestedTarget]]
          folderPrefixLinks → strip [[entities/|concepts/]] prefixes in-place
-         crossFolderDupes  → merge bullet sections, delete concept copy,
-                             normalise frontmatter type to entity
-         hyphenVariants    → union bullets into canonical slug, delete variants
+         crossFolderDupes  → composeMergedPage() (kept page is the base, no
+                             text lost), delete concept copy, type follows folder
+         hyphenVariants    → composeMergedPage() into canonical slug, delete variants
          missingBacklinks  → injectSingleBacklink() into scan-resolved entity
          orphanLink        → injectRelatedLink(): AI orphan-rescue bullet (v2.4.4+)
                              — pseudo-type, never emitted by scanWiki
          semanticDupe      → fixSemanticDuplicate() (v2.4.5+): DESTRUCTIVE
-                             merges two pages, rewrites all [[removeSlug]]
+                             composeMergedPage(), rewrites all [[removeSlug]]
                              links across the domain, deletes the duplicate
                              — pseudo-type, never emitted by scanWiki;
                              gated by mandatory Preview-diff in the UI

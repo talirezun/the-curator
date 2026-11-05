@@ -8032,7 +8032,7 @@ Use it if your wiki starts to feel messy — broken links, duplicate entities, p
 | **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo, hyphen drift, or a link to a page the LLM hasn't written yet. | **Best: ✨ Fix N broken links** under QUICK MAINTENANCE fixes them all in one reviewed batch (v3.0.1-beta.16). Per-row, **Apply** rewrites a link to a scanner-matched target, or ✨ **Ask AI** proposes one. |
 | **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Best: ✨ Rescue N orphans** under QUICK MAINTENANCE finds a home for each orphan in one reviewed batch (v3.0.1-beta.17). Per-row, ✨ **Ask AI** proposes up to 5 pages that should link to it. Or keep/merge/delete from Obsidian — many orphans resolve themselves as the wiki grows. |
 | **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
-| **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
+| **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version and deletes the concept page, keeping all text from both ([what a merged page looks like](#what-a-merged-page-looks-like)). |
 | **Hyphen variants** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix. The scanner groups files whose normalised form (strip honorifics like `dr-` / `dr.-` / `prof-`, then strip all hyphens, then lowercase) is identical. Example groups: `tali-rezun` + `talirezun` + `dr.-tali-rezun`; `prof-smith` + `smith`. | **Fix** — merges all variants into the canonical slug (no honorific, most hyphens, shortest). See the detailed walk-through below. |
 | **Missing backlinks** | A summary lists an entity or concept (under *Entities Mentioned* or *Concepts Introduced or Referenced*) but that page's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
 | **Summary link lists** *(v3.84.0)* | A summary lists the same page twice, lists concepts under *Entities Mentioned*, or lists entities under *Concepts Introduced or Referenced*. See [Summary link lists](#summary-link-lists-v3840) below. | **Fix** — free and local; moves each link to the right list and removes repeated lines. Also part of **Fix N safe issues**. |
@@ -8138,8 +8138,8 @@ All four cases collapse to the same canonical slug after the scanner's normalisa
 1. **Open the domain.** The **Hyphen variants** chip shows a count if any are detected.
 2. **Expand the Hyphen variants section.** Each row shows the canonical file (kept) plus the variants that will be merged into it. Canonical selection priorities: (a) no honorific prefix; (b) most hyphens; (c) shortest length.
 3. **Click Fix on the row** (or **Fix all** on the section header). The Curator:
-   - Reads each variant file's bullet sections (Key Facts, Related, Entities Mentioned, etc.)
-   - Unions them into the canonical file, deduplicating by link target
+   - Adds each variant's bullets to the same-named sections of the canonical file, without repeats
+   - Adds everything else the canonical file lacks under `## Merged from <variant>` ([what a merged page looks like](#what-a-merged-page-looks-like))
    - **Repoints every `[[link]]` in the domain that pointed at a variant, onto the canonical slug**
    - Deletes the variant files from disk
 4. **The scan re-runs.** The Hyphen variants count drops to zero — and, because the links were repointed, it does not leave a pile of new broken links behind it.
@@ -8153,10 +8153,71 @@ The button on those two says **Merge and delete**, not "Fix now" — the wording
 **Real-world example.** Two author files end up on disk: `entities/dr.-tali-rezun.md` (2.5 KB, sparse) and `entities/tali-rezun.md` (19.8 KB, populated). Both describe the same person.
 
 - The scan flags them as a hyphen-variant group with `tali-rezun.md` as canonical
-- One click on Fix unions the bullet sections, repoints every `[[dr.-tali-rezun]]` link in the domain to `[[tali-rezun]]`, and deletes `dr.-tali-rezun.md`
+- One click on Fix adds what `tali-rezun.md` lacks, repoints every `[[dr.-tali-rezun]]` link in the domain to `[[tali-rezun]]`, and deletes `dr.-tali-rezun.md`
 - The re-scan comes back clean — no stranded links to chase
 
-**Safety:** The merge is always non-destructive at the bullet level — `mergeBulletSections` unions content rather than overwriting. If the canonical file already had richer content than the variant (as in the example above), nothing is lost; the variant's unique bullets are added on top.
+**Safety:** No text is lost. The canonical file stays the base, and the merge is refused, with nothing written or deleted, if a final check finds any line of either page missing from the result.
+
+### What a merged page looks like
+
+Every merge that deletes a page works the same way: a duplicate pair, **Merge N spelling variants**, cross-folder duplicates, hyphen variants, **Fix N safe issues**, and an agent using `fix_wiki_issue`. **A merge never loses text.** The page you keep stays the base, whichever page is longer, and whatever the removed page said that the kept page lacks is added to it.
+
+```markdown
+---
+type: concept
+tags: [type/concept, gdpr, law]            <- both pages' tags
+---
+# Data Privacy                             <- the kept page's title and opening
+
+The kept page's opening paragraph.
+
+## Key Facts
+- A fact from the kept page
+- A fact from the removed page             <- bullets join the same-named section
+
+## Merged from privacy-and-data-protection <- everything else the kept page lacked
+
+### Privacy and Data Protection
+
+The removed page's opening paragraph.
+
+### Enforcement
+
+| Who | What |
+|---|---|
+| EU  | GDPR |
+```
+
+| From the removed page | Where it goes |
+|---|---|
+| Tags | Added to the kept page's tags. `type` follows the kept page's folder |
+| Bullets under a heading the kept page also has | Into that section, without repeats |
+| Bullets in a standard section the kept page lacks (Key Facts, Related, Examples and the like) | A new section of that name |
+| Its title, opening paragraph, prose, tables, code blocks and every other section | Under `## Merged from <page>`, whole and in order |
+
+```mermaid
+flowchart TD
+    R[The removed page] --> Q{What is this piece?}
+    Q -- "tags" --> T[Added to the kept page's tags]
+    Q -- "a bullet under a<br/>matching heading" --> B[Into that section,<br/>without repeats]
+    Q -- "anything else<br/>the kept page lacks" --> M["Under ## Merged from page,<br/>whole and in order"]
+    Q -- "already on the<br/>kept page, line for line" --> S[Left out: it adds nothing]
+    T --> K[The kept page]
+    B --> K
+    M --> K
+    K --> D[Links repointed,<br/>then the page is deleted]
+```
+
+Good to know:
+
+- **Headings move down a level under `## Merged from`** (`## Enforcement` becomes `### Enforcement`), so a later ingest treats the block as one section and leaves it alone. Nothing inside a code block changes.
+- **Merging twice repeats nothing.**
+- **A bullet with its own words stays, even when its link is already listed.** `- [[alice]] left in 2005` goes under `## Merged from` if the section has `- Founded by [[alice]]`.
+- **The removed page's `created` and `updated` dates are not carried.** The kept page keeps its own.
+- **The text is moved, not rewritten.** `## Merged from` can read like two pages side by side, and tidying it is yours to do.
+- **A later ingest of the same page still follows the [ingest rules](#re-ingesting-a-source-and-why-its-safe)**: it can rewrite the kept page's opening and its prose sections.
+
+**Merges done on earlier versions.** Before this fix a merge used the longer page as the base and carried over only the other page's bullets from eleven named sections. The other page's opening paragraph, its prose, tables, code blocks and any other section were not kept. If the page you chose to delete was the longer one, the page you kept lost its own title, frontmatter and prose, and the surviving file held the deleted page's text under the kept name. That text is not in your wiki any more and the app cannot bring it back. It can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge: a git client pointed at your knowledge base folder can show the earlier version of each file. There is no in-app undo.
 
 ### Semantic duplicates (v2.4.5+)
 
@@ -8167,14 +8228,14 @@ Unlike the other health fixes, this one:
 - **Costs a small amount** — typically $0.005–$0.03 per scan on Gemini Flash Lite. A confirm card shows the estimate and how many pairs it will check before you run it. If there is nothing to check, it tells you that instead of charging you.
 - **Takes several runs on a large domain.** Each run checks only the next batch of possible pairs (500 by default) and remembers the answers on this computer, so running it again moves forward instead of starting over.
 - **Is opt-in and user-gated.** Nothing happens until you click, then confirm.
-- **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug.
+- **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug. Its text is not: everything it said moves to the kept page ([what a merged page looks like](#what-a-merged-page-looks-like)).
 
 Each candidate comes back as its own card showing `remove-slug → keep-slug`, a confidence level (high / medium / low), and the AI's reasoning. Four buttons:
 
 | Button | What it does |
 |---|---|
-| **Preview diff** | Opens the diff **inline, in that card** — the exact keep path and delete path, how many link rewrites across how many files (with the files named), and the first 4 KB of the merged page. |
-| **↔ Flip** | Swaps which side is kept. Use it when the AI picked the wrong survivor. |
+| **Preview diff** | Opens the diff **inline, in that card** — the exact keep path and delete path, how many link rewrites across how many files (with the files named), and the first 4,000 characters of the merged page, which are exactly what Merge will write. Text from the removed page sits at the foot of the page, so on a long page it can fall past that sample. |
+| **↔ Flip** | Swaps which side is kept, which decides whose title, frontmatter and opening stay at the top. Use it when the AI picked the wrong survivor. |
 | **Merge** | Performs the merge. **Disabled until you have previewed that specific pair** — the card says *"Preview required before Merge"* until you do, then *"✓ previewed"*. |
 | **Skip** | Dismisses this pair so it stops coming back on future scans. |
 

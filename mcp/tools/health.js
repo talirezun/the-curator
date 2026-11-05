@@ -175,7 +175,7 @@ export const fixWikiIssueDefinition = {
     "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, summaryLinkSections, and brokenLinks that already carry a suggestedTarget. " +
     "summaryLinkSections rewrites ONE summary's two link lists only: a page listed twice keeps one line, a concept page filed under 'Entities Mentioned' moves to 'Concepts Introduced or Referenced' (and an entity page the other way); every link stays on the page and nothing else on it changes — the fix refuses to write otherwise (reason: 'link-guard'). Pass { summary } from the scan row. " +
     "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the AI broken-link fixer in the app's Health panel (Domains view), which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
-    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed): tell the user which page disappears before you call them. " +
+    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed; the deleted page's text moves to the kept page, whichever is longer): tell the user which page disappears before you call them. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
@@ -297,7 +297,7 @@ export async function fixWikiIssueHandler(args, storage) {
   }
 
   // v3.0.1-beta.8: respect the cross-process file lock. fixIssue() is
-  // destructive on AUTO_FIXABLE types (mergeBulletSections + rm() on
+  // destructive on AUTO_FIXABLE types (composeMergedPage + rm() on
   // crossFolderDupes / hyphenVariants / semanticDupe). Racing it against an
   // in-flight Curator-app ingest writing to the same files is a recipe for
   // confusing data loss.
@@ -379,6 +379,10 @@ function noOpReport(type, reason, domainName, missing) {
     case 'remove-page-missing':
     case 'keep-page-missing':
       return `ALREADY RESOLVED — nothing was written, and nothing needs to be. ${missing || 'One page of this pair'} no longer exists: an earlier merge in this session already consumed it. The semantic-duplicate scan emits EVERY pair above threshold, so a family of near-identical pages produces many overlapping pairs and merging one of them resolves its siblings. Do NOT retry this pair and do not re-run the paid scan to "refresh" it — move on to the next pair, and re-run scan_semantic_duplicates only when you have finished the list.`;
+    case 'merge-would-lose-text':
+      return `REFUSED — nothing was written and nothing was deleted. The merged page would have been missing text from one of the two pages, so The Curator kept both. Both pages are still there. Tell the user; do not retry.`;
+    case 'merge-same-file':
+      return `REFUSED — nothing was written and nothing was deleted. Both names reach the same file, so deleting one would delete the only copy. Tell the user.`;
     case 'wiki-missing':
       return `REFUSED — nothing was written. '${domainName}' has no wiki folder, so neither page of this pair could be read. Check the domain name with list_domains.`;
     case 'semantic-pair-invalid':

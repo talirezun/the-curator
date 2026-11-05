@@ -128,7 +128,7 @@ For each orphan, the AI picks the ONE existing page that should most naturally l
 
 ## One-click "Fix N safe issues" (v3.0.1-beta.17)
 
-The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). It's one write-locked operation, then the wiki re-scans.
+The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). Its merges keep all text from both pages: see *What a merged page looks like*. It's one write-locked operation, then the wiki re-scans.
 
 ---
 
@@ -145,8 +145,8 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 3. **Cost estimate** is shown in a confirm dialog: how many pairs will really be sent, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
 4. **You click Scan now**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM names the difference in subject and classifies each pair as `same`, `part`, `version`, `overlap` or `different`; for `same` it also picks the more canonical slug and a confidence.
 5. **Only `same`, at `medium` or `high` confidence, surfaces** in the UI. Everything else is remembered as not a duplicate. A long list renders 50 cards at a time; the counts and the batch cover all of them.
-6. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
-7. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
+6. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and the first 4,000 characters of the merged page, which are the same text Merge will write (it goes through the same composer and the same link rewrite). Text from the removed page sits at the foot of the page, so on a long page it can fall past that sample. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
+7. **When you click Merge** (from within the preview modal), the server: composes the merged page with the **kept page as the base** (see *What a merged page looks like*), writes it to the kept file, rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), and **deletes the duplicate file**. If a final check finds any line of either page missing from the merged text, the merge is refused and nothing is written or deleted.
 
 ### How careful it is, measured
 
@@ -174,6 +174,56 @@ On a large domain one run reaches only a small part of the possible pairs (measu
 - **Page names.** Any name a wikilink can carry can be previewed and merged, including dots and underscores (`claude-opus-4.6`, `foo_bar`). `isMergeableSlug` refuses a slash, a backslash, `..`, a leading dot, a control character, `| [ ] #` and a space at either end. The candidate list uses the same test, so a pair never shows a Merge it cannot perform, and the path is still resolved inside the wiki afterwards.
 - **Coming back.** `status?quick=1` returns the remembered pairs with no candidate pass, and the line reads *Counting the pairs…* until a second call brings the figures. A merge or a Skip re-counts the same way.
 - **Limits, stated.** There is one answer per pair, so switching model and back re-checks. Two scans saving in the same instant can lose one batch (a re-check, nothing worse). The model recorded is the one configured, not a fallback that may have answered for it. Domain rename leaves the old file behind, so a renamed domain starts over.
+
+### What a merged page looks like
+
+This applies to every merge that deletes a page: a merged pair, **Merge N spelling variants**, **Cross-folder duplicates**, **Hyphen variants**, **Fix N safe issues** and the MCP's `fix_wiki_issue`. A merge never loses text. Whatever either page said is on the kept page afterwards.
+
+```markdown
+---
+type: concept
+tags: [type/concept, gdpr, law]            <- both pages' tags
+---
+# Data Privacy                             <- the kept page's title and opening
+
+The kept page's opening paragraph.
+
+## Key Facts
+- A fact from the kept page
+- A fact from the removed page             <- bullets join the same-named section
+
+## Merged from privacy-and-data-protection <- everything else the kept page lacked
+
+### Privacy and Data Protection
+
+The removed page's opening paragraph.
+
+### Enforcement
+
+| Who | What |
+|---|---|
+| EU  | GDPR |
+```
+
+| Part of the removed page | Where it goes |
+|---|---|
+| Frontmatter `tags` | Added to the kept page's tags |
+| Frontmatter `type` | Dropped: `type` follows the kept page's folder |
+| Frontmatter `created`, `updated` | Dropped: they are dates of the deleted file, and the kept page keeps its own |
+| Any other frontmatter key | Added if the kept page lacks it. If the kept page has a different value, the removed page's value is kept as text under `### Frontmatter` |
+| A `- ` bullet directly under `## X` | Into the kept page's `## X`. Related, Key Facts, Key Ideas, Key Points, Key Takeaways, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples, Definition and How It Works are created if missing |
+| A bullet the kept section already has | Left out, because it adds nothing. That means the same words, or a bare `- [[x]]` when `[[x]]` is already there |
+| A bullet with its own words whose first link matches a different bullet | Under `## Merged from`, so both survive. `- [[alice]] left in 2005` is not a repeat of `- Founded by [[alice]]` |
+| Title, opening paragraph, prose, tables, code blocks, numbered lists, quotes, sections with no match | Under `## Merged from <page>`, whole and in order. A table or code block is never split |
+| Anything the kept page already holds, line for line | Left out, so merging twice repeats nothing |
+
+**One thing changes in moved text: heading levels.** Under `## Merged from`, `# Title` and `## Section` become `###`, and deeper headings drop one level. They have to: a later ingest treats a `## X` as a section its own `## X` can replace, and a stray `# Title` would end the block early. Under one heading the moved text outlives later ingests. Lines inside a code block are never changed. Links to the deleted page are repointed everywhere, moved text included.
+
+**Keep and Flip now decide the text.** The kept page's title, frontmatter and opening stay at the top, whichever page is longer. Flip gives you the other page at the top with this one's text below it.
+
+**Three limits, stated plainly.** The moved text is not rewritten, so `## Merged from` can read as two pages, and tidying it is yours to do. Near-identical paragraphs both stay, because nothing here judges meaning. And a later ingest still follows the ingest rules: it can replace the kept page's opening and its own prose sections, and `deduplicateBulletSections` keeps only the first bullet per first link in the accumulating sections.
+
+**Merges done on earlier versions.** Before this fix a merge used the longer page as the base and carried over only the other page's bullets from eleven named sections. The other page's opening paragraph, its prose, tables, code blocks and any other section were not kept. If the page you chose to delete was the longer one, the page you kept lost its own title, frontmatter and prose, and the surviving file held the deleted page's text under the kept name. That text is not in your wiki any more and the app cannot bring it back. It can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge: a git client pointed at your knowledge base folder can show the earlier version of each file. There is no in-app undo.
 
 ### One merge can resolve several pairs (v3.53.0)
 
@@ -344,7 +394,7 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 >     --work-tree="<your Knowledge Base Location>" checkout -- .
 > ```
 >
-> Your Knowledge Base Location is shown in **Settings → Knowledge base**. If you have already pushed, the change is a commit in your GitHub repo and `git revert` is the tool. If you have **not** set up Personal Sync at all, there is no history to go back to — take a copy of your domains folder before running a bulk AI fix.
+> Your Knowledge Base Location is shown in **Settings → Knowledge base**. If you have already pushed, the change is a commit in your GitHub repo and `git revert` is the tool. If you have **not** set up Personal Sync at all, there is no history to go back to — take a copy of your domains folder before running a bulk AI fix. A merge reverted this way brings back the deleted file, but only a version that a sync committed before the merge.
 
 ---
 
@@ -409,7 +459,7 @@ Because the provider is resolved through the same single chokepoint, adding Open
 | `POST` | `/api/health/:domain/semantic-dupes/scan` | Phase 3 — SSE stream. Events: `start`, `progress`, `pair`, `batch-error`, `done`, `error`. |
 | `GET` | `/api/health/:domain/semantic-dupes/status` | Coverage and remembered pairs. No LLM call. |
 | `POST` | `/api/health/:domain/semantic-dupes/forget` | Forgets this domain's remembered answers. Dismissals stay. |
-| `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. READ-ONLY. |
+| `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. `mergedPreview` is the start of the bytes Merge writes, links already repointed. READ-ONLY. |
 | `POST` | `/api/health/:domain/semantic-dupes/merge-batch` | beta.15 — SSE stream. Body `{pairs:[...]}` (≤2000). Events: `start`, `progress` (`{done,total,pair,status}`), `done` (`{merged,skipped,errors,total,results}`), `error`. Registered as a write-op + file lock; concurrent sync/update/delete get 409. |
 | `GET` | `/api/health/:domain/broken-links/estimate` | beta.16 — counts (unique / free / AI) + cost. No LLM. |
 | `POST` | `/api/health/:domain/broken-links/plan` | beta.16 — SSE, READ-ONLY (makes LLM calls). Returns the retarget/strip plan. |

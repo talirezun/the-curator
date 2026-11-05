@@ -235,9 +235,9 @@ When the user asks to "check my wiki" or "clean up", use the Health tools. There
 | Tier | Issue types | Action |
 |---|---|---|
 | **Auto-fix without asking** | `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` *carrying a scanner-supplied* `suggestedTarget` | These have one clear right answer and remove no page. Call `fix_wiki_issue` for each, no confirmation needed. |
-| **Say what disappears, then fix** | `crossFolderDupes`, `hyphenVariants` | These are **not** cosmetic: they merge two pages and **DELETE one of them** (inbound links are repointed to the survivor). Name the page that will disappear before you call. You do not need a preview round-trip, but the user must not learn a page was deleted afterwards. |
+| **Say what disappears, then fix** | `crossFolderDupes`, `hyphenVariants` | These are **not** cosmetic: they merge two pages and **DELETE one of them** (inbound links are repointed to the survivor; the deleted page's text moves to the kept page, under `## Merged from <page>` where its bullets have no matching section). Name the page that will disappear before you call. You do not need a preview round-trip, but the user must not learn a page was deleted afterwards. |
 | **Confirm with user first** | `brokenLinks` *without* a scanner target; orphans (via `orphanLink`) | Show the user, accept "fix" / "dismiss" / "leave for later", then act. |
-| **ALWAYS preview, then confirm** | `semanticDupe` (destructive — deletes a file, rewrites links) | Call `fix_wiki_issue` with `preview: true` to get the diff plan; show the user; only on explicit confirmation call again with `preview: false`. |
+| **ALWAYS preview, then confirm** | `semanticDupe` (destructive — deletes a file, rewrites links) | Call `fix_wiki_issue` with `preview: true` to get the diff plan; show the user; only on explicit confirmation call again with `preview: false`. The page named keep stays the base whichever is longer, so choose it deliberately. A `merge-would-lose-text` or `merge-same-file` refusal means nothing changed: tell the user, do not retry. |
 
 Four rules that hold whatever you are fixing:
 

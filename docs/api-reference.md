@@ -2383,6 +2383,13 @@ truncated to the first `mergedPreviewCap` characters (**field is new in v3.72.1*
 `mergedPreview` itself is unchanged — 4,000 characters, unrounded by multibyte content) when
 `mergedLength` is greater than `mergedPreview.length`.
 
+`mergedPreview` is the start of the exact text the merge writes to the kept page, and `mergedLength`
+is that text's full length: the same composer and the same link rewrite, so links to the removed
+page already point at the kept page. The kept page is the base and the removed page's remaining text
+sits at the foot, so on a long page it can fall past the cap. See
+[ai-health.md § What a merged page looks like](ai-health.md#what-a-merged-page-looks-like).
+The response shape is unchanged.
+
 ---
 
 ## GET /api/health/:domain/broken-links/estimate
@@ -2527,7 +2534,7 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 { "ok": true, "fixed": 1, "total": 1 }
 ```
 
-`fixed: 0` indicates a defence rejected the request (slug regex, same-slug-same-folder, summary folder, missing file). No error status is returned — it is a silent no-op.
+`fixed: 0` indicates a defence rejected the request (slug regex, same-slug-same-folder, summary folder, missing file). No error status is returned — it is a silent no-op. Two refusals carry a `reason` and leave both pages untouched, here and on the `crossFolderDupes` and `hyphenVariants` fixes: `merge-would-lose-text` (a line of either page would be missing from the merged text) and `merge-same-file` (both names reach one file, so a delete would remove the only copy).
 
 **Defences applied (all return `fixed: 0` on failure):**
 - `keepSlug` and `removeSlug` must match `/^[a-z0-9][a-z0-9.-]*$/i`.

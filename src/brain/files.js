@@ -288,7 +288,7 @@ function extractBulletsFromSection(content, sectionName) {
  * target only — so "- [[foo]] — description A" and "- [[foo]] — description B"
  * are treated as duplicates and only one is kept.
  */
-function dedupKey(line) {
+export function dedupKey(line) {
   // v3.84.0: a LINK-ONLY bullet (`- [[x]]`, `- [[x|Alias]]`) keys on its target
   // with the alias stripped, so the two spellings of one link are one bullet.
   // Bullets with prose keep the historical key (first link's inner text, alias

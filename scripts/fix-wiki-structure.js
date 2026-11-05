@@ -38,71 +38,26 @@ import { readFile, writeFile, readdir, rm, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { composeMergedPage, findLostLines } from '../src/brain/page-merge.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function extractBulletsFromSection(content, sectionName) {
-  const lines = content.split('\n');
-  const bullets = [];
-  let inSection = false;
-  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
-  for (const line of lines) {
-    if (re.test(line))                     { inSection = true; continue; }
-    if (inSection && /^##/.test(line))     { inSection = false; }
-    if (inSection && line.startsWith('- ')) bullets.push(line);
-  }
-  return bullets;
-}
-
-function injectBulletsIntoSection(content, sectionName, extraBullets) {
-  if (!extraBullets.length) return content;
-  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
-  const lines = content.split('\n');
-  const seen = new Set();
-  let inSection = false;
-  for (const line of lines) {
-    if (re.test(line))                     { inSection = true; continue; }
-    if (inSection && /^##/.test(line))     { inSection = false; }
-    if (inSection && line.startsWith('- ')) seen.add(line.toLowerCase().trim());
-  }
-  const newBullets = extraBullets.filter(b => !seen.has(b.toLowerCase().trim()));
-  if (!newBullets.length) return content;
-  const result = [];
-  inSection = false;
-  let injected = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (re.test(line)) { inSection = true; result.push(line); continue; }
-    if (inSection && /^##/.test(line) && !injected) {
-      result.push(...newBullets); injected = true; inSection = false;
-    }
-    result.push(line);
-  }
-  if (inSection && !injected) result.push(...newBullets);
-  return result.join('\n');
-}
-
-function mergeContent(existing, incoming) {
-  const SECTIONS = ['Related','Key Facts','Key Ideas','Key Points',
-    'Key Takeaways','Entities Mentioned','Concepts Introduced or Referenced',
-    'Applications','Examples'];
-  let merged = existing; // keep existing as base, inject incoming bullets
-  for (const s of SECTIONS) {
-    const incomingBullets = extractBulletsFromSection(incoming, s);
-    if (incomingBullets.length) merged = injectBulletsIntoSection(merged, s, incomingBullets);
-  }
-  return merged;
-}
-
 async function moveOrMerge(srcPath, destPath, label, dryRun) {
   const srcContent = await readFile(srcPath, 'utf8');
   if (existsSync(destPath)) {
     // Target exists — merge bullet sections
     const destContent = await readFile(destPath, 'utf8');
-    const merged = mergeContent(destContent, srcContent);
+    // The page already there is the base; a merge that would lose a line is refused.
+    const merged = composeMergedPage(destContent, srcContent, {
+      sourceLabel: path.basename(srcPath, '.md'), keepFolder: path.basename(path.dirname(destPath)),
+    });
+    if (findLostLines(destContent, srcContent, merged).length) {
+      console.log(`  SKIP    ${label}: the merge would lose text, both pages left alone`);
+      return;
+    }
     if (!dryRun) await writeFile(destPath, merged, 'utf8');
     console.log(`  MERGED  ${label}`);
   } else {

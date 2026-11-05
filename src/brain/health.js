@@ -33,6 +33,8 @@ import {
 } from './wiki-index.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
+// The text of a merge that deletes a page. Pure; every read, write and delete stays here.
+import { composeMergedPage, findLostLines } from './page-merge.js';
 import {
   loadDuplicateChecks, pairKey, openingsHash, pageOpening,
   isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs,
@@ -197,58 +199,6 @@ function extractBulletsFromSection(content, sectionName) {
     if (inSection && line.startsWith('- ')) bullets.push(line);
   }
   return bullets;
-}
-
-function dedupKey(line) {
-  const linkMatch = line.match(/\[\[([^\]]+)\]\]/);
-  if (linkMatch) return linkMatch[1].toLowerCase().trim();
-  return line.toLowerCase().trim();
-}
-
-function injectBulletsIntoSection(content, sectionName, extraBullets) {
-  if (!extraBullets.length) return content;
-  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
-  const lines = content.split('\n');
-  const seen = new Set();
-  let inSection = false;
-  for (const line of lines) {
-    if (re.test(line))                 { inSection = true;  continue; }
-    if (inSection && /^##/.test(line)) { inSection = false; }
-    if (inSection && line.startsWith('- ')) seen.add(dedupKey(line));
-  }
-  const newBullets = extraBullets.filter(b => !seen.has(dedupKey(b)));
-  if (!newBullets.length) return content;
-
-  const sectionExistsRe = new RegExp('^##\\s+' + sectionName + '\\s*$', 'im');
-  if (!sectionExistsRe.test(content)) {
-    return content.trimEnd() + `\n\n## ${sectionName}\n` + newBullets.join('\n') + '\n';
-  }
-
-  const result = [];
-  inSection = false;
-  let injected = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (re.test(line)) { inSection = true; result.push(line); continue; }
-    if (inSection && /^##/.test(line) && !injected) {
-      result.push(...newBullets); injected = true; inSection = false;
-    }
-    result.push(line);
-  }
-  if (inSection && !injected) result.push(...newBullets);
-  return result.join('\n');
-}
-
-function mergeBulletSections(canonicalContent, duplicateContent) {
-  const SECTIONS = ['Related','Key Facts','Key Ideas','Key Points',
-    'Key Takeaways','Entities Mentioned','Concepts Introduced or Referenced',
-    'Applications','Examples','Definition','How It Works'];
-  let merged = canonicalContent;
-  for (const s of SECTIONS) {
-    const bullets = extractBulletsFromSection(duplicateContent, s);
-    if (bullets.length) merged = injectBulletsIntoSection(merged, s, bullets);
-  }
-  return merged;
 }
 
 /**
@@ -1254,7 +1204,42 @@ function splitWikiRef(rel) {
  * @returns {Promise<number>} number of files rewritten
  */
 async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
-  if (!Array.isArray(retired) || typeof keepSlug !== 'string' || !keepSlug) return 0;
+  const rewriter = retiredLinkRewriter(retired, keepSlug, keepFolder);
+  if (!rewriter) return 0;
+
+  // Pages that are about to be unlinked are skipped: writing them would be an
+  // atomic temp-file + rename immediately before an `rm`.
+  const doomed = [];
+  for (const r of retired) {
+    if (!r || typeof r.folder !== 'string' || typeof r.slug !== 'string') continue;
+    const doomedAbs = wikiFile(wikiDir, r.folder, `${r.slug}.md`);
+    if (doomedAbs) doomed.push(doomedAbs);
+  }
+
+  const allFiles = await walkMdFiles(wikiDir);
+  let changed = 0;
+  for (const full of allFiles) {
+    const rel = path.relative(wikiDir, full);
+    if (rel === 'index.md' || rel === 'log.md') continue;
+    if (doomed.some((d) => path.resolve(d) === path.resolve(full))) continue;
+    const content = await readFile(full, 'utf8');
+    const rewritten = rewriter.apply(content);
+    if (rewritten !== content) {
+      await writeFileAtomic(full, rewritten, 'utf8');
+      changed++;
+    }
+  }
+  return changed;
+}
+
+/**
+ * What a merge does to the text of every page that links to a retired page: the
+ * one definition, used by `repointInboundLinks` on disk and by the preview on
+ * the kept page, because the kept page goes through it too (a page often links
+ * to its own duplicate). Null when there is nothing to rewrite.
+ */
+function retiredLinkRewriter(retired, keepSlug, keepFolder) {
+  if (!Array.isArray(retired) || typeof keepSlug !== 'string' || !keepSlug) return null;
 
   // A retired page whose slug already equals the survivor's needs no link
   // rewriting — every `[[slug]]` pointing at it still resolves to the kept
@@ -1268,7 +1253,7 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
     seen.add(r.slug);
     slugs.push(r.slug);
   }
-  if (slugs.length === 0) return 0;
+  if (slugs.length === 0) return null;
 
   // Match `[[X]]`, `[[entities/X]]`, `[[concepts/X]]`, `[[summaries/X]]`,
   // with an optional `|alias` suffix that must be preserved verbatim. The
@@ -1306,33 +1291,47 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
   // folder-prefix violation the old link carried.
   const replacement = keepFolder === 'summaries' ? `summaries/${keepSlug}` : keepSlug;
 
-  // Pages that are about to be unlinked are skipped: writing them would be an
-  // atomic temp-file + rename immediately before an `rm`.
-  const doomed = [];
-  for (const r of retired) {
-    if (!r || typeof r.folder !== 'string' || typeof r.slug !== 'string') continue;
-    const doomedAbs = wikiFile(wikiDir, r.folder, `${r.slug}.md`);
-    if (doomedAbs) doomed.push(doomedAbs);
-  }
-
-  const allFiles = await walkMdFiles(wikiDir);
-  let changed = 0;
-  for (const full of allFiles) {
-    const rel = path.relative(wikiDir, full);
-    if (rel === 'index.md' || rel === 'log.md') continue;
-    if (doomed.some((d) => path.resolve(d) === path.resolve(full))) continue;
-    const content = await readFile(full, 'utf8');
+  return {
+    re: linkRe,
     // v3.84.0: after a merge, `- [[old]]` and `- [[keep]]` on one page become
     // two copies of `- [[keep]]` — the rewritten copy goes.
-    const rewritten = dedupRewrittenBullets(content,
-      content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`));
-    if (rewritten !== content) {
-      await writeFileAtomic(full, rewritten, 'utf8');
-      changed++;
-    }
-  }
-  return changed;
+    apply: (content) => dedupRewrittenBullets(content,
+      content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`)),
+  };
 }
+
+/**
+ * The kept page's text after a merge, with the cross-check's answer. Every
+ * deleting merge and the preview go through this, so what the preview shows is
+ * what Merge writes. `lost` non-empty means: do not delete anything.
+ */
+function composeMerge(keepContent, removeContent, keepRef, removeRef) {
+  const sourceLabel = keepRef.slug === removeRef.slug
+    ? `${removeRef.folder}/${removeRef.slug}`
+    : removeRef.slug;
+  const merged = composeMergedPage(keepContent, removeContent, { sourceLabel, keepFolder: keepRef.folder });
+  return { merged, lost: findLostLines(keepContent, removeContent, merged) };
+}
+
+/**
+ * Do these two names reach one file? On a case-insensitive disk `Foo.md` and
+ * `foo.md` do, and a keep that is a link to the remove does too: deleting
+ * "the duplicate" would then delete the only copy. `lstat` on the remove side
+ * lets a link that merely points AT the kept page be removed as before, because
+ * `rm` only unlinks it.
+ */
+async function isSameFile(wikiDir, keepRel, removeRel) {
+  const keepAbs = wikiFile(wikiDir, keepRel);
+  const removeAbs = wikiFile(wikiDir, removeRel);
+  if (!keepAbs || !removeAbs) return false;
+  const a = await stat(keepAbs);
+  const b = await lstat(removeAbs);
+  return a.ino === b.ino && a.dev === b.dev;
+}
+
+// Refusals, not failures: nothing was written and nothing was deleted.
+const MERGE_WOULD_LOSE_TEXT = 'merge-would-lose-text';
+const MERGE_SAME_FILE = 'merge-same-file';
 
 async function fixCrossFolderDupe(wikiDir, issue) {
   // Folder + slug are needed to repoint inbound links before the delete.
@@ -1348,18 +1347,14 @@ async function fixCrossFolderDupe(wikiDir, issue) {
   if (!keepPath || !removePath) return false;
   if (!existsSync(keepPath) || !existsSync(removePath)) return false;
 
+  if (await isSameFile(wikiDir, issue.keep, issue.remove)) return { ok: false, reason: MERGE_SAME_FILE };
+
   const keepContent   = await readFile(keepPath, 'utf8');
   const removeContent = await readFile(removePath, 'utf8');
 
-  let merged;
-  if (keepContent.length >= removeContent.length) {
-    merged = mergeBulletSections(keepContent, removeContent);
-  } else {
-    merged = mergeBulletSections(removeContent, keepContent);
-    // Normalise frontmatter type to match the kept folder (entities/)
-    merged = merged.replace(/^type: concept$/m, 'type: entity');
-    merged = merged.replace(/type\/concept/g, 'type/entity');
-  }
+  // The kept page is the base and `type` follows its folder.
+  const { merged, lost } = composeMerge(keepContent, removeContent, keepRef, removeRef);
+  if (lost.length) return { ok: false, reason: MERGE_WOULD_LOSE_TEXT };
 
   // Persist the merged body FIRST: repointInboundLinks rewrites files on
   // disk, so a later write of in-memory content would clobber the kept page's
@@ -1397,15 +1392,22 @@ async function fixHyphenVariant(wikiDir, issue) {
 
   let canonContent = await readFile(canonPath, 'utf8');
   const retiredSlugs = [];
+  const canonRef = { folder: 'entities', slug: canonical };
+  let refusal = null;
   for (const slug of (issue.files || [])) {
     if (slug === canonical) continue;
     if (!isSafeSlug(slug)) continue;
     const dupPath = wikiFile(wikiDir, 'entities', `${slug}.md`);
     if (!dupPath || !existsSync(dupPath)) continue;
+    if (await isSameFile(wikiDir, `entities/${canonical}.md`, `entities/${slug}.md`)) { refusal = MERGE_SAME_FILE; continue; }
     const dupContent = await readFile(dupPath, 'utf8');
-    canonContent = mergeBulletSections(canonContent, dupContent);
+    const { merged, lost } = composeMerge(canonContent, dupContent, canonRef, { folder: 'entities', slug });
+    // A refused variant stays on disk and is offered again by the next scan.
+    if (lost.length) { refusal = MERGE_WOULD_LOSE_TEXT; continue; }
+    canonContent = merged;
     retiredSlugs.push(slug);
   }
+  if (refusal && retiredSlugs.length === 0) return { ok: false, reason: refusal };
 
   // Persist the merged canonical page BEFORE repointing. The merge folds the
   // duplicate's body in, and that body routinely contains links to the
@@ -2119,7 +2121,7 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   // ReferenceError on every VALID pair, while all five tests passed invalid
   // input and asserted a throw — which a ReferenceError satisfies. The
   // positive-path assertions in test-wiki-page.js §8d exist because of that.
-  const { keepPath, removePath, removeSlug, missingReason, missingPage } = resolved;
+  const { keepPath, keepSlug, keepFolder, removePath, removeSlug, removeFolder, missingReason, missingPage } = resolved;
   if (missingReason === 'wiki-missing') {
     throw new Error(`No wiki found for domain: ${domain}`);
   }
@@ -2132,16 +2134,21 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   const keepContent = await readFile(keepPath, 'utf8');
   const removeContent = await readFile(removePath, 'utf8');
 
-  // Mirror the real merge's direction logic: larger body wins as the base
-  const merged = keepContent.length >= removeContent.length
-    ? mergeBulletSections(keepContent, removeContent)
-    : mergeBulletSections(removeContent, keepContent);
+  // The same composer and the same link rewrite Merge uses, in the same order,
+  // so this is the page Merge will leave on disk, not a description of it.
+  const { merged: composed, lost } = composeMerge(keepContent, removeContent,
+    { folder: keepFolder, slug: keepSlug }, { folder: removeFolder, slug: removeSlug });
+  if (lost.length) {
+    throw new Error(`This merge is refused because it would lose text from ${lost[0].page === 'kept' ? keepSlug : removeSlug}. Nothing was changed.`);
+  }
+  const rewriter = retiredLinkRewriter([{ folder: removeFolder, slug: removeSlug }], keepSlug, keepFolder);
+  const merged = rewriter.apply(composed);
 
-  // Count affected files for the "N links will be rewritten" message
+  // Count affected files for the "N links will be rewritten" message, with the
+  // pattern the rewrite itself uses.
   const affectedFiles = [];
   const allFiles = await walkMdFiles(wikiDir);
-  const escSlug = removeSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`\\[\\[(entities/|concepts/|summaries/)?${escSlug}(\\|[^\\]]+)?\\]\\]`, 'g');
+  const re = rewriter.re;
   for (const full of allFiles) {
     const rel = path.relative(wikiDir, full);
     if (rel === 'index.md' || rel === 'log.md') continue;
@@ -2169,7 +2176,9 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
  *
  * Steps (ordered so a mid-operation crash leaves the wiki recoverable):
  *   1. Validate both slugs exist, distinct, not summaries, slug-regex safe.
- *   2. Read both files + merge bullet sections (larger body wins as base).
+ *   2. Read both files and compose the merged page: the KEPT page is the base
+ *      and whatever the removed page said that it lacks is added (page-merge.js).
+ *      If the cross-check finds a line missing, refuse: nothing is written or deleted.
  *   3. Write the merged content to the kept file.
  *   4. Repoint every inbound link across the domain via the SHARED
  *      `repointInboundLinks` (summaries included — a summary linking to the
@@ -2195,18 +2204,16 @@ async function fixSemanticDuplicate(wikiDir, issue) {
   const { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath, missingReason, missingPage } = resolved;
   if (missingReason) return { ok: false, reason: missingReason, ...(missingPage ? { missing: missingPage } : {}) };
 
-  // Step 2: merge bodies
+  if (await isSameFile(wikiDir, `${keepFolder}/${keepSlug}.md`, `${removeFolder}/${removeSlug}.md`)) {
+    return { ok: false, reason: MERGE_SAME_FILE };
+  }
+
+  // Step 2: compose the merged page. `type` follows the kept folder.
   const keepContent = await readFile(keepPath, 'utf8');
   const removeContent = await readFile(removePath, 'utf8');
-  let merged = keepContent.length >= removeContent.length
-    ? mergeBulletSections(keepContent, removeContent)
-    : mergeBulletSections(removeContent, keepContent);
-
-  // Normalise frontmatter type to match the kept folder
-  const wantType = keepFolder === 'entities' ? 'entity' : 'concept';
-  const otherType = keepFolder === 'entities' ? 'concept' : 'entity';
-  merged = merged.replace(new RegExp(`^type:\\s*${otherType}$`, 'm'), `type: ${wantType}`);
-  merged = merged.replace(new RegExp(`type/${otherType}`, 'g'), `type/${wantType}`);
+  const { merged, lost } = composeMerge(keepContent, removeContent,
+    { folder: keepFolder, slug: keepSlug }, { folder: removeFolder, slug: removeSlug });
+  if (lost.length) return { ok: false, reason: MERGE_WOULD_LOSE_TEXT };
 
   // Step 3: persist the merged body. This happens BEFORE the repoint (it used
   // to be interleaved with it) because repointInboundLinks writes to disk, so

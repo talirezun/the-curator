@@ -15,6 +15,7 @@
 | `tidySummaryLinkSections(content, {entitySlugs, conceptSlugs})` | v3.84.0. The one deterministic repair of a summary's two link sections, used by `syncSummaryEntities` (every write) and Health's `summaryLinkSections` fix (existing wikis). Moves bullets to the section their page's folder names, drops identical lines and plain `- [[x]]` lines whose target the section lists another way (aliased and prose lines are never dropped for being "the same link"). Refused by `summaryTidyGuard` unless the link-target set and every non-blank line outside the two sections are unchanged. Acts on the FIRST section with each heading only |
 | `dedupRewrittenBullets(before, after)` | v3.84.0. For Health's link rewriters (`fixBrokenLink`, the AI broken-link apply, the merge repoint): after a line-for-line rewrite, drops each CHANGED bullet that is now identical to another bullet in its section. Narrower than `deduplicateBulletSections` on purpose |
 | `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing ACCUMULATE sections are injected (Key Facts, Related, Entities Mentioned, etc.). **Prose preservation (v3.0.1-beta.15):** any `## ` PROSE section present in `existing` but ENTIRELY ABSENT from `incoming` is preserved (case-insensitive match), so a thin Compile/Curate edit can't wipe an existing page's Definition / Summary / Why It Matters. If `incoming` includes the heading, incoming wins (no duplication). Exported for unit testing. |
+| `composeMergedPage(keep, remove, {sourceLabel, keepFolder})` (`page-merge.js`) | The text of every merge that deletes a page, and of its preview. Kept page is the base; bullets join same-named sections; the rest goes under `## Merged from <page>` with headings one level down, fences and tables whole. `findLostLines` is the independent check that must return `[]` before a delete. Pure |
 | `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
 | `normalizePath(relativePath)` | Redirects non-canonical folders → entities/ or concepts/ |
@@ -190,7 +191,7 @@ find domains/articles/wiki -name "*.md" -print0 | xargs -0 sed -i '' \
 - `type/concept` → Green nodes
 - `type/summary` → Purple nodes
 
-**Merge strategy** — bullet-accumulating sections (Key Facts, Related, Entities Mentioned, etc.) grow with every ingest. Prose sections (Summary, Definition) use the incoming LLM version (it had full document context).
+**Merge strategy** — bullet-accumulating sections (Key Facts, Related, Entities Mentioned, etc.) grow with every ingest. Prose sections (Summary, Definition) use the incoming LLM version (it had full document context). A Health merge that deletes a page is different: it uses `composeMergedPage`, which never drops text, and moved text lives under `## Merged from <page>` because `mergeWikiPage` preserves that whole block when an incoming page omits the heading.
 
 ---
 

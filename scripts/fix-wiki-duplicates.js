@@ -25,66 +25,12 @@ import { readFile, writeFile, readdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { composeMergedPage, findLostLines } from '../src/brain/page-merge.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
 // ── Merge helpers ────────────────────────────────────────────────────────────
-
-function extractBulletsFromSection(content, sectionName) {
-  const lines = content.split('\n');
-  const bullets = [];
-  let inSection = false;
-  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
-  for (const line of lines) {
-    if (re.test(line))                     { inSection = true; continue; }
-    if (inSection && /^##/.test(line))     { inSection = false; }
-    if (inSection && line.startsWith('- ')) bullets.push(line);
-  }
-  return bullets;
-}
-
-function injectBulletsIntoSection(content, sectionName, extraBullets) {
-  if (!extraBullets.length) return content;
-  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
-  const lines = content.split('\n');
-  const seen = new Set();
-  let inSection = false;
-  for (const line of lines) {
-    if (re.test(line))                     { inSection = true; continue; }
-    if (inSection && /^##/.test(line))     { inSection = false; }
-    if (inSection && line.startsWith('- ')) seen.add(line.toLowerCase().trim());
-  }
-  const newBullets = extraBullets.filter(b => !seen.has(b.toLowerCase().trim()));
-  if (!newBullets.length) return content;
-  const result = [];
-  inSection = false;
-  let injected = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (re.test(line)) { inSection = true; result.push(line); continue; }
-    if (inSection && /^##/.test(line) && !injected) {
-      result.push(...newBullets); injected = true; inSection = false;
-    }
-    result.push(line);
-  }
-  if (inSection && !injected) result.push(...newBullets);
-  return result.join('\n');
-}
-
-function mergeInto(canonicalContent, duplicateContent) {
-  const SECTIONS = ['Related','Key Facts','Key Ideas','Key Points',
-    'Key Takeaways','Entities Mentioned','Concepts Introduced or Referenced',
-    'Applications','Examples','Definition','How It Works'];
-  let merged = canonicalContent;
-  for (const s of SECTIONS) {
-    const bullets = extractBulletsFromSection(duplicateContent, s);
-    if (bullets.length) merged = injectBulletsIntoSection(merged, s, bullets);
-  }
-  return merged;
-}
-
-// ── Core deduplication ───────────────────────────────────────────────────────
 
 async function deduplicateFolder(folderPath, type, dryRun) {
   const files = (await readdir(folderPath)).filter(f => f.endsWith('.md'));
@@ -144,12 +90,20 @@ async function deduplicateFolder(folderPath, type, dryRun) {
 
     const canonPath = path.join(folderPath, actualCanon + '.md');
     let canonContent = await readFile(canonPath, 'utf8');
+    const refused = new Set();
 
     for (const dupStem of toMerge) {
       const dupPath = path.join(folderPath, dupStem + '.md');
       if (!existsSync(dupPath)) continue;
       const dupContent = await readFile(dupPath, 'utf8');
-      canonContent = mergeInto(canonContent, dupContent);
+      // The kept page is the base; a merge that would lose a line is refused.
+      const composed = composeMergedPage(canonContent, dupContent, { sourceLabel: dupStem, keepFolder: type });
+      if (findLostLines(canonContent, dupContent, composed).length) {
+        console.log(`  SKIP   ${type}/${dupStem}.md: the merge would lose text, both pages left alone`);
+        refused.add(dupStem);
+        continue;
+      }
+      canonContent = composed;
       merged.add(dupStem);
       console.log(`  MERGE  ${type}/${dupStem}.md  →  ${type}/${actualCanon}.md`);
       mergeCount++;
@@ -160,6 +114,7 @@ async function deduplicateFolder(folderPath, type, dryRun) {
 
       // Delete merged files
       for (const dupStem of toMerge) {
+        if (refused.has(dupStem)) continue;
         const dupPath = path.join(folderPath, dupStem + '.md');
         if (existsSync(dupPath)) await rm(dupPath);
       }
