@@ -32,7 +32,7 @@ import {
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
 // run and an ingest are summed and priced by the same code.
-import { makeUsageAccumulator } from './ingest.js';
+import { makeUsageAccumulator, isOutputTokenLimit } from './ingest.js';
 import { DEFAULT_AI_HEALTH } from './config.js';
 
 // src/brain/ai-run.js is reached at CALL TIME, never by a static import.
@@ -556,6 +556,25 @@ const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).u
 // Haiku overflowed 2,048 on a batch of 20, which fails the whole batch. 6,000 was measured to fit.
 const SEMANTIC_MAX_OUTPUT_TOKENS = 6000;
 const SEMANTIC_RELATIONS = new Set(['same', 'part', 'version', 'overlap', 'different']);
+const SEMANTIC_MAX_SPLITS = 2;
+
+/**
+ * Which side a "same" keeps. The model's choice when it names a side, with or
+ * without a folder, in brackets or with .md. Models also invent a third name
+ * (measured: a pair re-sent and paid for on three scans in a row because of it),
+ * and that is still an answer, so the default is deterministic: the longer
+ * opening, then the longer slug, then side A. Preview shows it and Flip changes it.
+ */
+function semanticKeepSlug(canonical, info) {
+  const name = String(canonical || '').trim()
+    .replace(/^\[+|\]+$/g, '')
+    .replace(/\.md$/i, '')
+    .replace(/^(entities|concepts)\//, '');
+  if (name === info.slugA || name === info.slugB) return name;
+  if (info.sampleA.length !== info.sampleB.length) return info.sampleA.length > info.sampleB.length ? info.slugA : info.slugB;
+  if (info.slugA.length !== info.slugB.length) return info.slugA.length > info.slugB.length ? info.slugA : info.slugB;
+  return info.slugA;
+}
 
 /**
  * The live candidate list, with the last answer kept for one domain.
@@ -815,8 +834,13 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
 
   const systemPrompt = SEMANTIC_SYSTEM_PROMPT;
 
-  for (let bi = 0; bi < batches.length; bi++) {
-    const batch = batches[bi];
+  // One call. A reply the scan cannot use, or one cut off at the output limit, may
+  // simply have been too long or unlucky, so that batch is split in half and each
+  // half tried, at most SEMANTIC_MAX_SPLITS levels deep. Measured: 6 of 125 real
+  // batches failed this way, costing 20 pairs each. An auth, quota, rate-limit or
+  // network error is not about this batch, so it fails as it always did. Every
+  // call reports into the same accumulator, so retries are in what the run spent.
+  const judgeBatch = async (batch, bi, depth) => {
     const batchInfo = [];
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i];
@@ -844,22 +868,31 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
     totalInputChars += systemPrompt.length + userPrompt.length;
 
     let raw, parsed;
+    let replied = false;
     try {
       raw = await llm(systemPrompt, userPrompt, SEMANTIC_MAX_OUTPUT_TOKENS, 'json', null, { onUsage: usage.onUsage });
+      replied = true;
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
       // jsonrepair turns prose into a JSON string, so "it parsed" is no answer.
       if (!parsed || !Array.isArray(parsed.results)) throw new Error('The AI reply was not in the expected shape.');
     } catch (err) {
+      if ((replied || isOutputTokenLimit(err)) && depth < SEMANTIC_MAX_SPLITS && batch.length > 1) {
+        const mid = Math.ceil(batch.length / 2);
+        await judgeBatch(batch.slice(0, mid), bi, depth + 1);
+        await judgeBatch(batch.slice(mid), bi, depth + 1);
+        return;
+      }
       failedPairs += batch.length;
       onEvent({ type: 'batch-error', batch: bi, error: err.message });
-      processed += batch.length;
-      onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
-      continue;
+      return;
     }
 
-    // parseJSON is lenient: its output is validated here, never truth-tested,
-    // and only an explicit answer for a valid index is remembered.
+    // parseJSON is lenient: its output is validated here, never truth-tested.
+    // A valid index with a valid relation always remembers something, so a pair
+    // the model has answered can never come back and be paid for again. What
+    // stays unchecked: a failed call, an index missing from the reply, or a
+    // relation that is not one of the five.
     if (!plan.info) plan.info = getProviderInfo();
     const now = new Date().toISOString();
     const answered = new Map();
@@ -868,10 +901,10 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       if (!r || typeof r !== 'object') continue;
       const idx = Number(r.index);
       if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length || seenIndex.has(idx)) continue;
-      // An unknown relation is no answer: nothing is remembered, so it is asked again.
       const relation = typeof r.relation === 'string' ? r.relation.trim().toLowerCase() : '';
       if (!SEMANTIC_RELATIONS.has(relation)) continue;
-      const conf = String(r.confidence || '').toLowerCase();
+      seenIndex.add(idx);
+      const given = String(r.confidence || '').trim().toLowerCase();
       const pair = batch[idx];
       const info = batchInfo[idx];
       const record = {
@@ -880,16 +913,13 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
         at: now,
       };
       const key = pairKey(pair.folderA, pair.slugA, pair.folderB, pair.slugB);
-      if (relation !== 'same' || conf === 'low') {
-        seenIndex.add(idx);
+      if (relation !== 'same' || given === 'low') {
         answered.set(key, { ...record, verdict: 'no' });
         continue;
       }
-      if (conf !== 'high' && conf !== 'medium') continue; // no usable answer: not remembered, not listed
-      const canonical = String(r.canonicalSlug || '').trim().replace(/^(entities|concepts)\//, '');
-      if (canonical !== pair.slugA && canonical !== pair.slugB) continue; // must match one side
-      seenIndex.add(idx);
-      const keepSlug = canonical;
+      // A "same" with no usable confidence is listed for a Preview, never for the batch.
+      const conf = given === 'high' ? 'high' : 'medium';
+      const keepSlug = semanticKeepSlug(r.canonicalSlug, info);
       const keepFolder = keepSlug === pair.slugA ? pair.folderA : pair.folderB;
       const removeSlug = keepSlug === pair.slugA ? pair.slugB : pair.slugA;
       const removeFolder = keepSlug === pair.slugA ? pair.folderB : pair.folderA;
@@ -914,8 +944,11 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
     // BEFORE the progress event: an interrupted scan keeps what it paid for.
     await saveDuplicateChecks(domain, answered);
     checkedPairs += answered.size;
+  };
 
-    processed += batch.length;
+  for (let bi = 0; bi < batches.length; bi++) {
+    await judgeBatch(batches[bi], bi, 0);
+    processed += batches[bi].length;
     onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
   }
 

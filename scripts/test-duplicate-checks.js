@@ -306,9 +306,10 @@ section('5. Only an explicit answer for a valid index is remembered');
     ['a missing relation', reply({ confidence: 'high', canonicalSlug: 'handoff' }), 0],
     ['an unknown relation', reply({ relation: 'similar', confidence: 'high', canonicalSlug: 'handoff' }), 0],
     ['a relation that is not a string', reply({ relation: true }), 0],
-    ['same, with a canonical matching neither side', reply({ relation: 'same', confidence: 'high', canonicalSlug: 'something-else' }), 0],
-    ['same, with no canonical', reply({ relation: 'same', confidence: 'high' }), 0],
-    ['same, with a confidence that is not a confidence', reply({ relation: 'same', confidence: 'very', canonicalSlug: 'handoff' }), 0],
+    ['same, with a canonical matching neither side', reply({ relation: 'same', confidence: 'high', canonicalSlug: 'something-else' }), 1],
+    ['same, with no canonical', reply({ relation: 'same', confidence: 'high' }), 1],
+    ['same, with a confidence that is not a confidence', reply({ relation: 'same', confidence: 'very', canonicalSlug: 'handoff' }), 1],
+    ['same, with no confidence', reply({ relation: 'same', canonicalSlug: 'handoff' }), 1],
     ['part', reply({ relation: 'part' }), 1],
     ['version', reply({ relation: 'version' }), 1],
     ['overlap', reply({ relation: 'overlap' }), 1],
@@ -737,6 +738,133 @@ section('15. The pairs at once, with no candidate pass');
   delete process.env.LLM_MODEL;
   writeFileSync(checksFile(d2.name), 'garbage{{{');
   ok((await ai.semanticRememberedPairs(d2.name)).hasChecks === false, '15.8 a corrupt file is nothing remembered');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('16. A pair the model has answered always finishes');
+{
+  const longOpen = 'A much longer opening about this subject, with detail. '.repeat(3);
+  const third = async (_s, user) => JSON.stringify({ results: pairsIn(user).map((p) => ({
+    index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: 'concepts/an-invented-third-name', rationale: 'why' })) });
+  const keepOf = async (files, canonicalSlug = 'an-invented-third-name') => {
+    const d = mkDomain(files);
+    const r = await scan(d.name, async (_s, user) => JSON.stringify({ results: pairsIn(user).map((p) => ({
+      index: p.index, relation: 'same', confidence: 'high', canonicalSlug })) }));
+    return r.pairs[0];
+  };
+
+  const d = mkDomain({ 'concepts/compounding-knowledge.md': page('Short', 'Short.'), 'concepts/long-term-knowledge-compounding.md': page('Long', 'Short.'),
+    'concepts/data-store.md': page('Store', longOpen), 'concepts/data-stores.md': page('Stores', 'Tiny.') });
+  const r1 = await scan(d.name, third);
+  ok(r1.done.leftPairs === 0 && r1.done.failedPairs === 0, '16.1 THE FIX — a third-name canonical is an answer: nothing left to check', JSON.stringify([r1.done.leftPairs, r1.done.failedPairs]));
+  const again = fakeLLM();
+  const r2 = await scan(d.name, again);
+  ok(again.calls === 0 && r2.pairs.length === r1.pairs.length, '16.2 …and it never pays for that pair again, and the pair is listed free');
+
+  let p = await keepOf({ 'concepts/hand-off.md': page('A', 'Tiny.'), 'concepts/handoff.md': page('B', longOpen) });
+  ok(p.keepSlug === 'handoff', '16.3 the default keeps the longer opening', JSON.stringify(p));
+  p = await keepOf({ 'concepts/hand-off.md': page('A', longOpen), 'concepts/handoff.md': page('B', 'Tiny.') });
+  ok(p.keepSlug === 'hand-off', '16.4 …in either position', JSON.stringify(p));
+  p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/handoff.md': page('B', 'Same.') });
+  ok(p.keepSlug === 'hand-off', '16.5 equal openings: the longer slug');
+  p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/hand_of.md': page('B', 'Same.'), }, 'nope');
+  const pa = p.keepSlug;
+  p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/hand_of.md': page('B', 'Same.') }, 'nope');
+  ok(p.keepSlug === pa, '16.6 the same input keeps the same page every time');
+  for (const form of ['handoff', 'concepts/handoff', 'entities/handoff', '[[handoff]]', 'handoff.md', 'concepts/handoff.md', ' handoff ']) {
+    p = await keepOf({ 'concepts/hand-off.md': page('A', longOpen), 'concepts/handoff.md': page('B', 'Tiny.') }, form);
+    ok(p.keepSlug === 'handoff', `16.7 the model's choice is honoured when written ${JSON.stringify(form)}`, JSON.stringify(p));
+  }
+  p = await (async () => { const x = mkDomain({ 'concepts/hand-off.md': page('A'), 'concepts/handoff.md': page('B') });
+    const r = await scan(x.name, async () => '{"results":[{"index":0,"relation":"same","canonicalSlug":"handoff"}]}'); return r.pairs[0]; })();
+  ok(p.confidence === 'medium', '16.8 a same with no confidence is listed for a Preview, not the batch', JSON.stringify(p));
+
+  // The scan loop, on a model that ALWAYS invents a third name.
+  const files = {};
+  for (let i = 0; i < 12; i++) { files[`concepts/ledger-node-${i}.md`] = page('Node ' + i); files[`concepts/ledgernode${i}.md`] = page('Alt ' + i); }
+  const loop = mkDomain(files);
+  let last = null;
+  let runs = 0;
+  do { last = await scan(loop.name, third, { maxPairs: 7 }); runs++; } while (last.done.leftPairs > 0 && runs < 200);
+  ok(last.done.leftPairs === 0 && last.done.checkedPairs === last.done.totalPairs, `16.9 the scan loop reaches every pair checked (${last.done.totalPairs} pairs, ${runs} runs)`);
+  const expectRuns = Math.ceil(last.done.totalPairs / 7);
+  ok(runs === expectRuns, `16.10 DUMB CROSS-CHECK: pairs / cap = ${expectRuns} runs, so no run repeated a pair`, String(runs));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('17. A batch that fails for its own reasons is split and retried');
+{
+  const twenty = () => {
+    const files = {};
+    for (let i = 0; i < 20; i++) { files[`concepts/ab${i}cdefgh-node.md`] = page('Node ' + i); files[`concepts/ab${i}cdefghnode.md`] = page('Alt ' + i); }
+    return mkDomain(files);
+  };
+  // Answers only batches of at most `fits`; fails bigger ones with `fail`.
+  const sized = (fits, fail) => {
+    const fn = async (_s, user, _m, _f, _w, opts) => {
+      const pairs = pairsIn(user);
+      fn.sizes.push(pairs.length);
+      if (opts && opts.onUsage) opts.onUsage({ provider: 'gemini', model: 'gemini-2.5-flash-lite', inputTokens: 1000, outputTokens: 100, cachedReadTokens: 0, cacheWriteTokens: 0 });
+      if (pairs.length > fits) return fail();
+      return JSON.stringify({ results: pairs.map((p) => ({ index: p.index, relation: 'different' })) });
+    };
+    fn.sizes = [];
+    return fn;
+  };
+  const limit = () => { throw new Error('⚠ Gemini hit the output token limit (6000 tokens) on this call.'); };
+  const prose = () => 'I would rather explain this in words.';
+  const shape = () => '{"answers":[]}';
+
+  for (const [label, fail] of [['the output limit', limit], ['an unparseable reply', prose], ['the wrong shape', shape]]) {
+    const d = twenty();
+    const llm = sized(10, fail);
+    const r = await scan(d.name, llm, { maxPairs: 20 });
+    ok(JSON.stringify(llm.sizes) === '[20,10,10]', `17. ${label}: splits in half`, JSON.stringify(llm.sizes));
+    ok(r.done.failedPairs === 0 && r.done.checkedPairs === 20, '17. …and recovers every pair', JSON.stringify([r.done.failedPairs, r.done.checkedPairs]));
+    ok(!r.events.some((e) => e.type === 'batch-error'), '17. …with nothing reported as failed');
+    ok(r.done.spent.calls === 3 && r.done.spent.inputTokens === 3000, '17. …and all three calls are in what the run spent', JSON.stringify(r.done.spent));
+  }
+
+  // Two levels, no further: 20 -> 10 -> 5, then those 5 are left for next time.
+  const deep = twenty();
+  const llmDeep = sized(4, limit);
+  const rDeep = await scan(deep.name, llmDeep, { maxPairs: 20 });
+  ok(JSON.stringify(llmDeep.sizes) === JSON.stringify([20, 10, 5, 5, 10, 5, 5]), '17.5 at most two levels of splitting', JSON.stringify(llmDeep.sizes));
+  ok(rDeep.done.failedPairs === 20 && rDeep.done.checkedPairs === 0, '17.6 only what still fails counts as failed');
+  ok(rDeep.done.spent.calls === 7, '17.7 every retry is in the spend');
+
+  // Part recovers: only the rest counts.
+  const part = twenty();
+  let n = 0;
+  const llmPart = async (_s, user) => {
+    const pairs = pairsIn(user);
+    n++;
+    if (pairs.length === 20 || (pairs.length === 10 && n === 2) || (pairs.length === 5 && n === 3)) return prose();
+    return JSON.stringify({ results: pairs.map((p) => ({ index: p.index, relation: 'different' })) });
+  };
+  const rPart = await scan(part.name, llmPart, { maxPairs: 20 });
+  ok(rPart.done.failedPairs === 5 && rPart.done.checkedPairs === 15 && rPart.done.leftPairs >= 5, '17.8 only the pairs that still fail are counted', JSON.stringify([rPart.done.failedPairs, rPart.done.checkedPairs]));
+  ok(rPart.events.filter((e) => e.type === 'progress').length === 1, '17.9 one progress step per batch of the plan, however it was split');
+  const lastProgress = rPart.events.filter((e) => e.type === 'progress').pop();
+  ok(lastProgress.processed === 20 && lastProgress.total === 20, '17.10 …so progress still ends at its total');
+  const retry = fakeLLM();
+  await scan(part.name, retry, { maxPairs: 5 });
+  ok(retry.sent.length === 5, '17.11 the pairs left are tried next time');
+
+  // A single pair cannot split.
+  const one = mkDomain({ 'concepts/hand-off.md': page('A'), 'concepts/handoff.md': page('B') });
+  const llmOne = sized(0, prose);
+  const rOne = await scan(one.name, llmOne);
+  ok(JSON.stringify(llmOne.sizes) === '[1]' && rOne.done.failedPairs === 1 && rOne.done.leftPairs === 1, '17.12 a single pair that fails is left for next time');
+
+  // Not about this batch: no split, no extra spend.
+  for (const message of ['401 invalid API key', '429 rate limit exceeded', 'RESOURCE_EXHAUSTED quota', 'fetch failed: ECONNRESET', '503 overloaded']) {
+    const d2 = twenty();
+    const llm = sized(0, () => { throw new Error(message); });
+    const r = await scan(d2.name, llm, { maxPairs: 20 });
+    ok(JSON.stringify(llm.sizes) === '[20]', `17. "${message}" does not split`, JSON.stringify(llm.sizes));
+    ok(r.done.failedPairs === 20 && r.events.filter((e) => e.type === 'batch-error').length === 1, '17. …and fails as before');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

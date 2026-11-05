@@ -2325,7 +2325,7 @@ Forgets which pairs were checked in this domain: removes `<user data>/.duplicate
 
 ## POST /api/health/:domain/semantic-dupes/scan
 
-Phase 3. Streams the real scan over **Server-Sent Events (SSE)**. A pair already answered for the same two page openings, by the same provider and model and under the same instructions, is not sent again; answers are saved after each batch, outside `domains/`. Nothing left to send means no provider call. Each result names a `relation` (`same`, `part`, `version`, `overlap` or `different`). Only `same` with medium or high confidence and a `canonicalSlug` naming one side becomes a pair; any other valid relation is remembered as not a duplicate; an unknown one is not remembered. Output limit: 6,000 tokens per batch.
+Phase 3. Streams the real scan over **Server-Sent Events (SSE)**. A pair already answered for the same two page openings, by the same provider and model and under the same instructions, is not sent again; answers are saved after each batch, outside `domains/`. Nothing left to send means no provider call. Each result names a `relation` (`same`, `part`, `version`, `overlap` or `different`). Only `same` becomes a pair, unless its confidence is `low`; any other valid relation is remembered as not a duplicate; an unknown one is not remembered. A `canonicalSlug` naming neither side falls back to the page with the longer opening, then the longer slug, then side A. Output limit: 6,000 tokens per batch. A batch that hits it, or returns an unusable reply, is split and retried up to two levels deep, and only pairs that still fail reach `batch-error` and `failedPairs`.
 
 Each event is emitted as `event: <type>\ndata: <json>\n\n`.
 
