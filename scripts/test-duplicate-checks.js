@@ -767,6 +767,8 @@ section('16. A pair the model has answered always finishes');
   ok(p.keepSlug === 'hand-off', '16.4 …in either position', JSON.stringify(p));
   p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/handoff.md': page('B', 'Same.') });
   ok(p.keepSlug === 'hand-off', '16.5 equal openings: the longer slug');
+  p = await keepOf({ 'concepts/data-set.md': page('A', 'Same.'), 'concepts/data-sets.md': page('B', 'Same.') });
+  ok(p.keepSlug === 'data-sets', '16.5b …whichever side it is on', JSON.stringify(p));
   p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/hand_of.md': page('B', 'Same.'), }, 'nope');
   const pa = p.keepSlug;
   p = await keepOf({ 'concepts/hand-off.md': page('A', 'Same.'), 'concepts/hand_of.md': page('B', 'Same.') }, 'nope');
