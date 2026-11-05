@@ -25,9 +25,9 @@ import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
 import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
-import { loadDismissed } from './health-dismissed.js';
+import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import {
-  loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant,
+  loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant, isMergeableSlug,
 } from './duplicate-checks.js';
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
@@ -527,34 +527,35 @@ function costFields(provider, model, inputTokens, outputTokens) {
 }
 
 /**
- * The instructions for judging a batch. A module constant because an answer is
- * only good for the instructions that produced it: its hash is part of what a
- * remembered answer is bound to, so tightening these rules re-checks the pairs
- * answered under the old ones without anybody having to remember a version.
+ * The instructions for judging a batch. Module constants because an answer is
+ * only good for the instructions that produced it: their hash is part of what a
+ * remembered answer is bound to, so changing them re-checks the pairs answered
+ * under the old ones without anybody having to remember a version.
+ *
+ * WHY A RELATION, NOT YES/NO. Asked "is this a duplicate?", Flash Lite accepted
+ * 217 of 500 real pairs and 765 of 2,000. On 100 sampled pairs, against Opus 5.5
+ * as a reference at 30 "same": yes/no gave 61-68 "same" (31-38 extra, 0 missed);
+ * this prompt gave 19-25 on Flash Lite (4-6 extra, 9-17 missed, 20 flips between
+ * two runs) and 32 on Haiku 5.5 (6 extra, 4 missed). Naming the difference first
+ * is the point: the system text is the measured one, verbatim.
  */
-const SEMANTIC_SYSTEM_PROMPT =
-  `You are auditing a personal knowledge wiki for semantic duplicate pages — ` +
-  `pages that describe the same concept under different slugs (e.g. "rag" vs ` +
-  `"retrieval-augmented-generation", or "email" vs "e-mail"). You read a batch of ` +
-  `candidate pairs, each with both pages' slug + title + first paragraph, and ` +
-  `decide whether they are true duplicates.\n\n` +
-  `RULES:\n` +
-  `1. A pair is a duplicate ONLY if both pages describe the SAME underlying ` +
-  `concept/entity. Related-but-distinct pages (e.g. "gpt-4" vs "gpt-4-turbo") ` +
-  `are NOT duplicates.\n` +
-  `2. A page about a part, subtopic, specific version or instance of another ` +
-  `page is NOT a duplicate of it. A person and their website or product are NOT ` +
-  `duplicates. Two names that merely look alike are not evidence: judge by what ` +
-  `the text says.\n` +
-  `3. For duplicates, pick the canonical slug — prefer the more descriptive, ` +
-  `readable form (e.g. "retrieval-augmented-generation" over "rag"; ` +
-  `"neural-networks" over "neural-network"; full name over acronym).\n` +
-  `4. Set confidence honestly: "high" = unambiguous same concept; ` +
-  `"medium" = likely but some doubt; "low" = speculative.\n` +
-  `5. If unsure, mark as non-duplicate. Precision over recall — a missed dupe ` +
-  `is cheap; a wrong merge is expensive.\n` +
-  `6. Respond with ONLY valid JSON. No markdown fences, no prose outside JSON.`;
-const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).digest('hex').slice(0, 16);
+const SEMANTIC_SYSTEM_PROMPT = `You are auditing a personal knowledge wiki for pages that should be merged because they are the SAME page written twice. For each candidate pair, classify how the two pages relate:
+- "same": the same subject. Deleting one and pointing its links to the other would lose nothing a reader would miss.
+- "part": one is a part, aspect, subtopic, use or example of the other.
+- "version": one is a specific version, edition or product of the other, or a person/company and their website or product.
+- "overlap": different subjects that share a theme or several words.
+- "different": unrelated.
+Two pages about a shared theme are NOT "same", even when their names and openings are similar. Choose "same" only when you could not name a difference in subject. When unsure, choose "overlap".
+Respond with ONLY valid JSON.`;
+const SEMANTIC_REPLY_FORMAT =
+  `{"results":[{"index":N,"difference":"the difference in subject in a few words, or none","relation":"same|part|version|overlap|different"}]}\n` +
+  `Only when relation is "same", also give "canonicalSlug" (the slug to keep: prefer the more descriptive, readable ` +
+  `form, e.g. "retrieval-augmented-generation" over "rag", "neural-networks" over "neural-network", full name over ` +
+  `acronym), "confidence" ("high" = unambiguous, "medium" = some doubt, "low" = speculative) and "rationale" (one short sentence).`;
+const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).update(SEMANTIC_REPLY_FORMAT).digest('hex').slice(0, 16);
+// Haiku overflowed 2,048 on a batch of 20, which fails the whole batch. 6,000 was measured to fit.
+const SEMANTIC_MAX_OUTPUT_TOKENS = 6000;
+const SEMANTIC_RELATIONS = new Set(['same', 'part', 'version', 'overlap', 'different']);
 
 /**
  * The live candidate list, with the last answer kept for one domain.
@@ -651,6 +652,38 @@ async function planSemanticScan(domain, maxPairs, readOpening) {
     if (++work >= 2000) { work = 0; await new Promise((resolve) => setImmediate(resolve)); }
   }
   return { live, pageCount, toCheck, remembered, checked, send: toCheck.slice(0, maxPairs), info };
+}
+
+/**
+ * The remembered pairs alone, with NO candidate pass: what the panel shows at once
+ * when you come back to a domain, because deriving the list takes ~15 s on a large
+ * one. Only pairs whose answer still applies and that are not dismissed.
+ */
+export async function semanticRememberedPairs(domain) {
+  const checks = await loadDuplicateChecks(domain);
+  if (checks.size === 0) return { hasChecks: false, pairs: [] };
+  let info = null;
+  try { info = getProviderInfo(); } catch { return { hasChecks: false, pairs: [] }; }
+  const wikiDir = wikiPath(domain);
+  const readOpening = openingReader(wikiDir);
+  const { keys } = await loadDismissed(domain);
+  const pairs = [];
+  for (const [key, rec] of checks) {
+    if (rec.verdict !== 'yes' || rec.provider !== info.provider || rec.model !== info.model || rec.prompt !== SEMANTIC_PROMPT_ID) continue;
+    const [a, b] = key.split('||').map((side) => {
+      const at = side.indexOf('/');
+      return { folder: side.slice(0, at), slug: side.slice(at + 1) };
+    });
+    if (![a, b].every((p) => (p.folder === 'entities' || p.folder === 'concepts') && isMergeableSlug(p.slug)
+      && existsSync(path.join(wikiDir, p.folder, p.slug + '.md')))) continue;
+    const p = { folderA: a.folder, slugA: a.slug, folderB: b.folder, slugB: b.slug };
+    if (filterDismissed([p], 'semanticDupe', keys).kept.length === 0) continue;
+    const [oa, ob] = await Promise.all([readOpening(a.folder, a.slug), readOpening(b.folder, b.slug)]);
+    if (rec.openings !== openingsHash(a.folder, a.slug, oa, b.folder, b.slug, ob)) continue;
+    const pair = pairFromRecord(rec, p);
+    if (pair) pairs.push(pair);
+  }
+  return { hasChecks: true, pairs };
 }
 
 /**
@@ -800,8 +833,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
 
     const userPrompt =
       `Judge each of these ${batch.length} candidate pairs. Return JSON:\n` +
-      `{"results": [{"index": N, "isDuplicate": bool, "canonicalSlug": "slug-or-null", ` +
-      `"confidence": "high"|"medium"|"low", "rationale": "one short sentence"}, ...]}\n\n` +
+      SEMANTIC_REPLY_FORMAT + `\n\n` +
       `PAIRS:\n` +
       batchInfo.map(b =>
         `--- PAIR ${b.index} ---\n` +
@@ -813,7 +845,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
 
     let raw, parsed;
     try {
-      raw = await llm(systemPrompt, userPrompt, 2048, 'json', null, { onUsage: usage.onUsage });
+      raw = await llm(systemPrompt, userPrompt, SEMANTIC_MAX_OUTPUT_TOKENS, 'json', null, { onUsage: usage.onUsage });
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
       // jsonrepair turns prose into a JSON string, so "it parsed" is no answer.
@@ -836,9 +868,9 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       if (!r || typeof r !== 'object') continue;
       const idx = Number(r.index);
       if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length || seenIndex.has(idx)) continue;
-      const isDup = r.isDuplicate === true || r.isDuplicate === 'true' ? true
-        : (r.isDuplicate === false || r.isDuplicate === 'false' ? false : null);
-      if (isDup === null) continue;
+      // An unknown relation is no answer: nothing is remembered, so it is asked again.
+      const relation = typeof r.relation === 'string' ? r.relation.trim().toLowerCase() : '';
+      if (!SEMANTIC_RELATIONS.has(relation)) continue;
       const conf = String(r.confidence || '').toLowerCase();
       const pair = batch[idx];
       const info = batchInfo[idx];
@@ -848,7 +880,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
         at: now,
       };
       const key = pairKey(pair.folderA, pair.slugA, pair.folderB, pair.slugB);
-      if (isDup === false || conf === 'low') {
+      if (relation !== 'same' || conf === 'low') {
         seenIndex.add(idx);
         answered.set(key, { ...record, verdict: 'no' });
         continue;
@@ -861,7 +893,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       const keepFolder = keepSlug === pair.slugA ? pair.folderA : pair.folderB;
       const removeSlug = keepSlug === pair.slugA ? pair.slugB : pair.slugA;
       const removeFolder = keepSlug === pair.slugA ? pair.folderB : pair.folderA;
-      const rationale = String(r.rationale || '').trim() || 'No rationale provided.';
+      const rationale = String(r.rationale || r.difference || '').trim() || 'No rationale provided.';
       answered.set(key, {
         ...record, verdict: 'yes',
         keep: `${keepFolder}/${keepSlug}`, remove: `${removeFolder}/${removeSlug}`,

@@ -3310,7 +3310,7 @@ function semanticPrimaryAction(scan, readonly) {
   if (previewedOpen.length) return { kind: 'merge', key: previewedOpen[previewedOpen.length - 1] };
   if (open.some((p) => p.confidence === 'high' && p.spellingVariant === true)) return { kind: 'batch' };
   if (open.length) return { kind: 'preview', key: semanticPairKey(open[0]) };
-  if (scan.coverage && scan.coverage.left > 0) return { kind: 'next' };
+  if (scan.coverage && scan.coverage.left > 0 && !scan.counting) return { kind: 'next' };
   return null;
 }
 
@@ -3319,6 +3319,9 @@ function semanticCoverageFrom(ev) {
   if (!ev || ![ev.totalPairs, ev.checkedPairs, ev.leftPairs, ev.nextPairs].every(Number.isInteger)) return null;
   return { total: ev.totalPairs, checked: ev.checkedPairs, left: ev.leftPairs, next: ev.nextPairs };
 }
+
+// A long list renders in pages; the counts and the batch still read every pair.
+const SEMANTIC_PAGE_SIZE = 50;
 
 // A NEW SCAN GETS A NEW OBJECT, so the previewed set is empty by construction —
 // there is no set from the previous scan to forget to clear (LAYER 1,
@@ -3335,7 +3338,10 @@ function newSemanticScan(slug, frame) {
     })),
     cost: frame.cost,
     coverage: semanticCoverageFrom(frame),
+    failedPairs: Number.isInteger(frame.failedPairs) ? frame.failedPairs : 0,
     failedAll: Number.isInteger(frame.failedPairs) && frame.failedPairs > 0 && frame.failedPairs === frame.candidatePairsSent,
+    visible: SEMANTIC_PAGE_SIZE,
+    counting: false,
     previewed: new Set(),
     preview: null,
   };
@@ -3344,32 +3350,33 @@ function newSemanticScan(slug, frame) {
 // After any Health reload. A paid scan's list on screen keeps its pairs and gets
 // true figures (a merge or a Skip moves them, and only the server can say how);
 // with none on screen, what this computer remembers comes back, so leaving the
-// page or reloading never costs the user a found pair or their progress. Not
-// awaited: on a large domain the first derivation takes seconds, and the panel
-// does not wait for it. A mirror has no scan to resume: nothing can be merged there.
+// page or reloading never costs the user a found pair or their progress. The
+// pairs come first, from a call with no candidate pass; the figures follow, and
+// the line says "Counting the pairs…" until they land, because that pass takes
+// ~15 s on a large domain. Nothing here is awaited. A mirror has no scan to resume.
 function syncSemanticScan(slug, token) {
   if (!state.aiAvailable || slug !== state.activeSlug) return;
   if (state.readonlySet.has(slug)) return;
   const held = activeSemanticScan();
-  if (held && (!held.coverage || held.coverageBusy)) {
-    if (held.coverageBusy) held.coverageAgain = true;
-    return;
-  }
-  if (held) held.coverageBusy = true;
+  if (held) { countSemanticPairs(held, slug, token); return; }
+  fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
+    if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
+    state.semanticScan = newSemanticScan(slug, q);
+    countSemanticPairs(state.semanticScan, slug, token);
+  }).catch(() => { /* free and optional: the panel is whole without it */ });
+}
+
+function countSemanticPairs(scan, slug, token) {
+  if (scan.counting) { scan.countAgain = true; return; }
+  scan.counting = true;
+  if (isCurrentMount(token)) render(token);
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status').then((st) => {
-    const current = activeSemanticScan();
-    if (held) {
-      const c = semanticCoverageFrom(st);
-      if (current === held && c) { held.coverage = c; if (isCurrentMount(token)) render(token); }
-      return;
-    }
-    if (!st || !st.hasChecks || current || slug !== state.activeSlug || !isCurrentMount(token)) return;
-    state.semanticScan = newSemanticScan(slug, st);
-    render(token);
-  }).catch(() => { /* free and optional: the panel is whole without it */ }).finally(() => {
-    if (!held) return;
-    held.coverageBusy = false;
-    if (held.coverageAgain) { held.coverageAgain = false; syncSemanticScan(slug, token); }
+    const c = semanticCoverageFrom(st);
+    if (c) scan.coverage = c;
+  }).catch(() => { /* the figures already shown stay until a count succeeds */ }).finally(() => {
+    scan.counting = false;
+    if (scan.countAgain) { scan.countAgain = false; countSemanticPairs(scan, slug, token); return; }
+    if (activeSemanticScan() === scan && isCurrentMount(token)) render(token);
   });
 }
 
@@ -7754,10 +7761,13 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   const reset = renderSemanticReset(s, readonly, busy);
 
   if (s.pairs.length === 0) {
-    // "No likely duplicates found" is a finding, and a run whose every call
-    // failed found nothing out: its banner and the coverage line say what happened.
+    // "No likely duplicates found" is a finding, so it needs every pair checked.
+    const c = s.coverage;
+    const title = s.failedAll ? 'No pairs checked this time'
+      : (s.counting || !c) ? ''
+      : (c.left > 0 ? 'None found so far' : 'No likely duplicates found');
     return '<div class="dm-plan-card">' +
-      (s.failedAll ? '' : '<div class="dm-plan-title">No likely duplicates found</div>') +
+      (title ? '<div class="dm-plan-title">' + title + '</div>' : '') +
       coverage + reset + '</div>';
   }
 
@@ -7771,8 +7781,14 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
     '</div>'
   );
 
-  const cards = open.map((p) => renderSemanticPairCard(p, readonly, busy, primary)).join('');
-  const handledRows = handled.map((p) => renderFoldItem({
+  const visible = s.visible || SEMANTIC_PAGE_SIZE;
+  const cards = open.slice(0, visible).map((p) => renderSemanticPairCard(p, readonly, busy, primary)).join('');
+  const hidden = open.length - visible;
+  const more = hidden > 0 ? (
+    '<div class="dm-plan-actions"><button class="btn btn-secondary" id="dm-semantic-more-btn"' + (busy ? ' disabled' : '') + '>' +
+      'Show ' + Math.min(hidden, SEMANTIC_PAGE_SIZE) + ' more</button></div>'
+  ) : '';
+  const handledRows = handled.slice(0, SEMANTIC_PAGE_SIZE).map((p) => renderFoldItem({
     alias: 'dm', hostClass: 'dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : ''),
     main: p.removeFolder + '/' + p.removeSlug + ' → ' + p.keepFolder + '/' + p.keepSlug,
     meta: semanticHandledLabel(p),
@@ -7787,14 +7803,12 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       // reported it.
       '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'likely duplicate pair') + ' found</div>' +
       coverage +
-      '<div class="dm-plan-summary">Each merge deletes one page and repoints every [[wikilink]] to it across the domain. ' +
-      'Preview a pair to enable its Merge button; Flip swaps which side survives; Skip dismisses the pair so it stops ' +
-      'coming back on future scans. The scan pairs every candidate, so several versions of one page produce several ' +
-      'overlapping pairs — merging one of them can resolve the others, and those move to "Already handled" on their own. ' +
-      GIT_UNDO_WARN + '</div>' +
+      '<div class="dm-plan-summary">Each merge deletes one page and points its links to the page you keep. The app has no Undo button; with GitHub Sync, a git client can recover it.</div>' +
       batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
+      more +
       (handledRows ? ('<div class="dm-plan-detail">Already handled in this scan:</div>' + handledRows) : '') +
+      (handled.length > SEMANTIC_PAGE_SIZE ? '<div class="dm-issue-more">…and ' + (handled.length - SEMANTIC_PAGE_SIZE).toLocaleString('en-US') + ' more</div>' : '') +
       reset +
     '</div>'
   );
@@ -7804,31 +7818,37 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
 // got. The button sits with the number it moves.
 function renderSemanticCoverage(s, primary, readonly, busy) {
   const c = s.coverage;
-  if (!c) return '';
+  if (!c && !s.counting) return '';
   const n = (v) => v.toLocaleString('en-US');
   const waiting = s.pairs.filter((p) => p.remembered && p.status === 'open').length;
-  const line = c.left > 0
-    ? 'Checked ' + n(c.checked) + ' of ' + n(c.total) + ' possible pairs. ' + n(c.left) + ' still to check.'
-    : 'All ' + n(c.total) + ' possible pairs have been checked.';
-  const next = (readonly || c.left === 0) ? '' : (
+  const pairWord = c && c.total === 1 ? 'pair' : 'pairs';
+  const line = s.counting ? 'Counting the pairs…'
+    : c.left > 0
+      ? 'Checked ' + n(c.checked) + ' of ' + n(c.total) + ' possible ' + pairWord + '. ' + n(c.left) + ' still to check.'
+      : 'All ' + n(c.total) + ' possible ' + pairWord + ' ' + (c.total === 1 ? 'has' : 'have') + ' been checked.';
+  const next = (readonly || s.counting || c.left === 0) ? '' : (
     '<button class="btn ' + (primary && primary.kind === 'next' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-next-btn"' + (busy ? ' disabled' : '') + '>' +
       'Check the next ' + n(c.next) + '</button>'
   );
+  const failed = s.failedPairs > 0 && !s.failedAll ? (
+    '<br>' + n(s.failedPairs) + ' ' + (s.failedPairs === 1 ? 'pair' : 'pairs') + ' could not be checked because the AI call failed. They will be tried again next time.'
+  ) : '';
   return (
     '<div class="dm-sem-batch dm-sem-coverage">' +
       '<span class="dm-sem-batch-note">' + line +
         (waiting ? '<br>' + n(waiting) + ' found by earlier scans and not yet decided ' + (waiting === 1 ? 'is' : 'are') + ' listed again, at no cost.' : '') +
+        failed +
       '</span>' +
       next +
     '</div>'
   );
 }
 
-// Deliberately the quietest control on the card: it throws away money already
-// spent. Nothing to forget, nothing to offer.
+// A real button, and the least of them: it throws away money already spent.
+// Nothing to forget, nothing to offer.
 function renderSemanticReset(s, readonly, busy) {
-  if (readonly || !s.coverage || s.coverage.checked === 0) return '';
-  return '<div class="dm-plan-actions"><button class="btn btn-ghost btn-xs" id="dm-semantic-reset-btn"' + (busy ? ' disabled' : '') + '>Check everything again</button></div>';
+  if (readonly || !s.coverage || s.coverage.checked === 0 || s.counting) return '';
+  return '<div class="dm-plan-actions"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + (busy ? ' disabled' : '') + '>Check everything again</button></div>';
 }
 
 // One pair. The four actions mirror the shipping app's per-pair card, which
@@ -8148,6 +8168,10 @@ function bindHealthListeners(domain, readonly) {
   document.getElementById('dm-semantic-next-btn')?.addEventListener('click', () => {
     // Through the same door as Find duplicate pages, so the first-use disclosure holds.
     Promise.resolve().then(() => onQuickAction(domain.slug, 'semanticDupes')).catch(reportAsyncActionFailure);
+  });
+  document.getElementById('dm-semantic-more-btn')?.addEventListener('click', () => {
+    const scan = activeSemanticScan();
+    if (scan) { scan.visible = (scan.visible || SEMANTIC_PAGE_SIZE) + SEMANTIC_PAGE_SIZE; render(myMountToken); }
   });
   document.getElementById('dm-semantic-reset-btn')?.addEventListener('click', () => {
     Promise.resolve().then(() => confirmSemanticReset(domain.slug)).catch(reportAsyncActionFailure);
@@ -8991,7 +9015,7 @@ function semanticScanConfirmText(est, runsOnName, cost) {
     return {
       refused: false,
       title: 'Scan for duplicate pages?',
-      body: 'Checks the next ' + n(pairs) + ' of ' + n(est.leftPairs) + ' pairs not checked yet, using ' + runsOnName +
+      body: 'Checks the next ' + n(pairs) + ' of ' + n(est.leftPairs) + (est.leftPairs === 1 ? ' pair' : ' pairs') + ' not checked yet, using ' + runsOnName +
         '. Estimated cost ' + (cost || 'unknown') + '. This only finds pairs — nothing is merged yet.',
     };
   }
@@ -9028,8 +9052,9 @@ async function runSemanticScan(slug) {
     if (isCurrentMount(token)) {
       state.semanticScan = newSemanticScan(slug, Object.assign({}, result, { candidatePairsSent: sent }));
       // A failed batch remembers nothing, so its pairs stay in the "still to
-      // check" count; this says why that count did not move as far as it should.
-      if (firstBatchError) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError };
+      // check" count. Part of a run failing is a notice in the card, which says
+      // so; all of it failing is this banner.
+      if (firstBatchError && state.semanticScan.failedAll) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError };
     }
   } catch (err) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message };
@@ -9059,6 +9084,7 @@ async function runSemanticReset(slug) {
     // The list goes with what it stood on: the batch would refuse every pair on it.
     const scan = activeSemanticScan();
     if (scan) state.semanticScan = null;
+    if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' };
   } catch (err) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not check everything again — ' + err.message };
   }
@@ -9293,7 +9319,7 @@ async function runMergeSemanticDuplicates(slug) {
   // skip one (dismissing it), and both must be honoured.
   const pairs = liveBatchPairs().map(toWirePair);
   if (pairs.length === 0) {
-    state.banner = { tone: 'info', text: 'Nothing left to merge — every high-confidence pair has been handled.' };
+    state.banner = { tone: 'info', text: 'Nothing left to merge — every spelling variant has been handled.' };
     render(token);
     return;
   }
@@ -9349,7 +9375,17 @@ async function runMergeSemanticDuplicates(slug) {
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Merge failed');
     });
-    if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'Merged ' + (result.merged || 0) + ' of ' + (result.total || pairs.length) + ' duplicate pairs.' };
+    if (isCurrentMount(token)) {
+      const merged = result.merged || 0;
+      const total = result.total || pairs.length;
+      const refused = result.ineligible || 0;
+      state.banner = {
+        tone: 'success',
+        text: refused > 0
+          ? 'Merged ' + merged + ' of ' + total + ' spelling ' + (total === 1 ? 'variant' : 'variants') + '. ' + refused + ' now ' + (refused === 1 ? 'needs' : 'need') + ' your Preview.'
+          : 'Merged ' + merged + ' of ' + total + ' duplicate ' + (total === 1 ? 'pair' : 'pairs') + '.',
+      };
+    }
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);

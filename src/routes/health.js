@@ -20,6 +20,7 @@ import {
   estimateSemanticDuplicateScan,
   scanSemanticDuplicates,
   semanticScanStatus,
+  semanticRememberedPairs,
   estimateBrokenLinkFix,
   planBrokenLinkFixes,
   estimateOrphanRescue,
@@ -270,6 +271,9 @@ router.get('/:domain/semantic-dupes/status', async (req, res) => {
   try {
     const { domain } = req.params;
     await assertDomain(domain);
+    // `?quick=1`: the remembered pairs alone, with no candidate pass, so coming
+    // back to a large domain shows them at once while the figures are counted.
+    if (req.query && req.query.quick) return res.json({ ok: true, ...(await semanticRememberedPairs(domain)) });
     const settings = getAiHealthSettings();
     res.json({ ok: true, ...(await semanticScanStatus(domain, settings.semanticDupeMaxPairs)) });
   } catch (err) {

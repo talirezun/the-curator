@@ -298,6 +298,7 @@ const E = {
       { icon: 'agent', text: 'AI actions use your model; each shows what it costs first.' },
       { icon: 'check', text: 'Nothing changes until you press a fix.' },
     ],
+    try: 'Flip swaps the page kept; Skip hides a pair; one merge can settle several.',
     guide: { key: 'domains.health', heading: 'Wiki Health' },
   },
 

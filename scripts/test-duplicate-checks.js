@@ -93,9 +93,12 @@ function pairsIn(userPrompt) {
  * A fake LLM. `decide(pair)` returns one result's fields, or null to leave that
  * pair out of the reply. Records every pair it was sent.
  */
-function fakeLLM(decide = () => ({ isDuplicate: false, confidence: 'low' })) {
-  const fn = async (_sys, user) => {
+function fakeLLM(decide = () => ({ relation: 'different', difference: 'unrelated' })) {
+  const fn = async (sys, user, maxTokens) => {
     fn.calls++;
+    fn.system = sys;
+    fn.user = user;
+    fn.maxTokens = maxTokens;
     const pairs = pairsIn(user);
     fn.sent.push(...pairs.map((p) => p.a + ' + ' + p.b));
     const results = [];
@@ -109,7 +112,7 @@ function fakeLLM(decide = () => ({ isDuplicate: false, confidence: 'low' })) {
   fn.sent = [];
   return fn;
 }
-const yesAll = (confidence = 'high') => () => ({ isDuplicate: true, confidence });
+const yesAll = (confidence = 'high') => () => ({ relation: 'same', difference: 'none', confidence });
 const scan = async (name, llm, opts = {}) => {
   const events = [];
   const out = await ai.scanSemanticDuplicates(name, { maxPairs: 500, costCeilingTokens: 10_000_000, generateText: llm, ...opts }, (e) => events.push(e));
@@ -216,7 +219,7 @@ section('3. A second scan sends only new pairs; a yes returns free');
     'concepts/graph-store.md': page('Graph store'), 'concepts/graph-stores.md': page('Graph stores'),
   };
   const d = mkDomain(files);
-  const decide = (p) => (p.a.includes('data-pipeline') ? { isDuplicate: true, confidence: 'high' } : { isDuplicate: false, confidence: 'low' });
+  const decide = (p) => (p.a.includes('data-pipeline') ? { relation: 'same', confidence: 'high' } : { relation: 'overlap' });
 
   const first = fakeLLM(decide);
   const r1 = await scan(d.name, first, { maxPairs: 2 });
@@ -294,17 +297,24 @@ section('4. What makes an answer stop applying');
 // ═══════════════════════════════════════════════════════════════════════════
 section('5. Only an explicit answer for a valid index is remembered');
 {
+  const reply = (fields) => async () => JSON.stringify({ results: [{ index: 0, difference: 'x', ...fields }] });
   const cases = [
     ['a thrown call', async () => { throw new Error('provider down'); }, 0],
     ['unparseable text', async () => 'not json at all', 0],
     ['a reply with no results array', async () => '{"foo": 1}', 0],
-    ['an index out of range', async () => '{"results":[{"index":9,"isDuplicate":false,"confidence":"low"}]}', 0],
-    ['a missing isDuplicate', async () => '{"results":[{"index":0,"confidence":"high"}]}', 0],
-    ['a canonical matching neither side', async () => '{"results":[{"index":0,"isDuplicate":true,"confidence":"high","canonicalSlug":"something-else"}]}', 0],
-    ['a confidence that is not a confidence', async () => '{"results":[{"index":0,"isDuplicate":true,"confidence":"very","canonicalSlug":"handoff"}]}', 0],
-    ['not a duplicate', async () => '{"results":[{"index":0,"isDuplicate":false,"confidence":"high"}]}', 1],
-    ['low confidence', async () => '{"results":[{"index":0,"isDuplicate":true,"confidence":"low","canonicalSlug":"handoff"}]}', 1],
-    ['accepted', async () => '{"results":[{"index":0,"isDuplicate":true,"confidence":"medium","canonicalSlug":"handoff"}]}', 1],
+    ['an index out of range', async () => '{"results":[{"index":9,"relation":"different"}]}', 0],
+    ['a missing relation', reply({ confidence: 'high', canonicalSlug: 'handoff' }), 0],
+    ['an unknown relation', reply({ relation: 'similar', confidence: 'high', canonicalSlug: 'handoff' }), 0],
+    ['a relation that is not a string', reply({ relation: true }), 0],
+    ['same, with a canonical matching neither side', reply({ relation: 'same', confidence: 'high', canonicalSlug: 'something-else' }), 0],
+    ['same, with no canonical', reply({ relation: 'same', confidence: 'high' }), 0],
+    ['same, with a confidence that is not a confidence', reply({ relation: 'same', confidence: 'very', canonicalSlug: 'handoff' }), 0],
+    ['part', reply({ relation: 'part' }), 1],
+    ['version', reply({ relation: 'version' }), 1],
+    ['overlap', reply({ relation: 'overlap' }), 1],
+    ['different', reply({ relation: 'different' }), 1],
+    ['same, low confidence', reply({ relation: 'same', confidence: 'low', canonicalSlug: 'handoff' }), 1],
+    ['same, accepted', reply({ relation: 'same', confidence: 'medium', canonicalSlug: 'handoff' }), 1],
   ];
   for (const [label, llm, expected] of cases) {
     const d = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
@@ -317,15 +327,21 @@ section('5. Only an explicit answer for a valid index is remembered');
       ok(r.events.some((e) => e.type === 'batch-error'), '5. …with a batch-error event');
     }
   }
-  // The trap a lenient parser hides: the string "false" is truthy.
+  // Only "same" is a yes, however confident the rest of the answer sounds.
   const d = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
-  const r = await scan(d.name, async () => '{"results":[{"index":0,"isDuplicate":"false","confidence":"high","canonicalSlug":"handoff"}]}');
-  ok(r.pairs.length === 0, '5.x the string "false" is a no, never a merge candidate');
+  const r = await scan(d.name, reply({ relation: 'version', confidence: 'high', canonicalSlug: 'handoff', rationale: 'sure' }));
+  ok(r.pairs.length === 0, '5.x a confident "version" is a no, never a merge candidate');
   const rec = [...(await dc.loadDuplicateChecks(d.name)).values()][0];
   ok(rec && rec.verdict === 'no', '5.y …and remembered as a no');
+  const cased = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
+  const rCased = await scan(cased.name, reply({ relation: ' SAME ', confidence: 'High', canonicalSlug: 'handoff', rationale: 'why' }));
+  ok(rCased.pairs.length === 1 && rCased.pairs[0].confidence === 'high', '5.y2 a relation in other case is still that relation');
+  const noWhy = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
+  const rNoWhy = await scan(noWhy.name, reply({ relation: 'same', confidence: 'high', canonicalSlug: 'handoff', difference: 'none really' }));
+  ok(rNoWhy.pairs[0].rationale === 'none really', '5.y3 a same with no rationale falls back to its difference');
   // Two answers for one index: the first stands, no double card.
   const d2 = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
-  const dup = '{"index":0,"isDuplicate":true,"confidence":"high","canonicalSlug":"handoff"}';
+  const dup = '{"index":0,"relation":"same","confidence":"high","canonicalSlug":"handoff"}';
   const r2 = await scan(d2.name, async () => `{"results":[${dup},${dup}]}`);
   ok(r2.pairs.length === 1, '5.z a repeated index yields one pair');
 }
@@ -432,7 +448,7 @@ section('8. Reset forgets one domain and keeps dismissals');
   ok(s0.hasChecks === false, '8.6 status with nothing remembered says so');
   const yes = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff'),
     'concepts/data-store.md': page('Data store'), 'concepts/data-stores.md': page('Data stores') });
-  await scan(yes.name, fakeLLM((p) => (p.a.includes('hand') ? { isDuplicate: true, confidence: 'high' } : null)));
+  await scan(yes.name, fakeLLM((p) => (p.a.includes('hand') ? { relation: 'same', confidence: 'high' } : null)));
   const s1 = await ai.semanticScanStatus(yes.name);
   ok(s1.hasChecks === true && s1.pairs.length === 1 && s1.pairs[0].remembered === true, '8.7 status brings back a found pair');
   ok(s1.totalPairs === 2 && s1.checkedPairs === 1 && s1.leftPairs === 1 && s1.nextPairs === 1, '8.8 …and the true figures', JSON.stringify(s1));
@@ -464,9 +480,9 @@ section('9. The server decides what a batch may delete');
   const MEDIUM = { keepSlug: 'data-store', keepFolder: 'concepts', removeSlug: 'data-stores', removeFolder: 'concepts', confidence: 'high' };
   const UNCHECKED = { keepSlug: 'graph-node', keepFolder: 'concepts', removeSlug: 'graph-nodes', removeFolder: 'concepts', confidence: 'high' };
   const decide = (p) => {
-    if (p.a.includes('data-store')) return { isDuplicate: true, confidence: 'medium' };
+    if (p.a.includes('data-store')) return { relation: 'same', confidence: 'medium' };
     if (p.a.includes('graph')) return null;
-    return { isDuplicate: true, confidence: 'high' };
+    return { relation: 'same', confidence: 'high' };
   };
 
   const d = fixture();
@@ -507,7 +523,7 @@ section('9. The server decides what a batch may delete');
 
   // Decided before the first merge: chains inside one batch still run.
   const chain = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff'), 'concepts/handoffs.md': page('Handoffs') });
-  await scan(chain.name, fakeLLM((p) => ({ isDuplicate: true, confidence: 'high', canonicalSlug: 'hand-off' === p.a.split('/')[1] ? 'hand-off' : p.a.split('/')[1] })));
+  await scan(chain.name, fakeLLM((p) => ({ relation: 'same', confidence: 'high', canonicalSlug: 'hand-off' === p.a.split('/')[1] ? 'hand-off' : p.a.split('/')[1] })));
   const chained = await health.fixSemanticDuplicatesBatch(chain.name, [
     { keepSlug: 'hand-off', keepFolder: 'concepts', removeSlug: 'handoff', removeFolder: 'concepts' },
     { keepSlug: 'hand-off', keepFolder: 'concepts', removeSlug: 'handoffs', removeFolder: 'concepts' },
@@ -602,6 +618,109 @@ section('12. The MCP tool reports coverage');
   ok(/0 of 2 possible pairs/.test(est.report), '12.2 …in its report too', est.report);
   ok(/left_pairs/.test(scanSemanticDuplicatesDefinition.description) && /remembers/.test(scanSemanticDuplicatesDefinition.description),
     '12.3 the tool description tells a model about repeat runs');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('13. The prompt and the reply it asks for');
+{
+  const d = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
+  const llm = fakeLLM();
+  await scan(d.name, llm);
+  ok(llm.maxTokens === 6000, '13.1 the output limit is 6000: 2048 overflowed on a batch of 20', String(llm.maxTokens));
+  ok(llm.system.startsWith('You are auditing a personal knowledge wiki for pages that should be merged because they are the SAME page written twice.')
+    && llm.system.endsWith('When unsure, choose "overlap".\nRespond with ONLY valid JSON.'), '13.2 the measured system text, verbatim');
+  for (const f of ['difference', 'relation', 'same|part|version|overlap|different', 'canonicalSlug', 'confidence', 'rationale']) {
+    ok(llm.user.includes(f), `13.3 the reply format names ${f}`);
+  }
+  ok(llm.user.includes('"retrieval-augmented-generation" over "rag"'), '13.4 the rule for choosing the slug to keep is kept');
+
+  // Old answers re-check on their own: a record under other instructions does not apply.
+  const key = dc.pairKey('concepts', 'hand-off', 'concepts', 'handoff');
+  const rec = (await dc.loadDuplicateChecks(d.name)).get(key);
+  await dc.saveDuplicateChecks(d.name, new Map([[key, { ...rec, prompt: 'an-older-prompt' }]]));
+  const again = fakeLLM();
+  await scan(d.name, again);
+  ok(again.sent.length === 1, '13.5 an answer under older instructions is checked again');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('14. Real page names can be previewed and merged');
+{
+  const names = ['claude-opus-4.6', 'talirezun.com', 'kimi-k2.7', 'foo_bar', 'with space', 'café-notes', "o'reilly", 'a&b', 'fifty%off', 'c(1)'];
+  for (const name of names) {
+    const other = name + '-copy';
+    const d = mkDomain({
+      [`concepts/${name}.md`]: page('Kept'),
+      [`concepts/${other}.md`]: page('Gone'),
+      'summaries/hub.md': `# Hub\n\n- [[${other}]] and [[concepts/${other}|alias]]\n`,
+    });
+    const pair = { keepSlug: name, keepFolder: 'concepts', removeSlug: other, removeFolder: 'concepts' };
+    const plan = await health.previewSemanticDuplicateMerge(d.name, pair);
+    ok(plan.keepPath === `concepts/${name}.md` && plan.totalLinksRewritten === 2, `14. "${name}": previews, counting its links`, JSON.stringify([plan.keepPath, plan.totalLinksRewritten]));
+    const r = await health.fixIssue(d.name, 'semanticDupe', pair);
+    const hub = readFileSync(path.join(d.wiki, 'summaries/hub.md'), 'utf8');
+    ok(r.fixed === 1 && !existsSync(path.join(d.wiki, `concepts/${other}.md`)), `14. "${name}": merges and deletes the other page`, JSON.stringify(r));
+    ok(hub.includes(`[[${name}]]`) && !hub.includes(other), `14. "${name}": links point to the page kept`, hub);
+  }
+
+  // The widening must not open a way out of the wiki.
+  const d = mkDomain({ 'concepts/inside.md': page('Inside') });
+  const outside = path.join(DOMAINS_DIR, 'outside-secret.md');
+  writeFileSync(outside, 'secret\n');
+  const bad = ['../../outside-secret', '..\\..\\outside-secret', 'a/b', 'a\\b', '..', '.', '.hidden', 'a..b', '', ' lead', 'trail ', 'x\u0000y', 'x\ny', 'a|b', 'a[b', 'a]b', 'a#b',
+    '/etc/passwd', 'x'.repeat(241)];
+  for (const slug of bad) {
+    ok(!dc.isMergeableSlug(slug), `14. ${JSON.stringify(slug.slice(0, 24))} is not a mergeable name`);
+    const pair = { keepSlug: 'inside', keepFolder: 'concepts', removeSlug: slug, removeFolder: 'concepts' };
+    const r = await health.fixIssue(d.name, 'semanticDupe', pair);
+    ok(r.fixed === 0, '14. …and a merge naming it is refused', JSON.stringify(r));
+    let threw = false;
+    try { await health.previewSemanticDuplicateMerge(d.name, pair); } catch { threw = true; }
+    ok(threw, '14. …and so is a preview');
+  }
+  ok(existsSync(outside) && readFileSync(outside, 'utf8') === 'secret\n', '14. the file outside the wiki was never touched');
+  ok(!dc.isMergeableSlug(null) && !dc.isMergeableSlug(7), '14. a name must be a string');
+
+  // Never offered a Merge it cannot perform.
+  const odd = mkDomain({ 'concepts/a#b.md': page('Odd'), 'concepts/a-b.md': page('Odd 2'), 'concepts/ab.md': page('Fine'),
+    'concepts/x..y.md': page('Dots'), 'concepts/x-y.md': page('Plain'), 'concepts/xy.md': page('Plain 2') });
+  const { pairs: oddPairs } = await health.findSemanticCandidatePairs(odd.name, 1000);
+  ok(oddPairs.length > 0 && oddPairs.every((q) => dc.isMergeableSlug(q.slugA) && dc.isMergeableSlug(q.slugB)), '14. a name that can never merge is never a candidate', JSON.stringify(oddPairs.map((q) => q.slugA + '+' + q.slugB)));
+  for (const q of oddPairs) {
+    const plan = await health.previewSemanticDuplicateMerge(odd.name, { keepSlug: q.slugA, keepFolder: q.folderA, removeSlug: q.slugB, removeFolder: q.folderB });
+    ok(!!plan.keepPath, `14. …and every candidate previews (${q.slugA} + ${q.slugB})`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('15. The pairs at once, with no candidate pass');
+{
+  const d = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff'),
+    'concepts/data-store.md': page('Data store'), 'concepts/data-stores.md': page('Data stores'),
+    'concepts/graph-node.md': page('Graph node'), 'concepts/graph-nodes.md': page('Graph nodes') });
+  const none = await ai.semanticRememberedPairs(d.name);
+  ok(none.hasChecks === false && none.pairs.length === 0, '15.1 nothing remembered: nothing to show');
+  await scan(d.name, fakeLLM(yesAll()));
+  const q1 = await ai.semanticRememberedPairs(d.name);
+  ok(q1.hasChecks === true && q1.pairs.length === 3 && q1.pairs.every((p) => p.remembered === true && p.spellingVariant === true), '15.2 the found pairs come back', JSON.stringify(q1.pairs.length));
+  const full = await ai.semanticScanStatus(d.name);
+  const k = (list) => list.map((p) => p.keepSlug + '>' + p.removeSlug).sort().join();
+  ok(k(q1.pairs) === k(full.pairs), '15.3 DUMB CROSS-CHECK: the same pairs as the slow pass');
+  await addDismissal(d.name, 'semanticDupe', { slugA: 'data-store', folderA: 'concepts', slugB: 'data-stores', folderB: 'concepts' });
+  ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 2, '15.4 a skipped pair stays out');
+  writeFileSync(path.join(d.wiki, 'concepts/graph-node.md'), page('Graph node', 'Something else entirely.'));
+  ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 1, '15.5 a changed opening stays out');
+  rmSync(path.join(d.wiki, 'concepts/handoff.md'));
+  ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 0, '15.6 a page gone stays out');
+  process.env.LLM_MODEL = 'gemini-2.5-flash';
+  const d2 = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
+  delete process.env.LLM_MODEL;
+  await scan(d2.name, fakeLLM(yesAll()));
+  process.env.LLM_MODEL = 'gemini-2.5-flash';
+  ok((await ai.semanticRememberedPairs(d2.name)).pairs.length === 0, '15.7 another model\'s answer stays out');
+  delete process.env.LLM_MODEL;
+  writeFileSync(checksFile(d2.name), 'garbage{{{');
+  ok((await ai.semanticRememberedPairs(d2.name)).hasChecks === false, '15.8 a corrupt file is nothing remembered');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -35,7 +35,7 @@ import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
 import {
   loadDuplicateChecks, pairKey, openingsHash, pageOpening,
-  isSpellingVariant, spellingVariantIndexPairs, acronymIndexPairs,
+  isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs,
 } from './duplicate-checks.js';
 // Path chokepoint — see the comment above the fix handlers below. Imported,
 // not re-implemented: this module and wiki-read.js each had their own copy,
@@ -1837,7 +1837,7 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   const allSlugs = [
     ...entityFiles.map(f => ({ slug: f.slice(0, -3), folder: 'entities' })),
     ...conceptFiles.map(f => ({ slug: f.slice(0, -3), folder: 'concepts' })),
-  ];
+  ].filter((p) => isMergeableSlug(p.slug));
 
   // Inverted token index: token → list of indices in allSlugs
   const tokenIndex = new Map();
@@ -1994,12 +1994,9 @@ function resolveSemanticDupePair(wikiDir, issue) {
   if (!issue || typeof issue !== 'object') return null;
   const { keepSlug, keepFolder, removeSlug, removeFolder } = issue;
 
-  // Periods are allowed inside a slug ("dr.-tali-rezun"); a leading one is
-  // not, so ".." can never satisfy this.
-  const SLUG_RE = /^[a-z0-9][a-z0-9.-]*$/i;
-  if (typeof keepSlug !== 'string' || typeof removeSlug !== 'string') return null;
-  if (!SLUG_RE.test(keepSlug) || !SLUG_RE.test(removeSlug)) return null;
-  if (keepSlug.includes('/') || removeSlug.includes('/')) return null;
+  // One rule with the candidate list, so a pair never shows a Merge it cannot
+  // perform. It used to refuse an underscore here while the list offered it.
+  if (!isMergeableSlug(keepSlug) || !isMergeableSlug(removeSlug)) return null;
   if (!['entities', 'concepts'].includes(keepFolder)) return null;   // never summaries
   if (!['entities', 'concepts'].includes(removeFolder)) return null;
   if (keepSlug === removeSlug && keepFolder === removeFolder) return null;

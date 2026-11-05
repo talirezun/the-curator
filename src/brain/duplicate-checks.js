@@ -33,6 +33,23 @@ import { writeFileAtomic } from './atomic-write.js';
 const FORMAT = 1;
 const FIRST_PARA_MAX = 500; // per-page opening sent to the model
 
+/**
+ * Whether a page name can be previewed, merged and linked to. Real pages are
+ * named claude-opus-4.6, talirezun.com and foo_bar, so this says what a name may
+ * NOT be rather than listing what it may: nothing that can leave its folder (a
+ * slash, a backslash, "..", a leading dot, a control character), and nothing a
+ * [[wikilink]] cannot carry (| [ ] #, or a space at either end), because a merge
+ * has to repoint links to it. The path is still resolved inside the wiki after
+ * this (resolveInsideWiki). The candidate list uses the same test, so a pair that
+ * could never merge is never offered.
+ */
+export function isMergeableSlug(slug) {
+  if (typeof slug !== 'string' || slug.length === 0 || slug.length > 240) return false;
+  if (slug !== slug.trim() || slug.startsWith('.') || slug.includes('..')) return false;
+  // eslint-disable-next-line no-control-regex
+  return !/[/\\|[\]#\u0000-\u001f\u007f]/.test(slug);
+}
+
 /** The opening of a page: what the model reads, and so what an answer is bound to. */
 export function pageOpening(content) {
   let body = String(content);

@@ -321,6 +321,9 @@ section('5. F4 — the duplicate-scan confirm and the ceiling');
     estimatedTokens: 200000, costCeilingTokens: 200000 }, 'x', '$0.03');
   ok(capped.body === 'Checks the next 500 of 2,300 pairs not checked yet, using x. Estimated cost $0.03. This only finds pairs — nothing is merged yet.',
     '5.5 a capped list says it checks the next N of what is left, in the agreed words', capped.body);
+  const lastOne = semanticScanConfirmText({ candidatePairs: 1, totalCandidates: 2, leftPairs: 1, checkedPairs: 1, truncated: false, maxPairs: 500,
+    estimatedTokens: 400, costCeilingTokens: 200000 }, 'x', '$0.01');
+  ok(lastOne.body.startsWith('Checks the next 1 of 1 pair not checked yet, using x.'), '5.5a the confirm says pair at one', lastOne.body);
   const cappedOver = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, leftPairs: 1800, checkedPairs: 500, truncated: true, maxPairs: 500,
     estimatedTokens: 200000, costCeilingTokens: 100000 }, 'x', '$0.03');
   ok(/capped at your 500-pair limit/.test(cappedOver.body) && /most similar of 1,800/.test(cappedOver.body),
