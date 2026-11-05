@@ -534,6 +534,13 @@
    into shared/section.css as `.cur-card` / `.cur-card-top` (the element
    carries both names). What stays below is this view's own. */
 
+/* Wiki health's nodes survive a paint, which hands the browser's scroll
+   anchoring something to hold on to. Left on, a confirm opening above the pressed
+   row moves scrollTop (measured: 250 px at 375 wide) and carries the confirm
+   further off screen. Replaced nodes never anchored, so this keeps today's
+   behaviour; the section decides where things go, not the browser. */
+.dm-health { overflow-anchor: none; }
+
 
 .dm-health-head {
   display: flex;
