@@ -23,8 +23,9 @@
  *    filesystems throws EXDEV. `getDomainsDir()` can be a USB drive or a
  *    network mount, so we must NOT use `os.tmpdir()` for the temp path.
  *
- * 2. Tempfile name includes process pid + a monotonic counter so two
- *    concurrent writers in the same dir never collide.
+ * 2. Tempfile name is `.tmp-<pid>-<counter>-<random hex>`: unique across
+ *    concurrent writers and processes in the same dir, and a FIXED length
+ *    that never grows with the target's name (a 255-byte target works).
  *
  * 3. We refuse to rename over a path that already exists AS A SYMLINK
  *    (defense in depth — Shared Brain mirror domains live as read-only
@@ -50,6 +51,7 @@ import {
   existsSync,
 } from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
 
 /**
  * Normalise the third argument, which historically was an encoding string.
@@ -71,10 +73,15 @@ let _tmpCounter = 0;
 function nextTmpName(targetPath) {
   _tmpCounter = (_tmpCounter + 1) & 0xffffffff;
   const dir = path.dirname(targetPath);
-  const base = path.basename(targetPath);
-  // Leading dot keeps the temp file out of casual `ls` output;
-  // pid + counter make collisions effectively impossible.
-  return path.join(dir, `.tmp-${base}-${process.pid}-${_tmpCounter}`);
+  // Shape: `.tmp-<pid>-<counter>-<8 hex>`. FIXED LENGTH: the name does NOT
+  // include the target's name, because a page name near the 255-byte
+  // filename limit (real wikis have 244-character names) plus a prefix and
+  // suffix would overflow it (ENAMETOOLONG). The leading `.tmp-` is kept —
+  // the desktop watcher and the leftover checks match on it. pid + counter
+  // are unique within a process; the random nonce covers pid reuse and
+  // separate processes/containers sharing a directory.
+  const nonce = randomBytes(4).toString('hex');
+  return path.join(dir, `.tmp-${process.pid}-${_tmpCounter}-${nonce}`);
 }
 
 /**

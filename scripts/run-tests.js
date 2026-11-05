@@ -85,6 +85,7 @@ const OFFLINE = [
   'test-ingest-prompt-slimming.js',
   'test-sync-hygiene.js',
   'test-beta8-stress.js',
+  'test-atomic-write-long-names.js', // writeFileAtomic's temp name is fixed-length (.tmp-<pid>-<n>-<hex>), so 244-char and 255-byte (incl. multi-byte) targets write; concurrent in-process and cross-process writers never collide; a failed write leaves no temp and the target intact; 0600 kept.
   'test-beta10-fixes.js',
   'test-beta11-fixes.js',
   'test-beta13-fixes.js',
