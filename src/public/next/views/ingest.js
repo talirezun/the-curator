@@ -1997,7 +1997,12 @@ function renderIngestForm() {
   // real ring, the real phase and the real clock. The generic note remains for
   // the case it was actually written for: a write of some OTHER kind (a Sync
   // push, a Shared Brain pull) that this store knows nothing about.
-  const crossBusyNote = (crossBusy && !remoteRunning)
+  //
+  // ONLY WHEN IT EXPLAINS SOMETHING. With no file chosen the button is greyed for
+  // that reason, so the sentence explained nothing, and this section stands above
+  // the rest of the Domain page: every Wiki health repair, however short, opened
+  // this block for its few milliseconds and pushed the whole page down by 99 px.
+  const crossBusyNote = (crossBusy && !remoteRunning && state.file)
     ? '<div class="ing-status-block">' +
         renderStatus({
           state: 'attention',

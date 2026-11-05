@@ -242,18 +242,22 @@ export function renderFoldRow(o) {
  * slot. `mainHtml` / `metaHtml` / `actionHtml` are TRUSTED.
  *
  * @param {{ main?: string, mainHtml?: string, meta?: string, metaHtml?: string,
- *   actionHtml?: string, hostClass?: string, alias?: 'dm' }} o
+ *   actionHtml?: string, hostClass?: string, alias?: 'dm',
+ *   rowKey?: string,               // an identity a keyed patch can follow (data-row-key)
+ *   afterHtml?: string }} o        // TRUSTED: what stands directly under this row
  */
 export function renderFoldItem(o) {
   const opts = o && typeof o === 'object' ? o : {};
   const a = aliasOf(opts);
   const main = typeof opts.mainHtml === 'string' ? opts.mainHtml : opts.main != null ? escapeHtml(opts.main) : null;
   const meta = typeof opts.metaHtml === 'string' ? opts.metaHtml : opts.meta != null ? escapeHtml(opts.meta) : null;
-  return '<div class="' + cls('cur-fold-item', a.item, opts.hostClass) + '">' +
+  const rowKey = typeof opts.rowKey === 'string' && opts.rowKey ? ' data-row-key="' + escapeHtml(opts.rowKey) + '"' : '';
+  return '<div class="' + cls('cur-fold-item', a.item, opts.hostClass) + '"' + rowKey + '>' +
       (main != null ? '<span class="' + cls('mono cur-fold-item-main', a.itemMain) + '">' + main + '</span>' : '') +
       (meta != null ? '<span class="' + cls('cur-fold-item-meta', a.itemMeta) + '">' + meta + '</span>' : '') +
       (typeof opts.actionHtml === 'string' ? opts.actionHtml : '') +
-    '</div>';
+    '</div>' +
+    (typeof opts.afterHtml === 'string' ? opts.afterHtml : '');
 }
 
 /**

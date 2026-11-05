@@ -39,6 +39,7 @@ import {
 // lands on Settings › Providers & keys (it used to land on General).
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 import { patchInPlace } from '../shared/morph.js';
+import { holdLeavingRows, startRowMotion, releaseHeldRows, createScrollFloor } from '../shared/row-motion.js';
 
 // Second import of the SAME module, as a namespace. It was added for one
 // thing — the chat-scope handoff — and the reason it is a NAMESPACE import is
@@ -526,7 +527,19 @@ const state = {
   // has already moved on from cannot drive the ring of a DIFFERENT one —
   // the same slug-stamp discipline semanticScan uses, for the same reason.
   aiProgress: null,
-  banner: null,           // { tone: 'success'|'error'|'info', text }
+  banner: null,           // { tone: 'success'|'error'|'info', text }: the page's own notices, drawn above ⑤, never in it
+  // THE PRESS RULE (Wiki health): see the block of that name below morphHealthSection.
+  rowNote: null,          // the outcome an action just produced; render() files it on its row
+  rowOutcomes: {},        // row key -> the outcome on that row
+  rowLines: {},           // anchor -> the outcome line under that row (derived in render)
+  rowBusy: new Set(),     // rows with a small save running (Dismiss, Restore)
+  pressAnchor: null,      // the row whose press opened what is open
+  pressOpener: null,      // that press's control, to give focus back to
+  pressLocks: {},         // control -> width at the press, so its label cannot move it
+  ringAnchor: null,       // where the progress ring draws (derived in render)
+  flipFlash: null,        // the pair whose Flip is answering
+  healthTrace: null,      // { slug, text, at }: the last thing done, in the section head
+  healthLive: '',         // what the section's one live region says
 
   pendingPlan: null,      // { kind: 'brokenLinks'|'orphans', plan, summary }
 
@@ -2318,10 +2331,24 @@ async function onUndoKnowledgeFolder(targetPath, token) {
 // pair is still mergeable: a merge deletes a page that sibling pairs may
 // name, and those are marked `resolved` by resolvePairsTouching.
 function resetDomainScopedHealthState(opts) {
-  state.estimates = {};
+  // A QUIET READING KEEPS WHAT IS ON SCREEN (press rule). After a repair, the two
+  // AI chips kept flipping to a disabled "…" while their costs were re-read, and
+  // an open Dismissed list went to a loader nothing refilled. The figures are
+  // replaced when the new ones land. The duplicate estimate is not kept: it is
+  // fetched when asked for, and a merge changes what it would quote.
+  if (opts && (opts.silent || opts.keepHealth)) {
+    const kept = {};
+    for (const k of ['brokenLinks', 'orphans']) {
+      const e = state.estimates[k];
+      if (e && e !== 'loading' && !e.error) kept[k] = e;
+    }
+    state.estimates = kept;
+  } else {
+    state.estimates = {};
+  }
+  if (!(opts && opts.silent)) state.dismissedRecords = null;
   state.pendingPlan = null;
   if (!(opts && opts.keepSemanticScan)) state.semanticScan = null;
-  state.dismissedRecords = null;
 }
 
 // ── Paid-scan survival across a view change (cost honesty) ─────────────────
@@ -2429,7 +2456,7 @@ async function loadHealth(slug, token, opts) {
     // (`keepStale`) does not: that block is already there, and fading an
     // in-place update is how a repaint reads as a flicker. One-shot token,
     // consumed by the render that paints it — see renderHealthPanel.
-    if (!keepStale) state.reveal = { key: slug + ':health', used: false };
+    if (!keepStale && !silent) state.reveal = { key: slug + ':health', used: false };
     state.health = report;
     state.healthSlug = slug;
     state.healthStale = false;
@@ -2476,8 +2503,11 @@ async function loadEstimates(slug, token) {
   // that specific quick-maintenance action.
   if (jobs.length === 0) return;
 
-  for (const [key] of jobs) state.estimates[key] = 'loading';
-  render(token);
+  let anyLoading = false;
+  for (const [key] of jobs) {
+    if (!state.estimates[key]) { state.estimates[key] = 'loading'; anyLoading = true; }
+  }
+  if (anyLoading) render(token);
 
   await Promise.all(jobs.map(async ([key, url]) => {
     try {
@@ -3740,6 +3770,7 @@ function selectDomain(slug) {
   state.activeSlug = slug;
   state.confirm = null;
   state.banner = null;
+  resetHealthPressRule();
   state.lifecycleOutcome = null;
   state.expandedGroups = new Set();
   // A create/rename/delete form opened for the PREVIOUS domain must not
@@ -4299,7 +4330,7 @@ function renderMain(token) {
     '<section class="dm-fold dm-shared" id="dm-shared-fold" aria-labelledby="dm-shared-title">' +
       '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
     '</section>' +
-    renderHealthPanel(domain, readonly);
+    (state.banner ? renderBanner() : '') + renderHealthPanel(domain, readonly);
 
   setMain(html, token);
   // ── THE HEADER'S THREE CONTROLS, BOUND ONCE PER NODE (v3.64.1) ─────────
@@ -7137,9 +7168,20 @@ function healthSection(inner) {
   if (!inner) return '';
   return (
     '<section class="dm-section dm-health">' +
-      renderSectionTitle({ num: 5, title: 'Wiki health', infoBtnHtml: HEALTH_INFO.btn, alias: 'dm' }) +
+      renderSectionTitle({ num: 5, title: 'Wiki health', alias: 'dm',
+        // The trace: what was just done stays here after its row has left. One
+        // line, whatever its length, so it can never move the rows under it.
+        infoBtnHtml: HEALTH_INFO.btn + (state.healthTrace && state.healthTrace.slug === state.activeSlug
+          ? '<span class="dm-health-trace" title="' + escapeHtml(state.healthTrace.text) + '">' + escapeHtml(state.healthTrace.text) + ' ' +
+              '<span data-age-at="' + escapeHtml(state.healthTrace.at) + '" data-age-text>just now</span></span>'
+          : '') }) +
       HEALTH_INFO.panel +
       inner +
+      // ONE polite live region, for progress and outcome. It is here in every
+      // state of the section, because a region that arrives with its first
+      // sentence is not announced.
+      '<div class="visually-hidden dm-health-live" role="status" aria-live="polite" aria-atomic="true">' +
+        (state.healthLive ? escapeHtml(state.healthLive) : '') + '</div>' +
     '</section>'
   );
 }
@@ -7158,13 +7200,506 @@ function morphHealthSection(before, after) {
   if (!before.classList || !before.classList.contains('dm-health')) return false;
   if (!after.classList || !after.classList.contains('dm-health')) return false;
   if (!before.__dmHealthDomain || before.__dmHealthDomain.slug !== state.activeSlug) return false;
+  // Rows the next paint dropped go back into it (shared/row-motion.js); the
+  // focus and scroll position are read before anything can move them.
+  let held = null;
   try {
-    if (patchInPlace(before, after, { keyOf: healthMorphKey })) return true;
+    const focus = readHealthFocus(before);
+    const top = healthFloor.position();
+    held = holdLeavingRows(before, after, {
+      selector: HEALTH_ROW, keyOf: healthRowKey, holdFor: healthRowHold, decorate: decorateLeavingRow,
+    });
+    if (patchInPlace(before, after, { keyOf: healthMorphKey })) {
+      healthFloor.hold(top);
+      keepHealthFocus(before, focus);
+      latchHealthAbove(before);
+      startRowMotion(before, {
+        selector: HEALTH_ROW, keyOf: healthRowKey,
+        beforeCollapse: onHealthRowCollapse, afterRemove: onHealthRowRemoved, onOpen: onHealthRowOpen,
+        waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|pair):/.test(healthRowKey(el) || ''),
+      });
+      return true;
+    }
     console.warn('Wiki health: the patch did not match; replacing the section.');
   } catch (err) {
     console.warn('Wiki health: the patch failed; replacing the section.', err);
   }
+  if (held) held.undo();
   return false;
+}
+
+// ── THE PRESS RULE ─────────────────────────────────────────────────────────
+// Whatever Wiki health does, it answers where you pressed. Measured on v3.91.0:
+// a press could change nothing at all, its question opened 641 px away, its
+// outcome could land off-screen at y=-68 with another category's Fix all under
+// the pointer, and focus ended on <body> after 22 of 22 actions.
+//
+//   1. THE PRESSED CONTROL ANSWERS in its own label, within a frame, at the width
+//      it had (`pressLocks`, re-applied after each paint in applyPressLocks,
+//      because a patch strips a style the composed markup lacks). It is
+//      aria-disabled rather than disabled, so it keeps focus while it works.
+//   2. A QUESTION OPENS UNDER THE ROW. Confirm, plan, ring and outcome line all
+//      draw in one stack (renderAnchorStack) under the row that opened them.
+//   3. AN OUTCOME IS FILED ON THE ROW. An action sets `state.rowNote`, a plain
+//      field, and render() files it (takeHealthNote). That keeps every action
+//      free of new identifiers: suites lift them into sandboxes, and one of those
+//      sandboxes is the proof of the merge gate.
+//   4. ROWS OPEN AND LEAVE (shared/row-motion.js): held, then collapsed. Nothing
+//      above the pressed row moves, whatever the paint.
+//   5. FOCUS GOES TO A NAMED TARGET, never <body>; the scroll position holds even
+//      at the page's end (healthFloor).
+//   6. A FAILURE STAYS, on the row, with Try again, until it is acted on.
+//
+// WHAT IS NOT HERE: this is behaviour. Lanes, the review desk and the new words
+// are later stages.
+const HEALTH_HOLD_MS = 1000;
+let healthPressY = null;        // where the last press was, in page coordinates
+
+function pageY(el) {
+  const main = document.getElementById('main');
+  return el.getBoundingClientRect().top + (main ? main.scrollTop : 0) + window.scrollY;
+}
+const HEALTH_ROW = '[data-row-key], .dm-group[data-group-key], .dm-sem-card[data-sem-key]';
+
+const healthFloor = createScrollFloor(() => {
+  if (typeof document === 'undefined') return null;
+  const main = document.getElementById('main');
+  if (main && main.scrollHeight > main.clientHeight) return main;
+  return document.scrollingElement || main;
+}, '--dm-health-floor', () => {
+  // The user has moved on: what was waiting not to disturb them can go now.
+  const section = document.querySelector('.dm-health');
+  if (section) releaseHeldRows(section, () => true, healthRowKey);
+});
+
+function healthRowCollapseMs() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--dur-slow').trim();
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return 240;
+  return /ms$/.test(raw) ? n : n * 1000;
+}
+
+function sortedPairKey(key) {
+  return String(key).split('||').sort().join('||');
+}
+
+function healthRowKey(el) {
+  const a = el.getAttribute('data-row-key');
+  if (a) return a;
+  const g = el.getAttribute('data-group-key');
+  if (g) return 'group:' + g;
+  const p = el.getAttribute('data-sem-key');
+  if (p) return 'pair:' + sortedPairKey(p);
+  return null;
+}
+
+function heldOutcome(key) {
+  const o = state.rowOutcomes[key];
+  return o && o.held && o.slug === state.activeSlug ? o : null;
+}
+
+// A row carrying an outcome is held long enough to read it. A pair another
+// merge settled is held with it, so the two leave together rather than the
+// settled one moving the row you are reading.
+function healthRowHold(key, row) {
+  const o = heldOutcome(key);
+  if (o) return o.at + HEALTH_HOLD_MS + (o.lingerMs || 0) - Date.now();
+  // NOTHING ABOVE THE PRESSED ROW MOVES. A repair can change the rows above it (a
+  // new backlink rescues an orphan), and the reading that says so must not move
+  // what you are looking at. Such a row stays, marked, until a press above it or
+  // its own fold is touched: releaseHealthRowsBelow.
+  if (healthPressY !== null && /^(issue|group|pair):/.test(key) &&
+      pageY(row) + row.getBoundingClientRect().height < healthPressY) return Infinity;
+  if (key.indexOf('pair:') === 0) {
+    let latest = 0;
+    for (const k of Object.keys(state.rowOutcomes)) {
+      const m = heldOutcome(k);
+      if (k.indexOf('pair:') === 0 && m) latest = Math.max(latest, m.at + HEALTH_HOLD_MS);
+    }
+    if (latest) return latest - Date.now();
+  }
+  return 0;
+}
+
+// What a leaving row says while it is held, in the place of what you pressed.
+function decorateLeavingRow(clone, key, row) {
+  const o = heldOutcome(key);
+  let text = o ? (o.short || o.text) : '';
+  if (!o && clone.hasAttribute('data-row-deferred')) text = 'Resolved';
+  if (!o && key.indexOf('pair:') === 0) {
+    const scan = activeSemanticScan();
+    const pair = scan && scan.pairs.find((p) => 'pair:' + sortedPairKey(semanticPairKey(p)) === key);
+    if (pair && pair.status === 'resolved') text = 'Settled by another merge';
+  }
+  if (!text) return;
+  const done = clone.ownerDocument.createElement('span');
+  done.className = 'dm-row-done';
+  done.setAttribute('tabindex', '-1');
+  done.innerHTML = icon('check', 13) + '<span>' + escapeHtml(text) + '</span>';
+  const SLOT = '.dm-sem-actions, .dm-plan-actions, .dm-confirm-actions, .dm-group-fixall-btn, .dm-dismiss-btn, .dm-restore-btn';
+  const slot = clone.querySelector(SLOT);
+  if (slot) {
+    // It takes exactly the room of what it replaces, so saying so moves nothing.
+    const was = row.querySelector(SLOT);
+    if (was) done.style.minHeight = was.getBoundingClientRect().height + 'px';
+    slot.replaceWith(done);
+  }
+  else (clone.querySelector('summary') || clone).appendChild(done);
+}
+
+// ── Focus ─────────────────────────────────────────────────────────────────
+function healthFocusables(section) {
+  return Array.from(section.querySelectorAll('button:not([disabled]), summary')).filter((el) => {
+    if (el.getClientRects().length === 0 || el.closest('[data-row-leaving]')) return false;
+    // Inside a closed fold is not on screen, whatever its box says; the fold's own
+    // summary is. A focus sent there silently goes nowhere.
+    const closed = el.closest('details:not([open])');
+    return !closed || (el.tagName === 'SUMMARY' && el.parentElement === closed);
+  });
+}
+
+function readHealthFocus(section) {
+  const active = section.ownerDocument.activeElement;
+  if (!active || active === section || !section.contains(active)) return null;
+  const list = healthFocusables(section);
+  return { active, row: active.closest(HEALTH_ROW), list, index: list.indexOf(active) };
+}
+
+function focusFirstAlive(candidates) {
+  for (const el of candidates) {
+    if (el && el.isConnected && !el.disabled && el.getClientRects().length > 0 && !el.closest('[data-row-leaving]')) {
+      el.focus({ preventScroll: true });
+      if (el.ownerDocument.activeElement === el) return true;
+    }
+  }
+  return false;
+}
+
+// The pressed control can leave under the keyboard. Its row's outcome takes the
+// focus first, so a screen reader is on the sentence; failing that, the next
+// control in reading order, then the one before it, then Rescan. Never <body>.
+function keepHealthFocus(section, focus) {
+  if (!focus) return;
+  const doc = section.ownerDocument;
+  const now = doc.activeElement;
+  const body = !now || now === doc.body;
+  const stranded = now === focus.active && !!now.closest('[data-row-leaving]');
+  if (!body && !stranded) return;
+  // A control that is only waiting keeps its place (shared/morph.js gives it
+  // focus back the moment it is enabled again).
+  const waiting = section.__morphWaiting;
+  if (waiting && waiting.isConnected && !waiting.closest('[data-row-leaving]')) return;
+  section.__morphWaiting = null;
+  const done = focus.row && focus.row.isConnected ? focus.row.querySelector('.dm-row-done') : null;
+  if (done) { done.focus({ preventScroll: true }); return; }
+  const after = focus.index >= 0 ? focus.list.slice(focus.index + 1) : focus.list;
+  const before = focus.index >= 0 ? focus.list.slice(0, focus.index).reverse() : [];
+  if (!focusFirstAlive(after.concat(before))) focusFirstAlive([section.querySelector('#dm-rescan-btn')]);
+}
+
+function onHealthRowCollapse(el) {
+  // The whole space it gives back: its margins and the column's gap as well.
+  const cs = getComputedStyle(el);
+  const parentGap = el.parentElement ? parseFloat(getComputedStyle(el.parentElement).rowGap) || 0 : 0;
+  healthFloor.reserve(el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0) + parentGap);
+  const doc = el.ownerDocument;
+  if (!el.contains(doc.activeElement)) return;
+  const section = el.closest('.dm-health');
+  if (!section) return;
+  // A question or a plan closing gives focus back to what opened it.
+  if (/^(confirm|plan)$/.test(el.getAttribute('data-row-key') || '') &&
+      focusFirstAlive([findHealthControl(section, state.pressOpener)])) return;
+  const list = healthFocusables(section);
+  const following = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const preceding = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING).reverse();
+  focusFirstAlive(following.concat(preceding));
+}
+
+function onHealthRowRemoved() {
+  healthFloor.release();
+}
+
+// A question the user cannot see is the v3.91.0 defect again, so this is the one
+// place the page may scroll by itself, and only when almost none of it shows.
+function onHealthRowOpen(el, height) {
+  const key = el.getAttribute('data-row-key') || '';
+  if (key !== 'confirm' && key !== 'plan' && key.indexOf('outcome:') !== 0) return;
+  const top = el.getBoundingClientRect().top;
+  // A row leaving above it is about to give that space back.
+  let shown = top;
+  for (let s = el.previousElementSibling; s; s = s.previousElementSibling) {
+    if (s.hasAttribute('data-row-leaving') || s.getAttribute('data-row-key') === 'confirm') shown -= s.getBoundingClientRect().height;
+  }
+  if (shown < window.innerHeight - 96) return;
+  const scroller = document.getElementById('main');
+  if (scroller && scroller.scrollHeight > scroller.clientHeight) scroller.scrollTop += Math.min(height, top + height - window.innerHeight + 16);
+}
+
+// ── Nothing above the pressed row moves ───────────────────────────────────
+// Quick maintenance's chips wrap, so a chip going away at phone width can take a
+// whole line with it, and that line is above whatever was pressed below it, or
+// the thing itself moves in a single frame. The chip row keeps its height until
+// the next Rescan.
+function latchHealthAbove(section) {
+  const quick = section.querySelector('.dm-quick .cur-action-chips');
+  const main = document.getElementById('main');
+  if (!quick || !main) return;
+  const h = quick.getBoundingClientRect().height;
+  const floor = parseFloat(main.style.getPropertyValue('--dm-quick-floor')) || 0;
+  if (h > floor) main.style.setProperty('--dm-quick-floor', h + 'px');
+}
+
+// ── Filing an outcome ─────────────────────────────────────────────────────
+function healthStackHome(anchor) {
+  const a = anchor || 'quick';
+  if (a === 'quick' || !state.health) return 'quick';
+  if (a.indexOf('issue:') === 0) {
+    const cut = a.indexOf(':', 6);
+    const list = state.health[a.slice(6, cut)];
+    const want = a.slice(cut + 1);
+    return Array.isArray(list) && list.some((i) => JSON.stringify(i) === want) ? a : 'quick';
+  }
+  if (a.indexOf('restore:') === 0) {
+    const want = a.slice(8);
+    return Array.isArray(state.dismissedRecords) && state.expandedGroups.has('dismissed') &&
+      state.dismissedRecords.some((r) => JSON.stringify(r) === want) ? a : 'quick';
+  }
+  if (a.indexOf('group:') === 0) {
+    const issues = state.health[a.slice(6)];
+    return Array.isArray(issues) && issues.length > 0 ? a : 'quick';
+  }
+  const scan = activeSemanticScan();
+  // The bar stays once shown, so a question opened from it stays under it too.
+  if (a === 'sem-batch' && scan && scan.batchShown) return a;
+  return scan && scan.coverage ? a : 'quick';
+}
+
+// Applied the moment the server said so: figures tick and the row leaves now,
+// rather than after a whole-tree rescan that takes 18 s on a large domain. The
+// rescan that follows is the truth and overwrites this.
+function dropIssuesLocally(drop) {
+  const report = state.health;
+  if (!report || !drop) return;
+  if (drop.type) {
+    const list = report[drop.type];
+    if (Array.isArray(list)) {
+      if (drop.issue) {
+        const want = JSON.stringify(drop.issue);
+        report[drop.type] = list.filter((i) => JSON.stringify(i) !== want);
+      } else if (drop.type === 'brokenLinks') report[drop.type] = list.filter((i) => !i.suggestedTarget);
+      else report[drop.type] = [];
+    }
+  }
+  if (drop.safe) {
+    for (const t of AUTO_FIX_TYPES) {
+      if (t === 'brokenLinks') report[t] = (report[t] || []).filter((i) => !i.suggestedTarget);
+      else report[t] = [];
+    }
+  }
+  if (drop.dismissed) {
+    if (report.counts && Number.isInteger(report.counts.dismissed)) report.counts.dismissed += 1;
+    if (Number.isInteger(report.dismissedRecords)) report.dismissedRecords += 1;
+  }
+  if (drop.restored) {
+    if (Number.isInteger(report.dismissedRecords)) report.dismissedRecords = Math.max(0, report.dismissedRecords - 1);
+    if (Array.isArray(state.dismissedRecords)) {
+      const want = JSON.stringify(drop.restored);
+      state.dismissedRecords = state.dismissedRecords.filter((r) => JSON.stringify(r) !== want);
+    }
+  }
+}
+
+function takeHealthNote(token) {
+  const note = state.rowNote;
+  if (!note) return;
+  state.rowNote = null;
+  const key = note.key || state.pressAnchor || 'quick';
+  const outcome = Object.assign({}, note, { key, slug: state.activeSlug, at: Date.now(), held: note.held === true });
+  // AN ANSWER IS ANSWERED WHERE IT WAS GIVEN. Whoever pressed Apply or the yes of
+  // a question has their pointer on that card, and either can be hundreds of
+  // pixels tall at phone width, so the row or line it belongs to may be off-screen.
+  // The card says so, is held, and leaves; a line takes over as it goes, and stays.
+  const answered = planLeaving ? 'plan' : (state.confirm && state.confirm.busy ? 'confirm' : null);
+  planLeaving = false;
+  if (answered && note.tone !== 'error') {
+    const onCard = { key: answered, slug: state.activeSlug, at: outcome.at, held: true, tone: note.tone, text: note.text };
+    state.rowOutcomes[answered] = onCard;
+    if (!outcome.held) outcome.notBefore = outcome.at + HEALTH_HOLD_MS;
+    // The card goes first, then the row it belongs to: otherwise the row above it
+    // closes under the pointer while the answer is still being read.
+    else outcome.lingerMs = healthRowCollapseMs();
+    setTimeout(() => {
+      if (state.rowOutcomes[answered] === onCard) delete state.rowOutcomes[answered];
+      if (isCurrentMount(token)) render(token);
+    }, HEALTH_HOLD_MS);
+  }
+  state.rowOutcomes[key] = outcome;
+  state.healthLive = note.text;
+  if (note.tone !== 'error') {
+    state.healthTrace = { slug: state.activeSlug, text: note.short || note.text, at: new Date().toISOString() };
+  }
+  if (state.confirm && state.confirm.busy) state.confirm = null;
+  if (note.drop) dropIssuesLocally(note.drop);
+  if (outcome.held) {
+    setTimeout(() => {
+      if (state.rowOutcomes[key] !== outcome) return;
+      delete state.rowOutcomes[key];
+      if (isCurrentMount(token)) render(token);
+    }, HEALTH_HOLD_MS);
+  }
+}
+
+// Which outcome draws under which row, and where a question opened by a row that
+// has since gone now lives. Derived on every paint, so nothing can be stranded.
+function placeHealthStack() {
+  if (state.confirm) state.confirm.anchor = healthStackHome(state.confirm.anchor || state.pressAnchor);
+  if (state.pendingPlan) state.pendingPlan.anchor = healthStackHome(state.pendingPlan.anchor || state.pressAnchor);
+  state.ringAnchor = healthStackHome(state.pressAnchor);
+  const lines = {};
+  for (const key of Object.keys(state.rowOutcomes)) {
+    const o = state.rowOutcomes[key];
+    if (o.slug !== state.activeSlug) { delete state.rowOutcomes[key]; continue; }
+    if (o.held || (o.notBefore && o.notBefore > Date.now())) continue;
+    lines[healthStackHome(key)] = o;
+  }
+  state.rowLines = lines;
+}
+
+// ── After the paint ───────────────────────────────────────────────────────
+let confirmOnScreen = null;
+let planLeaving = false;
+
+function findHealthControl(section, key) {
+  if (!key) return null;
+  if (key.charAt(0) === '#') return section.querySelector(key);
+  return Array.from(section.querySelectorAll('button')).find((b) => healthMorphKey(b) === key) || null;
+}
+
+// A question takes focus when it opens, on Cancel: holding Enter must not answer
+// it. When it closes, focus returns to what opened it.
+function moveHealthFocusForQuestion() {
+  const section = document.querySelector('.dm-health');
+  const c = state.confirm;
+  if (c === confirmOnScreen) return;
+  const was = confirmOnScreen;
+  confirmOnScreen = c;
+  if (!section) return;
+  if (c && !c.busy) {
+    const cancel = section.querySelector('#dm-confirm-no');
+    if (cancel) cancel.focus({ preventScroll: true });
+    state.healthLive = 'A question appeared: ' + c.title;
+    return;
+  }
+  if (!c && was) {
+    const opener = findHealthControl(section, state.pressOpener);
+    if (opener && !opener.disabled) opener.focus({ preventScroll: true });
+  }
+}
+
+function applyPressLocks() {
+  if (!state.busyKey && !state.healthLoading && state.rowBusy.size === 0 && !(state.confirm && state.confirm.busy) && !state.rowOutcomes['chip:fixSafe']) { state.pressLocks = {}; return; }
+  const section = document.querySelector('.dm-health');
+  if (!section) return;
+  for (const key of Object.keys(state.pressLocks)) {
+    const btn = findHealthControl(section, key);
+    if (btn && btn.getAttribute('aria-disabled') === 'true') btn.style.width = state.pressLocks[key] + 'px';
+  }
+}
+
+// A running action is announced when it starts, and a finished one that filed no
+// outcome (a scan: its result is its card) when it ends.
+let busyAnnounced = null;
+function announceHealthBusy() {
+  const key = state.busyKey;
+  if (key === busyAnnounced) return;
+  if (key) state.healthLive = busyRingLabel(key);
+  else if (state.healthLive === busyRingLabel(busyAnnounced)) state.healthLive = 'Finished.';
+  busyAnnounced = key;
+}
+
+// While its question is open, the control that asked stays visibly pressed. Set
+// after the paint, like the width lock: the markup is the same either way.
+function markHealthOpener() {
+  const section = document.querySelector('.dm-health');
+  if (!section) return;
+  const asking = (state.confirm && !state.confirm.busy) || state.pendingPlan;
+  const opener = asking ? findHealthControl(section, state.pressOpener) : null;
+  if (opener && !opener.disabled) opener.setAttribute('aria-expanded', 'true');
+}
+
+function paintHealthLive() {
+  const live = document.querySelector('.dm-health-live');
+  if (live && live.textContent !== (state.healthLive || '')) live.textContent = state.healthLive || '';
+}
+
+// One press: the width it had, the row it belongs to, and the old outcomes it
+// makes stale. A failure stays until something is done at its own row.
+function noteHealthPress(btn) {
+  const key = healthMorphKey(btn);
+  if (key && typeof btn.getBoundingClientRect === 'function') state.pressLocks[key] = btn.getBoundingClientRect().width;
+  let anchor = null;
+  const fold = typeof btn.closest === 'function' ? btn.closest('[data-group-key]') : null;
+  if (btn.classList.contains('dm-group-fixall-btn')) anchor = 'group:' + btn.dataset.fixall;
+  else if (btn.classList.contains('dm-quick-btn')) anchor = fold ? 'group:' + fold.dataset.groupKey : 'quick';
+  else if (btn.id === 'dm-semantic-merge-btn') anchor = 'sem-batch';
+  else if (btn.id === 'dm-semantic-next-btn') anchor = 'sem-coverage';
+  else if (btn.id === 'dm-semantic-reset-btn') anchor = 'sem-reset';
+  if (anchor) { state.pressAnchor = anchor; state.pressOpener = key; }
+  if (btn.id === 'dm-rescan-btn' && typeof document !== 'undefined') {
+    const main = document.getElementById('main');
+    if (main) main.style.removeProperty('--dm-quick-floor');
+  }
+  if (typeof btn.getBoundingClientRect === 'function') {
+    healthPressY = pageY(btn);
+    const section = btn.closest('.dm-health');
+    if (section) releaseHeldRows(section, (el) => pageY(el) > healthPressY, healthRowKey);
+  }
+  for (const k of Object.keys(state.rowOutcomes)) {
+    const o = state.rowOutcomes[k];
+    if (o.held) continue;
+    if (o.tone !== 'error' || k === anchor) delete state.rowOutcomes[k];
+  }
+}
+
+function resetHealthPressRule() {
+  state.rowNote = null;
+  state.rowOutcomes = {};
+  state.rowLines = {};
+  state.rowBusy = new Set();
+  state.pressAnchor = null;
+  state.pressOpener = null;
+  state.pressLocks = {};
+  state.ringAnchor = null;
+  state.flipFlash = null;
+  state.healthTrace = null;
+  state.healthLive = '';
+  healthPressY = null;
+  confirmOnScreen = null;
+  planLeaving = false;
+  healthFloor.reset();
+  const main = typeof document !== 'undefined' ? document.getElementById('main') : null;
+  if (main) main.style.removeProperty('--dm-quick-floor');
+}
+
+// Everything that can sit under a row, in one order: the question, then the plan,
+// then what is running, then what happened. Each of them is below the pressed
+// control, so none of them can move it.
+function renderAnchorStack(anchor, crossMountBusy) {
+  const here = (o) => o && o.anchor === anchor;
+  return (here(state.confirm) ? renderConfirmCard() : '') +
+    (here(state.pendingPlan) ? renderPendingPlan(crossMountBusy) : '') +
+    (state.ringAnchor === anchor ? renderAiProgressRing() : '') +
+    (state.rowLines[anchor] ? renderOutcomeLine(state.rowLines[anchor]) : '');
+}
+
+function renderOutcomeLine(o) {
+  const failed = o.tone === 'error';
+  const cls = failed ? 'dm-outcome-failed' : (o.tone === 'info' ? 'dm-outcome-info' : 'dm-outcome-done');
+  return '<div class="dm-outcome ' + cls + '" data-row-key="outcome:' + escapeHtml(o.key) + '">' +
+      icon(failed ? 'alertCircle' : 'check', 14) +
+      '<span class="dm-outcome-text">' + escapeHtml(o.text) + '</span>' +
+      (o.retry ? '<button class="btn btn-secondary btn-xs dm-outcome-retry" data-outcome-key="' + escapeHtml(o.key) + '">Try again</button>' : '') +
+    '</div>';
 }
 
 // Identity for everything in the section that has one. A pair's key names its
@@ -7173,6 +7708,7 @@ function morphHealthSection(before, after) {
 function healthMorphKey(el) {
   if (el.id) return '#' + el.id;
   const a = (name) => el.getAttribute(name);
+  if (a('data-row-key')) return 'row:' + a('data-row-key');
   if (a('data-group-key')) return 'group:' + a('data-group-key');
   if (a('data-sem-key')) {
     return 'pair:' + a('data-sem-key').split('||').sort().join('||') + ':' + (a('data-sem-action') || '');
@@ -7181,6 +7717,7 @@ function healthMorphKey(el) {
   if (a('data-fixall')) return 'fixall:' + a('data-fixall');
   if (a('data-dismiss-issue')) return 'dismiss:' + a('data-dismiss-type') + ':' + a('data-dismiss-issue');
   if (a('data-restore-key')) return 'restore:' + a('data-restore-key');
+  if (a('data-outcome-key')) return 'retry:' + a('data-outcome-key');
   return null;
 }
 
@@ -7402,37 +7939,20 @@ function renderHealthPanel(domain, readonly) {
   return healthSection(renderCard(
       // The title is the SECTION's (see the loading branch); this row
       // exists for its one control.
+      // aria-disabled while it runs, not disabled: a disabled control drops focus.
       renderControlRow(
-        '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
+        '<button class="btn btn-secondary" id="dm-rescan-btn"' +
+          (revalidating ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' +
           ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : healthScanLabel(!!report)) +
-        '</button>', { alias: 'dm' }) +
-      // Honesty: while revalidating, these counts are the PREVIOUS scan's.
-      // Saying so is the price of not collapsing the panel — the figures
-      // stay useful, and nothing claims they are current. It is now a STATUS
-      // and sits ABOVE the readouts it qualifies, because a caveat printed
-      // after the number it qualifies has already been read too late.
-      // The wrapper is this view's, and it exists for spacing ONLY.
-      // shared/text.css owns the tx- prefix outright and its suite fails on
-      // any tx- name appearing in another stylesheet, so domains.css hangs
-      // its margins on `.dm-health-summary` instead of reaching into the
-      // component. That is the stricter and better arrangement: a view that
-      // cannot name a role's class cannot quietly restyle it either.
-      // THE WRAPPER EXISTS ONLY WHEN IT HAS SOMETHING IN IT. It carried the
-      // readouts too through v3.64.2, so it was always there; with the
-      // figures inside the Scan row it would otherwise be an empty box
-      // spending its own 16px bottom margin on nothing.
-      (revalidating
-        ? '<div class="dm-health-summary">' +
-            renderStatus({ state: 'attention', title: 'Re-scanning… showing the previous result',
-                           detail: 'The figures below are the last completed scan’s until this one finishes.' }) +
-          '</div>'
-        : '') +
+        '</button>' +
+        // THE CAVEAT HAS A PLACE OF ITS OWN IN THE ROW (press rule). It was a
+        // status box above the figures, 82 px tall, that pushed the whole card
+        // down and back on every rescan. It is one line that cannot wrap, so a
+        // reading never moves the page, and it still stands before the figures.
+        '<span class="dm-rescan-note" title="Showing the previous result until this scan finishes.">' +
+          (revalidating ? 'Showing the previous result' : '') + '</span>', { alias: 'dm' }) +
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
-      (state.banner ? renderBanner() : '') +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
-      (readonly ? '' : renderAiProgressRing()) +
-      (state.confirm ? renderConfirmCard() : '') +
-      (state.pendingPlan ? renderPendingPlan(crossMountBusy) : '') +
       (activeSemanticScan() ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
       renderIssueGroups(report, readonly, crossMountBusy),
     { alias: 'dm', hostClass: healthRevealCls.trim() }));
@@ -7539,11 +8059,14 @@ function renderAiProgressRing() {
   // The per-pair actions (preview / merge one / skip) are sub-second and
   // render their own inline button label; a ring would be noise.
   if (key.indexOf('semanticPreview:') === 0 || key.indexOf('semanticMergeOne:') === 0 || key.indexOf('semanticSkip:') === 0) return '';
+  // So are these, and they never send a count: a ring that opens and closes in
+  // 300 ms is a jump with nothing to report. The pressed button says "Repairing…".
+  if (key === 'fixSafe' || key.indexOf('group:') === 0 || key === 'indexRebuildPlan' || key === 'indexRebuildApply') return '';
   const p = state.aiProgress && state.aiProgress.key === key ? state.aiProgress : null;
   const value = p ? ringValueFromCounts(p.processed, p.total) : null;
   const sublabel = p ? (p.processed + ' of ' + p.total) : 'no count reported yet';
   return (
-    '<div class="dm-ai-progress">' +
+    '<div class="dm-ai-progress" data-row-key="progress">' +
       progressRingHtml({
         value,
         size: 32,
@@ -7564,10 +8087,15 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   const items = [];
 
   const safeTotal = countSafeFixable(report);
-  if (safeTotal > 0) {
-    items.push(actionChip({ action: 'fixSafe', disabled: disableAll, alias: 'dm',
+  // A chip whose repairs just finished stays for the moment it takes to say so.
+  const safeDone = state.rowOutcomes && state.rowOutcomes['chip:fixSafe'];
+  if (safeDone) {
+    items.push(actionChip({ action: 'fixSafe', attrs: ' aria-disabled="true"', alias: 'dm', leadHtml: icon('check', 12), label: safeDone.short || safeDone.text }));
+  } else if (safeTotal > 0) {
+    items.push(actionChip({ action: 'fixSafe', alias: 'dm',
+      attrs: busy === 'fixSafe' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
       leadHtml: busy === 'fixSafe' ? buttonRingHtml() : '',
-      label: busy === 'fixSafe' ? 'Fixing…' : 'Fix ' + pluralize(safeTotal, 'safe issue') }));
+      label: busy === 'fixSafe' ? 'Repairing…' : 'Fix ' + pluralize(safeTotal, 'safe issue') }));
   }
 
   // v3.83.0 — the index rebuild: deterministic, free, previewed. Deliberately
@@ -7577,7 +8105,8 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   if (drift) {
     const missing = Number(drift.missing) || 0;
     const what = missing > 0 ? countOf(missing, 'page', 'pages') + ' missing' : countOf(drift.stale, 'stale row', 'stale rows');
-    items.push(actionChip({ action: 'indexPlan', disabled: disableAll, alias: 'dm',
+    items.push(actionChip({ action: 'indexPlan', alias: 'dm',
+      attrs: busy === 'indexRebuildPlan' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
       leadHtml: busy === 'indexRebuildPlan' ? buttonRingHtml() : '',
       label: busy === 'indexRebuildPlan' ? 'Planning…' : 'Rebuild index · ' + what }));
   }
@@ -7616,10 +8145,20 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   const spent = state.aiSpent && domain && state.aiSpent.slug === domain.slug
     ? renderSpent(state.aiSpent.spent, { id: 'dm-quick-spent' }) : '';
 
+  // What a chip opened goes directly under the chips, inside the card: the cost
+  // line and the footnote are below the row, and a question 200 px from the press
+  // is the distance this rule exists to close. Whatever lost its own row comes
+  // here too. `anchor` is set in render(), so with none it is here.
+  const stack =
+    (state.confirm && (state.confirm.anchor || 'quick') === 'quick' ? renderConfirmCard() : '') +
+    (state.pendingPlan && (state.pendingPlan.anchor || 'quick') === 'quick' ? renderPendingPlan(crossMountBusy) : '') +
+    ((state.ringAnchor || 'quick') === 'quick' ? renderAiProgressRing() : '') +
+    (state.rowLines && state.rowLines.quick ? renderOutcomeLine(state.rowLines.quick) : '');
+
   return renderActionCard({
     alias: 'dm', iconHtml: icon('sparkles', 12), eyebrow: 'QUICK MAINTENANCE',
     chipsHtml: items.join(''),
-    runHtml: runLine || spent ? runLine + spent : '',
+    runHtml: stack + runLine + spent,
     footnoteHtml:
       // Wording nit found during live verification: `crossMountBusy` is
       // true for BOTH "some earlier, abandoned mount's write is still
@@ -7670,21 +8209,23 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
   return actionChip({
     tier: 'ai', action: key, alias: 'dm',
-    attrs: noKeyAttrs, disabled: !!disabled,
+    attrs: running ? ' aria-busy="true" aria-disabled="true"' : noKeyAttrs, disabled: !!disabled,
     // The sparkles mark (token spend) gives way to the ring only while
     // THIS action is the one running — the spend has already happened by
     // then, and liveness is the useful signal. Every other button keeps
     // its sparkles so the cost warning never disappears from the bar.
     leadHtml: running ? buttonRingHtml() : icon('sparkles', 12),
     label: label2,
-    cost: costText || '',
+    // Running, the spend is already decided and the ring needs the room: the
+    // button keeps the width it had when pressed.
+    cost: running ? '' : (costText || ''),
   });
 }
 
 function renderConfirmCard() {
   const c = state.confirm;
   return (
-    '<div class="dm-confirm-card">' +
+    '<div class="dm-confirm-card" data-row-key="confirm" role="group" aria-label="' + escapeHtml(c.title) + '">' +
       '<div class="dm-confirm-title">' + escapeHtml(c.title) + '</div>' +
       // v3.67.0: an AI action's confirm opens with the shared run line —
       // composed by the confirm's builder (renderRunsOn's own escaping), so
@@ -7698,8 +8239,11 @@ function renderConfirmCard() {
         // is to the setting that decides it.
         (c.refused
           ? '<button class="btn btn-secondary" id="dm-confirm-settings">' + escapeHtml(c.settingsLabel || 'Open settings') + '</button>'
-          : '<button class="btn btn-primary" id="dm-confirm-yes">' + escapeHtml(c.confirmLabel || 'Confirm') + '</button>') +
-        '<button class="btn btn-ghost" id="dm-confirm-no">' + (c.refused ? 'Close' : 'Cancel') + '</button>' +
+          // THE ANSWER STAYS WHERE IT WAS GIVEN: this card stays open, its button
+          // saying what is happening, until the action has an outcome to file.
+          : '<button class="btn btn-primary" id="dm-confirm-yes"' + (c.busy ? ' aria-busy="true" aria-disabled="true"' : '') + '>' +
+              (c.busy ? escapeHtml(c.busyLabel || 'Working…') : escapeHtml(c.confirmLabel || 'Confirm')) + '</button>') +
+        '<button class="btn btn-secondary" id="dm-confirm-no"' + (c.busy ? ' disabled' : '') + '>' + (c.refused ? 'Close' : 'Cancel') + '</button>' +
       '</div>' +
     '</div>'
   );
@@ -7768,14 +8312,14 @@ function renderPendingPlan(crossMountBusy) {
     body = 'Each rescued orphan gets one new [[wikilink]] added to the page that should reference it.';
   }
   return (
-    '<div class="dm-plan-card">' +
+    '<div class="dm-plan-card" data-row-key="plan">' +
       '<div class="dm-plan-title">Plan ready — nothing written yet</div>' +
       '<div class="dm-plan-summary">' + escapeHtml(summaryLine) + '</div>' +
       sampleHtml +
       '<div class="dm-plan-detail">' + escapeHtml(body) + '</div>' +
       '<div class="dm-plan-actions">' +
-        '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (busy ? ' disabled' : '') + '>' + (busy === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
-        '<button class="btn btn-ghost" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
+        '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (state.busyKey === p.kind + 'Apply' ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' + (state.busyKey === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
+        '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
       '</div>' +
       (crossMountBusy ? '<div class="dm-plan-detail dm-quick-note-busy">An earlier operation on this domain is still running.</div>' : '') +
     '</div>'
@@ -7803,8 +8347,21 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   const open = s.pairs.filter((p) => p.status === 'open');
   const handled = s.pairs.filter((p) => p.status !== 'open');
   const primary = semanticPrimaryAction(s, readonly);
-  const coverage = renderSemanticCoverage(s, primary, readonly, busy);
-  const reset = renderSemanticReset(s, readonly, busy);
+  // What a press in this card opened sits under the row that was pressed.
+  const stackAt = (anchor) => ((state.confirm && state.confirm.anchor === anchor) ||
+    (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
+    (state.rowLines && state.rowLines[anchor]) || state.ringAnchor === anchor
+    ? renderAnchorStack(anchor, crossMountBusy) : '');
+  // What earlier scans found stands under what the coverage row opened: it changes
+  // with each run, and the confirm for a run is what is being answered up there.
+  // Once shown it stays, because the pairs below it are what a merge is pressed on.
+  const waiting = s.pairs.filter((p) => p.remembered && p.status === 'open').length;
+  if (waiting) s.waitingShown = true;
+  const waitingLine = waiting
+    ? '<div class="dm-sem-waiting" data-row-key="sem-waiting">' + waiting.toLocaleString('en-US') + ' found by earlier scans and not yet decided ' + (waiting === 1 ? 'is' : 'are') + ' listed again, at no cost.</div>'
+    : (s.waitingShown ? '<div class="dm-sem-waiting" data-row-key="sem-waiting">All that earlier scans found have been decided.</div>' : '');
+  const coverage = renderSemanticCoverage(s, primary, readonly, busy) + stackAt('sem-coverage') + waitingLine;
+  const reset = renderSemanticReset(s, readonly, busy) + stackAt('sem-reset');
 
   if (s.pairs.length === 0) {
     // "No likely duplicates found" is a finding, so it needs every pair checked.
@@ -7812,19 +8369,24 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
     const title = s.failedAll ? 'No pairs checked this time'
       : (s.counting || !c) ? ''
       : (c.left > 0 ? 'None found so far' : 'No likely duplicates found');
-    return '<div class="dm-plan-card">' +
+    return '<div class="dm-plan-card" data-row-key="scan-results">' +
       (title ? '<div class="dm-plan-title">' + title + '</div>' : '') +
       coverage + reset + '</div>';
   }
 
   const batch = liveBatchPairs();
-  const batchBar = (readonly || batch.length === 0) ? '' : (
-    '<div class="dm-sem-batch">' +
-      '<button class="btn ' + (primary && primary.kind === 'batch' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-merge-btn"' + (busy ? ' disabled' : '') + '>' +
-        (busy === 'semanticMerge' ? 'Merging…' : 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants')) +
+  // ONCE SHOWN, THE BAR STAYS (press rule). It sits above the pairs, so taking it
+  // away when the last variant is merged moved every pair under the pointer.
+  if (batch.length > 0) s.batchShown = true;
+  const batchBar = (readonly || (batch.length === 0 && !s.batchShown)) ? '' : (
+    '<div class="dm-sem-batch" data-row-key="sem-batch">' +
+      '<button class="btn ' + (primary && primary.kind === 'batch' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-merge-btn"' +
+        (state.busyKey === 'semanticMerge' ? ' aria-busy="true" aria-disabled="true"' : ((busy || batch.length === 0) ? ' disabled' : '')) + '>' +
+        (state.busyKey === 'semanticMerge' ? 'Merging…' : 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants')) +
       '</button>' +
       '<span class="dm-sem-batch-note">Merges only pairs whose names are spelling variants, such as hand-off and handoff. Every other pair needs your Preview.</span>' +
-    '</div>'
+    '</div>' +
+    stackAt('sem-batch')
   );
 
   const visible = s.visible || SEMANTIC_PAGE_SIZE;
@@ -7835,13 +8397,14 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       'Show ' + Math.min(hidden, SEMANTIC_PAGE_SIZE) + ' more</button></div>'
   ) : '';
   const handledRows = handled.slice(0, SEMANTIC_PAGE_SIZE).map((p) => renderFoldItem({
-    alias: 'dm', hostClass: 'dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : ''),
+    alias: 'dm', rowKey: 'handled:' + p.removeFolder + '/' + p.removeSlug + '>' + p.keepFolder + '/' + p.keepSlug,
+    hostClass: 'dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : ''),
     main: p.removeFolder + '/' + p.removeSlug + ' → ' + p.keepFolder + '/' + p.keepSlug,
     meta: semanticHandledLabel(p),
   })).join('');
 
   return (
-    '<div class="dm-plan-card">' +
+    '<div class="dm-plan-card" data-row-key="scan-results">' +
       // "CANDIDATE PAIRS" NAMED TWO QUANTITIES (v3.72.1, F11): the confirm
       // used it for the pre-filtered INPUT ("Scans 180 candidate pairs") and
       // this header for the model's medium/high verdicts. These are the
@@ -7854,7 +8417,7 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
       more +
-      (handledRows ? ('<div class="dm-plan-detail">Already handled in this scan:</div>' + handledRows) : '') +
+      (handledRows ? ('<div class="dm-plan-detail" data-row-key="handled-title">Already handled in this scan:</div>' + handledRows) : '') +
       (handled.length > SEMANTIC_PAGE_SIZE ? '<div class="dm-issue-more">…and ' + (handled.length - SEMANTIC_PAGE_SIZE).toLocaleString('en-US') + ' more</div>' : '') +
       reset +
     '</div>'
@@ -7867,23 +8430,26 @@ function renderSemanticCoverage(s, primary, readonly, busy) {
   const c = s.coverage;
   if (!c && !s.counting) return '';
   const n = (v) => v.toLocaleString('en-US');
-  const waiting = s.pairs.filter((p) => p.remembered && p.status === 'open').length;
   const pairWord = c && c.total === 1 ? 'pair' : 'pairs';
-  const line = s.counting ? 'Counting the pairs…'
+  // A RECOUNT MOVES NOTHING (press rule). While it runs, the figures already on
+  // screen stay, with their button, and only a first count, which has no figures
+  // to show, says it is counting.
+  const line = (s.counting && !c) ? 'Counting the pairs…'
     : c.left > 0
       ? 'Checked ' + n(c.checked) + ' of ' + n(c.total) + ' possible ' + pairWord + '. ' + n(c.left) + ' still to check.'
       : 'All ' + n(c.total) + ' possible ' + pairWord + ' ' + (c.total === 1 ? 'has' : 'have') + ' been checked.';
-  const next = (readonly || s.counting || c.left === 0) ? '' : (
-    '<button class="btn ' + (primary && primary.kind === 'next' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-next-btn"' + (busy ? ' disabled' : '') + '>' +
-      'Check the next ' + n(c.next) + '</button>'
+  // The press is this button's when the row it anchored is this one.
+  const pressed = state.pressAnchor === 'sem-coverage' && (state.busyKey === 'semanticDupesEstimate' || state.busyKey === 'semanticDupesScan') ? state.busyKey : null;
+  const next = (readonly || !c || c.left === 0) ? '' : (
+    '<button class="btn ' + (primary && primary.kind === 'next' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-next-btn"' + (pressed ? ' aria-busy="true" aria-disabled="true"' : ((busy || s.counting) ? ' disabled' : '')) + '>' +
+      (pressed === 'semanticDupesEstimate' ? 'Working out the cost…' : (pressed === 'semanticDupesScan' ? 'Scanning…' : 'Check the next ' + n(c.next))) + '</button>'
   );
   const failed = s.failedPairs > 0 && !s.failedAll ? (
     '<br>' + n(s.failedPairs) + ' ' + (s.failedPairs === 1 ? 'pair' : 'pairs') + ' could not be checked because the AI call failed. They will be tried again next time.'
   ) : '';
   return (
-    '<div class="dm-sem-batch dm-sem-coverage">' +
+    '<div class="dm-sem-batch dm-sem-coverage" data-row-key="sem-coverage">' +
       '<span class="dm-sem-batch-note">' + line +
-        (waiting ? '<br>' + n(waiting) + ' found by earlier scans and not yet decided ' + (waiting === 1 ? 'is' : 'are') + ' listed again, at no cost.' : '') +
         failed +
       '</span>' +
       next +
@@ -7894,8 +8460,8 @@ function renderSemanticCoverage(s, primary, readonly, busy) {
 // A real button, and the least of them: it throws away money already spent.
 // Nothing to forget, nothing to offer.
 function renderSemanticReset(s, readonly, busy) {
-  if (readonly || !s.coverage || s.coverage.checked === 0 || s.counting) return '';
-  return '<div class="dm-plan-actions"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + (busy ? ' disabled' : '') + '>Check everything again</button></div>';
+  if (readonly || !s.coverage || s.coverage.checked === 0) return '';
+  return '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || s.counting) ? ' disabled' : '') + '>Check everything again</button></div>';
 }
 
 // One pair. The four actions mirror the shipping app's per-pair card, which
@@ -7925,10 +8491,10 @@ function renderSemanticPairCard(pair, readonly, busy, primary) {
       (!readonly && conf === 'high' && pair.spellingVariant !== true ? '<div class="dm-sem-sub">Names differ, so check this one yourself.</div>' : '') +
       (readonly ? '' : (
         '<div class="dm-sem-actions">' +
-          '<button class="btn ' + (primary && primary.kind === 'preview' && primary.key === key ? 'btn-primary' : 'btn-secondary') + ' dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') + '>' +
+          '<button class="btn ' + (primary && primary.kind === 'preview' && primary.key === key ? 'btn-primary' : 'btn-secondary') + ' dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(key) + '"' + (state.busyKey === 'semanticPreview:' + key ? ' aria-busy="true" aria-disabled="true"' : (rowBusy ? ' disabled' : '')) + '>' +
             (state.busyKey === 'semanticPreview:' + key ? 'Loading…' : 'Preview diff') + '</button>' +
           '<button class="btn btn-secondary dm-sem-btn" data-sem-action="flip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') +
-            ' title="Swap which side is kept">↔ Flip</button>' +
+            ' title="Swap which side is kept">' + (state.flipFlash === key.split('||').sort().join('||') ? '↔ Flipped' : '↔ Flip') + '</button>' +
           '<button class="btn ' + (primary && primary.kind === 'merge' && primary.key === key ? 'btn-primary' : 'btn-secondary') + ' dm-sem-btn" data-sem-action="merge" data-sem-key="' + escapeHtml(key) + '"' +
             // No `title=`. It carried `gate.reason` — but only while the
             // button was `disabled`, i.e. exactly when it is NOT focusable,
@@ -7936,9 +8502,9 @@ function renderSemanticPairCard(pair, readonly, busy, primary) {
             // as visible text five lines below ("Preview required before
             // Merge"), and when the gate IS open the tooltip only said
             // "Merge this pair", which is the button's own label.
-            ((rowBusy || !gate.allowed) ? ' disabled' : '') + '>' +
+            (state.busyKey === 'semanticMergeOne:' + key ? ' aria-busy="true" aria-disabled="true"' : ((rowBusy || !gate.allowed) ? ' disabled' : '')) + '>' +
             (state.busyKey === 'semanticMergeOne:' + key ? 'Merging…' : 'Merge') + '</button>' +
-          '<button class="btn btn-ghost dm-sem-btn" data-sem-action="skip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') + '>' +
+          '<button class="btn btn-secondary dm-sem-btn" data-sem-action="skip" data-sem-key="' + escapeHtml(key) + '"' + (state.busyKey === 'semanticSkip:' + key ? ' aria-busy="true" aria-disabled="true"' : (rowBusy ? ' disabled' : '')) + '>' +
             (state.busyKey === 'semanticSkip:' + key ? 'Skipping…' : 'Skip') + '</button>' +
           (previewed
             ? '<span class="dm-sem-gate dm-sem-gate-ok">' + icon('check', 11) + ' previewed</span>'
@@ -7947,7 +8513,11 @@ function renderSemanticPairCard(pair, readonly, busy, primary) {
       )) +
       (showPreview ? renderSemanticPreview(preview) : '') +
       (pair.refusal ? '<div class="dm-sem-refusal">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.refusal) + '</span></div>' : '') +
-      (pair.error ? '<div class="dm-sem-error">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.error) + '</span></div>' : '') +
+      (pair.error ? '<div class="dm-sem-error" data-row-key="pair-error:' + escapeHtml(key) + '">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.error) + '</span>' +
+        // A failure stays, with the way forward beside it. Through the same action
+        // as the button above, so a merge is gated again on the way.
+        (readonly ? '' : '<button class="btn btn-secondary dm-sem-btn" data-sem-action="' + escapeHtml(pair.errorAction || 'merge') + '" data-sem-key="' + escapeHtml(key) + '" data-sem-retry="1"' + (rowBusy ? ' disabled' : '') + '>Try again</button>') +
+        '</div>' : '') +
     '</div>'
   );
 }
@@ -7962,8 +8532,10 @@ function renderSemanticPairCard(pair, readonly, busy, primary) {
 // user decides.
 function renderSemanticPreview(preview) {
   if (preview.error) {
-    return '<div class="dm-sem-preview dm-sem-preview-error">' + icon('alertCircle', 13) +
-      '<span>Could not build a preview — ' + escapeHtml(preview.error) + '</span></div>';
+    return '<div class="dm-sem-preview dm-sem-preview-error" data-row-key="preview:' + escapeHtml(preview.key || '') + '">' + icon('alertCircle', 13) +
+      '<span>Could not build a preview — ' + escapeHtml(preview.error) + '</span>' +
+      (preview.key ? '<button class="btn btn-secondary dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(preview.key) + '" data-sem-retry="1">Try again</button>' : '') +
+      '</div>';
   }
   const d = preview.data || {};
   const files = Array.isArray(d.affectedFiles) ? d.affectedFiles : [];
@@ -7974,7 +8546,7 @@ function renderSemanticPreview(preview) {
     ? '<li class="dm-sem-preview-more">…and ' + ((d.affectedCount || 0) - files.slice(0, 12).length) + ' more files</li>'
     : '';
   return (
-    '<div class="dm-sem-preview">' +
+    '<div class="dm-sem-preview" data-row-key="preview:' + escapeHtml(preview.key || '') + '">' +
       '<div class="dm-sem-preview-grid mono">' +
         '<div>keep: ' + escapeHtml(d.keepPath || '') + '</div>' +
         '<div>delete: ' + escapeHtml(d.removePath || '') + '</div>' +
@@ -8015,22 +8587,30 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   const fixAllCount = cat.key === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
   const canFixAll = !readonly && AUTO_FIX_TYPES.has(cat.key) && fixAllCount > 0;
   const busy = state.busyKey === 'group:' + cat.key;
+  const anchor = 'group:' + cat.key;
+  // What this row's press opened goes directly under the row: above the items
+  // when the fold is open, because the row is the summary, and under the fold
+  // when it is closed, because nothing inside a closed fold is on screen.
+  const hasStack = (state.confirm && state.confirm.anchor === anchor) ||
+    (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
+    (state.rowLines && state.rowLines[anchor]);
+  const stack = hasStack ? renderAnchorStack(anchor, crossMountBusy) : '';
   // MEDIUM-5 fix: also disabled while ANY write against this domain is in
   // flight from an earlier mount — not just this specific category's own
   // busyKey — since a concurrent fix on a DIFFERENT category still hits
   // the same domain's files on disk and would still 409 against it.
-  const disabled = busy || crossMountBusy;
+  const disabled = crossMountBusy || !!state.busyKey;
   const rows = issues.slice(0, 50).map((issue) => renderIssueRow(cat.key, issue, readonly)).join('');
-  const more = issues.length > 50 ? '<div class="dm-issue-more">…and ' + (issues.length - 50) + ' more</div>' : '';
+  const more = issues.length > 50 ? '<div class="dm-issue-more" data-row-key="more:' + cat.key + '">…and ' + (issues.length - 50) + ' more</div>' : '';
   return renderFoldRow({
     key: cat.key, label: cat.label, pill: issues.length, open, alias: 'dm',
     actionHtml: canFixAll && fixAllCount > 0 ? (
-      '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (disabled ? ' disabled' : '') + '>' +
-        (busy ? 'Fixing…' : 'Fix all ' + fixAllCount) +
+      '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
+        (busy ? buttonRingHtml() + (DESTRUCTIVE_FIX_TYPES.has(cat.key) ? ' Merging…' : ' Repairing…') : 'Fix all ' + fixAllCount) +
       '</button>'
     ) : '',
-    bodyHtml: rows + more,
-  });
+    bodyHtml: (open ? stack : '') + rows + more,
+  }) + (open ? '' : stack);
 }
 
 function renderIssueRow(type, issue, readonly) {
@@ -8092,7 +8672,7 @@ function renderIssueRow(type, issue, readonly) {
       meta = 'Missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
         + (stale > 0 ? ', and ' + num(stale) + (stale === 1 ? ' row points' : ' rows point') + ' to ' + (stale === 1 ? 'a page' : 'pages') + ' that no longer ' + (stale === 1 ? 'exists' : 'exist') : '')
         + '. Rebuilt from the files on disk — free, previewed first. '
-        + '<button class="btn btn-ghost btn-xs cur-action-chip dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
+        + '<button class="btn btn-secondary btn-xs cur-action-chip dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
       break;
     }
     default:
@@ -8104,9 +8684,13 @@ function renderIssueRow(type, issue, readonly) {
       main = escapeHtml(JSON.stringify(issue));
   }
   const canDismiss = !readonly && dismissible;
+  const rowKey = 'issue:' + type + ':' + JSON.stringify(issue);
+  const saving = !!(state.rowBusy && state.rowBusy.has(rowKey));
   return renderFoldItem({
-    alias: 'dm', mainHtml: main, metaHtml: meta,
-    actionHtml: canDismiss ? '<button class="btn btn-ghost dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'>Dismiss</button>' : '',
+    alias: 'dm', mainHtml: main, metaHtml: meta, rowKey,
+    actionHtml: canDismiss ? '<button class="btn btn-secondary dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'' +
+      (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Dismiss') + '</button>' : '',
+    afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
   });
 }
 
@@ -8121,10 +8705,16 @@ function renderDismissedGroup(count) {
     // names beside this view's (shared/section.css owns the rules).
     body = gatedLoader(loadGate, 'Loading…', 'cur-fold-item cur-fold-item-meta dm-issue-row dm-issue-meta');
   } else {
-    body = state.dismissedRecords.map((r) => renderFoldItem({
-      alias: 'dm', main: describeDismissed(r),
-      actionHtml: '<button class="btn btn-ghost dm-restore-btn" data-restore-key=\'' + escapeHtml(JSON.stringify(r)) + '\'>Restore</button>',
-    })).join('') || renderFoldItem({ alias: 'dm', meta: 'Nothing dismissed.' });
+    body = state.dismissedRecords.map((r) => {
+      const rowKey = 'restore:' + JSON.stringify(r);
+      const saving = !!(state.rowBusy && state.rowBusy.has(rowKey));
+      return renderFoldItem({
+        alias: 'dm', main: describeDismissed(r), rowKey,
+        actionHtml: '<button class="btn btn-secondary dm-restore-btn" data-restore-key=\'' + escapeHtml(JSON.stringify(r)) + '\'' +
+          (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Restore') + '</button>',
+        afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
+      });
+    }).join('') || renderFoldItem({ alias: 'dm', meta: 'Nothing dismissed.' });
   }
   return renderFoldRow({
     key: 'dismissed', hostClass: 'dm-group-dismissed', label: 'Dismissed', labelClass: 'dm-dismissed-label',
@@ -8170,6 +8760,21 @@ function bindHealthListeners(domain, readonly) {
   boundScope.addEventListener('click', onHealthClick);
   // `toggle` does not bubble, so it is heard in capture.
   boundScope.addEventListener('toggle', onHealthToggle, true);
+  boundScope.addEventListener('keydown', onHealthKeydown);
+}
+
+// A HELD KEY IS NOT A SECOND PRESS. Focus moves to the next row's control when a
+// row leaves, so a repeating Enter would otherwise walk down the list acting on
+// each one. Escape closes a question, and focus returns to what opened it.
+function onHealthKeydown(e) {
+  if (e.repeat && (e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest && e.target.closest('button, summary')) {
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Escape' && state.confirm && !state.confirm.busy) {
+    state.confirm = null;
+    render(myMountToken);
+  }
 }
 
 // `.then()` even for a synchronous target: mergeSemanticDuplicates only sets
@@ -8197,13 +8802,33 @@ function onHealthClick(e) {
   // and engines have differed over the years about real ones. This section holds
   // Merge and Fix all, so the disabled state is checked rather than assumed.
   if (btn.disabled) return;
+  // A working control keeps its focus by being aria-disabled instead (press
+  // rule), and a row on its way out says what happened: neither takes a press.
+  if (btn.getAttribute('aria-disabled') === 'true') return;
+  if (typeof btn.closest === 'function' && btn.closest('[data-row-leaving]')) return;
+  noteHealthPress(btn);
+
+  if (btn.classList.contains('dm-outcome-retry')) {
+    const key = btn.dataset.outcomeKey;
+    const failed = state.rowOutcomes[key];
+    delete state.rowOutcomes[key];
+    if (failed && failed.retry) dispatchHealthAction(() => failed.retry());
+    else render(myMountToken);
+    return;
+  }
 
   switch (btn.id) {
     case 'dm-rescan-btn': rescan(domain.slug); return;
     case 'dm-confirm-yes': {
-      const run = state.confirm && state.confirm.run;
-      state.confirm = null;
-      if (run) dispatchHealthAction(() => run());
+      const asked = state.confirm;
+      if (!asked || asked.busy) return;
+      asked.busy = true;
+      render(myMountToken);
+      // Closed by the outcome being filed, or here when the action has none (a
+      // scan's result is its own card) or opened the next question itself.
+      dispatchHealthAction(() => Promise.resolve(asked.run ? asked.run() : undefined).finally(() => {
+        if (state.confirm === asked) { state.confirm = null; render(myMountToken); }
+      }));
       return;
     }
     case 'dm-confirm-no': state.confirm = null; render(myMountToken); return;
@@ -8212,7 +8837,7 @@ function onHealthClick(e) {
       requestSettingsSection('health');
       navigate('settings');
       return;
-    case 'dm-plan-apply-btn': dispatchHealthAction(() => applyPendingPlan(domain.slug)); return;
+    case 'dm-plan-apply-btn': planLeaving = true; dispatchHealthAction(() => applyPendingPlan(domain.slug)); return;
     case 'dm-plan-discard-btn': state.pendingPlan = null; render(myMountToken); return;
     case 'dm-semantic-merge-btn': dispatchHealthAction(() => mergeSemanticDuplicates(domain.slug)); return;
     // Through the same door as Find duplicate pages, so the first-use disclosure holds.
@@ -8244,7 +8869,16 @@ function onHealthClick(e) {
       const pair = scan.pairs.find((p) => semanticPairKey(p) === key);
       if (!pair) return undefined;
       if (action === 'preview') return previewSemanticPair(domain.slug, pair);
-      if (action === 'flip') { flipSemanticPair(pair); render(myMountToken); return undefined; }
+      if (action === 'flip') {
+        flipSemanticPair(pair);
+        // Flip finishes at once, so its answer is its own label for a moment.
+        const flash = sortedPairKey(key);
+        state.flipFlash = flash;
+        state.healthLive = 'Flipped. Keeps ' + pair.removeSlug + '.';
+        render(myMountToken);
+        setTimeout(() => { if (state.flipFlash === flash) { state.flipFlash = null; render(myMountToken); } }, HEALTH_HOLD_MS);
+        return undefined;
+      }
       if (action === 'merge') return mergeOneSemanticPair(domain.slug, pair);
       if (action === 'skip') return skipSemanticPair(domain.slug, pair);
       return undefined;
@@ -8286,6 +8920,14 @@ function onHealthToggle(e) {
   if (!el || !el.dataset || !el.dataset.groupKey || !el.classList.contains('dm-group')) return;
   const key = el.dataset.groupKey;
   if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
+  releaseHeldRows(e.currentTarget, (row) => el === row || el.contains(row), healthRowKey);
+  // A question inside a fold that just closed would be a question behind a
+  // chevron (v3.16.1): the paint moves it out from under the row.
+  const anchored = 'group:' + key;
+  if ((state.confirm && state.confirm.anchor === anchored) || (state.pendingPlan && state.pendingPlan.anchor === anchored) ||
+      (state.rowLines && state.rowLines[anchored])) {
+    render(myMountToken);
+  }
   if (key === 'dismissed' && el.open && state.dismissedRecords === null) {
     loadDismissedRecords(e.currentTarget.__dmHealthDomain.slug).catch(reportAsyncActionFailure);
   }
@@ -8295,8 +8937,12 @@ function rescan(slug) {
   // Slug-gated like the re-entry path, never a hardcoded `true`: a rescan
   // is the same domain by construction, but hardcoding that makes the
   // guarantee depend on the caller staying correct forever.
+  state.healthLive = 'Scanning the wiki.';
   loadHealth(slug, myMountToken, {
     keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, slug),
+  }).then(() => {
+    state.healthLive = 'Scan finished.';
+    render(myMountToken);
   }).catch(reportAsyncActionFailure);
 }
 
@@ -8415,18 +9061,20 @@ function markAiDisclosureSeen() {
 // ensureAiDisclosure() -> runAiSuggest() two-step exactly.
 function confirmAiAction(slug, action) {
   const dispatch = () => {
-    if (action === 'brokenLinks') confirmBrokenLinksPlan(slug);
-    else if (action === 'orphans') confirmOrphansPlan(slug);
-    else if (action === 'semanticDupes') confirmSemanticScan(slug);
+    if (action === 'brokenLinks') return confirmBrokenLinksPlan(slug);
+    if (action === 'orphans') return confirmOrphansPlan(slug);
+    if (action === 'semanticDupes') return confirmSemanticScan(slug);
+    return undefined;
   };
-  if (aiDisclosureSeen()) { dispatch(); return; }
+  if (aiDisclosureSeen()) return dispatch();
   state.confirm = {
     title: 'Before you use an AI action',
     body: AI_DISCLOSURE_COPY,
     confirmLabel: 'Continue',
-    run: () => { markAiDisclosureSeen(); dispatch(); },
+    run: () => { markAiDisclosureSeen(); return dispatch(); },
   };
   render(myMountToken);
+  return undefined;
 }
 
 function onQuickAction(slug, action) {
@@ -8445,6 +9093,9 @@ function confirmFixSafe(slug) {
   // "Fix all" for the very same issues counted the pages and warned. The
   // count comes from the same deletedPageCount the per-type confirm uses.
   const deletes = safeFixDeletedPages(state.health);
+  // FREE REPAIRS THAT DELETE NOTHING DO NOT ASK (owner's decision, 2026-11-05):
+  // see confirmFixAllOfType. This one asks only when it would delete a page.
+  if (deletes === 0) return runFixSafe(slug);
   state.confirm = {
     title: 'Fix ' + pluralize(total, 'safe issue') + '?',
     body: 'Applies deterministic repairs only — cross-folder duplicates, hyphen variants, folder-prefix links, ' +
@@ -8452,10 +9103,12 @@ function confirmFixSafe(slug) {
       (deletes > 0
         ? 'The duplicates and hyphen variants are MERGED: ' + pluralize(deletes, 'page') + ' will be deleted. ' + GIT_UNDO_WARN
         : GIT_UNDO_NOTE),
-    confirmLabel: deletes > 0 ? 'Fix and delete' : 'Fix now',
+    confirmLabel: 'Fix and delete',
+    busyLabel: 'Working…',
     run: () => runFixSafe(slug),
   };
   render(myMountToken);
+  return undefined;
 }
 
 // Every `run*`/`apply*`/`merge*` action below follows the same shape:
@@ -8491,9 +9144,15 @@ async function runFixSafe(slug) {
     // after it is caught by this same try's `finally`.
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — see the module-level comment above
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix-all-safe', { method: 'POST' });
-    if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'Fixed ' + result.fixed + ' of ' + result.total + ' safe issues.' };
+    if (isCurrentMount(token)) {
+      const whole = result.fixed === result.total;
+      state.rowNote = whole
+        ? { key: 'chip:fixSafe', held: true, tone: 'success', text: 'Repaired ' + result.fixed, drop: { safe: true } }
+        : { tone: 'error', text: 'Repaired ' + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) + ' could not be repaired.',
+            retry: () => confirmFixSafe(slug) };
+    }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not fix safe issues — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not repair: ' + err.message, retry: () => confirmFixSafe(slug) };
   } finally {
     inFlightWriteSlugs.delete(slug); // unconditional — the real write actually finished
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as the delete() above
@@ -8506,19 +9165,20 @@ async function runFixSafe(slug) {
 
 // ── Single-category "Fix all N" (free, deterministic) ──────────────────────
 
-// Per-section "Fix all N" — confirm first.
+// Per-section "Fix all N": a repair that deletes a page asks first, and only that.
 //
-// The global "Fix N safe issues" button has always confirmed; this one did
-// not, and it is the MORE dangerous of the two: `crossFolderDupes` and
-// `hyphenVariants` both MERGE two pages and DELETE one of them. A user
-// reported reaching a file-deleting merge in one click, with no dialog.
+// The reason for asking is the two types that delete: `crossFolderDupes` and
+// `hyphenVariants` both MERGE two pages and DELETE one of them, and a user
+// reported reaching a file-deleting merge in one click, with no dialog. Those
+// stay gated, with the page count and the undo warning.
 //
-// Every fix-all is gated (not only the two destructive types) so the two
-// bulk-fix surfaces behave the same way — an inconsistent gate is the thing
-// that makes a destructive click feel safe. Reuses the SAME state.confirm /
-// renderConfirmCard() plumbing as confirmFixSafe and every cost-before-action
-// dialog in this view; #dm-confirm-yes / #dm-confirm-no are already wired
-// unconditionally in bindHealthListeners.
+// EVERY FIX ALL USED TO BE GATED, deliberately ("an inconsistent gate is the
+// thing that makes a destructive click feel safe"). THE OWNER REVERSED THAT ON
+// 2026-11-05: a free repair that deletes nothing now runs on the press, with its
+// result on the row. The question those confirms asked said nothing useful, and
+// answering it is what made the page feel unresponsive. The words now carry the
+// difference instead: the deleting confirm says how many pages go, and its button
+// says "Merge and delete". A press on a gated Fix all still only asks.
 const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
 
 // ── AN ISSUE IS NOT A PAGE, AND FOR ONE TYPE IT IS NOT EVEN A PAIR ───────
@@ -8567,27 +9227,27 @@ function confirmFixAllOfType(slug, type) {
   const cat = HEALTH_CATEGORIES.find((c) => c.key === type);
   const issues = (state.health && state.health[type]) || [];
   const count = type === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
-  if (count === 0) return;
+  if (count === 0) return undefined;
+  if (!DESTRUCTIVE_FIX_TYPES.has(type)) return fixAllOfType(slug, type);
 
   const label = cat ? cat.label.toLowerCase() : type;
   // "group", not "pair": one hyphen-variant issue can hold three or more
   // slugs, and "pair" told the user the wrong thing about the SHAPE as well
   // as the count.
-  const body = DESTRUCTIVE_FIX_TYPES.has(type)
-    ? 'This MERGES each group and DELETES the duplicate pages, then repoints every '
+  const body = 'This MERGES each group and DELETES the duplicate pages, then repoints every '
       + '[[link]] that pointed at them. ' + pluralize(deletedPageCount(type, issues), 'page')
       + ' will be deleted. '
-      + GIT_UNDO_WARN
-    : 'Applies the deterministic repair to every ' + label.replace(/s$/, '')
-      + ' listed here. No AI tokens are spent. ' + GIT_UNDO_NOTE;
+      + GIT_UNDO_WARN;
 
   state.confirm = {
     title: 'Fix all ' + count + ' ' + label + '?',
     body,
-    confirmLabel: DESTRUCTIVE_FIX_TYPES.has(type) ? 'Merge and delete' : 'Fix now',
+    confirmLabel: 'Merge and delete',
+    busyLabel: 'Merging…',
     run: () => fixAllOfType(slug, type),
   };
   render(myMountToken);
+  return undefined;
 }
 
 async function fixAllOfType(slug, type) {
@@ -8607,9 +9267,21 @@ async function fixAllOfType(slug, type) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type }),
     });
-    if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'Fixed ' + result.fixed + ' of ' + result.total + '.' };
+    if (isCurrentMount(token)) {
+      const merges = DESTRUCTIVE_FIX_TYPES.has(type);
+      state.rowNote = result.fixed === result.total
+        ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, drop: { type } }
+        : { key: 'group:' + type, tone: 'error',
+            text: (merges ? 'Merged ' : 'Repaired ') + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) +
+              (merges ? ' could not be merged.' : ' could not be repaired.'),
+            retry: () => confirmFixAllOfType(slug, type) };
+    }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not fix — ' + err.message };
+    if (isCurrentMount(token)) {
+      state.rowNote = { key: 'group:' + type, tone: 'error',
+        text: (DESTRUCTIVE_FIX_TYPES.has(type) ? 'Could not merge: ' : 'Could not repair: ') + err.message,
+        retry: () => confirmFixAllOfType(slug, type) };
+    }
   } finally {
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix
@@ -8635,6 +9307,7 @@ function confirmBrokenLinksPlan(slug) {
       (est && est.needAi === 1 ? '' : 's') + ' that need AI (' + (est && !est.error ? est.resolveFree : 0) + ' resolve for free locally). ' +
       'This only builds a plan — nothing is written yet.',
     confirmLabel: 'Build plan',
+    busyLabel: 'Planning…',
     // The run line first (v3.67.0): the estimate route's own runsOn when it
     // sent one, else the resting model from the ai-available probe.
     runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
@@ -8694,7 +9367,8 @@ function emptyPlanNotice(kind, summary, batchErrors) {
 async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
-  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
+  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
+  // one stays: it stands above the pairs, and blanking it moved them (press rule).
   state.progressText = 'Planning…';
   state.aiProgress = null;
   render(token);
@@ -8723,12 +9397,12 @@ async function runBrokenLinksPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (plan.length === 0) {
       state.pendingPlan = null;
-      state.banner = { tone: 'info', text: emptyPlanNotice('brokenLinks', result.summary, batchErrors) };
+      state.rowNote = { tone: 'info', text: emptyPlanNotice('brokenLinks', result.summary, batchErrors) };
     } else {
       state.pendingPlan = { kind: 'brokenLinks', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') };
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -8749,6 +9423,7 @@ function confirmOrphansPlan(slug) {
       (est && !est.error ? ' (' + est.inventorySize + ' entries)' : '') + ' to ' + provider + (model ? '/' + model : '') +
       '. Estimated cost ' + (cost || 'unknown') + '. This only builds a plan — nothing is written yet.',
     confirmLabel: 'Build plan',
+    busyLabel: 'Planning…',
     runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
     run: () => runOrphansPlan(slug),
   };
@@ -8758,7 +9433,8 @@ function confirmOrphansPlan(slug) {
 async function runOrphansPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'orphansPlan';
-  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
+  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
+  // one stays: it stands above the pairs, and blanking it moved them (press rule).
   state.aiProgress = null;
   render(token);
   try {
@@ -8780,12 +9456,12 @@ async function runOrphansPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (plan.length === 0) {
       state.pendingPlan = null;
-      state.banner = { tone: 'info', text: emptyPlanNotice('orphans', result.summary, batchErrors) };
+      state.rowNote = { tone: 'info', text: emptyPlanNotice('orphans', result.summary, batchErrors) };
     } else {
       state.pendingPlan = { kind: 'orphans', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message, retry: () => onQuickAction(slug, 'orphans') };
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -8804,12 +9480,12 @@ async function runIndexRebuildPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (!result || result.nothingToDo) {
       state.pendingPlan = null;
-      state.banner = { tone: 'info', text: 'index.md already lists every page.' };
+      state.rowNote = { tone: 'info', text: 'index.md already lists every page.' };
     } else {
       state.pendingPlan = { kind: 'indexRebuild', basis: result.basis, summary: result.summary, samples: result.samples };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message, retry: () => runIndexRebuildPlan(slug) };
   } finally {
     state.busyKey = null;
   }
@@ -8834,16 +9510,16 @@ async function applyIndexRebuildPlan(slug) {
     });
     if (isCurrentMount(token)) {
       const s = (result && result.summary) || {};
-      state.banner = result && result.written === false
+      state.rowNote = result && result.written === false
         ? { tone: 'info', text: 'index.md already lists every page.' }
         : { tone: 'success', text: 'Index rebuilt — added ' + countOf(s.add, 'page', 'pages') + ' and removed '
             + countOf(s.removeStale, 'stale row', 'stale rows') + '. index.md is now ' + fmtKB(s.bytesAfter) + '.' };
     }
   } catch (err) {
     if (isCurrentMount(token)) {
-      state.banner = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
+      state.rowNote = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
         ? { tone: 'info', text: err.message }
-        : { tone: 'error', text: 'Could not rebuild the index — ' + err.message };
+        : { tone: 'error', text: 'Could not rebuild the index — ' + err.message, retry: () => runIndexRebuildPlan(slug) };
     }
   } finally {
     if (isCurrentMount(token)) state.pendingPlan = null;
@@ -8873,7 +9549,7 @@ async function applyPendingPlan(slug) {
   const pendingCount = Array.isArray(p.plan) ? p.plan.length : 0;
   if (pendingCount === 0) {
     state.pendingPlan = null;
-    state.banner = { tone: 'info', text: emptyPlanNotice(p.kind, p.summary, 0) };
+    state.rowNote = { tone: 'info', text: emptyPlanNotice(p.kind, p.summary, 0) };
     render(token);
     return;
   }
@@ -8928,13 +9604,13 @@ async function applyPendingPlan(slug) {
             + ' had a proposed target that did not pass the safety check, so the brackets'
             + ' were removed instead of pointing at the wrong page.';
         }
-        state.banner = { tone: 'success', text };
+        state.rowNote = { tone: 'success', text };
       } else {
-        state.banner = { tone: 'success', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
+        state.rowNote = { tone: 'success', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
       }
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not apply the plan — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not apply the plan — ' + err.message, retry: () => onQuickAction(slug, kind) };
   } finally {
     // MEDIUM-4 fix (re-audit): unlike busyKey (which must ALWAYS reset —
     // see the H2 fix note above — or a button stays disabled forever),
@@ -9000,7 +9676,8 @@ async function confirmSemanticScan(slug) {
   const est = state.estimates.semanticDupes;
   if (!est) { render(token); return; } // domain changed before the estimate ever resolved
   if (est.error) {
-    state.banner = { tone: 'error', text: 'Could not estimate the duplicate scan — ' + est.error };
+    delete state.estimates.semanticDupes;
+    state.rowNote = { tone: 'error', text: 'Could not estimate the duplicate scan — ' + est.error, retry: () => onQuickAction(slug, 'semanticDupes') };
     render(token);
     return;
   }
@@ -9008,7 +9685,7 @@ async function confirmSemanticScan(slug) {
     // Everything already checked: nothing to send, so no spend and no confirm.
     // The scan makes no provider call and brings back what it found before.
     if (est.totalPairs > 0) return runSemanticScan(slug);
-    state.banner = { tone: 'info', text: 'No likely duplicate candidates found — nothing to scan.' };
+    state.rowNote = { tone: 'info', text: 'No likely duplicate candidates found — nothing to scan.' };
     render(token);
     return;
   }
@@ -9024,6 +9701,7 @@ async function confirmSemanticScan(slug) {
     // button beside a price would be a control whose only outcome is an error
     // banner. The confirm's other door goes to the limits instead.
     confirmLabel: reading.refused ? null : 'Scan now',
+    busyLabel: 'Scanning…',
     refused: reading.refused,
     settingsLabel: reading.refused ? 'Open scan limits' : null,
     runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
@@ -9089,11 +9767,12 @@ function semanticScanConfirmText(est, runsOnName, cost) {
 async function runSemanticScan(slug) {
   const token = myMountToken;
   state.busyKey = 'semanticDupesScan';
-  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
+  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
+  // one stays: it stands above the pairs, and blanking it moved them (press rule).
   state.aiProgress = null;
   // What it quoted is about to stop being true, and so is a previous run's failure.
   delete state.estimates.semanticDupes;
-  state.banner = null;
+  state.rowNote = null;
   render(token);
   try {
     let result = null;
@@ -9110,13 +9789,15 @@ async function runSemanticScan(slug) {
     if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
     if (isCurrentMount(token)) {
       state.semanticScan = newSemanticScan(slug, Object.assign({}, result, { candidatePairsSent: sent }));
+      // Said on the question that was answered; the list itself is under it.
+      state.rowNote = { key: 'scan-done', held: true, tone: 'success', text: 'Checked ' + sent.toLocaleString('en-US') + ' ' + (sent === 1 ? 'pair' : 'pairs') + '.' };
       // A failed batch remembers nothing, so its pairs stay in the "still to
       // check" count. Part of a run failing is a notice in the card, which says
       // so; all of it failing is this banner.
-      if (firstBatchError && state.semanticScan.failedAll) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError };
+      if (firstBatchError && state.semanticScan.failedAll) state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') };
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9143,9 +9824,9 @@ async function runSemanticReset(slug) {
     // The list goes with what it stood on: the batch would refuse every pair on it.
     const scan = activeSemanticScan();
     if (scan) state.semanticScan = null;
-    if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' };
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not check everything again — ' + err.message };
+    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not check everything again — ' + err.message, retry: () => confirmSemanticReset(slug) };
   }
   render(token);
 }
@@ -9168,6 +9849,7 @@ function mergeSemanticDuplicates(slug) {
       'domain to it, and deletes the removed file. Nothing else changes. ' +
       'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.',
     confirmLabel: 'Merge now',
+    busyLabel: 'Merging…',
     // NOTE the missing argument: the pair list is NOT captured here. The
     // confirm card renders inline, so Flip / Skip / single-Merge stay
     // clickable while it is open — capturing `batch` now would merge a pair
@@ -9280,10 +9962,12 @@ async function mergeOneSemanticPair(slug, pair) {
         // cards whose Preview failed and whose Merge stayed gated.
         const alsoResolved = resolvePairsTouching(
           activeSemanticScan(), { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
-        state.banner = {
+        state.rowNote = {
+          key: 'pair:' + key.split('||').sort().join('||'),
+          held: true,
           tone: 'success',
-          text: 'Merged ' + pair.removeSlug + ' → ' + pair.keepSlug + '.' +
-            (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' resolved with it.' : ''),
+          text: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' +
+            (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' settled.' : ''),
         };
       }
     }
@@ -9292,7 +9976,7 @@ async function mergeOneSemanticPair(slug, pair) {
       // A 409 is a REFUSAL, not a failure — render it as its own visible
       // message on the pair the user clicked, never a silent button reset.
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not merge — ' + c.error });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not merge — ' + c.error, errorAction: 'merge' });
     }
   } finally {
     inFlightWriteSlugs.delete(slug);
@@ -9332,14 +10016,24 @@ async function skipSemanticPair(slug, pair) {
         },
       }),
     });
-    if (isCurrentMount(token)) markSemanticPairStatus(pair, 'skipped');
+    if (isCurrentMount(token)) {
+      markSemanticPairStatus(pair, 'skipped');
+      state.rowNote = {
+        key: 'pair:' + key.split('||').sort().join('||'),
+        held: true,
+        tone: 'success',
+        text: 'Kept ' + pair.removeSlug + ' and ' + pair.keepSlug + ' apart. They will not come back.',
+        drop: { dismissed: true },
+      };
+    }
     // A Skip IS a dismissal record: the loaded Dismissed list is stale now,
-    // exactly as it is after dismissIssue (v3.72.1, F5).
-    state.dismissedRecords = null;
+    // exactly as it is after dismissIssue (v3.72.1, F5). An open list is read
+    // again below, rather than going to a loader nothing refills.
+    if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not skip — ' + c.error });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not skip — ' + c.error, errorAction: 'skip' });
     }
   } finally {
     state.busyKey = null;
@@ -9347,6 +10041,7 @@ async function skipSemanticPair(slug, pair) {
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+  if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   revealSemanticMessage(key);
 }
 
@@ -9367,6 +10062,7 @@ function setSemanticPairMessage(key, msg) {
   scan.pairs[idx] = Object.assign({}, scan.pairs[idx], {
     refusal: msg.refusal || null,
     error: msg.error || null,
+    errorAction: msg.errorAction || null,
   });
 }
 
@@ -9378,7 +10074,7 @@ async function runMergeSemanticDuplicates(slug) {
   // skip one (dismissing it), and both must be honoured.
   const pairs = liveBatchPairs().map(toWirePair);
   if (pairs.length === 0) {
-    state.banner = { tone: 'info', text: 'Nothing left to merge — every spelling variant has been handled.' };
+    state.rowNote = { tone: 'info', text: 'Nothing left to merge — every spelling variant has been handled.' };
     render(token);
     return;
   }
@@ -9438,7 +10134,7 @@ async function runMergeSemanticDuplicates(slug) {
       const merged = result.merged || 0;
       const total = result.total || pairs.length;
       const refused = result.ineligible || 0;
-      state.banner = {
+      state.rowNote = {
         tone: 'success',
         text: refused > 0
           ? 'Merged ' + merged + ' of ' + total + ' spelling ' + (total === 1 ? 'variant' : 'variants') + '. ' + refused + ' now ' + (refused === 1 ? 'needs' : 'need') + ' your Preview.'
@@ -9448,9 +10144,9 @@ async function runMergeSemanticDuplicates(slug) {
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      state.banner = c.refusal
-        ? { tone: 'error', text: c.refusal }
-        : { tone: 'error', text: 'Could not merge duplicates — ' + c.error };
+      state.rowNote = c.refusal
+        ? { tone: 'error', text: c.refusal, retry: () => mergeSemanticDuplicates(slug) }
+        : { tone: 'error', text: 'Could not merge duplicates — ' + c.error, retry: () => mergeSemanticDuplicates(slug) };
     }
   } finally {
     // The scan is NO LONGER discarded here. It used to be, and that made
@@ -9476,36 +10172,50 @@ async function runMergeSemanticDuplicates(slug) {
 
 async function dismissIssue(slug, type, issue) {
   const token = myMountToken;
+  const rowKey = 'issue:' + type + ':' + JSON.stringify(issue);
+  state.rowBusy.add(rowKey);
+  render(token);
   try {
     await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/dismiss', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, issue }),
     });
-    state.dismissedRecords = null;
+    state.rowBusy.delete(rowKey);
+    if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
     if (!isCurrentMount(token)) return;
-    await loadHealth(slug, token, { silent: true });
+    state.rowNote = { key: rowKey, held: true, tone: 'success', text: 'Left as is.', drop: { type, issue, dismissed: true } };
+    await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+    if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
+    state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
-    state.banner = { tone: 'error', text: 'Could not dismiss — ' + err.message };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => dismissIssue(slug, type, issue) };
     render(token);
   }
 }
 
 async function undismissIssue(slug, record) {
   const token = myMountToken;
+  const rowKey = 'restore:' + JSON.stringify(record);
+  state.rowBusy.add(rowKey);
+  render(token);
   try {
     await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/undismiss', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: record.type, issue: record }),
     });
-    state.dismissedRecords = null;
+    state.rowBusy.delete(rowKey);
+    if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
     if (!isCurrentMount(token)) return;
-    await loadHealth(slug, token, { silent: true });
+    state.rowNote = { key: rowKey, held: true, tone: 'success', text: 'Brought back.', drop: { restored: record } };
+    await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+    if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
+    state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
-    state.banner = { tone: 'error', text: 'Could not restore — ' + err.message };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => undismissIssue(slug, record) };
     render(token);
   }
 }
@@ -9649,9 +10359,16 @@ function restoreOpenInfoPanels(ids) {
 function render(token) {
   const openInfo = captureOpenInfoPanels();
   captureCardReserve();
+  takeHealthNote(token);
+  placeHealthStack();
   renderSidebar(token);
   renderMain(token);
   restoreOpenInfoPanels(openInfo);
+  applyPressLocks();
+  markHealthOpener();
+  moveHealthFocusForQuestion();
+  announceHealthBusy();
+  paintHealthLive();
 }
 
 registerView('domains', {
@@ -9788,6 +10505,7 @@ registerView('domains', {
       quiescedWhileBusy = false;
       state.confirm = null;
       state.pendingPlan = null;
+      resetHealthPressRule();
       // NOT `state.semanticScan = null` any more. That discarded an LLM-
       // BILLED result on a rail click and made the user pay again. The paid
       // pair list is kept (stamped with its domain, and LAYER 2 refuses it
