@@ -433,10 +433,14 @@ function analyse(raw, ctx) {
   let snap = 0;
   raw.lms.forEach((l, i) => {
     if (l.rel !== 'below') return;
-    const tops = fr.map((f) => f.lm[i] && f.lm[i][0]).filter((v) => v != null);
+    const seen = fr.filter((f) => f.lm[i]);
+    const tops = seen.map((f) => f.lm[i][0]);
     if (tops.length < 2) return;
     let biggest = 0; let total = 0;
-    for (let k = 1; k < tops.length; k++) { const d = Math.abs(tops[k] - tops[k - 1]); biggest = Math.max(biggest, d); }
+    // A jump seen across a long frame proves nothing: the page was busy and the sampler
+    // simply did not get to look (measured: an animated row read as a 12 px "snap" in
+    // about one run in ten, across a 70 ms frame). Only consecutive frames can convict.
+    for (let k = 1; k < tops.length; k++) { if (seen[k].t - seen[k - 1].t > 40) continue; const d = Math.abs(tops[k] - tops[k - 1]); biggest = Math.max(biggest, d); }
     total = Math.max(...tops.map((t) => Math.abs(t - tops[0])));
     if (total > 4 && biggest >= total - 0.5 && total > snap) { snap = Math.round(total); ctx.snapWho = l.name; }
   });
@@ -515,7 +519,7 @@ async function act(app, profile, name, o) {
     let over = 0;
     if (h) for (const e of h.querySelectorAll('*')) {
       let skip = false; for (let p = e.parentElement; p && p !== h; p = p.parentElement) { const ov = getComputedStyle(p).overflowX; if (ov !== 'visible') { skip = true; break; } }
-      if (skip) continue; const r = e.getBoundingClientRect(); if (r.width > 0 && r.right - hr.right > over) { over = r.right - hr.right; }
+      if (skip) continue; const r = e.getBoundingClientRect(); if (r.width > 0 && r.right - hr.right > over) { over = r.right - hr.right; window.__overBy = e.tagName + '.' + String(e.className).split(' ')[0]; }
     }
     over = Math.max(over, document.documentElement.scrollWidth - innerWidth);
     if (!found) return { found: false, over: Math.round(over) };
@@ -527,6 +531,7 @@ async function act(app, profile, name, o) {
   if (a.m.outcomeOffscreen === undefined) a.m.outcomeOffscreen = (out.found && out.inView) ? 0 : 1;
   if (a.m.outcomeDistancePx === undefined) a.m.outcomeDistancePx = out.found ? out.dist : 9999;
   a.m.overflowPx = out.over;
+  if (out.over > 1) note(`[${profile.name}] ${name}: what pokes out: ${await page.evaluate(() => window.__overBy)}`);
   if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); const sh = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${profile.name}-${name}-after.png`), Buffer.from(sh.data, 'base64')); }
   store[name] = a.m; (DETAIL[profile.name] ||= {})[name] = { goneMs: a.goneMs, focusEnd: a.focusEnd, outcome: out, lost: a.lostNames.slice(0, 6), rootLost: a.rootLost };
   console.log(`    ${name.padEnd(18)} ${Object.entries(a.m).map(([k, v]) => k.replace(/Px$/, '').replace(/^outcome/, 'out') + '=' + v).join(' ')}  focus=${a.focusEnd.slice(0, 24)}${a.m.aboveMovePx > 1 ? ' above:' + a.aboveWho : ''}${a.m.belowSnapPx ? ' snap:' + o.snapWho : ''}`);

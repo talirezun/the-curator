@@ -1873,6 +1873,12 @@
   color: var(--text-2);
 }
 .dm-health-trace { flex: 1 1 0; text-align: right; align-self: center; line-height: 1; }
+/* At phone width the head has no room beside the title for even short words: its own
+   line, kept empty until it has something, so nothing ever moves to make room. */
+@media (max-width: 640px) {
+  .dm-health .dm-section-hd { flex-wrap: wrap; }
+  .dm-health-trace { flex: 1 0 100%; text-align: left; min-height: 1em; }
+}
 .dm-rescan-note { flex: 1 1 0; align-self: center; }
 .dm-health .dm-health-top { flex-wrap: nowrap; }
 .dm-health .dm-health-top > .btn { flex: none; }

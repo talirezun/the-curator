@@ -7197,10 +7197,12 @@ function healthSection(inner) {
       renderSectionTitle({ num: 5, title: 'Wiki health', alias: 'dm',
         // The trace: what was just done stays here after its row has left. One
         // line, whatever its length, so it can never move the rows under it.
-        infoBtnHtml: HEALTH_INFO.btn + (st.healthTrace && st.healthTrace.slug === st.activeSlug
-          ? '<span class="dm-health-trace">' + escapeHtml(st.healthTrace.text) + ' ' +
-              '<span data-age-at="' + escapeHtml(st.healthTrace.at) + '" data-age-text>just now</span></span>'
-          : '') }) +
+        // The slot is always there, empty or not: at phone width it is its own line,
+        // and one that appeared later would push everything under it down.
+        infoBtnHtml: HEALTH_INFO.btn + '<span class="dm-health-trace">' + (st.healthTrace && st.healthTrace.slug === st.activeSlug
+          ? escapeHtml(st.healthTrace.text) + ' ' +
+              '<span data-age-at="' + escapeHtml(st.healthTrace.at) + '" data-age-text>just now</span>'
+          : '') + '</span>' }) +
       HEALTH_INFO.panel +
       inner +
       // ONE polite live region, for progress and outcome. It is here in every
