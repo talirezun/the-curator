@@ -382,7 +382,6 @@ const SAMPLER = String.raw`(() => {
           const u = document.elementFromPoint(cfg.pointer.x, cfg.pointer.y); const b = u && u.closest('button');
           f.ptr = b ? { label: label(b), disabled: !!b.disabled, sig: sigOf(b), same: p === b } : null;
         }
-        if (window.__dbgOn) { const c=document.querySelector('.dm-health'); if(c) f.kids=[...c.parentElement.children,...c.querySelectorAll('.dm-health-card > *, .dm-quick > *, .dm-quick .cur-action-run > *')].filter(k=>!k.classList.contains('cur-section-head')&&!k.classList.contains('tx-vh')&&!k.classList.contains('dm-path-eyebrow')).map(k=>(k.dataset.groupKey||k.dataset.rowKey||k.className.split(' ').slice(0,2).join('.'))+(k.hasAttribute('data-row-leaving')?'[L]':'')+':'+Math.round(k.getBoundingClientRect().top)+'+'+Math.round(k.getBoundingClientRect().height)).join(' | '); }
         s.frames.push(f);
         requestAnimationFrame(tick);
       };
@@ -495,16 +494,12 @@ async function act(app, profile, name, o) {
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await delay(60);
   }
   await page.evaluate((cfg) => window.__hs.begin(cfg), { press: o.press, main: SEL.main, viewRoot: SEL.viewRoot, health: SEL.health, rows: SEL.rows, landmarks: SEL.landmarks, live: SEL.live, pointer: { x, y }, outcome: o.outcome || [] });
-  await page.evaluate(()=>{window.__dbgOn=true; if(!window.__errs){window.__errs=[]; addEventListener('error',(e)=>window.__errs.push(String(e.message)+' @'+e.lineno)); addEventListener('unhandledrejection',(e)=>window.__errs.push('rej '+String(e.reason&&e.reason.stack||e.reason))); const ce=console.error; console.error=(...a)=>{window.__errs.push('ce '+a.map(String).join(' ').slice(0,400)); ce(...a);};}});
-  if (process.env.HDBG && name.includes(process.env.HDBG)) console.log('PRE', JSON.stringify(await page.evaluate((x,y,s)=>{ window.__clk=[]; for (const t of ['mousedown','mouseup','click']) document.addEventListener(t,(e)=>window.__clk.push(t+':'+e.target.tagName+'.'+e.target.className+' y='+e.clientY+' btn='+JSON.stringify(document.querySelector('#dm-plan-apply-btn')&&document.querySelector('#dm-plan-apply-btn').getBoundingClientRect())),true); const u=document.elementFromPoint(x,y); const e=document.querySelector(s); return {at:u&&u.outerHTML.slice(0,200), el:e&&e.outerHTML.slice(0,240), n:document.querySelectorAll(s).length, leaving:e&&!!e.closest('[data-row-leaving]'), r:e&&e.getBoundingClientRect(), x,y};},x,y,o.press)));
   await page.click(x, y, { settleMs: 20 });
   if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); const sh = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${profile.name}-${name}-during.png`), Buffer.from(sh.data, 'base64')); }
   if (o.until) await waitFor(page, o.until, name, o.untilTries || 600, ...(o.args || []));
   await delay(o.settle ?? 600);
   const raw = await page.evaluate(() => window.__hs.end());
-  if (process.env.HDBG && name.includes(process.env.HDBG)) { console.log('OUT', JSON.stringify((raw.frames.find((f) => f.out) || {}).out), 'pressY', y); const fs=raw.frames; const seen=new Set(); for (const f of fs){ if(f.kids&&!seen.has(f.kids)){seen.add(f.kids); console.log(Math.round(f.t-raw.tDown), f.sc, f.kids);} } }
   const actx = { ...o, reduced: !!profile.reduced, pressY: y, viewH: profile.h }; const a = analyse(raw, actx); o.snapWho = actx.snapWho;
-  if (process.env.HDBG) { const e = await page.evaluate(()=>{const x=window.__errs||[]; window.__errs=[]; return {x, over:window.__overBy};}); if (e.x.length) console.log('ERRS', name, JSON.stringify(e.x).slice(0,800)); }
   // outcome + overflow, measured after the settle
   const out = await page.evaluate((sels, pressY, healthSel) => {
     let found = null;
@@ -513,7 +508,7 @@ async function act(app, profile, name, o) {
     let over = 0;
     if (h) for (const e of h.querySelectorAll('*')) {
       let skip = false; for (let p = e.parentElement; p && p !== h; p = p.parentElement) { const ov = getComputedStyle(p).overflowX; if (ov !== 'visible') { skip = true; break; } }
-      if (skip) continue; const r = e.getBoundingClientRect(); if (r.width > 0 && r.right - hr.right > over) { over = r.right - hr.right; window.__overBy = e.tagName + '.' + e.className; }
+      if (skip) continue; const r = e.getBoundingClientRect(); if (r.width > 0 && r.right - hr.right > over) { over = r.right - hr.right; }
     }
     over = Math.max(over, document.documentElement.scrollWidth - innerWidth);
     if (!found) return { found: false, over: Math.round(over) };
@@ -524,10 +519,10 @@ async function act(app, profile, name, o) {
   // Seen at any moment during the action (a held row has gone by now), else now.
   if (a.m.outcomeOffscreen === undefined) a.m.outcomeOffscreen = (out.found && out.inView) ? 0 : 1;
   if (a.m.outcomeDistancePx === undefined) a.m.outcomeDistancePx = out.found ? out.dist : 9999;
-  a.m.overflowPx = out.over; if (process.env.HDBG && out.over) console.log('OVER', name, await page.evaluate(()=>window.__overBy));
+  a.m.overflowPx = out.over;
   if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); const sh = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${profile.name}-${name}-after.png`), Buffer.from(sh.data, 'base64')); }
   store[name] = a.m; (DETAIL[profile.name] ||= {})[name] = { goneMs: a.goneMs, focusEnd: a.focusEnd, outcome: out, lost: a.lostNames.slice(0, 6), rootLost: a.rootLost };
-  console.log(`    ${name.padEnd(18)} ${Object.entries(a.m).map(([k, v]) => k.replace(/Px$/, '').replace(/^outcome/, 'out') + '=' + v).join(' ')}  focus=${a.focusEnd.slice(0, 24)}${a.m.aboveMovePx > 1 ? ' above:' + a.aboveWho : ''}${a.m.belowSnapPx ? ' snap:' + o.snapWho : ''} sc:${a.m.scrollDeltaPx > 1 ? JSON.stringify(raw.frames.slice(0, 40).map((f) => f.sc)) : ''}`);
+  console.log(`    ${name.padEnd(18)} ${Object.entries(a.m).map(([k, v]) => k.replace(/Px$/, '').replace(/^outcome/, 'out') + '=' + v).join(' ')}  focus=${a.focusEnd.slice(0, 24)}${a.m.aboveMovePx > 1 ? ' above:' + a.aboveWho : ''}${a.m.belowSnapPx ? ' snap:' + o.snapWho : ''}`);
   return a.m;
 }
 async function openFoldsOn(page, keys) {

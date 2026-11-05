@@ -349,7 +349,7 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
   // v3.67.0 (package SD): `dm-quick-empty-text` went with the no-key row it
   // spaced (the AI actions now stay visible and disabled); `dm-quick-run`,
   // the run line's wrapper under the action bar, took its place.
-  for (const w of ['dm-sidebar-status', 'dm-health-summary', 'dm-browse-lead']) {
+  for (const w of ['dm-sidebar-status', 'dm-rescan-note', 'dm-browse-lead']) {
     ok(domainsCode.includes(w) && domainsCssCode.includes('.' + w),
        `.${w} exists in BOTH the markup and the stylesheet — a wrapper in one and not the other is dead spacing`);
   }
@@ -547,13 +547,15 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
   const revalidating = callOrFail('revalidating health panel', () =>
     render({ ...base, healthLoading: true }));
   if (revalidating) {
-    ok(revalidating.includes('Re-scanning… showing the previous result'),
+    ok(revalidating.includes('Showing the previous result'),
        'a rescan behind a cached report still SAYS the figures are the previous scan\'s');
-    ok(revalidating.includes('tx-status-attention'),
-       'and it says so as a STATUS — the caveat is a state, not a sentence prefixed to a measurement');
+    // It was an 82 px status box, and it pushed the whole card down and back on
+    // every rescan. It is one line now, in a slot that is always there.
+    ok(revalidating.includes('dm-rescan-note'),
+       'and it says so in its own fixed line, which no reading can make taller');
     // ORDER IS A PRIORITY ORDER. A caveat printed after the number it
     // qualifies has already been read too late.
-    ok(revalidating.indexOf('tx-status') < revalidating.indexOf('data-group-key="scan"'),
+    ok(revalidating.indexOf('dm-rescan-note') < revalidating.indexOf('data-group-key="scan"'),
        'the caveat renders BEFORE the figures it qualifies');
     // AND IT IS NOT IN THE FOLD. v3.16.1, unmoved: a warning, a cost or an
     // outcome may never sit behind a chevron. This one says the numbers below

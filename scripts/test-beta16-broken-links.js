@@ -759,14 +759,14 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     assert(st.pendingPlan === null,
       '/next orphans: an empty plan is NOT stored as a pending plan (no live "Apply" button over 0 actions)',
       JSON.stringify(st.pendingPlan));
-    assert(st.banner && st.banner.tone === 'info',
+    assert(st.rowNote && st.rowNote.tone === 'info',
       '/next orphans: an empty plan produces an INFO banner, not the red error the maintainer saw',
-      JSON.stringify(st.banner));
-    assert(st.banner && !/Missing plan/i.test(st.banner.text) && !/could not/i.test(st.banner.text),
-      '/next orphans: the message does not read as a failure', JSON.stringify(st.banner));
-    assert(st.banner && /manual review/i.test(st.banner.text) && /3 orphan pages/.test(st.banner.text),
+      JSON.stringify(st.rowNote));
+    assert(st.rowNote && !/Missing plan/i.test(st.rowNote.text) && !/could not/i.test(st.rowNote.text),
+      '/next orphans: the message does not read as a failure', JSON.stringify(st.rowNote));
+    assert(st.rowNote && /manual review/i.test(st.rowNote.text) && /3 orphan pages/.test(st.rowNote.text),
       '/next orphans: the message says what actually happened, with the real count',
-      JSON.stringify(st.banner));
+      JSON.stringify(st.rowNote));
     assert(s.__calls.length === 1 && s.__calls[0].url.endsWith('/orphans/plan'),
       '/next orphans: exactly ONE request — the plan; no apply was attempted',
       JSON.stringify(s.__calls.map((c) => c.url)));
@@ -784,7 +784,7 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     assert(st.pendingPlan && st.pendingPlan.kind === 'orphans' && st.pendingPlan.plan.length === 1,
       'CONTROL /next orphans: a NON-empty plan is still stored and offered for apply',
       JSON.stringify(st.pendingPlan));
-    assert(!st.banner, 'CONTROL /next orphans: a real plan raises no banner', JSON.stringify(st.banner));
+    assert(!st.rowNote, 'CONTROL /next orphans: a real plan raises no banner', JSON.stringify(st.rowNote));
     await s.applyPendingPlan('articles');
     assert(s.__calls.length === 2 && s.__calls[1].url.endsWith('/orphans/apply'),
       'CONTROL /next orphans: applying a real plan DOES POST to the apply route',
@@ -807,8 +807,8 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     assert(st.pendingPlan === null,
       '/next broken links: an empty plan is NOT stored either (the unreported half of the defect)',
       JSON.stringify(st.pendingPlan));
-    assert(st.banner && st.banner.tone === 'info' && /nothing was written/i.test(st.banner.text),
-      '/next broken links: informational, and says the wiki is unchanged', JSON.stringify(st.banner));
+    assert(st.rowNote && st.rowNote.tone === 'info' && /nothing was written/i.test(st.rowNote.text),
+      '/next broken links: informational, and says the wiki is unchanged', JSON.stringify(st.rowNote));
     assert(s.__calls.length === 1, '/next broken links: no apply attempted', String(s.__calls.length));
   }
 
@@ -820,9 +820,9 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     s.__setFrames([{ type: 'done', summary: { orphans: 2 } }]);
     await s.runOrphansPlan('articles');
     const st = s.__state();
-    assert(st.pendingPlan === null && st.banner && st.banner.tone === 'info',
+    assert(st.pendingPlan === null && st.rowNote && st.rowNote.tone === 'info',
       '/next: a done frame carrying no plan[] at all degrades to the notice, not a crash',
-      JSON.stringify(st.banner));
+      JSON.stringify(st.rowNote));
   }
 
   // ── (a5) honesty: "the AI declined" vs "the AI never answered" ───────────
@@ -830,7 +830,7 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     const s = buildNext();
     s.__setFrames(SYNTH([], { rescuable: 0, noHome: 3, orphans: 3 }, 2));
     await s.runOrphansPlan('articles');
-    const t = (s.__state().banner || {}).text || '';   // see the defensive-read note above
+    const t = (s.__state().rowNote || {}).text || '';   // see the defensive-read note above
     assert(/did not answer/i.test(t) && /2 batches/.test(t),
       '/next: when every AI batch failed, the message says the AI did not answer', t);
     assert(!/no confident home/i.test(t),
@@ -851,9 +851,9 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
       '/next: applyPendingPlan sends NOTHING for an empty plan — no POST, no file lock, no spend',
       JSON.stringify(s.__calls));
     const st = s.__state();
-    assert(st.banner && st.banner.tone === 'info',
+    assert(st.rowNote && st.rowNote.tone === 'info',
       '/next: and it is not a SILENT no-op — the user is told why nothing happened',
-      JSON.stringify(st.banner));
+      JSON.stringify(st.rowNote));
     assert(st.pendingPlan === null, '/next: the dead plan is discarded', JSON.stringify(st.pendingPlan));
   }
 

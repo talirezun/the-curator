@@ -50,9 +50,11 @@ ok(HC && AF && DT, 'module constants located');
 
 function build() {
   const state = { expandedGroups: new Set(), busyKey: null, confirm: null, health: null, dismissedRecords: null };
-  const body = `const HEALTH_CATEGORIES=${HC};const AUTO_FIX_TYPES=${AF};const DESTRUCTIVE_FIX_TYPES=${DT};
+  const body = `const fixAllOfType = (slug, type) => { state.ranFixAll = type; return undefined; };
+    const buttonRingHtml = () => '';
+    const HEALTH_CATEGORIES=${HC};const AUTO_FIX_TYPES=${AF};const DESTRUCTIVE_FIX_TYPES=${DT};
     ${FUNCS.map((f) => src[f]).join('\n')}
-    return { HEALTH_CATEGORIES, AUTO_FIX_TYPES, ${FUNCS.join(', ')} };`;
+    return { HEALTH_CATEGORIES, AUTO_FIX_TYPES, DESTRUCTIVE_FIX_TYPES, ${FUNCS.join(', ')} };`;
   const api = new Function('state', 'escapeHtml', 'icon', 'render', 'myMountToken', 'GIT_UNDO_NOTE', 'GIT_UNDO_WARN', 'deletedPageCount', 'isCurrentMount',
     ...SECTION_KIT_NAMES, body)(state, esc, () => '<svg/>', () => {}, 1, 'NOTE', 'WARN', () => 0, () => true, ...SECTION_KIT_VALUES);
   return { api, state };
@@ -93,9 +95,11 @@ section('§3 group + confirm');
   const html = api.renderIssueGroup(cat, [ROW, ROW], false, false);
   ok(/data-fixall="summaryLinkSections"/.test(html) && html.includes('Fix all 2'), 'category "Fix all 2" present');
   ok(!/data-fixall/.test(api.renderIssueGroup(cat, [ROW, ROW], true, false)), 'no Fix all on a read-only mirror');
+  // A free repair that deletes nothing runs on the press (owner's decision,
+  // 2026-11-05; this asserted a confirm before). It deleted nothing then either.
   api.confirmFixAllOfType('d', 'summaryLinkSections');
-  ok(state.confirm && state.confirm.title === 'Fix all 2 summary link lists?' && state.confirm.confirmLabel === 'Fix now', 'confirm names the type, plain "Fix now"');
-  ok(/No AI tokens/.test(state.confirm.body), 'confirm says no AI tokens');
+  ok(!state.confirm && state.ranFixAll === 'summaryLinkSections', 'Fix all on a free repair runs at once, with no question');
+  ok(!api.DESTRUCTIVE_FIX_TYPES.has('summaryLinkSections'), 'because it is not one of the types that deletes');
 }
 
 section('§4 ingest "For review" classifier');

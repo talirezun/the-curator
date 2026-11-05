@@ -280,7 +280,7 @@ const CALLS = [];
 const STUBS = `
 const calls = __calls;
 const SEMANTIC_PAGE_SIZE = 50;
-const state = { confirm: null, pendingPlan: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+const state = { confirm: null, pendingPlan: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null, rowOutcomes: {}, pressLocks: {}, rowLines: {} };
 const myMountToken = 't';
 const document = __doc;
 function render() { calls.push('render'); }
@@ -302,8 +302,13 @@ function skipSemanticPair(s, p) { calls.push('skip ' + s + ' ' + p.key); }
 async function dismissIssue(s, t, i) { calls.push('dismiss ' + s + ' ' + t + ' ' + i.path); }
 async function undismissIssue(s, r) { calls.push('restore ' + s + ' ' + r.path); }
 async function loadDismissedRecords(s) { calls.push('loadDismissed ' + s); }
+const HEALTH_HOLD_MS = 0;
+let healthPressY = null;
+function pageY() { return 0; }
+function releaseHeldRows() {}
+function healthRowKey() { return null; }
 `;
-const FNS = ['bindHealthListeners', 'dispatchHealthAction', 'onHealthClick', 'noteHealthFoldPress', 'onHealthToggle'];
+const FNS = ['bindHealthListeners', 'dispatchHealthAction', 'onHealthClick', 'noteHealthFoldPress', 'onHealthToggle', 'onHealthKeydown', 'noteHealthPress', 'healthMorphKey', 'sortedPairKey'];
 for (const n of FNS) if (!functionSource(VIEW, n)) throw new Error('not found in domains.js: ' + n);
 const docStub = { sec: null, querySelector: () => docStub.sec };
 const box = new Function('__calls', '__doc',
@@ -370,7 +375,7 @@ section('§7 Every control reaches its own action, once');
 
   s.confirm = { run: () => { CALLS.push('ran the confirm'); } };
   await press(sec, controls.yes);
-  ok(CALLS.join() === 'ran the confirm' && s.confirm === null, 'Confirm runs the stored action once and clears it');
+  ok(CALLS.filter((c) => c !== 'render').join() === 'ran the confirm' && s.confirm === null, 'Confirm runs the stored action once and clears it');
   await press(sec, controls.yes);
   ok(CALLS.length === 0, 'a second press on Confirm runs nothing');
   s.confirm = { run: () => { CALLS.push('must not run'); } };
@@ -397,7 +402,8 @@ section('§7 Every control reaches its own action, once');
   await press(sec, controls.preview);
   ok(CALLS.join() === 'preview alpha p1', 'Preview');
   await press(sec, controls.flip);
-  ok(CALLS.join() === 'flip p1,render', 'Flip');
+  ok(CALLS.slice(0, 2).join() === 'flip p1,render', 'Flip');
+  await tick();   // its label goes back on a timer, and that is a paint too
   await press(sec, controls.merge);
   ok(CALLS.join() === 'merge alpha p1', 'Merge');
   await press(sec, controls.skip);
@@ -481,8 +487,14 @@ section('§9 Folds');
 section('§10 The patch refuses or falls back; it never leaves a broken section');
 {
   const morphSrc = functionSource(VIEW, 'morphHealthSection');
-  const make = (activeSlug, patch) => new Function('state', 'patchInPlace', 'healthMorphKey', 'console',
-    morphSrc + '\nreturn morphHealthSection;')({ activeSlug }, patch, healthKey, { warn() {} });
+  // The row motion is the browser suite's (e2e-wiki-health.mjs): here it is inert,
+  // except that a failed patch must take its held rows back out of `next`.
+  let undone = 0;
+  const motion = { readHealthFocus() { return null; }, healthFloor: { position() { return 0; }, hold() {} }, holdLeavingRows() { return { undo() { undone++; } }; },
+    keepHealthFocus() {}, latchHealthAbove() {}, startRowMotion() {}, HEALTH_ROW: '', healthRowKey() {}, healthRowHold() {}, decorateLeavingRow() {},
+    onHealthRowCollapse() {}, onHealthRowRemoved() {}, onHealthRowOpen() {}, healthPressY: null, pageY() { return 0; } };
+  const make = (activeSlug, patch) => new Function('state', 'patchInPlace', 'healthMorphKey', 'console', ...Object.keys(motion),
+    morphSrc + '\nreturn morphHealthSection;')({ activeSlug }, patch, healthKey, { warn() {} }, ...Object.values(motion));
   const sec = (cls = 'dm-section dm-health') => h('section', { class: cls });
   const live = sec(); live.__dmHealthDomain = { slug: 'alpha' };
   ok(make('alpha', () => true)(live, sec()) === true, 'same domain and a clean patch: kept');
@@ -492,7 +504,9 @@ section('§10 The patch refuses or falls back; it never leaves a broken section'
   ok(make('alpha', () => { called++; return true; })(unbound, sec()) === false && called === 0, 'a section nothing has stamped: refused');
   ok(make('alpha', () => { called++; return true; })(sec('dm-section dm-pages'), sec()) === false && called === 0, 'any other section: not this code\'s business');
   ok(make('alpha', () => { called++; return true; })(live, sec('dm-section dm-pages')) === false && called === 0, 'a Health section is never patched into something else');
+  undone = 0;
   ok(make('alpha', () => false)(live, sec()) === false, 'a patch that does not match: false, so the caller replaces');
+  ok(undone === 1, 'and the rows it held are taken back out of what the caller is about to insert');
   ok(make('alpha', () => { throw new Error('boom'); })(live, sec()) === false, 'a patch that throws: false, so the caller replaces');
 }
 {

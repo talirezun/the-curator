@@ -226,8 +226,9 @@ function renderDomainHealth(stateOver) {
   const FNS = ['shouldKeepHealthOnReload', 'healthScanLabel', 'healthSection', 'renderHealthPanel',
     'renderQuickMaintenance', 'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'countSafeFixable',
     'countOf', 'totalOpenIssues', 'renderIssueGroups', 'renderIssueGroup', 'renderIssueRow', 'renderDismissedGroup',
-    'describeDismissed', 'relTime'];
-  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO'];
+    'describeDismissed', 'relTime', 'renderConfirmCard', 'renderPendingPlan', 'renderOutcomeLine', 'renderAnchorStack',
+    'renderAiProgressRing', 'busyRingLabel', 'fmtKB'];
+  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES'];
   const deps = {
     escapeHtml: (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
@@ -238,6 +239,7 @@ function renderDomainHealth(stateOver) {
     renderSemanticScanResult: () => '', gatedLoader: () => '', loadGate: null,
     renderMonitor, freshnessTier, formatAge, renderStatus, renderDescription, explainerMark, formatUsdHonest,
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
+    progressRingHtml: () => '<span class="cur-ring"></span>', ringValueFromCounts: () => null,
     ...SECTION_KIT,
   };
   const names = Object.keys(deps).filter((n) => !SECTION_KIT_NAMES.includes(n));
@@ -261,7 +263,7 @@ function renderDomainHealth(stateOver) {
     },
     ...(stateOver || {}),
   };
-  return fn(state, ...names.map((n) => deps[n]), ...SECTION_KIT_VALUES)({ slug: 'early-computing' }, false);
+  return fn(state, ...names.map((n) => deps[n]), ...SECTION_KIT_VALUES)({ slug: 'early-computing' }, !!state.readonlyArm);
 }
 
 
@@ -315,6 +317,36 @@ const PAGES = [
   { id: 'domains.health (scan failed)', contract: DOMAIN_HEALTH_CONTRACT, enforced: true,
     render: () => renderDomainHealth({ healthError: 'the disk went away', health: null }) },
 ];
+// ── THE PRESS RULE, IN EVERY ARM OF ⑤ IT CAN REACH (Stage 1). The three arms above
+// are at rest, loading and failed, which is none of what the owner reported. These
+// render the question, the plan, the running action and the failure from the real
+// code. A confirm's yes is still violet until the wording stage, so `maxPrimary` is
+// the one thing eased, and only for the arms that carry one.
+const WITH_YES = { ...DOMAIN_HEALTH_CONTRACT, maxPrimary: 1 };
+const ASKED = { title: 'Fix all 2 cross-folder duplicates?', body: 'This MERGES each group.', confirmLabel: 'Merge and delete', run() {} };
+const PRESS_ARMS = [
+  ['a question under its row', WITH_YES, { confirm: { ...ASKED, anchor: 'group:brokenLinks' }, rowLines: {} }, ['dm-confirm-card', 'id="dm-confirm-no"']],
+  ['a question under the chips', WITH_YES, { confirm: { ...ASKED, anchor: 'quick' }, rowLines: {} }, ['dm-confirm-card']],
+  ['a question answered, running', WITH_YES, { confirm: { ...ASKED, anchor: 'quick', busy: true, busyLabel: 'Merging…' }, rowLines: {} }, ['aria-busy="true"', 'Merging…']],
+  ['a plan open', WITH_YES, { pendingPlan: { kind: 'orphans', anchor: 'quick', plan: [{}], summary: { rescuable: 1, noHome: 0 } }, rowLines: {} }, ['id="dm-plan-apply-btn"']],
+  ['a repair running', DOMAIN_HEALTH_CONTRACT, { busyKey: 'group:brokenLinks', pressAnchor: 'group:brokenLinks', rowLines: {} }, ['aria-busy="true"', 'Repairing…']],
+  ['AI help running', DOMAIN_HEALTH_CONTRACT, { busyKey: 'orphansPlan', ringAnchor: 'quick', rowLines: {} }, ['aria-busy="true"', 'dm-ai-progress']],
+  ['a row failed', DOMAIN_HEALTH_CONTRACT, { rowLines: { 'group:brokenLinks': { key: 'group:brokenLinks', tone: 'error', text: 'Could not repair: the disk went away', retry() {} } } }, ['dm-outcome-failed', 'Try again']],
+  ['the trace', DOMAIN_HEALTH_CONTRACT, { healthTrace: { slug: 'early-computing', text: 'Repaired 2', at: '2026-11-05T10:00:00Z' }, activeSlug: 'early-computing', rowLines: {} }, ['dm-health-trace']],
+  ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, { readonlyArm: true, rowLines: {} }, []],
+];
+for (const [label, contract, over, must] of PRESS_ARMS) {
+  PAGES.push({ id: 'domains.health (' + label + ')', contract, enforced: true, render: () => renderDomainHealth(over), must });
+}
+function pressRuleViolations(html) {
+  const bad = [];
+  if (/dm-banner/.test(html)) bad.push('a banner inside the section: an outcome belongs on its row');
+  if (/btn-ghost/.test(html)) bad.push('a text-styled button: every control has visible chrome');
+  if (/role="button"|onclick=/.test(html)) bad.push('something clickable that is not a <button>');
+  if ((html.match(/aria-live=/g) || []).length !== 1) bad.push('the section must hold exactly one live region');
+  return bad;
+}
+
 for (const p of PAGES) {
   if (!p.enforced) {
     ok(typeof p.contract === 'object' && p.contract.name, p.id + ': contract registered, NOT YET ENFORCED — ' + p.why);
@@ -325,6 +357,20 @@ for (const p of PAGES) {
   ok(html.length > 200, p.id + ': renders from the real views/domains.js (' + html.length + ' bytes)');
   const v = checkPageContract(html, p.contract);
   ok(v.length === 0, p.id + ': passes "' + p.contract.name + '"', v.join(' | '));
+  if (p.id.startsWith('domains.health')) {
+    const pr = pressRuleViolations(html);
+    ok(pr.length === 0, p.id + ': holds the press rule', pr.join(' | '));
+    for (const m of p.must || []) ok(html.includes(m), p.id + ': really is that state, holding ' + m);
+  }
+}
+{
+  // ANTI-VACUITY: each press-rule check goes red on the thing it forbids.
+  const base = renderDomainHealth();
+  ok(pressRuleViolations(base).length === 0, 'CONTROL — the plain render passes the press rule');
+  ok(pressRuleViolations(base + '<div class="dm-banner"></div>').length === 1, 'CONTROL — a banner goes red');
+  ok(pressRuleViolations(base + '<button class="btn btn-ghost">Skip</button>').length === 1, 'CONTROL — a ghost button goes red');
+  ok(pressRuleViolations(base + '<span role="button">x</span>').length === 1, 'CONTROL — a span acting as a button goes red');
+  ok(pressRuleViolations(base + '<div aria-live="polite"></div>').length === 1, 'CONTROL — a second live region goes red');
 }
 {
   // ANTI-VACUITY for the first client: the rendered card really holds the

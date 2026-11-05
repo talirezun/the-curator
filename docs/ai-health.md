@@ -128,7 +128,7 @@ For each orphan, the AI picks the ONE existing page that should most naturally l
 
 ## One-click "Fix N safe issues" (v3.0.1-beta.17)
 
-The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). Its merges keep all text from both pages: see *What a merged page looks like*. It's one write-locked operation, then the wiki re-scans.
+The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It runs on the press with its result on the button, unless it would delete a page: then a question opens under the row first, with the page count. It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). Its merges keep all text from both pages: see *What a merged page looks like*. It's one write-locked operation, then the wiki re-scans.
 
 ---
 

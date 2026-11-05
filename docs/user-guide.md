@@ -8038,7 +8038,29 @@ Use it if your wiki starts to feel messy — broken links, duplicate entities, p
 | **Summary link lists** *(v3.84.0)* | A summary lists the same page twice, lists concepts under *Entities Mentioned*, or lists entities under *Concepts Introduced or Referenced*. See [Summary link lists](#summary-link-lists-v3840) below. | **Fix** — free and local; moves each link to the right list and removes repeated lines. Also part of **Fix N safe issues**. |
 | **Index gaps** *(v3.83.0)* | `index.md` — the wiki's page catalogue, which your AI agents read through the `get_index` tool — is missing rows for pages that exist, or still has rows for pages that are gone. See [Index gaps and Rebuild index](#index-gaps-and-rebuild-index-v3830) below. Counted as **one** issue however many rows are off. | **Rebuild index** under QUICK MAINTENANCE — free, no AI, previewed before anything is written. There is no Fix or Dismiss on this row. |
 
-**Auto-fixable issues** have a **Fix** button per row, and a **Fix all N** button on the section header. **Broken links** use the same flow per row but with an **Apply** button — only rows where the scanner found a plausible target are applicable. **Orphans** are review-only per row, but you don't have to work through them one at a time; see **Quick maintenance** below.
+### What a press does
+
+Every button in Wiki health answers where you pressed it. *(New in this release; the section's layout is unchanged.)*
+
+| When you press | What you see |
+|---|---|
+| **Any button** | Its own label changes straight away ("Repairing…", "Saving…", "Merging…"), at the same width. It is never silent. |
+| **Fix all N** on a free repair that deletes nothing, and **Fix N safe issues** when it would delete nothing | No question. It runs, and the row says **Repaired N**. |
+| **Fix all N** on *Cross-folder duplicates* or *Hyphen variants*, **Fix N safe issues** when it would delete pages, **Merge N spelling variants** | A question opens **directly under the row you pressed**, saying how many pages go, with focus on **Cancel**. Escape closes it. |
+| **The yes of a question**, **Apply this plan** | The card stays open and says what is happening, then says what happened, then leaves. |
+| **An AI button** | Its cost question opens under the buttons, as before. |
+
+**When it is done**, the row holds its outcome for about a second, then closes smoothly. Rows under it slide up; nothing above it moves, and the page does not scroll, even at the very end of the page. What was just done stays in the section's heading, for example "Repaired 2 just now".
+
+**When it fails**, the row says so and offers **Try again**. That stays until you act on it: it never disappears on a timer. There is no longer a coloured banner at the top of the section.
+
+A repair can settle rows **above** the one you pressed, for instance when a new link rescues an orphan page in a list you have open. Those rows dim and say **Resolved** rather than vanish from under your pointer. They go when you scroll, press something above them, or close their fold.
+
+While a scan re-reads the wiki, the figures stay where they are and a note beside **Rescan** says "Showing the previous result".
+
+**From the keyboard**, focus moves to the next row when a row leaves, and holding Enter does not press the next button. A screen reader hears progress and outcomes through one polite announcement.
+
+**Auto-fixable issues** have a **Fix all N** button on the section's row. **Fix all** runs at once when nothing would be deleted, and asks first when pages would be: see [What a press does](#what-a-press-does). **Broken links** use the same flow per row but with an **Apply** button — only rows where the scanner found a plausible target are applicable. **Orphans** are review-only per row, but you don't have to work through them one at a time; see **Quick maintenance** below.
 
 ### Quick maintenance — the action bar (v3.0.1-beta.17)
 
@@ -8046,13 +8068,13 @@ This is the recommended way to maintain a wiki, and it's what makes health usabl
 
 | Button | What it does | AI? | Cost |
 |---|---|---|---|
-| **Fix N safe issues** | Applies every deterministic fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched. One click, no AI, no preview needed (these are unambiguous). | No | Free |
+| **Fix N safe issues** | Applies every deterministic fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched. One click, no AI, no preview needed (these are unambiguous). It asks first only if it would delete a page. | No | Free |
 | **Rebuild index** *(v3.83.0)* | Appears only when the scan finds **Index gaps**. Rebuilds `index.md` from the files on disk — adds the missing pages, removes rows for pages that no longer exist. **You see a preview first**, and nothing is written until you click Apply. | No | Free (no sparkles, no cost badge) |
 | **✨ Fix N broken links** | Resolves broken `[[wikilinks]]` in bulk. Free formatting fixes first (slugifying, stripping `.md`), then the AI matches the rest to real pages when they're a clear variant, and removes the brackets on links that point at no real page. **You review the full plan before it's applied.** | Yes | shown on the button |
 | **✨ Rescue N orphans** | For each orphan (a page nothing links to), the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Orphans with no confident match are left for manual review. **You review the plan before it's applied.** | Yes | shown on the button |
 | **✨ Find duplicate pages** | The semantic-duplicate scan (see below). Always offered when a key is configured — there's no free count to gate it on, so the cost is fetched when you open it. | Yes | shown when you open it |
 
-**The pattern is always the same:** click → a confirm card names exactly what will happen and what it costs → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki re-scans so you watch the counts drop. The panel itself says so: *"Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet."*
+**The pattern for an AI action is always the same:** click → a confirm card names exactly what will happen and what it costs → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki re-scans so you watch the counts drop. The panel itself says so: *"Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet."*
 
 This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
 
@@ -8108,7 +8130,7 @@ Every wiki has an `index.md`: one row per page, with a one-line description. You
 1. Click **Domains** in the rail
 2. Pick a domain — the health scan runs automatically
 3. **For bulk maintenance** (recommended): use the **QUICK MAINTENANCE** buttons — start with **Fix N safe issues**, then the AI tools (each previews before applying)
-4. **For granular control**: expand the per-type sections below and use the per-row **Fix** / **Apply** / **✨ Ask AI** / **Dismiss** buttons
+4. **For granular control**: expand the per-type sections below and use **Fix all N**, **Dismiss** and the row's own buttons
 5. After any fix the wiki re-scans so you see counts drop; when you're happy, push from **Sync**
 
 ### When to run it

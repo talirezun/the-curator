@@ -440,6 +440,10 @@ const EXEMPT = [
     why: 'reader overlay: measured 63 ms warm / 295-322 ms cold — a real wait, and on the KEEP list' },
   { file: 'views/domains.js', needle: '<div class="dm-health-body">Scanning…</div>',
     why: 'health scan: measured ~654 ms. Deliberately NOT gated — an honest indicator for a genuinely long wait. The skeleton this earns is a separate change with its own proof.' },
+  { file: 'views/domains.js', needle: "pressed === 'semanticDupesEstimate' ? 'Working out the cost…'",
+    why: 'The pressed "Check the next" answering in its own label (the press rule). The estimate is a candidate pass that took about 15 s on 3,251 pages, and the scan after it runs for minutes against a paid model, so this is a long wait stated on the control. A gate delay would make the press silent for its first moments.' },
+  { file: 'views/domains.js', needle: "busyLabel: 'Scanning…'",
+    why: 'The yes of the scan question answering in its own label (the press rule). A paid scan runs for seconds to minutes.' },
   { file: 'views/domains.js', needle: "buttonRingHtml() + ' Scanning…'",
     why: 'Rescan BUTTON label during a user-initiated scan, not a view-entry placeholder' },
   { file: 'views/domains.js', needle: "rescan: 'Scanning the wiki…'",
@@ -685,7 +689,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   let h = render({ healthLoading: true, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
   ok(!COLLAPSED.test(h), 'rescan with a cached report for THIS domain does NOT collapse to "Scanning…"');
   ok(FIGURES.test(h), 'the cached figures stay on screen');
-  ok(h.includes('Re-scanning… showing the previous result'),
+  ok(h.includes('Showing the previous result'),
     'and they are LABELLED as the previous scan — the figures stay useful, nothing claims they are current');
   ok(h.includes('<RING/>'), 'the Rescan control shows the scan is running');
 
@@ -699,7 +703,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   // settled state
   h = render({ healthLoading: false, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
   ok(FIGURES.test(h), 'settled: the report renders');
-  ok(!h.includes('Re-scanning…'), 'settled: no stale marker');
+  ok(!h.includes('Showing the previous result'), 'settled: no stale marker');
 
   // a settled foreign report renders NOTHING rather than the wrong domain's
   h = render({ healthLoading: false, health: REPORT, healthSlug: 'business', healthError: null, busyKey: null, expandedGroups: new Set() });

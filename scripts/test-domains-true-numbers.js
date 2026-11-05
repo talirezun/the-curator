@@ -415,16 +415,18 @@ section('8. F6 — "Fix N safe issues" states the deletions');
   const extra = liftConst('DESTRUCTIVE_FIX_TYPES') +
     "const GIT_UNDO_NOTE = 'NOTE'; const GIT_UNDO_WARN = 'WARN';\n";
   const fns = sandbox(['countSafeFixable', 'deletedPageCount', 'safeFixDeletedPages', 'confirmFixSafe'], {
-    state, pluralize, render: () => {}, myMountToken: 1, runFixSafe: () => {},
+    state, pluralize, render: () => {}, myMountToken: 1, runFixSafe: () => { state.ranFixSafe = true; },
   }, extra);
   fns.confirmFixSafe('a');
   ok(/3 pages will be deleted/.test(state.confirm.body) && /WARN/.test(state.confirm.body),
     '8.1 1 cross-folder dupe + a 3-slug hyphen group = 3 pages deleted, with the hard warning', state.confirm.body);
   ok(state.confirm.confirmLabel === 'Fix and delete', '8.2 the button says it deletes');
   state.health.crossFolderDupes = []; state.health.hyphenVariants = [];
+  // With nothing to delete there is nothing to ask (owner's decision, 2026-11-05).
+  state.confirm = null;
   fns.confirmFixSafe('a');
-  ok(!/deleted/.test(state.confirm.body) && /NOTE/.test(state.confirm.body) && state.confirm.confirmLabel === 'Fix now',
-    '8.3 CONTROL — with nothing destructive it is the soft note and "Fix now"');
+  ok(state.confirm === null && state.ranFixSafe === true,
+    '8.3 CONTROL — with nothing destructive it runs on the press, with no question');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

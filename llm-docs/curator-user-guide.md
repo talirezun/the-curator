@@ -555,13 +555,15 @@ A **QUICK MAINTENANCE** block holds one button per batch tool, each with a live 
 
 | Button | AI | Cost |
 |---|---|---|
-| **Fix N safe issues** — every deterministic fix at once, no preview needed because these are unambiguous | No | Free |
+| **Fix N safe issues** — every deterministic fix at once, no preview needed because these are unambiguous. Asks first only if it would delete a page | No | Free |
 | **Fix N broken links** — free formatting fixes first, then the AI matches the rest to real pages or removes brackets pointing at nothing | Yes | Shown on the button |
 | **Rescue N orphans** — the AI finds the page that should most naturally link to each orphan and writes a short relationship note into it | Yes | Shown on the button |
 | **Find duplicate pages** — the semantic-duplicate scan | Yes | Shown when you open it |
 | **Rebuild index** — appears only with Index gaps; previews "Plan ready — nothing written yet", then **Apply**. Refused if the wiki changed since the preview | No | Free |
 
-The pattern is always the same: click, a confirm card names exactly what will happen and what it costs, you confirm, the AI plans with a progress bar, you see a preview, you click **Apply**, and the wiki re-scans so you watch the counts drop. Without an API key you still get **Fix N safe issues**; **since version 3.67.0** the three AI buttons stay visible with no key too, disabled rather than hidden, with a line underneath linking to Providers & keys, and a second line naming the one model they all run on. The first time you use any AI action, a one-time notice explains what leaves your machine, and it now names all three supported providers — Google Gemini, Anthropic or OpenRouter.
+**Every button answers where you pressed it:** its own label changes at once, a question opens directly under the row, and the outcome appears on the row, then the row closes smoothly. There is no banner. **Fix all** on a free repair runs without asking; anything that deletes a page still asks first. A failure stays on the row, with **Try again**, until you act.
+
+The pattern for an AI action is always the same: click, a confirm card names exactly what will happen and what it costs, you confirm, the AI plans with a progress bar, you see a preview, you click **Apply**, and the wiki re-scans so you watch the counts drop. Without an API key you still get **Fix N safe issues**; **since version 3.67.0** the three AI buttons stay visible with no key too, disabled rather than hidden, with a line underneath linking to Providers & keys, and a second line naming the one model they all run on. The first time you use any AI action, a one-time notice explains what leaves your machine, and it now names all three supported providers — Google Gemini, Anthropic or OpenRouter.
 
 Run it after a large batch of ingests, when a wiki starts to feel messy, or about once a month on an active domain. A scan is always safe and idempotent, and never touches your source files or conversations.
 

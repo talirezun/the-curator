@@ -172,6 +172,7 @@ src/
                     Domains, Context and Settings; `cur-sb-*` classes carry every rule, Domains'
                     historical `dm-row-*` tokens ride as an opt-in ALIAS (`alias: 'dm'`), matched
                     byte-for-byte after three normalisations, each proved inert by execution
+    next/shared/row-motion.js — holdLeavingRows() / startRowMotion() / releaseHeldRows(): rows that open and leave instead of appearing and vanishing, by the Web Animations API (no transitionend, no style a patch would strip); createScrollFloor(): a scroll position that survives the page shrinking under it. Wiki health's press rule
     next/shared/morph.js — patchInPlace(): patch a live element until it equals a freshly composed one, keeping
                     every node it can (by key, then identical markup, then position). Never consumes the new tree, so a
                     caller can still replace the node whole if it returns false or throws. Used by Wiki health only.

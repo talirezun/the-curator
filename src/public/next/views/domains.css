@@ -35,8 +35,6 @@
    ABOVE the readouts it qualifies; the block sits above the chip row. These
    replace `.dm-health-body`'s 8px and `.dm-health-meta`'s 12px. The inner gap
    is child-agnostic so the wrapper needs no knowledge of what it holds. */
-.dm-health-summary { margin-bottom: 16px; }
-.dm-health-summary > * + * { margin-top: 14px; }
 
 /* Quick maintenance: replaces `.dm-quick-note`'s margin-top, for BOTH the
    cost/recovery description and the in-flight-write status that used to
@@ -1247,7 +1245,8 @@
   border: 1px solid var(--attention);
 }
 .dm-lc-error,
-.dm-sem-error {
+.dm-sem-error,
+.dm-outcome-failed {
   background: var(--danger-tint);
   color: var(--danger-text);
   border: 1px solid var(--danger);
@@ -1857,8 +1856,10 @@
 
 /* The two floors are set on the scroller by the view, in px. A patch would strip
    a style off the section itself. See createScrollFloor and latchHealthAbove. */
-.dm-health { padding-bottom: var(--dm-health-floor, 0px); }
-.dm-health .dm-quick .cur-action-chips { min-height: var(--dm-quick-floor, 0px); align-content: flex-start; }
+.dm-health { padding-bottom: var(--dm-health-floor); }
+#main { --dm-health-floor: 0px; --dm-quick-floor: 0px; --dm-quick-run-floor: 0px; }
+.dm-health .dm-quick-actions { min-height: var(--dm-quick-floor); align-content: flex-start; }
+.dm-health .dm-quick-run { min-height: var(--dm-quick-run-floor); }
 
 /* One line, whatever is in it: neither of these can push a row down. */
 .dm-health-trace,
@@ -1872,14 +1873,14 @@
 }
 .dm-health-trace { flex: 1 1 0; text-align: right; align-self: center; line-height: 1; }
 .dm-rescan-note { flex: 1 1 0; align-self: center; }
-.dm-health .cur-card-top { flex-wrap: nowrap; }
-.dm-health .cur-card-top > .btn { flex: none; }
+.dm-health .dm-health-top { flex-wrap: nowrap; }
+.dm-health .dm-health-top > .btn { flex: none; }
 
 /* A row's words wrap inside the row. Its long reading with a button in it ran 258
    px past the card at phone width, and 61 px at 800. */
-.dm-health .cur-fold-item { flex-wrap: wrap; }
-.dm-health .cur-fold-item-main,
-.dm-health .cur-fold-item-meta { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.dm-health .dm-issue-row { flex-wrap: wrap; }
+.dm-health .dm-issue-main,
+.dm-health .dm-issue-meta { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 /* A label that answers needs room for its answer at rest, or the answer clips. */
 .dm-group-fixall-btn { min-width: 112px; }
@@ -1889,7 +1890,7 @@
 
 .dm-health .btn { overflow: hidden; }
 .dm-health .btn[aria-busy="true"] { cursor: progress; }
-.dm-health .cur-action-label { overflow: hidden; text-overflow: ellipsis; }
+.dm-health .dm-quick-label { overflow: hidden; text-overflow: ellipsis; }
 
 /* The control whose question is open under it stays visibly pressed. */
 .dm-health .btn[aria-expanded="true"] {
@@ -1910,9 +1911,9 @@
   color: var(--text);
   outline: none;
 }
-.dm-row-done svg { color: var(--success-text); flex: none; }
+.dm-row-done svg { color: var(--text-2); flex: none; }
 /* Inside a fold's summary, the kit turns every svg with the chevron. */
-.dm-group[open] > .cur-fold-summary .dm-row-done svg { transform: none; }
+.dm-group[open] > .dm-group-summary .dm-row-done svg { transform: none; }
 .dm-sem-card .dm-row-done { margin-left: 0; margin-top: 9px; }
 
 /* A question and an outcome, directly under the row that asked for them. */
@@ -1929,9 +1930,8 @@
 .dm-outcome > svg { flex: none; }
 .dm-outcome-text { flex: 1 1 200px; min-width: 0; line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .dm-outcome-done { background: var(--surface-inset); color: var(--text); }
-.dm-outcome-done > svg { color: var(--success-text); }
+.dm-outcome-done > svg { color: var(--text-2); }
 .dm-outcome-info { background: var(--info-tint); color: var(--accent-text); }
-.dm-outcome-failed { background: var(--danger-tint); color: var(--danger-text); }
 .dm-sem-error > .btn,
 .dm-sem-preview-error > .btn { margin-left: auto; flex: none; }
 
@@ -1944,18 +1944,18 @@
 }
 
 /* Directly under the chips, inside the card. */
-.dm-quick .cur-action-run > .dm-confirm-card,
-.dm-quick .cur-action-run > .dm-plan-card,
-.dm-quick .cur-action-run > .dm-outcome,
-.dm-quick .cur-action-run > .dm-ai-progress { margin: 8px 0; }
+.dm-health .dm-quick-run > .dm-confirm-card,
+.dm-health .dm-quick-run > .dm-plan-card,
+.dm-health .dm-quick-run > .dm-outcome,
+.dm-health .dm-quick-run > .dm-ai-progress { margin: 8px 0; }
 
 /* Rows inside a fold's body keep their margin clear of the items. */
-.cur-fold-body > .dm-confirm-card,
-.cur-fold-body > .dm-plan-card,
-.cur-fold-body > .dm-outcome { margin: 8px 0; }
-.cur-folds > .dm-confirm-card,
-.cur-folds > .dm-plan-card,
-.cur-folds > .dm-outcome { margin: 6px 0; }
+.dm-health .dm-group-body > .dm-confirm-card,
+.dm-health .dm-group-body > .dm-plan-card,
+.dm-health .dm-group-body > .dm-outcome { margin: 8px 0; }
+.dm-health .dm-groups > .dm-confirm-card,
+.dm-health .dm-groups > .dm-plan-card,
+.dm-health .dm-groups > .dm-outcome { margin: 6px 0; }
 
 /* A row a reading settled, waiting for a moment when leaving moves nothing you
    are looking at. It says so, and it takes no press. */

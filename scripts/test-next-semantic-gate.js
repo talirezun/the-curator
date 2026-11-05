@@ -525,7 +525,7 @@ const run2 = __state().confirm.run;
 __state().confirm = null;
 await run2();
 ok(__net().calls.length === 0, '5f: with nothing left to merge, no request is made at all');
-ok(__state().banner && /Nothing left to merge/.test(__state().banner.text), '5f: …and the user is told why nothing happened');
+ok(__state().rowNote && /Nothing left to merge/.test(__state().rowNote.text), '5f: …and the user is told why nothing happened');
 
 // 5g. the batch records per-pair outcomes instead of discarding the scan
 __setState(stateWithScan('alpha', [p1, p2, p3]));
@@ -554,10 +554,10 @@ __net().nextFetchNotOk = {
   body: { error: 'Cannot batch-merge duplicates in "alpha" while a write operation is running: alpha (sync).', conflict: 'write_in_progress' },
 };
 await runMergeSemanticDuplicates('alpha');
-ok(__state().banner && __state().banner.tone === 'error', '5h: a banner was rendered');
-ok(!!(__state().banner && /Cannot batch-merge duplicates/.test(__state().banner.text)),
+ok(__state().rowNote && __state().rowNote.tone === 'error', '5h: a banner was rendered');
+ok(!!(__state().rowNote && /Cannot batch-merge duplicates/.test(__state().rowNote.text)),
    '5h: the server’s own 409 sentence reaches the banner verbatim — the refusal branch of classifyDomainError fired');
-ok(!(__state().banner && /^Could not merge duplicates —/.test(__state().banner.text)),
+ok(!(__state().rowNote && /^Could not merge duplicates —/.test(__state().rowNote.text)),
    '5h: …and NOT the generic "Could not merge duplicates —" error-branch wording, which is what shipped before the fix');
 ok(__gates().released > 0, '5h: the write gate is released even when the batch is refused');
 ok(!!(__state().semanticScan && __state().semanticScan.pairs[0].status === 'open'),
@@ -891,20 +891,23 @@ __net().sseFrames = [
 __setState(stateWithScan('alpha', [], []));
 __state().estimates = {};
 await runSemanticScan('alpha');
-ok(!__state().banner && __state().semanticScan.failedPairs === 20, '14c: part of a run failing raises no red banner');
+ok(!(__state().rowNote && __state().rowNote.tone === 'error') && __state().semanticScan.failedPairs === 20, '14c: part of a run failing raises no failure on the row');
 __net().sseFrames = [
   { type: 'start', candidatePairs: 20 },
   { type: 'batch-error', batch: 0, error: 'boom' },
   { type: 'done', pairs: [], failedPairs: 20, totalPairs: 100, checkedPairs: 0, leftPairs: 100, nextPairs: 20 },
 ];
 await runSemanticScan('alpha');
-ok(__state().banner && __state().banner.tone === 'error' && /Could not scan for duplicates — boom/.test(__state().banner.text) && __state().semanticScan.failedAll, '14c: all of it failing does');
+ok(__state().rowNote && __state().rowNote.tone === 'error' && /Could not scan for duplicates — boom/.test(__state().rowNote.text) && __state().semanticScan.failedAll, '14c: all of it failing does');
 
 __setState(stateWithScan('alpha', [VARIANT], []));
 Object.assign(__state().semanticScan, { coverage: SOME, counting: true });
 h13 = renderSemanticScanResult(false, false);
-ok(h13.includes('Counting the pairs…') && !h13.includes('Checked 500'), '14d: while counting, the line says so instead of an old figure');
-ok(!h13.includes('dm-semantic-next-btn') && !h13.includes('dm-semantic-reset-btn'), '14d: …with neither figure-dependent button');
+// A RECOUNT MOVES NOTHING (the press rule; this asserted the opposite). The figures
+// stay on screen and their buttons stay, disabled, so a press cannot use them and
+// the pairs under them do not jump when the count lands.
+ok(h13.includes('Checked 500') && !h13.includes('Counting the pairs…'), '14d: while recounting, the figures already on screen stay');
+ok(/id="dm-semantic-next-btn" disabled/.test(h13) && /id="dm-semantic-reset-btn" disabled/.test(h13), '14d: …with both figure-dependent buttons there and disabled');
 ok(h13.includes('dm-sem-card'), '14d: …and the pairs are already there');
 __setState(stateWithScan('alpha', [], []));
 Object.assign(__state().semanticScan, { coverage: null, counting: true });
@@ -960,15 +963,15 @@ ok(/…and 10 more/.test(h13), '14j: a long handled list is capped, and says so'
 __setState(stateWithScan('alpha', [VARIANT], []));
 __net().sseFrames = [{ type: 'progress', done: 1, total: 3, pair: toWirePair(VARIANT), status: 'ineligible', reason: 'page-changed' }, { type: 'done', merged: 1, total: 3, ineligible: 2 }];
 await runMergeSemanticDuplicates('alpha');
-ok(__state().banner.text === 'Merged 1 of 3 spelling variants. 2 now need your Preview.', '14k: some refused: the exact words', );
+ok(__state().rowNote.text === 'Merged 1 of 3 spelling variants. 2 now need your Preview.', '14k: some refused: the exact words', );
 ok(__state().semanticScan.pairs[0].spellingVariant === false, '14k: a refused pair leaves the batch and stays on screen');
 __setState(stateWithScan('alpha', [VARIANT], []));
 __net().sseFrames = [{ type: 'done', merged: 1, total: 2, ineligible: 1 }];
 await runMergeSemanticDuplicates('alpha');
-ok(__state().banner.text === 'Merged 1 of 2 spelling variants. 1 now needs your Preview.', '14k: …singular');
+ok(__state().rowNote.text === 'Merged 1 of 2 spelling variants. 1 now needs your Preview.', '14k: …singular');
 __setState(stateWithScan('alpha', [], []));
 await runMergeSemanticDuplicates('alpha');
-ok(__state().banner.text === 'Nothing left to merge — every spelling variant has been handled.', '14l: nothing left: the exact words');
+ok(__state().rowNote.text === 'Nothing left to merge — every spelling variant has been handled.', '14l: nothing left: the exact words');
 
 // The title counts what is still open; a merged pair is not still "found".
 const handledMix = [];

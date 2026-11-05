@@ -3770,7 +3770,8 @@ function selectDomain(slug) {
   state.activeSlug = slug;
   state.confirm = null;
   state.banner = null;
-  resetHealthPressRule();
+  // `typeof` guarded: suites lift this function into sandboxes without it.
+  if (typeof resetHealthPressRule === 'function') resetHealthPressRule();
   state.lifecycleOutcome = null;
   state.expandedGroups = new Set();
   // A create/rename/delete form opened for the PREVIOUS domain must not
@@ -7166,14 +7167,16 @@ const HEALTH_INFO = explainerMark('dm-health-info', 'domains.health');
 
 function healthSection(inner) {
   if (!inner) return '';
+  // Some suites lift this function with no `state` in reach.
+  const st = typeof state === 'undefined' ? {} : state;
   return (
     '<section class="dm-section dm-health">' +
       renderSectionTitle({ num: 5, title: 'Wiki health', alias: 'dm',
         // The trace: what was just done stays here after its row has left. One
         // line, whatever its length, so it can never move the rows under it.
-        infoBtnHtml: HEALTH_INFO.btn + (state.healthTrace && state.healthTrace.slug === state.activeSlug
-          ? '<span class="dm-health-trace" title="' + escapeHtml(state.healthTrace.text) + '">' + escapeHtml(state.healthTrace.text) + ' ' +
-              '<span data-age-at="' + escapeHtml(state.healthTrace.at) + '" data-age-text>just now</span></span>'
+        infoBtnHtml: HEALTH_INFO.btn + (st.healthTrace && st.healthTrace.slug === st.activeSlug
+          ? '<span class="dm-health-trace">' + escapeHtml(st.healthTrace.text) + ' ' +
+              '<span data-age-at="' + escapeHtml(st.healthTrace.at) + '" data-age-text>just now</span></span>'
           : '') }) +
       HEALTH_INFO.panel +
       inner +
@@ -7181,7 +7184,7 @@ function healthSection(inner) {
       // state of the section, because a region that arrives with its first
       // sentence is not announced.
       '<div class="visually-hidden dm-health-live" role="status" aria-live="polite" aria-atomic="true">' +
-        (state.healthLive ? escapeHtml(state.healthLive) : '') + '</div>' +
+        (st.healthLive ? escapeHtml(st.healthLive) : '') + '</div>' +
     '</section>'
   );
 }
@@ -7447,6 +7450,14 @@ function latchHealthAbove(section) {
   const h = quick.getBoundingClientRect().height;
   const floor = parseFloat(main.style.getPropertyValue('--dm-quick-floor')) || 0;
   if (h > floor) main.style.setProperty('--dm-quick-floor', h + 'px');
+  // The lines under the chips (which model, what the last run cost) likewise, and
+  // measured only when nothing has opened in there: that closes again by itself.
+  const run = section.querySelector('.dm-quick .dm-quick-run');
+  if (run && !run.querySelector('[data-row-key]')) {
+    const rh = run.getBoundingClientRect().height;
+    const rf = parseFloat(main.style.getPropertyValue('--dm-quick-run-floor')) || 0;
+    if (rh > rf) main.style.setProperty('--dm-quick-run-floor', rh + 'px');
+  }
 }
 
 // ── Filing an outcome ─────────────────────────────────────────────────────
@@ -7627,6 +7638,19 @@ function markHealthOpener() {
   if (opener && !opener.disabled) opener.setAttribute('aria-expanded', 'true');
 }
 
+function beforeHealthPaint(token) {
+  takeHealthNote(token);
+  placeHealthStack();
+}
+
+function afterHealthPaint() {
+  applyPressLocks();
+  markHealthOpener();
+  moveHealthFocusForQuestion();
+  announceHealthBusy();
+  paintHealthLive();
+}
+
 function paintHealthLive() {
   const live = document.querySelector('.dm-health-live');
   if (live && live.textContent !== (state.healthLive || '')) live.textContent = state.healthLive || '';
@@ -7645,9 +7669,9 @@ function noteHealthPress(btn) {
   else if (btn.id === 'dm-semantic-next-btn') anchor = 'sem-coverage';
   else if (btn.id === 'dm-semantic-reset-btn') anchor = 'sem-reset';
   if (anchor) { state.pressAnchor = anchor; state.pressOpener = key; }
-  if (btn.id === 'dm-rescan-btn' && typeof document !== 'undefined') {
+  if (btn.id === 'dm-rescan-btn' && typeof document.getElementById === 'function') {
     const main = document.getElementById('main');
-    if (main) main.style.removeProperty('--dm-quick-floor');
+    if (main) { main.style.removeProperty('--dm-quick-floor'); main.style.removeProperty('--dm-quick-run-floor'); }
   }
   if (typeof btn.getBoundingClientRect === 'function') {
     healthPressY = pageY(btn);
@@ -7678,7 +7702,7 @@ function resetHealthPressRule() {
   planLeaving = false;
   healthFloor.reset();
   const main = typeof document !== 'undefined' ? document.getElementById('main') : null;
-  if (main) main.style.removeProperty('--dm-quick-floor');
+  if (main) { main.style.removeProperty('--dm-quick-floor'); main.style.removeProperty('--dm-quick-run-floor'); }
 }
 
 // Everything that can sit under a row, in one order: the question, then the plan,
@@ -7688,7 +7712,7 @@ function renderAnchorStack(anchor, crossMountBusy) {
   const here = (o) => o && o.anchor === anchor;
   return (here(state.confirm) ? renderConfirmCard() : '') +
     (here(state.pendingPlan) ? renderPendingPlan(crossMountBusy) : '') +
-    (state.ringAnchor === anchor ? renderAiProgressRing() : '') +
+    (state.ringAnchor === anchor && state.busyKey ? renderAiProgressRing() : '') +
     (state.rowLines[anchor] ? renderOutcomeLine(state.rowLines[anchor]) : '');
 }
 
@@ -7949,7 +7973,7 @@ function renderHealthPanel(domain, readonly) {
         // status box above the figures, 82 px tall, that pushed the whole card
         // down and back on every rescan. It is one line that cannot wrap, so a
         // reading never moves the page, and it still stands before the figures.
-        '<span class="dm-rescan-note" title="Showing the previous result until this scan finishes.">' +
+        '<span class="dm-rescan-note">' +
           (revalidating ? 'Showing the previous result' : '') + '</span>', { alias: 'dm' }) +
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
@@ -8152,7 +8176,7 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   const stack =
     (state.confirm && (state.confirm.anchor || 'quick') === 'quick' ? renderConfirmCard() : '') +
     (state.pendingPlan && (state.pendingPlan.anchor || 'quick') === 'quick' ? renderPendingPlan(crossMountBusy) : '') +
-    ((state.ringAnchor || 'quick') === 'quick' ? renderAiProgressRing() : '') +
+    ((state.ringAnchor || 'quick') === 'quick' && state.busyKey && typeof renderAiProgressRing === 'function' ? renderAiProgressRing() : '') +
     (state.rowLines && state.rowLines.quick ? renderOutcomeLine(state.rowLines.quick) : '');
 
   return renderActionCard({
@@ -8350,7 +8374,7 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   // What a press in this card opened sits under the row that was pressed.
   const stackAt = (anchor) => ((state.confirm && state.confirm.anchor === anchor) ||
     (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
-    (state.rowLines && state.rowLines[anchor]) || state.ringAnchor === anchor
+    (state.rowLines && state.rowLines[anchor]) || (state.ringAnchor === anchor && state.busyKey)
     ? renderAnchorStack(anchor, crossMountBusy) : '');
   // What earlier scans found stands under what the coverage row opened: it changes
   // with each run, and the confirm for a run is what is being answered up there.
@@ -8600,7 +8624,13 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   // busyKey — since a concurrent fix on a DIFFERENT category still hits
   // the same domain's files on disk and would still 409 against it.
   const disabled = crossMountBusy || !!state.busyKey;
-  const rows = issues.slice(0, 50).map((issue) => renderIssueRow(cat.key, issue, readonly)).join('');
+  const rows = issues.slice(0, 50).map((issue) => {
+    const rowKey = 'issue:' + cat.key + ':' + JSON.stringify(issue);
+    return renderIssueRow(cat.key, issue, readonly, {
+      saving: !!(state.rowBusy && state.rowBusy.has(rowKey)),
+      afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
+    });
+  }).join('');
   const more = issues.length > 50 ? '<div class="dm-issue-more" data-row-key="more:' + cat.key + '">…and ' + (issues.length - 50) + ' more</div>' : '';
   return renderFoldRow({
     key: cat.key, label: cat.label, pill: issues.length, open, alias: 'dm',
@@ -8613,7 +8643,7 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   }) + (open ? '' : stack);
 }
 
-function renderIssueRow(type, issue, readonly) {
+function renderIssueRow(type, issue, readonly, rowView) {
   let main = '';
   let meta = '';
   let dismissible = false;
@@ -8684,13 +8714,12 @@ function renderIssueRow(type, issue, readonly) {
       main = escapeHtml(JSON.stringify(issue));
   }
   const canDismiss = !readonly && dismissible;
-  const rowKey = 'issue:' + type + ':' + JSON.stringify(issue);
-  const saving = !!(state.rowBusy && state.rowBusy.has(rowKey));
+  const saving = !!(rowView && rowView.saving);
   return renderFoldItem({
-    alias: 'dm', mainHtml: main, metaHtml: meta, rowKey,
+    alias: 'dm', mainHtml: main, metaHtml: meta, rowKey: 'issue:' + type + ':' + JSON.stringify(issue),
     actionHtml: canDismiss ? '<button class="btn btn-secondary dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'' +
       (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Dismiss') + '</button>' : '',
-    afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
+    afterHtml: rowView && rowView.afterHtml ? rowView.afterHtml : '',
   });
 }
 
@@ -8937,7 +8966,7 @@ function rescan(slug) {
   // Slug-gated like the re-entry path, never a hardcoded `true`: a rescan
   // is the same domain by construction, but hardcoding that makes the
   // guarantee depend on the caller staying correct forever.
-  state.healthLive = 'Scanning the wiki.';
+  state.healthLive = 'Rescan started.';
   loadHealth(slug, myMountToken, {
     keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, slug),
   }).then(() => {
@@ -9367,8 +9396,7 @@ function emptyPlanNotice(kind, summary, batchErrors) {
 async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
-  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
-  // one stays: it stands above the pairs, and blanking it moved them (press rule).
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.progressText = 'Planning…';
   state.aiProgress = null;
   render(token);
@@ -9433,8 +9461,7 @@ function confirmOrphansPlan(slug) {
 async function runOrphansPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'orphansPlan';
-  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
-  // one stays: it stands above the pairs, and blanking it moved them (press rule).
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.aiProgress = null;
   render(token);
   try {
@@ -9767,8 +9794,7 @@ function semanticScanConfirmText(est, runsOnName, cost) {
 async function runSemanticScan(slug) {
   const token = myMountToken;
   state.busyKey = 'semanticDupesScan';
-  // The after-line belongs to THIS run once it lands (v3.67.0). Until then the last
-  // one stays: it stands above the pairs, and blanking it moved them (press rule).
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.aiProgress = null;
   // What it quoted is about to stop being true, and so is a previous run's failure.
   delete state.estimates.semanticDupes;
@@ -10359,16 +10385,13 @@ function restoreOpenInfoPanels(ids) {
 function render(token) {
   const openInfo = captureOpenInfoPanels();
   captureCardReserve();
-  takeHealthNote(token);
-  placeHealthStack();
+  // `typeof` guarded: a suite lifts this function, and neither of these is about
+  // anything it tests.
+  if (typeof beforeHealthPaint === 'function') beforeHealthPaint(token);
   renderSidebar(token);
   renderMain(token);
   restoreOpenInfoPanels(openInfo);
-  applyPressLocks();
-  markHealthOpener();
-  moveHealthFocusForQuestion();
-  announceHealthBusy();
-  paintHealthLive();
+  if (typeof afterHealthPaint === 'function') afterHealthPaint();
 }
 
 registerView('domains', {
@@ -10505,7 +10528,7 @@ registerView('domains', {
       quiescedWhileBusy = false;
       state.confirm = null;
       state.pendingPlan = null;
-      resetHealthPressRule();
+      if (typeof resetHealthPressRule === 'function') resetHealthPressRule();
       // NOT `state.semanticScan = null` any more. That discarded an LLM-
       // BILLED result on a rail click and made the user pay again. The paid
       // pair list is kept (stamped with its domain, and LAYER 2 refuses it

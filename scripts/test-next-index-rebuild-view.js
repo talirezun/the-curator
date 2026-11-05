@@ -238,7 +238,7 @@ section('§5 apply');
   eq(calls.fetch[0].url, '/api/health/my%20domain/index/apply', 'URL is /api/health/<slug>/index/apply');
   eq(calls.fetch[0].opts.method, 'POST', 'POST');
   eq(JSON.parse(calls.fetch[0].opts.body), { basis: 'f'.repeat(64) }, 'the body is {basis} and nothing else');
-  eq(state.banner, { tone: 'success', text: 'Index rebuilt — added 2,705 pages and removed 39 stale rows. index.md is now 438 KB.' }, 'success banner');
+  eq(state.rowNote, { tone: 'success', text: 'Index rebuilt — added 2,705 pages and removed 39 stale rows. index.md is now 438 KB.' }, 'success banner');
   eq(state.pendingPlan, null, 'plan cleared');
   eq(calls.gates, ['index-rebuild-apply', 'release:index-rebuild-apply'], "write gate held under 'index-rebuild-apply' and released");
   eq(calls.loadHealth, 1, 'report reloaded');
@@ -250,20 +250,20 @@ section('§5 apply');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
   eq(state.pendingPlan, null, '409 INDEX_PLAN_STALE: plan discarded');
-  eq(state.banner, { tone: 'info', text: stale }, '409 INDEX_PLAN_STALE: info banner carries the server sentence');
+  eq(state.rowNote, { tone: 'info', text: stale }, '409 INDEX_PLAN_STALE: info banner carries the server sentence');
 }
 {
   const { api, state } = build(okFetch(500, { error: 'disk full' }));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
-  eq(state.banner, { tone: 'error', text: 'Could not rebuild the index — disk full' }, 'other errors: error banner');
+  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the index — disk full' }, 'other errors: error banner');
   eq(state.busyKey, null, 'busy key reset after an error');
 }
 {
   const { api, state } = build(okFetch(409, { error: 'locked', conflict: 'file_lock' }));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
-  eq(state.banner.tone, 'error', 'a 409 that is not INDEX_PLAN_STALE is still an error');
+  eq(state.rowNote.tone, 'error', 'a 409 that is not INDEX_PLAN_STALE is still an error');
 }
 {
   const src = sources.applyPendingPlan;
@@ -278,7 +278,7 @@ section('§6 plan runner');
   await api.onQuickAction('d', 'indexPlan');
   eq(calls.fetch[0].url, '/api/health/d/index/plan', 'POSTs /index/plan');
   eq(state.pendingPlan, null, 'nothingToDo: no card');
-  eq(state.banner, { tone: 'info', text: 'index.md already lists every page.' }, 'nothingToDo: info banner');
+  eq(state.rowNote, { tone: 'info', text: 'index.md already lists every page.' }, 'nothingToDo: info banner');
 }
 {
   const { api, state } = build(okFetch(200, { ok: true, nothingToDo: false, basis: 'b'.repeat(64), summary: SUMMARY, samples: { add: [] } }));
@@ -290,7 +290,7 @@ section('§6 plan runner');
 {
   const { api, state } = build(okFetch(409, { error: 'index.md is a symlink', code: 'INDEX_UNREADABLE' }));
   await api.onQuickAction('d', 'indexPlan');
-  eq(state.banner, { tone: 'error', text: 'Could not preview the index rebuild — index.md is a symlink' }, 'INDEX_UNREADABLE surfaces as an error banner');
+  eq(state.rowNote, { tone: 'error', text: 'Could not preview the index rebuild — index.md is a symlink' }, 'INDEX_UNREADABLE surfaces as an error banner');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
