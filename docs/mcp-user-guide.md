@@ -761,7 +761,7 @@ The MCP and the app's Wiki health panel share the **same** dismissal store (`dom
 
 ### Cost note
 
-`scan_semantic_duplicates` is the only Health tool with a paid LLM call (typically $0.005–$0.03 per scan on Gemini Flash Lite). Use the `estimate_only: true` flag to get the cost estimate before committing — Claude knows to do this when you say *"how much would it cost to scan?"* or similar.
+`scan_semantic_duplicates` is the only Health tool with a paid LLM call (typically $0.005–$0.03 per scan on Gemini Flash Lite). A large domain takes several runs: each checks only the next `max_pairs` pairs and remembers its answers on this computer, shared with the app, so a repeat run sends only pairs not checked yet and lists earlier finds again for free. Replies carry `total_pairs`, `checked_pairs` and `left_pairs` (`left_pairs: 0` means no call and no spend). Forgetting the answers is app-only (**Check everything again**), and so is the batch merge. Use the `estimate_only: true` flag to get the cost estimate before committing — Claude knows to do this when you say *"how much would it cost to scan?"* or similar.
 
 ---
 

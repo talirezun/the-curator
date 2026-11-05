@@ -282,7 +282,7 @@ const {
   previewSemanticPair, mergeOneSemanticPair, skipSemanticPair, runMergeSemanticDuplicates,
   mergeSemanticDuplicates,
   resolvePairsTouching, markSemanticPairResolved, semanticStaleFromError,
-  semanticHandledLabel, renderSemanticScanResult,
+  semanticHandledLabel, renderSemanticScanResult, semanticPrimaryAction,
   __state, __setState, __net, __gates, __setMount,
 } = sandbox;
 
@@ -795,6 +795,74 @@ ok(semanticHandledLabel({ status: 'merged' }) === 'merged' &&
    '12: NEGATIVE CONTROL — merged and skipped keep their own one-word labels');
 ok(/merging one of them can resolve the others/.test(html),
    '12: the panel explains that the scan pairs every candidate, so one merge can resolve several pairs');
+
+console.log('\n=== 13. The results card: the agreed words, and one primary action ===');
+const primaryCount = (h) => (h.match(/btn-primary/g) || []).length;
+const card = (pairs, coverage, previewed) => {
+  __setState(stateWithScan('alpha', pairs, previewed));
+  __state().semanticScan.coverage = coverage;
+  return renderSemanticScanResult(false, false);
+};
+const SOME = { total: 36333, checked: 500, left: 35833, next: 500 };
+const NONE = { total: 943, checked: 943, left: 0, next: 0 };
+const VARIANT = pair({ keepSlug: 'hand-off', removeSlug: 'handoff', removeFolder: 'entities' });
+const LOOKALIKE = pair({ keepSlug: 'gemini', removeSlug: 'gemini-flash', removeFolder: 'entities', spellingVariant: false });
+const MEDIUM = pair({ keepSlug: 'x-one', removeSlug: 'x-two', removeFolder: 'entities', confidence: 'medium', spellingVariant: false });
+
+let h13 = card([VARIANT, LOOKALIKE], SOME);
+ok(h13.includes('Checked 500 of 36,333 possible pairs. 35,833 still to check.'), '13a: some left: the exact status line');
+ok(h13.includes('Check the next 500'), '13a: …with its button');
+ok(h13.includes('Merge 1 spelling variant<'), '13b: the batch button, singular');
+ok(h13.includes('Merges only pairs whose names are spelling variants, such as hand-off and handoff. Every other pair needs your Preview.'), '13b: the batch note');
+ok(h13.includes('Names differ, so check this one yourself.'), '13c: a high-confidence look-alike carries the muted line');
+ok(h13.indexOf('dm-sem-coverage') < h13.indexOf('dm-sem-card'), '13d: the status line sits above the pairs');
+ok(h13.indexOf('dm-semantic-reset-btn') > h13.lastIndexOf('dm-sem-card'), '13d: Check everything again is at the end of the card');
+ok(/btn-ghost btn-xs" id="dm-semantic-reset-btn"/.test(h13), '13d: …and it is the quietest control there');
+ok(primaryCount(h13) === 1 && /btn-primary" id="dm-semantic-merge-btn"/.test(h13), '13e: with a variant waiting, the ONE primary is the batch');
+
+h13 = card([LOOKALIKE, MEDIUM], SOME);
+ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="preview"/.test(h13), '13f: with only Preview-gated pairs, the ONE primary is the first Preview');
+ok(/btn-secondary" id="dm-semantic-next-btn"/.test(h13), '13f: the next scan does not lead while pairs wait');
+ok((h13.match(/Names differ/g) || []).length === 1, '13f: a medium pair does not get the high-confidence line');
+
+h13 = card([LOOKALIKE, VARIANT], SOME, [semanticPairKey(LOOKALIKE)]);
+ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="merge"/.test(h13), '13g: a previewed pair is the decision in hand: its Merge is the ONE primary');
+
+h13 = card([], SOME);
+ok(primaryCount(h13) === 1 && /btn-primary" id="dm-semantic-next-btn"/.test(h13), '13h: nothing waiting: the next scan leads');
+ok(h13.includes('No likely duplicates found') && h13.includes('still to check'), '13h: nothing found still shows the status line');
+
+h13 = card([], NONE);
+ok(h13.includes('All 943 possible pairs have been checked.'), '13i: none left: the exact line');
+ok(primaryCount(h13) === 0 && !h13.includes('dm-semantic-next-btn'), '13i: …with no next button and no primary');
+
+h13 = card([pair({ keepSlug: 'a', removeSlug: 'b', remembered: true }), pair({ keepSlug: 'c', removeSlug: 'd', remembered: true, status: 'merged' })], SOME);
+ok(h13.includes('1 found by earlier scans and not yet decided is listed again, at no cost.'), '13j: remembered pairs, singular, counting only the undecided');
+h13 = card([pair({ keepSlug: 'a', removeSlug: 'b', remembered: true }), pair({ keepSlug: 'c', removeSlug: 'd', remembered: true })], SOME);
+ok(h13.includes('2 found by earlier scans and not yet decided are listed again, at no cost.'), '13j: …plural');
+
+h13 = card([], { total: 10, checked: 0, left: 10, next: 10 });
+ok(!h13.includes('dm-semantic-reset-btn'), '13k: nothing checked: nothing to forget, so no reset');
+__setState(stateWithScan('alpha', [], []));
+__state().semanticScan.coverage = SOME;
+__state().semanticScan.failedAll = true;
+ok(!renderSemanticScanResult(false, false).includes('No likely duplicates found'), '13l: a run whose every call failed does not claim it found nothing');
+
+__setState(stateWithScan('alpha', [VARIANT], []));
+__state().semanticScan.coverage = SOME;
+h13 = renderSemanticScanResult(true, false);
+ok(primaryCount(h13) === 0 && !h13.includes('dm-semantic-next-btn') && !h13.includes('dm-semantic-reset-btn') && !h13.includes('dm-semantic-merge-btn'), '13m: read-only: no action of any kind');
+
+const visible = card([VARIANT, LOOKALIKE], SOME).replace(/<[^>]*>/g, ' ');
+for (const w of ['verdict', 'cache', 'record', 'hash', 'token']) ok(!new RegExp(w, 'i').test(visible), `13n: no mechanism word on screen: ${w}`);
+
+__setState(stateWithScan('alpha', [LOOKALIKE], []));
+flipSemanticPair(__state().semanticScan.pairs[0]);
+ok(__state().semanticScan.pairs[0].spellingVariant === false, '13o: a Flip keeps what the server said about the names');
+__setState(stateWithScan('alpha', [VARIANT], []));
+flipSemanticPair(__state().semanticScan.pairs[0]);
+ok(liveBatchPairs().length === 1, '13o: …so a flipped variant stays in the batch');
+ok(toWirePair(VARIANT).spellingVariant === undefined, '13p: the view never sends its own idea of eligibility');
 
 console.log('\n' + '='.repeat(60));
 console.log(`Passed: ${passed}   Failed: ${failed}`);

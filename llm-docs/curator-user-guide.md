@@ -571,13 +571,17 @@ On a read-only Shared Brain mirror the scan runs but no fix buttons appear, beca
 
 The semantic-duplicate scan finds pages the algorithm cannot catch — `rag` and `retrieval-augmented-generation`, `email` and `e-mail`, `neural-network` and `neural-networks`. It is opt-in, user-gated and cost-gated: nothing happens until you click and then confirm.
 
-It typically costs between $0.005 and $0.03 per scan on Gemini Flash Lite. A confirm card shows the estimate and the candidate-pair count before it runs, and if there turn out to be no likely duplicates it tells you that instead of charging you.
+It typically costs between $0.005 and $0.03 per scan on Gemini Flash Lite. A confirm card shows the estimate and how many pairs it will check before it runs, and if there is nothing left to check it costs nothing.
+
+On a large domain it takes several runs. Each run checks the next batch of possible pairs (500 by default) and remembers the answers on that computer, so running it again moves forward instead of starting over. The results say how far you are, for example "Checked 500 of 36,333 possible pairs. 35,833 still to check.", with a button to check the next batch. Pairs found earlier and not yet decided are listed again at no cost. A pair is checked again if the opening of either page changes or you change the model. "Check everything again" forgets this domain's answers, costs money again on the next scan, and keeps the pairs you skipped.
+
+It does not catch everything. Two pages are only compared if their names share a word, look alike, are spelling variants, or one is the initials of the other, so `car` and `automobile` are never compared.
 
 Each candidate comes back as its own card showing `remove-slug → keep-slug`, a confidence level and the AI's reasoning, with four buttons: **Preview diff**, which opens the exact paths, the link rewrites and the first 4 KB of the merged page inline; **Flip**, which swaps which side is kept; **Merge**, disabled until you have previewed that specific pair; and **Skip**, which dismisses the pair permanently. The preview gate is per pair and resets when you re-scan, switch domains or flip a pair.
 
-There is a batch option for high-confidence pairs only, naming the count and what will happen first. Medium and low-confidence pairs are deliberately one at a time, because those are the ones most likely to be genuinely distinct.
+There is a batch option, **Merge N spelling variants**, naming the count and what will happen first. It takes only pairs the AI rated high confidence whose names are the same word spelled differently, such as `hand-off` and `handoff`. Every other pair needs its own Preview, including high-confidence pairs whose names differ, because a merge deletes a page and the AI's confidence alone has proved wrong.
 
-You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults, 200,000 tokens (raised from 50,000 in v3.72.1) and 500 pairs, suit domains up to about 5,000 pages — 200,000 tokens is enough for a full scan at the 500-pair default, about $0.03 on Gemini Flash Lite. A scan estimates its own cost first and refuses to start, before you can click Scan, when the estimate is over the ceiling.
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults, 200,000 tokens (raised from 50,000 in v3.72.1) and 500 pairs, set the size of one run — 200,000 tokens is enough for a run at the 500-pair default, about $0.03 on Gemini Flash Lite. A scan estimates its own cost first and refuses to start, before you can click Scan, when the estimate is over the ceiling.
 
 ## Can I undo a health fix or a merge?
 

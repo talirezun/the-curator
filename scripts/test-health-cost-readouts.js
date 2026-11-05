@@ -342,13 +342,13 @@ section('18. After a plan or a scan → what ran and what it cost, on THIS domai
     const body = extractFn(domainsSrc, name);
     ok(body !== null, `${name} extracts`);
     for (const plan of kind === 'semantic' ? [null] : [[{ a: 1 }], []]) {
-      const state = { aiSpent: { slug: 'x', spent: SPENT } };
+      const state = { aiSpent: { slug: 'x', spent: SPENT }, estimates: {} };
       let spentAtStart = 'unset';
       const fn = new Function('state', 'render', 'streamSSE', 'isCurrentMount', 'noteAiProgress', 'emptyPlanNotice',
-        'myMountToken', `return (async ${body});`)(state,
+        'newSemanticScan', 'myMountToken', `return (async ${body});`)(state,
         () => { if (spentAtStart === 'unset') spentAtStart = state.aiSpent; },
         async (_u, _b, on) => { on('done', kind === 'semantic' ? { pairs: [], spent: SPENT } : { plan, summary: {}, spent: SPENT }); },
-        () => true, () => {}, () => 'empty', 1);
+        () => true, () => {}, () => 'empty', () => ({}), 1);
       await fn('articles');
       ok(spentAtStart === null, `${name}${plan ? (plan.length ? ' (a plan)' : ' (an EMPTY plan)') : ''}: the previous bill is cleared when the run starts`);
       ok(state.aiSpent && state.aiSpent.slug === 'articles' && state.aiSpent.spent === SPENT,

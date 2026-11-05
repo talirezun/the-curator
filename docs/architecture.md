@@ -356,7 +356,8 @@ the-curator/
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic; indexDrift check + index rebuild plan/apply (v3.83.0)
 │   │   ├── wiki-index.js       index.md parse / coverage / rebuild; ensurePagesInIndex (v3.83.0)
-│   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
+│   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY over the wiki
+│   │   ├── duplicate-checks.js What a duplicate scan remembers (outside domains/); the spelling-variant test for batch merge
 │   │   ├── health-dismissed.js Persistent skip-store for Health issues (v2.5.1+) — wiki/.health-dismissed.jsonl
 │   │   └── config.js           Persistent config (API keys, domains path) — resolves through paths.js
 │   └── public/

@@ -177,6 +177,14 @@ section('2. Candidates: variants and acronyms exist and rank first');
   ok(scores.every((s, i) => i === 0 || s <= scores[i - 1]), '2.3 the list still reads in non-increasing score order');
   ok(pairs.length > 100, `2.4 CONTROL — the fillers really did produce competing pairs (${pairs.length})`);
 
+  // A variant neither earlier pass can see (case hides it from both) is only
+  // found after the acronym pass, so insertion order alone would put it second.
+  const tiers = mkDomain({ 'concepts/abc.md': page('ABC'), 'concepts/apple-banana-cherry.md': page('ABC long'),
+    'concepts/ZETA-FOO-BAR.md': page('Zeta upper'), 'concepts/zetafoobar.md': page('Zeta lower') });
+  const tierKeys = (await health.findSemanticCandidatePairs(tiers.name, 1_000_000)).pairs.map(key);
+  ok(tierKeys[0] === ['ZETA-FOO-BAR', 'zetafoobar'].sort().join(' + ') && tierKeys[1] === 'abc + apple-banana-cherry',
+    '2.3b spelling variants outrank acronyms by tier, not by the order they were found', tierKeys.join(' | '));
+
   // Dumb cross-check of the clever index: every pair of a mixed name list,
   // tested the slow way, must match what the linear index returns.
   const names = ['hand-off', 'handoff', 'hand_off', 'Hand-Off-s', 'window', 'windows', 'class', 'classes', 'box', 'boxes',

@@ -7471,7 +7471,7 @@ field rather than as the action for both of them.*
 > settings page instead) — so nothing is ever half-scanned and no partial bill
 > is run up. That is the whole model, and it is what the block's **ⓘ** says.
 
-Defaults suit domains up to roughly 5,000 pages. The hard caps that are **not**
+The defaults size one run, and a large domain takes several, each moving on to pairs not checked yet ([§17](#17-wiki-health)). The hard caps that are **not**
 adjustable — including the 20,000-page refusal — are in
 [ai-health.md](ai-health.md#scale-caps-baked-into-the-code).
 
@@ -8164,7 +8164,8 @@ In a domain's **Wiki health** panel, click **✨ Find duplicate pages** under **
 
 Unlike the other health fixes, this one:
 
-- **Costs a small amount** — typically $0.005–$0.03 per scan on Gemini Flash Lite. A confirm card shows the estimate and the candidate-pair count before you run it. If there turn out to be no likely duplicates, it tells you that instead of charging you for a scan.
+- **Costs a small amount** — typically $0.005–$0.03 per scan on Gemini Flash Lite. A confirm card shows the estimate and how many pairs it will check before you run it. If there is nothing to check, it tells you that instead of charging you.
+- **Takes several runs on a large domain.** Each run checks only the next batch of possible pairs (500 by default) and remembers the answers on this computer, so running it again moves forward instead of starting over.
 - **Is opt-in and user-gated.** Nothing happens until you click, then confirm.
 - **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug.
 
@@ -8177,19 +8178,42 @@ Each candidate comes back as its own card showing `remove-slug → keep-slug`, a
 | **Merge** | Performs the merge. **Disabled until you have previewed that specific pair** — the card says *"Preview required before Merge"* until you do, then *"✓ previewed"*. |
 | **Skip** | Dismisses this pair so it stops coming back on future scans. |
 
+**How far through the domain you are.** A line at the top of the results says where you stand, and it is there even when nothing was found:
+
+| What you see | What it means | What to do |
+|---|---|---|
+| *Checked 500 of 36,333 possible pairs. 35,833 still to check.* | This computer has answers for those 500 | **Check the next 500**, when you have dealt with the pairs on screen |
+| *All 943 possible pairs have been checked.* | Nothing left to send. Running it again costs nothing | Work through what is listed |
+| *12 found by earlier scans and not yet decided are listed again, at no cost.* | Pairs from earlier runs that you have not merged or skipped | Nothing special: they are ordinary cards |
+
+```mermaid
+flowchart LR
+    A[Every possible pair<br/>on this domain] --> B{Answered already,<br/>same model,<br/>same two openings?}
+    B -- "yes" --> C[Not sent again.<br/>A duplicate is listed<br/>again, free]
+    B -- "no" --> D[Queued. The next 500<br/>go to the AI]
+    D --> E[Answer saved after<br/>each batch of 20]
+    E --> C
+```
+
+A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Check everything again**, at the end of the card, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
+
+The answers live in your app data folder, not in your wiki, so they do not travel through Sync: each computer keeps its own, and losing them costs a re-check, never any data.
+
+**What it does not catch.** A pair is only considered if the two page names share a word, look alike, are spelling variants, or one is the initials of the other. `car` and `automobile` are never compared. On a large domain the AI also sees only each page's opening, so two pages that open differently can be missed.
+
 The preview gate is per pair, and it resets whenever you re-scan, switch domains, or flip a pair — a preview you looked at for one arrangement never authorises a different one. If a merge is refused (because something else is writing to that domain), the refusal appears **inside the card you are looking at**, not somewhere you'd have to scroll to find it.
 
 **One merge can resolve several pairs (v3.53.0).** The scan pairs up every candidate rather than grouping a family of pages into one cluster, so several versions of the same page produce several overlapping pairs — eight versions produce twenty-eight pairs, and each page appears in seven of them. When you merge one of those pairs, the page it deletes is a page other pairs still name, and those pairs are then **already resolved**: there is nothing left to decide and nothing left to merge.
 
 So they move, on their own, to the **Already handled in this scan** list at the bottom, labelled *"resolved by an earlier merge — entities/claude-opus-5 is gone"*. That wording is deliberately different from **merged** (you merged it) and from **skipped** (you skipped it, or the pair failed validation) — nobody decided this one, an earlier merge simply settled it. It is a free, local change to the list you already paid for: the scan is not re-run, and the pairs you have not reached — including every medium- and low-confidence pair — are left exactly as they were.
 
-The same thing happens when you use the batch **Merge all N high-confidence** button, which is where you will see it most, and when a page disappears from outside the app (you delete it in Obsidian, or an agent merges it through the MCP bridge) while a scan is open on screen.
+The same thing happens when you use the batch **Merge N spelling variants** button, which is where you will see it most, and when a page disappears from outside the app (you delete it in Obsidian, or an agent merges it through the MCP bridge) while a scan is open on screen.
 
 *Before v3.53.0 this was not reported at all: those pairs stayed on screen as ordinary cards, **Preview diff** failed with "Both pages must exist to preview a merge", and **Merge** stayed greyed out behind "Preview required before Merge" — with no way forward except paying for another scan.*
 
-**There is also a batch option** for high-confidence pairs, which names the count and what will happen before it runs: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Medium- and low-confidence pairs are deliberately one at a time — they're the ones most likely to be genuinely distinct.
+**There is also a batch option, for spelling variants only**: **Merge N spelling variants**. A pair qualifies only when the AI answered with high confidence **and** the names themselves are the same word spelled differently — `hand-off` and `handoff`, `e-mail` and `email`, `neural-network` and `neural-networks`. High confidence alone is not enough, because the AI has called pairs like `gemini` and `gemini-3.1-flash-lite` high confidence. Those cards say *"Names differ, so check this one yourself."* and need your Preview. The app checks this itself when the batch runs, and also refuses a pair whose page has changed since the AI read it. Before it runs, the confirm names what will happen: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Plurals ending in `-ies` (`ontology`, `ontologies`) do not count as spelling variants, so those go through Preview as well.
 
-You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. Defaults (200,000 tokens, 500 pairs — the ceiling was 50,000 through v3.72.0) suit domains up to ~5k pages; raise them for larger wikis. A scan estimates its cost first and refuses to start — before you can click Scan — when the estimate is over the ceiling.
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults are 200,000 tokens and 500 pairs (the ceiling was 50,000 through v3.72.0). They set the size of **one run**, not how large a domain they suit: a 946-page domain measured 3,918 possible pairs and a 3,407-page one 36,333, so a large domain takes many runs, and every run moves forward. A scan estimates its cost first and refuses to start — before you can click Scan — when the estimate is over the ceiling.
 
 For the full guide, see [ai-health.md](ai-health.md).
 

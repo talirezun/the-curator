@@ -2298,7 +2298,7 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
 }
 ```
 
-Set `candidatePairs` is the top N after ranking; `totalCandidates` is the unbounded count (what `candidatePairs` was capped from). `truncated: true` means the pre-filter found more pairs than your cap allowed. `maxPairs` (**new in v3.72.1**, additive) echoes the user's own candidate-pair cap, so the confirm dialog can name it without a second lookup. If `estimatedTokens` would exceed `costCeilingTokens`, the scan is refused before it starts (see `POST /api/health/:domain/semantic-dupes/scan` below) — nothing is spent.
+`candidatePairs` is what the scan will really **send**: the top N, after ranking, of the pairs with no remembered answer. `estimatedTokens` and the cost cover only those. `totalCandidates` is every live, non-dismissed pair. `truncated: true` means more pairs are waiting than your cap sends in one run. Coverage is additive: `totalPairs` (live, non-dismissed), `checkedPairs` (with an answer that still applies), `leftPairs`, `nextPairs` (what the next run sends) and `rememberedPairs` (found earlier, listed again free). `checkedPairs + leftPairs === totalPairs`. `maxPairs` (**new in v3.72.1**, additive) echoes the user's own candidate-pair cap, so the confirm dialog can name it without a second lookup. If `estimatedTokens` would exceed `costCeilingTokens`, the scan is refused before it starts (see `POST /api/health/:domain/semantic-dupes/scan` below) — nothing is spent.
 
 **Errors**
 
@@ -2309,19 +2309,31 @@ Set `candidatePairs` is the top N after ranking; `totalCandidates` is the unboun
 
 ---
 
+## GET /api/health/:domain/semantic-dupes/status
+
+What this computer already knows, for the panel to open with after a reload. **No LLM call and no wiki read beyond page openings.** With nothing remembered it answers `{ok: true, hasChecks: false}` at once, without deriving the candidate list. Otherwise `{ok: true, hasChecks: true, pairs, totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}`, where `pairs` are the remembered, undecided duplicates (same shape as the scan's). It also answers `hasChecks: false` when no provider is configured, because whether an answer applies depends on the model.
+
+---
+
+## POST /api/health/:domain/semantic-dupes/forget
+
+Forgets which pairs were checked in this domain: removes `<user data>/.duplicate-checks/<domain>.json`. The wiki and the dismissals are untouched, and the next scan starts over and costs money again. Allowed on a read-only mirror, because the file is this computer's and not the mirror's. Returns `{ok: true}`.
+
+---
+
 ## POST /api/health/:domain/semantic-dupes/scan
 
-Phase 3. Streams the real scan over **Server-Sent Events (SSE)**.
+Phase 3. Streams the real scan over **Server-Sent Events (SSE)**. A pair already answered for the same two page openings, by the same provider and model and under the same instructions, is not sent again; answers are saved after each batch, outside `domains/`. Nothing left to send means no provider call.
 
 Each event is emitted as `event: <type>\ndata: <json>\n\n`.
 
 | Event | Shape | Meaning |
 |-------|-------|---------|
-| `start` | `{candidatePairs, batches}` | Scan is starting. |
+| `start` | `{candidatePairs, batches, totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}` | Scan is starting. `candidatePairs` is what will be sent. |
 | `progress` | `{processed, total, found}` | After each batch. |
-| `pair` | `{pair: {keepSlug, keepFolder, removeSlug, removeFolder, confidence, rationale}}` | One accepted duplicate. |
-| `batch-error` | `{batch, error}` | One batch failed (scan continues). |
-| `done` | `{pairs, cost: {provider, model, inputTokens, outputTokens, estimatedUsd}}` | Final summary. |
+| `pair` | `{pair: {keepSlug, keepFolder, removeSlug, removeFolder, confidence, rationale, spellingVariant, remembered}}` | One duplicate. `remembered: true` means an earlier scan found it and it cost nothing now. `spellingVariant` is the server's test of the names, one half of batch eligibility. |
+| `batch-error` | `{batch, error}` | One batch failed, or its reply had no `results` array (scan continues). Nothing is remembered for it. |
+| `done` | `{pairs, cost: {provider, model, inputTokens, outputTokens, estimatedUsd}, spent, failedPairs, totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}` | Final summary. `pairs` includes remembered ones. |
 | `error` | `{error, code?}` | Unrecoverable error — e.g. `code: 'OVER_COST_CEILING'`. |
 
 The request body is empty (the scan uses the user's persisted settings).
@@ -2462,7 +2474,7 @@ v3.0.1-beta.17. DESTRUCTIVE. Runs every deterministic auto-fix type (`crossFolde
 
 ## POST /api/health/:domain/semantic-dupes/merge-batch
 
-v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semantic-duplicate pairs in one pass — powers the **Merge all high-confidence** button. Each pair runs through the same `fixSemanticDuplicate` path as the single `/fix` endpoint (slug-regex + folder allowlist + existence checks), sequentially (never parallel). Registered as a write-op with a per-domain file lock; a concurrent sync/update/delete is refused with `409`.
+v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semantic-duplicate pairs in one pass — powers the **Merge N spelling variants** button. Each pair runs through the same `fixSemanticDuplicate` path as the single `/fix` endpoint (slug-regex + folder allowlist + existence checks), sequentially (never parallel). Registered as a write-op with a per-domain file lock; a concurrent sync/update/delete is refused with `409`.
 
 **Request body**
 
@@ -2474,15 +2486,15 @@ v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semant
 }
 ```
 
-`pairs` is required and capped at 2000 entries. The frontend sends only the high-confidence pairs from the current scan.
+`pairs` is required and capped at 2000 entries. **The server decides what may run, before the first merge.** A pair runs only if its names are spelling variants and this computer remembers a high-confidence `yes` about the two page openings on disk now. A `confidence` field in the request is ignored. Anything else is reported as `ineligible` with a `reason` (`names-differ`, `not-high-confidence`, `page-changed`) and never touched. Either direction is accepted, so a Flip is honoured. A pair that cannot be resolved, or whose page is gone, keeps its own outcome (`skipped`, `stale`).
 
 **SSE events**
 
 | Event | Payload |
 |---|---|
 | `start` | `{ total }` |
-| `progress` | `{ done, total, pair, status }` — `status` ∈ `merged` \| `skipped` \| `error`. A pair whose file was already consumed by an earlier merge in the same batch is `skipped`. |
-| `done` | `{ merged, skipped, errors, total, results }` — `results` is `[{keepSlug, removeSlug, status}]`. |
+| `progress` | `{ done, total, pair, status }` — `status` ∈ `merged` \| `stale` \| `skipped` \| `ineligible` \| `error`. A pair whose file was already consumed by an earlier merge in the same batch is `stale`. |
+| `done` | `{ merged, stale, skipped, ineligible, errors, total, results }` — the five counts sum to `total`; `results` is `[{keepSlug, removeSlug, status, reason?}]`. |
 | `error` | `{ error }` |
 
 Because the whole wiki is git-tracked, a regretted batch is recoverable with git — there is no in-app revert. See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).

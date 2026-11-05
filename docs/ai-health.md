@@ -140,12 +140,22 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 
 ### The pipeline
 
-1. **Local pre-filter** (no LLM, runs in seconds even at 20k pages). An inverted token index finds slug pairs that share ≥1 non-stopword token or have high character-level similarity (Jaro-Winkler ≥ 0.85). Ranked by a combined score; capped at your configured maximum (default 500 pairs).
-2. **Cost estimate** is shown in a confirm dialog: number of candidate pairs, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
-3. **You click Run scan**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM is asked to judge each pair as duplicate / not-duplicate and pick the more canonical slug.
-4. **Only `medium` and `high` confidence duplicates surface** in the UI. Low-confidence and non-dupe verdicts are dropped silently.
-5. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
-6. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
+1. **Local pre-filter** (no LLM). An inverted token index finds slug pairs that share ≥1 non-stopword token or have high character-level similarity (Jaro-Winkler ≥ 0.85), and two linear passes add spelling variants (`hand-off` / `handoff`, `neural-network` / `neural-networks`) and acronyms (`rag` / `retrieval-augmented-generation`). Those two rank above everything else; the rest by a combined score.
+2. **Remembered answers are set aside.** A pair answered before, by the same model, about the same two page openings, is not sent again. A remembered duplicate is listed again for free. The top of what is left, up to your configured maximum (default 500 pairs), is what this run sends. See [What a scan remembers](#what-a-scan-remembers).
+3. **Cost estimate** is shown in a confirm dialog: how many pairs will really be sent, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
+4. **You click Scan now**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM is asked to judge each pair as duplicate / not-duplicate and pick the more canonical slug.
+5. **Only `medium` and `high` confidence duplicates surface** in the UI. Low-confidence and non-dupe verdicts are dropped silently.
+6. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
+7. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
+
+### What a scan remembers
+
+On a large domain one run reaches only a small part of the possible pairs (measured: 36,333 on a 3,407-page domain, against a default of 500 per run). So each answer is kept, in one JSON file per domain at `<user data>/.duplicate-checks/<domain>.json`, written atomically after each batch.
+
+- **It is a cache, on this computer only.** It sits outside `domains/`, so a scan still writes nothing into the wiki and Sync never carries it. A missing or corrupt file behaves as a first scan. Losing it costs money, never data.
+- **An answer applies** while both pages exist, the provider and model are the same, the instructions to the model are the same, and the sha256 of the two openings the model read (500 characters each) is the same. Folders are part of a pair's identity: `entities/x` and `concepts/x` are different pages.
+- **Only an explicit answer is remembered**: not a duplicate, low confidence, or an accepted pair, for a valid index. A failed batch, a reply with no `results`, a missing index, an unusable confidence or a canonical slug that matches neither side remembers nothing, so that pair is sent again.
+- **Limits, stated.** There is one answer per pair, so switching model and back re-checks. Two scans saving in the same instant can lose one batch (a re-check, nothing worse). The model recorded is the one configured, not a fallback that may have answered for it. Domain rename leaves the old file behind, so a renamed domain starts over.
 
 ### One merge can resolve several pairs (v3.53.0)
 
@@ -163,13 +173,13 @@ Before v3.53.0 none of this was reported. A sibling pair stayed on screen as an 
 
 > **A cluster-level scan is a possible future change, not a built one.** Grouping a version family into one N-page decision (instead of N·(N−1)/2 pairwise ones) would be the more direct fix, and it would change the scan's prompt, its cost model and its UI. Nothing in the code today does it — the pairwise emission is still how candidates are produced.
 
-### Merge all high-confidence duplicates (v3.0.1-beta.15)
+### Merge N spelling variants (the batch)
 
-When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is impractical. After the scan finishes, a **✨ Merge N high-confidence duplicates** bar appears above the results. It acts ONLY on the green **high confidence** pairs — clear near-identical duplicates like `opacity-objection-ai` ↔ `opacity-objection`. Medium- and low-confidence pairs still require the manual Preview → Merge gate, because they're the ones most likely to be genuinely distinct.
+When a scan returns a long list, reviewing each pair by hand is impractical, so a **Merge N spelling variants** bar appears above the results. High confidence alone used to qualify a pair, and measured runs labelled `transaction-costs-of-ai` / `transportation-sector-ai` and `gemini` / `gemini-3.1-flash-lite` high. So eligibility is now a deterministic check, made on the server in `fixSemanticDuplicatesBatch` before the first merge: **the names must be spelling variants** (equal after removing separators and lower-casing, optionally differing by a final plural `s` / `es`) **and this computer must remember a high-confidence answer about the two openings on disk now**. The client's list is not trusted for either. A pair that fails is reported as `ineligible`, never run. A separator between two digits counts as part of the name, so `gpt-4-1` / `gpt-41` is not a variant; nor are `new` / `news` or `iphone-14` / `iphone-14s`. `window` / `windows` passes the name test, so for that shape the AI's answer about the pages' text is the only guard. Every other pair, including a high-confidence one, keeps the manual Preview → Merge gate.
 
 Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar. Merges run sequentially server-side, so a pair whose page was already consumed by an earlier merge in the same run cannot error.
 
-Each pair ends in one of three states, and since v3.53.0 they are **named separately** because they are different events: **merged**, **resolved by an earlier merge** (a page of the pair was already gone — see above), and **skipped** (the pair failed validation for some other reason, which is also the word used when *you* press Skip on a pair). Through v3.52.0 the first and third of those were both reported as "skipped", so a merge that never ran was shown back to you as a decision you had made.
+Beyond `ineligible`, each pair ends in one of three states, and since v3.53.0 they are **named separately** because they are different events: **merged**, **resolved by an earlier merge** (a page of the pair was already gone — see above), and **skipped** (the pair failed validation for some other reason, which is also the word used when *you* press Skip on a pair). Through v3.52.0 the first and third of those were both reported as "skipped", so a merge that never ran was shown back to you as a decision you had made.
 
 **Undo:** the entire wiki is git-tracked, so a batch merge you regret is recoverable — but **not from inside the app**. See *How to actually undo a Health fix* below.
 
@@ -178,12 +188,12 @@ Each pair ends in one of three states, and since v3.53.0 they are **named separa
 | Cap | Default | Configurable in |
 |---|---|---|
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
-| Max candidate pairs sent to the LLM | 500 | Settings → Health & scan limits → Maximum candidate pairs per scan |
+| Max candidate pairs sent to the LLM, per run | 500 | Settings → Health & scan limits → Maximum candidate pairs per scan |
 | Cost ceiling per scan (tokens) | 200,000 (raised from 50,000 in v3.72.1 — the old default could refuse a scan the 500-pair cap alone would have allowed) | Settings → Health & scan limits → Cost ceiling per scan |
-| Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
+| Batch merge | Spelling variants with a remembered high-confidence answer, confirm-gated | per-pair Preview required for everything else |
 | Max pairs per batch merge | 2,000 | hard-coded |
 
-The batch merge is restricted to high-confidence pairs and guarded by an explicit confirm step; medium/low pairs keep the per-pair preview gate. Because the wiki is git-tracked, any batch merge is recoverable from a terminal (see *How to actually undo a Health fix* below) — that, plus the confirm step, is what makes a bulk operation acceptable here. Note the recovery is a git command, not an in-app button.
+The batch merge is restricted to spelling variants with a remembered high-confidence answer and guarded by an explicit confirm step; every other pair keeps the per-pair preview gate. Because the wiki is git-tracked, any batch merge is recoverable from a terminal (see *How to actually undo a Health fix* below) — that, plus the confirm step, is what makes a bulk operation acceptable here. Note the recovery is a git command, not an in-app button.
 
 ### Cost
 
@@ -211,7 +221,8 @@ The estimate payload does not currently distinguish the two: the note a free mod
 
 - Merge pairs that are related-but-distinct (e.g. `gpt-4` vs `gpt-4-turbo`). The LLM is instructed to err toward non-dupe when ambiguous.
 - Touch `summaries/` as a merge target. A summary can never be the kept or removed page in a merge; link rewrites still go through summary pages (because summaries may link to the old slug and need to point to the new one), but the summary itself is never deleted or structurally modified.
-- Batch-merge **medium- or low-confidence pairs**. Those are always one pair at a time, behind the Preview → Merge gate, however many are found. (High-confidence pairs *can* be batch-merged since v3.0.1-beta.15 — see [Merge all high-confidence duplicates](#merge-all-high-confidence-duplicates-v301-beta15) above — behind an explicit confirm step naming the page count, capped at 2,000 pairs per run, and recoverable via git — see *How to actually undo a Health fix*.)
+- Batch-merge anything but a spelling variant with a remembered high-confidence answer. Everything else is one pair at a time, behind the Preview → Merge gate, however many are found. A batch has an explicit confirm step, is capped at 2,000 pairs per run, and is recoverable via git — see *How to actually undo a Health fix*.
+- Compare pages whose names neither share a word, look alike, are spelling variants, nor match as initials (`car` / `automobile`), or read past the first 500 characters of a page.
 - Run without your explicit click. This is the only AI Health feature with a cost preview + cost ceiling, because it's the only one that scans the whole domain.
 
 ---
@@ -378,6 +389,8 @@ Because the provider is resolved through the same single chokepoint, adding Open
 | `POST` | `/api/health/:domain/ai-suggest` | Body: `{type, issue}`. Accepts `type: 'brokenLinks'` (v2.4.3+) or `type: 'orphans'` (v2.4.4+). |
 | `GET` | `/api/health/:domain/semantic-dupes/estimate` | Phase 3 — runs pre-filter only, returns `{pageCount, candidatePairs, estimatedTokens, estimatedUsd, costCeilingTokens, ...}`. No LLM calls. |
 | `POST` | `/api/health/:domain/semantic-dupes/scan` | Phase 3 — SSE stream. Events: `start`, `progress`, `pair`, `batch-error`, `done`, `error`. |
+| `GET` | `/api/health/:domain/semantic-dupes/status` | Coverage and remembered pairs. No LLM call. |
+| `POST` | `/api/health/:domain/semantic-dupes/forget` | Forgets this domain's remembered answers. Dismissals stay. |
 | `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. READ-ONLY. |
 | `POST` | `/api/health/:domain/semantic-dupes/merge-batch` | beta.15 — SSE stream. Body `{pairs:[...]}` (≤2000). Events: `start`, `progress` (`{done,total,pair,status}`), `done` (`{merged,skipped,errors,total,results}`), `error`. Registered as a write-op + file lock; concurrent sync/update/delete get 409. |
 | `GET` | `/api/health/:domain/broken-links/estimate` | beta.16 — counts (unique / free / AI) + cost. No LLM. |

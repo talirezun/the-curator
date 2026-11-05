@@ -246,7 +246,7 @@ Forwarding the scan object unchanged here returns `fixed: 0` with `reason: "orph
 
 > *"I noticed in the index `[[rag]]` and `[[retrieval-augmented-generation]]` likely describe the same concept. Want to run a semantic-duplicate scan? It costs ~$0.005–$0.03 per scan; I can show you the estimate first."*
 
-Only run `scan_semantic_duplicates` after explicit user approval. Use `estimate_only: true` first to show the cost.
+Only run `scan_semantic_duplicates` after explicit user approval. Use `estimate_only: true` first to show the cost. Tell the user how far it got: *"Checked 500 of 3,918 possible pairs, 3,418 still to check."* Running it again moves forward; it does not repeat those pairs.
 
 For each pair the scan returns: call `fix_wiki_issue` with `type='semanticDupe'`, `preview: true` first → show the diff plan to the user → only on confirmation call again with `preview: false`.
 
