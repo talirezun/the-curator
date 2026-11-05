@@ -38,6 +38,7 @@ import {
 // buttons stay VISIBLE and disabled, described by the no-key line, whose door
 // lands on Settings › Providers & keys (it used to land on General).
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
+import { patchInPlace } from '../shared/morph.js';
 
 // Second import of the SAME module, as a namespace. It was added for one
 // thing — the chat-scope handoff — and the reason it is a NAMESPACE import is
@@ -1180,6 +1181,11 @@ function patchMainAroundHosts(html, token) {
       continue;
     }
     if (before.outerHTML === after.outerHTML) continue;
+    // Wiki health keeps its nodes across a paint; see morphHealthSection. A
+    // refusal or a failed patch lands on the line below it, the whole-section
+    // replacement every other section gets. `typeof` because a suite lifts this
+    // function into a sandbox that has no morphHealthSection.
+    if (typeof morphHealthSection === 'function' && morphHealthSection(before, after)) continue;
     live.replaceChild(after, before);
   }
   return true;
@@ -7138,6 +7144,46 @@ function healthSection(inner) {
   );
 }
 
+// ── WIKI HEALTH KEEPS ITS NODES ACROSS A PAINT ─────────────────────────────
+// See shared/morph.js for what this fixes and what the patch promises.
+//
+// A SECTION NEVER SURVIVES A DOMAIN SWITCH, and that is the safety property
+// here. `bindHealthListeners` stamps the domain on the node, and a stamp that is
+// not the active domain's refuses the patch, so the switch replaces the section
+// whole, as it always did. Domain A's nodes are never reused under domain B.
+//
+// Anything but a clean result falls back: patchInPlace leaves `after` intact,
+// so the caller's replaceChild still has a complete section to put in.
+function morphHealthSection(before, after) {
+  if (!before.classList || !before.classList.contains('dm-health')) return false;
+  if (!after.classList || !after.classList.contains('dm-health')) return false;
+  if (!before.__dmHealthDomain || before.__dmHealthDomain.slug !== state.activeSlug) return false;
+  try {
+    if (patchInPlace(before, after, { keyOf: healthMorphKey })) return true;
+    console.warn('Wiki health: the patch did not match; replacing the section.');
+  } catch (err) {
+    console.warn('Wiki health: the patch failed; replacing the section.', err);
+  }
+  return false;
+}
+
+// Identity for everything in the section that has one. A pair's key names its
+// two pages in keep-then-delete order, so Flip reverses it: sorted here, a
+// flipped pair is the same card with the same buttons, and focus stays on Flip.
+function healthMorphKey(el) {
+  if (el.id) return '#' + el.id;
+  const a = (name) => el.getAttribute(name);
+  if (a('data-group-key')) return 'group:' + a('data-group-key');
+  if (a('data-sem-key')) {
+    return 'pair:' + a('data-sem-key').split('||').sort().join('||') + ':' + (a('data-sem-action') || '');
+  }
+  if (a('data-action')) return 'action:' + a('data-action');
+  if (a('data-fixall')) return 'fixall:' + a('data-fixall');
+  if (a('data-dismiss-issue')) return 'dismiss:' + a('data-dismiss-type') + ':' + a('data-dismiss-issue');
+  if (a('data-restore-key')) return 'restore:' + a('data-restore-key');
+  return null;
+}
+
 function renderHealthPanel(domain, readonly) {
   // Stale-while-revalidate — LAYER 2, independent of LAYER 1 in
   // shouldKeepHealthOnReload. A report is usable here ONLY if it was
@@ -8102,135 +8148,147 @@ function describeDismissed(r) {
 
 // ── Event wiring for the health card ───────────────────────────────────────
 
+// ONE LISTENER ON THE SECTION, FOR THE LIFE OF THE SECTION. The section's nodes
+// now survive a paint (morphHealthSection), so the old per-node binding would
+// stack a listener on every paint: Rescan, Fix-all, Apply plan and Merge are NOT
+// idempotent, a duplicate listener is a duplicate request, and one of them
+// deletes files. `__dmBound` is an expando rather than a `data-*` mark because
+// the patch compares markup. A section that is replaced (a domain switch, a
+// failed patch, a column whose shape moved) is a new node and binds once itself.
+//
+// The domain is stamped on the node and read at press time, so no closure holds
+// on to one.
 function bindHealthListeners(domain, readonly) {
-  // ── BOUND ONCE PER NODE (v3.64.1) — see bindStatCardListeners for the full
-  // argument. The invariant here: every element this function binds lives
-  // inside `.dm-health`, the section `healthSection` wraps. It matters more
-  // here than anywhere else on this page, because Rescan, Fix-all, Apply plan
-  // and Merge are NOT idempotent — a duplicate listener is a duplicate
-  // request, and one of them deletes files.
-  // `typeof` GUARDED, and that is not defensive dressing: three suites lift
-  // these functions and execute them against a hand-written `document` that
-  // has getElementById and querySelectorAll and NO querySelector, so an
-  // unguarded call is a CRASH in a suite rather than a failing assertion —
-  // the shape this file warns about. A stand-in with no querySelector simply
-  // binds every time, which is what it did before this guard existed.
+  // `typeof` guarded: suites lift this function against a hand-written
+  // `document` with no querySelector. With no section there is nothing to bind.
   const boundScope = typeof document.querySelector === 'function'
     ? document.querySelector('.dm-health') : null;
-  if (boundScope) {
-    if (boundScope.__dmBound) return;
-    boundScope.__dmBound = true;
+  if (!boundScope) return;
+  boundScope.__dmHealthDomain = domain;
+  if (boundScope.__dmBound) return;
+  boundScope.__dmBound = true;
+  boundScope.addEventListener('click', onHealthClick);
+  // `toggle` does not bubble, so it is heard in capture.
+  boundScope.addEventListener('toggle', onHealthToggle, true);
+}
+
+// `.then()` even for a synchronous target: mergeSemanticDuplicates only sets
+// state.confirm and returns undefined, so `fn().catch` would itself throw. The
+// wrapper turns a synchronous throw or a rejected promise into the same caught
+// path, which is what LOW-3 (re-audit, third round) asked of these destructive
+// dispatches: their targets end in an un-try-wrapped render(token) or loadHealth.
+function dispatchHealthAction(fn) {
+  Promise.resolve().then(fn).catch(reportAsyncActionFailure);
+}
+
+function onHealthClick(e) {
+  const section = e.currentTarget;
+  const domain = section.__dmHealthDomain;
+  const target = e.target;
+  if (!target || typeof target.closest !== 'function') return;
+  const btn = target.closest('button');
+  if (!btn || !section.contains(btn)) {
+    noteHealthFoldPress(target);
+    return;
   }
-  document.getElementById('dm-rescan-btn')?.addEventListener('click', () => rescan(domain.slug));
-  // (v3.67.0: the no-key "Open Settings" button — which landed on General —
-  // is gone. Its successor is the run line's own door, wired once per mount
-  // by wireAiRunDoors in onEnter, and it lands on Providers & keys.)
+  // A DELEGATE ASKS. Measured on Chrome 156: a real press on a disabled button,
+  // or on an icon inside one, reaches no listener at all, so this line does not
+  // fire there. A script-dispatched click on the icon does reach this listener,
+  // and engines have differed over the years about real ones. This section holds
+  // Merge and Fix all, so the disabled state is checked rather than assumed.
+  if (btn.disabled) return;
 
-  // LOW-3 fix (re-audit, third round): these 5 dispatch sites are the
-  // DESTRUCTIVE ones (fix/rescue/merge/apply) — exactly what
-  // reportAsyncActionFailure exists for — and each one's target function
-  // ends with an un-try-wrapped `render(token)` (or `await loadHealth`)
-  // whose own throw would otherwise become a bare, unattributed "Uncaught
-  // (in promise)". `Promise.resolve().then(() => fn()).catch(...)` is used
-  // uniformly rather than `fn(...).catch(...)` directly because
-  // mergeSemanticDuplicates is a plain SYNCHRONOUS function (it only sets
-  // state.confirm and calls render()) — it returns `undefined`, and
-  // `undefined.catch` would itself throw. Wrapping the call in `.then()`
-  // defers it by one microtask (imperceptible; nothing else can run
-  // in between) and converts either a synchronous throw OR a rejected
-  // promise into the same caught path, so the same wrapper is correct
-  // for both the sync and the async targets without special-casing either.
-  document.querySelectorAll('.dm-quick-btn[data-action]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      Promise.resolve().then(() => onQuickAction(domain.slug, btn.dataset.action)).catch(reportAsyncActionFailure);
-    });
-  });
-
-  document.getElementById('dm-confirm-yes')?.addEventListener('click', () => {
-    const run = state.confirm && state.confirm.run;
-    state.confirm = null;
-    if (run) Promise.resolve().then(() => run()).catch(reportAsyncActionFailure);
-  });
-  document.getElementById('dm-confirm-no')?.addEventListener('click', () => { state.confirm = null; render(myMountToken); });
-  document.getElementById('dm-confirm-settings')?.addEventListener('click', () => {
-    state.confirm = null;
-    requestSettingsSection('health');
-    navigate('settings');
-  });
-
-  document.getElementById('dm-plan-apply-btn')?.addEventListener('click', () => {
-    Promise.resolve().then(() => applyPendingPlan(domain.slug)).catch(reportAsyncActionFailure);
-  });
-  document.getElementById('dm-plan-discard-btn')?.addEventListener('click', () => { state.pendingPlan = null; render(myMountToken); });
-
-  document.getElementById('dm-semantic-merge-btn')?.addEventListener('click', () => {
-    Promise.resolve().then(() => mergeSemanticDuplicates(domain.slug)).catch(reportAsyncActionFailure);
-  });
-  document.getElementById('dm-semantic-next-btn')?.addEventListener('click', () => {
+  switch (btn.id) {
+    case 'dm-rescan-btn': rescan(domain.slug); return;
+    case 'dm-confirm-yes': {
+      const run = state.confirm && state.confirm.run;
+      state.confirm = null;
+      if (run) dispatchHealthAction(() => run());
+      return;
+    }
+    case 'dm-confirm-no': state.confirm = null; render(myMountToken); return;
+    case 'dm-confirm-settings':
+      state.confirm = null;
+      requestSettingsSection('health');
+      navigate('settings');
+      return;
+    case 'dm-plan-apply-btn': dispatchHealthAction(() => applyPendingPlan(domain.slug)); return;
+    case 'dm-plan-discard-btn': state.pendingPlan = null; render(myMountToken); return;
+    case 'dm-semantic-merge-btn': dispatchHealthAction(() => mergeSemanticDuplicates(domain.slug)); return;
     // Through the same door as Find duplicate pages, so the first-use disclosure holds.
-    Promise.resolve().then(() => onQuickAction(domain.slug, 'semanticDupes')).catch(reportAsyncActionFailure);
-  });
-  document.getElementById('dm-semantic-more-btn')?.addEventListener('click', () => {
-    const scan = activeSemanticScan();
-    if (scan) { scan.visible = (scan.visible || SEMANTIC_PAGE_SIZE) + SEMANTIC_PAGE_SIZE; render(myMountToken); }
-  });
-  document.getElementById('dm-semantic-reset-btn')?.addEventListener('click', () => {
-    Promise.resolve().then(() => confirmSemanticReset(domain.slug)).catch(reportAsyncActionFailure);
-  });
+    case 'dm-semantic-next-btn': dispatchHealthAction(() => onQuickAction(domain.slug, 'semanticDupes')); return;
+    case 'dm-semantic-more-btn': {
+      const scan = activeSemanticScan();
+      if (scan) { scan.visible = (scan.visible || SEMANTIC_PAGE_SIZE) + SEMANTIC_PAGE_SIZE; render(myMountToken); }
+      return;
+    }
+    case 'dm-semantic-reset-btn': dispatchHealthAction(() => confirmSemanticReset(domain.slug)); return;
+    default: break;
+  }
 
-  // Per-pair semantic actions. The pair object is looked up from LIVE state
-  // by key at click time rather than captured in the closure — a pair that
-  // was flipped since this markup was painted must be merged in the
-  // direction it now shows, not the one it had when the listener bound.
-  document.querySelectorAll('.dm-sem-btn[data-sem-action]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.semAction;
-      const key = btn.dataset.semKey;
-      Promise.resolve().then(() => {
-        const scan = activeSemanticScan();
-        if (!scan) return;
-        const pair = scan.pairs.find((p) => semanticPairKey(p) === key);
-        if (!pair) return;
-        if (action === 'preview') return previewSemanticPair(domain.slug, pair);
-        if (action === 'flip') { flipSemanticPair(pair); render(myMountToken); return; }
-        if (action === 'merge') return mergeOneSemanticPair(domain.slug, pair);
-        if (action === 'skip') return skipSemanticPair(domain.slug, pair);
-      }).catch(reportAsyncActionFailure);
+  const data = btn.dataset || {};
+  if (btn.classList.contains('dm-quick-btn') && data.action) {
+    const action = data.action;
+    dispatchHealthAction(() => onQuickAction(domain.slug, action));
+    return;
+  }
+  // Per-pair actions. The pair is looked up from LIVE state by key at click time:
+  // a pair flipped since this markup was painted must be merged in the direction
+  // it now shows.
+  if (btn.classList.contains('dm-sem-btn') && data.semAction) {
+    const action = data.semAction;
+    const key = data.semKey;
+    dispatchHealthAction(() => {
+      const scan = activeSemanticScan();
+      if (!scan) return undefined;
+      const pair = scan.pairs.find((p) => semanticPairKey(p) === key);
+      if (!pair) return undefined;
+      if (action === 'preview') return previewSemanticPair(domain.slug, pair);
+      if (action === 'flip') { flipSemanticPair(pair); render(myMountToken); return undefined; }
+      if (action === 'merge') return mergeOneSemanticPair(domain.slug, pair);
+      if (action === 'skip') return skipSemanticPair(domain.slug, pair);
+      return undefined;
     });
-  });
+    return;
+  }
+  if (btn.classList.contains('dm-group-fixall-btn') && data.fixall) {
+    e.preventDefault();
+    e.stopPropagation(); // don't toggle the <details> — see v3.0.1-beta.18 note in CLAUDE.md
+    dispatchHealthAction(() => confirmFixAllOfType(domain.slug, btn.dataset.fixall));
+    return;
+  }
+  if (btn.classList.contains('dm-dismiss-btn') && data.dismissType) {
+    const type = data.dismissType;
+    const issue = JSON.parse(data.dismissIssue);
+    dismissIssue(domain.slug, type, issue).catch(reportAsyncActionFailure);
+    return;
+  }
+  if (btn.classList.contains('dm-restore-btn') && data.restoreKey) {
+    undismissIssue(domain.slug, JSON.parse(data.restoreKey)).catch(reportAsyncActionFailure);
+  }
+}
 
-  document.querySelectorAll('.dm-group-fixall-btn[data-fixall]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation(); // don't toggle the <details> — see v3.0.1-beta.18 note in CLAUDE.md
-      // Same wrapper as every other action binding in this function — see the
-      // comment above the quick-action loop for why `.then()` is used even for
-      // a synchronous target (confirmFixAllOfType only sets state.confirm).
-      Promise.resolve().then(() => confirmFixAllOfType(domain.slug, btn.dataset.fixall)).catch(reportAsyncActionFailure);
-    });
-  });
+// THE FOLD'S STATE IS RIGHT BEFORE ANY PAINT CAN READ IT. `toggle` is queued, so
+// a paint landing between the press and the event would compose the fold from
+// the old state, and now that the fold survives a paint that would undo the
+// press. The click happens first: it records the state the press is about to
+// set, and `toggle` confirms it.
+function noteHealthFoldPress(target) {
+  const summary = target.closest('summary');
+  const fold = summary && summary.parentElement;
+  if (!fold || !fold.dataset || !fold.dataset.groupKey || !fold.classList.contains('dm-group')) return;
+  if (fold.open) state.expandedGroups.delete(fold.dataset.groupKey);
+  else state.expandedGroups.add(fold.dataset.groupKey);
+}
 
-  document.querySelectorAll('.dm-group[data-group-key]').forEach((el) => {
-    el.addEventListener('toggle', () => {
-      const key = el.dataset.groupKey;
-      if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
-      if (key === 'dismissed' && el.open && state.dismissedRecords === null) loadDismissedRecords(domain.slug).catch(reportAsyncActionFailure);
-    });
-  });
-
-  document.querySelectorAll('.dm-dismiss-btn[data-dismiss-type]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const type = btn.dataset.dismissType;
-      const issue = JSON.parse(btn.dataset.dismissIssue);
-      dismissIssue(domain.slug, type, issue).catch(reportAsyncActionFailure);
-    });
-  });
-  document.querySelectorAll('.dm-restore-btn[data-restore-key]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const record = JSON.parse(btn.dataset.restoreKey);
-      undismissIssue(domain.slug, record).catch(reportAsyncActionFailure);
-    });
-  });
+function onHealthToggle(e) {
+  const el = e.target;
+  if (!el || !el.dataset || !el.dataset.groupKey || !el.classList.contains('dm-group')) return;
+  const key = el.dataset.groupKey;
+  if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
+  if (key === 'dismissed' && el.open && state.dismissedRecords === null) {
+    loadDismissedRecords(e.currentTarget.__dmHealthDomain.slug).catch(reportAsyncActionFailure);
+  }
 }
 
 function rescan(slug) {
