@@ -46,7 +46,7 @@ function fnSource(name) {
   throw new Error('unterminated ' + name);
 }
 
-const FNS = ['confirmFixAllOfType', 'confirmFixSafe', 'safeFixDeletedPages', 'deletedPageCount', 'takeHealthNote',
+const FNS = ['readHealthBeforeAsking', 'healthTraceText', 'beforeHealthPaint', 'resetHealthPressRule', 'confirmFixAllOfType', 'confirmFixSafe', 'safeFixDeletedPages', 'deletedPageCount', 'takeHealthNote',
   'dropIssuesLocally', 'placeHealthStack', 'healthStackHome', 'onHealthKeydown', 'liveBatchPairs', 'heldOutcome', 'healthRowHold'];
 
 function world() {
@@ -54,12 +54,18 @@ function world() {
   const ran = [];
   const body = `
     const state = { rowNote: null, rowOutcomes: {}, rowLines: {}, confirm: null, pendingPlan: null, pressAnchor: null, ringAnchor: null,
-      activeSlug: 'a', health: null, healthLive: '', healthTrace: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
     const HEALTH_CATEGORIES = [{ key: 'missingBacklinks', label: 'Missing backlinks' }, { key: 'crossFolderDupes', label: 'Cross-folder duplicates' }, { key: 'brokenLinks', label: 'Broken links' }];
     const AUTO_FIX_TYPES = new Set(['missingBacklinks', 'crossFolderDupes', 'hyphenVariants', 'brokenLinks']);
     const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
     const GIT_UNDO_WARN = 'WARN'; const GIT_UNDO_NOTE = 'NOTE';
-    const HEALTH_HOLD_MS = 1000;
+    const HEALTH_HOLD_MS = 1000; const HEALTH_TRACE_MAX = 24;
+    let confirmOnScreen = null;
+    const healthFloor = { reset() {} };
+    const document = { getElementById() { return null; } };
+    const onQuickAction = () => {};
+    let fetchResult = null; let fetchFails = null; let fetchCalls = 0;
+    const fetchJSON = async () => { fetchCalls++; if (fetchFails) throw new Error(fetchFails); return fetchResult; };
     let healthPressY = null; let planLeaving = false;
     const pluralize = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
     const countSafeFixable = (r) => (r.missingBacklinks || []).length + (r.crossFolderDupes || []).length;
@@ -72,7 +78,7 @@ function world() {
     const pageY = (r) => r.y; const myMountToken = 1;
     const setTimeout = (fn, ms) => { __timers.push({ fn, ms }); return 0; };
     ${FNS.map(fnSource).join('\n')}
-    return { state, ${FNS.join(', ')}, setPress(y) { healthPressY = y; } };`;
+    return { state, ${FNS.join(', ')}, setPress(y) { healthPressY = y; }, setFetch(r, f) { fetchResult = r; fetchFails = f; }, fetchCount() { return fetchCalls; } };`;
   const api = new Function('__ran', '__timers', body)(ran, timers);
   return { ...api, ran, timers };
 }
@@ -82,23 +88,123 @@ section('§1 Free repairs run on the press; anything deleting a page asks');
 {
   const w = world();
   w.state.health = { missingBacklinks: [{ summary: 's', entity: 'e' }], crossFolderDupes: [{ keep: 'a', remove: 'b' }] };
-  w.confirmFixAllOfType('a', 'missingBacklinks');
+  await w.confirmFixAllOfType('a', 'missingBacklinks');
   ok(!w.state.confirm && w.ran.includes('fixAll missingBacklinks'), 'Fix all on a free repair runs at once, with no question');
+  ok(w.fetchCount() === 0, 'and reads nothing first: there is no count to get wrong');
   w.ran.length = 0;
-  w.confirmFixAllOfType('a', 'crossFolderDupes');
+  w.setFetch({ missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }] });
+  await w.confirmFixAllOfType('a', 'crossFolderDupes');
   ok(w.state.confirm && !w.ran.some((r) => r.startsWith('fixAll')), 'Fix all on a type that deletes only asks');
   ok(/1 page will be deleted/.test(w.state.confirm.body) && /WARN/.test(w.state.confirm.body), 'and the question counts the pages and carries the undo warning');
   ok(w.state.confirm.confirmLabel === 'Merge and delete', 'its button says what it does');
 
+  // The count in a delete warning is read at the moment of asking.
+  const st = world();
+  st.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }, { keep: 'c', remove: 'd' }, { keep: 'e', remove: 'f' }, { keep: 'g', remove: 'h' }] };
+  st.setFetch({ crossFolderDupes: [{ keep: 'g', remove: 'h' }] });
+  await st.confirmFixAllOfType('a', 'crossFolderDupes');
+  ok(st.fetchCount() === 1 && /1 page will be deleted/.test(st.state.confirm.body), 'four on screen, one on disk: it says one', st.state.confirm && st.state.confirm.body);
+  const nil = world();
+  nil.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }] };
+  nil.setFetch({ crossFolderDupes: [] });
+  await nil.confirmFixAllOfType('a', 'crossFolderDupes');
+  ok(!nil.state.confirm && nil.state.rowNote && /Nothing left/.test(nil.state.rowNote.text), 'none left: no question, and it says so');
+  ok(nil.state.health.crossFolderDupes.length === 0, 'and the row goes with it');
+  const down = world();
+  down.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }] };
+  down.setFetch(null, 'the disk went away');
+  await down.confirmFixAllOfType('a', 'crossFolderDupes');
+  ok(!down.state.confirm && down.state.rowNote.tone === 'error', 'cannot read: no question at all, rather than one with an old number');
+  ok(down.state.busyKey === null, 'and nothing is left waiting');
+
   const v = world();
   v.state.health = { missingBacklinks: [{}], crossFolderDupes: [], hyphenVariants: [] };
-  v.confirmFixSafe('a');
+  await v.confirmFixSafe('a');
   ok(!v.state.confirm && v.ran.includes('fixSafe'), 'Fix N safe issues with nothing to delete runs at once');
   const d = world();
   d.state.health = { missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }], hyphenVariants: [{ files: ['x', 'y', 'z'] }] };
-  d.confirmFixSafe('a');
+  d.setFetch(d.state.health);
+  await d.confirmFixSafe('a');
   ok(d.state.confirm && !d.ran.includes('fixSafe'), 'with pages to delete it asks');
   ok(/3 pages will be deleted/.test(d.state.confirm.body), 'and counts them: a pair and a three-page group is 3');
+  const stale = world();
+  stale.state.health = { missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }], hyphenVariants: [] };
+  stale.setFetch({ missingBacklinks: [{}], crossFolderDupes: [], hyphenVariants: [] });
+  await stale.confirmFixSafe('a');
+  ok(!stale.state.confirm && stale.ran.includes('fixSafe'), 'and if what it would delete has gone by now, it no longer asks');
+}
+
+section('§1b An outcome belongs to the domain it ran on');
+{
+  const w = world();
+  w.state.activeSlug = 'b';
+  w.state.health = { missingBacklinks: [{ summary: 'on b' }] };
+  w.state.rowNoteFrom = { slug: 'a', token: 1 };
+  w.state.rowNote = { key: 'group:missingBacklinks', held: true, tone: 'success', text: 'Repaired 400', drop: { type: 'missingBacklinks' } };
+  w.beforeHealthPaint(1);
+  ok(!Object.keys(w.state.rowOutcomes).length && !Object.keys(w.state.rowLines).length, 'domain a finished while b is on screen: b shows nothing of it');
+  ok(w.state.health.missingBacklinks.length === 1, 'and b\'s own rows are untouched by a\'s repair');
+  ok(w.state.healthLive === '' && !w.state.healthTrace, 'nor is it announced as if it were b\'s');
+  w.state.activeSlug = 'a';
+  w.state.health = { missingBacklinks: [] };
+  w.beforeHealthPaint(1);
+  ok(w.state.rowLines.quick && w.state.rowLines.quick.text === 'Repaired 400', 'back on a, it says what happened there');
+
+  // Leaving the view while it runs.
+  const l = world();
+  l.state.health = { crossFolderDupes: [] };
+  l.state.rowNoteFrom = { slug: 'a', token: 1 };
+  l.state.rowNote = { key: 'group:crossFolderDupes', held: true, tone: 'success', text: 'Merged 4', drop: { type: 'crossFolderDupes' } };
+  l.resetHealthPressRule();
+  ok(l.state.rowNote, 'leaving does not lose an outcome still on its way');
+  l.beforeHealthPaint(2);
+  ok(l.state.rowLines.quick && l.state.rowLines.quick.text === 'Merged 4', 'on return, from a newer mount, it is a line: its row has gone');
+
+  const kept = world();
+  kept.state.rowOutcomes = { quick: { slug: 'a', tone: 'error', text: 'Could not repair', key: 'quick' } };
+  kept.resetHealthPressRule();
+  ok(!Object.keys(kept.state.rowOutcomes).length && kept.state.rowAway.a.quick, 'a failure waits with its domain across a switch');
+  kept.beforeHealthPaint(1);
+  ok(kept.state.rowLines.quick && kept.state.rowLines.quick.tone === 'error', 'and is still there on return: a failure stays until acted on');
+}
+
+section('§1c The trace is never cut off');
+{
+  const w = world();
+  ok(w.healthTraceText({ text: 'Repaired 2' }) === 'Repaired 2', 'a short outcome is its own trace');
+  ok(w.healthTraceText({ text: 'Repointed 4 occurrences, removed the brackets from 2 occurrences, across 3 files.' }) === '', 'a long one leaves no trace, rather than half a sentence');
+  ok(w.healthTraceText({ text: 'Merged a-very-long-page-name-indeed into another-long-one.', trace: 'Merged a pair' }) === 'Merged a pair', 'unless it names a short one');
+  w.state.rowNoteFrom = { slug: 'a', token: 1 };
+  w.state.rowNote = { tone: 'success', text: 'Repointed 4 occurrences, removed the brackets from 2 occurrences, across 3 files.' };
+  w.takeHealthNote(1);
+  ok(w.state.rowOutcomes.quick.text.endsWith('across 3 files.'), 'the whole sentence is on the line');
+}
+
+section('§1d A page writing one link twice is one row');
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const os = await import('node:os');
+  const root = mkdtempSync(path.join(os.default.tmpdir(), 'press-rule-'));
+  process.env.CURATOR_TEST_DOMAINS_DIR = root;
+  process.env.CURATOR_TEST_USER_DATA_DIR = mkdtempSync(path.join(os.default.tmpdir(), 'press-rule-u-'));
+  const wiki = path.join(root, 'd', 'wiki');
+  for (const f of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(wiki, f), { recursive: true });
+  writeFileSync(path.join(root, 'd', 'CLAUDE.md'), '# d\n');
+  writeFileSync(path.join(wiki, 'index.md'), '# Wiki Index — d\n');
+  writeFileSync(path.join(wiki, 'concepts', 'one.md'), '---\ntype: concept\n---\n\n# One\n\nSee [[mac-os]] and again [[mac-os]], and [[entities/two]] and [[entities/two]].\n\n[[two]]\n');
+  writeFileSync(path.join(wiki, 'concepts', 'three.md'), '---\ntype: concept\n---\n\n# Three\n\nAlso [[mac-os]].\n\n[[one]]\n');
+  writeFileSync(path.join(wiki, 'entities', 'two.md'), '---\ntype: entity\n---\n\n# Two\n\n[[three]]\n');
+  const { scanWiki } = await import('../src/brain/health.js');
+  const { keyForIssue } = await import('../src/brain/health-dismissed.js');
+  const r = await scanWiki('d');
+  const mac = r.brokenLinks.filter((i) => i.linkText === 'mac-os');
+  ok(mac.length === 2, 'the same link on two pages is two rows, and the same link twice on one page is not', JSON.stringify(mac));
+  const twice = mac.find((i) => i.sourceFile.endsWith('one.md'));
+  ok(twice && twice.occurrences === 2, 'that row says how many times the page writes it');
+  const once = mac.find((i) => i.sourceFile.endsWith('three.md'));
+  ok(once && once.occurrences === undefined, 'a link written once carries nothing extra: every other reader sees the same row as before');
+  ok(new Set(mac.map((i) => keyForIssue('brokenLinks', i))).size === mac.length, 'so one Dismiss hides exactly the one row it was pressed on');
+  ok(r.folderPrefixLinks.filter((i) => i.linkText === 'entities/two').length === 1, 'folder-prefix links likewise');
 }
 
 section('§2 An outcome is filed on the row; a failure has no timer');

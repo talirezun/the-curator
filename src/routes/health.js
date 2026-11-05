@@ -141,7 +141,10 @@ router.get('/:domain', async (req, res) => {
     // gone are not in it), and the view needs both.
     let dismissedRecords = null;
     try { dismissedRecords = (await listDismissed(domain)).length; } catch { dismissedRecords = null; }
-    res.json(dismissedRecords === null ? report : { ...report, dismissedRecords });
+    // `scannedAt` is when the wiki was READ, and a cache hit keeps the older one.
+    // `checkedAt` is when it was last looked at, which a person pressing Rescan asks.
+    const checkedAt = new Date().toISOString();
+    res.json(dismissedRecords === null ? { ...report, checkedAt } : { ...report, dismissedRecords, checkedAt });
   } catch (err) {
     console.error('[health scan]', err);
     res.status(err.status || 500).json({ error: err.message });

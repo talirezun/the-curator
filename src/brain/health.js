@@ -605,8 +605,12 @@ async function scanWikiUncached(domain) {
       const raw = m[1].trim();
 
       // Folder-prefix violations (entities/ or concepts/ — summaries/ is intentional)
+      // One issue per link in a page: a dismissal and a fix both act on the pair, so
+      // a page writing the same link twice is one row, not two identical ones of which
+      // one Dismiss removes both and one repair reads as "1 of 2".
       if (raw.startsWith('entities/') || raw.startsWith('concepts/')) {
-        folderPrefixLinks.push({ sourceFile: relPath, linkText: raw });
+        const seen = folderPrefixLinks.find((i) => i.sourceFile === relPath && i.linkText === raw);
+        if (!seen) folderPrefixLinks.push({ sourceFile: relPath, linkText: raw });
       }
 
       // Resolve the link's target slug (for incoming-link tracking + broken detection)
@@ -636,7 +640,9 @@ async function scanWikiUncached(domain) {
           suggestedTarget = hit.folder ? `${hit.folder}/${hit.slug}` : hit.slug;
           if (suggestedTarget === raw) suggestedTarget = null;
         }
-        brokenLinks.push({ sourceFile: relPath, linkText: raw, suggestedTarget });
+        const again = brokenLinks.find((i) => i.sourceFile === relPath && i.linkText === raw);
+        if (again) again.occurrences = (again.occurrences || 1) + 1;
+        else brokenLinks.push({ sourceFile: relPath, linkText: raw, suggestedTarget });
       }
     }
   }

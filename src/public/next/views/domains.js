@@ -531,6 +531,8 @@ const state = {
   // THE PRESS RULE (Wiki health): see the block of that name below morphHealthSection.
   rowNote: null,          // the outcome an action just produced; render() files it on its row
   rowOutcomes: {},        // row key -> the outcome on that row
+  rowNoteFrom: null,      // { slug, token }: the domain and mount that note came from
+  rowAway: {},            // domain -> outcomes waiting for it to be on screen again
   rowLines: {},           // anchor -> the outcome line under that row (derived in render)
   rowBusy: new Set(),     // rows with a small save running (Dismiss, Restore)
   pressAnchor: null,      // the row whose press opened what is open
@@ -2438,6 +2440,13 @@ function shouldKeepHealthOnReload(report, reportSlug, slug) {
 
 async function loadHealth(slug, token, opts) {
   const silent = !!(opts && opts.silent);
+  // A write on a domain the user has left: this page is showing another one, whose
+  // open plan and figures this must not touch. That domain is read when it is opened.
+  if (silent && slug !== state.activeSlug) {
+    // Its outcome is filed now, against its own domain, by the paint.
+    if (isCurrentMount(token)) render(token);
+    return;
+  }
   // Stale-while-revalidate — LAYER 1. The decision is made BY THE CALLER
   // and handed in, exactly as `keepSemanticScan` above it is, and for the
   // same two reasons: it must be evaluated after state.activeSlug has
@@ -7409,6 +7418,8 @@ function keepHealthFocus(section, focus) {
   section.__morphWaiting = null;
   const done = focus.row && focus.row.isConnected ? focus.row.querySelector('.dm-row-done') : null;
   if (done) { done.focus({ preventScroll: true }); return; }
+  // A question or plan that closed with nothing to say hands back to what opened it.
+  if (focus.row && /^(confirm|plan)$/.test(focus.row.getAttribute('data-row-key') || '') && focusHealthOpener(section)) return;
   const after = focus.index >= 0 ? focus.list.slice(focus.index + 1) : focus.list;
   const before = focus.index >= 0 ? focus.list.slice(0, focus.index).reverse() : [];
   if (!focusFirstAlive(after.concat(before))) focusFirstAlive([section.querySelector('#dm-rescan-btn')]);
@@ -7424,12 +7435,21 @@ function onHealthRowCollapse(el) {
   const section = el.closest('.dm-health');
   if (!section) return;
   // A question or a plan closing gives focus back to what opened it.
-  if (/^(confirm|plan)$/.test(el.getAttribute('data-row-key') || '') &&
-      focusFirstAlive([findHealthControl(section, state.pressOpener)])) return;
+  if (/^(confirm|plan)$/.test(el.getAttribute('data-row-key') || '') && focusHealthOpener(section)) return;
   const list = healthFocusables(section);
   const following = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
   const preceding = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING).reverse();
   focusFirstAlive(following.concat(preceding));
+}
+
+// What opened it; if that has gone, the first of the section's own actions. Never a
+// door out of the section, such as Change model.
+function focusHealthOpener(section) {
+  return focusFirstAlive([
+    findHealthControl(section, state.pressOpener),
+    ...section.querySelectorAll('.dm-quick-btn'),
+    section.querySelector('#dm-rescan-btn'),
+  ]);
 }
 
 function onHealthRowRemoved() {
@@ -7534,12 +7554,36 @@ function dropIssuesLocally(drop) {
   }
 }
 
+// The trace is one line in the section head, which may not grow or be cut off. So it
+// only ever holds what fits; the whole sentence is on the row or the line it belongs to.
+const HEALTH_TRACE_MAX = 24;
+function healthTraceText(note) {
+  if (note.trace) return note.trace;
+  const t = note.short || note.text;
+  return t && t.length <= HEALTH_TRACE_MAX ? t : '';
+}
+
 function takeHealthNote(token) {
   const note = state.rowNote;
   if (!note) return;
   state.rowNote = null;
+  // AN OUTCOME BELONGS TO THE DOMAIN IT RAN ON. The user can be on another one by now,
+  // or have left and come back, and then there is no row to hold it on: it waits as a
+  // line for when that domain is on screen. Nothing of it touches the report on screen.
+  const from = state.rowNoteFrom || {};
+  state.rowNoteFrom = null;
+  const owner = from.slug || state.activeSlug;
+  if (owner !== state.activeSlug || (from.token !== undefined && from.token !== token)) {
+    const line = Object.assign({}, note, { key: 'quick', slug: owner, at: Date.now(), held: false, drop: null });
+    if (note.tone !== 'error' && healthTraceText(note)) {
+      if (owner === state.activeSlug) state.healthTrace = { slug: owner, text: healthTraceText(note), at: new Date().toISOString() };
+    }
+    if (owner === state.activeSlug) { state.rowOutcomes.quick = line; state.healthLive = note.text; }
+    else (state.rowAway[owner] || (state.rowAway[owner] = {})).quick = line;
+    return;
+  }
   const key = note.key || state.pressAnchor || 'quick';
-  const outcome = Object.assign({}, note, { key, slug: state.activeSlug, at: Date.now(), held: note.held === true });
+  const outcome = Object.assign({}, note, { key, slug: owner, at: Date.now(), held: note.held === true });
   // AN ANSWER IS ANSWERED WHERE IT WAS GIVEN. Whoever pressed Apply or the yes of
   // a question has their pointer on that card, and either can be hundreds of
   // pixels tall at phone width, so the row or line it belongs to may be off-screen.
@@ -7560,8 +7604,8 @@ function takeHealthNote(token) {
   }
   state.rowOutcomes[key] = outcome;
   state.healthLive = note.text;
-  if (note.tone !== 'error') {
-    state.healthTrace = { slug: state.activeSlug, text: note.short || note.text, at: new Date().toISOString() };
+  if (note.tone !== 'error' && healthTraceText(note)) {
+    state.healthTrace = { slug: owner, text: healthTraceText(note), at: new Date().toISOString() };
   }
   if (state.confirm && state.confirm.busy) state.confirm = null;
   if (note.drop) dropIssuesLocally(note.drop);
@@ -7583,7 +7627,11 @@ function placeHealthStack() {
   const lines = {};
   for (const key of Object.keys(state.rowOutcomes)) {
     const o = state.rowOutcomes[key];
-    if (o.slug !== state.activeSlug) { delete state.rowOutcomes[key]; continue; }
+    if (o.slug !== state.activeSlug) {
+      if (!o.held) (state.rowAway[o.slug] || (state.rowAway[o.slug] = {}))[key] = o;
+      delete state.rowOutcomes[key];
+      continue;
+    }
     if (o.held || (o.notBefore && o.notBefore > Date.now())) continue;
     lines[healthStackHome(key)] = o;
   }
@@ -7638,7 +7686,9 @@ function announceHealthBusy() {
   const key = state.busyKey;
   if (key === busyAnnounced) return;
   if (key) state.healthLive = busyRingLabel(key);
-  else if (state.healthLive === busyRingLabel(busyAnnounced)) state.healthLive = 'Finished.';
+  // Only what is true: a plan is ready, or the running label comes down. "Finished"
+  // said nothing, and it was said of a plan just thrown away.
+  else if (state.healthLive === busyRingLabel(busyAnnounced)) state.healthLive = state.pendingPlan ? 'Plan ready. Nothing is written yet.' : '';
   busyAnnounced = key;
 }
 
@@ -7653,6 +7703,12 @@ function markHealthOpener() {
 }
 
 function beforeHealthPaint(token) {
+  // What happened while this domain was off screen, or the view was left.
+  const away = state.rowAway[state.activeSlug];
+  if (away) {
+    delete state.rowAway[state.activeSlug];
+    state.rowOutcomes = Object.assign({}, away, state.rowOutcomes);
+  }
   takeHealthNote(token);
   placeHealthStack();
 }
@@ -7700,7 +7756,12 @@ function noteHealthPress(btn) {
 }
 
 function resetHealthPressRule() {
-  state.rowNote = null;
+  // Not the outcomes: a failure stays until acted on, and a line says what happened.
+  // Each waits with its own domain. A pending note stays too: its action is still running.
+  for (const k of Object.keys(state.rowOutcomes)) {
+    const o = state.rowOutcomes[k];
+    if (!o.held && o.slug) (state.rowAway[o.slug] || (state.rowAway[o.slug] = {}))[k] = o;
+  }
   state.rowOutcomes = {};
   state.rowLines = {};
   state.rowBusy = new Set();
@@ -7897,8 +7958,12 @@ function renderHealthPanel(domain, readonly) {
   // whose value is `undefined` is DROPPED by the component (`scalar()`
   // returns null), so `report.counts.dismissed` behaves the same way: a
   // missing count renders no line, while a real 0 is a measurement and does.
-  const scannedSec = report.scannedAt
-    ? Math.max(0, (Date.now() - new Date(report.scannedAt).getTime()) / 1000) : null;
+  // WHEN IT WAS LOOKED AT, which is what a person asks. An unchanged wiki answers from
+  // the scan cache with the older `scannedAt`, so a Rescan used to go on saying "13 min
+  // ago" straight after it had checked. `checkedAt` is the server's time of this answer.
+  const lookedAt = report.checkedAt || report.scannedAt;
+  const scannedSec = lookedAt
+    ? Math.max(0, (Date.now() - new Date(lookedAt).getTime()) / 1000) : null;
   const healthMonitor = renderMonitor({
     label: 'Wiki health scan',
     lines: [
@@ -7915,12 +7980,12 @@ function renderHealthPanel(domain, readonly) {
       // dismissal on disk — semantic-pair Skips and records whose issue has
       // since gone included — so the two are named apart.
       { key: 'hidden by a dismissal', value: report.counts.dismissed, tone: 'quiet' },
-      ...(report.scannedAt
-        ? [{ key: 'scanned', value: relTime(report.scannedAt),
+      ...(lookedAt
+        ? [{ key: 'scanned', value: relTime(lookedAt),
              // The absolute time beside the relative one (F12): the monitor's
              // value is escaped text and does not tick, so the reading it
              // gives is anchored to a clock time that stays true.
-             sub: 'at ' + new Date(report.scannedAt).toLocaleString([], {
+             sub: 'at ' + new Date(lookedAt).toLocaleString([], {
                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
              markHtml: '<span class="fresh-dot fresh-' + freshnessTier(scannedSec) +
                '" aria-hidden="true"></span>' }]
@@ -7954,9 +8019,9 @@ function renderHealthPanel(domain, readonly) {
     metaHtml:
       escapeHtml(pluralize(total, 'open issue')) +
       // Ticks (F12): the ONE clock rewrites this span's text in place.
-      (report.scannedAt
-        ? ' · <span data-age-at="' + escapeHtml(report.scannedAt) + '" data-age-text>' +
-            escapeHtml(relTime(report.scannedAt)) + '</span>'
+      (lookedAt
+        ? ' · <span data-age-at="' + escapeHtml(lookedAt) + '" data-age-text>' +
+            escapeHtml(relTime(lookedAt)) + '</span>'
         : ''),
     bodyClass: 'dm-scan-body',
     bodyHtml: healthMonitor + categoryMonitor,
@@ -8099,7 +8164,7 @@ function renderAiProgressRing() {
   if (key.indexOf('semanticPreview:') === 0 || key.indexOf('semanticMergeOne:') === 0 || key.indexOf('semanticSkip:') === 0) return '';
   // So are these, and they never send a count: a ring that opens and closes in
   // 300 ms is a jump with nothing to report. The pressed button says "Repairing…".
-  if (key === 'fixSafe' || key.indexOf('group:') === 0 || key === 'indexRebuildPlan' || key === 'indexRebuildApply') return '';
+  if (key === 'fixSafe' || key === 'fixSafeCheck' || key.indexOf('group:') === 0 || key.indexOf('groupCheck:') === 0 || key === 'indexRebuildPlan' || key === 'indexRebuildApply') return '';
   const p = state.aiProgress && state.aiProgress.key === key ? state.aiProgress : null;
   const value = p ? ringValueFromCounts(p.processed, p.total) : null;
   const sublabel = p ? (p.processed + ' of ' + p.total) : 'no count reported yet';
@@ -8131,9 +8196,9 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
     items.push(actionChip({ action: 'fixSafe', attrs: ' aria-disabled="true"', alias: 'dm', leadHtml: icon('check', 12), label: safeDone.short || safeDone.text }));
   } else if (safeTotal > 0) {
     items.push(actionChip({ action: 'fixSafe', alias: 'dm',
-      attrs: busy === 'fixSafe' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
-      leadHtml: busy === 'fixSafe' ? buttonRingHtml() : '',
-      label: busy === 'fixSafe' ? 'Repairing…' : 'Fix ' + pluralize(safeTotal, 'safe issue') }));
+      attrs: busy === 'fixSafe' || busy === 'fixSafeCheck' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
+      leadHtml: busy === 'fixSafe' || busy === 'fixSafeCheck' ? buttonRingHtml() : '',
+      label: busy === 'fixSafeCheck' ? 'Checking…' : (busy === 'fixSafe' ? 'Repairing…' : 'Fix ' + pluralize(safeTotal, 'safe issue')) }));
   }
 
   // v3.83.0 — the index rebuild: deterministic, free, previewed. Deliberately
@@ -8626,7 +8691,8 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
   const open = state.expandedGroups.has(cat.key);
   const fixAllCount = cat.key === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
   const canFixAll = !readonly && AUTO_FIX_TYPES.has(cat.key) && fixAllCount > 0;
-  const busy = state.busyKey === 'group:' + cat.key;
+  const checking = state.busyKey === 'groupCheck:' + cat.key;
+  const busy = checking || state.busyKey === 'group:' + cat.key;
   const anchor = 'group:' + cat.key;
   // What this row's press opened goes directly under the row: above the items
   // when the fold is open, because the row is the summary, and under the fold
@@ -8652,7 +8718,7 @@ function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
     key: cat.key, label: cat.label, pill: issues.length, open, alias: 'dm',
     actionHtml: canFixAll && fixAllCount > 0 ? (
       '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
-        (busy ? buttonRingHtml() + (DESTRUCTIVE_FIX_TYPES.has(cat.key) ? ' Merging…' : ' Repairing…') : 'Fix all ' + fixAllCount) +
+        (busy ? buttonRingHtml() + (checking ? ' Checking…' : (DESTRUCTIVE_FIX_TYPES.has(cat.key) ? ' Merging…' : ' Repairing…')) : 'Fix all ' + fixAllCount) +
       '</button>'
     ) : '',
     bodyHtml: (open ? stack : '') + rows + more,
@@ -8672,6 +8738,9 @@ function renderIssueRow(type, issue, readonly, rowView) {
       // health table rendering a wiki slug in the body face.
       if (issue.suggestedTarget) meta = 'suggests <span class="mono">' + escapeHtml(issue.suggestedTarget) + '</span>';
       else { meta = 'no suggestion'; dismissible = true; }
+      // One row per link in a page. A page that writes the same broken link twice
+      // is one thing to decide, and one Dismiss, and it says how many times it occurs.
+      if (Number(issue.occurrences) > 1) meta += ' · ' + Number(issue.occurrences) + ' times on this page';
       break;
     case 'orphans':
       main = escapeHtml(issue.path);
@@ -8883,7 +8952,11 @@ function onHealthClick(e) {
       navigate('settings');
       return;
     case 'dm-plan-apply-btn': planLeaving = true; dispatchHealthAction(() => applyPendingPlan(domain.slug)); return;
-    case 'dm-plan-discard-btn': state.pendingPlan = null; render(myMountToken); return;
+    case 'dm-plan-discard-btn':
+      state.pendingPlan = null;
+      state.healthLive = 'Plan discarded. Nothing was written.';
+      render(myMountToken);
+      return;
     case 'dm-semantic-merge-btn': dispatchHealthAction(() => mergeSemanticDuplicates(domain.slug)); return;
     // Through the same door as Find duplicate pages, so the first-use disclosure holds.
     case 'dm-semantic-next-btn': dispatchHealthAction(() => onQuickAction(domain.slug, 'semanticDupes')); return;
@@ -9130,7 +9203,9 @@ function onQuickAction(slug, action) {
 
 // ── fix-all-safe (free, deterministic) ─────────────────────────────────────
 
-function confirmFixSafe(slug) {
+async function confirmFixSafe(slug) {
+  const token = myMountToken;
+  if (safeFixDeletedPages(state.health) > 0 && !(await readHealthBeforeAsking(slug, token, 'fixSafeCheck'))) { render(token); return undefined; }
   const total = countSafeFixable(state.health);
   // THE SAME DELETIONS, SAID THE SAME WAY (v3.72.1, F6). fixAllSafe runs the
   // two page-DELETING types first (health.js), and this confirm used to call
@@ -9166,6 +9241,30 @@ function confirmFixSafe(slug) {
 // every state MUTATION (not just the render) gated on isCurrentMount(token)
 // so a response for an abandoned mount can't corrupt state a later, fresh
 // mount would otherwise render correctly.
+// A QUESTION ABOUT DELETING PAGES STATES A COUNT, SO THE COUNT IS READ NOW. What is on
+// screen can be a write behind (left and came back, an agent, another computer): it
+// once said "4 pages will be deleted" with none left to delete, then "Merged 0". No
+// report, no question.
+async function readHealthBeforeAsking(slug, token, busyKey) {
+  state.busyKey = busyKey;
+  render(token);
+  try {
+    const report = await fetchJSON('/api/health/' + encodeURIComponent(slug));
+    if (slug !== state.activeSlug || !isCurrentMount(token)) return false;
+    state.health = report;
+    state.healthSlug = slug;
+    return true;
+  } catch (err) {
+    if (slug === state.activeSlug && isCurrentMount(token)) {
+      state.rowNoteFrom = { slug, token };
+      state.rowNote = { tone: 'error', text: 'Could not check this wiki: ' + err.message, retry: () => onQuickAction(slug, 'fixSafe') };
+    }
+    return false;
+  } finally {
+    state.busyKey = null;
+  }
+}
+
 async function runFixSafe(slug) {
   const token = myMountToken;
   state.busyKey = 'fixSafe';
@@ -9189,23 +9288,26 @@ async function runFixSafe(slug) {
     // after it is caught by this same try's `finally`.
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — see the module-level comment above
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix-all-safe', { method: 'POST' });
-    if (isCurrentMount(token)) {
+    {
       const whole = result.fixed === result.total;
+      state.rowNoteFrom = { slug, token };
       state.rowNote = whole
         ? { key: 'chip:fixSafe', held: true, tone: 'success', text: 'Repaired ' + result.fixed, drop: { safe: true } }
         : { tone: 'error', text: 'Repaired ' + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) + ' could not be repaired.',
             retry: () => confirmFixSafe(slug) };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not repair: ' + err.message, retry: () => confirmFixSafe(slug) };
+    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not repair: ' + err.message, retry: () => confirmFixSafe(slug) };
   } finally {
     inFlightWriteSlugs.delete(slug); // unconditional — the real write actually finished
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as the delete() above
     state.busyKey = null;
     state.aiProgress = null;
   }
-  if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true });
+  // Left and came back while it ran: the mount on screen read the wiki too early.
+  const live = isCurrentMount(token) ? token : myMountToken;
+  if (!isCurrentMount(live)) return;
+  await loadHealth(slug, live, { silent: true });
 }
 
 // ── Single-category "Fix all N" (free, deterministic) ──────────────────────
@@ -9267,8 +9369,18 @@ function safeFixDeletedPages(report) {
   return n;
 }
 
-function confirmFixAllOfType(slug, type) {
-  if (!AUTO_FIX_TYPES.has(type)) return;
+async function confirmFixAllOfType(slug, type) {
+  if (!AUTO_FIX_TYPES.has(type)) return undefined;
+  if (DESTRUCTIVE_FIX_TYPES.has(type)) {
+    const token = myMountToken;
+    if (!(await readHealthBeforeAsking(slug, token, 'groupCheck:' + type))) { render(token); return undefined; }
+    if (!((state.health && state.health[type]) || []).length) {
+      state.rowNoteFrom = { slug, token };
+      state.rowNote = { tone: 'info', text: 'Nothing left to merge.' };
+      render(token);
+      return undefined;
+    }
+  }
   const cat = HEALTH_CATEGORIES.find((c) => c.key === type);
   const issues = (state.health && state.health[type]) || [];
   const count = type === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
@@ -9312,9 +9424,12 @@ async function fixAllOfType(slug, type) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type }),
     });
-    if (isCurrentMount(token)) {
+    {
       const merges = DESTRUCTIVE_FIX_TYPES.has(type);
-      state.rowNote = result.fixed === result.total
+      state.rowNoteFrom = { slug, token };
+      state.rowNote = result.total === 0
+        ? { tone: 'info', text: merges ? 'Nothing left to merge.' : 'Nothing left to repair.' }
+        : result.fixed === result.total
         ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, drop: { type } }
         : { key: 'group:' + type, tone: 'error',
             text: (merges ? 'Merged ' : 'Repaired ') + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) +
@@ -9322,7 +9437,8 @@ async function fixAllOfType(slug, type) {
             retry: () => confirmFixAllOfType(slug, type) };
     }
   } catch (err) {
-    if (isCurrentMount(token)) {
+    {
+      state.rowNoteFrom = { slug, token };
       state.rowNote = { key: 'group:' + type, tone: 'error',
         text: (DESTRUCTIVE_FIX_TYPES.has(type) ? 'Could not merge: ' : 'Could not repair: ') + err.message,
         retry: () => confirmFixAllOfType(slug, type) };
@@ -9333,8 +9449,10 @@ async function fixAllOfType(slug, type) {
     state.busyKey = null;
     state.aiProgress = null;
   }
-  if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true });
+  // Left and came back while it ran: the mount on screen read the wiki too early.
+  const live = isCurrentMount(token) ? token : myMountToken;
+  if (!isCurrentMount(live)) return;
+  await loadHealth(slug, live, { silent: true });
 }
 
 // ── Broken-links AI plan/apply ──────────────────────────────────────────────
@@ -9441,12 +9559,13 @@ async function runBrokenLinksPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (plan.length === 0) {
       state.pendingPlan = null;
+      state.rowNoteFrom = { slug, token };
       state.rowNote = { tone: 'info', text: emptyPlanNotice('brokenLinks', result.summary, batchErrors) };
     } else {
       state.pendingPlan = { kind: 'brokenLinks', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9499,12 +9618,13 @@ async function runOrphansPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (plan.length === 0) {
       state.pendingPlan = null;
+      state.rowNoteFrom = { slug, token };
       state.rowNote = { tone: 'info', text: emptyPlanNotice('orphans', result.summary, batchErrors) };
     } else {
       state.pendingPlan = { kind: 'orphans', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message, retry: () => onQuickAction(slug, 'orphans') };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message, retry: () => onQuickAction(slug, 'orphans') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9523,12 +9643,13 @@ async function runIndexRebuildPlan(slug) {
     if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
     else if (!result || result.nothingToDo) {
       state.pendingPlan = null;
+      state.rowNoteFrom = { slug, token };
       state.rowNote = { tone: 'info', text: 'index.md already lists every page.' };
     } else {
       state.pendingPlan = { kind: 'indexRebuild', basis: result.basis, summary: result.summary, samples: result.samples };
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message, retry: () => runIndexRebuildPlan(slug) };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message, retry: () => runIndexRebuildPlan(slug) }; }
   } finally {
     state.busyKey = null;
   }
@@ -9551,15 +9672,17 @@ async function applyIndexRebuildPlan(slug) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ basis: p.basis }),
     });
-    if (isCurrentMount(token)) {
+    {
       const s = (result && result.summary) || {};
+      state.rowNoteFrom = { slug, token };
       state.rowNote = result && result.written === false
         ? { tone: 'info', text: 'index.md already lists every page.' }
-        : { tone: 'success', text: 'Index rebuilt — added ' + countOf(s.add, 'page', 'pages') + ' and removed '
+        : { tone: 'success', trace: 'Index rebuilt', text: 'Index rebuilt — added ' + countOf(s.add, 'page', 'pages') + ' and removed '
             + countOf(s.removeStale, 'stale row', 'stale rows') + '. index.md is now ' + fmtKB(s.bytesAfter) + '.' };
     }
   } catch (err) {
-    if (isCurrentMount(token)) {
+    {
+      state.rowNoteFrom = { slug, token };
       state.rowNote = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
         ? { tone: 'info', text: err.message }
         : { tone: 'error', text: 'Could not rebuild the index — ' + err.message, retry: () => runIndexRebuildPlan(slug) };
@@ -9570,8 +9693,10 @@ async function applyIndexRebuildPlan(slug) {
     releaseGate();
     state.busyKey = null;
   }
-  if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true });
+  // Left and came back while it ran: the mount on screen read the wiki too early.
+  const live = isCurrentMount(token) ? token : myMountToken;
+  if (!isCurrentMount(live)) return;
+  await loadHealth(slug, live, { silent: true });
 }
 
 async function applyPendingPlan(slug) {
@@ -9592,6 +9717,7 @@ async function applyPendingPlan(slug) {
   const pendingCount = Array.isArray(p.plan) ? p.plan.length : 0;
   if (pendingCount === 0) {
     state.pendingPlan = null;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { tone: 'info', text: emptyPlanNotice(p.kind, p.summary, 0) };
     render(token);
     return;
@@ -9616,7 +9742,7 @@ async function applyPendingPlan(slug) {
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Apply failed');
     });
-    if (isCurrentMount(token)) {
+    {
       if (kind === 'brokenLinks') {
         // v3.9.1 — report the THREE outcomes this endpoint can produce, not one.
         //
@@ -9647,13 +9773,15 @@ async function applyPendingPlan(slug) {
             + ' had a proposed target that did not pass the safety check, so the brackets'
             + ' were removed instead of pointing at the wrong page.';
         }
-        state.rowNote = { tone: 'success', text };
+        state.rowNoteFrom = { slug, token };
+        state.rowNote = { tone: 'success', text, trace: 'Links fixed' };
       } else {
-        state.rowNote = { tone: 'success', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
+        state.rowNoteFrom = { slug, token };
+        state.rowNote = { tone: 'success', trace: 'Pages linked', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
       }
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not apply the plan — ' + err.message, retry: () => onQuickAction(slug, kind) };
+    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not apply the plan — ' + err.message, retry: () => onQuickAction(slug, kind) };
   } finally {
     // MEDIUM-4 fix (re-audit): unlike busyKey (which must ALWAYS reset —
     // see the H2 fix note above — or a button stays disabled forever),
@@ -9670,8 +9798,10 @@ async function applyPendingPlan(slug) {
     state.busyKey = null;
     state.aiProgress = null;
   }
-  if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true });
+  // Left and came back while it ran: the mount on screen read the wiki too early.
+  const live = isCurrentMount(token) ? token : myMountToken;
+  if (!isCurrentMount(live)) return;
+  await loadHealth(slug, live, { silent: true });
 }
 
 // ── Semantic-duplicate scan + batch merge ───────────────────────────────────
@@ -9720,6 +9850,7 @@ async function confirmSemanticScan(slug) {
   if (!est) { render(token); return; } // domain changed before the estimate ever resolved
   if (est.error) {
     delete state.estimates.semanticDupes;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { tone: 'error', text: 'Could not estimate the duplicate scan — ' + est.error, retry: () => onQuickAction(slug, 'semanticDupes') };
     render(token);
     return;
@@ -9728,6 +9859,7 @@ async function confirmSemanticScan(slug) {
     // Everything already checked: nothing to send, so no spend and no confirm.
     // The scan makes no provider call and brings back what it found before.
     if (est.totalPairs > 0) return runSemanticScan(slug);
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { tone: 'info', text: 'No likely duplicate candidates found — nothing to scan.' };
     render(token);
     return;
@@ -9832,14 +9964,15 @@ async function runSemanticScan(slug) {
     if (isCurrentMount(token)) {
       state.semanticScan = newSemanticScan(slug, Object.assign({}, result, { candidatePairsSent: sent }));
       // Said on the question that was answered; the list itself is under it.
+      state.rowNoteFrom = { slug, token };
       state.rowNote = { key: 'scan-done', held: true, tone: 'success', text: 'Checked ' + sent.toLocaleString('en-US') + ' ' + (sent === 1 ? 'pair' : 'pairs') + '.' };
       // A failed batch remembers nothing, so its pairs stay in the "still to
       // check" count. Part of a run failing is a notice in the card, which says
       // so; all of it failing is this banner.
-      if (firstBatchError && state.semanticScan.failedAll) state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') };
+      if (firstBatchError && state.semanticScan.failedAll) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') }; }
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9866,9 +9999,9 @@ async function runSemanticReset(slug) {
     // The list goes with what it stood on: the batch would refuse every pair on it.
     const scan = activeSemanticScan();
     if (scan) state.semanticScan = null;
-    if (isCurrentMount(token)) state.rowNote = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' }; }
   } catch (err) {
-    if (isCurrentMount(token)) state.rowNote = { tone: 'error', text: 'Could not check everything again — ' + err.message, retry: () => confirmSemanticReset(slug) };
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not check everything again — ' + err.message, retry: () => confirmSemanticReset(slug) }; }
   }
   render(token);
 }
@@ -9977,7 +10110,7 @@ async function mergeOneSemanticPair(slug, pair) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair) }),
     });
-    if (isCurrentMount(token)) {
+    {
       if (!result || !result.fixed) {
         // Two different "fixed: 0"s. A page of the pair being GONE is the
         // pair already being resolved (fixIssue names it in `missing`), and
@@ -10004,10 +10137,12 @@ async function mergeOneSemanticPair(slug, pair) {
         // cards whose Preview failed and whose Merge stayed gated.
         const alsoResolved = resolvePairsTouching(
           activeSemanticScan(), { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
+        state.rowNoteFrom = { slug, token };
         state.rowNote = {
           key: 'pair:' + key.split('||').sort().join('||'),
           held: true,
           tone: 'success',
+          trace: 'Merged a pair',
           text: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' +
             (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' settled.' : ''),
         };
@@ -10060,10 +10195,12 @@ async function skipSemanticPair(slug, pair) {
     });
     if (isCurrentMount(token)) {
       markSemanticPairStatus(pair, 'skipped');
+      state.rowNoteFrom = { slug, token };
       state.rowNote = {
         key: 'pair:' + key.split('||').sort().join('||'),
         held: true,
         tone: 'success',
+        trace: 'Kept a pair apart',
         text: 'Kept ' + pair.removeSlug + ' and ' + pair.keepSlug + ' apart. They will not come back.',
         drop: { dismissed: true },
       };
@@ -10116,6 +10253,7 @@ async function runMergeSemanticDuplicates(slug) {
   // skip one (dismissing it), and both must be honoured.
   const pairs = liveBatchPairs().map(toWirePair);
   if (pairs.length === 0) {
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { tone: 'info', text: 'Nothing left to merge — every spelling variant has been handled.' };
     render(token);
     return;
@@ -10172,20 +10310,23 @@ async function runMergeSemanticDuplicates(slug) {
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Merge failed');
     });
-    if (isCurrentMount(token)) {
+    {
       const merged = result.merged || 0;
       const total = result.total || pairs.length;
       const refused = result.ineligible || 0;
+      state.rowNoteFrom = { slug, token };
       state.rowNote = {
         tone: 'success',
+        trace: 'Merged ' + merged,
         text: refused > 0
           ? 'Merged ' + merged + ' of ' + total + ' spelling ' + (total === 1 ? 'variant' : 'variants') + '. ' + refused + ' now ' + (refused === 1 ? 'needs' : 'need') + ' your Preview.'
           : 'Merged ' + merged + ' of ' + total + ' duplicate ' + (total === 1 ? 'pair' : 'pairs') + '.',
       };
     }
   } catch (err) {
-    if (isCurrentMount(token)) {
+    {
       const c = classifyDomainError(err);
+      state.rowNoteFrom = { slug, token };
       state.rowNote = c.refusal
         ? { tone: 'error', text: c.refusal, retry: () => mergeSemanticDuplicates(slug) }
         : { tone: 'error', text: 'Could not merge duplicates — ' + c.error, retry: () => mergeSemanticDuplicates(slug) };
@@ -10206,8 +10347,10 @@ async function runMergeSemanticDuplicates(slug) {
     state.busyKey = null;
     state.aiProgress = null;
   }
-  if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+  // Left and came back while it ran: the mount on screen read the wiki too early.
+  const live = isCurrentMount(token) ? token : myMountToken;
+  if (!isCurrentMount(live)) return;
+  await loadHealth(slug, live, { silent: true, keepSemanticScan: true });
 }
 
 // ── Dismiss / undismiss ──────────────────────────────────────────────────
@@ -10226,12 +10369,14 @@ async function dismissIssue(slug, type, issue) {
     state.rowBusy.delete(rowKey);
     if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
     if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { key: rowKey, held: true, tone: 'success', text: 'Left as is.', drop: { type, issue, dismissed: true } };
     await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
     if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => dismissIssue(slug, type, issue) };
     render(token);
   }
@@ -10251,12 +10396,14 @@ async function undismissIssue(slug, record) {
     state.rowBusy.delete(rowKey);
     if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
     if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { key: rowKey, held: true, tone: 'success', text: 'Brought back.', drop: { restored: record } };
     await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
     if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
     state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => undismissIssue(slug, record) };
     render(token);
   }

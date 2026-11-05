@@ -1863,13 +1863,12 @@
    gives back exactly its own space, with no last small jump as it is removed. */
 .dm-health .dm-quick-run { min-height: var(--dm-quick-run-floor); display: flex; flex-direction: column; }
 
-/* One line, whatever is in it: neither of these can push a row down. */
+/* One line, and never cut off: both hold only short fixed words, so neither can push
+   a row down. Whole sentences belong to the row or the line under it. */
 .dm-health-trace,
 .dm-rescan-note {
   min-width: 0;
-  overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: var(--text-2xs);
   color: var(--text-2);
 }

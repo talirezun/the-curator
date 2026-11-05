@@ -49,7 +49,7 @@
  * THE SELECTORS are all in SEL, below. A redesign changes them there.
  *
  *   node scripts/e2e-wiki-health.mjs [--stage <name>] [--profiles 1280,375,1280-light,375-light,1280-rm,375-rm,800,big-1280,big-375]
- *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
+ *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
  *
  * SINCE STAGE 1 the default stage is `s1`, the press rule: every metric below is
  * REQUIRED except the review desk's, which belong to a later stage.
@@ -268,7 +268,7 @@ function buildLabDomain(root, name, opts = {}) {
   for (let i = 0; i < (opts.topicPairs ?? 45); i++) { let tag = ''; if (opts.distinct) for (let k = 0; k < 7; k++) tag += 'bcdfghjklmnpqrstvwxz'[Math.floor(rnd() * 20)];
     const a = opts.distinct ? tag + '-guide' : WORDS[i % WORDS.length] + '-method'; const twin = opts.distinct ? a + 's' : a + '-fundamentals'; linked.push(a, twin); concept(a); concept(twin); }
   for (let i = 0; i < (opts.filler ?? 150); i++) { let s = ''; for (let k = 0; k < 9; k++) s += 'bcdfghjklmnpqrstvwxz'[Math.floor(rnd() * 20)]; linked.push(s); concept(s); }
-  writeFileSync(path.join(w, 'concepts', 'wiki-hub.md'), `---\ntype: concept\n---\n\n# Hub\n\nAn index page.\n\n## Related\n\n${linked.map((s) => `- [[${s}]]`).join('\n')}\n- [[entities/acme-labs]]\n- [[context-windowz]]\n- [[model-trainingx]]\n- [[customer-satisfactionx]]\n`);
+  writeFileSync(path.join(w, 'concepts', 'wiki-hub.md'), `---\ntype: concept\n---\n\n# Hub\n\nAn index page.\n\n## Related\n\n${linked.map((s) => `- [[${s}]]`).join('\n')}\n- [[entities/acme-labs]]\n- [[context-windowz]]\n- [[model-trainingx]]\n- [[customer-satisfactionx]]\n- [[mac-os]]\n- [[mac-os]]\n`);
   writeFileSync(path.join(w, 'entities', 'acme-labs.md'), `---\ntype: entity\n---\n\n# Acme Labs\n\nA company.\n\n## Related\n\n- [[wiki-hub]]\n- [[concepts/ai-agents]]\n`);
   writeFileSync(path.join(w, 'entities', 'deployment.md'), `---\ntype: entity\n---\n\n# Deployment\n\nA team at Acme.\n\n## Related\n\n- [[wiki-hub]]\n`);
   writeFileSync(path.join(w, 'summaries', 'module-handoff.md'), `---\ntype: summary\n---\n\n# Module handoff\n\nA summary.\n\n## Key Takeaways\n\n- One point.\n\n## Concepts Introduced or Referenced\n\n- [[prototyping-to-production]]\n- [[ai-agents]]\n- [[ai-agents]]\n`);
@@ -277,7 +277,7 @@ function buildLabDomain(root, name, opts = {}) {
 }
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
-const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10'];
+const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13'];
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -587,13 +587,21 @@ async function scenarios(app, profile) {
   // S2 — Fix N safe issues that deletes pages asks; Rescan moves nothing.
   if (run('S2') && sub('S2')) {
     await openDomain(app, 'h2'); await openFoldsOn(page, ['orphans', 'brokenLinks']);
+    const age = () => page.evaluate(() => { const e = document.querySelector('.dm-group-scan [data-age-at]'); return e ? { at: Date.parse(e.getAttribute('data-age-at')), text: e.textContent } : null; });
+    await delay(1100);
+    const a0 = await age();
     await act(app, profile, 'rescan-1', { press: SEL.rescan, place: 200, outcome: [SEL.rescan], settle: 1000, runs: true });
+    const a1 = await age();
+    step(`[${profile.name}] Rescan on an unchanged wiki shows it was checked just now`, a0 && a1 && a1.at > a0.at && Date.now() - a1.at < 5000, JSON.stringify([a0, a1]));
     await act(app, profile, 'fixsafe-press', { press: SEL.fixSafe, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 400 });
     await act(app, profile, 'fixsafe-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], settle: HELD, runs: true });
   }
   // S5 — Dismiss, Restore
   if (run('S5') && sub('S5')) {
     await openDomain(app, 'h5'); await openFoldsOn(page, ['orphans', 'brokenLinks']);
+    // One link written twice on one page: one row, saying so.
+    const twice = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-group-key="brokenLinks"] .dm-issue-row')].filter((e) => /mac-os/.test(e.innerText)); return { n: r.length, text: r[0] ? r[0].innerText : '' }; });
+    step(`[${profile.name}] a link written twice on one page is one row, and says so`, twice.n === 1 && /2 times on this page/.test(twice.text), JSON.stringify(twice));
     const rows = () => page.evaluate((s) => document.querySelectorAll(s).length, `${SEL.fold('orphans')} .dm-issue-row`);
     const before = await rows();
     await act(app, profile, 'dismiss', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.done], settle: HELD, runs: true });
@@ -609,7 +617,16 @@ async function scenarios(app, profile) {
     await act(app, profile, 'rescue-run', { press: SEL.confirmYes, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 600, settle: 500, runs: true, settled: true });
     await act(app, profile, 'apply-plan', { press: SEL.planApply, outcome: [ON_PLAN], until: exists, args: [SEL.outcome], untilTries: 600, settle: 1200, runs: true });
     await delay(800);
+    // The whole outcome is on the line, and the head's trace is not cut off.
+    const fit = await page.evaluate(() => { const t = document.querySelector('.dm-health-trace'); return { trace: t ? t.innerText : null, fits: !t || t.scrollWidth <= t.clientWidth + 1, right: t ? t.getBoundingClientRect().right : 0, card: document.querySelector('.dm-health').getBoundingClientRect().right, ov: t ? getComputedStyle(t).textOverflow : '' }; });
+    step(`[${profile.name}] the section head's trace is whole`, fit.fits && fit.right <= fit.card + 1 && fit.ov !== 'ellipsis', JSON.stringify(fit));
     await act(app, profile, 'rebuild-press', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
+    await page.evaluate(() => document.getElementById('dm-plan-discard-btn').focus());
+    await page.evaluate(() => document.getElementById('dm-plan-discard-btn').click());
+    await delay(600);
+    const dis = await page.evaluate((s) => ({ onOpener: document.activeElement === document.querySelector(s), live: document.querySelector('.dm-health-live').textContent, plan: !!document.querySelector('#dm-plan-apply-btn') }), SEL.indexPlan);
+    step(`[${profile.name}] Discard: focus returns to what opened the plan, and it says what happened`, dis.onOpener && !dis.plan && /Nothing was written/.test(dis.live) && !/Finished/.test(dis.live), JSON.stringify(dis));
+    await act(app, profile, 'rebuild-press-2', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
     await act(app, profile, 'rebuild-apply', { press: SEL.planApply, outcome: [ON_PLAN], until: exists, args: [SEL.outcome], untilTries: 400, settle: 1200, runs: true });
   }
   // S7 — at the very end of the page, shrinking must not clamp the scroll.
@@ -657,6 +674,64 @@ async function scenarios(app, profile) {
     step(`[${profile.name}] the settled row above the press stays and says so`, !!waiting && /Resolved/.test(waiting), String(waiting));
     await page.evaluate((m) => { document.querySelector(m).scrollTop -= 200; }, SEL.main); await delay(600);
     step(`[${profile.name}] and it goes when you scroll`, await page.evaluate(() => !document.querySelector('[data-row-deferred]')));
+  }
+  const slowFix = (ms) => page.evaluate((d) => { const real = window.fetch; window.fetch = async (u, o) => { const r = await real(u, o); if (/\/fix$/.test(String(u))) await new Promise((k) => setTimeout(k, d)); return r; }; }, ms);
+  // S11 — an outcome belongs to the domain it ran on.
+  if (run('S11') && sub('S11')) {
+    await openDomain(app, 'h11'); await slowFix(800);
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.fixAll('missingBacklinks'));
+    await delay(120);
+    await page.evaluate((sel) => { [...document.querySelectorAll(sel)].find((n) => n.dataset.domainSlug === 'h10').click(); }, SEL.domainRow);
+    await waitFor(page, (r) => !!document.querySelector(r), 'other domain', 400, SEL.rescan);
+    await delay(1800);
+    const other = await page.evaluate(() => { const h = document.querySelector('.dm-health'); return /Repaired/.test(h.innerText); });
+    step(`[${profile.name}] another domain never shows this domain's outcome`, !other);
+    await page.evaluate((sel) => { [...document.querySelectorAll(sel)].find((n) => n.dataset.domainSlug === 'h11').click(); }, SEL.domainRow);
+    await waitFor(page, (r) => !!document.querySelector(r), 'back', 400, SEL.rescan);
+    await delay(1000);
+    const back = await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : null; });
+    step(`[${profile.name}] its own domain does, on return`, /Repaired/.test(back || ''), String(back));
+  }
+  // S12 — left while it ran, and a delete warning read fresh.
+  if (run('S12') && sub('S12')) {
+    await openDomain(app, 'h12'); await slowFix(1200);
+    await act(app, profile, 'stale-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.confirmYes);
+    await delay(150);
+    await page.evaluate(() => document.querySelector('#rail .rail-btn[data-view="chat"]').click());
+    await delay(400);
+    await page.evaluate(() => document.querySelector('#rail .rail-btn[data-view="domains"]').click());
+    await waitFor(page, (r) => !!document.querySelector(r), 'back', 400, SEL.rescan);
+    await delay(2600);
+    const after = await page.evaluate((s) => ({ row: !!document.querySelector(s), line: (document.querySelector('.dm-health .dm-outcome') || {}).innerText || null }), SEL.fixAll('crossFolderDupes'));
+    step(`[${profile.name}] left and came back: the merged row has gone`, !after.row, JSON.stringify(after));
+    step(`[${profile.name}] and the outcome is kept`, /Merged/.test(after.line || ''), JSON.stringify(after));
+    // What is on screen goes stale behind the app's back: no warning from that.
+    mkdirSync(path.join(app.ws.domains, 'h13', 'wiki', 'entities'), { recursive: true });
+    await openDomain(app, 'h13');
+    rmSync(path.join(app.ws.domains, 'h13', 'wiki', 'entities', 'deployment.md'));
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.fixAll('crossFolderDupes'));
+    await delay(1500);
+    const ask = await page.evaluate(() => ({ asked: !!document.querySelector('.dm-confirm-card'), line: (document.querySelector('.dm-health .dm-outcome') || {}).innerText || null }));
+    step(`[${profile.name}] a page gone behind its back: no delete warning, and it says why`, !ask.asked && /Nothing left/.test(ask.line || ''), JSON.stringify(ask));
+  }
+  // S13 — the keyboard focus ring is seen, and nothing changes at rest.
+  if (run('S13') && sub('S13')) {
+    await openDomain(app, 'h13'); await delay(200);
+    await page.evaluate((s, m) => { const e = document.querySelector(s); document.querySelector(m).scrollTop += e.getBoundingClientRect().top - 200; }, SEL.rescan, SEL.main); await delay(200);
+    const clipOf = () => page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.left - 8, y: r.top - 8, width: r.width + 16, height: r.height + 16, scale: 1 }; }, SEL.rescan);
+    const shot = async () => (await page.send('Page.captureScreenshot', { format: 'png', clip: await clipOf() })).data;
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }); await delay(300);
+    const rest = await shot();
+    const dropped = await page.evaluate(() => { let n = 0; for (const sheet of document.styleSheets) { let rules; try { rules = sheet.cssRules; } catch { continue; } for (let i = rules.length - 1; i >= 0; i--) { if (rules[i].selectorText && /\.btn-(secondary|primary|danger-solid):focus-visible/.test(rules[i].selectorText)) { sheet.deleteRule(i); n++; } } } return n; });
+    await delay(100);
+    const without = await shot();
+    step(`[${profile.name}] the ring rule changes no pixel at rest (${dropped} rules taken away, same image)`, dropped >= 2 && rest === without);
+    await page.navigate(app.origin); await delay(200);
+    await openDomain(app, 'h13'); await delay(200);
+    const shadow = await page.evaluate((s) => { const b = document.querySelector(s); const atRest = getComputedStyle(b).boxShadow; b.focus(); return { atRest, focused: b.matches(':focus-visible'), now: getComputedStyle(b).boxShadow, ring: getComputedStyle(document.documentElement).getPropertyValue('--ring-keyline').trim() }; }, SEL.rescan);
+    step(`[${profile.name}] a keyboard-focused button shows the ring on top of its shadow`, shadow.focused && shadow.now !== shadow.atRest && shadow.now.split('rgb').length > shadow.atRest.split('rgb').length, JSON.stringify(shadow).slice(0, 300));
   }
   // S4 — duplicate pages: find, next, preview, flip, merge, skip, batch
   if (run('S4') && sub('S4')) {
