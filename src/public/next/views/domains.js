@@ -2348,7 +2348,21 @@ function resetDomainScopedHealthState(opts) {
   }
   if (!(opts && opts.silent)) state.dismissedRecords = null;
   state.pendingPlan = null;
-  if (!(opts && opts.keepSemanticScan)) state.semanticScan = null;
+  // A QUIET READING KEEPS THE PAIR LIST TOO. Clearing it here and getting it back
+  // from the status route a moment later took a whole card out from above the row
+  // that was pressed, and put it back. The list stays, and the merge gate is re-armed
+  // in its place, because a repair may have changed the pages a preview showed.
+  // Re-previewing is free. A pair whose page has gone settles when it is touched.
+  const keepList = !!(opts && opts.keepSemanticScan);
+  const quiet = !!(opts && (opts.silent || opts.keepHealth));
+  if (!keepList) {
+    if (quiet && state.semanticScan && state.semanticScan.slug === state.activeSlug) {
+      if (state.semanticScan.previewed && typeof state.semanticScan.previewed.clear === 'function') state.semanticScan.previewed.clear();
+      state.semanticScan.preview = null;
+    } else {
+      state.semanticScan = null;
+    }
+  }
 }
 
 // ── Paid-scan survival across a view change (cost honesty) ─────────────────
@@ -8536,7 +8550,9 @@ function renderSemanticPairCard(pair, readonly, busy, primary) {
         '</div>'
       )) +
       (showPreview ? renderSemanticPreview(preview) : '') +
-      (pair.refusal ? '<div class="dm-sem-refusal">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.refusal) + '</span></div>' : '') +
+      (pair.refusal ? '<div class="dm-sem-refusal" data-row-key="pair-refusal:' + escapeHtml(key) + '">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.refusal) + '</span>' +
+        (!readonly && pair.errorAction ? '<button class="btn btn-secondary dm-sem-btn" data-sem-action="' + escapeHtml(pair.errorAction) + '" data-sem-key="' + escapeHtml(key) + '" data-sem-retry="1"' + (rowBusy ? ' disabled' : '') + '>Try again</button>' : '') +
+        '</div>' : '') +
       (pair.error ? '<div class="dm-sem-error" data-row-key="pair-error:' + escapeHtml(key) + '">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.error) + '</span>' +
         // A failure stays, with the way forward beside it. Through the same action
         // as the button above, so a merge is gated again on the way.
@@ -10002,7 +10018,7 @@ async function mergeOneSemanticPair(slug, pair) {
       // A 409 is a REFUSAL, not a failure — render it as its own visible
       // message on the pair the user clicked, never a silent button reset.
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not merge — ' + c.error, errorAction: 'merge' });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge — ' + c.error, errorAction: 'merge' });
     }
   } finally {
     inFlightWriteSlugs.delete(slug);
@@ -10059,7 +10075,7 @@ async function skipSemanticPair(slug, pair) {
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not skip — ' + c.error, errorAction: 'skip' });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not skip — ' + c.error, errorAction: 'skip' });
     }
   } finally {
     state.busyKey = null;

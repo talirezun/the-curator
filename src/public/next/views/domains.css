@@ -1859,7 +1859,9 @@
 .dm-health { padding-bottom: var(--dm-health-floor); }
 #main { --dm-health-floor: 0px; --dm-quick-floor: 0px; --dm-quick-run-floor: 0px; }
 .dm-health .dm-quick-actions { min-height: var(--dm-quick-floor); align-content: flex-start; }
-.dm-health .dm-quick-run { min-height: var(--dm-quick-run-floor); }
+/* A column, because margins do not collapse in one: a row closing to nothing here
+   gives back exactly its own space, with no last small jump as it is removed. */
+.dm-health .dm-quick-run { min-height: var(--dm-quick-run-floor); display: flex; flex-direction: column; }
 
 /* One line, whatever is in it: neither of these can push a row down. */
 .dm-health-trace,
@@ -1888,9 +1890,8 @@
 .dm-dismiss-btn,
 .dm-restore-btn { min-width: 72px; flex: none; }
 
-.dm-health .btn { overflow: hidden; }
-.dm-health .btn[aria-busy="true"] { cursor: progress; }
-.dm-health .dm-quick-label { overflow: hidden; text-overflow: ellipsis; }
+.dm-health .btn[aria-busy="true"] { cursor: progress; overflow: hidden; flex-wrap: nowrap; }
+.dm-health .btn[aria-busy="true"] .dm-quick-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The control whose question is open under it stays visibly pressed. */
 .dm-health .btn[aria-expanded="true"] {
@@ -1933,6 +1934,7 @@
 .dm-outcome-done > svg { color: var(--text-2); }
 .dm-outcome-info { background: var(--info-tint); color: var(--accent-text); }
 .dm-sem-error > .btn,
+.dm-sem-refusal > .btn,
 .dm-sem-preview-error > .btn { margin-left: auto; flex: none; }
 
 /* What earlier scans found, on its own line under the coverage row. */

@@ -264,7 +264,7 @@ function buildLabDomain(root, name, opts = {}) {
   for (const s of Object.keys(OPENINGS)) concept(s, orphans.includes(s) ? `---\ntype: concept\ntags: [type/concept]\n---\n\n# ${s}\n\n${OPENINGS[s]}\n\n## Key Facts\n\n- A fact about ${s}.\n` : undefined);
   let x = 7; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
   const WORDS = ['ledger', 'quorum', 'tidal', 'sonar', 'prism', 'cobalt', 'meridian', 'harbor', 'lattice', 'ember', 'vector', 'glacier', 'orbit', 'canopy', 'saffron', 'basalt', 'quartz', 'willow', 'falcon', 'marble', 'onyx', 'juniper', 'aurora', 'cedar', 'delta', 'fjord', 'gantry', 'hollow', 'indigo', 'jasper', 'kelvin', 'lumen', 'mosaic', 'nimbus', 'opal', 'pylon', 'quill', 'rivet', 'summit', 'thistle', 'umbra', 'vellum', 'wharf', 'xenon', 'yarrow', 'zephyr', 'anvil', 'beacon', 'cinder', 'dune'];
-  for (let i = 0; i < (opts.topicPairs ?? 45); i++) { const a = WORDS[i % WORDS.length] + (i < WORDS.length ? '' : '-' + Math.floor(i / WORDS.length)) + '-method'; linked.push(a, a + '-fundamentals'); concept(a); concept(a + '-fundamentals'); }
+  for (let i = 0; i < (opts.topicPairs ?? 45); i++) { const a = opts.distinct ? WORDS[i % WORDS.length] + i : WORDS[i % WORDS.length] + '-method'; linked.push(a, a + '-fundamentals'); concept(a); concept(a + '-fundamentals'); }
   for (let i = 0; i < (opts.filler ?? 150); i++) { let s = ''; for (let k = 0; k < 9; k++) s += 'bcdfghjklmnpqrstvwxz'[Math.floor(rnd() * 20)]; linked.push(s); concept(s); }
   writeFileSync(path.join(w, 'concepts', 'wiki-hub.md'), `---\ntype: concept\n---\n\n# Hub\n\nAn index page.\n\n## Related\n\n${linked.map((s) => `- [[${s}]]`).join('\n')}\n- [[entities/acme-labs]]\n- [[context-windowz]]\n- [[model-trainingx]]\n- [[customer-satisfactionx]]\n`);
   writeFileSync(path.join(w, 'entities', 'acme-labs.md'), `---\ntype: entity\n---\n\n# Acme Labs\n\nA company.\n\n## Related\n\n- [[wiki-hub]]\n- [[concepts/ai-agents]]\n`);
@@ -285,7 +285,7 @@ async function startApp(profile) {
   execFileSync(process.execPath, [path.join(REPO, 'scripts', 'demo-domain.mjs'), ws.domains], { cwd: REPO, stdio: ['ignore', 'ignore', 'inherit'],
     env: { ...process.env, HOME: ws.home, CURATOR_TEST_DOMAINS_DIR: ws.domains, CURATOR_TEST_USER_DATA_DIR: ws.userData } });
   for (const d of LABS) buildLabDomain(ws.domains, d);
-  if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000 });
+  if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,
     geminiApiKey: 'AIza-E2E-FAKE-KEY-not-a-credential', aiHealth: { semanticDupeMaxPairs: profile.big ? 500 : 40, costCeilingTokens: 20000000 } }, null, 2), { mode: 0o600 });
@@ -534,7 +534,8 @@ const pickCard = (page, n) => page.evaluate((cardSel, n) => {
   const cards = [...document.querySelectorAll(cardSel)].filter((c) => { const b = c.querySelector('[data-sem-action="preview"]'); return b && !b.disabled; });
   return cards[n - 1] ? cards[n - 1].dataset.semKey : null;
 }, SEL.card, n);
-const exists = (sel) => (s) => !!document.querySelector(s);
+// Serialised and called in the page with `args`: it must take the selector itself.
+const exists = (s) => !!document.querySelector(s);
 
 // ═══ 9. THE SCENARIOS ═══════════════════════════════════════════════════════
 const ON_CONFIRM = '.dm-confirm-card .dm-row-done';
@@ -546,7 +547,6 @@ async function scenarios(app, profile) {
   const OUT_CONFIRM = [SEL.confirmCard];
   const ON_PLAN = '.dm-plan-card .dm-row-done';
   const HELD = 1900;   // held about a second, then collapsed, then a little
-  const gone = (sel) => (s) => !document.querySelector(s);
   if (profile.overflowOnly) {
     await openDomain(app, 'h4');
     await act(app, profile, 'find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
@@ -587,7 +587,11 @@ async function scenarios(app, profile) {
   // S5 — Dismiss, Restore
   if (run('S5') && sub('S5')) {
     await openDomain(app, 'h5'); await openFoldsOn(page, ['orphans', 'brokenLinks']);
+    const rows = () => page.evaluate((s) => document.querySelectorAll(s).length, `${SEL.fold('orphans')} .dm-issue-row`);
+    const before = await rows();
     await act(app, profile, 'dismiss', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.done], settle: HELD, runs: true });
+    // Nothing here may depend on an event that reduced motion never fires.
+    step(`[${profile.name}] the row has really left, and left nothing behind`, (await rows()) === before - 1 && await page.evaluate(() => !document.querySelector('[data-row-leaving]')), String(await rows()));
     await openFoldsOn(page, ['dismissed']); await delay(500);
     await act(app, profile, 'restore', { press: SEL.restore, place: 450, outcome: [SEL.done], settle: HELD, runs: true });
   }
@@ -660,16 +664,17 @@ async function scenarios(app, profile) {
     await act(app, profile, 'batch-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.outcome], settle: 3000, optional: true, runs: true });
   }
   // S9 — real size: thousands of pages, hundreds of pairs.
-  if (run('S9') && sub('S9')) {
+  if (run('S9') && profile.big) {
     await openDomain(app, 'hbig'); await openFoldsOn(page, ['orphans', 'missingBacklinks']);
     const pages = await page.evaluate(() => (document.querySelector('.dm-health') ? 1 : 0));
     step(`[${profile.name}] the big domain opens`, pages === 1);
     await act(app, profile, 'big-dismiss', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.done], settle: HELD, runs: true });
-    await act(app, profile, 'big-find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], untilTries: 6000, settle: 300, runs: true });
+    await act(app, profile, 'big-find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: (a, b) => !!document.querySelector(a) || !!document.querySelector(b), args: [SEL.confirmYes, SEL.outcome], untilTries: 6000, settle: 300, runs: true });
+    note(`[${profile.name}] after pressing Find: ${await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : 'no outcome line'; })}`);
     await act(app, profile, 'big-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.card], untilTries: 2400, settle: 1800, runs: true });
     const n = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     const key = await pickCard(page, 2);
-    step(`[${profile.name}] the big scan lists pairs (first page of them)`, n >= 20 && !!key, String(n));
+    step(`[${profile.name}] the big scan lists hundreds of pairs, the first page of them on screen`, n === 50 && !!key && await page.evaluate(() => /[1-9]\d\d likely duplicate/.test(document.querySelector('.dm-plan-card[data-row-key="scan-results"]').innerText)), String(n));
     if (key) {
       await act(app, profile, 'big-preview', { press: SEL.cardBtn(key, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], untilTries: 800, settle: 400, runs: true });
       await act(app, profile, 'big-merge', { press: SEL.cardBtn(key, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 2000, runs: true });
@@ -728,6 +733,7 @@ function judge() {
         const label = `[${prof}] ${action} · ${mt} = ${v}`;
         if (must) { judged.push(step(label + ` (required <= ${REQUIRED[mt]})`, v <= REQUIRED[mt])); continue; }
         if (RECORD) continue;
+        if (mt === 'cardHeightDeltaPx') continue;   // the review desk's measure: recorded, judged from its own stage
         const b = baseline.profiles?.[prof]?.[action]?.[mt];
         if (b === undefined) { judged.push(step(label + ' (no baseline entry: record again)', false)); continue; }
         const ok = withinBaseline(mt, v, b);
