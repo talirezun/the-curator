@@ -1765,6 +1765,7 @@ curl http://localhost:3333/api/health/ai-tech
 {
   "domain": "ai-tech",
   "scannedAt": "2026-04-20T11:03:13.937Z",
+  "checkedAt": "2026-04-20T11:40:02.100Z",
   "counts": { "entities": 42, "concepts": 28, "summaries": 15, "indexRows": 83 },
   "brokenLinks": [
     { "sourceFile": "summaries/foo.md", "linkText": "missing-page", "suggestedTarget": null }
@@ -1815,7 +1816,7 @@ read.
 
 | Type | Auto-fixable | Description |
 |------|:-:|-------------|
-| `brokenLinks` | ✓¹ | `[[wikilink]]` that points to a non-existent page. Includes a `suggestedTarget` when a prefix-tolerant match exists. |
+| `brokenLinks` | ✓¹ | `[[wikilink]]` that points to a non-existent page, one row per link per page on this route (the MCP lists each occurrence). Includes a `suggestedTarget` when a prefix-tolerant match exists, and `occurrences` when the page writes the same link more than once. |
 | `orphans` | — | Entity or concept pages with zero incoming links. |
 | `folderPrefixLinks` | ✓ | Links like `[[concepts/rag]]` that should be `[[rag]]`. |
 | `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |

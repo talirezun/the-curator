@@ -414,17 +414,19 @@ section('8. F6 — "Fix N safe issues" states the deletions');
   };
   const extra = liftConst('DESTRUCTIVE_FIX_TYPES') +
     "const GIT_UNDO_NOTE = 'NOTE'; const GIT_UNDO_WARN = 'WARN';\n";
-  const fns = sandbox(['countSafeFixable', 'deletedPageCount', 'safeFixDeletedPages', 'confirmFixSafe'], {
+  const fns = sandbox(['readHealthBeforeAsking', 'countSafeFixable', 'deletedPageCount', 'safeFixDeletedPages', 'confirmFixSafe'], {
     state, pluralize, render: () => {}, myMountToken: 1, runFixSafe: () => { state.ranFixSafe = true; },
+    fetchJSON: async () => state.health, isCurrentMount: () => true, onQuickAction: () => {},
   }, extra);
-  fns.confirmFixSafe('a');
+  state.activeSlug = 'a';
+  await fns.confirmFixSafe('a');
   ok(/3 pages will be deleted/.test(state.confirm.body) && /WARN/.test(state.confirm.body),
     '8.1 1 cross-folder dupe + a 3-slug hyphen group = 3 pages deleted, with the hard warning', state.confirm.body);
   ok(state.confirm.confirmLabel === 'Fix and delete', '8.2 the button says it deletes');
   state.health.crossFolderDupes = []; state.health.hyphenVariants = [];
   // With nothing to delete there is nothing to ask (owner's decision, 2026-11-05).
   state.confirm = null;
-  fns.confirmFixSafe('a');
+  await fns.confirmFixSafe('a');
   ok(state.confirm === null && state.ranFixSafe === true,
     '8.3 CONTROL — with nothing destructive it runs on the press, with no question');
 }
@@ -499,7 +501,7 @@ section('14. F12 — ages tick in the ticker\'s own words');
     ok(relTime(iso) === ageWordsFor(iso, Date.now()), `14.1 relTime and the ticker agree at ${secs}s ("${relTime(iso)}")`);
   }
   ok(relTime(undefined) === 'never' && relTime('garbage') === 'never', '14.2 an absent or unreadable time is "never", never "NaN days ago"');
-  ok(/data-age-at="' \+ escapeHtml\(report\.scannedAt\)/.test(SRC), '14.3 the Scan row\'s age is a ticking [data-age-at] span');
+  ok(/data-age-at="' \+ escapeHtml\(lookedAt\)/.test(SRC), '14.3 the Scan row\'s age is a ticking [data-age-at] span');
   ok(/last save <span data-age-at="/.test(SRC), '14.4 a project\'s last save is a ticking span');
   ok(/subscribeAgeTicker\(/.test(SRC) && /unsubscribeAges\(\)/.test(SRC), '14.5 the view subscribes to the one clock and lets go on teardown');
 }

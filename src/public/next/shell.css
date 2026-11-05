@@ -2338,6 +2338,13 @@ body.guide-docked .main {
    one — and is what the ::before's well replaces. */
 .btn-primary:active { background-color: var(--accent-active); box-shadow: none; }
 .btn-secondary:active { background-color: var(--surface-active); box-shadow: var(--gloss-pressed); }
+/* THE RING GOES ON TOP OF THE SHADOW, NOT INSTEAD OF IT. tokens/base.css's global
+   `:focus-visible` sets box-shadow at the same weight as a `.btn` tier's own, and the
+   tier comes later, so the keyboard focus ring never showed on these. These rules
+   match only under keyboard focus: nothing changes at rest. */
+.btn-secondary:focus-visible { box-shadow: var(--ring-focus), var(--gloss-specular-quiet), var(--gloss-contact); }
+.btn-primary:focus-visible,
+.btn-danger-solid:focus-visible { box-shadow: var(--ring-focus), var(--gloss-contact); }
 .btn-danger-solid:active { box-shadow: none; filter: brightness(0.90); }
 .btn-danger:active { box-shadow: var(--gloss-pressed); }
 .btn-ai:active { background-color: var(--accent-tint-strong); box-shadow: var(--gloss-pressed); }

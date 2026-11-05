@@ -1347,7 +1347,7 @@ try {
       // `mergedPreviewCap`. A plain numeric constant, same class as the three
       // above — not a new way in, no §8b case.
       'MERGED_PREVIEW_CAP_CHARS',
-      'applyBrokenLinkFixes', 'applyOrphanRescue', 'countLinksToSlug',
+      'applyBrokenLinkFixes', 'collapseRepeatedLinks', /* pure: reads a report it is handed, writes nothing */ 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
       'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',
       // v3.83.0: the index rebuild. planIndexRebuild is read-only;

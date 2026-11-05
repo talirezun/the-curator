@@ -238,7 +238,7 @@ section('§5 apply');
   eq(calls.fetch[0].url, '/api/health/my%20domain/index/apply', 'URL is /api/health/<slug>/index/apply');
   eq(calls.fetch[0].opts.method, 'POST', 'POST');
   eq(JSON.parse(calls.fetch[0].opts.body), { basis: 'f'.repeat(64) }, 'the body is {basis} and nothing else');
-  eq(state.rowNote, { tone: 'success', text: 'Index rebuilt — added 2,705 pages and removed 39 stale rows. index.md is now 438 KB.' }, 'success banner');
+  eq(state.rowNote, { tone: 'success', trace: 'Index rebuilt', text: 'Index rebuilt — added 2,705 pages and removed 39 stale rows. index.md is now 438 KB.' }, 'success banner');
   eq(state.pendingPlan, null, 'plan cleared');
   eq(calls.gates, ['index-rebuild-apply', 'release:index-rebuild-apply'], "write gate held under 'index-rebuild-apply' and released");
   eq(calls.loadHealth, 1, 'report reloaded');

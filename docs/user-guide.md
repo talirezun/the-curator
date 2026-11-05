@@ -8052,6 +8052,8 @@ Every button in Wiki health answers where you pressed it. *(New in this release;
 
 **When it is done**, the row holds its outcome for about a second, then closes smoothly. Rows under it slide up; nothing above it moves, and the page does not scroll, even at the very end of the page. What was just done stays in the section's heading, for example "Repaired 2 just now".
 
+If you switch domain or leave while it runs, the outcome waits for you on that domain. If you press **Fix all** on something that deletes pages, the button says "Checking…" first, so the number in the question is the number on disk now.
+
 **When it fails**, the row says so and offers **Try again**. That stays until you act on it: it never disappears on a timer. There is no longer a coloured banner at the top of the section.
 
 A repair can settle rows **above** the one you pressed, for instance when a new link rescues an orphan page in a list you have open. Those rows dim and say **Resolved** rather than vanish from under your pointer. They go when you scroll, press something above them, or close their fold.

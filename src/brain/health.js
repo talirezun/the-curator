@@ -1650,7 +1650,36 @@ export async function fixIssue(domain, type, issue = null) {
     // so it is pinned behaviourally in test-mcp-e2e.js §9.
     if (normaliseFixOutcome(raw).ok) fixed++;
   }
-  return { fixed, total: issues.length };
+  // `total` counts occurrences, which is what the scan lists. `distinct` is how many
+  // links those are: one fix rewrites every occurrence of a link in its page, so a page
+  // writing it twice ends at fixed 1 of total 2 with nothing left undone.
+  const repeatable = type === 'brokenLinks' || type === 'folderPrefixLinks';
+  return { fixed, total: issues.length, distinct: repeatable ? new Set(issues.map((i) => i.sourceFile + '|' + i.linkText)).size : issues.length };
+}
+
+/**
+ * The report as a person reads it: one row per link per page, with how many times the
+ * page writes it. A dismissal and a fix both act on that pair, so listing each
+ * occurrence showed two identical rows of which one Dismiss removed both. The scan
+ * itself, and every agent reading it over the MCP, still lists occurrences.
+ */
+export function collapseRepeatedLinks(report) {
+  if (!report || typeof report !== 'object') return report;
+  const once = (list, count) => {
+    if (!Array.isArray(list)) return list;
+    const seen = new Map();
+    const out = [];
+    for (const it of list) {
+      const key = it.sourceFile + '|' + it.linkText;
+      const first = seen.get(key);
+      if (first) { if (count) first.occurrences = (first.occurrences || 1) + 1; continue; }
+      const row = { ...it };
+      seen.set(key, row);
+      out.push(row);
+    }
+    return out;
+  };
+  return { ...report, brokenLinks: once(report.brokenLinks, true), folderPrefixLinks: once(report.folderPrefixLinks, false) };
 }
 
 // ── Phase 3 (v2.4.5) — Semantic near-duplicate detection ────────────────────
@@ -2539,16 +2568,17 @@ export async function fixAllSafe(domain) {
   // links, which changes which folder a summary's links resolve to.
   const TYPES = ['crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];
   const byType = {};
-  let fixed = 0, total = 0;
+  let fixed = 0, total = 0, distinct = 0;
   for (const type of TYPES) {
     try {
       const r = await fixIssue(domain, type, null);  // brokenLinks fix-all only touches suggestedTarget rows
       byType[type] = r;
       fixed += r.fixed || 0;
       total += r.total || 0;
+      distinct += Number.isInteger(r.distinct) ? r.distinct : (r.total || 0);
     } catch (err) {
       byType[type] = { fixed: 0, total: 0, error: err.message };
     }
   }
-  return { fixed, total, byType };
+  return { fixed, total, distinct, byType };
 }
