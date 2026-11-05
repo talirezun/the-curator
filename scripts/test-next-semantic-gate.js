@@ -970,6 +970,15 @@ __setState(stateWithScan('alpha', [], []));
 await runMergeSemanticDuplicates('alpha');
 ok(__state().banner.text === 'Nothing left to merge — every spelling variant has been handled.', '14l: nothing left: the exact words');
 
+// The title counts what is still open; a merged pair is not still "found".
+const handledMix = [];
+for (let i = 0; i < 5; i++) handledMix.push(pair({ keepSlug: 'k' + i, removeSlug: 'r' + i, status: i < 2 ? 'merged' : 'open' }));
+h13 = card(handledMix, SOME);
+ok(h13.includes('3 likely duplicate pairs found'), '14m: the title counts OPEN pairs only');
+handledMix.forEach((p) => { p.status = 'merged'; });
+h13 = card(handledMix, SOME);
+ok(h13.includes('5 likely duplicate pairs found'), '14m: with none open it keeps the count of the whole list');
+
 console.log('\n' + '='.repeat(60));
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

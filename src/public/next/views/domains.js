@@ -7801,7 +7801,8 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       // this header for the model's medium/high verdicts. These are the
       // verdicts; the input count is stated beside them when the scan
       // reported it.
-      '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'likely duplicate pair') + ' found</div>' +
+      // The pairs still waiting. With none open, the count of what this list held.
+      '<div class="dm-plan-title">' + pluralize(open.length > 0 ? open.length : s.pairs.length, 'likely duplicate pair') + ' found</div>' +
       coverage +
       '<div class="dm-plan-summary">Each merge deletes one page and points its links to the page you keep. The app has no Undo button; with GitHub Sync, a git client can recover it.</div>' +
       batchBar +
