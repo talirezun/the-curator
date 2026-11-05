@@ -107,7 +107,7 @@ console.log('1. writeFileAtomic — basics\n');
   // Tempfile is in the SAME directory as the target (EXDEV-safe)
   const tmpName = atomicTesting.nextTmpName(target);
   assertEq(path.dirname(tmpName), dir, 'temp path is in same dir as target');
-  assertTrue(path.basename(tmpName).startsWith('.tmp-page.md-'), 'temp name pattern matches');
+  assertTrue(/^\.tmp-\d+-\d+-[0-9a-f]{8}$/.test(path.basename(tmpName)), 'temp name pattern matches');
   assertTrue(path.basename(tmpName).includes(`-${process.pid}-`), 'temp name includes pid');
 
   await rm(dir, { recursive: true, force: true });
