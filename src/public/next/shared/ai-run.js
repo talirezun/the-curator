@@ -161,6 +161,8 @@ export function renderRunsOn(runsOn, opts) {
  * @param {object} [opts]
  * @param {boolean} [opts.inSettings=false]  accepted for symmetry; the after-line has no door
  * @param {string}  [opts.id]
+ * @param {boolean} [opts.lastRun=false]     ADDITIVE: the short form, "Last run: <model> · <cost>",
+ *                                           for a line that stays beside the actions it prices
  * @returns {string} HTML, or '' when no call reported a model (nothing ran)
  */
 export function renderSpent(spent, opts) {
@@ -169,9 +171,9 @@ export function renderSpent(spent, opts) {
   const n = (v) => (isCount(v) ? v : 0);
   const tokensIn = n(spent.inputTokens) + n(spent.cachedReadTokens) + n(spent.cacheWriteTokens);
   const tokensOut = n(spent.outputTokens);
-  const parts = ['<span class="ai-run-lead">Ran on ' + modelSpan(spent)
+  const parts = ['<span class="ai-run-lead">' + (o.lastRun ? 'Last run: ' : 'Ran on ') + modelSpan(spent)
     + (spent.fallbackFrom ? ' (your model was unavailable)' : '') + '</span>'];
-  parts.push(fig(tokensIn.toLocaleString('en-US') + ' in / ' + tokensOut.toLocaleString('en-US') + ' out'));
+  if (!o.lastRun) parts.push(fig(tokensIn.toLocaleString('en-US') + ' in / ' + tokensOut.toLocaleString('en-US') + ' out'));
   if (isNum(spent.usd)) {
     const usd = formatUsdHonest(spent.usd);
     parts.push(fig((spent.estimated === true ? 'approx. ' : '') + usd));

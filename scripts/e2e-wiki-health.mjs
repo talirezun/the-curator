@@ -49,10 +49,11 @@
  * THE SELECTORS are all in SEL, below. A redesign changes them there.
  *
  *   node scripts/e2e-wiki-health.mjs [--stage <name>] [--profiles 1280,375,1280-light,375-light,1280-rm,375-rm,800,big-1280,big-375]
- *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
+ *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
  *
  * SINCE STAGE 1 the default stage is `s1`, the press rule: every metric below is
- * REQUIRED except the review desk's, which belong to a later stage.
+ * REQUIRED except the review desk's, which belong to a later stage. STAGE 2 keeps those
+ * thresholds on the three lanes and adds S14: lanes, words, Undo, real size.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -64,6 +65,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchBrowser, findBrowser } from './visual/browser.js';
 import { CdpConnection, CdpPage } from './visual/cdp.js';
+import { wordAllowed, isFigure, BANNED, STAGE3_SUBTREE } from './test-helpers/health-words.js';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -82,47 +84,52 @@ const SEL = {
   main: '#main',
   viewRoot: '#view-root',
   domainRow: '.dm-row[data-domain-slug]',
-  healthReady: '.dm-health .cur-action, .dm-health .cur-card',
+  healthReady: '.dm-health .cur-card',
   rescan: '#dm-rescan-btn',
   fixAll: (key) => `[data-group-key="${key}"] .dm-group-fixall-btn`,
-  fixSafe: '.dm-quick-btn[data-action="fixSafe"]',
+  repairAll: '#dm-repair-all-btn',
   findDupes: '.dm-quick-btn[data-action="semanticDupes"]',
   confirmYes: '#dm-confirm-yes',
   confirmNo: '#dm-confirm-no',
-  checkNext: '#dm-semantic-next-btn',
+  checkNext: '.dm-quick-btn[data-action="semanticDupes"]',
   batchMerge: '#dm-semantic-merge-btn',
+  review: '.dm-review-btn',
   card: '.dm-sem-card',                                   // one pair
   cardBtn: (key, action) => `.dm-sem-card[data-sem-key="${key}"] [data-sem-action="${action}"]`,
   preview: '.dm-sem-preview',
   dismissIn: (group) => `[data-group-key="${group}"] .dm-issue-row .dm-dismiss-btn`,
+  leftUndo: '.dm-left-undo-btn',
   restore: '.dm-restore-btn',
   fold: (key) => `[data-group-key="${key}"]`,
+  lane: (name) => `.dm-lane[data-row-key="lane:${name}"]`,
+  laneTitle: '.dm-lane-title',
+  reading: '.dm-health-reading',
+  laneReading: '.dm-lane-reading',
   // outcomes (first one that exists wins)
   banner: '.dm-health .dm-banner',
   done: '.dm-health .dm-row-done',
   outcome: '.dm-health .dm-outcome',
   plan: '.dm-health .dm-plan-card[data-row-key="plan"]',
   planApply: '#dm-plan-apply-btn',
-  indexPlan: '.dm-quick .dm-quick-btn[data-action="indexPlan"]',
+  indexPlan: '[data-group-key="indexDrift"] .dm-quick-btn[data-action="indexPlan"]',
   rescue: '.dm-quick-btn[data-action="orphans"]',
   fixLinks: '.dm-quick-btn[data-action="brokenLinks"]',
   retry: '.dm-health .dm-outcome-retry',
   confirmCard: '.dm-confirm-card',
-  coverage: '.dm-sem-coverage',
+  coverage: '[data-group-key="compare"]',
   handled: '.dm-sem-handled',
   // the row a press belongs to (nearest ancestor): used to split "above" from "below"
-  rows: '.dm-sem-card, .dm-issue-row, .dm-group, .dm-quick, .dm-confirm-card, .dm-plan-card, .dm-sem-batch, .dm-health-top',
+  rows: '.dm-sem-card, .dm-issue-row, .dm-group, .dm-lane-head, .dm-confirm-card, .dm-plan-card, .dm-health-top',
   // landmarks sampled every frame (each: base selector + how many matches)
   landmarks: [
-    { base: '.dm-health', max: 1 }, { base: '.dm-health .cur-section-hd', max: 1 }, { base: '.dm-quick', max: 1 },
-    { base: '.dm-group-scan', max: 1 }, { base: '.dm-group[data-group-key]', max: 10 }, { base: '.dm-confirm-card', max: 1 },
-    { base: '.dm-plan-card', max: 1 }, { base: '.dm-ai-progress', max: 1 }, { base: '.dm-sem-coverage', max: 1 },
-    { base: '.dm-sem-card', max: 9 }, { base: '.dm-sem-handled', max: 1 },
+    { base: '.dm-health', max: 1 }, { base: '.dm-health .cur-section-hd', max: 1 }, { base: '.dm-lane-head', max: 3 },
+    { base: '.dm-group-scan', max: 1 }, { base: '.dm-group[data-group-key]', max: 14 }, { base: '.dm-confirm-card', max: 1 },
+    { base: '.dm-plan-card', max: 1 }, { base: '.dm-sem-card', max: 9 }, { base: '.dm-sem-handled', max: 1 },
   ],
   live: '.dm-health [aria-live]',
 };
 // the folds the lab domains fill
-const FOLDS = ['orphans', 'missingBacklinks', 'brokenLinks', 'folderPrefixLinks'];
+const FOLDS = ['orphans', 'missingBacklinks', 'brokenLinksOpen', 'folderPrefixLinks'];
 
 // ═══ 2. THRESHOLDS ══════════════════════════════════════════════════════════
 // REQUIRED: PLAN §3 "Required" column. All metrics are "lower is better".
@@ -151,10 +158,10 @@ const withinBaseline = (m, v, b) => (UNIT[m] === 'ms' ? v <= Math.max(b * 1.5, b
 const ALL_PROFILES = {
   '1280': { name: '1280', w: 1280, h: 900 },
   '375': { name: '375', w: 375, h: 812 },
-  '1280-light': { name: '1280-light', w: 1280, h: 900, light: true, only: ['S1', 'S5', 'S6'] },
-  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6'] },
-  '1280-rm': { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5', 'S7'] },
-  '375-rm': { name: '375-reduced-motion', w: 375, h: 812, reduced: true, only: ['S1', 'S4', 'S7'] },
+  '1280-light': { name: '1280-light', w: 1280, h: 900, light: true, only: ['S1', 'S5', 'S6', 'S14'] },
+  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6', 'S14'] },
+  '1280-rm': { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5', 'S7', 'S14'] },
+  '375-rm': { name: '375-reduced-motion', w: 375, h: 812, reduced: true, only: ['S1', 'S4', 'S7', 'S14'] },
   rm: { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5'] },
   '800': { name: '800', w: 800, h: 900, overflowOnly: true },
   // A synthetic domain of thousands of pages and hundreds of pairs. The small
@@ -277,7 +284,7 @@ function buildLabDomain(root, name, opts = {}) {
 }
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
-const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13'];
+const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'hclean'];
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -287,6 +294,13 @@ async function startApp(profile) {
   execFileSync(process.execPath, [path.join(REPO, 'scripts', 'demo-domain.mjs'), ws.domains], { cwd: REPO, stdio: ['ignore', 'ignore', 'inherit'],
     env: { ...process.env, HOME: ws.home, CURATOR_TEST_DOMAINS_DIR: ws.domains, CURATOR_TEST_USER_DATA_DIR: ws.userData } });
   for (const d of LABS) buildLabDomain(ws.domains, d);
+  // A wiki with nothing wrong: two pages that link to each other.
+  { const w = path.join(ws.domains, 'hclean', 'wiki'); rmSync(w, { recursive: true, force: true });
+    for (const d of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, d), { recursive: true });
+    writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[zulu]]\n');
+    writeFileSync(path.join(w, 'concepts', 'zulu.md'), '---\ntype: concept\n---\n\n# Zulu\n\nA last page.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hclean\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n| [[zulu]] | A last page. |\n');
+    writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
   if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,
@@ -546,6 +560,11 @@ const pickCard = (page, n) => page.evaluate((cardSel, n) => {
   const cards = [...document.querySelectorAll(cardSel)].filter((c) => { const b = c.querySelector('[data-sem-action="preview"]'); return b && !b.disabled; });
   return cards[n - 1] ? cards[n - 1].dataset.semKey : null;
 }, SEL.card, n);
+const compareReady = async (page) => {
+  await page.evaluate((s, m) => { const e = document.querySelector(s); if (e) document.querySelector(m).scrollTop += e.getBoundingClientRect().top - 300; }, SEL.coverage, SEL.main);
+  await waitFor(page, (s) => { const b = document.querySelector(s); return !!b && !b.disabled; }, 'Compare enabled', 2400, SEL.findDupes);
+  await delay(200);
+};
 // Serialised and called in the page with `args`: it must take the selector itself.
 const exists = (s) => !!document.querySelector(s);
 
@@ -560,9 +579,9 @@ async function scenarios(app, profile) {
   const ON_PLAN = '.dm-plan-card .dm-row-done';
   const HELD = 1900;   // held about a second, then collapsed, then a little
   if (profile.overflowOnly) {
-    await openDomain(app, 'h4');
+    await openDomain(app, 'h4'); await compareReady(page);
     await act(app, profile, 'find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
-    await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.card], untilTries: 800, settle: 1800, runs: true });
+    await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
     return;
   }
   // S1 — Fix all: free repairs run on the press; a deleting one asks first.
@@ -584,36 +603,46 @@ async function scenarios(app, profile) {
       await act(app, profile, `fixall-${key}-confirm`, { press: SEL.confirmYes, outcome: [ON_CONFIRM], settle: HELD + 600, runs: true });
     }
     await delay(600);
-    if (await page.evaluate((s) => !!document.querySelector(s), SEL.fixSafe)) {
-      const m = await act(app, profile, 'fixsafe-free', { press: SEL.fixSafe, place: 300, outcome: [SEL.fixSafe, SEL.outcome], settle: HELD, runs: true });
-      step(`[${profile.name}] Fix N safe issues with nothing to delete opens no question`, m && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)));
+    if (await page.evaluate((s) => !!document.querySelector(s), SEL.repairAll)) {
+      const m = await act(app, profile, 'repair-all-free', { press: SEL.repairAll, place: 300, outcome: [SEL.done, SEL.laneReading], settle: HELD, runs: true });
+      step(`[${profile.name}] Repair all opens no question`, m && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)));
     }
   }
-  // S2 — Fix N safe issues that deletes pages asks; Rescan moves nothing.
+  // S2 — Repair all deletes nothing, in the free order; Check again moves nothing.
   if (run('S2') && sub('S2')) {
-    await openDomain(app, 'h2'); await openFoldsOn(page, ['orphans', 'brokenLinks']);
-    const age = () => page.evaluate(() => { const e = document.querySelector('.dm-group-scan [data-age-at]'); return e ? { at: Date.parse(e.getAttribute('data-age-at')), text: e.textContent } : null; });
+    await openDomain(app, 'h2'); await openFoldsOn(page, ['orphans', 'brokenLinksOpen']);
+    const age = () => page.evaluate((r) => { const e = document.querySelector(r + ' [data-age-at]'); return e ? { at: Date.parse(e.getAttribute('data-age-at')), text: e.textContent } : null; }, SEL.reading);
     await delay(1100);
     const a0 = await age();
     await act(app, profile, 'rescan-1', { press: SEL.rescan, place: 200, outcome: [SEL.rescan], settle: 1000, runs: true });
     const a1 = await age();
-    step(`[${profile.name}] Rescan on an unchanged wiki shows it was checked just now`, a0 && a1 && a1.at > a0.at && Date.now() - a1.at < 5000, JSON.stringify([a0, a1]));
-    await act(app, profile, 'fixsafe-press', { press: SEL.fixSafe, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 400 });
-    await act(app, profile, 'fixsafe-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], settle: HELD, runs: true });
+    step(`[${profile.name}] Check again on an unchanged wiki shows it was checked just now`, a0 && a1 && a1.at > a0.at && Date.now() - a1.at < 5000, JSON.stringify([a0, a1]));
+    await page.evaluate(() => { const real = window.fetch; window.__fixes = []; window.fetch = (u, o) => { if (/\/fix(-all-safe)?$/.test(String(u))) window.__fixes.push(String(u).endsWith('safe') ? 'fix-all-safe' : JSON.parse(o.body).type); return real(u, o); }; });
+    await act(app, profile, 'repair-all', { press: SEL.repairAll, place: 300, outcome: [SEL.done, SEL.laneReading], settle: HELD + 400, runs: true });
+    const fixes = await page.evaluate(() => window.__fixes);
+    step(`[${profile.name}] Repair all runs the free types in the server's order, and nothing that deletes`,
+      JSON.stringify(fixes.filter((t) => ['folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'].includes(t))) === JSON.stringify(fixes) &&
+        JSON.stringify(fixes) === JSON.stringify(['folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'].filter((t) => fixes.includes(t))) && fixes.length >= 2, JSON.stringify(fixes));
+    step(`[${profile.name}] and the two pages with one name are both still on disk`, existsSync(path.join(app.ws.domains, 'h2', 'wiki', 'entities', 'deployment.md')) && existsSync(path.join(app.ws.domains, 'h2', 'wiki', 'concepts', 'deployment.md')));
+    const tr = await page.evaluate((r) => (document.querySelector(r) || {}).innerText || '', SEL.lane('free') + ' ' + SEL.laneReading);
+    step(`[${profile.name}] the lane's head keeps the trace`, /^Repaired \d+ /.test(tr), tr);
   }
   // S5 — Dismiss, Restore
   if (run('S5') && sub('S5')) {
-    await openDomain(app, 'h5'); await openFoldsOn(page, ['orphans', 'brokenLinks']);
+    await openDomain(app, 'h5'); await openFoldsOn(page, ['orphans', 'brokenLinksOpen']);
     // One link written twice on one page: one row, saying so.
-    const twice = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-group-key="brokenLinks"] .dm-issue-row')].filter((e) => /mac-os/.test(e.innerText)); return { n: r.length, text: r[0] ? r[0].innerText : '' }; });
+    const twice = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-group-key="brokenLinksOpen"] .dm-issue-row')].filter((e) => /mac-os/.test(e.innerText)); return { n: r.length, text: r[0] ? r[0].innerText : '' }; });
     step(`[${profile.name}] a link written twice on one page is one row, and says so`, twice.n === 1 && /2 times on this page/.test(twice.text), JSON.stringify(twice));
-    const rows = () => page.evaluate((s) => document.querySelectorAll(s).length, `${SEL.fold('orphans')} .dm-issue-row`);
+    const rows = () => page.evaluate((s) => document.querySelectorAll(s).length, `${SEL.fold('orphans')} .dm-dismiss-btn`);
     const before = await rows();
-    await act(app, profile, 'dismiss', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.done], settle: HELD, runs: true });
+    await act(app, profile, 'leave-as-is', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.leftUndo], settle: HELD, runs: true });
     // Nothing here may depend on an event that reduced motion never fires.
-    step(`[${profile.name}] the row has really left, and left nothing behind`, (await rows()) === before - 1 && await page.evaluate(() => !document.querySelector('[data-row-leaving]')), String(await rows()));
+    step(`[${profile.name}] the row stays where it was, says so, and has Undo`, (await rows()) === before - 1 && await page.evaluate((u) => { const b = document.querySelector(u); return !!b && /Left as is\./.test(b.closest('.dm-issue-row').innerText); }, SEL.leftUndo), String(await rows()));
+    await act(app, profile, 'undo-left', { press: SEL.leftUndo, outcome: [SEL.outcome], until: (u) => !document.querySelector(u), args: [SEL.leftUndo], settle: 500, runs: true });
+    step(`[${profile.name}] Undo brings it back, in its place`, (await rows()) === before && /Brought back/.test(await page.evaluate((o) => (document.querySelector(o) || {}).innerText || '', SEL.outcome)));
+    await act(app, profile, 'leave-as-is-2', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.leftUndo], settle: 800, runs: true });
     await openFoldsOn(page, ['dismissed']); await delay(500);
-    await act(app, profile, 'restore', { press: SEL.restore, place: 450, outcome: [SEL.done], settle: HELD, runs: true });
+    await act(app, profile, 'bring-back', { press: SEL.restore, place: 450, outcome: [SEL.done], settle: HELD, runs: true });
   }
   // S6 — the paid plans and the free rebuild: Rescue, Apply plan, Rebuild index.
   if (run('S6') && sub('S6')) {
@@ -622,9 +651,9 @@ async function scenarios(app, profile) {
     await act(app, profile, 'rescue-run', { press: SEL.confirmYes, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 600, settle: 500, runs: true, settled: true });
     await act(app, profile, 'apply-plan', { press: SEL.planApply, outcome: [ON_PLAN], until: exists, args: [SEL.outcome], untilTries: 600, settle: 1200, runs: true });
     await delay(800);
-    // The whole outcome is on the line, and the head's trace is not cut off.
-    const fit = await page.evaluate(() => { const t = document.querySelector('.dm-health-trace'); return { trace: t ? t.innerText : null, fits: !t || t.scrollWidth <= t.clientWidth + 1, right: t ? t.getBoundingClientRect().right : 0, card: document.querySelector('.dm-health').getBoundingClientRect().right, ov: t ? getComputedStyle(t).textOverflow : '' }; });
-    step(`[${profile.name}] the section head's trace is whole`, fit.fits && fit.right <= fit.card + 1 && fit.ov !== 'ellipsis', JSON.stringify(fit));
+    // The section's reading is whole.
+    const fit = await page.evaluate(() => { const t = document.querySelector('.dm-health-reading'); return { trace: t ? t.innerText : null, fits: !t || t.scrollWidth <= t.clientWidth + 1, right: t ? t.getBoundingClientRect().right : 0, card: document.querySelector('.dm-health').getBoundingClientRect().right, ov: t ? getComputedStyle(t).textOverflow : '' }; });
+    step(`[${profile.name}] the section's reading is whole`, fit.fits && fit.right <= fit.card + 1 && fit.ov !== 'ellipsis', JSON.stringify(fit));
     await act(app, profile, 'rebuild-press', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
     await page.evaluate(() => document.getElementById('dm-plan-discard-btn').focus());
     await page.evaluate(() => document.getElementById('dm-plan-discard-btn').click());
@@ -639,13 +668,13 @@ async function scenarios(app, profile) {
     await openDomain(app, 'h7'); await openFoldsOn(page, ['orphans']); await delay(200);
     const toEnd = () => page.evaluate((m) => { const e = document.querySelector(m); e.scrollTop = e.scrollHeight; window.scrollTo(0, document.documentElement.scrollHeight); }, SEL.main);
     await toEnd(); await delay(150);
-    await act(app, profile, 'end-dismiss', { press: `${SEL.fold('orphans')} .dm-issue-row:last-child .dm-dismiss-btn`, outcome: [SEL.done], settle: HELD, runs: true, stay: true });
+    await act(app, profile, 'end-dismiss', { press: `${SEL.fold('orphans')} .dm-issue-row:last-child .dm-dismiss-btn`, outcome: [SEL.leftUndo], settle: HELD, runs: true, stay: true });
     await toEnd(); await delay(150);
     await act(app, profile, 'end-fixall', { press: SEL.fixAll('folderPrefixLinks'), outcome: [SEL.done], settle: HELD, runs: true, stay: true });
     // Pressed at the viewport's bottom edge: the next control is off-screen, and
     // moving focus to it must not scroll the page there.
     await openFoldsOn(page, ['orphans']); await delay(150);
-    await act(app, profile, 'edge-dismiss', { press: `${SEL.fold('orphans')} .dm-dismiss-btn`, edge: true, outcome: [SEL.done], settle: HELD, runs: true });
+    await act(app, profile, 'edge-dismiss', { press: `${SEL.fold('orphans')} .dm-dismiss-btn`, edge: true, outcome: [SEL.leftUndo], settle: HELD, runs: true });
     await toEnd(); await delay(150);
     const floor = await page.evaluate((m) => document.querySelector(m).style.getPropertyValue('--dm-health-floor'), SEL.main);
     note(`[${profile.name}] floor under the section after the end-of-page repairs: ${floor || '0'}`);
@@ -672,9 +701,9 @@ async function scenarios(app, profile) {
   // S10 — a row above the press is settled by the reading that follows it. It must
   // not move what was pressed: it stays, marked, until the user scrolls.
   if (run('S10') && sub('S10')) {
-    await openDomain(app, 'h10'); await openFoldsOn(page, ['orphans', 'missingBacklinks']); await delay(200);
-    rmSync(path.join(app.ws.domains, 'h10', 'wiki', 'concepts', 'gartner.md'));
-    await act(app, profile, 'row-above-settled', { press: SEL.fixAll('missingBacklinks'), place: 500, outcome: [SEL.done], settle: HELD, runs: true });
+    await openDomain(app, 'h10'); await openFoldsOn(page, ['orphans']); await delay(200);
+    rmSync(path.join(app.ws.domains, 'h10', 'wiki', 'summaries', 'module-handoff.md'));
+    await act(app, profile, 'row-above-settled', { press: SEL.dismissIn('orphans'), place: 500, outcome: [SEL.leftUndo], settle: HELD, runs: true });
     const waiting = await page.evaluate(() => { const e = document.querySelector('[data-row-deferred]'); return e ? e.innerText : null; });
     step(`[${profile.name}] the settled row above the press stays and says so`, !!waiting && /Resolved/.test(waiting), String(waiting));
     await page.evaluate((m) => { document.querySelector(m).scrollTop -= 200; }, SEL.main); await delay(600);
@@ -738,18 +767,99 @@ async function scenarios(app, profile) {
     const shadow = await page.evaluate((s) => { const b = document.querySelector(s); const atRest = getComputedStyle(b).boxShadow; b.focus(); return { atRest, focused: b.matches(':focus-visible'), now: getComputedStyle(b).boxShadow, ring: getComputedStyle(document.documentElement).getPropertyValue('--ring-keyline').trim() }; }, SEL.rescan);
     step(`[${profile.name}] a keyboard-focused button shows the ring on top of its shadow`, shadow.focused && shadow.now !== shadow.atRest && shadow.now.split('rgb').length > shadow.atRest.split('rgb').length, JSON.stringify(shadow).slice(0, 300));
   }
+  // S14 — the three lanes: what is drawn, in what order, in what words.
+  if (run('S14') && sub('S14')) {
+    const shot = async (state) => { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); const b = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${state}--${profile.name}.png`), Buffer.from(b.data, 'base64')); };
+    const toHealth = () => page.evaluate((s, m) => { const e = document.querySelector(s); document.querySelector(m).scrollTop += e.getBoundingClientRect().top - 40; }, '.dm-health', SEL.main);
+    const titles = () => page.evaluate((s) => [...document.querySelectorAll(s)].map((e) => e.textContent), SEL.laneTitle);
+    const audit = async (label) => { const a = await wordAudit(page); step(`[${profile.name}] words, ${label}: every visible string is in the deck`, a.bad.length === 0, a.bad.slice(0, 8).join(' | ')); step(`[${profile.name}] words, ${label}: none banned, none in capitals`, a.banned.length === 0, a.banned.slice(0, 8).join(' | ')); };
+    await openDomain(app, 'h14'); await toHealth(); await delay(300);
+    step(`[${profile.name}] three lanes, in cost order, each once`, JSON.stringify(await titles()) === JSON.stringify(['Free repairs', 'Your decision', 'AI help']), JSON.stringify(await titles()));
+    await shot('issues'); await audit('issues');
+    const shape = await page.evaluate(() => ({
+      aiOutside: [...document.querySelectorAll('.dm-health .btn-ai')].filter((b) => !b.closest('.dm-lane-ai')).length,
+      banner: document.querySelectorAll('.dm-health .dm-banner').length,
+      primary: document.querySelectorAll('.dm-health .btn-primary').length,
+      del: (document.querySelector('[data-group-key="crossFolderDupes"] .dm-lane-deletes') || {}).innerText || '',
+      cap: [...document.querySelectorAll('.dm-health *')].filter((e) => getComputedStyle(e).textTransform === 'uppercase').length,
+    }));
+    step(`[${profile.name}] AI buttons only in AI help; no banner; nothing primary; nothing uppercase`, shape.aiOutside === 0 && shape.banner === 0 && shape.primary === 0 && shape.cap === 0, JSON.stringify(shape));
+    step(`[${profile.name}] a deletion is stated on the row`, /^deletes \d+ pages?$/.test(shape.del), shape.del);
+    await openFoldsOn(page, ['missingBacklinks', 'orphans', 'folderPrefixLinks', 'summaryLinkSections', 'crossFolderDupes', 'brokenLinksOpen']); await delay(200);
+    await shot('folds-open'); await audit('folds open');
+    await act(app, profile, 'lane-merge-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300, runs: true });
+    await shot('merge-confirm'); await audit('merge confirm');
+    const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /otherwise it cannot be undone/.test(c.innerText) }; }, SEL.confirmYes);
+    step(`[${profile.name}] the deleting yes is danger, names its result and carries the warning`, /btn-danger/.test(conf.cls) && /^Merge and delete \d+$/.test(conf.label) && conf.warn, JSON.stringify(conf));
+    await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(400);
+    const m = await act(app, profile, 'lane-repair-row', { press: SEL.fixAll('missingBacklinks'), place: 450, outcome: [SEL.done], settle: 120, runs: true });
+    await shot('row-done');
+    step(`[${profile.name}] a free repair opens no question`, !!m && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)));
+    await delay(HELD);
+    const tr = await page.evaluate((s) => (document.querySelector(s) || {}).innerText || '', SEL.lane('free') + ' ' + SEL.laneReading);
+    step(`[${profile.name}] and it leaves its trace in the lane's head`, /^Repaired \d+ /.test(tr), tr);
+    await shot('after'); await audit('after');
+    await act(app, profile, 'lane-leave', { press: SEL.dismissIn('orphans'), place: 500, outcome: [SEL.leftUndo], settle: 500, runs: true });
+    await shot('left-as-is'); await audit('left as is');
+    await compareReady(page);
+    const label = await page.evaluate((s) => document.querySelector(s).innerText.replace(/\s+/g, ' ').trim(), SEL.findDupes);
+    step(`[${profile.name}] Compare wears its count and cost before you press`, /^Compare the next [\d,]+ (≈ )?(<\s*)?\$[\d.]+$/.test(label), label);
+    await act(app, profile, 'lane-compare-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
+    await shot('ai-confirm'); await audit('AI confirm');
+    await act(app, profile, 'lane-compare-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
+    await shot('after-run'); await audit('after a run');
+    await compareReady(page);
+    const reading = await page.evaluate((s) => document.querySelector(s).innerText, SEL.coverage + ' .dm-compare-reading');
+    step(`[${profile.name}] the row says how far it has got`, /^[\d,]+ of [\d,]+ pairs compared$/.test(reading), reading);
+    if (await page.evaluate((s) => !!document.querySelector(s), SEL.batchMerge)) {
+      await act(app, profile, 'lane-spelling-press', { press: SEL.batchMerge, place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
+      await shot('spelling-confirm'); await audit('spelling confirm');
+      await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(300);
+    }
+    await act(app, profile, 'lane-review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
+    await shot('review-open'); await audit('review open');
+    const key = await pickCard(page, 1);
+    if (key) {
+      await act(app, profile, 'lane-preview', { press: SEL.cardBtn(key, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], settle: 400, runs: true });
+      await act(app, profile, 'lane-merge-one', { press: SEL.cardBtn(key, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 800, runs: true });
+      await shot('merged-one');
+      const before = key.split('||')[1] || '';
+      step(`[${profile.name}] a pair merged through Possible duplicates really deleted its page`, before && !existsSync(path.join(app.ws.domains, 'h14', 'wiki', before + '.md')), before);
+    }
+    await page.evaluate((b) => { const e = document.querySelector(b); if (e && e.getAttribute('aria-expanded') === 'true') e.click(); }, SEL.review); await delay(300);
+    await page.evaluate((s) => { const d = document.querySelector(s); if (d) d.open = true; }, SEL.fold('compare')); await delay(200);
+    if (await page.evaluate(() => !!document.getElementById('dm-semantic-reset-btn'))) {
+      await act(app, profile, 'lane-forget-press', { press: '#dm-semantic-reset-btn', place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
+      await shot('forget-confirm'); await audit('forget confirm');
+      await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(300);
+    }
+    await act(app, profile, 'lane-rebuild', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan], until: exists, args: [SEL.planApply], untilTries: 400, settle: 300, runs: true });
+    await shot('rebuild-plan'); await audit('rebuild plan');
+    await page.evaluate(() => document.getElementById('dm-plan-discard-btn').click()); await delay(300);
+    // Clean: one line and Check again, and AI help still says how far it has got.
+    await openDomain(app, 'hclean'); await toHealth(); await delay(600);
+    const clean = await page.evaluate(() => ({ line: (document.querySelector('.dm-clean') || {}).innerText || '', titles: [...document.querySelectorAll('.dm-lane-title')].map((e) => e.textContent), again: (document.getElementById('dm-rescan-btn') || {}).innerText || '', reading: (document.querySelector('.dm-health-reading') || {}).innerText || '' }));
+    step(`[${profile.name}] clean: one line plus Check again; only AI help stays`, /^Nothing to fix\.\s+All 2 pages were checked/.test(clean.line) && clean.again.trim() === 'Check again' && JSON.stringify(clean.titles) === JSON.stringify(['AI help']) && /nothing to look at$/.test(clean.reading), JSON.stringify(clean));
+    await shot('clean'); await audit('clean');
+    const n1 = await page.evaluate((s) => { document.querySelector(s).__mark = 1; return true; }, '.dm-health');
+    await act(app, profile, 'clean-check-again', { press: SEL.rescan, outcome: [SEL.rescan], settle: 800, runs: true, stay: true });
+    step(`[${profile.name}] Check again keeps the section's node`, n1 && await page.evaluate((s) => document.querySelector(s).__mark === 1, '.dm-health'));
+    // A mirror draws the facts and no action.
+  }
   // S4 — duplicate pages: find, next, preview, flip, merge, skip, batch
   if (run('S4') && sub('S4')) {
-    await openDomain(app, 'h4');
+    await openDomain(app, 'h4'); await compareReady(page);
     await act(app, profile, 'find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
-    await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.card], untilTries: 800, settle: 1800, runs: true });
+    await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
+    await act(app, profile, 'review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
     const ncards = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     note(`[${profile.name}] pair cards after the first scan: ${ncards}`);
     if (await page.evaluate((s) => !!document.querySelector(s), SEL.checkNext)) {
-      await act(app, profile, 'next-press', { press: SEL.checkNext, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300 });
+      await compareReady(page);
+      await act(app, profile, 'next-press', { press: SEL.checkNext, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
       const before = ncards;
       await act(app, profile, 'next-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: (s, n) => document.querySelectorAll(s).length > n || !document.querySelector('#dm-confirm-yes'), args: [SEL.card, before], untilTries: 800, settle: 1800, runs: true });
-    } else step(`[${profile.name}] "Check the next" is offered after a partial scan`, false, 'button absent');
+    } else step(`[${profile.name}] "Compare the next" is offered after a partial run`, false, 'button absent');
     const keyA = await pickCard(page, 2);
     if (keyA) {
       const pv = SEL.cardBtn(keyA, 'preview'); const card = `.dm-sem-card[data-sem-key="${keyA}"]`;
@@ -768,21 +878,52 @@ async function scenarios(app, profile) {
   }
   // S9 — real size: thousands of pages, hundreds of pairs.
   if (run('S9') && profile.big) {
+    const t0 = Date.now();
     await openDomain(app, 'hbig'); await openFoldsOn(page, ['orphans', 'missingBacklinks']);
     const pages = await page.evaluate(() => (document.querySelector('.dm-health') ? 1 : 0));
-    step(`[${profile.name}] the big domain opens`, pages === 1);
-    await act(app, profile, 'big-dismiss', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.done], settle: HELD, runs: true });
+    step(`[${profile.name}] the big domain opens`, pages === 1, (Date.now() - t0) + ' ms');
+    // Summary first: the lanes on a 4,600-page wiki are a screen and a bit, not a list.
+    const shape = await page.evaluate(() => ({ h: document.querySelector('.dm-health').getBoundingClientRect().height, rows: document.querySelectorAll('.dm-health .dm-issue-row').length }));
+    note(`[${profile.name}] with two folds open the section is ${Math.round(shape.h)} px and draws ${shape.rows} item rows`);
+    step(`[${profile.name}] a long list shows a page and says how many more`, await page.evaluate(() => /Show \d+ more/.test((document.querySelector('[data-group-key="orphans"] .dm-show-more-btn') || document.querySelector('.dm-show-more-btn') || {}).innerText || 'Show 0 more')));
+    await act(app, profile, 'big-leave', { press: SEL.dismissIn('orphans'), place: 450, outcome: [SEL.leftUndo], settle: HELD, runs: true });
+    const t1 = Date.now(); await compareReady(page);
+    note(`[${profile.name}] the cost on the Compare button took ${Date.now() - t1} ms to arrive`);
     await act(app, profile, 'big-find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: (a, b) => !!document.querySelector(a) || !!document.querySelector(b), args: [SEL.confirmYes, SEL.outcome], untilTries: 6000, settle: 300, runs: true });
-    note(`[${profile.name}] after pressing Find: ${await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : 'no outcome line'; })}`);
-    await act(app, profile, 'big-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.card], untilTries: 2400, settle: 1800, runs: true });
+    note(`[${profile.name}] after pressing Compare: ${await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : 'no outcome line'; })}`);
+    await act(app, profile, 'big-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 2400, settle: 1800, runs: true });
+    await act(app, profile, 'big-review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
     const n = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     const key = await pickCard(page, 2);
-    step(`[${profile.name}] the big scan lists hundreds of pairs, the first page of them on screen`, n === 50 && !!key && await page.evaluate(() => /[1-9]\d\d likely duplicate/.test(document.querySelector('.dm-plan-card[data-row-key="scan-results"]').innerText)), String(n));
+    step(`[${profile.name}] the big run lists hundreds of pairs, the first page of them on screen`, n === 50 && !!key && await page.evaluate(() => /[1-9]\d\d/.test(document.querySelector('[data-group-key="duplicates"] .cur-fold-pill').innerText)), String(n));
+    const audited = await wordAudit(page);
+    step(`[${profile.name}] every word on screen at real size is in the deck`, audited.bad.length === 0, audited.bad.slice(0, 6).join(' | '));
     if (key) {
       await act(app, profile, 'big-preview', { press: SEL.cardBtn(key, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], untilTries: 800, settle: 400, runs: true });
       await act(app, profile, 'big-merge', { press: SEL.cardBtn(key, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 2000, runs: true });
     }
   }
+}
+
+// ═══ THE WORD AUDIT — the running page against the deck ═════════════════════
+async function wordAudit(page) {
+  const lines = await page.evaluate((section, stage3) => {
+    const root = document.querySelector(section); const out = [];
+    const skip = (e) => { for (let p = e; p && p !== root; p = p.parentElement) { if (p.classList && (p.classList.contains('mono') || p.classList.contains('visually-hidden') || p.classList.contains('dm-plan-data') || p.classList.contains('ai-run-model'))) return true; if (p.matches && p.matches(stage3)) return true; if (p.matches && p.matches('[data-row-leaving]')) return true; const cs = getComputedStyle(p); if (cs.display === 'none' || cs.visibility === 'hidden') return true; } return false; };
+    const blocks = new Set();
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!n.nodeValue.trim() || skip(n.parentElement)) continue; if (!n.parentElement.closest('details[open], :not(details)')) continue; const closedFold = n.parentElement.closest('details:not([open])'); if (closedFold && !n.parentElement.closest('summary')) continue; blocks.add(n.parentElement); }
+    for (const b of blocks) { let t = ''; for (const c of b.childNodes) t += c.nodeType === 3 ? c.nodeValue : (c.classList && (c.classList.contains('mono') || c.classList.contains('ai-run-model')) ? 'NAME' : (c.textContent || '')); out.push(t.replace(/\s+/g, ' ').trim()); }
+    return out;
+  }, SEL.health, STAGE3_SUBTREE);
+  const bad = []; const banned = [];
+  for (const l of lines) {
+    if (!l || isFigure(l)) continue;
+    if (BANNED.test(l)) banned.push(l);
+    if (/^[A-Z][A-Z ]{3,}$/.test(l)) banned.push('CAPS: ' + l);
+    if (!wordAllowed(l)) bad.push(l);
+  }
+  return { bad: [...new Set(bad)], banned: [...new Set(banned)] };
 }
 
 // ═══ 10. SAMPLER CONTROLS — the harness must be able to fail ════════════════

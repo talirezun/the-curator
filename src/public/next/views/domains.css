@@ -811,8 +811,11 @@
 /* 26 -> --control-sm (28px). A real <button class="btn btn-secondary"> that
    applies every fix in a category at once, and it was the smallest pointer
    target on the health panel. The BOX grew; the type did not. */
-.dm-group-fixall-btn {
-  margin-left: auto;
+.dm-group-fixall-btn,
+.dm-lane-btn,
+.dm-review-btn,
+.dm-health .dm-lane #dm-semantic-merge-btn {
+  flex: none;
   height: var(--control-sm);
   padding: 0 var(--space-4);
   font-size: var(--text-xs);
@@ -835,7 +838,8 @@
    row and were the smallest real buttons in the app — 56x22 measured in a
    rendered page. Their type is unchanged; only the box grew. */
 .dm-dismiss-btn,
-.dm-restore-btn {
+.dm-restore-btn,
+.dm-left-undo-btn {
   flex: none;
   height: var(--control-sm);
   padding: 0 var(--space-4);
@@ -1854,34 +1858,85 @@
 /* Figures change in place, so they keep their width. */
 .dm-health { font-variant-numeric: var(--numeric-tabular); }
 
-/* The two floors are set on the scroller by the view, in px. A patch would strip
-   a style off the section itself. See createScrollFloor and latchHealthAbove. */
+/* The floor is set on the scroller by the view, in px. A patch would strip a style
+   off the section itself. See createScrollFloor. */
 .dm-health { padding-bottom: var(--dm-health-floor); }
-#main { --dm-health-floor: 0px; --dm-quick-floor: 0px; --dm-quick-run-floor: 0px; }
-.dm-health .dm-quick-actions { min-height: var(--dm-quick-floor); align-content: flex-start; }
-/* A column, because margins do not collapse in one: a row closing to nothing here
-   gives back exactly its own space, with no last small jump as it is removed. */
-.dm-health .dm-quick-run { min-height: var(--dm-quick-run-floor); display: flex; flex-direction: column; }
+#main { --dm-health-floor: 0px; }
 
-/* One line, and never cut off: both hold only short fixed words, so neither can push
-   a row down. Whole sentences belong to the row or the line under it. */
-.dm-health-trace,
-.dm-rescan-note {
+/* The section's one reading. One line, and never cut off: it holds only short fixed
+   words, so it can never push a row down. */
+.dm-health-reading {
   min-width: 0;
   white-space: nowrap;
   font-size: var(--text-2xs);
   color: var(--text-2);
 }
-.dm-health-trace { flex: 1 1 0; text-align: right; align-self: center; line-height: 1; }
-/* At phone width the head has no room beside the title for even short words: its own
-   line, kept empty until it has something, so nothing ever moves to make room. */
+.dm-health-reading { flex: 1 1 0; text-align: right; align-self: center; line-height: 1; }
+/* At phone width the head has no room beside the title: its own line, always there,
+   so nothing ever moves to make room. */
 @media (max-width: 640px) {
   .dm-health .dm-section-hd { flex-wrap: wrap; }
-  .dm-health-trace { flex: 1 0 100%; text-align: left; min-height: 1em; }
+  .dm-health-reading { flex: 1 0 100%; text-align: left; min-height: 1em; }
 }
-.dm-rescan-note { flex: 1 1 0; align-self: center; }
-.dm-health .dm-health-top { flex-wrap: nowrap; }
+.dm-health .dm-health-top { flex-wrap: nowrap; align-items: center; }
 .dm-health .dm-health-top > .btn { flex: none; }
+
+/* Clean: one line, with Check again at its end. */
+.dm-clean { flex: 1 1 auto; min-width: 0; }
+.dm-clean-line { font-size: var(--text-sm); color: var(--text); }
+.dm-clean-sub { font-size: var(--text-xs); color: var(--text-2); }
+
+/* The lanes. No new colour: a title, a line that states the cost, and rows. */
+.dm-lane { display: flex; flex-direction: column; }
+.dm-lane + .dm-lane { border-top: 1px solid var(--border); padding-top: var(--space-3); }
+.dm-lane-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px var(--space-2);
+  min-height: var(--control-sm);
+  padding-bottom: var(--space-1);
+}
+.dm-lane-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+.dm-lane-line { font-size: var(--text-xs); color: var(--text-2); }
+.dm-lane-reading {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 1em;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.dm-lane-btn { flex: none; min-width: 112px; }
+.dm-lane-note { font-size: var(--text-xs); color: var(--text-2); padding: 4px 0; }
+.dm-lane-run { display: flex; flex-direction: column; gap: 2px; padding-top: var(--space-1); }
+.dm-lane-deletes, .dm-compare-reading { font-size: var(--text-xs); color: var(--text-2); }
+/* A row with nothing to open is the same row, without its chevron's room. */
+.dm-lane-plain > .cur-fold-summary { cursor: default; padding-left: 21px; }
+/* A row whose fold has nothing in it yet: same node, no chevron, nothing to open. */
+.dm-group-nofold > .cur-fold-summary { cursor: default; }
+.dm-group-nofold > .cur-fold-summary > svg { visibility: hidden; }
+.dm-group-nofold > .cur-fold-body { display: none; }
+/* The label takes the room, so a reading and a button sit together at the row's end. */
+.dm-health .dm-lane .cur-fold-summary > .cur-fold-label { margin-right: auto; }
+.dm-health .dm-lane .cur-fold-summary > .cur-fold-meta { margin-left: 0; }
+.dm-health .dm-lane .cur-fold-summary > .btn { flex: none; }
+/* Nothing in this section is in capitals, whatever the shared parts do elsewhere. */
+.dm-section.dm-health * { text-transform: none; }
+.dm-confirm-warn { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; }
+.dm-plan-data { color: var(--text-2); }
+.dm-review-btn { min-width: 72px; }
+.dm-left-undo-btn { min-width: 72px; }
+@media (max-width: 640px) {
+  .dm-lane-reading { flex-basis: 100%; justify-content: flex-start; }
+  .dm-health .dm-lane .cur-fold-summary { flex-wrap: wrap; }
+  .dm-health .dm-lane .cur-fold-label { flex: 1 1 60%; min-width: 0; white-space: normal; }
+  .dm-health .dm-lane .cur-fold-meta { flex: 1 1 100%; order: 3; margin-left: 0; text-align: left; white-space: normal; }
+  .dm-health .dm-lane .cur-fold-summary > .btn,
+  .dm-health .dm-lane .cur-fold-meta + .btn { order: 4; margin-left: 0; max-width: 100%; }
+}
 
 /* A row's words wrap inside the row. Its long reading with a button in it ran 258
    px past the card at phone width, and 61 px at 800. */
@@ -1943,14 +1998,6 @@
 .dm-sem-preview-error > .btn { margin-left: auto; flex: none; }
 
 /* What earlier scans found, on its own line under the coverage row. */
-.dm-sem-waiting {
-  margin: -4px 0 12px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  line-height: var(--leading-normal);
-}
-
-/* Directly under the chips, inside the card. */
 .dm-health .dm-quick-run > .dm-confirm-card,
 .dm-health .dm-quick-run > .dm-plan-card,
 .dm-health .dm-quick-run > .dm-outcome,

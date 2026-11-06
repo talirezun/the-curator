@@ -292,13 +292,13 @@ const E = {
   'domains.health': {
     label: 'About Wiki health',
     title: 'Wiki health',
-    lead: 'Finds broken links, orphan pages and duplicates in this wiki, and helps you fix them.',
+    lead: 'Finds problems in this wiki and helps you fix them.',
     points: [
-      { icon: 'search', text: 'Opening a domain scans it; a hollow ring means no current scan.' },
-      { icon: 'agent', text: 'AI actions use your model; each shows what it costs first.' },
-      { icon: 'check', text: 'Nothing changes until you press a fix.' },
+      { icon: 'search', text: 'Check again is free. It looks for broken links, pages nothing links to and gaps in the page list. It opens with the domain.' },
+      { icon: 'agent', text: 'Comparing pages for duplicates uses your AI model, and each action shows its cost first.' },
+      { icon: 'check', text: 'Nothing changes until you press a button.' },
     ],
-    try: 'Flip swaps the page kept; Skip hides a pair; one merge can settle several.',
+    try: 'One merge can settle several pairs.',
     guide: { key: 'domains.health', heading: 'Wiki Health' },
   },
 

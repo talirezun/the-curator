@@ -540,7 +540,12 @@ const state = {
   pressLocks: {},         // control -> width at the press, so its label cannot move it
   ringAnchor: null,       // where the progress ring draws (derived in render)
   flipFlash: null,        // the pair whose Flip is answering
-  healthTrace: null,      // { slug, text, at }: the last thing done, in the section head
+  healthTrace: null,      // { slug, text, lane, at }: the last thing done, in its lane's head
+  leftRows: {},           // rowKey -> a row left as is this round: it keeps its place, with Undo
+  groupVisible: {},       // group -> how many of its rows are shown
+  laneRun: null,          // { i, n }: Repair all, while it runs
+  semanticQuote: null,    // { slug, est, stale? }: the figures the Compare button wears
+  semanticQuoteLoading: false,
   healthLive: '',         // what the section's one live region says
 
   pendingPlan: null,      // { kind: 'brokenLinks'|'orphans', plan, summary }
@@ -2338,7 +2343,8 @@ function resetDomainScopedHealthState(opts) {
   // an open Dismissed list went to a loader nothing refilled. The figures are
   // replaced when the new ones land. The duplicate estimate is not kept: it is
   // fetched when asked for, and a merge changes what it would quote.
-  if (opts && (opts.silent || opts.keepHealth)) {
+  const quietReading = !!(opts && (opts.silent || opts.keepHealth));
+  if (quietReading) {
     const kept = {};
     for (const k of ['brokenLinks', 'orphans']) {
       const e = state.estimates[k];
@@ -2350,6 +2356,11 @@ function resetDomainScopedHealthState(opts) {
   }
   if (!(opts && opts.silent)) state.dismissedRecords = null;
   state.pendingPlan = null;
+  if (state.semanticQuote) {
+    if (quietReading) state.semanticQuote.stale = true;
+    else state.semanticQuote = null;
+  }
+  if (!quietReading) { state.leftRows = {}; state.groupVisible = {}; }
   // A QUIET READING KEEPS THE PAIR LIST TOO. Clearing it here and getting it back
   // from the status route a moment later took a whole card out from above the row
   // that was pressed, and put it back. The list stays, and the merge gate is re-armed
@@ -7161,9 +7172,7 @@ function showMoreBrowseRows() {
  * Pure, and lifted by the suite.
  */
 function healthScanLabel(hasResult) {
-  return hasResult
-    ? icon('refresh', 13) + ' Rescan'
-    : icon('activity', 13) + ' Scan wiki health';
+  return hasResult ? 'Check again' : 'Check this wiki';
 }
 
 /**
@@ -7188,21 +7197,17 @@ function healthScanLabel(hasResult) {
 // v3.16.1). Computed once: this function's own body has no per-call state.
 const HEALTH_INFO = explainerMark('dm-health-info', 'domains.health');
 
-function healthSection(inner) {
+function healthSection(inner, reading) {
   if (!inner) return '';
   // Some suites lift this function with no `state` in reach.
   const st = typeof state === 'undefined' ? {} : state;
   return (
     '<section class="dm-section dm-health">' +
       renderSectionTitle({ num: 5, title: 'Wiki health', alias: 'dm',
-        // The trace: what was just done stays here after its row has left. One
-        // line, whatever its length, so it can never move the rows under it.
-        // The slot is always there, empty or not: at phone width it is its own line,
-        // and one that appeared later would push everything under it down.
-        infoBtnHtml: HEALTH_INFO.btn + '<span class="dm-health-trace">' + (st.healthTrace && st.healthTrace.slug === st.activeSlug
-          ? escapeHtml(st.healthTrace.text) + ' ' +
-              '<span data-age-at="' + escapeHtml(st.healthTrace.at) + '" data-age-text>just now</span>'
-          : '') + '</span>' }) +
+        // The section's one reading. The slot is always there, empty or not: at phone
+        // width it is its own line, and one that appeared later would push everything
+        // under it down. It is trusted markup: the caller escapes what it puts in.
+        infoBtnHtml: HEALTH_INFO.btn + '<span class="dm-health-reading">' + (reading || '') + '</span>' }) +
       HEALTH_INFO.panel +
       inner +
       // ONE polite live region, for progress and outcome. It is here in every
@@ -7240,11 +7245,10 @@ function morphHealthSection(before, after) {
     if (patchInPlace(before, after, { keyOf: healthMorphKey })) {
       healthFloor.hold(top);
       keepHealthFocus(before, focus);
-      latchHealthAbove(before);
       startRowMotion(before, {
         selector: HEALTH_ROW, keyOf: healthRowKey,
         beforeCollapse: onHealthRowCollapse, afterRemove: onHealthRowRemoved, onOpen: onHealthRowOpen,
-        waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|pair):/.test(healthRowKey(el) || ''),
+        waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|pair|lane):/.test(healthRowKey(el) || ''),
       });
       return true;
     }
@@ -7278,8 +7282,7 @@ function morphHealthSection(before, after) {
 //      at the page's end (healthFloor).
 //   6. A FAILURE STAYS, on the row, with Try again, until it is acted on.
 //
-// WHAT IS NOT HERE: this is behaviour. Lanes, the review desk and the new words
-// are later stages.
+// WHAT IS NOT HERE: the review desk, which is a later stage.
 const HEALTH_HOLD_MS = 1000;
 let healthPressY = null;        // where the last press was, in page coordinates
 
@@ -7336,7 +7339,7 @@ function healthRowHold(key, row) {
   // new backlink rescues an orphan), and the reading that says so must not move
   // what you are looking at. Such a row stays, marked, until a press above it or
   // its own fold is touched: releaseHealthRowsBelow.
-  if (healthPressY !== null && /^(issue|group|pair):/.test(key) &&
+  if (healthPressY !== null && /^(issue|group|pair|lane):/.test(key) &&
       pageY(row) + row.getBoundingClientRect().height < healthPressY) return Infinity;
   if (key.indexOf('pair:') === 0) {
     let latest = 0;
@@ -7364,7 +7367,7 @@ function decorateLeavingRow(clone, key, row) {
   done.className = 'dm-row-done';
   done.setAttribute('tabindex', '-1');
   done.innerHTML = icon('check', 13) + '<span>' + escapeHtml(text) + '</span>';
-  const SLOT = '.dm-sem-actions, .dm-plan-actions, .dm-confirm-actions, .dm-group-fixall-btn, .dm-dismiss-btn, .dm-restore-btn';
+  const SLOT = '.dm-sem-actions, .dm-plan-actions, .dm-confirm-actions, .dm-group-fixall-btn, .dm-dismiss-btn, .dm-restore-btn, .dm-quick-btn, #dm-semantic-merge-btn';
   const slot = clone.querySelector(SLOT);
   if (slot) {
     // It takes exactly the room of what it replaces, so saying so moves nothing.
@@ -7474,51 +7477,47 @@ function onHealthRowOpen(el, height) {
   if (scroller && scroller.scrollHeight > scroller.clientHeight) scroller.scrollTop += Math.min(height, top + height - window.innerHeight + 16);
 }
 
-// ── Nothing above the pressed row moves ───────────────────────────────────
-// Quick maintenance's chips wrap, so a chip going away at phone width can take a
-// whole line with it, and that line is above whatever was pressed below it, or
-// the thing itself moves in a single frame. The chip row keeps its height until
-// the next Rescan.
-function latchHealthAbove(section) {
-  const quick = section.querySelector('.dm-quick .cur-action-chips');
-  const main = document.getElementById('main');
-  if (!quick || !main) return;
-  const h = quick.getBoundingClientRect().height;
-  const floor = parseFloat(main.style.getPropertyValue('--dm-quick-floor')) || 0;
-  if (h > floor) main.style.setProperty('--dm-quick-floor', h + 'px');
-  // The lines under the chips (which model, what the last run cost) likewise, and
-  // measured only when nothing has opened in there: that closes again by itself.
-  const run = section.querySelector('.dm-quick .dm-quick-run');
-  if (run && !run.querySelector('[data-row-key]')) {
-    const rh = run.getBoundingClientRect().height;
-    const rf = parseFloat(main.style.getPropertyValue('--dm-quick-run-floor')) || 0;
-    if (rh > rf) main.style.setProperty('--dm-quick-run-floor', rh + 'px');
-  }
+// ── Filing an outcome ─────────────────────────────────────────────────────
+const HEALTH_FREE_GROUPS = new Set(['missingBacklinks', 'folderPrefixLinks', 'summaryLinkSections', 'brokenLinks', 'indexDrift']);
+
+// Does this row still stand? The lanes draw exactly what this says.
+function healthGroupAlive(key) {
+  const r = state.health;
+  if (key === 'compare') return true;
+  if (key === 'aiOrphans') return (r.orphans || []).length > 0;
+  if (key === 'aiBroken') return (r.brokenLinks || []).length > 0;
+  if (key === 'spelling') return liveBatchPairs().length > 0;
+  if (key === 'duplicates') { const s = activeSemanticScan(); return !!s && s.pairs.some((p) => p.status === 'open'); }
+  if (key === 'dismissed') return Number(r.dismissedRecords) > 0;
+  if (key === 'brokenLinks') return (r.brokenLinks || []).some((i) => i.suggestedTarget);
+  if (key === 'brokenLinksOpen') return (r.brokenLinks || []).some((i) => !i.suggestedTarget);
+  return Array.isArray(r[key]) && r[key].length > 0;
 }
 
-// ── Filing an outcome ─────────────────────────────────────────────────────
+// Where something opened by, or filed on, a row now lives. When the row has gone, its
+// lane's head, which stays for as long as it has something to say.
 function healthStackHome(anchor) {
   const a = anchor || 'quick';
   if (a === 'quick' || !state.health) return 'quick';
+  if (a.indexOf('lane:') === 0) return a;
   if (a.indexOf('issue:') === 0) {
     const cut = a.indexOf(':', 6);
     const list = state.health[a.slice(6, cut)];
     const want = a.slice(cut + 1);
-    return Array.isArray(list) && list.some((i) => JSON.stringify(i) === want) ? a : 'quick';
+    return (Array.isArray(list) && list.some((i) => JSON.stringify(i) === want)) || (state.leftRows && state.leftRows[a]) ? a : 'lane:decision';
   }
   if (a.indexOf('restore:') === 0) {
     const want = a.slice(8);
     return Array.isArray(state.dismissedRecords) && state.expandedGroups.has('dismissed') &&
-      state.dismissedRecords.some((r) => JSON.stringify(r) === want) ? a : 'quick';
+      state.dismissedRecords.some((r) => JSON.stringify(r) === want) ? a : 'lane:decision';
   }
   if (a.indexOf('group:') === 0) {
-    const issues = state.health[a.slice(6)];
-    return Array.isArray(issues) && issues.length > 0 ? a : 'quick';
+    const key = a.slice(6);
+    if (healthGroupAlive(key)) return a;
+    return key.indexOf('ai') === 0 ? 'group:compare' : (HEALTH_FREE_GROUPS.has(key) ? 'lane:free' : 'lane:decision');
   }
-  const scan = activeSemanticScan();
-  // The bar stays once shown, so a question opened from it stays under it too.
-  if (a === 'sem-batch' && scan && scan.batchShown) return a;
-  return scan && scan.coverage ? a : 'quick';
+  if (a.indexOf('pair:') === 0) return healthGroupAlive('duplicates') ? 'group:duplicates' : 'lane:decision';
+  return 'quick';
 }
 
 // Applied the moment the server said so: figures tick and the row leaves now,
@@ -7537,15 +7536,17 @@ function dropIssuesLocally(drop) {
       else report[drop.type] = [];
     }
   }
-  if (drop.safe) {
-    for (const t of AUTO_FIX_TYPES) {
-      if (t === 'brokenLinks') report[t] = (report[t] || []).filter((i) => !i.suggestedTarget);
-      else report[t] = [];
-    }
-  }
   if (drop.dismissed) {
     if (report.counts && Number.isInteger(report.counts.dismissed)) report.counts.dismissed += 1;
     if (Number.isInteger(report.dismissedRecords)) report.dismissedRecords += 1;
+  }
+  if (drop.undoLeft) {
+    const l = drop.undoLeft;
+    if (Array.isArray(report[l.type])) report[l.type].splice(Math.min(l.absIndex, report[l.type].length), 0, l.issue);
+    if (report.counts && Number.isInteger(report.counts.dismissed)) report.counts.dismissed = Math.max(0, report.counts.dismissed - 1);
+    if (Number.isInteger(report.dismissedRecords)) report.dismissedRecords = Math.max(0, report.dismissedRecords - 1);
+    if (state.leftRows) delete state.leftRows[l.key];
+    state.dismissedRecords = state.expandedGroups.has('dismissed') ? state.dismissedRecords : null;
   }
   if (drop.restored) {
     if (Number.isInteger(report.dismissedRecords)) report.dismissedRecords = Math.max(0, report.dismissedRecords - 1);
@@ -7556,13 +7557,11 @@ function dropIssuesLocally(drop) {
   }
 }
 
-// The trace is one line in the section head, which may not grow or be cut off. So it
-// only ever holds what fits; the whole sentence is on the row or the line it belongs to.
-const HEALTH_TRACE_MAX = 24;
-function healthTraceText(note) {
-  if (note.trace) return note.trace;
-  const t = note.short || note.text;
-  return t && t.length <= HEALTH_TRACE_MAX ? t : '';
+// The trace is one line in its lane's head. Only what an action names for it goes
+// there; the whole sentence is on the row or the line it belongs to.
+function noteHealthTrace(note, owner) {
+  if (note.tone === 'error' || !note.trace) return;
+  state.healthTrace = { slug: owner, text: note.trace, lane: note.lane || 'free', at: new Date().toISOString() };
 }
 
 function takeHealthNote(token) {
@@ -7577,14 +7576,24 @@ function takeHealthNote(token) {
   const owner = from.slug || state.activeSlug;
   if (owner !== state.activeSlug || (from.token !== undefined && from.token !== token)) {
     const line = Object.assign({}, note, { key: 'quick', slug: owner, at: Date.now(), held: false, drop: null });
-    if (note.tone !== 'error' && healthTraceText(note)) {
-      if (owner === state.activeSlug) state.healthTrace = { slug: owner, text: healthTraceText(note), at: new Date().toISOString() };
-    }
+    if (owner === state.activeSlug) noteHealthTrace(note, owner);
     if (owner === state.activeSlug) { state.rowOutcomes.quick = line; state.healthLive = note.text; }
     else (state.rowAway[owner] || (state.rowAway[owner] = {})).quick = line;
     return;
   }
   const key = note.key || state.pressAnchor || 'quick';
+  // Left as is, this moment: the row keeps its place and says so.
+  if (note.left) {
+    state.leftRows[key] = Object.assign({ slug: owner, key, arming: true }, note.left);
+    // A second press of a double click lands where Undo now stands. It arms a moment later.
+    setTimeout(() => {
+      const l = state.leftRows[key];
+      if (l && l.arming) { l.arming = false; if (isCurrentMount(token)) render(token); }
+    }, 350);
+    state.healthLive = note.text;
+    if (note.drop) dropIssuesLocally(note.drop);
+    return;
+  }
   const outcome = Object.assign({}, note, { key, slug: owner, at: Date.now(), held: note.held === true });
   // AN ANSWER IS ANSWERED WHERE IT WAS GIVEN. Whoever pressed Apply or the yes of
   // a question has their pointer on that card, and either can be hundreds of
@@ -7606,9 +7615,7 @@ function takeHealthNote(token) {
   }
   state.rowOutcomes[key] = outcome;
   state.healthLive = note.text;
-  if (note.tone !== 'error' && healthTraceText(note)) {
-    state.healthTrace = { slug: owner, text: healthTraceText(note), at: new Date().toISOString() };
-  }
+  noteHealthTrace(note, owner);
   if (state.confirm && state.confirm.busy) state.confirm = null;
   if (note.drop) dropIssuesLocally(note.drop);
   if (outcome.held) {
@@ -7625,7 +7632,6 @@ function takeHealthNote(token) {
 function placeHealthStack() {
   if (state.confirm) state.confirm.anchor = healthStackHome(state.confirm.anchor || state.pressAnchor);
   if (state.pendingPlan) state.pendingPlan.anchor = healthStackHome(state.pendingPlan.anchor || state.pressAnchor);
-  state.ringAnchor = healthStackHome(state.pressAnchor);
   const lines = {};
   for (const key of Object.keys(state.rowOutcomes)) {
     const o = state.rowOutcomes[key];
@@ -7672,7 +7678,7 @@ function moveHealthFocusForQuestion() {
 }
 
 function applyPressLocks() {
-  if (!state.busyKey && !state.healthLoading && state.rowBusy.size === 0 && !(state.confirm && state.confirm.busy) && !state.rowOutcomes['chip:fixSafe']) { state.pressLocks = {}; return; }
+  if (!state.busyKey && !state.healthLoading && state.rowBusy.size === 0 && !(state.confirm && state.confirm.busy)) { state.pressLocks = {}; return; }
   const section = document.querySelector('.dm-health');
   if (!section) return;
   for (const key of Object.keys(state.pressLocks)) {
@@ -7690,7 +7696,7 @@ function announceHealthBusy() {
   if (key) state.healthLive = busyRingLabel(key);
   // Only what is true: a plan is ready, or the running label comes down. "Finished"
   // said nothing, and it was said of a plan just thrown away.
-  else if (state.healthLive === busyRingLabel(busyAnnounced)) state.healthLive = state.pendingPlan ? 'Plan ready. Nothing is written yet.' : '';
+  else if (state.healthLive === busyRingLabel(busyAnnounced)) state.healthLive = state.pendingPlan ? 'Nothing is written yet.' : '';
   busyAnnounced = key;
 }
 
@@ -7715,7 +7721,48 @@ function beforeHealthPaint(token) {
   placeHealthStack();
 }
 
+// The duplicate quote is read when its row is on screen: see activeSemanticQuote.
+let compareObserver = null;
+let compareWatched = null;
+function quoteWhenVisible() {
+  if (typeof document === 'undefined' || !state.aiAvailable || state.busyKey) return;
+  const el = document.querySelector('.dm-health [data-group-key="compare"]');
+  if (!el) return;
+  const q = activeSemanticQuote();
+  const scan = activeSemanticScan();
+  if (state.semanticQuoteLoading || (q && !q.stale) || (scan && scan.counting)) return;
+  const r = el.getBoundingClientRect();
+  if (r.bottom > 0 && r.top < window.innerHeight && r.height > 0) {
+    if (compareObserver) { compareObserver.disconnect(); compareWatched = null; }
+    Promise.resolve().then(() => loadSemanticQuote(state.activeSlug, myMountToken)).catch(reportAsyncActionFailure);
+    return;
+  }
+  if (typeof IntersectionObserver === 'undefined' || compareWatched === el) return;
+  if (compareObserver) compareObserver.disconnect();
+  compareObserver = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) quoteWhenVisible();
+  });
+  compareObserver.observe(el);
+  compareWatched = el;
+}
+
+async function loadSemanticQuote(slug, token) {
+  if (state.semanticQuoteLoading || slug !== state.activeSlug) return;
+  state.semanticQuoteLoading = true;
+  render(token);
+  try {
+    const est = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/estimate');
+    if (slug === state.activeSlug) state.semanticQuote = { slug, est };
+  } catch (err) {
+    if (slug === state.activeSlug) state.semanticQuote = { slug, est: { error: err.message } };
+  } finally {
+    state.semanticQuoteLoading = false;
+  }
+  if (isCurrentMount(token)) render(token);
+}
+
 function afterHealthPaint() {
+  quoteWhenVisible();
   applyPressLocks();
   markHealthOpener();
   moveHealthFocusForQuestion();
@@ -7735,16 +7782,12 @@ function noteHealthPress(btn) {
   if (key && typeof btn.getBoundingClientRect === 'function') state.pressLocks[key] = btn.getBoundingClientRect().width;
   let anchor = null;
   const fold = typeof btn.closest === 'function' ? btn.closest('[data-group-key]') : null;
-  if (btn.classList.contains('dm-group-fixall-btn')) anchor = 'group:' + btn.dataset.fixall;
-  else if (btn.classList.contains('dm-quick-btn')) anchor = fold ? 'group:' + fold.dataset.groupKey : 'quick';
-  else if (btn.id === 'dm-semantic-merge-btn') anchor = 'sem-batch';
-  else if (btn.id === 'dm-semantic-next-btn') anchor = 'sem-coverage';
-  else if (btn.id === 'dm-semantic-reset-btn') anchor = 'sem-reset';
+  if (btn.id === 'dm-repair-all-btn') anchor = 'lane:free';
+  else if (fold && (btn.classList.contains('dm-group-fixall-btn') || btn.classList.contains('dm-quick-btn') ||
+      btn.id === 'dm-semantic-merge-btn' || btn.id === 'dm-semantic-reset-btn')) anchor = 'group:' + fold.dataset.groupKey;
   if (anchor) { state.pressAnchor = anchor; state.pressOpener = key; }
-  if (btn.id === 'dm-rescan-btn' && typeof document.getElementById === 'function') {
-    const main = document.getElementById('main');
-    if (main) { main.style.removeProperty('--dm-quick-floor'); main.style.removeProperty('--dm-quick-run-floor'); }
-  }
+  // Check again is the end of this round: what was left as is has been said.
+  if (btn.id === 'dm-rescan-btn') { state.leftRows = {}; state.healthTrace = null; }
   if (typeof btn.getBoundingClientRect === 'function') {
     healthPressY = pageY(btn);
     const section = btn.closest('.dm-health');
@@ -7770,7 +7813,7 @@ function resetHealthPressRule() {
   state.pressAnchor = null;
   state.pressOpener = null;
   state.pressLocks = {};
-  state.ringAnchor = null;
+  state.leftRows = {};
   state.flipFlash = null;
   state.healthTrace = null;
   state.healthLive = '';
@@ -7778,18 +7821,15 @@ function resetHealthPressRule() {
   confirmOnScreen = null;
   planLeaving = false;
   healthFloor.reset();
-  const main = typeof document !== 'undefined' ? document.getElementById('main') : null;
-  if (main) { main.style.removeProperty('--dm-quick-floor'); main.style.removeProperty('--dm-quick-run-floor'); }
 }
 
 // Everything that can sit under a row, in one order: the question, then the plan,
-// then what is running, then what happened. Each of them is below the pressed
-// control, so none of them can move it.
+// then what happened. Each of them is below the pressed control, so none of them
+// can move it. What is running says so on the control itself.
 function renderAnchorStack(anchor, crossMountBusy) {
   const here = (o) => o && o.anchor === anchor;
   return (here(state.confirm) ? renderConfirmCard() : '') +
     (here(state.pendingPlan) ? renderPendingPlan(crossMountBusy) : '') +
-    (state.ringAnchor === anchor && state.busyKey ? renderAiProgressRing() : '') +
     (state.rowLines[anchor] ? renderOutcomeLine(state.rowLines[anchor]) : '');
 }
 
@@ -7819,6 +7859,9 @@ function healthMorphKey(el) {
   if (a('data-dismiss-issue')) return 'dismiss:' + a('data-dismiss-type') + ':' + a('data-dismiss-issue');
   if (a('data-restore-key')) return 'restore:' + a('data-restore-key');
   if (a('data-outcome-key')) return 'retry:' + a('data-outcome-key');
+  if (a('data-review')) return 'review';
+  if (a('data-more-group')) return 'more:' + a('data-more-group');
+  if (a('data-left-key')) return 'undo:' + a('data-left-key');
   return null;
 }
 
@@ -7862,7 +7905,7 @@ function renderHealthPanel(domain, readonly) {
         // the same words twice, eight pixels apart. This branch has no
         // control in its head row either, so the row goes with the title.
         '<div class="dm-health-body">Scanning…</div>',
-      { alias: 'dm', busy: true, minHeight: reserve }));
+      { alias: 'dm', busy: true, minHeight: reserve }), 'Checking…');
   }
   if (state.healthError) {
     return healthSection(renderCard(
@@ -7878,8 +7921,8 @@ function renderHealthPanel(domain, readonly) {
         // above and the readout below: a runtime error. It is a STATE, so it
         // is renderStatus, and the server's message is the DETAIL rather than
         // being glued onto the end of our sentence with an em dash.
-        renderStatus({ state: 'danger', title: 'Could not scan this domain', detail: state.healthError }),
-      { alias: 'dm' }));
+        renderStatus({ state: 'danger', title: 'Could not check this wiki', detail: state.healthError }),
+      { alias: 'dm' }), 'Not checked yet');
   }
   const report = usable ? state.health : null;
   if (!report) return '';
@@ -7892,101 +7935,35 @@ function renderHealthPanel(domain, readonly) {
   // this one tracks the real backend operation and survives remounts.
   const crossMountBusy = inFlightWriteSlugs.has(domain.slug);
 
-  // ── ISSUES PER CATEGORY, AS A COLUMN OF PEERS (v3.66.0, placement P6) ──
-  // This was a row of amber/violet chips: the same six counts drawn a second
-  // way beside the monitor, with a TONE (amber) and the ACCENT (violet, on
-  // orphans) painted onto categories — neither an outcome nor a selection.
-  // It is now a second monitor, one line per category, each figure with a
-  // DEPTH BAR against the LARGEST category (design rule 6: a column of peers
-  // is a named denominator, and the ⓘ-free label on every cell names it).
-  //
-  // NEVER RED, by construction: `max`, not `budget`, is what renderDepthCell
-  // gets, and only a budget over-run may set the danger tone. Being the
-  // largest category is not a fault. A ZERO line prints `0` and carries no
-  // `depth` at all, so it draws no bar rather than a zero-width one; when
-  // every category is zero the largest is 0 and no line gets a bar.
-  //
-  // Sorted largest-first, ties in HEALTH_CATEGORIES' order, so the bars read
-  // as a ranked column the way the acceptance picture draws them.
-  const categoryCounts = HEALTH_CATEGORIES.map((cat, order) =>
-    ({ cat, order, count: (report[cat.key] || []).length }));
-  const largestCategory = categoryCounts.reduce((m, c) => Math.max(m, c.count), 0);
-  const categoryMonitor = renderMonitor({
-    label: 'Issues per category',
-    lines: categoryCounts.slice()
-      .sort((a, b) => (b.count - a.count) || (a.order - b.order))
-      .map((c) => ({
-        key: c.cat.label.toLowerCase(),
-        value: c.count,
-        depth: c.count > 0 && largestCategory > 0
-          ? { amount: c.count, max: largestCategory,
-              label: c.count === largestCategory
-                ? c.count + ' — the largest category'
-                : c.count + ' of ' + largestCategory + ', the largest category' }
-          : undefined,
-      })),
-  });
-
-  // ── THE READOUT ──────────────────────────────────────────────────────────
-  // This is the block the maintainer reported: it "doesn't look like a report
-  // — it looks like a clarification". It was ONE prose <div> welding an action
-  // report ("Re-scanning… showing the previous result.") to a generated
-  // measurement ("Found 12 issues, last scanned 10s ago") to a static feature
-  // description, plus a SECOND <div class="dm-health-meta"> carrying four more
-  // measurements at --text-3 — 4.27 dark / 4.14 light, under the 4.5 AA floor.
-  // Three roles, one voice, and the most valuable figures on the screen were
-  // the least readable ones.
-  //
-  // ABSENT IS NOT ZERO, and it is not decorative here. `relTime(undefined)`
-  // returns the string 'never', so a report with no `scannedAt` used to render
-  // "last scanned never." — a claim about when a scan happened, made from the
-  // absence of the field that would say. As a readout the provenance is simply
-  // OMITTED instead, which is text.js's rule and is asserted by mutation.
-  // `report.counts.dismissed` behaves the same way: a missing count used to
-  // render the literal "undefined dismissed", and now drops its entry. A real
-  // 0 is a measurement and still renders.
-  // ── THE SCAN'S REPORT IS A MONITOR (v3.65.0, catalogue entry M6) ────────
-  // It was a five-cell `renderReadoutGroup` with a chip row beneath it, and
-  // the maintainer put it beside the bridge's Connected strip and Context's
-  // Last saved block and asked why one idea had three designs. It is the same
-  // instrument as those now: mono face, a recessed surface, one fact per
-  // line, key left and value right, and the freshness dot on the only
-  // time-based reading with the age in WORDS beside it.
-  //
-  // ABSENT IS NOT ZERO, and the monitor keeps the rule the readout group had:
-  // `relTime(undefined)` returns the string 'never', so a report with no
-  // `scannedAt` used to render "last scanned never." — a claim about when a
-  // scan happened, made from the absence of the field that would say. A line
-  // whose value is `undefined` is DROPPED by the component (`scalar()`
-  // returns null), so `report.counts.dismissed` behaves the same way: a
-  // missing count renders no line, while a real 0 is a measurement and does.
   // WHEN IT WAS LOOKED AT, which is what a person asks. An unchanged wiki answers from
-  // the scan cache with the older `scannedAt`, so a Rescan used to go on saying "13 min
+  // the scan cache with the older `scannedAt`, so a check used to go on saying "13 min
   // ago" straight after it had checked. `checkedAt` is the server's time of this answer.
   const lookedAt = report.checkedAt || report.scannedAt;
   const scannedSec = lookedAt
     ? Math.max(0, (Date.now() - new Date(lookedAt).getTime()) / 1000) : null;
+  const ageSpan = lookedAt
+    ? '<span data-age-at="' + escapeHtml(lookedAt) + '" data-age-text>' + escapeHtml(relTime(lookedAt)) + '</span>' : '';
+
+  // ── SCAN DETAILS IS A MONITOR IN A FOLD (v3.65.0, catalogue entry M6). The lanes
+  // are the per-category reading now, so the bars went with the column they drew.
+  // ABSENT IS NOT ZERO: a line whose value is `undefined` is DROPPED by the
+  // component, so a report with no `scannedAt` claims no time and a missing count
+  // renders no line, while a real 0 is a measurement and does.
   const healthMonitor = renderMonitor({
-    label: 'Wiki health scan',
+    label: 'Scan details',
     lines: [
       { key: total === 1 ? 'open issue' : 'open issues', value: total,
         // TONE ON THE FIGURE, not a word painted red: the monitor puts a tone
-        // on a MARK or a rule, never on text, because --attention-text fails
-        // the 4.5 floor as words on that surface in the light theme.
+        // on a MARK or a rule, never on text.
         tone: total > 0 ? 'warn' : undefined },
       { key: 'entities', value: report.counts.entities },
       { key: 'concepts', value: report.counts.concepts },
       { key: 'summaries', value: report.counts.summaries },
-      // NOT the Dismissed list's size (v3.72.1, F5): this is how many of
-      // THIS scan's issues a dismissal hid. The list below counts every
-      // dismissal on disk — semantic-pair Skips and records whose issue has
-      // since gone included — so the two are named apart.
-      { key: 'hidden by a dismissal', value: report.counts.dismissed, tone: 'quiet' },
+      // NOT the Left as is list's size (v3.72.1, F5): how many of THIS scan's issues
+      // a dismissal hid. That list counts every record on disk.
+      { key: 'left as is', value: report.counts.dismissed, tone: 'quiet' },
       ...(lookedAt
-        ? [{ key: 'scanned', value: relTime(lookedAt),
-             // The absolute time beside the relative one (F12): the monitor's
-             // value is escaped text and does not tick, so the reading it
-             // gives is anchored to a clock time that stays true.
+        ? [{ key: 'checked', value: relTime(lookedAt),
              sub: 'at ' + new Date(lookedAt).toLocaleString([], {
                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
              markHtml: '<span class="fresh-dot fresh-' + freshnessTier(scannedSec) +
@@ -7994,46 +7971,15 @@ function renderHealthPanel(domain, readonly) {
         : []),
     ],
   });
-
-  // ── AND IT SITS IN A ROW, LIKE EVERYTHING ELSE IN THIS SECTION ──────────
-  // THE STEP-BODY RULE (v3.64.2), applied to the remainder v3.64.2 listed and
-  // did not ship. Wiki health's body was a head row, then a bare readout
-  // block, then a bare chip row, then an action bar, then folds — five
-  // treatments. The counts and the per-category bars (v3.66.0; they were a
-  // chip row) are ONE fold row now, whose summary
-  // carries the reading that decides whether to open it, and the issue lists
-  // below it were already rows.
-  //
-  // CLOSED BY DEFAULT, which is the same call step ③ Knowledge made in
-  // v3.64.2: the headline IS the reading, and the breakdown is the dive-in.
-  // `.dm-group` rather than `.dm-fold` because this row lives INSIDE the
-  // health card — `.dm-fold` is the card-level fold two of this page's
-  // sections are, and a card inside a card is two objects where the design
-  // has one.
-  //
-  // WHAT STAYS OUTSIDE IT, and this is v3.16.1 unmoved: the revalidating
-  // caveat below, every banner, every confirm, every plan and the whole Quick
-  // maintenance bar. A warning, a COST or an outcome may never sit behind a
-  // chevron, and that bar carries a price on every button.
-  const scanOpen = state.expandedGroups.has('scan');
   const scanRow = renderFoldRow({
-    key: 'scan', hostClass: 'dm-group-scan', label: 'Scan', open: scanOpen, alias: 'dm',
-    metaHtml:
-      escapeHtml(pluralize(total, 'open issue')) +
-      // Ticks (F12): the ONE clock rewrites this span's text in place.
-      (lookedAt
-        ? ' · <span data-age-at="' + escapeHtml(lookedAt) + '" data-age-text>' +
-            escapeHtml(relTime(lookedAt)) + '</span>'
-        : ''),
+    key: 'scan', hostClass: 'dm-group-scan', label: 'Scan details', open: state.expandedGroups.has('scan'), alias: 'dm',
     bodyClass: 'dm-scan-body',
-    bodyHtml: healthMonitor + categoryMonitor,
+    bodyHtml: healthMonitor,
   });
 
   // Same one-shot token as the page list's, same reason: a report that lands
   // after a 750 ms scan has missed the view-enter animation entirely, so it
   // fades in on the fill that replaced the placeholder — and only that one.
-  // See renderBrowsePanel for why it is consumed here rather than cleared by
-  // the loader.
   const healthRevealKey = domain.slug + ':health';
   let healthRevealCls = '';
   if (state.reveal && state.reveal.key === healthRevealKey && !state.reveal.used) {
@@ -8041,26 +7987,37 @@ function renderHealthPanel(domain, readonly) {
     healthRevealCls = ' content-reveal';
   }
 
+  // What the section's one reading counts: every row with something to look at.
+  const openPairs = (activeSemanticScan() ? activeSemanticScan().pairs : []).filter((p) => p.status === 'open').length;
+  const toLook = total + openPairs;
+  const pageCount = (Number(report.counts.entities) || 0) + (Number(report.counts.concepts) || 0) + (Number(report.counts.summaries) || 0);
+  const clean = toLook === 0;
+  const reading = revalidating ? 'Checking…'
+    : (lookedAt ? 'Checked ' + ageSpan + ' · ' : '') +
+      (toLook === 0 ? 'nothing to look at' : (toLook === 1 ? '1 to look at' : toLook.toLocaleString('en-US') + ' to look at'));
+
+  const cleanLines = clean
+    ? '<div class="dm-clean"><div class="dm-clean-line">Nothing to fix.</div>' +
+        '<div class="dm-clean-sub">' + (pageCount === 1 ? 'The 1 page was checked ' : 'All ' + pageCount.toLocaleString('en-US') + ' pages were checked ') + (ageSpan || 'just now') + '.</div></div>'
+    : '';
+
   return healthSection(renderCard(
-      // The title is the SECTION's (see the loading branch); this row
-      // exists for its one control.
       // aria-disabled while it runs, not disabled: a disabled control drops focus.
       renderControlRow(
+        cleanLines +
         '<button class="btn btn-secondary" id="dm-rescan-btn"' +
           (revalidating ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' +
-          ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : healthScanLabel(!!report)) +
-        '</button>' +
-        // THE CAVEAT HAS A PLACE OF ITS OWN IN THE ROW (press rule). It was a
-        // status box above the figures, 82 px tall, that pushed the whole card
-        // down and back on every rescan. It is one line that cannot wrap, so a
-        // reading never moves the page, and it still stands before the figures.
-        '<span class="dm-rescan-note">' +
-          (revalidating ? 'Showing the previous result' : '') + '</span>', { alias: 'dm' }) +
+          (revalidating ? buttonRingHtml() + ' Checking…' : healthScanLabel(!!report)) +
+        '</button>', { alias: 'dm' }) +
+      renderAnchorHere('quick', crossMountBusy) +
+      (crossMountBusy && !busy ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running. Wait for it to finish before starting another.' }) : '') +
+      (readonly ? renderMirrorNote() : '') +
+      renderFreeLane(report, readonly, crossMountBusy) +
+      renderDecisionLane(report, readonly, crossMountBusy) +
+      (readonly ? '' : renderAiLane(domain, report, crossMountBusy)) +
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
-      (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
-      (activeSemanticScan() ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
-      renderIssueGroups(report, readonly, crossMountBusy),
-    { alias: 'dm', hostClass: healthRevealCls.trim() }));
+      (readonly ? '' : renderDescription(GIT_UNDO_NOTE)),
+    { alias: 'dm', hostClass: healthRevealCls.trim() }), reading);
 }
 
 function renderBanner(banner) {
@@ -8127,177 +8084,330 @@ function noteAiProgress(key, ev) {
   const total = ev && Number.isFinite(ev.total) ? ev.total : null;
   if (processed == null || total == null || total <= 0) return;
   state.aiProgress = { key, processed, total };
+  // Spoken every tenth of the way, not every frame.
+  if (key === 'semanticDupesScan') {
+    const tenth = Math.floor((processed / total) * 10);
+    if (tenth !== state.aiProgressTenth) {
+      state.aiProgressTenth = tenth;
+      state.healthLive = 'Comparing ' + processed + ' of ' + total;
+    }
+  }
 }
 
 // Human-readable name for whatever busyKey names. Anything unrecognised
 // gets a neutral "Working…" rather than a guess — this string sits next to
 // a spend gate and must not imply an operation the user did not start.
 const BUSY_LABELS = {
-  rescan: 'Scanning the wiki…',
-  fixSafe: 'Applying the safe repairs…',
-  brokenLinksPlan: 'Planning broken-link fixes…',
-  orphansPlan: 'Finding homes for orphan pages…',
-  brokenLinksApply: 'Rewriting links…',
-  orphansApply: 'Linking orphan pages…',
-  semanticDupesEstimate: 'Counting candidate pairs…',
-  semanticDupesScan: 'Comparing pages for duplicates…',
-  semanticMerge: 'Merging duplicate pages…',
+  rescan: 'Checking…',
+  laneFree: 'Repairing.',
+  brokenLinksPlan: 'Looking…',
+  orphansPlan: 'Looking…',
+  brokenLinksApply: 'Applying…',
+  orphansApply: 'Adding…',
+  semanticDupesEstimate: 'Working out the cost…',
+  semanticDupesScan: 'Comparing…',
+  semanticMerge: 'Merging.',
 };
 function busyRingLabel(key) {
   if (!key) return null;
   if (Object.prototype.hasOwnProperty.call(BUSY_LABELS, key)) return BUSY_LABELS[key];
-  if (key.indexOf('group:') === 0) return 'Applying fixes…';
+  if (key.indexOf('group:') === 0) return 'Repairing.';
   return 'Working…';
 }
 
-// The progress ring for whatever Health operation is in flight.
-//
-// `value` is null — activity only, orbit and nothing else — until the
-// server sends a count, and for the operations that never send one at all
-// (rescan, fix-all, the per-pair actions). That is deliberate and it is the
-// component's whole contract: an empty outer ring beside a turning orbit
-// says "running, amount genuinely unknown", which is the truth. Do not
-// substitute an elapsed-time-derived percentage here.
-function renderAiProgressRing() {
-  const key = state.busyKey;
-  if (!key) return '';
-  // The per-pair actions (preview / merge one / skip) are sub-second and
-  // render their own inline button label; a ring would be noise.
-  if (key.indexOf('semanticPreview:') === 0 || key.indexOf('semanticMergeOne:') === 0 || key.indexOf('semanticSkip:') === 0) return '';
-  // So are these, and they never send a count: a ring that opens and closes in
-  // 300 ms is a jump with nothing to report. The pressed button says "Repairing…".
-  if (key === 'fixSafe' || key === 'fixSafeCheck' || key.indexOf('group:') === 0 || key.indexOf('groupCheck:') === 0 || key === 'indexRebuildPlan' || key === 'indexRebuildApply') return '';
-  const p = state.aiProgress && state.aiProgress.key === key ? state.aiProgress : null;
-  const value = p ? ringValueFromCounts(p.processed, p.total) : null;
-  const sublabel = p ? (p.processed + ' of ' + p.total) : 'no count reported yet';
-  return (
-    '<div class="dm-ai-progress" data-row-key="progress">' +
-      progressRingHtml({
-        value,
-        size: 32,
-        label: busyRingLabel(key),
-        sublabel,
-        className: 'dm-ai-progress-ring',
-      }) +
-    '</div>'
-  );
+// ── THE THREE LANES ────────────────────────────────────────────────────────
+// What a row costs you decides where it stands: Free repairs (no AI, no cost, no
+// page deleted), Your decision (only you can tell), AI help (every button says what
+// it costs). Three lanes in one card, each drawn only when it has something to show.
+// A lane whose last row just left keeps its head while it holds the trace, "Repaired
+// 2 just now", so saying so moves nothing under it; the next Check again takes it.
+const ISSUE_PAGE = 20;
+const FREE_ROWS = [
+  { key: 'missingBacklinks', type: 'missingBacklinks', label: 'Pages missing a link back' },
+  { key: 'folderPrefixLinks', type: 'folderPrefixLinks', label: 'Links written with a folder name' },
+  { key: 'summaryLinkSections', type: 'summaryLinkSections', label: 'Summaries with untidy link lists' },
+  { key: 'brokenLinks', type: 'brokenLinks', label: 'Broken links with a known target', where: (i) => !!i.suggestedTarget },
+];
+// The order fixAllSafe runs them in (src/brain/health.js), without the two that delete
+// a page: health.js records an ordering effect, and this lane promises no page deleted.
+const FREE_REPAIR_ORDER = ['folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];
+
+function freeRepairCount(report, type) {
+  const list = (report && report[type]) || [];
+  return type === 'brokenLinks' ? list.filter((i) => i.suggestedTarget).length : list.length;
 }
 
-function renderQuickMaintenance(domain, report, crossMountBusy) {
-  const busy = state.busyKey;
-  // MEDIUM-5 fix: disable every DESTRUCTIVE quick-maintenance button (not
-  // just the read-only Rescan above) while an earlier, already-abandoned
-  // mount's write against this SAME domain is still actually running.
-  const disableAll = !!busy || crossMountBusy;
-  const items = [];
+function n0(v) { return (Number(v) || 0).toLocaleString('en-US'); }
 
-  const safeTotal = countSafeFixable(report);
-  // A chip whose repairs just finished stays for the moment it takes to say so.
-  const safeDone = state.rowOutcomes && state.rowOutcomes['chip:fixSafe'];
-  if (safeDone) {
-    items.push(actionChip({ action: 'fixSafe', attrs: ' aria-disabled="true"', alias: 'dm', leadHtml: icon('check', 12), label: safeDone.short || safeDone.text }));
-  } else if (safeTotal > 0) {
-    items.push(actionChip({ action: 'fixSafe', alias: 'dm',
-      attrs: busy === 'fixSafe' || busy === 'fixSafeCheck' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
-      leadHtml: busy === 'fixSafe' || busy === 'fixSafeCheck' ? buttonRingHtml() : '',
-      label: busy === 'fixSafeCheck' ? 'Checking…' : (busy === 'fixSafe' ? 'Repairing…' : 'Fix ' + pluralize(safeTotal, 'safe issue')) }));
+function renderAnchorHere(anchor, crossMountBusy) {
+  return (state.confirm && state.confirm.anchor === anchor) ||
+    (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
+    (state.rowLines && state.rowLines[anchor])
+    ? renderAnchorStack(anchor, crossMountBusy) : '';
+}
+
+function renderLaneHead(lane, title, line, readingHtml, actionHtml) {
+  return '<div class="dm-lane-head" data-row-key="lane-head:' + lane + '">' +
+      '<span class="dm-lane-title">' + title + '</span>' +
+      '<span class="dm-lane-line">' + line + '</span>' +
+      '<span class="dm-lane-reading">' + readingHtml + '</span>' +
+      (actionHtml || '') +
+    '</div>';
+}
+
+function renderLaneTrace(lane) {
+  const t = state.healthTrace;
+  if (!t || t.slug !== state.activeSlug || t.lane !== lane) return '';
+  return icon('check', 13) + '<span>' + escapeHtml(t.text) + ' ' +
+    '<span data-age-at="' + escapeHtml(t.at) + '" data-age-text>just now</span></span>';
+}
+
+// A row with nothing to open has no chevron: it is a line, not a fold.
+function renderPlainRow(key, labelHtml, pill, metaHtml, actionHtml) {
+  return '<div class="cur-fold dm-group dm-lane-plain" data-group-key="' + escapeHtml(key) + '">' +
+      '<div class="cur-fold-summary dm-group-summary">' +
+        '<span class="cur-fold-label dm-group-label">' + labelHtml + '</span>' +
+        (pill != null ? '<span class="cur-fold-pill dm-group-pill">' + escapeHtml(pill) + '</span>' : '') +
+        (metaHtml ? '<span class="cur-fold-meta dm-group-meta">' + metaHtml + '</span>' : '') +
+        (actionHtml || '') +
+      '</div>' +
+    '</div>';
+}
+
+function renderShowMore(key, hidden) {
+  return hidden > 0
+    ? '<div class="dm-issue-more" data-row-key="more:' + escapeHtml(key) + '"><button class="btn btn-secondary btn-xs dm-show-more-btn" data-more-group="' + escapeHtml(key) + '">Show ' + n0(Math.min(hidden, ISSUE_PAGE)) + ' more</button></div>'
+    : '';
+}
+
+// One lane row over its items: a long list shows a page, and says how many more.
+function renderIssueFold(o) {
+  const { key, type, label, issues, readonly, crossMountBusy } = o;
+  const open = state.expandedGroups.has(key);
+  const left = state.leftRows || {};
+  const merged = issues.slice();
+  for (const k of Object.keys(left)) {
+    const l = left[k];
+    if (l.group === key && l.slug === state.activeSlug) merged.splice(Math.min(l.index, merged.length), 0, l.issue);
   }
+  if (merged.length === 0) return '';
+  const visible = (state.groupVisible && state.groupVisible[key]) || ISSUE_PAGE;
+  const rows = merged.slice(0, visible).map((issue) => {
+    const rowKey = 'issue:' + type + ':' + JSON.stringify(issue);
+    return renderIssueRow(type, issue, readonly, {
+      saving: !!(state.rowBusy && state.rowBusy.has(rowKey)),
+      left: !!left[rowKey],
+      arming: !!(left[rowKey] && left[rowKey].arming),
+      afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
+    });
+  }).join('');
+  const stack = renderAnchorHere('group:' + key, crossMountBusy);
+  return renderFoldRow({
+    key, label, pill: n0(issues.length), open, alias: 'dm',
+    metaHtml: o.metaHtml, actionHtml: o.actionHtml || '',
+    bodyHtml: (open ? stack : '') + rows + renderShowMore(key, merged.length - visible),
+  }) + (open ? '' : stack);
+}
 
-  // v3.83.0 — the index rebuild: deterministic, free, previewed. Deliberately
-  // NOT a quickAiButton (no sparkles, no cost badge) and not counted in the
-  // "Fix N safe issues" total — it never runs without its own preview card.
+function repairButton(type, count, crossMountBusy) {
+  const busy = state.busyKey === 'group:' + type;
+  const disabled = crossMountBusy || !!state.busyKey;
+  return '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + type + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
+    (busy ? buttonRingHtml() + ' Repairing…' : 'Repair ' + n0(count)) + '</button>';
+}
+
+function mergeRowButton(type, count, crossMountBusy) {
+  const checking = state.busyKey === 'groupCheck:' + type;
+  const busy = checking || state.busyKey === 'group:' + type;
+  const disabled = crossMountBusy || !!state.busyKey;
+  return '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + type + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
+    (busy ? buttonRingHtml() + (checking ? ' Checking…' : ' Merging…') : 'Merge ' + n0(count)) + '</button>';
+}
+
+function deletesReading(pages) {
+  return '<span class="dm-lane-deletes">deletes ' + n0(pages) + (pages === 1 ? ' page' : ' pages') + '</span>';
+}
+
+function renderFreeLane(report, readonly, crossMountBusy) {
+  const rows = [];
+  let repairable = 0;
+  let total = 0;
+  for (const r of FREE_ROWS) {
+    const issues = r.where ? (report[r.type] || []).filter(r.where) : (report[r.type] || []);
+    if (issues.length === 0) continue;
+    const count = freeRepairCount(report, r.type);
+    repairable++;
+    total += count;
+    rows.push(renderIssueFold({ key: r.key, type: r.type, label: r.label, issues, readonly, crossMountBusy,
+      actionHtml: readonly ? '' : repairButton(r.type, count, crossMountBusy) }));
+  }
   const drift = Array.isArray(report.indexDrift) ? report.indexDrift[0] : null;
   if (drift) {
-    const missing = Number(drift.missing) || 0;
-    const what = missing > 0 ? countOf(missing, 'page', 'pages') + ' missing' : countOf(drift.stale, 'stale row', 'stale rows');
-    items.push(actionChip({ action: 'indexPlan', alias: 'dm',
-      attrs: busy === 'indexRebuildPlan' ? ' aria-busy="true" aria-disabled="true"' : (disableAll ? ' disabled' : ''),
-      leadHtml: busy === 'indexRebuildPlan' ? buttonRingHtml() : '',
-      label: busy === 'indexRebuildPlan' ? 'Planning…' : 'Rebuild index · ' + what }));
+    const busy = state.busyKey === 'indexRebuildPlan';
+    const disabled = !!state.busyKey || crossMountBusy;
+    // Rows that point to missing pages have no words of their own in the deck: when
+    // nothing is missing from the list, they are what the count counts.
+    const count = Number(drift.missing) || Number(drift.stale) || 0;
+    rows.push(renderPlainRow('indexDrift', 'Pages missing from the page list', n0(count), '', readonly ? '' : actionChip({
+      action: 'indexPlan', alias: 'dm',
+      attrs: busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : ''),
+      leadHtml: busy ? buttonRingHtml() : '', label: busy ? 'Working it out…' : 'Preview the rebuild',
+    })) + renderAnchorHere('group:indexDrift', crossMountBusy));
   }
+  const trace = renderLaneTrace('free');
+  const here = renderAnchorHere('lane:free', crossMountBusy);
+  if (rows.length === 0 && !trace && !here) return '';
+  if (readonly) return renderFoldRows(rows.join(''), { alias: 'dm' });
+  const running = state.busyKey === 'laneFree';
+  const run = state.laneRun;
+  const reading = running && run ? 'Repairing ' + n0(run.i) + ' of ' + n0(run.n) + '…' : '';
+  const button = repairable >= 2 || running
+    ? '<button class="btn btn-secondary dm-lane-btn" id="dm-repair-all-btn"' + (running ? ' aria-busy="true" aria-disabled="true"' : ((state.busyKey || crossMountBusy) ? ' disabled' : '')) + '>' +
+        (running ? buttonRingHtml() + ' Repairing…' : 'Repair all ' + n0(total)) + '</button>'
+    : '';
+  return '<div class="dm-lane" data-row-key="lane:free">' +
+    renderLaneHead('free', 'Free repairs', 'No AI, no cost, no page deleted.', reading ? escapeHtml(reading) : trace, button) +
+    here +
+    renderFoldRows(rows.join(''), { alias: 'dm' }) +
+  '</div>';
+}
 
-  // ── THE AI ACTIONS ARE NEVER HIDDEN (v3.67.0) ──────────────────────────
-  // Through v3.66.x, with no provider key, the three ✨ buttons were simply
-  // not rendered, and the only trace of them was a sentence — shown ONLY when
-  // there was nothing structural to fix — with a door to Settings › General,
-  // the wrong section. A user with a key-less install and a broken wiki saw
-  // one "Fix N safe issues" button and no sign the AI actions existed. Now the
-  // three render in every state; with no key they are DISABLED with the kit's
-  // attributes, described by the no-key run line under the bar, whose door is
-  // the shared one to Providers & keys.
-  //
-  // The model: the server's own runsOn when the probe has landed; with no
-  // probe answer at all, "no key" is the fail-safe reading (the AI actions
-  // stay disabled), which is the direction the old code took by hiding them.
+function renderDecisionLane(report, readonly, crossMountBusy) {
+  const rows = [];
+  const scan = activeSemanticScan();
+  const open = scan ? scan.pairs.filter((p) => p.status === 'open') : [];
+  if (open.length > 0) {
+    const isOpen = state.expandedGroups.has('duplicates');
+    rows.push(renderFoldRow({
+      key: 'duplicates', label: 'Possible duplicates', pill: n0(open.length), open: isOpen, alias: 'dm',
+      actionHtml: readonly ? '' : '<button class="btn btn-secondary dm-review-btn" data-review="1" aria-expanded="' + (isOpen ? 'true' : 'false') + '">Review</button>',
+      bodyHtml: isOpen ? renderSemanticScanResult(readonly, crossMountBusy) : '',
+    }));
+  }
+  const batch = readonly ? [] : liveBatchPairs();
+  if (batch.length > 0) {
+    const running = state.busyKey === 'semanticMerge';
+    const isOpen = state.expandedGroups.has('spelling');
+    const stack = renderAnchorHere('group:spelling', crossMountBusy);
+    const visible = (state.groupVisible && state.groupVisible.spelling) || ISSUE_PAGE;
+    rows.push(renderFoldRow({
+      key: 'spelling', label: 'Spelling variants', pill: n0(batch.length), open: isOpen, alias: 'dm',
+      metaHtml: deletesReading(batch.length),
+      actionHtml: '<button class="btn btn-secondary" id="dm-semantic-merge-btn"' + (running ? ' aria-busy="true" aria-disabled="true"' : ((state.busyKey || crossMountBusy) ? ' disabled' : '')) + '>' +
+        (running ? buttonRingHtml() + ' Merging…' : 'Merge ' + n0(batch.length)) + '</button>',
+      bodyHtml: (isOpen ? stack : '') + batch.slice(0, visible).map((p) => renderFoldItem({
+        alias: 'dm', rowKey: 'spelling:' + semanticPairKey(p), main: p.removeSlug + ' → ' + p.keepSlug,
+      })).join('') + renderShowMore('spelling', batch.length - visible),
+    }) + (isOpen ? '' : stack));
+  }
+  const cross = report.crossFolderDupes || [];
+  if (cross.length) {
+    rows.push(renderIssueFold({ key: 'crossFolderDupes', type: 'crossFolderDupes', label: 'Same name in two folders', issues: cross, readonly, crossMountBusy,
+      metaHtml: deletesReading(deletedPageCount('crossFolderDupes', cross)),
+      actionHtml: readonly ? '' : mergeRowButton('crossFolderDupes', cross.length, crossMountBusy) }));
+  }
+  const hyphen = report.hyphenVariants || [];
+  if (hyphen.length) {
+    rows.push(renderIssueFold({ key: 'hyphenVariants', type: 'hyphenVariants', label: 'Nearly the same name', issues: hyphen, readonly, crossMountBusy,
+      metaHtml: deletesReading(deletedPageCount('hyphenVariants', hyphen)),
+      actionHtml: readonly ? '' : mergeRowButton('hyphenVariants', hyphen.length, crossMountBusy) }));
+  }
+  rows.push(renderIssueFold({ key: 'orphans', type: 'orphans', label: 'Pages nothing links to', issues: report.orphans || [], readonly, crossMountBusy }));
+  rows.push(renderIssueFold({ key: 'brokenLinksOpen', type: 'brokenLinks', label: 'Broken links with no target',
+    issues: (report.brokenLinks || []).filter((i) => !i.suggestedTarget), readonly, crossMountBusy }));
+  // THE GROUP COUNTS THE LIST IT OPENS (v3.72.1, F5). `counts.dismissed` is the number
+  // of current-scan issues a dismissal hid, which excludes every kept-apart pair and
+  // every record whose issue is gone. The route sends the record count; an older
+  // server's report falls back to the old figure.
+  rows.push(renderDismissedGroup(Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed));
+  const body = rows.join('');
+  const trace = renderLaneTrace('decision');
+  const here = renderAnchorHere('lane:decision', crossMountBusy);
+  if (!body && !trace && !here) return '';
+  if (readonly) return renderFoldRows(body, { alias: 'dm' });
+  return '<div class="dm-lane" data-row-key="lane:decision">' +
+    renderLaneHead('decision', 'Your decision', 'Only you can tell. Nothing happens until you choose.', trace, '') +
+    here +
+    renderFoldRows(body, { alias: 'dm' }) +
+  '</div>';
+}
+
+// The duplicate quote, which the button wears. It needs the pass over every page name
+// (about 18 s on 3,500 pages), so a domain nobody compares never pays for it: it is
+// read when this row is on screen, or right after a count has done that pass anyway.
+// What the confirm says is always fetched at the press, never this.
+function activeSemanticQuote() {
+  const q = state.semanticQuote;
+  return q && q.slug === state.activeSlug ? q : null;
+}
+
+function renderCompareRow(runsOn, busy, crossMountBusy) {
+  const s = activeSemanticScan();
+  const q = activeSemanticQuote();
+  const est = q && q.est && !q.est.error ? q.est : null;
+  const c = (s && s.coverage) || (est ? semanticCoverageFrom(est) : null);
+  const estimating = state.busyKey === 'semanticDupesEstimate';
+  const running = state.busyKey === 'semanticDupesScan';
+  const quoting = !!state.semanticQuoteLoading && !est;
+  const counting = !!(s && s.counting && !c);
+  const p = state.aiProgress && state.aiProgress.key === 'semanticDupesScan' ? state.aiProgress : null;
+  let reading;
+  if (running) reading = p ? 'Comparing ' + n0(p.processed) + ' of ' + n0(p.total) + '…' : 'Comparing…';
+  else if (estimating || quoting || counting) reading = 'Working out the cost…';
+  else if (!c) reading = 'No pairs compared yet';
+  else if (c.total === 0) reading = 'No two page names look alike';
+  else if (c.left === 0) reading = 'All ' + n0(c.total) + ' pairs compared';
+  else if (c.checked === 0) reading = 'No pairs compared yet';
+  else reading = (s && s.counting ? 'About ' : '') + n0(c.checked) + ' of ' + n0(c.total) + ' pairs compared';
+  const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
+  const quoteFits = est && c && est.candidatePairs === c.next;
+  const cost = quoteFits ? (costReadout(est, { compact: true }) || '') : '';
+  const label = c && c.next > 0 && !estimating && !quoting ? 'Compare the next ' + n0(c.next) : 'Compare the next…';
+  const button = c && c.left === 0 ? '' : actionChip({
+    tier: 'ai', action: 'semanticDupes', alias: 'dm',
+    attrs: estimating ? ' aria-busy="true" aria-disabled="true"' : (noKeyAttrs || ((busy || crossMountBusy || quoting || counting) ? ' disabled' : '')),
+    leadHtml: estimating ? buttonRingHtml() : icon('sparkles', 12),
+    label, cost: estimating ? '' : cost,
+  });
+  const failed = s && s.failedPairs > 0 && !s.failedAll
+    ? '<div class="dm-lane-note" data-row-key="compare-failed">' + n0(s.failedPairs) + (s.failedPairs === 1 ? ' pair' : ' pairs') + ' could not be compared because the AI call failed. They will be tried again next time.</div>'
+    : '';
+  const meta = '<span class="dm-compare-reading">' + escapeHtml(reading) + '</span>';
+  const stack = renderAnchorHere('group:compare', crossMountBusy);
+  // One node whatever it holds, so a first run does not replace the row under the
+  // pointer: with nothing to forget yet it simply cannot open.
+  const canForget = !!(c && c.checked > 0);
+  const row = renderFoldRow({
+    key: 'compare', hostClass: canForget ? '' : 'dm-group-nofold', label: 'Compare pages for duplicates',
+    open: canForget && state.expandedGroups.has('compare'), alias: 'dm', metaHtml: meta, actionHtml: button,
+    bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
+  });
+  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + failed;
+}
+
+function renderSuggestRow(key, action, labelText, busy, crossMountBusy, runsOn) {
+  return renderPlainRow(key, escapeHtml(labelText), null, '', quickAiButton(action, 'Suggest', busy, crossMountBusy, runsOn)) +
+    renderAnchorHere('group:' + key, crossMountBusy);
+}
+
+// THE AI ACTIONS ARE NEVER HIDDEN (v3.67.0): with no key they are disabled, described
+// by the kit's no-key line, whose door is the shared one to Providers & keys.
+function renderAiLane(domain, report, crossMountBusy) {
+  const busy = state.busyKey;
   const runsOn = state.aiRunsOn || (state.aiAvailable ? null : { job: 'wiki-health', needsKey: true });
-  const brokenCount = (report.brokenLinks || []).length;
-  if (brokenCount > 0) items.push(quickAiButton('brokenLinks', 'Fix ' + pluralize(brokenCount, 'broken link'), busy, crossMountBusy, runsOn));
-  const orphanCount = (report.orphans || []).length;
-  if (orphanCount > 0) items.push(quickAiButton('orphans', 'Rescue ' + pluralize(orphanCount, 'orphan'), busy, crossMountBusy, runsOn));
-  // H4 fix: always offered, unlike the two above — there's no free,
-  // already-known count to gate this on (see the file-header comment on
-  // loadEstimates). The button shows no cost until the user opens it;
-  // confirmSemanticScan() fetches the (slow, but token-free) estimate at
-  // that point and shows a "no likely duplicates" banner instead of a
-  // confirm dialog if candidatePairs turns out to be 0.
-  items.push(quickAiButton('semanticDupes', 'Find duplicate pages', busy, crossMountBusy, runsOn));
-
-  // ONE line under the whole bar, not one per button: each button already
-  // carries its own compact cost badge (costReadout), so the line names the
-  // model and says so — the kit's `figuresNote` form. After a plan or a scan
-  // on THIS domain, the after-line follows it: what ran, what it cost.
+  const orphans = (report.orphans || []).length;
+  const broken = (report.brokenLinks || []).length;
+  const rows = renderCompareRow(runsOn, busy, crossMountBusy) +
+    (orphans > 0 ? renderSuggestRow('aiOrphans', 'orphans', 'Find links for ' + n0(orphans) + (orphans === 1 ? ' page' : ' pages') + ' nothing links to', busy, crossMountBusy, runsOn) : '') +
+    (broken > 0 ? renderSuggestRow('aiBroken', 'brokenLinks', 'Find targets for ' + n0(broken) + (broken === 1 ? ' broken link' : ' broken links'), busy, crossMountBusy, runsOn) : '');
   const runLine = renderRunsOn(runsOn, { id: 'dm-quick-runs-on', figuresNote: 'each action shows its cost' });
   const spent = state.aiSpent && domain && state.aiSpent.slug === domain.slug
-    ? renderSpent(state.aiSpent.spent, { id: 'dm-quick-spent' }) : '';
-
-  // What a chip opened goes directly under the chips, inside the card: the cost
-  // line and the footnote are below the row, and a question 200 px from the press
-  // is the distance this rule exists to close. Whatever lost its own row comes
-  // here too. `anchor` is set in render(), so with none it is here.
-  const stack =
-    (state.confirm && (state.confirm.anchor || 'quick') === 'quick' ? renderConfirmCard() : '') +
-    (state.pendingPlan && (state.pendingPlan.anchor || 'quick') === 'quick' ? renderPendingPlan(crossMountBusy) : '') +
-    ((state.ringAnchor || 'quick') === 'quick' && state.busyKey && typeof renderAiProgressRing === 'function' ? renderAiProgressRing() : '') +
-    (state.rowLines && state.rowLines.quick ? renderOutcomeLine(state.rowLines.quick) : '');
-
-  return renderActionCard({
-    alias: 'dm', iconHtml: icon('sparkles', 12), eyebrow: 'QUICK MAINTENANCE',
-    chipsHtml: items.join(''),
-    runHtml: stack + runLine + spent,
-    footnoteHtml:
-      // Wording nit found during live verification: `crossMountBusy` is
-      // true for BOTH "some earlier, abandoned mount's write is still
-      // running" AND "this exact mount's own action, which it just
-      // started, is running" (inFlightWriteSlugs.add(slug) fires the
-      // instant any write starts, including this mount's). Only call it
-      // an EARLIER fix when it isn't also this mount's own busyKey —
-      // otherwise a user who clicks Fix and never left the view sees
-      // "an earlier fix is still running" about the very click they just
-      // made, which reads as if something is already wrong.
-      //
-      // TWO ROLES THAT WERE ONE CLASS PLUS A COLOUR MODIFIER. The busy line is
-      // a live STATE and is now a status box; the other is static prose that
-      // is identical for every user and is now a description. They were
-      // `.dm-quick-note` and `.dm-quick-note.dm-quick-note-busy` — the
-      // `.sidebar-hint` defect again, in a second place.
-      //
-      // THE BUSY LINE WAS ALSO THE WORST CONTRAST IN THIS VIEW: it painted
-      // --attention-text as TEXT over --accent-tint, measured 3.16:1 in the
-      // light theme against a 4.5 floor. That is a warning about an in-flight
-      // write, printed directly above the buttons that delete pages, and it
-      // was the least readable string on the panel. As a status the amber is
-      // the RAIL (non-text, 3:1 floor, clears at 10.70 / 3.58) and the words
-      // are --text / --text-2.
-      //
-      // NEITHER IS FOLDED. renderExplainer was not used here and must not be:
-      // the cost promise and the git-recovery note are the disclosure that
-      // makes a spend gate a gate, and v3.16.1's rule is that a warning behind
-      // a click is not a warning.
-      (crossMountBusy && !busy
-        ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running',
-                         detail: 'Please wait for it to finish before starting another.' })
-        : renderDescription('Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE)),
-  });
+    ? renderSpent(state.aiSpent.spent, { id: 'dm-quick-spent', lastRun: true }) : '';
+  return '<div class="dm-lane dm-lane-ai" data-row-key="lane:ai">' +
+    renderLaneHead('ai', 'AI help', 'Uses your AI model. Each action shows its cost first.', '', '') +
+    renderFoldRows(rows, { alias: 'dm' }) +
+    '<div class="dm-lane-run">' + runLine + spent + '</div>' +
+  '</div>';
 }
 
 function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
@@ -8307,7 +8417,6 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   else costText = costReadout(est, { compact: true });
   const disabled = busy || crossMountBusy || est === 'loading' || (est && est.error);
   const running = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate');
-  const label2 = running ? label + '…' : label;
   // No key: disabled, never hidden, described by the no-key run line (v3.67.0).
   // `aiActionDisabledAttrs` is '' whenever a run is possible, so the ordinary
   // busy/estimate reasons keep their own plain `disabled`.
@@ -8315,12 +8424,10 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   return actionChip({
     tier: 'ai', action: key, alias: 'dm',
     attrs: running ? ' aria-busy="true" aria-disabled="true"' : noKeyAttrs, disabled: !!disabled,
-    // The sparkles mark (token spend) gives way to the ring only while
-    // THIS action is the one running — the spend has already happened by
-    // then, and liveness is the useful signal. Every other button keeps
-    // its sparkles so the cost warning never disappears from the bar.
+    // The sparkles mark (token spend) gives way to the ring only while THIS action
+    // is the one running: the spend has already happened by then.
     leadHtml: running ? buttonRingHtml() : icon('sparkles', 12),
-    label: label2,
+    label,
     // Running, the spend is already decided and the ring needs the room: the
     // button keeps the width it had when pressed.
     cost: running ? '' : (costText || ''),
@@ -8329,25 +8436,23 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
 
 function renderConfirmCard() {
   const c = state.confirm;
+  const p = c.busy && c.busyCount && state.aiProgress && state.aiProgress.total > 0 ? state.aiProgress : null;
+  const busyWords = p ? c.busyCount.replace('{i}', n0(p.processed)).replace('{n}', n0(p.total)) : (c.busyLabel || 'Working…');
+  const busyAttr = c.busy ? ' aria-busy="true" aria-disabled="true"' : '';
+  // ONE LOOK PER CONSEQUENCE. A deleting yes is danger and names what it deletes; a
+  // paying yes is AI and wears its cost; anything else is plain. Nothing here is
+  // primary, so the section never leans toward deleting.
+  const yes = c.refused ? '<button class="btn btn-secondary" id="dm-confirm-settings">' + escapeHtml(c.settingsLabel || 'Open scan limits') + '</button>'
+    : c.tier === 'danger' ? '<button class="btn btn-danger" id="dm-confirm-yes"' + busyAttr + '>' + (c.busy ? escapeHtml(busyWords) : escapeHtml(c.confirmLabel)) + '</button>'
+    : c.tier === 'ai' ? '<button class="btn btn-ai" id="dm-confirm-yes"' + busyAttr + '>' + (c.busy ? escapeHtml(busyWords)
+      : '<span class="cur-action-label dm-quick-label">' + escapeHtml(c.confirmLabel) + '</span>' + (c.costText ? '<span class="cur-action-cost dm-quick-cost">' + escapeHtml(c.costText) + '</span>' : '')) + '</button>'
+    : '<button class="btn btn-secondary" id="dm-confirm-yes"' + busyAttr + '>' + (c.busy ? escapeHtml(busyWords) : escapeHtml(c.confirmLabel || 'Continue')) + '</button>';
   return (
     '<div class="dm-confirm-card" data-row-key="confirm" role="group" aria-label="' + escapeHtml(c.title) + '">' +
       '<div class="dm-confirm-title">' + escapeHtml(c.title) + '</div>' +
-      // v3.67.0: an AI action's confirm opens with the shared run line —
-      // composed by the confirm's builder (renderRunsOn's own escaping), so
-      // this lifted body gains no free identifier (rule 10). Absent on every
-      // confirm that spends nothing.
-      (typeof c.runLineHtml === 'string' ? c.runLineHtml : '') +
       '<div class="dm-confirm-body">' + escapeHtml(c.body) + '</div>' +
-      '<div class="dm-confirm-actions">' +
-        // A REFUSED confirm (v3.72.1, F4) has no yes button: the action it
-        // describes would be refused by the server, so the one forward door
-        // is to the setting that decides it.
-        (c.refused
-          ? '<button class="btn btn-secondary" id="dm-confirm-settings">' + escapeHtml(c.settingsLabel || 'Open settings') + '</button>'
-          // THE ANSWER STAYS WHERE IT WAS GIVEN: this card stays open, its button
-          // saying what is happening, until the action has an outcome to file.
-          : '<button class="btn btn-primary" id="dm-confirm-yes"' + (c.busy ? ' aria-busy="true" aria-disabled="true"' : '') + '>' +
-              (c.busy ? escapeHtml(c.busyLabel || 'Working…') : escapeHtml(c.confirmLabel || 'Confirm')) + '</button>') +
+      (c.warn ? '<div class="dm-confirm-warn">' + escapeHtml(c.warn) + '</div>' : '') +
+      '<div class="dm-confirm-actions">' + yes +
         '<button class="btn btn-secondary" id="dm-confirm-no"' + (c.busy ? ' disabled' : '') + '>' + (c.refused ? 'Close' : 'Cancel') + '</button>' +
       '</div>' +
     '</div>'
@@ -8357,76 +8462,73 @@ function renderConfirmCard() {
 function renderPendingPlan(crossMountBusy) {
   const p = state.pendingPlan;
   const busy = state.busyKey || crossMountBusy;
-  let summaryLine = '';
-  let body = '';
+  const lines = [];
   let sampleHtml = '';
+  let applyLabel = 'Apply';
+  let applyBusy = 'Applying…';
+  let discardLabel = 'Discard';
+  const links = (v) => n0(v) + (Number(v) === 1 ? ' link' : ' links');
   if (p.kind === 'brokenLinks') {
-    const s = p.summary;
-    summaryLine = pluralize(s.retarget, 'link') + ' will be repointed to an existing page, ' + pluralize(s.strip, 'link') + ' will have the brackets removed (no matching page found).';
-    body = pluralize(s.retargetOccurrences, 'occurrence') + ' repointed, ' + pluralize(s.stripOccurrences, 'occurrence') + ' stripped, across the domain.';
+    const s = p.summary || {};
+    lines.push(links(s.retarget) + ' will point to an existing page, and ' + links(s.strip) + (Number(s.strip) === 1 ? ' becomes' : ' become') + ' plain text because no page matches.');
+    lines.push(GIT_UNDO_NOTE);
   } else if (p.kind === 'indexRebuild') {
-    // v3.83.0 — every number, the size change and every warning sit in the
-    // card itself, never behind a <details> (the v3.16.1 rule).
+    // Every number, the size change and every warning sit in the card itself,
+    // never behind a <details> (the v3.16.1 rule).
     const s = p.summary || {};
     const add = Number(s.add) || 0;
     const rm = Number(s.removeStale) || 0;
     const keep = Number(s.keepDescriptions) || 0;
     const rp = Number(s.repoint) || 0;
     const mg = Number(s.mergeDuplicates) || 0;
-    summaryLine = countOf(add, 'page', 'pages') + ' will be added to the index, '
-      + countOf(rm, 'row that points to a missing page', 'rows that point to missing pages') + ' will be removed, and '
-      + countOf(keep, 'existing description is', 'existing descriptions are') + ' kept as written.';
-    if (rp > 0) summaryLine += ' ' + countOf(rp, 'row will be', 'rows will be') + ' repointed to the page they name.';
-    if (mg > 0) summaryLine += ' ' + countOf(mg, 'duplicate row will be', 'duplicate rows will be') + ' merged.';
     const before = Number(s.bytesBefore) || 0;
     const after = Number(s.bytesAfter) || 0;
-    body = 'New descriptions come from each page’s title or first line — no AI, no cost. '
-      + 'Rows are sorted into Summaries, Entities and Concepts. '
-      + (s.indexExists === false
-        ? 'index.md will be created at ' + fmtKB(after) + '. '
-        : 'index.md ' + (after >= before ? 'grows' : 'shrinks') + ' from ' + fmtKB(before) + ' to ' + fmtKB(after) + '. ')
-      + (Number(s.unlinkable) > 0
-        ? countOf(s.unlinkable, 'page has a file name that cannot be linked', 'pages have file names that cannot be linked')
-          + ' (a leading or trailing space, or | [ ] #) and ' + (Number(s.unlinkable) === 1 ? 'is' : 'are') + ' left out — rename '
-          + (Number(s.unlinkable) === 1 ? 'it' : 'them') + ' to include ' + (Number(s.unlinkable) === 1 ? 'it' : 'them') + '. '
-        : '')
-      + (Number(s.unaddressable) > 0
-        ? countOf(s.unaddressable, 'concept page shares a name with an entity page and is', 'concept pages share a name with an entity page and are')
-          + ' left out — fix Cross-folder duplicates first. '
-        : '')
-      + GIT_UNDO_NOTE;
-    // Examples of what will change — plain lines, never behind a <details>.
+    let summary = countOf(add, 'page joins', 'pages join') + ' the page list and ' + countOf(rm, 'row that points to a missing page is', 'rows that point to missing pages are') + ' removed. ' +
+      countOf(keep, 'description stays', 'descriptions stay') + ' as written.';
+    if (rp > 0) summary += ' ' + countOf(rp, 'row now points', 'rows now point') + ' to the page ' + (rp === 1 ? 'it names' : 'they name') + '.';
+    if (mg > 0) summary += ' ' + countOf(mg, 'repeated row becomes', 'repeated rows become') + ' one.';
+    lines.push(summary);
     const sm = p.samples || {};
     const adds = (Array.isArray(sm.add) ? sm.add : []).slice(0, 5);
     const rms = (Array.isArray(sm.removeStale) ? sm.removeStale : []).slice(0, 5);
     // ONE emission site for the code-face literal (a path or a [[wikilink]]).
     const line = (literal, desc) => '<div class="dm-plan-detail"><span class="mono">' + escapeHtml(literal) + '</span>'
-      + (desc ? ' — ' + escapeHtml(desc) : '') + '</div>';
-    if (adds.length) {
-      sampleHtml += '<div class="dm-plan-detail">For example, added:</div>' + adds.map((a) => line(a.path, a.description)).join('');
-    }
+      + (desc ? ' <span class="dm-plan-data">' + escapeHtml(desc) + '</span>' : '') + '</div>';
+    if (adds.length) sampleHtml += '<div class="dm-plan-detail">For example, added:</div>' + adds.map((a) => line(a.path, a.description)).join('');
     if (rms.length) {
-      sampleHtml += '<div class="dm-plan-detail">Removed (the page no longer exists):</div>'
+      sampleHtml += '<div class="dm-plan-detail">Removed, because the page no longer exists:</div>'
         + rms.map((r) => line(/^\[\[/.test(String(r.target)) ? r.target : '[[' + r.target + ']]', r.description)).join('');
     }
     const more = Math.max(0, add - adds.length) + Math.max(0, rm - rms.length);
-    if (sampleHtml && more > 0) sampleHtml += '<div class="dm-plan-detail">…and ' + fmtInt(more) + ' more</div>';
+    if (sampleHtml && more > 0) sampleHtml += '<div class="dm-plan-detail">And ' + fmtInt(more) + ' more.</div>';
+    lines.push('New descriptions come from each page’s title or first line. No AI, no cost. The list is sorted into Summaries, Entities and Concepts. ' +
+      (after >= before ? 'It grows from ' : 'It shrinks from ') + fmtKB(before) + ' to ' + fmtKB(after) + '.');
+    if (Number(s.unlinkable) > 0) lines.push(countOf(s.unlinkable, 'page has a file name', 'pages have file names') + ' that cannot be linked (a leading or trailing space, or | [ ] #) and ' + (Number(s.unlinkable) === 1 ? 'is left out. Rename it to include it.' : 'are left out. Rename them to include them.'));
+    if (Number(s.unaddressable) > 0) lines.push(countOf(s.unaddressable, 'concept page shares a name with an entity page and is', 'concept pages share a name with an entity page and are') + ' left out. Merge those first.');
+    lines.push(GIT_UNDO_NOTE);
+    applyLabel = 'Rebuild the list';
+    applyBusy = 'Rebuilding…';
+    discardLabel = 'Cancel';
   } else {
-    const s = p.summary;
-    summaryLine = pluralize(s.rescuable, 'orphan') + ' found a home; ' + pluralize(s.noHome, 'orphan') + ' left for manual review.';
-    body = 'Each rescued orphan gets one new [[wikilink]] added to the page that should reference it.';
+    const s = p.summary || {};
+    lines.push(n0(s.rescuable) + (Number(s.rescuable) === 1 ? ' page' : ' pages') + ' found a home; ' + n0(s.noHome) + (Number(s.noHome) === 1 ? ' is' : ' are') + ' left for you.');
+    lines.push('Each one gets one new link, from the page that should mention it.');
+    lines.push(GIT_UNDO_NOTE);
+    applyLabel = 'Add these links';
+    applyBusy = 'Adding…';
   }
+  const first = lines.shift();
   return (
     '<div class="dm-plan-card" data-row-key="plan">' +
-      '<div class="dm-plan-title">Plan ready — nothing written yet</div>' +
-      '<div class="dm-plan-summary">' + escapeHtml(summaryLine) + '</div>' +
+      '<div class="dm-plan-title">Nothing is written yet.</div>' +
+      '<div class="dm-plan-summary">' + escapeHtml(first) + '</div>' +
       sampleHtml +
-      '<div class="dm-plan-detail">' + escapeHtml(body) + '</div>' +
+      lines.map((l) => '<div class="dm-plan-detail">' + escapeHtml(l) + '</div>').join('') +
       '<div class="dm-plan-actions">' +
-        '<button class="btn btn-primary" id="dm-plan-apply-btn"' + (state.busyKey === p.kind + 'Apply' ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' + (state.busyKey === p.kind + 'Apply' ? 'Applying…' : 'Apply this plan') + '</button>' +
-        '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>Discard</button>' +
+        '<button class="btn btn-secondary" id="dm-plan-apply-btn"' + (state.busyKey === p.kind + 'Apply' ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' + (state.busyKey === p.kind + 'Apply' ? applyBusy : applyLabel) + '</button>' +
+        '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>' + discardLabel + '</button>' +
       '</div>' +
-      (crossMountBusy ? '<div class="dm-plan-detail dm-quick-note-busy">An earlier operation on this domain is still running.</div>' : '') +
+      (crossMountBusy ? '<div class="dm-plan-detail dm-quick-note-busy">An earlier fix on this domain is still running. Wait for it to finish before starting another.</div>' : '') +
     '</div>'
   );
 }
@@ -8452,48 +8554,6 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
   const open = s.pairs.filter((p) => p.status === 'open');
   const handled = s.pairs.filter((p) => p.status !== 'open');
   const primary = semanticPrimaryAction(s, readonly);
-  // What a press in this card opened sits under the row that was pressed.
-  const stackAt = (anchor) => ((state.confirm && state.confirm.anchor === anchor) ||
-    (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
-    (state.rowLines && state.rowLines[anchor]) || (state.ringAnchor === anchor && state.busyKey)
-    ? renderAnchorStack(anchor, crossMountBusy) : '');
-  // What earlier scans found stands under what the coverage row opened: it changes
-  // with each run, and the confirm for a run is what is being answered up there.
-  // Once shown it stays, because the pairs below it are what a merge is pressed on.
-  const waiting = s.pairs.filter((p) => p.remembered && p.status === 'open').length;
-  if (waiting) s.waitingShown = true;
-  const waitingLine = waiting
-    ? '<div class="dm-sem-waiting" data-row-key="sem-waiting">' + waiting.toLocaleString('en-US') + ' found by earlier scans and not yet decided ' + (waiting === 1 ? 'is' : 'are') + ' listed again, at no cost.</div>'
-    : (s.waitingShown ? '<div class="dm-sem-waiting" data-row-key="sem-waiting">All that earlier scans found have been decided.</div>' : '');
-  const coverage = renderSemanticCoverage(s, primary, readonly, busy) + stackAt('sem-coverage') + waitingLine;
-  const reset = renderSemanticReset(s, readonly, busy) + stackAt('sem-reset');
-
-  if (s.pairs.length === 0) {
-    // "No likely duplicates found" is a finding, so it needs every pair checked.
-    const c = s.coverage;
-    const title = s.failedAll ? 'No pairs checked this time'
-      : (s.counting || !c) ? ''
-      : (c.left > 0 ? 'None found so far' : 'No likely duplicates found');
-    return '<div class="dm-plan-card" data-row-key="scan-results">' +
-      (title ? '<div class="dm-plan-title">' + title + '</div>' : '') +
-      coverage + reset + '</div>';
-  }
-
-  const batch = liveBatchPairs();
-  // ONCE SHOWN, THE BAR STAYS (press rule). It sits above the pairs, so taking it
-  // away when the last variant is merged moved every pair under the pointer.
-  if (batch.length > 0) s.batchShown = true;
-  const batchBar = (readonly || (batch.length === 0 && !s.batchShown)) ? '' : (
-    '<div class="dm-sem-batch" data-row-key="sem-batch">' +
-      '<button class="btn ' + (primary && primary.kind === 'batch' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-merge-btn"' +
-        (state.busyKey === 'semanticMerge' ? ' aria-busy="true" aria-disabled="true"' : ((busy || batch.length === 0) ? ' disabled' : '')) + '>' +
-        (state.busyKey === 'semanticMerge' ? 'Merging…' : 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants')) +
-      '</button>' +
-      '<span class="dm-sem-batch-note">Merges only pairs whose names are spelling variants, such as hand-off and handoff. Every other pair needs your Preview.</span>' +
-    '</div>' +
-    stackAt('sem-batch')
-  );
-
   const visible = s.visible || SEMANTIC_PAGE_SIZE;
   const cards = open.slice(0, visible).map((p) => renderSemanticPairCard(p, readonly, busy, primary)).join('');
   const hidden = open.length - visible;
@@ -8510,63 +8570,14 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
 
   return (
     '<div class="dm-plan-card" data-row-key="scan-results">' +
-      // "CANDIDATE PAIRS" NAMED TWO QUANTITIES (v3.72.1, F11): the confirm
-      // used it for the pre-filtered INPUT ("Scans 180 candidate pairs") and
-      // this header for the model's medium/high verdicts. These are the
-      // verdicts; the input count is stated beside them when the scan
-      // reported it.
-      // The pairs still waiting. With none open, the count of what this list held.
       '<div class="dm-plan-title">' + pluralize(open.length > 0 ? open.length : s.pairs.length, 'likely duplicate pair') + ' found</div>' +
-      coverage +
       '<div class="dm-plan-summary">Each merge deletes one page and points its links to the page you keep. The app has no Undo button; with GitHub Sync, a git client can recover it.</div>' +
-      batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
       more +
       (handledRows ? ('<div class="dm-plan-detail" data-row-key="handled-title">Already handled in this scan:</div>' + handledRows) : '') +
       (handled.length > SEMANTIC_PAGE_SIZE ? '<div class="dm-issue-more">…and ' + (handled.length - SEMANTIC_PAGE_SIZE).toLocaleString('en-US') + ' more</div>' : '') +
-      reset +
     '</div>'
   );
-}
-
-// The status line: how far through the domain's possible pairs this computer has
-// got. The button sits with the number it moves.
-function renderSemanticCoverage(s, primary, readonly, busy) {
-  const c = s.coverage;
-  if (!c && !s.counting) return '';
-  const n = (v) => v.toLocaleString('en-US');
-  const pairWord = c && c.total === 1 ? 'pair' : 'pairs';
-  // A RECOUNT MOVES NOTHING (press rule). While it runs, the figures already on
-  // screen stay, with their button, and only a first count, which has no figures
-  // to show, says it is counting.
-  const line = (s.counting && !c) ? 'Counting the pairs…'
-    : c.left > 0
-      ? 'Checked ' + n(c.checked) + ' of ' + n(c.total) + ' possible ' + pairWord + '. ' + n(c.left) + ' still to check.'
-      : 'All ' + n(c.total) + ' possible ' + pairWord + ' ' + (c.total === 1 ? 'has' : 'have') + ' been checked.';
-  // The press is this button's when the row it anchored is this one.
-  const pressed = state.pressAnchor === 'sem-coverage' && (state.busyKey === 'semanticDupesEstimate' || state.busyKey === 'semanticDupesScan') ? state.busyKey : null;
-  const next = (readonly || !c || c.left === 0) ? '' : (
-    '<button class="btn ' + (primary && primary.kind === 'next' ? 'btn-primary' : 'btn-secondary') + '" id="dm-semantic-next-btn"' + (pressed ? ' aria-busy="true" aria-disabled="true"' : ((busy || s.counting) ? ' disabled' : '')) + '>' +
-      (pressed === 'semanticDupesEstimate' ? 'Working out the cost…' : (pressed === 'semanticDupesScan' ? 'Scanning…' : 'Check the next ' + n(c.next))) + '</button>'
-  );
-  const failed = s.failedPairs > 0 && !s.failedAll ? (
-    '<br>' + n(s.failedPairs) + ' ' + (s.failedPairs === 1 ? 'pair' : 'pairs') + ' could not be checked because the AI call failed. They will be tried again next time.'
-  ) : '';
-  return (
-    '<div class="dm-sem-batch dm-sem-coverage" data-row-key="sem-coverage">' +
-      '<span class="dm-sem-batch-note">' + line +
-        failed +
-      '</span>' +
-      next +
-    '</div>'
-  );
-}
-
-// A real button, and the least of them: it throws away money already spent.
-// Nothing to forget, nothing to offer.
-function renderSemanticReset(s, readonly, busy) {
-  if (readonly || !s.coverage || s.coverage.checked === 0) return '';
-  return '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || s.counting) ? ' disabled' : '') + '>Check everything again</button></div>';
 }
 
 // One pair. The four actions mirror the shipping app's per-pair card, which
@@ -8674,59 +8685,6 @@ function renderSemanticPreview(preview) {
   );
 }
 
-function renderIssueGroups(report, readonly, crossMountBusy) {
-  const groups = HEALTH_CATEGORIES.map((cat) => renderIssueGroup(cat, report[cat.key] || [], readonly, crossMountBusy)).join('');
-  // THE GROUP COUNTS THE LIST IT OPENS (v3.72.1, F5). `counts.dismissed` is
-  // the number of current-scan issues a dismissal hid, which excludes every
-  // semantic-pair Skip and every record whose issue is gone — so the pill
-  // read 2 over a list of 7, and a domain whose only dismissals were Skips
-  // had no group at all, leaving them unrestorable here. The route now sends
-  // the record count (`dismissedRecords`); an older server's report falls
-  // back to the old figure.
-  const dismissedGroup = renderDismissedGroup(
-    Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed);
-  return renderFoldRows(groups + dismissedGroup, { alias: 'dm' });
-}
-
-function renderIssueGroup(cat, issues, readonly, crossMountBusy) {
-  if (issues.length === 0) return '';
-  const open = state.expandedGroups.has(cat.key);
-  const fixAllCount = cat.key === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
-  const canFixAll = !readonly && AUTO_FIX_TYPES.has(cat.key) && fixAllCount > 0;
-  const checking = state.busyKey === 'groupCheck:' + cat.key;
-  const busy = checking || state.busyKey === 'group:' + cat.key;
-  const anchor = 'group:' + cat.key;
-  // What this row's press opened goes directly under the row: above the items
-  // when the fold is open, because the row is the summary, and under the fold
-  // when it is closed, because nothing inside a closed fold is on screen.
-  const hasStack = (state.confirm && state.confirm.anchor === anchor) ||
-    (state.pendingPlan && state.pendingPlan.anchor === anchor) ||
-    (state.rowLines && state.rowLines[anchor]);
-  const stack = hasStack ? renderAnchorStack(anchor, crossMountBusy) : '';
-  // MEDIUM-5 fix: also disabled while ANY write against this domain is in
-  // flight from an earlier mount — not just this specific category's own
-  // busyKey — since a concurrent fix on a DIFFERENT category still hits
-  // the same domain's files on disk and would still 409 against it.
-  const disabled = crossMountBusy || !!state.busyKey;
-  const rows = issues.slice(0, 50).map((issue) => {
-    const rowKey = 'issue:' + cat.key + ':' + JSON.stringify(issue);
-    return renderIssueRow(cat.key, issue, readonly, {
-      saving: !!(state.rowBusy && state.rowBusy.has(rowKey)),
-      afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
-    });
-  }).join('');
-  const more = issues.length > 50 ? '<div class="dm-issue-more" data-row-key="more:' + cat.key + '">…and ' + (issues.length - 50) + ' more</div>' : '';
-  return renderFoldRow({
-    key: cat.key, label: cat.label, pill: issues.length, open, alias: 'dm',
-    actionHtml: canFixAll && fixAllCount > 0 ? (
-      '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + cat.key + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
-        (busy ? buttonRingHtml() + (checking ? ' Checking…' : (DESTRUCTIVE_FIX_TYPES.has(cat.key) ? ' Merging…' : ' Repairing…')) : 'Fix all ' + fixAllCount) +
-      '</button>'
-    ) : '',
-    bodyHtml: (open ? stack : '') + rows + more,
-  }) + (open ? '' : stack);
-}
-
 function renderIssueRow(type, issue, readonly, rowView) {
   let main = '';
   let meta = '';
@@ -8738,23 +8696,22 @@ function renderIssueRow(type, issue, readonly, rowView) {
       // prose and stays in the sans face. `.dm-issue-main` already carried
       // `mono` on every row, so this meta column was the last place in the
       // health table rendering a wiki slug in the body face.
-      if (issue.suggestedTarget) meta = 'suggests <span class="mono">' + escapeHtml(issue.suggestedTarget) + '</span>';
-      else { meta = 'no suggestion'; dismissible = true; }
+      if (issue.suggestedTarget) meta = 'goes to <span class="mono">' + escapeHtml(issue.suggestedTarget) + '</span>';
+      else dismissible = true;
       // One row per link in a page. A page that writes the same broken link twice
       // is one thing to decide, and one Dismiss, and it says how many times it occurs.
-      if (Number(issue.occurrences) > 1) meta += ' · ' + Number(issue.occurrences) + ' times on this page';
+      if (Number(issue.occurrences) > 1) meta += (meta ? ' · ' : '') + Number(issue.occurrences) + ' times on this page';
       break;
     case 'orphans':
       main = escapeHtml(issue.path);
-      meta = escapeHtml(issue.type);
       dismissible = true;
       break;
     case 'crossFolderDupes':
-      main = 'keep ' + escapeHtml(issue.keep) + ', remove ' + escapeHtml(issue.remove);
+      main = 'keep ' + escapeHtml(issue.keep) + ', delete ' + escapeHtml(issue.remove);
       break;
     case 'hyphenVariants':
       main = escapeHtml((issue.files || []).join(', '));
-      meta = '→ <span class="mono">' + escapeHtml(issue.suggestedSlug || '') + '</span>';
+      meta = 'becomes <span class="mono">' + escapeHtml(issue.suggestedSlug || '') + '</span>';
       break;
     case 'folderPrefixLinks':
       main = escapeHtml(issue.sourceFile) + ' → [[' + escapeHtml(issue.linkText) + ']]';
@@ -8774,22 +8731,7 @@ function renderIssueRow(type, issue, readonly, rowView) {
       if (toC > 0) parts.push(n(toC) + (toC === 1 ? ' concept' : ' concepts') + ' filed under Entities');
       if (toE > 0) parts.push(n(toE) + (toE === 1 ? ' entity' : ' entities') + ' filed under Concepts');
       main = escapeHtml(issue.summary);
-      meta = escapeHtml(parts.join(' \u00b7 ')) + (parts.length ? ' \u2014 ' : '') + 'tidied without removing any link.';
-      break;
-    }
-    case 'indexDrift': {
-      // v3.83.0 — prose, self-contained (the sandboxed row suites hand this
-      // function only escapeHtml). Not dismissible, not fixable in place: the
-      // only action is the same previewed rebuild as the Quick maintenance button.
-      const num = (n) => (Number(n) || 0).toLocaleString('en-US');
-      const missing = Number(issue.missing) || 0;
-      const stale = Number(issue.stale) || 0;
-      // The mono column holds only the path; the sentence goes in the wide meta column.
-      main = 'index.md';
-      meta = 'Missing ' + num(missing) + (missing === 1 ? ' page' : ' pages')
-        + (stale > 0 ? ', and ' + num(stale) + (stale === 1 ? ' row points' : ' rows point') + ' to ' + (stale === 1 ? 'a page' : 'pages') + ' that no longer ' + (stale === 1 ? 'exists' : 'exist') : '')
-        + '. Rebuilt from the files on disk — free, previewed first. '
-        + '<button class="btn btn-secondary btn-xs cur-action-chip dm-quick-btn" data-action="indexPlan">Preview rebuild</button>';
+      meta = (parts.length ? '<span class="dm-item-fact">' + escapeHtml(parts.join(' \u00b7 ')) + '</span> ' : '') + '<span class="dm-item-fact">No link is removed.</span>';
       break;
     }
     default:
@@ -8802,10 +8744,19 @@ function renderIssueRow(type, issue, readonly, rowView) {
   }
   const canDismiss = !readonly && dismissible;
   const saving = !!(rowView && rowView.saving);
+  // Left as is, this moment: the row stays where it was, says so, and offers the way
+  // back. A second press anywhere takes it, because the choice has been made by then.
+  if (rowView && rowView.left) {
+    const k = 'issue:' + type + ':' + JSON.stringify(issue);
+    return renderFoldItem({
+      alias: 'dm', mainHtml: main, metaHtml: 'Left as is.', rowKey: k,
+      actionHtml: '<button class="btn btn-secondary dm-left-undo-btn" data-left-key=\'' + escapeHtml(k) + '\'' + (saving ? ' aria-busy="true" aria-disabled="true"' : (rowView.arming ? ' disabled' : '')) + '>' + (saving ? 'Saving…' : 'Undo') + '</button>',
+    });
+  }
   return renderFoldItem({
     alias: 'dm', mainHtml: main, metaHtml: meta, rowKey: 'issue:' + type + ':' + JSON.stringify(issue),
     actionHtml: canDismiss ? '<button class="btn btn-secondary dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'' +
-      (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Dismiss') + '</button>' : '',
+      (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Leave as is') + '</button>' : '',
     afterHtml: rowView && rowView.afterHtml ? rowView.afterHtml : '',
   });
 }
@@ -8825,15 +8776,15 @@ function renderDismissedGroup(count) {
       const rowKey = 'restore:' + JSON.stringify(r);
       const saving = !!(state.rowBusy && state.rowBusy.has(rowKey));
       return renderFoldItem({
-        alias: 'dm', main: describeDismissed(r), rowKey,
+        alias: 'dm', main: describeDismissed(r), meta: r.type === 'semanticDupe' ? 'kept both' : undefined, rowKey,
         actionHtml: '<button class="btn btn-secondary dm-restore-btn" data-restore-key=\'' + escapeHtml(JSON.stringify(r)) + '\'' +
-          (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Restore') + '</button>',
+          (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Bring back') + '</button>',
         afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
       });
-    }).join('') || renderFoldItem({ alias: 'dm', meta: 'Nothing dismissed.' });
+    }).join('') || renderFoldItem({ alias: 'dm', meta: 'Nothing is left as is.' });
   }
   return renderFoldRow({
-    key: 'dismissed', hostClass: 'dm-group-dismissed', label: 'Dismissed', labelClass: 'dm-dismissed-label',
+    key: 'dismissed', hostClass: 'dm-group-dismissed', label: 'Left as is', labelClass: 'dm-dismissed-label',
     pill: open && Array.isArray(state.dismissedRecords) ? state.dismissedRecords.length : count,
     open, alias: 'dm', bodyHtml: body,
   });
@@ -8843,7 +8794,7 @@ function describeDismissed(r) {
   switch (r.type) {
     case 'brokenLinks': return r.sourceFile + ' → [[' + r.linkText + ']]';
     case 'orphans': return r.path;
-    case 'crossFolderDupes': return 'keep ' + r.keep + ', remove ' + r.remove;
+    case 'crossFolderDupes': return 'keep ' + r.keep + ', delete ' + r.remove;
     case 'hyphenVariants': return (r.files || []).join(', ');
     case 'folderPrefixLinks': return r.sourceFile + ' → [[' + r.linkText + ']]';
     case 'missingBacklinks': return r.summary + ' ↔ ' + r.entity;
@@ -8909,7 +8860,7 @@ function onHealthClick(e) {
   if (!target || typeof target.closest !== 'function') return;
   const btn = target.closest('button');
   if (!btn || !section.contains(btn)) {
-    noteHealthFoldPress(target);
+    noteHealthFoldPress(target, e);
     return;
   }
   // A DELEGATE ASKS. Measured on Chrome 156: a real press on a disabled button,
@@ -8923,7 +8874,27 @@ function onHealthClick(e) {
   if (btn.getAttribute('aria-disabled') === 'true') return;
   if (typeof btn.closest === 'function' && btn.closest('[data-row-leaving]')) return;
   noteHealthPress(btn);
+  // A control in a row's summary never toggles the row (v3.0.1-beta.18).
+  if (btn.closest('summary')) e.preventDefault();
 
+  if (btn.classList.contains('dm-review-btn')) {
+    if (state.expandedGroups.has('duplicates')) state.expandedGroups.delete('duplicates');
+    else state.expandedGroups.add('duplicates');
+    state.healthLive = state.expandedGroups.has('duplicates') ? 'Possible duplicates shown.' : 'Possible duplicates hidden.';
+    render(myMountToken);
+    return;
+  }
+  if (btn.classList.contains('dm-show-more-btn')) {
+    const group = btn.dataset.moreGroup;
+    state.groupVisible[group] = (state.groupVisible[group] || ISSUE_PAGE) + ISSUE_PAGE;
+    render(myMountToken);
+    return;
+  }
+  if (btn.classList.contains('dm-left-undo-btn')) {
+    const key = btn.dataset.leftKey;
+    undoLeftRow(domain.slug, key).catch(reportAsyncActionFailure);
+    return;
+  }
   if (btn.classList.contains('dm-outcome-retry')) {
     const key = btn.dataset.outcomeKey;
     const failed = state.rowOutcomes[key];
@@ -8935,6 +8906,7 @@ function onHealthClick(e) {
 
   switch (btn.id) {
     case 'dm-rescan-btn': rescan(domain.slug); return;
+    case 'dm-repair-all-btn': dispatchHealthAction(() => repairAllFree(domain.slug)); return;
     case 'dm-confirm-yes': {
       const asked = state.confirm;
       if (!asked || asked.busy) return;
@@ -8956,12 +8928,10 @@ function onHealthClick(e) {
     case 'dm-plan-apply-btn': planLeaving = true; dispatchHealthAction(() => applyPendingPlan(domain.slug)); return;
     case 'dm-plan-discard-btn':
       state.pendingPlan = null;
-      state.healthLive = 'Plan discarded. Nothing was written.';
+      state.healthLive = 'Nothing was written.';
       render(myMountToken);
       return;
     case 'dm-semantic-merge-btn': dispatchHealthAction(() => mergeSemanticDuplicates(domain.slug)); return;
-    // Through the same door as Find duplicate pages, so the first-use disclosure holds.
-    case 'dm-semantic-next-btn': dispatchHealthAction(() => onQuickAction(domain.slug, 'semanticDupes')); return;
     case 'dm-semantic-more-btn': {
       const scan = activeSemanticScan();
       if (scan) { scan.visible = (scan.visible || SEMANTIC_PAGE_SIZE) + SEMANTIC_PAGE_SIZE; render(myMountToken); }
@@ -9006,7 +8976,6 @@ function onHealthClick(e) {
     return;
   }
   if (btn.classList.contains('dm-group-fixall-btn') && data.fixall) {
-    e.preventDefault();
     e.stopPropagation(); // don't toggle the <details> — see v3.0.1-beta.18 note in CLAUDE.md
     dispatchHealthAction(() => confirmFixAllOfType(domain.slug, btn.dataset.fixall));
     return;
@@ -9027,10 +8996,11 @@ function onHealthClick(e) {
 // the old state, and now that the fold survives a paint that would undo the
 // press. The click happens first: it records the state the press is about to
 // set, and `toggle` confirms it.
-function noteHealthFoldPress(target) {
+function noteHealthFoldPress(target, e) {
   const summary = target.closest('summary');
   const fold = summary && summary.parentElement;
   if (!fold || !fold.dataset || !fold.dataset.groupKey || !fold.classList.contains('dm-group')) return;
+  if (fold.classList.contains('dm-group-nofold')) { if (e) e.preventDefault(); return; }
   if (fold.open) state.expandedGroups.delete(fold.dataset.groupKey);
   else state.expandedGroups.add(fold.dataset.groupKey);
 }
@@ -9057,11 +9027,11 @@ function rescan(slug) {
   // Slug-gated like the re-entry path, never a hardcoded `true`: a rescan
   // is the same domain by construction, but hardcoding that makes the
   // guarantee depend on the caller staying correct forever.
-  state.healthLive = 'Rescan started.';
+  state.healthLive = 'Checking…';
   loadHealth(slug, myMountToken, {
     keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, slug),
   }).then(() => {
-    state.healthLive = 'Scan finished.';
+    state.healthLive = 'Checked.';
     render(myMountToken);
   }).catch(reportAsyncActionFailure);
 }
@@ -9111,13 +9081,13 @@ const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';
 // paragraph. All three already show an exact per-action cost/target confirm
 // right after this one (confirmBrokenLinksPlan etc.) — this disclosure only
 // states the general shape ONCE, it does not repeat those specifics.
-const AI_DISCLOSURE_COPY =
-  'The ✨ AI actions in Quick maintenance — fixing broken links, rescuing orphan pages, and finding duplicate ' +
-  'pages — send excerpts of the relevant wiki pages, and usually a list of your other page names (slugs only, ' +
-  'never full page contents beyond what’s excerpted), to your configured AI provider (Google Gemini, ' +
-  'Anthropic or OpenRouter — whichever you set in Settings). The next step always shows exactly what that specific action ' +
-  'sends and its estimated cost before anything runs. The provider’s own privacy policy applies to what it ' +
-  'receives. To turn this off entirely, remove your API key in Settings.';
+const AI_PROVIDER_NAMES = { gemini: 'Google Gemini', anthropic: 'Anthropic', openrouter: 'OpenRouter' };
+function aiDisclosureCopy(provider) {
+  const name = AI_PROVIDER_NAMES[provider] || provider || 'the one you set in Settings';
+  return 'These actions send the opening of the pages involved, and usually a list of your other page names, to your AI provider (' + name + '). ' +
+    'The next step shows what it sends and what it costs before anything runs. The provider’s own privacy policy applies. ' +
+    'To turn this off, remove your API key in Settings.';
+}
 
 // Fail CLOSED: for a privacy consent, "can't tell" must mean "ask again",
 // never "assume yes". localStorage can throw (private/incognito mode,
@@ -9188,8 +9158,8 @@ function confirmAiAction(slug, action) {
   };
   if (aiDisclosureSeen()) return dispatch();
   state.confirm = {
-    title: 'Before you use an AI action',
-    body: AI_DISCLOSURE_COPY,
+    title: 'Before you use AI help.',
+    body: aiDisclosureCopy(state.aiProvider),
     confirmLabel: 'Continue',
     run: () => { markAiDisclosureSeen(); return dispatch(); },
   };
@@ -9198,39 +9168,8 @@ function confirmAiAction(slug, action) {
 }
 
 function onQuickAction(slug, action) {
-  if (action === 'fixSafe') return confirmFixSafe(slug);
   if (action === 'indexPlan') return runIndexRebuildPlan(slug);
   if (action === 'brokenLinks' || action === 'orphans' || action === 'semanticDupes') return confirmAiAction(slug, action);
-}
-
-// ── fix-all-safe (free, deterministic) ─────────────────────────────────────
-
-async function confirmFixSafe(slug) {
-  const token = myMountToken;
-  if (safeFixDeletedPages(state.health) > 0 && !(await readHealthBeforeAsking(slug, token, 'fixSafeCheck'))) { render(token); return undefined; }
-  const total = countSafeFixable(state.health);
-  // THE SAME DELETIONS, SAID THE SAME WAY (v3.72.1, F6). fixAllSafe runs the
-  // two page-DELETING types first (health.js), and this confirm used to call
-  // them "deterministic repairs" with the soft undo note, while the per-type
-  // "Fix all" for the very same issues counted the pages and warned. The
-  // count comes from the same deletedPageCount the per-type confirm uses.
-  const deletes = safeFixDeletedPages(state.health);
-  // FREE REPAIRS THAT DELETE NOTHING DO NOT ASK (owner's decision, 2026-11-05):
-  // see confirmFixAllOfType. This one asks only when it would delete a page.
-  if (deletes === 0) return runFixSafe(slug);
-  state.confirm = {
-    title: 'Fix ' + pluralize(total, 'safe issue') + '?',
-    body: 'Applies deterministic repairs only — cross-folder duplicates, hyphen variants, folder-prefix links, ' +
-      'missing backlinks, summary link lists, and broken links that already have a known target. Nothing here spends AI tokens. ' +
-      (deletes > 0
-        ? 'The duplicates and hyphen variants are MERGED: ' + pluralize(deletes, 'page') + ' will be deleted. ' + GIT_UNDO_WARN
-        : GIT_UNDO_NOTE),
-    confirmLabel: 'Fix and delete',
-    busyLabel: 'Working…',
-    run: () => runFixSafe(slug),
-  };
-  render(myMountToken);
-  return undefined;
 }
 
 // Every `run*`/`apply*`/`merge*` action below follows the same shape:
@@ -9247,7 +9186,7 @@ async function confirmFixSafe(slug) {
 // screen can be a write behind (left and came back, an agent, another computer): it
 // once said "4 pages will be deleted" with none left to delete, then "Merged 0". No
 // report, no question.
-async function readHealthBeforeAsking(slug, token, busyKey) {
+async function readHealthBeforeAsking(slug, token, busyKey, retry) {
   state.busyKey = busyKey;
   render(token);
   try {
@@ -9259,7 +9198,7 @@ async function readHealthBeforeAsking(slug, token, busyKey) {
   } catch (err) {
     if (slug === state.activeSlug && isCurrentMount(token)) {
       state.rowNoteFrom = { slug, token };
-      state.rowNote = { tone: 'error', text: 'Could not check this wiki: ' + err.message, retry: () => onQuickAction(slug, 'fixSafe') };
+      state.rowNote = { tone: 'error', text: 'Could not check this wiki: ' + err.message, retry };
     }
     return false;
   } finally {
@@ -9267,48 +9206,56 @@ async function readHealthBeforeAsking(slug, token, busyKey) {
   }
 }
 
-async function runFixSafe(slug) {
+// ── Repair all: every free row, one after another ─────────────────────────
+// NOT POST /fix-all-safe: that route also runs the two page-deleting types, and this
+// lane promises no page deleted. It stays for its other callers. One type at a time,
+// in that route's order (FREE_REPAIR_ORDER); each row says so and leaves as its own
+// call returns, and one failure does not stop the rest.
+async function repairAllFree(slug) {
   const token = myMountToken;
-  state.busyKey = 'fixSafe';
+  const report = state.health;
+  const todo = FREE_REPAIR_ORDER.filter((t) => freeRepairCount(report, t) > 0);
+  if (todo.length === 0) return;
+  const n = todo.reduce((sum, t) => sum + freeRepairCount(report, t), 0);
+  let repaired = 0;
+  let firstError = null;
+  state.busyKey = 'laneFree';
+  state.laneRun = { i: 0, n };
   render(token);
-  // MEDIUM-1 fix: acquired right after the operation is committed to (same
-  // spot ingest.js's runIngest acquires its own handle), released
-  // unconditionally in the `finally` below — see the module-level comment
-  // above inFlightWriteSlugs for why this is a SEPARATE mechanism from that
-  // Set, not a replacement for it.
-  const releaseGate = beginDomainWrite(slug, 'health-fix-all-safe');
+  const releaseGate = beginDomainWrite(slug, 'health-fix');
   try {
-    // LOW-4 fix (re-audit, third round): `add()` moved to be the FIRST
-    // statement inside the try (was: add(slug) — render(token) — try {}).
-    // If render(token) threw, `add()` had already run, but the matching
-    // `finally { delete(slug) }` below was never reached (the throw
-    // happened OUTSIDE the try) — the entry leaked permanently, disabling
-    // this domain's Fix/Rescue/Merge buttons behind "an earlier fix is
-    // still running" for the rest of the session (no reachable trigger
-    // found; hardening only). With `add()` INSIDE the try, a throw before
-    // this line means `add()` never ran — nothing to leak — and a throw
-    // after it is caught by this same try's `finally`.
-    inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — see the module-level comment above
-    const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix-all-safe', { method: 'POST' });
-    {
-      // `distinct`, not `total`: one fix rewrites every occurrence of a link in a page.
-      const wanted = Number.isInteger(result.distinct) ? result.distinct : result.total;
-      const whole = result.fixed >= wanted;
-      state.rowNoteFrom = { slug, token };
-      state.rowNote = whole
-        ? { key: 'chip:fixSafe', held: true, tone: 'success', text: 'Repaired ' + result.fixed, drop: { safe: true } }
-        : { tone: 'error', text: 'Repaired ' + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) + ' could not be repaired.',
-            retry: () => confirmFixSafe(slug) };
+    inFlightWriteSlugs.add(slug);
+    for (const type of todo) {
+      try {
+        const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type }),
+        });
+        const wanted = Number.isInteger(result.distinct) ? result.distinct : result.total;
+        repaired += Number(result.fixed) || 0;
+        state.laneRun = { i: Math.min(repaired, n), n };
+        if (result.total === 0 || result.fixed >= wanted) {
+          state.rowNoteFrom = { slug, token };
+          state.rowNote = { key: 'group:' + type, held: true, tone: 'success', text: 'Repaired ' + result.fixed, trace: 'Repaired ' + repaired, lane: 'free', drop: { type } };
+        }
+      } catch (err) {
+        if (!firstError) firstError = err;
+      }
+      if (isCurrentMount(token)) render(token);
     }
-  } catch (err) {
-    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not repair: ' + err.message, retry: () => confirmFixSafe(slug) };
+    if (repaired < n) {
+      state.rowNoteFrom = { slug, token };
+      state.rowNote = repaired === 0 && firstError
+        ? { key: 'lane:free', tone: 'error', text: 'Could not repair: ' + firstError.message, retry: () => repairAllFree(slug) }
+        : { key: 'lane:free', tone: 'error', text: 'Repaired ' + repaired + ' of ' + n + '. ' + (n - repaired) + ' could not be repaired.', retry: () => repairAllFree(slug) };
+    }
   } finally {
-    inFlightWriteSlugs.delete(slug); // unconditional — the real write actually finished
-    releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as the delete() above
+    inFlightWriteSlugs.delete(slug);
+    releaseGate();
     state.busyKey = null;
-    state.aiProgress = null;
+    state.laneRun = null;
   }
-  // Left and came back while it ran: the mount on screen read the wiki too early.
   const live = isCurrentMount(token) ? token : myMountToken;
   if (!isCurrentMount(live)) return;
   await loadHealth(slug, live, { silent: true });
@@ -9364,20 +9311,11 @@ function deletedPageCount(type, issues) {
   return issues.length;
 }
 
-/** Pages "Fix N safe issues" will delete — the two DESTRUCTIVE types, counted
- *  by the same deletedPageCount the per-type confirm uses. */
-function safeFixDeletedPages(report) {
-  if (!report) return 0;
-  let n = 0;
-  for (const type of DESTRUCTIVE_FIX_TYPES) n += deletedPageCount(type, report[type] || []);
-  return n;
-}
-
 async function confirmFixAllOfType(slug, type) {
   if (!AUTO_FIX_TYPES.has(type)) return undefined;
   if (DESTRUCTIVE_FIX_TYPES.has(type)) {
     const token = myMountToken;
-    if (!(await readHealthBeforeAsking(slug, token, 'groupCheck:' + type))) { render(token); return undefined; }
+    if (!(await readHealthBeforeAsking(slug, token, 'groupCheck:' + type, () => confirmFixAllOfType(slug, type)))) { render(token); return undefined; }
     if (!((state.health && state.health[type]) || []).length) {
       state.rowNoteFrom = { slug, token };
       state.rowNote = { tone: 'info', text: 'Nothing left to merge.' };
@@ -9385,25 +9323,24 @@ async function confirmFixAllOfType(slug, type) {
       return undefined;
     }
   }
-  const cat = HEALTH_CATEGORIES.find((c) => c.key === type);
   const issues = (state.health && state.health[type]) || [];
   const count = type === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
   if (count === 0) return undefined;
   if (!DESTRUCTIVE_FIX_TYPES.has(type)) return fixAllOfType(slug, type);
 
-  const label = cat ? cat.label.toLowerCase() : type;
-  // "group", not "pair": one hyphen-variant issue can hold three or more
-  // slugs, and "pair" told the user the wrong thing about the SHAPE as well
-  // as the count.
-  const body = 'This MERGES each group and DELETES the duplicate pages, then repoints every '
-      + '[[link]] that pointed at them. ' + pluralize(deletedPageCount(type, issues), 'page')
-      + ' will be deleted. '
-      + GIT_UNDO_WARN;
-
+  // "group", not "pair": one nearly-the-same-name issue can hold three or more pages.
+  // And a deletion says how many PAGES, which for that type is not how many issues.
+  const pages = deletedPageCount(type, issues);
+  const n = (v) => Number(v).toLocaleString('en-US');
+  const goes = pages === 1 ? '1 page is deleted and its links move' : n(pages) + ' pages are deleted and their links move';
   state.confirm = {
-    title: 'Fix all ' + count + ' ' + label + '?',
-    body,
-    confirmLabel: 'Merge and delete',
+    title: type === 'hyphenVariants'
+      ? 'Merge ' + n(count) + (count === 1 ? ' group' : ' groups') + ' with nearly the same name?'
+      : 'Merge ' + n(count) + (count === 1 ? ' page' : ' pages') + ' with the same name?',
+    body: goes + ' to the page that stays.',
+    warn: GIT_UNDO_WARN,
+    tier: 'danger',
+    confirmLabel: 'Merge and delete ' + n(pages),
     busyLabel: 'Merging…',
     run: () => fixAllOfType(slug, type),
   };
@@ -9434,7 +9371,7 @@ async function fixAllOfType(slug, type) {
       state.rowNote = result.total === 0
         ? { tone: 'info', text: merges ? 'Nothing left to merge.' : 'Nothing left to repair.' }
         : result.fixed >= (Number.isInteger(result.distinct) ? result.distinct : result.total)
-        ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, drop: { type } }
+        ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, trace: (merges ? 'Merged ' : 'Repaired ') + result.fixed, lane: merges ? 'decision' : 'free', drop: { type } }
         : { key: 'group:' + type, tone: 'error',
             text: (merges ? 'Merged ' : 'Repaired ') + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) +
               (merges ? ' could not be merged.' : ' could not be repaired.'),
@@ -9461,23 +9398,31 @@ async function fixAllOfType(slug, type) {
 
 // ── Broken-links AI plan/apply ──────────────────────────────────────────────
 
+// Which model, in words a person reads, and what a run is about to cost.
+function healthModelName(est) {
+  const r = (est && est.runsOn) || state.aiRunsOn;
+  return (r && (r.modelLabel || r.model)) || state.aiModel || 'your AI model';
+}
+function aboutCost(est) {
+  const cost = costReadout(est);
+  return typeof est === 'object' && est && typeof est.estimatedUsd === 'number' ? 'About ' + cost : (cost || 'Cost unknown');
+}
+
 function confirmBrokenLinksPlan(slug) {
   const est = state.estimates.brokenLinks;
-  const provider = state.aiProvider || 'the configured provider';
-  const model = state.aiModel || '';
-  const cost = costReadout(est);
+  const usable = est && !est.error && est !== 'loading';
+  const total = (state.health && state.health.brokenLinks || []).length;
+  const n = (v) => Number(v).toLocaleString('en-US');
+  const needAi = usable ? est.needAi : total;
   state.confirm = {
-    title: 'Ask AI to resolve broken links?',
-    body: 'Sends each broken link’s context, plus the domain’s slug inventory' +
-      (est && !est.error ? ' (' + est.inventorySize + ' entries)' : '') + ', to ' + provider + (model ? '/' + model : '') +
-      '. Estimated cost ' + (cost || 'unknown') + ' for ' + (est && !est.error ? est.needAi : '?') + ' link' +
-      (est && est.needAi === 1 ? '' : 's') + ' that need AI (' + (est && !est.error ? est.resolveFree : 0) + ' resolve for free locally). ' +
-      'This only builds a plan — nothing is written yet.',
-    confirmLabel: 'Build plan',
-    busyLabel: 'Planning…',
-    // The run line first (v3.67.0): the estimate route's own runsOn when it
-    // sent one, else the resting model from the ai-available probe.
-    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
+    title: 'Ask AI to resolve ' + n(total) + (total === 1 ? ' broken link?' : ' broken links?'),
+    body: 'Sends the text around each link and the list of your page names to ' + healthModelName(est) + '. ' +
+      aboutCost(usable ? est : null) + ' for ' + n(needAi) + (needAi === 1 ? ' link' : ' links') + (usable ? ' (' + n(est.resolveFree) + ' ' + (est.resolveFree === 1 ? 'is' : 'are') + ' resolved free)' : '') + '. Nothing is written yet.',
+    tier: 'ai',
+    confirmLabel: 'Ask for',
+    costText: costReadout(usable ? est : null, { compact: true }) || '',
+    busyLabel: 'Looking…',
+    busyCount: 'Looking… {i} of {n}',
     run: () => runBrokenLinksPlan(slug),
   };
   render(myMountToken);
@@ -9512,30 +9457,20 @@ function confirmBrokenLinksPlan(slug) {
 // available to write before now.
 function emptyPlanNotice(kind, summary, batchErrors) {
   if (batchErrors > 0) {
-    // NOT pluralize(): this file's pluralize is a bare + 's' and yields
-    // "2 batchs". Caught by §8 of test-beta16-broken-links.js, whose sandbox
-    // uses the same naive implementation the real view does — which is the
-    // point of stubbing it faithfully rather than "correctly".
-    return 'Nothing was planned and nothing was written — the AI did not answer for '
-      + batchErrors + ' batch' + (batchErrors === 1 ? '' : 'es')
-      + '. Your wiki is unchanged; try again in a moment.';
+    // NOT pluralize(): this file's pluralize is a bare + 's' and yields "2 batchs".
+    return 'Nothing changed. The AI did not answer for ' + batchErrors + ' batch' + (batchErrors === 1 ? '' : 'es') + '. Try again in a moment.';
   }
   if (kind === 'orphans') {
     const n = Number(summary && summary.orphans) || 0;
-    // Pronoun-free on purpose: the sentence has to read correctly at n = 1 and
-    // at n = 213 without a second template.
-    return 'No confident home was found for ' + (n ? pluralize(n, 'orphan page') : 'any orphan page')
-      + ', so nothing was written. The rescuer only proposes a link where there is a genuine '
-      + 'relationship, so this is it working as intended — left for manual review.';
+    return 'No clear home was found for ' + (n ? n.toLocaleString('en-US') + (n === 1 ? ' page' : ' pages') : 'any page') + ', so nothing changed.';
   }
-  return 'No broken link could be resolved, so nothing was written and your wiki is unchanged.';
+  return 'No broken link could be resolved, so nothing changed.';
 }
 
 async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
   state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
-  state.progressText = 'Planning…';
   state.aiProgress = null;
   render(token);
   try {
@@ -9569,7 +9504,7 @@ async function runBrokenLinksPlan(slug) {
       state.pendingPlan = { kind: 'brokenLinks', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9581,17 +9516,15 @@ async function runBrokenLinksPlan(slug) {
 
 function confirmOrphansPlan(slug) {
   const est = state.estimates.orphans;
-  const provider = state.aiProvider || 'the configured provider';
-  const model = state.aiModel || '';
-  const cost = costReadout(est);
+  const usable = est && !est.error && est !== 'loading';
   state.confirm = {
-    title: 'Ask AI to find homes for orphan pages?',
-    body: 'Sends each orphan plus the domain’s entity/concept inventory' +
-      (est && !est.error ? ' (' + est.inventorySize + ' entries)' : '') + ' to ' + provider + (model ? '/' + model : '') +
-      '. Estimated cost ' + (cost || 'unknown') + '. This only builds a plan — nothing is written yet.',
-    confirmLabel: 'Build plan',
-    busyLabel: 'Planning…',
-    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
+    title: 'Ask AI to find a page that should link to each?',
+    body: 'Sends each page’s opening and the list of your page names to ' + healthModelName(est) + '. ' + aboutCost(usable ? est : null) + '. Nothing is written yet.',
+    tier: 'ai',
+    confirmLabel: 'Ask for',
+    costText: costReadout(usable ? est : null, { compact: true }) || '',
+    busyLabel: 'Looking…',
+    busyCount: 'Looking… {i} of {n}',
     run: () => runOrphansPlan(slug),
   };
   render(myMountToken);
@@ -9628,7 +9561,7 @@ async function runOrphansPlan(slug) {
       state.pendingPlan = { kind: 'orphans', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message, retry: () => onQuickAction(slug, 'orphans') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'orphans') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9648,12 +9581,12 @@ async function runIndexRebuildPlan(slug) {
     else if (!result || result.nothingToDo) {
       state.pendingPlan = null;
       state.rowNoteFrom = { slug, token };
-      state.rowNote = { tone: 'info', text: 'index.md already lists every page.' };
+      state.rowNote = { tone: 'info', text: 'The page list already has every page.' };
     } else {
       state.pendingPlan = { kind: 'indexRebuild', basis: result.basis, summary: result.summary, samples: result.samples };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not preview the index rebuild — ' + err.message, retry: () => runIndexRebuildPlan(slug) }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not rebuild the list: ' + err.message, retry: () => runIndexRebuildPlan(slug) }; }
   } finally {
     state.busyKey = null;
   }
@@ -9680,16 +9613,15 @@ async function applyIndexRebuildPlan(slug) {
       const s = (result && result.summary) || {};
       state.rowNoteFrom = { slug, token };
       state.rowNote = result && result.written === false
-        ? { tone: 'info', text: 'index.md already lists every page.' }
-        : { tone: 'success', trace: 'Index rebuilt', text: 'Index rebuilt — added ' + countOf(s.add, 'page', 'pages') + ' and removed '
-            + countOf(s.removeStale, 'stale row', 'stale rows') + '. index.md is now ' + fmtKB(s.bytesAfter) + '.' };
+        ? { tone: 'info', text: 'The page list already has every page.' }
+        : { tone: 'success', text: 'The page list was rebuilt. ' + countOf(s.add, 'page', 'pages') + ' added, ' + countOf(s.removeStale, 'row', 'rows') + ' removed.' };
     }
   } catch (err) {
     {
       state.rowNoteFrom = { slug, token };
       state.rowNote = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
-        ? { tone: 'info', text: err.message }
-        : { tone: 'error', text: 'Could not rebuild the index — ' + err.message, retry: () => runIndexRebuildPlan(slug) };
+        ? { tone: 'info', text: 'The wiki changed since this was worked out. Press Preview the rebuild again.' }
+        : { tone: 'error', text: 'Could not rebuild the list: ' + err.message, retry: () => runIndexRebuildPlan(slug) };
     }
   } finally {
     if (isCurrentMount(token)) state.pendingPlan = null;
@@ -9769,23 +9701,21 @@ async function applyPendingPlan(slug) {
         const rt = Number(result.retargeted) || 0;
         const st = Number(result.stripped) || 0;
         const dg = Number(result.downgraded) || 0;
-        let text = 'Repointed ' + pluralize(rt, 'occurrence')
-          + ', removed the brackets from ' + pluralize(st, 'occurrence')
-          + ', across ' + pluralize(Number(result.filesChanged) || 0, 'file') + '.';
+        const fc = Number(result.filesChanged) || 0;
+        const num = (v) => v.toLocaleString('en-US');
+        let text = num(rt) + (rt === 1 ? ' link now points' : ' links now point') + ' to a page and ' + num(st) + (st === 1 ? ' link became' : ' links became') + ' plain text, across ' + num(fc) + (fc === 1 ? ' page.' : ' pages.');
         if (dg > 0) {
-          text += ' ' + pluralize(dg, 'link')
-            + ' had a proposed target that did not pass the safety check, so the brackets'
-            + ' were removed instead of pointing at the wrong page.';
+          text += ' ' + num(dg) + (dg === 1 ? ' link' : ' links') + ' had a suggested page that failed the safety check, so ' + (dg === 1 ? 'it' : 'they') + ' became plain text instead.';
         }
         state.rowNoteFrom = { slug, token };
-        state.rowNote = { tone: 'success', text, trace: 'Links fixed' };
+        state.rowNote = { tone: 'success', text };
       } else {
         state.rowNoteFrom = { slug, token };
-        state.rowNote = { tone: 'success', trace: 'Pages linked', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
+        state.rowNote = { tone: 'success', text: 'Added ' + (result.rescued || 0) + ((result.rescued || 0) === 1 ? ' link.' : ' links.') + ' ' + (result.skipped || 0) + ' skipped.' };
       }
     }
   } catch (err) {
-    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not apply the plan — ' + err.message, retry: () => onQuickAction(slug, kind) };
+    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: (kind === 'orphans' ? 'Could not add the links: ' : 'Could not repair: ') + err.message, retry: () => onQuickAction(slug, kind) };
   } finally {
     // MEDIUM-4 fix (re-audit): unlike busyKey (which must ALWAYS reset —
     // see the H2 fix note above — or a button stays disabled forever),
@@ -9855,7 +9785,7 @@ async function confirmSemanticScan(slug) {
   if (est.error) {
     delete state.estimates.semanticDupes;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { tone: 'error', text: 'Could not estimate the duplicate scan — ' + est.error, retry: () => onQuickAction(slug, 'semanticDupes') };
+    state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + est.error, retry: () => onQuickAction(slug, 'semanticDupes') };
     render(token);
     return;
   }
@@ -9864,26 +9794,24 @@ async function confirmSemanticScan(slug) {
     // The scan makes no provider call and brings back what it found before.
     if (est.totalPairs > 0) return runSemanticScan(slug);
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { tone: 'info', text: 'No likely duplicate candidates found — nothing to scan.' };
+    state.rowNote = { tone: 'info', text: 'No two page names look alike' };
     render(token);
     return;
   }
 
-  const provider = state.aiProvider || 'the configured provider';
-  const model = state.aiModel || '';
-  const reading = semanticScanConfirmText(est, provider + (model ? '/' + model : ''), costReadout(est));
+  const reading = semanticScanConfirmText(est, healthModelName(est), costReadout(est));
   state.confirm = {
     title: reading.title,
     body: reading.body,
-    // A REFUSED run gets no "Scan now" at all (v3.72.1, F4): the server
-    // refuses before any LLM call when the estimate is over the ceiling, so a
-    // button beside a price would be a control whose only outcome is an error
-    // banner. The confirm's other door goes to the limits instead.
-    confirmLabel: reading.refused ? null : 'Scan now',
-    busyLabel: 'Scanning…',
+    // A REFUSED run gets no go button at all (v3.72.1, F4): the server refuses before
+    // any LLM call when the estimate is over the ceiling, so a button beside a price
+    // would be a control whose only outcome is an error. The other door goes to the limits.
+    tier: 'ai',
+    confirmLabel: reading.refused ? null : 'Compare for',
+    costText: reading.refused ? '' : (costReadout(est, { compact: true }) || ''),
+    busyLabel: 'Comparing…',
     refused: reading.refused,
     settingsLabel: reading.refused ? 'Open scan limits' : null,
-    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
     run: reading.refused ? null : () => runSemanticScan(slug),
   };
   render(token);
@@ -9909,37 +9837,23 @@ async function confirmSemanticScan(slug) {
 function semanticScanConfirmText(est, runsOnName, cost) {
   const n = (v) => Number(v).toLocaleString('en-US');
   const pairs = est.candidatePairs;
-  const scope = est.truncated
-    ? n(pairs) + ' candidate pairs — the most similar of ' + n(Number.isInteger(est.leftPairs) ? est.leftPairs : est.totalCandidates) +
-      ' found locally, capped at your ' +
-      (Number.isInteger(est.maxPairs) ? n(est.maxPairs) + '-pair ' : '') + 'limit'
-    : n(pairs) + ' candidate ' + (pairs === 1 ? 'pair' : 'pairs') + ' found locally';
   const ceiling = est.costCeilingTokens;
   const tokens = est.estimatedTokens;
   const refused = Number.isFinite(ceiling) && Number.isFinite(tokens) && tokens > ceiling;
   if (refused) {
     return {
       refused: true,
-      title: 'This scan is over your cost ceiling',
-      body: 'It would send ' + scope + ' to ' + runsOnName + ': an estimated ' + n(tokens) +
-        ' tokens, over your AI Health cost ceiling of ' + n(ceiling) +
-        ' tokens, so it will not start. Raise the ceiling or lower the maximum candidate pairs in ' +
-        'Settings › Health & scan limits. Nothing has been sent and nothing was spent.',
+      title: 'This run is over your cost limit.',
+      body: 'It would send ' + n(pairs) + (pairs === 1 ? ' pair' : ' pairs') + ': about ' + n(tokens) +
+        ' tokens, over your limit of ' + n(ceiling) + '. Nothing has been sent.',
     };
   }
-  if (est.truncated || est.checkedPairs > 0) {
-    return {
-      refused: false,
-      title: 'Scan for duplicate pages?',
-      body: 'Checks the next ' + n(pairs) + ' of ' + n(est.leftPairs) + (est.leftPairs === 1 ? ' pair' : ' pairs') + ' not checked yet, using ' + runsOnName +
-        '. Estimated cost ' + (cost || 'unknown') + '. This only finds pairs — nothing is merged yet.',
-    };
-  }
+  const left = Number.isInteger(est.leftPairs) ? est.leftPairs : pairs;
+  const about = typeof est.estimatedUsd === 'number' ? ' and ' + (cost || 'cost unknown') : '. ' + (cost || 'Cost unknown');
   return {
     refused: false,
-    title: 'Scan for duplicate pages?',
-    body: 'Scans ' + scope + ', using ' + runsOnName + '. Estimated cost ' + (cost || 'unknown') +
-      '. This only finds pairs — nothing is merged yet.',
+    title: 'Compare the next ' + n(pairs) + ' of ' + n(left) + (left === 1 ? ' pair?' : ' pairs?'),
+    body: 'Sends the opening of each page to ' + runsOnName + '. About ' + n(tokens) + ' tokens' + about + '. Nothing is merged.',
   };
 }
 
@@ -9969,14 +9883,15 @@ async function runSemanticScan(slug) {
       state.semanticScan = newSemanticScan(slug, Object.assign({}, result, { candidatePairsSent: sent }));
       // Said on the question that was answered; the list itself is under it.
       state.rowNoteFrom = { slug, token };
-      state.rowNote = { key: 'scan-done', held: true, tone: 'success', text: 'Checked ' + sent.toLocaleString('en-US') + ' ' + (sent === 1 ? 'pair' : 'pairs') + '.' };
+      state.rowNote = { key: 'scan-done', held: true, tone: 'success', text: 'Compared ' + sent.toLocaleString('en-US') + ' ' + (sent === 1 ? 'pair' : 'pairs') + '.' };
+      state.semanticQuote = null;
       // A failed batch remembers nothing, so its pairs stay in the "still to
       // check" count. Part of a run failing is a notice in the card, which says
       // so; all of it failing is this banner.
-      if (firstBatchError && state.semanticScan.failedAll) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') }; }
+      if (firstBatchError && state.semanticScan.failedAll) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') }; }
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') }; }
   } finally {
     state.busyKey = null;
     state.aiProgress = null;
@@ -9986,10 +9901,10 @@ async function runSemanticScan(slug) {
 
 function confirmSemanticReset(slug) {
   state.confirm = {
-    title: 'Check everything again?',
-    body: 'The Curator forgets which pairs it has checked in this domain, so the next scan starts over and costs money again. ' +
-      'Pairs you skipped stay skipped. Nothing in your wiki changes.',
-    confirmLabel: 'Check everything again',
+    title: 'Forget all comparisons?',
+    body: 'The Curator forgets which pairs it has compared in this domain, so the next run starts over and costs money again. ' +
+      'Pairs you kept apart stay that way. Nothing in your wiki changes.',
+    confirmLabel: 'Forget',
     run: () => runSemanticReset(slug),
   };
   render(myMountToken);
@@ -10003,9 +9918,10 @@ async function runSemanticReset(slug) {
     // The list goes with what it stood on: the batch would refuse every pair on it.
     const scan = activeSemanticScan();
     if (scan) state.semanticScan = null;
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'success', text: 'This domain\'s checked pairs were forgotten.' }; }
+    state.semanticQuote = null;
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'success', text: 'Comparisons forgotten.' }; }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not check everything again — ' + err.message, retry: () => confirmSemanticReset(slug) }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not forget: ' + err.message, retry: () => confirmSemanticReset(slug) }; }
   }
   render(token);
 }
@@ -10014,21 +9930,23 @@ function mergeSemanticDuplicates(slug) {
   // Read live — never a captured array. See INVARIANT 2.
   const batch = liveBatchPairs();
   if (batch.length === 0) return;
+  const count = batch.length.toLocaleString('en-US');
   state.confirm = {
-    title: 'Merge ' + batch.length.toLocaleString('en-US') + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants') + '?',
+    title: 'Merge ' + count + ' spelling ' + (batch.length === 1 ? 'variant' : 'variants') + '?',
+    body: (batch.length === 1
+      ? 'The pair becomes one page. 1 page is deleted and its links move to the page that stays.'
+      : 'Each pair becomes one page. ' + count + ' pages are deleted and their links move to the page that stays.'),
     // DELIBERATELY INLINE, and must stay inline — do not "tidy" this into
     // GIT_UNDO_WARN. test-next-semantic-gate.js builds a sandbox from this
     // file's source with a FIXED const allow-list it extracts (`CONSTS`), and
-    // that suite is owned elsewhere; referencing the module constant here throws
-    // ReferenceError inside its sandbox and reds the suite. The copy is not
-    // unguarded: §8 of test-beta16-broken-links.js asserts that neither frontend
-    // contains a revert-from-Sync claim anywhere, and that this exact sentence
-    // is byte-identical to GIT_UNDO_WARN — so a drift between the two goes RED.
-    body: 'Combines each pair’s bullet sections onto the kept page, retargets every [[wikilink]] across the ' +
-      'domain to it, and deletes the removed file. Nothing else changes. ' +
-      'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.',
-    confirmLabel: 'Merge now',
+    // referencing the module constant here throws ReferenceError inside it. The
+    // copy is not unguarded: §8 of test-beta16-broken-links.js asserts that this
+    // exact sentence is byte-identical to GIT_UNDO_WARN.
+    warn: 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.',
+    tier: 'danger',
+    confirmLabel: 'Merge and delete ' + count,
     busyLabel: 'Merging…',
+    busyCount: 'Merging {i} of {n}…',
     // NOTE the missing argument: the pair list is NOT captured here. The
     // confirm card renders inline, so Flip / Skip / single-Merge stay
     // clickable while it is open — capturing `batch` now would merge a pair
@@ -10146,7 +10064,7 @@ async function mergeOneSemanticPair(slug, pair) {
           key: 'pair:' + key.split('||').sort().join('||'),
           held: true,
           tone: 'success',
-          trace: 'Merged a pair',
+          trace: 'Merged 1', lane: 'decision',
           text: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' +
             (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' settled.' : ''),
         };
@@ -10204,7 +10122,6 @@ async function skipSemanticPair(slug, pair) {
         key: 'pair:' + key.split('||').sort().join('||'),
         held: true,
         tone: 'success',
-        trace: 'Kept a pair apart',
         text: 'Kept ' + pair.removeSlug + ' and ' + pair.keepSlug + ' apart. They will not come back.',
         drop: { dismissed: true },
       };
@@ -10258,7 +10175,7 @@ async function runMergeSemanticDuplicates(slug) {
   const pairs = liveBatchPairs().map(toWirePair);
   if (pairs.length === 0) {
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { tone: 'info', text: 'Nothing left to merge — every spelling variant has been handled.' };
+    state.rowNote = { tone: 'info', text: 'Nothing left to merge.' };
     render(token);
     return;
   }
@@ -10320,11 +10237,12 @@ async function runMergeSemanticDuplicates(slug) {
       const refused = result.ineligible || 0;
       state.rowNoteFrom = { slug, token };
       state.rowNote = {
+        key: 'group:spelling',
         tone: 'success',
-        trace: 'Merged ' + merged,
+        trace: 'Merged ' + merged, lane: 'decision',
         text: refused > 0
-          ? 'Merged ' + merged + ' of ' + total + ' spelling ' + (total === 1 ? 'variant' : 'variants') + '. ' + refused + ' now ' + (refused === 1 ? 'needs' : 'need') + ' your Preview.'
-          : 'Merged ' + merged + ' of ' + total + ' duplicate ' + (total === 1 ? 'pair' : 'pairs') + '.',
+          ? 'Merged ' + merged + ' of ' + total + '. ' + refused + ' now ' + (refused === 1 ? 'needs' : 'need') + ' your review.'
+          : 'Merged ' + merged + '.',
       };
     }
   } catch (err) {
@@ -10333,7 +10251,7 @@ async function runMergeSemanticDuplicates(slug) {
       state.rowNoteFrom = { slug, token };
       state.rowNote = c.refusal
         ? { tone: 'error', text: c.refusal, retry: () => mergeSemanticDuplicates(slug) }
-        : { tone: 'error', text: 'Could not merge duplicates — ' + c.error, retry: () => mergeSemanticDuplicates(slug) };
+        : { tone: 'error', text: 'Could not merge: ' + c.error, retry: () => mergeSemanticDuplicates(slug) };
     }
   } finally {
     // The scan is NO LONGER discarded here. It used to be, and that made
@@ -10374,7 +10292,13 @@ async function dismissIssue(slug, type, issue) {
     if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, held: true, tone: 'success', text: 'Left as is.', drop: { type, issue, dismissed: true } };
+    // Where it stood, so Undo puts it back there and it does not move while it says so.
+    const whole = (state.health && state.health[type]) || [];
+    const asked = JSON.stringify(issue);
+    const group = type === 'brokenLinks' ? 'brokenLinksOpen' : type;
+    const siblings = type === 'brokenLinks' ? whole.filter((i) => !i.suggestedTarget) : whole;
+    state.rowNote = { key: rowKey, tone: 'success', text: 'Left as is.', drop: { type, issue, dismissed: true },
+      left: { type, issue, group, index: Math.max(0, siblings.findIndex((i) => JSON.stringify(i) === asked)), absIndex: Math.max(0, whole.findIndex((i) => JSON.stringify(i) === asked)) } };
     await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
     if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
@@ -10382,6 +10306,33 @@ async function dismissIssue(slug, type, issue) {
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
     state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => dismissIssue(slug, type, issue) };
+    render(token);
+  }
+}
+
+async function undoLeftRow(slug, rowKey) {
+  const token = myMountToken;
+  const left = state.leftRows[rowKey];
+  if (!left) return;
+  state.rowBusy.add(rowKey);
+  render(token);
+  try {
+    await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/undismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: left.type, issue: left.issue }),
+    });
+    state.rowBusy.delete(rowKey);
+    if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = { key: rowKey, tone: 'success', text: 'Brought back.', drop: { undoLeft: left } };
+    await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+    if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
+  } catch (err) {
+    state.rowBusy.delete(rowKey);
+    if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => undoLeftRow(slug, rowKey) };
     render(token);
   }
 }
