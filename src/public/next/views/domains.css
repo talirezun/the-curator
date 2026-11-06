@@ -1899,6 +1899,17 @@
 }
 .dm-lane-title { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
 .dm-lane-line { font-size: var(--text-xs); color: var(--text-2); }
+/* One slot of a fixed height for the reading and the button: a trace arriving or Repair
+   all going moves nothing under it. */
+.dm-lane-end {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-height: 18px;
+}
+.dm-lane-end-free { min-height: var(--control-sm); }
 .dm-lane-reading {
   flex: 1 1 auto;
   display: inline-flex;
@@ -1906,6 +1917,7 @@
   justify-content: flex-end;
   gap: 4px;
   min-height: 1em;
+  white-space: nowrap;
   font-size: var(--text-xs);
   color: var(--text-2);
 }
@@ -1920,17 +1932,27 @@
 .dm-group-nofold > .dm-group-summary > svg { visibility: hidden; }
 .dm-group-nofold > .dm-group-body { display: none; }
 /* The label takes the room, so a reading and a button sit together at the row's end. */
-.dm-health .dm-lane .dm-group-summary > .dm-group-label { margin-right: auto; }
+.dm-health .dm-lane .dm-group-summary > .dm-group-label:not(:has(+ .dm-group-pill)),
+.dm-health .dm-lane .dm-group-summary > .dm-group-pill { margin-right: auto; }
 .dm-health .dm-lane .dm-group-summary > .dm-group-meta { margin-left: 0; }
 .dm-health .dm-lane .dm-group-summary > .btn { flex: none; }
 /* Nothing in this section is in capitals, whatever the shared parts do elsewhere. */
 .dm-section.dm-health * { text-transform: none; }
-.dm-confirm-warn { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; }
+.dm-confirm-warn { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; margin-bottom: var(--space-2); }
+.dm-item-fact { display: block; }
 .dm-plan-data { color: var(--text-2); }
 .dm-review-btn { min-width: 72px; }
 .dm-left-undo-btn { min-width: 72px; }
 @media (max-width: 640px) {
-  .dm-lane-reading { flex-basis: 100%; justify-content: flex-start; }
+  /* The reading has a line of its own, always there, and so does the button. */
+  .dm-lane-end { flex-basis: 100%; flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+  .dm-lane-end-free { min-height: calc(var(--control-sm) + 22px); align-content: flex-start; }
+  .dm-lane-reading { flex: 1 0 100%; min-height: 18px; justify-content: flex-start; }
+  /* A path on its own line, so what stands beside the button can change and the row
+     keeps its height. */
+  .dm-health .dm-lane .dm-issue-main { flex: 1 1 100%; }
+  .dm-health .dm-lane .dm-dismiss-btn,
+  .dm-health .dm-lane .dm-left-undo-btn { margin-left: auto; }
   .dm-health .dm-lane .dm-group-summary { flex-wrap: wrap; }
   .dm-health .dm-lane .dm-group-label { flex: 1 1 60%; min-width: 0; white-space: normal; }
   .dm-health .dm-lane .dm-group-meta { flex: 1 1 100%; order: 3; margin-left: 0; text-align: left; white-space: normal; }

@@ -848,7 +848,7 @@ let h13 = card([VARIANT, LOOKALIKE], SOME);
 ok(compareOf().includes('500 of 36,333 pairs compared'), '13a: some left: the exact reading');
 ok(compareOf().includes('Compare the next 500'), '13a: …with its button');
 ok(decisionOf().includes('Spelling variants') && decisionOf().includes('Merge 1<') && decisionOf().includes('deletes 1 page'), '13b: the batch row, singular, and it says what it deletes');
-ok(decisionOf().indexOf('Possible duplicates') < decisionOf().indexOf('Spelling variants'), '13b: Possible duplicates comes first');
+ok(decisionOf().indexOf('Spelling variants') < decisionOf().indexOf('Possible duplicates'), '13b: Spelling variants comes first, so what a batch settles is all below the press');
 ok(h13.includes('Names differ, so check this one yourself.'), '13c: a high-confidence look-alike carries the muted line');
 ok(!h13.includes('dm-semantic-reset-btn') && /btn-secondary btn-xs" id="dm-semantic-reset-btn"/.test(compareOf()), '13d: Forget all comparisons is in AI help\'s fold, a real button and the smallest there');
 ok(primaryCount(h13) === 0 && !/btn-primary/.test(decisionOf().replace(/data-group-key="duplicates"[^]*?<\/details>/, '')), '13e: with a variant waiting, nothing leans toward deleting: the batch is not primary');

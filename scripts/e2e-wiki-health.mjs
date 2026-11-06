@@ -502,7 +502,12 @@ async function act(app, profile, name, o) {
   const store = (RESULTS[profile.name] ||= {});
   await inject(page);
   if (o.edge) await page.evaluate((s, mainSel, h) => { const e = document.querySelector(s); const m = document.querySelector(mainSel); m.scrollTop += e.getBoundingClientRect().top - (h - 60); }, o.press, SEL.main, profile.h);
-  else if (o.place) await place(page, o.press, o.place);
+  else if (o.place) {
+    await place(page, o.press, o.place);
+    // Scrolling there lets rows waiting on a scroll go, as it does for a person, who then
+    // looks again. The control is where it has settled, before the sampler starts.
+    if (await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.top < 0 || r.bottom > innerHeight; }, o.press)) { await delay(400); await place(page, o.press, o.place); }
+  }
   // A control the user cannot see is one they scroll to first (setup, before the sampler starts).
   else if (!o.stay && await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.top < 0 || r.bottom > innerHeight; }, o.press)) await place(page, o.press, 300);
   const r = await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, disabled: !!e.disabled }; }, o.press);
@@ -519,7 +524,9 @@ async function act(app, profile, name, o) {
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await delay(60);
   }
   await page.evaluate((cfg) => window.__hs.begin(cfg), { press: o.press, main: SEL.main, viewRoot: SEL.viewRoot, health: SEL.health, rows: SEL.rows, landmarks: SEL.landmarks, live: SEL.live, pointer: { x, y }, outcome: o.outcome || [] });
+  const underBefore = await page.evaluate((px, py) => { const e = document.elementFromPoint(px, py); return e ? e.tagName + '.' + String(e.className).split(' ')[0] + ' "' + (e.innerText || '').slice(0, 24) + '"' : 'nothing'; }, x, y);
   await page.click(x, y, { settleMs: 20 });
+  if (underBefore && !/^(BUTTON|SPAN|SVG|path|svg)/.test(underBefore)) note(`[${profile.name}] ${name}: under the pointer at the press: ${underBefore}, at ${x},${y}`);
   if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); const sh = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${profile.name}-${name}-during.png`), Buffer.from(sh.data, 'base64')); }
   if (o.until) await waitFor(page, o.until, name, o.untilTries || 600, ...(o.args || []));
   await delay(o.settle ?? 600);
@@ -654,13 +661,13 @@ async function scenarios(app, profile) {
     // The section's reading is whole.
     const fit = await page.evaluate(() => { const t = document.querySelector('.dm-health-reading'); return { trace: t ? t.innerText : null, fits: !t || t.scrollWidth <= t.clientWidth + 1, right: t ? t.getBoundingClientRect().right : 0, card: document.querySelector('.dm-health').getBoundingClientRect().right, ov: t ? getComputedStyle(t).textOverflow : '' }; });
     step(`[${profile.name}] the section's reading is whole`, fit.fits && fit.right <= fit.card + 1 && fit.ov !== 'ellipsis', JSON.stringify(fit));
-    await act(app, profile, 'rebuild-press', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
+    await act(app, profile, 'rebuild-press', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
     await page.evaluate(() => document.getElementById('dm-plan-discard-btn').focus());
     await page.evaluate(() => document.getElementById('dm-plan-discard-btn').click());
     await delay(600);
     const dis = await page.evaluate((s) => ({ onOpener: document.activeElement === document.querySelector(s), live: document.querySelector('.dm-health-live').textContent, plan: !!document.querySelector('#dm-plan-apply-btn') }), SEL.indexPlan);
     step(`[${profile.name}] Discard: focus returns to what opened the plan, and it says what happened`, dis.onOpener && !dis.plan && /Nothing was written/.test(dis.live) && !/Finished/.test(dis.live), JSON.stringify(dis));
-    await act(app, profile, 'rebuild-press-2', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan, SEL.outcome], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
+    await act(app, profile, 'rebuild-press-2', { press: SEL.indexPlan, place: 300, outcome: [SEL.plan], until: exists, args: [SEL.planApply], untilTries: 400, settle: 400, runs: true });
     await act(app, profile, 'rebuild-apply', { press: SEL.planApply, outcome: [ON_PLAN], until: exists, args: [SEL.outcome], untilTries: 400, settle: 1200, runs: true });
   }
   // S7 — at the very end of the page, shrinking must not clamp the scroll.
@@ -670,10 +677,11 @@ async function scenarios(app, profile) {
     await toEnd(); await delay(150);
     await act(app, profile, 'end-dismiss', { press: `${SEL.fold('orphans')} .dm-issue-row:last-child .dm-dismiss-btn`, outcome: [SEL.leftUndo], settle: HELD, runs: true, stay: true });
     await toEnd(); await delay(150);
-    await act(app, profile, 'end-fixall', { press: SEL.fixAll('folderPrefixLinks'), outcome: [SEL.done], settle: HELD, runs: true, stay: true });
+    await openFoldsOn(page, ['dismissed']); await delay(500); await toEnd(); await delay(150);
+    await act(app, profile, 'end-bring-back', { press: SEL.restore, outcome: [SEL.done], settle: HELD, runs: true, stay: true });
     // Pressed at the viewport's bottom edge: the next control is off-screen, and
     // moving focus to it must not scroll the page there.
-    await openFoldsOn(page, ['orphans']); await delay(150);
+    await openDomain(app, 'h7'); await openFoldsOn(page, ['orphans']); await delay(150);
     await act(app, profile, 'edge-dismiss', { press: `${SEL.fold('orphans')} .dm-dismiss-btn`, edge: true, outcome: [SEL.leftUndo], settle: HELD, runs: true });
     await toEnd(); await delay(150);
     const floor = await page.evaluate((m) => document.querySelector(m).style.getPropertyValue('--dm-health-floor'), SEL.main);
@@ -792,8 +800,11 @@ async function scenarios(app, profile) {
     const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /otherwise it cannot be undone/.test(c.innerText) }; }, SEL.confirmYes);
     step(`[${profile.name}] the deleting yes is danger, names its result and carries the warning`, /btn-danger/.test(conf.cls) && /^Merge and delete \d+$/.test(conf.label) && conf.warn, JSON.stringify(conf));
     await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(400);
+    const headH = () => page.evaluate(() => [...document.querySelectorAll('.dm-lane-head')].map((e) => [e.getBoundingClientRect().height, e.querySelector('.dm-lane-end') ? e.querySelector('.dm-lane-end').getBoundingClientRect().height : 0, e.querySelector('.btn') ? e.querySelector('.btn').getBoundingClientRect().height : 0].join('/')).join(' '));
+    note(`[${profile.name}] lane heads before: ${await headH()}`);
     const m = await act(app, profile, 'lane-repair-row', { press: SEL.fixAll('missingBacklinks'), place: 450, outcome: [SEL.done], settle: 120, runs: true });
     await shot('row-done');
+    note(`[${profile.name}] lane heads during: ${await headH()}`);
     step(`[${profile.name}] a free repair opens no question`, !!m && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)));
     await delay(HELD);
     const tr = await page.evaluate((s) => (document.querySelector(s) || {}).innerText || '', SEL.lane('free') + ' ' + SEL.laneReading);
@@ -864,7 +875,7 @@ async function scenarios(app, profile) {
     if (keyA) {
       const pv = SEL.cardBtn(keyA, 'preview'); const card = `.dm-sem-card[data-sem-key="${keyA}"]`;
       await act(app, profile, 'preview', { press: pv, place: 300, outcome: [`${card} ${SEL.preview}`], until: exists, args: [SEL.preview], settle: 400, decision: true, runs: true });
-      await act(app, profile, 'flip', { press: SEL.cardBtn(keyA, 'flip'), outcome: [card, SEL.card], settle: 400, decision: true });
+      await act(app, profile, 'flip', { press: SEL.cardBtn(keyA, 'flip'), outcome: [`.dm-sem-card[data-sem-key="${keyA.split('||').reverse().join('||')}"]`, card], settle: 400, decision: true });
       const keyA2 = await page.evaluate((cs) => { const c = [...document.querySelectorAll(cs)].find((x) => x.querySelector('[data-sem-action="preview"]:not([disabled])')); return c ? c.dataset.semKey : null; }, SEL.card);
       const keyM = keyA2 || keyA;
       await act(app, profile, 'preview-again', { press: SEL.cardBtn(keyM, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], settle: 400, decision: true, runs: true });

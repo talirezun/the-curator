@@ -54,7 +54,7 @@ function world() {
   const ran = [];
   const body = `
     const state = { rowNote: null, rowOutcomes: {}, rowLines: {}, confirm: null, pendingPlan: null, pressAnchor: null, ringAnchor: null,
-      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), leftRows: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), leftRows: {}, rowArming: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
     const HEALTH_CATEGORIES = [{ key: 'missingBacklinks', label: 'Missing backlinks' }, { key: 'crossFolderDupes', label: 'Cross-folder duplicates' }, { key: 'brokenLinks', label: 'Broken links' }];
     const AUTO_FIX_TYPES = new Set(['missingBacklinks', 'crossFolderDupes', 'hyphenVariants', 'brokenLinks']);
     const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
@@ -278,12 +278,12 @@ section('§3 Nothing is stranded: a row that has gone gives its question a home'
 {
   const w = world();
   w.state.health = { missingBacklinks: [] };
-  ok(w.healthStackHome('group:missingBacklinks') === 'lane:free', 'a group with no rows left has no row to draw under: its lane\'s head takes it');
+  ok(w.healthStackHome('group:missingBacklinks') === 'lane-end:free', 'a group with no rows left has no row to draw under: its lane\'s head takes it');
   w.state.health = { missingBacklinks: [{ a: 1 }] };
   ok(w.healthStackHome('group:missingBacklinks') === 'group:missingBacklinks', 'CONTROL: with rows, it stays under its row');
   ok(w.healthStackHome(null) === 'quick', 'no anchor is the section\'s own control row');
   ok(w.healthStackHome('issue:missingBacklinks:{"a":1}') === 'issue:missingBacklinks:{"a":1}', 'an issue row still there keeps its line');
-  ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'lane:decision', 'one that has gone hands it to the lane');
+  ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'lane-end:decision', 'one that has gone hands it to the lane');
   w.state.leftRows = { 'issue:missingBacklinks:{"a":2}': {} };
   ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'issue:missingBacklinks:{"a":2}', 'a row left as is this round still stands');
   w.state.leftRows = {};
@@ -291,7 +291,7 @@ section('§3 Nothing is stranded: a row that has gone gives its question a home'
   w.state.semanticScan = { coverage: {}, pairs: [] };
   w.state.rowOutcomes = { 'group:gone': { slug: 'a', tone: 'error', text: 'x', key: 'group:gone' } };
   w.placeHealthStack();
-  ok(w.state.rowLines['lane:decision'] && w.state.rowLines['lane:decision'].text === 'x', 'a failure whose row has gone is still on screen');
+  ok(w.state.rowLines['lane-end:decision'] && w.state.rowLines['lane-end:decision'].text === 'x', 'a failure whose row has gone is still on screen');
   w.state.rowOutcomes = { quick: { slug: 'other', tone: 'error', text: 'x', key: 'quick' } };
   w.placeHealthStack();
   ok(!w.state.rowLines.quick && !w.state.rowOutcomes.quick, 'another domain\'s outcome is dropped, never drawn');

@@ -136,7 +136,7 @@ import { renderOverview } from '../shared/overview.js';
 // identifiers inside functions several suites lift by brace-matching, so
 // those sandboxes inject the REAL functions.
 import { renderSectionHead, renderSectionTitle, renderCard, renderControlRow,
-  renderFoldRows, renderFoldRow, renderFoldItem, renderActionCard, actionChip } from '../shared/section.js';
+  renderFoldRows, renderFoldRow, renderFoldItem, actionChip } from '../shared/section.js';
 // ── THE SIDEBAR (v3.65.0) ──────────────────────────────────────────────────
 // THIS view's sidebar is the reference design — the maintainer's own words,
 // against the Context one: *"I suggest we go with the Domains design, which is
@@ -168,7 +168,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 // view was throwing away — so the outer ring here is fed by genuine server
 // counts, and is `null` (activity only, orbit alone) for exactly as long as
 // the server has reported nothing.
-import { progressRingHtml, ringValueFromCounts } from '../shared/progress-ring.js';
+import { progressRingHtml } from '../shared/progress-ring.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { loadUiState, durableStorage } from '../shared/ui-state.js';
 
@@ -542,6 +542,7 @@ const state = {
   flipFlash: null,        // the pair whose Flip is answering
   healthTrace: null,      // { slug, text, lane, at }: the last thing done, in its lane's head
   leftRows: {},           // rowKey -> a row left as is this round: it keeps its place, with Undo
+  rowArming: {},          // rowKey -> a row just brought back: its button arms a moment later
   groupVisible: {},       // group -> how many of its rows are shown
   laneRun: null,          // { i, n }: Repair all, while it runs
   semanticQuote: null,    // { slug, est, stale? }: the figures the Compare button wears
@@ -7486,7 +7487,7 @@ function healthGroupAlive(key) {
   if (key === 'compare') return true;
   if (key === 'aiOrphans') return (r.orphans || []).length > 0;
   if (key === 'aiBroken') return (r.brokenLinks || []).length > 0;
-  if (key === 'spelling') return liveBatchPairs().length > 0;
+  if (key === 'spelling') return liveBatchPairs().length > 0 || state.busyKey === 'semanticMerge';
   if (key === 'duplicates') { const s = activeSemanticScan(); return !!s && s.pairs.some((p) => p.status === 'open'); }
   if (key === 'dismissed') return Number(r.dismissedRecords) > 0;
   if (key === 'brokenLinks') return (r.brokenLinks || []).some((i) => i.suggestedTarget);
@@ -7499,24 +7500,24 @@ function healthGroupAlive(key) {
 function healthStackHome(anchor) {
   const a = anchor || 'quick';
   if (a === 'quick' || !state.health) return 'quick';
-  if (a.indexOf('lane:') === 0) return a;
+  if (a.indexOf('lane') === 0) return a;
   if (a.indexOf('issue:') === 0) {
     const cut = a.indexOf(':', 6);
     const list = state.health[a.slice(6, cut)];
     const want = a.slice(cut + 1);
-    return (Array.isArray(list) && list.some((i) => JSON.stringify(i) === want)) || (state.leftRows && state.leftRows[a]) ? a : 'lane:decision';
+    return (Array.isArray(list) && list.some((i) => JSON.stringify(i) === want)) || (state.leftRows && state.leftRows[a]) ? a : 'lane-end:decision';
   }
   if (a.indexOf('restore:') === 0) {
     const want = a.slice(8);
     return Array.isArray(state.dismissedRecords) && state.expandedGroups.has('dismissed') &&
-      state.dismissedRecords.some((r) => JSON.stringify(r) === want) ? a : 'lane:decision';
+      state.dismissedRecords.some((r) => JSON.stringify(r) === want) ? a : 'lane-end:decision';
   }
   if (a.indexOf('group:') === 0) {
     const key = a.slice(6);
-    if (healthGroupAlive(key)) return a;
-    return key.indexOf('ai') === 0 ? 'group:compare' : (HEALTH_FREE_GROUPS.has(key) ? 'lane:free' : 'lane:decision');
+    if (key === 'spelling' || healthGroupAlive(key)) return a;
+    return key.indexOf('ai') === 0 ? 'group:compare' : (HEALTH_FREE_GROUPS.has(key) ? 'lane-end:free' : 'lane-end:decision');
   }
-  if (a.indexOf('pair:') === 0) return healthGroupAlive('duplicates') ? 'group:duplicates' : 'lane:decision';
+  if (a.indexOf('pair:') === 0) return healthGroupAlive('duplicates') ? 'group:duplicates' : 'lane-end:decision';
   return 'quick';
 }
 
@@ -7589,10 +7590,14 @@ function takeHealthNote(token) {
     setTimeout(() => {
       const l = state.leftRows[key];
       if (l && l.arming) { l.arming = false; if (isCurrentMount(token)) render(token); }
-    }, 350);
+    }, 500);
     state.healthLive = note.text;
     if (note.drop) dropIssuesLocally(note.drop);
     return;
+  }
+  if (note.drop && note.drop.undoLeft) {
+    state.rowArming[key] = true;
+    setTimeout(() => { delete state.rowArming[key]; if (isCurrentMount(token)) render(token); }, 500);
   }
   const outcome = Object.assign({}, note, { key, slug: owner, at: Date.now(), held: note.held === true });
   // AN ANSWER IS ANSWERED WHERE IT WAS GIVEN. Whoever pressed Apply or the yes of
@@ -8152,8 +8157,7 @@ function renderLaneHead(lane, title, line, readingHtml, actionHtml) {
   return '<div class="dm-lane-head" data-row-key="lane-head:' + lane + '">' +
       '<span class="dm-lane-title">' + title + '</span>' +
       '<span class="dm-lane-line">' + line + '</span>' +
-      '<span class="dm-lane-reading">' + readingHtml + '</span>' +
-      (actionHtml || '') +
+      '<span class="dm-lane-end dm-lane-end-' + lane + '"><span class="dm-lane-reading">' + readingHtml + '</span>' + (actionHtml || '') + '</span>' +
     '</div>';
 }
 
@@ -8190,7 +8194,10 @@ function renderIssueFold(o) {
   const merged = issues.slice();
   for (const k of Object.keys(left)) {
     const l = left[k];
-    if (l.group === key && l.slug === state.activeSlug) merged.splice(Math.min(l.index, merged.length), 0, l.issue);
+    if (l.group !== key || l.slug !== state.activeSlug) continue;
+    // Brought back from the list below: it is an ordinary row again, in the report.
+    if (issues.some((i) => JSON.stringify(i) === JSON.stringify(l.issue))) continue;
+    merged.splice(Math.min(l.index, merged.length), 0, l.issue);
   }
   if (merged.length === 0) return '';
   const visible = (state.groupVisible && state.groupVisible[key]) || ISSUE_PAGE;
@@ -8198,8 +8205,8 @@ function renderIssueFold(o) {
     const rowKey = 'issue:' + type + ':' + JSON.stringify(issue);
     return renderIssueRow(type, issue, readonly, {
       saving: !!(state.rowBusy && state.rowBusy.has(rowKey)),
-      left: !!left[rowKey],
-      arming: !!(left[rowKey] && left[rowKey].arming),
+      left: !!left[rowKey] && !issues.some((i) => JSON.stringify(i) === JSON.stringify(issue)),
+      arming: !!(left[rowKey] && left[rowKey].arming) || !!(state.rowArming && state.rowArming[rowKey]),
       afterHtml: state.rowLines && state.rowLines[rowKey] ? renderOutcomeLine(state.rowLines[rowKey]) : '',
     });
   }).join('');
@@ -8264,7 +8271,8 @@ function renderFreeLane(report, readonly, crossMountBusy) {
   }
   const trace = renderLaneTrace('free');
   const here = renderAnchorHere('lane:free', crossMountBusy);
-  if (rows.length === 0 && !trace && !here) return '';
+  const end = renderAnchorHere('lane-end:free', crossMountBusy);
+  if (rows.length === 0 && !trace && !here && !end) return '';
   if (readonly) return renderFoldRows(rows.join(''), { alias: 'dm' });
   const running = state.busyKey === 'laneFree';
   const run = state.laneRun;
@@ -8277,6 +8285,7 @@ function renderFreeLane(report, readonly, crossMountBusy) {
     renderLaneHead('free', 'Free repairs', 'No AI, no cost, no page deleted.', reading ? escapeHtml(reading) : trace, button) +
     here +
     renderFoldRows(rows.join(''), { alias: 'dm' }) +
+    end +
   '</div>';
 }
 
@@ -8284,6 +8293,9 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
   const rows = [];
   const scan = activeSemanticScan();
   const open = scan ? scan.pairs.filter((p) => p.status === 'open') : [];
+  // SPELLING VARIANTS COMES FIRST. A batch settles pairs in the list under Possible
+  // duplicates, and pairs settled above the press moved it by 973 px at 1280.
+  const duplicatesAt = rows.length;
   if (open.length > 0) {
     const isOpen = state.expandedGroups.has('duplicates');
     rows.push(renderFoldRow({
@@ -8293,20 +8305,26 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
     }));
   }
   const batch = readonly ? [] : liveBatchPairs();
-  if (batch.length > 0) {
-    const running = state.busyKey === 'semanticMerge';
+  const running = state.busyKey === 'semanticMerge';
+  if (batch.length > 0 || running) {
     const isOpen = state.expandedGroups.has('spelling');
     const stack = renderAnchorHere('group:spelling', crossMountBusy);
     const visible = (state.groupVisible && state.groupVisible.spelling) || ISSUE_PAGE;
     rows.push(renderFoldRow({
       key: 'spelling', label: 'Spelling variants', pill: n0(batch.length), open: isOpen, alias: 'dm',
-      metaHtml: deletesReading(batch.length),
+      // The line stays while the last of them goes: at phone width it is a line of its own.
+      metaHtml: batch.length ? deletesReading(batch.length) : '<span class="dm-lane-deletes">&nbsp;</span>',
       actionHtml: '<button class="btn btn-secondary" id="dm-semantic-merge-btn"' + (running ? ' aria-busy="true" aria-disabled="true"' : ((state.busyKey || crossMountBusy) ? ' disabled' : '')) + '>' +
         (running ? buttonRingHtml() + ' Merging…' : 'Merge ' + n0(batch.length)) + '</button>',
       bodyHtml: (isOpen ? stack : '') + batch.slice(0, visible).map((p) => renderFoldItem({
         alias: 'dm', rowKey: 'spelling:' + semanticPairKey(p), main: p.removeSlug + ' → ' + p.keepSlug,
       })).join('') + renderShowMore('spelling', batch.length - visible),
     }) + (isOpen ? '' : stack));
+    // It was pushed after Possible duplicates' row: it goes in front of it.
+    if (rows.length > duplicatesAt + 1) rows.unshift(rows.pop());
+  } else {
+    // Its row has gone: what the batch has to say stays where the batch was pressed.
+    rows.unshift(renderAnchorHere('group:spelling', crossMountBusy));
   }
   const cross = report.crossFolderDupes || [];
   if (cross.length) {
@@ -8330,13 +8348,13 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
   rows.push(renderDismissedGroup(Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed));
   const body = rows.join('');
   const trace = renderLaneTrace('decision');
-  const here = renderAnchorHere('lane:decision', crossMountBusy);
+  const here = renderAnchorHere('lane-end:decision', crossMountBusy);
   if (!body && !trace && !here) return '';
   if (readonly) return renderFoldRows(body, { alias: 'dm' });
   return '<div class="dm-lane" data-row-key="lane:decision">' +
     renderLaneHead('decision', 'Your decision', 'Only you can tell. Nothing happens until you choose.', trace, '') +
-    here +
     renderFoldRows(body, { alias: 'dm' }) +
+    here +
   '</div>';
 }
 
@@ -8768,7 +8786,7 @@ function renderIssueRow(type, issue, readonly, rowView) {
   return renderFoldItem({
     alias: 'dm', mainHtml: main, metaHtml: meta, rowKey: 'issue:' + type + ':' + JSON.stringify(issue),
     actionHtml: canDismiss ? '<button class="btn btn-secondary dm-dismiss-btn" data-dismiss-type="' + type + '" data-dismiss-issue=\'' + escapeHtml(JSON.stringify(issue)) + '\'' +
-      (saving ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (saving ? 'Saving…' : 'Leave as is') + '</button>' : '',
+      (saving ? ' aria-busy="true" aria-disabled="true"' : (rowView && rowView.arming ? ' disabled' : '')) + '>' + (saving ? 'Saving…' : 'Leave as is') + '</button>' : '',
     afterHtml: rowView && rowView.afterHtml ? rowView.afterHtml : '',
   });
 }
