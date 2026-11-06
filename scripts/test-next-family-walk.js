@@ -297,6 +297,19 @@ section('§7 Stop any time; the end');
   fx.desk.open(); await fx.paint();
   t = text(fx.html());
   ok(t.includes('You chose a earlier. 1 merged, 1 kept, 2 left.') && t.includes('Page 3 of 4'), 'coming back: remembered, and it says so', t.slice(0, 300));
+  // A family left half done must not stand in front of everything else.
+  const lastly = await opened([pair('x', 'y'), ...CHAIN()]);
+  await lastly.press('hr-next'); await lastly.paint();
+  await pick(lastly, 'a');
+  await lastly.press('hr-done');
+  lastly.desk.open(); await lastly.paint();
+  ok(text(lastly.html()).includes('Pair 1 of 1'), 'a family you left does not come first: the rest can be reached', text(lastly.html()).slice(0, 100));
+  await lastly.press('hr-next'); await lastly.paint();
+  ok(text(lastly.html()).includes('Page 1 of') && text(lastly.html()).includes('a stays.'), 'and Next reaches it, remembered');
+  await lastly.press('hr-done');
+  lastly.scan.pairs[0].status = 'merged';
+  lastly.desk.open(); await lastly.paint();
+  ok(text(lastly.html()).includes('a stays.'), 'with nothing else left it opens by itself');
 
   // Leftovers.
   const walk = await opened();

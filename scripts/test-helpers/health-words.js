@@ -132,7 +132,7 @@ export const DECK = [
   'You merged {n} pages the AI never compared with {name}: {name} and {name}. Only your reading decided them.',
   'You merged 1 page the AI never compared with {name}: {name}. Only your reading decided it.',
   'You merged {n} pages the AI never compared with {name}. Only your reading decided them.',
-  'Merged in', '{n} pages deleted', '1 page deleted', 'Their text is on {name}, each under "Merged from" and its name.', 'the AI never compared it',
+  'Kept both', 'Merged in', '{n} pages deleted', '1 page deleted', 'Their text is on {name}, each under "Merged from" and its name.', 'the AI never compared it',
   '{n} pages kept', '1 page kept', 'These stay separate from {name}, and that pair will not come back.',
   'Not decided', '{n} pages waiting', '1 page waiting', 'Nothing happened to these.',
   '{n} pages left over still match one another, so they may be a smaller family of their own.', 'Review those {n}',

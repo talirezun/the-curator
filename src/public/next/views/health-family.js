@@ -92,25 +92,24 @@ export function planDecisions(scan) {
   const inStarted = (p) => started.find((f) => f.pages.includes(keepOf(p)) && f.pages.includes(removeOf(p)));
   const open = [];
   const items = [];
-  const heldAt = new Map();
   scan.pairs.forEach((pair, at) => {
-    if (pair.status !== 'open') return;
-    const f = inStarted(pair);
-    if (f) { if (!heldAt.has(f)) heldAt.set(f, at); } else open.push({ at, pair });
+    if (pair.status === 'open' && !inStarted(pair)) open.push({ at, pair });
   });
   const groups = connectedGroups(open);
   const fresh = groups.filter((g) => g.pages.length >= 3).map((g) => ({ at: g.first, fam: newFamily(g.pages, familyRelation(g.members)) }));
-  const held = started.map((fam) => ({ at: heldAt.has(fam) ? heldAt.get(fam) : -1, fam }));
-  if (fresh.length === 0 && held.length === 0) return null;
+  if (fresh.length === 0 && started.length === 0) return null;
   scan.families = [...started, ...fresh.map((x) => x.fam)];
   const inFamily = new Set(groups.filter((g) => g.pages.length >= 3).flatMap((g) => g.members.map((m) => m.at)));
-  const familyAt = new Map([...fresh, ...held].map((x) => [x.at, x.fam]));
-  for (const x of held) if (x.at === -1) items.push({ kind: 'family', fam: x.fam });
+  const familyAt = new Map(fresh.map((x) => [x.at, x.fam]));
   scan.pairs.forEach((pair, at) => {
     if (familyAt.has(at)) { items.push({ kind: 'family', fam: familyAt.get(at) }); return; }
-    if (inFamily.has(at) || inStarted(pair)) return;
+    if (pair.status !== 'open' || inFamily.has(at) || inStarted(pair)) return;
     items.push({ kind: 'pair', at });
   });
+  // A FAMILY YOU LEFT COMES LAST. Inside a walk Next moves through its pages, and Done goes back to
+  // the lanes, so if it came first Review would open on it every time and nothing else could be
+  // reached. Next and Previous still reach it, and with nothing else left it opens by itself.
+  for (const fam of started) items.push({ kind: 'family', fam });
   return items;
 }
 
@@ -301,6 +300,12 @@ export function chooseRows(fam) {
   return { total: all.length, found, shown, rest: q ? 0 : found.length - shown.length };
 }
 
+/** A page's opening as a sentence to read: no markdown, none of the next section. */
+export function firstWords(opening) {
+  const first = String(opening || '').split(/\n\s*\n|\n#{1,6}\s|\s#{2,6}\s/)[0];
+  return first.replace(/^#{1,6}\s+/, '').replace(/\s+/g, ' ').trim();
+}
+
 export function renderChoose(fam, ctx) {
   const n = fam.pages.length;
   const f = fam.facts;
@@ -316,7 +321,7 @@ export function renderChoose(fam, ctx) {
     const meta = i ? plural(i.links || 0, 'link') + ' · ' + ctx.size(i.length) + ' · AI compared it with ' + n0(f.counts.get(p)) + ' of the other ' + n0(n - 1) : '';
     return '<div class="hr-fam-row"><button type="button" class="hr-fam-pick" data-fam-pick="' + esc(p) + '"' + (f && !ctx.busy ? '' : ' disabled') + '>' +
         '<span class="hr-fam-pick-top"><span class="mono hr-fam-pick-name">' + esc(slugOf(p)) + '</span><span class="hr-fam-pick-meta">' + meta + '</span></span>' +
-        '<span class="hr-fam-pick-open">' + esc(i ? i.opening : '') + '</span>' +
+        '<span class="hr-fam-pick-open">' + esc(i ? firstWords(i.opening) : '') + '</span>' +
       '</button><button type="button" class="hr-fam-read" data-fam-read="' + esc(p) + '" aria-label="' + esc('Read full page: ' + slugOf(p)) + '">Read</button></div>';
   };
   const showing = fam.shown > CHOOSE_FIRST;
