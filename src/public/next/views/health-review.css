@@ -33,8 +33,9 @@
 .hr-swap { animation: hr-fade var(--t-layout) var(--ease-out); }
 @keyframes hr-fade { from { opacity: 0.25; } to { opacity: 1; } }
 .hr-pane { display: flex; flex-direction: column; min-width: 0; height: var(--hr-pane-h); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-sunken); }
-/* A very long page name wraps whole inside the head. The head is as tall as the walk's longest name needs. */
-.hr-pane-head { flex: 0 0 auto; height: var(--hr-pane-head-h, auto); box-sizing: border-box; overflow-y: auto; padding: var(--space-3) var(--space-3) var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+/* A very long page name wraps inside the head, which then scrolls: the pane keeps its height. On a
+   walk the head is as tall as its longest name needs, so nothing there is out of sight. */
+.hr-pane-head { flex: 0 0 auto; max-height: 40%; overflow-y: auto; padding: var(--space-3) var(--space-3) var(--space-2); border-bottom: 1px solid var(--border-subtle); }
 .hr-pane-role { display: block; margin-bottom: 2px; font-size: var(--text-2xs); color: var(--text-2); }
 .hr-pane-goes .hr-pane-role { color: var(--danger-text); }
 .hr-pane-name { display: block; font-size: var(--text-xs); color: var(--text); overflow-wrap: anywhere; }
@@ -77,6 +78,7 @@
 
 /* A family: the same desk, with one short row of marks and one line above the evidence. Each has a
  * fixed height too. Tone on the rule and the marks, words in the ordinary ink. */
+.hr-desk-family .hr-pane-head { max-height: none; height: var(--hr-pane-head-h, auto); box-sizing: border-box; }
 .hr-desk-family { --hr-marks-h: 22px; --hr-running-h: 28px; --hr-facts-h: 56px; }
 .hr-marks-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-3); height: var(--hr-marks-h); overflow: hidden; }
 .hr-marks { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
@@ -143,7 +145,7 @@
   /* Never a box to scroll: afterPaint sizes it for the longest reason in this walk. */
   .hr-facts { overflow-y: visible; }
   .hr-end { height: calc(2 * var(--hr-pane-h) + var(--space-3)); }
-  .hr-decide { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--hr-decide-btns-h, auto) auto; align-content: start; gap: var(--space-2); }
+  .hr-decide { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--hr-decide-btns-h, auto) minmax(0, 1fr); gap: var(--space-2); }
   .hr-decide-btns { flex-direction: column; align-items: stretch; }
   .hr-decide-btns .btn-secondary { align-self: flex-start; }
   /* The count takes a line of its own, so its length never moves what is under it. */

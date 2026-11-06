@@ -602,7 +602,6 @@ export function createReviewDesk(d) {
       for (const p of r.family.order) if (slugOf(p).length > goes.length) goes = slugOf(p);
     } else {
       for (const p of r.scan.pairs) {
-        if (p.status !== 'open') continue;
         if (p.removeSlug.length > goes.length) goes = p.removeSlug;
         if (p.removeSlug.length > stays.length) stays = p.removeSlug;
         if (p.keepSlug.length > goes.length) goes = p.keepSlug;
@@ -628,6 +627,8 @@ export function createReviewDesk(d) {
     for (const [sel, slot] of Object.entries(worst)) {
       const real = desk.querySelector(sel);
       if (!real) continue;
+      // A plain pair keeps its slots, except that its warning is never cut off either.
+      if (!r.family && sel !== '.hr-decide' && sel !== '.hr-decide-btns') continue;
       const need = Math.max(...[].concat(slot.html).map((h) => measure(real, h)));
       const base = sel === '.hr-pane-head' ? 0 : Math.ceil(real.getBoundingClientRect().height);
       // The longest name by letters is not always the one that wraps worst: one line in hand.
