@@ -115,6 +115,9 @@ if (IS_CRASH_CHILD) {
     before: async (fn) => { if (fn.calls > 3) await new Promise(() => {}); },
   }));
   job.startCompareAll(domain, { confirmedModel: MODEL, confirmedUsd: 100 });
+  // The timer holds the process open: with only a promise pending, Node would exit by
+  // itself once the fake LLM hangs, and that would not be a crash.
+  setInterval(() => {}, 1000);
   await new Promise(() => {}); // the parent kills this process
 }
 
@@ -368,11 +371,13 @@ section('D. Restart: nothing auto-starts spend (a real SIGKILL)');
 {
   const d = family(20);
   const child = spawn(process.execPath, [SELF, '--crash-child', d.name], { env: process.env, stdio: 'ignore' });
+  const childEnded = new Promise((r) => child.on('exit', (code, signal) => r({ code, signal })));
   await until(() => {
     try { return JSON.parse(readFileSync(recordFile(d.name), 'utf8')).spent.calls >= 3; } catch { return false; }
   }, 'the child to have spent three calls');
   child.kill('SIGKILL');
-  await new Promise((r) => child.on('exit', r));
+  const ended = await childEnded;
+  ok(ended.signal === 'SIGKILL', 'D.0 (control) the child really was killed, mid-run', JSON.stringify(ended));
 
   const onDisk = JSON.parse(readFileSync(recordFile(d.name), 'utf8'));
   ok(onDisk.state === 'running', 'D.1 (control) the dead process\'s record still says running', onDisk.state);
@@ -778,6 +783,14 @@ section('I. Families: A~B and B~C say nothing about A~C');
   let after = (await get(`/${name}/semantic-dupes/families`)).body;
   ok(!after.families.some((f) => f.pages.some((p) => p.slug === 'claude-opus-4')), 'I.14 a changed opening takes that pair out of the open pairs');
   writeFileSync(P('claude-opus-4'), '# claude-opus-4\n\nAbout claude-opus-4.\n');
+
+  // An old answer for this exact pair, about openings that have since changed, while
+  // both pages stay in the family through other answers.
+  const key = dc.pairKey('concepts', 'claude-opus-4', 'concepts', 'claude-opus');
+  const anyRec = [...(await dc.loadDuplicateChecks(name)).values()].find((x) => x.verdict === 'yes');
+  await dc.saveDuplicateChecks(name, new Map([[key, { ...anyRec, keep: 'concepts/claude-opus', remove: 'concepts/claude-opus-4', openings: 'other-openings' }]]));
+  after = (await get(`/${name}/semantic-dupes/families?stay=${encodeURIComponent('concepts/claude-opus')}`)).body.families[0];
+  ok(by(after, 'claude-opus-4').compared === 'stale' && by(after, 'claude-opus-4').confidence === undefined, 'I.14b an answer about other openings is "stale", never "same"', JSON.stringify(by(after, 'claude-opus-4')));
 
   // A Keep both between a member and the page that stays is said, in words.
   await addDismissal(name, 'semanticDupe', { folderA: 'concepts', slugA: 'claude-opus-4', folderB: 'concepts', slugB: 'claude-opus' }, 'test');
