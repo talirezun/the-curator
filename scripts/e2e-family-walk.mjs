@@ -607,7 +607,9 @@ async function fullWalks(app, seen, known) {
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');
   await toFamily(app, 8);
   await press(app, '#hr-done');
-  await waitFor(page, () => /Review those/.test(document.querySelector('.hr-desk').innerText), 'the leftovers');
+  // Its figures land just after it opens, and the sentence can then take another line.
+  await waitFor(page, () => /Review those|Review the first/.test(document.querySelector('.hr-desk').innerText) && /Links pointing to it went/.test(document.querySelector('.hr-desk').innerText), 'the leftovers');
+  await delay(100);
   await press(app, '#hr-fam-residue');
   await waitFor(page, () => /Which page stays\?/.test(document.querySelector('.hr-desk').innerText) && /possible pairs/.test(document.querySelector('.hr-desk').innerText), 'a smaller family');
   t = await deskText(page);
