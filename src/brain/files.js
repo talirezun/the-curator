@@ -1702,7 +1702,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     if (leftOut.length && typeof opts.onLeftOut === 'function') opts.onLeftOut(leftOut.length);
   } else if (leftOut.length) {
     const sample = leftOut[0].length > 80 ? `${leftOut[0].slice(0, 80)}…` : leftOut[0];
-    warn(`Page "${canonPath}": ${leftOut.length} passage${leftOut.length === 1 ? '' : 's'} not added, because the page already says mostly the same (for example "${sample}").`);
+    warn(`Page "${canonPath}": ${leftOut.length} passage${leftOut.length === 1 ? '' : 's'} not added, because ${leftOut.length === 1 ? 'it' : 'they'} looked mostly like what the page already says (for example "${sample}"). A real new point can be among them: compare the source with the page.`);
   }
 
   await writeFileAtomic(fullPath, final, 'utf8');

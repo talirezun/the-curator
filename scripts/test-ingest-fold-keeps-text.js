@@ -610,7 +610,7 @@ Tags: extra-tag
     ok(hasLine(dom.read('entities/tide-agent.md'), '- Storm surge warnings reach 240 subscribers'), 'a new point in round 3 accumulated');
     eq(sign.split('\n').filter((l) => /confirm/i.test(l) && /binding/i.test(l) && !l.startsWith('- ')).length, 2, 'no pile of near-identical definitions: the first opening and definition only');
     eq(sign.match(/^- \[\[governed-agent\]\]/gm).length, 1, 'Related holds a target once, however it is described');
-    ok(reports.every((r) => r.warnings.some((w) => w.includes('new wording was not added') && w.includes('On 3 pages'))), 'the report says so, aggregated across pages', JSON.stringify(reports[0].warnings).slice(0, 300));
+    ok(reports.every((r) => r.warnings.some((w) => w.includes('new wording was not added') && w.includes('On 3 pages') && w.includes('compare the source with the page') && !/always/.test(w))), 'the report says so, aggregated across pages', JSON.stringify(reports[0].warnings).slice(0, 300));
 
     // Replay every reply already seen.
     const snapshot = paths.map((p) => dom.read(p));

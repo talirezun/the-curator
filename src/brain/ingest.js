@@ -1946,10 +1946,10 @@ const AGGREGATABLE_WARNINGS = [
   {
     id: 'reworded',
     // Emitted by writePage on exact-name reuse: new wording that repeats the page.
-    match: /^Page "(.+?)": \d+ passages? not added, because the page already says/,
+    match: /^Page "(.+?)": \d+ passages? not added, because (?:it|they) looked mostly like/,
     render: (n, ex) =>
-      `On ${n} pages (${renderExamples(ex)}), new wording was not added because the page already says mostly the same. ` +
-      `What each page held is untouched. A point that is mostly new, or holds a new number, is always added.`,
+      `On ${n} pages (${renderExamples(ex)}), some new wording was not added because it looked mostly like what the page ` +
+      `already says. What each page held is untouched. A real new point can be among what was left out: compare the source with the page.`,
   },
   {
     id: 'no-path',
