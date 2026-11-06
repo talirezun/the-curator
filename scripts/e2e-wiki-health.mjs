@@ -324,7 +324,15 @@ async function startApp(profile) {
     writeFileSync(path.join(w, LONG_A + '.md'), long('One long page'));
     writeFileSync(path.join(w, LONG_B + '.md'), long('Another long page'));
     const hub = path.join(w, 'wiki-hub.md');
-    writeFileSync(hub, readFileSync(hub, 'utf8') + `- [[${LONG_A}]]\n- [[${LONG_B}]]\n`); }
+    writeFileSync(hub, readFileSync(hub, 'utf8') + `- [[${LONG_A}]]\n- [[${LONG_B}]]\n`);
+    // S16 IS THE PLAIN PAIR DESK. hand-off~handoff and handoff~handoffs share a page, so with handoffs
+    // here they would be a family, and families have their own walk (e2e-family-walk.mjs).
+    if (existsSync(path.join(w, 'handoffs.md'))) {
+      rmSync(path.join(w, 'handoffs.md'));
+      writeFileSync(hub, readFileSync(hub, 'utf8').split('\n').filter((l) => !l.includes('[[handoffs]]')).join('\n'));
+      const idx = path.join(w, '..', 'index.md');
+      writeFileSync(idx, readFileSync(idx, 'utf8').split('\n').filter((l) => !l.includes('[[handoffs]]')).join('\n'));
+    } }
   if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 1100, filler: 3000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,

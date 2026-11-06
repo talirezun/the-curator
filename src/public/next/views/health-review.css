@@ -103,7 +103,7 @@
 .hr-fam-row:last-child { border-bottom: none; }
 .hr-fam-pick { flex: 1 1 auto; min-width: 0; display: block; padding: var(--space-2) var(--space-3); background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--t-state); }
 .hr-fam-pick:hover:not(:disabled) { background: var(--hairline); }
-.hr-fam-pick:disabled { cursor: default; }
+.hr-fam-pick:disabled { cursor: not-allowed; }
 .hr-fam-pick:focus-visible, .hr-fam-read:focus-visible, .hr-fam-jump:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 .hr-fam-pick-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-3); }
 .hr-fam-pick-name { flex: 1 1 200px; min-width: 0; font-size: var(--text-xs); color: var(--text); overflow-wrap: anywhere; }

@@ -156,7 +156,7 @@ So you press the page that stays, which deletes nothing, and the others come up 
 
 Each press is **one ordinary merge**, through the same gate as a pair: the comparison for this direction seen for 500 ms, the `basis` check, a pointer that must leave Merge and come back. Nothing is ticked and nothing runs in a batch: the kept page changes with each merge, so a queue would show you a page that no longer exists when its turn comes. You can stop at any point; the summary says what stayed, how it grew, and which pages were merged without an AI comparison. Pages left over that still match one another come back as a smaller family, and two pages as an ordinary pair. **Keep all N apart** records every pair the AI matched there, and takes them all back if one cannot be saved; pairs it never compared may still come up later.
 
-What a family remembers (the page that stays, where you are) lives with the scan in memory; after a reload it asks again, and what was merged or kept is already on disk. Measured on the mock only so far, not on a real family in a person's hands; watch for a rhythm of pressing Merge.
+What a family remembers (the page that stays, where you are) lives with the scan in memory; after a reload it asks again, and what was merged or kept is already on disk. Proved on a real server with generated pages, not yet in a person's hands on a real family: watch for a rhythm of pressing Merge.
 
 ### Compare all remaining
 
