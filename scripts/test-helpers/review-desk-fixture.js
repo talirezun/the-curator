@@ -87,6 +87,9 @@ export function deskFixture(pairs, over = {}) {
     warn: () => WARN,
     coverageLeft: () => (scan.coverage ? scan.coverage.left : 0),
     onClosed: (merged) => calls.closed.push(merged),
+    headIntoView: () => { calls.head = (calls.head || 0) + 1; },
+    // The Merge button's box: where the pointer is, a suite says directly.
+    mergeRect: () => (fx.overMerge ? { left: 0, right: 10, top: 0, bottom: 10 } : { left: 100, right: 110, top: 100, bottom: 110 }),
     ...(over.deps || {}),
   });
   /** A paint: the desk fetches what it is missing. */

@@ -57,7 +57,7 @@
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -788,10 +788,23 @@ async function scenarios(app, profile) {
     const shot = async () => (await page.send('Page.captureScreenshot', { format: 'png', clip: await clipOf() })).data;
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }); await delay(300);
-    await delay(1500); const rest = await shot();
+    // THE PAGE IS AT REST WHEN TWO LOOKS AGREE, not after a fixed wait: a fixed wait is what
+    // a busy machine outruns. Whatever moved meanwhile is noted, so a flake names its cause.
+    const looks = () => page.evaluate((s) => { const b = document.querySelector(s); const r = b.getBoundingClientRect(); return JSON.stringify({ html: b.outerHTML, left: r.left, top: r.top, w: r.width, h: r.height, loading: !!document.querySelector('[aria-busy="true"]'), anim: document.getAnimations().length }); }, SEL.rescan);
+    const atRest = async (label) => {
+      let prev = await shot(); let was = await looks(); let same = 0; let moved = 0;
+      for (let i = 0; i < 60 && same < 3; i++) {
+        await delay(200);
+        const now = await shot(); const is = await looks();
+        if (now === prev) same++; else { same = 0; moved++; if (moved <= 3) note(`[${profile.name}] ring check, ${label}: still changing: ${was === is ? 'pixels only, ' + is.slice(-60) : was.slice(0, 200) + ' → ' + is.slice(0, 200)}`); }
+        prev = now; was = is;
+      }
+      if (same < 3) step(`[${profile.name}] the button comes to rest for the ring check (${label})`, false, was);
+      return prev;
+    };
+    const rest = await atRest('before');
     const dropped = await page.evaluate(() => { let n = 0; for (const sheet of document.styleSheets) { let rules; try { rules = sheet.cssRules; } catch { continue; } for (let i = rules.length - 1; i >= 0; i--) { if (rules[i].selectorText && /\.btn-(secondary|primary|danger-solid):focus-visible/.test(rules[i].selectorText)) { sheet.deleteRule(i); n++; } } } return n; });
-    await delay(100);
-    const without = await shot();
+    const without = await atRest('after');
     step(`[${profile.name}] the ring rule changes no pixel at rest (${dropped} rules taken away, same image)`, dropped >= 2 && rest === without);
     await page.navigate(app.origin); await delay(200);
     await openDomain(app, 'h13'); await delay(200);
@@ -1037,6 +1050,7 @@ async function reviewDeskScene(app, profile) {
   // The gate runs only while the panes are on screen, so a person reading the pair has them
   // in view. On a phone the panes can be above a button you just pressed: look at them first.
   const armed = async () => {
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
     await page.evaluate((p, m) => { const r = document.querySelector(p); if (!r) return; const b = r.getBoundingClientRect(); const seen = Math.min(b.bottom, innerHeight) - Math.max(b.top, 0); if (seen < b.height * 0.6) document.querySelector(m).scrollTop += b.top - 60; }, SEL.deskPanes, SEL.main);
     return waitFor(page, (s) => { const m = document.querySelector(s); return !!m && !m.disabled; }, 'Merge armed', 400, SEL.deskMerge);
   };
@@ -1122,8 +1136,10 @@ async function reviewDeskScene(app, profile) {
   step(`[${pn}] a repeating Enter on Merge does not merge`, (await title()) === titleBefore);
   await page.evaluate((s) => document.querySelector(s).focus(), SEL.deskTitle);
 
-  // ── Next: records nothing, and the gate starts again.
-  await bringIn(SEL.deskNext);
+  // ── Next: records nothing, and the gate starts again. Reading the pair: its head at the
+  // top of the window, both pages under it.
+  await page.evaluate((s, m) => { document.querySelector(m).scrollTop += document.querySelector(s).getBoundingClientRect().top - 20; }, SEL.deskTitle, SEL.main);
+  await delay(100);
   const nextFrames = await deciding('Next', () => press(SEL.deskNext));
   g = gateTime(nextFrames.filter((f, i, a) => i > 0 && (a[i - 1].title !== titleBefore || f.title !== titleBefore)));
   step(`[${pn}] Next goes to the next pair`, (await title()) !== titleBefore, await title());
@@ -1140,6 +1156,7 @@ async function reviewDeskScene(app, profile) {
   const offScreen = await page.evaluate((p) => { const r = document.querySelector(p).getBoundingClientRect(); return r.bottom < 0 || r.top > innerHeight; }, SEL.deskPanes);
   const stillShut = (await mergeState()).disabled;
   step(`[${pn}] with the panes off screen, 1.2 s later, Merge is still shut`, !offScreen || stillShut, 'off screen: ' + offScreen + ', shut: ' + stillShut);
+  if (offScreen) step(`[${pn}] and it says why, in place`, (await page.evaluate(() => document.getElementById('hr-gate').innerText)) === 'Merge opens once you have had both pages on screen.');
   await bringIn(SEL.deskPanes);
   await armed();
 
@@ -1153,6 +1170,20 @@ async function reviewDeskScene(app, profile) {
   step(`[${pn}] scrolled away inside the 500 ms, Merge stays shut`, awayOff && (await mergeState()).disabled, 'off screen: ' + awayOff);
   await bringIn(SEL.deskPanes);
   await armed();
+
+  // Stacked, a sliver of the page that goes away is not seeing it (measured: 20 px opened it).
+  if (profile.w < 720) {
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.deskNext);
+    await waitFor(page, (s) => !!document.querySelector(s), 'text', 200, SEL.deskText);
+    await page.evaluate((m) => { const main = document.querySelector(m); const g = document.querySelector('.hr-pane-goes').getBoundingClientRect(); main.scrollTop += g.bottom - 20; }, SEL.main);
+    await delay(1300);
+    const seenBits = await page.evaluate(() => { const g = document.querySelector('.hr-pane-goes').getBoundingClientRect(); const t = document.querySelector('.hr-pane-stays').getBoundingClientRect(); return { goes: Math.max(0, Math.min(g.bottom, innerHeight) - Math.max(g.top, 0)), stays: Math.max(0, Math.min(t.bottom, innerHeight) - Math.max(t.top, 0)) }; });
+    step(`[${pn}] 20 px of the page that goes away, the rest of the other in full: Merge stays shut`, seenBits.goes <= 30 && seenBits.stays > 200 && (await mergeState()).disabled, JSON.stringify(seenBits));
+    step(`[${pn}] and it says why`, (await page.evaluate(() => document.getElementById('hr-gate').innerText)) === 'Merge opens once you have had both pages on screen.');
+    await shot('desk-unseen');
+    await bringIn(SEL.deskPanes);
+    await armed();
+  }
 
   // ── Keep this one instead: this direction only, re-armed, nothing moved.
   await bringIn(SEL.deskFlip);
@@ -1177,6 +1208,32 @@ async function reviewDeskScene(app, profile) {
   const liveText = await page.evaluate(() => document.querySelector('.dm-health .dm-health-live').textContent);
   step(`[${pn}] and it is spoken, with where you are`, /^Merged .+Pair [\d,]+ of [\d,]+\.$/.test(liveText), liveText);
   await shot('desk-merged'); await audit('after a merge');
+
+  // ── 40 clicks on one spot, 100 ms apart: the first pair's press was the last that counted.
+  if (await armed()) {
+    // Both pages and Merge in one view, as near as a phone allows: the pair, read, then pressed.
+    await page.evaluate((s, m) => { const r = document.querySelector(s).getBoundingClientRect(); if (r.bottom > innerHeight - 10) document.querySelector(m).scrollTop += r.bottom - innerHeight + 20; }, SEL.deskMerge, SEL.main);
+    await delay(100);
+    const stampAt = await center(SEL.deskMerge);
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: stampAt.x, y: stampAt.y });
+    await delay(40);
+    const before = await title();
+    await page.click(stampAt.x, stampAt.y, { settleMs: 10 });
+    await waitFor(page, (s, t) => document.querySelector(s).innerText !== t, 'next pair', 200, SEL.deskTitle, before);
+    const stampTitle = await title();
+    const pagesBefore = readdirSync(wiki).length;
+    for (let i = 0; i < 40; i++) { await page.click(stampAt.x, stampAt.y, { settleMs: 5 }); await delay(95); }
+    step(`[${pn}] 40 clicks on one spot merge nothing more`, readdirSync(wiki).length === pagesBefore && (await title()) === stampTitle, stampTitle);
+    // It has been on screen under the clicks if a person could read it from there; on a phone
+    // the page may need to come back into view for the gate to have opened at all.
+    await page.evaluate((p, m) => { const r = document.querySelector(p).getBoundingClientRect(); if (r.top < 0) document.querySelector(m).scrollTop += r.top - 60; }, SEL.deskPanes, SEL.main);
+    await waitFor(page, (s) => /Move the pointer/.test(document.querySelector(s).innerText), 'the line', 100, '#hr-gate');
+    const hint = await page.evaluate(() => document.getElementById('hr-gate').innerText);
+    step(`[${pn}] Merge says why it is shut, and what to do`, hint === 'Move the pointer off Merge and back to press it.' && (await mergeState()).disabled, hint);
+    await shot('desk-pointer');
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 }); await delay(120);
+    step(`[${pn}] moved off, it opens, and the line goes`, !(await mergeState()).disabled && (await page.evaluate(() => document.getElementById('hr-gate').innerText)) === '');
+  } else step(`[${pn}] Merge opens for the rubber-stamp test`, false);
 
   // ── Keep both, with Undo.
   await armed();
@@ -1243,6 +1300,7 @@ async function reviewDeskScene(app, profile) {
     return { scrolls: before, top: b.scrollTop, wrapped: n.getBoundingClientRect().height > 24 || document.querySelector('.hr-pane-stays .hr-pane-name').getBoundingClientRect().height > 24,
       over: document.documentElement.scrollWidth - innerWidth, nameInside: n.getBoundingClientRect().right <= n.closest('.hr-pane').getBoundingClientRect().right + 0.5 };
   });
+  step(`[${pn}] a page's headings are the desk's size, not a document's`, await page.evaluate(() => { const h = document.querySelector('.hr-pane-text .chat-md-h, .hr-pane-text h1, .hr-pane-text h2'); const b = document.querySelector('.hr-pane-body'); return !!h && parseFloat(getComputedStyle(h).fontSize) === parseFloat(getComputedStyle(b).fontSize); }));
   step(`[${pn}] a long page scrolls inside its pane`, inner.scrolls && inner.top > 0, JSON.stringify(inner));
   step(`[${pn}] a long name wraps inside its pane, and the page has no sideways scroll`, inner.wrapped && inner.nameInside && inner.over <= 0, JSON.stringify(inner));
   await armed();
@@ -1269,9 +1327,14 @@ async function reviewDeskScene(app, profile) {
   step(`[${pn}] All N pairs: the summary first, this pair marked, the rest a press away`, fold.first === 'hr-fold-summary' && fold.here === 1 && fold.jumps > 0, JSON.stringify(fold));
   await shot('desk-all-pairs'); await audit('all pairs');
   const tBefore = await title();
+  // Far down the list: the pair it brings up is above the top of the window.
+  await page.evaluate((m) => { const j = document.querySelector('.hr-jump'); document.querySelector(m).scrollTop += j.getBoundingClientRect().top - 4; }, SEL.main);
+  await delay(100);
+  const farOff = await page.evaluate((s) => document.querySelector(s).getBoundingClientRect().bottom < 0, SEL.deskTitle);
   await page.evaluate(() => document.querySelector('.hr-jump').click());
   await delay(400);
   step(`[${pn}] a waiting row jumps to its pair`, (await title()) !== tBefore);
+  step(`[${pn}] and the desk is on screen after the jump`, farOff && await page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }, SEL.deskTitle), 'title was off screen: ' + farOff);
   step(`[${pn}] focus on the title after a jump`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
   await page.evaluate(() => document.querySelector('[data-group-key="reviewPairs"] summary').click());
   await delay(200);
@@ -1293,6 +1356,42 @@ async function reviewDeskScene(app, profile) {
   const back = await page.evaluate((r, m) => ({ lanes: document.querySelectorAll('.dm-lane').length, desk: !!document.querySelector('.hr-desk'), focus: document.activeElement && (document.activeElement.className || document.activeElement.tagName), review: !!document.querySelector(r), marker: document.querySelector('.dm-health').__marker === 1 }), SEL.review);
   step(`[${pn}] Done goes back to the lanes, focus on Review`, back.lanes > 0 && !back.desk && /dm-review-btn/.test(back.focus || ''), JSON.stringify(back));
   step(`[${pn}] and it is the same section`, back.marker);
+
+  // ── By touch, the wait is longer and says so.
+  if (profile.w < 720) {
+    await press(SEL.review);
+    await waitFor(page, (s) => !!document.querySelector(s), 'text', 200, SEL.deskText);
+    await page.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await bringIn(SEL.deskNext);
+    const tap = await center(SEL.deskNext);
+    await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tap.x, y: tap.y }] });
+    await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const t0 = Date.now();
+    await delay(1000);
+    const early = await page.evaluate(() => ({ shut: document.getElementById('hr-merge').disabled, said: document.getElementById('hr-gate').innerText, seen: !!document.querySelector('.hr-pane-text') }));
+    await page.evaluate((p, m) => { const r = document.querySelector(p).getBoundingClientRect(); if (r.top < 0 || r.bottom > innerHeight) document.querySelector(m).scrollTop += r.top - 60; }, SEL.deskPanes, SEL.main);
+    step(`[${pn}] by touch, a second after a pair arrives Merge is shut, and says why`, early.seen && early.shut && /^Merge opens /.test(early.said), JSON.stringify(early));
+    await waitFor(page, (s) => { const m = document.querySelector(s); return !!m && !m.disabled; }, 'Merge opens by touch', 200, SEL.deskMerge);
+    step(`[${pn}] and then it opens`, Date.now() - t0 >= 1800 && !(await mergeState()).disabled, (Date.now() - t0) + ' ms');
+    await page.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+    await bringIn(SEL.deskDone);
+    await press(SEL.deskDone);
+    await delay(400);
+  }
+
+  // ── Coming back: the row is there at once, however long the server takes.
+  await page.evaluate(() => { window.__realFetch3 = window.fetch; window.fetch = async (u, o) => { if (/\/api\/health\/h16(\/|$|\?)/.test(String(u))) await new Promise((r) => setTimeout(r, 2500)); return window.__realFetch3(u, o); }; });
+  if (await page.evaluate((s) => !!document.querySelector(s), SEL.review)) {
+    await page.evaluate((sel) => { const e = [...document.querySelectorAll(sel)].find((n) => n.dataset.domainSlug === 'h15'); if (e) e.click(); }, SEL.domainRow);
+    await delay(800);
+    await page.evaluate((sel) => { const e = [...document.querySelectorAll(sel)].find((n) => n.dataset.domainSlug === 'h16'); if (e) e.click(); }, SEL.domainRow);
+    await delay(300);
+    step(`[${pn}] coming back, Possible duplicates is there before the server has answered`, await page.evaluate((s) => !!document.querySelector(s), SEL.review));
+    await delay(2600);
+    step(`[${pn}] and still there after it has`, await page.evaluate((s) => !!document.querySelector(s), SEL.review));
+  } else step(`[${pn}] pairs left to come back to`, false);
+  await page.evaluate(() => { window.fetch = window.__realFetch3; });
   await shot('desk-done');
 }
 // Holds one route for a moment, in the page, so a busy state can be looked at.
@@ -1398,9 +1497,16 @@ try {
     const profile = ALL_PROFILES[pn]; if (!profile) { console.log('unknown profile ' + pn); continue; }
     console.log(`\n● profile ${profile.name} (${profile.w}x${profile.h}${profile.reduced ? ', reduced motion' : ''}${profile.overflowOnly ? ', overflow only' : ''})`);
     const app = await startApp(profile); apps.push(app);
-    try { await scenarios(app, profile); }
+    // A walk that stops drawing can wait for ever: name it instead.
+    const watchdog = setTimeout(() => { console.log(`\n[${profile.name}] still running after 25 min. Stopping.`); process.exit(3); }, 25 * 60 * 1000);
+    try {
+      await scenarios(app, profile);
+      const vis = await app.page.evaluate(() => document.visibilityState);
+      step(`[${profile.name}] the page was drawn to the end (a sleeping display stops it)`, vis === 'visible', vis);
+    }
     catch (e) { step(`[${profile.name}] scenario ran to the end`, false, e.stack); }
     finally {
+      clearTimeout(watchdog);
       await app.stop();
       try { blocked.push(...readFileSync(app.stubLog, 'utf8').split('\n').filter((l) => l.includes('blocked'))); } catch { /* none */ }
     }

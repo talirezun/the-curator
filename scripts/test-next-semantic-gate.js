@@ -896,6 +896,79 @@ ok(newSemanticScan('alpha', { pairs: [pair({ nameRelation: 'version-differs' })]
 }
 ok(toWirePair(VARIANT).spellingVariant === undefined, '13p: the view never sends its own idea of eligibility');
 
+console.log('\n=== 13q. State belongs to its domain: an answer lands on the scan that asked ===');
+{
+  const SAME = 'entities/openai||concepts/open-ai';
+  const switchTo = (slug) => { __state().activeSlug = slug; __state().semanticScan = { slug, pairs: [pair()], cost: null, previewed: new Set(), preview: null }; };
+  // Merge in flight, then another domain with a pair of the same names.
+  __setState(stateWithScan('alpha', [pair(), pair({ keepSlug: 'openai', keepFolder: 'entities', removeSlug: 'x', removeFolder: 'concepts' })], [SAME]));
+  const scanA = __state().semanticScan;
+  __net().nextResult = { ok: true, fixed: 1 };
+  let wait = mergeOneSemanticPair('alpha', scanA.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open', 'a merge in alpha, landing after a switch, does not mark beta\'s pair of the same names');
+  ok(scanA.pairs[0].status === 'merged', 'it is recorded on alpha\'s own list');
+  // Settled by a merge: the same.
+  __setState(stateWithScan('alpha', [pair()], [SAME]));
+  const scanA2 = __state().semanticScan;
+  __net().nextResult = { ok: true, fixed: 0, reason: 'keep-page-missing', missing: 'entities/openai' };
+  wait = mergeOneSemanticPair('alpha', scanA2.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open' && scanA2.pairs[0].status === 'resolved', 'a page gone in alpha settles alpha\'s pair, not beta\'s');
+  // Failed: the message too.
+  __setState(stateWithScan('alpha', [pair()], [SAME]));
+  __net().nextReject = new Error('the disk went away');
+  wait = mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(!__state().semanticScan.pairs[0].error, 'a failure in alpha is not written on beta\'s pair');
+  // Keep both.
+  __setState(stateWithScan('alpha', [pair()]));
+  const scanA3 = __state().semanticScan;
+  __net().nextResult = { ok: true };
+  wait = skipSemanticPair('alpha', scanA3.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open' && scanA3.pairs[0].status === 'skipped', 'Keep both, the same');
+  // A comparison.
+  __setState(stateWithScan('alpha', [pair()]));
+  __net().nextResult = { ok: true, basis: 'of-alpha' };
+  wait = previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  const ans = await wait;
+  ok(ans.stale === true && __state().semanticScan.preview === null && !__state().semanticScan.bases, 'alpha\'s comparison and basis never land on beta');
+  __setState(stateWithScan('alpha', [pair()]));
+  __net().nextReject = new Error('entities/openai no longer exists — settled.');
+  wait = previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open', 'alpha\'s page gone never settles beta\'s pair');
+
+  // Coming back: the row is there before anything has answered.
+  const REPORT = { counts: { entities: 0, concepts: 0, summaries: 0, dismissed: 0 }, brokenLinks: [], orphans: [], crossFolderDupes: [], hyphenVariants: [], folderPrefixLinks: [], missingBacklinks: [] };
+  __setState(stateWithScan('alpha', [pair(), pair({ keepSlug: 'kept', removeSlug: 'gone', status: 'merged' })], [SAME]));
+  __state().cache = { alpha: { health: REPORT } };
+  __state().aiAvailable = true;
+  const listA = __state().semanticScan;
+  __net().nextResult = REPORT;
+  await loadHealth('beta', 1, {});
+  ok(__state().semanticScan === null || __state().semanticScan !== listA, 'a domain switch takes the list off screen');
+  ok(rawPreviewedKeys().length === 0 && listA.previewed.size === 0 && listA.preview === null, 'disarmed: what was armed for it is gone, and stays gone');
+  __state().activeSlug = 'alpha';
+  let answered = false;
+  __net().nextResult = REPORT;
+  const back = loadHealth('alpha', 1, {});
+  ok(__state().semanticScan === listA, 'coming back it is there at once, before the reading has answered');
+  ok(decisionOf().includes('Possible duplicates'), 'and so is the row');
+  ok(listA.pairs[1].status === 'merged', 'with what happened to each pair');
+  ok(canMergeSemanticPair(listA.pairs[0]).allowed === false, 'and nothing armed by it');
+  await back; answered = true;
+  ok(answered, 'the reading lands behind it');
+  ok(!__state().cache.alpha.scan, 'held once: a list forgotten later cannot come back from here');
+}
+
 console.log('\n=== 14. Singular forms, the failure notice, counting, long lists ===');
 const ONE = { total: 1, checked: 1, left: 0, next: 0 };
 card([], ONE);

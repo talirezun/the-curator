@@ -10,6 +10,7 @@
   --hr-pane-h: 340px;
   --hr-after-h: 56px;
   --hr-decide-h: 66px;
+  --hr-gate-h: 18px;
   --hr-outcome-h: 44px;
   display: flex;
   flex-direction: column;
@@ -40,7 +41,7 @@
 .hr-pane-meta { display: block; margin-top: 2px; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); overflow-wrap: anywhere; }
 .hr-pane-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-3); font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
 .hr-pane-body:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
-.hr-pane-text :is(h1, h2, h3, h4, h5, h6) { margin: var(--space-3) 0 2px; font-size: var(--text-xs); line-height: var(--leading-normal); font-weight: var(--weight-semibold); color: var(--text); }
+.hr-pane-text :is(h1, h2, h3, h4, h5, h6, .chat-md-h) { margin: var(--space-3) 0 2px; font-size: var(--text-xs); line-height: var(--leading-normal); font-weight: var(--weight-semibold); color: var(--text); }
 .hr-pane-text > :first-child { margin-top: 0; }
 .hr-pane-text p { margin: 0 0 var(--space-2); }
 .hr-pane-text ul, .hr-pane-text ol { margin: 0 0 var(--space-2); padding-left: var(--space-4); }
@@ -60,6 +61,7 @@
 .hr-merge-label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .hr-note { margin: 0; max-height: 100%; overflow-y: auto; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
 
+.hr-gate { height: var(--hr-gate-h); font-size: var(--text-xs); line-height: 18px; color: var(--text); overflow-wrap: anywhere; }
 .hr-outcome { height: var(--hr-outcome-h); overflow-y: auto; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text); overflow-wrap: anywhere; }
 /* Tone on the rule, words in the ordinary ink: a failure is read, and it stays. */
 .hr-outcome-failed { border-left: 2px solid var(--danger); padding-left: var(--space-2); }
@@ -75,7 +77,7 @@
 
 /* Stacked. The same rule: every slot its own fixed height, so a decision moves nothing. */
 @media (max-width: 720px) {
-  .hr-desk { --hr-facts-h: 76px; --hr-pane-h: 250px; --hr-after-h: 112px; --hr-decide-h: 212px; --hr-outcome-h: 76px; }
+  .hr-desk { --hr-facts-h: 76px; --hr-pane-h: 250px; --hr-after-h: 112px; --hr-decide-h: 212px; --hr-gate-h: 36px; --hr-outcome-h: 76px; }
   .hr-head { align-items: flex-start; flex-direction: column; gap: var(--space-2); min-height: 62px; }
   .hr-nav { align-self: stretch; justify-content: flex-start; }
   .hr-panes { grid-template-columns: minmax(0, 1fr); }

@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deskFixture, pair, comparison, WARN } from './test-helpers/review-desk-fixture.js';
-import { renderDesk, renderPairsFold, foldWindow, foldSummary, tally, nextWaiting, afterLine, pageBody, formatSize, FOLD_PAGE, ARM_MS, RELATION_LABELS } from '../src/public/next/views/health-review.js';
+import { renderDesk, renderPairsFold, foldWindow, foldSummary, tally, nextWaiting, afterLine, pageBody, formatSize, FOLD_PAGE, ARM_MS, RELATION_LABELS, watchVisible, armDelay } from '../src/public/next/views/health-review.js';
 import { wordAllowed, BANNED } from './test-helpers/health-words.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -318,7 +318,13 @@ section('§6 The rubber-stamp guards, in the source');
 {
   const src = readFileSync(join(ROOT, 'src/public/next/views/health-review.js'), 'utf8');
   const code = src.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  ok(!/keydown|keypress|keyup|accesskey/i.test(code), 'the desk listens to no key: no shortcut can exist (the browser walk presses them)');
+  ok(!/keypress|keyup|accesskey/i.test(code) && (code.match(/keydown/g) || []).length === 1, 'one key listener, and it only lets a keyboard user past a resting mouse');
+  {
+    const keys = await opened(); keys.seen();
+    keys.overMerge = true; keys.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' });
+    for (const key of ['m', 'k', 'Enter', ' ', 'Tab']) keys.desk.onKey({ key });
+    ok(keys.calls.merge.length === 0 && keys.calls.keep.length === 0, 'no key merges or keeps, whatever is pressed');
+  }
   ok(!/btn-primary|btn-ghost/.test(code), 'no violet and no ghost button');
   ok(!/\.confidence\b/.test(code), 'the desk never reads confidence');
   const css = readFileSync(join(ROOT, 'src/public/next/views/health-review.css'), 'utf8');
@@ -332,6 +338,103 @@ section('§6 The rubber-stamp guards, in the source');
   }
   const words = readFileSync(join(ROOT, 'src/routes/health.js'), 'utf8');
   ok(/const MERGE_BASIS_CLIENT_REQUIRED = true;/.test(words), 'the server requires the basis');
+}
+
+section('§8 Try again belongs to the pair that failed');
+{
+  const fx = await opened();
+  fx.seen();
+  fx.nextMerge = { error: 'Could not merge: the disk went away' };
+  await fx.press('hr-merge');
+  ok(/id="hr-retry"/.test(fx.html()), 'a failed merge offers Try again');
+  await fx.press('hr-next');
+  ok(!/id="hr-retry"/.test(fx.html()) && fx.calls.merge.length === 1, 'after Next it does not: it would have merged the next pair');
+}
+
+section('§9 Both pages must have been seen');
+{
+  // A stand-in for the browser's observer: a test says how much of each pane is on screen.
+  const observers = [];
+  globalThis.IntersectionObserver = class { constructor(cb) { this.cb = cb; this.els = []; observers.push(this); } observe(el) { this.els.push(el); } disconnect() { this.gone = true; } };
+  globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
+  const show = (el, ratio, h = 250, rootH = 812) => observers[observers.length - 1].cb([{ target: el, isIntersecting: ratio > 0, intersectionRatio: ratio, intersectionRect: { height: ratio * h }, rootBounds: { height: rootH } }]);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const goes = {}; const stays = {};
+  let done = 0; const unseen = [];
+  let stop = watchVisible([goes, stays], 30, () => { done++; }, (u) => unseen.push(u));
+  show(stays, 1); show(goes, 20 / 250);
+  await wait(80);
+  ok(done === 0, '20 px of the page that goes away is not seeing it');
+  ok(unseen[unseen.length - 1] === true, 'and the desk is told one is still to be seen');
+  show(goes, 0.6);
+  await wait(10); show(goes, 0.1); await wait(50);
+  ok(done === 0, 'scrolled away before its time was up, it starts again');
+  show(goes, 0.6); await wait(50);
+  ok(done === 1, 'both seen, one after the other, is enough: two stacked pages may not fit a phone');
+  stop();
+  done = 0;
+  stop = watchVisible([goes, stays], 30, () => { done++; });
+  show(goes, 1); await wait(50);
+  ok(done === 0, 'one page alone never opens it');
+  show(stays, 0.4, 900, 500); await wait(50);
+  ok(done === 1, 'in a short window, half the window counts');
+  stop();
+  delete globalThis.IntersectionObserver; delete globalThis.document;
+  ok(armDelay('mouse', false) === ARM_MS && armDelay('touch', false) === 2000 && armDelay('pen', false) === 2000 && armDelay(null, true) === 2000 && armDelay(null, false) === ARM_MS, 'by touch the wait is longer');
+  const f = await opened(); f.seen();
+  ok(!text(f.html()).includes('Merge opens once'), 'with both in view, it says nothing');
+  f.scan.previewed.clear(); f.state.review.unseen = true;
+  ok(text(f.html()).includes('Merge opens once you have had both pages on screen.'), 'shut because a page has not been seen: it says so');
+}
+
+section('§10 A click on one spot is not a decision');
+{
+  const fx = await opened();
+  fx.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' });
+  fx.overMerge = true;           // the pointer rests on Merge
+  fx.seen();
+  ok(!shut(fx.html(), 'hr-merge'), 'a pointer that came to Merge after the pair arrived presses it');
+  await fx.press('hr-merge');
+  ok(fx.calls.merge.length === 1, 'and it merges');
+  await fx.paint(); fx.seen();
+  ok(shut(fx.html(), 'hr-merge'), 'the next pair arrives under the same pointer: seen or not, Merge is shut');
+  ok(text(fx.html()).includes('Move the pointer off Merge and back to press it.'), 'and it says what to do');
+  for (let i = 0; i < 56; i++) await fx.press('hr-merge');
+  ok(fx.calls.merge.length === 1, '56 presses on the same spot merge nothing more');
+  fx.overMerge = false;
+  fx.desk.onPointer({ clientX: 500, clientY: 500, pointerType: 'mouse' });
+  ok(!shut(fx.html(), 'hr-merge') && !text(fx.html()).includes('Move the pointer'), 'moved off, it opens');
+  fx.overMerge = true;
+  fx.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' });
+  await fx.press('hr-merge');
+  ok(fx.calls.merge.length === 2, 'and coming back presses it');
+
+  const reader = await opened();
+  reader.desk.onPointer({ clientX: 500, clientY: 500, pointerType: 'mouse' });
+  await reader.press('hr-next'); await reader.paint(); reader.seen();
+  ok(!shut(reader.html(), 'hr-merge'), 'a person whose pointer is elsewhere meets nothing new');
+  const kb = await opened();
+  kb.overMerge = true; kb.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' });
+  await kb.press('hr-next'); await kb.paint(); kb.seen();
+  kb.desk.onKey({ key: 'a' });
+  ok(shut(kb.html(), 'hr-merge'), 'a letter does nothing');
+  kb.desk.onKey({ key: 'Tab' });
+  ok(!shut(kb.html(), 'hr-merge'), 'walking there by keyboard is deliberate too');
+  const touch = await opened();
+  touch.overMerge = true; touch.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'touch' });
+  await touch.press('hr-next'); await touch.paint(); touch.seen();
+  ok(!shut(touch.html(), 'hr-merge'), 'a finger does not rest: touch has its longer wait instead');
+}
+
+section('§11 A jump brings the desk into view');
+{
+  const fx = await opened();
+  await fx.press('', { reviewJump: '2' });
+  ok(fx.calls.head === 1, 'the head is brought on screen');
+  await fx.press('', { reviewJump: '0' });
+  ok(fx.calls.head === 2, 'every time');
+  await fx.press('hr-next');
+  ok(fx.calls.head === 2, 'and Next does not scroll');
 }
 
 section('§7 The same desk can carry a family walk');

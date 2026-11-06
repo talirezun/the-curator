@@ -82,6 +82,10 @@ export async function launchBrowser({ headless = true } = {}) {
     '--disable-background-networking',
     '--disable-component-update',
     '--disable-sync',
+    // A headless Chrome still has a window to the system, and an occluded one stops drawing.
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-background-timer-throttling',
     '--disable-default-apps',
     '--metrics-recording-only',
     '--no-sandbox',
@@ -97,6 +101,14 @@ export async function launchBrowser({ headless = true } = {}) {
   let stderr = '';
   child.stderr.on('data', (d) => { stderr += d.toString().slice(0, 2000); });
   child.on('error', () => { /* surfaced below as "never wrote DevToolsActivePort" */ });
+  // THE DISPLAY MUST STAY ON WHILE THIS BROWSER RUNS (macOS). Measured: when the display
+  // slept on its idle timer, the page went to visibilityState "hidden" and
+  // requestAnimationFrame stopped for good, and neither focus emulation nor bringToFront
+  // brought it back. A walk then failed at random or hung, and a short scene, over before
+  // the timer, was always green. `caffeinate -w` ends with this browser and changes no setting.
+  if (process.platform === 'darwin' && child.pid) {
+    try { const keep = spawn('/usr/bin/caffeinate', ['-d', '-w', String(child.pid)], { stdio: 'ignore' }); keep.on('error', () => {}); keep.unref(); } catch { /* the run can still go, and says so if the page is hidden */ }
+  }
 
   const portFile = path.join(profileDir, 'DevToolsActivePort');
   let wsUrl = null;

@@ -23,7 +23,10 @@
 // RUBBER-STAMPING. There is no single-key shortcut for Merge or Keep both, and there must
 // never be one. After a decision focus lands on the pair's title, never on a button, so a
 // held Enter does nothing. Merge names its result, so its label changes on every pair, and
-// neither choice is violet, so the page does not lean toward deleting.
+// neither choice is violet, so the page does not lean toward deleting. 500 ms alone did not
+// hold: 56 clicks in 6 s on one spot merged 4 pages unread. So a mouse that is still resting
+// on Merge when the next pair arrives must leave it and come back before it opens, and by
+// touch the wait is longer. A person who moved the pointer to read never meets either.
 //
 // A FAMILY WALK (Stage 6) IS THE SAME DESK. `renderDesk` draws a model and knows nothing
 // about pairs: title, count, the two facts lines, two panes, the after line, the two
@@ -33,6 +36,8 @@ import { renderFoldRow, renderFoldItem, renderFoldRows } from '../shared/section
 
 /** How long the comparison must be on screen before Merge opens. */
 export const ARM_MS = 500;
+/** By touch, where a finger cannot leave and come back: a person who reads takes longer anyway. */
+export const ARM_TOUCH_MS = 2000;
 /** "All N pairs" draws this many rows at a time, however long the list. */
 export const FOLD_PAGE = 50;
 
@@ -189,17 +194,19 @@ export function renderDesk(m) {
       '<div class="hr-panes hr-end"><p class="hr-end-line">' + esc(m.end.counts) + '</p>' +
         (m.end.more ? '<p class="hr-end-line">' + esc(m.end.more) + '</p>' : '') + '</div>' +
       '<div class="hr-after"></div>' +
-      '<div class="hr-decide"></div>'
+      '<div class="hr-decide"></div>' +
+      '<div class="hr-gate"></div>'
     : '<div class="hr-facts">' + m.factsHtml + '</div>' +
       '<div class="hr-panes" data-review-key="' + esc(m.reviewKey) + '">' + renderPane(m.goes) + renderPane(m.stays) + '</div>' +
       '<div class="hr-after">' + (m.afterHtml || '') + '</div>' +
       '<div class="hr-decide">' +
         '<div class="hr-decide-btns">' +
           '<button type="button" class="btn btn-secondary" id="hr-keep"' + m.keepAttrs + '>' + m.keepLabel + '</button>' +
-          '<button type="button" class="btn btn-danger" id="hr-merge"' + m.mergeAttrs + ' aria-label="' + esc(m.mergeSpoken) + '"><span class="hr-merge-label">' + m.mergeLabelHtml + '</span></button>' +
+          '<button type="button" class="btn btn-danger" id="hr-merge" aria-describedby="hr-gate"' + m.mergeAttrs + ' aria-label="' + esc(m.mergeSpoken) + '"><span class="hr-merge-label">' + m.mergeLabelHtml + '</span></button>' +
         '</div>' +
         '<p class="hr-note">' + m.noteHtml + '</p>' +
-      '</div>';
+      '</div>' +
+      '<div class="hr-gate" id="hr-gate">' + esc(m.gateText || '') + '</div>';
   return '<div class="hr-desk' + (m.busy ? ' hr-desk-busy' : '') + '">' + head + middle +
       '<div class="hr-outcome' + (m.outcome && m.outcome.tone === 'error' ? ' hr-outcome-failed' : '') + '">' + (m.outcome ? m.outcome.html : '') + '</div>' +
       m.foldHtml +
@@ -207,36 +214,54 @@ export function renderDesk(m) {
 }
 
 // ── ON SCREEN FOR ms ──────────────────────────────────────────────────────
-// Half of the panes, or half of a window too short for that. On a hidden tab nothing
-// runs. No IntersectionObserver means nothing ever counts as seen: the safe direction.
-export function watchVisible(el, ms, done) {
-  if (typeof IntersectionObserver === 'undefined' || !el) return () => {};
-  let timer = null;
-  let seen = false;
-  const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  const run = () => {
-    stop();
-    if (!seen || document.hidden) return;
-    timer = setTimeout(() => { timer = null; cancel(); done(); }, ms);
+// EVERY element must be seen, each for the whole time: at least half of it, or half of a
+// window too short for that. They need not be on screen together, because on a phone two
+// stacked pages may not fit. Scrolling one away before its time is up starts it again. On
+// a hidden tab nothing runs. No IntersectionObserver means nothing ever counts as seen: the
+// safe direction. `onUnseen(true)` says one still to be seen is off screen.
+export function watchVisible(els, ms, done, onUnseen) {
+  const list = [].concat(els).filter(Boolean);
+  if (typeof IntersectionObserver === 'undefined' || list.length === 0) return () => {};
+  const items = new Map(list.map((el) => [el, { seen: false, read: false, timer: null, reported: false }]));
+  const stop = (it) => { if (it.timer) { clearTimeout(it.timer); it.timer = null; } };
+  const run = (it) => {
+    stop(it);
+    if (it.read || !it.seen || document.hidden) return;
+    it.timer = setTimeout(() => {
+      it.timer = null;
+      it.read = true;
+      if ([...items.values()].every((x) => x.read)) { cancel(); done(); }
+    }, ms);
   };
   const observer = new IntersectionObserver((entries) => {
-    const e = entries[entries.length - 1];
-    const rect = e.intersectionRect || { height: 0 };
-    const rootH = e.rootBounds ? e.rootBounds.height : (typeof window !== 'undefined' ? window.innerHeight : 0);
-    const now = !!e.isIntersecting && (e.intersectionRatio >= 0.5 || (rootH > 0 && rect.height >= rootH * 0.5));
-    if (now === seen) return;
-    seen = now;
-    run();
+    for (const e of entries) {
+      const it = items.get(e.target);
+      if (!it) continue;
+      it.reported = true;
+      const rect = e.intersectionRect || { height: 0 };
+      const rootH = e.rootBounds ? e.rootBounds.height : (typeof window !== 'undefined' ? window.innerHeight : 0);
+      const now = !!e.isIntersecting && (e.intersectionRatio >= 0.5 || (rootH > 0 && rect.height >= rootH * 0.5));
+      if (now === it.seen) continue;
+      it.seen = now;
+      run(it);
+    }
+    if (onUnseen && [...items.values()].every((x) => x.reported)) onUnseen([...items.values()].some((x) => !x.read && !x.seen));
   }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
-  const onVisibility = () => run();
+  const onVisibility = () => { for (const it of items.values()) run(it); };
   document.addEventListener('visibilitychange', onVisibility);
-  observer.observe(el);
+  for (const el of list) observer.observe(el);
   function cancel() {
-    stop();
+    for (const it of items.values()) stop(it);
     observer.disconnect();
     document.removeEventListener('visibilitychange', onVisibility);
   }
   return cancel;
+}
+
+/** With a pointer that can hover, 500 ms. By touch there is no hover to leave, so longer. */
+export function armDelay(pointerType, hoverNone) {
+  const coarse = pointerType === 'touch' || pointerType === 'pen' || (!pointerType && !!hoverNone);
+  return coarse ? ARM_TOUCH_MS : ARM_MS;
 }
 
 // ── THE WALK ──────────────────────────────────────────────────────────────
@@ -262,11 +287,41 @@ export function watchVisible(el, ms, done) {
  *   warn             GIT_UNDO_WARN, byte for byte
  *   onClosed(merged) what the lanes do when the desk goes
  *   coverageLeft()   pairs not compared yet
+ *   headIntoView()   brings the section's head on screen, when it is off
  */
 export function createReviewDesk(d) {
   let cancelWatch = null;
   let watchedEl = null;
   let watchedKey = null;
+  // Where the pointer is, read from every move, because a disabled button hears nothing.
+  const pointer = { x: null, y: null, type: null, stale: false };
+  let listening = false;
+
+  const mergeRect = () => {
+    if (d.mergeRect) return d.mergeRect();
+    const m = typeof document !== 'undefined' ? document.getElementById('hr-merge') : null;
+    return m ? m.getBoundingClientRect() : null;
+  };
+  const overMerge = () => {
+    const b = mergeRect();
+    return !!b && pointer.x !== null && pointer.x >= b.left && pointer.x <= b.right && pointer.y >= b.top && pointer.y <= b.bottom;
+  };
+  /** Every move and press. It has left Merge: the next arrival on it is a new press. */
+  function onPointer(e) {
+    pointer.x = e.clientX; pointer.y = e.clientY;
+    if (e.pointerType) pointer.type = e.pointerType;
+    if (pointer.stale && !overMerge()) { pointer.stale = false; d.render(); }
+  }
+  /** A keyboard reaches Merge by walking to it, which is deliberate; the mouse is not in it. */
+  function onKey(e) { if (e.key === 'Tab' && pointer.stale) { pointer.stale = false; d.render(); } }
+  function listen(on) {
+    if (on === listening || typeof document === 'undefined') return;
+    listening = on;
+    const way = on ? 'addEventListener' : 'removeEventListener';
+    document[way]('pointermove', onPointer, true);
+    document[way]('pointerdown', onPointer, true);
+    document[way]('keydown', onKey, true);
+  }
 
   const review = () => {
     const r = d.state.review;
@@ -305,6 +360,9 @@ export function createReviewDesk(d) {
   function goTo(r, index) {
     stopWatch();
     r.index = index;
+    r.checkHover = true;
+    r.unseen = false;
+    if (r.outcome && r.outcome.retry) r.outcome = null; // "Try again" belongs to the pair that failed, never the next one
     r.comparison = null;
     r.refreshing = false;
     d.disarm(r.scan);
@@ -333,6 +391,8 @@ export function createReviewDesk(d) {
       foldStart: null, foldCount: null, ended: false, refreshing: false, mergedAtOpen: tally(scan.pairs).merged };
     d.disarm(scan);
     stopWatch();
+    pointer.stale = false;
+    listen(true);
     const t = tally(scan.pairs);
     live('Pair ' + n0(first + 1) + ' of ' + n0(t.total) + '.');
     d.render();
@@ -343,6 +403,7 @@ export function createReviewDesk(d) {
   function close() {
     const r = review();
     stopWatch();
+    listen(false);
     d.state.review = null;
     d.state.expandedGroups.delete('reviewPairs');
     if (r) d.disarm(r.scan);
@@ -355,9 +416,12 @@ export function createReviewDesk(d) {
   // a comparison that is missing is fetched, one that has arrived starts the 500 ms.
   function afterPaint() {
     const r = review();
-    if (!r) { stopWatch(); return; }
+    if (!r) { stopWatch(); listen(false); return; }
+    listen(true);
     if (typeof document !== 'undefined') paintPanes();
     if (r.ended) return;
+    // The label has its new width now. Still on Merge when the pair arrived: not a new press.
+    if (r.checkHover) { r.checkHover = false; pointer.stale = pointer.type !== 'touch' && pointer.type !== 'pen' && overMerge(); }
     const pair = current(r);
     if (!pair) { close(); return; }
     if (pair.status !== 'open') {
@@ -398,7 +462,8 @@ export function createReviewDesk(d) {
     stopWatch();
     watchedEl = el;
     watchedKey = key;
-    cancelWatch = watchVisible(el, ARM_MS, () => {
+    const hoverNone = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
+    cancelWatch = watchVisible([...el.querySelectorAll('.hr-pane')], armDelay(pointer.type, hoverNone), () => {
       cancelWatch = null;
       watchedEl = null;
       watchedKey = null;
@@ -406,7 +471,13 @@ export function createReviewDesk(d) {
       if (!now) return;
       const p = current(now);
       if (!p || d.pairKey(p) !== key || p.status !== 'open') return;
+      now.unseen = false;
       if (d.arm(p)) d.render();
+    }, (unseen) => {
+      const now = review();
+      if (!now || now !== r || !!now.unseen === unseen) return;
+      now.unseen = unseen;
+      d.render();
     });
   }
 
@@ -584,7 +655,7 @@ export function createReviewDesk(d) {
       case 'hr-keep': return keepBoth(r);
       case 'hr-merge':
         // What the button promised is still on screen, or the press is refused here too.
-        if (!r.comparison || r.comparison.key !== key || !r.comparison.data || !d.gate(pair).allowed) return undefined;
+        if (!r.comparison || r.comparison.key !== key || !r.comparison.data || !d.gate(pair).allowed || pointer.stale) return undefined;
         return merge(r);
       case 'hr-undo': return undo(r);
       case 'hr-retry': {
@@ -623,6 +694,8 @@ export function createReviewDesk(d) {
         sayArrival(r);
         d.render();
         focusTitle();
+        // The row can be thousands of pixels below the pair it brings up.
+        if (d.headIntoView) d.headIntoView();
       }
     }
     return undefined;
@@ -686,7 +759,12 @@ export function createReviewDesk(d) {
       mergeLabelHtml: merging ? 'Merging…' : 'Merge into ' + name(staysPage),
       mergeSpoken: merging ? 'Merging' : 'Merge into ' + staysPage,
       // aria-disabled while it runs, not disabled: a disabled control drops focus.
-      mergeAttrs: merging ? ' aria-busy="true" aria-disabled="true"' : ((!armedNow || saving) ? ' disabled' : ''),
+      mergeAttrs: merging ? ' aria-busy="true" aria-disabled="true"' : ((!armedNow || saving || pointer.stale) ? ' disabled' : ''),
+      // Merge shut with no sign why is how a person concludes it is broken. Not said in the
+      // ordinary half second, which is over before it could be read.
+      gateText: busy ? '' : (armedNow && pointer.stale) ? 'Move the pointer off Merge and back to press it.'
+        : (!armedNow && data && r.unseen) ? 'Merge opens once you have had both pages on screen.'
+        : (!armedNow && data && armDelay(pointer.type, typeof matchMedia === 'function' && matchMedia('(hover: none)').matches) !== ARM_MS) ? 'Merge opens in a moment, so both pages can be read.' : '',
       noteHtml: 'Merging deletes ' + name(goesPage) + '. ' + esc(typeof d.warn === 'function' ? d.warn() : d.warn),
     };
     return outcomeBase;
@@ -697,5 +775,5 @@ export function createReviewDesk(d) {
     return m ? renderDesk(m) : '';
   }
 
-  return { open, close, isOpen: () => !!review(), html, model, afterPaint, onClick, focusTitle };
+  return { open, close, isOpen: () => !!review(), html, model, afterPaint, onClick, focusTitle, onPointer, onKey };
 }

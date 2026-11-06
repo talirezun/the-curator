@@ -133,6 +133,8 @@ export const OUTSIDE_THE_DECK = [
   'After the merge there is one page, {name}. Lists from {name} join the sections of the same name. 1 link moves to it.',
   'After the merge there is one page, {name}. Lists from {name} join the sections of the same name. No links move, because nothing links here.',
   'All 1 pair',
+  // Why Merge is shut, when the half second alone does not explain it.
+  'Move the pointer off Merge and back to press it.', 'Merge opens once you have had both pages on screen.', 'Merge opens in a moment, so both pages can be read.',
   'Read the comparison for this pair before merging it.',       // the gate's re-check at execution
   'Could not merge: this merge would lose text, so nothing was changed.',
   'Could not merge: the pages did not pass the check on disk, so nothing was changed.',
