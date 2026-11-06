@@ -84,6 +84,24 @@ export const DECK = [
   'Scan details', 'open issues', 'entities', 'concepts', 'summaries', 'left as is', 'checked',
   'This domain is a read-only Shared Brain mirror', 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.',
   'Could not check this wiki: {msg}',
+  // The review desk
+  'Pair {n} of {n}', '{n} decided · {n} left', 'Previous', 'Next', 'Done',
+  'Spelling variant', 'Version numbers differ', 'Different names', 'The AI gave no reason.',
+  'Goes away', 'Stays', '{name} · {n} links point here · {name}', '{name} · 1 link points here · {name}', '{name} · nothing links here · {name}', 'The AI says: "{msg}"',
+  'Loading the page…', '(showing the first {n} characters)', 'Read full page', 'Keep this one instead',
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name, and everything else moves under "Merged from {name}". {n} links move to it.',
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name, and everything else moves under "Merged from {name}". 1 link moves to it.',
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name, and everything else moves under "Merged from {name}". No links move, because nothing links here.',
+  'Keep both', 'Merge into {name}', 'Merging deletes {name}. ' + WARN,
+  'Merged {name} into {name}.', 'Merged {name} into {name}. {n} links moved.', 'Merged {name} into {name}. 1 link moved.',
+  'Merged {name} into {name}. {n} links moved. {n} other pairs settled.', 'Merged {name} into {name}. {n} links moved. 1 other pair settled.',
+  'Merged {name} into {name}. 1 link moved. {n} other pairs settled.', 'Merged {name} into {name}. 1 link moved. 1 other pair settled.',
+  'Merged {name} into {name}. {n} other pairs settled.', 'Merged {name} into {name}. 1 other pair settled.',
+  'Kept {name} and {name} apart. They will not come back.',
+  'This page changed since you compared it. The comparison has been refreshed.', 'This pair is settled: {name} no longer exists. Moving on.',
+  'Could not load the comparison: {msg}', 'All pairs decided.', '{n} merged · {n} kept both · {n} settled by another merge',
+  '{n} pairs have not been compared yet, shown in AI help.', '1 pair has not been compared yet, shown in AI help.',
+  'All {n} pairs', 'waiting', 'merged', 'settled by another merge', 'this pair', '{name} → {name}',
 ];
 
 /**
@@ -110,21 +128,27 @@ export const OUTSIDE_THE_DECK = [
   'at {name}',                    // the monitor's clock time beside "checked"
   '(your model was unavailable)', // a fallback's disclosure on the Last run line
   'free', 'cost unknown', '…',
+  // The review desk: facts the deck has no line for.
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name. {n} links move to it.',
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name. 1 link moves to it.',
+  'After the merge there is one page, {name}. Lists from {name} join the sections of the same name. No links move, because nothing links here.',
+  'All 1 pair',
+  'Read the comparison for this pair before merging it.',       // the gate's re-check at execution
+  'Could not merge: this merge would lose text, so nothing was changed.',
+  'Could not merge: the pages did not pass the check on disk, so nothing was changed.',
 ];
 
-/**
- * STAGE 2 ONLY: today's pair cards, which the review desk replaces in Stage 3, are
- * reached through Possible duplicates in their old words. Audited apart: only inside
- * this subtree, and the suite says how many strings it let through.
- */
-export const STAGE3_SUBTREE = '[data-group-key="duplicates"] > .cur-fold-body';
 
-// No mechanism words on screen. "confidence" joins this in Stage 3, with the badge.
-export const BANNED = /\b(diff|slugs?|orphans?|backlinks?|prefix(es)?|candidates?|deterministic|quick maintenance|safe issues?|rescan|dismiss(ed)?|restore)\b/i;
+// No mechanism words on screen. "confidence" joined in Stage 3, when the badge went.
+export const BANNED = /\b(diff|slugs?|orphans?|backlinks?|prefix(es)?|candidates?|deterministic|quick maintenance|safe issues?|rescan|dismiss(ed)?|restore|confidence)\b/i;
 
 // The deck's item line, in any combination: its parts are each optional.
 const FACT = '(?:[\\d,]+ repeated lines?|[\\d,]+ concepts? filed under Entities|[\\d,]+ entit(?:y|ies) filed under Concepts)';
 const ITEM_FACT = new RegExp('^' + FACT + '(?: · ' + FACT + ')*$');
+// All N pairs' summary: the deck's row states and facts, counted. Each part only when it is not zero.
+const STATE = '[\\d,]+ (?:waiting|merged|kept both|settled by another merge)';
+const RELATION = '(?:Spelling variant|Version numbers differ|Different names) [\\d,]+';
+const FOLD_LINE = new RegExp('^(?:' + STATE + '(?: · ' + STATE + ')*|' + RELATION + '(?: · ' + RELATION + ')*)$');
 function toRegex(line) {
   const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     .replace(/\\\{n\\\}/g, '[\\d,]+')
@@ -139,7 +163,7 @@ const COMPILED = [...DECK, ...OUTSIDE_THE_DECK].map(toRegex);
 export function wordAllowed(line) {
   const t = String(line).replace(/\s+/g, ' ').trim();
   if (!t) return true;
-  return ITEM_FACT.test(t) || COMPILED.some((re) => re.test(t));
+  return ITEM_FACT.test(t) || FOLD_LINE.test(t) || COMPILED.some((re) => re.test(t));
 }
 
 /**

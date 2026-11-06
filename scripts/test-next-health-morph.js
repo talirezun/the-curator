@@ -82,7 +82,7 @@ class El {
   }
   replaceChild(n, old) { this.insertBefore(n, old); this.removeChild(old); }
   contains(o) { for (let n = o; n; n = n.parentNode) if (n === this) return true; return false; }
-  closest(tag) { for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (n.nodeName === tag.toUpperCase()) return n; return null; }
+  closest(tag) { for (let n = this; n && n.nodeType === 1; n = n.parentNode) if (tag[0] === '.' ? (n.getAttribute('class') || '').split(' ').includes(tag.slice(1)) : n.nodeName === tag.toUpperCase()) return n; return null; }
   focus() { DOC.activeElement = this; }
   cloneNode(deep) { return new El(this.nodeName, Object.fromEntries(this._attrs), deep ? this.childNodes.map((k) => k.cloneNode(true)) : []); }
   isEqualNode(o) {
@@ -262,13 +262,11 @@ section('§4 Fuzz: any tree to any tree, checked by a dumb serialiser');
   ok(falseResults === 0, 'and every one of them reported true');
 }
 
-section('§5 Keys: a flipped pair is the same pair; different things are different');
+section('§5 Keys: the desk keeps its nodes; different things are different');
 {
-  const btn = (key, action) => h('button', { 'data-sem-key': key, 'data-sem-action': action });
-  ok(healthKey(btn('concepts/a||concepts/b', 'flip')) === healthKey(btn('concepts/b||concepts/a', 'flip')), 'Flip keeps a pair\'s key');
-  ok(healthKey(btn('concepts/a||concepts/b', 'flip')) !== healthKey(btn('concepts/a||concepts/b', 'merge')), 'Merge and Flip on one pair are different buttons');
-  ok(healthKey(btn('concepts/a||concepts/b', 'merge')) !== healthKey(btn('concepts/a||concepts/c', 'merge')), 'Merge on two pairs are different buttons');
-  ok(healthKey(h('div', { class: 'dm-sem-card', 'data-sem-key': 'x||y' })) !== healthKey(btn('x||y', 'merge')), 'a card is not its button');
+  ok(healthKey(h('button', { id: 'hr-merge' })) !== healthKey(h('button', { id: 'hr-keep' })), 'Merge and Keep both are different buttons');
+  ok(healthKey(h('div', { 'data-review-key': 'a||b' })) === healthKey(h('div', { 'data-review-key': 'c||d' })), 'the panes stay the same node from pair to pair, so a decision moves nothing');
+  ok(healthKey(h('button', { 'data-review-jump': '3' })) !== healthKey(h('button', { 'data-review-jump': '4' })), 'each row in All N pairs is its own button');
   const dismiss = (issue) => h('button', { 'data-dismiss-type': 'orphans', 'data-dismiss-issue': issue });
   ok(healthKey(dismiss('{"path":"a"}')) !== healthKey(dismiss('{"path":"b"}')), 'each Dismiss belongs to its own issue');
   ok(healthKey(h('details', { 'data-group-key': 'orphans' })) === 'group:orphans', 'a fold is keyed by its category');
@@ -298,10 +296,8 @@ function confirmSemanticReset(s) { calls.push('reset ' + s); }
 function confirmFixAllOfType(s, t) { calls.push('fixall ' + s + ' ' + t); }
 function activeSemanticScan() { return state.semanticScan; }
 function semanticPairKey(p) { return p.key; }
-function previewSemanticPair(s, p) { calls.push('preview ' + s + ' ' + p.key); }
-function flipSemanticPair(p) { calls.push('flip ' + p.key); }
-function mergeOneSemanticPair(s, p) { calls.push('merge ' + s + ' ' + p.key); }
-function skipSemanticPair(s, p) { calls.push('skip ' + s + ' ' + p.key); }
+const reviewDesk = { open() { calls.push('desk open'); return true; }, onClick(b) { calls.push('desk ' + b.id); } };
+function healthHeadIntoView() {}
 async function dismissIssue(s, t, i) { calls.push('dismiss ' + s + ' ' + t + ' ' + i.path); }
 async function undismissIssue(s, r) { calls.push('restore ' + s + ' ' + r.path); }
 async function loadDismissedRecords(s) { calls.push('loadDismissed ' + s); }
@@ -311,7 +307,7 @@ function pageY() { return 0; }
 function releaseHeldRows() {}
 function healthRowKey() { return null; }
 `;
-const FNS = ['bindHealthListeners', 'dispatchHealthAction', 'onHealthClick', 'noteHealthFoldPress', 'onHealthToggle', 'onHealthKeydown', 'noteHealthPress', 'healthMorphKey', 'sortedPairKey'];
+const FNS = ['bindHealthListeners', 'dispatchHealthAction', 'onHealthClick', 'noteHealthFoldPress', 'onHealthToggle', 'onHealthKeydown', 'noteHealthPress', 'healthMorphKey'];
 for (const n of FNS) if (!functionSource(VIEW, n)) throw new Error('not found in domains.js: ' + n);
 const docStub = { sec: null, querySelector: () => docStub.sec };
 const box = new Function('__calls', '__doc',
@@ -352,7 +348,6 @@ async function press(sec, target) {
 
 section('§7 Every control reaches its own action, once');
 {
-  const pairBtn = (action) => h('button', { class: 'btn dm-sem-btn', 'data-sem-action': action, 'data-sem-key': 'p1' }, action);
   const controls = {
     yes: h('button', { id: 'dm-confirm-yes' }),
     no: h('button', { id: 'dm-confirm-no' }),
@@ -361,10 +356,9 @@ section('§7 Every control reaches its own action, once');
     discard: h('button', { id: 'dm-plan-discard-btn' }),
     batch: h('button', { id: 'dm-semantic-merge-btn' }),
     repairAll: h('button', { id: 'dm-repair-all-btn' }),
-    more: h('button', { id: 'dm-semantic-more-btn' }),
     reset: h('button', { id: 'dm-semantic-reset-btn' }),
     quick: h('button', { class: 'dm-quick-btn', 'data-action': 'orphans' }),
-    preview: pairBtn('preview'), flip: pairBtn('flip'), merge: pairBtn('merge'), skip: pairBtn('skip'),
+    review: h('button', { class: 'dm-review-btn', 'data-review': '1' }, 'Review'),
     fixall: h('button', { class: 'dm-group-fixall-btn', 'data-fixall': 'orphans' }),
     dismiss: h('button', { class: 'dm-dismiss-btn', 'data-dismiss-type': 'orphans', 'data-dismiss-issue': '{"path":"p.md"}' }),
     restore: h('button', { class: 'dm-restore-btn', 'data-restore-key': '{"path":"r.md"}' }),
@@ -396,27 +390,19 @@ section('§7 Every control reaches its own action, once');
   ok(CALLS.join() === 'batch alpha', 'Merge N spelling variants');
   await press(sec, controls.repairAll);
   ok(CALLS.join() === 'repairAll alpha', 'Repair all');
-  await press(sec, controls.more);
-  ok(CALLS.join() === 'render' && s.semanticScan.visible === 100, 'Show more');
   await press(sec, controls.reset);
   ok(CALLS.join() === 'reset alpha', 'Forget all comparisons');
   await press(sec, controls.quick);
   ok(CALLS.join() === 'quick alpha orphans', 'A quick action');
-  await press(sec, controls.preview);
-  ok(CALLS.join() === 'preview alpha p1', 'Preview');
-  await press(sec, controls.flip);
-  ok(CALLS.slice(0, 2).join() === 'flip p1,render', 'Flip');
-  await tick();   // its label goes back on a timer, and that is a paint too
-  await press(sec, controls.merge);
-  ok(CALLS.join() === 'merge alpha p1', 'Merge');
-  await press(sec, controls.skip);
-  ok(CALLS.join() === 'skip alpha p1', 'Skip');
-  s.semanticScan.pairs = [];
-  await press(sec, controls.merge);
-  ok(CALLS.length === 0, 'a pair no longer in live state does nothing');
-  s.semanticScan = null;
-  await press(sec, controls.merge);
-  ok(CALLS.length === 0, 'and with no scan at all, nothing');
+  await press(sec, controls.review);
+  ok(CALLS.join() === 'desk open', 'Review opens the desk');
+  // A press inside the desk is the desk's. Merge, Keep both and the rest are its own suite's.
+  const inDesk = h('button', { id: 'hr-merge' }, 'Merge');
+  const desk = h('div', { class: 'hr-desk' }, inDesk);
+  sec.appendChild(desk);
+  await press(sec, inDesk);
+  ok(CALLS.join() === 'desk hr-merge', 'a button in the desk goes to the desk, once');
+  sec.removeChild(desk);
   const fix = await press(sec, controls.fixall);
   ok(CALLS.join() === 'fixall alpha orphans', 'Fix all');
   ok(fix.defaultPrevented && fix.stopped, 'Fix all, inside a <summary>, neither toggles the fold nor bubbles on');
@@ -433,7 +419,7 @@ section('§8 A disabled button never acts');
   const icon = h('svg', {});
   const quick = h('button', { class: 'dm-quick-btn', 'data-action': 'semanticDupes', disabled: '' }, icon, 'Find duplicate pages');
   const mergeIcon = h('span', {}, 'Merge');
-  const merge = h('button', { class: 'dm-sem-btn', 'data-sem-action': 'merge', 'data-sem-key': 'p1', disabled: '' }, mergeIcon);
+  const merge = h('button', { id: 'hr-merge', disabled: '' }, mergeIcon);
   const yes = h('button', { id: 'dm-confirm-yes', disabled: '' }, h('span', {}, 'Go'));
   const sec = h('section', { class: 'dm-health' }, quick, merge, yes);
   docStub.sec = sec;

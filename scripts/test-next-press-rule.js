@@ -54,7 +54,7 @@ function world() {
   const ran = [];
   const body = `
     const state = { rowNote: null, rowOutcomes: {}, rowLines: {}, confirm: null, pendingPlan: null, pressAnchor: null, ringAnchor: null,
-      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), busyAway: {}, leftRows: {}, rowArming: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), busyAway: {}, leftRows: {}, rowArming: {}, pressLocks: {}, pressOpener: null, review: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
     const HEALTH_CATEGORIES = [{ key: 'missingBacklinks', label: 'Missing backlinks' }, { key: 'crossFolderDupes', label: 'Cross-folder duplicates' }, { key: 'brokenLinks', label: 'Broken links' }];
     const AUTO_FIX_TYPES = new Set(['missingBacklinks', 'crossFolderDupes', 'hyphenVariants', 'brokenLinks']);
     const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
@@ -342,10 +342,6 @@ section('§4 What leaves when, and what stays put');
   ok(w.healthRowHold('confirm', above) === 0, 'a closing question is not such a row');
   w.setPress(120);
   ok(w.healthRowHold('issue:x', above) === 0, 'a row the press is inside is not above it');
-  w.state.rowOutcomes['pair:p'] = { held: true, slug: 'a', at: Date.now(), tone: 'success', text: 'x' };
-  w.setPress(null);
-  const settled = w.healthRowHold('pair:q', below);
-  ok(settled > 900, 'a pair another merge settled is held with it, so the two leave together', String(settled));
 }
 
 section('§5 Figures change before the rescan, and only for what was fixed');
