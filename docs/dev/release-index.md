@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.91.1` | A merge no longer loses text: `page-merge.js` is the one composer for every delete-after-merge path, the kept page is the base, and `findLostLines` refuses a delete that would lose a line. |
 | `v3.91.0` | "Find duplicate pages" finishes: remembered answers per domain, coverage, a relation prompt chosen by measurement, spelling-variant-only bulk merge checked by the server, and `isMergeableSlug`. |
 | `v3.90.1` | The website assistant shows the Windows one-liner (a fix in the website's bridge and renderer), and llm-docs describe the Windows install tab; docs only here. |
 | `v3.90.0` | Settings › MCP bridge in plain words (a copy deck implemented word for word, word audit, extended page contract), and a sync keeps running when you leave the Sync page (`sync-job.js`, `shared/sync-run.js`). |
