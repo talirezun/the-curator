@@ -211,7 +211,8 @@ section('5. writePage — redirects are user-visible warnings');
   const write = async (p) => {
     const warns = [];
     const rec = await files.writePage(domain, p, `# X\n\nType: tool\nTags: t\n\n## Key Points\n- From ${p}.\n`, { onWarn: (w) => warns.push(w) });
-    real.push(...warns);
+    // Only redirects: since the mostly-new rule, a reuse may also report a rewording.
+    real.push(...warns.filter((w) => /redirected to canonical/.test(w)));
     return { rec, warns };
   };
 
@@ -248,7 +249,7 @@ section('5. writePage — redirects are user-visible warnings');
     const a = await write('entities/brand-new.md');
     eq(a.warns.length, 0, 'CONTROL: a brand-new page produces no warning');
     const b = await write('entities/tali-rezun.md');
-    eq(b.warns.length, 0, 'CONTROL: writing the canonical path itself produces no warning');
+    eq(b.warns.filter((w) => /redirected to canonical/.test(w)).length, 0, 'CONTROL: writing the canonical path itself produces no redirect warning');
     eq(b.rec && b.rec.canonPath, 'entities/tali-rezun.md', 'CONTROL: …and lands where it was asked to');
   }
   // Aggregation — per-page classes collapse at 3, keep specifics at 2.

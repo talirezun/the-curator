@@ -8,7 +8,7 @@
  *   3. Chat: selectRelevantPages falls back to top-linked when no match
  *   4. Chat: scorePage weighting (filename > heading > body)
  *   5. Chat: selectRelevantPages respects content budget
- *   6. Ingest: redirectSemanticDuplicates auto-redirects at ≥0.85 Jaccard
+ *   6. Ingest: redirectSemanticDuplicates folds a spelling variant only (Jaccard >= 0.85 retired)
  *   7. Ingest: redirectSemanticDuplicates warns in 0.5–0.85 band
  *   8. Ingest: redirectSemanticDuplicates catches singular/plural via stem
  *   9. Ingest: redirectSemanticDuplicates catches within-outline dupes
@@ -174,23 +174,32 @@ async function main() {
     eq(contentBytes, 0, 'Test 5b: empty pages → 0 contentBytes');
   }
 
-  // ── Test 6: redirectSemanticDuplicates auto-redirects at ≥0.85 ──
-  console.log('\n[6] ingest — redirectSemanticDuplicates auto-redirect');
+  // ── Test 6: a spelling variant folds; a mid-word plural warns ──
+  // Moved deliberately (owner's decision, 2026-11-06): the Jaccard >= 0.85 redirect
+  // also folded reorderings and ignored one-character tokens. This suite's original
+  // example, experts-roundup-format, has its plural on the first word, which
+  // isSpellingVariant does not take, so it now keeps both pages and says so.
+  console.log('\n[6] ingest — redirectSemanticDuplicates spelling-only');
   {
     const { redirectSemanticDuplicates } = await import('../src/brain/ingest.js');
     const outline = {
       pages: [
         { path: 'summaries/foo.md', summary: 'A summary' },
-        { path: 'concepts/experts-roundup-format.md', summary: 'A roundup of expert views' },
+        { path: 'concepts/expert-roundup-formats.md', summary: 'A roundup of expert views' },
       ],
     };
     const existingFiles = { concepts: ['expert-roundup-format.md'], entities: [] };
     const { warnings, redirects } = redirectSemanticDuplicates(outline, existingFiles);
     eq(redirects.length, 1, 'Test 6a: one redirect emitted');
-    eq(redirects[0].from, 'experts-roundup-format', 'Test 6b: redirect.from is the proposed slug');
+    eq(redirects[0].from, 'expert-roundup-formats', 'Test 6b: redirect.from is the proposed slug');
     eq(redirects[0].to,   'expert-roundup-format',  'Test 6c: redirect.to is the existing slug');
     eq(outline.pages[1].path, 'concepts/expert-roundup-format.md', 'Test 6d: outline path rewritten');
-    truthy(warnings.some(w => w.includes('Jaccard')), 'Test 6e: warning mentions Jaccard');
+    truthy(warnings.some(w => w.includes('redirected to canonical')), 'Test 6e: warning names the redirect');
+
+    const midWord = { pages: [{ path: 'concepts/experts-roundup-format.md', summary: 's' }] };
+    const r2 = redirectSemanticDuplicates(midWord, existingFiles);
+    eq(r2.redirects.length, 0, 'Test 6f: a plural on another word does not fold');
+    truthy(r2.warnings.some(w => w.includes('Jaccard 1.00') && w.includes('Keeping both')), 'Test 6g: it says it kept both');
   }
 
   // ── Test 7: warn band (0.5–0.85) doesn't redirect ──────────────
@@ -236,7 +245,7 @@ async function main() {
     const outline = {
       pages: [
         { path: 'concepts/expert-roundup-format.md', summary: 'first' },
-        { path: 'concepts/experts-roundup-format.md', summary: 'plural variant' },
+        { path: 'concepts/expert-roundup-formats.md', summary: 'plural variant' },
       ],
     };
     const existingFiles = { concepts: [], entities: [] };
@@ -244,8 +253,16 @@ async function main() {
     eq(redirects.length, 1, 'Test 9a: one within-outline redirect');
     eq(redirects[0].scope, 'within', 'Test 9b: scope=within');
     eq(outline.pages.length, 1, 'Test 9c: outline.pages dropped to single entry');
-    truthy(warnings.some(w => w.includes('near-duplicate')),
-      'Test 9d: warning mentions near-duplicate');
+    truthy(warnings.some(w => w.includes('spelling variant')),
+      'Test 9d: warning names the spelling variant');
+
+    const close = { pages: [
+      { path: 'concepts/domain-knowledge.md', summary: 'first' },
+      { path: 'concepts/knowledge-domains.md', summary: 'reordered' },
+    ] };
+    const r2 = redirectSemanticDuplicates(close, existingFiles);
+    eq(close.pages.length, 2, 'Test 9e: a close name that is not a spelling variant stays in the plan');
+    truthy(r2.warnings.some(w => w.includes('near-duplicate') && w.includes('Keeping both')), 'Test 9f: it says it kept both');
   }
 
   // ── Test 10: entities are untouched ──────────────────────────

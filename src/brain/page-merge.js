@@ -477,6 +477,309 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
   return bom + [...head, ...body].join(eol);
 }
 
+// ── Reuse: the model named a page that exists ───────────────────────────────
+
+/**
+ * Whether new wording says something the page does not. Deterministic, no model.
+ *
+ * THE RULE (owner's decision, 2026-11-06, after a live re-test). Keeping every
+ * wording added 50,000 characters per re-ingest round on one domain and never
+ * converged: one page held six near-identical definitions. So a sentence, line or
+ * bullet joins the page only when at least half of its content words are on no
+ * line of the page, or it holds a number the page lacks ("30 years" beside "25
+ * years" shares every other word, and is a new fact).
+ *
+ * WHY 0.5, AND WHY THE WHOLE PAGE. Measured on the replies of three real re-ingest
+ * rounds, 79 lines labelled by one reader: at 0.5 on the whole page, 86% of what is
+ * dropped really was a rewording and 92% of real new points are kept, the best
+ * precision of the grid; 0.45 and 0.55 are lower, and comparing with the single
+ * closest line is no better. Added characters per round fell from about 40,000 to
+ * about 13,000. It does not reach zero: a model finds new details on each reading.
+ * Known failure: on a long page a new point in the page's own vocabulary is
+ * dropped, which is why every drop is reported.
+ *
+ * It can only ever drop new text. Replaying a reply adds nothing, because what it
+ * added is now on the page and what it dropped has less chance than before.
+ */
+export const NEW_WORDING_MIN_SHARE = 0.5;
+
+const STOP_WORDS = new Set(('a an and are as at be been but by can could did do does for from had has have how if in into is it '
+  + 'its may might more most no not of on or our she so some such than that the their them then there these they this those '
+  + 'to us was we were what when where which while who why will with would you your he his her i my me also both each very '
+  + 'just only over under about between through within without per via using use used uses make makes made one two new').split(' '));
+
+function contentWords(text) {
+  const plain = String(text).toLowerCase()
+    .replace(/\[\[([^\]|]*\/)?([^\]|]+)(\|([^\]]+))?\]\]/g, (m, a, slug, c, alias) => ` ${(alias || slug).replace(/[-_]/g, ' ')} `)
+    .replace(/(\d),(?=\d)/g, '$1')
+    .replace(/[^\p{L}\p{N}.$%-]+/gu, ' ')
+    .replace(/(?<!\d)[.-]|[.-](?!\d)/g, ' ');
+  const stem = (w) => {
+    if (/\d/.test(w)) return w;
+    if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+    if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+    return w;
+  };
+  return [...new Set(plain.split(/\s+/).filter((w) => w && !STOP_WORDS.has(w)).map(stem))];
+}
+
+/** Is this mostly new against the words on the page? A text with no content word never is. */
+export function isMostlyNew(text, pageWords) {
+  const words = contentWords(text);
+  if (!words.length) return false;
+  const fresh = words.filter((w) => !pageWords.has(w));
+  return fresh.length / words.length >= NEW_WORDING_MIN_SHARE || fresh.some((w) => /\d/.test(w));
+}
+
+const splitSentences = (text) => text.split(/(?<=[.!?])\s+(?=[A-Z\[`"“*])/).map((x) => x.trim()).filter(Boolean);
+const LINK_SECTIONS = new Set(['related', 'entities mentioned', 'concepts introduced or referenced']);
+const LIST_LINE_RE = /^[ \t]*(\d+[.)]|[*+]|>)[ \t]/;
+function leadTarget(bulletLine) {
+  const m = bulletLine.match(/^-\s+\[\[([^\]|#]+)/);
+  return m ? m[1].trim().replace(/\.md$/, '').replace(/^(entities|concepts)\//, '').toLowerCase() : null;
+}
+
+/**
+ * Exact-name reuse: the model named a page that exists. The page's text always
+ * stays, title and opening first; in any `##` section the incoming page repeats,
+ * wording that passes isMostlyNew goes directly below the kept text, verbatim; a
+ * section the page lacks goes at the foot if anything in it passes. The test runs
+ * on every sentence, list line and bullet against ALL the page, so it holds for
+ * every heading (812 distinct ones on one measured domain). In Related and the
+ * summary link sections a link-led bullet is decided by its target instead: a new
+ * target is always added, a known one never.
+ *
+ * Not text, on purpose: the incoming `# title` when the page has one, and `created`
+ * and `date` (bookkeeping of a write).
+ *
+ * @param {string} keepText
+ * @param {string} incomingText
+ * @param {object} [opts]
+ * @param {string} [opts.keepFolder]
+ * @param {boolean} [opts.repeatSource] this same source was ingested here before, so
+ *   no wording joins the page however new its words look: a model finds new vocabulary
+ *   on every reading, and the mostly-new test alone never reaches zero (measured +14,000
+ *   characters a round; +5,500 with new link targets still allowed).
+ * @param {string[]} [opts.dropped] receives each passage left out for repeating the
+ *   page, so the caller can say so. An exact repeat is not listed: nothing is lost.
+ * @returns {string}
+ */
+export function composeReusedPage(keepText, incomingText, { keepFolder, dropped = [], repeatSource = false } = {}) {
+  const original = String(keepText ?? '');
+  const bom = original.startsWith('\ufeff') ? '\ufeff' : '';
+  const crlf = (original.match(/\r\n/g) || []).length;
+  const eol = crlf * 2 > (original.match(/\n/g) || []).length ? '\r\n' : '\n';
+
+  const keep = splitPage(original);
+  const inc = splitPage(withoutWriteBookkeeping(incomingText));
+  const wantType = keepFolder === 'entities' ? 'entity' : keepFolder === 'concepts' ? 'concept' : null;
+  const fm = repeatSource
+    ? { lines: keep.hasFrontmatter ? keep.frontmatter : null, conflicts: [] }
+    : composeFrontmatter(keep, inc, wantType);
+
+  const keepTokens = tokenize(keep.body);
+  const sections = sectionIndex(keepTokens);
+  const keptHasTitle = keepTokens.some((t) => t.kind === 'heading' && t.level === 1);
+  let hay = hayOf(keep.body);
+  const pageWords = new Set(contentWords(keep.body.join('\n')));
+  const absorb = (text) => { for (const w of contentWords(text)) pageWords.add(w); };
+
+  // Where the opening ends: before the first `##`, or a second `#`.
+  let openingEnd = 0;
+  let titles = 0;
+  for (const t of keepTokens) {
+    if (t.kind === 'heading' && (t.level === 2 || (t.level === 1 && titles++ > 0))) break;
+    openingEnd = t.end;
+  }
+
+  const plans = new Map();          // insertion line → lines
+  const tailSections = new Map();   // section key → { heading, lines }
+  const addAt = (at, block) => {
+    if (!plans.has(at)) plans.set(at, []);
+    plans.get(at).push(block);
+  };
+  const remember = (lines) => { hay += normLines(lines).join('\n') + '\n'; };
+
+  // A section's bullets, as they stand plus what this write adds.
+  const bulletState = new Map();
+  const bulletsOf = (key) => {
+    if (!bulletState.has(key)) {
+      const target = bulletTarget(sections.get(key));
+      bulletState.set(key, target);
+    }
+    return bulletState.get(key);
+  };
+  /** True when this bullet is already held, or is a bare link the section has. */
+  const bulletHeld = (key, token) => {
+    const target = bulletsOf(key);
+    const top = token.lines[0];
+    const single = token.lines.length === 1;
+    if (single && target.exact.has(top.trim().toLowerCase())) return true;
+    if (!single && target.multi.includes(hayOf(token.lines))) return true;
+    if (single && BARE_LINK_BULLET_RE.test(top.trim()) && target.keys.has(dedupKey(top))) return true;
+    if (single) target.exact.add(top.trim().toLowerCase());
+    else target.multi.push(hayOf(token.lines));
+    target.keys.add(dedupKey(top));
+    return false;
+  };
+
+  const incTokens = tokenize(inc.body);
+  let group = null;                 // null: the opening
+  let pending = [];                 // a heading waits for something new under it
+  const linkTargets = new Map();    // link section → the targets it names
+  const place = (block, direct) => {
+    if (group === null) {
+      addAt(openingEnd, block);
+    } else if (sections.has(group.key)) {
+      const sec = sections.get(group.key);
+      addAt(direct ? sec.directEnd : sec.sectionEnd, block);
+    } else {
+      tailSections.get(group.key).lines.push(block);
+    }
+  };
+
+  for (const t of incTokens) {
+    if (t.kind === 'heading' && t.level === 2) {
+      pending = [];
+      const key = headingKey(t.text);
+      group = { key, direct: true };
+      if (!sections.has(key) && !tailSections.has(key)) {
+        tailSections.set(key, { heading: t.text, lines: [] });
+      }
+      continue;
+    }
+    if (t.kind === 'heading') {
+      if (group) group.direct = false;
+      // A sub-heading goes on the page only with something new under it.
+      pending.push([t.level === 1 ? demote(t) : t.lines[0]]);
+      continue;
+    }
+    if (t.kind === 'bullet' && group) {
+      if (bulletHeld(group.key, t)) continue;
+    } else if (hay.includes(hayOf(t.lines))) {
+      continue;
+    }
+
+    // What of this block says something new. A fence is code: only an exact repeat
+    // goes (above). A table is one unit. Prose goes sentence by sentence.
+    let lines = t.lines;
+    const whole = t.lines.join(' ');
+    if (t.kind === 'bullet') {
+      const target = group && LINK_SECTIONS.has(group.key) ? leadTarget(t.lines[0]) : null;
+      if (repeatSource) {
+        if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
+        continue;
+      } else if (target) {
+        if (!linkTargets.has(group.key)) {
+          linkTargets.set(group.key, new Set((sections.get(group.key)?.bullets || []).map((b) => leadTarget(b.lines[0])).filter(Boolean)));
+        }
+        const known = linkTargets.get(group.key);
+        if (known.has(target)) { dropped.push(whole); continue; }
+        known.add(target);
+      } else if (!isMostlyNew(whole, pageWords)) {
+        if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
+        continue;
+      }
+    } else if (repeatSource) {
+      dropped.push(whole);
+      continue;
+    } else if (t.kind === 'para') {
+      if (t.lines.every((l) => l.startsWith('|'))) {
+        if (!isMostlyNew(whole, pageWords)) { dropped.push(whole); continue; }
+      } else {
+        const everyLine = t.lines.every((l) => LIST_LINE_RE.test(l));
+        const units = everyLine ? t.lines : splitSentences(whole);
+        const fresh = [];
+        for (const u of units) {
+          if (isMostlyNew(u, pageWords)) { fresh.push(u); absorb(u); } else dropped.push(u);
+        }
+        if (!fresh.length) continue;
+        if (fresh.length !== units.length) lines = everyLine ? fresh : [fresh.join(' ')];
+      }
+    }
+    absorb(lines.join(' '));
+
+    const direct = !group || group.direct;
+    for (const h of pending) {
+      if (!hay.includes(`\n${h[0].trimEnd()}\n`)) { remember(h); absorb(h[0]); place(h, direct); }
+    }
+    pending = [];
+    remember(lines);
+    const closer = t.kind === 'fence' && !t.closed ? t.marker[0].repeat(t.marker.length) : null;
+    place(closer ? [...lines, closer] : lines, direct);
+  }
+  for (const [key, section] of tailSections) if (!section.lines.length) tailSections.delete(key);
+
+  const conflicts = fm.conflicts.length ? ['```yaml', ...fm.conflicts, '```'] : null;
+  const addConflicts = conflicts && !hay.includes(hayOf(conflicts));
+
+  const fmUnchanged = fm.lines === null
+    || (keep.hasFrontmatter && fm.lines.join('\n') === keep.frontmatter.join('\n'));
+  const anyNew = plans.size > 0 || tailSections.size > 0 || addConflicts;
+  if (fmUnchanged && !anyNew) return original;
+
+  // ── Into the kept body, last first so the line numbers hold ───────────────
+  const body = keep.body.slice();
+  const atList = (line) => line !== undefined && (line.startsWith('- ') || /^[ \t]+\S/.test(line));
+  for (const at of [...plans.keys()].sort((a, b) => b - a)) {
+    const out = [];
+    let prev = at > 0 ? body[at - 1] : undefined;
+    for (const block of plans.get(at)) {
+      const bothList = atList(prev) && block[0].startsWith('- ');
+      if (prev !== undefined && !isBlank(prev) && !bothList) out.push('');
+      out.push(...block);
+      prev = block[block.length - 1];
+    }
+    if (at < body.length && !isBlank(body[at]) && !(atList(prev) && body[at].startsWith('- '))) out.push('');
+    body.splice(at, 0, ...out);
+  }
+
+  const tail = [];
+  for (const { heading, lines } of tailSections.values()) {
+    tail.push('', `## ${heading}`);
+    lines.forEach((block, i) => {
+      const bothList = i > 0 && lines[i - 1][0].startsWith('- ') && block[0].startsWith('- ');
+      if (i > 0 && !bothList) tail.push('');
+      tail.push(...block);
+    });
+  }
+  if (addConflicts) tail.push('', '## Frontmatter from a later write', ...conflicts);
+
+  if (tail.length) {
+    while (body.length && isBlank(body[body.length - 1])) body.pop();
+    const lastKept = keepTokens[keepTokens.length - 1];
+    if (lastKept && lastKept.kind === 'fence' && !lastKept.closed) {
+      body.push(lastKept.marker[0].repeat(lastKept.marker.length));
+    }
+    if (!body.length) tail.shift();
+    body.push(...tail, '');
+  } else if (body.length === 0 || !isBlank(body[body.length - 1])) {
+    body.push('');
+  }
+
+  // A page with no `# title` takes the incoming one, which is otherwise not text.
+  if (!keptHasTitle && !repeatSource) {
+    const title = tokenize(splitPage(incomingText).body).find((t) => t.kind === 'heading' && t.level === 1);
+    if (title) body.unshift(title.lines[0], ...(body.length && !isBlank(body[0]) ? [''] : []));
+  }
+
+  const head = fm.lines === null ? [] : ['---', ...fm.lines, '---'];
+  return bom + [...head, ...body].join(eol);
+}
+
+/**
+ * The incoming page without what a reuse deliberately does not carry: its first
+ * `# title`, when no text comes before it, and its `date`.
+ */
+function withoutWriteBookkeeping(incomingText) {
+  const page = splitPage(incomingText);
+  const body = page.body.slice();
+  const first = body.findIndex((l) => !isBlank(l));
+  if (first >= 0 && /^#[ \t]+\S/.test(body[first])) body.splice(first, 1);
+  const fm = page.frontmatter.filter((l) => !/^date:/.test(l));
+  return (page.hasFrontmatter ? ['---', ...fm, '---'] : []).concat(body).join('\n');
+}
+
 // ── The dumb cross-check ────────────────────────────────────────────────────
 
 /**

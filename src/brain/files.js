@@ -7,6 +7,7 @@ import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { acquireFileLock } from './write-registry.js';
 import { moveToTrash, countFiles } from './trash.js';
+import { composeMergedPage, composeReusedPage, findLostLines } from './page-merge.js';
 
 // v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
 // process-kill mid-write (e.g. /api/restart killing the old process while
@@ -393,7 +394,9 @@ function injectBulletsIntoSection(content, sectionName, extraBullets) {
  * Merge an existing wiki page with newly-generated content.
  * Strategy:
  *   - Bullet-accumulating sections (Key Facts, Related, etc.): union of bullets.
- *   - Prose sections (Summary, Definition, etc.): use incoming (LLM had full doc context).
+ *   - Prose sections (Summary, Definition, etc.): use incoming.
+ * Since 2026-11-06 writePage uses this only to replace a stub page; a real page goes
+ * through page-merge.js, which loses no line.
  *   - Sections only in existing: preserved via bullet injection logic above.
  */
 /**
@@ -897,7 +900,7 @@ export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
   let updated = injectBulletsIntoSection(summaryContent, SUMMARY_ENTITIES_HEADING, entityBullets);
   updated = injectBulletsIntoSection(updated, SUMMARY_CONCEPTS_HEADING, conceptBullets);
   const stripped = stripBlanksInBulletSections(updated);
-  let cleaned = deduplicateBulletSections(stripped);
+  let cleaned = dedupBulletsKeepingText(stripped);
 
   // Then the same deterministic tidy Health offers for existing wikis: bullets
   // the MODEL filed under the wrong section move to the one their page's folder
@@ -1267,7 +1270,126 @@ function isUnsafePagePath(p) {
   return p.includes('\0') || p.includes('\\') || path.isAbsolute(p) || p.split('/').includes('..');
 }
 
+// ── A fold: a page the model named differently lands on an existing page ─────
+//
+// The model wrote about `agents`, or `talirezun`, without reading the page it
+// landed on. A fold composes with page-merge.js, the same composer every deleting
+// Health merge uses: the existing page is the base and the proposed page's text
+// moves over, under `## Merged from` where it has no matching section.
+let __foldComposeForTest = null;
+/** Test seam, same shape as __setSummaryTidyComposeForTest: prove the guard fires. */
+export function __setFoldComposeForTest(fn) { __foldComposeForTest = fn; }
+
+/**
+ * deduplicateBulletSections keys a bullet on its first link, so it drops a
+ * different sentence that opens with the same link. Writing onto an existing page
+ * that is lost text, so here a bullet goes only if the same line is already in
+ * the section, or it is a bare `- [[x]]` and the section already names x.
+ */
+function dedupBulletsKeepingText(content) {
+  const ACCUMULATE = new Set([
+    'Key Facts', 'Key Ideas', 'Key Points', 'Related',
+    'Key Takeaways', 'Entities Mentioned',
+    'Concepts Introduced or Referenced', 'Applications', 'Examples',
+  ]);
+  const result = [];
+  let inSection = false;
+  let lines = new Set();
+  let keys = new Set();
+  for (const line of content.split('\n')) {
+    const h = line.match(/^(#{1,3})\s+(.+)$/);
+    if (h && h[1] === '##') {
+      inSection = ACCUMULATE.has(h[2].trim());
+      lines = new Set();
+      keys = new Set();
+    } else if (inSection && line.startsWith('- ')) {
+      const norm = line.trim().toLowerCase();
+      const key = dedupKey(line);
+      if (lines.has(norm) || (linkOnlyTarget(line) !== null && keys.has(key))) continue;
+      lines.add(norm);
+      keys.add(key);
+    }
+    result.push(line);
+  }
+  return result.join('\n');
+}
+
+// A page The Curator wrote because the AI failed: "Re-ingest to fix" must fix it,
+// so a stub is the one existing page the incoming text replaces.
+const STUB_MARK_RE = /^> ⚠ \*\*Stub (page|summary)\b/m;
+
+/**
+ * The deterministic link tidy for one domain as it is on disk right now.
+ *   Folder prefixes: the LLM writes [[concepts/rag]] or [[entities/x]]; [[summaries/x]]
+ *     keeps its prefix, since Obsidian routes on it.
+ *   `.md`: [[summaries/foo.md]] and [[llama-3.1.md]] lose it, alias kept (v3.0.1-beta.9;
+ *     about 15-20% of broken-link reports on real output).
+ *   Variant slugs, Pass A: title prefix. Pass B: hyphen-normalised against entities and
+ *     concepts. Pass C: prefix-tolerant across all three folders (the-, a-, an-), which
+ *     catches [[energy-and-water-footprint-of-generative-ai]] →
+ *     [[summaries/the-energy-and-water-footprint-of-generative-ai]].
+ */
+async function linkRewriterFor(domain) {
+  const wiki = wikiPath(domain);
+  let entityFiles = [], conceptFiles = [], summaryFiles = [];
+  try { entityFiles = (await readdir(path.join(wiki, 'entities'))).filter(f => f.endsWith('.md')); } catch {}
+  try { conceptFiles = (await readdir(path.join(wiki, 'concepts'))).filter(f => f.endsWith('.md')); } catch {}
+  try { summaryFiles = (await readdir(path.join(wiki, 'summaries'))).filter(f => f.endsWith('.md')); } catch {}
+
+  const entitySlugs = new Set(entityFiles.map(f => f.slice(0, -3)));
+  const conceptSlugs = new Set(conceptFiles.map(f => f.slice(0, -3)));
+
+  // Pass C's lookup: key → { folder, slug }, keys hyphen- and article-stripped.
+  const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
+  const allSlugsMap = new Map();
+  for (const [files, folder] of [[entityFiles, null], [conceptFiles, null], [summaryFiles, 'summaries']]) {
+    for (const f of files) {
+      const s = f.slice(0, -3);
+      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder, slug: s });
+    }
+  }
+
+  const variants = (text) => text.replace(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g, (match, slug, alias) => {
+    // Never touch summaries/ prefixed links or any link containing a sub-path
+    if (slug.includes('/')) return match;
+    // Already a known canonical entity or concept slug — nothing to do
+    if (entitySlugs.has(slug) || conceptSlugs.has(slug)) return match;
+
+    const stripped = slug.replace(TITLE_PREFIX_RE, '');
+    if (stripped !== slug && (entitySlugs.has(stripped) || conceptSlugs.has(stripped))) {
+      return `[[${stripped}${alias || ''}]]`;
+    }
+
+    const norm = slug.replace(/-/g, '').toLowerCase();
+    for (const s of entitySlugs) {
+      if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
+    }
+    for (const s of conceptSlugs) {
+      if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
+    }
+
+    const hit = allSlugsMap.get(slug.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase());
+    if (hit) return `[[${hit.folder ? `${hit.folder}/${hit.slug}` : hit.slug}${alias || ''}]]`;
+    return match;
+  });
+
+  return (text) => variants(
+    text
+      .replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]')
+      .replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]')
+  );
+}
+
 export async function writePage(domain, relativePath, content, opts = {}) {
+  // opts.repeatSource: this same source was ingested into this domain before: the
+  // existing page takes no new wording, and opts.onLeftOut(count) hears what went.
+  // opts.keepLines: the caller read this page and rewrote it (hub linkification);
+  // used with opts.replace, the dedup still may not drop a line.
+  // opts.foldedFrom: the slug the model proposed, when ingest's spelling guard
+  // already moved this page onto an existing one (see redirectSemanticDuplicates).
+  // writePage's own redirects below set the same fold on themselves.
+  //
   // opts.onWarn (v3.0.16): optional callback(message) so a REFUSED or
   // auto-corrected page becomes visible to the user instead of dying in a
   // console line nobody reads. Contract mirrors the v3.0.4 adapter onWarn
@@ -1466,6 +1588,22 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   const dir = path.dirname(fullPath);
   await mkdir(dir, { recursive: true });
 
+  // Is this a fold? Only when the NAME moved: a page whose slug and folder are
+  // what the model asked for is ordinary reuse, even if its path needed tidying
+  // (`people/x.md`, `entities/a/x.md`, a missing `.md`). Never a summary: a
+  // re-ingest of the same source merges into its summary by design.
+  const canonSlug = path.basename(canonPath, '.md');
+  const askedSlug = path.basename(relativePath).replace(/\.md$/i, '');
+  const isPagePath = canonPath.startsWith('entities/') || canonPath.startsWith('concepts/');
+  let foldLabel = null;
+  if (isPagePath) {
+    if (typeof opts.foldedFrom === 'string' && opts.foldedFrom) foldLabel = opts.foldedFrom;
+    else if (requestedPath !== canonPath || askedSlug !== canonSlug) {
+      const fromSlug = path.basename(requestedPath, '.md');
+      foldLabel = fromSlug === canonSlug && askedSlug === canonSlug ? requestedPath.replace(/\.md$/, '') : askedSlug;
+    }
+  }
+
   // Capture pre-write state once — used both by the merge step below and by
   // the change-record computation after the write.
   const existedBefore = existsSync(fullPath);
@@ -1477,15 +1615,48 @@ export async function writePage(domain, relativePath, content, opts = {}) {
 
   // 4. Merge with existing content instead of overwriting — bullet-list
   //    sections (Key Facts, Related, etc.) accumulate across ingests.
+  //
+  //    Owner's decision, 2026-11-06: no write onto an existing page loses a line.
+  //    A page that came under another name folds (composeMergedPage). A page the
+  //    model named reuses (composeReusedPage). A stub is replaced. Both compose
+  //    over link-tidied text, so a link the tidy rewrites is not "new wording".
   let final = processed;
   const skipMerge = canonPath === 'index.md' || canonPath === 'log.md';
-  if (!skipMerge && existedBefore && !opts.replace) {
+  const rewriteLinks = skipMerge ? (t) => t : await linkRewriterFor(domain);
+  const onExisting = !skipMerge && existedBefore && !opts.replace && existingContent.trim() !== '';
+  const isStub = onExisting && STUB_MARK_RE.test(existingContent);
+  const isFold = onExisting && !isStub && Boolean(foldLabel);
+  const isReuse = onExisting && !isStub && !foldLabel;
+  const guarded = isFold || isReuse;
+  if (isFold && requestedPath === canonPath && askedSlug !== canonSlug && !opts.foldedFrom) {
+    // Underscores become hyphens above with no word to the user; on an existing
+    // page that is a redirect like any other, so it says so here.
+    warn(`Page "${relativePath}" is a spelling variant of the existing "${canonPath}" — redirected to canonical "${canonPath}"; its content was merged into that page.`);
+  }
+  const leftOut = [];
+  if (guarded) {
+    // A composer that throws must not fall through to a plain overwrite of the
+    // page this exists to protect: it ends at the refusal below.
+    try {
+      const keepFolder = canonPath.split('/')[0];
+      final = (isFold && !opts.repeatSource)
+        ? (__foldComposeForTest || composeMergedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { sourceLabel: foldLabel, keepFolder })
+        : (__foldComposeForTest || composeReusedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { keepFolder, dropped: leftOut, repeatSource: opts.repeatSource === true });
+    } catch {
+      final = null;
+    }
+  } else if (onExisting) {
     try {
       final = mergeWikiPage(existingContent, processed);
     } catch {
       // If merge fails, fall back to plain write — better than crashing
     }
   }
+  const refuseWrite = () => {
+    warn(`Page "${relativePath}" could not be merged into "${canonPath}" without losing text, so it was not written: "${canonPath}" is unchanged and this page's content did not reach the wiki. Re-ingest this source to try again.`);
+    return null;
+  };
+  if (final === null) return refuseWrite();
 
   // 5. Strip blank lines that appear inside bullet sections — the LLM sometimes
   //    emits two groups of bullets separated by a blank line. Remove those gaps
@@ -1496,101 +1667,13 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   //     cases where the same page is written more than once in a multi-phase
   //     ingest (the LLM returns a page in multiple batches), causing mergeWikiPage
   //     to produce duplicate bullets before the regular dedup can catch them.
-  if (!skipMerge) final = deduplicateBulletSections(final);
+  const dedup = (guarded || opts.keepLines) ? dedupBulletsKeepingText : deduplicateBulletSections;
+  if (!skipMerge) final = dedup(final);
 
-  // 5b. Strip folder prefixes from [[wiki-links]] — the LLM sometimes writes
-  //     [[concepts/rag]], [[entities/tali-rezun]], or [[summaries/foo]] instead
-  //     of [[rag]], [[tali-rezun]], [[summaries/foo]].
-  //     Exception: [[summaries/...]] links are intentionally kept as-is because
-  //     they live in a separate folder and need the prefix for Obsidian routing.
+  // 5b-5c. The link tidy (linkRewriterFor). It also runs on the originals before
+  //        composing; here it covers a first write and a replace.
   if (!skipMerge) {
-    final = final.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
-  }
-
-  // 5b2. Strip trailing `.md` from wikilinks — the LLM sometimes writes
-  //      `[[summaries/foo.md]]` or `[[llama-3.1.md]]` instead of
-  //      `[[summaries/foo]]` / `[[llama-3.1]]`. Wikilink syntax never includes
-  //      the file extension; Obsidian (and our own page-exists check) treats
-  //      the literal `.md` as part of the target slug, making the link broken.
-  //      v3.0.1-beta.8+ deep-test surfaced this as ~15-20% of broken-link
-  //      reports on real LLM output. The prompt asks the model to omit the
-  //      extension, but compliance is imperfect — strip programmatically.
-  //
-  //      Preserves `|alias` text: `[[foo.md|FooLabel]]` → `[[foo|FooLabel]]`.
-  if (!skipMerge) {
-    final = final.replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]');
-  }
-
-  // 5c. Normalize [[variant-slug]] links to canonical wiki slugs.
-  //     Pass A: title-prefix strip (dr-, mr-, prof-, etc.)
-  //     Pass B: hyphen-normalised match against entities and concepts
-  //     Pass C: prefix-tolerant match across ALL wiki files (entities, concepts, summaries)
-  //             Strips common article prefixes (the-, a-, an-) for comparison,
-  //             catching [[energy-and-water-footprint-of-generative-ai]] →
-  //             [[summaries/the-energy-and-water-footprint-of-generative-ai]].
-  if (!skipMerge) {
-    const wiki = wikiPath(domain);
-
-    // Load slugs from all three canonical folders
-    let entityFiles = [], conceptFiles = [], summaryFiles = [];
-    try { entityFiles = (await readdir(path.join(wiki, 'entities'))).filter(f => f.endsWith('.md')); } catch {}
-    try { conceptFiles = (await readdir(path.join(wiki, 'concepts'))).filter(f => f.endsWith('.md')); } catch {}
-    try { summaryFiles = (await readdir(path.join(wiki, 'summaries'))).filter(f => f.endsWith('.md')); } catch {}
-
-    const entitySlugs = new Set(entityFiles.map(f => f.slice(0, -3)));
-    const conceptSlugs = new Set(conceptFiles.map(f => f.slice(0, -3)));
-
-    // Build a prefix-tolerant lookup Map for Pass C: key → { folder, slug }
-    // Keys are hyphen-stripped AND article-prefix-stripped for maximum match coverage
-    const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
-    const allSlugsMap = new Map();
-    for (const f of entityFiles) {
-      const s = f.slice(0, -3);
-      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
-      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: null, slug: s }); // bare link
-    }
-    for (const f of conceptFiles) {
-      const s = f.slice(0, -3);
-      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
-      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: null, slug: s }); // bare link
-    }
-    for (const f of summaryFiles) {
-      const s = f.slice(0, -3);
-      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
-      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: 'summaries', slug: s }); // prefixed link
-    }
-
-    final = final.replace(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g, (match, slug, alias) => {
-      // Never touch summaries/ prefixed links or any link containing a sub-path
-      if (slug.includes('/')) return match;
-      // Already a known canonical entity or concept slug — nothing to do
-      if (entitySlugs.has(slug) || conceptSlugs.has(slug)) return match;
-
-      // Pass A: strip title prefix (dr-, mr-, prof-, etc.)
-      const stripped = slug.replace(TITLE_PREFIX_RE, '');
-      if (stripped !== slug && (entitySlugs.has(stripped) || conceptSlugs.has(stripped))) {
-        return `[[${stripped}${alias || ''}]]`;
-      }
-
-      // Pass B: hyphen-normalised match against entities and concepts
-      const norm = slug.replace(/-/g, '').toLowerCase();
-      for (const s of entitySlugs) {
-        if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
-      }
-      for (const s of conceptSlugs) {
-        if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
-      }
-
-      // Pass C: prefix-tolerant match across all wiki files (incl. summaries)
-      const normKey = slug.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
-      const hit = allSlugsMap.get(normKey);
-      if (hit) {
-        const target = hit.folder ? `${hit.folder}/${hit.slug}` : hit.slug;
-        return `[[${target}${alias || ''}]]`;
-      }
-
-      return match;
-    });
+    final = rewriteLinks(final);
 
     // 5d. Dedup AGAIN, after the rewrites (v3.84.0). 5a ran before 5b-5c, and
     //     those passes turn distinct lines into identical ones — `[[concepts/rag]]`
@@ -1598,7 +1681,28 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     //     become `[[rag]]`/`[[x]]` AFTER the dedup had already let both through.
     //     Measured: 200 identical lines across the maintainer's articles and
     //     projects summaries. Same function, same key as 5a.
-    final = deduplicateBulletSections(final);
+    final = dedup(final);
+
+    // 5e. The guarantee, checked on the bytes about to be written. Every line of
+    //     the existing page must be here, up to the link tidy (so that is applied
+    //     to the original before comparing), and on a fold every line of the moved
+    //     page too. A reuse may leave out wording that repeats the page, and says
+    //     so below. findLostLines shares no tokenizer with the composers, so a shape
+    //     of markdown nobody thought of costs one refused page, never the text of
+    //     the page it landed on.
+    if (guarded) {
+      const moved = (isFold && !opts.repeatSource) ? rewriteLinks(processed) : '';
+      if (findLostLines(rewriteLinks(existingContent), moved, final).length) return refuseWrite();
+    }
+  }
+
+  // If the pipeline drops what the model produced, the report says so. One line per
+  // page; aggregated across pages at the ingest chokepoint ('reworded').
+  if (opts.repeatSource) {
+    if (leftOut.length && typeof opts.onLeftOut === 'function') opts.onLeftOut(leftOut.length);
+  } else if (leftOut.length) {
+    const sample = leftOut[0].length > 80 ? `${leftOut[0].slice(0, 80)}…` : leftOut[0];
+    warn(`Page "${canonPath}": ${leftOut.length} passage${leftOut.length === 1 ? '' : 's'} not added, because ${leftOut.length === 1 ? 'it' : 'they'} looked mostly like what the page already says (for example "${sample}"). A real new point can be among them: compare the source with the page.`);
   }
 
   await writeFileAtomic(fullPath, final, 'utf8');

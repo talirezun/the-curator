@@ -26,11 +26,13 @@ import { parseIndex, ensurePagesInIndex, indexEntriesFrom } from './wiki-index.j
 // converting it (or anything else in that cycle) to a `const` arrow would make
 // it undefined at module-evaluation time on some load orders.
 import { tokenize } from './sharedbrain-delta.js';
+import { existsSync } from 'node:fs';
 import { writeFileAtomic } from './atomic-write.js';
+import { isSpellingVariant } from './duplicate-checks.js';
 // Track 7 Part II. raw-store imports extractText from THIS module, but does so
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
-import { appendManifestRecord, hashRawSource, readManifest } from './raw-store.js';
+import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
 import { createHash } from 'crypto';
 import { listOtherInstances, describeOthers } from './instance-probe.js';
 
@@ -209,7 +211,7 @@ export async function resolveSummaryPath(domain, originalName) {
 // Residual risk when it DOES fire is the same one the A/B measured, which is
 // exactly why the budget is set where nothing real reaches it. The post-answer
 // safety net still applies either way: writePage's Pass A/B/C dedup, cross-folder
-// dedup, and redirectSemanticDuplicates at Jaccard >= 0.85 — which deliberately
+// dedup, and redirectSemanticDuplicates on spelling variants — which deliberately
 // keeps scanning the FULL on-disk list, never the capped one.
 
 /**
@@ -1299,41 +1301,39 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
   return { outline: { ...outline, pages }, warnings };
 }
 
-// ── Semantic-near-duplicate guard (v3.0.1-beta.11) ───────────────────────────
+// ── The spelling guard and the near-duplicate notice ─────────────────────────
 //
-// Catches the slug-drift pattern that the structural Pass A/B/C in writePage
-// cannot:
-//   expert-roundup-format  vs  experts-roundup-format    (singular/plural)
-//   tools-directory        vs  tools-directory-format    (suffix variant)
-//   pattern-library        vs  pattern-library-format    (suffix variant)
+// Two different jobs, on CONCEPT pages only. Entities are usually proper nouns
+// (`jones` / `jone`, `windows` / `window`), and writePage's Pass A/B already
+// handles their separators, case and honorifics.
 //
-// Surfaced by a community-member field report on the Curation domain after
-// multiple related articles were ingested — each used slightly different
-// surface phrasing for the same concept, so each ingest minted a new slug.
-// The hyphen-normalised Pass B can't see these as equivalent because the
-// underlying letters genuinely differ. The v2.4.5 Health-side semantic-dupe
-// scan exists but is post-hoc cleanup — by the time it runs the wiki is
-// already populated with the drift.
+// 1. A proposed page whose NAME is a spelling variant of a page already there
+//    (`isSpellingVariant`: separators, case, a narrow final plural) is written to
+//    that page. Nothing else folds. It used to be Jaccard >= 0.85 on stemmed word
+//    SETS, which on the short slugs this wiki has means an identical set, so it
+//    also folded reorderings: `domain-knowledge` onto `knowledge-domains`,
+//    `security-in-ai` onto `ai-in-security`. And it dropped one-character tokens,
+//    so `phase-2-build` scored 1.00 against `phase-1-build`, as did `plan-a` and
+//    `plan-b`. A wrong fold has no in-app undo; a missed one costs one Health merge.
+//    The cost is deliberate and known: `experts-roundup-format` (the plural is not
+//    on the last word) no longer folds onto `expert-roundup-format`. It warns.
 //
-// Approach: tokenize each candidate slug + each existing slug into a token
-// set, lightly normalize singular→singular (trim trailing 's' if the
-// remainder is ≥3 chars), then compute Jaccard similarity:
-//   ≥ 0.85 → auto-redirect (the new slug becomes the existing one)
-//   0.5 – 0.85 → warn so the user knows there's a candidate cluster
-//   < 0.5 → independent concepts, no action
+// 2. Every other pair at Jaccard >= 0.5 keeps both pages and says so: a name for
+//    the user to look at, never an action. Every token counts now, digits and
+//    single letters included, and a token holding a digit is not stemmed, so the
+//    score on `1990s` / `1990` and `plan-a` / `plan-b` is honest.
 //
-// Auto-redirect is intentionally aggressive at 0.85 — a Jaccard of 0.85 on
-// short slugs (3-5 tokens) means at most one token differs, and that
-// difference is almost always a synonym, plural, or suffix variant. The
-// 0.5–0.85 band is the false-positive risk zone, so we warn but don't act.
-//
-// Currently scoped to CONCEPT pages only. Entities are usually proper nouns
-// (people, companies, countries) where slight slug differences may genuinely
-// be different entities (e.g. "open-ai" vs "open-source-ai"). Concepts are
-// the surface where slug drift compounds quickly across ingests.
+// A fold is carried on the entry under a Symbol, which a model's JSON cannot
+// set, and reaches writePage as opts.foldedFrom. The page landing on the existing
+// one then composes through page-merge.js so the kept text stays, instead of the
+// incoming page replacing it as ordinary reuse does.
 
-const SEMANTIC_DUPE_AUTO_REDIRECT = 0.85;
+const FOLDED_FROM = Symbol('foldedFrom');
+
 const SEMANTIC_DUPE_WARN_THRESHOLD = 0.5;
+// Within one outline only the pairs that used to be dropped get a notice: the
+// wider band would name most of a plan's related concepts.
+const SEMANTIC_DUPE_WITHIN_NOTICE = 0.85;
 
 function singularStem(token) {
   // Lightweight singular/plural stem: drop trailing 's' if the remainder is
@@ -1341,18 +1341,19 @@ function singularStem(token) {
   // "roundups" → "roundup" without harming words that legitimately end in s
   // ("is", "as", "css"). Doesn't try to be a real stemmer.
   if (typeof token !== 'string' || token.length < 4) return token;
+  if (/\d/.test(token)) return token;      // 1990s is not 1990
   if (!token.endsWith('s')) return token;
   return token.slice(0, -1);
 }
 
 function slugToStemmedTokens(slug) {
-  // Split on hyphens (slug convention) then stem each token. Drop empties
-  // and common slug-noise tokens.
+  // Split on hyphens (slug convention) then stem each token. Drop empties only:
+  // a one-character token is often the whole difference (phase-2, plan-a).
   if (typeof slug !== 'string') return new Set();
   return new Set(
     slug.split('-')
       .map(t => t.trim().toLowerCase())
-      .filter(t => t.length > 1)
+      .filter(Boolean)
       .map(singularStem)
   );
 }
@@ -1366,12 +1367,15 @@ function jaccardOnSets(a, b) {
 }
 
 /**
- * Detect and redirect semantic near-duplicate CONCEPT slugs in the outline.
+ * The spelling guard: fold a proposed CONCEPT page onto the page it is a spelling
+ * variant of, and warn on any other close name. See the block above.
  *
- * Mutates `outline.pages` in place when a redirect fires. Returns
- * `{ warnings, redirects }` so the caller can surface them like the rest of
- * validateOutline's signal.
+ * Works on an outline (plan entries, no content) and on a single-pass reply
+ * (entries carry the page body). The difference matters within one outline: a
+ * plan entry can simply go, because no text exists yet, while a single-pass entry
+ * IS the text, so it stays in the list and folds at write time.
  *
+ * Mutates `outline.pages` when a fold fires. Returns `{ warnings, redirects }`.
  * Exported for unit testing.
  */
 export function redirectSemanticDuplicates(outline, existingFiles) {
@@ -1379,14 +1383,17 @@ export function redirectSemanticDuplicates(outline, existingFiles) {
   const redirects = [];
   if (!outline || !Array.isArray(outline.pages)) return { warnings, redirects };
 
-  // Build the inventory of existing concept slugs (on-disk before this
-  // ingest). Use the same stemming so comparisons are symmetric.
+  const hasContent = (p) => typeof p.content === 'string' && p.content.trim() !== '';
   const existingSlugs = (existingFiles?.concepts || [])
     .map(f => f.replace(/\.md$/, ''))
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort();
+  const existingSet = new Set(existingSlugs);
   const existingTokenSets = existingSlugs.map(s => ({ slug: s, tokens: slugToStemmedTokens(s) }));
+  // writePage turns `_` into `-` in a file name, so a name with an underscore
+  // is not a place a page can be redirected to: the write would create a new page.
+  const foldTargets = existingSlugs.filter(s => !s.includes('_'));
 
-  // Track redirects so we can also rewrite within-outline duplicates.
   const newPaths = [];
   const seenSlugsInOutline = [];
 
@@ -1399,47 +1406,62 @@ export function redirectSemanticDuplicates(outline, existingFiles) {
     const slug = p.path.replace(/^concepts\//, '').replace(/\.md$/, '');
     const tokens = slugToStemmedTokens(slug);
 
-    // Compare against EXISTING on-disk slugs first.
-    let bestExisting = null;
-    let bestExistingScore = 0;
-    for (const { slug: exSlug, tokens: exTokens } of existingTokenSets) {
-      if (exSlug === slug) {
-        bestExisting = exSlug;
-        bestExistingScore = 1.0;
-        break;
+    if (!existingSet.has(slug)) {
+      const target = foldTargets.find(s => isSpellingVariant(slug, s));
+      if (target) {
+        const to = `concepts/${target}.md`;
+        warnings.push(
+          `Page "${p.path}" is a spelling variant of the existing "${to}" — ` +
+          `redirected to canonical "${to}"; its content was merged into that page.`
+        );
+        redirects.push({ from: slug, to: target, scope: 'existing' });
+        p.path = to;
+        p[FOLDED_FROM] = slug;
+        newPaths.push(p);
+        continue;
       }
-      const score = jaccardOnSets(tokens, exTokens);
-      if (score > bestExistingScore) {
-        bestExisting = exSlug;
-        bestExistingScore = score;
+
+      let bestExisting = null;
+      let bestExistingScore = 0;
+      for (const { slug: exSlug, tokens: exTokens } of existingTokenSets) {
+        const score = jaccardOnSets(tokens, exTokens);
+        if (score > bestExistingScore) {
+          bestExisting = exSlug;
+          bestExistingScore = score;
+        }
+      }
+      if (bestExistingScore >= SEMANTIC_DUPE_WARN_THRESHOLD) {
+        warnings.push(
+          `Outline proposed "concepts/${slug}.md" — possible semantic near-duplicate ` +
+          `(Jaccard ${bestExistingScore.toFixed(2)}) of existing "concepts/${bestExisting}.md". ` +
+          `Keeping both; review via Wiki Health → Scan for semantic duplicates if they're truly the same concept.`
+        );
       }
     }
 
-    if (bestExistingScore >= SEMANTIC_DUPE_AUTO_REDIRECT && bestExisting && bestExisting !== slug) {
-      // Auto-redirect onto the existing slug.
-      const newPath = `concepts/${bestExisting}.md`;
-      warnings.push(
-        `Outline proposed "concepts/${slug}.md" — semantic near-duplicate ` +
-        `(Jaccard ${bestExistingScore.toFixed(2)}) of existing "concepts/${bestExisting}.md". ` +
-        `Redirected; bullets will merge into the existing page.`
-      );
-      redirects.push({ from: slug, to: bestExisting, score: bestExistingScore, scope: 'existing' });
-      p.path = newPath;
-      newPaths.push(p);
-      seenSlugsInOutline.push({ slug: bestExisting, tokens: slugToStemmedTokens(bestExisting), entry: p });
+    // OTHER slugs already kept in THIS outline: one ingest planning both
+    // `neural-network` and `neural-networks`. A slug that is already a page on
+    // disk is that page, and stays itself even with a twin in the plan.
+    const twin = existingSet.has(slug) ? null : seenSlugsInOutline.find(seen => !seen.slug.includes('_') && isSpellingVariant(slug, seen.slug));
+    if (twin) {
+      const to = `concepts/${twin.slug}.md`;
+      redirects.push({ from: slug, to: twin.slug, scope: 'within' });
+      if (hasContent(p)) {
+        warnings.push(
+          `Page "${p.path}" is a spelling variant of "${to}", in the same AI reply — ` +
+          `redirected to canonical "${to}"; its content was merged into that page.`
+        );
+        p.path = to;
+        p[FOLDED_FROM] = slug;
+        newPaths.push(p);
+      } else {
+        warnings.push(
+          `Page "${p.path}" is a spelling variant of "${to}", planned in the same ingest — ` +
+          `redirected to canonical "${to}", so it is written once.`
+        );
+      }
       continue;
     }
-    if (bestExistingScore >= SEMANTIC_DUPE_WARN_THRESHOLD && bestExisting && bestExisting !== slug) {
-      warnings.push(
-        `Outline proposed "concepts/${slug}.md" — possible semantic near-duplicate ` +
-        `(Jaccard ${bestExistingScore.toFixed(2)}) of existing "concepts/${bestExisting}.md". ` +
-        `Keeping both; review via Wiki Health → Scan for semantic duplicates if they're truly the same concept.`
-      );
-    }
-
-    // Compare against OTHER slugs already kept in THIS outline pass — catches
-    // the case where one ingest plans both `expert-roundup-format` and
-    // `experts-roundup-format` for the same source.
     let bestWithin = null;
     let bestWithinScore = 0;
     for (const seen of seenSlugsInOutline) {
@@ -1450,22 +1472,30 @@ export function redirectSemanticDuplicates(outline, existingFiles) {
         bestWithinScore = score;
       }
     }
-    if (bestWithinScore >= SEMANTIC_DUPE_AUTO_REDIRECT && bestWithin) {
+    if (bestWithinScore >= SEMANTIC_DUPE_WITHIN_NOTICE) {
       warnings.push(
         `Outline planned two near-duplicate concept slugs: "${slug}" and ` +
         `"${bestWithin.slug}" (Jaccard ${bestWithinScore.toFixed(2)}). ` +
-        `Dropping "${slug}" — its content will merge into "${bestWithin.slug}".`
+        `Keeping both; review via Wiki Health → Scan for semantic duplicates if they're truly the same concept.`
       );
-      redirects.push({ from: slug, to: bestWithin.slug, score: bestWithinScore, scope: 'within' });
-      // Don't push this entry; we treat it as a duplicate of the earlier one.
-      continue;
     }
 
     newPaths.push(p);
-    seenSlugsInOutline.push({ slug, tokens, entry: p });
+    seenSlugsInOutline.push({ slug, tokens });
   }
 
-  outline.pages = newPaths;
+  // A plan entry that folded onto a page the plan also names has no text of its
+  // own yet: one entry, and if the model chose that page itself, it is ordinary
+  // reuse. A single-pass entry holds text, so it stays and is written separately.
+  const byPath = new Map();
+  outline.pages = newPaths.filter((p) => {
+    if (typeof p?.path !== 'string' || hasContent(p) || !p.path.startsWith('concepts/')) return true;
+    const first = byPath.get(p.path);
+    if (!first) { byPath.set(p.path, p); return true; }
+    if (!p[FOLDED_FROM] && first[FOLDED_FROM]) { delete first[FOLDED_FROM]; return false; }
+    if (!p[FOLDED_FROM] && !first[FOLDED_FROM]) return true;  // the model's own repeat: validateOutline warned
+    return false;
+  });
   return { warnings, redirects };
 }
 
@@ -1829,7 +1859,7 @@ no index.md content — the app maintains the index itself):
  *
  * WHAT IS AGGREGATED. Only classes that scale PER PAGE or PER BATCH, i.e. the
  * ones that can reach dozens on one ingest. Deliberately NOT aggregated:
- * semantic near-duplicate notices and trunk-page injections. Each of those
+ * "Keeping both" near-duplicate notices and trunk-page injections. Each of those
  * names a specific pair or cluster the user has to make a decision about, they
  * are pre-existing wordings the maintainer reads regularly, and neither was
  * part of the reported problem — collapsing them would trade real signal for
@@ -1879,7 +1909,7 @@ const AGGREGATABLE_WARNINGS = [
       `${n} pages had to be rewritten more briefly: the AI's first attempt at each came back unusable, ` +
       `so The Curator asked for a shorter version and saved that instead (${renderExamples(ex)}). ` +
       `These are real content, but they are briefer than the rest — open them in the Wiki tab and ` +
-      `re-ingest if any reads too thin.`,
+      `add to any that reads too thin.`,
   },
   {
     id: 'stub-page',
@@ -1899,7 +1929,7 @@ const AGGREGATABLE_WARNINGS = [
     id: 'variant-redirect',
     // Emitted by writePage (files.js) Pass A/B through its onWarn (v3.81.0).
     // The aggregate keeps "redirected to canonical" → the Auto-fixed bucket.
-    match: /^Page "(.+?)" is a spelling variant of the existing "/,
+    match: /^Page "(.+?)" is a spelling variant of (?:the existing )?"/,
     render: (n, ex) =>
       `${n} pages came back under a spelling variant of a page you already have (${renderExamples(ex)}) — ` +
       `each was redirected to canonical: the existing page, where its content merged. Nothing was lost.`,
@@ -1912,6 +1942,14 @@ const AGGREGATABLE_WARNINGS = [
       `${n} pages were written to entities/ or concepts/ while a page of the same name already existed in ` +
       `the other folder (${renderExamples(ex)}) — each was redirected to canonical: the existing page, which keeps ` +
       `its folder, and its content merged there. Nothing was lost; if one belongs in the other folder, move it by hand.`,
+  },
+  {
+    id: 'reworded',
+    // Emitted by writePage on exact-name reuse: new wording that repeats the page.
+    match: /^Page "(.+?)": \d+ passages? not added, because (?:it|they) looked mostly like/,
+    render: (n, ex) =>
+      `On ${n} pages (${renderExamples(ex)}), some new wording was not added because it looked mostly like what the page ` +
+      `already says. What each page held is untouched. A real new point can be among what was left out: compare the source with the page.`,
   },
   {
     id: 'no-path',
@@ -2622,11 +2660,9 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     warnings.push(w);
   }
 
-  // v3.0.1-beta.11: pre-write semantic-dupe guard. Catches slugs like
-  // "experts-roundup-format" landing in the same outline (or being created
-  // against an existing "expert-roundup-format" on disk) and redirects them
-  // onto the existing slug so bullets merge instead of accumulating
-  // near-duplicate sibling pages.
+  // The spelling guard: a concept named as a spelling variant of an existing or
+  // planned page goes there; other close names keep both, with a notice. It runs
+  // before allPages exists, so the batch prefix only ever sees the final plan.
   const semDupe = redirectSemanticDuplicates(outline, existingFiles);
   for (const w of semDupe.warnings) {
     console.warn(`[ingest] Semantic-dupe guard: ${w}`);
@@ -3033,14 +3069,25 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // raw/ stays local (gitignored). That is the point: a second machine can
   // then say "this summary came from report.pdf, 2.4 MB, ingested 12 March
   // — not on this machine" instead of having no idea it ever existed.
-  hashRawSource(destPath)
-    .then(sha256 => appendManifestRecord(domain, {
-      filename: originalName,
-      sha256,
-      bytes: buffer.length,
-      ingestedAt: new Date().toISOString(),
-      summaryPath,
-    }))
+  //
+  // The manifest is read BEFORE this ingest adds its own line, to tell whether these
+  // exact bytes were ingested here before (findCompletedIngest). If so, existing pages
+  // take no new wording: a model rewords and finds new vocabulary on every reading, so
+  // otherwise an identical source grows the wiki for ever. Nothing is blocked and no
+  // call is skipped. The hash is awaited for this, about a second on a 126 MB file.
+  const sourceHash = await hashRawSource(destPath);
+  const repeatSource = Boolean(findCompletedIngest(
+    await readManifest(domain),
+    sourceHash,
+    (p) => existsSync(path.join(wikiPath(domain), p)),
+  ));
+  const manifestRecord = {
+    filename: originalName,
+    sha256: sourceHash,
+    bytes: buffer.length,
+    summaryPath,
+  };
+  appendManifestRecord(domain, { ...manifestRecord, ingestedAt: new Date().toISOString(), completed: false })
     .catch(() => { /* best-effort: never surfaces to the user */ });
 
   // v3.0.1-beta.8: extract text inside a try/catch so a corrupt / encrypted /
@@ -3324,9 +3371,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       warnings.push(w);
     }
 
-    // v3.0.1-beta.11: same semantic-dupe guard as multi-phase. Catches a
-    // single-pass result where the LLM proposes a slug that's a plural/
-    // suffix variant of an existing concept on disk.
+    // Same spelling guard as multi-phase. Here each entry carries its page body,
+    // so a fold stays in the list and composes at write time.
     const semDupe = redirectSemanticDuplicates(result, existingFiles);
     for (const w of semDupe.warnings) {
       console.warn(`[ingest] Semantic-dupe guard: ${w}`);
@@ -3343,9 +3389,32 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // extension, so "concepts/x" and "concepts/x.md" are the same file — keying
     // on the raw string let both survive and write the same file twice (create,
     // then merge), producing two change records and two warnings for one page.
+    //
+    // A page the spelling guard folded is not a repeat of the page it landed on:
+    // it holds its own text, so it has its own key. And in a single-pass reply
+    // every entry IS text, so a repeat with different words is not discarded: the
+    // last copy is written as before and the earlier one folds on after it. (A
+    // multi-phase batch's repeat is a copy of a page it was never asked for.)
     const seen = new Map();
-    for (const page of result.pages) seen.set(withMdExtension(page.path), page);
-    result.pages = [...seen.values()];
+    const earlier = [];
+    for (const page of result.pages) {
+      const key = withMdExtension(page.path) + (page[FOLDED_FROM] ? `\0${page[FOLDED_FROM]}` : '');
+      const prev = seen.get(key);
+      if (!usedMultiPhase && prev && /^(entities|concepts)\//.test(page.path) && !prev[FOLDED_FROM]
+          && typeof prev.content === 'string' && prev.content.trim()
+          && typeof page.content === 'string' && page.content.trim()
+          && prev.content.trim() !== page.content.trim()) {
+        const slug = path.basename(withMdExtension(page.path), '.md');
+        prev[FOLDED_FROM] = slug;
+        earlier.push(prev);
+        warnings.push(
+          `The AI returned "${page.path}" more than once with different text. Both are kept on that page: ` +
+          `the earlier copy is under "Merged from ${slug}".`
+        );
+      }
+      seen.set(key, page);
+    }
+    result.pages = [...seen.values(), ...earlier];
   }
 
   // v3.0.1-beta.1: if the validator injected pages in single-pass mode that
@@ -3413,18 +3482,46 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const canonicalPaths = [];
   const changes = [];
   const writeRecords = [];
+  let repeatLeftOut = 0;
+  const plannedFolds = new Map(
+    (Array.isArray(result.outlinePages) ? result.outlinePages : [])
+      .filter(p => p && p[FOLDED_FROM])
+      .map(p => [withMdExtension(p.path), p[FOLDED_FROM]])
+  );
   for (const page of result.pages) {
     // v3.0.16: writePage refusals and path auto-corrections now surface to the
     // user instead of dying in a console line — a discarded page means content
     // the user paid for silently vanished.
+    // A fold is on the entry itself (single-pass) or on its plan entry
+    // (multi-phase: the batch reply is a new object naming the redirected path).
+    const foldedFrom = page[FOLDED_FROM] || plannedFolds.get(withMdExtension(page.path));
     const record = await writePage(domain, page.path, page.content, {
       onWarn: (w) => warnings.push(w),
+      ...(foldedFrom ? { foldedFrom } : {}),
+      ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
     });
     writeRecords.push(record ? { originalPath: page.path, record } : null);
     if (record) {
       canonicalPaths.push(record.canonPath);
-      changes.push(record);
+      // Two entries landing on one page are one row in the change list.
+      const sameIngest = page[FOLDED_FROM] ? changes.find(c => c.canonPath === record.canonPath) : null;
+      if (sameIngest) {
+        sameIngest.status = sameIngest.status === 'created' ? 'created' : record.status === 'unchanged' ? sameIngest.status : 'updated';
+        sameIngest.bytesAfter = record.bytesAfter;
+        sameIngest.bulletsAdded += record.bulletsAdded;
+        sameIngest.sectionsChanged = [...new Set([...sameIngest.sectionsChanged, ...record.sectionsChanged])];
+      } else {
+        changes.push(record);
+      }
     }
+  }
+
+  if (repeatSource) {
+    warnings.push(
+      `This source was already ingested into this domain (same content), so existing pages kept their text and took ` +
+      `no new wording (${repeatLeftOut} passage${repeatLeftOut === 1 ? '' : 's'} left out), including any page reported ` +
+      `as merged above. New pages were still created. To change a page, edit it or change the source.`
+    );
   }
 
   // Post-write: reconcile the summary's "Entities Mentioned" with every entity
@@ -3536,6 +3633,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // the batch prompt's byte-stable prefix.
   const logEntry = `## [${localDateStamp()}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
+  // The pages are on disk: only now does this source count as ingested.
+  await appendManifestRecord(domain, { ...manifestRecord, ingestedAt: new Date().toISOString(), completed: true });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this
   // module is imported by the MCP child process (v2.5.2).
@@ -3703,7 +3802,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
     if (pageLinks > 0) {
       // Write back via writePage so all the safeguards (atomic write,
       // bullet dedup, variant-link normalisation Pass A/B/C) still apply.
-      await writePage(domain, relPath, modified);
+      // replace: `modified` is this page with links added, so it IS the page. A
+      // reuse would read each linked line as new wording and add it again.
+      await writePage(domain, relPath, modified, { replace: true, keepLines: true });
       hubsModified++;
       linksAdded += pageLinks;
     }
@@ -3768,6 +3869,7 @@ async function auditBrokenWikilinks(domain, recentlyWrittenPaths) {
 // Internal helpers exposed for battle-testing (v3.0.1-beta.1).
 // Not part of the public API — callers should use ingestFile() instead.
 export const __testing = {
+  FOLDED_FROM,
   buildOutlinePrompt,
   buildPrompt,
   buildBatchPrompt,

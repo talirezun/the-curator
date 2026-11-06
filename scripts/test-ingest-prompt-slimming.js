@@ -756,7 +756,7 @@ section('13. DEFECT 1 — Phase 2 summary paths are reconciled, not trusted');
 section('13b. AUDIT FINDING 4 — result dedup is extension-normalised');
 {
   const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
-  ok(/seen\.set\(withMdExtension\(page\.path\), page\)/.test(src),
+  ok(/const key = withMdExtension\(page\.path\)/.test(src),
     'the result dedup keys on the .md-normalised path, not the raw string');
   ok(/function withMdExtension\(p\)/.test(src),
     'the normaliser is a single shared helper (dedup and reconciler cannot drift apart)');
