@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.90.1` | The website assistant shows the Windows one-liner (a fix in the website's bridge and renderer), and llm-docs describe the Windows install tab; docs only here. |
 | `v3.90.0` | Settings › MCP bridge in plain words (a copy deck implemented word for word, word audit, extended page contract), and a sync keeps running when you leave the Sync page (`sync-job.js`, `shared/sync-run.js`). |
 | `v3.89.1` | "Use existing folder" on Linux opens the desktop's own folder dialog (zenity, kdialog or yad), and never shows macOS advice off a Mac. |
 | `v3.89.0` | Settings › MCP bridge rebuilt from the Domain page's components (section kit + page contract), Install for me end to end, and Check entry, which runs only this app's own launch line. |
