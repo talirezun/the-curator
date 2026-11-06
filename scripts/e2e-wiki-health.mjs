@@ -785,7 +785,7 @@ async function scenarios(app, profile) {
     const shot = async () => (await page.send('Page.captureScreenshot', { format: 'png', clip: await clipOf() })).data;
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }); await delay(300);
-    const rest = await shot();
+    await delay(1500); const rest = await shot();
     const dropped = await page.evaluate(() => { let n = 0; for (const sheet of document.styleSheets) { let rules; try { rules = sheet.cssRules; } catch { continue; } for (let i = rules.length - 1; i >= 0; i--) { if (rules[i].selectorText && /\.btn-(secondary|primary|danger-solid):focus-visible/.test(rules[i].selectorText)) { sheet.deleteRule(i); n++; } } } return n; });
     await delay(100);
     const without = await shot();
