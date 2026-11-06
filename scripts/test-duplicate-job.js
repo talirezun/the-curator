@@ -138,7 +138,12 @@ const get = async (p) => {
 };
 const start = (name, extra = {}) => post(`/${name}/semantic-dupes/compare-all/start`, { confirmedModel: MODEL, confirmedUsd: 100, ...extra });
 const status = async (name) => (await get(`/${name}/semantic-dupes/compare-all/status`)).body.job;
-const settled = () => job.__compareAllSettled();
+// A job that never ends fails here, in seconds, rather than holding the whole run.
+const settled = () => {
+  let timer;
+  const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the job did not end within 30 s')), 30000); });
+  return Promise.race([job.__compareAllSettled(), limit]).finally(() => clearTimeout(timer));
+};
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 async function until(cond, label, ms = 20000) {
   const t = Date.now();
@@ -290,6 +295,7 @@ section('C. Pause and Resume; it does not need a client');
   await until(() => llm.waiting() === 1, 'first call');
   llm.release();
   await until(() => llm.waiting() === 1 && llm.calls === 2, 'second call');
+  await tick(150); // the first batch's record is written behind this; let it land before comparing
 
   const beforeBytes = readFileSync(recordFile(d.name));
   for (let i = 0; i < 5; i++) await status(d.name);
@@ -567,8 +573,10 @@ section('F. Failures, a changed model, a page gone mid-run');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Only for the mutation runs of guards outside the memo: this section is most of the time.
+const SKIP_MEMO = process.env.DUPJOB_SKIP_MEMO === '1';
 section('H. The memo filter equals a full pass');
-{
+if (!SKIP_MEMO) {
   const passes = ai.__testing.candidateFullPasses;
   // Seeded, so a failure reproduces.
   let seed = 7;
