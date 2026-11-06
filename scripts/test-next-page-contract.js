@@ -44,6 +44,7 @@ import { explainerMark } from '../src/public/next/shared/explainer.js';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 import { renderMcpPage, baseState, SETTINGS_SRC } from './test-helpers/mcp-page-sandbox.js';
+import { deskFixture, pair as deskPair } from './test-helpers/review-desk-fixture.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOMAINS_JS = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -76,7 +77,7 @@ const MCP_CONTRACT = MCP_PAGE_CONTRACT;
  *  card. */
 const DOMAIN_HEALTH_CONTRACT = Object.freeze({
   name: 'Domains › ⑤ Wiki health',
-  allow: [...KIT_CLASSES, 'dm-*', 'content-reveal', 'ai-run', 'ai-run-*', 'ring-*', 'cur-ring*'],
+  allow: [...KIT_CLASSES, 'dm-*', 'hr-*', 'content-reveal', 'ai-run', 'ai-run-*', 'ring-*', 'cur-ring*'],
   forbid: ['mcpi-*', 'settings-*'],
   column: { kinds: [['section', ['dm-health']]], pattern: /^section$/ },
   buttonHomes: ['cur-card'],
@@ -226,11 +227,11 @@ function extractConst(src, name) {
 function renderDomainHealth(stateOver) {
   const FNS = ['shouldKeepHealthOnReload', 'healthScanLabel', 'healthSection', 'renderHealthPanel',
     'renderHealthLanes', 'renderFreeLane', 'renderDecisionLane', 'renderAiLane', 'renderLaneHead', 'renderLaneTrace', 'renderPlainRow', 'renderShowMore', 'renderIssueFold', 'repairButton', 'mergeRowButton', 'deletesReading', 'renderCompareRow', 'renderSuggestRow', 'activeSemanticQuote', 'renderAnchorHere', 'freeRepairCount', 'n0', 'deletedPageCount', 'semanticCoverageFrom', 'liveBatchPairs',
-    'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'renderSemanticScanResult', 'renderSemanticPairCard', 'semanticPrimaryAction', 'semanticHandledLabel', 'semanticPairKey', 'isSemanticPreviewed', 'canMergeSemanticPair',
+    'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'semanticPairKey', 'isSemanticPreviewed', 'canMergeSemanticPair',
     'countOf', 'totalOpenIssues', 'renderIssueRow', 'renderDismissedGroup',
     'describeDismissed', 'relTime', 'renderConfirmCard', 'renderPendingPlan', 'renderOutcomeLine', 'renderAnchorStack',
     'busyRingLabel', 'fmtKB'];
-  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES', 'ISSUE_PAGE', 'FREE_ROWS', 'SEMANTIC_PAGE_SIZE'];
+  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES', 'ISSUE_PAGE', 'FREE_ROWS'];
   const deps = {
     escapeHtml: (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
@@ -239,6 +240,7 @@ function renderDomainHealth(stateOver) {
     renderBanner: () => '', gatedLoader: () => '', loadGate: null,
     renderMirrorNote: () => renderStatus({ title: 'This domain is a read-only Shared Brain mirror', detail: 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.' }),
     activeSemanticScan: () => (stateOver && stateOver.semanticScan) || null,
+    compareAll: { reading: () => null, actions: (slug, next) => next, line: () => '', running: () => false, onClick: () => false, afterPaint() {}, sync() {}, noteQuote() {}, acknowledge() {}, forgetQuote() {} },
     renderMonitor, freshnessTier, formatAge, renderStatus, renderDescription, explainerMark, formatUsdHonest,
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     progressRingHtml: () => '<span class="cur-ring"></span>', ringValueFromCounts: () => null,
@@ -251,7 +253,7 @@ function renderDomainHealth(stateOver) {
   const fn = new Function('__state', ...names, ...SECTION_KIT_NAMES, body);
   const state = {
     healthLoading: false, healthError: null, healthSlug: 'early-computing', busyKey: null,
-    expandedGroups: new Set(['scan', 'brokenLinks', 'brokenLinksOpen', 'orphans', 'dismissed', 'missingBacklinks', 'duplicates']), dismissedRecords: [{ type: 'orphans', path: 'concepts/old.md' }, { type: 'semanticDupe', slugs: ['a', 'b'] }],
+    expandedGroups: new Set(['scan', 'brokenLinks', 'brokenLinksOpen', 'orphans', 'dismissed', 'missingBacklinks']), dismissedRecords: [{ type: 'orphans', path: 'concepts/old.md' }, { type: 'semanticDupe', slugs: ['a', 'b'] }],
     rowLines: {}, rowBusy: new Set(), leftRows: {}, groupVisible: {},
     estimates: { brokenLinks: { estimatedUsd: 0.0003, priceKnown: true, needAi: 2, resolveFree: 0 }, orphans: { estimatedUsd: 0.0004, priceKnown: true } },
     activeSlug: 'early-computing', semanticQuote: { slug: 'early-computing', forNext: 500, est: { candidatePairs: 500, totalPairs: 2108, checkedPairs: 0, leftPairs: 2108, nextPairs: 500, estimatedUsd: 0.04, priceKnown: true } },
@@ -325,7 +327,7 @@ const PAGES = [
 // ── EVERY ARM OF ⑤ A PERSON CAN REACH, RENDERED FROM THE REAL CODE (Stage 2, PLAN §3).
 // The three arms above are at rest, loading and failed, which is none of what the owner
 // reported. These render the question, the plan, the running action, the failure and the
-// clean state. The desk's arms join in Stage 3.
+// clean state; the desk's arms follow them.
 const WITH_YES = { ...DOMAIN_HEALTH_CONTRACT };
 const ASKED = { title: 'Merge 2 pages with the same name?', body: '2 pages are deleted and their links move to the page that stays.',
   warn: 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.', tier: 'danger', confirmLabel: 'Merge and delete 2', run() {} };
@@ -378,21 +380,51 @@ for (const [label, contract, over, must] of PRESS_ARMS) {
   PAGES.push({ id: 'domains.health (' + label + ')', contract, enforced: true, render: () => renderDomainHealth(over), must, over });
 }
 
+// THE DESK, drawn by the real views/health-review.js inside the real section. These run
+// after their setup, so a page's render is a string by the time it is checked.
+function renderDeskSection(html) {
+  const HEALTH_INFO = explainerMark('dm-health-info', 'domains.health');
+  const section = new Function('state', 'escapeHtml', 'HEALTH_INFO', ...SECTION_KIT_NAMES,
+    extractFunction(DOMAINS_JS, 'healthSection') + '\nreturn healthSection;')(
+    { healthLive: '' }, (t) => String(t), HEALTH_INFO, ...SECTION_KIT_VALUES);
+  return section(K.renderCard(html, { alias: 'dm' }), 'Checked <span data-age-text>just now</span> · 25 to look at');
+}
+const DESK_PAIRS = () => [deskPair('data-privacy', 'privacy-and-data-protection'), deskPair('agent', 'ai-agents', { nameRelation: 'version-differs' }), deskPair('hand-off', 'handoff', { nameRelation: 'spelling-variant' })];
+const deskOpen = async (fn, pairs, over) => { const fx = deskFixture(pairs || DESK_PAIRS(), over); fx.desk.open(); await fx.paint(); if (fn) await fn(fx); return renderDeskSection(fx.html()); };
+const DESK_ARMS = [
+  ['the desk, the comparison seen', await deskOpen((f) => { f.seen(); }), ['Pair 1 of 3', 'Merge into', 'id="hr-merge"', 'btn-danger', 'Read full page']],
+  ['the desk, before 500 ms', await deskOpen(), ['aria-describedby="hr-gate" disabled']],
+  ['the desk, loading', renderDeskSection((() => { const f = deskFixture(DESK_PAIRS()); f.desk.open(); return f.html(); })()), ['Loading the page…']],
+  ['the desk, merging', await deskOpen((f) => { f.seen(); f.state.busyKey = 'semanticMergeOne:' + f.key(f.scan.pairs[0]); }), ['aria-busy="true"', 'Merging…']],
+  ['the desk, keeping both', await deskOpen((f) => { f.seen(); f.state.busyKey = 'semanticSkip:' + f.key(f.scan.pairs[0]); }), ['aria-busy="true"', 'Saving…']],
+  ['the desk, merged', await deskOpen(async (f) => { f.seen(); await f.press('hr-merge'); }), ['Merged', '4 links moved.', 'Pair 2 of 3']],
+  ['the desk, kept apart', await deskOpen(async (f) => { f.seen(); await f.press('hr-keep'); }), ['They will not come back.', 'id="hr-undo"']],
+  ['the desk, a merge failed', await deskOpen(async (f) => { f.seen(); f.nextMerge = { error: 'Could not merge: the disk went away' }; await f.press('hr-merge'); }), ['Could not merge: the disk went away', 'id="hr-retry"', 'hr-outcome-failed']],
+  ['the desk, the comparison failed', await (async () => { const f = deskFixture(DESK_PAIRS()); f.nextCompare = { error: 'the disk went away' }; f.desk.open(); await f.paint(); return renderDeskSection(f.html()); })(), ['Could not load the comparison: the disk went away', 'aria-describedby="hr-gate" disabled']],
+  ['the desk, a page changed', await deskOpen(async (f) => { f.seen(); f.nextMerge = { stale: true }; await f.press('hr-merge'); await f.paint(); }), ['This page changed since you compared it. The comparison has been refreshed.', 'aria-describedby="hr-gate" disabled']],
+  ['the desk, the list open', await deskOpen((f) => { f.state.expandedGroups.add('reviewPairs'); }), ['hr-fold-summary', 'this pair', 'hr-jump']],
+  ['the desk, the pointer still on Merge', await deskOpen(async (f) => { f.overMerge = true; f.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' }); await f.press('hr-next'); await f.paint(); f.seen(); }), ['Move the pointer off Merge and back to press it.', 'aria-describedby="hr-gate" disabled']],
+  ['the desk, the end', await deskOpen(async (f) => { f.seen(); await f.press('hr-merge'); await f.paint(); f.seen(); await f.press('hr-keep'); await f.paint(); f.seen(); await f.press('hr-merge'); }, null, { coverage: { left: 12 } }), ['All pairs decided.', '12 pairs have not been compared yet, shown in AI help.']],
+];
+for (const [label, html, must] of DESK_ARMS) {
+  PAGES.push({ id: 'domains.health (' + label + ')', contract: DOMAIN_HEALTH_CONTRACT, enforced: true, render: () => html, must });
+}
+
 // ── THE WORDS AND THE LANES (PLAN §3). Each is proved to fail, below, and each by
 // mutating the real code in the stage's mutation run.
 const LANE_TITLES = ['Free repairs', 'Your decision', 'AI help'];
 const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
 const hasClass = (n, c) => (n.classes || []).includes(c);
 const ancestorWith = (n, pred) => { for (let p = n.parent; p; p = p.parent) if (pred(p)) return p; return null; };
-// What a person reads: every element's own text, with page names out. A page name is
-// data; today's pair cards are Stage 3's and audited there.
+// What a person reads: every element's own text, with page names and page text out.
+// A page's own words are data.
 function visibleLines(root) {
   const lines = [];
   walk(root, (n) => {
     if (n.tag === '#text' || n.tag === 'svg' || n.tag === 'style') return;
     if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail')) return;
     if (ancestorWith(n, (p) => hasClass(p, 'visually-hidden') || hasClass(p, 'mono') || hasClass(p, 'dm-plan-data'))) return;
-    if (ancestorWith(n, (p) => hasClass(p, 'dm-group-body') && p.parent && p.parent.attrs && p.parent.attrs['data-group-key'] === 'duplicates')) return;
+    if (ancestorWith(n, (p) => hasClass(p, 'hr-pane-text'))) return;
     let t = ''; let own = false;
     for (const c of n.children || []) {
       if (c.tag === '#text') { const v = c.text == null ? (c.value || '') : c.text; t += v; if (v.trim()) own = true; }
@@ -427,11 +459,12 @@ function healthContractViolations(html) {
       const quiet = 'disabled' in n.attrs || n.attrs['aria-busy'] === 'true';
       if (!costed && !quiet) bad.push('an AI button with no cost');
     }
-    if (hasClass(n, 'btn-primary') && !ancestorWith(n, (p) => hasClass(p, 'dm-sem-card'))) bad.push('btn-primary outside today\'s pair cards: nothing here leans toward an action');
+    if (hasClass(n, 'btn-primary')) bad.push('btn-primary: nothing here leans toward an action');
     if (hasClass(n, 'btn-danger')) {
-      const label = (n.children || []).filter((c) => c.tag === '#text').map((c) => c.text || c.value || '').join('');
-      const block = ancestorWith(n, (p) => hasClass(p, 'dm-confirm-card'));
-      if (!/^(Merge and delete [\d,]+|Merging)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
+      const ownText = (m) => (m.children || []).map((c) => (c.tag === '#text' ? (c.text || c.value || '') : ownText(c))).join('');
+      const label = ownText(n).trim();
+      const block = ancestorWith(n, (p) => hasClass(p, 'dm-confirm-card') || hasClass(p, 'hr-decide'));
+      if (!/^(Merge and delete [\d,]+|Merging|Merge into \S)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
       if (!block || !html.includes(WARN)) bad.push('btn-danger without the undo warning in its block');
     }
   });

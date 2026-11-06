@@ -248,7 +248,7 @@ Forwarding the scan object unchanged here returns `fixed: 0` with `reason: "orph
 
 Only run `scan_semantic_duplicates` after explicit user approval. Use `estimate_only: true` first to show the cost. Tell the user how far it got: *"Checked 500 of 3,918 possible pairs, 3,418 still to check."* Running it again moves forward; it does not repeat those pairs.
 
-For each pair the scan returns: call `fix_wiki_issue` with `type='semanticDupe'`, `preview: true` first → show the diff plan to the user → only on confirmation call again with `preview: false`.
+For each pair the scan returns: call `fix_wiki_issue` with `type='semanticDupe'`, `preview: true` first → show the diff plan to the user → only on confirmation call again with `preview: false`. A preview covers exactly what it showed: the same page kept and the same text on both pages. If either changed, or you swap which page stays, the merge is refused (`reason: 'preview-stale'`), nothing is written, and you preview again.
 
 **Key moves**
 - Auto-fix the unambiguous categories without asking.

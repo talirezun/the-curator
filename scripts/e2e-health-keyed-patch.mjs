@@ -155,9 +155,8 @@ try {
   const reqs = (re, method) => page.evaluate((src, m) => window.__reqs.filter((q) => new RegExp(src).test(q.u) && (!m || q.m === m)), re.source, method || null);
   const mark = () => page.evaluate(() => { const s = document.querySelector('.dm-health'); s.__mark = 1; s.querySelectorAll('*').forEach((n) => { n.__mark = 1; }); });
   const kept = () => page.evaluate(() => { const s = document.querySelector('.dm-health'); const all = [...s.querySelectorAll('*')]; return { section: !!s.__mark, nodes: all.filter((n) => n.__mark).length, total: all.length }; });
-  const focus = () => page.evaluate(() => { const a = document.activeElement; return a === document.body || !a ? 'BODY' : (a.id || a.dataset.semAction || (a.innerText || '').trim().slice(0, 30)); });
+  const focus = () => page.evaluate(() => { const a = document.activeElement; return a === document.body || !a ? 'BODY' : (a.id || (a.innerText || '').trim().slice(0, 30)); });
   const text = (sel) => page.evaluate((s) => document.querySelector(s)?.innerText || null, sel);
-  const CARD = (n) => '.dm-sem-card:nth-child(' + n + ')';
 
   section('§1 The patch, on the real DOM: random trees to random trees');
   await openDomain('alpha');
@@ -301,14 +300,17 @@ try {
   await press('.dm-quick-btn[data-action="semanticDupes"]');
   await press('#dm-confirm-yes');
   ok((await reqs(/semantic-dupes\/scan/, 'POST')).length === 1, 'Compare the next: one run');
-  await press('.dm-review-btn');
-  ok(await page.evaluate(() => document.querySelector('.dm-review-btn').getAttribute('aria-expanded') === 'true'), 'Review opens the list');
-  const cards0 = await page.evaluate(() => document.querySelectorAll('.dm-sem-card').length);
-  ok(cards0 === 50, 'the list shows its page of 50', cards0);
-  await press('#dm-semantic-more-btn');
-  const cards1 = await page.evaluate(() => document.querySelectorAll('.dm-sem-card').length);
-  ok(cards1 > 50 && cards1 <= 100, 'Show more advances one page, not two', cards1);
-  ok((await focus()) === 'dm-semantic-more-btn' || cards1 < 100, 'focus stays on Show more while it is still there', await focus());
+  await mark();
+  await press('.dm-review-btn', { settle: false });
+  ok(await page.evaluate(() => !!document.querySelector('.hr-desk')), 'Review opens the desk');
+  ok((await kept()).section, 'in the same section');
+  ok((await focus()) === 'hr-title', 'focus lands on the pair title', await focus());
+  ok(await page.evaluate(() => document.getElementById('hr-merge').disabled), 'Merge is shut on arrival');
+  await press('#hr-merge', { settle: false }); await delay(100);
+  ok((await reqs(/\/api\/health\/alpha\/fix$/)).length === 0, 'and a press on it sends nothing');
+  const armed = async () => { for (let i = 0; i < 200; i++) { if (await page.evaluate(() => { const m = document.getElementById('hr-merge'); return !!m && !m.disabled; })) return true; await delay(25); } return false; };
+  ok(await armed(), 'the comparison, seen for 500 ms, opens the gate');
+  ok((await reqs(/semantic-dupes\/preview/, 'POST')).length === 0, 'and it is not asked for again while it waits');
 
   // Reported, not asserted: a timing here would be a flake. On this size of list
   // a paint must stay far under a frame's worth of a press's feedback.
@@ -316,7 +318,7 @@ try {
     const { patchInPlace } = await import(url);
     const sec = document.querySelector('.dm-health');
     const a = sec.cloneNode(true); const b = sec.cloneNode(true);
-    b.querySelector('.dm-sem-card').remove();
+    b.querySelector('.hr-pane-goes').remove();
     const host = document.createElement('div'); host.style.display = 'none'; host.appendChild(a); document.body.appendChild(host);
     const t0 = performance.now(); patchInPlace(a, b); const ms = performance.now() - t0;
     host.remove();
@@ -324,37 +326,43 @@ try {
   }, morphUrl);
   console.log('    (patching ' + cost.nodes + ' nodes took ' + cost.ms + ' ms)');
 
-  const merge = CARD(3) + ' [data-sem-action="merge"]';
-  ok(await page.evaluate((s) => document.querySelector(s).disabled, merge), 'Merge is disabled before a preview');
-  await press(merge, { settle: false }); await delay(200);
-  ok((await reqs(/\/api\/health\/alpha\/fix$/)).length === 0, 'and a press on it sends nothing');
-  await mark();
-  await press(CARD(3) + ' [data-sem-action="preview"]');
-  ok((await reqs(/semantic-dupes\/preview/, 'POST')).length === 1, 'Preview: one request');
-  ok(await page.evaluate((s) => !document.querySelector(s).disabled, merge), 'and it opens the gate');
-  ok((await focus()) === 'preview', 'focus is back on Preview', await focus());
-  const headBefore = await text(CARD(3) + ' .dm-sem-head');
-  await page.evaluate((s) => { document.querySelector(s).__flipBtn = 1; }, CARD(3) + ' [data-sem-action="flip"]');
-  await press(CARD(3) + ' [data-sem-action="flip"]');
-  ok((await focus()) === 'flip', 'Flip keeps focus', await focus());
-  ok(await page.evaluate((s) => document.querySelector(s).__flipBtn === 1, CARD(3) + ' [data-sem-action="flip"]'), 'Flip is the same button: a flipped pair is the same card');
-  ok((await text(CARD(3) + ' .dm-sem-head')) !== headBefore, 'the pair now reads the other way round');
-  ok(await page.evaluate((s) => document.querySelector(s).disabled, merge), 'and the gate closed again');
-  await press(CARD(3) + ' [data-sem-action="preview"]');
-  const keepSlug = await text(CARD(3) + ' .dm-sem-keep');
-  const removeSlug = await text(CARD(3) + ' .dm-sem-remove');
-  await press(merge, { y: 600 });
+  const nameOf = (side) => text('.hr-pane-' + side + ' .hr-pane-name');
+  const before = await nameOf('stays');
+  await page.evaluate(() => { document.getElementById('hr-flip').__flipBtn = 1; });
+  await press('#hr-flip', { settle: false });
+  ok((await focus()) === 'hr-flip', 'Keep this one instead keeps focus', await focus());
+  ok(await page.evaluate(() => document.getElementById('hr-flip').__flipBtn === 1), 'and is the same button');
+  ok((await nameOf('goes')) === before, 'the pair now reads the other way round');
+  ok(await page.evaluate(() => document.getElementById('hr-merge').disabled), 'and the gate closed again');
+  ok(await armed(), 'and opens again, for this direction');
+  // Leave the spelling variants for the batch below: walk to a pair the batch would not take.
+  for (let i = 0; i < 80 && /Spelling variant/.test(await text('.hr-facts')); i++) {
+    await press('#hr-next', { settle: false });
+    await delay(60);
+  }
+  ok(await armed(), 'and on the next pair too');
+  const stays = await nameOf('stays'); const goes = await nameOf('goes');
+  await press('#hr-merge', { y: 600 });
   const merges = await reqs(/\/api\/health\/alpha\/fix$/, 'POST');
   ok(merges.length === 1, 'Merge: exactly one POST', merges.length);
-  ok(merges[0] && merges[0].b.includes(keepSlug.split('/')[1]), 'and it merges in the direction on screen');
-  ok(!existsSync(path.join(ws.domains, 'alpha/wiki', removeSlug + '.md')), 'the page it said it deletes is gone');
-  ok(existsSync(path.join(ws.domains, 'alpha/wiki', keepSlug + '.md')), 'the page it said it keeps is there');
+  ok(merges[0] && merges[0].b.includes(stays) && /"basis":"[0-9a-f]+"/.test(merges[0].b), 'and it merges in the direction on screen, with its basis');
+  const fileOf = async (name) => { for (const f of ['concepts', 'entities']) if (existsSync(path.join(ws.domains, 'alpha/wiki', f, name + '.md'))) return true; return false; };
+  ok(!(await fileOf(goes)), 'the page it said it deletes is gone');
+  ok(await fileOf(stays), 'the page it said it keeps is there');
   ok((await kept()).section, 'and the section survived all of it');
-  // A row holds its outcome for about a second, then closes (the press rule).
-  await delay(1600);
-  await press(CARD(3) + ' [data-sem-action="skip"]');
-  ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Skip: one POST');
-  await delay(1600);
+  ok((await focus()) === 'hr-title', 'focus goes to the pair title', await focus());
+  await armed();
+  for (let i = 0; i < 80 && /Spelling variant/.test(await text('.hr-facts')); i++) {
+    await press('#hr-next', { settle: false });
+    await delay(60);
+  }
+  await armed();
+  await press('#hr-keep');
+  ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Keep both: one POST');
+  await armed();
+  await press('#hr-done');
+  ok(await page.evaluate(() => !document.querySelector('.hr-desk') && document.querySelectorAll('.dm-lane').length > 0), 'Done: back to the lanes');
+  await delay(600);
   await press('#dm-semantic-merge-btn');
   await press('#dm-confirm-yes');
   ok((await reqs(/merge-batch/, 'POST')).length === 1, 'Merge N spelling variants: one POST');

@@ -478,12 +478,9 @@ section('12. F10 — the compact cost badge is an estimate');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('13. F11 — the semantic header');
+section('13. F11 — how much was compared');
 {
-  const src = lift('renderSemanticScanResult');
-  ok(/'likely duplicate pair'/.test(src) && !/'candidate pair'\) \+ ' found'/.test(src),
-    '13.1 the header counts likely duplicates, not "candidate pairs"');
-  ok(/pairs compared/.test(lift('renderCompareRow')) && !/ checked\)'/.test(src),
+  ok(/pairs compared/.test(lift('renderCompareRow')),
     '13.2 how much was compared is the AI help row\'s, over the whole domain, not "(of N checked)" for one run');
 }
 
@@ -520,13 +517,6 @@ section('15. tray F8 — the merge preview cap');
     '15.1 the server sends its cap, and the preview is cut at exactly that many characters');
   ok(Buffer.byteLength(p.mergedPreview, 'utf8') > 4096, '15.2 …which is more than 4 KB of UTF-8 here — the old label was false', String(Buffer.byteLength(p.mergedPreview, 'utf8')));
 
-  const { renderSemanticPreview } = sandbox(['renderSemanticPreview'], { escapeHtml, icon: () => '', pluralize });
-  const html = renderSemanticPreview({ data: p });
-  ok(/MERGED CONTENT \(FIRST 4,000 CHARACTERS\)/.test(html) && !/4 KB/.test(html), '15.3 the label names the server\'s cap in characters');
-  ok(/…\(truncated\)/.test(html), '15.4 a longer merge is marked truncated');
-  const short = renderSemanticPreview({ data: { ...p, mergedPreview: 'abc', mergedLength: 3 } });
-  ok(!/truncated/.test(short), '15.5 CONTROL — a merge that fits is not marked truncated');
-  ok(!/> 4000/.test(lift('renderSemanticPreview')), '15.6 the view no longer retypes 4000');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

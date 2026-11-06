@@ -89,7 +89,7 @@ export function isKnownProvider(provider) {
 }
 
 /** Human-facing provider name for error messages. Never used for dispatch. */
-function providerDisplayName(provider) {
+export function providerDisplayName(provider) {
   switch (provider) {
     case 'gemini':     return 'Gemini';
     case 'anthropic':  return 'Claude';

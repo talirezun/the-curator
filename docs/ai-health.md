@@ -144,9 +144,20 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 2. **Remembered answers are set aside.** A pair answered before, by the same model, about the same two page openings, is not sent again. A remembered duplicate is listed again for free. The top of what is left, up to your configured maximum (default 500 pairs), is what this run sends. See [What a scan remembers](#what-a-scan-remembers).
 3. **Cost estimate** is shown in a confirm dialog: how many pairs will really be sent, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
 4. **You click Scan now**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM names the difference in subject and classifies each pair as `same`, `part`, `version`, `overlap` or `different`; for `same` it also picks the more canonical slug and a confidence.
-5. **Only `same`, at `medium` or `high` confidence, surfaces** in the UI. Everything else is remembered as not a duplicate. A long list renders 50 cards at a time; the counts and the batch cover all of them.
-6. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and the first 4,000 characters of the merged page, which are the same text Merge will write (it goes through the same composer and the same link rewrite). Text from the removed page sits at the foot of the page, so on a long page it can fall past that sample. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
-7. **When you click Merge** (from within the preview modal), the server: composes the merged page with the **kept page as the base** (see *What a merged page looks like*), writes it to the kept file, rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), and **deletes the duplicate file**. If a final check finds any line of either page missing from the merged text, the merge is refused and nothing is written or deleted.
+5. **Only `same`, at `medium` or `high` confidence, surfaces** in the UI. Everything else is remembered as not a duplicate. The counts and the batch cover all of them.
+6. **You decide at the review desk.** **Review** swaps the card for one pair at a time: both pages side by side at a fixed height, the app's own fact about the names, the AI's reason quoted as the AI's, and what the merge will do. The comparison is always on screen, so there is no Preview to press. **Merge into `<page>`** opens when the comparison **for this exact direction** has loaded **and** at least half of each page has been visible for 500 ms (2 seconds by touch); scrolled out of sight, the time does not run, and a line says why Merge is shut. **Keep this one instead** swaps which side is kept (if the AI picked the wrong canonical), and **Keep both** keeps the pair apart, with Undo.
+7. **When you press Merge**, the server first checks the comparison's `basis`: if either page changed, or the direction is not the one compared, it refuses, writes nothing, and the desk reads the comparison again and says so. Otherwise it: composes the merged page with the **kept page as the base** (see *What a merged page looks like*), writes it to the kept file, rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), and **deletes the duplicate file**. If a final check finds any line of either page missing from the merged text, the merge is refused and nothing is written or deleted.
+
+### Compare all remaining
+
+**Compare all N** (`src/brain/duplicate-job.js`, drawn by `views/health-compare.js`) answers every pair still unanswered as one job on the server. A full pass on a 3,407-page domain is about 36,000 pairs and 100 minutes, which is no use tied to an open page or to 70 presses.
+
+- **One at a time, across domains**, and it keeps running with the page closed. A short scan or Forget in the same domain is refused while it runs. It is offered once a run has been made and more is left than one run sends, and never on a mirror.
+- **Nothing auto-starts spend.** A record that says running with no run in this process reads as paused. Only Resume runs it, on the amount already confirmed.
+- **The confirm shows the total**, so it may exceed the per-run ceiling and says so (owner's decision). The limit that binds is what you confirmed: the job prices each call at the model that answered and stops before the call that would pass 120%. A dearer fallback rung, a call with no usage reported, or an unpriced model's answer each end it, and it says which.
+- **A provider failure pauses.** An out-of-credits answer (status 402, or `isOutOfCredits` on the words: Anthropic's arrives as a 400) pauses on the first refusal, because no later batch can succeed. Anything else pauses after 3 failed batches in a row. The reason is a sentence, not the provider's JSON (`plainProviderError`); the raw error stays in `lastError`. A run whose last batch failed that way pauses too, rather than reading as done.
+- **The screen does not move.** A poll every 2 s writes into the row's own text nodes with no paint, one poll outstanding, and stops when the domain leaves the screen. A paint happens only on a change of state or when pairs arrive. Pairs arriving are appended, so the desk's place holds, and an arrival is unseen like any other, so the merge gate is untouched. With no Possible duplicates or Spelling variants row on screen, a first pair would put a row above the one being watched, so those are held and counted on the Compare row until Review or the next reading of the panel.
+- **What is not measured.** The time is measured on Flash Lite only and is not given on any other model. Tokens per pair are measured on Flash Lite and Haiku 5.5 and stated as assumed elsewhere. A real provider's 402 was reproduced by its documented shape, not by emptying an account.
 
 ### How careful it is, measured
 
@@ -172,7 +183,7 @@ On a large domain one run reaches only a small part of the possible pairs (measu
 - **An answer applies** while both pages exist, the provider and model are the same, the instructions to the model are the same, and the sha256 of the two openings the model read (500 characters each) is the same. Folders are part of a pair's identity: `entities/x` and `concepts/x` are different pages.
 - **Only an explicit answer is remembered**: not a duplicate, low confidence, or an accepted pair, for a valid index. A valid index with a valid relation always remembers something. A `same` whose canonical slug names neither side keeps the page with the longer opening, then the longer slug, then side A, and Preview shows it; a `same` with no usable confidence is listed as medium. What stays unchecked: a failed call, an index missing from the reply, or a relation that is not one of the five. A batch that hits the output limit or returns an unusable reply is split in half and retried, at most two levels deep, and those calls are in what the run spent; only pairs that still fail count as failed. An auth, quota, rate-limit or network error does not split.
 - **Page names.** Any name a wikilink can carry can be previewed and merged, including dots and underscores (`claude-opus-4.6`, `foo_bar`). `isMergeableSlug` refuses a slash, a backslash, `..`, a leading dot, a control character, `| [ ] #` and a space at either end. The candidate list uses the same test, so a pair never shows a Merge it cannot perform, and the path is still resolved inside the wiki afterwards.
-- **Coming back.** `status?quick=1` returns the remembered pairs with no candidate pass, and the line reads *Counting the pairs…* until a second call brings the figures. A merge or a Skip re-counts the same way.
+- **Coming back.** `status?quick=1` returns the remembered pairs with no candidate pass, and the last counted figures with what they would cost (`<user data>/.duplicate-checks/figures/<domain>.json`, written by a scan and a count, bound to the provider and model, gone with Forget). So the row can be pressed at once and reads *About 400 of 900 pairs compared* until a second call brings the true figures; a confirm always reads fresh ones at the press. A wiki last scanned on an older version has no figures, and waits on its first count once. Two readers during a count share one pass. A merge or a Skip re-counts the same way.
 - **Limits, stated.** There is one answer per pair, so switching model and back re-checks. Two scans saving in the same instant can lose one batch (a re-check, nothing worse). The model recorded is the one configured, not a fallback that may have answered for it. Domain rename leaves the old file behind, so a renamed domain starts over.
 
 ### What a merged page looks like
@@ -219,7 +230,7 @@ The removed page's opening paragraph.
 
 **One thing changes in moved text: heading levels.** Under `## Merged from`, `# Title` and `## Section` become `###`, and deeper headings drop one level. They have to: a later ingest treats a `## X` as a section its own `## X` can replace, and a stray `# Title` would end the block early. Under one heading the moved text outlives later ingests. Lines inside a code block are never changed. Links to the deleted page are repointed everywhere, moved text included.
 
-**Keep and Flip now decide the text.** The kept page's title, frontmatter and opening stay at the top, whichever page is longer. Flip gives you the other page at the top with this one's text below it.
+**Which page stays decides the text.** The kept page's title, frontmatter and opening stay at the top, whichever page is longer. **Keep this one instead** gives you the other page at the top with this one's text below it.
 
 **Three limits, stated plainly.** The moved text is not rewritten, so `## Merged from` can read as two pages, and tidying it is yours to do. Near-identical paragraphs both stay, because nothing here judges meaning. And a later ingest still follows the ingest rules: it can replace the kept page's opening and its own prose sections, and `deduplicateBulletSections` keeps only the first bullet per first link in the accumulating sections.
 
@@ -229,17 +240,23 @@ The removed page's opening paragraph.
 
 The scan **pairs every candidate**, so it does not group a family of pages into one cluster — it emits every two-page combination that scores above the threshold. Eight versions of the same page produce **28 pairs**, and each of those eight pages appears in seven of them.
 
-That means merging one pair deletes a page that other pairs still name. Those pairs are not broken and they are not yours to decide any more: they are **already resolved**. The app says so directly — as soon as a page is deleted, every remaining pair naming it (on either side) moves to the **Already handled in this scan** list, labelled *"resolved by an earlier merge — entities/claude-opus-5 is gone"*.
+That means merging one pair deletes a page that other pairs still name. Those pairs are not broken and they are not yours to decide any more: they are **already resolved**. The app says so directly — as soon as a page is deleted, every remaining pair naming it (on either side) is settled: the desk steps over it, says how many *"other pairs settled"*, and **All N pairs** lists it as *settled by another merge*.
 
 This is a local, free change to the list you already paid for. The scan is **not** re-run and the pairs you have not reached are untouched, including the medium- and low-confidence ones.
 
 It works the same way from the batch merge, which is where it matters most — a batch deletes many pages in one pass, so within one family most of its own later pairs resolve part-way through the run.
 
-**If it happens outside the app** — you delete a page in Obsidian, or an agent merges one over the MCP, while a scan is open on screen — the first Preview you open on an affected pair notices and resolves it the same way, naming the page that is gone.
+**If it happens outside the app** — you delete a page in Obsidian, or an agent merges one over the MCP, while a scan is open on screen — the comparison for that pair notices when the desk reaches it, and says *"This pair is settled: `<page>` no longer exists. Moving on."*
 
 Before v3.53.0 none of this was reported. A sibling pair stayed on screen as an ordinary action card whose **Preview diff** failed with *"Could not build a preview — Both pages must exist to preview a merge"* and whose **Merge** button stayed disabled behind *"Preview required before Merge"* — a dead end whose only exit was re-running a paid scan. A community bug report on v3.52.0 is what surfaced it.
 
 > **A cluster-level scan is a possible future change, not a built one.** Grouping a version family into one N-page decision (instead of N·(N−1)/2 pairwise ones) would be the more direct fix, and it would change the scan's prompt, its cost model and its UI. Nothing in the code today does it — the pairwise emission is still how candidates are produced.
+
+### What the review desk guards against
+
+Showing the comparison by default makes one new risk: a rhythm of pressing Merge at the same spot. So: **no single-key shortcut** for Merge or Keep both, ever; after a decision focus goes to the pair's title, never a button, so a held Enter does nothing; Merge re-arms for 500 ms on every new pair, which also covers a double click; a mouse still resting on Merge when the next pair arrives must leave it and come back (measured without this: 56 clicks in 6 s merged 4 pages unread); it is the red button and names its result, so the label changes every time; and neither choice is violet. Whether this is enough cannot be measured offline.
+
+The confidence badge is gone from the screen: it was the model's opinion of itself, and measured wrong. `confidence` stays in the data, where it sets the order (high first) and is half of the batch rule.
 
 ### Merge N spelling variants (the batch)
 
@@ -258,10 +275,10 @@ Beyond `ineligible`, each pair ends in one of three states, and since v3.53.0 th
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
 | Max candidate pairs sent to the LLM, per run | 500 | Settings → Health & scan limits → Maximum candidate pairs per scan |
 | Cost ceiling per scan (tokens) | 200,000 (raised from 50,000 in v3.72.1 — the old default could refuse a scan the 500-pair cap alone would have allowed) | Settings → Health & scan limits → Cost ceiling per scan |
-| Batch merge | Spelling variants with a remembered high-confidence answer, confirm-gated | per-pair Preview required for everything else |
+| Batch merge | Spelling variants with a remembered high-confidence answer, confirm-gated | everything else is decided at the review desk, one pair at a time |
 | Max pairs per batch merge | 2,000 | hard-coded |
 
-The batch merge is restricted to spelling variants with a remembered high-confidence answer and guarded by an explicit confirm step; every other pair keeps the per-pair preview gate. Because the wiki is git-tracked, any batch merge is recoverable from a terminal (see *How to actually undo a Health fix* below) — that, plus the confirm step, is what makes a bulk operation acceptable here. Note the recovery is a git command, not an in-app button.
+The batch merge is restricted to spelling variants with a remembered high-confidence answer and guarded by an explicit confirm step; every other pair keeps the per-pair gate at the review desk. Because the wiki is git-tracked, any batch merge is recoverable from a terminal (see *How to actually undo a Health fix* below) — that, plus the confirm step, is what makes a bulk operation acceptable here. Note the recovery is a git command, not an in-app button.
 
 ### Cost
 
@@ -289,7 +306,7 @@ The estimate payload does not currently distinguish the two: the note a free mod
 
 - Merge pairs that are related-but-distinct (e.g. `gpt-4` vs `gpt-4-turbo`). The LLM is instructed to err toward non-dupe when ambiguous.
 - Touch `summaries/` as a merge target. A summary can never be the kept or removed page in a merge; link rewrites still go through summary pages (because summaries may link to the old slug and need to point to the new one), but the summary itself is never deleted or structurally modified.
-- Batch-merge anything but a spelling variant with a remembered high-confidence answer. Everything else is one pair at a time, behind the Preview → Merge gate, however many are found. A batch has an explicit confirm step, is capped at 2,000 pairs per run, and is recoverable via git — see *How to actually undo a Health fix*.
+- Batch-merge anything but a spelling variant with a remembered high-confidence answer. Everything else is one pair at a time, at the review desk, however many are found. A batch has an explicit confirm step, is capped at 2,000 pairs per run, and is recoverable via git — see *How to actually undo a Health fix*.
 - Compare pages whose names neither share a word, look alike, are spelling variants, nor match as initials (`car` / `automobile`), or read past the first 500 characters of a page.
 - Run without your explicit click. This is the only AI Health feature with a cost preview + cost ceiling, because it's the only one that scans the whole domain.
 
@@ -307,7 +324,7 @@ A **Leave as is** button appears on every review-only Health row:
 
 - **Orphans** — pages with no incoming links (with or without ✨ Ask AI suggestions).
 - **Broken links** that have no auto-fix suggestion — anything where AI couldn't propose a target, or you didn't accept the proposal.
-- **Semantic-duplicate pair cards** — the existing **Skip** button now persists (this is the change that motivated the feature).
+- **Semantic-duplicate pairs** — **Keep both** at the review desk persists (this is the change that motivated the feature).
 
 Auto-fixable issues (broken links *with* a suggested target, folder-prefix violations, cross-folder duplicates, hyphen variants, missing backlinks) deliberately do **not** have a Leave as is button — the right action there is **Repair** or **Merge**, not skip. Until the next **Check again**, a row left as is stays in place and offers **Undo**.
 

@@ -9,8 +9,8 @@
  * LLM's judgement about two pages being "the same thing".
  *
  * The shipping app gives that judgement two ways to be checked: a per-pair
- * path where Merge stays DISABLED until the user has opened a Preview diff
- * for that exact pair (and the handler refuses even if the button is
+ * path where Merge stays DISABLED until the comparison for that exact pair has
+ * been on screen for 500 ms (and the handler refuses even if the button is
  * clicked anyway), and a batch "Merge all N high-confidence" behind a text
  * confirm. /next shipped only the batch path — so "merge all of them, sight
  * unseen" was the ONLY available action on a semantic duplicate. A
@@ -127,17 +127,13 @@ const FNS = [
   'resolvePairsTouching',
   'markSemanticPairResolved',
   'semanticStaleFromError',
-  'semanticHandledLabel',
-  'renderSemanticScanResult',
   'renderCompareRow', 'renderDecisionLane', 'renderPlainRow', 'renderAnchorHere', 'renderAnchorStack', 'renderIssueFold', 'renderShowMore', 'renderDismissedGroup',
   'renderLaneHead', 'renderLaneTrace', 'mergeRowButton', 'deletesReading', 'deletedPageCount', 'activeSemanticQuote', 'n0', 'costReadout', 'formatUsd',
-  'semanticPrimaryAction',
   'semanticCoverageFrom',
   'newSemanticScan',
   'syncSemanticScan',
   'countSemanticPairs',
-  'renderSemanticPairCard',
-  'renderSemanticPreview',
+  'armSemanticPair',
   // A real dependency of runSemanticScan and runMergeSemanticDuplicates,
   // not a convenience: both feed the Health progress ring from the SSE
   // frames they already read. Omitting it made the merge stream throw a
@@ -170,7 +166,7 @@ const FNS = [
   // stub in PREAMBLE below, which is what the real streamSSE now calls.
   'streamSSE',
 ];
-const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN', 'SEMANTIC_PAGE_SIZE'];
+const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN'];
 
 // Stubs for everything the extracted functions reach outside themselves.
 // `net` records every request so the shapes can be asserted; `net.fail`
@@ -178,6 +174,8 @@ const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN', 'SEMANTIC_PAGE_SIZE'];
 const PREAMBLE = `
 let state = {};
 let myMountToken = 1;
+const compareAll = { acknowledge() {}, forgetQuote() {}, running() { return false; }, sync() {}, noteQuote() {}, afterPaint() {}, reading() { return null; }, actions(slug, next) { return next; }, line() { return ''; }, onClick() { return false; } };
+function releaseArrivals() {}
 const ISSUE_PAGE = 20;
 const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
 function buttonRingHtml() { return ''; }
@@ -214,7 +212,6 @@ function icon() { return ''; }
 // and proven for real in the browser (they are a scroll-position concern,
 // which is not a thing a headless state machine can have).
 function revealMessage() { return false; }
-function revealSemanticMessage(key) { net.revealed = key; return false; }
 async function fetchJSON(url, opts) {
   net.calls.push({ url, opts, body: opts && opts.body ? JSON.parse(opts.body) : null });
   if (net.nextReject) { const e = net.nextReject; net.nextReject = null; throw e; }
@@ -296,7 +293,7 @@ const {
   previewSemanticPair, mergeOneSemanticPair, skipSemanticPair, runMergeSemanticDuplicates,
   mergeSemanticDuplicates,
   resolvePairsTouching, markSemanticPairResolved, semanticStaleFromError,
-  semanticHandledLabel, renderSemanticScanResult, renderCompareRow, renderDecisionLane, semanticPrimaryAction, syncSemanticScan, newSemanticScan,
+  armSemanticPair, renderCompareRow, renderDecisionLane, syncSemanticScan, newSemanticScan,
   __state, __setState, __net, __gates, __setMount,
 } = sandbox;
 
@@ -407,7 +404,7 @@ ok(rawPreviewedKeys().length === 1,
 console.log('\n=== 4. The gate blocks everything it should ===');
 __setState(stateWithScan('alpha', [pair()]));
 let g = canMergeSemanticPair(__state().semanticScan.pairs[0]);
-ok(g.allowed === false && /preview/i.test(g.reason), 'un-previewed: refused, and told to preview first');
+ok(g.allowed === false && /comparison/i.test(g.reason), 'not yet seen: refused, and told to read the comparison first');
 markSemanticPreviewed(__state().semanticScan.pairs[0]);
 ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'previewed: allowed');
 markSemanticPairStatus(__state().semanticScan.pairs[0], 'merged');
@@ -420,25 +417,42 @@ __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai'
 __state().semanticScan = null;
 ok(canMergeSemanticPair(pair()).allowed === false, 'with no scan at all, nothing is mergeable');
 
-console.log('\n=== 4b. Only a SUCCESSFUL preview opens the gate ===');
+console.log('\n=== 4b. Fetching is not seeing, and only a SUCCESSFUL comparison can open the gate ===');
 __setState(stateWithScan('alpha', [pair()]));
-__net().nextResult = { ok: true, keepPath: 'entities/openai.md', removePath: 'concepts/open-ai.md', totalLinksRewritten: 3, affectedCount: 2, affectedFiles: [], mergedPreview: 'x', mergedLength: 1 };
-await previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
-ok(!!(__state().semanticScan && isSemanticPreviewed(__state().semanticScan.pairs[0]) === true), 'a successful preview marks the pair previewed');
-ok(__state().semanticScan.preview && __state().semanticScan.preview.data, 'the preview payload is stored for rendering');
+ok(armSemanticPair(__state().semanticScan.pairs[0]) === false, 'with no comparison held, nothing can arm the gate');
+__net().nextResult = { ok: true, basis: 'b-1', keepPath: 'entities/openai.md', removePath: 'concepts/open-ai.md', totalLinksRewritten: 3, affectedCount: 2, affectedFiles: [], mergedPreview: 'x', mergedLength: 1 };
+const fetched = await previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+ok(!!fetched.data, 'the comparison comes back to its caller');
+ok(isSemanticPreviewed(__state().semanticScan.pairs[0]) === false, 'THE TRIGGER MOVED: a comparison that has only been fetched does NOT open the gate');
+ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === false, '…so Merge is still refused');
+ok(__state().semanticScan.preview && __state().semanticScan.preview.data, 'the comparison is held for the desk');
+ok(__state().semanticScan.bases[semanticPairKey(__state().semanticScan.pairs[0])] === 'b-1', 'its basis is held for this exact direction');
+ok(armSemanticPair(__state().semanticScan.pairs[0]) === true && canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'seen: the desk arms it, and the gate opens');
 ok(__net().calls.some((c) => /semantic-dupes\/preview$/.test(c.url) && c.body && c.body.issue),
-   'the preview POSTs { issue } to /semantic-dupes/preview');
+   'the comparison POSTs { issue } to /semantic-dupes/preview');
 ok(__net().calls.slice(-1)[0].body.issue.status === undefined,
    'the wire pair carries no view-local `status` field');
 
+// A comparison held for the other direction arms nothing.
+__setState(stateWithScan('alpha', [pair()]));
+__net().nextResult = { ok: true, basis: 'b-1' };
+await previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+flipSemanticPair(__state().semanticScan.pairs[0]);
+ok(armSemanticPair(__state().semanticScan.pairs[0]) === false, 'after a flip the comparison held is not this direction\'s: it arms nothing');
+__setState(stateWithScan('alpha', [pair()]));
+__net().nextResult = { ok: true, basis: 'b-1' };
+const inFlight = __state().semanticScan.pairs[0];
+const waiting = previewSemanticPair('alpha', inFlight);
+flipSemanticPair(__state().semanticScan.pairs[0]);
+const answered = await waiting;
+ok(answered.stale === true && __state().semanticScan.preview === null, 'a comparison that lands after a flip is dropped, never shown as this direction\'s');
+
 __setState(stateWithScan('alpha', [pair()]));
 __net().nextReject = new Error('preview blew up');
-await previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
-ok(isSemanticPreviewed(__state().semanticScan.pairs[0]) === false,
-   'a FAILED preview does NOT open the gate — otherwise "clicking Preview" is the guard, which is not what it promises');
-ok(__state().semanticScan.preview && __state().semanticScan.preview.error === 'preview blew up',
-   'the failed preview renders its own error in the pair’s own card');
-ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === false, '…and Merge stays refused');
+const failedCompare = await previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+ok(failedCompare.error === 'preview blew up', 'a failed comparison answers with its own message');
+ok(armSemanticPair(__state().semanticScan.pairs[0]) === false, 'a FAILED comparison cannot arm the gate, however long passes');
+ok(isSemanticPreviewed(__state().semanticScan.pairs[0]) === false && canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === false, '…and Merge stays refused');
 
 console.log('\n=== 4c. Merge re-checks the gate at EXECUTION time ===');
 // A disabled button is an affordance. This is the guard.
@@ -446,7 +460,7 @@ __setState(stateWithScan('alpha', [pair()]));           // deliberately NOT prev
 __net().calls.length = 0;
 await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
 ok(__net().calls.length === 0, 'an un-previewed pair NEVER reaches the network, even when the function is called directly');
-ok(!!(__state().semanticScan && __state().semanticScan.pairs[0].refusal && /preview/i.test(__state().semanticScan.pairs[0].refusal)),
+ok(!!(__state().semanticScan && __state().semanticScan.pairs[0].refusal && /comparison/i.test(__state().semanticScan.pairs[0].refusal)),
    '…and the refusal is written onto that pair so the user is told why');
 ok(!!(__state().semanticScan && __state().semanticScan.pairs[0].status === 'open'), '…and nothing about the pair changed');
 
@@ -465,6 +479,22 @@ ok(__net().calls.some((c) => /\/api\/health\/alpha$/.test(c.url)),
    'health is refreshed afterwards');
 ok(__state().semanticScan !== null,
    'the scan SURVIVES a per-pair merge — wiping it would force a paid re-scan to reach pair 2 of 8');
+
+__setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai']));
+__state().semanticScan.bases = { 'entities/openai||concepts/open-ai': 'basis-of-this-way-round', 'concepts/open-ai||entities/openai': 'basis-of-the-other-way' };
+__net().calls.length = 0;
+__net().nextResult = { ok: true, fixed: 1 };
+let settledWith = null;
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0], (o) => { settledWith = o; });
+ok(__net().calls.find((c) => /\/fix$/.test(c.url)).body.basis === 'basis-of-this-way-round', 'the merge carries the basis of THIS direction');
+ok(settledWith && settledWith.merged === true && settledWith.alsoResolved === 0, 'and tells the desk, with what else it settled');
+for (const code of ['MERGE_BASIS_STALE', 'MERGE_BASIS_MISSING']) {
+  __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai']));
+  __net().nextReject = Object.assign(new Error('changed'), { status: 409, body: { code, fixed: 0 } });
+  let said = null;
+  await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0], (o) => { said = o; });
+  ok(said && said.stale === true && __state().semanticScan.pairs[0].status === 'open', code + ': the desk is told the comparison is out of date, and the pair stays');
+}
 
 console.log('\n=== 4d. A 409 on a per-pair merge is a visible refusal ===');
 __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai']));
@@ -648,16 +678,6 @@ ok(!/keepSemanticScan/.test(extractFunction(src, 'selectDomain')), 'a domain swi
 ok(!/keepSemanticScan/.test(extractFunction(src, 'repairAllFree')), 'an ordinary fix never opts in');
 
 console.log('\n=== 9. A rendered refusal must also be VISIBLE ===');
-// Found in browser verification of this change: a 409 rendered correctly, on
-// the right pair, with no overlay anywhere — at y=1067 in an 892px viewport.
-// The user sees the button re-enable and nothing else. "We rendered it" is
-// not "they can see it"; that distinction IS v3.6.0 finding 7.
-const mergeOneSrc = extractFunction(src, 'mergeOneSemanticPair');
-const skipOneSrc = extractFunction(src, 'skipSemanticPair');
-ok(/revealSemanticMessage\(key\);/.test(mergeOneSrc), 'a per-pair merge reveals its outcome message');
-ok(/revealSemanticMessage\(key\);/.test(skipOneSrc), 'a per-pair skip reveals its outcome message');
-ok((mergeOneSrc.match(/revealSemanticMessage\(key\)/g) || []).length === 2,
-   'both the synchronous gate refusal AND the post-request outcome are revealed — the gate refusal never reaches the network, so it has no repaint of its own to piggyback on');
 const revealSrc = extractFunction(src, 'revealMessage');
 ok(/if \(r\.top >= 0 && r\.bottom <= window\.innerHeight\) return false;/.test(revealSrc),
    'revealMessage is a NO-OP when the message is already fully in view — it must not yank the page under someone who can already read it');
@@ -706,8 +726,8 @@ ok(gr.allowed === false, '10b: a resolved pair cannot be merged');
 ok(/Already resolved by an earlier merge/.test(gr.reason) && /a2/.test(gr.reason),
    '10b: …and the refusal names the page, instead of the generic "already been handled"');
 ok(canMergeSemanticPair(__state().semanticScan.pairs[3]).allowed === false &&
-   /preview/i.test(canMergeSemanticPair(__state().semanticScan.pairs[3]).reason),
-   '10b: NEGATIVE CONTROL — the untouched pair still gets the ordinary preview refusal, not the resolved one');
+   /comparison/i.test(canMergeSemanticPair(__state().semanticScan.pairs[3]).reason),
+   '10b: NEGATIVE CONTROL — the untouched pair still gets the ordinary refusal, not the resolved one');
 
 // 10c. DEFENCE IN DEPTH — a page deleted OUTSIDE this session (Obsidian, the
 // MCP, another Health fix) is first noticed by a failing preview.
@@ -748,8 +768,12 @@ ok(ps[0].status === 'resolved' && !ps[0].error,
 __setState(stateWithScan('alpha', family(), [KEY_1]));
 __net().nextResult = { ok: true, fixed: 0, reason: 'semantic-pair-invalid' };
 await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
-ok(/failed validation/.test(__state().semanticScan.pairs[0].error || ''),
-   '10e: NEGATIVE CONTROL — a real validation refusal still reports as an error on the card');
+ok(/did not pass the check on disk/.test(__state().semanticScan.pairs[0].error || ''),
+   '10e: NEGATIVE CONTROL — a real validation refusal still reports as an error on the pair');
+__setState(stateWithScan('alpha', family(), [KEY_1]));
+__net().nextResult = { ok: true, fixed: 0, reason: 'merge-would-lose-text' };
+await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+ok(/would lose text/.test(__state().semanticScan.pairs[0].error || ''), '10e: a merge refused for losing text says so');
 
 console.log('\n=== 11. The BATCH path cascades too — and it reaches this first ===');
 // v3.0.17's lesson: fix the path that runs FIRST. The batch deletes many
@@ -800,44 +824,17 @@ ok(resolvePairsTouching(__state().semanticScan, { folder: 'entities', slug: 'a2'
 ok(resolvePairsTouching(__state().semanticScan, { folder: 'entities', slug: 'a2' }, null) === 0,
    '11c: …and running it again resolves nothing more (it only ever touches OPEN pairs)');
 
-console.log('\n=== 12. A resolved pair is NEVER rendered as an action card ===');
-__setState(stateWithScan('alpha', family(), [KEY_1]));
-__net().nextResult = { ok: true, fixed: 1 };
-await mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
-const html = renderSemanticScanResult(false, false);
-const resolvedKeys = __state().semanticScan.pairs.filter((p) => p.status === 'resolved').map(semanticPairKey);
-ok(resolvedKeys.length === 2, '12: precondition — two pairs are resolved');
-for (const k of resolvedKeys) {
-  ok(html.indexOf('data-sem-action="merge" data-sem-key="' + k + '"') === -1,
-     '12: no Merge action is rendered for resolved pair ' + k);
-  ok(html.indexOf('data-sem-action="preview" data-sem-key="' + k + '"') === -1,
-     '12: …and no Preview action either — the whole card is gone, not just its button');
-}
-const openKey = semanticPairKey(__state().semanticScan.pairs[3]);
-ok(html.indexOf('data-sem-action="merge" data-sem-key="' + openKey + '"') !== -1,
-   '12: NEGATIVE CONTROL — the still-open pair DOES render a Merge action, so the absence above means something');
-ok(/Already handled in this scan/.test(html), '12: the resolved pairs land in the "Already handled" block');
-ok(/resolved by an earlier merge/.test(html),
-   '12: …worded "resolved by an earlier merge", distinct from merged and from skipped');
-ok(/entities\/a2 is gone/.test(html), '12: …and naming the page that went');
-ok(/dm-sem-handled-resolved/.test(html), '12: …on a row the stylesheet can tell apart');
-ok(semanticHandledLabel({ status: 'merged' }) === 'merged' &&
-   semanticHandledLabel({ status: 'skipped' }) === 'skipped',
-   '12: NEGATIVE CONTROL — merged and skipped keep their own one-word labels');
-ok(html.includes('Each merge deletes one page and points its links to the page you keep. The app has no Undo button; with GitHub Sync, a git client can recover it.'),
-   '12: the card opens with the agreed two sentences');
-ok(!/Flip swaps|Skip dismisses|overlapping pairs/.test(html), '12: …and the rest of that wall of text is gone from the card');
-
-console.log('\n=== 13. The results card: the agreed words, and one primary action ===');
+console.log('\n=== 13. The lanes: the agreed words, and no primary action ===');
 const primaryCount = (h) => (h.match(/btn-primary/g) || []).length;
-// STAGE 2: how far it has got and Compare the next are AI help's row, and the batch is
-// the Spelling variants row in Your decision. Only the pair list itself is still the card.
+// How far it has got and Compare the next are AI help's row, and the batch is the Spelling
+// variants row in Your decision. The pairs themselves are the review desk's: its suite is
+// test-next-review-desk.js.
 const compareOf = () => renderCompareRow({ needsKey: false, model: 'm' }, __state().busyKey, false);
 const decisionOf = (readonly) => renderDecisionLane({ counts: { dismissed: 0 }, dismissedRecords: 0 }, !!readonly, false);
 const card = (pairs, coverage, previewed) => {
   __setState(stateWithScan('alpha', pairs, previewed));
   __state().semanticScan.coverage = coverage;
-  return renderSemanticScanResult(false, false);
+  return decisionOf();
 };
 const SOME = { total: 36333, checked: 500, left: 35833, next: 500 };
 const NONE = { total: 943, checked: 943, left: 0, next: 0 };
@@ -850,17 +847,12 @@ ok(compareOf().includes('500 of 36,333 pairs compared'), '13a: some left: the ex
 ok(compareOf().includes('Compare the next 500'), '13a: …with its button');
 ok(decisionOf().includes('Spelling variants') && decisionOf().includes('Merge 1<') && decisionOf().includes('deletes 1 page'), '13b: the batch row, singular, and it says what it deletes');
 ok(decisionOf().indexOf('Spelling variants') < decisionOf().indexOf('Possible duplicates'), '13b: Spelling variants comes first, so what a batch settles is all below the press');
-ok(h13.includes('Names differ, so check this one yourself.'), '13c: a high-confidence look-alike carries the muted line');
 ok(!h13.includes('dm-semantic-reset-btn') && /btn-secondary btn-xs" id="dm-semantic-reset-btn"/.test(compareOf()), '13d: Forget all comparisons is in AI help\'s fold, a real button and the smallest there');
-ok(primaryCount(h13) === 0 && !/btn-primary/.test(decisionOf().replace(/data-group-key="duplicates"[^]*?<\/details>/, '')), '13e: with a variant waiting, nothing leans toward deleting: the batch is not primary');
+ok(primaryCount(h13) === 0, '13e: with a variant waiting, nothing leans toward deleting: the batch is not primary');
 
 h13 = card([LOOKALIKE, MEDIUM], SOME);
-ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="preview"/.test(h13), '13f: with only Preview-gated pairs, the ONE primary is the first Preview');
+ok(primaryCount(h13) === 0 && h13.includes('dm-review-btn') && !h13.includes('Spelling variants'), '13f: with pairs to read and none to batch, Review is the way in, and it is not primary');
 ok(/btn-ai/.test(compareOf()) && !/btn-primary/.test(compareOf()), '13f: the next run is the AI button, whatever waits');
-ok((h13.match(/Names differ/g) || []).length === 1, '13f: a medium pair does not get the high-confidence line');
-
-h13 = card([LOOKALIKE, VARIANT], SOME, [semanticPairKey(LOOKALIKE)]);
-ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="merge"/.test(h13), '13g: a previewed pair is the decision in hand: its Merge is the ONE primary');
 
 h13 = card([], SOME);
 ok(primaryCount(h13) === 0, '13h: nothing waiting: nothing primary');
@@ -882,8 +874,8 @@ ok(!compareOf().includes('No two page names') && !compareOf().includes('All '), 
 
 __setState(stateWithScan('alpha', [VARIANT], []));
 __state().semanticScan.coverage = SOME;
-h13 = decisionOf(true) + renderSemanticScanResult(true, false);
-ok(primaryCount(h13) === 0 && !h13.includes('dm-review-btn') && !h13.includes('dm-semantic-merge-btn') && !h13.includes('data-sem-action'), '13m: read-only: no action of any kind');
+h13 = decisionOf(true);
+ok(primaryCount(h13) === 0 && !h13.includes('dm-review-btn') && !h13.includes('dm-semantic-merge-btn'), '13m: read-only: no action of any kind');
 
 const visible = card([VARIANT, LOOKALIKE], SOME).replace(/<[^>]*>/g, ' ');
 for (const w of ['verdict', 'cache', 'record', 'hash', 'token']) ok(!new RegExp(w, 'i').test(visible), `13n: no mechanism word on screen: ${w}`);
@@ -894,7 +886,88 @@ ok(__state().semanticScan.pairs[0].spellingVariant === false, '13o: a Flip keeps
 __setState(stateWithScan('alpha', [VARIANT], []));
 flipSemanticPair(__state().semanticScan.pairs[0]);
 ok(liveBatchPairs().length === 1, '13o: …so a flipped variant stays in the batch');
+__setState(stateWithScan('alpha', [pair({ nameRelation: 'spelling-variant' })], []));
+flipSemanticPair(__state().semanticScan.pairs[0]);
+ok(__state().semanticScan.pairs[0].nameRelation === 'spelling-variant', '13o: a Flip keeps the app\'s own fact about the names');
+ok(newSemanticScan('alpha', { pairs: [pair({ nameRelation: 'version-differs' })] }).pairs[0].nameRelation === 'version-differs', '13o: a scan keeps it too');
+{
+  const ordered = newSemanticScan('alpha', { pairs: [pair({ keepSlug: 'a', confidence: 'low' }), pair({ keepSlug: 'b', confidence: 'medium' }), pair({ keepSlug: 'c', confidence: 'high' }), pair({ keepSlug: 'd', confidence: 'medium' }), pair({ keepSlug: 'e', confidence: 'high' })] }).pairs.map((p) => p.keepSlug).join();
+  ok(ordered === 'c,e,b,d,a', '13o: the desk\'s order is high first, and what the server ranked stays ranked inside each', ordered);
+}
 ok(toWirePair(VARIANT).spellingVariant === undefined, '13p: the view never sends its own idea of eligibility');
+
+console.log('\n=== 13q. State belongs to its domain: an answer lands on the scan that asked ===');
+{
+  const SAME = 'entities/openai||concepts/open-ai';
+  const switchTo = (slug) => { __state().activeSlug = slug; __state().semanticScan = { slug, pairs: [pair()], cost: null, previewed: new Set(), preview: null }; };
+  // Merge in flight, then another domain with a pair of the same names.
+  __setState(stateWithScan('alpha', [pair(), pair({ keepSlug: 'openai', keepFolder: 'entities', removeSlug: 'x', removeFolder: 'concepts' })], [SAME]));
+  const scanA = __state().semanticScan;
+  __net().nextResult = { ok: true, fixed: 1 };
+  let wait = mergeOneSemanticPair('alpha', scanA.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open', 'a merge in alpha, landing after a switch, does not mark beta\'s pair of the same names');
+  ok(scanA.pairs[0].status === 'merged', 'it is recorded on alpha\'s own list');
+  // Settled by a merge: the same.
+  __setState(stateWithScan('alpha', [pair()], [SAME]));
+  const scanA2 = __state().semanticScan;
+  __net().nextResult = { ok: true, fixed: 0, reason: 'keep-page-missing', missing: 'entities/openai' };
+  wait = mergeOneSemanticPair('alpha', scanA2.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open' && scanA2.pairs[0].status === 'resolved', 'a page gone in alpha settles alpha\'s pair, not beta\'s');
+  // Failed: the message too.
+  __setState(stateWithScan('alpha', [pair()], [SAME]));
+  __net().nextReject = new Error('the disk went away');
+  wait = mergeOneSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(!__state().semanticScan.pairs[0].error, 'a failure in alpha is not written on beta\'s pair');
+  // Keep both.
+  __setState(stateWithScan('alpha', [pair()]));
+  const scanA3 = __state().semanticScan;
+  __net().nextResult = { ok: true };
+  wait = skipSemanticPair('alpha', scanA3.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open' && scanA3.pairs[0].status === 'skipped', 'Keep both, the same');
+  // A comparison.
+  __setState(stateWithScan('alpha', [pair()]));
+  __net().nextResult = { ok: true, basis: 'of-alpha' };
+  wait = previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  const ans = await wait;
+  ok(ans.stale === true && __state().semanticScan.preview === null && !__state().semanticScan.bases, 'alpha\'s comparison and basis never land on beta');
+  __setState(stateWithScan('alpha', [pair()]));
+  __net().nextReject = new Error('entities/openai no longer exists — settled.');
+  wait = previewSemanticPair('alpha', __state().semanticScan.pairs[0]);
+  switchTo('beta');
+  await wait;
+  ok(__state().semanticScan.pairs[0].status === 'open', 'alpha\'s page gone never settles beta\'s pair');
+
+  // Coming back: the row is there before anything has answered.
+  const REPORT = { counts: { entities: 0, concepts: 0, summaries: 0, dismissed: 0 }, brokenLinks: [], orphans: [], crossFolderDupes: [], hyphenVariants: [], folderPrefixLinks: [], missingBacklinks: [] };
+  __setState(stateWithScan('alpha', [pair(), pair({ keepSlug: 'kept', removeSlug: 'gone', status: 'merged' })], [SAME]));
+  __state().cache = { alpha: { health: REPORT } };
+  __state().aiAvailable = true;
+  const listA = __state().semanticScan;
+  __net().nextResult = REPORT;
+  await loadHealth('beta', 1, {});
+  ok(__state().semanticScan === null || __state().semanticScan !== listA, 'a domain switch takes the list off screen');
+  ok(rawPreviewedKeys().length === 0 && listA.previewed.size === 0 && listA.preview === null, 'disarmed: what was armed for it is gone, and stays gone');
+  __state().activeSlug = 'alpha';
+  let answered = false;
+  __net().nextResult = REPORT;
+  const back = loadHealth('alpha', 1, {});
+  ok(__state().semanticScan === listA, 'coming back it is there at once, before the reading has answered');
+  ok(decisionOf().includes('Possible duplicates'), 'and so is the row');
+  ok(listA.pairs[1].status === 'merged', 'with what happened to each pair');
+  ok(canMergeSemanticPair(listA.pairs[0]).allowed === false, 'and nothing armed by it');
+  await back; answered = true;
+  ok(answered, 'the reading lands behind it');
+  ok(!__state().cache.alpha.scan, 'held once: a list forgotten later cannot come back from here');
+}
 
 console.log('\n=== 14. Singular forms, the failure notice, counting, long lists ===');
 const ONE = { total: 1, checked: 1, left: 0, next: 0 };
@@ -931,7 +1004,6 @@ ok(__state().rowNote && __state().rowNote.tone === 'error' && /Could not compare
 
 __setState(stateWithScan('alpha', [VARIANT], []));
 Object.assign(__state().semanticScan, { coverage: SOME, counting: true });
-h13 = renderSemanticScanResult(false, false);
 // A RECOUNT MOVES NOTHING (the press rule). The figures stay, marked as about, and the
 // button stays: what it would really send is read at the press.
 ok(compareOf().includes('About 500 of 36,333 pairs compared'), '14d: while recounting, the figures already on screen stay');
@@ -944,7 +1016,7 @@ __state().semanticQuote = { slug: 'alpha', forNext: 40, est: { candidatePairs: 4
   ok(!/disabled/.test(btn) && /cur-action-cost/.test(row), '14d: a recount disables nothing: the button keeps a figure, scaled to what it says it will send');
 }
 __state().semanticQuote = null;
-ok(h13.includes('dm-sem-card'), '14d: …and the pairs are already there');
+ok(decisionOf().includes('dm-review-btn'), '14d: …and the pairs are already there');
 __setState(stateWithScan('alpha', [], []));
 Object.assign(__state().semanticScan, { coverage: null, counting: true });
 ok(compareOf().includes('Working out the cost…') && /disabled/.test(compareOf()) && !/All |No two/.test(compareOf()), '14d: with no figures yet it claims no finding');
@@ -979,20 +1051,8 @@ ok(__net().calls.length === 0, '14g: a mirror has no scan to resume');
 const many = [];
 for (let i = 0; i < 123; i++) many.push(pair({ keepSlug: 'k' + i, removeSlug: 'r' + i }));
 h13 = card(many, SOME);
-ok((h13.match(/class="dm-sem-card"/g) || []).length === 50, '14h: a long list renders the first 50');
-ok(h13.includes('Show 50 more'), '14h: …with the button');
-ok(decisionOf().includes('Merge 123<'), '14h: the batch counts ALL pairs, not the rendered ones');
-ok(h13.includes('123 likely duplicate pairs found'), '14h: …and so does the title');
+ok(decisionOf().includes('Merge 123<'), '14h: the batch counts ALL pairs');
 ok(liveBatchPairs().length === 123, '14h: …and so does what the batch would send');
-__state().semanticScan.visible = 100;
-h13 = renderSemanticScanResult(false, false);
-ok((h13.match(/class="dm-sem-card"/g) || []).length === 100 && h13.includes('Show 23 more'), '14i: fewer left: fewer offered');
-__state().semanticScan.visible = 150;
-h13 = renderSemanticScanResult(false, false);
-ok((h13.match(/class="dm-sem-card"/g) || []).length === 123 && !h13.includes('dm-semantic-more-btn'), '14i: none left: no button');
-for (let i = 0; i < 60; i++) __state().semanticScan.pairs[i] = Object.assign({}, __state().semanticScan.pairs[i], { status: 'merged' });
-h13 = renderSemanticScanResult(false, false);
-ok(/…and 10 more/.test(h13), '14j: a long handled list is capped, and says so');
 
 // The batch's own message.
 __setState(stateWithScan('alpha', [VARIANT], []));
@@ -1007,15 +1067,6 @@ ok(__state().rowNote.text === 'Merged 1 of 2. 1 now needs your review.', '14k: �
 __setState(stateWithScan('alpha', [], []));
 await runMergeSemanticDuplicates('alpha');
 ok(__state().rowNote.text === 'Nothing left to merge.', '14l: nothing left: the exact words');
-
-// The title counts what is still open; a merged pair is not still "found".
-const handledMix = [];
-for (let i = 0; i < 5; i++) handledMix.push(pair({ keepSlug: 'k' + i, removeSlug: 'r' + i, status: i < 2 ? 'merged' : 'open' }));
-h13 = card(handledMix, SOME);
-ok(h13.includes('3 likely duplicate pairs found'), '14m: the title counts OPEN pairs only');
-handledMix.forEach((p) => { p.status = 'merged'; });
-h13 = card(handledMix, SOME);
-ok(h13.includes('5 likely duplicate pairs found'), '14m: with none open it keeps the count of the whole list');
 
 console.log('\n' + '='.repeat(60));
 console.log(`Passed: ${passed}   Failed: ${failed}`);

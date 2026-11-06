@@ -28,6 +28,8 @@ import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd
 import { loadDismissed, filterDismissed, keyForIssue } from './health-dismissed.js';
 import {
   loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant, isMergeableSlug, nameRelation,
+  loadDuplicateFigures,
+  saveDuplicateFigures,
 } from './duplicate-checks.js';
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
@@ -603,6 +605,7 @@ function semanticKeepSlug(canonical, info) {
  */
 let candidateMemo = null;
 let candidateFullPasses = 0;
+let candidateInFlight = null;
 
 function removalOnly(memo, entities, concepts) {
   const now = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
@@ -643,11 +646,23 @@ async function liveCandidates(domain, { reconcile = false } = {}) {
       return result;
     }
   }
-  candidateFullPasses++;
-  const { ranked, ...result } = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER, { includeRanked: true });
-  const pages = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
-  candidateMemo = { domain, sig, result, ranked, pages, figuresFrom: 'full-pass' };
-  return result;
+  // ONE PASS AT A TIME per list. A press during the first count asked for a second pass
+  // of about 18 s over the same names, on the thread that answers everything else.
+  if (candidateInFlight && candidateInFlight.domain === domain && candidateInFlight.sig === sig) return candidateInFlight.promise;
+  const promise = (async () => {
+    candidateFullPasses++;
+    const { ranked, ...result } = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER, { includeRanked: true });
+    const pages = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
+    candidateMemo = { domain, sig, result, ranked, pages, figuresFrom: 'full-pass' };
+    return result;
+  })();
+  const flight = { domain, sig, promise };
+  candidateInFlight = flight;
+  try {
+    return await promise;
+  } finally {
+    if (candidateInFlight === flight) candidateInFlight = null;
+  }
 }
 
 /** Where the list on hand came from, for the coverage a route reports. */
@@ -771,6 +786,7 @@ export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAUL
   if (checks.size === 0) return { hasChecks: false };
   const plan = await planSemanticScan(domain, maxPairs, openingReader(wikiPath(domain)), { reconcile });
   if (!plan.info) return { hasChecks: false }; // no provider: nothing can be said to apply
+  await saveDuplicateFigures(domain, { totalPairs: plan.live.length, checkedPairs: plan.checked, provider: plan.info.provider, model: plan.info.model });
   return {
     hasChecks: true,
     pairs: plan.remembered,
@@ -852,6 +868,20 @@ export async function estimateCompareAll(domain) {
   const plan = await planSemanticScan(domain, Number.MAX_SAFE_INTEGER, openingReader(wikiPath(domain)));
   const { provider, model } = getProviderInfo();
   const pairs = plan.toCheck.length;
+  return {
+    pageCount: plan.pageCount,
+    pairs,
+    batches: Math.ceil(pairs / SEMANTIC_BATCH_SIZE),
+    ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, pairs),
+    ...candidateFigures(domain),
+    ...compareAllCost(provider, model, pairs),
+    provider,
+    model,
+    fallbackNote: 'Priced on this model. If it is unavailable the app may answer on a newer model that costs more; the job counts what is really billed and stops at your limit.',
+  };
+}
+
+function compareAllCost(provider, model, pairs) {
   const rate = COMPARE_PAIR_TOKENS[model] || COMPARE_PAIR_TOKENS_DEFAULT;
   const inputTokens = pairs * rate.input;
   const outputTokens = pairs * rate.output;
@@ -866,19 +896,36 @@ export async function estimateCompareAll(domain) {
       : costFields(provider, model, inputTokens, outputTokens);
   }
   return {
-    pageCount: plan.pageCount,
-    pairs,
-    batches: Math.ceil(pairs / SEMANTIC_BATCH_SIZE),
-    ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, pairs),
-    ...candidateFigures(domain),
     estimatedTokens: inputTokens + outputTokens,
     ...cost,
     estimatedSeconds: Math.ceil(pairs * COMPARE_SECONDS_PER_PAIR),
     rateBasis: rate.basis,
     timeBasis: model === 'gemini-2.5-flash-lite' ? 'measured' : 'assumed',
-    provider,
-    model,
-    fallbackNote: 'Priced on this model. If it is unavailable the app may answer on a newer model that costs more; the job counts what is really billed and stops at your limit.',
+  };
+}
+
+/**
+ * What a domain with remembered answers can say at once: the last counted figures and the
+ * cost of what they leave, with NO pass over the page names. Free and approximate, so the
+ * row says "About" and asks for the real figures straight after; what a confirm shows is
+ * always read fresh at the press. Figures from another model say nothing about this one.
+ */
+export async function semanticLastFigures(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
+  const f = await loadDuplicateFigures(domain);
+  let info = null;
+  try { info = getProviderInfo(); } catch { return {}; }
+  if (!f || f.provider !== info.provider || f.model !== info.model) return {};
+  const coverage = coverageFields(f.totalPairs, Math.min(f.checkedPairs, f.totalPairs), 0, maxPairs);
+  const tokens = coverage.nextPairs * EST_TOKENS_PER_PAIR;
+  return {
+    totalPairs: coverage.totalPairs, checkedPairs: coverage.checkedPairs, leftPairs: coverage.leftPairs, nextPairs: coverage.nextPairs,
+    figuresFrom: 'last-count',
+    quote: {
+      ...coverage, candidatePairs: coverage.nextPairs, estimatedTokens: tokens,
+      ...costFields(info.provider, info.model, tokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, tokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
+      provider: info.provider, model: info.model,
+    },
+    allQuote: { pairs: coverage.leftPairs, ...compareAllCost(info.provider, info.model, coverage.leftPairs), provider: info.provider, model: info.model },
   };
 }
 
@@ -1023,7 +1070,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
         return;
       }
       failedPairs += batch.length;
-      onEvent({ type: 'batch-error', batch: bi, error: err.message });
+      onEvent({ type: 'batch-error', batch: bi, error: err.message, ...(Number.isInteger(err.status) ? { status: err.status } : {}) });
       return;
     }
 
@@ -1115,6 +1162,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   // (v3.67.0) is the provider-reported figure, in the one actual shape.
   const spent = (await aiRun()).spentFromUsage(usage.totals);
   const coverage = coverageFields(totalPairs, checkedPairs, rememberedPairs, maxPairs);
+  await saveDuplicateFigures(domain, { totalPairs, checkedPairs, provider, model });
   const ended = stopped ? { stopped: true } : {};
   onEvent({ type: 'done', pairs: acceptedPairs, cost, spent, failedPairs, ...coverage, ...ended });
   return { pairs: acceptedPairs, cost, spent, failedPairs, ...coverage, ...ended };

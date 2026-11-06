@@ -144,11 +144,50 @@ export async function saveDuplicateChecks(domain, newRecords) {
   }
 }
 
+/**
+ * The last counted figures, so a domain with remembered answers can open with "About 400
+ * of 900" at once instead of waiting about 18 s for the pass over every page name. In a
+ * folder of their own, so no domain's name can land on another's answers. A cache of a
+ * cache: never read as exact, gone with Forget, and a bad file reads as nothing.
+ */
+function figuresFileFor(domain) {
+  const file = fileFor(domain);
+  return file ? path.join(path.dirname(file), 'figures', path.basename(file)) : null;
+}
+
+export async function loadDuplicateFigures(domain) {
+  const file = figuresFileFor(domain);
+  if (!file) return null;
+  try {
+    const f = JSON.parse(await readFile(file, 'utf8'));
+    if (!f || f.format !== FORMAT || !Number.isInteger(f.totalPairs) || !Number.isInteger(f.checkedPairs) || typeof f.model !== 'string') return null;
+    return f;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDuplicateFigures(domain, { totalPairs, checkedPairs, provider, model }) {
+  const file = figuresFileFor(domain);
+  if (!file) return false;
+  try {
+    const was = await loadDuplicateFigures(domain);
+    if (was && was.totalPairs === totalPairs && was.checkedPairs === checkedPairs && was.provider === provider && was.model === model) return false;
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFileAtomic(file, JSON.stringify({ format: FORMAT, totalPairs, checkedPairs, provider, model }) + '\n');
+    return true;
+  } catch (err) {
+    process.stderr.write(`[duplicate-checks] could not save figures for ${domain}: ${err && err.message}\n`);
+    return false;
+  }
+}
+
 /** Forget this domain's answers, and only this domain's. Dismissals live in the wiki and are untouched. */
 export async function forgetDuplicateChecks(domain) {
   const file = fileFor(domain);
   if (!file) return;
   await rm(file, { force: true });
+  await rm(figuresFileFor(domain), { force: true });
 }
 
 /**
