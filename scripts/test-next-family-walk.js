@@ -242,6 +242,17 @@ section('§4b The AI\'s own pair follows a decision on the walk');
   ok(fx.calls.keep.length === 1 && fx.calls.keep[0] === 'concepts/a||concepts/b', 'one record, in the walk\'s direction');
 }
 
+section('§4c A decided page cannot be decided again');
+{
+  const fx = await opened();
+  await pick(fx, 'a');
+  fx.seen(); await fx.press('hr-merge'); await fx.paint();
+  await fx.press('', { famJump: c('b') }); await fx.paint();
+  const before = fx.calls.merge.length;
+  await fx.press('hr-merge'); await fx.press('hr-keep');
+  ok(fx.calls.merge.length === before && fx.calls.keep.length === 0, 'a forged press on a merged page reaches nothing');
+}
+
 section('§5 The AI\'s three answers, and the fourth');
 {
   const fx = await opened();
@@ -368,6 +379,13 @@ section('§7 Stop any time; the end');
   await quiet.press('hr-done');
   ok(quiet.scan.pairs.every((p) => p.status !== 'open') && quiet.scan.walkWaiting === 1, 'the lanes are told, so Review is still offered', quiet.scan.walkWaiting);
   ok(quiet.desk.open() === true && text(quiet.html()).includes('a stays.'), 'and it opens on the walk');
+
+  // Who can be left over.
+  const lo = await opened();
+  await pick(lo, 'a');
+  ok(leftovers(fam(lo), lo.scan.pairs).every((g) => !g.pages.includes(c('a'))) && leftovers(fam(lo), lo.scan.pairs).length === 1, 'the page that stays is never left over, even with its own pairs open');
+  lo.scan.pairs.forEach((p, i) => { lo.scan.pairs[i] = { ...p, status: 'skipped' }; });
+  ok(leftovers(fam(lo), lo.scan.pairs).length === 0, 'a pair kept apart does not make anything left over');
 
   // Merged with no comparison: named on the way out.
   const nv = await opened(CHAIN(), { facts: { ...FACTS(), pages: FACTS().pages.slice(0, 4), answers: FACTS().answers.slice(0, 3) } });

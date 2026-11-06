@@ -393,9 +393,6 @@ ok(rawPreviewedKeys().length === 0,
 console.log('\n=== 3. INVARIANT 1 (LAYER 2): the gate refuses, independently ===');
 __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai']));
 ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'a previewed, open pair on the active domain is allowed');
-// Now make the stamp stale WITHOUT clearing anything — this is exactly the
-// state layer 1 is supposed to prevent, and layer 2 must catch it anyway.
-__state().activeSlug = 'beta';
 // A family walk's pair: the page that stays against another page, compared or not. It goes through
 // this same gate, in a list of its own, and nothing that reads the AI's pairs can see it.
 {
@@ -418,6 +415,9 @@ __state().activeSlug = 'beta';
   ok(!liveBatchPairs().some((p) => p.walk), 'the batch cannot reach one');
   delete s.walkPairs; s.preview = null; s.previewed.clear();
 }
+// Now make the stamp stale WITHOUT clearing anything — this is exactly the
+// state layer 1 is supposed to prevent, and layer 2 must catch it anyway.
+__state().activeSlug = 'beta';
 const crossDomain = canMergeSemanticPair(__state().semanticScan.pairs[0]);
 ok(crossDomain.allowed === false, 'LAYER 2: a scan stamped for another domain cannot authorise a merge');
 ok(/different domain/.test(crossDomain.reason), '…and the refusal says why');

@@ -334,6 +334,7 @@ section('5. Only an explicit answer for a valid index is remembered');
   ok(r.pairs.length === 0, '5.x a confident "version" is a no, never a merge candidate');
   const rec = [...(await dc.loadDuplicateChecks(d.name)).values()][0];
   ok(rec && rec.verdict === 'no', '5.y …and remembered as a no');
+  ok(rec.rationale === 'sure', '5.y1 …with its reason, which a family walk quotes');
   const cased = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff') });
   const rCased = await scan(cased.name, reply({ relation: ' SAME ', confidence: 'High', canonicalSlug: 'handoff', rationale: 'why' }));
   ok(rCased.pairs.length === 1 && rCased.pairs[0].confidence === 'high', '5.y2 a relation in other case is still that relation');

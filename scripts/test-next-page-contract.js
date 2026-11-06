@@ -368,6 +368,7 @@ const PRESS_ARMS = [
   ['a row failed', DOMAIN_HEALTH_CONTRACT, lane({ rowLines: { 'group:missingBacklinks': { key: 'group:missingBacklinks', tone: 'error', text: 'Could not repair: the disk went away', retry() {} } } }), ['dm-outcome-failed', 'Try again']],
   ['the trace', DOMAIN_HEALTH_CONTRACT, lane({ healthTrace: { slug: 'early-computing', lane: 'free', text: 'Repaired 2', at: '2026-11-05T10:00:00Z' }, activeSlug: 'early-computing' }), ['dm-lane-reading', 'Repaired 2']],
   ['a row left as is, with Undo', DOMAIN_HEALTH_CONTRACT, lane({ activeSlug: 'early-computing', leftRows: { 'issue:orphans:{"path":"concepts/w.md"}': { slug: 'early-computing', group: 'orphans', index: 0, issue: { path: 'concepts/w.md' }, type: 'orphans' } } }), ['Left as is.', 'Undo']],
+  ['a walk left with pages no pair names', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: { ...SCAN, pairs: SCAN.pairs.map((p) => ({ ...p, status: 'merged' })), walkWaiting: 2 } }), ['Possible duplicates', 'Review']],
   ['pairs waiting, with the spelling row', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: SCAN }), ['Possible duplicates', 'Review', 'Spelling variants', '500 of 2,108 pairs compared', 'could not be compared']],
   ['no key', DOMAIN_HEALTH_CONTRACT, lane({ aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true } }), ['Needs an AI provider key', 'disabled aria-disabled="true"']],
   ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, lane({ readonlyArm: true }), ['read-only Shared Brain mirror']],
