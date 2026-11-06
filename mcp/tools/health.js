@@ -520,6 +520,7 @@ export async function scanSemanticDuplicatesHandler(args, storage) {
         total_pairs: est.totalPairs,
         checked_pairs: est.checkedPairs,
         left_pairs: est.leftPairs,
+        recent_new_pages: est.recentNewPages,
         report: `Estimate for '${domain.value}': ${scope} across ${n(est.pageCount)} pages `
           + `(${n(est.checkedPairs)} of ${n(est.totalPairs)} possible pairs already checked). `
           + `Approx ${n(est.estimatedTokens)} tokens on ${est.model || 'the configured model'}. ${cost}`,

@@ -265,6 +265,7 @@ export function observeActivity(id, event) {
         // the raw provider/model id, and an "in" figure without cached
         // tokens, for the same ingest the live panel had just described.
         spent: (event.spent && typeof event.spent === 'object') ? event.spent : null,
+        newPagesToCompare: event.newPagesToCompare || null,
       };
       return;
     }
@@ -400,6 +401,11 @@ function wireRecord(rec) {
       wasOverwrite: wireBool(r.wasOverwrite),
       tokenUsage: wireTokenUsage(r.tokenUsage),
       spent: wireSpent(r.spent),
+      newPagesToCompare: r.newPagesToCompare ? {
+        newPages: wireNum(r.newPagesToCompare.newPages),
+        comparable: wireNum(r.newPagesToCompare.comparable),
+        pairs: wireNum(r.newPagesToCompare.pairs),
+      } : null,
     } : null,
   };
 }

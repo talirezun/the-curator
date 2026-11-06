@@ -2002,6 +2002,64 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
 }
 
 /**
+ * The candidate pairs that touch these pages, without the full pass: what an ingest
+ * asks about the pages it just created. It costs (these pages x the domain's pages)
+ * name comparisons rather than the triangle, so about 0.2 s for 20 new pages on 3,500
+ * (at the 2.75 us per comparison measured above), where the full pass takes 15 s.
+ *
+ * THE SAME TEST AS findSemanticCandidatePairs, whose body stays as it is (its output
+ * is pinned by a golden fingerprint). It can be asked about one page because a pair's
+ * candidacy depends on those two names only. The lower index goes first, as in the
+ * full pass: jaroWinkler and the shared-token count are not symmetric on every input.
+ * scripts/test-recent-new-pages.js cross-checks the two over generated names.
+ *
+ * @param {string} domain
+ * @param {string[]} pageKeys — 'concepts/slug' or 'entities/slug'
+ * @returns {Promise<Array|null>} pairs in the scan's shape, dismissed ones removed, or
+ *   null when the domain is over the scan's page limit (no comparison can run there).
+ */
+export async function candidatePairsTouching(domain, pageKeys) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) return null;
+  const entityFiles = await listMd(wikiDir, 'entities');
+  const conceptFiles = await listMd(wikiDir, 'concepts');
+  if (entityFiles.length + conceptFiles.length > SEMANTIC_DUPE_MAX_DOMAIN_PAGES) return null;
+  const allSlugs = [
+    ...entityFiles.map((f) => ({ slug: f.slice(0, -3), folder: 'entities' })),
+    ...conceptFiles.map((f) => ({ slug: f.slice(0, -3), folder: 'concepts' })),
+  ].filter((p) => isMergeableSlug(p.slug));
+
+  const wanted = new Set(pageKeys);
+  const isWanted = allSlugs.map((p) => wanted.has(`${p.folder}/${p.slug}`));
+  const names = allSlugs.map((p) => p.slug);
+  const tokens = names.map(tokenizeSlug);
+  const found = new Set();
+  let work = 0;
+  for (let t = 0; t < allSlugs.length; t++) {
+    if (!isWanted[t]) continue;
+    for (let o = 0; o < allSlugs.length; o++) {
+      if (o === t || (isWanted[o] && o < t)) continue; // two wanted pages: once
+      const i = Math.min(t, o);
+      const j = Math.max(t, o);
+      if (names[i] === names[j]) continue;
+      const shared = tokens[i].filter((tok) => tokens[j].includes(tok)).length;
+      const byTokens = shared > 0 && candidatePairScore(names[i], names[j], shared) >= 0.5;
+      if (byTokens || jaroWinkler(names[i], names[j]) >= 0.85) found.add(`${i}|${j}`);
+      if (++work >= SEMANTIC_SCAN_YIELD_CHUNK) { work = 0; await yieldToEventLoop(); }
+    }
+  }
+  for (const [i, j] of [...acronymIndexPairs(names, STOPWORDS), ...spellingVariantIndexPairs(names)]) {
+    if (names[i] !== names[j] && (isWanted[i] || isWanted[j])) found.add(`${i}|${j}`);
+  }
+  const pairs = [...found].map((key) => {
+    const [i, j] = key.split('|').map(Number);
+    return { slugA: names[i], folderA: allSlugs[i].folder, slugB: names[j], folderB: allSlugs[j].folder };
+  });
+  const { keys } = await loadDismissed(domain);
+  return filterDismissed(pairs, 'semanticDupe', keys).kept;
+}
+
+/**
  * Count how many .md files in the domain contain `[[removeSlug]]` or
  * `[[folder/removeSlug]]` — used for the merge preview-diff ("14 links will
  * be rewritten"). Does not modify anything.

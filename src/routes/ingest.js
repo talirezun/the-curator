@@ -60,6 +60,7 @@ export function ingestDoneEvent(result, overwrite) {
     // Passed through as-is (possibly undefined on an older/partial
     // result shape) — the frontend degrades gracefully when absent.
     tokenUsage: r.tokenUsage,
+    newPagesToCompare: r.newPagesToCompare || null,
     ...(usage ? { spent: spentFromUsage(usage) } : {}),
   };
 }

@@ -195,6 +195,7 @@ AuthKey_*.p8
 # tracked source, and it names the owner's pages.
 .duplicate-checks/
 .duplicate-jobs/
+.recent-new-pages/
 
 # MCP install manifest (v3.85.0, src/brain/paths.js getMcpInstallManifestPath()) —
 # every write the app made to another tool's MCP config, with ABSOLUTE paths on
