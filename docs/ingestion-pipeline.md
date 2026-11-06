@@ -228,7 +228,7 @@ flowchart TD
     F --> G[3b. Cross-folder dedup:<br/>concepts/X.md → entities/X.md if exists]
     G --> H[4. injectFrontmatter:<br/>YAML block with type tag]
     H --> I{Page exists?}
-    I -- Yes --> J[mergeWikiPage: union bullet sections.<br/>Name moved: composeMergedPage,<br/>no line of the page is lost]
+    I -- Yes --> J[composeReusedPage: kept text first,<br/>mostly new wording below. Name moved:<br/>composeMergedPage. No line is lost]
     I -- No --> K[Use processed content]
     J --> L
     K --> L
@@ -252,7 +252,7 @@ Key invariants `writePage` guarantees:
 - **No folder-prefix or `.md` in wikilinks** — `[[concepts/rag]]` → `[[rag]]`, `[[foo.md]]` → `[[foo]]` (v3.0.1-beta.9+).
 - **Type tag always present** — `type/entity`, `type/concept`, or `type/summary` enforced in frontmatter even when the LLM mirrors the source's own YAML (v3.0.1-beta.9+).
 - **Variant slugs collapse to canonical** — `[[dr-tali-rezun]]` rewrites to `[[tali-rezun]]` at write time (Pass A); `[[talirezun]]` rewrites to `[[tali-rezun]]` (Pass B); `[[energy-and-water-footprint]]` rewrites to `[[summaries/the-energy-and-water-footprint-of-generative-ai]]` (Pass C, prefix-tolerant).
-- **Bullet sections merge** — Key Facts, Related, Entities Mentioned grow with each ingest; prose sections (Summary, Definition) use the incoming LLM version.
+- **Bullet sections merge** — Key Facts, Related, Entities Mentioned grow with each ingest when a bullet says something new; in a prose section (Summary, Definition) the kept text stays first and only mostly new wording goes below it, with what is left out reported. No line of an existing page is lost.
 
 ### Stage 5 — `syncSummaryEntities` (the post-write reconciler)
 
@@ -1056,7 +1056,7 @@ Most raw sources are PDFs. `get_raw_source` must never let their bytes reach the
 
 ### 10h.5 — The manifest: a synced index over unsynced blobs
 
-`<domain>/wiki/.raw-manifest.jsonl` is an append-only JSONL file recording `{filename, sha256, bytes, ingestedAt, summaryPath}` for every file ingested. It lives **inside** `wiki/`, following `.health-dismissed.jsonl`'s precedent exactly (same folder, same format, same merge rationale — one JSON object per line appends cleanly under git's 3-way merge) — deliberately, because that's what makes it git-tracked and synced while the blobs in `raw/` stay local and gitignored (`*/raw/` — unchanged). That split is the entire point: without the manifest, a second machine opening a summary whose file isn't there can only say "no idea"; with it, it can say "this came from `report.pdf`, 2.4 MB, ingested 12 March — not on this machine." It leaks nothing beyond what's already synced — the filename is already sitting in the summary's own `source:` frontmatter next to it.
+`<domain>/wiki/.raw-manifest.jsonl` is an append-only JSONL file recording `{filename, sha256, bytes, ingestedAt, summaryPath, completed}` for every file ingested (one line with `completed: false` at the start, a second with `true` once the pages are written; `findCompletedIngest` reads it to recognise an identical source, and older lines have no `completed`). It lives **inside** `wiki/`, following `.health-dismissed.jsonl`'s precedent exactly (same folder, same format, same merge rationale — one JSON object per line appends cleanly under git's 3-way merge) — deliberately, because that's what makes it git-tracked and synced while the blobs in `raw/` stay local and gitignored (`*/raw/` — unchanged). That split is the entire point: without the manifest, a second machine opening a summary whose file isn't there can only say "no idea"; with it, it can say "this came from `report.pdf`, 2.4 MB, ingested 12 March — not on this machine." It leaks nothing beyond what's already synced — the filename is already sitting in the summary's own `source:` frontmatter next to it.
 
 **The append is best-effort by contract, and that contract is load-bearing** — the same rule as the MCP audit log and ingest's `onWarn` channel: an ingest whose pages are correctly on disk must never be reported as failed because a bookkeeping line didn't append. `appendManifestRecord()` catches its own errors and returns `false` rather than throwing. `ingest.js` calls it fire-and-forget (`hashRawSource(destPath).then(...).catch(() => {})`, no `await`) immediately after the atomic raw-file write, running concurrently with text extraction rather than delaying the user's ingest for a 126 MB PDF's hash. `readManifest()` is symmetrically tolerant on the read side: a malformed line (a half-written line from a killed process, or literal git conflict markers from a bad merge) is skipped, never thrown on, so one bad line degrades to "that record is unavailable" rather than breaking every other record in the file.
 

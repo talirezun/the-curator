@@ -435,6 +435,9 @@ export async function appendManifestRecord(domain, record) {
       bytes: Number.isFinite(record.bytes) ? record.bytes : null,
       ingestedAt: typeof record.ingestedAt === 'string' ? record.ingestedAt : new Date().toISOString(),
       summaryPath: typeof record.summaryPath === 'string' ? record.summaryPath : null,
+      // false at the start of an ingest, true on a second line once its pages are
+      // written. Absent on a record older than this field. findCompletedIngest reads it.
+      ...(typeof record.completed === 'boolean' ? { completed: record.completed } : {}),
     });
 
     const target = manifestFilePath(domain);
@@ -493,6 +496,26 @@ export async function findManifestRecord(domain, sourceName) {
     if (!best || String(rec.ingestedAt || '') >= String(best.ingestedAt || '')) best = rec;
   }
   return best;
+}
+
+/**
+ * Whether these exact bytes were already ingested into this domain, from any file
+ * name. A record alone does not say so: it is written when an ingest STARTS, so one
+ * that failed at the provider leaves a record and no pages. So it needs its summary on
+ * disk and `completed: true`. A record older than that field counts on its summary
+ * alone; the one case that misjudges is a changed file whose ingest failed before this
+ * field existed, retried afterwards.
+ *
+ * @param {object[]} records from readManifest, read before this ingest adds its own
+ * @param {string} sha256
+ * @param {(summaryPath: string) => boolean} summaryExists
+ */
+export function findCompletedIngest(records, sha256, summaryExists) {
+  if (typeof sha256 !== 'string' || !sha256) return null;
+  return records.find((r) => r.sha256 === sha256
+    && r.completed !== false
+    && typeof r.summaryPath === 'string'
+    && summaryExists(r.summaryPath)) || null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

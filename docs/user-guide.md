@@ -3357,6 +3357,8 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
 | *"Page 'X' could not be merged into 'Y' without losing text, so it was not written: 'Y' is unchanged and this page's content did not reach the wiki."* | ℹ Info | A last safety check found that combining the two pages would have dropped a line. This should be very rare. | Left the existing page byte-for-byte as it was and did not write the new page. | Re-ingest the source to try again. |
 | *"The AI returned 'X' more than once with different text. Both are kept on that page: the earlier copy is under 'Merged from X'."* | ℹ Info | A short source's reply held the same page twice, with different words. | Kept both versions on one page instead of throwing one away. | Tidy the page if you want to. |
+| *"Page 'X': N passages not added, because they looked mostly like what the page already says (for example '…'). A real new point can be among them: compare the source with the page."* (grouped form at 3 or more: *"On N pages (...), some new wording was not added …"*) | ℹ Info | The AI reused a page you already have and reworded what it says. | Kept what the page held and left out wording that looked like a repeat, so ingests don't pile up near-identical text. This is a word count and it can be wrong: in one live check 17 of 19 new facts survived. | Compare the source with the page if the point matters, and add anything missing by hand. |
+| *"This source was already ingested into this domain (same content), so existing pages kept their text and took no new wording (N passages left out) …"* | ℹ Info | You ingested a file whose content is identical to one already ingested here, under any name. | Left every existing page exactly as it was, and created any page that did not exist yet. The AI still ran, at its usual cost. | Nothing, unless you meant to change a page: edit it, or ingest a changed version of the source. |
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
 | *"Refused an unsafe/malformed page path '...' — nothing was written"* | ⚠ Attention | The AI returned a page path that can never be a valid wiki page (e.g. empty, a folder with no filename, or containing characters that aren't allowed). This is rare and is a hard safety refusal, not an auto-correction. | Refused to write that one page — every other page from the same ingest still wrote normally. | That one page's content was lost. Re-ingest the source; if it recurs on the same source, open an issue — this shouldn't normally happen. |
@@ -3416,7 +3418,20 @@ The plural rule covers **concept** pages only. Entities are usually proper names
 
 #### When the AI reuses a page by its exact name
 
-This is a different case from all of the above, and it replaces text. If the AI names a page you already have, its new opening and any section it writes again (such as `## Definition`) take the place of the old ones, because it wrote them with the whole source in view. Bullet sections such as Key Facts and Related add up, and sections it leaves out stay.
+Nothing already on the page is lost, and new wording is added only when it says something new:
+
+| Part of the page | What a later ingest does |
+|---|---|
+| Title | Stays. |
+| Opening, `## Definition` and any other section | The text there stays first. A new sentence goes directly below it only if it is **mostly new**. |
+| Bullets | A bullet that is mostly new is added. One that rewords the page is not. |
+| `## Related` and the summary's link lists | A link to a new page is added. A link already listed is not added again, whatever its description says. |
+| A section the page does not have | Added at the end of the page, if anything in it is mostly new. |
+| A stub page ("Re-ingest to fix") | Replaced by the real page. |
+
+**"Mostly new" is a word count, with no AI involved:** at least half of a sentence's meaningful words appear nowhere on the page, or it holds a number the page does not have. Measured on three real re-ingest rounds, about 86% of what it left out really was a rewording and about 92% of new points were kept, so **it does leave out some real new points**, more often on a long page: in one live re-ingest check, 17 of 19 new facts survived and two were left out. The report says so each time (*"N passages not added"*). To see what went, compare the source with the page, and add anything missing by hand.
+
+This rule covers a different source, or a changed version of one. An unchanged file adds nothing at all (see [Re-ingesting a source](#re-ingesting-a-source-and-why-its-safe)). To correct a section, edit the file: an ingest will not replace it.
 
 ### Related: things you might also see during ingest
 
@@ -3451,11 +3466,11 @@ Asking **Chat** why is not useful: Chat reads your wiki's pages and the domain's
 
 ### Re-ingesting a source (and why it's safe)
 
-If you find an ingested page looks incomplete, or you've updated The Curator and want fresh ingests to apply newer prompt rules to old sources, re-ingest. **The pipeline is fully idempotent on re-ingest (v3.0.1-beta.1+):**
+**Re-ingesting the same file changes no page you already have.** The Curator recognises identical content (it keeps a fingerprint of each source, under any file name), so existing pages stay exactly as they are, and only pages that did not exist yet are created. That includes a stub page, which is replaced. The ingest still runs and costs the same as before, and the report says so. To change an existing page, edit it, or ingest a changed version of the source. If an earlier ingest of the file failed, the retry counts as a first ingest. **No file or line is duplicated on re-ingest (v3.0.1-beta.1+):**
 
 | What could duplicate | What prevents it |
 |---|---|
-| Summary page | The slug is computed from the source filename, so `report.pdf` always becomes `summaries/report.md`. The second ingest merges into the existing summary — bullets accumulate, no second file. |
+| Summary page | The slug is computed from the source filename, so `report.pdf` always becomes `summaries/report.md`. The second ingest merges into the existing summary: no second file, and nothing it held is lost. |
 | Entity pages (Alice, Google, etc.) | The AI is shown a list of existing entity filenames before it picks slugs, plus `writePage` runs three dedup passes (title-prefix strip, hyphen-normalised match, cross-folder dedup). Same entity = same file = bullets merge. |
 | Concept pages | Same mechanism as entities. |
 | Index rows | The index is updated programmatically — rows for slugs already mentioned are skipped. |
@@ -8247,7 +8262,7 @@ Good to know:
 - **A bullet with its own words stays, even when its link is already listed.** `- [[alice]] left in 2005` goes under `## Merged from` if the section has `- Founded by [[alice]]`.
 - **The removed page's `created` and `updated` dates are not carried.** The kept page keeps its own.
 - **The text is moved, not rewritten.** `## Merged from` can read like two pages side by side, and tidying it is yours to do.
-- **A later ingest of the same page still follows the [ingest rules](#re-ingesting-a-source-and-why-its-safe)**: it can rewrite the kept page's opening and its prose sections.
+- **A later ingest of the same page follows the [ingest rules](#when-the-ai-reuses-a-page-by-its-exact-name)**: it adds what is mostly new to the kept page and does not replace its text.
 
 **Merges done on earlier versions.** Before this fix a merge used the longer page as the base and carried over only the other page's bullets from eleven named sections. The other page's opening paragraph, its prose, tables, code blocks and any other section were not kept. If the page you chose to delete was the longer one, the page you kept lost its own title, frontmatter and prose, and the surviving file held the deleted page's text under the kept name. That text is not in your wiki any more and the app cannot bring it back. It can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge: a git client pointed at your knowledge base folder can show the earlier version of each file. There is no in-app undo.
 

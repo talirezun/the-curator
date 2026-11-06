@@ -204,15 +204,15 @@ lose the user's work.
 
 | Section kind | What happens on merge |
 |---|---|
-| Bullet sections — Key Facts, Key Ideas, Key Points, Key Takeaways, Related, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples | Genuinely accumulate. Existing bullets are kept, yours are added, duplicates are removed. Safe. |
-| Prose sections — Definition, Summary, Why It Matters, Overview, anything else | **Your version REPLACES the existing one.** The existing prose is preserved *only* if your page omits that heading entirely. |
+| Bullet sections — Key Facts, Key Ideas, Key Points, Key Takeaways, Applications, Examples | Existing bullets are kept. Yours are added under the same test, so a rewording is left out. In Related, Entities Mentioned and Concepts Introduced or Referenced a link is added once per target. |
+| Prose sections — Definition, Summary, Why It Matters, Overview, anything else | **Nothing is replaced.** The existing text stays first; your wording goes below it only if at least half its content words are new to the page or it holds a new number. The rest is left out and named in `warnings`. |
 
 So when a page in `additional_pages` already exists:
 
-- **Adding facts?** Send only the bullet sections. Omit the prose headings and the existing prose
-  survives untouched. This is the safe default.
-- **Genuinely rewriting the prose?** Call `get_node(domain, slug)` first, read what is there, and
-  carry forward anything still true. Do not ship a one-line `## Definition` over a rich one.
+- **Adding facts?** Send only the bullet sections. This is the safe default.
+- **Adding to the prose?** Call `get_node(domain, slug)` first and send only what is new. Check
+  `warnings` in the reply: a point stated in the page's own words can be left out as a rewording.
+- **Correcting the prose?** This tool cannot. Tell the user which file to edit.
 - **Not sure whether the page exists?** It was in the list from step 2 — check.
 
 Use `dry_run: true` when you are unsure. It shows which pages are creates and which are updates.

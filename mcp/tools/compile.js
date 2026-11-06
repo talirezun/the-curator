@@ -55,7 +55,7 @@ export const compileToWikiDefinition = {
     "'store these notes', 'put this in my Curator', or any phrasing that means 'persist this knowledge'. " +
     "Writes a summary page plus any new entity/concept pages that emerged. " +
     "MERGE SEMANTICS — this is NOT a fully non-destructive write. Bullet-accumulating sections (Key Facts, Key Ideas, Key Points, Key Takeaways, Related, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples) genuinely accumulate: existing bullets are preserved and yours are added. " +
-    "PROSE sections (Definition, Summary, Why It Matters, Overview, …) are only preserved when your page OMITS the heading entirely — if you include a '## Definition' heading, YOUR version REPLACES the existing one. " +
+    "NOTHING ON AN EXISTING PAGE IS REPLACED: the title and opening stay; in a section you repeat (Definition, Summary, Why It Matters, Overview, …) the existing text stays first, and your wording goes directly below it ONLY if at least half its content words are new to the page or it holds a new number. The rest is left out and named in `warnings`. To correct existing prose, tell the user to edit the file: this tool can only add. " +
     "So when updating an existing page, either omit the prose headings you are not deliberately rewriting, or call get_node first and carry the existing prose forward. Shipping a thin page with the same headings will silently discard the richer existing prose. " +
     "Returns the list of created and updated pages with byte counts so you can show the user what changed. " +
     "Refuses with a clear message if the EXACT same title + content was already compiled today (the slug is a hash of title+content+date — same inputs map to the same file). Two compiles with the same title but different content on the same day produce different files; an unchanged re-compile is refused. " +
@@ -87,7 +87,7 @@ export const compileToWikiDefinition = {
       },
       additional_pages: {
         type: 'array',
-        description: "Optional. Entity or concept pages that emerged from the conversation and should be created or updated. Each must have path starting with 'entities/' or 'concepts/' and end in '.md'. On an existing page, bullet sections accumulate — but a prose section you include (e.g. '## Definition') REPLACES the existing one, and is only preserved if you omit its heading. Read the page with get_node first if you are updating rather than creating.",
+        description: "Optional. Entity or concept pages that emerged from the conversation and should be created or updated. Each must have path starting with 'entities/' or 'concepts/' and end in '.md'. On an existing page, nothing is replaced: bullets and prose that are mostly new are added below the existing text, and rewordings are left out (named in `warnings`). Read the page with get_node first and send only what is new.",
         items: {
           type: 'object',
           properties: {
@@ -566,7 +566,10 @@ export async function compileToWikiHandler(args, storage) {
   const writeRecords = [];
 
   // 4a. Summary page
-  const summaryRecord = await writePage(domain, summaryPath, resolvedSummary);
+  // A write that leaves wording out says so, here as in ingest's report.
+  const writeWarnings = [];
+  const onWarn = (w) => writeWarnings.push(w);
+  const summaryRecord = await writePage(domain, summaryPath, resolvedSummary, { onWarn });
   if (summaryRecord) {
     writeRecords.push({
       originalPath: summaryPath,
@@ -579,7 +582,7 @@ export async function compileToWikiHandler(args, storage) {
 
   // 4b. Additional pages
   for (const p of resolvedExtra) {
-    const rec = await writePage(domain, p.path, p.content);
+    const rec = await writePage(domain, p.path, p.content, { onWarn });
     if (rec) {
       writeRecords.push({
         originalPath: p.path,
@@ -662,6 +665,7 @@ export async function compileToWikiHandler(args, storage) {
     pages_written: canonicalPaths,
     changes,
     links: linkStats,
+    ...(writeWarnings.length ? { warnings: writeWarnings } : {}),
     report: baseReport + linkSuffix,
     next:
       allBroken.length > 0
