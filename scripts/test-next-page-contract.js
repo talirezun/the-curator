@@ -368,6 +368,7 @@ const PRESS_ARMS = [
   ['a row failed', DOMAIN_HEALTH_CONTRACT, lane({ rowLines: { 'group:missingBacklinks': { key: 'group:missingBacklinks', tone: 'error', text: 'Could not repair: the disk went away', retry() {} } } }), ['dm-outcome-failed', 'Try again']],
   ['the trace', DOMAIN_HEALTH_CONTRACT, lane({ healthTrace: { slug: 'early-computing', lane: 'free', text: 'Repaired 2', at: '2026-11-05T10:00:00Z' }, activeSlug: 'early-computing' }), ['dm-lane-reading', 'Repaired 2']],
   ['a row left as is, with Undo', DOMAIN_HEALTH_CONTRACT, lane({ activeSlug: 'early-computing', leftRows: { 'issue:orphans:{"path":"concepts/w.md"}': { slug: 'early-computing', group: 'orphans', index: 0, issue: { path: 'concepts/w.md' }, type: 'orphans' } } }), ['Left as is.', 'Undo']],
+  ['a walk left with pages no pair names', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: { ...SCAN, pairs: SCAN.pairs.map((p) => ({ ...p, status: 'merged' })), walkWaiting: 2 } }), ['Possible duplicates', 'Review']],
   ['pairs waiting, with the spelling row', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: SCAN }), ['Possible duplicates', 'Review', 'Spelling variants', '500 of 2,108 pairs compared', 'could not be compared']],
   ['no key', DOMAIN_HEALTH_CONTRACT, lane({ aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true } }), ['Needs an AI provider key', 'disabled aria-disabled="true"']],
   ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, lane({ readonlyArm: true }), ['read-only Shared Brain mirror']],
@@ -406,6 +407,27 @@ const DESK_ARMS = [
   ['the desk, the pointer still on Merge', await deskOpen(async (f) => { f.overMerge = true; f.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' }); await f.press('hr-next'); await f.paint(); f.seen(); }), ['Move the pointer off Merge and back to press it.', 'aria-describedby="hr-gate" disabled']],
   ['the desk, the end', await deskOpen(async (f) => { f.seen(); await f.press('hr-merge'); await f.paint(); f.seen(); await f.press('hr-keep'); await f.paint(); f.seen(); await f.press('hr-merge'); }, null, { coverage: { left: 12 } }), ['All pairs decided.', '12 pairs have not been compared yet, shown in AI help.']],
 ];
+// A family at the same desk. The same section, the same kit classes, in every state it has.
+const FAMILY_PAIRS = () => [deskPair('b', 'a', { rationale: 'A and B match.' }), deskPair('c', 'b', { rationale: 'B and C match.' }), deskPair('d', 'c', { rationale: 'C and D match.' })];
+const FAMILY_FACTS = { pages: ['a', 'b', 'c', 'd'].map((s, i) => ({ page: 'concepts/' + s, folder: 'concepts', slug: s, exists: true, opening: 'Opening of ' + s + '.', length: 1000 + i, links: 9 - i })),
+  answers: [{ a: 'concepts/a', b: 'concepts/b', compared: 'same', rationale: 'A and B match.' }, { a: 'concepts/b', b: 'concepts/c', compared: 'same', rationale: 'B and C match.' }, { a: 'concepts/c', b: 'concepts/d', compared: 'same', rationale: 'C and D match.' }, { a: 'concepts/a', b: 'concepts/d', compared: 'different', rationale: 'Another subject.' }], kept: [] };
+const familyOpen = async (fn) => {
+  const f = deskFixture(FAMILY_PAIRS(), { deps: { familyFacts: async (s, pages, textOf) => (textOf ? { pages: [{ page: textOf, exists: true, length: 5000, links: 20 }], answers: [], kept: [], keptText: { text: '# a\n', truncated: false } } : { ...FAMILY_FACTS, pages: FAMILY_FACTS.pages.filter((p) => pages.includes(p.page)) }), keepApart: async () => {}, reload: () => {}, note: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.' } });
+  f.desk.open(); await f.paint();
+  if (fn) await fn(f);
+  return renderDeskSection(f.html());
+};
+const famPick = async (f) => { await f.press('', { famPick: 'concepts/a' }); await f.paint(); };
+DESK_ARMS.push(
+  ['a family, which page stays', await familyOpen(), ['Family of 4 pages', 'Decision 1 of 1', 'Which page stays?', 'Keep all 4 apart', 'possible pairs']],
+  ['a family, the walk', await familyOpen(async (f) => { await famPick(f); f.seen(); }), ['Page 1 of 3', 'id="hr-merge"', 'btn-danger', 'Merge', 'Choose again', 'aria-label="3 pages to go through: 0 merged, 0 kept, 3 left"']],
+  ['a family, never compared', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); }), ['The AI never compared these two pages.', 'which you have since merged in', 'Page 2 of 3']],
+  ['a family, the list open', await familyOpen(async (f) => { await famPick(f); f.state.expandedGroups.add('reviewFamily'); }), ['All 3 pages', 'The AI never compared these with', 'this page', 'hr-fam-jump']],
+  ['a family, a merged page gone back to', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['This page no longer exists', 'Nothing more to decide here.']],
+  ['a family, a kept page gone back to', await familyOpen(async (f) => { await famPick(f); await f.press('hr-keep'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['apart.', 'id="hr-undo"', 'Goes away']],
+  ['a family, finished', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-done'); await f.paint(); for (const k of ['reviewFamMerged', 'reviewFamLeft']) f.state.expandedGroups.add(k); }), ['Took in 1 page.', 'Merged in', 'Not decided', 'Go back to them', 'Review those', 'If you use GitHub Sync']],
+  ['a family, kept apart', await familyOpen(async (f) => { await f.press('hr-fam-apart'); await f.paint(); }), ['Kept these 4 pages apart.', 'id="hr-undo"']],
+);
 for (const [label, html, must] of DESK_ARMS) {
   PAGES.push({ id: 'domains.health (' + label + ')', contract: DOMAIN_HEALTH_CONTRACT, enforced: true, render: () => html, must });
 }
@@ -422,7 +444,7 @@ function visibleLines(root) {
   const lines = [];
   walk(root, (n) => {
     if (n.tag === '#text' || n.tag === 'svg' || n.tag === 'style') return;
-    if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail')) return;
+    if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail') || hasClass(n, 'hr-fam-pick-open')) return;
     if (ancestorWith(n, (p) => hasClass(p, 'visually-hidden') || hasClass(p, 'mono') || hasClass(p, 'dm-plan-data'))) return;
     if (ancestorWith(n, (p) => hasClass(p, 'hr-pane-text'))) return;
     let t = ''; let own = false;
@@ -464,7 +486,7 @@ function healthContractViolations(html) {
       const ownText = (m) => (m.children || []).map((c) => (c.tag === '#text' ? (c.text || c.value || '') : ownText(c))).join('');
       const label = ownText(n).trim();
       const block = ancestorWith(n, (p) => hasClass(p, 'dm-confirm-card') || hasClass(p, 'hr-decide'));
-      if (!/^(Merge and delete [\d,]+|Merging|Merge into \S)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
+      if (!/^(Merge and delete [\d,]+|Merging|Merge into \S|Merge \S+ into \S)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
       if (!block || !html.includes(WARN)) bad.push('btn-danger without the undo warning in its block');
     }
   });

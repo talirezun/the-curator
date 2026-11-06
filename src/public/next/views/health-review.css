@@ -65,7 +65,8 @@
 .hr-outcome { height: var(--hr-outcome-h); overflow-y: auto; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text); overflow-wrap: anywhere; }
 /* Tone on the rule, words in the ordinary ink: a failure is read, and it stays. */
 .hr-outcome-failed { border-left: 2px solid var(--danger); padding-left: var(--space-2); }
-.hr-outcome .btn { margin-left: var(--space-1); }
+/* However long the names, Undo and Try again stay in sight inside this slot. */
+.hr-outcome .btn { position: sticky; bottom: 0; margin-left: var(--space-1); }
 
 .hr-end { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--space-2); height: var(--hr-pane-h); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-sunken); padding: var(--space-4); text-align: center; }
 .hr-end-line { margin: 0; font-size: var(--text-xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
@@ -74,6 +75,65 @@
 .hr-fold-more { padding: var(--space-2) 0; }
 .hr-fold-row { overflow-wrap: anywhere; }
 .hr-jump { height: auto; min-height: var(--control-sm); white-space: normal; text-align: left; font-family: inherit; overflow-wrap: anywhere; }
+
+/* A family: the same desk, with one short row of marks and one line above the evidence. Each has a
+ * fixed height too. Tone on the rule and the marks, words in the ordinary ink. */
+.hr-desk-family { --hr-marks-h: 22px; --hr-running-h: 28px; --hr-facts-h: 56px; }
+.hr-marks-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-3); height: var(--hr-marks-h); overflow: hidden; }
+.hr-marks { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.hr-marks-group { display: flex; gap: 2px; min-width: 0; }
+.hr-mark { flex: 0 1 12px; min-width: 3px; width: 12px; height: 12px; box-sizing: border-box; border-radius: 2px; border: 1px solid var(--border-strong); background: transparent; }
+.hr-mark-never { border-color: var(--attention); }
+.hr-mark-kept { background: linear-gradient(to top, var(--text-2) 40%, transparent 40%); }
+.hr-mark-merged { background: var(--text); border-color: var(--text); }
+.hr-mark-here { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.hr-marks-words { flex: 1 1 auto; text-align: right; font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
+.hr-running { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-3); margin: 0; height: var(--hr-running-h); overflow-y: auto; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
+.hr-ev { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
+.hr-ev strong { font-weight: var(--weight-medium); color: var(--text); }
+.hr-ev-line { display: block; }
+.hr-ev-never { padding-left: var(--space-2); border-left: 2px solid var(--attention); }
+.hr-fam-pane-note { margin: 0; color: var(--text); }
+.hr-pane-merged .hr-pane-role { color: var(--text-2); }
+.hr-fam-summary { font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); }
+.hr-fam-sum-line { margin: 0; min-height: 40px; }
+.hr-fam-q { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text); }
+.hr-fam-sub { margin: calc(-1 * var(--space-2)) 0 0; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); }
+.hr-fam-list { border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-sunken); overflow: hidden; }
+.hr-fam-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border-subtle); }
+.hr-fam-row:last-child { border-bottom: none; }
+.hr-fam-pick { flex: 1 1 auto; min-width: 0; display: block; padding: var(--space-2) var(--space-3); background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--t-state); }
+.hr-fam-pick:hover:not(:disabled) { background: var(--hairline); }
+.hr-fam-pick:disabled { cursor: not-allowed; }
+.hr-fam-pick:focus-visible, .hr-fam-read:focus-visible, .hr-fam-jump:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.hr-fam-pick-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-3); }
+.hr-fam-pick-name { flex: 1 1 200px; min-width: 0; font-size: var(--text-xs); color: var(--text); overflow-wrap: anywhere; }
+.hr-fam-pick-meta { font-size: var(--text-2xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
+.hr-fam-pick-open { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; margin-top: 1px; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
+.hr-fam-read { flex: none; align-self: stretch; padding: 0 var(--space-3); background: none; border: none; border-left: 1px solid var(--border-subtle); color: var(--text-2); font: inherit; font-size: var(--text-2xs); cursor: pointer; }
+.hr-fam-read:hover { color: var(--text); }
+.hr-fam-none { margin: 0; padding: var(--space-3); font-size: var(--text-xs); color: var(--text-2); }
+.hr-fam-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.hr-fam-find { flex: 1 1 160px; min-width: 0; height: var(--control-sm); padding: 0 var(--space-2); font: inherit; font-size: var(--text-xs); color: var(--text); background: var(--surface-sunken); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.hr-fam-apart { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.hr-fam-apart span { flex: 1 1 200px; font-size: var(--text-xs); color: var(--text-2); }
+.hr-fam-group { margin-top: var(--space-3); font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
+.hr-fam-group:first-child { margin-top: 0; }
+.hr-fam-jump { display: flex; width: 100%; gap: var(--space-3); align-items: baseline; justify-content: space-between; padding: 6px 2px; min-height: 28px; background: none; border: none; border-top: 1px solid var(--border-subtle); color: inherit; font: inherit; font-size: var(--text-xs); text-align: left; cursor: pointer; }
+.hr-fam-jump .mono { min-width: 0; overflow-wrap: anywhere; }
+.hr-fam-jump-state { flex: none; font-size: var(--text-2xs); color: var(--text-2); }
+.hr-fam-jump[aria-current="true"] .hr-fam-jump-state { color: var(--text); }
+.hr-fam-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.hr-fam-card-text { flex: 1 1 260px; min-width: 0; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); }
+.hr-fam-card-name { display: block; margin: 2px 0; font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
+.hr-fam-never { margin: 0; }
+.hr-fam-res-line { margin: 0 0 var(--space-1); font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text-2); overflow-wrap: anywhere; }
+.hr-fam-res-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-3); min-height: 30px; padding: 2px 0; border-top: 1px solid var(--border-subtle); font-size: var(--text-xs); }
+.hr-fam-res-row > .mono { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.hr-fam-res-note { font-size: var(--text-2xs); color: var(--text-2); }
+.hr-fam-left { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-md); }
+.hr-fam-left p { flex: 1 1 260px; margin: 0; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text); }
+.hr-fam-foot { margin: 0; }
 
 /* Stacked. The same rule: every slot its own fixed height, so a decision moves nothing. */
 @media (max-width: 720px) {
@@ -88,4 +148,13 @@
   .hr-decide-btns { flex-direction: column; align-items: stretch; }
   .hr-decide-btns .btn-secondary { align-self: flex-start; }
   .hr-merge-label { -webkit-line-clamp: 3; line-clamp: 3; }
+  /* The count takes a line of its own, so its length never moves what is under it. */
+  .hr-desk-family { --hr-marks-h: 54px; --hr-running-h: 40px; }
+  .hr-desk-family .hr-count { flex-basis: 100%; min-height: 36px; }
+  .hr-marks-words { flex-basis: 100%; text-align: left; }
+  .hr-marks { gap: 5px; }
+  .hr-mark { width: 10px; }
+  .hr-desk-family .hr-facts { overflow-y: visible; }
+  .hr-fam-read { padding: 0 var(--space-2); }
+  .hr-fam-pick-name { flex-basis: 100%; }
 }

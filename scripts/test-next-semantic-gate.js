@@ -114,6 +114,7 @@ const FNS = [
   'rawPreviewedKeys',
   'markSemanticPreviewed',
   'isSemanticPreviewed',
+  'semanticListOf',
   'canMergeSemanticPair',
   'flipSemanticPair',
   'liveBatchPairs',
@@ -392,6 +393,28 @@ ok(rawPreviewedKeys().length === 0,
 console.log('\n=== 3. INVARIANT 1 (LAYER 2): the gate refuses, independently ===');
 __setState(stateWithScan('alpha', [pair()], ['entities/openai||concepts/open-ai']));
 ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'a previewed, open pair on the active domain is allowed');
+// A family walk's pair: the page that stays against another page, compared or not. It goes through
+// this same gate, in a list of its own, and nothing that reads the AI's pairs can see it.
+{
+  const s = __state().semanticScan;
+  const walkPair = { walk: true, family: 'f', keepFolder: 'concepts', keepSlug: 'walk-stays', removeFolder: 'concepts', removeSlug: 'walk-goes', status: 'open' };
+  s.walkPairs = [walkPair];
+  const listed = s.pairs.length;
+  ok(canMergeSemanticPair(walkPair).allowed === false, 'a walk\'s pair: shut until seen, like any other');
+  s.preview = { key: semanticPairKey(walkPair), data: {} };
+  ok(armSemanticPair(walkPair) === true && canMergeSemanticPair(walkPair).allowed === true, 'seen, it opens, through the same functions');
+  ok(s.pairs.length === listed, 'and it never joins the AI\'s list');
+  s.previewed.delete(semanticPairKey(walkPair));
+  ok(canMergeSemanticPair({ ...walkPair, keepSlug: 'somewhere-else' }).allowed === false, 'a walk\'s pair nobody made is refused');
+  ok(canMergeSemanticPair({ ...walkPair, walk: undefined }).allowed === false, 'and the same names with no walk mark are not the walk\'s pair');
+  const named = { folder: 'concepts', slug: 'walk-goes' };
+  ok(resolvePairsTouching(s, named, null) === 0 && s.walkPairs[0].status === 'open', 'the cascade never touches a walk\'s pair, so a page cannot leave the walk by it');
+  markSemanticPairStatus(walkPair, 'merged');
+  ok(s.walkPairs[0].status === 'merged', 'its own status is written in its own list');
+  ok(canMergeSemanticPair(s.walkPairs[0]).allowed === false, 'and decided, it is shut');
+  ok(!liveBatchPairs().some((p) => p.walk), 'the batch cannot reach one');
+  delete s.walkPairs; s.preview = null;
+}
 // Now make the stamp stale WITHOUT clearing anything — this is exactly the
 // state layer 1 is supposed to prevent, and layer 2 must catch it anyway.
 __state().activeSlug = 'beta';

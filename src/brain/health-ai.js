@@ -24,7 +24,7 @@ import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
 import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates, TIER_ESTIMATE_MARGIN } from './llm.js';
-import { findSemanticCandidatePairs, candidatePairsTouching, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
+import { findSemanticCandidatePairs, candidatePairsTouching, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd, walkMdFiles } from './health.js';
 import { loadRecentNewPages, pruneRecentNewPages } from './recent-new-pages.js';
 import { loadDismissed, filterDismissed, keyForIssue } from './health-dismissed.js';
 import {
@@ -555,7 +555,7 @@ const SEMANTIC_REPLY_FORMAT =
   `Only when relation is "same", also give "canonicalSlug" (the slug to keep: prefer the more descriptive, readable ` +
   `form, e.g. "retrieval-augmented-generation" over "rag", "neural-networks" over "neural-network", full name over ` +
   `acronym), "confidence" ("high" = unambiguous, "medium" = some doubt, "low" = speculative) and "rationale" (one short sentence).`;
-const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).update(SEMANTIC_REPLY_FORMAT).digest('hex').slice(0, 16);
+export const SEMANTIC_PROMPT_ID = createHash('sha256').update(SEMANTIC_SYSTEM_PROMPT).update(SEMANTIC_REPLY_FORMAT).digest('hex').slice(0, 16);
 // Haiku overflowed 2,048 on a batch of 20, which fails the whole batch. 6,000 was measured to fit.
 const SEMANTIC_MAX_OUTPUT_TOKENS = 6000;
 const SEMANTIC_RELATIONS = new Set(['same', 'part', 'version', 'overlap', 'different']);
@@ -1176,7 +1176,10 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       };
       const key = pairKey(pair.folderA, pair.slugA, pair.folderB, pair.slugB);
       if (relation !== 'same' || given === 'low') {
-        answered.set(key, { ...record, verdict: 'no' });
+        // Kept short, because most answers are this one and the file holds tens of thousands.
+        // A family walk quotes it: "The AI compared these two pages and said they are not the same."
+        const said = String(r.rationale || r.difference || '').trim().slice(0, 300);
+        answered.set(key, { ...record, verdict: 'no', ...(said && said.toLowerCase() !== 'none' ? { rationale: said } : {}) });
         continue;
       }
       // A "same" with no usable confidence is listed for a Preview, never for the batch.
@@ -1330,6 +1333,99 @@ export async function semanticFamilies(domain, { stay = null } = {}) {
   }
   families.sort((a, b) => (b.size - a.size) || (a.suggestedStay < b.suggestedStay ? -1 : 1));
   return { families, openPairs: pairs.length };
+}
+
+/** The most pages one family's facts are worked out for. Larger is refused, never cut short. */
+export const FAMILY_FACTS_MAX_PAGES = 2000;
+
+/**
+ * What a family walk states, for pages the VIEW names. READ-ONLY: no provider call, no write,
+ * no candidate pass, one read of the wiki's files for the link counts.
+ *
+ * The view takes this once, when a family opens, and keeps it. It cannot be asked later: a merge
+ * changes the kept page's opening, so answers about it lapse, and a page merged away takes its
+ * answers with it, and neither makes a comparison that was on screen untrue or a page leave the walk.
+ *
+ * `answers` holds only pairs the AI really answered: `same` / `different` (still applying) or
+ * `stale` (it answered about other openings or on another model). A pair absent from it was never
+ * compared. Nothing here joins A~B and B~C: the view looks up the exact pair or says "never".
+ * `kept` lists the pairs the user already kept apart, answered or not.
+ * `textOf` (one of `pages`) adds that page's text, as it is now, for the page that stays.
+ */
+export async function semanticFamilyFacts(domain, pageList, { textOf = null } = {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+  const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+  if (!Array.isArray(pageList) || pageList.length === 0) throw bad('Missing pages');
+  if (pageList.length > FAMILY_FACTS_MAX_PAGES) throw bad(`At most ${FAMILY_FACTS_MAX_PAGES} pages at a time`);
+  const split = (page) => { const at = String(page).indexOf('/'); return { folder: String(page).slice(0, at), slug: String(page).slice(at + 1) }; };
+  const wanted = [...new Set(pageList)];
+  for (const page of wanted) {
+    const { folder, slug } = split(page);
+    if ((folder !== 'entities' && folder !== 'concepts') || !isMergeableSlug(slug)) throw bad(`Not a wiki page: ${page}`);
+  }
+  if (textOf !== null && !wanted.includes(textOf)) throw bad('textOf must be one of the pages');
+
+  const inFamily = new Set(wanted);
+  const bySlug = new Map();
+  for (const page of wanted) {
+    const { slug } = split(page);
+    if (!bySlug.has(slug)) bySlug.set(slug, []);
+    bySlug.get(slug).push(page);
+  }
+  // One pass, one pattern, the same links the comparison counts: a page's link to itself is not
+  // a link in, and index.md and log.md are not pages that point anywhere.
+  const links = new Map(wanted.map((page) => [page, 0]));
+  const linkRe = /\[\[(?:entities\/|concepts\/|summaries\/)?([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  for (const full of await walkMdFiles(wikiDir)) {
+    const rel = path.relative(wikiDir, full).split(path.sep).join('/');
+    if (rel === 'index.md' || rel === 'log.md') continue;
+    let content = '';
+    try { content = await readFile(full, 'utf8'); } catch { continue; }
+    for (const m of content.matchAll(linkRe)) {
+      for (const page of bySlug.get(m[1]) || []) {
+        if (rel !== page + '.md') links.set(page, links.get(page) + 1);
+      }
+    }
+  }
+
+  const pages = [];
+  let text = null;
+  for (const page of wanted) {
+    const { folder, slug } = split(page);
+    let content = null;
+    try { content = await readFile(path.join(wikiDir, folder, slug + '.md'), 'utf8'); } catch { /* gone */ }
+    pages.push({ page, folder, slug, exists: content !== null, opening: content === null ? '' : pageOpening(content),
+      length: content === null ? 0 : content.length, links: links.get(page) });
+    if (page === textOf && content !== null) text = { text: content.slice(0, 60000), truncated: content.length > 60000 };
+  }
+  const openingOf = new Map(pages.map((p) => [p.page, p.opening]));
+
+  const info = (() => { try { return getProviderInfo(); } catch { return null; } })();
+  const answers = [];
+  for (const [key, rec] of await loadDuplicateChecks(domain)) {
+    const [a, b] = key.split('||');
+    if (!inFamily.has(a) || !inFamily.has(b)) continue;
+    const pa = split(a); const pb = split(b);
+    const applies = info && rec.provider === info.provider && rec.model === info.model && rec.prompt === SEMANTIC_PROMPT_ID
+      && rec.openings === openingsHash(pa.folder, pa.slug, openingOf.get(a), pb.folder, pb.slug, openingOf.get(b));
+    if (!applies) answers.push({ a, b, compared: 'stale' });
+    else answers.push({ a, b, compared: rec.verdict === 'yes' ? 'same' : 'different',
+      ...(typeof rec.rationale === 'string' && rec.rationale ? { rationale: rec.rationale } : {}) });
+  }
+
+  const { keys: dismissedKeys } = await loadDismissed(domain);
+  const kept = [];
+  if (dismissedKeys.size) {
+    for (let i = 0; i < wanted.length; i++) {
+      const a = split(wanted[i]);
+      for (let j = i + 1; j < wanted.length; j++) {
+        const b = split(wanted[j]);
+        if (dismissedKeys.has(keyForIssue('semanticDupe', { folderA: a.folder, slugA: a.slug, folderB: b.folder, slugB: b.slug }))) kept.push([wanted[i], wanted[j]]);
+      }
+    }
+  }
+  return { pages, answers, kept, ...(textOf === null ? {} : { keptText: text }) };
 }
 
 // ── Phase 4 (v3.0.1-beta.16) — Bulk AI broken-link resolution ───────────────

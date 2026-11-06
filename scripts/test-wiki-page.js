@@ -1347,6 +1347,8 @@ try {
       // `mergedPreviewCap`. A plain numeric constant, same class as the three
       // above — not a new way in, no §8b case.
       'MERGED_PREVIEW_CAP_CHARS',
+      // Lists file paths, writes nothing, for the family facts' link count. No §8b case.
+      'walkMdFiles',
       'applyBrokenLinkFixes', 'collapseRepeatedLinks', /* pure: reads a report it is handed, writes nothing */ 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
       // Read-only like findSemanticCandidatePairs beside it: lists names, writes nothing. No §8b case.

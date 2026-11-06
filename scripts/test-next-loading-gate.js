@@ -442,6 +442,8 @@ const EXEMPT = [
     why: 'health scan: measured ~654 ms. Deliberately NOT gated — an honest indicator for a genuinely long wait. The skeleton this earns is a separate change with its own proof.' },
   { file: 'views/health-review.js', needle: 'Loading the page…',
     why: 'the review desk\'s pane, while the comparison it just asked for is read: a slot of a fixed height, so it moves nothing, and Merge stays shut under it' },
+  { file: 'views/health-family.js', needle: "ctx.loading ? 'Loading…'",
+    why: 'the line above a family\'s list while its facts are read: its slot is reserved, and no page can be pressed under it' },
   { file: 'views/settings.js', needle: "state.quickLoading ? 'Scanning…'",
     why: 'System-check BUTTON label during a user-initiated scan' },
   // RE-ANCHORED, not widened, when views/shared.js adopted shared/text.js.

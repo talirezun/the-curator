@@ -1075,6 +1075,8 @@ const HEALTH_GUARD_CLASSES = [
         'runs the LLM scan and streams candidate pairs; read-only (health-ai.js), no wiki write.' },
       { method: 'POST', path: '/:domain/semantic-dupes/preview', reason:
         'computes and returns a merge diff preview; read-only, no wiki write.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/family', reason:
+        'reads what a family walk states about pages the view names: links, size and the AI answers; read-only, no wiki write. A POST only because a long family\'s names do not fit a URL.' },
       { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
         'removes one machine-local cache file in the user-data dir, outside domains/; no wiki page, sidecar or lock involved.' },
       { method: 'POST', path: '/:domain/semantic-dupes/compare-all/start', reason:
@@ -1134,6 +1136,8 @@ const HEALTH_GUARD_CLASSES = [
         'read-only scan; writes nothing to the domain.' },
       { method: 'POST', path: '/:domain/semantic-dupes/preview', reason:
         'read-only diff preview; writes nothing to the domain.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/family', reason:
+        'read-only facts for a family walk; writes nothing to the domain.' },
       { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
         'writes nothing into domains/<domain>/: the cache it clears is this machine\'s and a Pull never touches it.' },
       { method: 'POST', path: '/:domain/semantic-dupes/compare-all/pause', reason:
@@ -1353,7 +1357,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 21, // +POST compare-all/stop; v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
+    expectedMutatingCount: 22, // +POST semantic-dupes/family; +POST compare-all/stop; v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via
