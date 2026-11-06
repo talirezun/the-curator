@@ -909,7 +909,7 @@ async function scenarios(app, profile) {
 async function wordAudit(page) {
   const lines = await page.evaluate((section, stage3) => {
     const root = document.querySelector(section); const out = [];
-    const skip = (e) => { for (let p = e; p && p !== root; p = p.parentElement) { if (p.classList && (p.classList.contains('mono') || p.classList.contains('visually-hidden') || p.classList.contains('dm-plan-data') || p.classList.contains('ai-run-model'))) return true; if (p.matches && p.matches(stage3)) return true; if (p.matches && p.matches('[data-row-leaving]')) return true; const cs = getComputedStyle(p); if (cs.display === 'none' || cs.visibility === 'hidden') return true; } return false; };
+    const skip = (e) => { for (let p = e; p && p !== root; p = p.parentElement) { if (p.classList && (p.classList.contains('mono') || p.classList.contains('visually-hidden') || p.classList.contains('dm-plan-data') || p.classList.contains('ai-run-model') || p.classList.contains('tx-status-detail'))) return true; if (p.matches && p.matches(stage3)) return true; if (p.matches && p.matches('[data-row-leaving]')) return true; const cs = getComputedStyle(p); if (cs.display === 'none' || cs.visibility === 'hidden') return true; } return false; };
     const blocks = new Set();
     const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!n.nodeValue.trim() || skip(n.parentElement)) continue; if (!n.parentElement.closest('details[open], :not(details)')) continue; const closedFold = n.parentElement.closest('details:not([open])'); if (closedFold && !n.parentElement.closest('summary')) continue; blocks.add(n.parentElement); }

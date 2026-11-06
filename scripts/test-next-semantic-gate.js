@@ -129,8 +129,8 @@ const FNS = [
   'semanticStaleFromError',
   'semanticHandledLabel',
   'renderSemanticScanResult',
-  'renderSemanticCoverage',
-  'renderSemanticReset',
+  'renderCompareRow', 'renderDecisionLane', 'renderPlainRow', 'renderAnchorHere', 'renderAnchorStack', 'renderIssueFold', 'renderShowMore', 'renderDismissedGroup',
+  'renderLaneHead', 'renderLaneTrace', 'mergeRowButton', 'deletesReading', 'deletedPageCount', 'activeSemanticQuote', 'n0', 'costReadout', 'formatUsd',
   'semanticPrimaryAction',
   'semanticCoverageFrom',
   'newSemanticScan',
@@ -178,6 +178,17 @@ const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN', 'SEMANTIC_PAGE_SIZE'];
 const PREAMBLE = `
 let state = {};
 let myMountToken = 1;
+const ISSUE_PAGE = 20;
+const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
+function buttonRingHtml() { return ''; }
+function aiActionDisabledAttrs() { return ''; }
+function renderConfirmCard() { return ''; }
+function renderPendingPlan() { return ''; }
+function renderOutcomeLine() { return ''; }
+function gatedLoader() { return ''; }
+const loadGate = null;
+function describeDismissed(r) { return String(r.type); }
+function renderIssueRow() { return ''; }
 const inFlightWriteSlugs = new Set();
 const net = { calls: [], nextReject: null, nextResult: null, sseFrames: [], nextFetchNotOk: null };
 const gates = { opened: [], released: 0 };
@@ -284,7 +295,7 @@ const {
   previewSemanticPair, mergeOneSemanticPair, skipSemanticPair, runMergeSemanticDuplicates,
   mergeSemanticDuplicates,
   resolvePairsTouching, markSemanticPairResolved, semanticStaleFromError,
-  semanticHandledLabel, renderSemanticScanResult, semanticPrimaryAction, syncSemanticScan, newSemanticScan,
+  semanticHandledLabel, renderSemanticScanResult, renderCompareRow, renderDecisionLane, semanticPrimaryAction, syncSemanticScan, newSemanticScan,
   __state, __setState, __net, __gates, __setMount,
 } = sandbox;
 
@@ -633,7 +644,7 @@ const perPairKeeps = extractFunction(src, 'mergeOneSemanticPair') + extractFunct
 ok((perPairKeeps.match(/keepSemanticScan: true/g) || []).length === 2,
    'exactly the two per-pair actions opt into keeping the scan');
 ok(!/keepSemanticScan/.test(extractFunction(src, 'selectDomain')), 'a domain switch never opts in');
-ok(!/keepSemanticScan/.test(extractFunction(src, 'runFixSafe')), 'an ordinary fix never opts in');
+ok(!/keepSemanticScan/.test(extractFunction(src, 'repairAllFree')), 'an ordinary fix never opts in');
 
 console.log('\n=== 9. A rendered refusal must also be VISIBLE ===');
 // Found in browser verification of this change: a 409 rendered correctly, on
@@ -818,6 +829,10 @@ ok(!/Flip swaps|Skip dismisses|overlapping pairs/.test(html), '12: …and the re
 
 console.log('\n=== 13. The results card: the agreed words, and one primary action ===');
 const primaryCount = (h) => (h.match(/btn-primary/g) || []).length;
+// STAGE 2: how far it has got and Compare the next are AI help's row, and the batch is
+// the Spelling variants row in Your decision. Only the pair list itself is still the card.
+const compareOf = () => renderCompareRow({ needsKey: false, model: 'm' }, __state().busyKey, false);
+const decisionOf = (readonly) => renderDecisionLane({ counts: { dismissed: 0 }, dismissedRecords: 0 }, !!readonly, false);
 const card = (pairs, coverage, previewed) => {
   __setState(stateWithScan('alpha', pairs, previewed));
   __state().semanticScan.coverage = coverage;
@@ -830,49 +845,44 @@ const LOOKALIKE = pair({ keepSlug: 'gemini', removeSlug: 'gemini-flash', removeF
 const MEDIUM = pair({ keepSlug: 'x-one', removeSlug: 'x-two', removeFolder: 'entities', confidence: 'medium', spellingVariant: false });
 
 let h13 = card([VARIANT, LOOKALIKE], SOME);
-ok(h13.includes('Checked 500 of 36,333 possible pairs. 35,833 still to check.'), '13a: some left: the exact status line');
-ok(h13.includes('Check the next 500'), '13a: …with its button');
-ok(h13.includes('Merge 1 spelling variant<'), '13b: the batch button, singular');
-ok(h13.includes('Merges only pairs whose names are spelling variants, such as hand-off and handoff. Every other pair needs your Preview.'), '13b: the batch note');
+ok(compareOf().includes('500 of 36,333 pairs compared'), '13a: some left: the exact reading');
+ok(compareOf().includes('Compare the next 500'), '13a: …with its button');
+ok(decisionOf().includes('Spelling variants') && decisionOf().includes('Merge 1<') && decisionOf().includes('deletes 1 page'), '13b: the batch row, singular, and it says what it deletes');
+ok(decisionOf().indexOf('Possible duplicates') < decisionOf().indexOf('Spelling variants'), '13b: Possible duplicates comes first');
 ok(h13.includes('Names differ, so check this one yourself.'), '13c: a high-confidence look-alike carries the muted line');
-ok(h13.indexOf('dm-sem-coverage') < h13.indexOf('dm-sem-card'), '13d: the status line sits above the pairs');
-ok(h13.indexOf('dm-semantic-reset-btn') > h13.lastIndexOf('dm-sem-card'), '13d: Check everything again is at the end of the card');
-ok(/btn-secondary btn-xs" id="dm-semantic-reset-btn"/.test(h13), '13d: …a real button, and the smallest there');
-ok(primaryCount(h13) === 1 && /btn-primary" id="dm-semantic-merge-btn"/.test(h13), '13e: with a variant waiting, the ONE primary is the batch');
+ok(!h13.includes('dm-semantic-reset-btn') && /btn-secondary btn-xs" id="dm-semantic-reset-btn"/.test(compareOf()), '13d: Forget all comparisons is in AI help\'s fold, a real button and the smallest there');
+ok(primaryCount(h13) === 0 && !/btn-primary/.test(decisionOf().replace(/data-group-key="duplicates"[^]*?<\/details>/, '')), '13e: with a variant waiting, nothing leans toward deleting: the batch is not primary');
 
 h13 = card([LOOKALIKE, MEDIUM], SOME);
 ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="preview"/.test(h13), '13f: with only Preview-gated pairs, the ONE primary is the first Preview');
-ok(/btn-secondary" id="dm-semantic-next-btn"/.test(h13), '13f: the next scan does not lead while pairs wait');
+ok(/btn-ai/.test(compareOf()) && !/btn-primary/.test(compareOf()), '13f: the next run is the AI button, whatever waits');
 ok((h13.match(/Names differ/g) || []).length === 1, '13f: a medium pair does not get the high-confidence line');
 
 h13 = card([LOOKALIKE, VARIANT], SOME, [semanticPairKey(LOOKALIKE)]);
 ok(primaryCount(h13) === 1 && /btn-primary dm-sem-btn" data-sem-action="merge"/.test(h13), '13g: a previewed pair is the decision in hand: its Merge is the ONE primary');
 
 h13 = card([], SOME);
-ok(primaryCount(h13) === 1 && /btn-primary" id="dm-semantic-next-btn"/.test(h13), '13h: nothing waiting: the next scan leads');
-ok(h13.includes('None found so far') && !h13.includes('No likely duplicates found') && h13.includes('still to check'), '13h: none found with pairs left says so far');
+ok(primaryCount(h13) === 0, '13h: nothing waiting: nothing primary');
+ok(!decisionOf().includes('Possible duplicates'), '13h: and no row for pairs that are not there');
 
 h13 = card([], NONE);
-ok(h13.includes('All 943 possible pairs have been checked.') && h13.includes('No likely duplicates found'), '13i: none left: the exact line, and the finding');
-ok(primaryCount(h13) === 0 && !h13.includes('dm-semantic-next-btn'), '13i: …with no next button and no primary');
+ok(compareOf().includes('All 943 pairs compared') && !/data-action="semanticDupes"/.test(compareOf()), '13i: none left: the exact reading, with no next button');
 
+// The row counts only what is still undecided.
 h13 = card([pair({ keepSlug: 'a', removeSlug: 'b', remembered: true }), pair({ keepSlug: 'c', removeSlug: 'd', remembered: true, status: 'merged' })], SOME);
-ok(h13.includes('1 found by earlier scans and not yet decided is listed again, at no cost.'), '13j: remembered pairs, singular, counting only the undecided');
-h13 = card([pair({ keepSlug: 'a', removeSlug: 'b', remembered: true }), pair({ keepSlug: 'c', removeSlug: 'd', remembered: true })], SOME);
-ok(h13.includes('2 found by earlier scans and not yet decided are listed again, at no cost.'), '13j: …plural');
+ok(/Possible duplicates<\/span><span class="[^"]*">1</.test(decisionOf()), '13j: remembered pairs count, undecided only');
 
 h13 = card([], { total: 10, checked: 0, left: 10, next: 10 });
-ok(!h13.includes('dm-semantic-reset-btn'), '13k: nothing checked: nothing to forget, so no reset');
+ok(!compareOf().includes('dm-semantic-reset-btn'), '13k: nothing compared: nothing to forget, so no reset');
 __setState(stateWithScan('alpha', [], []));
 __state().semanticScan.coverage = SOME;
 __state().semanticScan.failedAll = true;
-h13 = renderSemanticScanResult(false, false);
-ok(!h13.includes('No likely duplicates found') && h13.includes('No pairs checked this time'), '13l: a run whose every call failed does not claim it found nothing');
+ok(!compareOf().includes('No two page names') && !compareOf().includes('All '), '13l: a run whose every call failed does not claim it found nothing');
 
 __setState(stateWithScan('alpha', [VARIANT], []));
 __state().semanticScan.coverage = SOME;
-h13 = renderSemanticScanResult(true, false);
-ok(primaryCount(h13) === 0 && !h13.includes('dm-semantic-next-btn') && !h13.includes('dm-semantic-reset-btn') && !h13.includes('dm-semantic-merge-btn'), '13m: read-only: no action of any kind');
+h13 = decisionOf(true) + renderSemanticScanResult(true, false);
+ok(primaryCount(h13) === 0 && !h13.includes('dm-review-btn') && !h13.includes('dm-semantic-merge-btn') && !h13.includes('data-sem-action'), '13m: read-only: no action of any kind');
 
 const visible = card([VARIANT, LOOKALIKE], SOME).replace(/<[^>]*>/g, ' ');
 for (const w of ['verdict', 'cache', 'record', 'hash', 'token']) ok(!new RegExp(w, 'i').test(visible), `13n: no mechanism word on screen: ${w}`);
@@ -887,18 +897,19 @@ ok(toWirePair(VARIANT).spellingVariant === undefined, '13p: the view never sends
 
 console.log('\n=== 14. Singular forms, the failure notice, counting, long lists ===');
 const ONE = { total: 1, checked: 1, left: 0, next: 0 };
-ok(card([], ONE).includes('All 1 possible pair has been checked.'), '14a: all, singular');
-ok(card([], { total: 1, checked: 0, left: 1, next: 1 }).includes('Checked 0 of 1 possible pair. 1 still to check.'), '14a: some left, singular');
-ok(card([], { total: 1, checked: 1, left: 0, next: 0 }).includes('No likely duplicates found'), '14a: the finding, at one');
+card([], ONE);
+ok(compareOf().includes('The 1 pair was compared'), '14a: all, singular');
+card([], { total: 1, checked: 0, left: 1, next: 1 });
+ok(compareOf().includes('No pairs compared yet') && compareOf().includes('Compare the next 1'), '14a: some left, singular');
 
 const failedCard = (failedPairs, failedAll, pairs = []) => {
   __setState(stateWithScan('alpha', pairs, []));
   Object.assign(__state().semanticScan, { coverage: SOME, failedPairs, failedAll });
-  return renderSemanticScanResult(false, false);
+  return compareOf();
 };
-ok(failedCard(20, false).includes('20 pairs could not be checked because the AI call failed. They will be tried again next time.'), '14b: the midway notice, in the card');
-ok(failedCard(1, false).includes('1 pair could not be checked because the AI call failed.'), '14b: …singular');
-ok(!failedCard(20, true).includes('could not be checked'), '14b: every batch failing is the banner and the title, not the notice');
+ok(failedCard(20, false).includes('20 pairs could not be compared because the AI call failed. They will be tried again next time.'), '14b: the midway notice, on the row');
+ok(failedCard(1, false).includes('1 pair could not be compared because the AI call failed.'), '14b: …singular');
+ok(!failedCard(20, true).includes('could not be compared'), '14b: every batch failing is the failure on the row, not the notice');
 
 __net().sseFrames = [
   { type: 'start', candidatePairs: 40 },
@@ -915,21 +926,19 @@ __net().sseFrames = [
   { type: 'done', pairs: [], failedPairs: 20, totalPairs: 100, checkedPairs: 0, leftPairs: 100, nextPairs: 20 },
 ];
 await runSemanticScan('alpha');
-ok(__state().rowNote && __state().rowNote.tone === 'error' && /Could not scan for duplicates — boom/.test(__state().rowNote.text) && __state().semanticScan.failedAll, '14c: all of it failing does');
+ok(__state().rowNote && __state().rowNote.tone === 'error' && /Could not compare pages: boom/.test(__state().rowNote.text) && __state().semanticScan.failedAll, '14c: all of it failing does');
 
 __setState(stateWithScan('alpha', [VARIANT], []));
 Object.assign(__state().semanticScan, { coverage: SOME, counting: true });
 h13 = renderSemanticScanResult(false, false);
-// A RECOUNT MOVES NOTHING (the press rule; this asserted the opposite). The figures
-// stay on screen and their buttons stay, disabled, so a press cannot use them and
-// the pairs under them do not jump when the count lands.
-ok(h13.includes('Checked 500') && !h13.includes('Counting the pairs…'), '14d: while recounting, the figures already on screen stay');
-ok(/id="dm-semantic-next-btn" disabled/.test(h13) && /id="dm-semantic-reset-btn" disabled/.test(h13), '14d: …with both figure-dependent buttons there and disabled');
+// A RECOUNT MOVES NOTHING (the press rule). The figures stay, marked as about, and the
+// button stays: what it would really send is read at the press.
+ok(compareOf().includes('About 500 of 36,333 pairs compared'), '14d: while recounting, the figures already on screen stay');
+ok(/id="dm-semantic-reset-btn" disabled/.test(compareOf()), '14d: …and Forget waits for it');
 ok(h13.includes('dm-sem-card'), '14d: …and the pairs are already there');
 __setState(stateWithScan('alpha', [], []));
 Object.assign(__state().semanticScan, { coverage: null, counting: true });
-h13 = renderSemanticScanResult(false, false);
-ok(h13.includes('Counting the pairs…') && !/None found|No likely/.test(h13), '14d: with no pairs yet it claims no finding');
+ok(compareOf().includes('Working out the cost…') && /disabled/.test(compareOf()) && !/All |No two/.test(compareOf()), '14d: with no figures yet it claims no finding');
 
 // Coming back: the pairs come from the quick call, then the figures land.
 __setState(stateWithScan('alpha', [], []));
@@ -963,7 +972,7 @@ for (let i = 0; i < 123; i++) many.push(pair({ keepSlug: 'k' + i, removeSlug: 'r
 h13 = card(many, SOME);
 ok((h13.match(/class="dm-sem-card"/g) || []).length === 50, '14h: a long list renders the first 50');
 ok(h13.includes('Show 50 more'), '14h: …with the button');
-ok(h13.includes('Merge 123 spelling variants'), '14h: the batch counts ALL pairs, not the rendered ones');
+ok(decisionOf().includes('Merge 123<'), '14h: the batch counts ALL pairs, not the rendered ones');
 ok(h13.includes('123 likely duplicate pairs found'), '14h: …and so does the title');
 ok(liveBatchPairs().length === 123, '14h: …and so does what the batch would send');
 __state().semanticScan.visible = 100;
@@ -980,15 +989,15 @@ ok(/…and 10 more/.test(h13), '14j: a long handled list is capped, and says so'
 __setState(stateWithScan('alpha', [VARIANT], []));
 __net().sseFrames = [{ type: 'progress', done: 1, total: 3, pair: toWirePair(VARIANT), status: 'ineligible', reason: 'page-changed' }, { type: 'done', merged: 1, total: 3, ineligible: 2 }];
 await runMergeSemanticDuplicates('alpha');
-ok(__state().rowNote.text === 'Merged 1 of 3 spelling variants. 2 now need your Preview.', '14k: some refused: the exact words', );
+ok(__state().rowNote.text === 'Merged 1 of 3. 2 now need your review.', '14k: some refused: the exact words', );
 ok(__state().semanticScan.pairs[0].spellingVariant === false, '14k: a refused pair leaves the batch and stays on screen');
 __setState(stateWithScan('alpha', [VARIANT], []));
 __net().sseFrames = [{ type: 'done', merged: 1, total: 2, ineligible: 1 }];
 await runMergeSemanticDuplicates('alpha');
-ok(__state().rowNote.text === 'Merged 1 of 2 spelling variants. 1 now needs your Preview.', '14k: …singular');
+ok(__state().rowNote.text === 'Merged 1 of 2. 1 now needs your review.', '14k: …singular');
 __setState(stateWithScan('alpha', [], []));
 await runMergeSemanticDuplicates('alpha');
-ok(__state().rowNote.text === 'Nothing left to merge — every spelling variant has been handled.', '14l: nothing left: the exact words');
+ok(__state().rowNote.text === 'Nothing left to merge.', '14l: nothing left: the exact words');
 
 // The title counts what is still open; a merged pair is not still "found".
 const handledMix = [];

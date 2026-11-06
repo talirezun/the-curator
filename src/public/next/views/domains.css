@@ -1914,15 +1914,15 @@
 .dm-lane-run { display: flex; flex-direction: column; gap: 2px; padding-top: var(--space-1); }
 .dm-lane-deletes, .dm-compare-reading { font-size: var(--text-xs); color: var(--text-2); }
 /* A row with nothing to open is the same row, without its chevron's room. */
-.dm-lane-plain > .cur-fold-summary { cursor: default; padding-left: 21px; }
+.dm-lane-plain > .dm-group-summary { cursor: default; user-select: none; padding-left: 21px; }
 /* A row whose fold has nothing in it yet: same node, no chevron, nothing to open. */
-.dm-group-nofold > .cur-fold-summary { cursor: default; }
-.dm-group-nofold > .cur-fold-summary > svg { visibility: hidden; }
-.dm-group-nofold > .cur-fold-body { display: none; }
+.dm-group-nofold > .dm-group-summary { cursor: default; user-select: none; }
+.dm-group-nofold > .dm-group-summary > svg { visibility: hidden; }
+.dm-group-nofold > .dm-group-body { display: none; }
 /* The label takes the room, so a reading and a button sit together at the row's end. */
-.dm-health .dm-lane .cur-fold-summary > .cur-fold-label { margin-right: auto; }
-.dm-health .dm-lane .cur-fold-summary > .cur-fold-meta { margin-left: 0; }
-.dm-health .dm-lane .cur-fold-summary > .btn { flex: none; }
+.dm-health .dm-lane .dm-group-summary > .dm-group-label { margin-right: auto; }
+.dm-health .dm-lane .dm-group-summary > .dm-group-meta { margin-left: 0; }
+.dm-health .dm-lane .dm-group-summary > .btn { flex: none; }
 /* Nothing in this section is in capitals, whatever the shared parts do elsewhere. */
 .dm-section.dm-health * { text-transform: none; }
 .dm-confirm-warn { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; }
@@ -1931,11 +1931,10 @@
 .dm-left-undo-btn { min-width: 72px; }
 @media (max-width: 640px) {
   .dm-lane-reading { flex-basis: 100%; justify-content: flex-start; }
-  .dm-health .dm-lane .cur-fold-summary { flex-wrap: wrap; }
-  .dm-health .dm-lane .cur-fold-label { flex: 1 1 60%; min-width: 0; white-space: normal; }
-  .dm-health .dm-lane .cur-fold-meta { flex: 1 1 100%; order: 3; margin-left: 0; text-align: left; white-space: normal; }
-  .dm-health .dm-lane .cur-fold-summary > .btn,
-  .dm-health .dm-lane .cur-fold-meta + .btn { order: 4; margin-left: 0; max-width: 100%; }
+  .dm-health .dm-lane .dm-group-summary { flex-wrap: wrap; }
+  .dm-health .dm-lane .dm-group-label { flex: 1 1 60%; min-width: 0; white-space: normal; }
+  .dm-health .dm-lane .dm-group-meta { flex: 1 1 100%; order: 3; margin-left: 0; text-align: left; white-space: normal; }
+  .dm-health .dm-lane .dm-group-summary > .btn { order: 4; margin-left: 0; max-width: 100%; }
 }
 
 /* A row's words wrap inside the row. Its long reading with a button in it ran 258
@@ -2007,6 +2006,12 @@
 .dm-health .dm-group-body > .dm-confirm-card,
 .dm-health .dm-group-body > .dm-plan-card,
 .dm-health .dm-group-body > .dm-outcome { margin: 8px 0; }
+.dm-health .dm-lane > .dm-confirm-card,
+.dm-health .dm-lane > .dm-plan-card,
+.dm-health .dm-lane > .dm-outcome { margin: 8px 0; }
+.dm-health .dm-health-top + .dm-confirm-card,
+.dm-health .dm-health-top + .dm-plan-card,
+.dm-health .dm-health-top + .dm-outcome { margin: 8px 0; }
 .dm-health .dm-groups > .dm-confirm-card,
 .dm-health .dm-groups > .dm-plan-card,
 .dm-health .dm-groups > .dm-outcome { margin: 6px 0; }

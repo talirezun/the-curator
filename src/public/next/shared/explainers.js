@@ -294,8 +294,8 @@ const E = {
     title: 'Wiki health',
     lead: 'Finds problems in this wiki and helps you fix them.',
     points: [
-      { icon: 'search', text: 'Check again is free. It looks for broken links, pages nothing links to and gaps in the page list. It opens with the domain.' },
-      { icon: 'agent', text: 'Comparing pages for duplicates uses your AI model, and each action shows its cost first.' },
+      { icon: 'search', text: 'Check again finds broken links, unlinked pages and page list gaps.' },
+      { icon: 'agent', text: 'Comparing pages for duplicates uses your AI model.' },
       { icon: 'check', text: 'Nothing changes until you press a button.' },
     ],
     try: 'One merge can settle several pairs.',

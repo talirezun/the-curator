@@ -2974,7 +2974,7 @@ function deleteDomainOutcome(form, result) {
 // for those the report is rescanned too. Rename/delete reload the whole list
 // themselves (reloadAfterLifecycleChange) and are left to it.
 const WRITES_THAT_RESCAN_THEMSELVES = new Set([
-  'health-fix-all-safe', 'health-fix', 'broken-links-apply', 'orphan-rescue-apply',
+  'health-fix', 'broken-links-apply', 'orphan-rescue-apply',
   'semantic-dupe-merge', 'semantic-dupes-merge-batch', 'index-rebuild-apply',
 ]);
 const WRITES_THAT_RELOAD_THE_LIST = new Set(['rename-domain', 'delete-domain']);
@@ -7730,7 +7730,10 @@ function quoteWhenVisible() {
   if (!el) return;
   const q = activeSemanticQuote();
   const scan = activeSemanticScan();
-  if (state.semanticQuoteLoading || (q && !q.stale) || (scan && scan.counting)) return;
+  if (state.semanticQuoteLoading || (scan && scan.counting)) return;
+  // Figures that have moved under the quote want a new one; a quote that failed is not retried by itself.
+  const moved = q && scan && scan.coverage && q.forNext !== scan.coverage.next && !(q.est && q.est.error);
+  if (q && !q.stale && !moved) return;
   const r = el.getBoundingClientRect();
   if (r.bottom > 0 && r.top < window.innerHeight && r.height > 0) {
     if (compareObserver) { compareObserver.disconnect(); compareWatched = null; }
@@ -7751,8 +7754,9 @@ async function loadSemanticQuote(slug, token) {
   state.semanticQuoteLoading = true;
   render(token);
   try {
+    const asked = activeSemanticScan() && activeSemanticScan().coverage ? activeSemanticScan().coverage.next : null;
     const est = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/estimate');
-    if (slug === state.activeSlug) state.semanticQuote = { slug, est };
+    if (slug === state.activeSlug) state.semanticQuote = { slug, est, forNext: asked === null ? est.nextPairs : asked };
   } catch (err) {
     if (slug === state.activeSlug) state.semanticQuote = { slug, est: { error: err.message } };
   } finally {
@@ -8012,9 +8016,7 @@ function renderHealthPanel(domain, readonly) {
       renderAnchorHere('quick', crossMountBusy) +
       (crossMountBusy && !busy ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running. Wait for it to finish before starting another.' }) : '') +
       (readonly ? renderMirrorNote() : '') +
-      renderFreeLane(report, readonly, crossMountBusy) +
-      renderDecisionLane(report, readonly, crossMountBusy) +
-      (readonly ? '' : renderAiLane(domain, report, crossMountBusy)) +
+      renderHealthLanes(domain, report, readonly, crossMountBusy) +
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (readonly ? '' : renderDescription(GIT_UNDO_NOTE)),
     { alias: 'dm', hostClass: healthRevealCls.trim() }), reading);
@@ -8228,6 +8230,12 @@ function deletesReading(pages) {
   return '<span class="dm-lane-deletes">deletes ' + n0(pages) + (pages === 1 ? ' page' : ' pages') + '</span>';
 }
 
+function renderHealthLanes(domain, report, readonly, crossMountBusy) {
+  return renderFreeLane(report, readonly, crossMountBusy) +
+    renderDecisionLane(report, readonly, crossMountBusy) +
+    (readonly ? '' : renderAiLane(domain, report, crossMountBusy));
+}
+
 function renderFreeLane(report, readonly, crossMountBusy) {
   const rows = [];
   let repairable = 0;
@@ -8356,16 +8364,19 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   else if (estimating || quoting || counting) reading = 'Working out the cost…';
   else if (!c) reading = 'No pairs compared yet';
   else if (c.total === 0) reading = 'No two page names look alike';
-  else if (c.left === 0) reading = 'All ' + n0(c.total) + ' pairs compared';
+  else if (c.left === 0) reading = c.total === 1 ? 'The 1 pair was compared' : 'All ' + n0(c.total) + ' pairs compared';
   else if (c.checked === 0) reading = 'No pairs compared yet';
-  else reading = (s && s.counting ? 'About ' : '') + n0(c.checked) + ' of ' + n0(c.total) + ' pairs compared';
+  else reading = (s && s.counting ? 'About ' : '') + n0(c.checked) + ' of ' + n0(c.total) + (c.total === 1 ? ' pair compared' : ' pairs compared');
   const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
-  const quoteFits = est && c && est.candidatePairs === c.next;
+  const quoteFits = est && c && (q.forNext === c.next || est.candidatePairs === c.next);
   const cost = quoteFits ? (costReadout(est, { compact: true }) || '') : '';
+  // A button that spends says what it costs. With no figure yet it waits; a quote that
+  // failed leaves it pressable, because the press asks again and says why on the row.
+  const quoteFailed = !!(q && q.est && q.est.error);
   const label = c && c.next > 0 && !estimating && !quoting ? 'Compare the next ' + n0(c.next) : 'Compare the next…';
   const button = c && c.left === 0 ? '' : actionChip({
     tier: 'ai', action: 'semanticDupes', alias: 'dm',
-    attrs: estimating ? ' aria-busy="true" aria-disabled="true"' : (noKeyAttrs || ((busy || crossMountBusy || quoting || counting) ? ' disabled' : '')),
+    attrs: estimating ? ' aria-busy="true" aria-disabled="true"' : (noKeyAttrs || ((busy || crossMountBusy || quoting || counting || (!cost && !quoteFailed)) ? ' disabled' : '')),
     leadHtml: estimating ? buttonRingHtml() : icon('sparkles', 12),
     label, cost: estimating ? '' : cost,
   });
@@ -8415,7 +8426,8 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   let costText = null;
   if (est === 'loading') costText = '…';
   else costText = costReadout(est, { compact: true });
-  const disabled = busy || crossMountBusy || est === 'loading' || (est && est.error);
+  // No figure yet is not a figure: it waits for one. (Stage 2: every AI button carries its cost.)
+  const disabled = busy || crossMountBusy || !est || est === 'loading' || est.error;
   const running = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate');
   // No key: disabled, never hidden, described by the no-key run line (v3.67.0).
   // `aiActionDisabledAttrs` is '' whenever a run is possible, so the ordinary
@@ -8436,7 +8448,7 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
 
 function renderConfirmCard() {
   const c = state.confirm;
-  const p = c.busy && c.busyCount && state.aiProgress && state.aiProgress.total > 0 ? state.aiProgress : null;
+  const p = c.busy && c.busyCount && state.aiProgress && state.aiProgress.key === state.busyKey ? state.aiProgress : null;
   const busyWords = p ? c.busyCount.replace('{i}', n0(p.processed)).replace('{n}', n0(p.total)) : (c.busyLabel || 'Working…');
   const busyAttr = c.busy ? ' aria-busy="true" aria-disabled="true"' : '';
   // ONE LOOK PER CONSEQUENCE. A deleting yes is danger and names what it deletes; a
@@ -8470,7 +8482,7 @@ function renderPendingPlan(crossMountBusy) {
   const links = (v) => n0(v) + (Number(v) === 1 ? ' link' : ' links');
   if (p.kind === 'brokenLinks') {
     const s = p.summary || {};
-    lines.push(links(s.retarget) + ' will point to an existing page, and ' + links(s.strip) + (Number(s.strip) === 1 ? ' becomes' : ' become') + ' plain text because no page matches.');
+    lines.push(links(s.retarget) + (Number(s.retarget) === 1 ? ' will point' : ' will point') + ' to an existing page, and ' + n0(s.strip) + (Number(s.strip) === 1 ? ' becomes' : ' become') + ' plain text because no page matches.');
     lines.push(GIT_UNDO_NOTE);
   } else if (p.kind === 'indexRebuild') {
     // Every number, the size change and every warning sit in the card itself,
@@ -8483,11 +8495,11 @@ function renderPendingPlan(crossMountBusy) {
     const mg = Number(s.mergeDuplicates) || 0;
     const before = Number(s.bytesBefore) || 0;
     const after = Number(s.bytesAfter) || 0;
-    let summary = countOf(add, 'page joins', 'pages join') + ' the page list and ' + countOf(rm, 'row that points to a missing page is', 'rows that point to missing pages are') + ' removed. ' +
+    const summary = countOf(add, 'page joins', 'pages join') + ' the page list and ' + countOf(rm, 'row that points to a missing page is', 'rows that point to missing pages are') + ' removed. ' +
       countOf(keep, 'description stays', 'descriptions stay') + ' as written.';
-    if (rp > 0) summary += ' ' + countOf(rp, 'row now points', 'rows now point') + ' to the page ' + (rp === 1 ? 'it names' : 'they name') + '.';
-    if (mg > 0) summary += ' ' + countOf(mg, 'repeated row becomes', 'repeated rows become') + ' one.';
     lines.push(summary);
+    if (rp > 0) lines.push(countOf(rp, 'row now points', 'rows now point') + ' to the page ' + (rp === 1 ? 'it names' : 'they name') + '.');
+    if (mg > 0) lines.push(countOf(mg, 'repeated row becomes', 'repeated rows become') + ' one.');
     const sm = p.samples || {};
     const adds = (Array.isArray(sm.add) ? sm.add : []).slice(0, 5);
     const rms = (Array.isArray(sm.removeStale) ? sm.removeStale : []).slice(0, 5);
@@ -8502,7 +8514,7 @@ function renderPendingPlan(crossMountBusy) {
     const more = Math.max(0, add - adds.length) + Math.max(0, rm - rms.length);
     if (sampleHtml && more > 0) sampleHtml += '<div class="dm-plan-detail">And ' + fmtInt(more) + ' more.</div>';
     lines.push('New descriptions come from each page’s title or first line. No AI, no cost. The list is sorted into Summaries, Entities and Concepts. ' +
-      (after >= before ? 'It grows from ' : 'It shrinks from ') + fmtKB(before) + ' to ' + fmtKB(after) + '.');
+      (after >= before ? 'It grows from ' : 'It shrinks from ') + (s.indexExists === false ? '0 KB' : fmtKB(before)) + ' to ' + fmtKB(after) + '.');
     if (Number(s.unlinkable) > 0) lines.push(countOf(s.unlinkable, 'page has a file name', 'pages have file names') + ' that cannot be linked (a leading or trailing space, or | [ ] #) and ' + (Number(s.unlinkable) === 1 ? 'is left out. Rename it to include it.' : 'are left out. Rename them to include them.'));
     if (Number(s.unaddressable) > 0) lines.push(countOf(s.unaddressable, 'concept page shares a name with an entity page and is', 'concept pages share a name with an entity page and are') + ' left out. Merge those first.');
     lines.push(GIT_UNDO_NOTE);
@@ -8522,8 +8534,8 @@ function renderPendingPlan(crossMountBusy) {
     '<div class="dm-plan-card" data-row-key="plan">' +
       '<div class="dm-plan-title">Nothing is written yet.</div>' +
       '<div class="dm-plan-summary">' + escapeHtml(first) + '</div>' +
-      sampleHtml +
       lines.map((l) => '<div class="dm-plan-detail">' + escapeHtml(l) + '</div>').join('') +
+      sampleHtml +
       '<div class="dm-plan-actions">' +
         '<button class="btn btn-secondary" id="dm-plan-apply-btn"' + (state.busyKey === p.kind + 'Apply' ? ' aria-busy="true" aria-disabled="true"' : (busy ? ' disabled' : '')) + '>' + (state.busyKey === p.kind + 'Apply' ? applyBusy : applyLabel) + '</button>' +
         '<button class="btn btn-secondary" id="dm-plan-discard-btn"' + (busy ? ' disabled' : '') + '>' + discardLabel + '</button>' +
@@ -8875,7 +8887,7 @@ function onHealthClick(e) {
   if (typeof btn.closest === 'function' && btn.closest('[data-row-leaving]')) return;
   noteHealthPress(btn);
   // A control in a row's summary never toggles the row (v3.0.1-beta.18).
-  if (btn.closest('summary')) e.preventDefault();
+  if (typeof btn.closest === 'function' && btn.closest('summary')) e.preventDefault();
 
   if (btn.classList.contains('dm-review-btn')) {
     if (state.expandedGroups.has('duplicates')) state.expandedGroups.delete('duplicates');
@@ -8976,6 +8988,7 @@ function onHealthClick(e) {
     return;
   }
   if (btn.classList.contains('dm-group-fixall-btn') && data.fixall) {
+    e.preventDefault();
     e.stopPropagation(); // don't toggle the <details> — see v3.0.1-beta.18 note in CLAUDE.md
     dispatchHealthAction(() => confirmFixAllOfType(domain.slug, btn.dataset.fixall));
     return;
@@ -9254,6 +9267,7 @@ async function repairAllFree(slug) {
     inFlightWriteSlugs.delete(slug);
     releaseGate();
     state.busyKey = null;
+    state.aiProgress = null;
     state.laneRun = null;
   }
   const live = isCurrentMount(token) ? token : myMountToken;

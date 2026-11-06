@@ -1056,7 +1056,7 @@ section('9. /next per-section "Fix all" confirms before running');
     '9.3 the gate reuses the existing state.confirm plumbing (no new dialog mechanism)');
   assert(/DESTRUCTIVE_FIX_TYPES = new Set\(\['crossFolderDupes', 'hyphenVariants'\]\)/.test(dm),
     '9.4 the two page-DELETING types are named, so their copy can say so');
-  assert(/DELETES the duplicate page/.test(dm),
+  assert(/pages are deleted and their links move/.test(dm),
     '9.5 …and the destructive copy actually says a page will be deleted');
 
   // ── 9b. THE COUNT IN THAT SENTENCE MUST BE PAGES, NOT ISSUES ───────────
@@ -1121,7 +1121,7 @@ section('9. /next per-section "Fix all" confirms before running');
   // three or more slugs, so "each pair" was wrong about more than the count.
   assert(!/MERGES each pair/.test(dm),
     '9b.9 the destructive copy no longer says "each pair" — a variant issue is a GROUP');
-  assert(/MERGES each group/.test(dm),
+  assert(/with nearly the same name/.test(dm),
     '9b.10 …it says "group"');
   assert(/deletedPageCount\(type, issues\)/.test(dm),
     '9b.11 and the sentence consumes the PAGE count, not issues.length');

@@ -349,18 +349,9 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
   // v3.67.0 (package SD): `dm-quick-empty-text` went with the no-key row it
   // spaced (the AI actions now stay visible and disabled); `dm-quick-run`,
   // the run line's wrapper under the action bar, took its place.
-  for (const w of ['dm-sidebar-status', 'dm-rescan-note', 'dm-browse-lead']) {
+  for (const w of ['dm-sidebar-status', 'dm-health-reading', 'dm-browse-lead']) {
     ok(domainsCode.includes(w) && domainsCssCode.includes('.' + w),
        `.${w} exists in BOTH the markup and the stylesheet — a wrapper in one and not the other is dead spacing`);
-  }
-  // v3.89.0: the run line's and the footnote's wrappers moved with the action
-  // card into the section kit — the markup in shared/section.js, the rule in
-  // shared/section.css — and this view draws them through renderActionCard.
-  const kitJs = readFileSync(join(ROOT, 'src/public/next/shared/section.js'), 'utf8');
-  const kitCss = stripCssComments(readFileSync(join(ROOT, 'src/public/next/shared/section.css'), 'utf8'));
-  for (const w of ['cur-action-footnote', 'cur-action-run']) {
-    ok(kitJs.includes("'" + w + "'") && kitCss.includes('.' + w + ' {') && /renderActionCard\(\{/.test(domainsCode),
-       `.${w} exists in BOTH the kit's markup and its stylesheet, and this view draws the card through it`);
   }
 }
 
@@ -372,10 +363,11 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     relTime: () => '10s ago', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: (r) => (r && r.brokenLinks ? r.brokenLinks.length : 0),
     renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
-    renderQuickMaintenance: () => '<QUICK/>', renderAiProgressRing: () => '',
+    renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
-    renderIssueGroups: () => '<GROUPS/>',
+    
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
     renderDescription, renderStatus,
@@ -448,80 +440,12 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
        'the report sits in a `Scan` fold row, like every other part of this section');
     ok(settled.indexOf('data-group-key="scan"') < settled.indexOf('class="cur-mon"'),
        '…and the monitor is the row\'s BODY, not a block above it');
-    // v3.72.1 (F12): the age is a ticking [data-age-at] span inside the meta.
-    ok(/dm-group-meta">3 open issue[s]? · <span data-age-at="[^"]+" data-age-text>10s ago<\/span></.test(settled),
-       '…whose summary reads the headline and the age, so a closed row still answers the '
-       + 'question the section is for',
-       (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
-    // THE PER-CATEGORY COUNTS CAME WITH IT (v3.65.0), and since v3.66.0
-    // they are no longer chips: a SECOND monitor, in the same row's body,
-    // under the first. The chip row is gone — one fact, one treatment.
-    const monIdx = [...settled.matchAll(/class="cur-mon"/g)].map((m) => m.index);
-    eq('the Scan row carries exactly TWO monitors — totals, then issues per category',
-      monIdx.length, 2);
-    ok(monIdx.length === 2 && monIdx[1] > monIdx[0] && monIdx[1] < settled.indexOf('</details>')
-       && /aria-label="Issues per category"/.test(settled),
-       'the per-category monitor is INSIDE the same row\'s body, under the totals');
-    ok(!/dm-chip/.test(settled),
-       'no category CHIP survives — the amber/violet row was a second way of showing the same counts');
-
-    // ── P6 (v3.66.0): ISSUES PER CATEGORY vs THE LARGEST CATEGORY ─────────
-    // Driven with the REAL renderMonitor through the REAL renderHealthPanel,
-    // over three categories: one large, one small, one zero.
-    {
-      const cats = [
-        { key: 'brokenLinks', label: 'Broken links' },
-        { key: 'orphans', label: 'Orphan pages' },
-        { key: 'hyphenVariants', label: 'Hyphen variants' },
-      ];
-      const rep6 = { ...REPORT,
-        brokenLinks: Array.from({ length: 4 }, (_, i) => ({ i })),
-        orphans: Array.from({ length: 16 }, (_, i) => ({ i })),
-        hyphenVariants: [] };
-      const d6 = { ...deps, HEALTH_CATEGORIES: cats,
-        totalOpenIssues: (r) => r.brokenLinks.length + r.orphans.length };
-      const names6 = Object.keys(d6);
-      const html = callOrFail('the P6 panel renders', () => makeCallable(
-        ['state', ...names6],
-        extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
-        extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
-        extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
-        extractFunction(domainsSrc, 'healthSection') + '\n' +
-        extractFunction(domainsSrc, 'renderHealthPanel'),
-        'renderHealthPanel')({ ...base, health: rep6 }, ...names6.map((n) => d6[n]))({ slug: 'articles' }, false));
-      if (html) {
-        const catMon = html.slice(html.indexOf('aria-label="Issues per category"'));
-        const lines = [...catMon.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span><\/div>/g)]
-          .map((m) => ({ key: m[1], val: m[2] }));
-        eq('one line per category', lines.length, 3);
-        eq('...largest first, ties in the category order — a ranked column of peers',
-          lines.map((l) => l.key).join(','), 'orphan pages,broken links,hyphen variants');
-        const width = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v); return m ? Number(m[1]) : null; };
-        eq('the LARGEST category fills its cell (16 of 16)', width(lines[0] && lines[0].val), 100);
-        eq('a smaller one is its share OF THE LARGEST (4 of 16 = 25%)', width(lines[1] && lines[1].val), 25);
-        eq('a ZERO category prints 0 and draws NO bar at all', width(lines[2] && lines[2].val), null);
-        ok(lines[2] && lines[2].val === '0', '...but its 0 is still printed — a measured zero', lines[2] && lines[2].val);
-        ok(!/cur-depth-danger/.test(catMon),
-          'NEVER red: being the largest category is not a fault (max, never budget)');
-        ok(/visually-hidden"> 4 of 16, the largest category</.test(catMon),
-          'every bar NAMES its denominator in words for a screen reader', catMon.slice(0, 400));
-        ok(!/cur-mon-line cur-mon-(ok|warn|danger)/.test(catMon),
-          'no category line carries a TONE — a count of issues is a size, the outcome is the "open issues" line');
-      }
-      // ALL ZERO — the denominator is 0, so no line gets a bar.
-      const zero = callOrFail('an all-zero scan renders', () => makeCallable(
-        ['state', ...names6],
-        extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
-        extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
-        extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
-        extractFunction(domainsSrc, 'healthSection') + '\n' +
-        extractFunction(domainsSrc, 'renderHealthPanel'),
-        'renderHealthPanel')({ ...base, health: { ...REPORT, brokenLinks: [], orphans: [], hyphenVariants: [] } },
-        ...names6.map((n) => ({ ...d6, totalOpenIssues: () => 0 })[n]))({ slug: 'articles' }, false));
-      if (zero) ok(!/cur-depth-bar/.test(zero) && /aria-label="Issues per category"/.test(zero),
-        'an all-zero scan still lists its categories, and draws no bar against a zero denominator');
-    }
-
+    // v3.72.1 (F12): the age is a ticking [data-age-at] span, in the section's reading now.
+    ok(/dm-health-reading">Checked <span data-age-at="[^"]+" data-age-text>10s ago<\/span> · 3 to look at</.test(settled),
+       '…and the section head reads the headline and the age, so a closed row answers the question the section is for');
+    // STAGE 2: the lanes are the per-category reading, so its monitor and bars went.
+    ok(!/Issues per category/.test(settled) && (settled.match(/class="cur-mon"/g) || []).length === 1,
+       'Scan details is one monitor: the lanes say what is in each category');
     // THE WELD IS GONE. This is the maintainer's own report: three roles in
     // one <div>, which is why it read as a clarification and not a report.
     ok(!/class="dm-health-body">(?!Scanning)/.test(settled),
@@ -534,7 +458,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // PROVENANCE IS PART OF THE INSTRUMENT, not a separate sentence — and it
     // is the one TIME-BASED reading here, so it takes the app's freshness dot
     // with the age in WORDS beside it. Never a dot alone.
-    ok(/cur-mon-key">scanned</.test(settled) && /10s ago<\/span>/.test(settled),
+    ok(/cur-mon-key">checked</.test(settled) && /10s ago<\/span>/.test(settled),
        'when the scan happened is a line of the same instrument, quieter treatment');
     ok(/<span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>10s ago/.test(settled),
        '…carrying the app\'s own freshness dot, aria-hidden, with the age in words beside it',
@@ -547,21 +471,18 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
   const revalidating = callOrFail('revalidating health panel', () =>
     render({ ...base, healthLoading: true }));
   if (revalidating) {
-    ok(revalidating.includes('Showing the previous result'),
-       'a rescan behind a cached report still SAYS the figures are the previous scan\'s');
-    // It was an 82 px status box, and it pushed the whole card down and back on
-    // every rescan. It is one line now, in a slot that is always there.
-    ok(revalidating.includes('dm-rescan-note'),
-       'and it says so in its own fixed line, which no reading can make taller');
+    // STAGE 2: the reading in the section head says so, and the control does. It was an
+    // 82 px status box once, then a note in the control row; a head's reading has a slot
+    // that is always there, so no reading can move anything.
+    ok(/dm-health-reading">Checking…</.test(revalidating),
+       'a check behind a cached report SAYS it is checking, in the section head');
     // ORDER IS A PRIORITY ORDER. A caveat printed after the number it
     // qualifies has already been read too late.
-    ok(revalidating.indexOf('dm-rescan-note') < revalidating.indexOf('data-group-key="scan"'),
+    ok(revalidating.indexOf('dm-health-reading') < revalidating.indexOf('data-group-key="scan"'),
        'the caveat renders BEFORE the figures it qualifies');
-    // AND IT IS NOT IN THE FOLD. v3.16.1, unmoved: a warning, a cost or an
-    // outcome may never sit behind a chevron. This one says the numbers below
-    // it are the PREVIOUS scan's, which is exactly the kind of thing a
-    // tidy-up would sweep into the row it qualifies.
-    ok(revalidating.indexOf('tx-status') < revalidating.indexOf('<details'),
+    // AND IT IS NOT IN THE FOLD. v3.16.1, unmoved: a warning, a cost or an outcome may
+    // never sit behind a chevron.
+    ok(revalidating.indexOf('dm-health-reading') < revalidating.indexOf('<details'),
        '…outside every fold on the card, because a caveat behind a chevron is not a caveat');
     ok(/cur-mon-value">3</.test(revalidating),
        'and the cached figures stay on screen — the whole point of not collapsing the panel');
@@ -573,7 +494,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     render({ ...base, healthError: 'ENOENT: no such file' }));
   if (errored) {
     ok(errored.includes('tx-status-danger'), 'a failed scan is a DANGER status, not red-dyed body prose');
-    ok(errored.includes('Could not scan this domain'), 'with a constant headline');
+    ok(errored.includes('Could not check this wiki'), 'with a constant headline');
     ok(errored.includes('tx-status-detail') && errored.includes('ENOENT: no such file'),
        'and the server\'s own message as the DETAIL rather than glued onto our sentence with an em dash');
     ok(!/cur-mon-value/.test(errored) && !/tx-readout-value/.test(errored),
@@ -601,10 +522,11 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     buttonRingHtml: () => '<RING/>',
     totalOpenIssues: () => 0,
     renderBanner: () => '', renderMirrorNote: () => '',
-    renderQuickMaintenance: () => '', renderAiProgressRing: () => '',
+    renderHealthLanes: () => '', renderAnchorHere: () => '',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
-    renderIssueGroups: () => '', HEALTH_CATEGORIES: [], inFlightWriteSlugs: new Set(),
+    HEALTH_CATEGORIES: [], inFlightWriteSlugs: new Set(),
     renderDescription, renderStatus,
     // v3.65.0: the scan's figures are a MONITOR (M6), so renderHealthPanel
     // composes these two as free identifiers. Injected, and REAL — a stub
@@ -645,18 +567,15 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
   if (noStamp) {
     ok(!noStamp.includes('never'),
        'a report with no scannedAt does NOT render the word "never" — that is a claim nobody measured');
-    ok(!/cur-mon-key">scanned</.test(noStamp) && !noStamp.includes('tx-readout-prov'),
-       'it renders NO `scanned` line at all, rather than a dash or a placeholder');
+    ok(!/cur-mon-key">checked</.test(noStamp) && !noStamp.includes('tx-readout-prov'),
+       'it renders NO `checked` line at all, rather than a dash or a placeholder');
     ok(!/fresh-dot/.test(noStamp),
        '…and no freshness dot either — a mark with nothing to qualify is a state invented '
        + 'out of a missing field');
     ok(/cur-mon-value">4</.test(noStamp),
        'and the figures it DOES have still render — an absent stamp does not suppress a real measurement');
-    ok(/dm-group-meta">0 open issue[s]?</.test(noStamp)
-       && !/dm-group-meta">[^<]*·/.test(noStamp),
-       '…and the row\'s own summary drops the age clause rather than printing a separator with '
-       + 'nothing after it',
-       (/<span class="dm-group-meta">[^<]*/.exec(noStamp) || ['(none)'])[0]);
+    ok(!/data-age-at/.test(noStamp),
+       '…and the section head drops the age clause rather than printing a separator with nothing after it');
   }
 
   const noDismissed = callOrFail('report with no dismissed count', () =>
@@ -667,8 +586,8 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     ok((noDismissed.match(/class="cur-mon-line[ "]/g) || []).length === 5,
        'the entry is dropped and the other five lines survive — the four figures and the stamp ' +
        `(got ${(noDismissed.match(/class="cur-mon-line[ "]/g) || []).length})`);
-    ok(!/cur-mon-key">dismissed</.test(noDismissed),
-       '…and it is the DISMISSED line specifically that is missing');
+    ok(!/cur-mon-key">left as is</.test(noDismissed),
+       '…and it is the LEFT AS IS line specifically that is missing');
   }
 
   const zeroes = callOrFail('report with real zeroes', () =>
@@ -688,73 +607,44 @@ section('§5  THE SPEND GATE — the cost promise is never folded, never dyed');
 {
   const deps = {
     icon: () => '<ICON/>', pluralize: (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`,
-    countSafeFixable: () => 0, quickAiButton: () => '<AIBTN/>',
-    buttonRingHtml: () => '<RING/>', costReadout: () => null,
-    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
+    renderCompareRow: () => '<AIBTN/>', renderSuggestRow: () => '<AIBTN/>',
+    renderLaneHead: (_k, t, l) => '<HEAD>' + t + ' ' + l + '</HEAD>', n0: String,
     renderStatus, renderDescription,
     // v3.67.0 (package SD): the REAL run-line kit.
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
   };
   const names = Object.keys(deps);
-  const render = (st, crossMountBusy) => makeCallable(
-    ['state', ...names], extractFunction(domainsSrc, 'renderQuickMaintenance'), 'renderQuickMaintenance'
-  )(st, ...names.map((n) => deps[n]))({ slug: 'articles' }, { brokenLinks: [{}], orphans: [] }, crossMountBusy);
+  const render = (st) => makeCallable(
+    ['state', ...names], extractFunction(domainsSrc, 'renderAiLane'), 'renderAiLane'
+  )(st, ...names.map((n) => deps[n]))({ slug: 'articles' }, { brokenLinks: [{}], orphans: [] }, false);
 
-  const normal = callOrFail('quick maintenance, idle', () =>
-    render({ busyKey: null, aiAvailable: true, estimates: {} }, false));
+  const normal = callOrFail('AI help, idle', () => render({ busyKey: null, aiAvailable: true, estimates: {} }));
   if (normal) {
-    ok(normal.includes('Every AI action shows its cost before it runs'),
-       'the cost promise is on screen');
-    ok(normal.includes('the app has no Undo button yet'),
-       'and so is the recovery note — the honest half, single-sourced from GIT_UNDO_NOTE');
-    ok(normal.includes('tx-desc'), 'it renders as a DESCRIPTION — static copy, identical for every user');
-    // v3.16.1: a warning behind a click is not a warning. The explainer role
-    // exists and must not be reached for here.
+    ok(normal.includes('Each action shows its cost first'), 'the cost promise is on screen');
+    // v3.16.1: a warning behind a click is not a warning.
     ok(!normal.includes('<details'),
        'it is NOT inside a <details> — the disclosure that makes a spend gate a gate cannot be one click away');
     ok(!normal.includes('tx-explainer'), 'and the explainer role is not used on this surface at all');
   }
+  // The recovery note is the card's last line, and the in-flight warning is a status.
+  const panelSrc = extractFunction(domainsSrc, 'renderHealthPanel');
+  ok(/renderDescription\(GIT_UNDO_NOTE\)/.test(panelSrc), 'the recovery note is a DESCRIPTION, single-sourced from GIT_UNDO_NOTE');
+  ok(/crossMountBusy && !busy \? renderStatus\(\{ state: 'attention', title: 'An earlier fix/.test(panelSrc),
+     'the in-flight-write warning is a STATUS, and only when it is not this mount\'s own action');
 
-  const busy = callOrFail('quick maintenance, an earlier write in flight', () =>
-    render({ busyKey: null, aiAvailable: true, estimates: {} }, true));
-  if (busy) {
-    ok(busy.includes('An earlier fix on this domain is still running'),
-       'the in-flight-write warning is still shown');
-    ok(busy.includes('tx-status-attention'),
-       'and it is a STATUS — it used to be the same class as the cost note plus a colour modifier, ' +
-       'painting --attention-text as TEXT at a measured 3.16:1 in the light theme');
-    ok(!busy.includes('<details'), 'and it is not folded either');
-    ok(!busy.includes('dm-quick-note-busy'),
-       'the dyed-prose class is gone from this site');
-  }
-
-  // The mount's OWN action must not be described as an earlier one — a
-  // pre-existing behaviour that must survive the reshuffle.
-  const ownAction = callOrFail('quick maintenance, this mount is the one working', () =>
-    render({ busyKey: 'fixSafe', aiAvailable: true, estimates: {} }, true));
-  if (ownAction) {
-    ok(!ownAction.includes('An earlier fix'),
-       'a user who clicked Fix and never left is NOT told an earlier fix is running (unchanged behaviour)');
-  }
-
-  // v3.67.0 (package SD): with no key the AI actions are no longer REPLACED
-  // by a sentence and an "Open Settings" button (which landed on General);
-  // the bar stays, the ✨ actions are disabled, and the shared no-key run line
-  // says why, with its door to Providers & keys. The cost promise is still a
-  // description, and still unfolded.
-  const noKey = callOrFail('quick maintenance, no AI key', () =>
-    render({ busyKey: null, aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true }, estimates: {} }, false));
+  // v3.67.0 (package SD): with no key the AI actions are disabled, never hidden, and the
+  // shared no-key run line says why, with its door to Providers & keys.
+  const noKey = callOrFail('AI help, no AI key', () =>
+    render({ busyKey: null, aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true }, estimates: {} }));
   if (noKey) {
     ok(noKey.includes('Needs an AI provider key') && noKey.includes('data-ai-run-door="providers"'),
        'the no-key state is the shared run line, with its door to Providers & keys');
     ok(noKey.includes('<AIBTN/>') && !noKey.includes('Open Settings'),
        'the AI actions are still rendered (disabled, never hidden) and the General door is gone');
-    ok(noKey.includes('tx-desc') && !noKey.includes('<details'),
-       'the cost promise is still a description, and still not folded');
+    ok(!noKey.includes('<details'), 'the cost promise is still not folded');
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error');
 {
   const mirror = callOrFail('mirror note', () => makeCallable(

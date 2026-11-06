@@ -16,9 +16,10 @@ export const DECK = [
   'Wiki health', '{age}', 'Checked', 'Checked {age} · {n} to look at', 'Checked {age} · 1 to look at', 'Checked {age} · nothing to look at',
   '{n} to look at', 'nothing to look at', 'Checking…', 'Not checked yet',
   'Finds problems in this wiki and helps you fix them.',
-  'Check again is free. It looks for broken links, pages nothing links to and gaps in the page list. It opens with the domain.',
-  'Comparing pages for duplicates uses your AI model, and each action shows its cost first.',
-  'Nothing changes until you press a button.', 'One merge can settle several pairs.', 'Try', 'Open the guide', 'Read the guide',
+  // The ⓘ's two points, cut to fit its standing limit (12 words, no "cost"): reported.
+  'Check again finds broken links, unlinked pages and page list gaps.',
+  'Comparing pages for duplicates uses your AI model.',
+  'Nothing changes until you press a button.', 'One merge can settle several pairs.', 'Try', 'User guide', 'Wiki Health', 'Opens in your browser',
   // Control row
   'Check again', 'Check this wiki', 'Could not check this wiki', 'Scanning…',
   // Clean
@@ -92,7 +93,9 @@ export const DECK = [
  */
 export const OUTSIDE_THE_DECK = [
   '{n} times on this page',       // v3.92.0's fact, newer than the deck
-  'Compared {n} pairs.',          // the answer on the confirm when a run ends
+  'Compared {n} pairs.', 'Compared 1 pair.',  // the answer on the confirm when a run ends
+  'The 1 pair was compared', '{n} of 1 pair compared',
+  'Merged {n} of {n}. 1 now needs your review.',
   'Comparing…',                   // before the first count arrives
   'Merging…', 'Checking…',        // a press with no count to give; the desk's own word
   'Nothing left to repair.',      // the deck has it only for merging

@@ -42,7 +42,7 @@ function constLiteral(src, name) {
   return null;
 }
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-const FUNCS = ['pluralize', 'countSafeFixable', 'renderIssueRow', 'confirmFixAllOfType', 'renderIssueGroup'];
+const FUNCS = ['pluralize', 'countSafeFixable', 'renderIssueRow', 'confirmFixAllOfType', 'renderIssueFold', 'renderShowMore', 'renderAnchorHere', 'repairButton', 'n0'];
 const src = {};
 for (const f of FUNCS) { src[f] = functionSource(js, f); ok(src[f] !== null, `${f} extracted`); }
 const HC = constLiteral(js, 'HEALTH_CATEGORIES'), AF = constLiteral(js, 'AUTO_FIX_TYPES'), DT = constLiteral(js, 'DESTRUCTIVE_FIX_TYPES');
@@ -52,6 +52,7 @@ function build() {
   const state = { expandedGroups: new Set(), busyKey: null, confirm: null, health: null, dismissedRecords: null };
   const body = `const fixAllOfType = (slug, type) => { state.ranFixAll = type; return undefined; };
     const buttonRingHtml = () => '';
+    const ISSUE_PAGE = 20; const renderAnchorStack = () => '';
     const HEALTH_CATEGORIES=${HC};const AUTO_FIX_TYPES=${AF};const DESTRUCTIVE_FIX_TYPES=${DT};
     ${FUNCS.map((f) => src[f]).join('\n')}
     return { HEALTH_CATEGORIES, AUTO_FIX_TYPES, DESTRUCTIVE_FIX_TYPES, ${FUNCS.join(', ')} };`;
@@ -77,10 +78,10 @@ section('§2 issue row');
   const { api } = build();
   const row = api.renderIssueRow('summaryLinkSections', ROW, false);
   ok(/<span class="mono cur-fold-item-main dm-issue-main">summaries\/foo\.md<\/span>/.test(row), 'path alone in the mono column');
-  ok(row.includes('12 repeated lines · 40 concepts filed under Entities · 3 entities filed under Concepts — tidied without removing any link.'), 'counts in prose in the meta column');
+  ok(row.includes('12 repeated lines · 40 concepts filed under Entities · 3 entities filed under Concepts') && row.includes('No link is removed.'), 'counts in prose in the meta column');
   ok(!/dm-dismiss-btn/.test(row) && !/dm-dismiss-btn/.test(api.renderIssueRow('summaryLinkSections', ROW, true)), 'never a Dismiss button');
   const one = api.renderIssueRow('summaryLinkSections', { summary: 'summaries/a.md', duplicateLines: 1, conceptsToMove: 0, entitiesToMove: 1 }, false);
-  ok(one.includes('1 repeated line · 1 entity filed under Concepts —') && !one.includes('concept filed'), 'singular forms, zero parts omitted');
+  ok(one.includes('1 repeated line · 1 entity filed under Concepts') && !one.includes('concept filed'), 'singular forms, zero parts omitted');
   const big = api.renderIssueRow('summaryLinkSections', { summary: 's', duplicateLines: 0, conceptsToMove: 1234, entitiesToMove: 0 }, false);
   ok(big.includes('1,234 concepts filed under Entities'), 'thousands separators');
   const hostile = api.renderIssueRow('summaryLinkSections', { summary: '<img onerror=x>', duplicateLines: '<b>', conceptsToMove: 2 }, false);
@@ -91,14 +92,15 @@ section('§3 group + confirm');
 {
   const { api, state } = build();
   state.health = { summaryLinkSections: [ROW, ROW] };
-  const cat = api.HEALTH_CATEGORIES.find((c) => c.key === 'summaryLinkSections');
-  const html = api.renderIssueGroup(cat, [ROW, ROW], false, false);
-  ok(/data-fixall="summaryLinkSections"/.test(html) && html.includes('Fix all 2'), 'category "Fix all 2" present');
-  ok(!/data-fixall/.test(api.renderIssueGroup(cat, [ROW, ROW], true, false)), 'no Fix all on a read-only mirror');
+  const fold = (readonly) => api.renderIssueFold({ key: 'summaryLinkSections', type: 'summaryLinkSections', label: 'Summaries with untidy link lists', issues: [ROW, ROW], readonly,
+    crossMountBusy: false, actionHtml: readonly ? '' : api.repairButton('summaryLinkSections', 2, false) });
+  const html = fold(false);
+  ok(/data-fixall="summaryLinkSections"/.test(html) && html.includes('Repair 2'), 'the row has "Repair 2"');
+  ok(!/data-fixall/.test(fold(true)), 'no Repair on a read-only mirror');
   // A free repair that deletes nothing runs on the press (owner's decision,
   // 2026-11-05; this asserted a confirm before). It deleted nothing then either.
   api.confirmFixAllOfType('d', 'summaryLinkSections');
-  ok(!state.confirm && state.ranFixAll === 'summaryLinkSections', 'Fix all on a free repair runs at once, with no question');
+  ok(!state.confirm && state.ranFixAll === 'summaryLinkSections', 'Repair on a free row runs at once, with no question');
   ok(!api.DESTRUCTIVE_FIX_TYPES.has('summaryLinkSections'), 'because it is not one of the types that deletes');
 }
 

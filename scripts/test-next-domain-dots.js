@@ -948,8 +948,12 @@ if (renderIssueRow && HEALTH_KEYS.length) {
   // And the prose field is NOT forced into mono — a rule that monos everything
   // is not the typographic rule, it is the absence of one.
   const orphanRuns = textRuns(renderIssueRow('orphans', SENTINEL_ISSUE, false));
+  // STAGE 2: the deck's item line for this row is the path alone, so the prose word left
+  // the row. Its counterpart: the words a row does say are in the body face.
   const typeRun = orphanRuns.find((r) => r.text.trim() === SENTINEL_ISSUE.type);
-  ok(typeRun && !typeRun.classes.includes('mono'), `the orphan row's prose "${PROSE_FIELDS[0]}" word stays in the body face`);
+  ok(!typeRun, `the orphan row no longer repeats its "${PROSE_FIELDS[0]}": the path says it`);
+  const factRuns = textRuns(renderIssueRow('brokenLinks', { ...SENTINEL_ISSUE, suggestedTarget: 't' }, false));
+  ok(factRuns.some((r) => /goes to/.test(r.text) && !r.classes.includes('mono')), 'and the row\'s own words stay in the body face');
 }
 {
   // Every SOURCE emission of dm-issue-main carries mono — the executed check

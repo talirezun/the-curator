@@ -440,16 +440,8 @@ const EXEMPT = [
     why: 'reader overlay: measured 63 ms warm / 295-322 ms cold — a real wait, and on the KEEP list' },
   { file: 'views/domains.js', needle: '<div class="dm-health-body">Scanning…</div>',
     why: 'health scan: measured ~654 ms. Deliberately NOT gated — an honest indicator for a genuinely long wait. The skeleton this earns is a separate change with its own proof.' },
-  { file: 'views/domains.js', needle: "pressed === 'semanticDupesEstimate' ? 'Working out the cost…'",
-    why: 'The pressed "Check the next" answering in its own label (the press rule). The estimate is a candidate pass that took about 15 s on 3,251 pages, and the scan after it runs for minutes against a paid model, so this is a long wait stated on the control. A gate delay would make the press silent for its first moments.' },
-  { file: 'views/domains.js', needle: "busyLabel: 'Scanning…'",
-    why: 'The yes of the scan question answering in its own label (the press rule). A paid scan runs for seconds to minutes.' },
-  { file: 'views/domains.js', needle: "buttonRingHtml() + ' Scanning…'",
-    why: 'Rescan BUTTON label during a user-initiated scan, not a view-entry placeholder' },
-  { file: 'views/domains.js', needle: "rescan: 'Scanning the wiki…'",
-    why: 'progress label for a user-initiated action' },
   { file: 'views/domains.js', needle: "'semanticPreview:' + key",
-    why: 'Preview-diff BUTTON label during a user-initiated LLM call (seconds)' },
+    why: 'Preview-diff BUTTON label during a user-initiated call (Stage 3 retires it with the card)' },
   { file: 'views/settings.js', needle: "state.quickLoading ? 'Scanning…'",
     why: 'System-check BUTTON label during a user-initiated scan' },
   // RE-ANCHORED, not widened, when views/shared.js adopted shared/text.js.
@@ -640,10 +632,12 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     icon: () => '', escapeHtml: (x) => String(x), pluralize: (n, w) => `${n} ${w}`,
     relTime: () => 'just now', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: () => 6, renderBanner: () => '', renderMirrorNote: () => '',
-    renderQuickMaintenance: () => '<QUICK/>', renderAiProgressRing: () => '',
+    renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
-    renderIssueGroups: () => '<GROUPS/>',
+    
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
     renderReadoutGroup, renderDescription, renderStatus,
@@ -689,8 +683,8 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   let h = render({ healthLoading: true, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
   ok(!COLLAPSED.test(h), 'rescan with a cached report for THIS domain does NOT collapse to "Scanning…"');
   ok(FIGURES.test(h), 'the cached figures stay on screen');
-  ok(h.includes('Showing the previous result'),
-    'and they are LABELLED as the previous scan — the figures stay useful, nothing claims they are current');
+  ok(/dm-health-reading">Checking…</.test(h),
+    'and the head says a check is running — the figures stay useful, nothing claims they are current');
   ok(h.includes('<RING/>'), 'the Rescan control shows the scan is running');
 
   // M7 — THE CORRECTNESS HALF. Layer 2 must refuse a foreign report even

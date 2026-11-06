@@ -212,7 +212,7 @@ section('2. F1 — the write-gate watcher');
   ok(orphans.length === 0, '2.7 every label in the two sets is a literal this file passes to beginDomainWrite', orphans.join(', '));
   ok(literal.size >= 8, '2.8 CROSS-CHECK — the label scan found the file\'s writes (' + literal.size + ')');
   // And every Health path that ends in loadHealth holds a label in the set.
-  for (const fn of ['runFixSafe', 'fixAllOfType', 'applyPendingPlan']) {
+  for (const fn of ['repairAllFree', 'fixAllOfType', 'applyPendingPlan']) {
     const src = lift(fn);
     const labels = [...src.matchAll(/beginDomainWrite\([^,]+,\s*([^)]*)\)/g)]
       .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]))
@@ -311,33 +311,33 @@ section('5. F4 — the duplicate-scan confirm and the ceiling');
   const over = semanticScanConfirmText({ candidatePairs: 180, totalCandidates: 180, truncated: false,
     estimatedTokens: 72000, costCeilingTokens: 50000 }, 'gemini/flash', '$0.01');
   ok(over.refused === true, '5.1 72,000 estimated over a 50,000 ceiling is REFUSED before the click');
-  ok(/72,000/.test(over.body) && /50,000/.test(over.body) && /will not start/.test(over.body),
-    '5.2 the refusal names both figures and says it will not start', over.body);
-  ok(!/Estimated cost \$/.test(over.body), '5.3 no price is offered for a run that cannot happen');
+  ok(/72,000/.test(over.body) && /50,000/.test(over.body) && /Nothing has been sent/.test(over.body),
+    '5.2 the refusal names both figures and says nothing was sent', over.body);
+  ok(!/\$/.test(over.body), '5.3 no price is offered for a run that cannot happen');
   const under = semanticScanConfirmText({ candidatePairs: 100, totalCandidates: 100, truncated: false,
-    estimatedTokens: 40000, costCeilingTokens: 50000 }, 'gemini/flash', '$0.01');
-  ok(under.refused === false && /Estimated cost \$0\.01/.test(under.body), '5.4 CONTROL — under the ceiling it is the ordinary priced confirm');
+    estimatedTokens: 40000, estimatedUsd: 0.01, costCeilingTokens: 50000 }, 'gemini/flash', '$0.01');
+  ok(under.refused === false && /About 40,000 tokens and \$0\.01/.test(under.body), '5.4 CONTROL — under the ceiling it is the ordinary priced confirm');
   const capped = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, leftPairs: 2300, checkedPairs: 0, truncated: true, maxPairs: 500,
     estimatedTokens: 200000, costCeilingTokens: 200000 }, 'x', '$0.03');
-  ok(capped.body === 'Checks the next 500 of 2,300 pairs not checked yet, using x. Estimated cost $0.03. This only finds pairs — nothing is merged yet.',
-    '5.5 a capped list says it checks the next N of what is left, in the agreed words', capped.body);
+  ok(capped.title === 'Compare the next 500 of 2,300 pairs?' && /Sends the opening of each page to x\./.test(capped.body) && /Nothing is merged\./.test(capped.body),
+    '5.5 a capped list says it compares the next N of what is left, in the deck\'s words', capped.title + ' ' + capped.body);
   const lastOne = semanticScanConfirmText({ candidatePairs: 1, totalCandidates: 2, leftPairs: 1, checkedPairs: 1, truncated: false, maxPairs: 500,
     estimatedTokens: 400, costCeilingTokens: 200000 }, 'x', '$0.01');
-  ok(lastOne.body.startsWith('Checks the next 1 of 1 pair not checked yet, using x.'), '5.5a the confirm says pair at one', lastOne.body);
+  ok(lastOne.title === 'Compare the next 1 of 1 pair?', '5.5a the confirm says pair at one', lastOne.title);
   const cappedOver = semanticScanConfirmText({ candidatePairs: 500, totalCandidates: 2300, leftPairs: 1800, checkedPairs: 500, truncated: true, maxPairs: 500,
     estimatedTokens: 200000, costCeilingTokens: 100000 }, 'x', '$0.03');
-  ok(/capped at your 500-pair limit/.test(cappedOver.body) && /most similar of 1,800/.test(cappedOver.body),
-    '5.5b a refused capped run names the user\'s setting and what is left, not every pair', cappedOver.body);
+  ok(/It would send 500 pairs/.test(cappedOver.body) && /over your limit of 100,000/.test(cappedOver.body) && cappedOver.refused,
+    '5.5b a refused capped run names what it would send and the user\'s limit', cappedOver.body);
   ok(capped.refused === false, '5.6 exactly AT the ceiling runs (the server refuses only when over)');
 
   // The card: a refused confirm has no yes button.
   const state = { confirm: { title: 't', body: 'b', refused: true, settingsLabel: 'Open scan limits', confirmLabel: null } };
-  const { renderConfirmCard } = sandbox(['renderConfirmCard'], { state, escapeHtml });
+  const { renderConfirmCard } = sandbox(['renderConfirmCard', 'n0'], { state, escapeHtml });
   const html = renderConfirmCard();
   ok(!/dm-confirm-yes/.test(html) && /dm-confirm-settings/.test(html) && /Open scan limits/.test(html),
     '5.7 the refused card has no Scan button, and one door to the limits');
-  state.confirm = { title: 't', body: 'b', confirmLabel: 'Scan now' };
-  ok(/dm-confirm-yes[^>]*>Scan now/.test(renderConfirmCard()), '5.8 CONTROL — an ordinary confirm keeps its yes button');
+  state.confirm = { title: 't', body: 'b', confirmLabel: 'Forget' };
+  ok(/dm-confirm-yes[^>]*>Forget/.test(renderConfirmCard()), '5.8 CONTROL — an ordinary confirm keeps its yes button');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -366,22 +366,25 @@ section('6. F4 — the two AI Health defaults agree');
 section('7. F5 — the Dismissed group counts records');
 {
   const state = { expandedGroups: new Set(), dismissedRecords: null };
-  const fns = sandbox(['renderIssueGroups', 'renderDismissedGroup'], {
-    state, escapeHtml, icon: () => '', gatedLoader: () => '', loadGate: null,
-    HEALTH_CATEGORIES: [], renderIssueGroup: () => '', describeDismissed: (r) => r.type,
+  const fns = sandbox(['renderDismissedGroup'], {
+    state, escapeHtml, icon: () => '', gatedLoader: () => '', loadGate: null, describeDismissed: (r) => r.type,
     ...SECTION_KIT,
   });
+  // The Left as is row counts the records when the route sends them, the old figure if not.
+  const count = (report) => (Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed);
+  const srcLane = lift('renderDecisionLane');
+  ok(/Number\.isInteger\(report\.dismissedRecords\) \? report\.dismissedRecords : report\.counts\.dismissed/.test(srcLane), '7.0 the lane reads the record count first');
   const report = { counts: { dismissed: 0 }, dismissedRecords: 3 };
-  const html = fns.renderIssueGroups(report, false, false);
+  const html = fns.renderDismissedGroup(count(report));
   ok(/dm-group-dismissed/.test(html) && /dm-group-pill">3</.test(html),
-    '7.1 three records (say, semantic Skips) with 0 hidden issues still render the group, pill 3', html);
-  const old = fns.renderIssueGroups({ counts: { dismissed: 2 } }, false, false);
+    '7.1 three records (say, kept-apart pairs) with 0 hidden issues still render the group, pill 3', html);
+  const old = fns.renderDismissedGroup(count({ counts: { dismissed: 2 } }));
   ok(/dm-group-pill">2</.test(old), '7.2 an older server without the record count falls back to the old figure');
   state.expandedGroups.add('dismissed');
   state.dismissedRecords = [{ type: 'a' }, { type: 'b' }, { type: 'c' }, { type: 'd' }];
-  ok(/dm-group-pill">4</.test(fns.renderIssueGroups(report, false, false)), '7.3 an open, loaded list counts itself');
-  ok(/'hidden by a dismissal'/.test(SRC) && !/key: 'dismissed', value: report\.counts\.dismissed/.test(SRC),
-    '7.4 the scan monitor names its figure as hidden issues, not "dismissed"');
+  ok(/dm-group-pill">4</.test(fns.renderDismissedGroup(count(report))), '7.3 an open, loaded list counts itself');
+  ok(/key: 'left as is', value: report\.counts\.dismissed/.test(SRC),
+    '7.4 the scan monitor names its figure in the words on the row');
 
   // The route sends the record count.
   const { default: router } = await import(path.join(REPO, 'src/routes/health.js'));
@@ -402,33 +405,26 @@ section('7. F5 — the Dismissed group counts records');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('8. F6 — "Fix N safe issues" states the deletions');
+section('8. F6 — a deletion is stated: the row, the question, the warning');
 {
   const state = {
-    health: {
-      brokenLinks: [], folderPrefixLinks: [], missingBacklinks: [{}],
-      crossFolderDupes: [{ keep: 'x', remove: 'y' }],
-      hyphenVariants: [{ files: ['a', 'b', 'c'] }],
-    },
+    activeSlug: 'a',
+    health: { brokenLinks: [], folderPrefixLinks: [], missingBacklinks: [{}], crossFolderDupes: [{ keep: 'x', remove: 'y' }], hyphenVariants: [{ files: ['a', 'b', 'c'] }] },
     confirm: null,
   };
-  const extra = liftConst('DESTRUCTIVE_FIX_TYPES') +
-    "const GIT_UNDO_NOTE = 'NOTE'; const GIT_UNDO_WARN = 'WARN';\n";
-  const fns = sandbox(['readHealthBeforeAsking', 'countSafeFixable', 'deletedPageCount', 'safeFixDeletedPages', 'confirmFixSafe'], {
-    state, pluralize, render: () => {}, myMountToken: 1, runFixSafe: () => { state.ranFixSafe = true; },
-    fetchJSON: async () => state.health, isCurrentMount: () => true, onQuickAction: () => {},
+  const extra = liftConst('DESTRUCTIVE_FIX_TYPES') + liftConst('AUTO_FIX_TYPES') + "const GIT_UNDO_NOTE = 'NOTE'; const GIT_UNDO_WARN = 'WARN';\n";
+  const fns = sandbox(['readHealthBeforeAsking', 'deletedPageCount', 'confirmFixAllOfType', 'deletesReading', 'n0'], {
+    state, render: () => {}, myMountToken: 1, fixAllOfType: () => { state.ranFree = true; }, escapeHtml,
+    fetchJSON: async () => state.health, isCurrentMount: () => true,
   }, extra);
-  state.activeSlug = 'a';
-  await fns.confirmFixSafe('a');
-  ok(/3 pages will be deleted/.test(state.confirm.body) && /WARN/.test(state.confirm.body),
-    '8.1 1 cross-folder dupe + a 3-slug hyphen group = 3 pages deleted, with the hard warning', state.confirm.body);
-  ok(state.confirm.confirmLabel === 'Fix and delete', '8.2 the button says it deletes');
-  state.health.crossFolderDupes = []; state.health.hyphenVariants = [];
-  // With nothing to delete there is nothing to ask (owner's decision, 2026-11-05).
+  await fns.confirmFixAllOfType('a', 'hyphenVariants');
+  ok(/^2 pages are deleted/.test(state.confirm.body) && state.confirm.warn === 'WARN',
+    '8.1 a 3-page group is 2 pages deleted, with the hard warning', state.confirm.body);
+  ok(state.confirm.confirmLabel === 'Merge and delete 2' && state.confirm.tier === 'danger', '8.2 the button names what it deletes, in the danger style');
   state.confirm = null;
-  await fns.confirmFixSafe('a');
-  ok(state.confirm === null && state.ranFixSafe === true,
-    '8.3 CONTROL — with nothing destructive it runs on the press, with no question');
+  await fns.confirmFixAllOfType('a', 'missingBacklinks');
+  ok(state.confirm === null && state.ranFree === true, '8.3 CONTROL — with nothing destructive it runs on the press, with no question');
+  ok(/deletes 1 page</.test(fns.deletesReading(1)) && /deletes 3 pages</.test(fns.deletesReading(3)), '8.4 the row states it, singular and plural');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -487,8 +483,8 @@ section('13. F11 — the semantic header');
   const src = lift('renderSemanticScanResult');
   ok(/'likely duplicate pair'/.test(src) && !/'candidate pair'\) \+ ' found'/.test(src),
     '13.1 the header counts likely duplicates, not "candidate pairs"');
-  ok(/renderSemanticCoverage/.test(src) && !/ checked\)'/.test(src),
-    '13.2 how much was checked is the coverage line\'s, over the whole domain, not "(of N checked)" for one run');
+  ok(/pairs compared/.test(lift('renderCompareRow')) && !/ checked\)'/.test(src),
+    '13.2 how much was compared is the AI help row\'s, over the whole domain, not "(of N checked)" for one run');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

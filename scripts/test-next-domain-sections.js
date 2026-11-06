@@ -2338,7 +2338,10 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     relTime: () => '10s ago', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: (r) => ((r.brokenLinks || []).length + (r.orphans || []).length),
     renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
-    renderQuickMaintenance: () => '<QUICK/>', renderAiProgressRing: () => '',
+    renderAiLane: () => '<QUICK/>', renderFreeLane: () => '', renderAnchorHere: () => '',
+    renderCompareRowStub: null, deletedPageCount: () => 0, renderIssueFoldStub: null,
+    liveBatchPairs: () => [], semanticPairKey: () => '', mergeRowButton: () => '', deletesReading: () => '', renderLaneTrace: () => '', renderLaneHead: () => '',
+    GIT_UNDO_NOTE: 'NOTE',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     // THE REAL ISSUE GROUPS, not a stub: this section is ABOUT their open
@@ -2367,9 +2370,13 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     extractFunction(SRC, 'healthScanLabel') + '\n' +
     extractConstText(SRC, 'HEALTH_INFO') + '\n' +
     extractFunction(SRC, 'healthSection') + '\n' +
-    extractFunction(SRC, 'renderIssueGroup') + '\n' +
+    'const ISSUE_PAGE = 20;\n' +
+    extractFunction(SRC, 'renderHealthLanes') + '\n' +
+    extractFunction(SRC, 'renderShowMore') + '\n' +
+    extractFunction(SRC, 'n0') + '\n' +
+    extractFunction(SRC, 'renderIssueFold') + '\n' +
+    extractFunction(SRC, 'renderDecisionLane') + '\n' +
     extractFunction(SRC, 'renderDismissedGroup') + '\n' +
-    extractFunction(SRC, 'renderIssueGroups') + '\n' +
     extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
   );
   const REPORT = {
@@ -2394,8 +2401,8 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     // CONTROL FIRST. Four rows have to BE there, or "none of them is open" is
     // a statement about an empty list -- the vacuity this suite keeps finding.
     eq('CONTROL -- section 5 renders four fold rows', keys.length, 4);
-    ok('...and they are Scan, then the two issue kinds, then Dismissed',
-      keys.join(',') === 'scan,brokenLinks,orphans,dismissed', keys.join(','));
+    ok('...and they are the two issue kinds and Left as is, in the lane, then Scan details',
+      keys.join(',') === 'orphans,brokenLinksOpen,dismissed,scan', keys.join(','));
     ok('EVERY one of them ships CLOSED when the preference names none -- the headline '
       + 'in each summary IS the reading, and the breakdown is the dive-in',
       rows.every((r) => !r.open), rows.map((r) => r.key + '=' + r.open).join(' '));
@@ -2404,7 +2411,7 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
   // ...AND EACH ONE OPENS, ON ITS OWN, WHEN THE PREFERENCE NAMES IT. Without
   // this half, "nothing is open" is satisfiable by a panel that can never open
   // anything at all.
-  for (const key of ['scan', 'brokenLinks', 'orphans', 'dismissed']) {
+  for (const key of ['scan', 'brokenLinksOpen', 'orphans', 'dismissed']) {
     const html = callOrFail('the panel renders with ' + key + ' remembered', () => render([key]));
     if (!html) continue;
     const rows = rowsOf(html);

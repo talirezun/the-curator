@@ -442,17 +442,19 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('S3 -- "Scan wiki health" vs "Rescan"');
+section('S3 -- "Check this wiki" vs "Check again" (the words of Stage 2; the rule is v3.49.0)');
 // ═════════════════════════════════════════════════════════════════════════
 {
   const deps = {
     icon: (n) => '<ICON:' + n + '/>', escapeHtml: (x) => String(x), pluralize: (n, w) => n + ' ' + w,
     relTime: () => '10s ago', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: () => 2, renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
-    renderQuickMaintenance: () => '<QUICK/>', renderAiProgressRing: () => '',
+    renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
+    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
-    renderIssueGroups: () => '<GROUPS/>',
+    
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
     renderDescription: (t) => '<p>' + t + '</p>',
@@ -486,82 +488,60 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
   // CLOSED until pressed, the same call step 3 Knowledge made in v3.64.2.
   const render = (st) => build()({ expandedGroups: new Set(), ...st }, ...names.map((n) => deps[n]))({ slug: 'articles' }, false);
   const REPORT = { counts: { entities: 1, concepts: 2, summaries: 3, dismissed: 0 }, scannedAt: '2026-09-01T00:00:00Z', brokenLinks: [{}, {}] };
+  // The ⓘ names Check again too, so the label is read off the button itself.
+  const rescanBtn = (h) => (/id="dm-rescan-btn"[^>]*>([^]*?)<\/button>/.exec(h) || [])[1] || '';
 
   // (a) THE BRANCH THAT WAS LYING: a first scan that failed. There is no
   // result, and the button used to offer to redo one.
   const firstFail = callOrFail('a first scan that failed', () =>
     render({ healthLoading: false, healthError: 'the disk went away', health: null, healthSlug: null }));
   if (firstFail) {
-    ok('a FIRST failed scan offers "Scan wiki health" -- nothing has been scanned',
-      firstFail.includes('Scan wiki health'), firstFail.slice(0, 400));
-    ok('...and never the word Rescan', !firstFail.includes('Rescan'));
-    ok('...the error is still a danger status, unchanged', firstFail.includes('tx-status-danger'));
+    ok('a FIRST failed scan offers "Check this wiki" -- nothing has been checked',
+      firstFail.includes('Check this wiki'), firstFail.slice(0, 400));
+    ok('...and never the words Check again on the button', !rescanBtn(firstFail).includes('Check again'));
   }
 
-  // (b) A FAILURE AFTER A SUCCESS. A result for this domain DOES exist —
-  // the panel is simply showing the error instead of it — so "Rescan" is
-  // the true word and must survive the fix.
-  const laterFail = callOrFail('a rescan that failed behind an existing report', () =>
-    render({ healthLoading: false, healthError: 'network', health: REPORT, healthSlug: 'articles' }));
+  // A failure AFTER a successful check: a result exists, the panel is showing the error
+  // instead of it, so "again" is true.
+  const laterFail = callOrFail('a failure after a successful scan', () =>
+    render({ healthLoading: false, healthError: 'the disk went away', health: REPORT, healthSlug: 'articles' }));
   if (laterFail) {
-    ok('a failure AFTER a successful scan still says "Rescan"',
-      laterFail.includes('Rescan'), laterFail.slice(0, 400));
-    ok('...and does not regress to the first-scan wording', !laterFail.includes('Scan wiki health'));
+    ok('a failure AFTER a successful scan still says "Check again"',
+      laterFail.includes('Check again'), laterFail.slice(0, 400));
+    ok('...and does not regress to the first-scan wording', !laterFail.includes('Check this wiki'));
   }
 
-  // (c) A FAILURE WHOSE ONLY REPORT BELONGS TO ANOTHER DOMAIN. The stamp is
-  // what separates (a) from (b), and it is the same predicate the readout
-  // branch uses — so a report scanned for `beta` must read as no result.
-  const foreign = callOrFail('a failed scan with only another domain\'s report in memory', () =>
-    render({ healthLoading: false, healthError: 'network', health: REPORT, healthSlug: 'beta' }));
+  const foreign = callOrFail('a failure with another domain\'s report in hand', () =>
+    render({ healthLoading: false, healthError: 'the disk went away', health: REPORT, healthSlug: 'some-other-domain' }));
   if (foreign) {
-    ok('another domain\'s report does not make this one say "Rescan"',
-      foreign.includes('Scan wiki health') && !foreign.includes('Rescan'));
+    ok('another domain\'s report does not make this one say "Check again"',
+      rescanBtn(foreign).includes('Check this wiki') && !rescanBtn(foreign).includes('Check again'));
   }
 
-  // (d) THE READOUT BRANCH. Unchanged, and asserted so a future "fix" that
-  // makes it say "Scan wiki health" over a report on screen goes red.
   const settled = callOrFail('a settled report', () =>
     render({ healthLoading: false, healthError: null, health: REPORT, healthSlug: 'articles' }));
   if (settled) {
-    ok('with a report on screen the button says "Rescan"', settled.includes('Rescan'));
-    ok('...never "Scan wiki health", which would be false there', !settled.includes('Scan wiki health'));
-    // v3.65.0: the five readouts became a MONITOR inside a `Scan` fold row
-    // (catalogue entry M6), so the needle follows the figure and the stamp
-    // into the instrument rather than pinning the old container's name.
-    ok('...and the open-issue figure and the scan stamp are both in the monitor',
-      /cur-mon-key">open issues<\/span><span class="cur-mon-value">2</.test(settled)
-      && /cur-mon-key">scanned</.test(settled), settled.slice(settled.indexOf('cur-mon'), settled.indexOf('cur-mon') + 260));
-    // THE WHOLE OPEN TAG, because `open` sits BEFORE `data-group-key` in the
-    // markup and a regex anchored on the key looks past it — which is how the
-    // first cut of this assertion stayed GREEN against a row hardcoded open.
-    const scanTag = (/<details[^>]*data-group-key="scan"[^>]*>/.exec(settled) || [''])[0];
-    ok('...and the row is CLOSED with `expandedGroups` empty, which is the shipped default \u2014 '
-      + 'the headline is the reading, the breakdown is the dive-in',
-      scanTag !== '' && !/\sopen(\s|>)/.test(scanTag), scanTag || '(no scan row)');
-    ok('...while its own summary still says so, so the reading survives the fold rather than '
-      + 'being hidden by it',
-      // v3.72.1 (F12): the age is a ticking [data-age-at] span.
-      /dm-group-meta">2 open issue[s]? \u00b7 <span data-age-at="[^"]+" data-age-text>10s ago<\/span></.test(settled),
-      (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
+    ok('with a report on screen the button says "Check again"', settled.includes('Check again'));
+    ok('...never "Check this wiki", which would be false there', !settled.includes('Check this wiki'));
+    ok('the section head carries the one reading',
+      /dm-health-reading">Checked <span data-age-at="[^"]+" data-age-text>10s ago<\/span> · 2 to look at</.test(settled),
+      (/dm-health-reading">[^]{0,120}/.exec(settled) || ['(none)'])[0]);
   }
 
   // (e) MID-SCAN. Neither label: the panel says what is happening.
   const busy = callOrFail('a scan running behind an existing report', () =>
     render({ healthLoading: true, healthError: null, health: REPORT, healthSlug: 'articles', busyKey: 'rescan' }));
   if (busy) {
-    ok('while scanning the button says "Scanning…" and neither label',
-      busy.includes('Scanning…') && !busy.includes('Rescan') && !busy.includes('Scan wiki health'));
+    ok('while checking the button says "Checking…" and neither label',
+      rescanBtn(busy).includes('Checking…') && !rescanBtn(busy).includes('Check again') && !rescanBtn(busy).includes('Check this wiki'));
   }
 }
 {
-  // THE LABEL FUNCTION ITSELF, in isolation, with its icons — so a mutation
-  // that swaps the two arms is caught even if every caller were stubbed.
-  const label = new Function('icon', extractFunction(SRC, 'healthScanLabel') + '\nreturn healthScanLabel;')((n) => '[' + n + ']');
-  eq('healthScanLabel(true) is the rescan wording', label(true), '[refresh] Rescan');
-  eq('healthScanLabel(false) names the action for someone who has never scanned', label(false), '[activity] Scan wiki health');
-  ok('the two arms differ in their ICON as well as their word -- a refresh glyph is a claim about a previous run',
-    label(true) !== label(false) && !label(false).includes('refresh'));
+  // THE LABEL FUNCTION ITSELF, in isolation, so a mutation that swaps the two arms is
+  // caught even if every caller were stubbed.
+  const label = new Function(extractFunction(SRC, 'healthScanLabel') + '\nreturn healthScanLabel;')();
+  eq('healthScanLabel(true) is the wording for a wiki already checked', label(true), 'Check again');
+  eq('healthScanLabel(false) names the action for someone who has never checked', label(false), 'Check this wiki');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

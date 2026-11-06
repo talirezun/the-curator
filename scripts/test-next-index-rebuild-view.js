@@ -61,7 +61,7 @@ function constLiteral(name) {
   return null;
 }
 const FUNCS = ['fetchJSON', 'pluralize', 'fmtInt', 'fmtKB', 'countOf', 'countSafeFixable', 'totalOpenIssues',
-  'renderPendingPlan', 'renderQuickMaintenance', 'renderIssueRow', 'runIndexRebuildPlan',
+  'renderPendingPlan', 'renderFreeLane', 'renderPlainRow', 'renderIssueFold', 'renderLaneHead', 'renderLaneTrace', 'renderAnchorHere', 'renderShowMore', 'repairButton', 'freeRepairCount', 'n0', 'renderIssueRow', 'runIndexRebuildPlan',
   'applyIndexRebuildPlan', 'applyPendingPlan', 'onQuickAction'];
 const sources = {};
 for (const f of FUNCS) { sources[f] = functionSource(js, f); ok(sources[f] !== null, `${f} extracted from views/domains.js`); }
@@ -73,12 +73,15 @@ ok(HEALTH_CATEGORIES_SRC && AUTO_FIX_SRC && WRITES_SRC && GIT_NOTE_SRC, 'the fou
 
 function build(fetchStub) {
   const calls = { fetch: [], renders: 0, loadHealth: 0, gates: [] };
-  const state = { busyKey: null, banner: null, pendingPlan: null, estimates: {}, aiRunsOn: null, aiAvailable: true, aiSpent: null, health: null };
+  const state = { expandedGroups: new Set(), busyKey: null, banner: null, pendingPlan: null, estimates: {}, aiRunsOn: null, aiAvailable: true, aiSpent: null, health: null };
   const body = `
     const HEALTH_CATEGORIES = ${HEALTH_CATEGORIES_SRC};
     const AUTO_FIX_TYPES = ${AUTO_FIX_SRC};
     const WRITES_THAT_RESCAN_THEMSELVES = ${WRITES_SRC};
     const GIT_UNDO_NOTE = ${GIT_NOTE_SRC};
+    const ISSUE_PAGE = 20;
+    const renderAnchorStack = () => '';
+    const FREE_ROWS = [];
     ${FUNCS.map((f) => sources[f]).join('\n')}
     return { HEALTH_CATEGORIES, AUTO_FIX_TYPES, WRITES_THAT_RESCAN_THEMSELVES, GIT_UNDO_NOTE, ${FUNCS.join(', ')} };
   `;
@@ -137,41 +140,28 @@ section('§1 category, safe-fix totals, open-issue count');
 }
 
 // ── §2 ─────────────────────────────────────────────────────────────────────
-section('§2 Quick maintenance button');
+section('§2 The Free repairs row');
 {
   const { api, state } = build(okFetch(200, {}));
-  const withRow = api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [DRIFT] }), false);
+  const free = (r) => api.renderFreeLane(r, false, false);
+  const withRow = free(baseReport({ indexDrift: [DRIFT] }));
   const m = /<button[^>]*data-action="indexPlan"[^>]*>[\s\S]*?<\/button>/.exec(withRow);
   ok(!!m, 'the button renders when the scan sent an indexDrift row');
   const btn = m ? m[0] : '';
-  ok(/Rebuild index · 2,705 pages missing/.test(btn), 'label reads "Rebuild index · 2,705 pages missing"');
+  ok(/Preview the rebuild/.test(btn), 'its label is the deck\'s');
+  ok(/Pages missing from the page list/.test(withRow) && /2,705/.test(withRow), 'the row says what and how many');
   ok(!/btn-ai/.test(btn) && !/sparkles/.test(btn) && !/dm-quick-cost/.test(btn), 'free: not btn-ai, no sparkles, no cost badge');
-  ok(/btn btn-secondary btn-xs cur-action-chip dm-quick-btn/.test(btn), 'the shared secondary quick-button chrome');
-  const stale = api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [{ ...DRIFT, missing: 0, stale: 1 }] }), false);
-  ok(/Rebuild index · 1 stale row</.test(stale), 'stale-only: "Rebuild index · 1 stale row"');
-  const none = api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [] }), false);
+  ok(/btn btn-secondary btn-xs cur-action-chip dm-quick-btn/.test(btn), 'the shared secondary chrome');
+  const stale = free(baseReport({ indexDrift: [{ ...DRIFT, missing: 0, stale: 1 }] }));
+  ok(/Pages missing from the page list/.test(stale) && />1</.test(stale), 'stale-only: the row still stands, counting the rows that point nowhere');
+  const none = free(baseReport({ indexDrift: [] }));
   ok(!/indexPlan/.test(none), 'no button when indexDrift is [] (a read-only mirror sends [])');
-  const noField = api.renderQuickMaintenance({ slug: 'x' }, baseReport({}), false);
+  const noField = free(baseReport({}));
   ok(!/indexPlan/.test(noField), 'no button when an older server sends no indexDrift field');
+  ok(!/dm-dismiss-btn|data-dismiss/.test(withRow), 'no Leave as is on it, even on a writable domain: it is not dismissible');
+  ok(!/indexPlan/.test(api.renderFreeLane(baseReport({ indexDrift: [DRIFT] }), true, false)), 'no action on a read-only mirror');
   state.busyKey = 'indexRebuildPlan';
-  ok(/Planning…/.test(api.renderQuickMaintenance({ slug: 'x' }, baseReport({ indexDrift: [DRIFT] }), false)), 'busy: "Planning…"');
-}
-
-// ── §3 ─────────────────────────────────────────────────────────────────────
-section('§3 issue row');
-{
-  const { api } = build(okFetch(200, {}));
-  const row = api.renderIssueRow('indexDrift', DRIFT, false);
-  ok(/<span class="mono cur-fold-item-main dm-issue-main">index\.md<\/span>/.test(row), 'main cell is exactly the mono path index.md');
-  ok(/<span class="cur-fold-item-meta dm-issue-meta">Missing 2,705 pages, and 39 rows point to pages that no longer exist\./.test(row), 'prose sits in the meta column (with stale)');
-  const noStale = api.renderIssueRow('indexDrift', { ...DRIFT, stale: 0 }, false);
-  ok(noStale.includes('Missing 2,705 pages. Rebuilt') && !/no longer/.test(noStale), 'row prose without stale');
-  ok(row.includes('Rebuilt from the files on disk — free, previewed first.'), 'meta line');
-  ok(/data-action="indexPlan"[^>]*>Preview rebuild</.test(row), '"Preview rebuild" action');
-  ok(!/Dismiss|dm-dismiss-btn|data-dismiss/.test(row), 'no Dismiss control, even on a writable domain');
-  ok(api.renderIssueRow('indexDrift', { ...DRIFT, missing: 1, stale: 1 }, false).includes('Missing 1 page, and 1 row points to a page that no longer exists.'), 'singular forms');
-  const hostile = api.renderIssueRow('indexDrift', { missing: '<img onerror=x>', stale: 0 }, false);
-  ok(!/<img/.test(hostile), 'a hostile field value never reaches the HTML');
+  ok(/Working it out…/.test(free(baseReport({ indexDrift: [DRIFT] }))), 'busy: "Working it out…"');
 }
 
 // ── §4 ─────────────────────────────────────────────────────────────────────
@@ -180,29 +170,29 @@ section('§4 plan card');
   const { api, state } = build(okFetch(200, {}));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'a'.repeat(64), summary: SUMMARY, samples: {} };
   const card = api.renderPendingPlan(false);
-  ok(card.includes('Plan ready — nothing written yet'), 'title unchanged');
-  ok(card.includes('2,705 pages will be added to the index, 39 rows that point to missing pages will be removed, and 764 existing descriptions are kept as written.'), 'summary sentence carries add / remove / keep');
-  ok(card.includes('3 rows will be repointed to the page they name.'), 'repoint sentence when > 0');
-  ok(!/duplicate row/.test(card), 'no merge sentence at 0');
-  ok(card.includes('no AI, no cost') && card.includes('Summaries, Entities and Concepts'), 'detail: free, sorted');
-  ok(card.includes('index.md grows from 146 KB to 438 KB.'), 'size change in KB');
+  ok(card.includes('Nothing is written yet.'), 'the title');
+  ok(card.includes('2,705 pages join the page list and 39 rows that point to missing pages are removed. 764 descriptions stay as written.'), 'summary sentence');
+  ok(card.includes('3 rows now point to the page they name.'), 'repoint sentence when > 0');
+  ok(!/repeated row/.test(card), 'no merge sentence at 0');
+  ok(card.includes('No AI, no cost') && card.includes('Summaries, Entities and Concepts'), 'detail: free, sorted');
+  ok(card.includes('It grows from 146 KB to 438 KB.'), 'size change in KB');
   ok(card.includes(api.GIT_UNDO_NOTE), 'GIT_UNDO_NOTE is in the card');
   ok(!/cannot be linked/.test(card) && !/share a name/.test(card), 'unlinkable / unaddressable sentences absent at 0');
-  ok(/Apply this plan/.test(card) && /Discard/.test(card), 'buttons unchanged');
+  ok(/Rebuild the list/.test(card) && /Cancel/.test(card), 'the buttons say what they do');
   eq(detailsMax(card), 0, 'no <details> anywhere in the card');
   ok(!/<details/.test(sources.renderPendingPlan), "renderPendingPlan's source never opens a <details>");
 
   state.pendingPlan = { kind: 'indexRebuild', basis: 'b', samples: {}, summary: { ...SUMMARY, mergeDuplicates: 1, repoint: 0, unlinkable: 5, unaddressable: 2, bytesAfter: 100000 } };
   const warn = api.renderPendingPlan(false);
-  ok(warn.includes('1 duplicate row will be merged.'), 'merge sentence (singular) when > 0');
+  ok(warn.includes('1 repeated row becomes one.'), 'merge sentence (singular) when > 0');
   ok(warn.includes('5 pages have file names that cannot be linked (a leading or trailing space, or | [ ] #)'), 'unlinkable sentence when > 0');
-  ok(warn.includes('2 concept pages share a name with an entity page') && warn.includes('fix Cross-folder duplicates first'), 'unaddressable sentence when > 0');
-  ok(warn.includes('shrinks from 146 KB to 100 KB'), 'a smaller index says shrinks');
+  ok(warn.includes('2 concept pages share a name with an entity page') && warn.includes('Merge those first.'), 'unaddressable sentence when > 0');
+  ok(warn.includes('It shrinks from 146 KB to 100 KB'), 'a smaller index says shrinks');
   eq(detailsMax(warn), 0, 'warnings are not inside a <details> either');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'c', samples: {}, summary: { ...SUMMARY, indexExists: false, bytesBefore: 0 } };
-  ok(api.renderPendingPlan(false).includes('index.md will be created at 438 KB.'), 'no index yet: "will be created"');
+  ok(api.renderPendingPlan(false).includes('It grows from 0 KB to 438 KB.'), 'no index yet: it grows from nothing');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'd', samples: {}, summary: { ...SUMMARY, add: 1, removeStale: 1, keepDescriptions: 1 } };
-  ok(api.renderPendingPlan(false).includes('1 page will be added to the index, 1 row that points to a missing page will be removed, and 1 existing description is kept as written.'), 'singular summary');
+  ok(api.renderPendingPlan(false).includes('1 page joins the page list and 1 row that points to a missing page is removed. 1 description stays as written.'), 'singular summary');
 }
 
 // ── §4b ────────────────────────────────────────────────────────────────────
@@ -213,19 +203,19 @@ section('§4b plan card examples');
   const rm = Array.from({ length: 8 }, (_, i) => ({ target: i === 0 ? '[[gone0]]' : `gone${i}`, description: `r${i}` }));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: SUMMARY, samples: { add, removeStale: rm } };
   const card = api.renderPendingPlan(false);
-  ok(card.includes('For example, added:') && card.includes('Removed (the page no longer exists):'), 'both group labels');
-  ok(card.includes('<span class="mono">concepts/p0.md</span> — &lt;b&gt;x&lt;/b&gt; &amp; y'), 'an addition: mono path — escaped description');
+  ok(card.includes('For example, added:') && card.includes('Removed, because the page no longer exists:'), 'both group labels');
+  ok(card.includes('<span class="mono">concepts/p0.md</span> <span class="dm-plan-data">&lt;b&gt;x&lt;/b&gt; &amp; y</span>'), 'an addition: mono path — escaped description');
   ok(card.includes('concepts/p4.md') && !card.includes('concepts/p5.md'), 'at most 5 additions');
   ok(card.includes('<span class="mono">[[gone0]]</span>') && card.includes('<span class="mono">[[gone4]]</span>') && !card.includes('gone5'), 'at most 5 removals, targets as [[wikilinks]]');
   // total = 2705 + 39; shown = 5 + 5
-  ok(card.includes('…and 2,734 more'), '"…and N more" = (add - 5) + (remove - 5)');
+  ok(card.includes('And 2,734 more.'), '"And N more." = (add - 5) + (remove - 5)');
   eq(detailsMax(card), 0, 'examples are not inside a <details>');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: SUMMARY, samples: { add: [], removeStale: [] } };
   const empty = api.renderPendingPlan(false);
-  ok(!/For example|Removed \(|…and/.test(empty), 'empty samples: no groups, no "and N more"');
+  ok(!/For example|Removed,|And \d/.test(empty), 'empty samples: no groups, no "And N more"');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'a', summary: { ...SUMMARY, add: 2, removeStale: 0 }, samples: { add: add.slice(0, 2), removeStale: [] } };
   const small = api.renderPendingPlan(false);
-  ok(small.includes('For example, added:') && !small.includes('Removed (') && !small.includes('…and'), 'one group only; nothing hidden so no "and N more"');
+  ok(small.includes('For example, added:') && !small.includes('Removed,') && !/And \d/.test(small), 'one group only; nothing hidden so no "and N more"');
 }
 
 // ── §5 ─────────────────────────────────────────────────────────────────────
@@ -238,7 +228,7 @@ section('§5 apply');
   eq(calls.fetch[0].url, '/api/health/my%20domain/index/apply', 'URL is /api/health/<slug>/index/apply');
   eq(calls.fetch[0].opts.method, 'POST', 'POST');
   eq(JSON.parse(calls.fetch[0].opts.body), { basis: 'f'.repeat(64) }, 'the body is {basis} and nothing else');
-  eq(state.rowNote, { tone: 'success', trace: 'Index rebuilt', text: 'Index rebuilt — added 2,705 pages and removed 39 stale rows. index.md is now 438 KB.' }, 'success banner');
+  eq(state.rowNote, { tone: 'success', text: 'The page list was rebuilt. 2,705 pages added, 39 rows removed.' }, 'the outcome, in plain words');
   eq(state.pendingPlan, null, 'plan cleared');
   eq(calls.gates, ['index-rebuild-apply', 'release:index-rebuild-apply'], "write gate held under 'index-rebuild-apply' and released");
   eq(calls.loadHealth, 1, 'report reloaded');
@@ -250,13 +240,13 @@ section('§5 apply');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
   eq(state.pendingPlan, null, '409 INDEX_PLAN_STALE: plan discarded');
-  eq(state.rowNote, { tone: 'info', text: stale }, '409 INDEX_PLAN_STALE: info banner carries the server sentence');
+  eq(state.rowNote, { tone: 'info', text: 'The wiki changed since this was worked out. Press Preview the rebuild again.' }, '409 INDEX_PLAN_STALE: says so, and what to press');
 }
 {
   const { api, state } = build(okFetch(500, { error: 'disk full' }));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
-  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the index — disk full' }, 'other errors: error banner');
+  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: disk full' }, 'other errors: a failure on the row');
   eq(state.busyKey, null, 'busy key reset after an error');
 }
 {
@@ -278,7 +268,7 @@ section('§6 plan runner');
   await api.onQuickAction('d', 'indexPlan');
   eq(calls.fetch[0].url, '/api/health/d/index/plan', 'POSTs /index/plan');
   eq(state.pendingPlan, null, 'nothingToDo: no card');
-  eq(state.rowNote, { tone: 'info', text: 'index.md already lists every page.' }, 'nothingToDo: info banner');
+  eq(state.rowNote, { tone: 'info', text: 'The page list already has every page.' }, 'nothingToDo: says so');
 }
 {
   const { api, state } = build(okFetch(200, { ok: true, nothingToDo: false, basis: 'b'.repeat(64), summary: SUMMARY, samples: { add: [] } }));
@@ -290,7 +280,7 @@ section('§6 plan runner');
 {
   const { api, state } = build(okFetch(409, { error: 'index.md is a symlink', code: 'INDEX_UNREADABLE' }));
   await api.onQuickAction('d', 'indexPlan');
-  eq(state.rowNote, { tone: 'error', text: 'Could not preview the index rebuild — index.md is a symlink' }, 'INDEX_UNREADABLE surfaces as an error banner');
+  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: index.md is a symlink' }, 'INDEX_UNREADABLE surfaces as a failure on the row');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

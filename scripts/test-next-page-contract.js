@@ -34,6 +34,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkPageContract, parseHtml, walk, KIT_CLASSES, MCP_PAGE_CONTRACT, DEPTH_BAR_WIDTH } from './test-helpers/page-contract.js';
+import { wordAllowed, isFigure, BANNED } from './test-helpers/health-words.js';
 import { SECTION_KIT, SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { renderOverview } from '../src/public/next/shared/overview.js';
@@ -224,33 +225,37 @@ function extractConst(src, name) {
 /** ⑤ Wiki health, rendered by the REAL views/domains.js functions. */
 function renderDomainHealth(stateOver) {
   const FNS = ['shouldKeepHealthOnReload', 'healthScanLabel', 'healthSection', 'renderHealthPanel',
-    'renderQuickMaintenance', 'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'countSafeFixable',
-    'countOf', 'totalOpenIssues', 'renderIssueGroups', 'renderIssueGroup', 'renderIssueRow', 'renderDismissedGroup',
+    'renderHealthLanes', 'renderFreeLane', 'renderDecisionLane', 'renderAiLane', 'renderLaneHead', 'renderLaneTrace', 'renderPlainRow', 'renderShowMore', 'renderIssueFold', 'repairButton', 'mergeRowButton', 'deletesReading', 'renderCompareRow', 'renderSuggestRow', 'activeSemanticQuote', 'renderAnchorHere', 'freeRepairCount', 'n0', 'deletedPageCount', 'semanticCoverageFrom', 'liveBatchPairs',
+    'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'renderSemanticScanResult', 'renderSemanticPairCard', 'semanticPrimaryAction', 'semanticHandledLabel', 'semanticPairKey', 'isSemanticPreviewed', 'canMergeSemanticPair',
+    'countOf', 'totalOpenIssues', 'renderIssueRow', 'renderDismissedGroup',
     'describeDismissed', 'relTime', 'renderConfirmCard', 'renderPendingPlan', 'renderOutcomeLine', 'renderAnchorStack',
-    'renderAiProgressRing', 'busyRingLabel', 'fmtKB'];
-  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES'];
+    'busyRingLabel', 'fmtKB'];
+  const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES', 'ISSUE_PAGE', 'FREE_ROWS', 'SEMANTIC_PAGE_SIZE'];
   const deps = {
     escapeHtml: (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     icon: (n) => '<svg data-icon="' + n + '"></svg>', buttonRingHtml: () => '<span class="cur-ring"></span>',
     fmtInt: (n) => String(n), inFlightWriteSlugs: new Set(),
-    renderBanner: () => '', renderMirrorNote: () => '', renderAiProgressRing: () => '',
-    renderConfirmCard: () => '', renderPendingPlan: () => '', activeSemanticScan: () => null,
-    renderSemanticScanResult: () => '', gatedLoader: () => '', loadGate: null,
+    renderBanner: () => '', gatedLoader: () => '', loadGate: null,
+    renderMirrorNote: () => renderStatus({ title: 'This domain is a read-only Shared Brain mirror', detail: 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.' }),
+    activeSemanticScan: () => (stateOver && stateOver.semanticScan) || null,
     renderMonitor, freshnessTier, formatAge, renderStatus, renderDescription, explainerMark, formatUsdHonest,
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     progressRingHtml: () => '<span class="cur-ring"></span>', ringValueFromCounts: () => null,
     ...SECTION_KIT,
   };
   const names = Object.keys(deps).filter((n) => !SECTION_KIT_NAMES.includes(n));
-  const body = 'let state = __state;\n' +
+  const body = 'let state = __state;\nconst fmtIntAlias = 0;\n' +
     CONSTS.map((c) => extractConst(DOMAINS_JS, c)).join('\n') + '\n' +
     FNS.map((f) => extractFunction(DOMAINS_JS, f)).join('\n\n') + '\nreturn renderHealthPanel;';
   const fn = new Function('__state', ...names, ...SECTION_KIT_NAMES, body);
   const state = {
     healthLoading: false, healthError: null, healthSlug: 'early-computing', busyKey: null,
-    expandedGroups: new Set(['scan', 'brokenLinks', 'orphans', 'dismissed']), dismissedRecords: [],
-    estimates: {}, aiAvailable: true, aiRunsOn: { job: 'wiki-health', needsKey: false, provider: 'gemini',
+    expandedGroups: new Set(['scan', 'brokenLinks', 'brokenLinksOpen', 'orphans', 'dismissed', 'missingBacklinks', 'duplicates']), dismissedRecords: [{ type: 'orphans', path: 'concepts/old.md' }, { type: 'semanticDupe', slugs: ['a', 'b'] }],
+    rowLines: {}, rowBusy: new Set(), leftRows: {}, groupVisible: {},
+    estimates: { brokenLinks: { estimatedUsd: 0.0003, priceKnown: true, needAi: 2, resolveFree: 0 }, orphans: { estimatedUsd: 0.0004, priceKnown: true } },
+    activeSlug: 'early-computing', semanticQuote: { slug: 'early-computing', forNext: 500, est: { candidatePairs: 500, totalPairs: 2108, checkedPairs: 0, leftPairs: 2108, nextPairs: 500, estimatedUsd: 0.04, priceKnown: true } },
+    aiAvailable: true, aiRunsOn: { job: 'wiki-health', needsKey: false, provider: 'gemini',
       providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5', priceKnown: true },
     aiSpent: null, confirm: null, pendingPlan: null, banner: null, reveal: null, reserve: null,
     health: {
@@ -317,35 +322,126 @@ const PAGES = [
   { id: 'domains.health (scan failed)', contract: DOMAIN_HEALTH_CONTRACT, enforced: true,
     render: () => renderDomainHealth({ healthError: 'the disk went away', health: null }) },
 ];
-// ── THE PRESS RULE, IN EVERY ARM OF ⑤ IT CAN REACH (Stage 1). The three arms above
-// are at rest, loading and failed, which is none of what the owner reported. These
-// render the question, the plan, the running action and the failure from the real
-// code. A confirm's yes is still violet until the wording stage, so `maxPrimary` is
-// the one thing eased, and only for the arms that carry one.
-const WITH_YES = { ...DOMAIN_HEALTH_CONTRACT, maxPrimary: 1 };
-const ASKED = { title: 'Fix all 2 cross-folder duplicates?', body: 'This MERGES each group.', confirmLabel: 'Merge and delete', run() {} };
+// ── EVERY ARM OF ⑤ A PERSON CAN REACH, RENDERED FROM THE REAL CODE (Stage 2, PLAN §3).
+// The three arms above are at rest, loading and failed, which is none of what the owner
+// reported. These render the question, the plan, the running action, the failure and the
+// clean state. The desk's arms join in Stage 3.
+const WITH_YES = { ...DOMAIN_HEALTH_CONTRACT };
+const ASKED = { title: 'Merge 2 pages with the same name?', body: '2 pages are deleted and their links move to the page that stays.',
+  warn: 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.', tier: 'danger', confirmLabel: 'Merge and delete 2', run() {} };
+const AI_ASKED = { title: 'Ask AI to find a page that should link to each?', body: 'Sends each page’s opening and the list of your page names to Flash Lite 2.5. About $0.0004. Nothing is written yet.', tier: 'ai', confirmLabel: 'Ask for', costText: '≈ $0.0004', run() {} };
+const FORGET = { title: 'Forget all comparisons?', body: 'The Curator forgets which pairs it has compared in this domain, so the next run starts over and costs money again. Pairs you kept apart stay that way. Nothing in your wiki changes.', confirmLabel: 'Forget', run() {} };
+const FIRST_USE = { title: 'Before you use AI help.', body: 'These actions send the opening of the pages involved, and usually a list of your other page names, to your AI provider (Google Gemini). The next step shows what it sends and what it costs before anything runs. The provider’s own privacy policy applies. To turn this off, remove your API key in Settings.', confirmLabel: 'Continue', run() {} };
+const REFUSED = { title: 'This run is over your cost limit.', body: 'It would send 500 pairs: about 200,000 tokens, over your limit of 100,000. Nothing has been sent.', refused: true, settingsLabel: 'Open scan limits', confirmLabel: null };
+const FULL_REPORT = {
+  counts: { entities: 11, concepts: 8, summaries: 4, dismissed: 1 }, dismissedRecords: 2, scannedAt: '2026-10-30T12:00:00Z',
+  brokenLinks: [{ sourceFile: 'entities/a.md', linkText: 'B', suggestedTarget: 'b' }, { sourceFile: 'entities/c.md', linkText: 'Z', occurrences: 2 }],
+  orphans: [{ path: 'concepts/x.md', type: 'concept' }], crossFolderDupes: [{ keep: 'entities/d.md', remove: 'concepts/d.md' }], hyphenVariants: [{ files: ['concepts/a-b.md', 'concepts/ab.md', 'concepts/a_b.md'], suggestedSlug: 'ab' }],
+  folderPrefixLinks: [{ sourceFile: 'concepts/y.md', linkText: 'concepts/z' }], missingBacklinks: [{ summary: 'summaries/s.md', entity: 'entities/e.md' }, { summary: 'summaries/s.md', entity: 'entities/f.md' }],
+  summaryLinkSections: [{ summary: 'summaries/s.md', duplicateLines: 2, conceptsToMove: 1, entitiesToMove: 0 }], indexDrift: [{ missing: 326, stale: 4 }],
+};
+const OPEN_ALL = new Set(['scan', 'brokenLinks', 'brokenLinksOpen', 'orphans', 'dismissed', 'missingBacklinks', 'folderPrefixLinks', 'summaryLinkSections', 'crossFolderDupes', 'hyphenVariants', 'spelling']);
+const CLEAN_REPORT = { counts: { entities: 1, concepts: 1, summaries: 0, dismissed: 0 }, dismissedRecords: 0, scannedAt: '2026-10-30T12:00:00Z',
+  brokenLinks: [], orphans: [], crossFolderDupes: [], hyphenVariants: [], folderPrefixLinks: [], missingBacklinks: [], summaryLinkSections: [], indexDrift: [] };
+const SCAN = { slug: 'early-computing', previewed: new Set(), preview: null, visible: 50, counting: false, failedPairs: 3, failedAll: false,
+  coverage: { total: 2108, checked: 500, left: 1608, next: 500 },
+  pairs: [{ keepFolder: 'concepts', keepSlug: 'handoff', removeFolder: 'concepts', removeSlug: 'hand-off', confidence: 'high', rationale: 'Same.', spellingVariant: true, status: 'open' }] };
+const PLAN_INDEX = { kind: 'indexRebuild', anchor: 'group:indexDrift', basis: 'b', summary: { add: 326, removeStale: 4, keepDescriptions: 10, repoint: 2, mergeDuplicates: 2, unlinkable: 2, unaddressable: 2, bytesBefore: 100000, bytesAfter: 200000 },
+  samples: { add: [{ path: 'concepts/p.md', description: 'd' }, { path: 'concepts/q.md', description: 'e' }], removeStale: [{ target: 'gone', description: 'r' }] } };
+const lane = (st) => ({ health: FULL_REPORT, expandedGroups: OPEN_ALL, ...st });
 const PRESS_ARMS = [
-  ['a question under its row', WITH_YES, { confirm: { ...ASKED, anchor: 'group:brokenLinks' }, rowLines: {} }, ['dm-confirm-card', 'id="dm-confirm-no"']],
-  ['a question under the chips', WITH_YES, { confirm: { ...ASKED, anchor: 'quick' }, rowLines: {} }, ['dm-confirm-card']],
-  ['a question answered, running', WITH_YES, { confirm: { ...ASKED, anchor: 'quick', busy: true, busyLabel: 'Merging…' }, rowLines: {} }, ['aria-busy="true"', 'Merging…']],
-  ['a plan open', WITH_YES, { pendingPlan: { kind: 'orphans', anchor: 'quick', plan: [{}], summary: { rescuable: 1, noHome: 0 } }, rowLines: {} }, ['id="dm-plan-apply-btn"']],
-  ['a repair running', DOMAIN_HEALTH_CONTRACT, { busyKey: 'group:brokenLinks', pressAnchor: 'group:brokenLinks', rowLines: {} }, ['aria-busy="true"', 'Repairing…']],
-  ['AI help running', DOMAIN_HEALTH_CONTRACT, { busyKey: 'orphansPlan', ringAnchor: 'quick', rowLines: {} }, ['aria-busy="true"', 'dm-ai-progress']],
-  ['a row failed', DOMAIN_HEALTH_CONTRACT, { rowLines: { 'group:brokenLinks': { key: 'group:brokenLinks', tone: 'error', text: 'Could not repair: the disk went away', retry() {} } } }, ['dm-outcome-failed', 'Try again']],
-  ['the trace', DOMAIN_HEALTH_CONTRACT, { healthTrace: { slug: 'early-computing', text: 'Repaired 2', at: '2026-11-05T10:00:00Z' }, activeSlug: 'early-computing', rowLines: {} }, ['dm-health-trace']],
-  ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, { readonlyArm: true, rowLines: {} }, []],
+  ['issues, every lane full', WITH_YES, lane({}), ['Free repairs', 'Your decision', 'AI help', 'Repair all', 'deletes 1 page', 'deletes 2 pages']],
+  ['a question that deletes, under its row', WITH_YES, lane({ confirm: { ...ASKED, anchor: 'group:crossFolderDupes' } }), ['dm-confirm-card', 'id="dm-confirm-no"', 'btn-danger']],
+  ['a question answered, running', WITH_YES, lane({ busyKey: 'group:crossFolderDupes', confirm: { ...ASKED, anchor: 'group:crossFolderDupes', busy: true, busyLabel: 'Merging…' } }), ['aria-busy="true"', 'Merging…']],
+  ['an AI question, under its row', WITH_YES, lane({ confirm: { ...AI_ASKED, anchor: 'group:aiOrphans' } }), ['btn-ai', 'Ask for']],
+  ['forgetting comparisons', WITH_YES, lane({ semanticScan: SCAN, confirm: { ...FORGET, anchor: 'group:compare' } }), ['Forget']],
+  ['the first AI use', WITH_YES, lane({ confirm: { ...FIRST_USE, anchor: 'group:compare' } }), ['Before you use AI help.']],
+  ['a run refused', WITH_YES, lane({ confirm: { ...REFUSED, anchor: 'group:compare' } }), ['Open scan limits', 'Close']],
+  ['the links plan open', WITH_YES, lane({ pendingPlan: { kind: 'orphans', anchor: 'group:aiOrphans', plan: [{}], summary: { rescuable: 2, noHome: 3 } } }), ['id="dm-plan-apply-btn"', 'Add these links']],
+  ['the targets plan open', WITH_YES, lane({ pendingPlan: { kind: 'brokenLinks', anchor: 'group:aiBroken', plan: [{}], summary: { retarget: 2, strip: 3 } } }), ['Apply', 'Discard']],
+  ['the rebuild plan open', WITH_YES, lane({ pendingPlan: PLAN_INDEX }), ['Rebuild the list', 'Cancel']],
+  ['a repair running', DOMAIN_HEALTH_CONTRACT, lane({ busyKey: 'group:missingBacklinks', pressAnchor: 'group:missingBacklinks' }), ['aria-busy="true"', 'Repairing…']],
+  ['Repair all running', DOMAIN_HEALTH_CONTRACT, lane({ busyKey: 'laneFree', laneRun: { i: 2, n: 5 } }), ['aria-busy="true"', 'Repairing 2 of 5…']],
+  ['AI help running', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: SCAN, busyKey: 'semanticDupesScan', aiProgress: { key: 'semanticDupesScan', processed: 12, total: 500 } }), ['Comparing 12 of 500…']],
+  ['a row failed', DOMAIN_HEALTH_CONTRACT, lane({ rowLines: { 'group:missingBacklinks': { key: 'group:missingBacklinks', tone: 'error', text: 'Could not repair: the disk went away', retry() {} } } }), ['dm-outcome-failed', 'Try again']],
+  ['the trace', DOMAIN_HEALTH_CONTRACT, lane({ healthTrace: { slug: 'early-computing', lane: 'free', text: 'Repaired 2', at: '2026-11-05T10:00:00Z' }, activeSlug: 'early-computing' }), ['dm-lane-reading', 'Repaired 2']],
+  ['a row left as is, with Undo', DOMAIN_HEALTH_CONTRACT, lane({ activeSlug: 'early-computing', leftRows: { 'issue:orphans:{"path":"concepts/w.md"}': { slug: 'early-computing', group: 'orphans', index: 0, issue: { path: 'concepts/w.md' }, type: 'orphans' } } }), ['Left as is.', 'Undo']],
+  ['pairs waiting, with the spelling row', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: SCAN }), ['Possible duplicates', 'Review', 'Spelling variants', '500 of 2,108 pairs compared', 'could not be compared']],
+  ['no key', DOMAIN_HEALTH_CONTRACT, lane({ aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true } }), ['Needs an AI provider key', 'disabled aria-disabled="true"']],
+  ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, lane({ readonlyArm: true }), ['read-only Shared Brain mirror']],
+  ['clean', DOMAIN_HEALTH_CONTRACT, { health: CLEAN_REPORT, expandedGroups: new Set(['scan']) }, ['Nothing to fix.', 'All 2 pages were checked', 'dm-rescan-btn', 'nothing to look at']],
+  ['clean, with a repair just done', DOMAIN_HEALTH_CONTRACT, { health: CLEAN_REPORT, expandedGroups: new Set(), activeSlug: 'early-computing', healthTrace: { slug: 'early-computing', lane: 'free', text: 'Repaired 5', at: '2026-11-05T10:00:00Z' } }, ['Repaired 5']],
 ];
 for (const [label, contract, over, must] of PRESS_ARMS) {
-  PAGES.push({ id: 'domains.health (' + label + ')', contract, enforced: true, render: () => renderDomainHealth(over), must });
+  PAGES.push({ id: 'domains.health (' + label + ')', contract, enforced: true, render: () => renderDomainHealth(over), must, over });
 }
-function pressRuleViolations(html) {
+
+// ── THE WORDS AND THE LANES (PLAN §3). Each is proved to fail, below, and each by
+// mutating the real code in the stage's mutation run.
+const LANE_TITLES = ['Free repairs', 'Your decision', 'AI help'];
+const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+const hasClass = (n, c) => (n.classes || []).includes(c);
+const ancestorWith = (n, pred) => { for (let p = n.parent; p; p = p.parent) if (pred(p)) return p; return null; };
+// What a person reads: every element's own text, with page names out. A page name is
+// data; today's pair cards are Stage 3's and audited there.
+function visibleLines(root) {
+  const lines = [];
+  walk(root, (n) => {
+    if (n.tag === '#text' || n.tag === 'svg' || n.tag === 'style') return;
+    if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail')) return;
+    if (ancestorWith(n, (p) => hasClass(p, 'visually-hidden') || hasClass(p, 'mono') || hasClass(p, 'dm-plan-data'))) return;
+    if (ancestorWith(n, (p) => hasClass(p, 'dm-group-body') && p.parent && p.parent.attrs && p.parent.attrs['data-group-key'] === 'duplicates')) return;
+    let t = ''; let own = false;
+    for (const c of n.children || []) {
+      if (c.tag === '#text') { const v = c.text == null ? (c.value || '') : c.text; t += v; if (v.trim()) own = true; }
+      else if (hasClass(c, 'mono') || hasClass(c, 'ai-run-model')) t += 'NAME';
+      else if ('data-age-text' in c.attrs) t += 'just now';
+    }
+    if (own) lines.push(t.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim());
+  });
+  return lines;
+}
+function healthContractViolations(html) {
   const bad = [];
+  const root = parseHtml(html);
   if (/dm-banner/.test(html)) bad.push('a banner inside the section: an outcome belongs on its row');
   if (/btn-ghost/.test(html)) bad.push('a text-styled button: every control has visible chrome');
-  if (/role="button"|onclick=/.test(html)) bad.push('something clickable that is not a <button>');
+  // The ⓘ panel's link to the user guide is the shared explainer's, and a real link.
+  if (/role="button"|onclick=|<a\s/.test(html.replace(/<a class="xp-guide"/g, ''))) bad.push('something clickable that is not a <button>');
   if ((html.match(/aria-live=/g) || []).length !== 1) bad.push('the section must hold exactly one live region');
+  for (const t of LANE_TITLES) {
+    const n = (html.match(new RegExp('class="dm-lane-title">' + t + '<', 'g')) || []).length;
+    if (n > 1) bad.push('the lane title "' + t + '" appears ' + n + ' times');
+  }
+  walk(root, (n) => {
+    if (n.tag !== 'button') {
+      if (hasClass(n, 'btn')) bad.push('a .btn that is not a <button>: ' + n.tag);
+      return;
+    }
+    const inAi = !!ancestorWith(n, (p) => hasClass(p, 'dm-lane-ai'));
+    if (hasClass(n, 'btn-ai')) {
+      if (!inAi) bad.push('btn-ai outside AI help');
+      const costed = (n.children || []).some((c) => hasClass(c, 'cur-action-cost'));
+      const quiet = 'disabled' in n.attrs || n.attrs['aria-busy'] === 'true';
+      if (!costed && !quiet) bad.push('an AI button with no cost');
+    }
+    if (hasClass(n, 'btn-primary') && !ancestorWith(n, (p) => hasClass(p, 'dm-sem-card'))) bad.push('btn-primary outside today\'s pair cards: nothing here leans toward an action');
+    if (hasClass(n, 'btn-danger')) {
+      const label = (n.children || []).filter((c) => c.tag === '#text').map((c) => c.text || c.value || '').join('');
+      const block = ancestorWith(n, (p) => hasClass(p, 'dm-confirm-card'));
+      if (!/^(Merge and delete [\d,]+|Merging)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
+      if (!block || !html.includes(WARN)) bad.push('btn-danger without the undo warning in its block');
+    }
+  });
+  for (const l of visibleLines(root)) {
+    if (!l || isFigure(l)) continue;
+    if (BANNED.test(l)) bad.push('a banned word on screen: ' + l);
+    if (/^[A-Z][A-Z ]{3,}$/.test(l)) bad.push('capitals on screen: ' + l);
+    if (!wordAllowed(l)) bad.push('not in the deck: ' + l);
+  }
   return bad;
 }
+const pressRuleViolations = healthContractViolations;
 
 for (const p of PAGES) {
   if (!p.enforced) {
@@ -371,18 +467,33 @@ for (const p of PAGES) {
   ok(pressRuleViolations(base + '<button class="btn btn-ghost">Skip</button>').length === 1, 'CONTROL — a ghost button goes red');
   ok(pressRuleViolations(base + '<span role="button">x</span>').length === 1, 'CONTROL — a span acting as a button goes red');
   ok(pressRuleViolations(base + '<div aria-live="polite"></div>').length === 1, 'CONTROL — a second live region goes red');
+  ok(pressRuleViolations(base + '<div class="dm-lane-title">AI help</div>').length === 0, 'CONTROL — the title alone, once, is fine in the plain render');
+  const full = renderDomainHealth(lane({}));
+  ok(pressRuleViolations(full + '<div class="dm-lane-title">Free repairs</div>').some((v) => /appears 2 times/.test(v)), 'CONTROL — a lane title twice goes red');
+  ok(pressRuleViolations(full + '<button class="btn btn-ai">Go<span class="cur-action-cost">$1</span></button>').some((v) => /outside AI help/.test(v)), 'CONTROL — an AI button outside the lane goes red');
+  ok(pressRuleViolations(full.replace(/<span class="cur-action-cost[^"]*">[^<]*<\/span>/g, '')).some((v) => /with no cost/.test(v)), 'CONTROL — an AI button with no cost goes red');
+  ok(pressRuleViolations(full + '<button class="btn btn-primary">Go</button>').some((v) => /btn-primary/.test(v)), 'CONTROL — a primary button goes red');
+  ok(pressRuleViolations(full + '<div class="dm-confirm-card"><button class="btn btn-danger">Delete</button></div>').some((v) => /does not name/.test(v)), 'CONTROL — a danger button that names nothing goes red');
+  ok(pressRuleViolations(full + '<div>Fix the orphan pages</div>').some((v) => /banned word/.test(v)), 'CONTROL — a banned word goes red');
+  ok(pressRuleViolations(full + '<div>OVERVIEW OF THINGS</div>').some((v) => /capitals/.test(v)), 'CONTROL — capitals go red');
+  ok(pressRuleViolations(full + '<div>Words nobody agreed</div>').some((v) => /not in the deck/.test(v)), 'CONTROL — a word outside the deck goes red');
+  const emptyLanes = renderDomainHealth({ health: CLEAN_REPORT, expandedGroups: new Set() });
+  ok(!/Free repairs|Your decision/.test(emptyLanes) && /AI help/.test(emptyLanes), 'an empty lane renders nothing, title included; AI help stays');
+  ok(!/AI help|btn-ai|dm-lane-title/.test(renderDomainHealth(lane({ readonlyArm: true }))), 'a mirror draws the facts, and no lane and no AI action');
+  // No uppercase anywhere in the section, whatever a shared part does elsewhere.
+  ok(/\.dm-section\.dm-health \* \{ text-transform: none; \}/.test(readFileSync(join(ROOT, 'src/public/next/views/domains.css'), 'utf8')), 'nothing in the section can be uppercased by a shared part');
 }
 {
   // ANTI-VACUITY for the first client: the rendered card really holds the
   // things the rules are about, so a pass is a finding.
   const html = renderDomainHealth();
-  ok(/<details class="cur-fold dm-group/.test(html) && /cur-action dm-quick/.test(html)
+  ok(/<details class="cur-fold dm-group/.test(html) && /dm-lane-ai/.test(html)
     && /<button class="btn btn-secondary" id="dm-rescan-btn"/.test(html) && /class="cur-mon/.test(html)
     && /class="tx-desc/.test(html),
-  'CONTROL — the ⑤ render holds fold rows, the action card, the control-row button, a monitor and a footnote');
+  'CONTROL — the ⑤ render holds fold rows, AI help, the control-row button, a monitor and a footnote');
   const mutated = html.replace('<div class="cur-card-top dm-health-top">', '</div><div class="cur-card-top dm-health-top">');
   ok(checkPageContract(mutated, DOMAIN_HEALTH_CONTRACT).length > 0,
-    'CONTROL — the same render with Rescan moved out of its card goes red');
+    'CONTROL — the same render with Check again moved out of its card goes red');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

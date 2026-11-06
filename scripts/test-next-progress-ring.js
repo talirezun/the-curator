@@ -131,7 +131,7 @@ const ingestCode = assertStrippedSane(stripComments(ingestJs), 'ingest.js', [
 ]);
 const ingestCssCode = assertStrippedSane(stripComments(ingestCss), 'ingest.css', ['.ing-progress {']);
 const domainsCode = assertStrippedSane(stripComments(domainsJs), 'domains.js', [
-  'function renderAiProgressRing()',
+  'function renderConfirmCard()',
   'function noteAiProgress(key, ev)',
 ]);
 
@@ -836,13 +836,14 @@ section('§12  Adoption — domains.js (Health)');
   ok(/total <= 0/.test(note), 'a zero total is refused rather than dividing by it');
   ok(/return;/.test(note), 'a frame carrying neither key leaves the count alone rather than resetting it to zero');
 
-  const rend = extractFunction(domainsJs, 'renderAiProgressRing');
-  ok(rend.includes('ringValueFromCounts'), 'the ring\'s value comes from the server\'s own counts');
-  ok(rend.includes('state.aiProgress.key === state.busyKey') || rend.includes("aiProgress.key === key"),
-    'the count is stamped with the operation it came from, so a late frame cannot drive a different ring');
-  ok(rend.includes('value,'), 'the value is passed through — null (activity only) until a count arrives');
+  // STAGE 2: the count is on the pressed control and the row's reading (the deck's
+  // "Comparing {i} of {n}…"), so the separate ring went. Same rules: the server's own
+  // count, stamped with its operation, never derived from elapsed time.
+  const rend = extractFunction(domainsJs, 'renderConfirmCard') + extractFunction(domainsJs, 'renderCompareRow');
+  ok(rend.includes('state.aiProgress.key === state.busyKey') && rend.includes("state.aiProgress.key === 'semanticDupesScan'"),
+    'the count is stamped with the operation it came from, so a late frame cannot drive a different control');
   ok(!/Date\.now|elapsed/.test(rend),
-    'nothing in the Health ring is derived from elapsed time — an unknown stays an unknown');
+    'nothing in the Health progress is derived from elapsed time — an unknown stays an unknown');
 
   // Every long operation feeds the ring.
   for (const k of ['brokenLinksPlan', 'orphansPlan', 'semanticDupesScan', 'semanticMerge']) {
@@ -857,8 +858,8 @@ section('§12  Adoption — domains.js (Health)');
   ok(busyResets > 5, `sanity: found ${busyResets} busyKey resets`);
   ok(progResets >= busyResets, `every busyKey reset is paired with an aiProgress reset (${progResets} >= ${busyResets})`);
 
-  // Existing per-pair actions must NOT sprout a ring — they are sub-second.
-  ok(rend.includes('semanticPreview:'), 'the sub-second per-pair actions are excluded from the ring');
+  // Per-pair actions never sprouted a ring, and now nothing in Health has a separate one.
+  ok(!domainsCode.includes('renderAiProgressRing'), 'no separate ring: what runs says so on the control itself');
   ok(domainsCode.includes('markSemanticPairStatus'),
     'the merge stream\'s per-pair status recording (which stops a batch destroying unreviewed pairs) is untouched');
   ok(domainsCode.includes('buttonRingHtml()'), 'the 16px in-button ring is used');

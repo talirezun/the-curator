@@ -291,6 +291,9 @@ function navigate(x) { calls.push('navigate ' + x); }
 function applyPendingPlan(s) { calls.push('apply ' + s); }
 function mergeSemanticDuplicates(s) { calls.push('batch ' + s); }
 function onQuickAction(s, a) { calls.push('quick ' + s + ' ' + a); }
+function repairAllFree(s) { calls.push('repairAll ' + s); }
+function undoLeftRow(s, k) { calls.push('undo ' + s + ' ' + k); return Promise.resolve(); }
+const ISSUE_PAGE = 20;
 function confirmSemanticReset(s) { calls.push('reset ' + s); }
 function confirmFixAllOfType(s, t) { calls.push('fixall ' + s + ' ' + t); }
 function activeSemanticScan() { return state.semanticScan; }
@@ -357,7 +360,7 @@ section('§7 Every control reaches its own action, once');
     apply: h('button', { id: 'dm-plan-apply-btn' }),
     discard: h('button', { id: 'dm-plan-discard-btn' }),
     batch: h('button', { id: 'dm-semantic-merge-btn' }),
-    next: h('button', { id: 'dm-semantic-next-btn' }),
+    repairAll: h('button', { id: 'dm-repair-all-btn' }),
     more: h('button', { id: 'dm-semantic-more-btn' }),
     reset: h('button', { id: 'dm-semantic-reset-btn' }),
     quick: h('button', { class: 'dm-quick-btn', 'data-action': 'orphans' }),
@@ -391,12 +394,12 @@ section('§7 Every control reaches its own action, once');
   ok(CALLS.join() === 'render' && s.pendingPlan === null, 'Discard');
   await press(sec, controls.batch);
   ok(CALLS.join() === 'batch alpha', 'Merge N spelling variants');
-  await press(sec, controls.next);
-  ok(CALLS.join() === 'quick alpha semanticDupes', 'Check the next goes through Find duplicate pages\' door');
+  await press(sec, controls.repairAll);
+  ok(CALLS.join() === 'repairAll alpha', 'Repair all');
   await press(sec, controls.more);
   ok(CALLS.join() === 'render' && s.semanticScan.visible === 100, 'Show more');
   await press(sec, controls.reset);
-  ok(CALLS.join() === 'reset alpha', 'Check everything again');
+  ok(CALLS.join() === 'reset alpha', 'Forget all comparisons');
   await press(sec, controls.quick);
   ok(CALLS.join() === 'quick alpha orphans', 'A quick action');
   await press(sec, controls.preview);
@@ -491,7 +494,7 @@ section('§10 The patch refuses or falls back; it never leaves a broken section'
   // except that a failed patch must take its held rows back out of `next`.
   let undone = 0;
   const motion = { readHealthFocus() { return null; }, healthFloor: { position() { return 0; }, hold() {} }, holdLeavingRows() { return { undo() { undone++; } }; },
-    keepHealthFocus() {}, latchHealthAbove() {}, startRowMotion() {}, HEALTH_ROW: '', healthRowKey() {}, healthRowHold() {}, decorateLeavingRow() {},
+    keepHealthFocus() {}, startRowMotion() {}, HEALTH_ROW: '', healthRowKey() {}, healthRowHold() {}, decorateLeavingRow() {},
     onHealthRowCollapse() {}, onHealthRowRemoved() {}, onHealthRowOpen() {}, healthPressY: null, pageY() { return 0; } };
   const make = (activeSlug, patch) => new Function('state', 'patchInPlace', 'healthMorphKey', 'console', ...Object.keys(motion),
     morphSrc + '\nreturn morphHealthSection;')({ activeSlug }, patch, healthKey, { warn() {} }, ...Object.values(motion));

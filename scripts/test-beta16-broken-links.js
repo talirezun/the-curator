@@ -764,7 +764,7 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
       JSON.stringify(st.rowNote));
     assert(st.rowNote && !/Missing plan/i.test(st.rowNote.text) && !/could not/i.test(st.rowNote.text),
       '/next orphans: the message does not read as a failure', JSON.stringify(st.rowNote));
-    assert(st.rowNote && /manual review/i.test(st.rowNote.text) && /3 orphan pages/.test(st.rowNote.text),
+    assert(st.rowNote && /nothing changed/i.test(st.rowNote.text) && /3 pages/.test(st.rowNote.text),
       '/next orphans: the message says what actually happened, with the real count',
       JSON.stringify(st.rowNote));
     assert(s.__calls.length === 1 && s.__calls[0].url.endsWith('/orphans/plan'),
@@ -807,7 +807,7 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
     assert(st.pendingPlan === null,
       '/next broken links: an empty plan is NOT stored either (the unreported half of the defect)',
       JSON.stringify(st.pendingPlan));
-    assert(st.rowNote && st.rowNote.tone === 'info' && /nothing was written/i.test(st.rowNote.text),
+    assert(st.rowNote && st.rowNote.tone === 'info' && /nothing changed/i.test(st.rowNote.text),
       '/next broken links: informational, and says the wiki is unchanged', JSON.stringify(st.rowNote));
     assert(s.__calls.length === 1, '/next broken links: no apply attempted', String(s.__calls.length));
   }
@@ -835,7 +835,7 @@ console.log('\n8. empty plan: normal outcome in both frontends, backstop 400 at 
       '/next: when every AI batch failed, the message says the AI did not answer', t);
     assert(!/no confident home/i.test(t),
       '/next: and does NOT assert a judgement the model never made', t);
-    assert(/unchanged/i.test(t), '/next: and states the wiki is unchanged', t);
+    assert(/nothing changed/i.test(t), '/next: and states the wiki is unchanged', t);
   }
 
   // ── (a6) the SECOND layer: applyPendingPlan itself refuses an empty plan ─

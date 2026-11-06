@@ -46,7 +46,7 @@ function fnSource(name) {
   throw new Error('unterminated ' + name);
 }
 
-const FNS = ['readHealthBeforeAsking', 'healthTraceText', 'beforeHealthPaint', 'resetHealthPressRule', 'confirmFixAllOfType', 'confirmFixSafe', 'safeFixDeletedPages', 'deletedPageCount', 'takeHealthNote',
+const FNS = ['readHealthBeforeAsking', 'noteHealthTrace', 'beforeHealthPaint', 'resetHealthPressRule', 'confirmFixAllOfType', 'deletedPageCount', 'takeHealthNote', 'healthGroupAlive', 'repairAllFree', 'freeRepairCount',
   'dropIssuesLocally', 'placeHealthStack', 'healthStackHome', 'onHealthKeydown', 'liveBatchPairs', 'heldOutcome', 'healthRowHold'];
 
 function world() {
@@ -54,23 +54,26 @@ function world() {
   const ran = [];
   const body = `
     const state = { rowNote: null, rowOutcomes: {}, rowLines: {}, confirm: null, pendingPlan: null, pressAnchor: null, ringAnchor: null,
-      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), leftRows: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
     const HEALTH_CATEGORIES = [{ key: 'missingBacklinks', label: 'Missing backlinks' }, { key: 'crossFolderDupes', label: 'Cross-folder duplicates' }, { key: 'brokenLinks', label: 'Broken links' }];
     const AUTO_FIX_TYPES = new Set(['missingBacklinks', 'crossFolderDupes', 'hyphenVariants', 'brokenLinks']);
     const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
     const GIT_UNDO_WARN = 'WARN'; const GIT_UNDO_NOTE = 'NOTE';
-    const HEALTH_HOLD_MS = 1000; const HEALTH_TRACE_MAX = 24;
+    const HEALTH_HOLD_MS = 1000;
+    const HEALTH_FREE_GROUPS = new Set(['missingBacklinks', 'folderPrefixLinks', 'summaryLinkSections', 'brokenLinks', 'indexDrift']);
     let confirmOnScreen = null;
     const healthFloor = { reset() {} };
     const document = { getElementById() { return null; } };
     const onQuickAction = () => {};
     let fetchResult = null; let fetchFails = null; let fetchCalls = 0;
-    const fetchJSON = async () => { fetchCalls++; if (fetchFails) throw new Error(fetchFails); return fetchResult; };
+    let fixFn = null;
+    const fetchJSON = async (u, o) => { fetchCalls++; if (fixFn && String(u).endsWith('/fix')) return fixFn(JSON.parse(o.body).type); if (fetchFails) throw new Error(fetchFails); return fetchResult; };
+    const FREE_REPAIR_ORDER = ['folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];
+    const inFlightWriteSlugs = new Set(); const beginDomainWrite = () => () => {}; const loadHealth = async () => {};
     let healthPressY = null; let planLeaving = false;
     const pluralize = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
     const countSafeFixable = (r) => (r.missingBacklinks || []).length + (r.crossFolderDupes || []).length;
     const fixAllOfType = (slug, type) => { __ran.push('fixAll ' + type); };
-    const runFixSafe = () => { __ran.push('fixSafe'); };
     const render = () => { __ran.push('render'); };
     const isCurrentMount = () => true;
     const healthRowCollapseMs = () => 240;
@@ -78,7 +81,7 @@ function world() {
     const pageY = (r) => r.y; const myMountToken = 1;
     const setTimeout = (fn, ms) => { __timers.push({ fn, ms }); return 0; };
     ${FNS.map(fnSource).join('\n')}
-    return { state, ${FNS.join(', ')}, setPress(y) { healthPressY = y; }, setFetch(r, f) { fetchResult = r; fetchFails = f; }, fetchCount() { return fetchCalls; } };`;
+    return { state, ${FNS.join(', ')}, setPress(y) { healthPressY = y; }, setFetch(r, f) { fetchResult = r; fetchFails = f; }, setFixFetch(fn) { fixFn = fn; }, fetchCount() { return fetchCalls; } };`;
   const api = new Function('__ran', '__timers', body)(ran, timers);
   return { ...api, ran, timers };
 }
@@ -95,15 +98,15 @@ section('§1 Free repairs run on the press; anything deleting a page asks');
   w.setFetch({ missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }] });
   await w.confirmFixAllOfType('a', 'crossFolderDupes');
   ok(w.state.confirm && !w.ran.some((r) => r.startsWith('fixAll')), 'Fix all on a type that deletes only asks');
-  ok(/1 page will be deleted/.test(w.state.confirm.body) && /WARN/.test(w.state.confirm.body), 'and the question counts the pages and carries the undo warning');
-  ok(w.state.confirm.confirmLabel === 'Merge and delete', 'its button says what it does');
+  ok(/1 page is deleted/.test(w.state.confirm.body) && /WARN/.test(w.state.confirm.warn), 'and the question counts the pages and carries the undo warning');
+  ok(w.state.confirm.confirmLabel === 'Merge and delete 1' && w.state.confirm.tier === 'danger', 'its button says what it does, in the danger style');
 
   // The count in a delete warning is read at the moment of asking.
   const st = world();
   st.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }, { keep: 'c', remove: 'd' }, { keep: 'e', remove: 'f' }, { keep: 'g', remove: 'h' }] };
   st.setFetch({ crossFolderDupes: [{ keep: 'g', remove: 'h' }] });
   await st.confirmFixAllOfType('a', 'crossFolderDupes');
-  ok(st.fetchCount() === 1 && /1 page will be deleted/.test(st.state.confirm.body), 'four on screen, one on disk: it says one', st.state.confirm && st.state.confirm.body);
+  ok(st.fetchCount() === 1 && /1 page is deleted/.test(st.state.confirm.body), 'four on screen, one on disk: it says one', st.state.confirm && st.state.confirm.body);
   const nil = world();
   nil.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }] };
   nil.setFetch({ crossFolderDupes: [] });
@@ -117,21 +120,32 @@ section('§1 Free repairs run on the press; anything deleting a page asks');
   ok(!down.state.confirm && down.state.rowNote.tone === 'error', 'cannot read: no question at all, rather than one with an old number');
   ok(down.state.busyKey === null, 'and nothing is left waiting');
 
-  const v = world();
-  v.state.health = { missingBacklinks: [{}], crossFolderDupes: [], hyphenVariants: [] };
-  await v.confirmFixSafe('a');
-  ok(!v.state.confirm && v.ran.includes('fixSafe'), 'Fix N safe issues with nothing to delete runs at once');
-  const d = world();
-  d.state.health = { missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }], hyphenVariants: [{ files: ['x', 'y', 'z'] }] };
-  d.setFetch(d.state.health);
-  await d.confirmFixSafe('a');
-  ok(d.state.confirm && !d.ran.includes('fixSafe'), 'with pages to delete it asks');
-  ok(/3 pages will be deleted/.test(d.state.confirm.body), 'and counts them: a pair and a three-page group is 3');
-  const stale = world();
-  stale.state.health = { missingBacklinks: [{}], crossFolderDupes: [{ keep: 'a', remove: 'b' }], hyphenVariants: [] };
-  stale.setFetch({ missingBacklinks: [{}], crossFolderDupes: [], hyphenVariants: [] });
-  await stale.confirmFixSafe('a');
-  ok(!stale.state.confirm && stale.ran.includes('fixSafe'), 'and if what it would delete has gone by now, it no longer asks');
+}
+
+section('§1a Repair all: free rows only, in the server\'s order, and it runs on the press');
+{
+  const SAFE_ORDER = (/const TYPES = (\[[^\]]+\])/.exec(readFileSync(new URL('../src/brain/health.js', import.meta.url), 'utf8')) || [])[1];
+  const serverOrder = JSON.parse(SAFE_ORDER.replace(/'/g, '"'));
+  const go = async (report, fail) => {
+    const w = world();
+    w.state.health = report;
+    const sent = [];
+    w.setFixFetch((type) => { sent.push(type); if (fail && fail.includes(type)) throw new Error('the disk went away'); return { fixed: (report[type] || []).length, total: (report[type] || []).length }; });
+    await w.repairAllFree('a');
+    return { w, sent };
+  };
+  const full = { missingBacklinks: [{}, {}], folderPrefixLinks: [{}], summaryLinkSections: [{}], brokenLinks: [{ suggestedTarget: 't' }], crossFolderDupes: [{ keep: 'a', remove: 'b' }], hyphenVariants: [{ files: ['x', 'y'] }] };
+  const { w, sent } = await go(JSON.parse(JSON.stringify(full)));
+  ok(!w.state.confirm, 'a free repair that deletes nothing asks nothing');
+  ok(!sent.includes('crossFolderDupes') && !sent.includes('hyphenVariants'), 'and never sends a type that deletes a page');
+  ok(JSON.stringify(sent) === JSON.stringify(serverOrder.filter((t) => sent.includes(t))) && sent.length === 4, 'one type at a time, in fixAllSafe\'s own order: ' + sent.join(' '));
+  ok(w.state.busyKey === null && w.state.laneRun === null, 'and nothing is left waiting');
+  const part = await go(JSON.parse(JSON.stringify(full)), ['missingBacklinks']);
+  ok(part.sent.length === 4, 'one type failing does not stop the rest');
+  ok(part.w.state.rowNote && part.w.state.rowNote.tone === 'error' && /^Repaired 3 of 5\. 2 could not be repaired\.$/.test(part.w.state.rowNote.text) && part.w.state.rowNote.key === 'lane:free', 'and the lane says exactly how far it got: ' + (part.w.state.rowNote || {}).text);
+  ok(typeof part.w.state.rowNote.retry === 'function', 'with Try again');
+  const none = await go({ missingBacklinks: [], crossFolderDupes: [{ keep: 'a', remove: 'b' }] });
+  ok(none.sent.length === 0, 'with nothing free to repair, nothing is sent');
 }
 
 section('§1b An outcome belongs to the domain it ran on');
@@ -171,9 +185,13 @@ section('§1b An outcome belongs to the domain it ran on');
 section('§1c The trace is never cut off');
 {
   const w = world();
-  ok(w.healthTraceText({ text: 'Repaired 2' }) === 'Repaired 2', 'a short outcome is its own trace');
-  ok(w.healthTraceText({ text: 'Repointed 4 occurrences, removed the brackets from 2 occurrences, across 3 files.' }) === '', 'a long one leaves no trace, rather than half a sentence');
-  ok(w.healthTraceText({ text: 'Merged a-very-long-page-name-indeed into another-long-one.', trace: 'Merged a pair' }) === 'Merged a pair', 'unless it names a short one');
+  w.noteHealthTrace({ text: 'A whole long sentence that names nothing for the trace.' }, 'a');
+  ok(w.state.healthTrace === null, 'an action that names no trace leaves none, rather than half a sentence');
+  w.noteHealthTrace({ tone: 'error', text: 'Could not', trace: 'Repaired 2' }, 'a');
+  ok(w.state.healthTrace === null, 'a failure leaves no trace');
+  w.noteHealthTrace({ text: 'Merged a into b.', trace: 'Merged 1', lane: 'decision' }, 'a');
+  ok(w.state.healthTrace && w.state.healthTrace.text === 'Merged 1' && w.state.healthTrace.lane === 'decision', 'and what it names goes to its lane');
+  w.state.healthTrace = null;
   w.state.rowNoteFrom = { slug: 'a', token: 1 };
   w.state.rowNote = { tone: 'success', text: 'Repointed 4 occurrences, removed the brackets from 2 occurrences, across 3 files.' };
   w.takeHealthNote(1);
@@ -218,12 +236,12 @@ section('§2 An outcome is filed on the row; a failure has no timer');
   const w = world();
   w.state.pressAnchor = 'group:missingBacklinks';
   w.state.health = { missingBacklinks: [{ summary: 's', entity: 'e' }] };
-  w.state.rowNote = { key: 'group:missingBacklinks', held: true, tone: 'success', text: 'Repaired 1', drop: { type: 'missingBacklinks' } };
+  w.state.rowNote = { key: 'group:missingBacklinks', held: true, tone: 'success', text: 'Repaired 1', trace: 'Repaired 1', lane: 'free', drop: { type: 'missingBacklinks' } };
   w.takeHealthNote(1);
   ok(w.state.rowNote === null, 'the note is consumed once');
   ok(w.state.rowOutcomes['group:missingBacklinks'].text === 'Repaired 1', 'the outcome is on its row');
   ok(w.state.healthLive === 'Repaired 1', 'the live region says it');
-  ok(w.state.healthTrace && w.state.healthTrace.text === 'Repaired 1', 'and the section head keeps the trace');
+  ok(w.state.healthTrace && w.state.healthTrace.text === 'Repaired 1', 'and its lane\'s head keeps the trace');
   ok(w.state.health.missingBacklinks.length === 0, 'the row left the figures at once, ahead of the rescan');
   const held = w.timers.filter((t) => t.ms === 1000);
   ok(held.length === 1, 'a held outcome has one timer, about a second');
@@ -260,18 +278,20 @@ section('§3 Nothing is stranded: a row that has gone gives its question a home'
 {
   const w = world();
   w.state.health = { missingBacklinks: [] };
-  ok(w.healthStackHome('group:missingBacklinks') === 'quick', 'a group with no rows left has no row to draw under');
+  ok(w.healthStackHome('group:missingBacklinks') === 'lane:free', 'a group with no rows left has no row to draw under: its lane\'s head takes it');
   w.state.health = { missingBacklinks: [{ a: 1 }] };
   ok(w.healthStackHome('group:missingBacklinks') === 'group:missingBacklinks', 'CONTROL: with rows, it stays under its row');
-  ok(w.healthStackHome(null) === 'quick', 'no anchor is Quick maintenance, where a chip opened it');
+  ok(w.healthStackHome(null) === 'quick', 'no anchor is the section\'s own control row');
   ok(w.healthStackHome('issue:missingBacklinks:{"a":1}') === 'issue:missingBacklinks:{"a":1}', 'an issue row still there keeps its line');
-  ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'quick', 'one that has gone hands it to Quick maintenance');
-  ok(w.healthStackHome('sem-batch') === 'quick', 'with no scan, the batch row has no home');
-  w.state.semanticScan = { batchShown: true, coverage: {}, pairs: [] };
-  ok(w.healthStackHome('sem-batch') === 'sem-batch', 'with the bar still shown, it stays there');
+  ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'lane:decision', 'one that has gone hands it to the lane');
+  w.state.leftRows = { 'issue:missingBacklinks:{"a":2}': {} };
+  ok(w.healthStackHome('issue:missingBacklinks:{"a":2}') === 'issue:missingBacklinks:{"a":2}', 'a row left as is this round still stands');
+  w.state.leftRows = {};
+  ok(w.healthStackHome('group:compare') === 'group:compare' && w.healthStackHome('group:aiOrphans') === 'group:compare', 'AI help\'s rows fall back to Compare, which always stands');
+  w.state.semanticScan = { coverage: {}, pairs: [] };
   w.state.rowOutcomes = { 'group:gone': { slug: 'a', tone: 'error', text: 'x', key: 'group:gone' } };
   w.placeHealthStack();
-  ok(w.state.rowLines.quick && w.state.rowLines.quick.text === 'x', 'a failure whose row has gone is still on screen');
+  ok(w.state.rowLines['lane:decision'] && w.state.rowLines['lane:decision'].text === 'x', 'a failure whose row has gone is still on screen');
   w.state.rowOutcomes = { quick: { slug: 'other', tone: 'error', text: 'x', key: 'quick' } };
   w.placeHealthStack();
   ok(!w.state.rowLines.quick && !w.state.rowOutcomes.quick, 'another domain\'s outcome is dropped, never drawn');
@@ -309,9 +329,9 @@ section('§5 Figures change before the rescan, and only for what was fixed');
   w.state.dismissedRecords = [{ p: 9 }, { p: 8 }];
   w.dropIssuesLocally({ restored: { p: 9 } });
   ok(w.state.dismissedRecords.length === 1 && w.state.health.dismissedRecords === 2, 'a restore takes its own record');
-  w.dropIssuesLocally({ safe: true });
-  ok(w.state.health.missingBacklinks.length === 0 && w.state.health.brokenLinks.length === 1, 'Fix N safe issues clears what it covers, and not the links it cannot fix');
-  ok(w.state.health.orphans.length === 1, 'and never orphans, which it does not touch');
+  w.dropIssuesLocally({ type: 'missingBacklinks' }); w.dropIssuesLocally({ type: 'brokenLinks' });
+  ok(w.state.health.missingBacklinks.length === 0 && w.state.health.brokenLinks.length === 1, 'a repair clears what it covers, and not the links it cannot fix');
+  ok(w.state.health.orphans.length === 1, 'and never pages nothing links to, which it does not touch');
 }
 
 section('§6 A held key is not a second press; Escape closes a question');
@@ -384,7 +404,7 @@ section('§8 Two absences, on purpose');
 {
   const panel = fnSource('renderHealthPanel');
   ok(!/renderBanner|state\.banner/.test(panel), 'the Health section draws no banner: an outcome is on its row');
-  for (const name of ['runFixSafe', 'fixAllOfType', 'runBrokenLinksPlan', 'runOrphansPlan', 'runIndexRebuildPlan', 'applyIndexRebuildPlan',
+  for (const name of ['repairAllFree', 'fixAllOfType', 'runBrokenLinksPlan', 'runOrphansPlan', 'runIndexRebuildPlan', 'applyIndexRebuildPlan',
     'applyPendingPlan', 'runSemanticScan', 'runSemanticReset', 'mergeOneSemanticPair', 'skipSemanticPair', 'runMergeSemanticDuplicates', 'dismissIssue', 'undismissIssue']) {
     ok(!/state\.banner\s*=/.test(fnSource(name)), name + ' files on the row, not in a banner');
   }

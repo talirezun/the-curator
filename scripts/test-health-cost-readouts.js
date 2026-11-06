@@ -163,7 +163,7 @@ section('8. domains.js call sites — old formatUsd(est.estimatedUsd) direct cal
     'costReadout\'s own known-price branch still calls formatUsd(est.estimatedUsd) internally (that call is legitimate, not a leftover)');
 
   const costReadoutCalls = (srcMinusDef.match(/costReadout\(est/g) || []).length;
-  eq(costReadoutCalls, 4, 'costReadout(est…) is called at all 4 known CALL sites (quickAiButton + 3 confirm dialogs), excluding its own declaration');
+  eq(costReadoutCalls, 5, 'costReadout(est…) is called at all 5 known CALL sites (quickAiButton, the Compare row, aboutCost, the Compare confirm twice), excluding its own declaration');
 }
 
 // ── 9-13 (REMOVED in v3.41.0) — sbRevokeDoneStatus lived ONLY in the
@@ -249,8 +249,11 @@ function quickSandbox(state) {
     icon: (n) => '<svg data-icon="' + n + '"></svg>', buttonRingHtml: () => '<RING/>',
     ...SECTION_KIT,
   };
-  return buildSandbox(domainsSrc, ['formatUsd', 'costReadout', 'pluralize', 'countSafeFixable',
-    'quickAiButton', 'renderQuickMaintenance', 'renderConfirmCard'], kit);
+  kit.activeSemanticScan = () => null;
+  kit.renderPendingPlan = () => '';
+  kit.renderOutcomeLine = () => '';
+  return buildSandbox(domainsSrc, ['formatUsd', 'costReadout', 'pluralize', 'n0', 'quickAiButton', 'renderAiLane', 'renderCompareRow', 'renderSuggestRow',
+    'renderPlainRow', 'renderLaneHead', 'renderAnchorHere', 'renderAnchorStack', 'activeSemanticQuote', 'semanticCoverageFrom', 'renderConfirmCard'], kit);
 }
 const REPORT = { brokenLinks: [{}, {}, {}], orphans: [{}, {}], crossFolderDupes: [], hyphenVariants: [],
   folderPrefixLinks: [], missingBacklinks: [] };
@@ -262,9 +265,9 @@ const aiButtons = (html) => [...html.matchAll(/<button class="btn btn-ai btn-xs 
 section('16. No key → the three ✨ AI actions are disabled, never hidden (v3.67.0)');
 {
   const st = { busyKey: null, aiAvailable: false, aiRunsOn: NOKEY, estimates: {}, aiSpent: null };
-  const html = quickSandbox(st).renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+  const html = quickSandbox(st).renderAiLane({ slug: 'articles' }, REPORT, false);
   const btns = aiButtons(html);
-  eq(btns.map((b) => b.key).join(','), 'brokenLinks,orphans,semanticDupes',
+  eq(btns.map((b) => b.key).join(','), 'semanticDupes,orphans,brokenLinks',
     'disabled, never hidden: all three AI actions render with no key');
   ok(btns.every((b) => b.attrs === ' disabled aria-disabled="true" aria-describedby="dm-quick-runs-on"'),
     '…each one DISABLED with the kit\'s attributes, described by the no-key line');
@@ -274,21 +277,20 @@ section('16. No key → the three ✨ AI actions are disabled, never hidden (v3.
     '…and its door is the shared one to Providers & keys');
   ok(!/dm-open-settings-btn|Open Settings/.test(html) && !/dm-open-settings-btn/.test(domainsSrc),
     'the old "Open Settings" door (which landed on General) is gone, from the markup AND the listeners');
-  ok(html.indexOf('dm-quick-actions') < html.indexOf('dm-quick-runs-on')
-    && html.indexOf('dm-quick-runs-on') < html.indexOf('dm-quick-footnote'),
-    'the line sits directly under the action bar, above the cost promise');
+  ok(html.indexOf('dm-quick-btn') < html.indexOf('dm-quick-runs-on'),
+    'the line sits under the actions it describes');
 
   // With nothing structural to fix and no key, the bar used to be REPLACED by
   // a sentence. Now the bar stays, with the one always-offered AI action.
-  const empty = quickSandbox({ ...st }).renderQuickMaintenance({ slug: 'articles' }, EMPTY_REPORT, false);
+  const empty = quickSandbox({ ...st }).renderAiLane({ slug: 'articles' }, EMPTY_REPORT, false);
   eq(aiButtons(empty).map((b) => b.key).join(','), 'semanticDupes',
-    'disabled, never hidden: with nothing to fix and no key, "Find duplicate pages" is still on screen, disabled');
-  ok(/QUICK MAINTENANCE/.test(empty), '…inside the Quick maintenance bar, not a replacement sentence');
+    'disabled, never hidden: with nothing to fix and no key, Compare is still on screen, disabled');
+  ok(/AI help/.test(empty), '…inside the AI help lane, not a replacement sentence');
 
   // No probe answer at all (state.aiRunsOn null, aiAvailable false): the fail-
   // safe reading is "no key" — disabled, the direction the old code took by hiding.
   const unknown = quickSandbox({ busyKey: null, aiAvailable: false, aiRunsOn: null, estimates: {} })
-    .renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+    .renderAiLane({ slug: 'articles' }, REPORT, false);
   ok(aiButtons(unknown).length === 3 && aiButtons(unknown).every((b) => /aria-disabled="true"/.test(b.attrs)),
     'with no probe answer, the three are shown disabled (fail-safe), never hidden');
 }
@@ -298,9 +300,10 @@ section('17. A key → one run line under the bar; the per-button cost badges st
   const st = { busyKey: null, aiAvailable: true, aiRunsOn: PRICED, aiSpent: null,
     estimates: { brokenLinks: { estimatedUsd: 0.004, priceKnown: true, costNote: null },
       orphans: { estimatedUsd: 0.002, priceKnown: true, costNote: null } } };
-  const html = quickSandbox(st).renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+  const html = quickSandbox(st).renderAiLane({ slug: 'articles' }, REPORT, false);
   const btns = aiButtons(html);
-  ok(btns.length === 3 && btns.every((b) => !/disabled/.test(b.attrs)), 'with a key the three are enabled');
+  ok(btns.length === 3 && btns.filter((b) => !/disabled/.test(b.attrs)).map((b) => b.key).join() === 'orphans,brokenLinks', 'with a key, each one with a figure is enabled');
+  ok(/disabled/.test(btns[0].attrs) && btns[0].key === 'semanticDupes', '…and the one with no figure yet waits for it: every AI button carries its cost');
   const line = (html.match(/<p class="ai-run"[\s\S]*?<\/p>/) || [''])[0];
   const text = line.replace(/<[^>]+>/g, '');
   eq(text, 'Runs on Flash Lite 2.5 · each action shows its cost · Change model',
@@ -309,11 +312,11 @@ section('17. A key → one run line under the bar; the per-button cost badges st
   eq((html.match(/class="ai-run"/g) || []).length, 1, 'exactly one run line for the three actions, never one per button');
   ok(/<span class="cur-action-cost dm-quick-cost">≈ \$0\.0040<\/span>/.test(html) && /<span class="cur-action-cost dm-quick-cost">≈ \$0\.0020<\/span>/.test(html),
     'each button keeps its compact cost badge (costReadout)');
-  ok(!/<details/.test(html), 'the line is not behind a chevron (v3.16.1)');
+  ok(html.indexOf('class="ai-run"') > html.lastIndexOf('</details>'), 'the line is not behind a chevron (v3.16.1)');
   // The route may not have sent runsOn (an older backend): the probe then
   // rebuilds one from provider/model, and the line still names the model.
   const bare = quickSandbox({ ...st, aiRunsOn: { job: 'wiki-health', needsKey: false, provider: 'gemini', model: 'gemini-2.5-flash-lite' } })
-    .renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+    .renderAiLane({ slug: 'articles' }, REPORT, false);
   ok(/Runs on <span class="ai-run-model" title="gemini · gemini-2\.5-flash-lite">gemini-2\.5-flash-lite<\/span>/.test(bare),
     'a probe with no runsOn still yields a line naming the model (by its id)');
 }
@@ -324,14 +327,14 @@ section('18. After a plan or a scan → what ran and what it cost, on THIS domai
     inputTokens: 5812, outputTokens: 640, cachedReadTokens: 0, cacheWriteTokens: 0, calls: 2, usd: 0.0008372,
     estimated: false, fallbackFrom: null };
   const st = { busyKey: null, aiAvailable: true, aiRunsOn: PRICED, estimates: {}, aiSpent: { slug: 'articles', spent: SPENT } };
-  const html = quickSandbox(st).renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+  const html = quickSandbox(st).renderAiLane({ slug: 'articles' }, REPORT, false);
   const text = html.replace(/<[^>]+>/g, '');
-  ok(text.includes('Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008'), 'the after-line: model, tokens in/out, dollars');
+  ok(text.includes('Last run: Flash Lite 2.5 · $0.0008'), 'the after-line: model and dollars');
   ok(html.indexOf('dm-quick-runs-on') < html.indexOf('dm-quick-spent'), '…under the before-line (it adds a line, replaces nothing)');
-  const other = quickSandbox({ ...st }).renderQuickMaintenance({ slug: 'research' }, REPORT, false);
-  ok(!/Ran on/.test(other), 'another domain never shows this domain\'s bill');
+  const other = quickSandbox({ ...st }).renderAiLane({ slug: 'research' }, REPORT, false);
+  ok(!/Last run/.test(other), 'another domain never shows this domain\'s bill');
   const unpriced = quickSandbox({ ...st, aiSpent: { slug: 'articles', spent: { ...SPENT, usd: null } } })
-    .renderQuickMaintenance({ slug: 'articles' }, REPORT, false);
+    .renderAiLane({ slug: 'articles' }, REPORT, false);
   ok(/price not published/.test(unpriced) && !/\$0\.00\b/.test(unpriced.replace(/<[^>]+>/g, '')),
     'an unpriced run says "price not published", never $0.00');
 
@@ -357,44 +360,39 @@ section('18. After a plan or a scan → what ran and what it cost, on THIS domai
   }
 }
 
-section('19. The run line is the FIRST line of each AI confirm (v3.67.0)');
+section('19. Each AI confirm names the model and the cost, in the deck\'s words (Stage 2; the run line was v3.67.0)');
 {
-  const st = { confirm: { title: 'Ask AI to resolve broken links?', body: 'Sends each broken link…',
-    confirmLabel: 'Build plan', runLineHtml: renderRunsOn(PRICED, { id: 'dm-confirm-runs-on' }) } };
-  const card = quickSandbox(st).renderConfirmCard();
-  const iT = card.indexOf('dm-confirm-title'), iL = card.indexOf('class="ai-run"'), iB = card.indexOf('dm-confirm-body');
-  ok(iT !== -1 && iL > iT && iL < iB, 'title, then the run line, then the body');
-  const plain = quickSandbox({ confirm: { title: 'Fix 3 safe issues?', body: 'No AI.', confirmLabel: 'Fix now' } }).renderConfirmCard();
-  ok(!/ai-run/.test(plain), 'a confirm that spends nothing carries no run line');
-  // The three builders compose it — EXECUTED: the estimate's own runsOn wins,
-  // the resting probe's is the fallback.
-  const EST_RUNSON = { ...PRICED, inputTokens: 18000, outputTokensLow: 400, outputTokensHigh: 900, usdLow: 0.002, usdHigh: 0.004 };
+  // STAGE 2: the deck's confirm says "to {model}" and "About {x}" in its own sentence, so
+  // the kit's run line above it said the same thing twice. Same intent: model and cost
+  // are read before the yes, and the yes wears the cost.
   for (const [name, key] of [['confirmBrokenLinksPlan', 'brokenLinks'], ['confirmOrphansPlan', 'orphans']]) {
     const body = extractFn(domainsSrc, name);
-    for (const [est, want] of [[{ estimatedUsd: 0.003, priceKnown: true, inventorySize: 10, needAi: 3, resolveFree: 0, runsOn: EST_RUNSON }, '≈$0.0020–$0.0040'],
-                               [{ estimatedUsd: 0.003, priceKnown: true, inventorySize: 10, needAi: 3, resolveFree: 0 }, 'Runs on']]) {
-      const state = { estimates: { [key]: est }, aiRunsOn: PRICED, aiProvider: 'gemini', aiModel: 'gemini-2.5-flash-lite' };
-      const fn = new Function('state', 'costReadout', 'render', 'myMountToken', 'renderRunsOn', 'runBrokenLinksPlan', 'runOrphansPlan',
-        `return (${body});`)(state, () => '$0.0030', () => {}, 1, renderRunsOn, () => {}, () => {});
-      fn('articles');
-      const line = state.confirm && state.confirm.runLineHtml;
-      ok(typeof line === 'string' && line.includes(want) && /id="dm-confirm-runs-on"/.test(line),
-        `${name}: the confirm's run line ${est.runsOn ? 'is the ESTIMATE\'s own (its range)' : 'falls back to the resting model'}`);
-    }
+    const est = { estimatedUsd: 0.003, priceKnown: true, inventorySize: 10, needAi: 3, resolveFree: 1, runsOn: { ...PRICED, modelLabel: 'The Estimate Model' } };
+    const state = { estimates: { [key]: est }, aiRunsOn: PRICED, aiProvider: 'gemini', aiModel: 'gemini-2.5-flash-lite', health: { brokenLinks: [{}, {}, {}, {}] } };
+    const fn = new Function('state', 'costReadout', 'render', 'myMountToken', 'runBrokenLinksPlan', 'runOrphansPlan', 'healthModelName', 'aboutCost',
+      `return (${body});`)(state, (e, o) => (e ? (o && o.compact ? '≈ $0.0030' : '$0.0030') : null), () => {}, 1, () => {}, () => {},
+      (e) => e.runsOn.modelLabel, () => 'About $0.0030');
+    fn('articles');
+    ok(/The Estimate Model/.test(state.confirm.body), name + ': the confirm names the estimate\'s own model');
+    ok(/About \$0\.0030/.test(state.confirm.body), name + ': and what it costs');
+    ok(state.confirm.tier === 'ai' && state.confirm.costText === '≈ $0.0030', name + ': and its yes wears the cost');
   }
-  ok(/runLineHtml: renderRunsOn\(\(est && est\.runsOn\) \|\| state\.aiRunsOn, \{ id: 'dm-confirm-runs-on' \}\)/.test(extractFn(domainsSrc, 'confirmSemanticScan') || '')
-    || /runLineHtml: renderRunsOn\(\(est && est\.runsOn\) \|\| state\.aiRunsOn, \{ id: 'dm-confirm-runs-on' \}\)/.test(domainsSrc.slice(domainsSrc.indexOf('async function confirmSemanticScan'))),
-    'confirmSemanticScan composes the same line (its estimate is fetched on click)');
+  const body = extractFn(domainsSrc, 'renderConfirmCard');
+  ok(/c\.tier === 'ai' \? '<button class="btn btn-ai"/.test(body) && /cur-action-cost/.test(body), 'an AI yes is the AI button, with the cost in its slot');
+  const card = quickSandbox({ confirm: { title: 'Forget?', body: 'No AI.', confirmLabel: 'Forget' } }).renderConfirmCard();
+  ok(!/btn-ai|btn-primary|btn-danger/.test(card), 'a confirm that spends and deletes nothing is plain');
 }
 
 section('20. The privacy disclosure names OpenRouter; its consent key is byte-identical (v3.67.0)');
 {
   ok(/const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';/.test(domainsSrc),
     'the consent key is unchanged, so nobody who accepted is asked again');
-  const copy = (domainsSrc.match(/const AI_DISCLOSURE_COPY =([\s\S]*?);\n/) || [])[1] || '';
-  const joined = String(new Function('return (' + copy + ');')());
-  ok(/Google Gemini, Anthropic or OpenRouter/.test(joined), 'the disclosure names all three providers');
-  ok(!/Gemini or Anthropic —/.test(joined), '…and no longer the two-provider phrasing');
+  const copy = extractFn(domainsSrc, 'aiDisclosureCopy');
+  const names = (domainsSrc.match(/const AI_PROVIDER_NAMES = (\{[^}]*\});/) || [])[1];
+  const disclose = new Function('AI_PROVIDER_NAMES', 'return (' + copy + ');')(new Function('return ' + names)());
+  ok(/\(Google Gemini\)/.test(disclose('gemini')) && /\(Anthropic\)/.test(disclose('anthropic')) && /\(OpenRouter\)/.test(disclose('openrouter')),
+    'the disclosure names the provider this install really sends to, for all three');
+  ok(!/slug|✨|Quick maintenance/.test(disclose('gemini')), '…in plain words');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
