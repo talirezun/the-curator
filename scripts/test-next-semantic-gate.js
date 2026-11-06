@@ -935,6 +935,14 @@ h13 = renderSemanticScanResult(false, false);
 // button stays: what it would really send is read at the press.
 ok(compareOf().includes('About 500 of 36,333 pairs compared'), '14d: while recounting, the figures already on screen stay');
 ok(/id="dm-semantic-reset-btn" disabled/.test(compareOf()), '14d: …and Forget waits for it');
+__state().activeSlug = 'alpha';
+__state().semanticQuote = { slug: 'alpha', forNext: 40, est: { candidatePairs: 40, estimatedUsd: 0.04, priceKnown: true } };
+{
+  const row = compareOf();
+  const btn = /<button[^>]*data-action="semanticDupes"[^>]*>/.exec(row)[0];
+  ok(!/disabled/.test(btn) && /cur-action-cost/.test(row), '14d: a recount disables nothing: the button keeps a figure, scaled to what it says it will send');
+}
+__state().semanticQuote = null;
 ok(h13.includes('dm-sem-card'), '14d: …and the pairs are already there');
 __setState(stateWithScan('alpha', [], []));
 Object.assign(__state().semanticScan, { coverage: null, counting: true });

@@ -8056,7 +8056,7 @@ A long list shows 20 items and **Show N more**, so a wiki with thousands of page
 | **Nearly the same name** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix (`tali-rezun`, `talirezun`, `dr.-tali-rezun`). | **Merge N** asks first, then merges them into one page. See [below](#hyphen-variants--when-and-how-v301-beta3). |
 | **Pages missing a link back** | A summary lists an entity or concept (under *Entities Mentioned* or *Concepts Introduced or Referenced*) but that page's *Related* section doesn't link back. | **Repair N** adds the link. Free. |
 | **Summaries with untidy link lists** *(v3.84.0)* | A summary lists the same page twice, lists concepts under *Entities Mentioned*, or lists entities under *Concepts Introduced or Referenced*. See [Summary link lists](#summary-link-lists-v3840) below. | **Repair N**. Free, and no link is removed. |
-| **Pages missing from the page list** *(v3.83.0)* | `index.md`, the wiki's page catalogue your AI agents read through the `get_index` tool, is missing rows for pages that exist, or still has rows for pages that are gone. See [The page list and its rebuild](#index-gaps-and-rebuild-index-v3830) below. | **Preview the rebuild**. Free, and you see it first. |
+| **Pages missing from the page list** *(v3.83.0)*, or **Rows in the page list with no page** when only the second is true | `index.md`, the wiki's page catalogue your AI agents read through the `get_index` tool, is missing rows for pages that exist, or still has rows for pages that are gone. See [The page list and its rebuild](#index-gaps-and-rebuild-index-v3830) below. | **Preview the rebuild**. Free, and you see it first. |
 
 ### What a press does
 
@@ -8067,18 +8067,18 @@ Every button in Wiki health answers where you pressed it.
 | **Any button** | Its own label changes straight away ("Repairing…", "Saving…", "Merging…"), at the same width. It is never silent. |
 | **Repair N**, **Repair all N** | No question. It runs, and the row says **Repaired N**. **Repair all** runs each free row in turn and says how far it has got. It never runs the two kinds that delete a page. |
 | **Merge N** on *Same name in two folders*, *Nearly the same name* or *Spelling variants* | A question opens **directly under the row you pressed**, saying how many pages go, with the undo warning and focus on **Cancel**. Escape closes it. Its button says **Merge and delete N**, in red. |
-| **Leave as is** | The row stays where it is and says *Left as is.*, with **Undo**. Nothing under it moves, so you can walk down a list. **Check again** clears those rows. |
+| **Leave as is** | The row stays where it is and says *Left as is.*, with **Undo**. Nothing under it moves, so you can walk down a list. **Check again** clears those rows. When it was the last one in its row, the row goes after a moment and **Left as is** has it. |
 | **Review** | Opens the pair list under Possible duplicates. A pair is still decided one at a time: **Preview diff**, then **Merge**. |
 | **An AI button** | Its cost question opens under the row. The yes wears the cost: **Compare for ≈ $0.04**. |
 | **The yes of a question**, **Add these links**, **Apply**, **Rebuild the list** | The card stays open and says what is happening, then says what happened, then leaves. |
 
 **When it is done**, the row holds its outcome for about a second, then closes smoothly. Rows under it slide up; nothing above it moves, and the page does not scroll, even at the very end of the page. What was just done stays in the lane's heading, for example "Repaired 2 just now".
 
-If you switch domain or leave while it runs, the outcome waits for you on that domain. If you press **Merge N** on something that deletes pages, the button says "Checking…" first, so the number in the question is the number on disk now.
+If you switch domain or leave while it runs, the outcome waits for you on that domain. **Merge N** never waits for a count: the question opens at once with the figure on screen, and the number on disk is read behind it. If that differs, the question changes in place; if nothing is left to merge, it closes and says so. Coming back to a domain shows what was known at once, with *Checking…* in the heading, and the answer replaces it in place. What runs on one domain stays on that domain: another domain's buttons work while it runs.
 
 **When it fails**, the row says so and offers **Try again**. That stays until you act on it: it never disappears on a timer. There is no longer a coloured banner at the top of the section.
 
-A repair can settle rows **above** the one you pressed, for instance when a new link rescues an orphan page in a list you have open. Those rows dim and say **Resolved** rather than vanish from under your pointer. They go when you scroll, press something above them, or close their fold.
+A repair can settle rows **above** the one you pressed, for instance when a new link rescues an orphan page in a list you have open. Those rows dim and say **Resolved** rather than vanish from under your pointer. After about three seconds they go by themselves, and what you pressed stays exactly where it is; they also go when you scroll, press something above them, or close their fold.
 
 While a check re-reads the wiki, the figures stay where they are and the section's heading says *Checking…*.
 
@@ -8098,7 +8098,7 @@ This is what makes health usable on a large or shared brain with **hundreds or t
 
 **The pattern for an AI action is always the same:** press → a question under the row names exactly what is sent and what it costs → confirm → the AI works, counting on the button (*Looking… 12 of 300*) → **you see a plan**, headed *Nothing is written yet.* → **Add these links** or **Apply** → the wiki is checked again so you watch the counts drop.
 
-**Where the cost on Compare comes from.** It needs a pass over every page name, about 18 seconds on 3,500 pages. So a domain nobody compares never pays for it: the pass runs when that row is on screen. While it runs the row says *Working out the cost…* and the button waits. What the question then shows is read again when you press, so it is true at that moment. If a merge changes the figures, the row says *About 500 of 2,108 pairs compared* until the recount lands, in place.
+**Where the cost on Compare comes from.** It needs a pass over every page name, about 18 seconds on 3,500 pages. So a domain nobody compares never pays for it: the pass runs when that row is on screen. While it runs the row says *Working out the cost…* and the button waits. What the question then shows is read again when you press, so it is true at that moment. If a merge changes the figures, the row says *About 500 of 2,108 pairs compared* until the count lands, in place, and the button keeps working. After a merge that count needs no pass over every page name, and a merge does not make the kept page's remembered answers lapse: text moved under `## Merged from` is not part of what the AI reads as its opening.
 
 This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
 
