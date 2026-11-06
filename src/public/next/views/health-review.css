@@ -65,7 +65,8 @@
 .hr-outcome { height: var(--hr-outcome-h); overflow-y: auto; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--text); overflow-wrap: anywhere; }
 /* Tone on the rule, words in the ordinary ink: a failure is read, and it stays. */
 .hr-outcome-failed { border-left: 2px solid var(--danger); padding-left: var(--space-2); }
-.hr-outcome .btn { margin-left: var(--space-1); }
+/* However long the names, Undo and Try again stay in sight inside this slot. */
+.hr-outcome .btn { position: sticky; bottom: 0; margin-left: var(--space-1); }
 
 .hr-end { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--space-2); height: var(--hr-pane-h); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-sunken); padding: var(--space-4); text-align: center; }
 .hr-end-line { margin: 0; font-size: var(--text-xs); color: var(--text-2); font-variant-numeric: var(--numeric-tabular); }
