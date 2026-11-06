@@ -301,17 +301,16 @@ try {
   await press('#dm-confirm-yes');
   ok((await reqs(/semantic-dupes\/scan/, 'POST')).length === 1, 'Compare the next: one run');
   await mark();
-  await press('.dm-review-btn');
+  await press('.dm-review-btn', { settle: false });
   ok(await page.evaluate(() => !!document.querySelector('.hr-desk')), 'Review opens the desk');
   ok((await kept()).section, 'in the same section');
   ok((await focus()) === 'hr-title', 'focus lands on the pair title', await focus());
-  await delay(50);
   ok(await page.evaluate(() => document.getElementById('hr-merge').disabled), 'Merge is shut on arrival');
   await press('#hr-merge', { settle: false }); await delay(100);
   ok((await reqs(/\/api\/health\/alpha\/fix$/)).length === 0, 'and a press on it sends nothing');
   const armed = async () => { for (let i = 0; i < 200; i++) { if (await page.evaluate(() => { const m = document.getElementById('hr-merge'); return !!m && !m.disabled; })) return true; await delay(25); } return false; };
   ok(await armed(), 'the comparison, seen for 500 ms, opens the gate');
-  ok((await reqs(/semantic-dupes\/preview/, 'POST')).length === 1, 'one comparison: one request');
+  ok((await reqs(/semantic-dupes\/preview/, 'POST')).length === 0, 'and it is not asked for again while it waits');
 
   // Reported, not asserted: a timing here would be a flake. On this size of list
   // a paint must stay far under a frame's worth of a press's feedback.
@@ -330,12 +329,18 @@ try {
   const nameOf = (side) => text('.hr-pane-' + side + ' .hr-pane-name');
   const before = await nameOf('stays');
   await page.evaluate(() => { document.getElementById('hr-flip').__flipBtn = 1; });
-  await press('#hr-flip');
+  await press('#hr-flip', { settle: false });
   ok((await focus()) === 'hr-flip', 'Keep this one instead keeps focus', await focus());
   ok(await page.evaluate(() => document.getElementById('hr-flip').__flipBtn === 1), 'and is the same button');
   ok((await nameOf('goes')) === before, 'the pair now reads the other way round');
   ok(await page.evaluate(() => document.getElementById('hr-merge').disabled), 'and the gate closed again');
   ok(await armed(), 'and opens again, for this direction');
+  // Leave the spelling variants for the batch below: walk to a pair the batch would not take.
+  for (let i = 0; i < 80 && /Spelling variant/.test(await text('.hr-facts')); i++) {
+    await press('#hr-next', { settle: false });
+    await delay(60);
+  }
+  ok(await armed(), 'and on the next pair too');
   const stays = await nameOf('stays'); const goes = await nameOf('goes');
   await press('#hr-merge', { y: 600 });
   const merges = await reqs(/\/api\/health\/alpha\/fix$/, 'POST');
@@ -346,6 +351,11 @@ try {
   ok(await fileOf(stays), 'the page it said it keeps is there');
   ok((await kept()).section, 'and the section survived all of it');
   ok((await focus()) === 'hr-title', 'focus goes to the pair title', await focus());
+  await armed();
+  for (let i = 0; i < 80 && /Spelling variant/.test(await text('.hr-facts')); i++) {
+    await press('#hr-next', { settle: false });
+    await delay(60);
+  }
   await armed();
   await press('#hr-keep');
   ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Keep both: one POST');
