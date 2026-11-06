@@ -216,7 +216,7 @@ async function auditWords(app, label, seen, known) {
   const bad = [];
   for (const raw of lines) {
     // The fact sits beside its sentence, a small button at the end of its line.
-    let line = raw.replace(/^(Spelling variant|Version numbers differ|Different names) (?=[^\d\s])/, '').replace(/ (Undo|Try again)$/, '');
+    let line = raw.replace(/^(Spelling variant|Version numbers differ|Different names) (?!\d+$)/, '').replace(/ (Undo|Try again)$/, '');
     for (const n of known) if (line === n) line = '';
     if (!line || /^[→·\s]*$/.test(line)) continue;
     if (seen) seen.add(line);
