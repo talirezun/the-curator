@@ -433,7 +433,7 @@ Tags: extra-tag
     for (const l of ['Autonomous helpers negotiate booking contracts overnight.', 'Software negotiating binding contracts independently across marketplaces.', '- Launched during winter trials across Norway', 'Regulators increasingly demand audit trails.']) ok(hasLine(body, l), `mostly new, added: "${l}"`);
     for (const l of ['The kept opening sentence, reworded slightly.', 'The definition kept, written by hand.', '- [[alice]] left during 2005']) ok(!hasLine(body, l), `a rewording, left out: "${l}"`);
     ok(warnings.some((w) => /^Page "concepts\/agent.md": 3 passages not added/.test(w)), 'the report counts what was left out', JSON.stringify(warnings));
-    ok(!hasLine(body, '# Agents'), 'the current title stays and the incoming title is not added');
+    ok(!/^#+ Agents$/m.test(body), 'the current title stays and the incoming title is not added, at any level');
     ok(!/Merged from/.test(body), 'no Merged from block: this is the model\'s own page');
     ok(/extra-tag/.test(body) && /kept-tag/.test(body), 'tags union');
     const order = (a, c) => body.indexOf(a) < body.indexOf(c);
@@ -455,6 +455,20 @@ Tags: extra-tag
     ok(hasLine(body, '- Lumina has been running 30 years in Oslo'), 'a new number is new');
     ok(!hasLine(body, '- Lumina has been running for many years in Oslo'), 'the same words without one are not');
     ok(hasLine(body, '- Lumina has been running 25 years in Oslo'), 'the old figure stays');
+  }
+  {
+    // Links count as their words; the page's words grow as text is added; an exact
+    // repeat is not "left out", since nothing is lost.
+    const dom = makeDomain({ 'concepts/w.md': '---\ntype: concept\ntags: [type/concept]\n---\n# W\n\nAn exact opening paragraph stays.\n\n## Key Facts\n- Alongside [[barley]]\n\n## Notes\n```js\nkeep();\n```\n' });
+    const warnings = [];
+    await writePage(dom.name, 'concepts/w.md', '# W\n\nAn exact opening paragraph stays.\n\n## Key Facts\n- Alongside [[barley]]\n- Alongside [[quartz]]\n- Ferment wort slowly overnight\n- Overnight the wort ferments slowly\n\n## Notes\n```js\nkeep();\n```\n', { onWarn: (x) => warnings.push(x) });
+    const body = dom.read('concepts/w.md');
+    ok(hasLine(body, '- Alongside [[quartz]]'), 'a new link target is a new word');
+    ok(hasLine(body, '- Ferment wort slowly overnight'), 'the first wording of a new point joins');
+    ok(!/ferments slowly/.test(body), 'a rewording of it in the same reply does not');
+    eq((body.match(/An exact opening paragraph stays\./g) || []).length, 1, 'an exact paragraph is not repeated');
+    eq((body.match(/keep\(\);/g) || []).length, 1, 'an exact fence is not repeated');
+    ok(warnings.some((x) => /: 1 passage not added/.test(x)), 'only the rewording is reported', JSON.stringify(warnings));
   }
   {
     // Sentence level: a paragraph with one new sentence adds that sentence.
@@ -485,6 +499,13 @@ Tags: extra-tag
     const body = dom.read('concepts/l.md');
     for (const l of ['- [[alpha]] old description', '- [[alpha]] another description, on disk already', '- [[beta]]', '- [[gamma]] barely different words alpha']) ok(hasLine(body, l), `link section: "${l}"`);
     for (const l of ['- [[alpha]] new description', '- [[beta]] now with words']) ok(!hasLine(body, l), `a known target is not added: "${l}"`);
+    const dom2 = makeDomain({ 'concepts/m.md': '---\ntype: concept\ntags: [type/concept]\n---\n# M\n\n## Related\n- [[gamma]] with words\n- [[gamma]]\n- [[eps]] with words\n\n## Notes\n- [[delta]] with words\n' });
+    const warnings = [];
+    await writePage(dom2.name, 'concepts/m.md', '# M\n\n## Related\n- [[gamma]]\n- [[eps]]\n\n## Notes\n- [[delta]]\n', { onWarn: (w) => warnings.push(w) });
+    const body2 = dom2.read('concepts/m.md');
+    ok(!/^- \[\[gamma\]\]$/m.test(body2) && hasLine(body2, '- [[gamma]] with words'), 'a bare link the section already names goes: it holds no text');
+    ok(!/^- \[\[delta\]\]$/m.test(body2), 'nor is a bare link added beside a line that names it');
+    eq(warnings.length, 0, 'a bare link left out is not reported: it holds no text');
   }
   {
     // The AI's stub said "re-ingest to fix": that has to keep working.
@@ -499,8 +520,10 @@ Tags: extra-tag
   {
     // Link tidy: the same line with a different link spelling is not new wording.
     const dom = makeDomain({ 'concepts/k.md': '---\ntype: concept\ntags: [type/concept]\n---\n# K\n\n## Definition\nUses [[rag]] here.\n', 'concepts/rag.md': '# rag\n' });
-    const rec = await writePage(dom.name, 'concepts/k.md', '# K\n\n## Definition\nUses [[concepts/rag]] here.\n');
+    const tidyWarnings = [];
+    const rec = await writePage(dom.name, 'concepts/k.md', '# K\n\n## Definition\nUses [[concepts/rag]] here.\n', { onWarn: (w) => tidyWarnings.push(w) });
     eq(rec.status, 'unchanged', 'a link spelled with its folder adds nothing');
+    eq(tidyWarnings.length, 0, '…and is an exact repeat, so nothing is reported');
   }
   {
     // A page with no title takes the incoming one; a frontmatter claim stays visible.
@@ -893,6 +916,7 @@ Tags: extra-tag
       for (const l of ['Kept hub opening.', 'Proposed hub opening.']) ok(hasLine(body, l), `hub: "${l}" survives`);
       for (const t of ['flow south', 'flood often']) ok(body.includes(t), `hub: "${t}" survives the linkify rewrite`);
       for (const t of ['flow south', 'flood often']) eq(body.split(t).length - 1, 1, `hub: "${t}" is on the page once, not again unlinked`);
+      ok(/\[\[rivers\|Rivers\]\] flow south/.test(body), 'hub: the rewrite is really on the page');
     }
 
     // The MCP's compile_to_wiki, in a real spawned server.
@@ -949,6 +973,17 @@ Tags: extra-tag
           broken_link_policy: 'keep',
         } });
         ok(!re.error && !re.result.isError, `mcp seed ${seed}: reuse ran`);
+        if (seed === 1) {
+          const rw = await rpc('tools/call', { name: 'compile_to_wiki', arguments: {
+            domain: d.name,
+            title: 'Reworded',
+            summary_content: '# Reworded\n\n## Key Takeaways\n- r\n',
+            additional_pages: [{ path: `entities/mcp-page-${seed}.md`, content: `# Other\n\n## Definition\nThe quartz${seed} lattices are refracting.\n` }],
+            broken_link_policy: 'keep',
+          } });
+          const replyJson = JSON.parse(rw.result.content[0].text);
+          ok(Array.isArray(replyJson.warnings) && replyJson.warnings.some((w) => w.includes('not added')), 'mcp: a rewording left out is named in the reply', JSON.stringify(replyJson).slice(0, 200));
+        }
         record('reuse mcp', seed, afterFold, `# Proposed\n\nZephyr${seed} barometers oscillate.\n\n## Definition\nQuartz${seed} lattices refract.\n`, d.read(`entities/mcp-page-${seed}.md`));
       }
       mcpChild.stdin.end();
