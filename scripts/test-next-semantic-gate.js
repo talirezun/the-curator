@@ -181,6 +181,7 @@ let myMountToken = 1;
 const ISSUE_PAGE = 20;
 const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
 function buttonRingHtml() { return ''; }
+function formatUsdHonest(v) { return '$' + v; }
 function aiActionDisabledAttrs() { return ''; }
 function renderConfirmCard() { return ''; }
 function renderPendingPlan() { return ''; }

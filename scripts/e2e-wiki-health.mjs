@@ -284,7 +284,7 @@ function buildLabDomain(root, name, opts = {}) {
 }
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
-const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'h15', 'h15b', 'hclean', 'hone'];
+const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'h15', 'h15b', 'hclean', 'hone', 'hdup'];
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -300,6 +300,14 @@ async function startApp(profile) {
     writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[zulu]]\n');
     writeFileSync(path.join(w, 'concepts', 'zulu.md'), '---\ntype: concept\n---\n\n# Zulu\n\nA last page.\n\n## Related\n\n- [[alpha]]\n');
     writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hclean\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n| [[zulu]] | A last page. |\n');
+    writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
+  // One name in two folders, and nothing else: after its merge, only AI help is left.
+  { const w = path.join(ws.domains, 'hdup', 'wiki'); rmSync(w, { recursive: true, force: true });
+    for (const d of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, d), { recursive: true });
+    writeFileSync(path.join(w, 'entities', 'same.md'), '---\ntype: entity\n---\n\n# Same\n\nThe entity.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'concepts', 'same.md'), '---\ntype: concept\n---\n\n# Same\n\nThe concept.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[same]]\n');
+    writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hdup\n\n## Entities\n\n| Page | Summary |\n|---|---|\n| [[same]] | The entity. |\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n');
     writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
   // One page nothing links to, and nothing else to do.
   { const w = path.join(ws.domains, 'hone', 'wiki'); rmSync(w, { recursive: true, force: true });
@@ -908,6 +916,14 @@ async function scenarios(app, profile) {
     await delay(5500);
     const focus = await page.evaluate(() => { const a = document.activeElement; return { tag: a && a.tagName, ai: !!(a && a.classList.contains('btn-ai')), text: a && a.innerText.slice(0, 24), inSection: !!(a && a.closest('.dm-health')) }; });
     step(`[${profile.name}] after a merge focus is on the next thing, never a paid button`, focus.inSection && !focus.ai && focus.tag !== 'BODY', JSON.stringify(focus));
+    // With nothing left to decide, the next thing is Check again, not the button that spends.
+    await openDomain(app, 'hdup');
+    await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.fixAll('crossFolderDupes'));
+    await waitFor(page, exists, 'question', 200, SEL.confirmYes);
+    await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.confirmYes);
+    await delay(3200);
+    const landed = await page.evaluate(() => { const a = document.activeElement; return { id: a && a.id, text: a && a.innerText && a.innerText.slice(0, 24), merged: !document.querySelector('[data-group-key="crossFolderDupes"]') }; });
+    step(`[${profile.name}] and with nothing left to decide, that is Check again`, landed.merged && landed.id === 'dm-rescan-btn', JSON.stringify(landed));
     // 4. Coming back shows what is known, at once.
     await openDomain(app, 'h15b'); await delay(300);
     await row('h15'); await waitFor(page, (r) => !!document.querySelector(r), 'h15', 400, SEL.rescan); await delay(600);
