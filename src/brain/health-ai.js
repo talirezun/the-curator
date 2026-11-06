@@ -24,7 +24,8 @@ import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
 import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates, TIER_ESTIMATE_MARGIN } from './llm.js';
-import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
+import { findSemanticCandidatePairs, candidatePairsTouching, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
+import { loadRecentNewPages, pruneRecentNewPages } from './recent-new-pages.js';
 import { loadDismissed, filterDismissed, keyForIssue } from './health-dismissed.js';
 import {
   loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant, isMergeableSlug, nameRelation,
@@ -713,10 +714,72 @@ function pairFromRecord(rec, p) {
   };
 }
 
+/** Whether a remembered answer still applies to this pair: same model, instructions and openings. */
+async function answerApplies(rec, p, info, readOpening) {
+  if (!rec || !info || rec.provider !== info.provider || rec.model !== info.model || rec.prompt !== SEMANTIC_PROMPT_ID) return false;
+  const [a, b] = await Promise.all([readOpening(p.folderA, p.slugA), readOpening(p.folderB, p.slugB)]);
+  if (rec.openings !== openingsHash(p.folderA, p.slugA, a, p.folderB, p.slugB, b)) return false;
+  return rec.verdict !== 'yes' || pairFromRecord(rec, p) !== null;
+}
+
+/**
+ * Pairs touching a page a recent ingest created go first; each side keeps its own
+ * order, so spelling variants still lead among the new pairs. An empty or lost record
+ * returns the list as it came. The pages and pairs it reports are read off the
+ * unanswered LIVE list, so a page that was deleted or merged cannot be counted.
+ */
+function newPagesFirst(toCheck, recorded) {
+  if (recorded.size === 0) return { ordered: toCheck, recentNewPages: { pages: 0, pairs: 0 } };
+  const first = [];
+  const rest = [];
+  const pages = new Set();
+  for (const p of toCheck) {
+    const a = `${p.folderA}/${p.slugA}`;
+    const b = `${p.folderB}/${p.slugB}`;
+    const isA = recorded.has(a);
+    const isB = recorded.has(b);
+    if (isA) pages.add(a);
+    if (isB) pages.add(b);
+    (isA || isB ? first : rest).push(p);
+  }
+  return { ordered: first.concat(rest), recentNewPages: { pages: pages.size, pairs: first.length } };
+}
+
+/**
+ * What an ingest's result says about the pages it just created: how many have a
+ * candidate pair not answered yet. No provider call and no write. Null when no page
+ * was created or a comparison could not run on this domain; `comparable: 0` when
+ * pages were created and none has a pair (a batch adds these up, so it needs the
+ * pages either way).
+ *
+ * @param {string} domain
+ * @param {string[]} pageKeys — the created pages, as 'concepts/slug' / 'entities/slug'
+ * @returns {Promise<{newPages:number, comparable:number, pairs:number}|null>}
+ */
+export async function newPagesToCompare(domain, pageKeys) {
+  if (!Array.isArray(pageKeys) || pageKeys.length === 0) return null;
+  const candidates = await candidatePairsTouching(domain, pageKeys);
+  if (!candidates) return null;
+  let info = null;
+  try { info = getProviderInfo(); } catch { info = null; }
+  const checks = await loadDuplicateChecks(domain);
+  const readOpening = openingReader(wikiPath(domain));
+  const wanted = new Set(pageKeys);
+  const pages = new Set();
+  let pairs = 0;
+  for (const p of candidates) {
+    const rec = checks.get(pairKey(p.folderA, p.slugA, p.folderB, p.slugB));
+    if (await answerApplies(rec, p, info, readOpening)) continue;
+    pairs++;
+    for (const page of [`${p.folderA}/${p.slugA}`, `${p.folderB}/${p.slugB}`]) if (wanted.has(page)) pages.add(page);
+  }
+  return { newPages: pageKeys.length, comparable: pages.size, pairs };
+}
+
 /**
  * Sort the live pairs into already answered and still to check. This is the one
- * layer that knows about remembered answers; findSemanticCandidatePairs stays
- * free of them. No provider call and no write.
+ * layer that knows about remembered answers and recently created pages;
+ * findSemanticCandidatePairs stays free of both. No provider call and no write.
  */
 async function planSemanticScan(domain, maxPairs, readOpening, candidateOpts) {
   const { pairs: live, pageCount } = await liveCandidates(domain, candidateOpts);
@@ -729,19 +792,13 @@ async function planSemanticScan(domain, maxPairs, readOpening, candidateOpts) {
   let work = 0;
   for (const p of live) {
     const rec = checks.get(pairKey(p.folderA, p.slugA, p.folderB, p.slugB));
-    let applies = false;
-    if (rec && info && rec.provider === info.provider && rec.model === info.model && rec.prompt === SEMANTIC_PROMPT_ID) {
-      const [a, b] = await Promise.all([readOpening(p.folderA, p.slugA), readOpening(p.folderB, p.slugB)]);
-      applies = rec.openings === openingsHash(p.folderA, p.slugA, a, p.folderB, p.slugB, b);
-      if (applies && rec.verdict === 'yes') {
-        const pair = pairFromRecord(rec, p);
-        if (pair) remembered.push(pair); else applies = false;
-      }
-    }
+    const applies = await answerApplies(rec, p, info, readOpening);
+    if (applies && rec.verdict === 'yes') remembered.push(pairFromRecord(rec, p));
     if (applies) checked++; else toCheck.push(p);
     if (++work >= 2000) { work = 0; await new Promise((resolve) => setImmediate(resolve)); }
   }
-  return { live, pageCount, toCheck, remembered, checked, send: toCheck.slice(0, maxPairs), info };
+  const { ordered, recentNewPages } = newPagesFirst(toCheck, await loadRecentNewPages(domain));
+  return { live, pageCount, toCheck: ordered, remembered, checked, send: ordered.slice(0, maxPairs), recentNewPages, info };
 }
 
 /**
@@ -791,6 +848,7 @@ export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAUL
     hasChecks: true,
     pairs: plan.remembered,
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
+    recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
   };
 }
@@ -817,6 +875,7 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
     totalCandidates: plan.live.length,
     truncated: plan.toCheck.length > maxPairs,
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
+    recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
     estimatedTokens,
     ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
@@ -873,6 +932,7 @@ export async function estimateCompareAll(domain) {
     pairs,
     batches: Math.ceil(pairs / SEMANTIC_BATCH_SIZE),
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, pairs),
+    recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
     ...compareAllCost(provider, model, pairs),
     provider,
@@ -1004,7 +1064,12 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   onEvent({
     type: 'start', candidatePairs: candidatePairs.length, batches: batches.length,
     ...coverageFields(totalPairs, checkedPairs, rememberedPairs, maxPairs),
+    recentNewPages: plan.recentNewPages,
   });
+
+  // A scan is the one place that already saves beside the wiki: drop any recorded
+  // page that has since been deleted or merged. Never fails a scan.
+  await pruneRecentNewPages(domain, wikiDir);
 
   // Listed again, at no cost, so a found pair neither vanishes nor flips between runs.
   const acceptedPairs = [];

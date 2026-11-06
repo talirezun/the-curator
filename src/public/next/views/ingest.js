@@ -2706,10 +2706,40 @@ function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
       warningsHtml +
       (r.changes && r.changes.length ? changesHtml : ('<h3 class="ing-result-title">' + escapeHtml(titlePrefix + ' ' + (r.title || '')) + '</h3>' + fallbackHtml)) +
       truncNote +
+      renderNewPagesLine(r.newPagesToCompare) +
       spentHtml +
       tokenHtml +
     '</div>'
   );
+}
+
+/**
+ * The one line that asks about new pages, after the fact. It names what the app knows
+ * (their NAMES are close to other pages), not that anything is a duplicate, and it
+ * asks for nothing: no question, no cost, and nothing until the user presses Compare.
+ * Nothing to compare, no line. Its link is bound in the view's listener pass.
+ */
+function renderNewPagesLine(c) {
+  const n = c && Number.isFinite(c.comparable) ? c.comparable : 0;
+  if (n <= 0) return '';
+  const total = Number.isFinite(c.newPages) && c.newPages > n ? c.newPages : n;
+  const count = '<span class="ing-num">' + n + '</span>' +
+    (total > n ? ' of <span class="ing-num">' + total + '</span> new pages ' : (n === 1 ? ' new page ' : ' new pages '));
+  return '<div class="ing-new-pages-line">' + count + (n === 1 ? 'has a name' : 'have names') +
+    ' close to other pages. Compare ' + (n === 1 ? 'it' : 'them') + ' under ' +
+    '<button type="button" class="ing-browse-link" data-ing-wiki-health>Wiki health</button>.</div>';
+}
+
+/**
+ * Bring the domain page's Wiki health section into view. On the full-page host there
+ * is no such section on screen, so it goes to the Domains page instead.
+ */
+function goToWikiHealth() {
+  const el = document.querySelector('.dm-health');
+  if (!el || typeof el.scrollIntoView !== 'function') { navigate('domains'); return; }
+  let reduce = false;
+  try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { reduce = false; }
+  el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
 }
 
 // ── Change records (ported from src/public/app.js's renderChangeRecords —
@@ -3272,6 +3302,7 @@ function wireListeners() {
   // than growing a second picker, for the same reason chat does not have one.
   document.getElementById('ing-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
   document.getElementById('ing-queue-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
+  document.querySelectorAll('[data-ing-wiki-health]').forEach((btn) => btn.addEventListener('click', goToWikiHealth));
 
   // The main-pane settled line. "Show me" goes through `selectDomain` — the
   // SAME writer the sidebar rows use, and one of §2's allow-listed writers of
@@ -3615,6 +3646,7 @@ async function runIngest(token, overwrite) {
         // v3.67.0: what the run cost, from the route's spentFromUsage() over
         // this ingest's own token totals. Absent on an older server.
         spent: (finalData.spent && typeof finalData.spent === 'object') ? finalData.spent : null,
+        newPagesToCompare: finalData.newPagesToCompare || null,
         unchangedExpanded: false,
       };
       render(token);
@@ -4827,6 +4859,10 @@ function renderQueueDoneSummary(job) {
       '</div>' +
       ranOnLine +
       healthLine +
+      renderNewPagesLine(items.reduce((sum, i) => {
+        const c = i && i.result && i.result.newPagesToCompare;
+        return c ? { newPages: sum.newPages + (c.newPages || 0), comparable: sum.comparable + (c.comparable || 0) } : sum;
+      }, { newPages: 0, comparable: 0 })) +
     '</div>'
   );
 }

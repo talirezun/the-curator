@@ -530,6 +530,11 @@ function wireItem(item) {
       pagesWritten: wireNum(r.pagesWritten),
       warningCount: wireNum(r.warningCount),
       changeCounts: wireCounts(r.changeCounts),
+      newPagesToCompare: r.newPagesToCompare && typeof r.newPagesToCompare === 'object' ? {
+        newPages: wireNum(r.newPagesToCompare.newPages),
+        comparable: wireNum(r.newPagesToCompare.comparable),
+        pairs: wireNum(r.newPagesToCompare.pairs),
+      } : null,
     } : null,
     tokenUsage: u && typeof u === 'object' ? {
       provider: wireStr(u.provider, 64),
@@ -2132,6 +2137,7 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       pagesWritten: Array.isArray(result?.pagesWritten) ? result.pagesWritten.length : 0,
       warningCount: Array.isArray(result?.warnings) ? result.warnings.length : 0,
       changeCounts: summarizeChangeCounts(result?.changes),
+      newPagesToCompare: result?.newPagesToCompare || null,
     };
     it.tokenUsage = result && result.tokenUsage ? result.tokenUsage : null;
     // v3.72.1 (truth audit F12): the model that ACTUALLY answered, by the run

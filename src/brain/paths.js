@@ -672,6 +672,17 @@ export function getDuplicateChecksDir() {
 }
 
 /**
+ * Which pages recent ingests created, one JSON file per domain, written by
+ * `src/brain/recent-new-pages.js`. OUTSIDE `domains/` like the two around it: it
+ * only orders this machine's duplicate scan. Lost, the scan uses its old order.
+ *
+ * Pure resolver — never creates the directory.
+ */
+export function getRecentNewPagesDir() {
+  return userDataPath('.recent-new-pages');
+}
+
+/**
  * The "Compare all remaining" job's record, one JSON file per domain, written by
  * `src/brain/duplicate-job.js`. OUTSIDE `domains/` like the answers above: it is
  * this machine's run of a paid job, and a wiki scan must not write inside the wiki.

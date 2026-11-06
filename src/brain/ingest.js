@@ -29,6 +29,7 @@ import { tokenize } from './sharedbrain-delta.js';
 import { existsSync } from 'node:fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { isSpellingVariant } from './duplicate-checks.js';
+import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // Track 7 Part II. raw-store imports extractText from THIS module, but does so
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
@@ -3516,6 +3517,12 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     }
   }
 
+  // Which pages this ingest created, beside the wiki rather than in it, so the next
+  // duplicate scan compares them first. Written here because the pages are on disk
+  // now, whatever happens below. Never fails an ingest.
+  const createdPages = createdPageKeys(changes);
+  await recordRecentNewPages(domain, createdPages, wikiDir);
+
   if (repeatSource) {
     warnings.push(
       `This source was already ingested into this domain (same content), so existing pages kept their text and took ` +
@@ -3647,6 +3654,16 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     );
   }
 
+  // How many of the new pages have a pair to compare, for the one line in the result.
+  // Dynamic because health-ai.js imports this module. No model call, no wiki write.
+  let toCompare = null;
+  try {
+    const { newPagesToCompare } = await import('./health-ai.js');
+    toCompare = await newPagesToCompare(domain, createdPages);
+  } catch (err) {
+    console.error(`[ingest] Could not count new pages to compare (non-fatal): ${err.message}`);
+  }
+
   progress(100, 'Done!');
   return {
     title: result.title,
@@ -3666,6 +3683,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // inputTokens + cachedReadTokens + cacheWriteTokens and a cost calculation
     // never has to branch on which provider ran.
     tokenUsage: usage.totals,
+    // {newPages, comparable, pairs}, or null when no page was created or no comparison could run.
+    newPagesToCompare: toCompare,
   };
 }
 

@@ -814,7 +814,7 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
     'isRemoteIngestRunning', 'pendingRemoteOutcome', 'activitySignature',
     'loadAckedActivityIds', 'isActivityAcked', 'ackActivityId',
     'scheduleActivityPoll', 'stopActivityPoll', 'renderRemoteProgress',
-    'renderRemoteOutcome', 'renderResultBodyHtml', 'dismissRemoteOutcome',
+    'renderRemoteOutcome', 'renderResultBodyHtml', 'renderNewPagesLine', 'dismissRemoteOutcome',
     'syncRemoteElapsedTimer', 'refreshActivity',
     // v3.24.2 — the SETTLED surfaces. Added here rather than sandboxed
     // separately because activitySignature() now calls unackedSettledRecords(),
@@ -2720,7 +2720,7 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
     'applyQueueJobSnapshot', 'checkActiveQueueJob', 'adoptDestination', 'pickAdoptableDestination',
     'refreshActivity', 'activitySignature', 'runningActivityDomains', 'settledActivityRecords',
     'unackedSettledRecords', 'loadAckedActivityIds', 'isActivityAcked', 'renderResult',
-    'renderResultBodyHtml', 'renderChangeRecordsHtml', 'classifyIngestEntry', 'renderConfirmGrid',
+    'renderResultBodyHtml', 'renderNewPagesLine', 'renderChangeRecordsHtml', 'classifyIngestEntry', 'renderConfirmGrid',
     'renderQueueEstimate', 'renderQueuePausedBanner', 'renderQueueDoneSummary', 'isQueueTerminal',
   ];
   const missing = LIFTED.filter((n) => !decls.has(n));
@@ -2813,7 +2813,7 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
   const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const names = ['queueBudgetFacts', 'queueBudgetSpendHtml', 'queueCapSentence', 'renderQueueOutcomeBanner',
-    'renderQueuePausedBanner', 'renderQueuePanel', 'renderQueueDoneSummary', 'isQueueTerminal',
+    'renderQueuePausedBanner', 'renderQueuePanel', 'renderQueueDoneSummary', 'renderNewPagesLine', 'isQueueTerminal',
     // v3.72.1: the one spend reading (F1/F8), the page counts (F13), the
     // ran-on line (F12) and the paused copy (F14), all executed here.
     'queueSpendReading', 'queueSpendHtml', 'queueItemPageCounts', 'queueRanOnLine', 'queuePausedCopy'];
@@ -3080,6 +3080,7 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
     const escapeHtml = (s) => String(s == null ? '' : s);
     const renderWarningsHtml = () => '';
     const renderChangeRecordsHtml = () => '<div data-stub="changes"></div>';
+    const renderNewPagesLine = () => '';
     ${b22r.join('\n')}
     return { renderResultBodyHtml, formatTokenUsageHtml };
   `)(aiRun.renderSpent);
@@ -3229,7 +3230,7 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
 
   // ── F12 / F13: the batch summary and rows ────────────────────────────
   const names = ['queueItemPageCounts', 'queueRanOnLine', 'queueSpendReading', 'queueSpendHtml', 'queueBudgetFacts',
-    'renderQueueDoneSummary', 'renderQueueItemRow', 'queuePausedCopy', 'renderQueuePausedBanner'];
+    'renderQueueDoneSummary', 'renderNewPagesLine', 'renderQueueItemRow', 'queuePausedCopy', 'renderQueuePausedBanner'];
   const bodies23 = names.map((n) => extractFunction(js, n));
   ok(bodies23.every(Boolean), '§23-pre the batch renderers were extracted');
   const q = new Function('escapeHtml', 'formatUsdHonest', 'computeQueueStatusCounts', 'formatHealthCounts', 'pausedReasonCopy',
@@ -3248,6 +3249,11 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
   ok(/3 pages written/.test(sum) && !/19 pages written/.test(sum),
     '★ F13 "pages written" counts CHANGED pages (2 new + 1 updated = 3), not every path writePage touched (19)');
   ok(/16 unchanged/.test(sum), 'F13 …and the untouched ones are stated separately ("16 unchanged")');
+  ok(!/new pages? ha/.test(sum), 'a batch with nothing to compare has no new-pages line');
+  const withNew = (n, c) => ({ status: 'done', idx: 3, name: 'd.md', result: { title: 'D', pagesWritten: n, warningCount: 0, newPagesToCompare: { newPages: n, comparable: c, pairs: c * 2 } } });
+  const newSum = textOf(q.renderQueueDoneSummary({ status: 'done', spentUsd: 0, items: [withNew(5, 2), withNew(3, 0), reIngest, withNew(2, 1)] }));
+  ok(/3 of 10 new pages have names close to other pages\. Compare them under Wiki health\./.test(newSum),
+    'a batch adds its items up, counting the new pages of an item with nothing to compare', newSum);
   const row = textOf(q.renderQueueItemRow(reIngest, { jobTerminal: true }));
   ok(/no changes — every page was already up to date/.test(row) && !/14 page/.test(row),
     '★ F13 a re-ingest that changed nothing says so on its row — the single-file path\'s words — not "14 pages"');
