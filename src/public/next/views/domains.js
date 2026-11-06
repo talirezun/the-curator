@@ -40,6 +40,7 @@ import {
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 import { patchInPlace } from '../shared/morph.js';
 import { createReviewDesk } from './health-review.js';
+import { createCompareAll } from './health-compare.js';
 import { holdLeavingRows, startRowMotion, releaseHeldRows, createScrollFloor } from '../shared/row-motion.js';
 
 // Second import of the SAME module, as a namespace. It was added for one
@@ -541,6 +542,7 @@ const state = {
   pressLocks: {},         // control -> width at the press, so its label cannot move it
   ringAnchor: null,       // where the progress ring draws (derived in render)
   review: null,           // the review desk, while it is open (views/health-review.js)
+  compareArrivals: null,  // { slug, count, frame }: pairs Compare all found with no row to tick yet
   busyAway: {},           // slug -> what is running on a domain that is off screen
   healthTrace: null,      // { slug, text, lane, at }: the last thing done, in its lane's head
   leftRows: {},           // rowKey -> a row left as is this round: it keeps its place, with Undo
@@ -3432,11 +3434,17 @@ function newSemanticScan(slug, frame) {
 function syncSemanticScan(slug, token, opening) {
   if (!state.aiAvailable || slug !== state.activeSlug) return;
   if (state.readonlySet.has(slug)) return;
+  compareAll.sync(slug);
+  releaseArrivals(slug);
   const held = activeSemanticScan();
-  if (held) { countSemanticPairs(held, slug, token, opening); return; }
+  if (held) { held.holdSpelling = false; countSemanticPairs(held, slug, token, opening); return; }
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
+    // The last count's figures and what they would cost, with no pass over the page names:
+    // the row can be pressed at once and says "About" until the real count lands.
+    if (q.quote && !activeSemanticQuote()) state.semanticQuote = { slug, est: q.quote, forNext: q.quote.nextPairs, stale: true };
+    if (q.allQuote) compareAll.noteQuote(slug, q.allQuote);
     countSemanticPairs(state.semanticScan, slug, token, opening);
   }).catch(() => { /* free and optional: the panel is whole without it */ });
 }
@@ -7781,7 +7789,7 @@ function beforeHealthPaint(token) {
 let compareObserver = null;
 let compareWatched = null;
 function quoteWhenVisible() {
-  if (typeof document === 'undefined' || !state.aiAvailable || state.busyKey) return;
+  if (typeof document === 'undefined' || !state.aiAvailable || state.busyKey || compareAll.running(state.activeSlug)) return;
   const el = document.querySelector('.dm-health [data-group-key="compare"]');
   if (!el) return;
   const q = activeSemanticQuote();
@@ -7824,6 +7832,7 @@ async function loadSemanticQuote(slug, token) {
 
 function afterHealthPaint() {
   reviewDesk.afterPaint();
+  compareAll.afterPaint(activeSemanticScan() && activeSemanticScan().coverage);
   quoteWhenVisible();
   applyPressLocks();
   markHealthOpener();
@@ -8050,9 +8059,9 @@ function renderHealthPanel(domain, readonly) {
 
   // What the section's one reading counts: every row with something to look at.
   const openPairs = (activeSemanticScan() ? activeSemanticScan().pairs : []).filter((p) => p.status === 'open').length;
-  const toLook = total + openPairs;
+  const toLook = total + openPairs + (state.compareArrivals && state.compareArrivals.slug === domain.slug ? state.compareArrivals.count : 0);
   const pageCount = (Number(report.counts.entities) || 0) + (Number(report.counts.concepts) || 0) + (Number(report.counts.summaries) || 0);
-  const clean = toLook === 0;
+  const clean = total + openPairs === 0;
   const reading = revalidating ? 'Checking…'
     : (lookedAt ? 'Checked ' + ageSpan + ' · ' : '') +
       (toLook === 0 ? 'nothing to look at' : (toLook === 1 ? '1 to look at' : toLook.toLocaleString('en-US') + ' to look at'));
@@ -8077,6 +8086,90 @@ function renderHealthPanel(domain, readonly) {
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (readonly ? '' : renderDescription(GIT_UNDO_NOTE)),
     { alias: 'dm', hostClass: healthRevealCls.trim() }), reading);
+}
+
+// ── COMPARE ALL REMAINING ──────────────────────────────────────────────────
+// A server job (src/brain/duplicate-job.js) drawn on the Compare row. What it says and how it
+// polls is views/health-compare.js; only what touches this file's state is here.
+const compareAll = createCompareAll({
+  slug: () => state.activeSlug,
+  offered: (slug) => !state.readonlySet.has(slug),
+  mounted: () => isCurrentMount(myMountToken),
+  fetchJSON,
+  render: () => render(myMountToken),
+  live: (text) => { state.healthLive = text; },
+  ask: (confirm) => { state.confirm = confirm; render(myMountToken); },
+  note: (slug, text, retry) => { state.rowNoteFrom = { slug, token: myMountToken }; state.rowNote = { tone: 'error', text, retry }; render(myMountToken); },
+  setBusy: (on) => { state.busyKey = on ? 'compareAllEstimate' : null; render(myMountToken); },
+  busy: () => state.busyKey === 'compareAllEstimate',
+  focusAfterStart: () => { state.pressOpener = '#dm-compare-job-btn'; },
+  focusAfterStop: () => { const b = document.querySelector('.dm-health .dm-quick-btn[data-action="compareAll"], .dm-health .dm-quick-btn[data-action="semanticDupes"]'); if (b && !b.disabled) b.focus({ preventScroll: true }); },
+  modelName: (est) => healthModelName(est),
+  cost: (est, opts) => costReadout(est, opts),
+  usd: (v) => formatUsd(v),
+  chip: (o) => actionChip({ tier: 'ai', action: 'compareAll', alias: 'dm', ...o }),
+  ring: () => buttonRingHtml(),
+  sparkles: () => icon('sparkles', 12),
+  escape: (t) => escapeHtml(t),
+  scanCounting: () => { const s = activeSemanticScan(); return !!(s && s.counting); },
+  setCoverage: (total, checked) => {
+    const s = activeSemanticScan();
+    if (!s) return;
+    const left = Math.max(0, total - checked);
+    s.coverage = { total, checked, left, next: Math.min(left, (s.coverage && s.coverage.next) || left) };
+  },
+  pullPairs: (slug) => fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => receiveArrivals(slug, q)),
+  ended: (slug) => {
+    delete state.estimates.semanticDupes;
+    if (state.semanticQuote) state.semanticQuote.stale = true;
+    const s = activeSemanticScan();
+    if (s && slug === state.activeSlug && isCurrentMount(myMountToken)) countSemanticPairs(s, slug, myMountToken);
+  },
+});
+
+// Found pairs reach the desk as they land. THE COUNT TICKS IN PLACE WHEN IT HAS A PLACE: with no
+// Possible duplicates row on screen, the first pair would put a row, or a whole lane, above the
+// row being watched. Those are held and counted on the Compare row, whose Review button brings
+// them in, and they join the list by themselves the next time the panel is read. Appended, so
+// the pair the desk is on keeps its place. The merge gate is not touched: `previewed` stays as
+// it is, and an arrived pair starts unseen like any other.
+function receiveArrivals(slug, q) {
+  if (slug !== state.activeSlug || !q || !Array.isArray(q.pairs)) return 0;
+  const either = (p) => [p.keepFolder + '/' + p.keepSlug, p.removeFolder + '/' + p.removeSlug].sort().join('||');
+  const scan = activeSemanticScan();
+  const known = new Set(scan ? scan.pairs.map(either) : []);
+  const arrivals = q.pairs.filter((p) => !known.has(either(p)));
+  const hasRow = !!(scan && scan.pairs.some((p) => p.status === 'open'));
+  if (!hasRow && !state.review) {
+    state.compareArrivals = arrivals.length ? { slug, count: arrivals.length, frame: q } : null;
+    return arrivals.length;
+  }
+  if (scan && arrivals.length) addArrivals(scan, arrivals);
+  return arrivals.length;
+}
+
+function addArrivals(scan, arrivals) {
+  // The same reason, for the row that batches spelling variants: it sits above too.
+  if (liveBatchPairs().length === 0) scan.holdSpelling = true;
+  for (const p of arrivals) {
+    scan.pairs.push({
+      keepFolder: p.keepFolder, keepSlug: p.keepSlug, removeFolder: p.removeFolder, removeSlug: p.removeSlug,
+      confidence: p.confidence, rationale: p.rationale, spellingVariant: p.spellingVariant === true,
+      remembered: p.remembered === true, nameRelation: p.nameRelation, status: 'open',
+    });
+  }
+}
+
+function releaseArrivals(slug) {
+  const held = state.compareArrivals;
+  state.compareArrivals = null;
+  if (!held || held.slug !== slug || slug !== state.activeSlug) return;
+  const scan = activeSemanticScan();
+  if (!scan) { state.semanticScan = newSemanticScan(slug, held.frame); return; }
+  const either = (p) => [p.keepFolder + '/' + p.keepSlug, p.removeFolder + '/' + p.removeSlug].sort().join('||');
+  const known = new Set(scan.pairs.map(either));
+  const arrivals = held.frame.pairs.filter((p) => !known.has(either(p)));
+  if (arrivals.length) addArrivals(scan, arrivals);
 }
 
 // ── THE REVIEW DESK ────────────────────────────────────────────────────────
@@ -8226,6 +8319,7 @@ const BUSY_LABELS = {
   brokenLinksApply: 'Applying…',
   orphansApply: 'Adding…',
   semanticDupesEstimate: 'Working out the cost…',
+  compareAllEstimate: 'Working out the cost…',
   semanticDupesScan: 'Comparing…',
   semanticMerge: 'Merging.',
 };
@@ -8413,7 +8507,7 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
     rows.push(renderPlainRow('duplicates', 'Possible duplicates', n0(open.length), '',
       readonly ? '' : '<button class="btn btn-secondary dm-review-btn" data-review="1">Review</button>'));
   }
-  const batch = readonly ? [] : liveBatchPairs();
+  const batch = readonly || (scan && scan.holdSpelling) ? [] : liveBatchPairs();
   const running = state.busyKey === 'semanticMerge';
   if (batch.length > 0 || running) {
     const isOpen = state.expandedGroups.has('spelling');
@@ -8486,8 +8580,9 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   const quoting = !!state.semanticQuoteLoading && !est;
   const counting = !!(s && s.counting && !c);
   const p = state.aiProgress && state.aiProgress.key === 'semanticDupesScan' ? state.aiProgress : null;
-  let reading;
-  if (running) reading = p ? 'Comparing ' + n0(p.processed) + ' of ' + n0(p.total) + '…' : 'Comparing…';
+  let reading = compareAll.reading(state.activeSlug);
+  if (reading) { /* the job says where it is */ }
+  else if (running) reading = p ? 'Comparing ' + n0(p.processed) + ' of ' + n0(p.total) + '…' : 'Comparing…';
   else if (estimating || quoting || counting) reading = 'Working out the cost…';
   else if (!c) reading = 'No pairs compared yet';
   else if (c.total === 0) reading = 'No two page names look alike';
@@ -8514,17 +8609,18 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   const failed = s && s.failedPairs > 0 && !s.failedAll
     ? '<div class="dm-lane-note" data-row-key="compare-failed">' + n0(s.failedPairs) + (s.failedPairs === 1 ? ' pair' : ' pairs') + ' could not be compared because the AI call failed. They will be tried again next time.</div>'
     : '';
-  const meta = '<span class="dm-compare-reading">' + escapeHtml(reading) + '</span>';
+  const meta = '<span class="dm-compare-reading" data-compare-reading>' + escapeHtml(reading) + '</span>';
   const stack = renderAnchorHere('group:compare', crossMountBusy);
   // One node whatever it holds, so a first run does not replace the row under the
   // pointer: with nothing to forget yet it simply cannot open.
   const canForget = !!(c && c.checked > 0);
   const row = renderFoldRow({
     key: 'compare', hostClass: canForget ? '' : 'dm-group-nofold', label: 'Compare pages for duplicates',
-    open: canForget && state.expandedGroups.has('compare'), alias: 'dm', metaHtml: meta, actionHtml: button,
-    bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
+    open: canForget && state.expandedGroups.has('compare'), alias: 'dm', metaHtml: meta, actionHtml: compareAll.actions(state.activeSlug, button, c, { noKeyAttrs, disabled: !!(busy || crossMountBusy) }),
+    bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting) || compareAll.running(state.activeSlug)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
   });
-  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + failed;
+  const arrivals = state.compareArrivals && state.compareArrivals.slug === state.activeSlug ? state.compareArrivals.count : 0;
+  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + failed + compareAll.line(state.activeSlug, arrivals);
 }
 
 function renderSuggestRow(key, action, labelText, busy, crossMountBusy, runsOn) {
@@ -8868,7 +8964,9 @@ function onHealthClick(e) {
   // A control in a row's summary never toggles the row (v3.0.1-beta.18).
   if (typeof btn.closest === 'function' && btn.closest('summary')) e.preventDefault();
 
+  if (compareAll.onClick(btn)) return;
   if (btn.classList.contains('dm-review-btn')) {
+    releaseArrivals(domain.slug);
     reviewDesk.open();
     healthHeadIntoView();
     return;
@@ -9118,6 +9216,7 @@ function confirmAiAction(slug, action) {
     if (action === 'brokenLinks') return confirmBrokenLinksPlan(slug);
     if (action === 'orphans') return confirmOrphansPlan(slug);
     if (action === 'semanticDupes') return confirmSemanticScan(slug);
+    if (action === 'compareAll') return compareAll.press(slug);
     return undefined;
   };
   if (aiDisclosureSeen()) return dispatch();
@@ -9133,7 +9232,7 @@ function confirmAiAction(slug, action) {
 
 function onQuickAction(slug, action) {
   if (action === 'indexPlan') return runIndexRebuildPlan(slug);
-  if (action === 'brokenLinks' || action === 'orphans' || action === 'semanticDupes') return confirmAiAction(slug, action);
+  if (action === 'brokenLinks' || action === 'orphans' || action === 'semanticDupes' || action === 'compareAll') return confirmAiAction(slug, action);
 }
 
 // Every `run*`/`apply*`/`merge*` action below follows the same shape:
@@ -9817,6 +9916,7 @@ function semanticScanConfirmText(est, runsOnName, cost) {
 
 async function runSemanticScan(slug) {
   const token = myMountToken;
+  compareAll.acknowledge(slug);
   state.busyKey = 'semanticDupesScan';
   state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.aiProgress = null;
@@ -9878,6 +9978,7 @@ async function runSemanticReset(slug) {
   try {
     await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/forget', { method: 'POST' });
     delete state.estimates.semanticDupes;
+    compareAll.forgetQuote(slug);
     // The list goes with what it stood on: the batch would refuse every pair on it.
     const scan = activeSemanticScan();
     if (scan) state.semanticScan = null;

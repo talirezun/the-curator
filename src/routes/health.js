@@ -21,6 +21,7 @@ import {
   scanSemanticDuplicates,
   semanticScanStatus,
   semanticRememberedPairs,
+  semanticLastFigures,
   estimateBrokenLinkFix,
   planBrokenLinkFixes,
   estimateOrphanRescue,
@@ -33,6 +34,7 @@ import {
   startCompareAll,
   pauseCompareAll,
   resumeCompareAll,
+  stopCompareAll,
   compareAllStatus,
   beginManualScan,
   refuseIfCompareAllRunning,
@@ -345,8 +347,10 @@ router.get('/:domain/semantic-dupes/status', async (req, res) => {
     await assertDomain(domain);
     // `?quick=1`: the remembered pairs alone, with no candidate pass, so coming
     // back to a large domain shows them at once while the figures are counted.
-    if (req.query && req.query.quick) return res.json({ ok: true, ...(await semanticRememberedPairs(domain)) });
     const settings = getAiHealthSettings();
+    if (req.query && req.query.quick) {
+      return res.json({ ok: true, ...(await semanticRememberedPairs(domain)), ...(await semanticLastFigures(domain, settings.semanticDupeMaxPairs)) });
+    }
     // `?reconcile=1`, when the panel opens: repeat the full pass if the list on hand
     // was filtered after a merge. It costs nothing when it was not.
     const reconcile = !!(req.query && req.query.reconcile);
@@ -476,6 +480,14 @@ router.post('/:domain/semantic-dupes/compare-all/resume', async (req, res) => {
     await assertWritableDomain(domain);
     res.json({ ok: true, job: await resumeCompareAll(domain) });
   } catch (err) { sendJobError(res, err, '[compare-all resume]'); }
+});
+
+router.post('/:domain/semantic-dupes/compare-all/stop', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    res.json({ ok: true, job: await stopCompareAll(domain) });
+  } catch (err) { sendJobError(res, err, '[compare-all stop]'); }
 });
 
 // Read-only, and cheap enough to poll: it reads one small file.

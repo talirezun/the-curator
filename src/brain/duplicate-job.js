@@ -36,13 +36,38 @@ import path from 'path';
 import { getDuplicateJobsDir } from './paths.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { wikiPath } from './files.js';
-import { getProviderInfo, getModelPrice, isFreeModel, priceUsageUsd } from './llm.js';
+import { getProviderInfo, getModelPrice, isFreeModel, priceUsageUsd, providerDisplayName } from './llm.js';
 import { scanSemanticDuplicates } from './health-ai.js';
 
 const FORMAT = 1;
 export const COMPARE_ALL_SPEND_MARGIN = 1.2;
 /** A provider that fails this many batches running is not going to recover on its own. */
 const MAX_CONSECUTIVE_BATCH_ERRORS = 3;
+
+/**
+ * "Out of credits" in the words providers use for it: HTTP 402 (OpenRouter, a prepaid
+ * balance) and Anthropic's "credit balance is too low", which arrives as a 400. No later
+ * batch can succeed and no retry helps, so the job pauses on the FIRST one.
+ */
+export function isOutOfCredits(ev) {
+  if (ev && Number(ev.status) === 402) return true;
+  const m = String((ev && ev.error) || '');
+  return /\bHTTP 402\b|"code":\s*402\b|\b402\b.*(payment|credit)|payment required|insufficient[_ ]credits?|credit balance|prepaid credits?|credits? (are|is|have|has) (been )?(depleted|exhausted)|out of credits/i.test(m);
+}
+
+/** A provider's error is often its whole JSON body. The row gets the sentence inside it. */
+export function plainProviderError(message) {
+  const raw = String(message || '').trim();
+  const at = raw.indexOf('{');
+  if (at !== -1) {
+    try {
+      const parsed = JSON.parse(raw.slice(at));
+      const inner = parsed && parsed.error && (parsed.error.message || parsed.error);
+      if (typeof inner === 'string' && inner.trim()) return inner.trim().slice(0, 240);
+    } catch { /* not JSON: the text as it came */ }
+  }
+  return raw.slice(0, 240);
+}
 
 let _run = null;              // { domain, record, pauseRequested, stop, ... } — THE run
 const _manualScans = new Map(); // domain → how many short scans are running
@@ -258,13 +283,16 @@ function noteEvent(run, ev) {
     p.failedBatches++;
     run.record.lastError = ev.error;
     run.batchFailed = true;
+    if (isOutOfCredits(ev)) {
+      run.stop = { kind: 'pause', pauseReason: 'provider-errors', reason: `${providerDisplayName(run.record.provider)} says this account is out of credits, so the comparison paused. What it already compared is saved and paid for. Add credits with your provider, then press Resume.` };
+    }
   } else if (ev.type === 'progress') {
     p.processed = ev.processed;
     p.checkedPairs = ev.checkedPairs;
     if (run.batchFailed) {
       run.consecutiveErrors++;
-      if (run.consecutiveErrors >= MAX_CONSECUTIVE_BATCH_ERRORS) {
-        run.stop = { kind: 'pause', pauseReason: 'provider-errors', reason: `The AI failed ${run.consecutiveErrors} batches in a row, so the comparison paused rather than keep trying. Last error: ${run.record.lastError}` };
+      if (!run.stop && run.consecutiveErrors >= MAX_CONSECUTIVE_BATCH_ERRORS) {
+        run.stop = { kind: 'pause', pauseReason: 'provider-errors', reason: `The AI failed ${run.consecutiveErrors} batches in a row, so the comparison paused rather than keep trying. Last error: ${plainProviderError(run.record.lastError)}` };
       }
     } else {
       run.consecutiveErrors = 0;
@@ -306,6 +334,9 @@ async function runLoop(run) {
     ended = { kind: 'stop', stopReason: 'failed', reason: `The comparison stopped: ${err && err.message ? err.message : String(err)}` };
     record.lastError = err && err.message ? err.message : String(err);
   }
+  // The run's last batch failed the way that pauses, so no later check saw it. A list
+  // that ran out on a failure is not "done": those pairs are still to pay for.
+  if (!ended && run.stop && run.stop.kind === 'pause') ended = run.stop;
   const now = new Date().toISOString();
   record.runSeconds = run.secondsBefore + (Date.now() - run.startedMs) / 1000;
   record.updatedAt = now;
@@ -411,6 +442,27 @@ export async function resumeCompareAll(domain) {
   const run = launch(domain, record);
   run.record.updatedAt = new Date().toISOString();
   return present(run.record, { live: true });
+}
+
+/**
+ * Close a paused job without running it, so the row goes back to its ordinary buttons.
+ * What it compared stays remembered; only the job's record says it is over.
+ */
+export async function stopCompareAll(domain) {
+  if (_run && _run.domain === domain) throw busyError(_run);
+  const record = await readRecord(domain);
+  const shown = record ? present(record, { live: false }) : null;
+  if (!shown || shown.state !== 'paused') {
+    throw new CompareAllError('JOB_NOT_PAUSED', 409, 'There is no paused comparison in this domain to stop.');
+  }
+  // An `await` above: a resume may have got in during it.
+  if (_run && _run.domain === domain) throw busyError(_run);
+  const now = new Date().toISOString();
+  Object.assign(record, { state: 'stopped', stopReason: 'user', pauseReason: null, reason: null, recovered: false, updatedAt: now, finishedAt: now });
+  const file = fileFor(domain);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFileAtomic(file, JSON.stringify({ format: FORMAT, ...record }) + '\n');
+  return present(record, { live: false });
 }
 
 // ── Test seams ──────────────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+/* "Compare all remaining" on the Compare row (views/health-compare.js). */
+.dm-compare-reading { font-variant-numeric: tabular-nums; }
+
+/* The label changes on one node, so it holds its width: Pause, Pausing…, Resume. */
+.dm-compare-job-btn { min-width: 104px; justify-content: center; }
+.dm-compare-job-stop { min-width: 72px; justify-content: center; }
+.dm-health .dm-lane .dm-group-summary > .dm-compare-job-stop { flex: none; }
+
+.dm-compare-job {
+  padding: 4px 0 4px 21px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  animation: dm-compare-job-in var(--t-enter) var(--ease-out);
+}
+@keyframes dm-compare-job-in { from { opacity: 0; } to { opacity: 1; } }
+.dm-compare-job-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--space-2);
+  font-variant-numeric: tabular-nums;
+  min-height: 18px;
+}
+.dm-compare-job-note { margin-top: 2px; }
+.dm-compare-job-note-error { color: var(--danger-text); }
+
+@media (max-width: 640px) {
+  /* Figures that grow by a digit may wrap: the room is there from the start, so a tick
+     never moves what is under it. */
+  .dm-compare-job { padding-left: 0; }
+  .dm-compare-job-line { min-height: 36px; align-content: flex-start; }
+}

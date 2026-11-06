@@ -174,6 +174,8 @@ const CONSTS = ['HEALTH_CATEGORIES', 'GIT_UNDO_WARN'];
 const PREAMBLE = `
 let state = {};
 let myMountToken = 1;
+const compareAll = { acknowledge() {}, forgetQuote() {}, running() { return false; }, sync() {}, noteQuote() {}, afterPaint() {}, reading() { return null; }, actions(slug, next) { return next; }, line() { return ''; }, onClick() { return false; } };
+function releaseArrivals() {}
 const ISSUE_PAGE = 20;
 const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
 function buttonRingHtml() { return ''; }
