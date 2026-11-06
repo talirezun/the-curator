@@ -17,8 +17,8 @@
  *   §2  Digits and single letters count in the guard.
  *   §3  A single-pass reply loses no page body.
  *   §4  Spelling variants fold; nothing else does.
- *   §5  ORDINARY REUSE IS UNCHANGED: the incoming Definition replaces. Owner's
- *       open decision; this section is the record of today's behaviour.
+ *   §5  Exact-name reuse: title and opening stay, a differing section's new
+ *       wording goes below the kept text, nothing repeats. A stub is replaced.
  *   §6  Warnings: truthful wording, the view's buckets, the one aggregator.
  *   §7  The cached batch prefix is byte-identical across batches with a fold.
  *   §8  The run-time guard: a lossy or throwing composer writes nothing.
@@ -26,9 +26,8 @@
  *   §10 Property: generated pairs through every route; the oracle walks raw lines
  *       and shares no code with the composer or findLostLines.
  *
- * NOT ENFORCED. Whether a real model's text folds well (the orchestrator measures
- * live). Ordinary reuse can still replace a Definition, and a later ordinary
- * write can still replace text under a heading it repeats.
+ * NOT ENFORCED. Whether a real model's text reads well (the orchestrator measures
+ * live). A model that rewords adds a paragraph per write: identity is by the words.
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
@@ -403,32 +402,114 @@ try {
   }
 
   // ── §5 ────────────────────────────────────────────────────────────────────
-  section('§5  Ordinary reuse is unchanged (the owner\'s open decision)');
+  section('§5  Exact-name reuse loses nothing (owner\'s decision, 2026-11-06)');
   {
     const dom = makeDomain({ 'concepts/agent.md': KEPT });
-    await writePage(dom.name, 'concepts/agent.md', PROPOSED);
+    const res = await writePage(dom.name, 'concepts/agent.md', PROPOSED);
     const body = dom.read('concepts/agent.md');
-    ok(hasLine(body, 'The proposed definition, from one source.'), 'the incoming Definition is on the page');
-    ok(!hasLine(body, 'The kept definition, written by hand.'), 'the kept Definition is gone: today\'s behaviour, not a fold');
-    ok(!hasLine(body, 'Kept opening sentence.'), 'the kept opening is gone too');
-    ok(hasLine(body, '- A new fact from the source'), 'Key Facts accumulate');
-    ok(!/Merged from/.test(body), 'no Merged from block');
-    // The same path through the tidying routes is still the model's own choice.
-    const dom2 = makeDomain({ 'entities/agent.md': asEntity(KEPT) });
-    await writePage(dom2.name, 'people/agent.md', PROPOSED);
-    ok(!/Merged from/.test(dom2.read('entities/agent.md')), 'a wrong folder name with the right slug is still ordinary reuse');
-    const dom3 = makeDomain({ 'entities/agent.md': asEntity(KEPT) });
-    await writePage(dom3.name, 'entities/a/agent.md', PROPOSED);
-    ok(!/Merged from/.test(dom3.read('entities/agent.md')), 'a nested path with the right slug is still ordinary reuse');
-    const dom4 = makeDomain({ 'concepts/agent.md': KEPT });
-    await writePage(dom4.name, 'concepts/agent', PROPOSED);
-    ok(!/Merged from/.test(dom4.read('concepts/agent.md')), 'a missing .md is still ordinary reuse');
-    // Exact byte control against the merge ordinary reuse has always used.
-    const dom5 = makeDomain({ 'concepts/plain.md': '---\ntype: concept\ntags: [type/concept]\ncreated: 2025-01-01\n---\n# P\n\n## Key Facts\n- a\n' });
-    await writePage(dom5.name, 'concepts/plain.md', '# P\n\nNew body.\n\n## Key Facts\n- b\n');
-    const direct = mergeWikiPage('---\ntype: concept\ntags: [type/concept]\ncreated: 2025-01-01\n---\n# P\n\n## Key Facts\n- a\n', 'X');
-    ok(direct.includes('- a'), 'CONTROL: mergeWikiPage still unions bullets');
-    ok(hasLine(dom5.read('concepts/plain.md'), '- a') && hasLine(dom5.read('concepts/plain.md'), '- b') && hasLine(dom5.read('concepts/plain.md'), 'New body.'), 'ordinary reuse: new body, both bullets');
+    for (const l of KEPT_LINES) ok(hasLine(body, l), `kept: "${l}"`);
+    for (const l of PROPOSED_LINES) ok(hasLine(body, l), `new: "${l}"`);
+    ok(!hasLine(body, '# Agents'), 'the current title stays and the incoming title is not added');
+    ok(!/Merged from/.test(body), 'no Merged from block: this is the model\'s own page');
+    ok(hasLine(body, 'kept-tag') || /kept-tag/.test(body), 'tags keep');
+    const order = (a, c) => body.indexOf(a) < body.indexOf(c);
+    ok(order('# Agent\n', 'Kept opening sentence.') && order('Kept opening sentence.', 'Proposed opening sentence.') && order('Proposed opening sentence.', '## Definition'), 'title, kept opening, new opening, then the sections');
+    const defn = body.slice(body.indexOf('## Definition'), body.indexOf('## Key Facts'));
+    ok(defn.indexOf('The kept definition') >= 0 && defn.indexOf('The kept definition') < defn.indexOf('The proposed definition'), 'Definition: kept first, new wording directly below, in that section');
+    eq((body.match(/^## Definition/gm) || []).length, 1, 'one Definition heading');
+    const why = body.slice(body.indexOf('## Why It Matters'));
+    ok(why.indexOf('Kept reason.') < why.indexOf('Proposed reason.') && why.indexOf('Proposed reason.') > 0, 'any other prose section: the same rule');
+    ok(res.status === 'updated', 'reported as updated');
+
+    const again = await writePage(dom.name, 'concepts/agent.md', PROPOSED);
+    eq(again.status, 'unchanged', 'the same text again adds nothing');
+    eq((dom.read('concepts/agent.md').match(/The proposed definition/g) || []).length, 1, '…once on the page');
+  }
+  {
+    // Sections outside the accumulating list: measured at 28% of all bullet lines.
+    const dom = makeDomain({ 'concepts/p.md': '---\ntype: concept\ntags: [type/concept]\n---\n# P\n\n## How It Works\n- step one\n- step two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n## Notes\n```js\n## not a heading\n```\n' });
+    await writePage(dom.name, 'concepts/p.md', '# P\n\n## How It Works\n- step three\n- step one\n\n## Notes\nA new note.\n\n### Deep\nDeep text.\n\n## Brand New\nFresh words.\n');
+    const body = dom.read('concepts/p.md');
+    for (const l of ['- step one', '- step two', '- step three', '| 1 | 2 |', '## not a heading', 'A new note.', '### Deep', 'Deep text.', '## Brand New', 'Fresh words.']) ok(hasLine(body, l), `other sections: "${l}"`);
+    eq((body.match(/- step one/g) || []).length, 1, 'a bullet already held is not repeated');
+    ok(body.indexOf('- step three') < body.indexOf('| 1 | 2 |') || body.indexOf('- step three') > 0, 'the new bullet is in its section');
+    ok(/## not a heading\n```/.test(body), 'a fence stays whole');
+  }
+  {
+    // Same first link, different words: both stay, on this write and the next.
+    const dom = makeDomain({ 'concepts/l.md': '---\ntype: concept\ntags: [type/concept]\n---\n# L\n\n## Related\n- [[alpha]] old description\n- [[beta]]\n' });
+    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Related\n- [[alpha]] new description\n- [[beta]]\n- [[beta]] now with words\n');
+    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Key Facts\n- later\n');
+    const body = dom.read('concepts/l.md');
+    for (const l of ['- [[alpha]] old description', '- [[alpha]] new description', '- [[beta]] now with words']) ok(hasLine(body, l), `same-link bullet: "${l}"`);
+    eq((body.match(/^- \[\[beta\]\]$/gm) || []).length, 1, 'a bare link stays once');
+  }
+  {
+    // The AI's stub said "re-ingest to fix": that has to keep working.
+    const stub = '---\ntype: concept\ntags: [type/concept]\n---\n# s\n\n> ⚠ **Stub page — AI failed to write this on ingest.**\n> Re-ingest "x.md" to fix this.\n\n## Related\n- [[summaries/x]]\n';
+    const dom = makeDomain({ 'concepts/s.md': stub });
+    await writePage(dom.name, 'concepts/s.md', '# Real Title\n\nReal opening.\n\n## Definition\nReal definition.\n');
+    const body = dom.read('concepts/s.md');
+    ok(!/Stub page/.test(body), 'a stub is replaced');
+    ok(hasLine(body, 'Real opening.') && hasLine(body, '# Real Title'), '…by the real page');
+    ok(hasLine(body, '- [[summaries/x]]'), '…its accumulated bullets stay');
+  }
+  {
+    // Link tidy: the same line with a different link spelling is not new wording.
+    const dom = makeDomain({ 'concepts/k.md': '---\ntype: concept\ntags: [type/concept]\n---\n# K\n\n## Definition\nUses [[rag]] here.\n', 'concepts/rag.md': '# rag\n' });
+    const rec = await writePage(dom.name, 'concepts/k.md', '# K\n\n## Definition\nUses [[concepts/rag]] here.\n');
+    eq(rec.status, 'unchanged', 'a link spelled with its folder adds nothing');
+  }
+  {
+    // A page with no title takes the incoming one; a frontmatter claim stays visible.
+    const dom = makeDomain({ 'concepts/n.md': '---\ntype: concept\ntags: [type/concept]\nauthor: kept\n---\nNo title yet.\n' });
+    await writePage(dom.name, 'concepts/n.md', '---\ntags: [x]\nauthor: other\n---\n# Now Titled\n\nMore.\n');
+    const body = dom.read('concepts/n.md');
+    ok(hasLine(body, '# Now Titled') && hasLine(body, 'No title yet.') && hasLine(body, 'More.'), 'no kept title: the incoming one is used');
+    ok(hasLine(body, 'author: kept') && hasLine(body, 'author: other'), 'a differing frontmatter value is kept as text');
+  }
+  {
+    // Bookkeeping of a write is not text, and a summary's sync keeps same-link lines.
+    const dom = makeDomain({ 'summaries/d.md': '---\ntype: summary\nsource: d.md\ndate: 2024-01-01\ntags: [type/summary]\ncreated: 2024-01-01\n---\n# D\n\n## Entities Mentioned\n- [[alpha]] the founder\n\n## Key Takeaways\n- one\n' });
+    const rec = await writePage(dom.name, 'summaries/d.md', '---\ntype: summary\nsource: d.md\ndate: 2026-11-06\ntags: [type/summary]\ncreated: 2026-11-06\n---\n# D\n\n## Key Takeaways\n- one\n');
+    eq(rec.status, 'unchanged', 'a later date is not new text');
+    ok(hasLine(dom.read('summaries/d.md'), 'date: 2024-01-01'), 'the first date stays');
+    await writePage(dom.name, 'summaries/d.md', '# D\n\n## Entities Mentioned\n- [[alpha]] another description\n');
+    await files.syncSummaryEntities(dom.name, 'summaries/d.md', ['summaries/d.md']);
+    const body = dom.read('summaries/d.md');
+    ok(hasLine(body, '- [[alpha]] the founder') && hasLine(body, '- [[alpha]] another description'), 'the post-write sync keeps both same-link lines');
+  }
+  {
+    // Tidied paths are still reuse, not a fold.
+    for (const [existing, asked] of [['entities/agent.md', 'people/agent.md'], ['entities/agent.md', 'entities/a/agent.md'], ['concepts/agent.md', 'concepts/agent']]) {
+      const dom = makeDomain({ [existing]: existing.startsWith('entities') ? asEntity(KEPT) : KEPT });
+      await quiet(() => writePage(dom.name, asked, PROPOSED));
+      const body = dom.read(existing);
+      ok(!/Merged from/.test(body) && hasLine(body, 'The kept definition, written by hand.') && hasLine(body, 'The proposed definition, from one source.'), `${asked} is reuse`);
+    }
+  }
+  {
+    // Re-ingest of one source: the summary and its pages hold still.
+    const dom = makeDomain();
+    const llm = singlePass('note-r.md', [{ path: 'concepts/rivers.md', content: PROPOSED }, { path: 'entities/harbour.md', content: '# Harbour\n\nA town.\n\n## Key Facts\n- on a river\n' }]);
+    await quiet(() => ingestFile(dom.name, sourceFile('note-r.md', SHORT), 'note-r.md', false, null, { llm }));
+    const first = ['concepts/rivers.md', 'entities/harbour.md', 'summaries/note-r.md'].map((p) => dom.read(p));
+    const res = await quiet(() => ingestFile(dom.name, sourceFile('note-r.md', SHORT), 'note-r.md', true, null, { llm }));
+    const second = ['concepts/rivers.md', 'entities/harbour.md', 'summaries/note-r.md'].map((p) => dom.read(p));
+    first.forEach((b, i) => eq(second[i], b, `re-ingest with the same words: page ${i + 1} byte-identical`));
+    ok(res.changes.filter((c) => /rivers|harbour|note-r/.test(c.canonPath)).every((c) => c.status === 'unchanged'), 're-ingest: reported unchanged');
+  }
+  {
+    // A summary keeps its text across a re-ingest with new words.
+    const dom = makeDomain();
+    const v = (w) => async (a, b, c, d, e, opts) => {
+      usage(opts);
+      return JSON.stringify({ title: 'Note', pages: [{ path: 'summaries/note-s.md', content: `# Note\n\nSource: note-s.md\nTags: t\n\n${w} opening.\n\n## Key Takeaways\n- ${w} point\n` }] });
+    };
+    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', false, null, { llm: v('First') }));
+    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', true, null, { llm: v('Second') }));
+    const body = dom.read('summaries/note-s.md');
+    for (const l of ['First opening.', 'Second opening.', '- First point', '- Second point']) ok(hasLine(body, l), `summary re-ingest: "${l}"`);
   }
 
   // ── §6 ────────────────────────────────────────────────────────────────────
@@ -500,6 +581,22 @@ try {
 
     const ok2 = await writePage(dom.name, 'entities/talirezun.md', PROPOSED);
     ok(ok2 && ok2.status === 'updated', 'CONTROL: the real composer writes');
+  }
+  {
+    // The same guard on exact-name reuse.
+    const dom = makeDomain({ 'concepts/agent.md': KEPT });
+    const warnings = [];
+    __setFoldComposeForTest((keep, incoming) => incoming);
+    let rec;
+    try { rec = await writePage(dom.name, 'concepts/agent.md', PROPOSED, { onWarn: (w) => warnings.push(w) }); }
+    finally { __setFoldComposeForTest(null); }
+    eq(rec, null, 'reuse, a lossy composer: nothing written');
+    eq(dom.read('concepts/agent.md'), KEPT, 'reuse, a lossy composer: byte-identical');
+    ok(warnings.some((w) => w.includes('without losing text')), 'reuse, a lossy composer: reported');
+    __setFoldComposeForTest((keep) => keep);
+    try { rec = await writePage(dom.name, 'concepts/agent.md', PROPOSED, { onWarn: () => {} }); }
+    finally { __setFoldComposeForTest(null); }
+    eq(rec, null, 'reuse, a composer dropping the new wording: refused');
   }
   {
     // The second dedup key: a different sentence opening with the same link.
@@ -621,11 +718,13 @@ try {
     const record = (route, seed, existing, proposed, body) => {
       stats[route] = (stats[route] || 0) + 1;
       const lostKept = oracle(existing, body, route);
-      const lostNew = oracle(proposed, body, route, { demoted: true }).filter((l) => !l.startsWith('Tags:'));
+      const lostNew = oracle(proposed, body, route, { demoted: true })
+        .filter((l) => !l.startsWith('Tags:'))
+        .filter((l) => !(route.startsWith('reuse') && l.startsWith('# Proposed')));
       if (lostKept.length || lostNew.length) allLost.push({ route, seed, lostKept: lostKept.slice(0, 3), lostNew: lostNew.slice(0, 3) });
     };
 
-    const N = 40;
+    const N = Number(process.env.CURATOR_TEST_FOLD_SEEDS) || 40;
     for (let seed = 1; seed <= N; seed++) {
       const existing = genExisting(seed);
       const proposed = genProposed(seed);
@@ -657,6 +756,36 @@ try {
       d = makeDomain({ 'concepts/some-thing.md': existing });
       await quiet(() => writePage(d.name, 'concepts/some_thing.md', proposed));
       record('underscore', seed, existing, proposed, d.read('concepts/some-thing.md'));
+
+      // Exact-name reuse, through each way a page is written.
+      d = makeDomain({ 'concepts/thing.md': existing });
+      await quiet(() => writePage(d.name, 'concepts/thing.md', proposed));
+      const firstBody = d.read('concepts/thing.md');
+      record('reuse writePage', seed, existing, proposed, firstBody);
+      const twice = await quiet(() => writePage(d.name, 'concepts/thing.md', proposed));
+      if (d.read('concepts/thing.md') !== firstBody || twice.status !== 'unchanged') allLost.push({ route: 'reuse idempotence', seed, status: twice.status });
+
+      d = makeDomain({ 'concepts/thing.md': existing });
+      await quiet(() => ingestFile(d.name, sourceFile(`u${seed}.md`, SHORT), `u${seed}.md`, false, null, {
+        llm: singlePass(`u${seed}.md`, [{ path: 'concepts/thing.md', content: proposed }]),
+      }));
+      record('reuse single-pass', seed, existing, proposed, d.read('concepts/thing.md'));
+
+      d = makeDomain({ 'concepts/thing.md': existing });
+      await quiet(() => ingestFile(d.name, sourceFile(`v${seed}.md`, LONG), `v${seed}.md`, false, null, {
+        llm: multiPhase(`v${seed}.md`, ['concepts/thing.md', 'entities/harbour.md', 'concepts/rivers.md'], { 'concepts/thing.md': proposed }),
+      }));
+      record('reuse multi-phase', seed, existing, proposed, d.read('concepts/thing.md'));
+
+      d = makeDomain({ 'entities/some-thing.md': existing.replace('type: concept', 'type: entity') });
+      const convR = `00000000-0000-4000-8000-${String(200000000000 + seed)}`;
+      await files.writeConversation(d.name, { id: convR, title: 'T', createdAt: new Date().toISOString(), messages: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }] });
+      const llmR = async (s0, p0, m0, f0, w0, opts) => {
+        usage(opts);
+        return JSON.stringify({ title: `R ${seed}`, pages: [{ path: 'summaries/c.md', content: '# C\n\n## Key Takeaways\n- k\n' }, { path: 'entities/some-thing.md', content: proposed }] });
+      };
+      await quiet(() => compileConversation(d.name, convR, () => {}, { generateText: llmR }));
+      record('reuse compile', seed, existing, proposed, d.read('entities/some-thing.md'));
 
       // Through a real compile, with the summary sync and index steps after it.
       d = makeDomain({ 'entities/some-thing.md': existing.replace('type: concept', 'type: entity') });
@@ -733,6 +862,16 @@ try {
         } });
         ok(!res.error && !res.result.isError, `mcp seed ${seed}: compile ran`, JSON.stringify(res).slice(0, 300));
         record('mcp compile_to_wiki', seed, existing, proposed, d.read(`entities/mcp-page-${seed}.md`));
+        const afterFold = d.read(`entities/mcp-page-${seed}.md`);
+        const re = await rpc('tools/call', { name: 'compile_to_wiki', arguments: {
+          domain: d.name,
+          title: `Reuse ${seed}`,
+          summary_content: `# Reuse ${seed}\n\n## Key Takeaways\n- r${seed}\n`,
+          additional_pages: [{ path: `entities/mcp-page-${seed}.md`, content: `# Other\n\nReuse opening ${seed}.\n\n## Definition\nReuse definition ${seed}.\n` }],
+          broken_link_policy: 'keep',
+        } });
+        ok(!re.error && !re.result.isError, `mcp seed ${seed}: reuse ran`);
+        record('reuse mcp', seed, afterFold, `# Proposed\n\nReuse opening ${seed}.\n\n## Definition\nReuse definition ${seed}.\n`, d.read(`entities/mcp-page-${seed}.md`));
       }
       mcpChild.stdin.end();
       mcpChild.kill();
@@ -742,18 +881,16 @@ try {
     for (const [route, n] of Object.entries(stats)) console.log(`    ${route}: ${n} pairs`);
     eq(allLost.length, 0, `no line lost in ${Object.values(stats).reduce((a, b) => a + b, 0)} generated folds`);
     for (const l of allLost.slice(0, 6)) console.log('    ' + JSON.stringify(l));
-    ok(Object.keys(stats).length === 8, 'CONTROL: all eight routes ran');
+    ok(Object.keys(stats).length === 13, 'CONTROL: all thirteen routes ran');
 
-    // A dumb cross-check on the generator: ordinary reuse DOES lose lines on these
-    // pages, so the oracle can see a loss and the pages hold something to lose.
-    let ordinaryLosses = 0;
+    // A dumb cross-check on the generator: the merge reuse used to go through DOES
+    // lose lines on these pages, so the oracle can see a loss.
+    let oldMergeLosses = 0;
     for (let seed = 1; seed <= 10; seed++) {
       const existing = genExisting(seed);
-      const d = makeDomain({ 'concepts/thing.md': existing });
-      await quiet(() => writePage(d.name, 'concepts/thing.md', genProposed(seed)));
-      if (oracle(existing, d.read('concepts/thing.md'), 'ordinary').length) ordinaryLosses++;
+      if (oracle(existing, mergeWikiPage(existing, genProposed(seed)), 'old merge').length) oldMergeLosses++;
     }
-    ok(ordinaryLosses > 0, `CONTROL: the oracle sees ordinary reuse lose lines (${ordinaryLosses}/10 pairs)`);
+    ok(oldMergeLosses > 0, `CONTROL: the oracle sees the old merge lose lines (${oldMergeLosses}/10 pairs)`);
   }
 } catch (err) {
   failed++;

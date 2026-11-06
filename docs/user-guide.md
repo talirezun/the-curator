@@ -3416,7 +3416,18 @@ The plural rule covers **concept** pages only. Entities are usually proper names
 
 #### When the AI reuses a page by its exact name
 
-This is a different case from all of the above, and it replaces text. If the AI names a page you already have, its new opening and any section it writes again (such as `## Definition`) take the place of the old ones, because it wrote them with the whole source in view. Bullet sections such as Key Facts and Related add up, and sections it leaves out stay.
+Nothing already on the page is lost:
+
+| Part of the page | What a later ingest does |
+|---|---|
+| Title | Stays. |
+| Opening | Stays. A different new opening goes directly below it. |
+| `## Definition` and any other section it writes again | The text there stays first, and different wording goes directly below it, word for word. |
+| Bullets | Add up. A line already in the section is not repeated. |
+| A section the page does not have | Added at the end of the page. |
+| A stub page ("Re-ingest to fix") | Replaced by the real page. |
+
+**Your pages can now hold two wordings of one idea.** That is deliberate, and tidying is yours to do. Re-ingesting a source adds nothing when the AI writes the same words; if it rewords them, the new wording is added too. To correct a section, edit the file: an ingest will not replace it.
 
 ### Related: things you might also see during ingest
 
@@ -3451,11 +3462,11 @@ Asking **Chat** why is not useful: Chat reads your wiki's pages and the domain's
 
 ### Re-ingesting a source (and why it's safe)
 
-If you find an ingested page looks incomplete, or you've updated The Curator and want fresh ingests to apply newer prompt rules to old sources, re-ingest. **The pipeline is fully idempotent on re-ingest (v3.0.1-beta.1+):**
+If you find an ingested page looks incomplete, or you've updated The Curator and want fresh ingests to apply newer prompt rules to old sources, re-ingest. It adds to pages and [never removes what they hold](#when-the-ai-reuses-a-page-by-its-exact-name). **No file or line is duplicated on re-ingest (v3.0.1-beta.1+); wording the AI changes is added as new text:**
 
 | What could duplicate | What prevents it |
 |---|---|
-| Summary page | The slug is computed from the source filename, so `report.pdf` always becomes `summaries/report.md`. The second ingest merges into the existing summary — bullets accumulate, no second file. |
+| Summary page | The slug is computed from the source filename, so `report.pdf` always becomes `summaries/report.md`. The second ingest merges into the existing summary: no second file, and nothing it held is lost. |
 | Entity pages (Alice, Google, etc.) | The AI is shown a list of existing entity filenames before it picks slugs, plus `writePage` runs three dedup passes (title-prefix strip, hyphen-normalised match, cross-folder dedup). Same entity = same file = bullets merge. |
 | Concept pages | Same mechanism as entities. |
 | Index rows | The index is updated programmatically — rows for slugs already mentioned are skipped. |
@@ -8247,7 +8258,7 @@ Good to know:
 - **A bullet with its own words stays, even when its link is already listed.** `- [[alice]] left in 2005` goes under `## Merged from` if the section has `- Founded by [[alice]]`.
 - **The removed page's `created` and `updated` dates are not carried.** The kept page keeps its own.
 - **The text is moved, not rewritten.** `## Merged from` can read like two pages side by side, and tidying it is yours to do.
-- **A later ingest of the same page still follows the [ingest rules](#re-ingesting-a-source-and-why-its-safe)**: it can rewrite the kept page's opening and its prose sections.
+- **A later ingest of the same page follows the [ingest rules](#when-the-ai-reuses-a-page-by-its-exact-name)**: it adds to the kept page and does not replace its text.
 
 **Merges done on earlier versions.** Before this fix a merge used the longer page as the base and carried over only the other page's bullets from eleven named sections. The other page's opening paragraph, its prose, tables, code blocks and any other section were not kept. If the page you chose to delete was the longer one, the page you kept lost its own title, frontmatter and prose, and the surviving file held the deleted page's text under the kept name. That text is not in your wiki any more and the app cannot bring it back. It can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge: a git client pointed at your knowledge base folder can show the earlier version of each file. There is no in-app undo.
 

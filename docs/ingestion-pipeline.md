@@ -228,7 +228,7 @@ flowchart TD
     F --> G[3b. Cross-folder dedup:<br/>concepts/X.md → entities/X.md if exists]
     G --> H[4. injectFrontmatter:<br/>YAML block with type tag]
     H --> I{Page exists?}
-    I -- Yes --> J[mergeWikiPage: union bullet sections.<br/>Name moved: composeMergedPage,<br/>no line of the page is lost]
+    I -- Yes --> J[composeReusedPage: kept text first,<br/>new wording below. Name moved:<br/>composeMergedPage. No line is lost]
     I -- No --> K[Use processed content]
     J --> L
     K --> L
@@ -252,7 +252,7 @@ Key invariants `writePage` guarantees:
 - **No folder-prefix or `.md` in wikilinks** — `[[concepts/rag]]` → `[[rag]]`, `[[foo.md]]` → `[[foo]]` (v3.0.1-beta.9+).
 - **Type tag always present** — `type/entity`, `type/concept`, or `type/summary` enforced in frontmatter even when the LLM mirrors the source's own YAML (v3.0.1-beta.9+).
 - **Variant slugs collapse to canonical** — `[[dr-tali-rezun]]` rewrites to `[[tali-rezun]]` at write time (Pass A); `[[talirezun]]` rewrites to `[[tali-rezun]]` (Pass B); `[[energy-and-water-footprint]]` rewrites to `[[summaries/the-energy-and-water-footprint-of-generative-ai]]` (Pass C, prefix-tolerant).
-- **Bullet sections merge** — Key Facts, Related, Entities Mentioned grow with each ingest; prose sections (Summary, Definition) use the incoming LLM version.
+- **Bullet sections merge** — Key Facts, Related, Entities Mentioned grow with each ingest; in a prose section (Summary, Definition) the kept text stays first and differing new wording goes directly below it. No line of an existing page is lost.
 
 ### Stage 5 — `syncSummaryEntities` (the post-write reconciler)
 

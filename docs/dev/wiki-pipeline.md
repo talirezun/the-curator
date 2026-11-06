@@ -14,7 +14,8 @@
 | `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities. Since v3.84.0 `writePage` runs it a SECOND time after its link rewrites (folder-prefix, `.md`, variants — they turn distinct lines into identical ones), and a link-only bullet keys on its target with the alias stripped (`[[x]]` = `[[x\|Alias]]`) |
 | `tidySummaryLinkSections(content, {entitySlugs, conceptSlugs})` | v3.84.0. The one deterministic repair of a summary's two link sections, used by `syncSummaryEntities` (every write) and Health's `summaryLinkSections` fix (existing wikis). Moves bullets to the section their page's folder names, drops identical lines and plain `- [[x]]` lines whose target the section lists another way (aliased and prose lines are never dropped for being "the same link"). Refused by `summaryTidyGuard` unless the link-target set and every non-blank line outside the two sections are unchanged. Acts on the FIRST section with each heading only |
 | `dedupRewrittenBullets(before, after)` | v3.84.0. For Health's link rewriters (`fixBrokenLink`, the AI broken-link apply, the merge repoint): after a line-for-line rewrite, drops each CHANGED bullet that is now identical to another bullet in its section. Narrower than `deduplicateBulletSections` on purpose |
-| `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing ACCUMULATE sections are injected (Key Facts, Related, Entities Mentioned, etc.). **Prose preservation (v3.0.1-beta.15):** any `## ` PROSE section present in `existing` but ENTIRELY ABSENT from `incoming` is preserved (case-insensitive match), so a thin Compile/Curate edit can't wipe an existing page's Definition / Summary / Why It Matters. If `incoming` includes the heading, incoming wins (no duplication). Exported for unit testing. |
+| `mergeWikiPage(existing, incoming)` | Incoming is base, existing ACCUMULATE bullets injected, a prose section the incoming page omits preserved. **Since 2026-11-06 only for a stub page and for `reconcileGeneratedPages` (copies inside one reply).** A real page goes through `composeReusedPage` or `composeMergedPage`. |
+| `composeReusedPage(keep, incoming, {keepFolder})` (`page-merge.js`) | Exact-name reuse. Title and opening stay; in any repeated `##` section the kept text stays first and new wording goes directly below, verbatim; a block already there is not added; a new section goes at the foot. Returns the kept bytes when nothing is new. `findLostLines` checks it in `writePage` step 5e |
 | `composeMergedPage(keep, remove, {sourceLabel, keepFolder})` (`page-merge.js`) | The text of every merge that deletes a page, of its preview, and of every fold in `writePage` (a page landing on an existing one under a name the model did not choose). Kept page is the base; bullets join same-named sections; the rest goes under `## Merged from <page>` with headings one level down, fences and tables whole. `findLostLines` is the independent check that must return `[]` before a delete. Pure |
 | `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
@@ -73,10 +74,11 @@ POST /api/ingest
                v3.81.0: every A/B/3b redirect emits an onWarn warning ("…redirected
                to canonical…"), aggregated at 3 ('variant-redirect', 'cross-folder')
            d. injectFrontmatter()
-           e. mergeWikiPage() if file exists and the model named this page;
-              composeMergedPage() if the NAME moved (Pass A/B, 3b, an underscore,
-              or opts.foldedFrom): the existing page is the base, and step j is
-              refused if findLostLines finds a missing line
+           e. On an existing page, over link-tidied text, with that page as the base:
+              composeReusedPage() if the model named it; composeMergedPage() if the
+              NAME moved (Pass A/B, 3b, an underscore, or opts.foldedFrom). Step j is
+              refused if findLostLines finds a missing line. A stub page, and only a
+              stub, goes through mergeWikiPage() and is replaced
            f. stripBlanksInBulletSections()
            g. deduplicateBulletSections() — safety net for merge edge cases
            h. Strip [[entities/...]] and [[concepts/...]] folder-prefix links
@@ -199,7 +201,7 @@ find domains/articles/wiki -name "*.md" -print0 | xargs -0 sed -i '' \
 - `type/concept` → Green nodes
 - `type/summary` → Purple nodes
 
-**Merge strategy** — bullet-accumulating sections (Key Facts, Related, Entities Mentioned, etc.) grow with every ingest. Prose sections (Summary, Definition) use the incoming LLM version (it had full document context). A page written onto an existing one under a name the model did not choose (a fold) and a Health merge that deletes a page are different: both use `composeMergedPage`, which never drops text, and moved text lives under `## Merged from <page>` because `mergeWikiPage` preserves that whole block when an incoming page omits the heading.
+**Merge strategy** — nothing on an existing page is lost. Bullet sections grow with every ingest. In any other section, or a repeated Definition, the kept text stays first and new wording goes directly below it (`composeReusedPage`); the page's title and opening stay. A page written under a name the model did not choose (a fold) and a Health merge that deletes a page use `composeMergedPage`, whose moved text lives under `## Merged from <page>`, a block later writes keep. A stub page is replaced. Identity is by the words, so a model that rewords adds a paragraph.
 
 ---
 

@@ -3770,7 +3770,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
     if (pageLinks > 0) {
       // Write back via writePage so all the safeguards (atomic write,
       // bullet dedup, variant-link normalisation Pass A/B/C) still apply.
-      await writePage(domain, relPath, modified);
+      // replace: `modified` is this page with links added, so it IS the page. A
+      // reuse would read each linked line as new wording and add it again.
+      await writePage(domain, relPath, modified, { replace: true, keepLines: true });
       hubsModified++;
       linksAdded += pageLinks;
     }

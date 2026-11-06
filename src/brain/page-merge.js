@@ -477,6 +477,205 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
   return bom + [...head, ...body].join(eol);
 }
 
+// ── Reuse: the model named a page that exists ───────────────────────────────
+
+/**
+ * THE RULE (owner's decision, 2026-11-06). Exact-name reuse used to take the
+ * incoming page as the base, so every section it repeated was replaced. Now:
+ * the page's title and opening stay; in any `##` section the incoming page
+ * repeats, the kept text stays first and the new wording goes directly below it,
+ * verbatim; a block already on the page is not added again; a section the page
+ * lacks is added at the foot.
+ *
+ * WHY EVERY SECTION, NOT A LIST. Measured on a copy of a 3,407-page domain: 812
+ * distinct `##` headings. 10,294 of 36,121 bullet lines sat in sections outside
+ * the accumulating list (How It Works 3,260, Key Aspects 890), and replacing
+ * those lost them just as it lost Definition (2,045 lines) and Summary (552). No
+ * list of names could hold the rule, so the composer has none.
+ *
+ * Not text, on purpose: the incoming `# title` when the page has one (the current
+ * title stays), and `created` and `date` (bookkeeping of a write). See
+ * `incomingForLossCheck`, which the guard reads so it cannot disagree.
+ *
+ * Idempotent on identical text: nothing to add returns the kept bytes. It cannot
+ * see that reworded text means the same: a model that rewords adds a paragraph.
+ *
+ * @param {string} keepText
+ * @param {string} incomingText
+ * @param {object} [opts]
+ * @param {string} [opts.keepFolder]
+ * @returns {string}
+ */
+export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
+  const original = String(keepText ?? '');
+  const bom = original.startsWith('\ufeff') ? '\ufeff' : '';
+  const crlf = (original.match(/\r\n/g) || []).length;
+  const eol = crlf * 2 > (original.match(/\n/g) || []).length ? '\r\n' : '\n';
+
+  const keep = splitPage(original);
+  const inc = splitPage(incomingForLossCheck(incomingText));
+  const wantType = keepFolder === 'entities' ? 'entity' : keepFolder === 'concepts' ? 'concept' : null;
+  const fm = composeFrontmatter(keep, inc, wantType);
+
+  const keepTokens = tokenize(keep.body);
+  const sections = sectionIndex(keepTokens);
+  const keptHasTitle = keepTokens.some((t) => t.kind === 'heading' && t.level === 1);
+  let hay = hayOf(keep.body);
+
+  // Where the opening ends: before the first `##`, or a second `#`.
+  let openingEnd = 0;
+  let titles = 0;
+  for (const t of keepTokens) {
+    if (t.kind === 'heading' && (t.level === 2 || (t.level === 1 && titles++ > 0))) break;
+    openingEnd = t.end;
+  }
+
+  const plans = new Map();          // insertion line → lines
+  const tailSections = new Map();   // section key → { heading, lines }
+  const addAt = (at, block) => {
+    if (!plans.has(at)) plans.set(at, []);
+    plans.get(at).push(block);
+  };
+  const remember = (lines) => { hay += normLines(lines).join('\n') + '\n'; };
+
+  // A section's bullets, as they stand plus what this write adds.
+  const bulletState = new Map();
+  const bulletsOf = (key) => {
+    if (!bulletState.has(key)) {
+      const target = bulletTarget(sections.get(key));
+      bulletState.set(key, target);
+    }
+    return bulletState.get(key);
+  };
+  /** True when this bullet is already held, or is a bare link the section has. */
+  const bulletHeld = (key, token) => {
+    const target = bulletsOf(key);
+    const top = token.lines[0];
+    const single = token.lines.length === 1;
+    if (single && target.exact.has(top.trim().toLowerCase())) return true;
+    if (!single && target.multi.includes(hayOf(token.lines))) return true;
+    if (single && BARE_LINK_BULLET_RE.test(top.trim()) && target.keys.has(dedupKey(top))) return true;
+    if (single) target.exact.add(top.trim().toLowerCase());
+    else target.multi.push(hayOf(token.lines));
+    target.keys.add(dedupKey(top));
+    return false;
+  };
+
+  const incTokens = tokenize(inc.body);
+  let group = null;                 // null: the opening
+  let pending = [];                 // a heading waits for something new under it
+  const place = (block, direct) => {
+    if (group === null) {
+      addAt(openingEnd, block);
+    } else if (sections.has(group.key)) {
+      const sec = sections.get(group.key);
+      addAt(direct ? sec.directEnd : sec.sectionEnd, block);
+    } else {
+      tailSections.get(group.key).lines.push(block);
+    }
+  };
+
+  for (const t of incTokens) {
+    if (t.kind === 'heading' && t.level === 2) {
+      pending = [];
+      const key = headingKey(t.text);
+      group = { key, direct: true };
+      if (!sections.has(key) && !tailSections.has(key)) {
+        tailSections.set(key, { heading: t.text, lines: [] });
+      }
+      continue;
+    }
+    if (t.kind === 'heading') {
+      if (group) group.direct = false;
+      const line = t.level === 1 ? demote(t) : t.lines[0];
+      if (hay.includes('\n' + line.trimEnd() + '\n')) pending.push([line]);
+      else { for (const h of pending) place(h, false); pending = []; remember([line]); place([line], false); }
+      continue;
+    }
+    if (t.kind === 'bullet' && group) {
+      if (bulletHeld(group.key, t)) continue;
+    } else if (hay.includes(hayOf(t.lines))) {
+      continue;
+    }
+    const direct = !group || group.direct;
+    for (const h of pending) place(h, direct);
+    pending = [];
+    remember(t.lines);
+    const closer = t.kind === 'fence' && !t.closed ? t.marker[0].repeat(t.marker.length) : null;
+    place(closer ? [...t.lines, closer] : t.lines, direct);
+  }
+
+  const conflicts = fm.conflicts.length ? ['```yaml', ...fm.conflicts, '```'] : null;
+  const addConflicts = conflicts && !hay.includes(hayOf(conflicts));
+
+  const fmUnchanged = fm.lines === null
+    || (keep.hasFrontmatter && fm.lines.join('\n') === keep.frontmatter.join('\n'));
+  const anyNew = plans.size > 0 || tailSections.size > 0 || addConflicts;
+  if (fmUnchanged && !anyNew) return original;
+
+  // ── Into the kept body, last first so the line numbers hold ───────────────
+  const body = keep.body.slice();
+  const atList = (line) => line !== undefined && (line.startsWith('- ') || /^[ \t]+\S/.test(line));
+  for (const at of [...plans.keys()].sort((a, b) => b - a)) {
+    const out = [];
+    let prev = at > 0 ? body[at - 1] : undefined;
+    for (const block of plans.get(at)) {
+      const bothList = atList(prev) && block[0].startsWith('- ');
+      if (prev !== undefined && !isBlank(prev) && !bothList) out.push('');
+      out.push(...block);
+      prev = block[block.length - 1];
+    }
+    if (at < body.length && !isBlank(body[at]) && !(atList(prev) && body[at].startsWith('- '))) out.push('');
+    body.splice(at, 0, ...out);
+  }
+
+  const tail = [];
+  for (const { heading, lines } of tailSections.values()) {
+    tail.push('', `## ${heading}`);
+    lines.forEach((block, i) => {
+      const bothList = i > 0 && lines[i - 1][0].startsWith('- ') && block[0].startsWith('- ');
+      if (i > 0 && !bothList) tail.push('');
+      tail.push(...block);
+    });
+  }
+  if (addConflicts) tail.push('', '## Frontmatter from a later write', ...conflicts);
+
+  if (tail.length) {
+    while (body.length && isBlank(body[body.length - 1])) body.pop();
+    const lastKept = keepTokens[keepTokens.length - 1];
+    if (lastKept && lastKept.kind === 'fence' && !lastKept.closed) {
+      body.push(lastKept.marker[0].repeat(lastKept.marker.length));
+    }
+    if (!body.length) tail.shift();
+    body.push(...tail, '');
+  } else if (body.length === 0 || !isBlank(body[body.length - 1])) {
+    body.push('');
+  }
+
+  // A page with no `# title` takes the incoming one, which is otherwise not text.
+  if (!keptHasTitle) {
+    const title = tokenize(splitPage(incomingText).body).find((t) => t.kind === 'heading' && t.level === 1);
+    if (title) body.unshift(title.lines[0], ...(body.length && !isBlank(body[0]) ? [''] : []));
+  }
+
+  const head = fm.lines === null ? [] : ['---', ...fm.lines, '---'];
+  return bom + [...head, ...body].join(eol);
+}
+
+/**
+ * The incoming page without what a reuse deliberately does not carry: its first
+ * `# title`, when no text comes before it, and its `date`. composeReusedPage and
+ * the guard in writePage both read this, so what is "not text" has one definition.
+ */
+export function incomingForLossCheck(incomingText) {
+  const page = splitPage(incomingText);
+  const body = page.body.slice();
+  const first = body.findIndex((l) => !isBlank(l));
+  if (first >= 0 && /^#[ \t]+\S/.test(body[first])) body.splice(first, 1);
+  const fm = page.frontmatter.filter((l) => !/^date:/.test(l));
+  return (page.hasFrontmatter ? ['---', ...fm, '---'] : []).concat(body).join('\n');
+}
+
 // ── The dumb cross-check ────────────────────────────────────────────────────
 
 /**
