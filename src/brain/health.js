@@ -37,7 +37,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { composeMergedPage, findLostLines } from './page-merge.js';
 import {
   loadDuplicateChecks, pairKey, openingsHash, pageOpening,
-  isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs,
+  isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs, nameRelation,
 } from './duplicate-checks.js';
 // Path chokepoint — see the comment above the fix handlers below. Imported,
 // not re-implemented: this module and wiki-read.js each had their own copy,
@@ -1995,6 +1995,9 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
     truncated,
     totalCandidates: livePairs.length,
     dismissed: filtered.dismissed,
+    // Every ranked pair BEFORE dismissals: what liveCandidates keeps so a later
+    // dismissal, or one dropped with a page, can be re-applied without a full pass.
+    ...(opts.includeRanked ? { ranked: allPairs } : {}),
   };
 }
 
@@ -2136,7 +2139,51 @@ export async function countLinksToSlug(domain, slug) {
  */
 export const MERGED_PREVIEW_CAP_CHARS = 4000;
 
-export async function previewSemanticDuplicateMerge(domain, issue) {
+/**
+ * How much of EACH original page a comparison carries. Much larger than the merged
+ * preview on purpose: this is the evidence for a decision that deletes a page, and
+ * v3.91.1 recorded that a 4,000-character window can hide moved text. A longer page
+ * says `truncated: true` and the view offers the whole page in the reader.
+ */
+const COMPARISON_TEXT_CAP_CHARS = 60000;
+
+/**
+ * What a comparison was of: both pages' whole current text, and which way round.
+ * The names and the direction are hashed with the text, so a basis for keep A /
+ * remove B never matches keep B / remove A, and the separator keeps
+ * ("ab","c") and ("a","bc") apart. Not a secret: it proves nothing about who asked,
+ * only that the pages are still the ones that were compared.
+ */
+function semanticBasisOf(resolved, keepContent, removeContent) {
+  const hash = createHash('sha256');
+  for (const part of [resolved.keepFolder, resolved.keepSlug, resolved.removeFolder, resolved.removeSlug, keepContent, removeContent]) {
+    hash.update(String(part)).update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * The basis of this pair as it is on disk NOW, or null when there is nothing to
+ * compare: an invalid pair, or a page that is gone. Those are not this gate's to
+ * answer, because fixSemanticDuplicate refuses them with their own reasons, and the
+ * view relies on those reasons to mark a pair already resolved.
+ */
+export async function semanticMergeBasisNow(domain, issue) {
+  const wikiDir = wikiPath(domain);
+  const resolved = resolveSemanticDupePair(wikiDir, issue);
+  if (!resolved || resolved.missingReason) return null;
+  const { keepPath, removePath } = resolved;
+  const [keepContent, removeContent] = await Promise.all([readFile(keepPath, 'utf8'), readFile(removePath, 'utf8')]);
+  return semanticBasisOf(resolved, keepContent, removeContent);
+}
+
+/**
+ * The preview. `opts.comparison` adds what a person decides from: both original
+ * pages and the links pointing at each. Only the app's route asks for it; the MCP
+ * does not, so a model's preview stays the size it was. `basis` and `nameRelation`
+ * are always present.
+ */
+export async function previewSemanticDuplicateMerge(domain, issue, opts = {}) {
   const wikiDir = wikiPath(domain);
   const resolved = resolveSemanticDupePair(wikiDir, issue);
   if (!resolved) {
@@ -2168,7 +2215,10 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   const { merged: composed, lost } = composeMerge(keepContent, removeContent,
     { folder: keepFolder, slug: keepSlug }, { folder: removeFolder, slug: removeSlug });
   if (lost.length) {
-    throw new Error(`This merge is refused because it would lose text from ${lost[0].page === 'kept' ? keepSlug : removeSlug}. Nothing was changed.`);
+    const err = new Error(`This merge is refused because it would lose text from ${lost[0].page === 'kept' ? keepSlug : removeSlug}. Nothing was changed.`);
+    err.code = MERGE_WOULD_LOSE_TEXT;
+    err.status = 409;
+    throw err;
   }
   const rewriter = retiredLinkRewriter([{ folder: removeFolder, slug: removeSlug }], keepSlug, keepFolder);
   const merged = rewriter.apply(composed);
@@ -2178,6 +2228,10 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   const affectedFiles = [];
   const allFiles = await walkMdFiles(wikiDir);
   const re = rewriter.re;
+  // Links in, for the comparison. A page's link to itself is not a link in.
+  const linkInPattern = (slug) => new RegExp(`\\[\\[(entities/|concepts/|summaries/)?${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\|[^\\]]+)?\\]\\]`, 'g');
+  const linksIn = { keep: { pattern: linkInPattern(keepSlug), own: path.relative(wikiDir, keepPath), files: [], links: 0 },
+    remove: { pattern: linkInPattern(removeSlug), own: path.relative(wikiDir, removePath), files: [], links: 0 } };
   for (const full of allFiles) {
     const rel = path.relative(wikiDir, full);
     if (rel === 'index.md' || rel === 'log.md') continue;
@@ -2186,9 +2240,45 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
     if (matches && matches.length > 0) {
       affectedFiles.push({ path: rel, linkCount: matches.length });
     }
+    if (opts.comparison) {
+      for (const side of [linksIn.keep, linksIn.remove]) {
+        if (rel === side.own) continue;
+        const found = content.match(side.pattern);
+        if (found) { side.files.push(rel); side.links += found.length; }
+      }
+    }
   }
 
+  const comparison = !opts.comparison ? {} : (() => {
+    const original = (text, side, slug, folder) => ({
+      slug, folder,
+      text: text.slice(0, COMPARISON_TEXT_CAP_CHARS),
+      length: text.length,
+      truncated: text.length > COMPARISON_TEXT_CAP_CHARS,
+      linksIn: { files: side.files.length, links: side.links, from: side.files.slice(0, 20) },
+    });
+    const movedUnder = `Merged from ${keepSlug === removeSlug ? `${removeFolder}/${removeSlug}` : removeSlug}`;
+    return {
+      originals: {
+        keep: original(keepContent, linksIn.keep, keepSlug, keepFolder),
+        remove: original(removeContent, linksIn.remove, removeSlug, removeFolder),
+      },
+      // A merge that would lose a line never reaches this point (it is refused
+      // above, by the same check the merge itself runs), so this states a checked
+      // fact and is not an estimate. The removed page's created/updated dates are
+      // the one thing that does not move: they belong to a file that is deleted.
+      mergeOutcome: {
+        lostLines: 0,
+        movedUnder: merged.includes(`\n## ${movedUnder}`) ? movedUnder : null,
+        mergedPreviewTruncated: merged.length > MERGED_PREVIEW_CAP_CHARS,
+      },
+    };
+  })();
+
   return {
+    basis: semanticBasisOf(resolved, keepContent, removeContent),
+    nameRelation: nameRelation(keepSlug, removeSlug),
+    ...comparison,
     keepPath: path.relative(wikiDir, keepPath),
     removePath: path.relative(wikiDir, removePath),
     mergedPreview: merged.slice(0, MERGED_PREVIEW_CAP_CHARS), // cap for UI

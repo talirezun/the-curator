@@ -26,10 +26,20 @@ import {
   estimateOrphanRescue,
   planOrphanRescue,
   describeHealthRun,
+  estimateCompareAll,
+  semanticFamilies,
 } from '../brain/health-ai.js';
+import {
+  startCompareAll,
+  pauseCompareAll,
+  resumeCompareAll,
+  compareAllStatus,
+  beginManualScan,
+  refuseIfCompareAllRunning,
+} from '../brain/duplicate-job.js';
 import { describeRun } from '../brain/ai-run.js';
 import { forgetDuplicateChecks } from '../brain/duplicate-checks.js';
-import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
+import { previewSemanticDuplicateMerge, semanticMergeBasisNow, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings, DEFAULT_AI_HEALTH } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
@@ -151,6 +161,61 @@ router.get('/:domain', async (req, res) => {
   }
 });
 
+// ── THE MERGE GATE ───────────────────────────────────────────────────────────
+//
+// A semantic merge deletes a page. "Preview before Merge" used to be enforced only
+// in the browser: POST /fix with no preview ever requested returned 200 and deleted
+// the page. Now the route itself asks: is this the pair, this way round, with the
+// text, that somebody compared? The comparison's `basis` (health.js) answers that.
+//
+// MERGE_BASIS_CLIENT_REQUIRED is THE switch for the landing order, and the only one.
+//   false: the view of this release sends no basis yet. A merge with no basis passes
+//          only if THIS SERVER issued, in a preview, the basis of the pages as they
+//          are now, this way round. A merge that nobody previewed is refused either
+//          way, so the hole is closed before the view changes. A client that previews
+//          and then merges blind still passes, which is what `true` removes.
+//   true:  the caller must send the basis. The view must send it first.
+// scripts/test-merge-basis-gate.js goes red if this and the view disagree.
+//
+// Batch merge does not come through here and needs no basis: no one reads a preview
+// of a batch, and fixSemanticDuplicatesBatch requires a spelling variant AND a
+// remembered high-confidence answer about the openings on disk now. The MCP has its
+// own gate in mcp/tools/health.js, bound to the same basis.
+const MERGE_BASIS_CLIENT_REQUIRED = false;
+let mergeBasisClientRequired = MERGE_BASIS_CLIENT_REQUIRED;
+
+const MERGE_BASIS_MISSING_MESSAGE = 'This merge is not based on a comparison of the two pages as they are now, so nothing was changed. Compare them first, then merge.';
+const MERGE_BASIS_STALE_MESSAGE = 'One of these pages changed since you compared them, or the page to keep is a different one now, so nothing was changed. Compare them again, then merge.';
+
+const issuedBases = new Set(); // `${domain}|${basis}`, oldest first
+const MAX_ISSUED_BASES = 500;
+function noteIssuedBasis(domain, basis) {
+  const key = `${domain}|${basis}`;
+  issuedBases.delete(key);
+  issuedBases.add(key);
+  if (issuedBases.size > MAX_ISSUED_BASES) issuedBases.delete(issuedBases.values().next().value);
+}
+
+/**
+ * Null when the merge may go ahead, else the refusal. Runs under the file lock, so
+ * what it compares is what the merge reads. An invalid pair or a gone page has no
+ * basis, and goes on to fixSemanticDuplicate's own refusal, which writes nothing.
+ */
+async function mergeBasisRefusal(domain, issue, basis) {
+  const now = await semanticMergeBasisNow(domain, issue);
+  if (now === null) return null;
+  const sent = typeof basis === 'string' && basis ? basis : null;
+  if (sent !== null) return sent === now ? null : { status: 409, code: 'MERGE_BASIS_STALE', error: MERGE_BASIS_STALE_MESSAGE };
+  if (!mergeBasisClientRequired && issuedBases.has(`${domain}|${now}`)) return null;
+  return { status: 409, code: 'MERGE_BASIS_MISSING', error: MERGE_BASIS_MISSING_MESSAGE };
+}
+
+/** Test seam: run the suite under each setting. Null puts the shipped constant back. */
+export function __setMergeBasisClientRequiredForTest(value) {
+  mergeBasisClientRequired = value === null ? MERGE_BASIS_CLIENT_REQUIRED : !!value;
+}
+export const __MERGE_BASIS_CLIENT_REQUIRED = MERGE_BASIS_CLIENT_REQUIRED;
+
 // Fix ONE issue -- or, when `issue` is omitted, every issue of `type`.
 //
 // Guarded exactly like /:domain/fix-all below, because it can do exactly the
@@ -173,7 +238,7 @@ router.get('/:domain', async (req, res) => {
 // careful than the app's own route.
 router.post('/:domain/fix', async (req, res) => {
   const { domain } = req.params;
-  const { type, issue } = req.body || {};
+  const { type, issue, basis } = req.body || {};
   if (!type)                   return res.status(400).json({ error: 'Missing type' });
   if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
   // Validate the domain BEFORE acquiring the lock / mkdir (audit H1) so a bogus
@@ -194,6 +259,10 @@ router.post('/:domain/fix', async (req, res) => {
     });
   }
   try {
+    if (type === 'semanticDupe' && issue) {
+      const refusal = await mergeBasisRefusal(domain, issue, basis);
+      if (refusal) return res.status(refusal.status).json({ error: refusal.error, code: refusal.code, fixed: 0 });
+    }
     const result = await fixIssue(domain, type, issue || null);
     res.json({ ok: true, ...result });
   } catch (err) {
@@ -278,7 +347,10 @@ router.get('/:domain/semantic-dupes/status', async (req, res) => {
     // back to a large domain shows them at once while the figures are counted.
     if (req.query && req.query.quick) return res.json({ ok: true, ...(await semanticRememberedPairs(domain)) });
     const settings = getAiHealthSettings();
-    res.json({ ok: true, ...(await semanticScanStatus(domain, settings.semanticDupeMaxPairs)) });
+    // `?reconcile=1`, when the panel opens: repeat the full pass if the list on hand
+    // was filtered after a merge. It costs nothing when it was not.
+    const reconcile = !!(req.query && req.query.reconcile);
+    res.json({ ok: true, ...(await semanticScanStatus(domain, settings.semanticDupeMaxPairs, { reconcile })) });
   } catch (err) {
     if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[semantic-dupes status]', err);
@@ -293,9 +365,11 @@ router.post('/:domain/semantic-dupes/forget', async (req, res) => {
   try {
     const { domain } = req.params;
     await assertDomain(domain);
+    refuseIfCompareAllRunning(domain);
     await forgetDuplicateChecks(domain);
     res.json({ ok: true });
   } catch (err) {
+    if (err && err.code === 'COMPARE_ALL_RUNNING') return res.status(err.status).json({ error: err.message, code: err.code });
     console.error('[semantic-dupes forget]', err);
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -305,13 +379,15 @@ router.post('/:domain/semantic-dupes/forget', async (req, res) => {
 //   event: start | progress | pair | batch-error | done | error
 // matching the shape documented in docs/api-reference.md.
 router.post('/:domain/semantic-dupes/scan', async (req, res) => {
+  let releaseScan = () => {};
   try {
     const { domain } = req.params;
     await assertDomain(domain);
     try { getProviderInfo(); }
     catch (err) { return res.status(400).json({ error: err.message }); }
+    releaseScan = beginManualScan(domain);
   } catch (err) {
-    return res.status(err.status || 500).json({ error: err.message });
+    return res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
 
   // SSE headers
@@ -338,7 +414,89 @@ router.post('/:domain/semantic-dupes/scan', async (req, res) => {
   } catch (err) {
     send({ type: 'error', error: err.message, code: err.code });
   } finally {
+    releaseScan();
     res.end();
+  }
+});
+
+// ── Compare all remaining: one server job (src/brain/duplicate-job.js) ─────────
+
+function sendJobError(res, err, label) {
+  if (err && err.code && err.status) {
+    return res.status(err.status).json({ error: err.message, code: err.code, ...(err.running ? { running: err.running } : {}) });
+  }
+  if (!err.status || err.status >= 500) console.error(label, err);
+  return res.status(err.status || 500).json({ error: err.message });
+}
+
+// The confirm's figures: every pair not yet answered. No provider call and no write.
+// `overCeiling` says this pass is larger than the per-run ceiling, which applies to one
+// press of a button; the limit that binds here is the amount confirmed at start.
+router.get('/:domain/semantic-dupes/compare-all/estimate', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); }
+    catch (err) { return res.status(400).json({ error: err.message, code: 'NO_PROVIDER' }); }
+    const settings = getAiHealthSettings();
+    const estimate = await estimateCompareAll(domain);
+    res.json({
+      ok: true, ...estimate,
+      costCeilingTokens: settings.costCeilingTokens,
+      overCeiling: estimate.estimatedTokens > settings.costCeilingTokens,
+      stopMargin: 1.2,
+      job: await compareAllStatus(domain),
+      runsOn: describeRun({ job: 'wiki-health' }),
+    });
+  } catch (err) {
+    if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
+    sendJobError(res, err, '[compare-all estimate]');
+  }
+});
+
+router.post('/:domain/semantic-dupes/compare-all/start', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertWritableDomain(domain);
+    res.json({ ok: true, job: startCompareAll(domain, req.body) });
+  } catch (err) { sendJobError(res, err, '[compare-all start]'); }
+});
+
+router.post('/:domain/semantic-dupes/compare-all/pause', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    res.json({ ok: true, job: await pauseCompareAll(domain) });
+  } catch (err) { sendJobError(res, err, '[compare-all pause]'); }
+});
+
+router.post('/:domain/semantic-dupes/compare-all/resume', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertWritableDomain(domain);
+    res.json({ ok: true, job: await resumeCompareAll(domain) });
+  } catch (err) { sendJobError(res, err, '[compare-all resume]'); }
+});
+
+// Read-only, and cheap enough to poll: it reads one small file.
+router.get('/:domain/semantic-dupes/compare-all/status', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    res.json({ ok: true, job: await compareAllStatus(domain) });
+  } catch (err) { sendJobError(res, err, '[compare-all status]'); }
+});
+
+// Open pairs grouped into families, stating what the AI really compared. READ-ONLY.
+router.get('/:domain/semantic-dupes/families', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const stay = req.query && typeof req.query.stay === 'string' ? req.query.stay : null;
+    res.json({ ok: true, ...(await semanticFamilies(domain, { stay })) });
+  } catch (err) {
+    console.error('[semantic-dupes families]', err);
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -351,7 +509,8 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
     await assertDomain(domain);
     const issue = req.body && req.body.issue;
     if (!issue) return res.status(400).json({ error: 'Missing issue' });
-    const preview = await previewSemanticDuplicateMerge(domain, issue);
+    const preview = await previewSemanticDuplicateMerge(domain, issue, { comparison: true });
+    noteIssuedBasis(domain, preview.basis);
     res.json({ ok: true, ...preview });
   } catch (err) {
     // A pair whose page an earlier merge already deleted is a REFUSAL, not a
@@ -367,6 +526,9 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
         code: err.code,
         ...(err.missing ? { missing: err.missing } : {}),
       });
+    }
+    if (err && err.code === 'merge-would-lose-text') {
+      return res.status(409).json({ error: err.message, code: err.code });
     }
     console.error('[semantic-dupes preview]', err);
     res.status(err.status || 500).json({ error: err.message });

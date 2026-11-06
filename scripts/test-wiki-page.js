@@ -1355,6 +1355,10 @@ try {
       // through wikiFile(). Both have §8b cases (Cases 11 and 12: a symlinked
       // folder, and index.md itself a symlink out) and §8d positive paths.
       'planIndexRebuild', 'applyIndexRebuild',
+      // The merge gate's hash of a pair as it is now. Read-only: resolves through
+      // resolveSemanticDupePair, like the preview, and reads two files. No §8b case,
+      // the precedent for the read-only exports above.
+      'semanticMergeBasisNow',
     ].sort();
     assert(JSON.stringify(exports) === JSON.stringify(KNOWN),
       '8c #7: health.js\'s export surface is unchanged — a NEW export must be added to section 8b\'s enumeration and to this list',

@@ -672,6 +672,17 @@ export function getDuplicateChecksDir() {
 }
 
 /**
+ * The "Compare all remaining" job's record, one JSON file per domain, written by
+ * `src/brain/duplicate-job.js`. OUTSIDE `domains/` like the answers above: it is
+ * this machine's run of a paid job, and a wiki scan must not write inside the wiki.
+ *
+ * Pure resolver — never creates the directory.
+ */
+export function getDuplicateJobsDir() {
+  return userDataPath('.duplicate-jobs');
+}
+
+/**
  * The Curator's trash (v3.73.0) — where a deleted DOMAIN or a deleted PROJECT
  * goes instead of being `rm -rf`'d. Two subfolders, created on first use:
  *

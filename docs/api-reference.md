@@ -2316,6 +2316,71 @@ What this computer already knows, for the panel to open with after a reload. **N
 
 With `?quick=1` it returns only `{ok: true, hasChecks, pairs}`, with **no candidate pass**, so the panel can show the pairs at once on a large domain and fetch the figures with a second, plain call.
 
+**After a merge the figures stay exact without a full pass.** When pages have only gone since the last count, the pairs touching them are filtered out of the kept list, which equals a full pass, order included: a pair's candidacy and score depend on its two names alone (`scripts/test-duplicate-job.js` checks it at 2,000 pages). `figuresFrom` is `full-pass` or `memo-filtered`, and `estimated` is `false` on both (the same two fields are on `/estimate`). `checkedPairs` can fall by more than the deleted page's pairs: a merge usually changes the kept page's opening, and answers bound to the old opening no longer apply. That part is read from disk every time. A new page or a rename goes through a full pass. With `?reconcile=1`, for when the panel opens, the full pass runs once if the list on hand was filtered; otherwise it costs nothing.
+
+---
+
+## GET /api/health/:domain/semantic-dupes/families
+
+READ-ONLY, no LLM call, no candidate pass. The open pairs (remembered `yes`, still applying, not dismissed) grouped by the pages they share. **A~B and B~C say nothing about A~C**, so each page states what is known about that exact pair with the page that stays.
+
+`?stay=<folder>/<slug>` chooses the page that stays in the family containing it; otherwise `suggestedStay` is used (most open pairs, then most often the AI's keeper, then by name). It decides nothing.
+
+```json
+{
+  "ok": true,
+  "openPairs": 2,
+  "families": [
+    {
+      "size": 3,
+      "openPairs": 2,
+      "suggestedStay": "concepts/claude-opus-5",
+      "stays": "concepts/claude-opus",
+      "pages": [
+        { "page": "concepts/claude-opus", "folder": "concepts", "slug": "claude-opus", "opening": "...", "stays": true },
+        { "page": "concepts/claude-opus-5", "folder": "concepts", "slug": "claude-opus-5", "opening": "...", "compared": "same", "confidence": "high", "rationale": "...", "nameRelation": "version-differs" },
+        { "page": "concepts/claude-opus-4", "folder": "concepts", "slug": "claude-opus-4", "opening": "...", "compared": "never", "nameRelation": "version-differs" }
+      ]
+    }
+  ]
+}
+```
+
+`compared` is `same` or `different` (the AI compared these two, and that answer still applies), `stale` (it answered about other openings or on another model), `kept-both` (the user dismissed this pair) or `never`. Families are returned largest first, and a two-page family is included.
+
+---
+
+## GET /api/health/:domain/semantic-dupes/compare-all/estimate
+
+The confirm for **Compare all remaining**: every pair not yet answered. No LLM call and no write. Besides coverage it returns `pairs`, `batches`, `estimatedTokens`, `estimatedUsd`, `priceKnown`, `costNote`, `estimatedSeconds`, `rateBasis`, `timeBasis`, `provider`, `model`, `fallbackNote`, `costCeilingTokens`, `overCeiling`, `stopMargin` (1.2), `runsOn` and `job` (as `/status`).
+
+- `rateBasis`: `measured` (Flash Lite: $0.046 per 1,000 pairs at v3.91.0), `measured-tokens` (`claude-haiku-5-5`: tokens measured, price not) or `assumed` (any other model: about 450 tokens per pair). `timeBasis`: `measured` on Flash Lite (165 ms per pair), otherwise `assumed`.
+- A tiered model is priced at the tier its batch prompt falls in. A free model has `estimatedUsd: null, priceKnown: true`; an unpriced one `estimatedUsd: null, priceKnown: false`. Those two are confirmed in tokens.
+- **The figure is for the configured model.** If it is unavailable a newer, usually dearer model may answer; `fallbackNote` says so, and the job prices each call at the model that really answered.
+- `overCeiling: true` says the pass is larger than the per-run ceiling in Settings. That ceiling applies to one press of **Check the next N** and is not applied here: the limit that binds is the amount confirmed at start.
+
+## POST /api/health/:domain/semantic-dupes/compare-all/start
+
+**Request body:** `{ "confirmedModel": "gemini-2.5-flash-lite", "confirmedUsd": 1.67 }`, or `confirmedTokens` for a free or unpriced model. Answers at once with `{ok: true, job}`; the job keeps running if the client leaves. It stops by itself before the call that would pass 120% of the confirmed amount. Refused on a read-only mirror (400).
+
+## POST /api/health/:domain/semantic-dupes/compare-all/pause
+
+Stops the job before its next provider call. The call in flight finishes and is saved. `{ok: true, job}` with `state: "pausing"`, then `paused`. Saying it twice is the same as once.
+
+## POST /api/health/:domain/semantic-dupes/compare-all/resume
+
+Runs a paused job again on the amount already confirmed, with what it spent still counted, sending only pairs without an answer. Pressed while a pause is still waiting on its call, the run simply carries on.
+
+## GET /api/health/:domain/semantic-dupes/compare-all/status
+
+Read-only: reads one small file, writes nothing, safe to poll. `{ok: true, job}`. `job.state` is `none`, `running`, `pausing`, `paused`, `stopped`, `done` or `failed`. A record that says running with no run in this process (the app restarted) **reads as paused**, `pauseReason: "restart"`, `recovered: true`. Nothing auto-starts spend.
+
+`job` holds `model`, `provider`, `limit {kind: "usd"|"tokens", confirmed, stopAt}`, `spent {usd, calls, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, `answeredBy {<model>: {calls, usd}}`, `fallbackAnswered`, `progress {pairsThisRun, processed, totalPairs, checkedPairs, rememberedPairs, found, failedBatches, failedPairs}`, `secondsLeft`, `pauseReason` (`user`, `restart`, `provider-errors`), `stopReason` (`spend-limit`, `price-unknown`, `fallback-not-confirmed`, `domain-missing`, `failed`), `reason` (a plain sentence), `lastError`. `spent` counts every completed provider call, split retries and fallback rungs included. After a crash it can read one call low, and `recovered` says a crash happened. `runningElsewhere` names another domain's running job.
+
+**Error codes** (`{error, code}`): `JOB_CONFIRM_REQUIRED` 400, `JOB_ESTIMATE_STALE` 409 (the confirm was for another model), `JOB_RUNNING` 409 with `running: {domain, state}` (one at a time across domains), `SCAN_RUNNING` 409, `JOB_NOT_RUNNING` 409, `JOB_NOT_PAUSED` 409, `JOB_MODEL_CHANGED` 409, `NO_PROVIDER` 400.
+
+While a job runs in a domain, `POST /scan` and `POST /forget` there answer 409 `COMPARE_ALL_RUNNING`. The job writes nothing under `domains/`: its record is one JSON file per domain in the user-data dir (`.duplicate-jobs/`).
+
 ---
 
 ## POST /api/health/:domain/semantic-dupes/forget
@@ -2346,6 +2411,8 @@ The request body is empty (the scan uses the user's persisted settings).
 ## POST /api/health/:domain/semantic-dupes/preview
 
 Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would do. Called before the **Merge** button is enabled.
+
+**The comparison (additive).** The response also carries `basis` (the sha-256 of both pages' current text, the direction included, which a merge must present: see `/fix` below), `nameRelation` (`spelling-variant`, `version-differs` or `different-names`, computed by the app), `originals.keep` and `originals.remove` (each `{slug, folder, text, length, truncated, linksIn: {files, links, from}}`, with `text` cut at 60,000 characters and `from` at 20 paths; a page's link to itself is not counted) and `mergeOutcome` (`{lostLines: 0, movedUnder, mergedPreviewTruncated}`). `lostLines` is always 0, because a merge that would lose a line is refused here with 409 `merge-would-lose-text`, by the check the merge itself runs. `movedUnder` is the `## Merged from …` heading the removed page's other text moves under, or null when there was none. The removed page's `created` and `updated` dates do not move. They belong to the deleted file. The MCP's preview has `basis` and `nameRelation` but no page text.
 
 **Request body**
 
@@ -2525,7 +2592,8 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
     "keepFolder": "concepts",
     "removeSlug": "e-mail",
     "removeFolder": "concepts"
-  }
+  },
+  "basis": "<the basis from the preview>"
 }
 ```
 
@@ -2535,10 +2603,14 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 { "ok": true, "fixed": 1, "total": 1 }
 ```
 
+**The merge gate.** This route requires a comparison of the pages as they are now. Refused with `409 {error, code, fixed: 0}`, deleting nothing: `MERGE_BASIS_MISSING` (no basis and no matching comparison) and `MERGE_BASIS_STALE` (a basis that does not match: either page changed, even far below its opening, or it was for the other direction). Compare again and use the new basis. The check runs under the file lock. An invalid pair or a page already gone has no basis and keeps the answers below. During the landing of the view that sends it, a merge with no `basis` still passes if this server issued that same basis in a preview (`MERGE_BASIS_CLIENT_REQUIRED` in `src/routes/health.js`).
+
+`merge-batch` takes no basis: nobody previews a batch, and its own server rule requires a spelling variant and a remembered high-confidence answer about the openings on disk now. The MCP's `fix_wiki_issue` keeps its session preview, now bound to the direction and text that preview returned (`reason: "preview-stale"`).
+
 `fixed: 0` indicates a defence rejected the request (slug regex, same-slug-same-folder, summary folder, missing file). No error status is returned — it is a silent no-op. Two refusals carry a `reason` and leave both pages untouched, here and on the `crossFolderDupes` and `hyphenVariants` fixes: `merge-would-lose-text` (a line of either page would be missing from the merged text) and `merge-same-file` (both names reach one file, so a delete would remove the only copy).
 
 **Defences applied (all return `fixed: 0` on failure):**
-- `keepSlug` and `removeSlug` must match `/^[a-z0-9][a-z0-9.-]*$/i`.
+- `keepSlug` and `removeSlug` must pass `isMergeableSlug` (nothing that can leave the folder or that a wikilink cannot carry).
 - `keepFolder` and `removeFolder` must be `entities` or `concepts` (never `summaries`).
 - Both files must exist on disk.
 - The pair must not be `{same slug, same folder}`.
