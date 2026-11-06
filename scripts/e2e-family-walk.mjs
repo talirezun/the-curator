@@ -62,13 +62,15 @@ const THREE = ['privacy-and-data-protection', 'data-privacy', 'personal-data-pro
 const EIGHT = ['claude-opus', 'claude-opus-model-family-overview-and-pricing-tiers', 'anthropic-claude-opus-large-model-tier', 'opus-tier', 'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4', 'claude-opus-3-legacy-and-its-retirement-from-the-public-api' + TAIL];
 const THIRTY = Array.from({ length: 30 }, (_, i) => (i === 0 ? 'search-engine-history' : 'search-engine-history-part-' + i + (i % 7 === 0 ? TAIL : '')));
 
+const LONE = ['lone-a', 'lone-b', 'lone-c'];
+
 const pageText = (slug, i) => `---\ntype: concept\ntags: [type/concept, topic/${i % 3}]\ncreated: 2026-01-0${(i % 9) + 1}\nupdated: 2026-02-0${(i % 9) + 1}\n---\n\n# ${slug}\n\nThe opening of ${slug}, in its own words, ${'with more to read '.repeat((i % 4) + 1)}.\n\n## Key Facts\n\n- A fact only ${slug} states.\n- A second fact, number ${i}.\n\n## Own section of ${slug}\n\nA paragraph that belongs to ${slug} and to no other page.\n\n- A bullet under that section, ${slug}.\n`;
 
 function buildWorld(root) {
   const w = path.join(root, 'main', 'wiki');
   for (const f of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, f), { recursive: true });
   writeFileSync(path.join(root, 'main', 'CLAUDE.md'), '# main\n');
-  const all = [...THREE, ...EIGHT, ...THIRTY, 'solo-page', 'solo-pages', 'other-page', 'other-pages', 'wiki-hub'];
+  const all = [...THREE, ...EIGHT, ...THIRTY, ...LONE, 'solo-page', 'solo-pages', 'other-page', 'other-pages', 'wiki-hub'];
   all.forEach((s, i) => writeFileSync(path.join(w, 'concepts', s + '.md'), pageText(s, i)));
   const links = all.filter((s) => s !== 'wiki-hub').map((s, i) => Array.from({ length: (all.length - i) % 5 + 1 }, () => `- [[${s}]]`).join('\n')).join('\n');
   writeFileSync(path.join(w, 'concepts', 'wiki-hub.md'), `---\ntype: concept\n---\n\n# Hub\n\nAn index page.\n\n## Related\n\n${links}\n`);
@@ -95,6 +97,7 @@ function answersFor() {
   // 30 pages: 41 of 435, a chain with spokes.
   for (let i = 1; i < 30; i++) same(THIRTY[i - 1], THIRTY[i]);
   for (let i = 3; i < 15; i++) (i % 3 ? same : no)(THIRTY[0], THIRTY[i]);
+  same(LONE[0], LONE[1]); same(LONE[1], LONE[2]);
   // Two pairs in no family.
   same('solo-page', 'solo-pages'); same('other-page', 'other-pages');
   return out;
@@ -274,17 +277,30 @@ const titleFocused = (page) => page.evaluate(() => document.activeElement && doc
 const liveText = (page) => page.evaluate(() => { const l = document.querySelector('.dm-health [aria-live="polite"]'); return l ? l.textContent : ''; });
 const dec = (s) => s.replace(/\s+/g, ' ');
 
-async function toFamily(app, size) {
-  for (let i = 0; i < 8; i++) {
-    const t = await deskText(app.page);
-    if (t.includes('Family of ' + size + ' pages')) return true;
+/** Reach a family the way a person can: Next among decisions; out of a walk by Done, then Review. */
+async function toFamily(app, size, naming) {
+  const { page } = app;
+  const here = (t) => t.includes('Family of ' + size + ' pages') && (!naming || t.includes(naming));
+  for (let i = 0; i < 24; i++) {
+    const t = await deskText(page);
+    if (here(t)) return true;
+    if (!t) { await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review'); await press(app, '.dm-review-btn'); await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk'); await delay(250); continue; }
+    if (/Page \d+ of \d+ ·|pages? not decided|All decided/.test(t)) { await press(app, '#hr-done'); await delay(250); continue; }
     await press(app, '#hr-next');
-    await delay(200);
-    await waitFor(app.page, () => !!document.querySelector('.hr-desk'), 'desk');
+    await delay(250);
   }
-  step('reached the family of ' + size, false, await deskText(app.page));
+  step('reached the family of ' + size, false, await deskText(page));
   return false;
 }
+/** A slot that cuts its text off, a name or a warning. */
+const clipped = (page) => page.evaluate(() => {
+  const out = [];
+  for (const s of ['.hr-running', '.hr-after', '.hr-note', '.hr-decide', '.hr-pane-head', '.hr-outcome', '.hr-marks-row', '.hr-merge-label', '.hr-marks-words']) {
+    for (const e of document.querySelectorAll('.hr-desk ' + s)) if (e.scrollHeight > e.clientHeight + 1) out.push(s + ' ' + e.scrollHeight + '>' + e.clientHeight);
+  }
+  return out;
+});
+const titleInView = (page) => page.evaluate(() => { const r = document.getElementById('hr-title').getBoundingClientRect(); const m = document.getElementById('main').getBoundingClientRect(); return r.top >= m.top - 1 && r.bottom <= innerHeight; });
 const pickPage = (app, slug) => press(app, `[data-fam-pick="concepts/${slug}"]`);
 
 function onDisk(app, slug) { const f = path.join(app.wiki, 'concepts', slug + '.md'); return existsSync(f) ? readFileSync(f, 'utf8') : null; }
@@ -301,7 +317,7 @@ async function walk(app) {
   await openDomain(app);
   await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review', 600);
   const seen = new Set();
-  const known = [...THREE, ...EIGHT, ...THIRTY, 'solo-page', 'solo-pages', 'other-page', 'other-pages'];
+  const known = [...THREE, ...EIGHT, ...THIRTY, ...LONE, 'solo-page', 'solo-pages', 'other-page', 'other-pages'];
   await press(app, '.dm-review-btn');
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');
 
@@ -325,6 +341,7 @@ async function walk(app) {
   await delay(100);
   await waitFor(page, () => !!document.querySelector('.hr-pane-text'), 'the first comparison');
   step('8: focus goes to the title, never a button', await titleFocused(page));
+  step('8: arriving, the title is in view', await titleInView(page));
   t = await deskText(page);
   step('8: the walk starts', t.includes('Page 1 of 7 · 0 merged · 0 kept · 7 left'), t.slice(0, 200));
   step('8: same first', t.includes('The AI compared these two pages and said they are the same.'), t.slice(0, 500));
@@ -348,10 +365,11 @@ async function walk(app) {
   const after1 = onDisk(app, gone1);
   const kept1 = onDisk(app, EIGHT[0]);
   step('a merge: the page is gone from disk', after1 === null);
-  step('a merge: the kept page holds all of it', lostLines(pageText(gone1, [...THREE, ...EIGHT, ...THIRTY, 'solo-page', 'solo-pages', 'other-page', 'other-pages', 'wiki-hub'].indexOf(gone1)), kept1).length === 0, lostLines(pageText(gone1, 0), kept1).join('|'));
+  step('a merge: the kept page holds all of it', lostLines(pageText(gone1, [...THREE, ...EIGHT, ...THIRTY, ...LONE, 'solo-page', 'solo-pages', 'other-page', 'other-pages', 'wiki-hub'].indexOf(gone1)), kept1).length === 0, lostLines(pageText(gone1, 0), kept1).join('|'));
   step('a merge: under the heading it promised', kept1.includes('## Merged from ' + gone1));
   step('a merge: its own opening stayed at the top', kept1.replace(/^---[\s\S]*?---\n/, '').trimStart().startsWith('# ' + EIGHT[0]));
   step('a merge: focus on the title again', await titleFocused(page));
+  step('a merge: the next page\'s title is in view', await titleInView(page));
   t = dec(await liveText(page));
   step('spoken: the outcome and where you are', /Merged .* into claude-opus\..*Page 2 of 7\./.test(t), t);
   const openNow = await page.evaluate(() => document.querySelector('#hr-merge').disabled);
@@ -488,6 +506,7 @@ async function fullWalks(app, seen, known) {
   await shot(app, '30-walk-start');
   // Positions across the long names: Keep both on each of six pages, then Merge on two.
   const spots = [];
+  const clippedAt = [];
   for (let i = 0; i < 6; i++) {
     await leave(app);
     await waitFor(page, () => !!document.querySelector('.hr-pane-text'), 'the comparison');
@@ -495,9 +514,12 @@ async function fullWalks(app, seen, known) {
     // The fold's row settles after the one move from choosing to walking; from then on nothing may.
     await delay(i === 0 ? 500 : 60);
     spots.push(await page.evaluate(POSITIONS));
+    const cut = await clipped(page);
+    if (cut.length) clippedAt.push(cut.join(', '));
     await page.evaluate(() => { document.querySelector('#hr-keep').click(); });
     await waitFor(page, (n) => new RegExp('· ' + n + ' kept').test(document.querySelector('.hr-desk').innerText), 'the next page', 400, i + 1);
   }
+  step('30: long names: every name and the warning are whole, nothing cut off', clippedAt.length === 0, clippedAt.join(' | '));
   const allMoved = spots.slice(1).flatMap((s) => sameSpots(spots[0], s));
   step('30: long names and short, six decisions: no button moved', allMoved.length === 0, allMoved.join(', '));
   const of2 = await noOverflow(page);
@@ -519,7 +541,7 @@ async function fullWalks(app, seen, known) {
   // The family of 3, to its end, by real merges, with a bridge. Then its leftovers.
   await press(app, '.dm-review-btn');
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');
-  await toFamily(app, 3);
+  await toFamily(app, 3, THREE[0]);
   await waitFor(page, () => /possible pairs/.test(document.querySelector('.hr-desk').innerText), 'the summary');
   await headIntoView(page);
   await shot(app, '3-choose');
@@ -567,6 +589,18 @@ async function fullWalks(app, seen, known) {
   await auditWords(app, 'the list of decisions', seen, known);
   await page.evaluate(() => { const s = document.querySelector('[data-group-key="reviewPairs"] summary'); if (s) s.click(); });
 
+  // A page whose only pair a merge closes: named by nothing, and it must not vanish at a reload.
+  await toFamily(app, 3, 'lone-a');
+  await waitFor(page, () => /possible pairs/.test(document.querySelector('.hr-desk').innerText), 'the summary');
+  await pickPage(app, 'lone-a');
+  await readUntilOpen(app);
+  await press(app, '.hr-merge-label');
+  await waitFor(page, () => /Page 2 of 2/.test(document.querySelector('.hr-desk').innerText), 'the page still waiting');
+  await press(app, '#hr-done');
+  await waitFor(page, () => /1 page not decided/.test(document.querySelector('.hr-desk').innerText), 'the summary');
+  await press(app, '#hr-done');
+  await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review');
+
   // The leftovers of the 8: a smaller family, with its facts read afresh.
   await press(app, '#hr-done');
   await waitFor(page, () => !document.querySelector('.hr-desk'), 'the lanes');
@@ -591,8 +625,19 @@ async function fullWalks(app, seen, known) {
   await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review', 600);
   await press(app, '.dm-review-btn');
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');
-  const reachedFamily = await (async () => { for (let i = 0; i < 6; i++) { const x = await deskText(page); if (/Which page stays\?/.test(x)) return true; await press(app, '#hr-next'); await delay(300); } return false; })();
-  step('after a reload a family is offered from the start: what was merged is on disk, the choice is asked again', reachedFamily, (await deskText(page)).slice(0, 200));
+  await toFamily(app, 2, 'lone-a');
+  await waitFor(page, () => /You chose lone-a earlier\. 1 page is still waiting\./.test(document.querySelector('.hr-desk').innerText), 'the walk back after a reload');
+  t = await deskText(page);
+  step('after a reload a page no pair names comes back in its walk, and says so', t.includes('Merge lone-c into lone-a') && t.includes('Page 1 of 1'), t.slice(0, 300));
+  step('and nothing claims the match it no longer has', t.includes('The AI never compared these two pages.') && t.includes('Only your reading decides this one.') && !t.includes('since merged'), t.slice(0, 500));
+  await press(app, '#hr-done');
+  await delay(250);
+  await toFamily(app, 30);
+  await waitFor(page, () => /You chose search-engine-history earlier/.test(document.querySelector('.hr-desk').innerText), 'the long walk back');
+  await press(app, '#hr-fam-rechoose');
+  await delay(200);
+  const reachedFamily = /Which page stays\?/.test(await deskText(page));
+  step('a walk with no merge yet: Choose again still works after a reload', reachedFamily, (await deskText(page)).slice(0, 200));
   if (reachedFamily) {
     await waitFor(page, () => /possible pairs/.test(document.querySelector('.hr-desk').innerText), 'the summary');
     const before = existsSync(path.join(app.wiki, '.health-dismissed.jsonl')) ? readFileSync(path.join(app.wiki, '.health-dismissed.jsonl'), 'utf8').split('\n').filter(Boolean).length : 0;

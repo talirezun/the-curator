@@ -1179,7 +1179,8 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
         // Kept short, because most answers are this one and the file holds tens of thousands.
         // A family walk quotes it: "The AI compared these two pages and said they are not the same."
         const said = String(r.rationale || r.difference || '').trim().slice(0, 300);
-        answered.set(key, { ...record, verdict: 'no', ...(said && said.toLowerCase() !== 'none' ? { rationale: said } : {}) });
+        // A "same" at low confidence is remembered as a no, and the screen must not call it "not the same".
+        answered.set(key, { ...record, verdict: 'no', ...(relation === 'same' ? { leaned: 'same' } : {}), ...(said && said.toLowerCase() !== 'none' ? { rationale: said } : {}) });
         continue;
       }
       // A "same" with no usable confidence is listed for a Preview, never for the batch.
@@ -1346,9 +1347,10 @@ export const FAMILY_FACTS_MAX_PAGES = 2000;
  * changes the kept page's opening, so answers about it lapse, and a page merged away takes its
  * answers with it, and neither makes a comparison that was on screen untrue or a page leave the walk.
  *
- * `answers` holds only pairs the AI really answered: `same` / `different` (still applying) or
- * `stale` (it answered about other openings or on another model). A pair absent from it was never
- * compared. Nothing here joins A~B and B~C: the view looks up the exact pair or says "never".
+ * `answers` holds only pairs the AI really answered: `same`, `different` or `unsure` (it leaned
+ * same at low confidence), still applying, or `stale`, with `changed` saying what lapsed it:
+ * `model` (and `model` naming the one that answered), `prompt` (the app asks differently now) or
+ * `text` (a page's opening changed). A pair absent from it was never compared. Nothing here joins A~B and B~C: the view looks up the exact pair or says "never".
  * `kept` lists the pairs the user already kept apart, answered or not.
  * `textOf` (one of `pages`) adds that page's text, as it is now, for the page that stays.
  */
@@ -1409,8 +1411,10 @@ export async function semanticFamilyFacts(domain, pageList, { textOf = null } = 
     const pa = split(a); const pb = split(b);
     const applies = info && rec.provider === info.provider && rec.model === info.model && rec.prompt === SEMANTIC_PROMPT_ID
       && rec.openings === openingsHash(pa.folder, pa.slug, openingOf.get(a), pb.folder, pb.slug, openingOf.get(b));
-    if (!applies) answers.push({ a, b, compared: 'stale' });
-    else answers.push({ a, b, compared: rec.verdict === 'yes' ? 'same' : 'different',
+    if (!applies) {
+      const otherModel = !info || rec.provider !== info.provider || rec.model !== info.model;
+      answers.push({ a, b, compared: 'stale', changed: otherModel ? 'model' : rec.prompt !== SEMANTIC_PROMPT_ID ? 'prompt' : 'text', ...(otherModel ? { model: rec.model } : {}) });
+    } else answers.push({ a, b, compared: rec.verdict === 'yes' ? 'same' : rec.leaned === 'same' ? 'unsure' : 'different',
       ...(typeof rec.rationale === 'string' && rec.rationale ? { rationale: rec.rationale } : {}) });
   }
 

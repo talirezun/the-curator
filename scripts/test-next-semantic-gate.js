@@ -177,6 +177,8 @@ let state = {};
 let myMountToken = 1;
 const compareAll = { acknowledge() {}, forgetQuote() {}, running() { return false; }, sync() {}, noteQuote() {}, afterPaint() {}, reading() { return null; }, actions(slug, next) { return next; }, line() { return ''; }, onClick() { return false; } };
 function releaseArrivals() {}
+function restoreWalks() {}
+function loadFamilyWalks() { return []; }
 const ISSUE_PAGE = 20;
 const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
 function buttonRingHtml() { return ''; }

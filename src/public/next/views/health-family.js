@@ -109,8 +109,35 @@ export function planDecisions(scan) {
   // A FAMILY YOU LEFT COMES LAST. Inside a walk Next moves through its pages, and Done goes back to
   // the lanes, so if it came first Review would open on it every time and nothing else could be
   // reached. Next and Previous still reach it, and with nothing else left it opens by itself.
-  for (const fam of started) items.push({ kind: 'family', fam });
+  // Least recently left first: otherwise a second walk you left could never be reached.
+  for (const fam of [...started].sort((a, b) => (a.leftAt || 0) - (b.leftAt || 0))) items.push({ kind: 'family', fam });
   return items;
+}
+
+// ── A WALK SURVIVES A RELOAD, as what is left of it ──────────────────────
+// What was merged is on disk and what was kept is in the Left as is record. What only the screen
+// knows is which page stays and which pages still wait, and a page whose only pair a merge closed
+// is named by nothing else: without this record it would vanish from the desk and the lanes.
+export function walksToStore(scan) {
+  return (scan.families || []).filter((f) => !f.retired && !f.keptAll && f.stays)
+    .map((f) => ({ stays: f.stays, pages: f.pendingStays ? f.pages.filter((p) => p !== f.stays) : f.order.filter((p) => f.dec[p] !== 'merged') }))
+    .filter((w) => w.pages.length > 0);
+}
+
+/** What was stored comes back as a family that asks for its facts, then goes straight to its walk. */
+export function restoreWalks(scan, records) {
+  const list = Array.isArray(records) ? records : [];
+  for (const w of list) {
+    if (!w || typeof w.stays !== 'string' || !Array.isArray(w.pages) || !w.pages.length) continue;
+    const pages = [w.stays, ...w.pages.filter((p) => typeof p === 'string' && p !== w.stays)];
+    if (pages.length < 2) continue;
+    const fam = newFamily(pages);
+    fam.stays = w.stays;
+    fam.pendingStays = w.stays;
+    fam.order = pages.slice(1);
+    (scan.families || (scan.families = [])).push(fam);
+  }
+  scan.walkWaiting = walkPagesWithNoPair(scan);
 }
 
 /** Pages waiting on a walk under way that no open pair names, so nothing else would list them. */
@@ -134,7 +161,7 @@ export function applyFacts(fam, res, pairs) {
   const info = new Map();
   for (const p of res.pages || []) if (p.exists !== false) info.set(p.page, p);
   const answers = new Map();
-  for (const a of res.answers || []) answers.set(edgeKey(a.a, a.b), { compared: a.compared, reason: a.rationale || null });
+  for (const a of res.answers || []) answers.set(edgeKey(a.a, a.b), { compared: a.compared, reason: a.rationale || null, changed: a.changed || null, model: a.model || null });
   for (const p of pairs) {
     const k = edgeKey(keepOf(p), removeOf(p));
     const had = answers.get(k);
@@ -147,7 +174,7 @@ export function applyFacts(fam, res, pairs) {
   const counts = new Map(fam.pages.map((p) => [p, 0]));
   let total = 0;
   for (const [k, v] of answers) {
-    if (v.compared !== 'same' && v.compared !== 'different') continue;
+    if (v.compared !== 'same' && v.compared !== 'different' && v.compared !== 'unsure') continue;
     const [a, b] = k.split('||');
     if (!counts.has(a) || !counts.has(b)) continue;
     counts.set(a, counts.get(a) + 1); counts.set(b, counts.get(b) + 1); total++;
@@ -159,7 +186,7 @@ export function applyFacts(fam, res, pairs) {
 /** The ONLY place a statement about two pages is decided: their own answer, or never. */
 export function relationOf(fam, page, other) {
   const a = fam.facts && fam.facts.answers.get(edgeKey(page, other));
-  return a ? { kind: a.compared, reason: a.reason } : { kind: 'never', reason: null };
+  return a ? { kind: a.compared, reason: a.reason, changed: a.changed, model: a.model } : { kind: 'never', reason: null };
 }
 
 /** The page the AI did match this one with, if any: never the page that stays. */
@@ -171,7 +198,7 @@ export function matchedWith(fam, page, stays) {
   return null;
 }
 
-const RANK = { same: 0, never: 1, stale: 2, different: 3 };
+const RANK = { same: 0, unsure: 1, never: 2, stale: 3, different: 4 };
 /** The strongest first, so stopping early leaves the strongest done. */
 export function orderFor(fam, stays) {
   const links = (p) => fam.facts.info.get(p).links || 0;
@@ -208,8 +235,14 @@ export function evidence(fam, page, fact, assumeMerged) {
     amber = false;
     line1 = r.kind === 'same' ? 'The AI compared these two pages and said they are the same.' : 'The AI compared these two pages and said they are not the same.';
     line2 = r.reason ? 'The AI says: "' + esc(r.reason) + '"' : 'The reason it gave was not kept.';
+  } else if (r.kind === 'unsure') {
+    // It leaned same and said it was not sure. The app counts that as no match, and the screen must not.
+    line1 = 'The AI leaned towards these two pages being the same, but was not sure.';
+    line2 = r.reason ? 'The AI says: "' + esc(r.reason) + '"' : 'The reason it gave was not kept.';
   } else if (r.kind === 'stale') {
-    line1 = 'The AI compared older versions of these two pages.';
+    line1 = r.changed === 'model' ? 'The AI compared these two pages on another model' + (r.model ? ', ' + esc(r.model) : '') + '.'
+      : r.changed === 'prompt' ? 'The AI compared these two pages when the app asked it differently.'
+      : 'The AI compared older versions of these two pages.';
     line2 = 'Its answer no longer applies. Only your reading decides this one.';
   } else {
     line1 = 'The AI never compared these two pages.';
@@ -232,7 +265,7 @@ export function countLine(fam) {
 }
 
 function groupsOf(fam) {
-  const g = { same: [], never: [], stale: [], different: [] };
+  const g = { same: [], unsure: [], never: [], stale: [], different: [] };
   for (const p of fam.order) g[relationOf(fam, p, fam.stays).kind].push(p);
   return g;
 }
@@ -241,8 +274,9 @@ export function marksWords(fam) {
   const g = groupsOf(fam);
   const parts = [];
   if (g.same.length) parts.push(n0(g.same.length) + ' the AI said ' + (g.same.length === 1 ? 'is' : 'are') + ' the same');
+  if (g.unsure.length) parts.push(n0(g.unsure.length) + ' it was unsure about');
   if (g.never.length) parts.push(n0(g.never.length) + ' it never compared');
-  if (g.stale.length) parts.push(n0(g.stale.length) + ' it compared in older versions');
+  if (g.stale.length) parts.push(n0(g.stale.length) + ' with an answer that no longer applies');
   if (g.different.length) parts.push(n0(g.different.length) + ' it said ' + (g.different.length === 1 ? 'is' : 'are') + ' not the same');
   return parts.join(' · ');
 }
@@ -252,10 +286,10 @@ export function renderMarks(fam, onWalk) {
   const c = counts(fam);
   const g = groupsOf(fam);
   const here = onWalk ? fam.order[fam.i] : null;
-  const mark = (p, kind) => '<span class="hr-mark' + (kind === 'never' || kind === 'stale' ? ' hr-mark-never' : '') +
+  const mark = (p, kind) => '<span class="hr-mark' + (kind === 'never' || kind === 'stale' || kind === 'unsure' ? ' hr-mark-never' : '') +
     (fam.dec[p] === 'merged' ? ' hr-mark-merged' : fam.dec[p] === 'both' ? ' hr-mark-kept' : '') + (p === here ? ' hr-mark-here' : '') + '"></span>';
   const row = !SHOW_MARKS ? '' : '<div class="hr-marks" role="img" aria-label="' + esc(n0(fam.order.length) + ' pages to go through: ' + n0(c.m) + ' merged, ' + n0(c.k) + ' kept, ' + n0(c.left) + ' left') + '">' +
-    ['same', 'never', 'stale', 'different'].filter((k) => g[k].length).map((k) => '<span class="hr-marks-group">' + g[k].map((p) => mark(p, k)).join('') + '</span>').join('') + '</div>';
+    ['same', 'unsure', 'never', 'stale', 'different'].filter((k) => g[k].length).map((k) => '<span class="hr-marks-group">' + g[k].map((p) => mark(p, k)).join('') + '</span>').join('') + '</div>';
   return '<div class="hr-marks-row">' + row + '<span class="hr-marks-words">' + marksWords(fam) + '</span></div>';
 }
 
@@ -274,7 +308,8 @@ export function afterLineWalk(goes, stays, links) {
 const FOLD_HEADS = {
   same: 'The AI said these are the same as ',
   never: 'The AI never compared these with ',
-  stale: 'The AI compared older versions of these and ',
+  unsure: 'The AI was unsure whether these are the same as ',
+  stale: 'The AI\'s answer no longer applies for these and ',
   different: 'The AI said these are not the same as ',
 };
 
@@ -287,7 +322,7 @@ export function renderWalkFold(fam, open, busy) {
   const body = [];
   if (open) {
     let left = fam.foldCount;
-    for (const kind of ['same', 'never', 'stale', 'different']) {
+    for (const kind of ['same', 'unsure', 'never', 'stale', 'different']) {
       if (!g[kind].length || left <= 0) continue;
       body.push('<div class="hr-fam-group">' + FOLD_HEADS[kind] + name(slugOf(fam.stays)) + ' (' + n0(g[kind].length) + ')</div>');
       for (const p of g[kind].slice(0, left)) {
@@ -300,6 +335,22 @@ export function renderWalkFold(fam, open, busy) {
     if (fam.foldCount < fam.order.length) body.push(moreRows('hr-fam-fold-more', Math.min(fam.order.length - fam.foldCount, PAGE_STEP)));
   }
   return renderFoldRows(renderFoldRow({ key: 'reviewFamily', label: 'All ' + n0(fam.order.length) + ' pages', open: !!open, alias: 'dm', hostClass: 'hr-fold', bodyHtml: body.join('') }), { alias: 'dm' });
+}
+
+/**
+ * What each fixed slot must hold for this walk's longest names. The slots are as tall as this needs,
+ * measured once at this width, so nothing is cut off and nothing moves from page to page.
+ */
+export function worstSlots({ goes, stays, warn, family }) {
+  const label = family ? 'Merge ' + name(goes) + ' into ' + name(stays) : 'Merge into ' + name(stays);
+  return {
+    '.hr-running': { css: '--hr-running-h', html: '<span>' + name(stays) + ' stays. It has taken in 9,999 pages so far.</span>' + btn('', 'Choose again') },
+    '.hr-after': { css: '--hr-after-h', html: afterLineWalk(goes, stays, 9999) },
+    '.hr-decide': { css: '--hr-decide-h', html: '<div class="hr-decide-btns"><button type="button" class="btn btn-secondary">Keep both</button><button type="button" class="btn btn-danger"><span class="hr-merge-label">' + label + '</span></button></div>' +
+      '<p class="hr-note">Merging deletes ' + name(goes) + '. ' + esc(warn) + '</p>' },
+    '.hr-outcome': { css: '--hr-outcome-h', html: 'Kept ' + name(goes) + ' and ' + name(stays) + ' apart. This pair will not come back. ' + btn('', 'Undo') },
+    '.hr-pane-head': { css: '--hr-pane-head-h', html: [goes, stays].map((p) => '<span class="hr-pane-role">Goes away</span><span class="mono hr-pane-name">' + esc(p) + '</span><span class="hr-pane-meta">entities · 99,999 links point here · 9,999 KB</span>') },
+  };
 }
 
 // ── STEP 1: WHICH PAGE STAYS ──────────────────────────────────────────────
@@ -371,7 +422,7 @@ export function renderFinish(fam, ctx) {
     const names = never.length <= 2 ? ': ' + never.map((p) => name(slugOf(p))).join(' and ') : '';
     neverLine = '<p class="hr-ev hr-ev-never hr-fam-never">You merged ' + plural(never.length, 'page') + ' the AI never compared with ' + name(stays) + names + '. Only your reading decided ' + (never.length === 1 ? 'it' : 'them') + '.</p>';
   }
-  const note = (p) => { const kind = relationOf(fam, p, fam.stays).kind; return kind === 'never' ? '<span class="hr-fam-res-note">the AI never compared it</span>' : kind === 'stale' ? '<span class="hr-fam-res-note">the AI compared older versions</span>' : ''; };
+  const note = (p) => { const kind = relationOf(fam, p, fam.stays).kind; return kind === 'never' ? '<span class="hr-fam-res-note">the AI never compared it</span>' : kind === 'stale' ? '<span class="hr-fam-res-note">the AI\'s answer no longer applied</span>' : kind === 'unsure' ? '<span class="hr-fam-res-note">the AI was unsure</span>' : ''; };
   const folds = [
     merged.length ? resultFold('reviewFamMerged', 'Merged in', plural(merged.length, 'page') + ' deleted', ctx.open('reviewFamMerged'), 'Their text is on ' + name(stays) + ', each under "Merged from" and its name.', merged.map((p) => row(p, note(p))), fam.foldCount) : '',
     keptPages.length ? resultFold('reviewFamKept', 'Kept both', plural(keptPages.length, 'page') + ' kept', ctx.open('reviewFamKept'), 'These stay separate from ' + name(stays) + ', and that pair will not come back.',
@@ -383,6 +434,9 @@ export function renderFinish(fam, ctx) {
   return (SHOW_MARKS ? renderMarks(fam, false) : '') +
     '<div class="hr-fam-card"><div class="hr-fam-card-text"><div>Stays</div><div class="mono hr-fam-card-name">' + esc(stays) + '</div><div>' + grew + '</div></div>' + btn('hr-read-stays', 'Read full page', ' aria-label="' + esc('Read full page: ' + stays) + '"') + '</div>' +
     neverLine + renderFoldRows(folds, { alias: 'dm' }) +
-    (nLeft ? '<div class="hr-fam-left"><p>' + plural(nLeft, 'page') + ' left over still match one another, so they may be a smaller family of their own.</p>' + btn('hr-fam-residue', 'Review those ' + n0(nLeft)) + '</div>' : '') +
+    (nLeft ? '<div class="hr-fam-left"><p>' + (groups.length === 1
+      ? plural(nLeft, 'page') + ' left over still match one another, so they may be a smaller family of their own.'
+      : plural(nLeft, 'page') + ' left over still match one another, in ' + n0(groups.length) + ' separate groups, so they may be smaller families of their own.') + '</p>' +
+      btn('hr-fam-residue', groups.length === 1 ? 'Review those ' + n0(nLeft) : 'Review the first ' + n0(groups[0].pages.length)) + '</div>' : '') +
     '<p class="hr-note hr-fam-foot">' + esc(ctx.note) + '</p>';
 }

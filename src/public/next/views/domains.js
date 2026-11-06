@@ -40,6 +40,7 @@ import {
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 import { patchInPlace } from '../shared/morph.js';
 import { createReviewDesk } from './health-review.js';
+import { restoreWalks } from './health-family.js';
 import { createCompareAll } from './health-compare.js';
 import { holdLeavingRows, startRowMotion, releaseHeldRows, createScrollFloor } from '../shared/row-motion.js';
 
@@ -3480,6 +3481,7 @@ function syncSemanticScan(slug, token, opening) {
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
+    restoreWalks(state.semanticScan, loadFamilyWalks(slug));
     state.compareArrivals = null; // this read holds them all
     state.semanticScan.lastQuote = q.quote || null;
     // The last count's figures and what they would cost, with no pass over the page names:
@@ -8222,6 +8224,20 @@ function releaseArrivals(slug) {
   if (arrivals.length) addArrivals(scan, arrivals);
 }
 
+// A walk's choice, on this computer. A convenience with a real job: a page whose only pair a merge
+// closed is named by nothing else, so without this a reload would make it vanish. No storage, no
+// memory: the desk still works, and what was merged or kept is on disk either way.
+const FAMILY_WALKS_KEY = 'curator-health-family-walks:';
+function saveFamilyWalks(slug, walks) {
+  try {
+    if (walks.length) localStorage.setItem(FAMILY_WALKS_KEY + slug, JSON.stringify(walks));
+    else localStorage.removeItem(FAMILY_WALKS_KEY + slug);
+  } catch { /* private window, or storage full */ }
+}
+function loadFamilyWalks(slug) {
+  try { return JSON.parse(localStorage.getItem(FAMILY_WALKS_KEY + slug) || '[]'); } catch { return []; }
+}
+
 // ── THE REVIEW DESK ────────────────────────────────────────────────────────
 // Possible duplicates → Review swaps the card's content for this. What it draws and how it
 // walks is views/health-review.js; what it asks of this file is listed here, and the merge
@@ -8247,6 +8263,14 @@ const reviewDesk = createReviewDesk({
   keepApart: (slug, p) => keepSemanticPairApart(slug, p),
   reload: (slug) => { const token = myMountToken; return loadHealth(slug, token, { silent: true, keepSemanticScan: true }); },
   note: GIT_UNDO_NOTE,
+  saveWalks: (slug, walks) => saveFamilyWalks(slug, walks),
+  titleIntoView: () => {
+    const title = document.getElementById('hr-title');
+    const main = document.getElementById('main');
+    if (!title || !main) return;
+    const t = title.getBoundingClientRect();
+    if (t.top < main.getBoundingClientRect().top || t.bottom > window.innerHeight) main.scrollTop += t.top - main.getBoundingClientRect().top - 16;
+  },
   readPage: (path, title) => openWikiPageFromBrowse(path, title),
   markdown: (text) => renderMarkdown(text),
   render: () => render(myMountToken),

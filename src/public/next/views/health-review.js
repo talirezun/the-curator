@@ -40,7 +40,7 @@ import { renderFoldRow, renderFoldItem, renderFoldRows } from '../shared/section
 import {
   planDecisions, newFamily, applyFacts, relationOf, orderFor, counts, isFresh, leftovers, evidence, countLine,
   renderMarks, renderRunning, afterLineWalk, renderWalkFold, renderChoose, renderFinish, chooseRows, undecidedCount, familyWaiting,
-  slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST, walkPagesWithNoPair,
+  slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST, walkPagesWithNoPair, walksToStore, worstSlots,
 } from './health-family.js';
 
 /** How long the comparison must be on screen before Merge opens. */
@@ -299,6 +299,8 @@ export function armDelay(pointerType, hoverNone) {
  *   headIntoView()   brings the section's head on screen, when it is off
  */
 const NOT_MINE = Symbol('not-mine');
+let leftSerial = 0;
+const plural0 = (v) => (v === 1 ? '1 page' : n0(v) + ' pages');
 const FOLD_KEYS = ['reviewPairs', 'reviewFamily', 'reviewFamMerged', 'reviewFamKept', 'reviewFamLeft'];
 
 export function createReviewDesk(d) {
@@ -366,6 +368,10 @@ export function createReviewDesk(d) {
   function focusTitle() {
     const el = typeof document !== 'undefined' ? document.getElementById('hr-title') : null;
     if (el) el.focus({ preventScroll: true });
+    // On a phone a walk's page starts well above the button just pressed. Its title and its text
+    // are what comes next, so they come into view. The buttons have not moved within the desk.
+    const r = review();
+    if (r && r.family && d.titleIntoView) d.titleIntoView();
   }
 
   function clearPairMessage(pair) {
@@ -490,7 +496,9 @@ export function createReviewDesk(d) {
     if (r) {
       d.disarm(r.scan);
       // Finished, it has said what it had to. What is left comes back by itself as pairs.
-      for (const f of r.scan.families || []) if (f.stays && undecidedCount(f) === 0) retire(r, f);
+      for (const f of r.scan.families || []) if (f.stays && !f.pendingStays && undecidedCount(f) === 0) retire(r, f);
+      if (r.family && r.family.stays) r.family.leftAt = ++leftSerial;
+      remember(r);
       // Leaving a walk, the lanes still have to offer it: a merge may have closed the only pair
       // that named a page still waiting, and "the family is still listed" has to stay true.
       r.scan.walkWaiting = walkPagesWithNoPair(r.scan);
@@ -506,7 +514,7 @@ export function createReviewDesk(d) {
     const r = review();
     if (!r) { stopWatch(); listen(false); return; }
     listen(true);
-    if (typeof document !== 'undefined') { paintPanes(); fitFacts(r); wireFind(r); }
+    if (typeof document !== 'undefined') { paintPanes(); fitFacts(r); fitSlots(r); wireFind(r); }
     if (r.ended) return;
     if (r.family && familyAfterPaint(r)) return;
     // The label has its new width now. Still on Merge when the pair arrived: not a new press.
@@ -579,6 +587,58 @@ export function createReviewDesk(d) {
     desk.style.setProperty('--hr-facts-h', r.factsPx);
   }
 
+  // A LONG NAME WRAPS AND A WARNING IS NEVER CUT OFF, and still nothing moves from page to page:
+  // each slot is as tall as this walk's longest names need, measured once at this width.
+  function fitSlots(r) {
+    const desk = document.querySelector('.hr-desk');
+    if (!desk) return;
+    const panes = desk.querySelector('.hr-panes[data-review-key]');
+    if (!panes) return;
+    const reapply = () => { for (const [k, v] of Object.entries(r.slotPx || {})) desk.style.setProperty(k, v); };
+    let goes = ''; let stays = '';
+    if (r.family) {
+      stays = slugOf(r.family.stays);
+      for (const p of r.family.order) if (slugOf(p).length > goes.length) goes = slugOf(p);
+    } else {
+      for (const p of r.scan.pairs) {
+        if (p.status !== 'open') continue;
+        if (p.removeSlug.length > goes.length) goes = p.removeSlug;
+        if (p.removeSlug.length > stays.length) stays = p.removeSlug;
+        if (p.keepSlug.length > goes.length) goes = p.keepSlug;
+        if (p.keepSlug.length > stays.length) stays = p.keepSlug;
+      }
+    }
+    const fit = goes + '|' + stays + '|' + desk.clientWidth + '|' + !!r.family;
+    if (r.slotsFit === fit) { reapply(); return; }
+    r.slotsFit = fit;
+    const worst = worstSlots({ goes, stays, warn: typeof d.warn === 'function' ? d.warn() : d.warn, family: !!r.family });
+    for (const k of Object.keys(r.slotPx || {})) desk.style.removeProperty(k);
+    const px = {};
+    const measure = (real, html) => {
+      const probe = real.cloneNode(false);
+      probe.removeAttribute('id');
+      probe.style.cssText = 'position:absolute;visibility:hidden;height:auto;max-height:none;overflow:visible;width:' + real.clientWidth + 'px';
+      probe.innerHTML = html;
+      real.parentNode.appendChild(probe);
+      const h = Math.ceil(probe.getBoundingClientRect().height);
+      probe.remove();
+      return h;
+    };
+    for (const [sel, slot] of Object.entries(worst)) {
+      const real = desk.querySelector(sel);
+      if (!real) continue;
+      const need = Math.max(...[].concat(slot.html).map((h) => measure(real, h)));
+      const base = sel === '.hr-pane-head' ? 0 : Math.ceil(real.getBoundingClientRect().height);
+      px[slot.css] = Math.max(need, base) + 'px';
+    }
+    const marks = desk.querySelector('.hr-marks-row');
+    if (marks) px['--hr-marks-h'] = Math.max(measure(marks, marks.innerHTML), Math.ceil(marks.getBoundingClientRect().height)) + 'px';
+    // The text under a long head keeps the room it had.
+    if (px['--hr-pane-head-h']) px['--hr-pane-h'] = Math.max(340, parseInt(px['--hr-pane-head-h'], 10) + 260) + 'px';
+    r.slotPx = px;
+    reapply();
+  }
+
   function wireFind(r) {
     const input = document.getElementById('hr-fam-find');
     if (!input || input.__wired) return;
@@ -595,6 +655,12 @@ export function createReviewDesk(d) {
   function retire(r, fam) {
     fam.retired = true;
     if (r.scan.walkPairs) r.scan.walkPairs = r.scan.walkPairs.filter((p) => p.family !== fam.id);
+    remember(r);
+  }
+
+  /** Which page stays and which pages still wait, so a reload does not make them vanish. */
+  function remember(r) {
+    if (d.saveWalks) d.saveWalks(r.slug, walksToStore(r.scan));
   }
 
   async function loadFacts(r, fam) {
@@ -606,6 +672,7 @@ export function createReviewDesk(d) {
       // Taken once and kept. See health-family.js: a merge must not change what this says.
       applyFacts(fam, res, r.scan.pairs);
       if (r.family === fam && r.outcome && r.outcome.retry === 'facts') r.outcome = null;
+      if (fam.pendingStays) resumeWalk(r, fam);
     } catch (err) {
       if (review() !== r) return;
       fam.factsError = err.message;
@@ -617,6 +684,24 @@ export function createReviewDesk(d) {
       fam.loadingFacts = false;
     }
     if (review() === r) d.render();
+  }
+
+  /** A walk from before a reload: its facts are in, so it goes on from what is left of it. */
+  function resumeWalk(r, fam) {
+    const stays = fam.pendingStays;
+    fam.pendingStays = null;
+    if (!fam.pages.includes(stays)) {
+      // The page that stayed is gone. The others have not: they are a choice again, or only a pair's business.
+      fam.stays = null; fam.order = []; fam.view = 'choose';
+      if (fam.pages.length < 2) { retire(r, fam); if (r.family === fam) goToWaiting(r, 0, 1); }
+      remember(r);
+      return;
+    }
+    pickStays(r, fam, stays);
+    const left = counts(fam).left;
+    const tail = left === 1 ? ' earlier. 1 page is still waiting.' : ' earlier. ' + n0(left) + ' pages are still waiting.';
+    r.outcome = { tone: 'info', familyMessage: true, html: 'You chose ' + name(slugOf(stays)) + tail, spoken: 'You chose ' + slugOf(stays) + tail };
+    if (r.family === fam) sayArrival(r);
   }
 
   // The page that stays, as it is now: for its figures on the last screen, and to read beside a
@@ -691,7 +776,9 @@ export function createReviewDesk(d) {
     fam.i = first === -1 ? 0 : first;
     fam.view = first === -1 ? 'finish' : 'walk';
     r.factsFit = null;
+    r.slotsFit = null;
     resetForPage(r);
+    remember(r);
   }
 
   function factOfPage(r, fam, page) {
@@ -717,6 +804,7 @@ export function createReviewDesk(d) {
     const j = nextUndecided(fam, fam.i);
     if (j === -1) toFinish(r, fam);
     else { resetForPage(r); fam.i = j; }
+    remember(r);
     sayArrival(r);
     d.render();
     focusTitle();
@@ -743,6 +831,7 @@ export function createReviewDesk(d) {
       if (j === -1) toFinish(r, fam);
       else { resetForPage(r); fam.i = j; }
     }
+    remember(r);
     sayArrival(r);
     d.render();
     focusTitle();
@@ -812,7 +901,11 @@ export function createReviewDesk(d) {
   function reviewLeftovers(r, fam) {
     const groups = leftovers(fam, r.scan.pairs);
     if (!groups.length) return;
-    retire(r, fam);
+    // The walk does not end by this press. If pages still wait on it, it stays in the list, and the
+    // screen says so.
+    const waiting = undecidedCount(fam);
+    const nLeft = groups.reduce((a, g) => a + g.pages.length, 0);
+    if (waiting === 0) retire(r, fam);
     const made = groups.map((g) => {
       if (g.pages.length >= 3) {
         const nf = newFamily(g.pages, 'different-names');
@@ -824,6 +917,10 @@ export function createReviewDesk(d) {
     r.items.splice(r.pos + 1, 0, ...made);
     r.outcome = null;
     enterItem(r, r.pos + 1);
+    const parts = [];
+    if (groups.length > 1) parts.push('These are ' + n0(groups[0].pages.length) + ' of the ' + n0(nLeft) + ' pages left over. The other groups come up after them.');
+    if (waiting) parts.push('The walk for ' + name(slugOf(fam.stays)) + ' is still there, with ' + plural0(waiting) + ' not decided. Next reaches it.');
+    if (parts.length) r.outcome = { tone: 'info', familyMessage: true, html: parts.join(' '), spoken: parts.join(' ').replace(/<[^>]+>/g, '') };
     sayArrival(r);
     d.render();
     focusTitle();
@@ -1023,6 +1120,7 @@ export function createReviewDesk(d) {
     if (review() !== r) return;
     delete fam.dec[page];
     delete fam.pre[page];
+    remember(r);
     d.status(pair, 'open');
     if (fam.keptReal[page]) {
       const real = r.scan.pairs.find((p) => d.pairKey(p) === fam.keptReal[page]);
@@ -1248,6 +1346,7 @@ export function createReviewDesk(d) {
         if (!isFresh(fam)) return undefined;
         if (r.scan.walkPairs) r.scan.walkPairs = r.scan.walkPairs.filter((p) => p.family !== fam.id);
         fam.stays = null; fam.view = 'choose'; fam.order = []; fam.dec = {}; fam.pre = {};
+        remember(r);
         r.outcome = null;
         resetForPage(r);
         go();

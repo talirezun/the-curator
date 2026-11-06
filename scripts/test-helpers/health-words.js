@@ -176,7 +176,17 @@ export const OUTSIDE_THE_DECK = [
   // other text or another model is neither "compared" nor "never compared". An old "not the
   // same" answer has no reason to quote: the cache kept none until this release.
   'The AI compared older versions of these two pages.', 'Its answer no longer applies. Only your reading decides this one.',
-  'The AI compared older versions of these and {name} ({n})', 'the AI compared older versions', 'The reason it gave was not kept.',
+  'The AI compared these two pages on another model.', 'The AI compared these two pages on another model, {name}.', 'The AI compared these two pages when the app asked it differently.',
+  'The AI\'s answer no longer applies for these and {name} ({n})', 'the AI\'s answer no longer applied', 'The reason it gave was not kept.',
+  // A "same" at low confidence: the AI's own hesitation, reported as that.
+  'The AI leaned towards these two pages being the same, but was not sure.', 'The AI was unsure whether these are the same as {name} ({n})', 'the AI was unsure',
+  // Leftovers in more than one group, and a walk from before a reload.
+  '{n} pages left over still match one another, in {n} separate groups, so they may be smaller families of their own.', 'Review the first {n}',
+  'These are {n} of the {n} pages left over. The other groups come up after them.',
+  'The walk for {name} is still there, with {n} pages not decided. Next reaches it.', 'The walk for {name} is still there, with 1 page not decided. Next reaches it.',
+  'These are {n} of the {n} pages left over. The other groups come up after them. The walk for {name} is still there, with {n} pages not decided. Next reaches it.',
+  'These are {n} of the {n} pages left over. The other groups come up after them. The walk for {name} is still there, with 1 page not decided. Next reaches it.',
+  'You chose {name} earlier. {n} pages are still waiting.', 'You chose {name} earlier. 1 page is still waiting.',
   // The list of decisions, when a family is in it.
   'All {n} decisions',
 ];
@@ -191,7 +201,7 @@ const ITEM_FACT = new RegExp('^' + FACT + '(?: · ' + FACT + ')*$');
 // All N pairs' summary: the deck's row states and facts, counted. Each part only when it is not zero.
 const STATE = '[\\d,]+ (?:waiting|merged|kept both|settled by another merge)';
 const RELATION = '(?:Spelling variant|Version numbers differ|Different names) [\\d,]+';
-const MARK = '[\\d,]+ (?:the AI said (?:is|are) the same|it never compared|it compared in older versions|it said (?:is|are) not the same)';
+const MARK = '[\\d,]+ (?:the AI said (?:is|are) the same|it never compared|it was unsure about|with an answer that no longer applies|it said (?:is|are) not the same)';
 const MARKS_LINE = new RegExp('^' + MARK + '(?: · ' + MARK + ')*$');
 const FOLD_LINE = new RegExp('^(?:' + STATE + '(?: · ' + STATE + ')*|' + RELATION + '(?: · ' + RELATION + ')*)$');
 function toRegex(line) {

@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deskFixture, pair, comparison } from './test-helpers/review-desk-fixture.js';
-import { planDecisions, connectedGroups, relationOf, applyFacts, newFamily, orderFor, matchedWith, leftovers, SHOW_MARKS, renderMarks } from '../src/public/next/views/health-family.js';
+import { walksToStore, restoreWalks, worstSlots, walkPagesWithNoPair, planDecisions, connectedGroups, relationOf, applyFacts, newFamily, orderFor, matchedWith, leftovers, SHOW_MARKS, renderMarks } from '../src/public/next/views/health-family.js';
 import { wordAllowed, BANNED } from './test-helpers/health-words.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,6 +52,7 @@ function family(pairs, over = {}) {
   }, keepApart: async (slug, p) => { fx.calls.apart = [...(fx.calls.apart || []), fx.key(p)]; if (fx.nextApart && fx.calls.apart.length === fx.nextApart.at) throw new Error(fx.nextApart.error); }, reload: () => { fx.calls.reload = (fx.calls.reload || 0) + 1; }, note: NOTE, ...(over.deps || {}) } });
   return fx;
 }
+function deskFixtureFor(pairs, facts) { return family(pairs, { facts }); }
 async function opened(pairs, over) { const fx = family(pairs || CHAIN().concat([pair('e', 'd', { rationale: 'D and E match.' })]), over); fx.desk.open(); await fx.paint(); return fx; }
 const pick = async (fx, page) => { await fx.press('', { famPick: c(page) }); await fx.paint(); };
 const fam = (fx) => fx.state.review.family;
@@ -470,6 +471,124 @@ section('§9 A failure stays; a page that went');
   await staysGone.paint();
   t = text(staysGone.html());
   ok(t.includes('This page is settled: a no longer exists. Moving on.') && staysGone.scan.families[0].retired === true && t.includes('Pair 1 of 1'), 'the page that stays gone: the family ends, and says why', t.slice(0, 200));
+}
+
+section('§9b The second review: what real data showed');
+{
+  // 1. Every long name and the whole warning are what a slot is measured for.
+  const LONG = 'x'.repeat(200); const LONG2 = 'y'.repeat(180);
+  const w = worstSlots({ goes: LONG, stays: LONG2, warn: 'THE-WARNING', family: true });
+  ok(w['.hr-decide'].html.includes('Merge <span class="mono">' + LONG + '</span> into <span class="mono">' + LONG2 + '</span>') && w['.hr-decide'].html.includes('THE-WARNING'), '1. the decision slot is measured with both whole names and the whole warning');
+  ok(w['.hr-running'].html.includes(LONG2) && w['.hr-running'].html.includes('Choose again'), '1. the running line with the page that stays and Choose again');
+  ok(w['.hr-pane-head'].html.join().includes(LONG) && w['.hr-pane-head'].html.join().includes(LONG2) && w['.hr-pane-head'].html.join().includes('links point here'), '1. the pane heads with both names and the links count');
+  ok(w['.hr-after'].html.includes(LONG) && w['.hr-outcome'].html.includes('Undo'), '1. the after line and the outcome with its Undo');
+  const css = readFileSync(join(ROOT, 'src/public/next/views/health-review.css'), 'utf8');
+  ok(!/line-clamp/.test(css.slice(css.indexOf('.hr-merge-label'), css.indexOf('.hr-note'))) && !/\.hr-merge-label \{[^}]*clamp/.test(css), '1. no name is cut on the button');
+
+  // 2. A low-confidence same does not contradict itself.
+  const un = await opened(CHAIN(), { facts: { pages: FACTS().pages.slice(0, 4), answers: [{ a: c('a'), b: c('b'), compared: 'unsure', rationale: 'Both cover the same subject.' }, ...FACTS().answers.slice(1, 3)], kept: [] } });
+  ok(text(un.html()).includes('The AI compared 3 of the 6'), '2. it counts as compared');
+  await pick(un, 'a');
+  await un.press('', { famJump: c('b') }); await un.paint();
+  let t = text(un.html());
+  ok(t.includes('The AI leaned towards these two pages being the same, but was not sure.') && t.includes('The AI says: "Both cover the same subject."'), '2. it says what the AI did, with its reason', t);
+  ok(!t.includes('said they are not the same') && !t.includes('said they are the same'), '2. and neither of the plain answers');
+  ok(t.includes('1 it was unsure about'), '2. the marks say so');
+  un.state.expandedGroups.add('reviewFamily');
+  ok(text(un.html()).includes('The AI was unsure whether these are the same as a (1)'), '2. the list says so');
+
+  // 3. The button does what it says, or says what it does.
+  const split = [pair('b', 'a'), pair('c', 'b'), pair('d', 'c'), pair('p', 'c'), pair('q', 'p')];
+  const pagesOf = ['a', 'b', 'c', 'd', 'p', 'q'];
+  const facts3 = { pages: pagesOf.map((s, i) => ({ page: c(s), folder: 'concepts', slug: s, exists: true, opening: 'o', length: 100, links: 9 - i })), answers: split.map((p) => ({ a: c(p.keepSlug), b: c(p.removeSlug), compared: 'same', rationale: 'r' })), kept: [] };
+  const lo = await opened(split, { facts: facts3 });
+  await pick(lo, 'a');
+  // b goes, c stays apart: d~c and p~c are closed by Keep? No: only a's pairs are decided. So p~c, q~p, d~c remain one group.
+  lo.seen(); await lo.press('hr-merge'); await lo.paint();
+  await lo.press('hr-done'); await lo.paint();
+  t = text(lo.html());
+  ok(t.includes('Review those 4') && t.includes('4 pages left over'), '3. one group: the words as agreed', t);
+  await lo.press('hr-fam-residue'); await lo.paint();
+  t = text(lo.html());
+  ok(t.includes('Family of 4 pages'), '3. Review those 4 opens 4', t.slice(0, 80));
+  ok(t.includes('The walk for a is still there, with 4 pages not decided. Next reaches it.'), '3. and the walk it left is not ended silently: it says so', t);
+  ok(lo.scan.families.some((f) => f.stays === c('a') && !f.retired), '3. and it really is still there');
+  // Two groups: the count on the button is what opens.
+  const two = await opened([pair('b', 'a'), pair('c', 'b'), pair('d', 'c'), pair('e', 'b'), pair('f', 'e'), pair('g', 'f')], { facts: { pages: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((s, i) => ({ page: c(s), folder: 'concepts', slug: s, exists: true, opening: 'o', length: 100, links: 9 - i })), answers: [], kept: [] } });
+  await pick(two, 'a');
+  fam(two).dec[c('b')] = 'merged'; fam(two).mergedOrder.push(c('b'));
+  two.scan.pairs.forEach((p, i) => { if (p.keepSlug === 'b' || p.removeSlug === 'b') two.scan.pairs[i] = { ...p, status: 'resolved' }; });
+  await two.press('hr-done'); await two.paint();
+  t = text(two.html());
+  ok(t.includes('in 2 separate groups') && t.includes('Review the first 2') && !t.includes('Review those'), '3. several groups: it says so, and the button counts what it opens', t);
+  await two.press('hr-fam-residue'); await two.paint();
+  t = text(two.html());
+  ok(t.includes('Pair') || t.includes('Family of 2'), '3. the first group opens', t.slice(0, 120));
+  ok(t.includes('These are 2 of the 5 pages left over. The other groups come up after them.'), '3. and it says the rest come next', t);
+  ok(two.state.review.items.filter((it) => it.kind === 'family' && !it.fam.stays).length === 1, '3. the rest really are next');
+
+  // 4. A walk's arrival brings its title into view.
+  let brought = 0;
+  const seenT = await opened(undefined, { deps: { titleIntoView: () => { brought++; } } });
+  ok(brought === 1, '4. opening a family brings the title into view', brought);
+  await pick(seenT, 'a');
+  ok(brought === 2, '4. pressing the page that stays brings it into view', brought);
+  seenT.seen(); await seenT.press('hr-merge');
+  ok(brought === 3, '4. and so does each decision', brought);
+  await seenT.press('hr-next');
+  ok(brought === 4, '4. and Next', brought);
+
+  // 5. Stale says what changed.
+  const lapse = (extra) => opened(CHAIN(), { facts: { pages: FACTS().pages.slice(0, 4), answers: [{ a: c('a'), b: c('b'), compared: 'stale', ...extra }, ...FACTS().answers.slice(1, 3)], kept: [] } });
+  const onB = async (f) => { await pick(f, 'a'); await f.press('', { famJump: c('b') }); await f.paint(); return text(f.html()); };
+  t = await onB(await lapse({ changed: 'model', model: 'gemini-old' }));
+  ok(t.includes('The AI compared these two pages on another model, gemini-old.') && !t.includes('older versions'), '5. a model change says a model change', t);
+  t = await onB(await lapse({ changed: 'prompt' }));
+  ok(t.includes('when the app asked it differently') && !t.includes('older versions'), '5. a changed question says that');
+  t = await onB(await lapse({ changed: 'text' }));
+  ok(t.includes('The AI compared older versions of these two pages.'), '5. and changed text says older versions');
+
+  // 6. A reload: pages come back, truthfully.
+  let stored = [];
+  const before = await opened([pair('b', 'a'), pair('c', 'b')], { facts: { pages: FACTS().pages.slice(0, 3), answers: FACTS().answers.slice(0, 2), kept: [] }, deps: { saveWalks: (s, w) => { stored = w; } } });
+  await pick(before, 'a');
+  before.seen(); await before.press('hr-merge'); await before.paint();
+  ok(stored.length === 1 && stored[0].stays === c('a') && stored[0].pages.join() === c('c'), '6. what is left is kept: the page that stays and the page still waiting', JSON.stringify(stored));
+  // A new page load: the merged pair is gone, nothing names c.
+  const after = deskFixtureFor([], { pages: [FACTS().pages[0], FACTS().pages[2]], answers: [], kept: [] });
+  restoreWalks(after.scan, JSON.parse(JSON.stringify(stored)));
+  ok(after.scan.walkWaiting === 1, '6. the lanes know, with no pair naming it');
+  ok(after.desk.open() === true, '6. Review opens on it');
+  await after.paint();
+  t = text(after.html());
+  ok(t.includes('Family of 2 pages') && t.includes('You chose a earlier. 1 page is still waiting.') && t.includes('Page 1 of 1'), '6. it comes back in the walk, and says what it is', t.slice(0, 500));
+  ok(t.includes('The AI never compared these two pages.') && t.includes('Only your reading decides this one.'), '6. and the match it had is not claimed', t);
+  ok(!t.includes('since merged in'), '6. nor a merge this page load knows nothing about');
+  const gate = after.scan.previewed.size;
+  ok(gate === 0 && shut(after.html(), 'hr-merge'), '6. and nothing is armed');
+  const noStay = deskFixtureFor([], { pages: [FACTS().pages[2]], answers: [], kept: [] });
+  restoreWalks(noStay.scan, [{ stays: c('a'), pages: [c('c')] }]);
+  noStay.desk.open(); await noStay.paint();
+  ok(noStay.scan.families[0].retired === true, '6. the page that stayed is gone and one page is left: nothing to decide, and it says nothing false');
+  ok(walkPagesWithNoPair({ pairs: [], families: [] }) === 0, '6. nothing stored: nothing waits');
+  restoreWalks({ pairs: [] }, 'not an array');
+  restoreWalks({ pairs: [] }, [{ stays: 3 }, null, { stays: 'concepts/a', pages: [] }]);
+  ok(true, '6. a bad record is ignored');
+
+  // Two walks left: the second can be reached.
+  const pairsTwo = [pair('b', 'a'), pair('c', 'b'), pair('y', 'x'), pair('z', 'y')];
+  const twoF = { pages: ['a', 'b', 'c', 'x', 'y', 'z'].map((s, i) => ({ page: c(s), folder: 'concepts', slug: s, exists: true, opening: 'o', length: 100, links: 9 - i })), answers: [], kept: [] };
+  const bo = await opened(pairsTwo, { facts: twoF });
+  await pick(bo, 'a'); const firstFam = fam(bo);
+  await bo.press('hr-done');
+  bo.desk.open(); await bo.paint();
+  await pick(bo, 'x'); const secondFam = fam(bo);
+  await bo.press('hr-done');
+  bo.desk.open(); await bo.paint();
+  ok(fam(bo) === firstFam, 'of two walks left, the one left longest ago comes up');
+  await bo.press('hr-done');
+  bo.desk.open(); await bo.paint();
+  ok(fam(bo) === secondFam, 'and leaving it brings up the other: neither blocks the other');
 }
 
 section('§10 Every word, against the deck');
