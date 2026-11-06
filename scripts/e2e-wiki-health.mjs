@@ -1497,8 +1497,15 @@ try {
     const profile = ALL_PROFILES[pn]; if (!profile) { console.log('unknown profile ' + pn); continue; }
     console.log(`\n● profile ${profile.name} (${profile.w}x${profile.h}${profile.reduced ? ', reduced motion' : ''}${profile.overflowOnly ? ', overflow only' : ''})`);
     const app = await startApp(profile); apps.push(app);
-    try { await scenarios(app, profile); }
+    // A walk that stops drawing can wait for ever: name it instead.
+    const watchdog = setTimeout(() => { console.log(`\n[${profile.name}] still running after 25 min. Stopping.`); process.exit(3); }, 25 * 60 * 1000);
+    try {
+      await scenarios(app, profile);
+      const vis = await app.page.evaluate(() => document.visibilityState);
+      step(`[${profile.name}] the page was drawn to the end (a sleeping display stops it)`, vis === 'visible', vis);
+    }
     catch (e) { step(`[${profile.name}] scenario ran to the end`, false, e.stack); }
+    finally { clearTimeout(watchdog); }
     finally {
       await app.stop();
       try { blocked.push(...readFileSync(app.stubLog, 'utf8').split('\n').filter((l) => l.includes('blocked'))); } catch { /* none */ }
