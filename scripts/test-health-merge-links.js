@@ -1052,7 +1052,7 @@ section('9. /next per-section "Fix all" confirms before running');
     + 'fixAllOfType');
   assert(!/\.then\(\(\) => fixAllOfType\(domain\.slug/.test(dm),
     '9.2 …and the un-gated direct call is gone');
-  assert(/function confirmFixAllOfType\([\s\S]{0,1400}state\.confirm = \{/.test(dm),
+  assert(/function confirmFixAllOfType\([\s\S]{0,1400}state\.confirm = asked/.test(dm),
     '9.3 the gate reuses the existing state.confirm plumbing (no new dialog mechanism)');
   assert(/DESTRUCTIVE_FIX_TYPES = new Set\(\['crossFolderDupes', 'hyphenVariants'\]\)/.test(dm),
     '9.4 the two page-DELETING types are named, so their copy can say so');

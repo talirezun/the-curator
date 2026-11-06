@@ -163,7 +163,7 @@ section('8. domains.js call sites — old formatUsd(est.estimatedUsd) direct cal
     'costReadout\'s own known-price branch still calls formatUsd(est.estimatedUsd) internally (that call is legitimate, not a leftover)');
 
   const costReadoutCalls = (srcMinusDef.match(/costReadout\(est/g) || []).length;
-  eq(costReadoutCalls, 5, 'costReadout(est…) is called at all 5 known CALL sites (quickAiButton, the Compare row, aboutCost, the Compare confirm twice), excluding its own declaration');
+  eq(costReadoutCalls, 4, 'costReadout(est…) is called at all 4 known CALL sites (quickAiButton, aboutCost, the Compare confirm twice), plus the Compare row on its scaled figure');
 }
 
 // ── 9-13 (REMOVED in v3.41.0) — sbRevokeDoneStatus lived ONLY in the

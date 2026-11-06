@@ -815,7 +815,7 @@ async function scenarios(app, profile) {
     step(`[${profile.name}] a deletion is stated on the row`, /^deletes \d+ pages?$/.test(shape.del), shape.del);
     await openFoldsOn(page, ['missingBacklinks', 'orphans', 'folderPrefixLinks', 'summaryLinkSections', 'crossFolderDupes', 'brokenLinksOpen']); await delay(200);
     await shot('folds-open'); await audit('folds open');
-    await act(app, profile, 'lane-merge-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300, runs: true });
+    await act(app, profile, 'lane-merge-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
     await shot('merge-confirm'); await audit('merge confirm');
     const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /otherwise it cannot be undone/.test(c.innerText) }; }, SEL.confirmYes);
     step(`[${profile.name}] the deleting yes is danger, names its result and carries the warning`, /btn-danger/.test(conf.cls) && /^Merge and delete \d+$/.test(conf.label) && conf.warn, JSON.stringify(conf));
@@ -963,7 +963,7 @@ async function scenarios(app, profile) {
     if (keyS) await act(app, profile, 'skip-one', { press: SEL.cardBtn(keyS, 'skip'), place: 420, outcome: [SEL.done], settle: HELD + 400, runs: true });
     else step(`[${profile.name}] a pair card to Skip exists`, false, 'none');
     await act(app, profile, 'batch-press', { press: SEL.batchMerge, place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, optional: true });
-    await act(app, profile, 'batch-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.outcome], settle: 3000, optional: true, runs: true });
+    await act(app, profile, 'batch-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.outcome], settle: 1200, optional: true, runs: true });
   }
   // S9 — real size: thousands of pages, hundreds of pairs.
   if (run('S9') && profile.big) {
