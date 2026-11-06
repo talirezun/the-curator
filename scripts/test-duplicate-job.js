@@ -594,7 +594,7 @@ if (!SKIP_MEMO) {
   writeFileSync(path.join(wiki, 'index.md'), '# Index\n');
   writeFileSync(path.join(wiki, 'log.md'), '# Log\n');
   const pages = new Set();
-  while (pages.size < 2000) {
+  while (pages.size < 1200) { // a full pass costs n²: at 2,000 this section alone took 110-160 s, past the runner's 2-minute cap
     const shape = rnd(6);
     const w = () => WORDS[rnd(WORDS.length)];
     const s = shape === 0 ? `${w()}-${w()}` : shape === 1 ? `${w()}-${w()}-${rnd(40)}` : shape === 2 ? `${w()}_${w()}-${w()}` : shape === 3 ? `${w()}s-${w()}` : shape === 4 ? `${w()}${w()}${rnd(9)}` : `${w()}-${w()}-${w()}-${w()}`;
