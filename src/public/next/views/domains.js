@@ -2376,6 +2376,16 @@ function resetDomainScopedHealthState(opts) {
       if (state.semanticScan.previewed && typeof state.semanticScan.previewed.clear === 'function') state.semanticScan.previewed.clear();
       state.semanticScan.preview = null;
     } else {
+      // A DOMAIN SWITCH TAKES THE LIST OFF SCREEN, NOT OUT OF EXISTENCE. It stays with its own
+      // domain, disarmed, so coming back shows Possible duplicates at once (measured: the row
+      // was absent for about 8 s while the server was busy with the reading) and a merge still
+      // in flight can record what it did on the right list.
+      const leaving = state.semanticScan;
+      if (leaving && leaving.slug && state.cache) {
+        if (leaving.previewed && typeof leaving.previewed.clear === 'function') leaving.previewed.clear();
+        leaving.preview = null;
+        (state.cache[leaving.slug] || (state.cache[leaving.slug] = {})).scan = leaving;
+      }
       state.semanticScan = null;
     }
   }
@@ -2493,6 +2503,12 @@ async function loadHealth(slug, token, opts) {
     state.healthStale = true;
     if (known.estimates) state.estimates = Object.assign({}, known.estimates);
     if (known.quote) state.semanticQuote = Object.assign({}, known.quote, { stale: true });
+    // The list this domain had, on screen now; syncSemanticScan refreshes it behind that.
+    if (known.scan) {
+      state.semanticScan = known.scan;
+      known.scan.restored = true;
+      delete known.scan;
+    }
     if (state.aiAvailable) syncSemanticScan(slug, token, true);
   }
   render(token);
@@ -3297,8 +3313,8 @@ function resolvePairsTouching(scan, gone, byPair) {
 // Marks ONE pair resolved — the pair the server itself just told us is stale
 // (a `stale` batch frame, a stale preview, or a merge refused because a page
 // is gone). Its siblings are handled by resolvePairsTouching above.
-function markSemanticPairResolved(pair, opts) {
-  const s = activeSemanticScan();
+function markSemanticPairResolved(pair, opts, onScan) {
+  const s = onScan || activeSemanticScan();
   if (!s) return false;
   const key = semanticPairKey(pair);
   const idx = s.pairs.findIndex((p) => semanticPairKey(p) === key);
@@ -3433,7 +3449,19 @@ function syncSemanticScan(slug, token, opening) {
   if (!state.aiAvailable || slug !== state.activeSlug) return;
   if (state.readonlySet.has(slug)) return;
   const held = activeSemanticScan();
-  if (held) { countSemanticPairs(held, slug, token, opening); return; }
+  if (held && !held.restored) { countSemanticPairs(held, slug, token, opening); return; }
+  if (held) {
+    // Come back to from another domain: what was remembered is on screen, and a job or
+    // another computer may have moved it on. Replaced in place, and not under an open desk.
+    held.restored = false;
+    fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
+      if (!q || activeSemanticScan() !== held || !isCurrentMount(token) || (state.review && state.review.scan === held)) return;
+      held.pairs = newSemanticScan(slug, q).pairs;
+      render(token);
+    }).catch(() => { /* free and optional: the list on screen stands */ });
+    countSemanticPairs(held, slug, token, opening);
+    return;
+  }
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
@@ -3455,8 +3483,8 @@ function countSemanticPairs(scan, slug, token, opening) {
   });
 }
 
-function markSemanticPairStatus(pair, status) {
-  const s = activeSemanticScan();
+function markSemanticPairStatus(pair, status, onScan) {
+  const s = onScan || activeSemanticScan();
   if (!s) return false;
   const key = semanticPairKey(pair);
   const idx = s.pairs.findIndex((p) => semanticPairKey(p) === key);
@@ -8103,6 +8131,7 @@ const reviewDesk = createReviewDesk({
   render: () => render(myMountToken),
   warn: () => GIT_UNDO_WARN,
   coverageLeft: () => { const s = activeSemanticScan(); return s && s.coverage ? s.coverage.left : 0; },
+  headIntoView: () => healthHeadIntoView(),
   onClosed: (merged) => {
     if (merged > 0) state.healthTrace = { slug: state.activeSlug, lane: 'decision', text: 'Merged ' + n0(merged), at: new Date().toISOString() };
     render(myMountToken);
@@ -8133,12 +8162,11 @@ function renderReviewPanel() {
 // Lanes ↔ desk is the one move the page makes, once, because you pressed for it. It
 // scrolls only when the section's head would otherwise be out of sight.
 function healthHeadIntoView() {
-  const head = document.querySelector('.dm-health .cur-section-hd, .dm-health .dm-section-title');
+  const head = document.querySelector('.dm-health .cur-section-hd');
   const main = document.getElementById('main');
   if (!head || !main) return;
   const r = head.getBoundingClientRect();
-  const top = main.getBoundingClientRect().top;
-  if (r.top < top) main.scrollTop -= top - r.top + 8;
+  if (r.top < main.getBoundingClientRect().top || r.bottom > window.innerHeight) head.scrollIntoView({ block: 'start' });
 }
 
 function renderBanner(banner) {
@@ -9931,6 +9959,9 @@ function mergeSemanticDuplicates(slug) {
 async function previewSemanticPair(slug, pair) {
   const token = myMountToken;
   const key = semanticPairKey(pair);
+  // ANOTHER DOMAIN CAN HAVE A PAIR WITH THE SAME NAMES, so an answer belongs to the scan
+  // that asked, by identity, never to whichever scan is active when it lands.
+  const asked = activeSemanticScan();
   try {
     const data = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/preview', {
       method: 'POST',
@@ -9939,13 +9970,14 @@ async function previewSemanticPair(slug, pair) {
     });
     if (!isCurrentMount(token)) return { stale: true };
     const scan = activeSemanticScan();
-    if (!scan || !scan.pairs.some((p) => semanticPairKey(p) === key)) return { stale: true }; // another domain, or flipped meanwhile
+    if (!scan || scan !== asked || !scan.pairs.some((p) => semanticPairKey(p) === key)) return { stale: true }; // another domain, or flipped meanwhile
     scan.preview = { key, data };
     (scan.bases || (scan.bases = {}))[key] = data.basis;
     return { data };
   } catch (err) {
     if (!isCurrentMount(token)) return { stale: true };
-    const scan = activeSemanticScan();
+    if (activeSemanticScan() !== asked) return { stale: true };
+    const scan = asked;
     // DEFENCE IN DEPTH. The cascade above covers merges made in THIS session;
     // a page can also go in Obsidian, over the MCP, or in another Health fix
     // on another tab, and then the first thing that notices is this comparison.
@@ -9991,13 +10023,15 @@ async function mergeOneSemanticPair(slug, pair, onSettled) {
   setSemanticPairMessage(key, {});
   render(token);
   let settled = { failed: true };
+  // What comes back belongs to THIS scan, on screen or not: see previewSemanticPair.
+  const scan = activeSemanticScan();
   const releaseGate = beginDomainWrite(slug, 'semantic-dupe-merge');
   try {
     inFlightWriteSlugs.add(slug);
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair), basis: (activeSemanticScan()?.bases || {})[key] }),
+      body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair), basis: (scan.bases || {})[key] }),
     });
     {
       if (!result || !result.fixed) {
@@ -10010,24 +10044,24 @@ async function mergeOneSemanticPair(slug, pair, onSettled) {
           markSemanticPairResolved(pair, {
             missing: result.missing || null,
             by: 'the page is gone',
-          });
+          }, scan);
           if (result.missing) {
             const parts = String(result.missing).split('/');
-            resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
+            resolvePairsTouching(scan, { folder: parts[0], slug: parts.slice(1).join('/') }, null);
           }
           settled = { gone: true, missing: result.missing || null };
         } else {
           setSemanticPairMessage(key, { error: 'Could not merge: ' + (result && result.reason === 'merge-would-lose-text'
             ? 'this merge would lose text, so nothing was changed.'
-            : 'the pages did not pass the check on disk, so nothing was changed.'), errorAction: 'merge' });
+            : 'the pages did not pass the check on disk, so nothing was changed.'), errorAction: 'merge' }, scan);
         }
       } else {
-        markSemanticPairStatus(pair, 'merged');
+        markSemanticPairStatus(pair, 'merged', scan);
         // THE CASCADE. `pair.removeSlug` no longer exists on disk, so every
         // other OPEN pair in this scan that names it is resolved too — see
         // resolvePairsTouching.
         const alsoResolved = resolvePairsTouching(
-          activeSemanticScan(), { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
+          scan, { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
         settled = { merged: true, alsoResolved };
       }
     }
@@ -10041,7 +10075,7 @@ async function mergeOneSemanticPair(slug, pair, onSettled) {
       if (code === 'MERGE_BASIS_STALE' || code === 'MERGE_BASIS_MISSING') settled = { stale: true };
       else {
         const c = classifyDomainError(err);
-        setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge: ' + c.error, errorAction: 'merge' });
+        setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge: ' + c.error, errorAction: 'merge' }, scan);
       }
     }
   } finally {
@@ -10070,6 +10104,7 @@ async function skipSemanticPair(slug, pair, onSettled) {
   setSemanticPairMessage(key, {});
   render(token);
   let settled = { failed: true };
+  const scan = activeSemanticScan();
   try {
     // Dismissal shape mirrors health-dismissed.js's semanticDupe key
     // (slugA/folderA/slugB/folderB), same as the shipping app's Skip.
@@ -10085,7 +10120,7 @@ async function skipSemanticPair(slug, pair, onSettled) {
       }),
     });
     if (isCurrentMount(token)) {
-      markSemanticPairStatus(pair, 'skipped');
+      markSemanticPairStatus(pair, 'skipped', scan);
       settled = { kept: true };
     }
     // A Skip IS a dismissal record: the loaded Dismissed list is stale now,
@@ -10095,7 +10130,7 @@ async function skipSemanticPair(slug, pair, onSettled) {
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not save: ' + c.error, errorAction: 'skip' });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not save: ' + c.error, errorAction: 'skip' }, scan);
     }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
@@ -10121,8 +10156,8 @@ async function bringBackSemanticPair(slug, pair) {
 }
 
 // Per-pair message slot (refusal / error), cleared by passing {}.
-function setSemanticPairMessage(key, msg) {
-  const scan = activeSemanticScan();
+function setSemanticPairMessage(key, msg, onScan) {
+  const scan = onScan || activeSemanticScan();
   if (!scan) return;
   const idx = scan.pairs.findIndex((p) => semanticPairKey(p) === key);
   if (idx === -1) return;

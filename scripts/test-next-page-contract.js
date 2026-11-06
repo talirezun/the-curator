@@ -392,16 +392,17 @@ const DESK_PAIRS = () => [deskPair('data-privacy', 'privacy-and-data-protection'
 const deskOpen = async (fn, pairs, over) => { const fx = deskFixture(pairs || DESK_PAIRS(), over); fx.desk.open(); await fx.paint(); if (fn) await fn(fx); return renderDeskSection(fx.html()); };
 const DESK_ARMS = [
   ['the desk, the comparison seen', await deskOpen((f) => { f.seen(); }), ['Pair 1 of 3', 'Merge into', 'id="hr-merge"', 'btn-danger', 'Read full page']],
-  ['the desk, before 500 ms', await deskOpen(), ['id="hr-merge" disabled']],
+  ['the desk, before 500 ms', await deskOpen(), ['aria-describedby="hr-gate" disabled']],
   ['the desk, loading', renderDeskSection((() => { const f = deskFixture(DESK_PAIRS()); f.desk.open(); return f.html(); })()), ['Loading the page…']],
   ['the desk, merging', await deskOpen((f) => { f.seen(); f.state.busyKey = 'semanticMergeOne:' + f.key(f.scan.pairs[0]); }), ['aria-busy="true"', 'Merging…']],
   ['the desk, keeping both', await deskOpen((f) => { f.seen(); f.state.busyKey = 'semanticSkip:' + f.key(f.scan.pairs[0]); }), ['aria-busy="true"', 'Saving…']],
   ['the desk, merged', await deskOpen(async (f) => { f.seen(); await f.press('hr-merge'); }), ['Merged', '4 links moved.', 'Pair 2 of 3']],
   ['the desk, kept apart', await deskOpen(async (f) => { f.seen(); await f.press('hr-keep'); }), ['They will not come back.', 'id="hr-undo"']],
   ['the desk, a merge failed', await deskOpen(async (f) => { f.seen(); f.nextMerge = { error: 'Could not merge: the disk went away' }; await f.press('hr-merge'); }), ['Could not merge: the disk went away', 'id="hr-retry"', 'hr-outcome-failed']],
-  ['the desk, the comparison failed', await (async () => { const f = deskFixture(DESK_PAIRS()); f.nextCompare = { error: 'the disk went away' }; f.desk.open(); await f.paint(); return renderDeskSection(f.html()); })(), ['Could not load the comparison: the disk went away', 'id="hr-merge" disabled']],
-  ['the desk, a page changed', await deskOpen(async (f) => { f.seen(); f.nextMerge = { stale: true }; await f.press('hr-merge'); await f.paint(); }), ['This page changed since you compared it. The comparison has been refreshed.', 'id="hr-merge" disabled']],
+  ['the desk, the comparison failed', await (async () => { const f = deskFixture(DESK_PAIRS()); f.nextCompare = { error: 'the disk went away' }; f.desk.open(); await f.paint(); return renderDeskSection(f.html()); })(), ['Could not load the comparison: the disk went away', 'aria-describedby="hr-gate" disabled']],
+  ['the desk, a page changed', await deskOpen(async (f) => { f.seen(); f.nextMerge = { stale: true }; await f.press('hr-merge'); await f.paint(); }), ['This page changed since you compared it. The comparison has been refreshed.', 'aria-describedby="hr-gate" disabled']],
   ['the desk, the list open', await deskOpen((f) => { f.state.expandedGroups.add('reviewPairs'); }), ['hr-fold-summary', 'this pair', 'hr-jump']],
+  ['the desk, the pointer still on Merge', await deskOpen(async (f) => { f.overMerge = true; f.desk.onPointer({ clientX: 5, clientY: 5, pointerType: 'mouse' }); await f.press('hr-next'); await f.paint(); f.seen(); }), ['Move the pointer off Merge and back to press it.', 'aria-describedby="hr-gate" disabled']],
   ['the desk, the end', await deskOpen(async (f) => { f.seen(); await f.press('hr-merge'); await f.paint(); f.seen(); await f.press('hr-keep'); await f.paint(); f.seen(); await f.press('hr-merge'); }, null, { coverage: { left: 12 } }), ['All pairs decided.', '12 pairs have not been compared yet, shown in AI help.']],
 ];
 for (const [label, html, must] of DESK_ARMS) {
