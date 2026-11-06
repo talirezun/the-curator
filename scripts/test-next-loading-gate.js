@@ -784,7 +784,7 @@ ok(!/if \(!silent\) \{ state\.healthLoading = true; state\.healthError = null; s
   'domains: the unconditional `state.health = null` on re-entry is gone');
 // loadHealth takes the keep decision FROM ITS CALLER (the shape
 // `keepSemanticScan` already uses), and the default is the SAFE one.
-ok(/const keepStale = !!\(opts && opts\.keepHealth\);/.test(domainsSrc),
+ok(/let keepStale = !!\(opts && opts\.keepHealth\);/.test(domainsSrc),
   'domains: loadHealth reads the keep decision from opts, defaulting to CLEAR');
 ok(/keepHealth: shouldKeepHealthOnReload\(state\.health, state\.healthSlug, state\.activeSlug\)/.test(domainsSrc),
   'domains: the re-entry call site evaluates the slug-gated predicate');

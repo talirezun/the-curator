@@ -49,7 +49,7 @@
  * THE SELECTORS are all in SEL, below. A redesign changes them there.
  *
  *   node scripts/e2e-wiki-health.mjs [--stage <name>] [--profiles 1280,375,1280-light,375-light,1280-rm,375-rm,800,big-1280,big-375]
- *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
+ *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
  *
  * SINCE STAGE 1 the default stage is `s1`, the press rule: every metric below is
  * REQUIRED except the review desk's, which belong to a later stage. STAGE 2 keeps those
@@ -159,7 +159,7 @@ const ALL_PROFILES = {
   '1280': { name: '1280', w: 1280, h: 900 },
   '375': { name: '375', w: 375, h: 812 },
   '1280-light': { name: '1280-light', w: 1280, h: 900, light: true, only: ['S1', 'S5', 'S6', 'S14'] },
-  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6', 'S14'] },
+  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6', 'S14', 'S15'] },
   '1280-rm': { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5', 'S7', 'S14'] },
   '375-rm': { name: '375-reduced-motion', w: 375, h: 812, reduced: true, only: ['S1', 'S4', 'S7', 'S14'] },
   rm: { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5'] },
@@ -284,7 +284,7 @@ function buildLabDomain(root, name, opts = {}) {
 }
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
-const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'hclean'];
+const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'h15', 'h15b', 'hclean', 'hone'];
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -300,6 +300,14 @@ async function startApp(profile) {
     writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[zulu]]\n');
     writeFileSync(path.join(w, 'concepts', 'zulu.md'), '---\ntype: concept\n---\n\n# Zulu\n\nA last page.\n\n## Related\n\n- [[alpha]]\n');
     writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hclean\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n| [[zulu]] | A last page. |\n');
+    writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
+  // One page nothing links to, and nothing else to do.
+  { const w = path.join(ws.domains, 'hone', 'wiki'); rmSync(w, { recursive: true, force: true });
+    for (const d of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, d), { recursive: true });
+    writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[zulu]]\n');
+    writeFileSync(path.join(w, 'concepts', 'zulu.md'), '---\ntype: concept\n---\n\n# Zulu\n\nA last page.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'concepts', 'lonely.md'), '---\ntype: concept\n---\n\n# Lonely\n\nNothing links here.\n');
+    writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hone\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n| [[lonely]] | Nothing links here. |\n| [[zulu]] | A last page. |\n');
     writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
   if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
@@ -714,8 +722,12 @@ async function scenarios(app, profile) {
     await act(app, profile, 'row-above-settled', { press: SEL.dismissIn('orphans'), place: 500, outcome: [SEL.leftUndo], settle: HELD, runs: true });
     const waiting = await page.evaluate(() => { const e = document.querySelector('[data-row-deferred]'); return e ? e.innerText : null; });
     step(`[${profile.name}] the settled row above the press stays and says so`, !!waiting && /Resolved/.test(waiting), String(waiting));
-    await page.evaluate((m) => { document.querySelector(m).scrollTop -= 200; }, SEL.main); await delay(600);
-    step(`[${profile.name}] and it goes when you scroll`, await page.evaluate(() => !document.querySelector('[data-row-deferred]')));
+    const pressedAt = () => page.evaluate((s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; }, SEL.leftUndo);
+    const t0 = await pressedAt();
+    await delay(2600);
+    step(`[${profile.name}] and it goes by itself a moment later, not when somebody scrolls`, await page.evaluate(() => !document.querySelector('[data-row-deferred]')));
+    const t1 = await pressedAt();
+    step(`[${profile.name}] with what was pressed exactly where it was`, t0 !== null && Math.abs(t1 - t0) <= 1, `${t0} -> ${t1}`);
   }
   const slowFix = (ms) => page.evaluate((d) => { const real = window.fetch; window.fetch = async (u, o) => { const r = await real(u, o); if (/\/fix$/.test(String(u))) await new Promise((k) => setTimeout(k, d)); return r; }; }, ms);
   // S11 — an outcome belongs to the domain it ran on.
@@ -755,7 +767,7 @@ async function scenarios(app, profile) {
     await page.evaluate((s) => document.querySelector(s).click(), SEL.fixAll('crossFolderDupes'));
     await delay(1500);
     const ask = await page.evaluate(() => ({ asked: !!document.querySelector('.dm-confirm-card'), line: (document.querySelector('.dm-health .dm-outcome') || {}).innerText || null }));
-    step(`[${profile.name}] a page gone behind its back: no delete warning, and it says why`, !ask.asked && /Nothing left/.test(ask.line || ''), JSON.stringify(ask));
+    step(`[${profile.name}] a page gone behind its back: the question closes when the read lands, and it says why`, !ask.asked && /Nothing left/.test(ask.line || ''), JSON.stringify(ask));
   }
   // S13 — the keyboard focus ring is seen, and nothing changes at rest.
   if (run('S13') && sub('S13')) {
@@ -853,6 +865,59 @@ async function scenarios(app, profile) {
     await act(app, profile, 'clean-check-again', { press: SEL.rescan, outcome: [SEL.rescan], settle: 800, runs: true, stay: true });
     step(`[${profile.name}] Check again keeps the section's node`, n1 && await page.evaluate((s) => document.querySelector(s).__mark === 1, '.dm-health'));
     // A mirror draws the facts and no action.
+  }
+  // S15 — what the review on a real wiki found: domains, waiting, return.
+  if (run('S15') && sub('S15')) {
+    const row = (slug) => page.evaluate((sel, s) => { [...document.querySelectorAll(sel)].find((n) => n.dataset.domainSlug === s).click(); }, SEL.domainRow, slug);
+    const healthText = () => page.evaluate(() => document.querySelector('.dm-health').innerText);
+    // Slow answers, as on a wiki of thousands of pages during a recount.
+    const slow = (re, ms) => page.evaluate((src, d) => { const r = new RegExp(src); const real = window.fetch; window.fetch = async (u, o) => { if (r.test(String(u))) await new Promise((k) => setTimeout(k, d)); return real(u, o); }; }, re, ms);
+    // 1. A run belongs to its domain.
+    await openDomain(app, 'h15'); await compareReady(page);
+    await slow('semantic-dupes/scan', 2500);
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.findDupes);
+    await waitFor(page, exists, 'confirm', 200, SEL.confirmYes);
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.confirmYes);
+    await delay(300);
+    step(`[${profile.name}] the run says so on its own domain`, /Comparing/.test(await healthText()));
+    await row('h15b');
+    await waitFor(page, (r) => !!document.querySelector(r), 'other domain', 400, SEL.rescan); await delay(500);
+    const other = await page.evaluate(() => ({ text: document.querySelector('.dm-health').innerText, busy: document.querySelectorAll('.dm-health [aria-busy="true"]').length, fix: document.querySelector('.dm-group-fixall-btn') ? document.querySelector('.dm-group-fixall-btn').disabled : null }));
+    step(`[${profile.name}] another domain shows nothing of it, and its buttons work`, !/Comparing|Merging/.test(other.text) && other.busy <= 1 && other.fix === false, JSON.stringify({ busy: other.busy, fix: other.fix }));
+    await row('h15');
+    await waitFor(page, (r) => !!document.querySelector(r), 'back', 400, SEL.rescan); await delay(200);
+    step(`[${profile.name}] and it is still running when you come back`, /Comparing|pairs compared/.test(await healthText()));
+    await delay(4000);
+    // 2. The last Leave as is: the row reading 0 goes.
+    await openDomain(app, 'hone'); await openFoldsOn(page, ['orphans']);
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.dismissIn('orphans'));
+    await delay(600);
+    step(`[${profile.name}] the last one left as is says so`, await page.evaluate((u) => !!document.querySelector(u), SEL.leftUndo));
+    await delay(1800);
+    const gone = await page.evaluate(() => ({ row: !!document.querySelector('[data-group-key="orphans"]'), left: !!document.querySelector('[data-group-key="dismissed"]') }));
+    step(`[${profile.name}] then the empty row goes, and Left as is has it`, !gone.row && gone.left, JSON.stringify(gone));
+    // 3. Merge never waits for a count; 7. focus goes to a named target, never a paid one.
+    await openDomain(app, 'h15'); await slow('/api/health/h15$', 2500);
+    const mb = SEL.fixAll('crossFolderDupes');
+    const t0 = Date.now();
+    await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, mb);
+    await delay(100);
+    const ask = await page.evaluate((c, b) => ({ q: !!document.querySelector(c), label: document.querySelector(b).innerText }), SEL.confirmCard, mb);
+    step(`[${profile.name}] Merge asks at once, with a read running behind it`, ask.q && !/Checking/.test(ask.label), JSON.stringify(ask) + ' ' + (Date.now() - t0) + ' ms');
+    await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.confirmYes);
+    await delay(5500);
+    const focus = await page.evaluate(() => { const a = document.activeElement; return { tag: a && a.tagName, ai: !!(a && a.classList.contains('btn-ai')), text: a && a.innerText.slice(0, 24), inSection: !!(a && a.closest('.dm-health')) }; });
+    step(`[${profile.name}] after a merge focus is on the next thing, never a paid button`, focus.inSection && !focus.ai && focus.tag !== 'BODY', JSON.stringify(focus));
+    // 4. Coming back shows what is known, at once.
+    await openDomain(app, 'h15b'); await delay(300);
+    await row('h15'); await waitFor(page, (r) => !!document.querySelector(r), 'h15', 400, SEL.rescan); await delay(600);
+    await slow('/api/health/h15b$', 3000);
+    await row('h15b'); await delay(300);
+    const backNow = await page.evaluate(() => ({ text: document.querySelector('.dm-health').innerText, lanes: document.querySelectorAll('.dm-health .dm-lane').length, reading: document.querySelector('.dm-health-reading').innerText }));
+    step(`[${profile.name}] coming back during a slow read shows what is known, and says it is checking`, !/Scanning…/.test(backNow.text) && backNow.lanes >= 2 && /Checking/.test(backNow.reading), JSON.stringify({ lanes: backNow.lanes, reading: backNow.reading }));
+    await delay(3200);
+    step(`[${profile.name}] then the answer lands in place`, /Checked /.test(await page.evaluate(() => document.querySelector('.dm-health-reading').innerText)));
+    step(`[${profile.name}] nothing anywhere says Counting`, !/Counting/.test(await healthText()));
   }
   // S4 — duplicate pages: find, next, preview, flip, merge, skip, batch
   if (run('S4') && sub('S4')) {

@@ -46,7 +46,7 @@ function fnSource(name) {
   throw new Error('unterminated ' + name);
 }
 
-const FNS = ['readHealthBeforeAsking', 'noteHealthTrace', 'beforeHealthPaint', 'resetHealthPressRule', 'confirmFixAllOfType', 'deletedPageCount', 'takeHealthNote', 'healthGroupAlive', 'repairAllFree', 'freeRepairCount',
+const FNS = ['mergeQuestion', 'parkHealthBusy', 'noteHealthTrace', 'beforeHealthPaint', 'resetHealthPressRule', 'confirmFixAllOfType', 'deletedPageCount', 'takeHealthNote', 'healthGroupAlive', 'repairAllFree', 'freeRepairCount',
   'dropIssuesLocally', 'placeHealthStack', 'healthStackHome', 'onHealthKeydown', 'liveBatchPairs', 'heldOutcome', 'healthRowHold'];
 
 function world() {
@@ -54,12 +54,12 @@ function world() {
   const ran = [];
   const body = `
     const state = { rowNote: null, rowOutcomes: {}, rowLines: {}, confirm: null, pendingPlan: null, pressAnchor: null, ringAnchor: null,
-      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), leftRows: {}, rowArming: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
+      activeSlug: 'a', healthSlug: 'a', health: null, healthLive: '', healthTrace: null, rowAway: {}, rowNoteFrom: null, rowBusy: new Set(), busyAway: {}, leftRows: {}, rowArming: {}, pressLocks: {}, pressOpener: null, flipFlash: null, busyKey: null, expandedGroups: new Set(), dismissedRecords: null, semanticScan: null };
     const HEALTH_CATEGORIES = [{ key: 'missingBacklinks', label: 'Missing backlinks' }, { key: 'crossFolderDupes', label: 'Cross-folder duplicates' }, { key: 'brokenLinks', label: 'Broken links' }];
     const AUTO_FIX_TYPES = new Set(['missingBacklinks', 'crossFolderDupes', 'hyphenVariants', 'brokenLinks']);
     const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
     const GIT_UNDO_WARN = 'WARN'; const GIT_UNDO_NOTE = 'NOTE';
-    const HEALTH_HOLD_MS = 1000;
+    const HEALTH_HOLD_MS = 1000; const HEALTH_EMPTY_ROW_MS = 1500; let healthSettleTimer = null;
     const HEALTH_FREE_GROUPS = new Set(['missingBacklinks', 'folderPrefixLinks', 'summaryLinkSections', 'brokenLinks', 'indexDrift']);
     let confirmOnScreen = null;
     const healthFloor = { reset() {} };
@@ -117,8 +117,17 @@ section('§1 Free repairs run on the press; anything deleting a page asks');
   down.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }] };
   down.setFetch(null, 'the disk went away');
   await down.confirmFixAllOfType('a', 'crossFolderDupes');
-  ok(!down.state.confirm && down.state.rowNote.tone === 'error', 'cannot read: no question at all, rather than one with an old number');
+  ok(down.state.confirm && /1 page is deleted/.test(down.state.confirm.body), 'cannot read: the question stands on what was on screen; the merge reports its own failure');
   ok(down.state.busyKey === null, 'and nothing is left waiting');
+  // MERGE NEVER WAITS FOR A COUNT: the question is there before the read has answered.
+  const quick = world();
+  quick.state.health = { crossFolderDupes: [{ keep: 'a', remove: 'b' }, { keep: 'c', remove: 'd' }] };
+  quick.setFetch({ crossFolderDupes: [{ keep: 'a', remove: 'b' }] });
+  const pending = quick.confirmFixAllOfType('a', 'crossFolderDupes');
+  ok(quick.state.confirm && /^2 pages are deleted/.test(quick.state.confirm.body) && quick.state.busyKey === null, 'the question opens at once, from what is on screen, and nothing says Checking');
+  const same = quick.state.confirm;
+  await pending;
+  ok(quick.state.confirm === same && /^1 page is deleted/.test(same.body) && same.confirmLabel === 'Merge and delete 1', 'the true figure changes it in place');
 
 }
 
@@ -146,6 +155,28 @@ section('§1a Repair all: free rows only, in the server\'s order, and it runs on
   ok(typeof part.w.state.rowNote.retry === 'function', 'with Try again');
   const none = await go({ missingBacklinks: [], crossFolderDupes: [{ keep: 'a', remove: 'b' }] });
   ok(none.sent.length === 0, 'with nothing free to repair, nothing is sent');
+}
+
+section('§1a2 What is running belongs to its domain');
+{
+  const w = world();
+  w.state.activeSlug = 'a';
+  w.state.health = { missingBacklinks: [{}], folderPrefixLinks: [{}] };
+  let seenOnB = 'unset';
+  w.setFixFetch((type) => {
+    if (type === 'folderPrefixLinks') { w.parkHealthBusy('a', 'b'); w.state.activeSlug = 'b'; seenOnB = w.state.busyKey; w.state.busyKey = 'group:orphans'; }
+    return { fixed: 1, total: 1 };
+  });
+  await w.repairAllFree('a');
+  ok(seenOnB === null, 'switching mid-run: the domain on screen has nothing running');
+  ok(w.state.busyKey === 'group:orphans', 'and the run on the other domain ending does not end what this domain started');
+  ok(!w.state.busyAway.a, 'it clears its own entry');
+  const back = world();
+  back.state.busyKey = 'semanticDupesScan';
+  back.parkHealthBusy('a', 'b');
+  ok(back.state.busyKey === null && back.state.busyAway.a === 'semanticDupesScan', 'parked with its domain');
+  back.parkHealthBusy('b', 'a');
+  ok(back.state.busyKey === 'semanticDupesScan' && !back.state.busyAway.a, 'and back with it');
 }
 
 section('§1b An outcome belongs to the domain it ran on');

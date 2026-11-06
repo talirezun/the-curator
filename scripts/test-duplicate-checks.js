@@ -870,6 +870,22 @@ section('17. A batch that fails for its own reasons is split and retried');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('A merge does not change what a page opens with');
+{
+  const page = '---\ntype: concept\ntags: [a]\n---\n\n# Title\n\nA short opening.\n\n## Key Facts\n\n- one\n';
+  const merged = page + '\n## Merged from other-page\n\nEverything the other page said, which is new text.\n';
+  ok(dc.pageOpening(merged) === dc.pageOpening(page), 'the moved section is not part of the opening');
+  ok(dc.pageOpening(page) === 'A short opening. ## Key Facts - one', 'a page with no such section reads exactly as before, byte for byte');
+  ok(dc.pageOpening('# T\n\nText about ## Merged from a page, in a sentence.\n') === 'Text about ## Merged from a page, in a sentence.', 'only a heading at the start of a line counts');
+  ok(dc.pageOpening('# T\n\n## Merged from x\n\nall moved\n') === '', 'a page that opens with it has no opening of its own');
+  const hash = (s) => dc.openingsHash('concepts', 'a', dc.pageOpening(s), 'concepts', 'b', dc.pageOpening(page));
+  ok(hash(merged) === hash(page), 'so a remembered answer still applies after a merge');
+  ok(hash(page + 'more text\n') !== hash(page), 'CONTROL: a real edit near the top still lapses it');
+  const aiSrc = readFileSync(path.join(REPO, 'src/brain/health-ai.js'), 'utf8');
+  ok(/SEMANTIC_PROMPT_ID = createHash\('sha256'\)\.update\(SEMANTIC_SYSTEM_PROMPT\)\.update\(SEMANTIC_REPLY_FORMAT\)/.test(aiSrc) && !/pageOpening/.test(aiSrc.slice(aiSrc.indexOf('const SEMANTIC_SYSTEM_PROMPT'), aiSrc.indexOf('const SEMANTIC_PROMPT_ID'))),
+    'the prompt id is the prompt and the reply format only: this leaves it as it was, so nothing is re-billed by it');
+}
+
 __setDomainsDirOverride(null);
 console.log('\n' + '='.repeat(62));
 console.log(`Passed: ${passed}   Failed: ${failed}`);

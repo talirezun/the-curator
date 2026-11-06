@@ -153,7 +153,7 @@ section('§2 The Free repairs row');
   ok(!/btn-ai/.test(btn) && !/sparkles/.test(btn) && !/dm-quick-cost/.test(btn), 'free: not btn-ai, no sparkles, no cost badge');
   ok(/btn btn-secondary btn-xs cur-action-chip dm-quick-btn/.test(btn), 'the shared secondary chrome');
   const stale = free(baseReport({ indexDrift: [{ ...DRIFT, missing: 0, stale: 1 }] }));
-  ok(/Pages missing from the page list/.test(stale) && />1</.test(stale), 'stale-only: the row still stands, counting the rows that point nowhere');
+  ok(/Rows in the page list with no page/.test(stale) && !/Pages missing/.test(stale) && />1</.test(stale), 'stale-only: the row says what it counts, and never "missing"');
   const none = free(baseReport({ indexDrift: [] }));
   ok(!/indexPlan/.test(none), 'no button when indexDrift is [] (a read-only mirror sends [])');
   const noField = free(baseReport({}));

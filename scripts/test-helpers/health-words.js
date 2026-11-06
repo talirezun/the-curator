@@ -99,6 +99,7 @@ export const OUTSIDE_THE_DECK = [
   'Comparing…',                   // before the first count arrives
   'Merging…', 'Checking…',        // a press with no count to give; the desk's own word
   'Nothing left to repair.',      // the deck has it only for merging
+  'Rows in the page list with no page',  // a stale-only list: "missing" would say the wrong thing
   'Resolved',                     // a row above the press, settled by the reading after it
   'Settled by another merge',     // the same, for a pair (Stage 1)
   'It shrinks from {name} to {name}.',  // the deck has only the page list growing

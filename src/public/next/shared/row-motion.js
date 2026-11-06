@@ -174,7 +174,7 @@ function collapseFrames(el) {
   return [from, to];
 }
 
-function collapse(el, key, motion, hooks) {
+function collapse(el, key, motion, hooks, instant) {
   const entry = motion.ghosts.get(key);
   if (!entry) return;
   entry.started = true;
@@ -197,7 +197,7 @@ function collapse(el, key, motion, hooks) {
     if (hooks.afterRemove) hooks.afterRemove(el);
   };
   const dur = tokenMs('--dur-slow', 240);
-  if (reducedMotion() || dur <= 0 || typeof el.animate !== 'function') { finish(); return; }
+  if (instant || reducedMotion() || dur <= 0 || typeof el.animate !== 'function') { finish(); return; }
   const height = el.animate(collapseFrames(el), { duration: dur, easing: tokenEase(), fill: 'forwards' });
   const fade = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: tokenMs('--dur-fast', 120), easing: tokenEase(), fill: 'forwards' });
   entry.animations = [height, fade];
@@ -290,15 +290,17 @@ export function startRowMotion(section, opts) {
  * @param {Element} section
  * @param {(el: Element) => boolean} which
  * @param {(el: Element) => string|null} keyOf
+ * @param {{ instant?: boolean }} [opts]  in one frame, for a caller who keeps the scroll steady
  */
-export function releaseHeldRows(section, which, keyOf) {
+export function releaseHeldRows(section, which, keyOf, opts) {
+  const instant = !!(opts && opts.instant);
   const motion = motionState(section);
   for (const el of Array.from(section.querySelectorAll('[' + DEFERRED + ']'))) {
     if (!which(el)) continue;
     const key = keyOf(el);
     const entry = motion.ghosts.get(key);
     if (!entry || entry.started) continue;
-    collapse(el, key, motion, motion.hooks || {});
+    collapse(el, key, motion, motion.hooks || {}, instant);
   }
   // And rows that were waiting to open.
   for (const el of Array.from(section.querySelectorAll('[data-row-waiting]'))) {
@@ -308,7 +310,7 @@ export function releaseHeldRows(section, which, keyOf) {
     if (!key || !motion.hidden.has(key) || !which(el)) { el.style.display = 'none'; continue; }
     motion.hidden.delete(key);
     el.removeAttribute('data-row-waiting');
-    open(el);
+    if (!instant) open(el);
   }
 }
 

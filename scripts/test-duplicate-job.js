@@ -720,11 +720,10 @@ section('H2. After a real merge: coverage against a fresh full pass');
   ok(after.totalPairs === truth.totalPairs && after.checkedPairs === truth.checkedPairs && after.leftPairs === truth.leftPairs && after.rememberedPairs === truth.rememberedPairs,
     'H2.6 every figure equals the full pass', JSON.stringify({ after: [after.totalPairs, after.checkedPairs, after.leftPairs], truth: [truth.totalPairs, truth.checkedPairs, truth.leftPairs] }));
   ok(after.totalPairs === 406, 'H2.7 435 less the 29 pairs of the deleted page', String(after.totalPairs));
-  // The audit's 2 vs 3: a merge changes the kept page's opening (on a short page the
-  // moved text falls inside the 500 characters the model reads), so that page's answers
-  // lapse. Exact, because it is read from disk, and it is why "checked" can fall by more
-  // than the deleted page's pairs: here all 28 pairs of the kept page need asking again.
-  ok(after.leftPairs === 28, 'H2.8 the kept page\'s other pairs lapse, and the figure says so', String(after.leftPairs));
+  // Was 28: on a short page the moved text fell inside the 500 characters the model reads,
+  // so one merge lapsed every answer about the kept page and they were billed again.
+  // pageOpening stops at the composer's own heading, so nothing lapses.
+  ok(after.leftPairs === 0, 'H2.8 a merge re-bills nothing: the kept page\'s answers still apply', String(after.leftPairs));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

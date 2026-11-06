@@ -369,6 +369,8 @@ const PRESS_ARMS = [
   ['pairs waiting, with the spelling row', DOMAIN_HEALTH_CONTRACT, lane({ semanticScan: SCAN }), ['Possible duplicates', 'Review', 'Spelling variants', '500 of 2,108 pairs compared', 'could not be compared']],
   ['no key', DOMAIN_HEALTH_CONTRACT, lane({ aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true } }), ['Needs an AI provider key', 'disabled aria-disabled="true"']],
   ['a read-only mirror', DOMAIN_HEALTH_CONTRACT, lane({ readonlyArm: true }), ['read-only Shared Brain mirror']],
+  ['a page list with only rows whose page has gone', DOMAIN_HEALTH_CONTRACT, lane({ health: { ...FULL_REPORT, indexDrift: [{ missing: 0, stale: 4 }] } }), ['Rows in the page list with no page']],
+  ['a question with no busy word of its own', WITH_YES, lane({ busyKey: 'x', confirm: { ...FORGET, anchor: 'group:compare', busy: true } }), ['Saving…']],
   ['clean', DOMAIN_HEALTH_CONTRACT, { health: CLEAN_REPORT, expandedGroups: new Set(['scan']) }, ['Nothing to fix.', 'All 2 pages were checked', 'dm-rescan-btn', 'nothing to look at']],
   ['clean, with a repair just done', DOMAIN_HEALTH_CONTRACT, { health: CLEAN_REPORT, expandedGroups: new Set(), activeSlug: 'early-computing', healthTrace: { slug: 'early-computing', lane: 'free', text: 'Repaired 5', at: '2026-11-05T10:00:00Z' } }, ['Repaired 5']],
 ];

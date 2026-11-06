@@ -413,7 +413,7 @@ section('8. F6 — a deletion is stated: the row, the question, the warning');
     confirm: null,
   };
   const extra = liftConst('DESTRUCTIVE_FIX_TYPES') + liftConst('AUTO_FIX_TYPES') + "const GIT_UNDO_NOTE = 'NOTE'; const GIT_UNDO_WARN = 'WARN';\n";
-  const fns = sandbox(['readHealthBeforeAsking', 'deletedPageCount', 'confirmFixAllOfType', 'deletesReading', 'n0'], {
+  const fns = sandbox(['mergeQuestion', 'deletedPageCount', 'confirmFixAllOfType', 'deletesReading', 'n0'], {
     state, render: () => {}, myMountToken: 1, fixAllOfType: () => { state.ranFree = true; }, escapeHtml,
     fetchJSON: async () => state.health, isCurrentMount: () => true,
   }, extra);

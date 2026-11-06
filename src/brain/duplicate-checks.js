@@ -58,6 +58,11 @@ export function pageOpening(content) {
     if (closeIdx !== -1) body = body.slice(closeIdx + 4).trimStart();
   }
   body = body.replace(/^#\s+.*\n/, '').trimStart();
+  // WHAT A MERGE MOVED IN IS NOT THE PAGE'S OPENING. On a short page it fell inside the first
+  // 500 characters, so one merge lapsed every answer about the kept page and re-billed them
+  // (30 pages: left 0 -> 28). Only a section the merge composer wrote is cut.
+  const moved = body.search(/^## Merged from /m);
+  if (moved >= 0) body = body.slice(0, moved);
   return body.slice(0, FIRST_PARA_MAX).replace(/\s+/g, ' ').trim();
 }
 

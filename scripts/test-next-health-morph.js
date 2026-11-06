@@ -494,7 +494,7 @@ section('§10 The patch refuses or falls back; it never leaves a broken section'
   // except that a failed patch must take its held rows back out of `next`.
   let undone = 0;
   const motion = { readHealthFocus() { return null; }, healthFloor: { position() { return 0; }, hold() {} }, holdLeavingRows() { return { undo() { undone++; } }; },
-    keepHealthFocus() {}, startRowMotion() {}, HEALTH_ROW: '', healthRowKey() {}, healthRowHold() {}, decorateLeavingRow() {},
+    keepHealthFocus() {}, startRowMotion() {}, scheduleHealthSettle() {}, HEALTH_ROW: '', healthRowKey() {}, healthRowHold() {}, decorateLeavingRow() {},
     onHealthRowCollapse() {}, onHealthRowRemoved() {}, onHealthRowOpen() {}, healthPressY: null, pageY() { return 0; } };
   const make = (activeSlug, patch) => new Function('state', 'patchInPlace', 'healthMorphKey', 'console', ...Object.keys(motion),
     morphSrc + '\nreturn morphHealthSection;')({ activeSlug }, patch, healthKey, { warn() {} }, ...Object.values(motion));

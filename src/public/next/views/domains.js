@@ -540,6 +540,7 @@ const state = {
   pressLocks: {},         // control -> width at the press, so its label cannot move it
   ringAnchor: null,       // where the progress ring draws (derived in render)
   flipFlash: null,        // the pair whose Flip is answering
+  busyAway: {},           // slug -> what is running on a domain that is off screen
   healthTrace: null,      // { slug, text, lane, at }: the last thing done, in its lane's head
   leftRows: {},           // rowKey -> a row left as is this round: it keeps its place, with Undo
   rowArming: {},          // rowKey -> a row just brought back: its button arms a moment later
@@ -2472,7 +2473,11 @@ async function loadHealth(slug, token, opts) {
   // free identifier here makes loadHealth throw mid-clear and silently
   // defeats the destructive-merge gate's own test. That suite's FNS list
   // already carries a comment about the last time this happened.
-  const keepStale = !!(opts && opts.keepHealth);
+  let keepStale = !!(opts && opts.keepHealth);
+  // COMING BACK SHOWS WHAT WAS KNOWN, AT ONCE, under this domain's own heading (the cache is
+  // keyed by it), with the head saying "Checking…"; the answer replaces it in place. Measured:
+  // 13 to 27 s of "Scanning…" on a real wiki during a recount. Only a first visit says that.
+  const known = !silent && !keepStale && state.cache && state.cache[slug] && state.cache[slug].health ? state.cache[slug] : null;
   if (!silent) {
     state.healthLoading = true;
     state.healthError = null;
@@ -2480,6 +2485,15 @@ async function loadHealth(slug, token, opts) {
     state.healthStale = keepStale;
   }
   resetDomainScopedHealthState(opts);
+  if (known) {
+    keepStale = true;
+    state.health = known.health;
+    state.healthSlug = slug;
+    state.healthStale = true;
+    if (known.estimates) state.estimates = Object.assign({}, known.estimates);
+    if (known.quote) state.semanticQuote = Object.assign({}, known.quote, { stale: true });
+    if (state.aiAvailable) syncSemanticScan(slug, token, true);
+  }
   render(token);
 
   try {
@@ -2495,6 +2509,7 @@ async function loadHealth(slug, token, opts) {
     state.health = report;
     state.healthSlug = slug;
     state.healthStale = false;
+    if (state.cache) (state.cache[slug] || (state.cache[slug] = {})).health = report;
     state.healthSummary[slug] = {
       count: totalOpenIssues(report),
       scannedAt: typeof report.scannedAt === 'string' ? report.scannedAt : null,
@@ -2519,7 +2534,9 @@ async function loadHealth(slug, token, opts) {
 
   if (state.aiAvailable && state.health && slug === state.activeSlug && isCurrentMount(token)) {
     loadEstimates(slug, token).catch(reportAsyncActionFailure);
-    syncSemanticScan(slug, token);
+    // Opening asks the server to settle a filtered list once (`?reconcile=1`); after a
+    // merge the quiet reading is exact and costs no pass.
+    if (!known) syncSemanticScan(slug, token, !silent);
   }
 }
 
@@ -2548,6 +2565,7 @@ async function loadEstimates(slug, token) {
     try {
       const est = await fetchJSON(url);
       if (slug === state.activeSlug && isCurrentMount(token)) state.estimates[key] = est;
+      if (state.cache && !est.error) { const c = state.cache[slug] || (state.cache[slug] = {}); (c.estimates || (c.estimates = {}))[key] = est; }
     } catch (err) {
       if (slug === state.activeSlug && isCurrentMount(token)) state.estimates[key] = { error: err.message };
     }
@@ -3425,23 +3443,23 @@ function newSemanticScan(slug, frame) {
 // pairs come first, from a call with no candidate pass; the figures follow, and
 // the line says "Counting the pairs…" until they land, because that pass takes
 // ~15 s on a large domain. Nothing here is awaited. A mirror has no scan to resume.
-function syncSemanticScan(slug, token) {
+function syncSemanticScan(slug, token, opening) {
   if (!state.aiAvailable || slug !== state.activeSlug) return;
   if (state.readonlySet.has(slug)) return;
   const held = activeSemanticScan();
-  if (held) { countSemanticPairs(held, slug, token); return; }
+  if (held) { countSemanticPairs(held, slug, token, opening); return; }
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
-    countSemanticPairs(state.semanticScan, slug, token);
+    countSemanticPairs(state.semanticScan, slug, token, opening);
   }).catch(() => { /* free and optional: the panel is whole without it */ });
 }
 
-function countSemanticPairs(scan, slug, token) {
+function countSemanticPairs(scan, slug, token, opening) {
   if (scan.counting) { scan.countAgain = true; return; }
   scan.counting = true;
   if (isCurrentMount(token)) render(token);
-  fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status').then((st) => {
+  fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status' + (opening ? '?reconcile=1' : '')).then((st) => {
     const c = semanticCoverageFrom(st);
     if (c) scan.coverage = c;
   }).catch(() => { /* the figures already shown stay until a count succeeds */ }).finally(() => {
@@ -3800,8 +3818,20 @@ function bindSidebarButtons() {
 
 // Entered synchronously by a click handler — reading myMountToken here is
 // safe (see the doc comment on it above).
+// WHAT IS RUNNING BELONGS TO ITS DOMAIN. `state.busyKey` always speaks for the domain on
+// screen; another domain's running action waits here, and comes back with it. An action
+// ending on a domain that is off screen clears its own entry and touches nothing else.
+function parkHealthBusy(from, to) {
+  const away = state.busyAway || (state.busyAway = {});
+  if (state.busyKey && from) away[from] = state.busyKey;
+  state.busyKey = away[to] || null;
+  delete away[to];
+  state.aiProgress = null;
+}
+
 function selectDomain(slug) {
   if (slug === state.activeSlug) return;
+  if (typeof parkHealthBusy === 'function') parkHealthBusy(state.activeSlug, slug);
   state.activeSlug = slug;
   state.confirm = null;
   state.banner = null;
@@ -7251,6 +7281,7 @@ function morphHealthSection(before, after) {
         beforeCollapse: onHealthRowCollapse, afterRemove: onHealthRowRemoved, onOpen: onHealthRowOpen,
         waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|pair|lane):/.test(healthRowKey(el) || ''),
       });
+      scheduleHealthSettle(before);
       return true;
     }
     console.warn('Wiki health: the patch did not match; replacing the section.');
@@ -7285,6 +7316,9 @@ function morphHealthSection(before, after) {
 //
 // WHAT IS NOT HERE: the review desk, which is a later stage.
 const HEALTH_HOLD_MS = 1000;
+const HEALTH_EMPTY_ROW_MS = 1500;
+const HEALTH_SETTLE_MS = 3000;
+let healthSettleTimer = null;
 let healthPressY = null;        // where the last press was, in page coordinates
 
 function pageY(el) {
@@ -7303,6 +7337,28 @@ const healthFloor = createScrollFloor(() => {
   const section = document.querySelector('.dm-health');
   if (section) releaseHeldRows(section, () => true, healthRowKey);
 });
+
+// A ROW WAITING ABOVE THE PRESS WAITS A MOMENT, NOT FOR EVER. Measured on a real wiki: 150 s
+// of "Resolved" and a row reading 0, because nobody scrolled. They settle in one frame, and
+// the scroll position takes up the difference, so what was pressed stays exactly where it is.
+function scheduleHealthSettle(section) {
+  if (healthSettleTimer || !section.querySelector('[data-row-deferred], [data-row-waiting]')) return;
+  healthSettleTimer = setTimeout(() => {
+    healthSettleTimer = null;
+    settleHealthRows();
+  }, HEALTH_SETTLE_MS);
+}
+
+function settleHealthRows() {
+  const section = document.querySelector('.dm-health');
+  if (!section) return;
+  const stays = Array.from(section.querySelectorAll('.dm-group, .dm-lane-head')).filter((el) => !el.closest('[data-row-leaving]') && !el.hasAttribute('data-row-waiting') && el.getClientRects().length > 0);
+  const anchor = stays.find((el) => healthPressY === null || pageY(el) + el.getBoundingClientRect().height >= healthPressY) || stays[stays.length - 1];
+  const was = anchor ? anchor.getBoundingClientRect().top : 0;
+  const top = healthFloor.position();
+  releaseHeldRows(section, () => true, healthRowKey, { instant: true });
+  if (anchor && anchor.isConnected) healthFloor.hold(top + anchor.getBoundingClientRect().top - was);
+}
 
 function healthRowCollapseMs() {
   const raw = getComputedStyle(document.documentElement).getPropertyValue('--dur-slow').trim();
@@ -7426,9 +7482,10 @@ function keepHealthFocus(section, focus) {
   if (done) { done.focus({ preventScroll: true }); return; }
   // A question or plan that closed with nothing to say hands back to what opened it.
   if (focus.row && /^(confirm|plan)$/.test(focus.row.getAttribute('data-row-key') || '') && focusHealthOpener(section)) return;
-  const after = focus.index >= 0 ? focus.list.slice(focus.index + 1) : focus.list;
-  const before = focus.index >= 0 ? focus.list.slice(0, focus.index).reverse() : [];
-  if (!focusFirstAlive(after.concat(before))) focusFirstAlive([section.querySelector('#dm-rescan-btn')]);
+  const unpaid = (el) => !el.classList.contains('btn-ai');
+  const after = (focus.index >= 0 ? focus.list.slice(focus.index + 1) : focus.list).filter(unpaid);
+  const before = (focus.index >= 0 ? focus.list.slice(0, focus.index).reverse() : []).filter(unpaid);
+  if (!focusFirstAlive(after.concat(before))) focusFirstAlive(healthNextTargets(section));
 }
 
 function onHealthRowCollapse(el) {
@@ -7443,8 +7500,9 @@ function onHealthRowCollapse(el) {
   // A question or a plan closing gives focus back to what opened it.
   if (/^(confirm|plan)$/.test(el.getAttribute('data-row-key') || '') && focusHealthOpener(section)) return;
   const list = healthFocusables(section);
-  const following = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
-  const preceding = list.filter((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING).reverse();
+  const unpaid = (c) => !c.classList.contains('btn-ai');
+  const following = list.filter((c) => unpaid(c) && el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const preceding = list.filter((c) => unpaid(c) && el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING).reverse();
   focusFirstAlive(following.concat(preceding));
 }
 
@@ -7453,9 +7511,17 @@ function onHealthRowCollapse(el) {
 function focusHealthOpener(section) {
   return focusFirstAlive([
     findHealthControl(section, state.pressOpener),
-    ...section.querySelectorAll('.dm-quick-btn'),
-    section.querySelector('#dm-rescan-btn'),
+    ...healthNextTargets(section),
   ]);
+}
+
+// WHERE FOCUS GOES WHEN WHAT YOU PRESSED HAS GONE: the next thing in the lane you were in,
+// then the other free-of-charge lane, then Check again. Never a button that spends money.
+function healthNextTargets(section) {
+  const free = /^(group:(missingBacklinks|folderPrefixLinks|summaryLinkSections|brokenLinks|indexDrift)|lane:free)$/.test(state.pressAnchor || '');
+  const lanes = free ? ['lane:free', 'lane:decision'] : ['lane:decision', 'lane:free'];
+  const inLane = (l) => Array.from(section.querySelectorAll('.dm-lane[data-row-key="' + l + '"] button'));
+  return [...inLane(lanes[0]), ...inLane(lanes[1]), section.querySelector('#dm-rescan-btn')];
 }
 
 function onHealthRowRemoved() {
@@ -7586,6 +7652,16 @@ function takeHealthNote(token) {
   // Left as is, this moment: the row keeps its place and says so.
   if (note.left) {
     state.leftRows[key] = Object.assign({ slug: owner, key, arming: true }, note.left);
+    // The last one in its row: nothing is left to walk down, and a row reading 0 is not a
+    // row. It stays while its outcome is read, then goes. Left as is has it from here.
+    if (note.left.lastInGroup) {
+      setTimeout(() => {
+        for (const k of Object.keys(state.leftRows)) {
+          if (state.leftRows[k].group === note.left.group) delete state.leftRows[k];
+        }
+        if (isCurrentMount(token)) render(token);
+      }, HEALTH_EMPTY_ROW_MS);
+    }
     // A second press of a double click lands where Undo now stands. It arms a moment later.
     setTimeout(() => {
       const l = state.leftRows[key];
@@ -7762,6 +7838,7 @@ async function loadSemanticQuote(slug, token) {
     const asked = activeSemanticScan() && activeSemanticScan().coverage ? activeSemanticScan().coverage.next : null;
     const est = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/estimate');
     if (slug === state.activeSlug) state.semanticQuote = { slug, est, forNext: asked === null ? est.nextPairs : asked };
+    if (state.cache) (state.cache[slug] || (state.cache[slug] = {})).quote = { slug, est, forNext: asked === null ? est.nextPairs : asked };
   } catch (err) {
     if (slug === state.activeSlug) state.semanticQuote = { slug, est: { error: err.message } };
   } finally {
@@ -7830,6 +7907,7 @@ function resetHealthPressRule() {
   confirmOnScreen = null;
   planLeaving = false;
   healthFloor.reset();
+  if (healthSettleTimer) { clearTimeout(healthSettleTimer); healthSettleTimer = null; }
 }
 
 // Everything that can sit under a row, in one order: the question, then the plan,
@@ -8102,7 +8180,7 @@ function noteAiProgress(key, ev) {
 }
 
 // Human-readable name for whatever busyKey names. Anything unrecognised
-// gets a neutral "Working…" rather than a guess — this string sits next to
+// gets a neutral "Saving…" rather than a guess — this string sits next to
 // a spend gate and must not imply an operation the user did not start.
 const BUSY_LABELS = {
   rescan: 'Checking…',
@@ -8119,7 +8197,7 @@ function busyRingLabel(key) {
   if (!key) return null;
   if (Object.prototype.hasOwnProperty.call(BUSY_LABELS, key)) return BUSY_LABELS[key];
   if (key.indexOf('group:') === 0) return 'Repairing.';
-  return 'Working…';
+  return 'Saving…';
 }
 
 // ── THE THREE LANES ────────────────────────────────────────────────────────
@@ -8226,11 +8304,10 @@ function repairButton(type, count, crossMountBusy) {
 }
 
 function mergeRowButton(type, count, crossMountBusy) {
-  const checking = state.busyKey === 'groupCheck:' + type;
-  const busy = checking || state.busyKey === 'group:' + type;
+  const busy = state.busyKey === 'group:' + type;
   const disabled = crossMountBusy || !!state.busyKey;
   return '<button class="btn btn-secondary dm-group-fixall-btn" data-fixall="' + type + '"' + (busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : '')) + '>' +
-    (busy ? buttonRingHtml() + (checking ? ' Checking…' : ' Merging…') : 'Merge ' + n0(count)) + '</button>';
+    (busy ? buttonRingHtml() + ' Merging…' : 'Merge ' + n0(count)) + '</button>';
 }
 
 function deletesReading(pages) {
@@ -8260,10 +8337,9 @@ function renderFreeLane(report, readonly, crossMountBusy) {
   if (drift) {
     const busy = state.busyKey === 'indexRebuildPlan';
     const disabled = !!state.busyKey || crossMountBusy;
-    // Rows that point to missing pages have no words of their own in the deck: when
-    // nothing is missing from the list, they are what the count counts.
+    // With nothing missing from the list, what the count counts is rows whose page has gone.
     const count = Number(drift.missing) || Number(drift.stale) || 0;
-    rows.push(renderPlainRow('indexDrift', 'Pages missing from the page list', n0(count), '', readonly ? '' : actionChip({
+    rows.push(renderPlainRow('indexDrift', Number(drift.missing) > 0 ? 'Pages missing from the page list' : 'Rows in the page list with no page', n0(count), '', readonly ? '' : actionChip({
       action: 'indexPlan', alias: 'dm',
       attrs: busy ? ' aria-busy="true" aria-disabled="true"' : (disabled ? ' disabled' : ''),
       leadHtml: busy ? buttonRingHtml() : '', label: busy ? 'Working it out…' : 'Preview the rebuild',
@@ -8386,8 +8462,12 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   else if (c.checked === 0) reading = 'No pairs compared yet';
   else reading = (s && s.counting ? 'About ' : '') + n0(c.checked) + ' of ' + n0(c.total) + (c.total === 1 ? ' pair compared' : ' pairs compared');
   const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
-  const quoteFits = est && c && (q.forNext === c.next || est.candidatePairs === c.next);
-  const cost = quoteFits ? (costReadout(est, { compact: true }) || '') : '';
+  // A RECOUNT DISABLES NOTHING. The figure on the button stands while the count moves, scaled
+  // to what the button says it will send; the question re-reads it at the press.
+  const fits = est && c && (q.forNext === c.next || est.candidatePairs === c.next);
+  const scaled = est && c && !fits && est.candidatePairs > 0 && typeof est.estimatedUsd === 'number'
+    ? Object.assign({}, est, { estimatedUsd: est.estimatedUsd * (c.next / est.candidatePairs) }) : est;
+  const cost = est && c ? (costReadout(scaled, { compact: true }) || '') : '';
   // A button that spends says what it costs. With no figure yet it waits; a quote that
   // failed leaves it pressable, because the press asks again and says why on the row.
   const quoteFailed = !!(q && q.est && q.est.error);
@@ -8467,7 +8547,7 @@ function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
 function renderConfirmCard() {
   const c = state.confirm;
   const p = c.busy && c.busyCount && state.aiProgress && state.aiProgress.key === state.busyKey ? state.aiProgress : null;
-  const busyWords = p ? c.busyCount.replace('{i}', n0(p.processed)).replace('{n}', n0(p.total)) : (c.busyLabel || 'Working…');
+  const busyWords = p ? c.busyCount.replace('{i}', n0(p.processed)).replace('{n}', n0(p.total)) : (c.busyLabel || 'Saving…');
   const busyAttr = c.busy ? ' aria-busy="true" aria-disabled="true"' : '';
   // ONE LOOK PER CONSEQUENCE. A deleting yes is danger and names what it deletes; a
   // paying yes is AI and wears its cost; anything else is plain. Nothing here is
@@ -9213,30 +9293,6 @@ function onQuickAction(slug, action) {
 // every state MUTATION (not just the render) gated on isCurrentMount(token)
 // so a response for an abandoned mount can't corrupt state a later, fresh
 // mount would otherwise render correctly.
-// A QUESTION ABOUT DELETING PAGES STATES A COUNT, SO THE COUNT IS READ NOW. What is on
-// screen can be a write behind (left and came back, an agent, another computer): it
-// once said "4 pages will be deleted" with none left to delete, then "Merged 0". No
-// report, no question.
-async function readHealthBeforeAsking(slug, token, busyKey, retry) {
-  state.busyKey = busyKey;
-  render(token);
-  try {
-    const report = await fetchJSON('/api/health/' + encodeURIComponent(slug));
-    if (slug !== state.activeSlug || !isCurrentMount(token)) return false;
-    state.health = report;
-    state.healthSlug = slug;
-    return true;
-  } catch (err) {
-    if (slug === state.activeSlug && isCurrentMount(token)) {
-      state.rowNoteFrom = { slug, token };
-      state.rowNote = { tone: 'error', text: 'Could not check this wiki: ' + err.message, retry };
-    }
-    return false;
-  } finally {
-    state.busyKey = null;
-  }
-}
-
 // ── Repair all: every free row, one after another ─────────────────────────
 // NOT POST /fix-all-safe: that route also runs the two page-deleting types, and this
 // lane promises no page deleted. It stays for its other callers. One type at a time,
@@ -9284,7 +9340,7 @@ async function repairAllFree(slug) {
   } finally {
     inFlightWriteSlugs.delete(slug);
     releaseGate();
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
     state.laneRun = null;
   }
@@ -9345,27 +9401,46 @@ function deletedPageCount(type, issues) {
 
 async function confirmFixAllOfType(slug, type) {
   if (!AUTO_FIX_TYPES.has(type)) return undefined;
-  if (DESTRUCTIVE_FIX_TYPES.has(type)) {
-    const token = myMountToken;
-    if (!(await readHealthBeforeAsking(slug, token, 'groupCheck:' + type, () => confirmFixAllOfType(slug, type)))) { render(token); return undefined; }
-    if (!((state.health && state.health[type]) || []).length) {
-      state.rowNoteFrom = { slug, token };
-      state.rowNote = { tone: 'info', text: 'Nothing left to merge.' };
-      render(token);
-      return undefined;
-    }
-  }
   const issues = (state.health && state.health[type]) || [];
   const count = type === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
   if (count === 0) return undefined;
   if (!DESTRUCTIVE_FIX_TYPES.has(type)) return fixAllOfType(slug, type);
 
+  // MERGE NEVER WAITS FOR A COUNT (6 to 9 s of "Checking…" on a real wiki during a recount).
+  // The question opens now, from what is on screen, and the figures are read behind it and
+  // change in place. If there is nothing left it closes and says so. The server merges what
+  // is on disk whichever figure was showing.
+  const token = myMountToken;
+  const asked = mergeQuestion(slug, type, issues);
+  state.confirm = asked;
+  render(token);
+  try {
+    const report = await fetchJSON('/api/health/' + encodeURIComponent(slug));
+    if (slug !== state.activeSlug || !isCurrentMount(token)) return undefined;
+    state.health = report;
+    state.healthSlug = slug;
+    if (state.confirm === asked && !asked.busy) {
+      const fresh = report[type] || [];
+      if (fresh.length) Object.assign(asked, mergeQuestion(slug, type, fresh));
+      else {
+        state.confirm = null;
+        state.rowNoteFrom = { slug, token };
+        state.rowNote = { tone: 'info', text: 'Nothing left to merge.' };
+      }
+    }
+    render(token);
+  } catch { /* the question stands on what was on screen; the merge reports its own failure */ }
+  return undefined;
+}
+
+function mergeQuestion(slug, type, issues) {
+  const count = issues.length;
   // "group", not "pair": one nearly-the-same-name issue can hold three or more pages.
   // And a deletion says how many PAGES, which for that type is not how many issues.
   const pages = deletedPageCount(type, issues);
   const n = (v) => Number(v).toLocaleString('en-US');
   const goes = pages === 1 ? '1 page is deleted and its links move' : n(pages) + ' pages are deleted and their links move';
-  state.confirm = {
+  return {
     title: type === 'hyphenVariants'
       ? 'Merge ' + n(count) + (count === 1 ? ' group' : ' groups') + ' with nearly the same name?'
       : 'Merge ' + n(count) + (count === 1 ? ' page' : ' pages') + ' with the same name?',
@@ -9376,8 +9451,6 @@ async function confirmFixAllOfType(slug, type) {
     busyLabel: 'Merging…',
     run: () => fixAllOfType(slug, type),
   };
-  render(myMountToken);
-  return undefined;
 }
 
 async function fixAllOfType(slug, type) {
@@ -9419,7 +9492,7 @@ async function fixAllOfType(slug, type) {
   } finally {
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   // Left and came back while it ran: the mount on screen read the wiki too early.
@@ -9509,7 +9582,7 @@ async function runBrokenLinksPlan(slug) {
     let result = null;
     let batchErrors = 0;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/broken-links/plan', {}, (type, ev) => {
-      if (type === 'progress') { noteAiProgress('brokenLinksPlan', ev); render(token); }
+      if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('brokenLinksPlan', ev); render(token); }
       if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
@@ -9538,7 +9611,7 @@ async function runBrokenLinksPlan(slug) {
   } catch (err) {
     if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') }; }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   render(token);
@@ -9572,7 +9645,7 @@ async function runOrphansPlan(slug) {
     let result = null;
     let batchErrors = 0;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/orphans/plan', {}, (type, ev) => {
-      if (type === 'progress') { noteAiProgress('orphansPlan', ev); render(token); }
+      if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('orphansPlan', ev); render(token); }
       if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
@@ -9595,7 +9668,7 @@ async function runOrphansPlan(slug) {
   } catch (err) {
     if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'orphans') }; }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   render(token);
@@ -9620,7 +9693,7 @@ async function runIndexRebuildPlan(slug) {
   } catch (err) {
     if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not rebuild the list: ' + err.message, retry: () => runIndexRebuildPlan(slug) }; }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
   }
   render(token);
 }
@@ -9659,7 +9732,7 @@ async function applyIndexRebuildPlan(slug) {
     if (isCurrentMount(token)) state.pendingPlan = null;
     inFlightWriteSlugs.delete(slug);
     releaseGate();
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
   }
   // Left and came back while it ran: the mount on screen read the wiki too early.
   const live = isCurrentMount(token) ? token : myMountToken;
@@ -9706,7 +9779,7 @@ async function applyPendingPlan(slug) {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     let result = null;
     await streamSSE(url, { plan: p.plan }, (type, ev) => {
-      if (type === 'progress') { noteAiProgress(kind + 'Apply', ev); render(token); }
+      if (type === 'progress' && slug === state.activeSlug) { noteAiProgress(kind + 'Apply', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Apply failed');
     });
@@ -9761,7 +9834,7 @@ async function applyPendingPlan(slug) {
     if (isCurrentMount(token)) state.pendingPlan = null;
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix — unconditional, regardless of mount staleness (same as inFlightWriteSlugs.delete above)
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   // Left and came back while it ran: the mount on screen read the wiki too early.
@@ -9805,7 +9878,7 @@ async function confirmSemanticScan(slug) {
       // remount; only a page reload recovered. A `finally` runs on EVERY
       // exit from the block above, including a `return` inside it, so
       // this can no longer be skipped.
-      state.busyKey = null;
+      if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
     }
   }
@@ -9904,14 +9977,19 @@ async function runSemanticScan(slug) {
     let firstBatchError = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/scan', {}, (type, ev) => {
       if (type === 'start' && ev && Number.isInteger(ev.candidatePairs)) sent = ev.candidatePairs;
-      if (type === 'progress') { noteAiProgress('semanticDupesScan', ev); render(token); }
+      if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('semanticDupesScan', ev); render(token); }
       if (type === 'batch-error' && ev && !firstBatchError) firstBatchError = ev.error || 'the AI call failed';
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Scan failed');
     });
     if (!result) throw new Error('No scan result returned');
     if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
-    if (isCurrentMount(token)) {
+    if (isCurrentMount(token) && slug !== state.activeSlug) {
+      // Run on a domain that is off screen: what it found comes back with that domain,
+      // from what this computer remembers. The list on screen is another domain's.
+      state.rowNoteFrom = { slug, token };
+      state.rowNote = { tone: 'success', text: 'Compared ' + sent.toLocaleString('en-US') + ' ' + (sent === 1 ? 'pair' : 'pairs') + '.' };
+    } else if (isCurrentMount(token)) {
       state.semanticScan = newSemanticScan(slug, Object.assign({}, result, { candidatePairsSent: sent }));
       // Said on the question that was answered; the list itself is under it.
       state.rowNoteFrom = { slug, token };
@@ -9925,7 +10003,7 @@ async function runSemanticScan(slug) {
   } catch (err) {
     if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') }; }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   render(token);
@@ -10032,7 +10110,7 @@ async function previewSemanticPair(slug, pair) {
       scan.preview = { key, error: err.message };
     }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   render(token);
@@ -10112,7 +10190,7 @@ async function mergeOneSemanticPair(slug, pair) {
   } finally {
     inFlightWriteSlugs.delete(slug);
     releaseGate();
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
@@ -10168,7 +10246,7 @@ async function skipSemanticPair(slug, pair) {
       setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not skip — ' + c.error, errorAction: 'skip' });
     }
   } finally {
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
@@ -10227,6 +10305,7 @@ async function runMergeSemanticDuplicates(slug) {
       // Per-pair outcomes arrive as progress frames. Recording them keeps
       // the pair list truthful about what happened rather than wiping it —
       // see the `finally` below for why wiping was the wrong default.
+      if (type === 'progress' && slug !== state.activeSlug) return;
       if (type === 'progress' && ev.pair && (ev.status === 'merged' || ev.status === 'skipped')) {
         markSemanticPairStatus(ev.pair, ev.status);
         // THE CASCADE, on the path that reaches it FIRST and hardest: the
@@ -10259,7 +10338,7 @@ async function runMergeSemanticDuplicates(slug) {
       // Same frames also carry {done, total}. Feeding the ring here is
       // additive — it does not touch the pair-status recording above, which
       // has its own audit history and its own reasons.
-      if (type === 'progress') { noteAiProgress('semanticMerge', ev); render(token); }
+      if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('semanticMerge', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Merge failed');
     });
@@ -10298,7 +10377,7 @@ async function runMergeSemanticDuplicates(slug) {
     // through activeSemanticScan().)
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as inFlightWriteSlugs.delete above
-    state.busyKey = null;
+    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   // Left and came back while it ran: the mount on screen read the wiki too early.
@@ -10330,7 +10409,8 @@ async function dismissIssue(slug, type, issue) {
     const group = type === 'brokenLinks' ? 'brokenLinksOpen' : type;
     const siblings = type === 'brokenLinks' ? whole.filter((i) => !i.suggestedTarget) : whole;
     state.rowNote = { key: rowKey, tone: 'success', text: 'Left as is.', drop: { type, issue, dismissed: true },
-      left: { type, issue, group, index: Math.max(0, siblings.findIndex((i) => JSON.stringify(i) === asked)), absIndex: Math.max(0, whole.findIndex((i) => JSON.stringify(i) === asked)) } };
+      left: { type, issue, group, index: Math.max(0, siblings.findIndex((i) => JSON.stringify(i) === asked)), absIndex: Math.max(0, whole.findIndex((i) => JSON.stringify(i) === asked)),
+        lastInGroup: siblings.length <= 1 } };
     await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
     if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
   } catch (err) {
