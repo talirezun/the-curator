@@ -8309,9 +8309,15 @@ under "Merged from data-privacy". 4 links move to it.
 
 **What the desk tells you, and what it no longer does.** The grey fact is the app's own reading of the two names: *Spelling variant*, *Version numbers differ* or *Different names*. Next to it is the AI's reason, quoted as the AI's. The old high / medium / low badge is gone from the screen, because it was the model's opinion of itself and was measured wrong. It still decides the order (the ones the AI was surest of come first) and the batch rule below, so the first pairs are not proof of anything. Read them.
 
-**Why Merge waits half a second.** The comparison is always there, so there is no separate Preview to press. Merge opens when the comparison **for this pair, this way round,** has loaded **and** been on screen for half a second. Scrolled out of sight, the half second does not run. On a phone that means the panes need to be in view, which they are when you are reading the pair.
+**Why Merge waits.** The comparison is always there, so there is no separate Preview to press. Merge opens when the comparison **for this pair, this way round,** has loaded **and** at least half of **each** page has been on screen for half a second. On a phone, where two stacked pages may not fit, they can be seen one after the other. Scrolled out of sight, the time does not run, and the line under the buttons says so:
 
-To stop a rhythm of pressing the same spot, the desk has **no keyboard shortcut for either choice**, and there must never be one; after you decide, focus goes to the pair's title rather than to a button, so holding Enter does nothing; and neither choice is the violet button, so the page does not lean toward deleting.
+| Line under the buttons | Why Merge is shut | What to do |
+|---|---|---|
+| *Merge opens once you have had both pages on screen.* | One page has not been in view | Scroll to it |
+| *Move the pointer off Merge and back to press it.* | The pointer was already resting on Merge when this pair arrived | Move it off and back |
+| *Merge opens in a moment, so both pages can be read.* | By touch, the wait is two seconds | Read |
+
+To stop a rhythm of pressing the same spot, the desk has **no keyboard shortcut for either choice**, and there must never be one; after you decide, focus goes to the pair's title rather than to a button, so holding Enter does nothing; a pointer left on Merge cannot press the next pair; and neither choice is the violet button, so the page does not lean toward deleting. If you moved the pointer to read, as most people do, you meet none of this. Half a second alone did not hold: 56 clicks on one spot in 6 seconds merged 4 pages nobody had read.
 
 **If a page changes while you are reading it** (in Obsidian, or an agent's write), the server refuses the merge and writes nothing. The desk says *"This page changed since you compared it. The comparison has been refreshed."*, shows the new text, and Merge waits its half second again. A merge also rewrites links across the domain, so the next pair's comparison is always read after it, never before.
 

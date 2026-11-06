@@ -788,10 +788,23 @@ async function scenarios(app, profile) {
     const shot = async () => (await page.send('Page.captureScreenshot', { format: 'png', clip: await clipOf() })).data;
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }); await delay(300);
-    await delay(1500); const rest = await shot();
+    // THE PAGE IS AT REST WHEN TWO LOOKS AGREE, not after a fixed wait: a fixed wait is what
+    // a busy machine outruns. Whatever moved meanwhile is noted, so a flake names its cause.
+    const looks = () => page.evaluate((s) => { const b = document.querySelector(s); const r = b.getBoundingClientRect(); return JSON.stringify({ html: b.outerHTML, left: r.left, top: r.top, w: r.width, h: r.height, loading: !!document.querySelector('[aria-busy="true"]'), anim: document.getAnimations().length }); }, SEL.rescan);
+    const atRest = async (label) => {
+      let prev = await shot(); let was = await looks(); let same = 0; let moved = 0;
+      for (let i = 0; i < 60 && same < 3; i++) {
+        await delay(200);
+        const now = await shot(); const is = await looks();
+        if (now === prev) same++; else { same = 0; moved++; if (moved <= 3) note(`[${profile.name}] ring check, ${label}: still changing: ${was === is ? 'pixels only, ' + is.slice(-60) : was.slice(0, 200) + ' → ' + is.slice(0, 200)}`); }
+        prev = now; was = is;
+      }
+      if (same < 3) step(`[${profile.name}] the button comes to rest for the ring check (${label})`, false, was);
+      return prev;
+    };
+    const rest = await atRest('before');
     const dropped = await page.evaluate(() => { let n = 0; for (const sheet of document.styleSheets) { let rules; try { rules = sheet.cssRules; } catch { continue; } for (let i = rules.length - 1; i >= 0; i--) { if (rules[i].selectorText && /\.btn-(secondary|primary|danger-solid):focus-visible/.test(rules[i].selectorText)) { sheet.deleteRule(i); n++; } } } return n; });
-    await delay(100);
-    const without = await shot();
+    const without = await atRest('after');
     step(`[${profile.name}] the ring rule changes no pixel at rest (${dropped} rules taken away, same image)`, dropped >= 2 && rest === without);
     await page.navigate(app.origin); await delay(200);
     await openDomain(app, 'h13'); await delay(200);
