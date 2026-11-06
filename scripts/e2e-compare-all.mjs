@@ -94,7 +94,7 @@ function buildDomain(root, name, topics, filler, { twinEvery = 1, groupSize = 0 
     // `families` pages to a shared first word, as a real wiki has: all in one, 3,000 pages came
     // to 4.5 million pairs, over a hundred times the largest real domain measured (36,333).
     const a = (groupSize ? 'topic' + Math.floor(i / groupSize) + '-' : 'guide-') + word(5);
-    const b = i % twinEvery === 0 ? a + 's' : a + '-notes';
+    const b = i % twinEvery === 0 ? a + 's' : a + (groupSize ? '-' + word(4) : '-notes');
     for (const s of [a, b]) { writeFileSync(path.join(w, 'concepts', s + '.md'), page_(s, 'Notes about ' + s + '.')); linked.push(s); }
   }
   for (let i = 0; i < filler; i++) { const s = word(9); writeFileSync(path.join(w, 'concepts', s + '.md'), page_(s, 'Notes about ' + s + '.')); linked.push(s); }
@@ -536,7 +536,8 @@ async function walkBig(app) {
   const ready = await waitFor(page, (s) => { const b = document.querySelector(s); return b && !b.disabled && /Compare the next 40/.test(b.innerText) && /\$/.test(b.innerText); }, 'Compare the next at first open', 2400, NEXT);
   const firstMs = Date.now() - at0;
   const words = await reading(page);
-  step(`[${pn}] first open: pressable from the last figures`, ready, firstMs + ' ms');
+  const chipNow = await page.evaluate((s) => { const b = document.querySelector(s); return b ? { text: b.innerText, disabled: b.disabled, busy: b.getAttribute('aria-busy') } : null; }, NEXT);
+  step(`[${pn}] first open: pressable from the last figures`, ready, firstMs + ' ms ' + JSON.stringify(chipNow));
   step(`[${pn}] while the count is still out, and it says so`, /^About [\d,]+ of [\d,]+ pairs compared$/.test(words), words);
   await shot(app, 'big-1-first-open');
   await chipReady(app);

@@ -3471,6 +3471,7 @@ function syncSemanticScan(slug, token, opening) {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
     state.compareArrivals = null; // this read holds them all
+    state.semanticScan.lastQuote = q.quote || null;
     // The last count's figures and what they would cost, with no pass over the page names:
     // the row can be pressed at once and says "About" until the real count lands.
     if (q.quote && !activeSemanticQuote()) state.semanticQuote = { slug, est: q.quote, forNext: q.quote.nextPairs, stale: true };
@@ -8605,7 +8606,11 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
 // What the confirm says is always fetched at the press, never this.
 function activeSemanticQuote() {
   const q = state.semanticQuote;
-  return q && q.slug === state.activeSlug ? q : null;
+  if (q && q.slug === state.activeSlug) return q;
+  // A full reading of the panel drops the quote, and with the row off screen nothing asks again,
+  // so the button sat disabled with no price. The last count's figures are still a price.
+  const s = activeSemanticScan();
+  return s && s.lastQuote ? { slug: s.slug, est: s.lastQuote, forNext: s.lastQuote.nextPairs, stale: true } : null;
 }
 
 function renderCompareRow(runsOn, busy, crossMountBusy) {
