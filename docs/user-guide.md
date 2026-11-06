@@ -3331,7 +3331,7 @@ So, any issue that happens **3 or more times** in one ingest is collapsed into a
 
 **No detail is lost by grouping** — it only affects the warnings banner. Every page written during the ingest, including every one folded into a grouped line, is still listed individually — with its full path and whether it was created or updated — in the change list shown above the warnings.
 
-Two kinds of entries are deliberately **never** grouped, even when they happen many times: semantic near-duplicate redirects, and a newly-injected "trunk" parent page. Both name a specific pair or page you may want to look at individually — folding "12 duplicates were merged" into one line would hide exactly the thing worth double-checking.
+Two kinds of entries are deliberately **never** grouped, even when they happen many times: "Keeping both" near-duplicate notices, and a newly-injected "trunk" parent page. Both name a specific pair or page you may want to look at individually — folding them into one line would hide exactly the thing worth double-checking.
 
 #### Full reference of ingest-report entries
 
@@ -3340,21 +3340,23 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"Outline had N `prefix-*` pages without a parent `concepts/<prefix>.md` — injected the trunk page (granularity-inversion fix)"* | ✓ Auto-fixed | The LLM created several specific sub-concept pages (e.g. `taste-as-moat`, `taste-as-judgment`) but skipped the obvious parent `taste`. | Auto-injected the parent concept page with a clean umbrella summary. | Nothing. You can edit the parent page later in Obsidian if you want richer content. |
 | *"Outline omitted originator '<author>' — injected `entities/<slug>.md`"* | ✓ Auto-fixed | The source had a clear byline ("By Dr. X") but the LLM didn't create an entity page for the author. | Detected the byline + injected the missing author entity. | Nothing. |
 | *"Outline used originator slug `entities/dr-tali-rezun.md` — redirected to canonical `entities/tali-rezun.md`"* | ✓ Auto-fixed | The LLM used a honorific-prefixed slug. | Redirected to the canonical slug so honorific variants don't pile up. | Nothing. |
-| *"Outline proposed `concepts/X.md` — semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Redirected; bullets will merge."* | ✓ Auto-fixed | A new concept slug was ≥85% similar to an existing one (e.g. `experts-roundup-format` vs `expert-roundup-format`). | Auto-merged the new content into the existing page. | Nothing. |
+| *"Page 'concepts/neural-networks.md' is a spelling variant of the existing 'concepts/neural-network.md' — redirected to canonical …; its content was merged into that page."* (also *"… of 'concepts/x.md', in the same AI reply …"* and *"… planned in the same ingest … so it is written once."*; grouped form at 3 or more) | ✓ Auto-fixed | The AI proposed a concept whose name differs from an existing page only by hyphens, capitals or a final plural. | Wrote it into the existing page. Everything that page held stays, and the new text it did not already hold goes into matching bullet sections or under *Merged from …*. | Nothing. If the two were really different ideas (`window` and `windows`), split the page by hand. |
 | *"Hub linkification: added N wikilinks across M hub-shaped concept page(s)"* | ✓ Auto-fixed | The LLM wrote a "hub" concept page (one that enumerates many sibling concepts) using plain-text item names instead of `[[wikilinks]]`. | Detected hub-shape pages, found plain-text mentions of siblings, wrapped them in `[[brackets]]`. | Nothing — your hub now connects to all its items in Obsidian's graph. |
 | *"The AI invented N extra summary page(s) (...) — merged into the canonical summary '...' instead of creating duplicates"* | ℹ Info | The AI wrote its content for a second, differently-named summary page instead of the one the file name always produces for this source. | Merged the extra summary's content into the canonical one and never wrote the duplicate to disk. | Nothing. Re-ingesting this same source will keep updating the one canonical summary, as intended. |
 | *"Page path '...' was missing the .md extension — wrote it as '...'"* | ℹ Info | The AI returned a page path with no file extension (e.g. `concepts/some-idea` instead of `concepts/some-idea.md`). | Added the extension and wrote the page normally — previously this page would have been silently dropped. | Nothing. |
 | *"N page paths came back from the AI without the '.md' extension and were written correctly (a, b, c, …and N more)"* (v3.0.17, the grouped form — appears once 3 or more pages hit this in one ingest, see "When one line represents many pages" above) | ℹ Info | Same issue as the row above, happening on 3 or more pages in this ingest. | Same fix, applied to every affected page — grouped into one line instead of listing it N times. | Nothing. Every affected page is still listed individually, with its full path, in the change list above the warnings. |
 | *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → PAGES**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
 | *"N pages had to be rewritten more briefly: the AI's first attempt at each came back unusable... (examples). These are real content, but they are briefer than the rest..."* (v3.0.17, grouped form) | ⚠ For review | Same as the row above, happening on 3 or more pages in this ingest. | Same brevity retry, applied to each page, grouped into one line. | Same as above — check the pages named as examples, or anything in the change list that reads unusually thin. |
-| *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **Compare pages for duplicates** in **AI help**. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
+| *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* (also *"Outline planned two near-duplicate concept slugs …"*) | ⚠ For review | A new concept's name shares at least half its words with an existing one, and is not just a different spelling of it. Same words in a different order count here (`domain-knowledge`, `knowledge-domains`), even at Jaccard 1.00. | Kept BOTH pages. The Curator never merges these on its own: the names look alike, but the ideas are often different. | Open **Domains → the domain → Wiki health**, then **Compare pages for duplicates** in **AI help**. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
 | *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open **Domains → the domain → Wiki health** → expand Broken links → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
 | *"The summary `summaries/x.md` is missing a title (# heading), a source and a Key Takeaways section — the AI did not follow the summary layout."* (v3.84.0; names only what is missing) | ⚠ For review | The saved summary lacks a `# Title`, a recorded source, or Key Takeaways bullets — some models write labels such as "Key Takeaways:" instead of headings. | Left the page as written; supplied the uploaded filename as the source if the AI wrote none. | Open it in the Wiki tab; re-ingesting the source usually fixes it. |
 | *"Two different sources map to the same summary name … — keeping both: this source's summary was written to `summaries/<name>-<6 hex>.md`"* (v3.84.0) | ⚠ For review | Two different files produce the same short summary name (long names that differ late, or names with no Latin letters). | Gave the second one its own summary instead of merging the two. | Nothing required; rename the source if you want a cleaner name. |
 | *"Stub page created: `<path>` — AI failed to write content for this page"* | ⚠ For review | The LLM failed to generate content for a planned page even after the page-by-page fallback and the v3.0.17 brevity retry above. | Wrote a clearly-marked stub with the LLM's planned summary preserved. | Re-ingest the source. The stub page has a `stub` tag so you can find it. |
-| *"Page 'entities/talirezun.md' is a spelling variant of the existing 'entities/tali-rezun.md' — redirected to canonical …; its content was merged into that page."* (v3.81.0; grouped form at 3 or more: *"N pages came back under a spelling variant of a page you already have …"*) | ✓ Auto-fixed | The AI named a page slightly differently from one you already have — a missing hyphen, different capitals, or a title such as `dr-`. | Wrote the content into the existing page instead of creating a near-copy. Before v3.81.0 this happened silently. | Nothing. |
-| *"Page 'entities/trust-grader.md' already exists in the other folder as 'concepts/trust-grader.md' — redirected to canonical … (the page that existed first keeps its folder); its content was merged into that page."* (v3.81.0; grouped form at 3 or more) | ✓ Auto-fixed | The AI filed a page under `entities/` while a page of the same name already sat in `concepts/` (or the other way round). | Merged it into the page that was there first, so the wiki never holds two pages with one name. Before v3.81.0 this happened silently. | Usually nothing. If the existing page is in the wrong folder — a product filed as a concept, say — move the file into the other folder by hand (in Finder or Obsidian); the next ingest will then merge into it there. |
+| *"Page 'entities/talirezun.md' is a spelling variant of the existing 'entities/tali-rezun.md' — redirected to canonical …; its content was merged into that page."* (v3.81.0; grouped form at 3 or more: *"N pages came back under a spelling variant of a page you already have …"*) | ✓ Auto-fixed | The AI named a page slightly differently from one you already have — a missing hyphen, different capitals, or a title such as `dr-`. | Wrote the content into the existing page instead of creating a near-copy, and everything that page held stays: new text goes into matching bullet sections or under *Merged from …*. Before v3.81.0 this happened silently. | Nothing. |
+| *"Page 'entities/trust-grader.md' already exists in the other folder as 'concepts/trust-grader.md' — redirected to canonical … (the page that existed first keeps its folder); its content was merged into that page."* (v3.81.0; grouped form at 3 or more) | ✓ Auto-fixed | The AI filed a page under `entities/` while a page of the same name already sat in `concepts/` (or the other way round). | Merged it into the page that was there first, so the wiki never holds two pages with one name; everything that page held stays. Before v3.81.0 this happened silently. | Usually nothing. If the existing page is in the wrong folder — a product filed as a concept, say — move the file into the other folder by hand (in Finder or Obsidian); the next ingest will then merge into it there. |
 | *"The AI wrote N page(s) that were not in its own plan (...). They were kept — check them"* | ℹ Info | The LLM wrote a page it never listed in its own outline — sometimes a legitimate addition, sometimes a near-duplicate under a slightly different name. | Kept the page rather than silently discarding content you paid for. | Open it from **Domains → PAGES**. If it duplicates an existing page, delete it (or merge it manually); otherwise, nothing to do. |
+| *"Page 'X' could not be merged into 'Y' without losing text, so it was not written: 'Y' is unchanged and this page's content did not reach the wiki."* | ℹ Info | A last safety check found that combining the two pages would have dropped a line. This should be very rare. | Left the existing page byte-for-byte as it was and did not write the new page. | Re-ingest the source to try again. |
+| *"The AI returned 'X' more than once with different text. Both are kept on that page: the earlier copy is under 'Merged from X'."* | ℹ Info | A short source's reply held the same page twice, with different words. | Kept both versions on one page instead of throwing one away. | Tidy the page if you want to. |
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
 | *"Refused an unsafe/malformed page path '...' — nothing was written"* | ⚠ Attention | The AI returned a page path that can never be a valid wiki page (e.g. empty, a folder with no filename, or containing characters that aren't allowed). This is rare and is a hard safety refusal, not an auto-correction. | Refused to write that one page — every other page from the same ingest still wrote normally. | That one page's content was lost. Re-ingest the source; if it recurs on the same source, open an issue — this shouldn't normally happen. |
@@ -3385,52 +3387,36 @@ Reading it left to right:
 
 You don't need to act on anything here — it's informational, useful if you're curious what an ingest actually cost, or comparing providers.
 
-### What is Jaccard similarity? (for the semantic-dupe entries)
+### What is Jaccard similarity? (for the "Keeping both" entries)
 
-Several entries above mention a "Jaccard 0.XX" score. Jaccard similarity is a simple math measure of how similar two sets are. The Curator uses it to detect concept slugs that are different strings but probably mean the same thing.
-
-The formula (in plain English):
+Those entries mention a "Jaccard 0.XX" score. It measures how many words two page names share:
 
 ```
-similarity = (words both slugs share) / (total unique words across both)
+similarity = (words both names share) / (total different words across both)
 ```
 
-Worked examples from a real ingest report:
+| Pair | Shared | Different words in all | Jaccard |
+|---|---|---|---|
+| `the-human-touch` and `human-touch` | 2 | 3 | **0.67** |
+| `phase-2-build` and `phase-1-build` | 2 | 4 | **0.50** |
+| `expert-roundup-format` and `experts-roundup-format` | 3 (a final `s` is ignored) | 3 | **1.00** |
+| `domain-knowledge` and `knowledge-domains` | 2 | 2 | **1.00** |
 
-| Pair | Tokens A | Tokens B | Shared | Unique total | Jaccard |
-|---|---|---|---|---|---|
-| `the-human-touch` vs `human-touch` | `{the, human, touch}` | `{human, touch}` | 2 | 3 | **0.67** |
-| `wisdom-cultivation-accelerates` vs `wisdom-cultivation` | `{wisdom, cultivation, accelerates}` | `{wisdom, cultivation}` | 2 | 3 | **0.67** |
-| `expert-roundup-format` vs `experts-roundup-format` | `{expert, roundup, format}` | `{experts, roundup, format}` | 2 (after stem) | 3 | **0.50** raw → **1.0** with stem |
-| `community-relationships-deepen` vs `deepening-community-relationships` | `{community, relationships, deepen}` | `{deepening, community, relationships}` | 2 (3 after stem) | 4 | **0.50** |
+| What it finds | What The Curator does |
+|---|---|
+| Under 0.50 | Keeps both, no message. |
+| 0.50 or more | Keeps both and adds a "For review" entry. **A high score never merges anything:** `domain-knowledge` and `knowledge-domains` score 1.00 and are different ideas. |
+| Same name apart from hyphens, capitals or a final plural (`hand-off` and `handoff`, `neural-network` and `neural-networks`) | Writes the new page into the existing one, and no text the existing page held is lost. This is the one case merged on its own, and it is a test of the spelling, not of the score. |
 
-The scale and what the Curator does at each:
+Digits and single letters count as words, so `phase-1` and `phase-2`, or `plan-a` and `plan-b`, are never treated as one page.
 
-| Jaccard score | What it means | Curator's action |
-|---|---|---|
-| **0.00 – 0.49** | Independent concepts (share few words) | Keeps both, no message. |
-| **0.50 – 0.84** | Possible duplicate, but uncertain | Keeps both + emits a "For review" entry so you can decide via Wiki Health. |
-| **0.85 – 1.0** | Almost certainly the same concept | Auto-redirects the new slug onto the existing one. Bullets from the new page merge into the existing one. |
+#### Entities
 
-#### Lightweight singular/plural normalisation
+The plural rule covers **concept** pages only. Entities are usually proper names, where a final `s` can be a different thing (`jones`). For entities, The Curator matches a missing hyphen, different capitals, a title such as `dr-`, and a page of the same name in the other folder, then writes into that page with the same no-loss rule. The **Compare pages for duplicates** scan in Wiki health is the AI-judged tool for anything else.
 
-Before computing Jaccard, the Curator trims trailing `s` if the resulting token would still be ≥3 chars long. This catches:
+#### When the AI reuses a page by its exact name
 
-- `collections` → `collection`
-- `roundups` → `roundup`
-- `relationships` → `relationship`
-
-Without this step, `expert-roundup-format` and `experts-roundup-format` would compute Jaccard 0.50 (3 unique tokens, 2 shared). WITH it, they compute 1.0 (same token set after stem) — and get auto-merged. The stem step is conservative on short words: `is`, `as`, `os` are NOT stemmed (would damage real meaning).
-
-#### Why entities are never auto-merged by Jaccard
-
-The Jaccard guard ONLY operates on **concept** pages, never entities. Entities are usually proper nouns (people, companies, countries) where slug variants may genuinely be different things:
-
-- `open-ai` vs `open-source-ai` — Jaccard might be high but these are different
-- `microsoft` vs `microsoft-research` — different entities sharing a name
-- `tali-rezun` vs `tali-reziuncipher` — could be honest typo or actual different people
-
-For entity dedup, the Curator relies on the structural passes (honorific-prefix strip, hyphen-normalisation, cross-folder dedup) which work on slug shape, not semantics. The Health-side semantic-duplicate scan remains the LLM-judged tool for entity-side merges if you ever need them.
+This is a different case from all of the above, and it replaces text. If the AI names a page you already have, its new opening and any section it writes again (such as `## Definition`) take the place of the old ones, because it wrote them with the whole source in view. Bullet sections such as Key Facts and Related add up, and sections it leaves out stay.
 
 ### Related: things you might also see during ingest
 

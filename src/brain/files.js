@@ -7,6 +7,7 @@ import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { acquireFileLock } from './write-registry.js';
 import { moveToTrash, countFiles } from './trash.js';
+import { composeMergedPage, findLostLines } from './page-merge.js';
 
 // v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
 // process-kill mid-write (e.g. /api/restart killing the old process while
@@ -1267,7 +1268,35 @@ function isUnsafePagePath(p) {
   return p.includes('\0') || p.includes('\\') || path.isAbsolute(p) || p.split('/').includes('..');
 }
 
+// ── A fold: a page the model named differently lands on an existing page ─────
+//
+// `mergeWikiPage` is the merge for ORDINARY REUSE: the model named this page and
+// wrote it with the whole source in view, so its version of a prose section
+// replaces the old one. That is wrong the moment the page is written under a
+// name the model did NOT choose: it wrote about `agents`, or `talirezun`, without
+// reading the page it landed on, and its Definition overwrote the kept one under
+// a warning saying "merged". A fold therefore composes with page-merge.js, the
+// same composer every deleting Health merge uses: the existing page is the base
+// and the proposed page's text moves over.
+let __foldComposeForTest = null;
+/** Test seam, same shape as __setSummaryTidyComposeForTest: prove the guard fires. */
+export function __setFoldComposeForTest(fn) { __foldComposeForTest = fn; }
+
+/**
+ * deduplicateBulletSections keys a bullet on its first link, so it can drop a
+ * different sentence that opens with the same link. On a fold that is lost text,
+ * so a dedup that removes a line nothing else on the page holds is not applied.
+ */
+function dedupWithoutLoss(content) {
+  const deduped = deduplicateBulletSections(content);
+  return findLostLines(content, '', deduped).length ? content : deduped;
+}
+
 export async function writePage(domain, relativePath, content, opts = {}) {
+  // opts.foldedFrom: the slug the model proposed, when ingest's spelling guard
+  // already moved this page onto an existing one (see redirectSemanticDuplicates).
+  // writePage's own redirects below set the same fold on themselves.
+  //
   // opts.onWarn (v3.0.16): optional callback(message) so a REFUSED or
   // auto-corrected page becomes visible to the user instead of dying in a
   // console line nobody reads. Contract mirrors the v3.0.4 adapter onWarn
@@ -1466,6 +1495,22 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   const dir = path.dirname(fullPath);
   await mkdir(dir, { recursive: true });
 
+  // Is this a fold? Only when the NAME moved: a page whose slug and folder are
+  // what the model asked for is ordinary reuse, even if its path needed tidying
+  // (`people/x.md`, `entities/a/x.md`, a missing `.md`). Never a summary: a
+  // re-ingest of the same source merges into its summary by design.
+  const canonSlug = path.basename(canonPath, '.md');
+  const askedSlug = path.basename(relativePath).replace(/\.md$/i, '');
+  const isPagePath = canonPath.startsWith('entities/') || canonPath.startsWith('concepts/');
+  let foldLabel = null;
+  if (isPagePath) {
+    if (typeof opts.foldedFrom === 'string' && opts.foldedFrom) foldLabel = opts.foldedFrom;
+    else if (requestedPath !== canonPath || askedSlug !== canonSlug) {
+      const fromSlug = path.basename(requestedPath, '.md');
+      foldLabel = fromSlug === canonSlug && askedSlug === canonSlug ? requestedPath.replace(/\.md$/, '') : askedSlug;
+    }
+  }
+
   // Capture pre-write state once — used both by the merge step below and by
   // the change-record computation after the write.
   const existedBefore = existsSync(fullPath);
@@ -1479,13 +1524,35 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   //    sections (Key Facts, Related, etc.) accumulate across ingests.
   let final = processed;
   const skipMerge = canonPath === 'index.md' || canonPath === 'log.md';
-  if (!skipMerge && existedBefore && !opts.replace) {
+  const isFold = Boolean(foldLabel) && !skipMerge && existedBefore && !opts.replace && existingContent.trim() !== '';
+  if (isFold) {
+    // Underscores become hyphens above with no word to the user; on an existing
+    // page that is a redirect like any other, so it says so here.
+    if (requestedPath === canonPath && askedSlug !== canonSlug && !opts.foldedFrom) {
+      warn(`Page "${relativePath}" is a spelling variant of the existing "${canonPath}" — redirected to canonical "${canonPath}"; its content was merged into that page.`);
+    }
+    // A composer that throws must not fall through to a plain overwrite of the
+    // page this exists to protect: it ends at the refusal below.
+    try {
+      final = (__foldComposeForTest || composeMergedPage)(existingContent, processed, {
+        sourceLabel: foldLabel,
+        keepFolder: canonPath.split('/')[0],
+      });
+    } catch {
+      final = null;
+    }
+  } else if (!skipMerge && existedBefore && !opts.replace) {
     try {
       final = mergeWikiPage(existingContent, processed);
     } catch {
       // If merge fails, fall back to plain write — better than crashing
     }
   }
+  const refuseFold = () => {
+    warn(`Page "${relativePath}" could not be merged into "${canonPath}" without losing text, so it was not written: "${canonPath}" is unchanged and this page's content did not reach the wiki. Re-ingest this source to try again.`);
+    return null;
+  };
+  if (final === null) return refuseFold();
 
   // 5. Strip blank lines that appear inside bullet sections — the LLM sometimes
   //    emits two groups of bullets separated by a blank line. Remove those gaps
@@ -1496,16 +1563,16 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   //     cases where the same page is written more than once in a multi-phase
   //     ingest (the LLM returns a page in multiple batches), causing mergeWikiPage
   //     to produce duplicate bullets before the regular dedup can catch them.
-  if (!skipMerge) final = deduplicateBulletSections(final);
+  const dedup = isFold ? dedupWithoutLoss : deduplicateBulletSections;
+  if (!skipMerge) final = dedup(final);
 
   // 5b. Strip folder prefixes from [[wiki-links]] — the LLM sometimes writes
   //     [[concepts/rag]], [[entities/tali-rezun]], or [[summaries/foo]] instead
   //     of [[rag]], [[tali-rezun]], [[summaries/foo]].
   //     Exception: [[summaries/...]] links are intentionally kept as-is because
   //     they live in a separate folder and need the prefix for Obsidian routing.
-  if (!skipMerge) {
-    final = final.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
-  }
+  const stripLinkPrefixes = (text) => text.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
+  if (!skipMerge) final = stripLinkPrefixes(final);
 
   // 5b2. Strip trailing `.md` from wikilinks — the LLM sometimes writes
   //      `[[summaries/foo.md]]` or `[[llama-3.1.md]]` instead of
@@ -1517,9 +1584,8 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   //      extension, but compliance is imperfect — strip programmatically.
   //
   //      Preserves `|alias` text: `[[foo.md|FooLabel]]` → `[[foo|FooLabel]]`.
-  if (!skipMerge) {
-    final = final.replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]');
-  }
+  const stripLinkExtensions = (text) => text.replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]');
+  if (!skipMerge) final = stripLinkExtensions(final);
 
   // 5c. Normalize [[variant-slug]] links to canonical wiki slugs.
   //     Pass A: title-prefix strip (dr-, mr-, prof-, etc.)
@@ -1560,7 +1626,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
       if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: 'summaries', slug: s }); // prefixed link
     }
 
-    final = final.replace(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g, (match, slug, alias) => {
+    const normalizeVariantLinks = (text) => text.replace(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g, (match, slug, alias) => {
       // Never touch summaries/ prefixed links or any link containing a sub-path
       if (slug.includes('/')) return match;
       // Already a known canonical entity or concept slug — nothing to do
@@ -1591,6 +1657,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
 
       return match;
     });
+    final = normalizeVariantLinks(final);
 
     // 5d. Dedup AGAIN, after the rewrites (v3.84.0). 5a ran before 5b-5c, and
     //     those passes turn distinct lines into identical ones — `[[concepts/rag]]`
@@ -1598,7 +1665,17 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     //     become `[[rag]]`/`[[x]]` AFTER the dedup had already let both through.
     //     Measured: 200 identical lines across the maintainer's articles and
     //     projects summaries. Same function, same key as 5a.
-    final = deduplicateBulletSections(final);
+    final = dedup(final);
+
+    // 5e. The guarantee, checked on the bytes about to be written. Every line of
+    //     both pages must be here, up to the link rewrites above (so those are
+    //     applied to the originals before comparing). findLostLines shares no
+    //     tokenizer with the composer, so a shape of markdown nobody thought of
+    //     costs one refused page, never the text of the page it landed on.
+    if (isFold) {
+      const rewritten = (text) => normalizeVariantLinks(stripLinkExtensions(stripLinkPrefixes(text)));
+      if (findLostLines(rewritten(existingContent), rewritten(processed), final).length) return refuseFold();
+    }
   }
 
   await writeFileAtomic(fullPath, final, 'utf8');

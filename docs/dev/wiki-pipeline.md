@@ -15,7 +15,7 @@
 | `tidySummaryLinkSections(content, {entitySlugs, conceptSlugs})` | v3.84.0. The one deterministic repair of a summary's two link sections, used by `syncSummaryEntities` (every write) and Health's `summaryLinkSections` fix (existing wikis). Moves bullets to the section their page's folder names, drops identical lines and plain `- [[x]]` lines whose target the section lists another way (aliased and prose lines are never dropped for being "the same link"). Refused by `summaryTidyGuard` unless the link-target set and every non-blank line outside the two sections are unchanged. Acts on the FIRST section with each heading only |
 | `dedupRewrittenBullets(before, after)` | v3.84.0. For Health's link rewriters (`fixBrokenLink`, the AI broken-link apply, the merge repoint): after a line-for-line rewrite, drops each CHANGED bullet that is now identical to another bullet in its section. Narrower than `deduplicateBulletSections` on purpose |
 | `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing ACCUMULATE sections are injected (Key Facts, Related, Entities Mentioned, etc.). **Prose preservation (v3.0.1-beta.15):** any `## ` PROSE section present in `existing` but ENTIRELY ABSENT from `incoming` is preserved (case-insensitive match), so a thin Compile/Curate edit can't wipe an existing page's Definition / Summary / Why It Matters. If `incoming` includes the heading, incoming wins (no duplication). Exported for unit testing. |
-| `composeMergedPage(keep, remove, {sourceLabel, keepFolder})` (`page-merge.js`) | The text of every merge that deletes a page, and of its preview. Kept page is the base; bullets join same-named sections; the rest goes under `## Merged from <page>` with headings one level down, fences and tables whole. `findLostLines` is the independent check that must return `[]` before a delete. Pure |
+| `composeMergedPage(keep, remove, {sourceLabel, keepFolder})` (`page-merge.js`) | The text of every merge that deletes a page, of its preview, and of every fold in `writePage` (a page landing on an existing one under a name the model did not choose). Kept page is the base; bullets join same-named sections; the rest goes under `## Merged from <page>` with headings one level down, fences and tables whole. `findLostLines` is the independent check that must return `[]` before a delete. Pure |
 | `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
 | `normalizePath(relativePath)` | Redirects non-canonical folders → entities/ or concepts/ |
@@ -59,6 +59,10 @@ POST /api/ingest
            unplanned path); keep last occurrence per path (Map dedup). Since
            v3.84.0 the common cause (every batch answering with every planned
            page) is removed upstream by filterBatchReply
+      5.6 (before Phase 2 and before writing) redirectSemanticDuplicates: a proposed
+           concept whose name is a spelling variant (isSpellingVariant) of an existing
+           page, or of another page in the plan, moves there and is marked as a fold.
+           Any other close name keeps both, with a notice. No prompt text changes.
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
            a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md
@@ -69,7 +73,10 @@ POST /api/ingest
                v3.81.0: every A/B/3b redirect emits an onWarn warning ("…redirected
                to canonical…"), aggregated at 3 ('variant-redirect', 'cross-folder')
            d. injectFrontmatter()
-           e. mergeWikiPage() if file exists
+           e. mergeWikiPage() if file exists and the model named this page;
+              composeMergedPage() if the NAME moved (Pass A/B, 3b, an underscore,
+              or opts.foldedFrom): the existing page is the base, and step j is
+              refused if findLostLines finds a missing line
            f. stripBlanksInBulletSections()
            g. deduplicateBulletSections() — safety net for merge edge cases
            h. Strip [[entities/...]] and [[concepts/...]] folder-prefix links
@@ -121,6 +128,7 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Cross-folder duplicates: `concepts/google.md` when `entities/google.md` exists | Common | Step 3b cross-folder dedup redirects to existing file |
 | Slug mismatch: `[[international-energy-agency]]` but file is `iea.md` | Occasional | Prompt strengthened + Step 5c Pass C prefix-tolerant matching |
 | Missing article prefix in link: `[[energy-and-water...]]` vs `the-energy-and-water...` | Occasional | Step 5c Pass C strips `the-`/`a-`/`an-` prefixes for matching |
+| A concept named for a spelling variant of an existing page: `neural-networks` beside `neural-network`, `hand-off` beside `handoff` | About 5 of 29 measured duplicates on one domain | `redirectSemanticDuplicates` folds it onto the existing page; a composed fold keeps every existing line. Anything looser keeps both pages with a notice; Wiki health compares them |
 | Semantic near-duplicates in Key Facts ("25 years" vs "30 years") | Common | NOT fixed — requires LLM or manual curation |
 | Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix |
 | **Announced product omitted, or filed as a concept** — a source announcing a tool ("Trust Grader") gets feature concepts but no `entities/trust-grader.md`, or gets `concepts/trust-grader.md` (v3.81.0) | Measured 2026-09-30 without the fix: Haiku 4.5 on a seeded domain omitted it 2/9; Gemini 2.5 Flash-Lite on an empty domain filed it as a concept 5/6 short + 2/2 long | `ANNOUNCED_PRODUCT_RULE` in `ingest.js`, appended to REQUIRED COVERAGE item 2 of the outline AND single-pass prompts (not the batch prompt — coverage is decided by the outline; the batch prefix is unchanged). With it, on the real code path: Haiku 6/6 short + 2/2 long, Gemini 6/6 short + 3/3 long, all as entities. The `(e.g. entities/<product-name>.md — never concepts/)` clause is load-bearing for Gemini (3/6 without it). The generic/personal/business templates' entity wording now names tools/products (new domains only). Guarded by `test-ingest-coverage-v381.js` |
@@ -191,7 +199,7 @@ find domains/articles/wiki -name "*.md" -print0 | xargs -0 sed -i '' \
 - `type/concept` → Green nodes
 - `type/summary` → Purple nodes
 
-**Merge strategy** — bullet-accumulating sections (Key Facts, Related, Entities Mentioned, etc.) grow with every ingest. Prose sections (Summary, Definition) use the incoming LLM version (it had full document context). A Health merge that deletes a page is different: it uses `composeMergedPage`, which never drops text, and moved text lives under `## Merged from <page>` because `mergeWikiPage` preserves that whole block when an incoming page omits the heading.
+**Merge strategy** — bullet-accumulating sections (Key Facts, Related, Entities Mentioned, etc.) grow with every ingest. Prose sections (Summary, Definition) use the incoming LLM version (it had full document context). A page written onto an existing one under a name the model did not choose (a fold) and a Health merge that deletes a page are different: both use `composeMergedPage`, which never drops text, and moved text lives under `## Merged from <page>` because `mergeWikiPage` preserves that whole block when an incoming page omits the heading.
 
 ---
 

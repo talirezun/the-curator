@@ -37,7 +37,7 @@ flowchart TD
     I -- Yes --> K[MULTI-PHASE<br/>Phase 1 outline → Phase 2 batches<br/>cache-ordered prefix, batch page list last]
     J --> L[validateOutline:<br/>summary path + originator + trunk detector + structural checks]
     K --> L
-    L --> L2[redirectSemanticDuplicates:<br/>Jaccard-based pre-write dedup<br/>v3.0.1-beta.11+]
+    L --> L2[redirectSemanticDuplicates:<br/>spelling variants fold,<br/>other close names warn]
     L2 --> M[For each page:<br/>writePage with 3-pass dedup +<br/>frontmatter inject + link normalization]
     M --> N[syncSummaryEntities:<br/>reconcile Entities Mentioned<br/>+ inject bidirectional backlinks]
     N --> O[mergeIntoIndex:<br/>programmatic, no LLM call]
@@ -115,7 +115,7 @@ Single-pass ingest is unaffected by the reorder (it has no batch loop to share a
   Haiku leans on the full slug list to ground its `[[wikilinks]]`; trimming it to the most-relevant 562 of 2,651 concepts didn't make it link more carefully, it made it invent slugs it couldn't verify. Gemini's link quality was unharmed in that arm. **This specific comparison is old, small-sample (n=2), and superseded by a later, larger measurement that could not reliably resolve a quality effect at all (see above) — it is kept here only as the historical reason the budget was raised, not as a standing claim about current quality.**
 - **What it is today:** the budget was raised to `SLUG_INVENTORY_BUDGET_CHARS = 160,000` characters per list — derived from the tightest context window this app ships against (`claude-haiku-4-5` at 200,000 tokens), not chosen for cost. At that size the valve **does not fire on any real domain measured so far** — the largest list on hand (the `articles` domain's 2,651 concepts) renders to ~112,200 chars, about 70% of the budget. It starts truncating only around ~3,780 pages in a single folder at today's average filename length — a genuinely pathological wiki size. **Do not lower this constant to save tokens** — it is an inert safety valve against a hard context-window failure on a pathological domain, not a cost lever; the actual cost saving in this release is the caching above.
 - When it does fire, `capSlugInventory` scores every filename by **token-overlap coverage** with the source document (using the same `tokenize()` the Shared Brain delta/synthesis code uses) and keeps the most relevant entries until the budget is spent; the result is still fully **deterministic** and never silent — a warning naming how many of how many pages were left out is pushed into `result.warnings` (see the [ingest-report reference](user-guide.md#full-reference-of-ingest-report-entries)).
-- **The dedup safety net keeps scanning the FULL list regardless.** `redirectSemanticDuplicates` — the Jaccard-based guard that catches slug drift (`expert-roundup-format` vs `experts-roundup-format`) — is called with the original, uncapped `existingFiles`, never `promptFiles`.
+- **The dedup safety net keeps scanning the FULL list regardless.** `redirectSemanticDuplicates` — the guard that folds a spelling variant (`neural-networks` onto `neural-network`) and warns on other close names — is called with the original, uncapped `existingFiles`, never `promptFiles`.
 - Distinct from this valve: the multi-phase batch prompt's "PAGES BEING CREATED IN THIS SAME INGEST" block (above) lists `allOutlinePages` — the *plan for this one ingest* (typically 5–40 pages, per the outline budget rule) — which is a different, much smaller input and is **not** subject to `SLUG_INVENTORY_BUDGET_CHARS` at all.
 
 ### Stage 1c — Sizing the Phase 1 outline budget (v3.0.17)
@@ -228,7 +228,7 @@ flowchart TD
     F --> G[3b. Cross-folder dedup:<br/>concepts/X.md → entities/X.md if exists]
     G --> H[4. injectFrontmatter:<br/>YAML block with type tag]
     H --> I{Page exists?}
-    I -- Yes --> J[mergeWikiPage:<br/>union bullet sections]
+    I -- Yes --> J[mergeWikiPage: union bullet sections.<br/>Name moved: composeMergedPage,<br/>no line of the page is lost]
     I -- No --> K[Use processed content]
     J --> L
     K --> L
@@ -310,7 +310,7 @@ By the time all the stages above finish, `warnings` can hold dozens of near-iden
   | `batch-overflow` | A Phase 2 batch call hitting its output-token limit | ℹ Info |
   | `no-path` | `reconcileGeneratedPages`, a page with no `path` field | ℹ Info |
 
-- **Two classes never aggregate, on purpose**: semantic near-duplicate redirects (`redirectSemanticDuplicates`) and trunk-page injections (`validateOutline`'s trunk detector). Each names a specific pair or a specific injected parent page the user may want to sanity-check individually — folding "12 semantic duplicates were merged" into one line would hide exactly the auto-redirects worth double-checking.
+- **Two classes never aggregate, on purpose**: semantic near-duplicate notices ("Keeping both", `redirectSemanticDuplicates`) and trunk-page injections (`validateOutline`'s trunk detector). Each names a specific pair or a specific injected parent page the user may want to look at. A spelling redirect is not one of them: it aggregates with `variant-redirect`, because no text is lost and there is nothing to decide.
 - **Classification is preserved deliberately, not incidentally.** `classifyIngestEntry` (in `src/public/app.js` when this was written; in `src/public/next/views/ingest.js` since v3.41.0) buckets by substring match against the *rendered* string, so each `render()` function in `AGGREGATABLE_WARNINGS` is written to keep (or knowingly change) the bucket its un-aggregated counterpart already had. The `concise-rewrite` and `stub-page` renderers deliberately retain the load-bearing substrings `"briefer than the rest"` and `"stub page"` for exactly this reason — losing either would silently drop the aggregate from amber to the blue Info default. (v3.0.17 also gave `classifyIngestEntry` a dedicated, first-class `'briefer than the rest'` trigger — it previously landed in the amber bucket only by accident, via the `'stub page'` trigger matching inside the negation *"not a stub page"*, which was semantically backwards and one reword away from silently going blue.)
 - A broken per-class `render()` can never eat a warning — `aggregateWarnings` wraps each call in a try/catch and falls back to passing the original, un-aggregated message through on any failure.
 
@@ -359,7 +359,7 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | A Phase 2 **batch** response is `{"pages": []}` or a non-array `"pages"` (e.g. `{}`, `null`, a bare array, no `"pages"` key at all, or an array of non-objects) | Rare, but catastrophic when it happens | `extractPageArray`/`usablePageArray` reject the shape and route to the page-by-page fallback instead of (a) accepting the truthy-but-empty `{"pages": []}` as success — silently dropping every page the batch was planned to write, with no file, no stub, and no warning — or (b) `push(...batchResult.pages)` throwing `TypeError: … is not iterable` on a non-array `"pages"`, which used to escape `ingestMultiPhase` uncaught and kill the *entire* ingest (v3.0.17) |
 | A Phase 1 outline response is lenient-parsed into a truthy non-plan — `parseJSON`'s `jsonrepair` fallback can turn bare garbage text (e.g. `not json at all`) into the truthy *string* `"not json at all"` | Rare | `usablePageArray` requires an actual `pages` array with at least one entry carrying a non-empty `path`; anything else is treated as a failed attempt and routes into the stricter-JSON retry, instead of silently degrading straight to a summary-only plan (previously an `if (!outline)` truthiness check accepted the garbage string as a "successful" outline and skipped the retry entirely — an 80,000-character source could produce a wiki containing exactly one page) (v3.0.17) |
 | A single Phase 2 page's first attempt is unusable — output-token limit or a parse failure, either of which trips `extractPageArray` | Occasional | One additional retry with a brevity directive (`CONCISE_PAGE_DIRECTIVE`, same prefix so the cache breakpoint still hits) before falling back to a visible stub page. Cause-neutral by design — the retry fires on any of the four ways a response can be unusable, not just a token-limit hit, so the warning says "came back unusable" rather than naming a specific cause it can't always be sure of (v3.0.17) |
-| Slug drift across re-ingest of related sources (`expert-roundup-format` vs `experts-roundup-format`) | Common | `redirectSemanticDuplicates` runs Jaccard at write time (v3.0.1-beta.11+) |
+| Slug drift across re-ingest of related sources | Common | `redirectSemanticDuplicates` folds spelling variants (`neural-networks` onto `neural-network`) with no text lost, and warns on other close names such as `experts-roundup-format` beside `expert-roundup-format`, leaving them to Wiki health |
 | Summary "Entities Mentioned" lists 5 entities when 30 written | Every ingest | `syncSummaryEntities` reconciles |
 | Entity has no Related section | New entities | `injectBulletsIntoSection` creates the section |
 | Type tag missing on pre-formatted source's frontmatter | Occasional | `injectFrontmatter` ensures type tag (v3.0.1-beta.9+) |
@@ -563,7 +563,7 @@ Each scenario's output is checked against the full quality contract from §5 —
 
 46 offline assertions specifically targeting the v3.0.1-beta.11 changes:
 - Chat: `selectRelevantPages` prefers query-matching pages, excludes index/log, respects budget, falls back to top-linked
-- Ingest: `redirectSemanticDuplicates` auto-redirects at ≥0.85 Jaccard, warns in 0.5–0.85, handles within-outline dupes, skips entities
+- Ingest: `redirectSemanticDuplicates` folds spelling variants only, warns from Jaccard 0.5 (test-ingest-fold-keeps-text.js holds the no-loss property), handles within-outline dupes, skips entities
 - Ingest: `buildBatchPrompt` now includes full outline slug list and HUB-PAGE RULE guidance
 - Hub linkification: nested-bracket regression guard (the bug found during the live deep test)
 
@@ -623,7 +623,7 @@ The pipeline is mature but not perfect. Known limitations:
 - **No native JSON mode for Anthropic** — Claude users rely on `parseJSON` + `jsonrepair`. Anthropic's `tool_use` mechanism could be wired in for stricter compliance; left as future work. v3.0.1-beta.11 added several Anthropic-amplifying-bug fixes (hub linkification, full outline threading, Jaccard dedup) that significantly close the Haiku/Flash gap.
 - **Single-domain ingest** — every ingest writes to exactly one domain. Cross-domain ingest would require parser/scanner work in `health.js`, `compile.js`, and the MCP tools (see [docs/domains.md § 4](domains.md#4-how-domains-relate-to-each-other)).
 - **No streaming progress for the LLM call itself** — the user sees "AI is analyzing the document…" for tens of seconds at a time. Streaming the partial LLM output for user reassurance is still a polish item left for a future release. v3.0.17 mitigated the WORST symptom of this at the UI level — a per-step elapsed-time counter and an honest "large documents can take a minute or more per phase" note in the frontend (`phaseStartedAt`/`elapsedTimerId` clock writing `#ing-elapsed` in [src/public/next/views/ingest.js](../src/public/next/views/ingest.js) — it was `showProgress`/`tickProgressElapsed` in the `src/public/app.js` deleted in v3.41.0), so a stalled-looking Phase 1 reads as "still working" instead of "hung" — but the underlying call itself is still one opaque request with no sub-progress to report.
-- **Heuristic, not LLM-driven, dedup** — `redirectSemanticDuplicates` uses Jaccard + lightweight stemming. Genuinely synonymous concepts with different vocabularies (e.g. "self-attention" vs "scaled-dot-product-attention") still slip through. The Wiki Health semantic-duplicate scan remains the LLM-judged backstop for that case.
+- **Heuristic, not LLM-driven, dedup** — `redirectSemanticDuplicates` folds spelling variants and only warns otherwise. Genuinely synonymous concepts with different vocabularies (e.g. "self-attention" vs "scaled-dot-product-attention") still slip through. The Wiki Health semantic-duplicate scan remains the LLM-judged backstop for that case.
 
 ---
 
