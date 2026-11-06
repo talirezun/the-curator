@@ -8366,7 +8366,7 @@ While it runs, the row shows where it is, and you can go on working: review pair
 | *A comparison is already running in "research"…* | One job at a time, across all your domains: two would share one provider's rate limit, and one person cannot watch two meters | Wait, or pause that one |
 | *3 pairs to review*, with **Review**, on this row | Pairs were found while there was no Possible duplicates row to count them. A new row would have moved the page while you were reading it | **Review**, or wait: the row appears the next time the panel is read |
 
-While it runs, **Compare the next** and **Forget all comparisons** are not offered in that domain. A read-only Shared Brain mirror does not offer Compare all. A scan started by an agent over the MCP runs in its own process and is not seen by the job: that can repeat some pairs, never harm data.
+While it runs, **Compare the next** and **Forget all comparisons** are not offered in that domain. A read-only Shared Brain mirror does not offer Compare all. A question has to be on screen for a moment before it can be answered, so a double tap on the row cannot land on its yes. A scan started by an agent over the MCP runs in its own process and is not seen by the job: that can repeat some pairs, never harm data.
 
 ```mermaid
 flowchart LR

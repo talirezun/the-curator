@@ -173,7 +173,7 @@ The reference is Claude Opus 5.5, which called 30 of the 100 the same. It is a s
 
 So it is much more careful and it misses more, and Flash Lite misses more and flips more than Haiku. No model is hidden and nothing on screen steers the choice: **Change model** is the route. The output limit for a batch is 6,000 tokens, because Haiku overflowed the earlier 2,048 on a batch of 20, which fails the whole batch.
 
-The estimate stays at 400 tokens per pair, split 60/40. Measured on Haiku 5.5, a pair cost about 383 input and 72 output tokens, before the extra fields a `same` answer carries. Worked from those counts, the **token** figure runs about 10–15% low and the **price** about 30–40% high, because the split assumes more output than this reply uses. It is an estimate, not a measurement of every model.
+The **token** figure stays at 400 per pair, because it is the budget the cost ceiling refuses on. The **price** of the next N no longer comes from it: it uses the same tokens per pair as Compare all, on the tier that batch's prompt falls in. From 400 at 60/40, 100 pairs on Haiku 5.5 read about $0.05, the same as 444 pairs really cost ($0.0415 against the $0.0484 Compare all estimates). It is an estimate, not a measurement of every model.
 
 ### What a scan remembers
 
@@ -326,7 +326,7 @@ A **Leave as is** button appears on every review-only Health row:
 
 - **Orphans** — pages with no incoming links (with or without ✨ Ask AI suggestions).
 - **Broken links** that have no auto-fix suggestion — anything where AI couldn't propose a target, or you didn't accept the proposal.
-- **Semantic-duplicate pairs** — **Keep both** at the review desk persists (this is the change that motivated the feature).
+- **Semantic-duplicate pairs** — **Keep both** at the review desk persists (this is the change that motivated the feature). Until the Wiki health redesign, one across `entities/` and `concepts/` was deleted the next time the file was read, because its `folder: "mixed"` was looked up as a folder, so the pair came back. It holds now; a Keep both lost that way is gone from the file and has to be pressed once more.
 
 Auto-fixable issues (broken links *with* a suggested target, folder-prefix violations, cross-folder duplicates, hyphen variants, missing backlinks) deliberately do **not** have a Leave as is button — the right action there is **Repair** or **Merge**, not skip. Until the next **Check again**, a row left as is stays in place and offers **Undo**.
 
