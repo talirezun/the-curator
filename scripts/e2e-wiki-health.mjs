@@ -1505,8 +1505,8 @@ try {
       step(`[${profile.name}] the page was drawn to the end (a sleeping display stops it)`, vis === 'visible', vis);
     }
     catch (e) { step(`[${profile.name}] scenario ran to the end`, false, e.stack); }
-    finally { clearTimeout(watchdog); }
     finally {
+      clearTimeout(watchdog);
       await app.stop();
       try { blocked.push(...readFileSync(app.stubLog, 'utf8').split('\n').filter((l) => l.includes('blocked'))); } catch { /* none */ }
     }
