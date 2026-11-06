@@ -71,7 +71,7 @@ globalThis.fetch = async (url, opts) => {
   while ((m = re.exec(prompt))) pairs.push({ index: Number(m[1]), a: m[2], b: m[3] });
   log({ call: c.mode, n: pairs.length });
   const results = pairs.map((p) => (c.mode !== 'no' && p.a.replace(/s$/, '') === p.b.replace(/s$/, '') && Math.abs(p.a.length - p.b.length) === 1
-    ? { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: 'One page and its plural.' }
+    ? { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: p.index % 2 === 0 ? 'One page and its plural. ' + 'The two pages open on the same subject, name the same things in the same order, and neither adds a fact the other lacks, so a reader would not tell them apart. '.repeat(3) : 'One page and its plural.' }
     : { index: p.index, difference: 'different subjects', relation: 'overlap' }));
   const dear = c.mode === 'dear';
   return new Response(JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify({ results }) }] }, finishReason: 'STOP', index: 0 }],
@@ -176,6 +176,7 @@ async function switchDomain(app, slug) {
   await delay(300);
 }
 
+const CONFIRM_READ_MS = 400;
 const CHIP = '.dm-quick-btn[data-action="compareAll"]';
 const NEXT = '.dm-quick-btn[data-action="semanticDupes"]';
 const JOB = '#dm-compare-job-btn';
@@ -183,10 +184,26 @@ const ROW = '[data-group-key="compare"]';
 const reading = (page) => page.evaluate(() => { const e = document.querySelector('[data-compare-reading]'); return e ? e.textContent : null; });
 const lineText = (page) => page.evaluate(() => { const e = document.querySelector('[data-row-key="compare-job"]'); return e ? e.innerText : ''; });
 const buttonText = (page, s) => page.evaluate((x) => { const e = document.querySelector(x); return e ? e.innerText.replace(/\s+/g, ' ').trim() : null; }, s);
-async function press(app, sel) {
+// A person presses what they can see and what has stopped moving. A question opening at phone
+// width is taller than the screen until it settles, so this waits for that, then brings it in.
+const QUESTION_SETTLES = async (page, sel) => {
+  await page.evaluate(async (s) => {
+    let last = null; let still = 0;
+    for (let i = 0; i < 120 && still < 6; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const e = document.querySelector(s); const y = e ? e.getBoundingClientRect().top + document.querySelector('#main').scrollTop : null;
+      still = y === last ? still + 1 : 0; last = y;
+    }
+  }, sel);
+};
+async function press(app, sel, { early = false } = {}) {
   const { page } = app;
+  if (!early) {
+    await QUESTION_SETTLES(page, sel);
+    if (sel === '#dm-confirm-yes') await delay(CONFIRM_READ_MS);
+  }
   await page.evaluate((s) => { const e = document.querySelector(s); if (e) e.scrollIntoView({ block: 'center' }); }, sel);
-  await delay(80);
+  await delay(early ? 0 : 80);
   const c = await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
   if (!c) { step('a control to press: ' + sel, false); return; }
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
@@ -274,6 +291,16 @@ async function walk(app) {
   if (!profile.big) step(`[${pn}] above the limit for one run: says so, and the words are true`, /above your limit of 40,000 tokens for one run/.test(conf.text) && !/smaller runs/.test(conf.text), conf.text);
   step(`[${pn}] showing a price calls nothing`, app.calls() === callsBeforeConfirm);
   await shot(app, '2-confirm');
+
+  // A double tap lands on Yes as the question opens: that spends nothing.
+  await press(app, '#dm-confirm-no');
+  await waitFor(page, () => !document.querySelector('#dm-confirm-yes'), 'the question closed');
+  await delay(350);
+  await press(app, CHIP);
+  await waitFor(page, () => !!document.querySelector('#dm-confirm-yes'), 'the question again');
+  const early = await page.evaluate(() => { const b = document.querySelector('#dm-confirm-yes'); b.click(); return !!document.querySelector('.dm-confirm-card') && !b.getAttribute('aria-busy'); });
+  await delay(250);
+  step(`[${pn}] a press as the question opens is not an answer`, early && app.calls() === callsBeforeConfirm && (await jobOf(app, 'main')).state === 'none' && !!(await page.evaluate(() => document.querySelector('#dm-confirm-yes'))));
 
   // ── Running ─────────────────────────────────────────────────────────────
   app.mode('ok', 700);
@@ -403,7 +430,6 @@ async function walk(app) {
   await chipReady(app);
   await press(app, CHIP);
   await waitFor(page, () => !!document.querySelector('#dm-confirm-yes'), 'the confirm');
-  await delay(350); // the card has opened: a person presses what has stopped moving
   await press(app, '#dm-confirm-yes');
   await waitFor(page, () => /Stopped at the limit/.test((document.querySelector('[data-row-key="compare-job"]') || {}).innerText || ''), 'stopped at 120%', 800);
   await delay(100);
@@ -446,6 +472,25 @@ async function walk(app) {
     const t0 = await page.evaluate(() => document.querySelector('.hr-desk').innerText);
     step(`[${pn}] Review brings them to the desk`, /Pair 1 of \d+/.test(t0), t0.slice(0, 60));
     const n0 = Number((t0.match(/Pair 1 of (\d+)/) || [])[1]);
+    if (profile.w < 720) {
+      // Walk the desk: on a phone no reason is clipped, and the buttons do not move between pairs.
+      const y0 = await page.evaluate(() => document.querySelector('#hr-next').getBoundingClientRect().top + document.querySelector('#main').scrollTop);
+      let clipped = 0; let longest = 0; let moved = 0;
+      for (let i = 0; i < Math.min(n0, 6); i++) {
+        await delay(150);
+        const f = await page.evaluate(() => { const b = document.querySelector('.hr-facts'); const k = document.querySelector('.hr-decide'); return { over: b.scrollHeight - b.clientHeight, text: b.innerText.length, y: k ? k.getBoundingClientRect().top + document.querySelector('#main').scrollTop : 0, pane: document.querySelector('.hr-pane-goes').getBoundingClientRect().height }; });
+        clipped = Math.max(clipped, f.over); longest = Math.max(longest, f.text);
+        if (i === 0) app.deckY = f.y; else moved = Math.max(moved, Math.abs(f.y - app.deckY));
+        app.paneH = f.pane;
+        await page.evaluate(() => { const n = document.querySelector('#hr-next'); if (n && !n.disabled) n.click(); });
+      }
+      step(`[${pn}] the AI's reason is never clipped, however long`, clipped <= 1 && longest > 300, clipped + ' px over, longest ' + longest);
+      step(`[${pn}] and nothing under it moves between pairs`, moved <= 1, moved + ' px');
+      step(`[${pn}] each page gets room to be read`, app.paneH >= 330, app.paneH + ' px');
+      await shot(app, '9b-desk');
+      await page.evaluate(() => { const p = document.querySelector('#hr-prev'); for (let i = 0; i < 6 && p && !p.disabled; i++) p.click(); });
+      await delay(200);
+    }
     const openMerge = await page.evaluate(() => { const m = document.querySelector('#hr-merge'); return m ? m.disabled : null; });
     await waitFor(page, async () => { const m = document.querySelector('.hr-desk'); return !!m && /Pair 1 of (\d+)/.test(m.innerText); }, 'desk count');
     await delay(2400);
@@ -484,11 +529,13 @@ async function walkBig(app) {
   await openDomain(app, 'other');
   const at0 = Date.now();
   await page.evaluate((s) => { const e = [...document.querySelectorAll('.dm-row[data-domain-slug]')].find((n) => n.dataset.domainSlug === s); if (e) e.click(); }, 'huge');
-  const ready = await waitFor(page, (s) => { const b = document.querySelector(s); return b && !b.disabled && /Compare the next 40/.test(b.innerText) && /\$/.test(b.innerText); }, 'Compare the next at first open', 600, NEXT);
+  // From a click, the report of 3,500 pages comes first, and how long that takes is this machine's
+  // load. What is proved: pressable while the count is still out, which only the last figures can do.
+  const ready = await waitFor(page, (s) => { const b = document.querySelector(s); return b && !b.disabled && /Compare the next 40/.test(b.innerText) && /\$/.test(b.innerText); }, 'Compare the next at first open', 2400, NEXT);
   const firstMs = Date.now() - at0;
   const words = await reading(page);
   step(`[${pn}] first open: pressable from the last figures`, ready, firstMs + ' ms');
-  step(`[${pn}] and it says the figures are not fresh`, /^About [\d,]+ of [\d,]+ pairs compared$/.test(words) || /^[\d,]+ of [\d,]+ pairs compared$/.test(words), words);
+  step(`[${pn}] while the count is still out, and it says so`, /^About [\d,]+ of [\d,]+ pairs compared$/.test(words), words);
   await shot(app, 'big-1-first-open');
   await chipReady(app);
   await press(app, CHIP);

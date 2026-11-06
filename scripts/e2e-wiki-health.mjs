@@ -1312,6 +1312,7 @@ async function reviewDeskScene(app, profile) {
 
   // ── Read full page opens the reader; closing it, the desk is still there.
   await armed();
+  await bringIn('#hr-read-stays');
   await press('#hr-read-stays');
   const opened = await waitFor(page, () => { const r = document.querySelector('.reader, #reader, [data-reader], .reader-panel'); return !!r && getComputedStyle(r).display !== 'none'; }, 'the reader', 200);
   step(`[${pn}] Read full page opens the right-side reader`, opened);

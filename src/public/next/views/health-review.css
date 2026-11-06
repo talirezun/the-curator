@@ -77,10 +77,12 @@
 
 /* Stacked. The same rule: every slot its own fixed height, so a decision moves nothing. */
 @media (max-width: 720px) {
-  .hr-desk { --hr-facts-h: 76px; --hr-pane-h: 250px; --hr-after-h: 112px; --hr-decide-h: 212px; --hr-gate-h: 36px; --hr-outcome-h: 76px; }
+  .hr-desk { --hr-facts-h: 76px; --hr-pane-h: 340px; --hr-after-h: 112px; --hr-decide-h: 212px; --hr-gate-h: 36px; --hr-outcome-h: 76px; }
   .hr-head { align-items: flex-start; flex-direction: column; gap: var(--space-2); min-height: 62px; }
   .hr-nav { align-self: stretch; justify-content: flex-start; }
   .hr-panes { grid-template-columns: minmax(0, 1fr); }
+  /* Never a box to scroll: afterPaint sizes it for the longest reason in this walk. */
+  .hr-facts { overflow-y: visible; }
   .hr-end { height: calc(2 * var(--hr-pane-h) + var(--space-3)); }
   .hr-decide { grid-template-columns: minmax(0, 1fr); grid-template-rows: 112px minmax(0, 1fr); gap: var(--space-2); }
   .hr-decide-btns { flex-direction: column; align-items: stretch; }

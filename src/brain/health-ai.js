@@ -878,10 +878,21 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
     recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
     estimatedTokens,
-    ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
+    ...nextRunPrice(provider, model, plan.send.length),
     provider,
     model,
   };
+}
+
+/**
+ * The dollars for the next N pairs, by the same measured figures as the whole pass.
+ * `estimatedTokens` stays 400 a pair because it is the ceiling's budget, and the scan's own
+ * refusal reads it. Priced from that 400 at 60/40, 100 pairs on Haiku 5.5 read about $0.05,
+ * the same as 444 really cost: 40% of it as output, where a pair replies about 72 tokens.
+ */
+function nextRunPrice(provider, model, pairs) {
+  const { estimatedUsd, priceKnown, costNote } = compareAllCost(provider, model, pairs);
+  return { estimatedUsd, priceKnown, costNote };
 }
 
 /**
@@ -982,7 +993,7 @@ export async function semanticLastFigures(domain, maxPairs = SEMANTIC_DUPE_DEFAU
     figuresFrom: 'last-count',
     quote: {
       ...coverage, candidatePairs: coverage.nextPairs, estimatedTokens: tokens,
-      ...costFields(info.provider, info.model, tokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, tokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
+      ...nextRunPrice(info.provider, info.model, coverage.nextPairs),
       provider: info.provider, model: info.model,
     },
     allQuote: { pairs: coverage.leftPairs, ...compareAllCost(info.provider, info.model, coverage.leftPairs), provider: info.provider, model: info.model },
@@ -1178,7 +1189,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
       answered.set(key, {
         ...record, verdict: 'yes',
         keep: `${keepFolder}/${keepSlug}`, remove: `${removeFolder}/${removeSlug}`,
-        confidence: conf, rationale: rationale.slice(0, 500),
+        confidence: conf, rationale: rationale.slice(0, 2000), // what the desk quotes: 500 cut real reasons mid-word
       });
       const accepted = {
         keepSlug, keepFolder,
@@ -2011,6 +2022,7 @@ export const __testing = {
   slugifyText,
   estimateUsdCost,
   costFields,
+  compareAllCost,
   HEALTH_TOKEN_SPLIT,
   liveCandidates,
   candidateFullPasses: () => candidateFullPasses,

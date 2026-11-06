@@ -190,12 +190,15 @@ function isRecordLive(record, inventory) {
     case 'semanticDupe': {
       const slugs = Array.isArray(record.slugs) ? record.slugs : null;
       if (!slugs || slugs.length !== 2) return false;
-      const folder = record.folder;
-      // Either both slugs in the recorded folder, or split — record covers both
-      // shapes by checking presence in any folder. Cross-folder dupes use a
-      // different type, so semanticDupe pairs are normally same-folder.
       const a = slugs[0], b = slugs[1];
-      const folders = folder ? [folder] : ['entities', 'concepts'];
+      // A pair can span the two folders, and then `folder` is the word "mixed", which is
+      // no folder: read as one, every such Keep both was deleted on its next load, and the
+      // pair came back. folderA and folderB say where each page is, in `slugs`' order.
+      if (record.folderA && record.folderB) {
+        return !!(slugsByFolder[record.folderA]?.has(a) && slugsByFolder[record.folderB]?.has(b));
+      }
+      // Older records: one folder, or none recorded.
+      const folders = record.folder && record.folder !== 'mixed' ? [record.folder] : ['entities', 'concepts'];
       const has = (slug) => folders.some(f => slugsByFolder[f]?.has(slug));
       return has(a) && has(b);
     }

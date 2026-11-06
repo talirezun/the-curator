@@ -28,10 +28,19 @@
 }
 .dm-compare-job-note { margin-top: 2px; }
 
-.dm-compare-all-slot { display: none; }
+/* A wide lane holds both chips on the row. A narrow one gives Compare all a line of its own,
+   there from before a first run, so the chip arriving moves nothing. Measured on the lane, not
+   the window: the sidebars decide how wide it is. */
+.dm-lane-ai { container-type: inline-size; }
+.dm-compare-all-line { display: contents; }
+@container (max-width: 820px) {
+  .dm-health .dm-lane .dm-group-summary > .dm-compare-all-line {
+    display: flex; flex: 0 0 100%; justify-content: flex-end; min-height: var(--control-sm); order: 4;
+  }
+}
 
 @media (max-width: 640px) {
-  .dm-health .dm-lane .dm-group-summary > .dm-compare-all-slot { display: block; order: 4; flex: 0 0 100%; height: var(--control-sm); }
+  .dm-health .dm-lane .dm-group-summary > .dm-compare-all-line { justify-content: flex-start; }
   /* Figures that grow by a digit may wrap: the room is there from the start, so a tick
      never moves what is under it. */
   .dm-compare-job { padding-left: 0; }

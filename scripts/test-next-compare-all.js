@@ -290,7 +290,7 @@ section('7. The chip');
   const w = world({ status: { state: 'none' } });
   await w.api.sync('alpha');
   const first = w.api.actions('alpha', 'NEXT', { checked: 0, left: 500, next: 40, total: 500 });
-  ok(first.startsWith('NEXT') && !first.includes('Compare all') && first.includes('dm-compare-all-slot'), '7.1 never run: only the next batch (the deck), and the chip\'s line kept at phone width', first);
+  ok(first.startsWith('NEXT') && !first.includes('Compare all') && first.includes('dm-compare-all-line'), '7.1 never run: only the next batch (the deck), and the chip\'s line kept at phone width', first);
   ok(w.api.actions('alpha', 'NEXT', { checked: 10, left: 30, next: 30, total: 40 }) === 'NEXT', '7.2 the rest fits in one run: Compare the next covers it');
   ok(/disabled/.test(w.api.actions('alpha', 'NEXT', c0)), '7.3 no figure yet: it waits, a paying button wears its cost');
   w.api.afterPaint(c0);

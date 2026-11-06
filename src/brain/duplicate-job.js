@@ -287,7 +287,7 @@ function noteEvent(run, ev) {
     run.record.lastError = ev.error;
     run.batchFailed = true;
     if (isOutOfCredits(ev)) {
-      run.stop = { kind: 'pause', pauseReason: 'provider-errors', reason: `${providerDisplayName(run.record.provider)} says this account is out of credits, so the comparison paused. What it already compared is saved and paid for. Add credits with your provider, then press Resume.` };
+      run.stop = { kind: 'pause', pauseReason: 'provider-errors', reason: `${providerDisplayName(run.record.provider)} says this account is out of credits, so the comparison paused. ${run.record.spent.calls > 0 ? 'What it compared before that is saved.' : 'Nothing was compared or charged by this run.'} Add credits with your provider, then press Resume.` };
     }
   } else if (ev.type === 'progress') {
     p.processed = ev.processed;

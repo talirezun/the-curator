@@ -7742,6 +7742,12 @@ function placeHealthStack() {
 
 // ── After the paint ───────────────────────────────────────────────────────
 let confirmOnScreen = null;
+// A QUESTION HAS TO BE SEEN BEFORE IT CAN BE ANSWERED. It opens under the pressed row and the page
+// may scroll to show it, so a double tap on the row can land on Yes, which spends or deletes. A
+// press in its first moments is that accident, never an answer: nobody reads it that fast.
+const CONFIRM_ANSWER_AFTER_MS = 350;
+let confirmOpenedAt = 0;
+function questionJustOpened() { return Date.now() - confirmOpenedAt < CONFIRM_ANSWER_AFTER_MS; }
 let planLeaving = false;
 
 function findHealthControl(section, key) {
@@ -7758,6 +7764,7 @@ function moveHealthFocusForQuestion() {
   if (c === confirmOnScreen) return;
   const was = confirmOnScreen;
   confirmOnScreen = c;
+  confirmOpenedAt = c && !c.busy ? Date.now() : 0;
   if (!section) return;
   if (c && !c.busy) {
     const cancel = section.querySelector('#dm-confirm-no');
@@ -9032,7 +9039,7 @@ function onHealthClick(e) {
     case 'dm-repair-all-btn': dispatchHealthAction(() => repairAllFree(domain.slug)); return;
     case 'dm-confirm-yes': {
       const asked = state.confirm;
-      if (!asked || asked.busy) return;
+      if (!asked || asked.busy || questionJustOpened()) return;
       asked.busy = true;
       render(myMountToken);
       // Closed by the outcome being filed, or here when the action has none (a

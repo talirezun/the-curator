@@ -418,7 +418,7 @@ export function createReviewDesk(d) {
     const r = review();
     if (!r) { stopWatch(); listen(false); return; }
     listen(true);
-    if (typeof document !== 'undefined') paintPanes();
+    if (typeof document !== 'undefined') { paintPanes(); fitFacts(r); }
     if (r.ended) return;
     // The label has its new width now. Still on Merge when the pair arrived: not a new press.
     if (r.checkHover) { r.checkHover = false; pointer.stale = pointer.type !== 'touch' && pointer.type !== 'pen' && overMerge(); }
@@ -438,6 +438,34 @@ export function createReviewDesk(d) {
     }
     if (held.error || !held.data || d.armed(pair) || isBusy(key)) return;
     startArm(r, pair, key);
+  }
+
+  // ON A PHONE THE AI'S REASON IS NEVER CLIPPED, and the buttons under it still do not move
+  // from pair to pair: the line is as tall as the longest reason in this walk needs, measured
+  // once, at this width. A wide screen keeps its fixed line and its own scroll.
+  function fitFacts(r) {
+    const desk = document.querySelector('.hr-desk');
+    const box = document.querySelector('.hr-facts');
+    if (!desk || !box) return;
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 720px)').matches) {
+      desk.style.removeProperty('--hr-facts-h');
+      r.factsFit = null;
+      return;
+    }
+    const longest = r.scan.pairs.reduce((a, p) => Math.max(a, String(p.rationale || '').length), 0);
+    const fit = longest + '|' + box.clientWidth;
+    // Set again after every paint: the keyed patch takes back an attribute its markup lacks.
+    if (r.factsFit === fit || !box.clientWidth) { if (r.factsPx) desk.style.setProperty('--hr-facts-h', r.factsPx); return; }
+    r.factsFit = fit;
+    const text = (r.scan.pairs.find((p) => String(p.rationale || '').length === longest) || {}).rationale || '';
+    const probe = box.cloneNode(false);
+    probe.style.cssText = 'position:absolute;visibility:hidden;height:auto;width:' + box.clientWidth + 'px';
+    probe.innerHTML = '<span class="hr-fact">' + RELATION_LABELS['version-differs'] + '</span> <span class="hr-reason">The AI says: "' + esc(text) + '"</span>';
+    box.parentNode.appendChild(probe);
+    const need = Math.ceil(probe.getBoundingClientRect().height);
+    probe.remove();
+    r.factsPx = Math.max(need, 40) + 'px';
+    desk.style.setProperty('--hr-facts-h', r.factsPx);
   }
 
   // A new pair fades in over the old one's place. Its text starts at the top by itself:

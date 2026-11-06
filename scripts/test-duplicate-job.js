@@ -59,7 +59,7 @@ const ai = await import(path.join(REPO, 'src/brain/health-ai.js'));
 const health = await import(path.join(REPO, 'src/brain/health.js'));
 const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
 const llmMod = await import(path.join(REPO, 'src/brain/llm.js'));
-const { addDismissal, removeDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
+const { addDismissal, removeDismissal, loadDismissed } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
 const { getDuplicateJobsDir, getDuplicateChecksDir } = await import(path.join(REPO, 'src/brain/paths.js'));
 
 const MODEL = 'gemini-2.5-flash-lite';
@@ -841,6 +841,16 @@ section('J. Out of credits: a 402 pauses at once, in words, and keeps what it pa
   ok(r.status === 200 && after.state === 'done', 'J.7 credits back: Resume finishes it', after.state);
   ok(!later.sent.includes(good.sent[0]), 'J.8 and pays for nothing twice');
 
+  // The account was empty from the start: nothing was compared or paid for, and it says that.
+  const zero = family(30);
+  job.__setCompareAllLlmForTest(async () => { throw credit(); });
+  await start(zero.name);
+  await settled();
+  const z = await status(zero.name);
+  ok(z.state === 'paused' && z.spent.calls === 0 && /Nothing was compared or charged by this run/.test(z.reason), 'J.8b empty from the first call: no claim of work kept', z.reason);
+  ok(!/saved|paid for/.test(z.reason), 'J.8c it claims nothing saved', z.reason);
+  ok(/What it compared before that is saved/.test(s.reason) && !/Nothing was compared/.test(s.reason), 'J.8d with work done, it says that instead', s.reason);
+
   // A list that ends on the failure: no later check sees it, and this is not "done".
   const small = family(6);
   job.__setCompareAllLlmForTest(async () => { throw credit(); });
@@ -934,6 +944,66 @@ section('L. First open: the last figures, with no pass over the page names');
   const [a, b] = await Promise.all([ai.estimateCompareAll(d.name), ai.estimateCompareAll(d.name)]);
   ok(ai.__testing.candidateFullPasses() === before + 1, 'L.12 two readers during a count share one pass', String(ai.__testing.candidateFullPasses() - before));
   ok(a.totalPairs === b.totalPairs, 'L.13 and read the same figures');
+}
+
+section('M. Keep both across the two folders sticks');
+{
+  const d = family(0);
+  const page = (rel, t) => writeFileSync(path.join(d.wiki, rel + '.md'), `---\ntype: x\n---\n\n# ${t}\n\nAbout ${t}.\n`);
+  page('entities/acme-model', 'Acme'); page('concepts/acme-models', 'Acme models');
+  const same = () => ({ index: 0, relation: 'same', difference: 'none', confidence: 'high' });
+  const llm = fakeLLM({ decide: same });
+  job.__setCompareAllLlmForTest(null);
+  const first = await ai.scanSemanticDuplicates(d.name, { maxPairs: 10, costCeilingTokens: 1e9, generateText: llm });
+  ok(first.pairs.length === 1, 'M.1 (control) the pair is offered');
+  const p = first.pairs[0];
+  ok(p.keepFolder !== p.removeFolder, 'M.2 (control) across the two folders');
+  const issue = { slugA: p.keepSlug, folderA: p.keepFolder, slugB: p.removeSlug, folderB: p.removeFolder };
+  const r = await post(`/${d.name}/dismiss`, { type: 'semanticDupe', issue });
+  ok(r.status === 200, 'M.3 Keep both answers', JSON.stringify(r.body));
+  const file = path.join(d.wiki, '.health-dismissed.jsonl');
+  ok(/semanticDupe/.test(readFileSync(file, 'utf8')) && (await loadDismissed(d.name)).keys.size === 1, 'M.4 and is still there after it is read');
+  ok(/semanticDupe/.test(readFileSync(file, 'utf8')), 'M.5 the read did not delete it');
+  ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 0, 'M.6 coming back: the pair is not listed');
+  const again = await ai.scanSemanticDuplicates(d.name, { maxPairs: 10, costCeilingTokens: 1e9, generateText: llm });
+  ok(again.pairs.length === 0 && again.totalPairs === 0, 'M.7 a scan does not offer it', JSON.stringify({ n: again.pairs.length, t: again.totalPairs }));
+  await removeDismissal(d.name, 'semanticDupe', issue);
+  ok((await ai.semanticRememberedPairs(d.name)).pairs.length === 1, 'M.8 Bring back brings it back');
+  await post(`/${d.name}/dismiss`, { type: 'semanticDupe', issue });
+  rmSync(path.join(d.wiki, 'entities/acme-model.md'));
+  ok((await loadDismissed(d.name)).keys.size === 0, 'M.9 a page gone still retires the record');
+
+  // Same folder, and the folders the wrong way round, are each read for what they say.
+  const t = family(0);
+  writeFileSync(path.join(t.wiki, 'concepts/one.md'), '# one\n');
+  writeFileSync(path.join(t.wiki, 'concepts/two.md'), '# two\n');
+  await addDismissal(t.name, 'semanticDupe', { slugA: 'one', folderA: 'concepts', slugB: 'two', folderB: 'concepts' });
+  ok((await loadDismissed(t.name)).keys.size === 1, 'M.10 same folder stands');
+  const f2 = path.join(t.wiki, '.health-dismissed.jsonl');
+  writeFileSync(f2, JSON.stringify({ type: 'semanticDupe', slugs: ['one', 'two'], folder: 'concepts', dismissedAt: 'x' }) + '\n');
+  ok((await loadDismissed(t.name)).records.length === 1, 'M.11 an older record with one folder stands');
+  writeFileSync(f2, JSON.stringify({ type: 'semanticDupe', slugs: ['one', 'two'], folder: 'entities', dismissedAt: 'x' }) + '\n');
+  ok((await loadDismissed(t.name)).records.length === 0, 'M.12 and one naming the wrong folder is retired');
+  writeFileSync(f2, JSON.stringify({ type: 'semanticDupe', slugs: ['one', 'two'], folderA: 'entities', folderB: 'concepts', dismissedAt: 'x' }) + '\n');
+  ok((await loadDismissed(t.name)).records.length === 0, 'M.13 each page is looked for in its own folder');
+}
+
+section('N. The next N is priced as the whole pass is');
+{
+  const cost = ai.__testing.compareAllCost;
+  const haiku100 = cost('anthropic', 'claude-haiku-5-5', 100).estimatedUsd;
+  const haiku444 = cost('anthropic', 'claude-haiku-5-5', 444).estimatedUsd;
+  ok(Math.abs(haiku444 - 0.0484) < 0.0005, 'N.1 (control) 444 pairs on Haiku: the $0.0484 against a measured $0.0415', String(haiku444));
+  ok(Math.abs(haiku100 - haiku444 * 100 / 444) < 1e-9, 'N.2 100 is a quarter of it, not the same', String(haiku100));
+  const d = family(40);
+  const est = await ai.estimateSemanticDuplicateScan(d.name, 100);
+  const all = await ai.estimateCompareAll(d.name);
+  ok(Math.abs(est.estimatedUsd / est.candidatePairs - all.estimatedUsd / all.pairs) < 1e-12, 'N.3 per pair, the next N and the whole pass agree', JSON.stringify([est.estimatedUsd, est.candidatePairs, all.estimatedUsd, all.pairs]));
+  ok(est.estimatedTokens === est.candidatePairs * ai.EST_TOKENS_PER_PAIR, 'N.4 the tokens stay the ceiling\'s budget, which the scan refuses on');
+  const scanned = await ai.scanSemanticDuplicates(d.name, { maxPairs: 100, costCeilingTokens: 1e9, generateText: fakeLLM() });
+  ok(scanned.checkedPairs === 100, 'N.5 (control) a run so the last figures exist');
+  const q = await ai.semanticLastFigures(d.name, 100);
+  ok(Math.abs(q.quote.estimatedUsd - ai.__testing.compareAllCost('gemini', MODEL, q.nextPairs).estimatedUsd) < 1e-12, 'N.6 first open prices it the same way');
 }
 
 job.__setCompareAllLlmForTest(null);

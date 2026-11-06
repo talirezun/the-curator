@@ -339,9 +339,10 @@ export function createCompareAll(deps) {
       // "Compare the next N" already covers it when what is left fits in one run.
       const offered = c && c.checked > 0 && c.left > c.next && deps.offered(slug);
       // Before a first run the chip is not offered, and the run will bring it while its question
-      // is still closing under this row. At phone width the chips stack, so its line is kept
-      // from the start and the question does not move.
-      if (!offered) return nextChip + (c && c.left > c.next && deps.offered(slug) ? '<span class="dm-compare-all-slot" aria-hidden="true"></span>' : '');
+      // is still closing under this row. Where the row is too narrow for both chips it has a line
+      // of its own (health-compare.css), kept from the start, so the question does not move.
+      const line = (inner) => '<span class="dm-compare-all-line">' + inner + '</span>';
+      if (!offered) return nextChip + (c && c.left > c.next && deps.offered(slug) ? line('') : '');
       const q = quotes.get(slug);
       const est = q && q.est;
       const scaled = est && est.pairs > 0 && typeof est.estimatedUsd === 'number' && est.pairs !== c.left
@@ -349,11 +350,11 @@ export function createCompareAll(deps) {
       const cost = scaled ? (deps.cost(scaled, { compact: true }) || '') : '';
       const failed = !!(q && q.failed);
       const asking = deps.busy();
-      return nextChip + deps.chip({
+      return nextChip + line(deps.chip({
         attrs: asking ? ' aria-busy="true" aria-disabled="true"' : (noKeyAttrs || (disabled || (!cost && !failed) ? ' disabled' : '')),
         leadHtml: asking ? deps.ring() : deps.sparkles(),
         label: 'Compare all ' + n0(c.left), cost: asking ? '' : cost,
-      });
+      }));
     },
 
     /** The line under the row, always the same node while there is anything to say. */

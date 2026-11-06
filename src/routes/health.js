@@ -327,8 +327,13 @@ router.get('/:domain/semantic-dupes/estimate', async (req, res) => {
       // the confirm can name the cap as the user's setting ("capped at your
       // 500-pair limit") rather than as a local pre-filter.
       maxPairs: settings.semanticDupeMaxPairs,
-      // v3.67.0, additive: the run line, priced on the estimate's own split.
-      runsOn: await describeHealthRun('semanticDupes', estimate.estimatedTokens),
+      // v3.67.0, additive: the run line, with the confirm's own dollars. Its tokens are the
+      // ceiling's budget, which over-prices a pair; the dollars are the measured ones.
+      runsOn: await (async () => {
+        const run = await describeHealthRun('semanticDupes', estimate.estimatedTokens);
+        return typeof estimate.estimatedUsd === 'number' && run && typeof run.usdHigh === 'number'
+          ? { ...run, usdLow: estimate.estimatedUsd, usdHigh: estimate.estimatedUsd } : run;
+      })(),
     });
   } catch (err) {
     if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });

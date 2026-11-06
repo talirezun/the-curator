@@ -297,6 +297,7 @@ function confirmFixAllOfType(s, t) { calls.push('fixall ' + s + ' ' + t); }
 function activeSemanticScan() { return state.semanticScan; }
 function semanticPairKey(p) { return p.key; }
 const compareAll = { onClick: () => false };
+function questionJustOpened() { return false; }
 function releaseArrivals() {}
 const reviewDesk = { open() { calls.push('desk open'); return true; }, onClick(b) { calls.push('desk ' + b.id); } };
 function healthHeadIntoView() {}
