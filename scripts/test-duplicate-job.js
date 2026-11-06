@@ -60,7 +60,7 @@ const health = await import(path.join(REPO, 'src/brain/health.js'));
 const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
 const llmMod = await import(path.join(REPO, 'src/brain/llm.js'));
 const { addDismissal, removeDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
-const { getDuplicateJobsDir } = await import(path.join(REPO, 'src/brain/paths.js'));
+const { getDuplicateJobsDir, getDuplicateChecksDir } = await import(path.join(REPO, 'src/brain/paths.js'));
 
 const MODEL = 'gemini-2.5-flash-lite';
 const USAGE = { inputTokens: 6000, outputTokens: 900 };
@@ -812,6 +812,126 @@ section('I. Families: A~B and B~C say nothing about A~C');
   const empty = family(3);
   const none = await get(`/${empty.name}/semantic-dupes/families`);
   ok(none.status === 200 && none.body.families.length === 0, 'I.17 nothing compared yet: no families');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+section('J. Out of credits: a 402 pauses at once, in words, and keeps what it paid for');
+{
+  const credit = () => { const e = new Error('{"error":{"code":402,"message":"Your prepaid credits are depleted.","status":"PAYMENT_REQUIRED"}}'); e.status = 402; return e; };
+  const d = family(30);
+  let calls = 0;
+  const good = fakeLLM();
+  job.__setCompareAllLlmForTest(async (...a) => { calls++; if (calls <= 2) return good(...a); throw credit(); });
+  await start(d.name);
+  await settled();
+  const s = await status(d.name);
+  ok(s.state === 'paused' && s.pauseReason === 'provider-errors', 'J.1 it pauses, which can resume, rather than stops', JSON.stringify(s).slice(0, 200));
+  ok(calls === 3, 'J.2 on the FIRST failed batch: nothing is retried against an empty account', String(calls));
+  ok(/out of credits/.test(s.reason) && /Add credits/.test(s.reason) && /Resume/.test(s.reason), 'J.3 the reason is in words, and says what to do', s.reason);
+  ok(!/[{}]|PAYMENT_REQUIRED|402/.test(s.reason), 'J.4 and no provider JSON reaches the row', s.reason);
+  ok(s.spent.calls === 2 && s.spent.usd > 0, 'J.5 what was paid for is still counted');
+  ok(s.progress.checkedPairs === 40, 'J.6 and its answers are remembered', String(s.progress.checkedPairs));
+  const later = fakeLLM();
+  job.__setCompareAllLlmForTest(later);
+  const r = await post(`/${d.name}/semantic-dupes/compare-all/resume`, {});
+  await settled();
+  const after = await status(d.name);
+  ok(r.status === 200 && after.state === 'done', 'J.7 credits back: Resume finishes it', after.state);
+  ok(!later.sent.includes(good.sent[0]), 'J.8 and pays for nothing twice');
+
+  // A list that ends on the failure: no later check sees it, and this is not "done".
+  const small = family(6);
+  job.__setCompareAllLlmForTest(async () => { throw credit(); });
+  await start(small.name);
+  await settled();
+  const t = await status(small.name);
+  ok(t.state === 'paused' && /out of credits/.test(t.reason || ''), 'J.9 a run whose LAST batch hit it pauses, it is not "done"', t.state);
+
+  // By the words alone, for a provider whose error carries no status.
+  for (const m of ['Your credit balance is too low to access the Anthropic API', 'OpenRouter reports insufficient credits (HTTP 402).', 'insufficient_credits', 'Payment Required']) ok(job.isOutOfCredits({ error: m }), 'J.10 "' + m + '" is out of credits');
+  for (const m of ['quota exhausted', 'Rate limit reached', 'The model is at capacity', 'Pair 402 not found', 'Service unavailable']) ok(!job.isOutOfCredits({ error: m }), 'J.11 "' + m + '" is not');
+  ok(job.isOutOfCredits({ error: 'x', status: 402 }) && !job.isOutOfCredits({ error: 'x', status: 429 }), 'J.12 the status decides when it is there');
+  ok(job.plainProviderError('got status: 503. {"error":{"message":"Overloaded","code":503}}') === 'Overloaded', 'J.13 a JSON body gives up its sentence');
+  ok(job.plainProviderError('a plain message') === 'a plain message' && job.plainProviderError('bad {json') === 'bad {json', 'J.14 anything else is left as it is');
+
+  // Other failures still wait for three, and their row is not a JSON dump.
+  const other = family(30);
+  let n = 0;
+  job.__setCompareAllLlmForTest(async () => { n++; throw new Error('{"error":{"message":"The model is overloaded","code":503}}'); });
+  await start(other.name);
+  await settled();
+  const o = await status(other.name);
+  ok(n === 3 && /The model is overloaded/.test(o.reason) && !/[{}]/.test(o.reason), 'J.15 a passing failure: three batches, and a sentence', o.reason);
+}
+
+section('K. Stop: closes a paused job');
+{
+  const d = family(30);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  job.__setCompareAllLlmForTest(fakeLLM({ before: async () => { await gate; } }));
+  await start(d.name);
+  let r = await post(`/${d.name}/semantic-dupes/compare-all/stop`, {});
+  ok(r.status === 409 && r.body.code === 'JOB_RUNNING', 'K.1 not while it runs: Pause first', JSON.stringify(r.body));
+  await post(`/${d.name}/semantic-dupes/compare-all/pause`, {});
+  release();
+  await settled();
+  r = await post(`/${d.name}/semantic-dupes/compare-all/stop`, {});
+  ok(r.status === 200 && r.body.job.state === 'stopped' && r.body.job.stopReason === 'user' && r.body.job.reason === null, 'K.2 paused: it closes, with nothing to say', JSON.stringify(r.body).slice(0, 200));
+  r = await post(`/${d.name}/semantic-dupes/compare-all/resume`, {});
+  ok(r.status === 409 && r.body.code === 'JOB_NOT_PAUSED', 'K.3 and cannot be resumed');
+  r = await post(`/${d.name}/semantic-dupes/compare-all/stop`, {});
+  ok(r.status === 409 && r.body.code === 'JOB_NOT_PAUSED', 'K.4 nothing paused: nothing to stop');
+  const checks = await dc.loadDuplicateChecks(d.name);
+  ok(checks.size > 0, 'K.5 what it compared stays remembered');
+  const none = family(5);
+  r = await post(`/${none.name}/semantic-dupes/compare-all/stop`, {});
+  ok(r.status === 409, 'K.6 no job at all: refused');
+}
+
+section('L. First open: the last figures, with no pass over the page names');
+{
+  const d = family(24);
+  const llm = fakeLLM();
+  job.__setCompareAllLlmForTest(null);
+  await ai.scanSemanticDuplicates(d.name, { maxPairs: 40, costCeilingTokens: 1e9, generateText: llm });
+  const figures = await dc.loadDuplicateFigures(d.name);
+  ok(figures && figures.checkedPairs === 40 && figures.totalPairs > 40 && figures.model === MODEL, 'L.1 a scan leaves its figures', JSON.stringify(figures));
+
+  ai.__testing.forgetCandidateMemo();
+  const passes = ai.__testing.candidateFullPasses();
+  const q = await get(`/${d.name}/semantic-dupes/status?quick=1`);
+  ok(ai.__testing.candidateFullPasses() === passes, 'L.2 the quick read makes no pass', String(ai.__testing.candidateFullPasses() - passes));
+  ok(q.body.totalPairs === figures.totalPairs && q.body.checkedPairs === 40 && q.body.leftPairs === figures.totalPairs - 40, 'L.3 and answers with the figures');
+  ok(q.body.figuresFrom === 'last-count', 'L.4 and says where they came from');
+  ok(q.body.quote && q.body.quote.candidatePairs > 0 && typeof q.body.quote.estimatedUsd === 'number', 'L.5 the next batch has a price at once', JSON.stringify(q.body.quote).slice(0, 160));
+  ok(q.body.allQuote && q.body.allQuote.pairs === q.body.leftPairs && typeof q.body.allQuote.estimatedUsd === 'number', 'L.6 and so does the rest');
+  const real = await get(`/${d.name}/semantic-dupes/compare-all/estimate`);
+  ok(Math.abs(real.body.estimatedUsd - q.body.allQuote.estimatedUsd) < 1e-9, 'L.7 and that price equals the real estimate, on figures that have not moved');
+
+  process.env.LLM_MODEL = 'gemini-3.1-flash-lite';
+  const other = await get(`/${d.name}/semantic-dupes/status?quick=1`);
+  delete process.env.LLM_MODEL;
+  ok(other.body.totalPairs === undefined && other.body.quote === undefined, 'L.8 figures from another model say nothing about this one');
+
+  const fresh = family(6);
+  const none = await get(`/${fresh.name}/semantic-dupes/status?quick=1`);
+  ok(none.body.hasChecks === false && none.body.totalPairs === undefined, 'L.9 nothing remembered: nothing claimed');
+
+  await post(`/${d.name}/semantic-dupes/forget`, {});
+  ok((await dc.loadDuplicateFigures(d.name)) === null, 'L.10 Forget takes the figures too');
+  const bad = family(5);
+  await ai.scanSemanticDuplicates(bad.name, { maxPairs: 2, costCeilingTokens: 1e9, generateText: fakeLLM() });
+  const f = path.join(getDuplicateChecksDir(), 'figures', encodeURIComponent(bad.name) + '.json');
+  writeFileSync(f, '{not json');
+  ok((await dc.loadDuplicateFigures(bad.name)) === null, 'L.11 a bad figures file reads as nothing');
+
+  // One pass per list: a press during the first count asks for the same list.
+  ai.__testing.forgetCandidateMemo();
+  const before = ai.__testing.candidateFullPasses();
+  const [a, b] = await Promise.all([ai.estimateCompareAll(d.name), ai.estimateCompareAll(d.name)]);
+  ok(ai.__testing.candidateFullPasses() === before + 1, 'L.12 two readers during a count share one pass', String(ai.__testing.candidateFullPasses() - before));
+  ok(a.totalPairs === b.totalPairs, 'L.13 and read the same figures');
 }
 
 job.__setCompareAllLlmForTest(null);

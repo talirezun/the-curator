@@ -8319,15 +8319,48 @@ To stop a rhythm of pressing the same spot, the desk has **no keyboard shortcut 
 
 | What you see | What it means | What to do |
 |---|---|---|
-| *500 of 36,333 pairs compared* | This computer has answers for those 500 | **Compare the next 500**, when you have dealt with the pairs in Your decision |
+| *500 of 36,333 pairs compared* | This computer has answers for those 500 | **Compare the next 500**, when you have dealt with the pairs in Your decision, or **Compare all 35,833** to finish in one go |
 | *All 943 pairs compared* | Nothing left to send | Work through what is listed |
 | *No pairs compared yet* | No run on this computer | **Compare the next N** |
 | *No two page names look alike* | There is nothing to compare | Nothing |
 | *Working out the cost…* | The pass over every page name is running; on a large domain that takes about 15 seconds | Carry on: everything else still works |
-| *About 500 of 36,333 pairs compared* | A merge changed the list, and the true figures are on their way | Carry on |
+| *About 500 of 36,333 pairs compared* | The last count, while the true figures are on their way (after a merge, or when you first open a domain) | Carry on: the buttons already work |
 | *20 pairs could not be compared because the AI call failed. They will be tried again next time.* | Part of the run failed | **Compare the next** tries them again |
 
 Pairs found by earlier runs and not yet decided come back into Possible duplicates at no cost.
+
+**Compare all remaining.** Beside **Compare the next N**, once a run has been made and more is left than one run sends, **Compare all N ≈ $x** does the rest as one job. Press it and a question opens under the row with the whole cost: how many pairs, about how many tokens, about how many dollars, and about how long.
+
+- **It may go over your limit for one run.** That limit is about one press of Compare the next, and the question shows you the total, so one yes can be larger than it, and it says so when it is. In exchange, **it stops by itself at 120% of what you confirmed**.
+- **How honest the figures are.** They are priced on your model. If that model is unavailable the app may answer on a newer one that costs more: the question says so, the job counts what is really billed, and the stop is in real dollars, so a dearer model stops it sooner. A time is only given where it has been measured, which today is Gemini 2.5 Flash Lite; on any other model the question says the time is not known. A free or unpriced model is confirmed in tokens, with no invented price.
+
+While it runs, the row shows where it is, and you can go on working: review pairs, merge, leave the page or the domain.
+
+| What you see on the row | What it means | What to do |
+|---|---|---|
+| *Comparing 4,600 of 36,333…* and, under it, *$0.21 spent · 12 new pairs found so far · about 1 hour 20 minutes left* | It is running. The job is on the server, so it carries on if you leave. Found pairs reach Possible duplicates as they land | **Pause**, or nothing |
+| *Paused at 4,600 of 36,333. $0.21 spent.* | You paused it, and no more calls are made | **Resume** carries on, on the amount you already confirmed. **Stop** closes it |
+| *Paused when The Curator closed, at 4,600 of 36,333.* | The app closed or restarted. The spend can read one call low. Nothing starts spending by itself, ever | **Resume** or **Stop** |
+| *Paused at …*, with *Gemini says this account is out of credits…* under it | The provider refused for lack of credits (HTTP 402, or its own words for it). It pauses on the first refusal. What it compared is saved and paid for | Add credits with your provider, then **Resume** |
+| *Stopped at the limit: it had spent $2.00 and would have passed $2.00, 120% of the $1.67 you confirmed.* | The stop did its job, before the call that would have passed it. Answers so far are saved | Press **Compare all** again: it shows what is left and asks you to confirm a new amount |
+| *A comparison is already running in "research"…* | One job at a time, across all your domains: two would share one provider's rate limit, and one person cannot watch two meters | Wait, or pause that one |
+| *3 pairs to review*, with **Review**, on this row | Pairs were found while there was no Possible duplicates row to count them. A new row would have moved the page while you were reading it | **Review**, or wait: the row appears the next time the panel is read |
+
+While it runs, **Compare the next** and **Forget all comparisons** are not offered in that domain. A read-only Shared Brain mirror does not offer Compare all. A scan started by an agent over the MCP runs in its own process and is not seen by the job: that can repeat some pairs, never harm data.
+
+```mermaid
+flowchart LR
+    A[Compare all N] --> Q[The question:<br/>count, tokens, dollars, time]
+    Q -- "yes" --> R[Running.<br/>Answers saved<br/>after each batch]
+    R -- "Pause" --> P[Paused]
+    R -- "out of credits, or<br/>3 failed batches running" --> P
+    R -- "the app closed" --> P
+    P -- "Resume, only by you" --> R
+    P -- "Stop" --> E[Ordinary row]
+    R -- "next call would pass<br/>120% of what you confirmed" --> S[Stopped: says why]
+    S -- "a new question,<br/>a new amount" --> Q
+    R -- "every pair answered" --> D[All N pairs compared]
+```
 
 ```mermaid
 flowchart LR

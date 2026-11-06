@@ -229,7 +229,10 @@ function stopReasonBeforeCall(run) {
     return {
       kind: 'stop', stopReason: 'spend-limit',
       reason: limit.kind === 'usd'
-        ? `Stopped at the limit: it had spent $${used.toFixed(4)} and would have passed $${limit.stopAt.toFixed(4)}, 120% of the $${limit.confirmed.toFixed(4)} you confirmed. Answers so far are saved.`
+        ? (used >= limit.stopAt
+          // One call can pass it: what a call costs is only known once it has answered.
+          ? `Stopped at the limit: it had spent $${used.toFixed(4)}, past $${limit.stopAt.toFixed(4)}, 120% of the $${limit.confirmed.toFixed(4)} you confirmed, because a call's cost is only known once it answers. Answers so far are saved.`
+          : `Stopped at the limit: it had spent $${used.toFixed(4)} and would have passed $${limit.stopAt.toFixed(4)}, 120% of the $${limit.confirmed.toFixed(4)} you confirmed. Answers so far are saved.`)
         : `Stopped at the limit: it had used ${Math.round(used).toLocaleString()} tokens and would have passed ${Math.round(limit.stopAt).toLocaleString()}, 120% of what you confirmed. Answers so far are saved.`,
     };
   }

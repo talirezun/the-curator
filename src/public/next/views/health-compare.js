@@ -146,7 +146,7 @@ export function createCompareAll(deps) {
   function schedule(slug) {
     clearTimeout(pollTimer);
     pollSlug = slug;
-    pollTimer = setTimeout(() => { tick(slug); }, POLL_MS);
+    pollTimer = setTimeout(() => { tick(slug); }, deps.pollMs || POLL_MS);
   }
 
   function stopPolling() {
@@ -189,7 +189,9 @@ export function createCompareAll(deps) {
     const was = jobs.get(slug);
     jobs.set(slug, job);
     const moved = !was || was.state !== job.state;
-    if (job && job.progress && job.progress.totalPairs > 0 && (ACTIVE.has(job.state) || job.state === 'paused' || job.state === 'done' || job.state === 'stopped')) {
+    // Only a job this page is watching. An old record is older than the row's own count (a
+    // merge, a short run), and it could land after that count had.
+    if (job && job.progress && job.progress.totalPairs > 0 && (ACTIVE.has(job.state) || (was && ACTIVE.has(was.state)))) {
       deps.setCoverage(job.progress.totalPairs, job.progress.checkedPairs);
     }
     return { was, moved };
@@ -233,8 +235,9 @@ export function createCompareAll(deps) {
       const r = await deps.fetchJSON(api(slug, 'status'));
       if (slug !== deps.slug()) return;
       const { moved } = take(slug, r.job);
-      if (r.job && r.job.progress) foundSeen.set(slug, r.job.progress.found);
       if (moved) deps.render(); else patch(slug);
+      // Pairs found while nobody was looking. Once per page, however often the panel is read.
+      if (r.job && r.job.progress && r.job.progress.found > 0) pullPairs(slug, r.job);
       if (ACTIVE.has(r.job.state)) { if (pollSlug !== slug || !pollTimer) schedule(slug); }
     } catch { /* free and optional: the row reads as usual without it */ }
   }
@@ -365,6 +368,7 @@ export function createCompareAll(deps) {
       if (!what) return false;
       const slug = deps.slug();
       if (pressing) return true;
+      pressing = what; // here, not after the next tick: a double click is two presses in one tick
       Promise.resolve().then(() => act(slug, what)).catch(() => {});
       return true;
     },

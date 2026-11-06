@@ -2,8 +2,16 @@
 .dm-compare-reading { font-variant-numeric: tabular-nums; }
 
 /* The label changes on one node, so it holds its width: Pause, Pausing…, Resume. */
-.dm-compare-job-btn { min-width: 104px; justify-content: center; }
-.dm-compare-job-stop { min-width: 72px; justify-content: center; }
+.dm-compare-job-btn,
+.dm-compare-job-stop {
+  flex: none;
+  height: var(--control-sm);
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+  justify-content: center;
+}
+.dm-compare-job-btn { min-width: 104px; }
+.dm-compare-job-stop { min-width: 72px; }
 .dm-health .dm-lane .dm-group-summary > .dm-compare-job-stop { flex: none; }
 
 .dm-compare-job {

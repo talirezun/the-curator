@@ -403,12 +403,13 @@ async function walk(app) {
   await chipReady(app);
   await press(app, CHIP);
   await waitFor(page, () => !!document.querySelector('#dm-confirm-yes'), 'the confirm');
+  await delay(350); // the card has opened: a person presses what has stopped moving
   await press(app, '#dm-confirm-yes');
   await waitFor(page, () => /Stopped at the limit/.test((document.querySelector('[data-row-key="compare-job"]') || {}).innerText || ''), 'stopped at 120%', 800);
   await delay(100);
   const stopped = await lineText(page);
   const jobStop = await jobOf(app, 'main');
-  step(`[${pn}] it says why and what was spent`, /Stopped at the limit: it had spent \$[\d.]+ and would have passed \$[\d.]+, 120% of the \$[\d.]+ you confirmed/.test(stopped), stopped);
+  step(`[${pn}] it says why and what was spent`, /Stopped at the limit: it had spent \$[\d.]+(,| and would have) (past|passed) \$[\d.]+, 120% of the \$[\d.]+ you confirmed/.test(stopped), stopped);
   step(`[${pn}] and how to continue`, /To carry on, compare again: it asks you to confirm a new amount/.test(stopped), stopped);
   step(`[${pn}] state is stopped, reason spend-limit`, jobStop.state === 'stopped' && jobStop.stopReason === 'spend-limit', jobStop.state);
   // A call can pass the limit by at most its own size: the job predicts from its largest call.
@@ -430,9 +431,12 @@ async function walk(app) {
   if (quietPairs === 0) {
     await press(app, CHIP);
     await waitFor(page, () => !!document.querySelector('#dm-confirm-yes'), 'the confirm');
+    await delay(350);
     await press(app, '#dm-confirm-yes');
     await waitFor(page, (s) => !!document.querySelector(s), 'running', 200, JOB);
+    await delay(400); // the question has closed
     await page.evaluate((s) => document.querySelector(s).scrollIntoView({ block: 'center' }), ROW);
+    await delay(250);
     const q = await watchRow(page, 2500);
     step(`[${pn}] a first found pair puts no row above`, q.maxAbove <= 1 && q.maxMove <= 1, JSON.stringify(q));
     await waitFor(page, () => /pairs? to review/.test((document.querySelector('[data-row-key="compare-job"]') || {}).innerText || ''), 'the count on the row', 600);
@@ -489,9 +493,11 @@ async function walkBig(app) {
   await chipReady(app);
   await press(app, CHIP);
   await waitFor(page, () => !!document.querySelector('#dm-confirm-yes'), 'the confirm', 1200);
+  await delay(350);
   await shot(app, 'big-2-confirm');
   await press(app, '#dm-confirm-yes');
   await waitFor(page, (s) => !!document.querySelector(s), 'running', 400, JOB);
+  await delay(400);
   await page.evaluate((s) => document.querySelector(s).scrollIntoView({ block: 'center' }), ROW);
   await waitFor(page, () => /Comparing [\d,]+ of [\d,]+…/.test((document.querySelector('[data-compare-reading]') || {}).textContent || ''), 'the figures on the row', 1200);
   const w = await watchRow(page, 8000);

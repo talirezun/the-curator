@@ -3441,6 +3441,7 @@ function syncSemanticScan(slug, token, opening) {
   fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/status?quick=1').then((q) => {
     if (!q || !q.hasChecks || activeSemanticScan() || slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.semanticScan = newSemanticScan(slug, q);
+    state.compareArrivals = null; // this read holds them all
     // The last count's figures and what they would cost, with no pass over the page names:
     // the row can be pressed at once and says "About" until the real count lands.
     if (q.quote && !activeSemanticQuote()) state.semanticQuote = { slug, est: q.quote, forNext: q.quote.nextPairs, stale: true };

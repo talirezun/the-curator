@@ -60,7 +60,7 @@ export const DECK = [
   'AI help', 'Uses your AI model. Each action shows its cost first.', 'each action shows its cost', 'Change model',
   'Runs on {name} · each action shows its cost · Change model', 'Runs on {name}', 'Last run: {name}', 'Last run: {name} · {x}', '{x}',
   'Needs an AI provider key', 'Add one in Providers & keys', 'Needs an AI provider key · Add one in Providers & keys',
-  'Compare pages for duplicates', 'No pairs compared yet', 'Compare the next {n}', 'Compare the next {n} {x}', '{n} of {n} pairs compared',
+  'Compare pages for duplicates', 'Compare all {n}', 'Compare all {n} {x}', 'Compare all for', 'Compare all for {x}', 'Compare all {n} remaining pairs?', 'Compare all 1 remaining pair?', 'No pairs compared yet', 'Compare the next {n}', 'Compare the next {n} {x}', '{n} of {n} pairs compared',
   'Working out the cost…', 'Compare the next…', 'All {n} pairs compared', 'No two page names look alike', 'About {n} of {n} pairs compared',
   'Comparing {n} of {n}…', '{n} pairs could not be compared because the AI call failed. They will be tried again next time.',
   'Could not compare pages: {msg}', 'Forget all comparisons',

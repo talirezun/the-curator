@@ -2314,7 +2314,7 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
 
 What this computer already knows, for the panel to open with after a reload. **No LLM call and no wiki read beyond page openings.** With nothing remembered it answers `{ok: true, hasChecks: false}` at once, without deriving the candidate list. Otherwise `{ok: true, hasChecks: true, pairs, totalPairs, checkedPairs, leftPairs, nextPairs, rememberedPairs}`, where `pairs` are the remembered, undecided duplicates (same shape as the scan's). It also answers `hasChecks: false` when no provider is configured, because whether an answer applies depends on the model.
 
-With `?quick=1` it returns only `{ok: true, hasChecks, pairs}`, with **no candidate pass**, so the panel can show the pairs at once on a large domain and fetch the figures with a second, plain call.
+With `?quick=1` it returns `{ok: true, hasChecks, pairs}` with **no candidate pass**, so the panel can show the pairs at once on a large domain and fetch the figures with a second, plain call. When a scan or a count has left figures for this provider and model it adds them: `totalPairs`, `checkedPairs`, `leftPairs`, `nextPairs`, `figuresFrom: "last-count"`, `quote` (the next run's `candidatePairs`, `estimatedTokens`, `estimatedUsd`, `priceKnown`, `costNote`) and `allQuote` (the same for every pair left, as `/compare-all/estimate` prices them). They are the last count, not a fresh one: a button may wear them, a confirm reads fresh ones.
 
 **After a merge the figures stay exact without a full pass.** When pages have only gone since the last count, the pairs touching them are filtered out of the kept list, which equals a full pass, order included: a pair's candidacy and score depend on its two names alone (`scripts/test-duplicate-job.js` checks it at 2,000 pages). `figuresFrom` is `full-pass` or `memo-filtered`, and `estimated` is `false` on both (the same two fields are on `/estimate`). `checkedPairs` can fall by more than the deleted page's pairs: a merge usually changes the kept page's opening, and answers bound to the old opening no longer apply. That part is read from disk every time. A new page or a rename goes through a full pass. With `?reconcile=1`, for when the panel opens, the full pass runs once if the list on hand was filtered; otherwise it costs nothing.
 
@@ -2357,7 +2357,7 @@ The confirm for **Compare all remaining**: every pair not yet answered. No LLM c
 - `rateBasis`: `measured` (Flash Lite: $0.046 per 1,000 pairs at v3.91.0), `measured-tokens` (`claude-haiku-5-5`: tokens measured, price not) or `assumed` (any other model: about 450 tokens per pair). `timeBasis`: `measured` on Flash Lite (165 ms per pair), otherwise `assumed`.
 - A tiered model is priced at the tier its batch prompt falls in. A free model has `estimatedUsd: null, priceKnown: true`; an unpriced one `estimatedUsd: null, priceKnown: false`. Those two are confirmed in tokens.
 - **The figure is for the configured model.** If it is unavailable a newer, usually dearer model may answer; `fallbackNote` says so, and the job prices each call at the model that really answered.
-- `overCeiling: true` says the pass is larger than the per-run ceiling in Settings. That ceiling applies to one press of **Check the next N** and is not applied here: the limit that binds is the amount confirmed at start.
+- `overCeiling: true` says the pass is larger than the per-run ceiling in Settings. That ceiling applies to one press of **Compare the next N** and is not applied here: the limit that binds is the amount confirmed at start.
 
 ## POST /api/health/:domain/semantic-dupes/compare-all/start
 
@@ -2371,11 +2371,15 @@ Stops the job before its next provider call. The call in flight finishes and is 
 
 Runs a paused job again on the amount already confirmed, with what it spent still counted, sending only pairs without an answer. Pressed while a pause is still waiting on its call, the run simply carries on.
 
+## POST /api/health/:domain/semantic-dupes/compare-all/stop
+
+Closes a **paused** job: `state: "stopped"`, `stopReason: "user"`, `reason: null`. What it compared stays remembered, and it cannot be resumed (a new start needs a new confirm). `JOB_RUNNING` 409 while it runs: pause it first. `JOB_NOT_PAUSED` 409 with nothing paused.
+
 ## GET /api/health/:domain/semantic-dupes/compare-all/status
 
 Read-only: reads one small file, writes nothing, safe to poll. `{ok: true, job}`. `job.state` is `none`, `running`, `pausing`, `paused`, `stopped`, `done` or `failed`. A record that says running with no run in this process (the app restarted) **reads as paused**, `pauseReason: "restart"`, `recovered: true`. Nothing auto-starts spend.
 
-`job` holds `model`, `provider`, `limit {kind: "usd"|"tokens", confirmed, stopAt}`, `spent {usd, calls, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, `answeredBy {<model>: {calls, usd}}`, `fallbackAnswered`, `progress {pairsThisRun, processed, totalPairs, checkedPairs, rememberedPairs, found, failedBatches, failedPairs}`, `secondsLeft`, `pauseReason` (`user`, `restart`, `provider-errors`), `stopReason` (`spend-limit`, `price-unknown`, `fallback-not-confirmed`, `domain-missing`, `failed`), `reason` (a plain sentence), `lastError`. `spent` counts every completed provider call, split retries and fallback rungs included. After a crash it can read one call low, and `recovered` says a crash happened. `runningElsewhere` names another domain's running job.
+`job` holds `model`, `provider`, `limit {kind: "usd"|"tokens", confirmed, stopAt}`, `spent {usd, calls, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, `answeredBy {<model>: {calls, usd}}`, `fallbackAnswered`, `progress {pairsThisRun, processed, totalPairs, checkedPairs, rememberedPairs, found, failedBatches, failedPairs}`, `secondsLeft`, `pauseReason` (`user`, `restart`, `provider-errors`: out of credits on the first refusal, anything else after 3 failed batches in a row), `stopReason` (`spend-limit`, `price-unknown`, `fallback-not-confirmed`, `domain-missing`, `failed`, `user`), `reason` (a plain sentence, never the provider's JSON), `lastError` (the provider's error as it came). `spent` counts every completed provider call, split retries and fallback rungs included. After a crash it can read one call low, and `recovered` says a crash happened. `runningElsewhere` names another domain's running job.
 
 **Error codes** (`{error, code}`): `JOB_CONFIRM_REQUIRED` 400, `JOB_ESTIMATE_STALE` 409 (the confirm was for another model), `JOB_RUNNING` 409 with `running: {domain, state}` (one at a time across domains), `SCAN_RUNNING` 409, `JOB_NOT_RUNNING` 409, `JOB_NOT_PAUSED` 409, `JOB_MODEL_CHANGED` 409, `NO_PROVIDER` 400.
 
@@ -2385,7 +2389,7 @@ While a job runs in a domain, `POST /scan` and `POST /forget` there answer 409 `
 
 ## POST /api/health/:domain/semantic-dupes/forget
 
-Forgets which pairs were checked in this domain: removes `<user data>/.duplicate-checks/<domain>.json`. The wiki and the dismissals are untouched, and the next scan starts over and costs money again. Allowed on a read-only mirror, because the file is this computer's and not the mirror's. Returns `{ok: true}`.
+Forgets which pairs were checked in this domain: removes `<user data>/.duplicate-checks/<domain>.json` and its last figures. The wiki and the dismissals are untouched, and the next scan starts over and costs money again. Allowed on a read-only mirror, because the file is this computer's and not the mirror's. Returns `{ok: true}`.
 
 ---
 
