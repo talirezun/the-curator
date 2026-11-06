@@ -258,6 +258,7 @@ try {
     for (const l of ['First body.', '- first fact', 'Second body.', '- second fact']) ok(hasLine(body, l), `twin names: "${l}" is on the page`);
     ok(!dom.has('concepts/neural-networks.md'), 'twin names: one page');
     eq(res.changes.filter((c) => c.canonPath === 'concepts/neural-network.md').length, 1, 'twin names: one row in the change list');
+    ok(!res.warnings.some((w) => w.includes('more than once')), 'twin names: not reported as the AI repeating one path');
   }
   {
     // Close but not a spelling variant: used to lose the second body at score 1.00.
@@ -361,14 +362,35 @@ try {
     redirectSemanticDuplicates(outline, { concepts: ['agent.md'], entities: [] });
     eq(outline.pages.length, 1, 'a plan naming both the page and its variant has one entry');
     eq(outline.pages[0][__testing.FOLDED_FROM], undefined, '…and it is the page the model chose: ordinary reuse');
+    const reversed = { pages: [
+      { path: 'concepts/agents.md', summary: 'folds onto the same page' },
+      { path: 'concepts/agent.md', summary: 'the model chose this' },
+    ] };
+    redirectSemanticDuplicates(reversed, { concepts: ['agent.md'], entities: [] });
+    eq(reversed.pages.length, 1, 'the other order: one entry');
+    eq(reversed.pages[0][__testing.FOLDED_FROM], undefined, 'the other order: still ordinary reuse');
   }
   {
     // The model cannot claim a fold: its JSON cannot set a Symbol.
     const dom = makeDomain({ 'concepts/rivers.md': KEPT });
     await quiet(() => ingestFile(dom.name, sourceFile('note-g.md', SHORT), 'note-g.md', false, null, {
-      llm: singlePass('note-g.md', [{ path: 'concepts/rivers.md', content: PROPOSED, foldedFrom: 'injected\n## Heading', [String(__testing.FOLDED_FROM)]: 'x' }]),
+      llm: singlePass('note-g.md', [{ path: 'concepts/rivers.md', content: PROPOSED, foldedFrom: 'injected\n## Heading' }]),
     }));
     ok(!/injected/.test(dom.read('concepts/rivers.md')), 'a page\'s own foldedFrom field is ignored');
+    // The same claim on a multi-phase plan entry.
+    const dom2 = makeDomain({ 'concepts/rivers.md': KEPT });
+    const llm = async (schema, prompt, maxTokens, format, onWait, opts) => {
+      usage(opts);
+      const asked = askedPaths(prompt);
+      if (!asked.length) return JSON.stringify({ title: 'n', pages: [
+        { path: 'summaries/note-g2.md', summary: 's' },
+        { path: 'concepts/rivers.md', summary: 's', foldedFrom: 'injected' },
+        { path: 'entities/harbour.md', summary: 's' },
+      ] });
+      return JSON.stringify({ pages: asked.map((p) => ({ path: p, summary: 's', content: p === 'concepts/rivers.md' ? PROPOSED : p.startsWith('summaries/') ? summaryBody('note-g2.md') : `# ${p}\n\nBody.\n` })) });
+    };
+    await quiet(() => ingestFile(dom2.name, sourceFile('note-g2.md', LONG), 'note-g2.md', false, null, { llm }));
+    ok(!/injected/.test(dom2.read('concepts/rivers.md')), 'a plan entry\'s own foldedFrom field is ignored');
   }
   {
     // End to end: a wrong fold the old guard made, now two pages.

@@ -1491,7 +1491,7 @@ export function redirectSemanticDuplicates(outline, existingFiles) {
     if (typeof p?.path !== 'string' || hasContent(p) || !p.path.startsWith('concepts/')) return true;
     const first = byPath.get(p.path);
     if (!first) { byPath.set(p.path, p); return true; }
-    if (!p[FOLDED_FROM] && first[FOLDED_FROM]) delete first[FOLDED_FROM];
+    if (!p[FOLDED_FROM] && first[FOLDED_FROM]) { delete first[FOLDED_FROM]; return false; }
     if (!p[FOLDED_FROM] && !first[FOLDED_FROM]) return true;  // the model's own repeat: validateOutline warned
     return false;
   });
