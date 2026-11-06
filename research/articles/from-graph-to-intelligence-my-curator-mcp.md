@@ -178,7 +178,7 @@ The Curator has a comprehensive Health section in its app UI, and I have investe
 
 But it has a practical limitation at scale. A large document — a 50-page research report, say — can generate 50, 80, even 100 broken links when its summary references concept pages that do not yet exist. Processing these through the in-app Health UI, one confirmation at a time, is slow. Necessary, but slow.
 
-> **Update, 26 September 2026.** The app closed most of this gap soon after. Each domain's **Wiki health** panel now has a **Quick maintenance** bar that works in batches: one button applies every safe, deterministic fix at once, and two AI buttons fix all broken links or find homes for all orphan pages in a single reviewed plan, each naming its cost before it runs ([user guide §17](../../docs/user-guide.md#quick-maintenance--the-action-bar-v301-beta17)). The MCP route below still works; it is no longer the only fast one.
+> **Update, 26 September 2026.** The app closed most of this gap soon after. Each domain's **Wiki health** panel now has a **Quick maintenance** bar that works in batches: one button applies every safe, deterministic fix at once, and two AI buttons fix all broken links or find homes for all orphan pages in a single reviewed plan, each naming its cost before it runs ([user guide §17](../../docs/user-guide.md#the-ai-help-lane)). The MCP route below still works; it is no longer the only fast one.
 
 **My Curator MCP changes this calculus significantly.**
 
