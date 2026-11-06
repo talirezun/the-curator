@@ -194,6 +194,7 @@ AuthKey_*.p8
 # getDuplicateChecksDir()). Machine-local cache; in REPO mode it lands beside
 # tracked source, and it names the owner's pages.
 .duplicate-checks/
+.duplicate-jobs/
 
 # MCP install manifest (v3.85.0, src/brain/paths.js getMcpInstallManifestPath()) —
 # every write the app made to another tool's MCP config, with ABSOLUTE paths on

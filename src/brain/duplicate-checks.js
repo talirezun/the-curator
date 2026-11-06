@@ -187,6 +187,30 @@ export function isSpellingVariant(slugA, slugB) {
 }
 
 /**
+ * What the app itself can say about two page NAMES, computed here and sent with
+ * every pair so no view carries a copy of the rule. It replaces a model's opinion
+ * of itself on screen; it is not a merge gate (batch eligibility is
+ * isSpellingVariant plus a remembered answer).
+ *   'spelling-variant'  the same name apart from separators, case, a narrow plural
+ *   'version-differs'   the same words with different numbers in them:
+ *                       claude-opus-4.6 / claude-opus-4.7, gpt-4-1 / gpt-41, gemini / gemini-3
+ *   'different-names'   everything else, including iphone-14 / iphone-14s and gpt-4 / gpt-4o,
+ *                       whose letters differ
+ * The words are compared after removing digits and separators; an empty remainder
+ * (2024 / 2025) says nothing about the words, so it is 'different-names'.
+ */
+export function nameRelation(slugA, slugB) {
+  if (isSpellingVariant(slugA, slugB)) return 'spelling-variant';
+  const parts = (slug) => {
+    const s = String(slug).toLowerCase();
+    return { words: s.replace(/[\d\W_]+/g, ''), numbers: (s.match(/\d+/g) || []).map((d) => d.replace(/^0+(?=\d)/, '')).join('.') };
+  };
+  const a = parts(slugA);
+  const b = parts(slugB);
+  return a.words && a.words === b.words && a.numbers !== b.numbers ? 'version-differs' : 'different-names';
+}
+
+/**
  * Index pairs of spelling variants among `slugs`, in linear time. Both candidate
  * passes usually find these anyway; this makes sure they are always candidates.
  */

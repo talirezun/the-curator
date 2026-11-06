@@ -26,6 +26,7 @@ import {
   fixIssue,
   AUTO_FIXABLE,
   previewSemanticDuplicateMerge,
+  semanticMergeBasisNow,
 } from '../../src/brain/health.js';
 import {
   estimateSemanticDuplicateScan,
@@ -159,7 +160,7 @@ const FIXABLE_TYPES = new Set([
   'semanticDupe',   // pseudo-type for semantic-dupe merge (Phase 3, DESTRUCTIVE, gated)
 ]);
 
-const SEMANTIC_DUPE_PREVIEWED = new Set();
+const SEMANTIC_DUPE_PREVIEWED = new Map(); // preview key → the basis that preview returned
 function previewKey(issue) {
   if (!issue) return null;
   const a = `${issue.removeFolder || issue.folderA}/${issue.removeSlug || issue.slugA}`;
@@ -180,6 +181,7 @@ export const fixWikiIssueDefinition = {
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
     "Without a preview having been performed in this MCP session, a preview: false call on semanticDupe is refused. " +
+    "A preview covers exactly what it showed: the same page kept and the same text on both pages. If either changed, or you swap which page stays, the merge is refused (reason: 'preview-stale'), nothing is written, and you preview again. " +
     "indexDrift is app-only and is refused here (reason: 'app-only'): the user rebuilds index.md in the app's Wiki health.",
   inputSchema: {
     type: 'object',
@@ -251,6 +253,7 @@ export async function fixWikiIssueHandler(args, storage) {
   if (!issue || typeof issue !== 'object') return { ok: false, error: 'issue is required and must be an object' };
 
   // ── semanticDupe: hard preview gate ──────────────────────────────────────
+  let previewedBasis = null;
   if (type === 'semanticDupe') {
     const key = previewKey(issue);
     if (preview) {
@@ -276,7 +279,7 @@ export async function fixWikiIssueHandler(args, storage) {
         }
         throw err;
       }
-      if (key) SEMANTIC_DUPE_PREVIEWED.add(`${domain.value}|${key}`);
+      if (key) SEMANTIC_DUPE_PREVIEWED.set(`${domain.value}|${key}`, planned.basis);
       return {
         ok: true,
         preview: true,
@@ -293,6 +296,7 @@ export async function fixWikiIssueHandler(args, storage) {
       };
     }
     // Consume the preview token so each merge requires a fresh preview.
+    previewedBasis = SEMANTIC_DUPE_PREVIEWED.get(`${domain.value}|${key}`);
     SEMANTIC_DUPE_PREVIEWED.delete(`${domain.value}|${key}`);
   }
 
@@ -312,6 +316,22 @@ export async function fixWikiIssueHandler(args, storage) {
 
   let result;
   try {
+    // Under the lock, so what it compares is what the merge reads. The preview's key
+    // above does not know which way round a pair was, and knows nothing of its text.
+    // A gone page has no basis, and goes on to fixIssue's own refusal.
+    if (previewedBasis) {
+      const now = await semanticMergeBasisNow(domain.value, issue);
+      if (now !== null && now !== previewedBasis) {
+        return {
+          ok: false,
+          domain: domain.value,
+          type,
+          reason: 'preview-stale',
+          error: 'One of these pages changed since the preview, or the page to keep is a different one now.',
+          report: 'REFUSED — nothing was written. One of these pages changed since the preview, or the page to keep is a different one now. Call fix_wiki_issue with preview: true again, show the user the new plan, then commit that.',
+        };
+      }
+    }
     result = await fixIssue(domain.value, type, issue);
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }

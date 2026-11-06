@@ -1077,6 +1077,12 @@ const HEALTH_GUARD_CLASSES = [
         'computes and returns a merge diff preview; read-only, no wiki write.' },
       { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
         'removes one machine-local cache file in the user-data dir, outside domains/; no wiki page, sidecar or lock involved.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/start', reason:
+        'runs for up to hours and writes nothing under domains/: the LLM scan is read-only (health-ai.js), its answers and the job record are machine-local files in the user-data dir. Holding the write lock for its length would block every ingest and sync for no reason; it has its own single-flight gate (duplicate-job.js, 409 JOB_RUNNING).' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/resume', reason:
+        'the same job as /compare-all/start, with the same reasons: no write under domains/, and its own single-flight gate.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/pause', reason:
+        'sets a flag on the running job and answers; writes nothing under domains/.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'runs the deterministic pre-pass + AI batches and streams the plan; read-only — the write happens in the separate, guarded /broken-links/apply route.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1128,6 +1134,8 @@ const HEALTH_GUARD_CLASSES = [
         'read-only diff preview; writes nothing to the domain.' },
       { method: 'POST', path: '/:domain/semantic-dupes/forget', reason:
         'writes nothing into domains/<domain>/: the cache it clears is this machine\'s and a Pull never touches it.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/pause', reason:
+        'stops spending on a job that is already running; refusing that on a mirror would keep the spend going. Writes nothing into domains/<domain>/.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'read-only planning stage; the write is in /broken-links/apply, which carries the guard.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1341,7 +1349,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 17, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget
+    expectedMutatingCount: 20, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via
@@ -1720,6 +1728,8 @@ const WRITABILITY_ROUTES = [
   { method: 'POST', path: '/broken-links/apply',         body: {},                             label: '/broken-links/apply' },
   { method: 'POST', path: '/orphans/apply',              body: {},                             label: '/orphans/apply' },
   { method: 'POST', path: '/semantic-dupes/merge-batch', body: {},                             label: '/semantic-dupes/merge-batch' },
+  { method: 'POST', path: '/semantic-dupes/compare-all/start', body: {},                       label: '/semantic-dupes/compare-all/start' },
+  { method: 'POST', path: '/semantic-dupes/compare-all/resume', body: {},                      label: '/semantic-dupes/compare-all/resume' },
   { method: 'POST', path: '/dismiss',                    body: dismissBody,                    label: '/dismiss' },
   { method: 'POST', path: '/undismiss',                  body: dismissBody,                    label: '/undismiss' },
   // v3.83.0 — the index rebuild. /index/plan is read-only but still refuses a

@@ -23,11 +23,11 @@ import { createHash } from 'crypto';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
-import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates } from './llm.js';
+import { generateText, getProviderInfo, getModelPrice, isFreeModel, estimateRates, TIER_ESTIMATE_MARGIN } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki, listMd } from './health.js';
-import { loadDismissed, filterDismissed } from './health-dismissed.js';
+import { loadDismissed, filterDismissed, keyForIssue } from './health-dismissed.js';
 import {
-  loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant, isMergeableSlug,
+  loadDuplicateChecks, saveDuplicateChecks, pairKey, openingsHash, pageOpening, isSpellingVariant, isMergeableSlug, nameRelation,
 } from './duplicate-checks.js';
 // v3.67.0: one estimate shape and one actual shape for every AI job. The
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
@@ -584,9 +584,35 @@ function semanticKeepSlug(canonical, info) {
  * for far more often (the estimate, then the scan, then coverage after a merge and
  * on returning to the page), so it is worth not re-deriving when neither input
  * moved. One entry, so a large domain's list is the most this ever holds.
+ *
+ * AFTER A MERGE IT DOES NOT START AGAIN. When pages have only gone (a merge, here or
+ * from another process, or a delete in Obsidian), the pairs touching them are taken
+ * out of the kept list. That list EQUALS a full pass, order included, because:
+ *   - whether a pair is a candidate and its score depend on those two names only
+ *     (tokenizeSlug, candidatePairScore, jaroWinkler, the two shape tests), with no
+ *     document frequency or other whole-domain figure;
+ *   - each pass adds pairs by rising index, and removing a page keeps the others'
+ *     relative order, so a stable sort breaks ties the same way;
+ *   - dismissals are applied to the ranked list last, in both routes.
+ * scripts/test-duplicate-job.js checks this against a full pass over thousands of
+ * pages. Any new page goes the slow way: nothing is known about its pairs. So
+ * `estimated` is false on either route, and `figuresFrom` says which it was.
+ * `checkedPairs` can still fall by more than the removed pairs: a merge changes the
+ * kept page's opening, and answers bound to the old opening no longer apply. That
+ * is re-read from disk every time, never derived.
  */
 let candidateMemo = null;
-async function liveCandidates(domain) {
+let candidateFullPasses = 0;
+
+function removalOnly(memo, entities, concepts) {
+  const now = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
+  for (const page of now) if (!memo.pages.has(page)) return null;
+  const gone = new Set();
+  for (const page of memo.pages) if (!now.has(page)) gone.add(page);
+  return { now, gone };
+}
+
+async function liveCandidates(domain, { reconcile = false } = {}) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
   const [entities, concepts, dismissed] = await Promise.all([
@@ -595,10 +621,39 @@ async function liveCandidates(domain) {
   const sig = createHash('sha256')
     .update(JSON.stringify([[...entities].sort(), [...concepts].sort(), [...dismissed.keys].sort()]))
     .digest('hex');
-  if (candidateMemo && candidateMemo.domain === domain && candidateMemo.sig === sig) return candidateMemo.result;
-  const result = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER);
-  candidateMemo = { domain, sig, result };
+  const memo = candidateMemo && candidateMemo.domain === domain ? candidateMemo : null;
+  // A reconcile only repeats the pass when the list on hand was derived: asking for
+  // it on every panel open would make each open as slow as the worst case.
+  const mustRecount = reconcile && memo && memo.figuresFrom === 'memo-filtered';
+  if (memo && !mustRecount) {
+    if (memo.sig === sig) return memo.result;
+    const change = removalOnly(memo, entities, concepts);
+    if (change) {
+      const ranked = change.gone.size === 0 ? memo.ranked : memo.ranked.filter((p) =>
+        !change.gone.has(`${p.folderA}/${p.slugA}`) && !change.gone.has(`${p.folderB}/${p.slugB}`));
+      const filtered = filterDismissed(ranked, 'semanticDupe', dismissed.keys);
+      const result = {
+        pageCount: entities.length + concepts.length,
+        pairs: filtered.kept,
+        truncated: false,
+        totalCandidates: filtered.kept.length,
+        dismissed: filtered.dismissed,
+      };
+      candidateMemo = { domain, sig, result, ranked, pages: change.now, figuresFrom: 'memo-filtered' };
+      return result;
+    }
+  }
+  candidateFullPasses++;
+  const { ranked, ...result } = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER, { includeRanked: true });
+  const pages = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
+  candidateMemo = { domain, sig, result, ranked, pages, figuresFrom: 'full-pass' };
   return result;
+}
+
+/** Where the list on hand came from, for the coverage a route reports. */
+function candidateFigures(domain) {
+  const from = candidateMemo && candidateMemo.domain === domain ? candidateMemo.figuresFrom : 'full-pass';
+  return { figuresFrom: from, estimated: false };
 }
 
 /** Reads each page's opening once per pass. A page that cannot be read has an empty opening. */
@@ -638,6 +693,7 @@ function pairFromRecord(rec, p) {
     confidence: rec.confidence,
     rationale: typeof rec.rationale === 'string' && rec.rationale ? rec.rationale : 'No rationale provided.',
     spellingVariant: isSpellingVariant(keep.slug, remove.slug),
+    nameRelation: nameRelation(keep.slug, remove.slug),
     remembered: true,
   };
 }
@@ -647,8 +703,8 @@ function pairFromRecord(rec, p) {
  * layer that knows about remembered answers; findSemanticCandidatePairs stays
  * free of them. No provider call and no write.
  */
-async function planSemanticScan(domain, maxPairs, readOpening) {
-  const { pairs: live, pageCount } = await liveCandidates(domain);
+async function planSemanticScan(domain, maxPairs, readOpening, candidateOpts) {
+  const { pairs: live, pageCount } = await liveCandidates(domain, candidateOpts);
   let info = null;
   try { info = getProviderInfo(); } catch { info = null; }
   const checks = await loadDuplicateChecks(domain);
@@ -710,15 +766,16 @@ export async function semanticRememberedPairs(domain) {
  * Free: no provider call, and with nothing remembered it answers without even
  * deriving the candidate list, so a domain nobody has scanned costs one file read.
  */
-export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
+export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, { reconcile = false } = {}) {
   const checks = await loadDuplicateChecks(domain);
   if (checks.size === 0) return { hasChecks: false };
-  const plan = await planSemanticScan(domain, maxPairs, openingReader(wikiPath(domain)));
+  const plan = await planSemanticScan(domain, maxPairs, openingReader(wikiPath(domain)), { reconcile });
   if (!plan.info) return { hasChecks: false }; // no provider: nothing can be said to apply
   return {
     hasChecks: true,
     pairs: plan.remembered,
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
+    ...candidateFigures(domain),
   };
 }
 
@@ -744,10 +801,84 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
     totalCandidates: plan.live.length,
     truncated: plan.toCheck.length > maxPairs,
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
+    ...candidateFigures(domain),
     estimatedTokens,
     ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
     provider,
     model,
+  };
+}
+
+/**
+ * Tokens one pair costs, for the "Compare all remaining" estimate. The per-run
+ * estimate above keeps its 400 (a ceiling's budget, and pinned as such); a whole
+ * pass needs a figure that can sit beside a stop at 120%.
+ *
+ * gemini-2.5-flash-lite: $0.046 per 1,000 pairs is the v3.91.0 measurement (a full
+ * pass of 36,332 pairs, about $1.70). The split is derived, not measured: a batch of
+ * 20 sends two openings of at most 500 characters per pair (about 280 tokens with
+ * its share of the instructions), and the output is what the dollars leave over.
+ * claude-haiku-5-5: about 450 tokens per pair is measured (v3.91.0, "10-15% low"
+ * against 400); its split is assumed.
+ * Everything else is unmeasured: Haiku's figure, the larger of the two, is used and
+ * the estimate says `rateBasis: 'assumed'`.
+ */
+const COMPARE_PAIR_TOKENS = Object.freeze({
+  'gemini-2.5-flash-lite': Object.freeze({ input: 280, output: 45, basis: 'measured' }),
+  'claude-haiku-5-5': Object.freeze({ input: 290, output: 160, basis: 'measured-tokens' }),
+});
+const COMPARE_PAIR_TOKENS_DEFAULT = Object.freeze({ input: 290, output: 160, basis: 'assumed' });
+/** Measured on Flash Lite at v3.91.0 (36,332 pairs in about 100 minutes). Stated as assumed for any other model. */
+const COMPARE_SECONDS_PER_PAIR = 0.165;
+
+/**
+ * The confirm for "Compare all remaining": every pair not yet answered, in tokens,
+ * dollars and time. No provider call and no write.
+ *
+ * PRICE. Per call, a batch's prompt is about 6,000 tokens and is known in advance, so
+ * a tiered model is quoted at the tier that prompt really falls in (through
+ * `estimateRates`, with its margin), and never at a flat rate. A free model has
+ * `estimatedUsd: null` and `priceKnown: true`, and an unpriced one `priceKnown: false`,
+ * as on every other estimate. Those two are confirmed in tokens instead.
+ *
+ * A FALLBACK. This figure is for the model configured now, and says so. If that model
+ * is unavailable the chain moves forward to a newer model that usually costs more
+ * (2.5x in and 3.75x out for Flash Lite's first rung), so the estimate would be low.
+ * Nothing here pretends otherwise: `fallbackNote` is shown with it, the job prices
+ * each call at the model that really answered, reports `answeredBy`, and the stop at
+ * 120% is of dollars billed, so a dearer rung stops the job early and says why.
+ */
+export async function estimateCompareAll(domain) {
+  const plan = await planSemanticScan(domain, Number.MAX_SAFE_INTEGER, openingReader(wikiPath(domain)));
+  const { provider, model } = getProviderInfo();
+  const pairs = plan.toCheck.length;
+  const rate = COMPARE_PAIR_TOKENS[model] || COMPARE_PAIR_TOKENS_DEFAULT;
+  const inputTokens = pairs * rate.input;
+  const outputTokens = pairs * rate.output;
+  const promptBound = SEMANTIC_BATCH_SIZE * rate.input * TIER_ESTIMATE_MARGIN;
+  let cost;
+  if (isFreeModel(model)) {
+    cost = costFields(provider, model, inputTokens, outputTokens);
+  } else {
+    const r = estimateRates(model, promptBound);
+    cost = r
+      ? { estimatedUsd: (inputTokens * r.input + outputTokens * r.output) / 1_000_000, priceKnown: true, costNote: null }
+      : costFields(provider, model, inputTokens, outputTokens);
+  }
+  return {
+    pageCount: plan.pageCount,
+    pairs,
+    batches: Math.ceil(pairs / SEMANTIC_BATCH_SIZE),
+    ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, pairs),
+    ...candidateFigures(domain),
+    estimatedTokens: inputTokens + outputTokens,
+    ...cost,
+    estimatedSeconds: Math.ceil(pairs * COMPARE_SECONDS_PER_PAIR),
+    rateBasis: rate.basis,
+    timeBasis: model === 'gemini-2.5-flash-lite' ? 'measured' : 'assumed',
+    provider,
+    model,
+    fallbackNote: 'Priced on this model. If it is unavailable the app may answer on a newer model that costs more; the job counts what is really billed and stops at your limit.',
   };
 }
 
@@ -785,11 +916,18 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   // what the run actually cost. `opts.onUsage` is forwarded when given.
   const llm = typeof opts.generateText === 'function' ? opts.generateText : generateText;
   const usage = makeUsageAccumulator(typeof opts.onUsage === 'function' ? opts.onUsage : null);
+  // The compare-all job's two additions. `shouldStop` is asked before EVERY provider
+  // call, a split's halves included, and it ends the run cleanly: what is saved stays
+  // saved. `liveWiki` is for a run long enough for the wiki to change under it: it
+  // drops pairs whose page has gone before paying for them, and reads openings fresh
+  // for each batch rather than remembering them from when the run began.
+  const shouldStop = typeof opts.shouldStop === 'function' ? opts.shouldStop : null;
+  let stopped = false;
 
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
-  const readOpening = openingReader(wikiDir);
+  let readOpening = openingReader(wikiDir);
   const plan = await planSemanticScan(domain, maxPairs, readOpening);
   const candidatePairs = plan.send;
 
@@ -841,6 +979,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   // network error is not about this batch, so it fails as it always did. Every
   // call reports into the same accumulator, so retries are in what the run spent.
   const judgeBatch = async (batch, bi, depth) => {
+    if (stopped || (shouldStop && shouldStop())) { stopped = true; return; }
     const batchInfo = [];
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i];
@@ -935,6 +1074,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
         confidence: conf,
         rationale,
         spellingVariant: isSpellingVariant(keepSlug, removeSlug),
+        nameRelation: nameRelation(keepSlug, removeSlug),
         remembered: false,
       };
       acceptedPairs.push(accepted);
@@ -947,9 +1087,17 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   };
 
   for (let bi = 0; bi < batches.length; bi++) {
-    await judgeBatch(batches[bi], bi, 0);
+    // Here as well as before each call: a batch whose pages have all gone makes no call.
+    if (shouldStop && shouldStop()) { stopped = true; break; }
+    let batch = batches[bi];
+    if (opts.liveWiki) {
+      readOpening = openingReader(wikiDir);
+      batch = batch.filter((p) => existsSync(path.join(wikiDir, p.folderA, p.slugA + '.md')) && existsSync(path.join(wikiDir, p.folderB, p.slugB + '.md')));
+    }
+    if (batch.length) await judgeBatch(batch, bi, 0);
+    if (stopped) break;
     processed += batches[bi].length;
-    onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
+    onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length, checkedPairs });
   }
 
   // Rough token ≈ 4 chars. Good enough for a user-facing "you spent $X" readout.
@@ -967,8 +1115,97 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   // (v3.67.0) is the provider-reported figure, in the one actual shape.
   const spent = (await aiRun()).spentFromUsage(usage.totals);
   const coverage = coverageFields(totalPairs, checkedPairs, rememberedPairs, maxPairs);
-  onEvent({ type: 'done', pairs: acceptedPairs, cost, spent, failedPairs, ...coverage });
-  return { pairs: acceptedPairs, cost, spent, failedPairs, ...coverage };
+  const ended = stopped ? { stopped: true } : {};
+  onEvent({ type: 'done', pairs: acceptedPairs, cost, spent, failedPairs, ...coverage, ...ended });
+  return { pairs: acceptedPairs, cost, spent, failedPairs, ...coverage, ...ended };
+}
+
+/**
+ * Open pairs grouped by the pages they share, for one decision per family. READ-ONLY:
+ * no provider call and no write, and it derives no candidate list.
+ *
+ * A~B AND B~C DO NOT PROVE A~C. A family is only "these pages are connected by
+ * answers", so every statement about a page and the page that stays is looked up for
+ * that exact pair and is one of:
+ *   'same' / 'different'  the AI compared these two, and that answer still applies
+ *   'stale'               it answered once, but about other openings or on another model
+ *   'kept-both'           the user decided to keep these two
+ *   'never'               the AI never compared them
+ * `suggestedStay` is the page with the most open pairs, then the page the AI named as
+ * the keeper most often, then the first by name. It decides nothing.
+ */
+export async function semanticFamilies(domain, { stay = null } = {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+  const { pairs } = await semanticRememberedPairs(domain);
+  const parent = new Map();
+  const find = (x) => {
+    if (!parent.has(x)) parent.set(x, x);
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root);
+    while (parent.get(x) !== root) { const next = parent.get(x); parent.set(x, root); x = next; }
+    return root;
+  };
+  const degree = new Map();
+  const keeper = new Map();
+  for (const p of pairs) {
+    const k = `${p.keepFolder}/${p.keepSlug}`;
+    const r = `${p.removeFolder}/${p.removeSlug}`;
+    parent.set(find(k), find(r));
+    degree.set(k, (degree.get(k) || 0) + 1);
+    degree.set(r, (degree.get(r) || 0) + 1);
+    keeper.set(k, (keeper.get(k) || 0) + 1);
+  }
+  const groups = new Map();
+  for (const page of parent.keys()) {
+    const root = find(page);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(page);
+  }
+
+  const info = (() => { try { return getProviderInfo(); } catch { return null; } })();
+  const checks = await loadDuplicateChecks(domain);
+  const { keys: dismissedKeys } = await loadDismissed(domain);
+  const readOpening = openingReader(wikiDir);
+  const split = (page) => { const at = page.indexOf('/'); return { folder: page.slice(0, at), slug: page.slice(at + 1) }; };
+
+  const between = async (x, y) => {
+    const a = split(x);
+    const b = split(y);
+    if (dismissedKeys.has(keyForIssue('semanticDupe', { folderA: a.folder, slugA: a.slug, folderB: b.folder, slugB: b.slug }))) {
+      return { compared: 'kept-both' };
+    }
+    const rec = checks.get(pairKey(a.folder, a.slug, b.folder, b.slug));
+    if (!rec) return { compared: 'never' };
+    const [oa, ob] = await Promise.all([readOpening(a.folder, a.slug), readOpening(b.folder, b.slug)]);
+    const applies = info && rec.provider === info.provider && rec.model === info.model && rec.prompt === SEMANTIC_PROMPT_ID
+      && rec.openings === openingsHash(a.folder, a.slug, oa, b.folder, b.slug, ob);
+    if (!applies) return { compared: 'stale' };
+    if (rec.verdict !== 'yes') return { compared: 'different' };
+    return { compared: 'same', confidence: rec.confidence, rationale: rec.rationale || 'No rationale provided.' };
+  };
+
+  const families = [];
+  for (const pagesOf of groups.values()) {
+    const pagesSorted = [...pagesOf].sort();
+    const suggestedStay = [...pagesSorted].sort((x, y) =>
+      (degree.get(y) - degree.get(x)) || ((keeper.get(y) || 0) - (keeper.get(x) || 0)) || (x < y ? -1 : 1))[0];
+    const stays = stay && pagesSorted.includes(stay) ? stay : suggestedStay;
+    const pages = [];
+    for (const page of pagesSorted) {
+      const { folder, slug } = split(page);
+      pages.push({
+        page, folder, slug,
+        opening: await readOpening(folder, slug),
+        ...(page === stays ? { stays: true } : { ...(await between(page, stays)), nameRelation: nameRelation(slug, split(stays).slug) }),
+      });
+    }
+    const inFamily = new Set(pagesOf);
+    const openPairs = pairs.filter((p) => inFamily.has(`${p.keepFolder}/${p.keepSlug}`)).length;
+    families.push({ size: pages.length, openPairs, suggestedStay, stays, pages });
+  }
+  families.sort((a, b) => (b.size - a.size) || (a.suggestedStay < b.suggestedStay ? -1 : 1));
+  return { families, openPairs: pairs.length };
 }
 
 // ── Phase 4 (v3.0.1-beta.16) — Bulk AI broken-link resolution ───────────────
@@ -1662,4 +1899,7 @@ export const __testing = {
   estimateUsdCost,
   costFields,
   HEALTH_TOKEN_SPLIT,
+  liveCandidates,
+  candidateFullPasses: () => candidateFullPasses,
+  forgetCandidateMemo: () => { candidateMemo = null; },
 };
