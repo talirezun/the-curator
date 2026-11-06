@@ -2303,7 +2303,7 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
 
 `recentNewPages` is `{pages, pairs}`: how many recently ingested pages still have an unanswered pair, and how many such pairs there are. Those pairs are sent first. It is `{pages: 0, pairs: 0}` when there are none or the record is lost. The same field is on `GET .../semantic-dupes/status` (when `hasChecks` is true), `GET .../semantic-dupes/compare-all/estimate` and the scan's `start` event, and is `recent_new_pages` in the MCP tool `scan_semantic_duplicates`'s estimate.
 
-An ingest's `done` event, its `result` in `GET /api/ingest/activity` and each batch item's `result` carry `newPagesToCompare`: `{newPages, comparable, pairs}`, or `null` when no page was created or no comparison could run on the domain. `comparable` is how many of the created pages have an unanswered candidate pair. The result shows a line only when it is above 0.
+An ingest's `done` event, its `result` in `GET /api/ingest/activity` and each batch item's `result` carry `newPagesToCompare`: `{newPages, comparable, pairs}`. When no page was created or no comparison could run on the domain, it is absent from the `done` event and `null` in the other two. `comparable` is how many of the created pages have an unanswered candidate pair. The result shows a line only when it is above 0.
 
 **Errors**
 

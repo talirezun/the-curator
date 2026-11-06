@@ -457,7 +457,7 @@ try {
     const { ingestDoneEvent } = await import(path.join(REPO, 'src/routes/ingest.js'));
     const figure = { newPages: 4, comparable: 2, pairs: 9 };
     eq(ingestDoneEvent({ title: 't', newPagesToCompare: figure }, 'false').newPagesToCompare, figure, 'the done event carries the figure');
-    eq(ingestDoneEvent({ title: 't' }, 'false').newPagesToCompare, null, 'an older result shape: null');
+    ok(!('newPagesToCompare' in ingestDoneEvent({ title: 't', newPagesToCompare: null }, 'false')), 'nothing to say: the field is absent, the event as it was');
 
     const activity = await import(path.join(REPO, 'src/brain/ingest-activity.js'));
     activity.__resetActivityForTests();

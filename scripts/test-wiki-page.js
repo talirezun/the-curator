@@ -1349,6 +1349,8 @@ try {
       'MERGED_PREVIEW_CAP_CHARS',
       'applyBrokenLinkFixes', 'collapseRepeatedLinks', /* pure: reads a report it is handed, writes nothing */ 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
+      // Read-only like findSemanticCandidatePairs beside it: lists names, writes nothing. No §8b case.
+      'candidatePairsTouching',
       'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',
       // v3.83.0: the index rebuild. planIndexRebuild is read-only;
       // applyIndexRebuild writes ONE file, wiki/index.md, via writeFileAtomic

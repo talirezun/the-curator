@@ -1113,6 +1113,7 @@
 .ing-queue-done-unaccounted { color: var(--text); font-weight: var(--weight-medium); }
 .ing-queue-done-health { margin-top: var(--space-4); font-size: var(--text-xs); color: var(--text-2); }
 .ing-new-pages-line { margin-top: var(--space-4); font-size: var(--text-xs); color: var(--text-2); }
+.ing-new-pages-line .ing-browse-link { padding: 0; background: none; border: 0; }
 /* v3.72.1 (F12): the model each finished file actually billed. */
 .ing-queue-done-ranon { margin-top: var(--space-4); font-size: var(--text-xs); color: var(--text-2); }
 
