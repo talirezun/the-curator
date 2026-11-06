@@ -800,11 +800,8 @@ async function scenarios(app, profile) {
     const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /otherwise it cannot be undone/.test(c.innerText) }; }, SEL.confirmYes);
     step(`[${profile.name}] the deleting yes is danger, names its result and carries the warning`, /btn-danger/.test(conf.cls) && /^Merge and delete \d+$/.test(conf.label) && conf.warn, JSON.stringify(conf));
     await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(400);
-    const headH = () => page.evaluate(() => [...document.querySelectorAll('.dm-lane-head')].map((e) => [e.getBoundingClientRect().height, e.querySelector('.dm-lane-end') ? e.querySelector('.dm-lane-end').getBoundingClientRect().height : 0, e.querySelector('.btn') ? e.querySelector('.btn').getBoundingClientRect().height : 0].join('/')).join(' '));
-    note(`[${profile.name}] lane heads before: ${await headH()}`);
     const m = await act(app, profile, 'lane-repair-row', { press: SEL.fixAll('missingBacklinks'), place: 450, outcome: [SEL.done], settle: 120, runs: true });
     await shot('row-done');
-    note(`[${profile.name}] lane heads during: ${await headH()}`);
     step(`[${profile.name}] a free repair opens no question`, !!m && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)));
     await delay(HELD);
     const tr = await page.evaluate((s) => (document.querySelector(s) || {}).innerText || '', SEL.lane('free') + ' ' + SEL.laneReading);

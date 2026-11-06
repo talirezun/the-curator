@@ -251,13 +251,24 @@ try {
     await delay(1600);
     ok((await reqs(/\/api\/health\/alpha\/fix$/, 'POST')).length === 1, 'a free Fix all: one press, one POST, no question');
   }
-  await press('.dm-quick-btn[data-action="fixSafe"]');
-  if (await page.evaluate(() => !!document.getElementById('dm-confirm-yes'))) await press('#dm-confirm-yes');
-  await delay(1600);
-  ok((await reqs(/\/fix-all-safe$/, 'POST')).length === 1, 'Fix N safe issues: exactly one POST');
+  if (await page.evaluate(() => !!document.getElementById('dm-repair-all-btn'))) {
+    await press('#dm-repair-all-btn');
+    ok(!(await page.evaluate(() => !!document.getElementById('dm-confirm-yes'))), 'Repair all asks nothing');
+    await delay(1600);
+    const sent = await reqs(/\/api\/health\/alpha\/fix$/, 'POST');
+    ok(sent.length >= 2 && sent.length <= 4, 'Repair all: one POST per free row', JSON.stringify(sent));
+  }
+  ok((await reqs(/\/fix-all-safe$/, 'POST')).length === 0, 'and the route that also deletes is never called');
   ok((await kept()).section, 'and the section survived all of it');
 
+  // Compare wears its cost, and waits for it: the row has to be on screen first.
+  const compareReady = async () => {
+    await place('[data-group-key="compare"]');
+    for (let i = 0; i < 400 && await page.evaluate(() => { const b = document.querySelector('.dm-quick-btn[data-action="semanticDupes"]'); return !b || b.disabled; }); i++) await delay(50);
+    await delay(100);
+  };
   section('§4 A press inside a disabled button');
+  await compareReady();
   const control = await page.evaluate(() => {
     const b = document.querySelector('.dm-quick-btn[data-action="semanticDupes"]');
     const svg = b.querySelector('svg');
@@ -286,9 +297,12 @@ try {
   await page.evaluate(() => { document.querySelector('.dm-quick-btn[data-action="semanticDupes"]').disabled = false; });
 
   section('§5 Duplicates: every action, once');
+  await compareReady();
   await press('.dm-quick-btn[data-action="semanticDupes"]');
   await press('#dm-confirm-yes');
-  ok((await reqs(/semantic-dupes\/scan/, 'POST')).length === 1, 'Find duplicate pages: one scan');
+  ok((await reqs(/semantic-dupes\/scan/, 'POST')).length === 1, 'Compare the next: one run');
+  await press('.dm-review-btn');
+  ok(await page.evaluate(() => document.querySelector('.dm-review-btn').getAttribute('aria-expanded') === 'true'), 'Review opens the list');
   const cards0 = await page.evaluate(() => document.querySelectorAll('.dm-sem-card').length);
   ok(cards0 === 50, 'the list shows its page of 50', cards0);
   await press('#dm-semantic-more-btn');
@@ -344,20 +358,23 @@ try {
   await press('#dm-semantic-merge-btn');
   await press('#dm-confirm-yes');
   ok((await reqs(/merge-batch/, 'POST')).length === 1, 'Merge N spelling variants: one POST');
-  if (await page.evaluate(() => !!document.querySelector('#dm-semantic-next-btn'))) {
-    await press('#dm-semantic-next-btn');
-    ok(!!(await text('.dm-confirm-card')), 'Check the next opens its confirm');
+  await delay(600);
+  if (await page.evaluate(() => !!document.querySelector('.dm-quick-btn[data-action="semanticDupes"]'))) {
+    await compareReady();
+    await press('.dm-quick-btn[data-action="semanticDupes"]');
+    ok(!!(await text('.dm-confirm-card')), 'Compare the next opens its confirm');
     await press('#dm-confirm-no');
   }
   // Surviving nodes hand the browser's scroll anchoring something to hold. This
   // press sits under the list and the confirm opens above it, so with anchoring
   // on, the browser moves scrollTop and carries the confirm further off screen.
+  await page.evaluate(() => { document.querySelector('[data-group-key="compare"]').open = true; }); await delay(150);
   await place('#dm-semantic-reset-btn'); await delay(60);
   const scrollBefore = await page.evaluate(() => document.getElementById('main').scrollTop);
   await press('#dm-semantic-reset-btn');
   const scrollAfter = await page.evaluate(() => document.getElementById('main').scrollTop);
   ok(Math.abs(scrollAfter - scrollBefore) <= 1, 'a confirm opening above the press leaves scrollTop alone', scrollAfter + ' from ' + scrollBefore);
-  ok(!!(await text('.dm-confirm-card')), 'Check everything again opens its confirm');
+  ok(!!(await text('.dm-confirm-card')), 'Forget all comparisons opens its confirm');
   await press('#dm-confirm-yes');
   ok((await reqs(/semantic-dupes\/forget/, 'POST')).length === 1, 'and its Confirm sends one forget');
 
@@ -368,14 +385,14 @@ try {
   const rowsBefore = await page.evaluate(() => document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row').length);
   await mark();
   await press('[data-group-key="orphans"] .dm-issue-row:nth-child(2) .dm-dismiss-btn', { y: 450 });
-  ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Dismiss: one POST');
+  ok((await reqs(/\/dismiss$/, 'POST')).length === 1, 'Leave as is: one POST');
   await delay(1600);
-  ok(await page.evaluate((n) => document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row').length === n - 1, rowsBefore), 'the row left');
+  ok(await page.evaluate((n) => document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row').length === n && !!document.querySelector('.dm-left-undo-btn'), rowsBefore), 'the row stays in place, with Undo');
   ok(await page.evaluate(() => { const rows = [...document.querySelectorAll('[data-group-key="orphans"] .dm-issue-row')]; return rows.length > 0 && rows.every((r) => r.__mark === 1); }), 'and the other rows are the same nodes');
   await press('[data-group-key="dismissed"] > summary');
-  ok(!!(await page.evaluate(() => document.querySelector('.dm-restore-btn'))), 'opening Dismissed, with a real press, loads its list');
+  ok(!!(await page.evaluate(() => document.querySelector('.dm-restore-btn'))), 'opening Left as is, with a real press, loads its list');
   await press('.dm-restore-btn', { y: 500 });
-  ok((await reqs(/\/undismiss$/, 'POST')).length === 1, 'Restore: one POST');
+  ok((await reqs(/\/undismiss$/, 'POST')).length === 1, 'Bring back: one POST');
   await press('.dm-quick-btn[data-action="orphans"]');
   await press('#dm-confirm-yes');
   ok((await reqs(/orphans\/plan/, 'POST')).length === 1, 'Rescue: one plan');
@@ -391,7 +408,7 @@ try {
   ok((await reqs(/index\/apply/, 'POST')).length === 1, 'and one apply');
 
   section('§7 Folds, with real presses');
-  const foldSel = '[data-group-key="brokenLinks"]';
+  const foldSel = 'details[data-group-key="brokenLinksOpen"], details[data-group-key="orphans"]';
   const was = await page.evaluate((s) => document.querySelector(s).open, foldSel);
   await press(foldSel + ' > summary');
   ok(await page.evaluate((s, w) => document.querySelector(s).open === !w, foldSel, was), 'a press on a summary toggles it');
