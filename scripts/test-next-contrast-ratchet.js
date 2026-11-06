@@ -553,9 +553,10 @@ const successAsText = OWNED.reduce((n, f) => n + colorDecls(['--success-text'], 
 // --text-2. Two of the four keep the tone on their check GLYPH
 // (`.dm-banner-success svg`, `.dm-sem-gate-ok svg`), a non-text mark at the
 // 3:1 floor, which this count still sees — so domains reads 2, both glyphs.
-ok(successAsText === 9,
+// 9 -> 8 in the review desk: `.dm-sem-gate-ok svg` went with the pair cards.
+ok(successAsText === 8,
    `RATCHETED: exactly ${successAsText} declarations across the three owned files paint --success-text as TEXT. ` +
-   'Expected 9 (domains 2 — both check glyphs — sync 0, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
+   'Expected 8 (domains 1 — a check glyph — sync 0, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
    '(4.05 on --surface, 3.59 on --success-tint) reported rather than repaired, because a fourth colour family ' +
    'was outside this wave\'s brief. The fix is the same one applied to amber: tone on the rail, words in --text.');
 

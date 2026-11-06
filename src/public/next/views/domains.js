@@ -39,6 +39,7 @@ import {
 // lands on Settings › Providers & keys (it used to land on General).
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 import { patchInPlace } from '../shared/morph.js';
+import { createReviewDesk } from './health-review.js';
 import { holdLeavingRows, startRowMotion, releaseHeldRows, createScrollFloor } from '../shared/row-motion.js';
 
 // Second import of the SAME module, as a namespace. It was added for one
@@ -539,7 +540,7 @@ const state = {
   pressOpener: null,      // that press's control, to give focus back to
   pressLocks: {},         // control -> width at the press, so its label cannot move it
   ringAnchor: null,       // where the progress ring draws (derived in render)
-  flipFlash: null,        // the pair whose Flip is answering
+  review: null,           // the review desk, while it is open (views/health-review.js)
   busyAway: {},           // slug -> what is running on a domain that is off screen
   healthTrace: null,      // { slug, text, lane, at }: the last thing done, in its lane's head
   leftRows: {},           // rowKey -> a row left as is this round: it keeps its place, with Undo
@@ -3160,7 +3161,7 @@ async function reloadAfterLifecycleChange(token) {
 //
 // WHY THIS SECTION EXISTS AT ALL. The shipping app offers TWO ways to act on
 // a semantic-duplicate pair: a per-pair path where Merge is DISABLED until
-// the user has opened a Preview diff for that exact pair (and the handler
+// the comparison for that exact pair has been on screen for 500 ms (and the handler
 // hard-refuses without it), and a batch "Merge all N high-confidence" path
 // behind a text confirm. /next shipped only the batch path — so the only
 // available action on an LLM's duplicate judgement was "merge all of them,
@@ -3244,7 +3245,7 @@ function isSemanticPreviewed(pair) {
 // 28 pairs, and every page appears in 7 of them. Merging one pair deletes a
 // page that up to N-2 other pairs still name, and before this those siblings
 // stayed on screen as ordinary action cards: Preview failed ("Both pages must
-// exist"), Merge stayed gated behind "Preview required before Merge", and the
+// exist"), Merge stayed gated behind a preview that could not succeed, and the
 // only way out was to re-run a PAID scan.
 //
 // So when a page goes, every OPEN pair that names it — on either side — is
@@ -3347,7 +3348,7 @@ function canMergeSemanticPair(pair) {
     };
   }
   if (known.status !== 'open') return { allowed: false, reason: 'That pair has already been handled.' };
-  if (!s.previewed.has(semanticPairKey(known))) return { allowed: false, reason: 'Open the preview diff for this pair before merging it.' };
+  if (!s.previewed.has(semanticPairKey(known))) return { allowed: false, reason: 'Read the comparison for this pair before merging it.' };
   return { allowed: true, reason: null };
 }
 
@@ -3372,7 +3373,7 @@ function flipSemanticPair(pair) {
     keepFolder: p.removeFolder, keepSlug: p.removeSlug,
     removeFolder: p.keepFolder, removeSlug: p.keepSlug,
     confidence: p.confidence, rationale: p.rationale, status: p.status,
-    spellingVariant: p.spellingVariant, remembered: p.remembered,
+    spellingVariant: p.spellingVariant, remembered: p.remembered, nameRelation: p.nameRelation,
   };
   s.previewed.clear();
   s.preview = null;
@@ -3388,48 +3389,33 @@ function liveBatchPairs() {
   return s.pairs.filter((p) => p.status === 'open' && p.confidence === 'high' && p.spellingVariant === true);
 }
 
-// THERE IS ONE PRIMARY ACTION ON THE RESULTS CARD, and this picks it. A pair
-// already previewed is the decision in hand; then the batch, which clears the
-// most for the least reading; then the first pair to read; only with no pair
-// waiting does the next scan lead. Everything else renders quiet. PURE.
-function semanticPrimaryAction(scan, readonly) {
-  if (!scan || readonly) return null;
-  const open = scan.pairs.filter((p) => p.status === 'open');
-  const previewedOpen = [...scan.previewed].filter((k) => open.some((p) => semanticPairKey(p) === k));
-  if (previewedOpen.length) return { kind: 'merge', key: previewedOpen[previewedOpen.length - 1] };
-  if (open.some((p) => p.confidence === 'high' && p.spellingVariant === true)) return { kind: 'batch' };
-  if (open.length) return { kind: 'preview', key: semanticPairKey(open[0]) };
-  if (scan.coverage && scan.coverage.left > 0 && !scan.counting) return { kind: 'next' };
-  return null;
-}
-
 // Coverage from any server frame that carries it (scan done, estimate, status).
 function semanticCoverageFrom(ev) {
   if (!ev || ![ev.totalPairs, ev.checkedPairs, ev.leftPairs, ev.nextPairs].every(Number.isInteger)) return null;
   return { total: ev.totalPairs, checked: ev.checkedPairs, left: ev.leftPairs, next: ev.nextPairs };
 }
 
-// A long list renders in pages; the counts and the batch still read every pair.
-const SEMANTIC_PAGE_SIZE = 50;
-
 // A NEW SCAN GETS A NEW OBJECT, so the previewed set is empty by construction —
 // there is no set from the previous scan to forget to clear (LAYER 1,
 // structural). The slug stamp is LAYER 2.
+// Ordered high first (stable, so what the server ranked stays ranked inside each). Off the
+// screen, confidence still decides what comes up first.
 function newSemanticScan(slug, frame) {
+  const rank = (p) => (p.confidence === 'high' ? 0 : p.confidence === 'medium' ? 1 : 2);
   return {
     slug,
-    pairs: (frame.pairs || []).map((p) => ({
+    pairs: (frame.pairs || []).slice().sort((a, b) => rank(a) - rank(b)).map((p) => ({
       keepFolder: p.keepFolder, keepSlug: p.keepSlug,
       removeFolder: p.removeFolder, removeSlug: p.removeSlug,
       confidence: p.confidence, rationale: p.rationale,
       spellingVariant: p.spellingVariant === true, remembered: p.remembered === true,
+      nameRelation: p.nameRelation,
       status: 'open',
     })),
     cost: frame.cost,
     coverage: semanticCoverageFrom(frame),
     failedPairs: Number.isInteger(frame.failedPairs) ? frame.failedPairs : 0,
     failedAll: Number.isInteger(frame.failedPairs) && frame.failedPairs > 0 && frame.failedPairs === frame.candidatePairsSent,
-    visible: SEMANTIC_PAGE_SIZE,
     counting: false,
     previewed: new Set(),
     preview: null,
@@ -4396,7 +4382,8 @@ function renderMain(token) {
     '<section class="dm-fold dm-shared" id="dm-shared-fold" aria-labelledby="dm-shared-title">' +
       '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
     '</section>' +
-    (state.banner ? renderBanner() : '') + renderHealthPanel(domain, readonly);
+    (state.banner ? renderBanner() : '') +
+    (typeof renderReviewPanel === 'function' && !readonly && reviewDesk.isOpen() ? renderReviewPanel() : renderHealthPanel(domain, readonly));
 
   setMain(html, token);
   // ── THE HEADER'S THREE CONTROLS, BOUND ONCE PER NODE (v3.64.1) ─────────
@@ -7269,6 +7256,13 @@ function morphHealthSection(before, after) {
   let held = null;
   try {
     const focus = readHealthFocus(before);
+    // Lanes ↔ desk: every row "leaves" at once, and none of them should wait to say so.
+    const hasDesk = (n) => typeof n.querySelector === 'function' && !!n.querySelector('.hr-desk');
+    if (hasDesk(before) !== hasDesk(after)) {
+      if (patchInPlace(before, after, { keyOf: healthMorphKey })) return true;
+      console.warn('Wiki health: the patch did not match; replacing the section.');
+      return false;
+    }
     const top = healthFloor.position();
     held = holdLeavingRows(before, after, {
       selector: HEALTH_ROW, keyOf: healthRowKey, holdFor: healthRowHold, decorate: decorateLeavingRow,
@@ -7279,7 +7273,7 @@ function morphHealthSection(before, after) {
       startRowMotion(before, {
         selector: HEALTH_ROW, keyOf: healthRowKey,
         beforeCollapse: onHealthRowCollapse, afterRemove: onHealthRowRemoved, onOpen: onHealthRowOpen,
-        waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|pair|lane):/.test(healthRowKey(el) || ''),
+        waitToOpen: (el, h) => healthPressY !== null && pageY(el) + h < healthPressY && /^(issue|group|lane):/.test(healthRowKey(el) || ''),
       });
       scheduleHealthSettle(before);
       return true;
@@ -7325,7 +7319,7 @@ function pageY(el) {
   const main = document.getElementById('main');
   return el.getBoundingClientRect().top + (main ? main.scrollTop : 0) + window.scrollY;
 }
-const HEALTH_ROW = '[data-row-key], .dm-group[data-group-key], .dm-sem-card[data-sem-key]';
+const HEALTH_ROW = '[data-row-key], .dm-group[data-group-key]';
 
 const healthFloor = createScrollFloor(() => {
   if (typeof document === 'undefined') return null;
@@ -7367,17 +7361,12 @@ function healthRowCollapseMs() {
   return /ms$/.test(raw) ? n : n * 1000;
 }
 
-function sortedPairKey(key) {
-  return String(key).split('||').sort().join('||');
-}
 
 function healthRowKey(el) {
   const a = el.getAttribute('data-row-key');
   if (a) return a;
   const g = el.getAttribute('data-group-key');
   if (g) return 'group:' + g;
-  const p = el.getAttribute('data-sem-key');
-  if (p) return 'pair:' + sortedPairKey(p);
   return null;
 }
 
@@ -7396,16 +7385,8 @@ function healthRowHold(key, row) {
   // new backlink rescues an orphan), and the reading that says so must not move
   // what you are looking at. Such a row stays, marked, until a press above it or
   // its own fold is touched: releaseHealthRowsBelow.
-  if (healthPressY !== null && /^(issue|group|pair|lane):/.test(key) &&
+  if (healthPressY !== null && /^(issue|group|lane):/.test(key) &&
       pageY(row) + row.getBoundingClientRect().height < healthPressY) return Infinity;
-  if (key.indexOf('pair:') === 0) {
-    let latest = 0;
-    for (const k of Object.keys(state.rowOutcomes)) {
-      const m = heldOutcome(k);
-      if (k.indexOf('pair:') === 0 && m) latest = Math.max(latest, m.at + HEALTH_HOLD_MS);
-    }
-    if (latest) return latest - Date.now();
-  }
   return 0;
 }
 
@@ -7414,17 +7395,12 @@ function decorateLeavingRow(clone, key, row) {
   const o = heldOutcome(key);
   let text = o ? (o.short || o.text) : '';
   if (!o && clone.hasAttribute('data-row-deferred')) text = 'Resolved';
-  if (!o && key.indexOf('pair:') === 0) {
-    const scan = activeSemanticScan();
-    const pair = scan && scan.pairs.find((p) => 'pair:' + sortedPairKey(semanticPairKey(p)) === key);
-    if (pair && pair.status === 'resolved') text = 'Settled by another merge';
-  }
   if (!text) return;
   const done = clone.ownerDocument.createElement('span');
   done.className = 'dm-row-done';
   done.setAttribute('tabindex', '-1');
   done.innerHTML = icon('check', 13) + '<span>' + escapeHtml(text) + '</span>';
-  const SLOT = '.dm-sem-actions, .dm-plan-actions, .dm-confirm-actions, .dm-group-fixall-btn, .dm-dismiss-btn, .dm-restore-btn, .dm-quick-btn, #dm-semantic-merge-btn';
+  const SLOT = '.dm-plan-actions, .dm-confirm-actions, .dm-group-fixall-btn, .dm-dismiss-btn, .dm-restore-btn, .dm-quick-btn, #dm-semantic-merge-btn';
   const slot = clone.querySelector(SLOT);
   if (slot) {
     // It takes exactly the room of what it replaces, so saying so moves nothing.
@@ -7583,7 +7559,6 @@ function healthStackHome(anchor) {
     if (key === 'spelling' || healthGroupAlive(key)) return a;
     return key.indexOf('ai') === 0 ? 'group:compare' : (HEALTH_FREE_GROUPS.has(key) ? 'lane-end:free' : 'lane-end:decision');
   }
-  if (a.indexOf('pair:') === 0) return healthGroupAlive('duplicates') ? 'group:duplicates' : 'lane-end:decision';
   return 'quick';
 }
 
@@ -7848,6 +7823,7 @@ async function loadSemanticQuote(slug, token) {
 }
 
 function afterHealthPaint() {
+  reviewDesk.afterPaint();
   quoteWhenVisible();
   applyPressLocks();
   markHealthOpener();
@@ -7900,7 +7876,6 @@ function resetHealthPressRule() {
   state.pressOpener = null;
   state.pressLocks = {};
   state.leftRows = {};
-  state.flipFlash = null;
   state.healthTrace = null;
   state.healthLive = '';
   healthPressY = null;
@@ -7938,15 +7913,14 @@ function healthMorphKey(el) {
   const a = (name) => el.getAttribute(name);
   if (a('data-row-key')) return 'row:' + a('data-row-key');
   if (a('data-group-key')) return 'group:' + a('data-group-key');
-  if (a('data-sem-key')) {
-    return 'pair:' + a('data-sem-key').split('||').sort().join('||') + ':' + (a('data-sem-action') || '');
-  }
   if (a('data-action')) return 'action:' + a('data-action');
   if (a('data-fixall')) return 'fixall:' + a('data-fixall');
   if (a('data-dismiss-issue')) return 'dismiss:' + a('data-dismiss-type') + ':' + a('data-dismiss-issue');
   if (a('data-restore-key')) return 'restore:' + a('data-restore-key');
   if (a('data-outcome-key')) return 'retry:' + a('data-outcome-key');
   if (a('data-review')) return 'review';
+  if (a('data-review-jump')) return 'review-jump:' + a('data-review-jump');
+  if (a('data-review-key')) return 'review-panes';
   if (a('data-more-group')) return 'more:' + a('data-more-group');
   if (a('data-left-key')) return 'undo:' + a('data-left-key');
   return null;
@@ -8103,6 +8077,68 @@ function renderHealthPanel(domain, readonly) {
       renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (readonly ? '' : renderDescription(GIT_UNDO_NOTE)),
     { alias: 'dm', hostClass: healthRevealCls.trim() }), reading);
+}
+
+// ── THE REVIEW DESK ────────────────────────────────────────────────────────
+// Possible duplicates → Review swaps the card's content for this. What it draws and how it
+// walks is views/health-review.js; what it asks of this file is listed here, and the merge
+// gate itself stays in this file.
+const reviewDesk = createReviewDesk({
+  state,
+  scan: () => activeSemanticScan(),
+  slug: () => state.activeSlug,
+  pairKey: (p) => semanticPairKey(p),
+  gate: (p) => canMergeSemanticPair(p),
+  arm: (p) => armSemanticPair(p),
+  armed: (p) => isSemanticPreviewed(p),
+  disarm: (scan) => disarmSemanticScan(scan),
+  flip: (p) => flipSemanticPair(p),
+  status: (p, s) => markSemanticPairStatus(p, s),
+  compare: (slug, p) => previewSemanticPair(slug, p),
+  merge: (slug, p, cb) => mergeOneSemanticPair(slug, p, cb),
+  keepBoth: (slug, p, cb) => skipSemanticPair(slug, p, cb),
+  bringBack: (slug, p) => bringBackSemanticPair(slug, p),
+  readPage: (path, title) => openWikiPageFromBrowse(path, title),
+  markdown: (text) => renderMarkdown(text),
+  render: () => render(myMountToken),
+  warn: () => GIT_UNDO_WARN,
+  coverageLeft: () => { const s = activeSemanticScan(); return s && s.coverage ? s.coverage.left : 0; },
+  onClosed: (merged) => {
+    if (merged > 0) state.healthTrace = { slug: state.activeSlug, lane: 'decision', text: 'Merged ' + n0(merged), at: new Date().toISOString() };
+    render(myMountToken);
+    const section = document.querySelector('.dm-health');
+    if (!section) return;
+    const back = section.querySelector('.dm-review-btn');
+    if (!focusFirstAlive([back, ...healthNextTargets(section)])) { const t = section.querySelector('#dm-rescan-btn'); if (t) t.focus({ preventScroll: true }); }
+    healthHeadIntoView();
+  },
+});
+
+// The section's one reading, in the same words as with the lanes behind it.
+function reviewPanelReading() {
+  const report = state.health;
+  const scan = activeSemanticScan();
+  const openPairs = scan ? scan.pairs.filter((p) => p.status === 'open').length : 0;
+  const total = report ? totalOpenIssues(report) : 0;
+  const toLook = total + openPairs;
+  const lookedAt = report && report.scannedAt;
+  return (lookedAt ? 'Checked <span data-age-at="' + escapeHtml(lookedAt) + '" data-age-text>' + escapeHtml(relTime(lookedAt)) + '</span> · ' : '') +
+    (toLook === 0 ? 'nothing to look at' : (toLook === 1 ? '1 to look at' : toLook.toLocaleString('en-US') + ' to look at'));
+}
+
+function renderReviewPanel() {
+  return healthSection(renderCard(reviewDesk.html(), { alias: 'dm' }), reviewPanelReading());
+}
+
+// Lanes ↔ desk is the one move the page makes, once, because you pressed for it. It
+// scrolls only when the section's head would otherwise be out of sight.
+function healthHeadIntoView() {
+  const head = document.querySelector('.dm-health .cur-section-hd, .dm-health .dm-section-title');
+  const main = document.getElementById('main');
+  if (!head || !main) return;
+  const r = head.getBoundingClientRect();
+  const top = main.getBoundingClientRect().top;
+  if (r.top < top) main.scrollTop -= top - r.top + 8;
 }
 
 function renderBanner(banner) {
@@ -8373,12 +8409,8 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
   // duplicates, and pairs settled above the press moved it by 973 px at 1280.
   const duplicatesAt = rows.length;
   if (open.length > 0) {
-    const isOpen = state.expandedGroups.has('duplicates');
-    rows.push(renderFoldRow({
-      key: 'duplicates', label: 'Possible duplicates', pill: n0(open.length), open: isOpen, alias: 'dm',
-      actionHtml: readonly ? '' : '<button class="btn btn-secondary dm-review-btn" data-review="1" aria-expanded="' + (isOpen ? 'true' : 'false') + '">Review</button>',
-      bodyHtml: isOpen ? renderSemanticScanResult(readonly, crossMountBusy) : '',
-    }));
+    rows.push(renderPlainRow('duplicates', 'Possible duplicates', n0(open.length), '',
+      readonly ? '' : '<button class="btn btn-secondary dm-review-btn" data-review="1">Review</button>'));
   }
   const batch = readonly ? [] : liveBatchPairs();
   const running = state.busyKey === 'semanticMerge';
@@ -8643,158 +8675,6 @@ function renderPendingPlan(crossMountBusy) {
   );
 }
 
-// THREE outcomes on a handled pair, not two. `merged` and `skipped` are the
-// user's own actions; `resolved` is neither — an earlier merge in this same
-// scan deleted a page this pair named, so it needs nothing from anyone. It
-// was previously indistinguishable from `skipped`, which is the word the UI
-// uses for the user's own Skip (dismiss), so a merge that never ran was
-// presented back as a decision they had made.
-function semanticHandledLabel(p) {
-  if (p.status === 'merged') return 'merged';
-  if (p.status === 'resolved') {
-    return 'resolved by an earlier merge' + (p.resolvedMissing ? ' — ' + p.resolvedMissing + ' is gone' : '');
-  }
-  return 'skipped';
-}
-
-function renderSemanticScanResult(readonly, crossMountBusy) {
-  const s = activeSemanticScan();
-  if (!s) return '';
-  const busy = state.busyKey || crossMountBusy;
-  const open = s.pairs.filter((p) => p.status === 'open');
-  const handled = s.pairs.filter((p) => p.status !== 'open');
-  const primary = semanticPrimaryAction(s, readonly);
-  const visible = s.visible || SEMANTIC_PAGE_SIZE;
-  const cards = open.slice(0, visible).map((p) => renderSemanticPairCard(p, readonly, busy, primary)).join('');
-  const hidden = open.length - visible;
-  const more = hidden > 0 ? (
-    '<div class="dm-plan-actions"><button class="btn btn-secondary" id="dm-semantic-more-btn"' + (busy ? ' disabled' : '') + '>' +
-      'Show ' + Math.min(hidden, SEMANTIC_PAGE_SIZE) + ' more</button></div>'
-  ) : '';
-  const handledRows = handled.slice(0, SEMANTIC_PAGE_SIZE).map((p) => renderFoldItem({
-    alias: 'dm', rowKey: 'handled:' + p.removeFolder + '/' + p.removeSlug + '>' + p.keepFolder + '/' + p.keepSlug,
-    hostClass: 'dm-sem-handled' + (p.status === 'resolved' ? ' dm-sem-handled-resolved' : ''),
-    main: p.removeFolder + '/' + p.removeSlug + ' → ' + p.keepFolder + '/' + p.keepSlug,
-    meta: semanticHandledLabel(p),
-  })).join('');
-
-  return (
-    '<div class="dm-plan-card" data-row-key="scan-results">' +
-      '<div class="dm-plan-title">' + pluralize(open.length > 0 ? open.length : s.pairs.length, 'likely duplicate pair') + ' found</div>' +
-      '<div class="dm-plan-summary">Each merge deletes one page and points its links to the page you keep. The app has no Undo button; with GitHub Sync, a git client can recover it.</div>' +
-      '<div class="dm-sem-list">' + cards + '</div>' +
-      more +
-      (handledRows ? ('<div class="dm-plan-detail" data-row-key="handled-title">Already handled in this scan:</div>' + handledRows) : '') +
-      (handled.length > SEMANTIC_PAGE_SIZE ? '<div class="dm-issue-more">…and ' + (handled.length - SEMANTIC_PAGE_SIZE).toLocaleString('en-US') + ' more</div>' : '') +
-    '</div>'
-  );
-}
-
-// One pair. The four actions mirror the shipping app's per-pair card, which
-// is the ONLY place a semantic duplicate can be acted on with judgement
-// rather than in bulk.
-function renderSemanticPairCard(pair, readonly, busy, primary) {
-  const key = semanticPairKey(pair);
-  const previewed = isSemanticPreviewed(pair);
-  const gate = canMergeSemanticPair(pair);
-  const conf = pair.confidence || 'medium';
-  const confCls = conf === 'high' ? 'dm-sem-conf-high' : (conf === 'low' ? 'dm-sem-conf-low' : 'dm-sem-conf-med');
-  const rowBusy = !!busy;
-  const preview = (activeSemanticScan() || {}).preview;
-  const showPreview = preview && preview.key === key;
-
-  return (
-    '<div class="dm-sem-card" data-sem-key="' + escapeHtml(key) + '">' +
-      '<div class="dm-sem-head">' +
-        '<span class="mono dm-sem-remove">' + escapeHtml(pair.removeFolder + '/' + pair.removeSlug) + '</span>' +
-        '<span class="dm-sem-arrow">→</span>' +
-        '<span class="mono dm-sem-keep">' + escapeHtml(pair.keepFolder + '/' + pair.keepSlug) + '</span>' +
-        '<span class="dm-sem-conf ' + confCls + '">' + escapeHtml(conf) + ' confidence</span>' +
-      '</div>' +
-      '<div class="dm-sem-sub">Keeps <span class="mono">' + escapeHtml(pair.keepSlug) + '</span>, deletes <span class="mono">' +
-        escapeHtml(pair.removeSlug) + '</span>.</div>' +
-      (pair.rationale ? '<div class="dm-sem-rationale">' + escapeHtml(pair.rationale) + '</div>' : '') +
-      (!readonly && conf === 'high' && pair.spellingVariant !== true ? '<div class="dm-sem-sub">Names differ, so check this one yourself.</div>' : '') +
-      (readonly ? '' : (
-        '<div class="dm-sem-actions">' +
-          '<button class="btn ' + (primary && primary.kind === 'preview' && primary.key === key ? 'btn-primary' : 'btn-secondary') + ' dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(key) + '"' + (state.busyKey === 'semanticPreview:' + key ? ' aria-busy="true" aria-disabled="true"' : (rowBusy ? ' disabled' : '')) + '>' +
-            (state.busyKey === 'semanticPreview:' + key ? 'Loading…' : 'Preview diff') + '</button>' +
-          '<button class="btn btn-secondary dm-sem-btn" data-sem-action="flip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') +
-            ' title="Swap which side is kept">' + (state.flipFlash === key.split('||').sort().join('||') ? '↔ Flipped' : '↔ Flip') + '</button>' +
-          '<button class="btn ' + (primary && primary.kind === 'merge' && primary.key === key ? 'btn-primary' : 'btn-secondary') + ' dm-sem-btn" data-sem-action="merge" data-sem-key="' + escapeHtml(key) + '"' +
-            // No `title=`. It carried `gate.reason` — but only while the
-            // button was `disabled`, i.e. exactly when it is NOT focusable,
-            // so the refusal was mouse-only. The same refusal already renders
-            // as visible text five lines below ("Preview required before
-            // Merge"), and when the gate IS open the tooltip only said
-            // "Merge this pair", which is the button's own label.
-            (state.busyKey === 'semanticMergeOne:' + key ? ' aria-busy="true" aria-disabled="true"' : ((rowBusy || !gate.allowed) ? ' disabled' : '')) + '>' +
-            (state.busyKey === 'semanticMergeOne:' + key ? 'Merging…' : 'Merge') + '</button>' +
-          '<button class="btn btn-secondary dm-sem-btn" data-sem-action="skip" data-sem-key="' + escapeHtml(key) + '"' + (state.busyKey === 'semanticSkip:' + key ? ' aria-busy="true" aria-disabled="true"' : (rowBusy ? ' disabled' : '')) + '>' +
-            (state.busyKey === 'semanticSkip:' + key ? 'Skipping…' : 'Skip') + '</button>' +
-          (previewed
-            ? '<span class="dm-sem-gate dm-sem-gate-ok">' + icon('check', 11) + ' previewed</span>'
-            : '<span class="dm-sem-gate">Preview required before Merge</span>') +
-        '</div>'
-      )) +
-      (showPreview ? renderSemanticPreview(preview) : '') +
-      (pair.refusal ? '<div class="dm-sem-refusal" data-row-key="pair-refusal:' + escapeHtml(key) + '">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.refusal) + '</span>' +
-        (!readonly && pair.errorAction ? '<button class="btn btn-secondary dm-sem-btn" data-sem-action="' + escapeHtml(pair.errorAction) + '" data-sem-key="' + escapeHtml(key) + '" data-sem-retry="1"' + (rowBusy ? ' disabled' : '') + '>Try again</button>' : '') +
-        '</div>' : '') +
-      (pair.error ? '<div class="dm-sem-error" data-row-key="pair-error:' + escapeHtml(key) + '">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.error) + '</span>' +
-        // A failure stays, with the way forward beside it. Through the same action
-        // as the button above, so a merge is gated again on the way.
-        (readonly ? '' : '<button class="btn btn-secondary dm-sem-btn" data-sem-action="' + escapeHtml(pair.errorAction || 'merge') + '" data-sem-key="' + escapeHtml(key) + '" data-sem-retry="1"' + (rowBusy ? ' disabled' : '') + '>Try again</button>') +
-        '</div>' : '') +
-    '</div>'
-  );
-}
-
-// The preview renders INLINE, inside the pair's own card — deliberately not
-// in a modal/overlay. v3.6.0 finding 7 was a refused destructive write whose
-// error was written to a status line sitting UNDERNEATH a 92%-opaque
-// full-screen overlay that stayed up: the user saw the button reset and
-// nothing else, read it as "my click didn’t register", and clicked the
-// refused destructive action again. An inline card has no overlay that can
-// hide its own outcome, and it keeps the pair’s context on screen while the
-// user decides.
-function renderSemanticPreview(preview) {
-  if (preview.error) {
-    return '<div class="dm-sem-preview dm-sem-preview-error" data-row-key="preview:' + escapeHtml(preview.key || '') + '">' + icon('alertCircle', 13) +
-      '<span>Could not build a preview — ' + escapeHtml(preview.error) + '</span>' +
-      (preview.key ? '<button class="btn btn-secondary dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(preview.key) + '" data-sem-retry="1">Try again</button>' : '') +
-      '</div>';
-  }
-  const d = preview.data || {};
-  const files = Array.isArray(d.affectedFiles) ? d.affectedFiles : [];
-  const shown = files.slice(0, 12).map((f) =>
-    '<li><span class="mono">' + escapeHtml(f.path) + '</span> — ' + pluralize(f.linkCount || 0, 'link') + '</li>'
-  ).join('');
-  const more = (d.affectedCount || 0) > shown.length
-    ? '<li class="dm-sem-preview-more">…and ' + ((d.affectedCount || 0) - files.slice(0, 12).length) + ' more files</li>'
-    : '';
-  return (
-    '<div class="dm-sem-preview" data-row-key="preview:' + escapeHtml(preview.key || '') + '">' +
-      '<div class="dm-sem-preview-grid mono">' +
-        '<div>keep: ' + escapeHtml(d.keepPath || '') + '</div>' +
-        '<div>delete: ' + escapeHtml(d.removePath || '') + '</div>' +
-        '<div>' + (d.totalLinksRewritten || 0) + ' link rewrites across ' + pluralize(d.affectedCount || 0, 'file') + '</div>' +
-      '</div>' +
-      (files.length ? '<ul class="dm-sem-preview-files">' + shown + more + '</ul>' : '') +
-      // THE CAP IS THE SERVER'S AND IT IS CHARACTERS (v3.72.1, tray F8). It
-      // read "FIRST 4 KB" over a String#slice(0, 4000) — characters, not
-      // bytes — and retyped 4000 for the truncation test. Now the label
-      // names the server's own `mergedPreviewCap`, and "truncated" is decided
-      // by comparing the text actually sent with the full length.
-      '<div class="cur-eyebrow">MERGED CONTENT' +
-        (Number.isInteger(d.mergedPreviewCap) && d.mergedPreviewCap > 0
-          ? ' (FIRST ' + d.mergedPreviewCap.toLocaleString('en-US') + ' CHARACTERS)' : '') + '</div>' +
-      '<pre class="dm-sem-preview-body">' + escapeHtml(d.mergedPreview || '') +
-        ((d.mergedLength || 0) > String(d.mergedPreview || '').length ? '\n…(truncated)' : '') + '</pre>' +
-    '</div>'
-  );
-}
-
 function renderIssueRow(type, issue, readonly, rowView) {
   let main = '';
   let meta = '';
@@ -8988,10 +8868,13 @@ function onHealthClick(e) {
   if (typeof btn.closest === 'function' && btn.closest('summary')) e.preventDefault();
 
   if (btn.classList.contains('dm-review-btn')) {
-    if (state.expandedGroups.has('duplicates')) state.expandedGroups.delete('duplicates');
-    else state.expandedGroups.add('duplicates');
-    state.healthLive = state.expandedGroups.has('duplicates') ? 'Possible duplicates shown.' : 'Possible duplicates hidden.';
-    render(myMountToken);
+    reviewDesk.open();
+    healthHeadIntoView();
+    return;
+  }
+  // The desk answers its own buttons (views/health-review.js).
+  if (typeof btn.closest === 'function' && btn.closest('.hr-desk')) {
+    dispatchHealthAction(() => reviewDesk.onClick(btn));
     return;
   }
   if (btn.classList.contains('dm-show-more-btn')) {
@@ -9042,11 +8925,6 @@ function onHealthClick(e) {
       render(myMountToken);
       return;
     case 'dm-semantic-merge-btn': dispatchHealthAction(() => mergeSemanticDuplicates(domain.slug)); return;
-    case 'dm-semantic-more-btn': {
-      const scan = activeSemanticScan();
-      if (scan) { scan.visible = (scan.visible || SEMANTIC_PAGE_SIZE) + SEMANTIC_PAGE_SIZE; render(myMountToken); }
-      return;
-    }
     case 'dm-semantic-reset-btn': dispatchHealthAction(() => confirmSemanticReset(domain.slug)); return;
     default: break;
   }
@@ -9055,34 +8933,6 @@ function onHealthClick(e) {
   if (btn.classList.contains('dm-quick-btn') && data.action) {
     const action = data.action;
     dispatchHealthAction(() => onQuickAction(domain.slug, action));
-    return;
-  }
-  // Per-pair actions. The pair is looked up from LIVE state by key at click time:
-  // a pair flipped since this markup was painted must be merged in the direction
-  // it now shows.
-  if (btn.classList.contains('dm-sem-btn') && data.semAction) {
-    const action = data.semAction;
-    const key = data.semKey;
-    dispatchHealthAction(() => {
-      const scan = activeSemanticScan();
-      if (!scan) return undefined;
-      const pair = scan.pairs.find((p) => semanticPairKey(p) === key);
-      if (!pair) return undefined;
-      if (action === 'preview') return previewSemanticPair(domain.slug, pair);
-      if (action === 'flip') {
-        flipSemanticPair(pair);
-        // Flip finishes at once, so its answer is its own label for a moment.
-        const flash = sortedPairKey(key);
-        state.flipFlash = flash;
-        state.healthLive = 'Flipped. Keeps ' + pair.removeSlug + '.';
-        render(myMountToken);
-        setTimeout(() => { if (state.flipFlash === flash) { state.flipFlash = null; render(myMountToken); } }, HEALTH_HOLD_MS);
-        return undefined;
-      }
-      if (action === 'merge') return mergeOneSemanticPair(domain.slug, pair);
-      if (action === 'skip') return skipSemanticPair(domain.slug, pair);
-      return undefined;
-    });
     return;
   }
   if (btn.classList.contains('dm-group-fixall-btn') && data.fixall) {
@@ -9121,6 +8971,8 @@ function onHealthToggle(e) {
   if (!el || !el.dataset || !el.dataset.groupKey || !el.classList.contains('dm-group')) return;
   const key = el.dataset.groupKey;
   if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
+  // The desk's list draws its rows only while it is open: a list of thousands costs nothing shut.
+  if (key === 'reviewPairs') { render(myMountToken); return; }
   releaseHeldRows(e.currentTarget, (row) => el === row || el.contains(row), healthRowKey);
   // A question inside a fold that just closed would be a question behind a
   // chevron (v3.16.1): the paint moves it out from under the row.
@@ -10071,34 +9923,32 @@ function mergeSemanticDuplicates(slug) {
 
 // ── Per-pair semantic actions: preview / flip / merge one / skip ───────────
 
+// Reads the comparison for this exact direction. IT DOES NOT OPEN THE GATE: fetching is
+// not seeing. armSemanticPair does, when the desk has had it on screen for 500 ms.
+// Answers { data }, { error } or { settled, missing }, and never throws: the desk has one
+// place for each.
 async function previewSemanticPair(slug, pair) {
   const token = myMountToken;
   const key = semanticPairKey(pair);
-  state.busyKey = 'semanticPreview:' + key;
-  render(token);
   try {
     const data = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ issue: toWirePair(pair) }),
     });
-    if (!isCurrentMount(token)) return;
+    if (!isCurrentMount(token)) return { stale: true };
     const scan = activeSemanticScan();
-    if (!scan) return; // domain changed while the preview was in flight
+    if (!scan || !scan.pairs.some((p) => semanticPairKey(p) === key)) return { stale: true }; // another domain, or flipped meanwhile
     scan.preview = { key, data };
-    // ONLY a SUCCESSFUL preview opens the gate. A failed one must leave
-    // Merge disabled — otherwise the guard degrades into "clicking Preview
-    // is enough", which is not what it promises.
-    markSemanticPreviewed(pair);
+    (scan.bases || (scan.bases = {}))[key] = data.basis;
+    return { data };
   } catch (err) {
-    if (!isCurrentMount(token)) return;
+    if (!isCurrentMount(token)) return { stale: true };
     const scan = activeSemanticScan();
     // DEFENCE IN DEPTH. The cascade above covers merges made in THIS session;
     // a page can also go in Obsidian, over the MCP, or in another Health fix
-    // on another tab, and then the first thing that notices is this preview.
-    // Leaving it as a red "Could not build a preview" under a Merge button
-    // gated by "Preview required before Merge" is the dead end this release
-    // is about — so the pair is marked resolved instead.
+    // on another tab, and then the first thing that notices is this comparison.
+    // The pair is settled, and the desk moves on and says so.
     const stale = semanticStaleFromError(err);
     if (stale) {
       markSemanticPairResolved(pair, { missing: stale.missing, by: 'the page is gone' });
@@ -10106,17 +9956,22 @@ async function previewSemanticPair(slug, pair) {
         const parts = String(stale.missing).split('/');
         resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
       }
-    } else if (scan) {
-      scan.preview = { key, error: err.message };
+      return { settled: true, missing: stale.missing };
     }
-  } finally {
-    if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
-    state.aiProgress = null;
+    if (scan) scan.preview = { key, error: err.message };
+    return { error: err.message };
   }
-  render(token);
 }
 
-async function mergeOneSemanticPair(slug, pair) {
+// ONLY a comparison that succeeded, for this direction, can open the gate. A failed one
+// leaves Merge disabled: otherwise the guard degrades into "time passed".
+function armSemanticPair(pair) {
+  const s = activeSemanticScan();
+  if (!s || !s.preview || s.preview.key !== semanticPairKey(pair) || !s.preview.data) return false;
+  return markSemanticPreviewed(pair);
+}
+
+async function mergeOneSemanticPair(slug, pair, onSettled) {
   const token = myMountToken;
   const key = semanticPairKey(pair);
   // Re-check the gate at EXECUTION time, not just at render time. A
@@ -10128,19 +9983,20 @@ async function mergeOneSemanticPair(slug, pair) {
   if (!gate.allowed) {
     setSemanticPairMessage(key, { refusal: gate.reason });
     render(token);
-    revealSemanticMessage(key);
+    if (onSettled) onSettled({ refused: true });
     return;
   }
   state.busyKey = 'semanticMergeOne:' + key;
   setSemanticPairMessage(key, {});
   render(token);
+  let settled = { failed: true };
   const releaseGate = beginDomainWrite(slug, 'semantic-dupe-merge');
   try {
     inFlightWriteSlugs.add(slug);
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair) }),
+      body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair), basis: (activeSemanticScan()?.bases || {})[key] }),
     });
     {
       if (!result || !result.fixed) {
@@ -10158,34 +10014,34 @@ async function mergeOneSemanticPair(slug, pair) {
             const parts = String(result.missing).split('/');
             resolvePairsTouching(activeSemanticScan(), { folder: parts[0], slug: parts.slice(1).join('/') }, null);
           }
+          settled = { gone: true, missing: result.missing || null };
         } else {
-          setSemanticPairMessage(key, { error: 'The server refused this merge (the pair failed validation on disk).' });
+          setSemanticPairMessage(key, { error: 'Could not merge: ' + (result && result.reason === 'merge-would-lose-text'
+            ? 'this merge would lose text, so nothing was changed.'
+            : 'the pages did not pass the check on disk, so nothing was changed.'), errorAction: 'merge' });
         }
       } else {
         markSemanticPairStatus(pair, 'merged');
         // THE CASCADE. `pair.removeSlug` no longer exists on disk, so every
         // other OPEN pair in this scan that names it is resolved too — see
-        // resolvePairsTouching. Without this, a version family left N-2
-        // cards whose Preview failed and whose Merge stayed gated.
+        // resolvePairsTouching.
         const alsoResolved = resolvePairsTouching(
           activeSemanticScan(), { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
-        state.rowNoteFrom = { slug, token };
-        state.rowNote = {
-          key: 'pair:' + key.split('||').sort().join('||'),
-          held: true,
-          tone: 'success',
-          trace: 'Merged 1', lane: 'decision',
-          text: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' +
-            (alsoResolved ? ' ' + pluralize(alsoResolved, 'other pair') + ' settled.' : ''),
-        };
+        settled = { merged: true, alsoResolved };
       }
     }
   } catch (err) {
     if (isCurrentMount(token)) {
       // A 409 is a REFUSAL, not a failure — render it as its own visible
       // message on the pair the user clicked, never a silent button reset.
-      const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge — ' + c.error, errorAction: 'merge' });
+      // A page changed under the comparison: nothing was written, and the desk reads
+      // the comparison again and says so. It is not a failure to retry.
+      const code = err && err.body && err.body.code;
+      if (code === 'MERGE_BASIS_STALE' || code === 'MERGE_BASIS_MISSING') settled = { stale: true };
+      else {
+        const c = classifyDomainError(err);
+        setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge: ' + c.error, errorAction: 'merge' });
+      }
     }
   } finally {
     inFlightWriteSlugs.delete(slug);
@@ -10194,23 +10050,25 @@ async function mergeOneSemanticPair(slug, pair) {
     state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
+  // The desk moves first, and the reading follows behind it.
+  if (onSettled) onSettled(settled);
   // keepSemanticScan: re-earning this pair list costs a paid LLM pass, so the
   // scan is kept. NOT because "the remaining pairs are still valid" — that is
   // what this comment used to claim and it was false: the scan pairs every
   // candidate, so a version family is a clique and this merge just deleted a
   // page that several sibling pairs still name. Those are marked `resolved`
-  // above (resolvePairsTouching) rather than left as cards that cannot be
-  // previewed or merged. See resetDomainScopedHealthState.
+  // above (resolvePairsTouching) rather than left as pairs that cannot be
+  // compared or merged. See resetDomainScopedHealthState.
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
-  revealSemanticMessage(key);
 }
 
-async function skipSemanticPair(slug, pair) {
+async function skipSemanticPair(slug, pair, onSettled) {
   const token = myMountToken;
   const key = semanticPairKey(pair);
   state.busyKey = 'semanticSkip:' + key;
   setSemanticPairMessage(key, {});
   render(token);
+  let settled = { failed: true };
   try {
     // Dismissal shape mirrors health-dismissed.js's semanticDupe key
     // (slugA/folderA/slugB/folderB), same as the shipping app's Skip.
@@ -10227,14 +10085,7 @@ async function skipSemanticPair(slug, pair) {
     });
     if (isCurrentMount(token)) {
       markSemanticPairStatus(pair, 'skipped');
-      state.rowNoteFrom = { slug, token };
-      state.rowNote = {
-        key: 'pair:' + key.split('||').sort().join('||'),
-        held: true,
-        tone: 'success',
-        text: 'Kept ' + pair.removeSlug + ' and ' + pair.keepSlug + ' apart. They will not come back.',
-        drop: { dismissed: true },
-      };
+      settled = { kept: true };
     }
     // A Skip IS a dismissal record: the loaded Dismissed list is stale now,
     // exactly as it is after dismissIssue (v3.72.1, F5). An open list is read
@@ -10243,24 +10094,29 @@ async function skipSemanticPair(slug, pair) {
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not skip — ' + c.error, errorAction: 'skip' });
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not save: ' + c.error, errorAction: 'skip' });
     }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
+  if (onSettled) onSettled(settled);
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
   if (state.expandedGroups.has('dismissed') && state.dismissedRecords !== null) await loadDismissedRecords(slug);
-  revealSemanticMessage(key);
 }
 
-// Reveals a per-pair refusal/error after the repaint. Scoped to the pair the
-// user actually clicked — see revealMessage for why "rendered" is not
-// "visible".
-function revealSemanticMessage(key) {
-  const sel = '.dm-sem-card[data-sem-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"] ';
-  return revealMessage(sel + '.dm-sem-refusal') || revealMessage(sel + '.dm-sem-error');
+// Keep both, undone: the record goes, and the pair is a pair again.
+async function bringBackSemanticPair(slug, pair) {
+  await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/undismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'semanticDupe', issue: {
+      slugA: pair.keepSlug, folderA: pair.keepFolder,
+      slugB: pair.removeSlug, folderB: pair.removeFolder,
+    } }),
+  });
+  if (!state.expandedGroups.has('dismissed')) state.dismissedRecords = null;
 }
 
 // Per-pair message slot (refusal / error), cleared by passing {}.

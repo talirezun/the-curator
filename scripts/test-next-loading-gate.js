@@ -440,8 +440,8 @@ const EXEMPT = [
     why: 'reader overlay: measured 63 ms warm / 295-322 ms cold — a real wait, and on the KEEP list' },
   { file: 'views/domains.js', needle: '<div class="dm-health-body">Scanning…</div>',
     why: 'health scan: measured ~654 ms. Deliberately NOT gated — an honest indicator for a genuinely long wait. The skeleton this earns is a separate change with its own proof.' },
-  { file: 'views/domains.js', needle: "'semanticPreview:' + key",
-    why: 'Preview-diff BUTTON label during a user-initiated call (Stage 3 retires it with the card)' },
+  { file: 'views/health-review.js', needle: 'Loading the page…',
+    why: 'the review desk\'s pane, while the comparison it just asked for is read: a slot of a fixed height, so it moves nothing, and Merge stays shut under it' },
   { file: 'views/settings.js', needle: "state.quickLoading ? 'Scanning…'",
     why: 'System-check BUTTON label during a user-initiated scan' },
   // RE-ANCHORED, not widened, when views/shared.js adopted shared/text.js.

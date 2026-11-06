@@ -8068,7 +8068,7 @@ Every button in Wiki health answers where you pressed it.
 | **Repair N**, **Repair all N** | No question. It runs, and the row says **Repaired N**. **Repair all** runs each free row in turn and says how far it has got. It never runs the two kinds that delete a page. |
 | **Merge N** on *Same name in two folders*, *Nearly the same name* or *Spelling variants* | A question opens **directly under the row you pressed**, saying how many pages go, with the undo warning and focus on **Cancel**. Escape closes it. Its button says **Merge and delete N**, in red. |
 | **Leave as is** | The row stays where it is and says *Left as is.*, with **Undo**. Nothing under it moves, so you can walk down a list. **Check again** clears those rows. When it was the last one in its row, the row goes after a moment and **Left as is** has it. |
-| **Review** | Opens the pair list under Possible duplicates. A pair is still decided one at a time: **Preview diff**, then **Merge**. |
+| **Review** | Swaps the card for the review desk, one pair at a time, with both pages already on screen. **Done** brings the lanes back. |
 | **An AI button** | Its cost question opens under the row. The yes wears the cost: **Compare for ≈ $0.04**. |
 | **The yes of a question**, **Add these links**, **Apply**, **Rebuild the list** | The card stays open and says what is happening, then says what happened, then leaves. |
 
@@ -8276,14 +8276,44 @@ Unlike the other health fixes, this one:
 - **Is opt-in and user-gated.** Nothing happens until you click, then confirm.
 - **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug. Its text is not: everything it said moves to the kept page ([what a merged page looks like](#what-a-merged-page-looks-like)).
 
-What it finds waits in **Your decision → Possible duplicates**. Press **Review** to open the list. Each pair is its own card showing `remove-slug → keep-slug`, a confidence level (high / medium / low), and the AI's reasoning. Four buttons:
+What it finds waits in **Your decision → Possible duplicates**. Press **Review** and the card becomes the review desk: one pair, both pages side by side, and the decision underneath.
+
+```text
+Pair 3 of 45   12 decided · 33 left                  Previous  Next  Done
+(Different names)  The AI says: "Both pages describe the protection of…"
+┌ Goes away ────────────────────┐ ┌ Stays ────────────────────────────┐
+│ data-privacy                  │ │ privacy-and-data-protection       │
+│ concepts · 4 links · 1.1 KB   │ │ concepts · 11 links · 3.4 KB      │
+│ the page's text, scrolls here │ │ the page's text, scrolls here     │
+│ Read full page                │ │ Read full page                    │
+│ Keep this one instead         │ │                                   │
+└───────────────────────────────┘ └───────────────────────────────────┘
+After the merge there is one page, privacy-and-data-protection. Lists from
+data-privacy join the sections of the same name, and everything else moves
+under "Merged from data-privacy". 4 links move to it.
+[Keep both] [Merge into privacy-and-data-protection]   Merging deletes…
+> All 45 pairs
+```
+
+**Nothing moves.** The title, the panes and the buttons stay at exactly the same place from pair to pair, at any window width, and on a phone the two pages stack. A long page scrolls inside its pane, and a long name wraps. Deciding only swaps the words.
 
 | Button | What it does |
 |---|---|
-| **Preview diff** | Opens the diff **inline, in that card** — the exact keep path and delete path, how many link rewrites across how many files (with the files named), and the first 4,000 characters of the merged page, which are exactly what Merge will write. Text from the removed page sits at the foot of the page, so on a long page it can fall past that sample. |
-| **↔ Flip** | Swaps which side is kept, which decides whose title, frontmatter and opening stay at the top. Use it when the AI picked the wrong survivor. |
-| **Merge** | Performs the merge. **Disabled until you have previewed that specific pair** — the card says *"Preview required before Merge"* until you do, then *"✓ previewed"*. |
-| **Skip** | Dismisses this pair so it stops coming back on future scans. |
+| **Merge into `<page>`** | Merges, and deletes the page marked *Goes away*. The label names the page that stays, so it changes with every pair. It opens only after this pair's comparison has been on screen for half a second (see below). |
+| **Keep both** | The two pages are kept apart and this pair does not come back. The line under the buttons says so and offers **Undo**. Later, **Left as is** has it, with **Bring back**. |
+| **Next** / **Previous** | Moves on, or back, among the pairs still waiting. Records nothing. |
+| **Keep this one instead** | On the page marked *Goes away*: makes that one the page that stays, which decides whose title, frontmatter and opening stay at the top. Use it when the AI picked the wrong survivor. |
+| **Read full page** | Opens the whole page in the reader on the right. |
+| **All N pairs** | A fold under the desk. A summary comes first: how many are waiting, merged, kept and settled, and how many of each kind of name. Then a page of rows, with **Show 50 more**. A waiting row takes you to its pair. |
+| **Done** | Back to the lanes, on the Review button. Nothing is lost by leaving: a pair you did not decide is still waiting. |
+
+**What the desk tells you, and what it no longer does.** The grey fact is the app's own reading of the two names: *Spelling variant*, *Version numbers differ* or *Different names*. Next to it is the AI's reason, quoted as the AI's. The old high / medium / low badge is gone from the screen, because it was the model's opinion of itself and was measured wrong. It still decides the order (the ones the AI was surest of come first) and the batch rule below, so the first pairs are not proof of anything. Read them.
+
+**Why Merge waits half a second.** The comparison is always there, so there is no separate Preview to press. Merge opens when the comparison **for this pair, this way round,** has loaded **and** been on screen for half a second. Scrolled out of sight, the half second does not run. On a phone that means the panes need to be in view, which they are when you are reading the pair.
+
+To stop a rhythm of pressing the same spot, the desk has **no keyboard shortcut for either choice**, and there must never be one; after you decide, focus goes to the pair's title rather than to a button, so holding Enter does nothing; and neither choice is the violet button, so the page does not lean toward deleting.
+
+**If a page changes while you are reading it** (in Obsidian, or an agent's write), the server refuses the merge and writes nothing. The desk says *"This page changed since you compared it. The comparison has been refreshed."*, shows the new text, and Merge waits its half second again. A merge also rewrites links across the domain, so the next pair's comparison is always read after it, never before.
 
 **How far through the domain you are.** The *Compare pages for duplicates* row says where you stand, and it is there even when nothing was found:
 
@@ -8308,7 +8338,7 @@ flowchart LR
     E --> C
 ```
 
-A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. A long list shows 50 pairs at a time with **Show 50 more**; the counts and the Spelling variants row always cover all of them. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Forget all comparisons**, in that row's fold, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
+A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. The counts and the Spelling variants row always cover every pair. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Forget all comparisons**, in that row's fold, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
 
 The answers live in your app data folder, not in your wiki, so they do not travel through Sync: each computer keeps its own, and losing them costs a re-check, never any data.
 
@@ -8326,17 +8356,17 @@ In plain words: the scan is much more careful now, and it misses more as a resul
 
 **What it does not catch.** A pair is only considered if the two page names share a word, look alike, are spelling variants, or one is the initials of the other. `car` and `automobile` are never compared. A page whose name has `| [ ] #`, starts with a dot, contains `..`, or has a space at either end is left out too, because it could not be linked or merged safely. The AI also sees only each page's opening, so two pages that open differently can be missed.
 
-The preview gate is per pair, and it resets whenever you re-scan, switch domains, or flip a pair — a preview you looked at for one arrangement never authorises a different one. If a merge is refused (because something else is writing to that domain), the refusal appears **inside the card you are looking at**, not somewhere you'd have to scroll to find it.
+The gate is per pair and per direction. It closes whenever you move to another pair, press **Keep this one instead**, re-check or switch domains, so a comparison you looked at for one arrangement never authorises a different one. If a merge is refused (because something else is writing to that domain), the refusal appears on the line under the buttons, with **Try again**.
 
 **One merge can resolve several pairs (v3.53.0).** The scan pairs up every candidate rather than grouping a family of pages into one cluster, so several versions of the same page produce several overlapping pairs — eight versions produce twenty-eight pairs, and each page appears in seven of them. When you merge one of those pairs, the page it deletes is a page other pairs still name, and those pairs are then **already resolved**: there is nothing left to decide and nothing left to merge.
 
-So they move, on their own, to the **Already handled in this scan** list at the bottom, labelled *"resolved by an earlier merge — entities/claude-opus-5 is gone"*. That wording is deliberately different from **merged** (you merged it) and from **skipped** (you skipped it, or the pair failed validation) — nobody decided this one, an earlier merge simply settled it. It is a free, local change to the list you already paid for: the scan is not re-run, and the pairs you have not reached — including every medium- and low-confidence pair — are left exactly as they were.
+So the desk steps over them. The line under the buttons says how many *"other pairs settled"*, and in **All N pairs** they read *settled by another merge*, which is deliberately different from **merged** (you merged it) and **kept both** (you decided that). Nobody decided this one, an earlier merge simply settled it. It is a free, local change to the list you already paid for: the scan is not re-run, and the pairs you have not reached are untouched.
 
 The same thing happens when you use the batch **Merge N spelling variants** button, which is where you will see it most, and when a page disappears from outside the app (you delete it in Obsidian, or an agent merges it through the MCP bridge) while a scan is open on screen.
 
 *Before v3.53.0 this was not reported at all: those pairs stayed on screen as ordinary cards, **Preview diff** failed with "Both pages must exist to preview a merge", and **Merge** stayed greyed out behind "Preview required before Merge" — with no way forward except paying for another scan.*
 
-**There is also a batch option, for spelling variants only**: **Merge N spelling variants**. A pair qualifies only when the AI answered with high confidence **and** the names themselves are the same word spelled differently — `hand-off` and `handoff`, `e-mail` and `email`, `neural-network` and `neural-networks`. High confidence alone is not enough, because the AI has called pairs like `gemini` and `gemini-3.1-flash-lite` high confidence. Those cards say *"Names differ, so check this one yourself."* and need your Preview. The app checks this itself when the batch runs, and also refuses a pair whose page has changed since the AI read it. Before it runs, the confirm names what will happen: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Plurals ending in `-ies` (`ontology`, `ontologies`) do not count as spelling variants, so those go through Preview as well.
+**There is also a batch option, for spelling variants only**: **Merge N spelling variants**. A pair qualifies only when the AI answered with high confidence **and** the names themselves are the same word spelled differently — `hand-off` and `handoff`, `e-mail` and `email`, `neural-network` and `neural-networks`. High confidence alone is not enough, because the AI has called pairs like `gemini` and `gemini-3.1-flash-lite` high confidence. Those pairs need your own reading at the review desk. The app checks this itself when the batch runs, and also refuses a pair whose page has changed since the AI read it. Before it runs, the confirm names what will happen: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Plurals ending in `-ies` (`ontology`, `ontologies`) do not count as spelling variants, so those go through the desk as well.
 
 You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults are 200,000 tokens and 500 pairs (the ceiling was 50,000 through v3.72.0). They set the size of **one run**, not how large a domain they suit: a 946-page domain measured 3,918 possible pairs and a 3,407-page one 36,333, so a large domain takes many runs, and every run moves forward. A scan estimates its cost first and refuses to start — before you can click Scan — when the estimate is over the ceiling.
 
@@ -8348,7 +8378,7 @@ Not every flagged issue is a real problem. Two pages you intentionally keep sepa
 
 Now dismissals stick.
 
-A **Leave as is** button appears on every row only you can judge (pages nothing links to, broken links with no target), and **Skip** does the same job on a pair card. Press it once and the issue stops appearing on future checks. Until the next **Check again** the row stays in place with **Undo**.
+A **Leave as is** button appears on every row only you can judge (pages nothing links to, broken links with no target), and **Keep both** does the same job at the review desk. Press it once and the issue stops appearing on future checks. Until the next **Check again** the row stays in place with **Undo**.
 
 **Scan details** says how many issues are being filtered out, and **Left as is (N)** at the end of *Your decision* lists everything you've set aside, with **Bring back** on each row.
 
@@ -8357,7 +8387,7 @@ A **Leave as is** button appears on every row only you can judge (pages nothing 
 | Button | Where | What it does |
 |---|---|---|
 | **Repair N** / **Merge N** | The rows the app can do | Performs the repair now. The issue is resolved. |
-| **Leave as is** / **Skip** | Rows only you can judge · pair cards | Marks the issue as not-a-problem. Won't surface on future checks. Reversible with **Bring back**. |
+| **Leave as is** / **Keep both** | Rows only you can judge · the review desk | Marks the issue as not-a-problem. Won't surface on future checks. Reversible with **Bring back**. |
 | **Cancel** | Inside a question under a row | Backs out without doing anything. The underlying issue stays flagged on future checks. Use **Leave as is** if you want it gone for good. |
 
 **Dismissals sync between your computers.** They live inside the wiki folder (`<wiki>/.health-dismissed.jsonl`), so your existing GitHub sync carries them along. Skip a 70-pair semantic scan on your laptop, sync, and the same false positives stay skipped on your desktop.

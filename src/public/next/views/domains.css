@@ -1023,7 +1023,7 @@
 /* The clipboard-refusal fallback for "Copy agent instructions". The marker
    line fits in a sentence; the agent block is a paragraph, so a refusal shows
    it here for the user to select by hand rather than dropping it. Same
-   declarations as .dm-sem-preview-body below — a sunken mono block that wraps
+   declarations as the merge preview had — a sunken mono block that wraps
    rather than scrolls sideways — capped so a refusal never pushes the rows it
    belongs to off screen. */
 .dm-proj-copy-fallback {
@@ -1224,14 +1224,11 @@
    Both sites are `btn btn-danger-solid`, which is the ONE sanctioned use of
    a filled red: a confirm card whose primary action IS the deletion (both
    are gated behind typing the exact name). */
-
 /* A refusal is visually distinct from an error on purpose: "the server said
    no, nothing happened, try again in a moment" is a different thing to tell
    someone than "this broke". */
 .dm-lc-refusal,
-.dm-lc-error,
-.dm-sem-refusal,
-.dm-sem-error {
+.dm-lc-error {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1240,209 +1237,17 @@
   border-radius: var(--radius-md);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
-}
-.dm-lc-refusal,
-.dm-sem-refusal {
+}.dm-lc-refusal {
   background: var(--attention-tint);
   /* Rail + tint carry the tone; the words are --text (the tone channel). */
   color: var(--text);
   border: 1px solid var(--attention);
-}
-.dm-lc-error,
-.dm-sem-error,
+}.dm-lc-error,
 .dm-outcome-failed {
   background: var(--danger-tint);
   color: var(--danger-text);
   border: 1px solid var(--danger);
 }
-
-/* ── Semantic-duplicate pair cards ────────────────────────────────────── */
-
-.dm-sem-batch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: 12px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-inset);
-}
-.dm-sem-batch-note {
-  flex: 1 1 260px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  line-height: var(--leading-normal);
-}
-.dm-sem-batch > .btn { max-width: 100%; white-space: normal; }
-/* The coverage line is where the user is in the domain, not a footnote. */
-.dm-sem-coverage .dm-sem-batch-note {
-  font-size: var(--text-sm);
-  color: var(--text);
-}
-
-.dm-sem-list { display: flex; flex-direction: column; gap: 10px; }
-
-.dm-sem-card {
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-.dm-sem-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  font-size: var(--text-2xs);
-}
-.dm-sem-remove { color: var(--danger-text); overflow-wrap: anywhere; }
-/* The page that SURVIVES a merge is named in the ordinary ink (v3.66.0): it
-   is not an outcome, and green words fail AA in the light theme. The arrow
-   and the sentence under the head ("Keeps …, deletes …") say which side is
-   kept. */
-.dm-sem-keep { color: var(--text); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
-.dm-sem-arrow { color: var(--text-2); }
-.dm-sem-conf {
-  margin-left: auto;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-  /* Reserved so the -high variant can colour a border to carry its amber
-     without standing 2px taller than -med and -low down a list of cards.
-     (A 1px reserved border, so a toned variant costs no layout.) */
-  border: 1px solid transparent;
-  font-size: var(--text-2xs);
-  white-space: nowrap;
-}
-.dm-sem-conf-high { background: var(--attention-tint); border-color: var(--attention-text); color: var(--text); }
-.dm-sem-conf-med { background: var(--surface-active); color: var(--text-2); }
-.dm-sem-conf-low { background: var(--surface-inset); color: var(--text-2); }
-
-.dm-sem-sub {
-  margin-top: 5px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-}
-.dm-sem-rationale {
-  margin-top: 4px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  line-height: var(--leading-normal);
-  max-width: 76ch;
-}
-
-.dm-sem-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 9px;
-}
-.dm-sem-btn {
-  height: var(--control-sm);
-  padding: 0 9px;
-  font-size: var(--text-2xs);
-}
-.dm-sem-gate {
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-}
-.dm-sem-gate-ok {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  /* The words stay --text-2 like the refusal beside them; the check GLYPH
-     carries the tone (a mark, 3:1) — v3.66.0's tone channel. */
-  color: var(--text-2);
-}
-.dm-sem-gate-ok svg { color: var(--success-text); }
-
-.dm-sem-preview {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-inset);
-}
-.dm-sem-preview-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--danger-text);
-  font-size: var(--text-2xs);
-}
-.dm-sem-preview-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-.dm-sem-preview-files {
-  margin: 8px 0;
-  padding-left: 18px;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-}
-.dm-sem-preview-more { list-style: none; margin-left: -18px; }
-.dm-sem-preview-body {
-  max-height: 220px;
-  overflow: auto;
-  margin: 6px 0 0;
-  padding: 8px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-sunken);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  line-height: var(--leading-normal);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.dm-sem-handled { opacity: 0.6; }
-/* A pair RESOLVED by an earlier merge is not the user's own Skip, and its row
-   carries a whole sentence where the others carry one word ("resolved by an
-   earlier merge — entities/claude-opus-5 is gone"). Two things follow, and the
-   second was found by LOOKING at the rendered row, not by reasoning about it:
-
-     1. At the inherited 0.6 opacity a sentence is harder to read than a label.
-        These rows lift to 0.8.
-     2. The sentence CANNOT share the row. `.dm-issue-main` is `flex: 1` with
-        `min-width: 0`, so it collapses to zero against any sibling with a wide
-        min-content — and the meta's longest word is a full `folder/slug`. A
-        first attempt at `flex: 0 1 auto` on the meta rendered the slug column
-        ONE CHARACTER PER LINE in the domain card's ~230 px content column
-        (photographed in the running app). The sentence therefore takes its own
-        full-width line under the pair, at every width. */
-.dm-sem-handled-resolved {
-  opacity: 0.8;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-.dm-sem-handled-resolved .dm-issue-meta {
-  flex: 1 0 100%;
-  overflow-wrap: anywhere;
-}
-
-/* ── Wiki browse panel ────────────────────────────────────────────────── */
-
-/* ── ONE CARD CHROME FOR ALL FOUR SECTIONS (v3.50.0) ───────────────────────
-   Reported: the sections "are not visually distinguished from each other" and
-   Projects "has no card of its own". Measured, the second half was not quite
-   the defect — Projects has had a `.cur-group` card since v3.48.0 — but the
-   first half was, and worse than reported: the three cards on this screen were
-   painted in THREE different chromes.
-
-       .cur-group    (Projects)  --surface        + --hairline + --elev-1
-       .dm-browse-card (Pages)   --surface-raised + --border   + no shadow
-       .dm-health-card (Health)  --surface        + --border   + no shadow
-
-   Three answers to one question, so no two sections looked like siblings. They
-   are now the kit's group chrome, which is the one with a rule behind it
-   (shell.css: a card is CONTENT, so it takes elevation and a hairline and
-   never the two-line material edge). */
 .dm-browse-card {
   padding: 12px 14px;
   border: 1px solid var(--hairline);
@@ -1967,7 +1772,6 @@
 
 /* A label that answers needs room for its answer at rest, or the answer clips. */
 .dm-group-fixall-btn { min-width: 112px; }
-.dm-health .dm-sem-btn { min-width: 76px; }
 .dm-dismiss-btn,
 .dm-restore-btn { min-width: 72px; flex: none; }
 
@@ -1996,7 +1800,6 @@
 .dm-row-done svg { color: var(--text-2); flex: none; }
 /* Inside a fold's summary, the kit turns every svg with the chevron. */
 .dm-group[open] > .dm-group-summary .dm-row-done svg { transform: none; }
-.dm-sem-card .dm-row-done { margin-left: 0; margin-top: 9px; }
 
 /* A question and an outcome, directly under the row that asked for them. */
 .dm-outcome {
@@ -2014,9 +1817,6 @@
 .dm-outcome-done { background: var(--surface-inset); color: var(--text); }
 .dm-outcome-done > svg { color: var(--text-2); }
 .dm-outcome-info { background: var(--info-tint); color: var(--accent-text); }
-.dm-sem-error > .btn,
-.dm-sem-refusal > .btn,
-.dm-sem-preview-error > .btn { margin-left: auto; flex: none; }
 
 /* What earlier scans found, on its own line under the coverage row. */
 .dm-health .dm-quick-run > .dm-confirm-card,

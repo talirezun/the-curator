@@ -49,7 +49,7 @@
  * THE SELECTORS are all in SEL, below. A redesign changes them there.
  *
  *   node scripts/e2e-wiki-health.mjs [--stage <name>] [--profiles 1280,375,1280-light,375-light,1280-rm,375-rm,800,big-1280,big-375]
- *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
+ *        [--only S1,S2,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16] [--record-baseline [--merge-baseline]] [--baseline <file>] [--shots <dir>]
  *
  * SINCE STAGE 1 the default stage is `s1`, the press rule: every metric below is
  * REQUIRED except the review desk's, which belong to a later stage. STAGE 2 keeps those
@@ -65,7 +65,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { launchBrowser, findBrowser } from './visual/browser.js';
 import { CdpConnection, CdpPage } from './visual/cdp.js';
-import { wordAllowed, isFigure, BANNED, STAGE3_SUBTREE } from './test-helpers/health-words.js';
+import { wordAllowed, isFigure, BANNED } from './test-helpers/health-words.js';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -94,9 +94,8 @@ const SEL = {
   checkNext: '.dm-quick-btn[data-action="semanticDupes"]',
   batchMerge: '#dm-semantic-merge-btn',
   review: '.dm-review-btn',
-  card: '.dm-sem-card',                                   // one pair
-  cardBtn: (key, action) => `.dm-sem-card[data-sem-key="${key}"] [data-sem-action="${action}"]`,
-  preview: '.dm-sem-preview',
+  desk: '.hr-desk', deskTitle: '#hr-title', deskMerge: '#hr-merge', deskKeep: '#hr-keep', deskFlip: '#hr-flip', deskNext: '#hr-next', deskPrev: '#hr-prev', deskDone: '#hr-done',
+  deskOutcome: '.hr-outcome', deskPanes: '.hr-panes', deskText: '.hr-pane-text',
   dismissIn: (group) => `[data-group-key="${group}"] .dm-issue-row .dm-dismiss-btn`,
   leftUndo: '.dm-left-undo-btn',
   restore: '.dm-restore-btn',
@@ -117,14 +116,13 @@ const SEL = {
   retry: '.dm-health .dm-outcome-retry',
   confirmCard: '.dm-confirm-card',
   coverage: '[data-group-key="compare"]',
-  handled: '.dm-sem-handled',
   // the row a press belongs to (nearest ancestor): used to split "above" from "below"
-  rows: '.dm-sem-card, .dm-issue-row, .dm-group, .dm-lane-head, .dm-confirm-card, .dm-plan-card, .dm-health-top',
+  rows: '.hr-desk, .dm-issue-row, .dm-group, .dm-lane-head, .dm-confirm-card, .dm-plan-card, .dm-health-top',
   // landmarks sampled every frame (each: base selector + how many matches)
   landmarks: [
     { base: '.dm-health', max: 1 }, { base: '.dm-health .cur-section-hd', max: 1 }, { base: '.dm-lane-head', max: 3 },
     { base: '.dm-group-scan', max: 1 }, { base: '.dm-group[data-group-key]', max: 14 }, { base: '.dm-confirm-card', max: 1 },
-    { base: '.dm-plan-card', max: 1 }, { base: '.dm-sem-card', max: 9 }, { base: '.dm-sem-handled', max: 1 },
+    { base: '.dm-plan-card', max: 1 },
   ],
   live: '.dm-health [aria-live]',
 };
@@ -158,10 +156,10 @@ const withinBaseline = (m, v, b) => (UNIT[m] === 'ms' ? v <= Math.max(b * 1.5, b
 const ALL_PROFILES = {
   '1280': { name: '1280', w: 1280, h: 900 },
   '375': { name: '375', w: 375, h: 812 },
-  '1280-light': { name: '1280-light', w: 1280, h: 900, light: true, only: ['S1', 'S5', 'S6', 'S14'] },
-  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6', 'S14', 'S15'] },
-  '1280-rm': { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5', 'S7', 'S14'] },
-  '375-rm': { name: '375-reduced-motion', w: 375, h: 812, reduced: true, only: ['S1', 'S4', 'S7', 'S14'] },
+  '1280-light': { name: '1280-light', w: 1280, h: 900, light: true, only: ['S1', 'S5', 'S6', 'S14', 'S16'] },
+  '375-light': { name: '375-light', w: 375, h: 812, light: true, only: ['S1', 'S5', 'S6', 'S14', 'S15', 'S16'] },
+  '1280-rm': { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5', 'S7', 'S14', 'S16'] },
+  '375-rm': { name: '375-reduced-motion', w: 375, h: 812, reduced: true, only: ['S1', 'S4', 'S7', 'S14', 'S16'] },
   rm: { name: '1280-reduced-motion', w: 1280, h: 900, reduced: true, only: ['S2', 'S5'] },
   '800': { name: '800', w: 800, h: 900, overflowOnly: true },
   // A synthetic domain of thousands of pages and hundreds of pairs. The small
@@ -232,7 +230,7 @@ globalThis.fetch = async (url, opts) => {
     while ((m = re.exec(prompt))) pairs.push({ index: Number(m[1]), a: m[2], b: m[3] });
     log({ stubbed: 'pairs', n: pairs.length });
     return reply(JSON.stringify({ results: pairs.map((p) => {
-      const why = lookup(p.a, p.b);
+      const why = lookup(p.a, p.b) || (p.a.startsWith('a-very-long') && p.b.startsWith('a-very-long') ? 'Both pages are about the history of a long page name, at length.' : null);
       if (why) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.b.length >= p.a.length ? p.b : p.a, rationale: why };
       if (p.a.replace(/-guides$/, '-guide') === p.b.replace(/-guides$/, '-guide')) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: 'One page and its plural.' };
       if (p.a.replace(/-fundamentals$/, '') === p.b.replace(/-fundamentals$/, '')) return { index: p.index, difference: 'none', relation: 'same', confidence: 'high', canonicalSlug: p.a.length >= p.b.length ? p.a : p.b, rationale: 'Both pages describe the same subject.' };
@@ -285,6 +283,9 @@ function buildLabDomain(root, name, opts = {}) {
 
 // ═══ 6. THE APP ═════════════════════════════════════════════════════════════
 const LABS = ['h1', 'h2', 'h4', 'h5', 'h6', 'h7', 'h8', 'h10', 'h11', 'h12', 'h13', 'h14', 'h15', 'h15b', 'hclean', 'hone', 'hdup'];
+// The desk's domain: a pair whose name wraps and whose text is longer than any pane.
+const LONG_A = 'a-very-long-page-name-that-goes-on-and-on-about-the-history-of-the-long-page-name';
+const LONG_B = LONG_A + '-and-then-a-little-more-about-it';
 async function startApp(profile) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'curator-e2e-health-'));
   const ws = { domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
@@ -317,7 +318,14 @@ async function startApp(profile) {
     writeFileSync(path.join(w, 'concepts', 'lonely.md'), '---\ntype: concept\n---\n\n# Lonely\n\nNothing links here.\n');
     writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hone\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n| [[lonely]] | Nothing links here. |\n| [[zulu]] | A last page. |\n');
     writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
-  if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 300, filler: 4000, distinct: true });
+  buildLabDomain(ws.domains, 'h16', { topicPairs: 12, filler: 20 });
+  { const w = path.join(ws.domains, 'h16', 'wiki', 'concepts');
+    const long = (t) => `---\ntype: concept\ntags: [type/concept]\n---\n\n# ${t}\n\nA long page about one subject.\n\n` + Array.from({ length: 60 }, (_, i) => `## Section ${i}\n\nSomething written about part ${i}, long enough to run across the pane more than once and then some more.\n\n- A fact from part ${i}.\n`).join('\n') + '\n## Related\n\n- [[wiki-hub]]\n';
+    writeFileSync(path.join(w, LONG_A + '.md'), long('One long page'));
+    writeFileSync(path.join(w, LONG_B + '.md'), long('Another long page'));
+    const hub = path.join(w, 'wiki-hub.md');
+    writeFileSync(hub, readFileSync(hub, 'utf8') + `- [[${LONG_A}]]\n- [[${LONG_B}]]\n`); }
+  if (profile.big) buildLabDomain(ws.domains, 'hbig', { topicPairs: 1100, filler: 3000, distinct: true });
   // 40 pairs per scan, so "Check the next" has something left to check.
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,
     geminiApiKey: 'AIza-E2E-FAKE-KEY-not-a-credential', aiHealth: { semanticDupeMaxPairs: profile.big ? 3000 : 40, costCeilingTokens: 20000000 } }, null, 2), { mode: 0o600 });
@@ -367,8 +375,8 @@ async function openDomain(app, slug, profile = app.profile) {
 
 // ═══ 7. THE SAMPLER (in the page) ═══════════════════════════════════════════
 const SAMPLER = String.raw`(() => {
-  const sigOf = (e) => e.id ? '#' + e.id : (e.tagName + JSON.stringify(Object.entries(e.dataset || {}).map(([k, v]) => [k, k === 'semKey' ? v.split('||').sort().join('||') : v]).sort()));
-  const keyOf = (e) => { const d = e.dataset || {}; if (d.rowKey) return 'r:' + d.rowKey; if (d.groupKey) return 'g:' + d.groupKey; if (d.semKey) return 's:' + d.semKey; return e.id ? '#' + e.id : null; };
+  const sigOf = (e) => e.id ? '#' + e.id : (e.tagName + JSON.stringify(Object.entries(e.dataset || {}).sort()));
+  const keyOf = (e) => { const d = e.dataset || {}; if (d.rowKey) return 'r:' + d.rowKey; if (d.groupKey) return 'g:' + d.groupKey; return e.id ? '#' + e.id : null; };
   const desc = (e) => { if (!e || e === document.body || e === document.documentElement) return 'BODY'; const t = (e.innerText || e.value || '').trim().slice(0, 30); return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (t ? ' "' + t + '"' : ''); };
   const label = (e) => (e && (e.innerText || e.value || '') || '').trim();
   window.__hs = {
@@ -578,11 +586,6 @@ async function openFoldsOn(page, keys) {
   await page.evaluate((ks) => { for (const k of ks) { const d = document.querySelector('[data-group-key="' + k + '"]'); if (d) d.open = true; } }, keys);
   await delay(200);
 }
-// the n-th pair card (1-based) that still has an enabled Preview, as its data-sem-key
-const pickCard = (page, n) => page.evaluate((cardSel, n) => {
-  const cards = [...document.querySelectorAll(cardSel)].filter((c) => { const b = c.querySelector('[data-sem-action="preview"]'); return b && !b.disabled; });
-  return cards[n - 1] ? cards[n - 1].dataset.semKey : null;
-}, SEL.card, n);
 const compareReady = async (page) => {
   await page.evaluate((s, m) => { const e = document.querySelector(s); if (e) document.querySelector(m).scrollTop += e.getBoundingClientRect().top - 300; }, SEL.coverage, SEL.main);
   await waitFor(page, (s) => { const b = document.querySelector(s); return !!b && !b.disabled; }, 'Compare enabled', 2400, SEL.findDupes);
@@ -844,17 +847,6 @@ async function scenarios(app, profile) {
       await shot('spelling-confirm'); await audit('spelling confirm');
       await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(300);
     }
-    await act(app, profile, 'lane-review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
-    await shot('review-open'); await audit('review open');
-    const key = await pickCard(page, 1);
-    if (key) {
-      await act(app, profile, 'lane-preview', { press: SEL.cardBtn(key, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], settle: 400, runs: true });
-      await act(app, profile, 'lane-merge-one', { press: SEL.cardBtn(key, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 800, runs: true });
-      await shot('merged-one');
-      const before = key.split('||')[1] || '';
-      step(`[${profile.name}] a pair merged through Possible duplicates really deleted its page`, before && !existsSync(path.join(app.ws.domains, 'h14', 'wiki', before + '.md')), before);
-    }
-    await page.evaluate((b) => { const e = document.querySelector(b); if (e && e.getAttribute('aria-expanded') === 'true') e.click(); }, SEL.review); await delay(300);
     await page.evaluate((s) => { const d = document.querySelector(s); if (d) d.open = true; }, SEL.fold('compare')); await delay(200);
     if (await page.evaluate(() => !!document.getElementById('dm-semantic-reset-btn'))) {
       await act(app, profile, 'lane-forget-press', { press: '#dm-semantic-reset-btn', place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
@@ -940,28 +932,11 @@ async function scenarios(app, profile) {
     await openDomain(app, 'h4'); await compareReady(page);
     await act(app, profile, 'find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
     await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
-    await act(app, profile, 'review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
-    const ncards = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
-    note(`[${profile.name}] pair cards after the first scan: ${ncards}`);
     if (await page.evaluate((s) => !!document.querySelector(s), SEL.checkNext)) {
       await compareReady(page);
       await act(app, profile, 'next-press', { press: SEL.checkNext, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
-      const before = ncards;
-      await act(app, profile, 'next-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: (s, n) => document.querySelectorAll(s).length > n || !document.querySelector('#dm-confirm-yes'), args: [SEL.card, before], untilTries: 800, settle: 1800, runs: true });
+      await act(app, profile, 'next-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: (s) => !document.querySelector(s), args: ['#dm-confirm-yes'], untilTries: 800, settle: 1800, runs: true });
     } else step(`[${profile.name}] "Compare the next" is offered after a partial run`, false, 'button absent');
-    const keyA = await pickCard(page, 2);
-    if (keyA) {
-      const pv = SEL.cardBtn(keyA, 'preview'); const card = `.dm-sem-card[data-sem-key="${keyA}"]`;
-      await act(app, profile, 'preview', { press: pv, place: 300, outcome: [`${card} ${SEL.preview}`], until: exists, args: [SEL.preview], settle: 400, decision: true, runs: true });
-      await act(app, profile, 'flip', { press: SEL.cardBtn(keyA, 'flip'), outcome: [`.dm-sem-card[data-sem-key="${keyA.split('||').reverse().join('||')}"]`, card], settle: 400, decision: true });
-      const keyA2 = await page.evaluate((cs) => { const c = [...document.querySelectorAll(cs)].find((x) => x.querySelector('[data-sem-action="preview"]:not([disabled])')); return c ? c.dataset.semKey : null; }, SEL.card);
-      const keyM = keyA2 || keyA;
-      await act(app, profile, 'preview-again', { press: SEL.cardBtn(keyM, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], settle: 400, decision: true, runs: true });
-      await act(app, profile, 'merge-one', { press: SEL.cardBtn(keyM, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 800, runs: true });
-    } else step(`[${profile.name}] a pair card with an enabled Preview exists`, false, 'none');
-    const keyS = await pickCard(page, 3);
-    if (keyS) await act(app, profile, 'skip-one', { press: SEL.cardBtn(keyS, 'skip'), place: 420, outcome: [SEL.done], settle: HELD + 400, runs: true });
-    else step(`[${profile.name}] a pair card to Skip exists`, false, 'none');
     await act(app, profile, 'batch-press', { press: SEL.batchMerge, place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, optional: true });
     await act(app, profile, 'batch-confirm', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.outcome], settle: 1200, optional: true, runs: true });
   }
@@ -981,30 +956,348 @@ async function scenarios(app, profile) {
     await act(app, profile, 'big-find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: (a, b) => !!document.querySelector(a) || !!document.querySelector(b), args: [SEL.confirmYes, SEL.outcome], untilTries: 6000, settle: 300, runs: true });
     note(`[${profile.name}] after pressing Compare: ${await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : 'no outcome line'; })}`);
     await act(app, profile, 'big-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 2400, settle: 1800, runs: true });
-    await act(app, profile, 'big-review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
-    const n = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
-    const key = await pickCard(page, 2);
-    step(`[${profile.name}] the big run lists hundreds of pairs, the first page of them on screen`, n === 50 && !!key && await page.evaluate(() => /[1-9]\d\d/.test(document.querySelector('[data-group-key="duplicates"] .cur-fold-pill').innerText)), String(n));
     const audited = await wordAudit(page);
     step(`[${profile.name}] every word on screen at real size is in the deck`, audited.bad.length === 0, audited.bad.slice(0, 6).join(' | '));
-    if (key) {
-      await act(app, profile, 'big-preview', { press: SEL.cardBtn(key, 'preview'), place: 300, outcome: [SEL.preview], until: exists, args: [SEL.preview], untilTries: 800, settle: 400, runs: true });
-      await act(app, profile, 'big-merge', { press: SEL.cardBtn(key, 'merge'), place: 400, outcome: [SEL.done], settle: HELD + 2000, runs: true });
+    await place(page, SEL.review, 300);
+    await page.evaluate((s) => document.querySelector(s).click(), SEL.review);
+    await waitFor(page, (s) => !!document.querySelector(s), 'the desk', 800, SEL.deskText);
+    const count = await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskTitle);
+    const total = Number(count.replace(/^Pair [\d,]+ of /, '').replace(/,/g, ''));
+    step(`[${profile.name}] the big run reaches the desk with more than 1,000 pairs`, total > 1000, count);
+    // Summary first; the rows are a window, however long the list. Press to painted.
+    const opened = await page.evaluate(() => new Promise((res) => {
+      const sum = document.querySelector('[data-group-key="reviewPairs"] summary');
+      sum.scrollIntoView({ block: 'center' });
+      const t0 = performance.now();
+      sum.click();
+      requestAnimationFrame(() => requestAnimationFrame(() => res({ ms: Math.round(performance.now() - t0),
+        rows: document.querySelectorAll('.hr-fold-row').length, first: (document.querySelector('[data-group-key="reviewPairs"] .cur-fold-body').firstElementChild || {}).className })));
+    }));
+    note(`[${profile.name}] All N pairs at ${total} pairs: ${opened.ms} ms, ${opened.rows} rows drawn`);
+    step(`[${profile.name}] All N pairs opens fast at more than 1,000 pairs (under 300 ms)`, opened.ms < 300, opened.ms + ' ms');
+    step(`[${profile.name}] …draws a window, not the list`, opened.rows > 0 && opened.rows <= 100, String(opened.rows));
+    step(`[${profile.name}] …and the summary comes first`, opened.first === 'hr-fold-summary', opened.first);
+    await page.evaluate((s) => document.querySelector(s).click(), '#hr-fold-more'); await delay(100);
+    step(`[${profile.name}] Show more adds a page`, await page.evaluate(() => document.querySelectorAll('.hr-fold-row').length) === 100);
+    const auditBig = await wordAudit(page);
+    step(`[${profile.name}] every word on the desk at real size is in the deck`, auditBig.bad.length === 0, auditBig.bad.slice(0, 6).join(' | '));
+  }
+  // S16 — the review desk.
+  if (run('S16') && sub('S16')) await reviewDeskScene(app, profile);
+}
+
+// ═══ THE REVIEW DESK ════════════════════════════════════════════════════════
+// Every box the eye rests on, per frame, across a decision. Nothing may move, in either
+// direction, by more than a pixel, and the card keeps its height. The pixels are read
+// every frame, because a jump that is back by the end is still a jump.
+const DESK_MARKS = ['#hr-title', '#hr-prev', '#hr-next', '#hr-done', '.hr-count', '.hr-facts', '.hr-panes', '.hr-pane-goes', '.hr-pane-stays', '#hr-read-goes', '#hr-flip', '#hr-read-stays', '.hr-after', '.hr-decide', '#hr-keep', '#hr-merge', '.hr-note', '.hr-outcome', '[data-group-key="reviewPairs"]', '.dm-health .cur-card', '.dm-health .cur-section-hd'];
+const DESK_SAMPLER = String.raw`(() => {
+  window.__desk = {
+    begin(marks) {
+      const s = this.s = { frames: [], done: false, marks };
+      const read = () => {
+        const f = { t: performance.now(), boxes: {}, focus: document.activeElement === document.body || !document.activeElement ? 'BODY' : (document.activeElement.id || document.activeElement.tagName),
+          merge: (() => { const m = document.querySelector('#hr-merge'); return m ? { disabled: m.disabled, busy: m.getAttribute('aria-busy') === 'true', text: m.innerText } : null; })(),
+          text: !!document.querySelector('.hr-pane-text'), title: (document.querySelector('#hr-title') || {}).innerText };
+        for (const m of marks) { const e = document.querySelector(m); if (e) { const r = e.getBoundingClientRect(); f.boxes[m] = [r.left, r.top, r.height]; } }
+        return f;
+      };
+      const tick = () => { if (s.done) return; s.frames.push(read()); requestAnimationFrame(tick); };
+      s.frames.push(read());
+      requestAnimationFrame(tick);
+    },
+    end() { this.s.done = true; return this.s.frames; },
+  };
+})();`;
+function deskMoves(frames) {
+  const first = {}; let maxMove = 0; let who = ''; let cardMove = 0; let body = 0;
+  // Merge's height may grow by a line for a long name; its place may not move, and the
+  // block it stands in keeps its height. The rest keep height too.
+  const heightFree = new Set(['#hr-merge', '#hr-flip', '#hr-keep']);
+  for (const f of frames) {
+    if (f.focus === 'BODY') body++;
+    for (const [k, b] of Object.entries(f.boxes)) {
+      if (!first[k]) { first[k] = b; continue; }
+      const moved = Math.max(Math.abs(b[0] - first[k][0]), Math.abs(b[1] - first[k][1]), heightFree.has(k) ? 0 : Math.abs(b[2] - first[k][2]));
+      if (moved > maxMove) { maxMove = moved; who = k; }
+      if (k === '.dm-health .cur-card') cardMove = Math.max(cardMove, Math.abs(b[2] - first[k][2]));
     }
   }
+  return { maxMove: Math.round(maxMove * 10) / 10, who, cardMove: Math.round(cardMove * 10) / 10, body };
+}
+
+async function reviewDeskScene(app, profile) {
+  const { page } = app;
+  const pn = profile.name;
+  const wiki = path.join(app.ws.domains, 'h16', 'wiki', 'concepts');
+  const shot = async (state) => { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); const b = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${state}--${pn}.png`), Buffer.from(b.data, 'base64')); };
+  const audit = async (label) => { const a = await wordAudit(page); step(`[${pn}] words, ${label}: every visible string is in the deck`, a.bad.length === 0, a.bad.slice(0, 8).join(' | ')); step(`[${pn}] words, ${label}: none banned, none in capitals`, a.banned.length === 0, a.banned.slice(0, 8).join(' | ')); };
+  const title = () => page.evaluate((s) => document.querySelector(s).innerText, SEL.deskTitle);
+  const mergeState = () => page.evaluate((s) => { const m = document.querySelector(s); return m ? { disabled: m.disabled, text: m.innerText } : null; }, SEL.deskMerge);
+  // The gate runs only while the panes are on screen, so a person reading the pair has them
+  // in view. On a phone the panes can be above a button you just pressed: look at them first.
+  const armed = async () => {
+    await page.evaluate((p, m) => { const r = document.querySelector(p); if (!r) return; const b = r.getBoundingClientRect(); const seen = Math.min(b.bottom, innerHeight) - Math.max(b.top, 0); if (seen < b.height * 0.6) document.querySelector(m).scrollTop += b.top - 60; }, SEL.deskPanes, SEL.main);
+    return waitFor(page, (s) => { const m = document.querySelector(s); return !!m && !m.disabled; }, 'Merge armed', 400, SEL.deskMerge);
+  };
+  const center = (sel) => page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2), top: r.top, bottom: r.bottom }; }, sel);
+  const press = async (sel) => { const c = await center(sel); await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y }); await delay(40); await page.click(c.x, c.y, { settleMs: 20 }); };
+  // A control the user cannot see is one they scroll to first.
+  const bringIn = async (sel) => { await page.evaluate((s, m) => { const e = document.querySelector(s); const r = e.getBoundingClientRect(); if (r.top < 0 || r.bottom > innerHeight - 8) document.querySelector(m).scrollTop += r.top - 120; }, sel, SEL.main); await delay(120); };
+  const deciding = async (label, fn, settle = 1000) => {
+    await page.send('Runtime.evaluate', { expression: DESK_SAMPLER });
+    await page.evaluate((m) => window.__desk.begin(m), DESK_MARKS);
+    await fn();
+    await delay(settle);
+    const frames = await page.evaluate(() => window.__desk.end());
+    const mv = deskMoves(frames);
+    step(`[${pn}] ${label}: nothing moves across it (<= 1 px)`, mv.maxMove <= 1, mv.maxMove + ' px, ' + mv.who);
+    step(`[${pn}] ${label}: the card keeps its height`, mv.cardMove <= 1, mv.cardMove + ' px');
+    step(`[${pn}] ${label}: focus never on the page body`, mv.body === 0, mv.body + ' frames');
+    return frames;
+  };
+
+  await openDomain(app, 'h16');
+  await compareReady(page);
+  await act(app, profile, 'desk-find', { press: SEL.findDupes, place: 300, outcome: [SEL.confirmCard], until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
+  await act(app, profile, 'desk-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
+  await page.evaluate(() => { document.querySelector('.dm-health').__marker = 1; });
+
+  // ── Opening: comparison by default, and the gate is not open before 500 ms visible.
+  // A row that opened above the last press waits for you to scroll, as a person does.
+  await page.evaluate((m) => { document.querySelector(m).scrollTop -= 40; }, SEL.main);
+  await delay(500);
+  await place(page, SEL.review, 300);
+  await delay(300);
+  await page.send('Runtime.evaluate', { expression: DESK_SAMPLER });
+  await page.evaluate((m) => window.__desk.begin(m), DESK_MARKS);
+  await press(SEL.review);
+  await waitFor(page, (s) => !!document.querySelector(s), 'the desk', 400, SEL.deskText);
+  await armed();
+  await delay(100);
+  let frames = await page.evaluate(() => window.__desk.end());
+  const gateTime = (fr) => {
+    const textAt = fr.find((f) => f.text);
+    const openAt = fr.find((f) => f.merge && !f.merge.disabled && !f.merge.busy && textAt && f.t >= textAt.t);
+    const earlier = fr.filter((f) => f.merge && !f.merge.disabled && (!textAt || f.t < textAt.t));
+    return { textAt: textAt && textAt.t, openAt: openAt && openAt.t, gap: textAt && openAt ? Math.round(openAt.t - textAt.t) : null, early: earlier.length };
+  };
+  let g = gateTime(frames);
+  const errs = (page.consoleErrors || []).filter((e) => !/favicon|404/.test(e));
+  step(`[${pn}] the page threw nothing opening the desk`, errs.length === 0, errs.slice(0, 3).join(' | '));
+  step(`[${pn}] the comparison is on screen without asking for it`, !!g.textAt);
+  step(`[${pn}] the gate is not open before the comparison is seen for 500 ms`, g.gap !== null && g.gap >= 480 && g.early === 0, 'gap ' + g.gap + ' ms, enabled early in ' + g.early + ' frames');
+  step(`[${pn}] Review keeps the section node`, await page.evaluate(() => document.querySelector('.dm-health').__marker === 1));
+  step(`[${pn}] focus lands on the pair title`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
+  const look = await page.evaluate(() => ({
+    primary: document.querySelectorAll('.dm-health .btn-primary').length,
+    danger: [...document.querySelectorAll('.dm-health .btn-danger')].map((b) => b.id),
+    badge: /confidence/i.test(document.querySelector('.dm-health').innerText),
+    fact: (document.querySelector('.hr-fact') || {}).innerText,
+    reason: (document.querySelector('.hr-reason') || {}).innerText || '',
+    roles: [...document.querySelectorAll('.hr-pane-role')].map((e) => e.innerText),
+    articles: [...document.querySelectorAll('article.hr-pane')].map((e) => e.getAttribute('aria-label')),
+    banners: document.querySelectorAll('.dm-health .dm-banner').length,
+    order: [...document.querySelectorAll('.hr-desk button, .hr-desk [tabindex="0"], .hr-desk summary')].map((e) => e.id || (e.classList.contains('hr-pane-body') ? 'text' : e.tagName)),
+  }));
+  step(`[${pn}] no violet primary, and Merge alone is the danger button`, look.primary === 0 && look.danger.join() === 'hr-merge', JSON.stringify(look));
+  step(`[${pn}] no confidence on screen`, !look.badge);
+  step(`[${pn}] the app's own fact, and the AI quoted as the AI`, /^(Spelling variant|Version numbers differ|Different names)$/.test(look.fact || '') && /^The AI says: ".+"$/.test(look.reason), look.fact + ' / ' + look.reason);
+  step(`[${pn}] the panes say which page goes, in words`, look.roles.join() === 'Goes away,Stays' && /^Page that goes away: /.test(look.articles[0]) && /^Page that stays: /.test(look.articles[1]), look.articles.join(' | '));
+  step(`[${pn}] tab order: head, first page, second page, decision, list`, look.order.join() === 'hr-prev,hr-next,hr-done,text,hr-read-goes,hr-flip,text,hr-read-stays,hr-keep,hr-merge,SUMMARY', look.order.join());
+  await shot('desk'); await audit('the desk');
+
+  // ── No single key does anything. A held Enter is not a second press.
+  const titleBefore = await title();
+  for (const key of ['m', 'M', 'k', 'K', 'Enter', ' ', 'y', 'ArrowRight']) {
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key, text: key.length === 1 ? key : undefined });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key });
+  }
+  await delay(300);
+  step(`[${pn}] no single key merges, keeps or moves on, with focus on the title`, (await title()) === titleBefore && (await page.evaluate((s) => document.querySelector(s) && document.querySelector(s).getAttribute('aria-busy') !== 'true', SEL.deskMerge)));
+  await page.evaluate((s) => document.querySelector(s).focus(), SEL.deskMerge);
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, autoRepeat: true, text: '\r' });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await delay(300);
+  step(`[${pn}] a repeating Enter on Merge does not merge`, (await title()) === titleBefore);
+  await page.evaluate((s) => document.querySelector(s).focus(), SEL.deskTitle);
+
+  // ── Next: records nothing, and the gate starts again.
+  await bringIn(SEL.deskNext);
+  const nextFrames = await deciding('Next', () => press(SEL.deskNext));
+  g = gateTime(nextFrames.filter((f, i, a) => i > 0 && (a[i - 1].title !== titleBefore || f.title !== titleBefore)));
+  step(`[${pn}] Next goes to the next pair`, (await title()) !== titleBefore, await title());
+  const openedAfterNext = nextFrames.find((f) => f.title !== titleBefore && f.merge && !f.merge.disabled);
+  const arrived = nextFrames.find((f) => f.title !== titleBefore);
+  const textBack = nextFrames.find((f) => arrived && f.t >= arrived.t && f.text);
+  step(`[${pn}] Merge re-arms for 500 ms on a new pair`, !!arrived && !!openedAfterNext && !!textBack && openedAfterNext.t - textBack.t >= 480, openedAfterNext && textBack ? Math.round(openedAfterNext.t - textBack.t) + ' ms' : 'never');
+  await armed();
+
+  // ── Off screen, the 500 ms does not run. Fetched is not seen.
+  await page.evaluate((s) => document.querySelector(s).click(), SEL.deskNext);
+  await page.evaluate((m) => { const main = document.querySelector(m); main.scrollTop = 0; }, SEL.main);
+  await delay(1200);
+  const offScreen = await page.evaluate((p) => { const r = document.querySelector(p).getBoundingClientRect(); return r.bottom < 0 || r.top > innerHeight; }, SEL.deskPanes);
+  const stillShut = (await mergeState()).disabled;
+  step(`[${pn}] with the panes off screen, 1.2 s later, Merge is still shut`, !offScreen || stillShut, 'off screen: ' + offScreen + ', shut: ' + stillShut);
+  await bringIn(SEL.deskPanes);
+  await armed();
+
+  // ── Keep this one instead: this direction only, re-armed, nothing moved.
+  await bringIn(SEL.deskFlip);
+  const nameBefore = await page.evaluate(() => document.querySelector('.hr-pane-stays .hr-pane-name').innerText);
+  await deciding('Keep this one instead', () => press(SEL.deskFlip));
+  step(`[${pn}] the other page stays now`, (await page.evaluate(() => document.querySelector('.hr-pane-goes .hr-pane-name').innerText)) === nameBefore);
+  step(`[${pn}] Merge names the new page`, (await armed()) && (await mergeState()).text.includes(await page.evaluate(() => document.querySelector('.hr-pane-stays .hr-pane-name').innerText)));
+  await shot('desk-flipped');
+
+  // ── Merge, for real, with a double click: one page goes, the next pair is safe.
+  const m1 = await page.evaluate(() => ({ goes: document.querySelector('.hr-pane-goes .hr-pane-name').innerText, stays: document.querySelector('.hr-pane-stays .hr-pane-name').innerText }));
+  const pairsBefore = await title();
+  await bringIn(SEL.deskMerge);
+  const mergeFrames = await deciding('Merge', async () => { const c = await center(SEL.deskMerge); await page.click(c.x, c.y, { settleMs: 5 }); await page.click(c.x, c.y, { settleMs: 5 }); }, 1500);
+  step(`[${pn}] Merge deleted the page that goes and kept the page that stays`, !existsSync(path.join(wiki, m1.goes + '.md')) && existsSync(path.join(wiki, m1.stays + '.md')), m1.goes + ' into ' + m1.stays);
+  step(`[${pn}] the button said Merging while it ran`, mergeFrames.some((f) => f.merge && f.merge.busy && /Merging…/.test(f.merge.text)));
+  const m2 = await page.evaluate(() => document.querySelector('.hr-pane-goes .hr-pane-name').innerText);
+  step(`[${pn}] a double click merged one pair`, existsSync(path.join(wiki, m2 + '.md')) && (await title()) !== pairsBefore, m2);
+  step(`[${pn}] focus goes to the pair title, never a button`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
+  const said = await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome);
+  step(`[${pn}] the outcome is on the desk`, /^Merged .+ into .+\./.test(said), said);
+  const liveText = await page.evaluate(() => document.querySelector('.dm-health .dm-health-live').textContent);
+  step(`[${pn}] and it is spoken, with where you are`, /^Merged .+Pair [\d,]+ of [\d,]+\.$/.test(liveText), liveText);
+  await shot('desk-merged'); await audit('after a merge');
+
+  // ── Keep both, with Undo.
+  await armed();
+  await bringIn(SEL.deskKeep);
+  const k1 = await page.evaluate(() => ({ goes: document.querySelector('.hr-pane-goes .hr-pane-name').innerText, stays: document.querySelector('.hr-pane-stays .hr-pane-name').innerText }));
+  await deciding('Keep both', () => press(SEL.deskKeep));
+  const keptLine = await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome);
+  step(`[${pn}] Keep both says so and offers Undo`, /^Kept .+ and .+ apart\. They will not come back\./.test(keptLine) && await page.evaluate(() => !!document.getElementById('hr-undo')), keptLine);
+  step(`[${pn}] focus goes to the pair title`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
+  await shot('desk-kept');
+  await deciding('Undo', () => press('#hr-undo'));
+  step(`[${pn}] Undo: Brought back.`, (await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome)) === 'Brought back.');
+  step(`[${pn}] Undo leaves focus on the title, not the body`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
+
+  // ── A stale basis, on a real file: refused, nothing written, shown truthfully.
+  await armed();
+  const s1 = await page.evaluate(() => ({ goes: document.querySelector('.hr-pane-goes .hr-pane-name').innerText, stays: document.querySelector('.hr-pane-stays .hr-pane-name').innerText }));
+  const stayFile = path.join(wiki, s1.stays + '.md');
+  const edited = readFileSync(stayFile, 'utf8') + '\nA line someone added in Obsidian after you compared.\n';
+  writeFileSync(stayFile, edited);
+  await bringIn(SEL.deskMerge);
+  const staleFrames = await deciding('A stale basis', () => press(SEL.deskMerge), 1400);
+  step(`[${pn}] a page changed since the comparison: the merge is refused and nothing is written`, existsSync(path.join(wiki, s1.goes + '.md')) && readFileSync(stayFile, 'utf8') === edited);
+  const staleLine = await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome);
+  step(`[${pn}] the desk says so, in the deck's words`, staleLine === 'This page changed since you compared it. The comparison has been refreshed.', staleLine);
+  step(`[${pn}] and the new text really is on the pane`, await page.evaluate(() => document.querySelector('.hr-pane-stays .hr-pane-text').innerText.includes('after you compared')));
+  step(`[${pn}] the gate re-armed through the 500 ms, not at once`, (() => {
+    const shutAgain = staleFrames.find((f, i) => i > 0 && f.merge && f.merge.disabled);
+    const reopened = shutAgain ? staleFrames.find((f) => f.t > shutAgain.t && f.merge && !f.merge.disabled && !f.merge.busy) : null;
+    return !!shutAgain && (!reopened || reopened.t - shutAgain.t >= 480);
+  })());
+  await armed();
+  await shot('desk-stale'); await audit('a stale comparison');
+
+  // ── The comparison fails: says so, Merge stays shut, Try again works.
+  await page.evaluate(() => { window.__realFetch = window.fetch; window.fetch = (u, o) => (String(u).includes('semantic-dupes/preview') ? Promise.reject(new Error('the disk went away')) : window.__realFetch(u, o)); });
+  await bringIn(SEL.deskNext);
+  await deciding('A failed comparison', () => press(SEL.deskNext), 900);
+  const failLine = await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome);
+  step(`[${pn}] a failed comparison says so, with Try again`, /^Could not load the comparison: the disk went away/.test(failLine) && await page.evaluate(() => !!document.getElementById('hr-retry')), failLine);
+  step(`[${pn}] and Merge stays shut`, (await mergeState()).disabled);
+  await shot('desk-failed'); await audit('a failed comparison');
+  await page.evaluate(() => { window.fetch = window.__realFetch; });
+  await bringIn('#hr-retry');
+  await press('#hr-retry');
+  step(`[${pn}] Try again loads it, and Merge opens through the gate`, (await waitFor(page, (s) => !!document.querySelector(s), 'text', 200, SEL.deskText)) && await armed());
+
+  // ── A long page scrolls inside its pane; a long name wraps. Neither moves anything.
+  const longName = 'a-very-long-page-name-that-goes-on-and-on-about-the-history-of-the-long-page-name';
+  let walked = 0; let found = false;
+  for (; walked < 60 && !found; walked++) {
+    found = await page.evaluate((n) => !!document.querySelector('.hr-pane-goes .hr-pane-name') && (document.querySelector('.hr-pane-goes .hr-pane-name').innerText.startsWith(n) || document.querySelector('.hr-pane-stays .hr-pane-name').innerText.startsWith(n)), longName);
+    if (!found) { await page.evaluate((s) => document.querySelector(s).click(), SEL.deskNext); await delay(120); }
+  }
+  step(`[${pn}] the pair with the long name and the long text comes up`, found);
+  await waitFor(page, (s) => !!document.querySelector(s), 'text', 200, SEL.deskText);
+  await delay(200);
+  const inner = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.hr-pane-body')].sort((x, y) => y.scrollHeight - x.scrollHeight)[0];
+    const before = b.scrollHeight > b.clientHeight;
+    b.scrollTop = 300;
+    const n = document.querySelector('.hr-pane-goes .hr-pane-name');
+    return { scrolls: before, top: b.scrollTop, wrapped: n.getBoundingClientRect().height > 24 || document.querySelector('.hr-pane-stays .hr-pane-name').getBoundingClientRect().height > 24,
+      over: document.documentElement.scrollWidth - innerWidth, nameInside: n.getBoundingClientRect().right <= n.closest('.hr-pane').getBoundingClientRect().right + 0.5 };
+  });
+  step(`[${pn}] a long page scrolls inside its pane`, inner.scrolls && inner.top > 0, JSON.stringify(inner));
+  step(`[${pn}] a long name wraps inside its pane, and the page has no sideways scroll`, inner.wrapped && inner.nameInside && inner.over <= 0, JSON.stringify(inner));
+  await armed();
+  await shot('desk-long');
+  await audit('a long page');
+  await bringIn(SEL.deskNext);
+  await deciding('Next, from the long page', () => press(SEL.deskNext));
+  step(`[${pn}] a new pair starts at the top of its text`, await page.evaluate(() => [...document.querySelectorAll('.hr-pane-body')].every((b) => b.scrollTop === 0)));
+
+  // ── Read full page opens the reader; closing it, the desk is still there.
+  await armed();
+  await press('#hr-read-stays');
+  const opened = await waitFor(page, () => { const r = document.querySelector('.reader, #reader, [data-reader], .reader-panel'); return !!r && getComputedStyle(r).display !== 'none'; }, 'the reader', 200);
+  step(`[${pn}] Read full page opens the right-side reader`, opened);
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await delay(400);
+  step(`[${pn}] the desk is still there behind it`, await page.evaluate((s) => !!document.querySelector(s), SEL.desk));
+
+  // ── All N pairs: summary first; a waiting row jumps to its pair.
+  await page.evaluate(() => { const sum = document.querySelector('[data-group-key="reviewPairs"] summary'); sum.scrollIntoView({ block: 'center' }); sum.click(); });
+  await delay(300);
+  const fold = await page.evaluate(() => ({ first: (document.querySelector('[data-group-key="reviewPairs"] .cur-fold-body').firstElementChild || {}).className, here: [...document.querySelectorAll('.hr-fold-row')].filter((r) => /this pair/.test(r.innerText)).length, jumps: document.querySelectorAll('.hr-jump').length }));
+  step(`[${pn}] All N pairs: the summary first, this pair marked, the rest a press away`, fold.first === 'hr-fold-summary' && fold.here === 1 && fold.jumps > 0, JSON.stringify(fold));
+  await shot('desk-all-pairs'); await audit('all pairs');
+  const tBefore = await title();
+  await page.evaluate(() => document.querySelector('.hr-jump').click());
+  await delay(400);
+  step(`[${pn}] a waiting row jumps to its pair`, (await title()) !== tBefore);
+  step(`[${pn}] focus on the title after a jump`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
+  await page.evaluate(() => document.querySelector('[data-group-key="reviewPairs"] summary').click());
+  await delay(200);
+
+  // ── Merging state, seen. And Done.
+  await slowRoute(page, '/fix', 700);
+  await armed();
+  await bringIn(SEL.deskMerge);
+  await press(SEL.deskMerge);
+  await delay(250);
+  await shot('desk-merging'); await audit('merging');
+  step(`[${pn}] while it merges, Keep both is shut and Merge says so`, await page.evaluate(() => document.getElementById('hr-keep').disabled && document.getElementById('hr-merge').getAttribute('aria-busy') === 'true' && /Merging…/.test(document.getElementById('hr-merge').innerText)));
+  await delay(1100);
+  await page.evaluate(() => { if (window.__realFetch2) window.fetch = window.__realFetch2; });
+  await bringIn(SEL.deskDone);
+  await press(SEL.deskDone);
+  await delay(500);
+  const back = await page.evaluate((r, m) => ({ lanes: document.querySelectorAll('.dm-lane').length, desk: !!document.querySelector('.hr-desk'), focus: document.activeElement && (document.activeElement.className || document.activeElement.tagName), review: !!document.querySelector(r), marker: document.querySelector('.dm-health').__marker === 1 }), SEL.review);
+  step(`[${pn}] Done goes back to the lanes, focus on Review`, back.lanes > 0 && !back.desk && /dm-review-btn/.test(back.focus || ''), JSON.stringify(back));
+  step(`[${pn}] and it is the same section`, back.marker);
+  await shot('desk-done');
+}
+// Holds one route for a moment, in the page, so a busy state can be looked at.
+async function slowRoute(page, part, ms) {
+  await page.evaluate((p, w) => { window.__realFetch2 = window.fetch; window.fetch = async (u, o) => { if (String(u).endsWith(p)) await new Promise((r) => setTimeout(r, w)); return window.__realFetch2(u, o); }; }, part, ms);
 }
 
 // ═══ THE WORD AUDIT — the running page against the deck ═════════════════════
 async function wordAudit(page) {
-  const lines = await page.evaluate((section, stage3) => {
+  const lines = await page.evaluate((section) => {
     const root = document.querySelector(section); const out = [];
-    const skip = (e) => { for (let p = e; p && p !== root; p = p.parentElement) { if (p.classList && (p.classList.contains('mono') || p.classList.contains('visually-hidden') || p.classList.contains('dm-plan-data') || p.classList.contains('ai-run-model') || p.classList.contains('tx-status-detail'))) return true; if (p.matches && p.matches(stage3)) return true; if (p.matches && p.matches('[data-row-leaving]')) return true; const cs = getComputedStyle(p); if (cs.display === 'none' || cs.visibility === 'hidden') return true; } return false; };
+    const skip = (e) => { for (let p = e; p && p !== root; p = p.parentElement) { if (p.classList && (p.classList.contains('mono') || p.classList.contains('visually-hidden') || p.classList.contains('dm-plan-data') || p.classList.contains('ai-run-model') || p.classList.contains('tx-status-detail') || p.classList.contains('hr-pane-text'))) return true; if (p.matches && p.matches('[data-row-leaving]')) return true; const cs = getComputedStyle(p); if (cs.display === 'none' || cs.visibility === 'hidden') return true; } return false; };
     const blocks = new Set();
     const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!n.nodeValue.trim() || skip(n.parentElement)) continue; if (!n.parentElement.closest('details[open], :not(details)')) continue; const closedFold = n.parentElement.closest('details:not([open])'); if (closedFold && !n.parentElement.closest('summary')) continue; blocks.add(n.parentElement); }
     for (const b of blocks) { let t = ''; for (const c of b.childNodes) t += c.nodeType === 3 ? c.nodeValue : (c.classList && (c.classList.contains('mono') || c.classList.contains('ai-run-model')) ? 'NAME' : (c.textContent || '')); out.push(t.replace(/\s+/g, ' ').trim()); }
     return out;
-  }, SEL.health, STAGE3_SUBTREE);
+  }, SEL.health);
   const bad = []; const banned = [];
   for (const l of lines) {
     if (!l || isFigure(l)) continue;

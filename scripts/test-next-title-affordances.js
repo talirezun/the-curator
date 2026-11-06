@@ -200,7 +200,7 @@ const CEILING = {
   // the compile button while disabled, and the send/stop button's
   // unattributed title. NEVER raise this back.
   'chat.js': 4,
-  'domains.js': 1,     // the Flip button, focusable whenever it is not busy
+  'domains.js': 0,
   'ingest.js': 0,
   'memory.js': 3,
   'settings.js': 9,
@@ -312,8 +312,8 @@ section('§4  THE CONVERTED SITES — named, on top of the class guard');
     !d.includes('dm-row-attn" title='));
   ok('domains: the semantic-merge refusal is not a tooltip on a disabled button',
     !d.includes("gate.allowed ? 'Merge this pair' : gate.reason"));
-  ok('domains: ...and the visible refusal it duplicated is still there',
-    d.includes('Preview required before Merge'));
+  ok('domains: ...and the desk\'s Merge has no tooltip either: the panes it waits for are on screen',
+    !/title=/.test(readFileSync(join(VIEWS_DIR, 'health-review.js'), 'utf8')));
 
   ok('shared: the three "another write is running" tooltips are gone',
     !sh.includes("title=\"Another write is already running"));

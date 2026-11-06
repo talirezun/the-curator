@@ -181,7 +181,7 @@ router.get('/:domain', async (req, res) => {
 // of a batch, and fixSemanticDuplicatesBatch requires a spelling variant AND a
 // remembered high-confidence answer about the openings on disk now. The MCP has its
 // own gate in mcp/tools/health.js, bound to the same basis.
-const MERGE_BASIS_CLIENT_REQUIRED = false;
+const MERGE_BASIS_CLIENT_REQUIRED = true;
 let mergeBasisClientRequired = MERGE_BASIS_CLIENT_REQUIRED;
 
 const MERGE_BASIS_MISSING_MESSAGE = 'This merge is not based on a comparison of the two pages as they are now, so nothing was changed. Compare them first, then merge.';
