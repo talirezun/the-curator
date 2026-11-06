@@ -443,6 +443,11 @@ try {
     const body = dom.read('concepts/l.md');
     for (const l of ['- [[alpha]] old description', '- [[alpha]] new description', '- [[beta]] now with words']) ok(hasLine(body, l), `same-link bullet: "${l}"`);
     eq((body.match(/^- \[\[beta\]\]$/gm) || []).length, 1, 'a bare link stays once');
+    const dom2 = makeDomain({ 'concepts/m.md': '---\ntype: concept\ntags: [type/concept]\n---\n# M\n\n## Related\n- [[gamma]] with words\n- [[gamma]]\n\n## Notes\n- [[delta]] with words\n' });
+    await writePage(dom2.name, 'concepts/m.md', '# M\n\n## Notes\n- [[delta]]\n');
+    const body2 = dom2.read('concepts/m.md');
+    ok(!/^- \[\[gamma\]\]$/m.test(body2) && hasLine(body2, '- [[gamma]] with words'), 'a bare link the section already names goes: it holds no text');
+    ok(!/^- \[\[delta\]\]$/m.test(body2), 'nor is a bare link added beside a line that names it, in any section');
   }
   {
     // The AI's stub said "re-ingest to fix": that has to keep working.
@@ -475,7 +480,9 @@ try {
     eq(rec.status, 'unchanged', 'a later date is not new text');
     ok(hasLine(dom.read('summaries/d.md'), 'date: 2024-01-01'), 'the first date stays');
     await writePage(dom.name, 'summaries/d.md', '# D\n\n## Entities Mentioned\n- [[alpha]] another description\n');
-    await files.syncSummaryEntities(dom.name, 'summaries/d.md', ['summaries/d.md']);
+    await writePage(dom.name, 'entities/beta.md', '# Beta\n\nBody.\n');
+    await files.syncSummaryEntities(dom.name, 'summaries/d.md', ['summaries/d.md', 'entities/beta.md']);
+    ok(hasLine(dom.read('summaries/d.md'), '- [[beta]]'), 'CONTROL: the sync really rewrote the summary');
     const body = dom.read('summaries/d.md');
     ok(hasLine(body, '- [[alpha]] the founder') && hasLine(body, '- [[alpha]] another description'), 'the post-write sync keeps both same-link lines');
   }
@@ -815,6 +822,7 @@ try {
       const body = d.read('concepts/formats.md');
       for (const l of ['Kept hub opening.', 'Proposed hub opening.']) ok(hasLine(body, l), `hub: "${l}" survives`);
       for (const t of ['flow south', 'flood often']) ok(body.includes(t), `hub: "${t}" survives the linkify rewrite`);
+      for (const t of ['flow south', 'flood often']) eq(body.split(t).length - 1, 1, `hub: "${t}" is on the page once, not again unlinked`);
     }
 
     // The MCP's compile_to_wiki, in a real spawned server.
