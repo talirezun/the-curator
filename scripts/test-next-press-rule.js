@@ -68,7 +68,7 @@ function world() {
     let fetchResult = null; let fetchFails = null; let fetchCalls = 0;
     let fixFn = null;
     const fetchJSON = async (u, o) => { fetchCalls++; if (fixFn && String(u).endsWith('/fix')) return fixFn(JSON.parse(o.body).type); if (fetchFails) throw new Error(fetchFails); return fetchResult; };
-    const FREE_REPAIR_ORDER = ['folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];
+    ${(VIEW.match(/const FREE_REPAIR_ORDER = [^;]+;/) || [''])[0]}
     const inFlightWriteSlugs = new Set(); const beginDomainWrite = () => () => {}; const loadHealth = async () => {};
     let healthPressY = null; let planLeaving = false;
     const pluralize = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');

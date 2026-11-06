@@ -1846,7 +1846,7 @@ panels and a row of dropdowns; **Current handoff** became the reader in v3.56.0;
 joined in v3.59.0. v3.62.0 numbered what was left, deleted the **Status** block and moved its
 readings into the strip. v3.65.1 renamed the steps and their rows — see
 [the table above](#the-word-on-screen-and-the-word-on-disk) — and rebuilt each step's controls into
-a head row above its rows, the same anatomy Wiki health's Quick maintenance panel already used.)*
+a head row above its rows, the same anatomy Wiki health's AI help panel already used.)*
 
 *This part covers steps ① to ③. Step ④ has its own section above,
 [Session start and the context window](#session-start-and-the-context-window); step ⑤ has its own
@@ -3347,7 +3347,7 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"N page paths came back from the AI without the '.md' extension and were written correctly (a, b, c, …and N more)"* (v3.0.17, the grouped form — appears once 3 or more pages hit this in one ingest, see "When one line represents many pages" above) | ℹ Info | Same issue as the row above, happening on 3 or more pages in this ingest. | Same fix, applied to every affected page — grouped into one line instead of listing it N times. | Nothing. Every affected page is still listed individually, with its full path, in the change list above the warnings. |
 | *"The AI's first attempt at '...' came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it and re-ingest if it reads too thin."* (v3.0.17) | ⚠ For review | The AI's first attempt at writing this one page ran past the response length limit, or came back unparseable. | Automatically retried with a strict "be brief" instruction, and that attempt succeeded. | Open the page from **Domains → PAGES**. It's genuine content, just shorter than the rest of the wiki — re-ingest the source later if it reads too thin. |
 | *"N pages had to be rewritten more briefly: the AI's first attempt at each came back unusable... (examples). These are real content, but they are briefer than the rest..."* (v3.0.17, grouped form) | ⚠ For review | Same as the row above, happening on 3 or more pages in this ingest. | Same brevity retry, applied to each page, grouped into one line. | Same as above — check the pages named as examples, or anything in the change list that reads unusually thin. |
-| *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **✨ Find duplicate pages** under QUICK MAINTENANCE. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
+| *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open **Domains → the domain → Wiki health**, then **Compare pages for duplicates** in **AI help**. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
 | *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open **Domains → the domain → Wiki health** → expand Broken links → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
 | *"The summary `summaries/x.md` is missing a title (# heading), a source and a Key Takeaways section — the AI did not follow the summary layout."* (v3.84.0; names only what is missing) | ⚠ For review | The saved summary lacks a `# Title`, a recorded source, or Key Takeaways bullets — some models write labels such as "Key Takeaways:" instead of headings. | Left the page as written; supplied the uploaded filename as the source if the AI wrote none. | Open it in the Wiki tab; re-ingesting the source usually fixes it. |
 | *"Two different sources map to the same summary name … — keeping both: this source's summary was written to `summaries/<name>-<6 hex>.md`"* (v3.84.0) | ⚠ For review | Two different files produce the same short summary name (long names that differ late, or names with no Latin letters). | Gave the second one its own summary instead of merging the two. | Nothing required; rename the source if you want a cleaner name. |
@@ -4122,7 +4122,7 @@ is what each section holds:
 | 2 **Pages** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them, remembered for the whole install since v3.64.1. See [§11](#11-read-a-wiki-page) |
 | 3 **Projects in this domain** | Unchanged. See just below |
 | 4 **Shared Brain** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**; since v3.64.1 that too is one preference for the whole install rather than per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
-| 5 **Wiki health** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents. *Since v3.65.0* it opens as rows, not a card: a head row carrying only **Rescan**, then **Scan** (the report itself, opening to entities/concepts/summaries counts and the scan's own age), **Broken links**, **Orphan pages** and **Dismissed**, each a row whose meta is its count and which ships closed. **Quick maintenance stays unfolded below the rows** — every button there names its cost before it runs, and a price never sits behind a chevron |
+| 5 **Wiki health** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents. One card holds up to three lanes (**Free repairs**, **Your decision**, **AI help**), each drawn only when it has rows, then **Scan details**. Every AI button wears its own cost, so a price never sits behind a chevron |
 
 ![The Domains view on the synthetic Early Computing demo domain. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. Beside it the Domains sidebar: New domain and Use existing folder buttons over a KNOWLEDGE list of two domains, each with its identity dot, page count, age and last-write line — Early Computing (23 pages, selected, with a small amber health dot) and Night Sky (6 pages, with a hollow 'not checked' health ring). The main column reads DOMAINS/EARLY-COMPUTING/ over the title Early Computing with an info mark, Rename, Delete and an Ask this domain button. An OVERVIEW card holds PAGES 23 (pressed, as the current filter), ENTITIES 11, CONCEPTS 8, SUMMARIES 4, PROJECTS 2 and SOURCES 2 weeks ago. Below it section 1, Ingest — a Domain picker set to Early Computing and a dashed drop zone reading Drop a source here — and section 2, Pages, with a Wiki / Context / All lens, a filter box, facet tabs All 23, Entities 11, Concepts 8, Summaries 4, Memory 7, and the first page rows (Algorithm, Binary Arithmetic, Compiler…) with their paths in monospace.](images/curator-domains.png)
 
@@ -7449,7 +7449,7 @@ Settings field (v3.65.2) and is no longer the way to add one.
 ### Health & scan limits
 
 One unnumbered block, **Semantic-duplicate scan limits**. It caps what a single AI
-duplicate scan may cost, and it is used only by the **✨ Find duplicate pages** scan
+duplicate scan may cost, and it is used only by the **Compare pages for duplicates** scan
 you start from a domain's health panel ([§17](#17-wiki-health)). Nothing here
 affects the free structural health scan.
 
@@ -8013,9 +8013,9 @@ These are measurements, not endorsements. Your documents are not the documents t
 
 **Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page — the **last** of the domain page's six sections, below the page list, the Projects group and SHARED BRAIN (it sat above the first two until v3.49.0). That's where it belongs: a health problem is always a problem with one specific wiki, and it is the section you go looking for on the days something is wrong rather than the one you read first.
 
-**It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. **Since v3.65.0 the panel opens as rows, not a card**: a head row carrying only the scan action, then **Scan**, **Broken links**, **Orphan pages** and **Dismissed**, each a closed row whose own summary line is its count — every row ships closed, and only one opens at a time. Opening **Scan** shows the full report as a monitor — the same recessed, monospace reading used everywhere a live state appears in the app: pages by kind, how many are dismissed, and the age of the scan with its own freshness dot. A row of chips — one per issue type, with its count — sits inside that same body. Zero counts stay grey.
+**It checks by itself.** You don't have to press anything: selecting a domain runs the free, local check and the panel fills in. The section's heading says the result in one line, *Checked just now · 16 to look at*. Under it, **one card holds up to three lanes**, sorted by what each action costs you, and each lane is drawn only when it has something in it. A clean wiki is one line, *Nothing to fix. All 23 pages were checked just now.*, plus **Check again**. **Scan details** at the foot of the card holds the figures.
 
-**The button says what it will do.** Once a scan has produced a result for that domain the action reads **Rescan**, and re-runs it after you have made changes. If a scan **fails** and there is no result at all — a folder that has gone away, a disk that stopped answering — the same button reads **Scan wiki health** instead, because there is nothing to *re*-do (*new in v3.49.0*; it used to say "Rescan" under an error, asking you to remember a scan that never happened). A failure that follows a successful scan still says **Rescan**, because in that case a result does exist — the panel is just showing you the error instead of it.
+**The button says what it will do.** Once a check has produced a result for that domain the action reads **Check again**. If a check **fails** and there is no result at all, a folder that has gone away or a disk that stopped answering, it reads **Check this wiki**, and the card shows the error rather than a stale result.
 
 Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
 
@@ -8023,66 +8023,88 @@ Use it if your wiki starts to feel messy — broken links, duplicate entities, p
 
 > **On a read-only Shared Brain mirror**, the scan still runs but no fix buttons appear. The panel explains why: fixes here would be overwritten on the next Pull. Fix the issue in your personal contributing domain and push instead.
 
-> 📖 **For the AI-assisted features** (bulk broken-link fix, bulk orphan rescue, semantic-duplicate detection — what each does, what data leaves your machine, exact cost math), see **[docs/ai-health.md](ai-health.md)**. The **Quick maintenance** action bar (below) is the fast way to use them; the per-issue sections give you granular control.
+> 📖 **For the AI-assisted features** (finding targets for broken links, finding links for pages nothing links to, comparing pages for duplicates: what each does, what data leaves your machine, exact cost math), see **[docs/ai-health.md](ai-health.md)**. They are the **AI help** lane, below.
+
+### The three lanes
+
+| Lane | What it promises | What is in it |
+|---|---|---|
+| **Free repairs** | No AI, no cost, no page deleted | Pages missing a link back · Links written with a folder name · Summaries with untidy link lists · Broken links with a known target · Pages missing from the page list. Each row has **Repair N**. With two or more rows the lane has **Repair all N**. |
+| **Your decision** | Only you can tell. Nothing happens until you choose | Possible duplicates (**Review**) · Spelling variants, Same name in two folders, Nearly the same name (**Merge N**, each saying on the row how many pages it deletes) · Pages nothing links to and Broken links with no target (**Leave as is**, per item) · Left as is (**Bring back**, per item) |
+| **AI help** | Uses your AI model. Each action shows its cost first | Compare pages for duplicates (**Compare the next N**) · Find links for N pages nothing links to (**Suggest**) · Find targets for N broken links (**Suggest**). Every button wears its cost. |
+
+```mermaid
+flowchart TD
+    A[Wiki health checks the wiki] --> B{Anything to look at?}
+    B -- "no" --> C[One line: Nothing to fix.<br/>Check again]
+    B -- "yes" --> D[Free repairs<br/>runs on the press]
+    B -- "yes" --> E[Your decision<br/>a deletion asks first]
+    B -- "yes" --> F[AI help<br/>the cost is on the button,<br/>then asks first]
+```
+
+A long list shows 20 items and **Show N more**, so a wiki with thousands of pages still opens as a screen of rows, not a list you scroll for a minute.
 
 ### What it checks
 
-| Issue | What it means | Action |
+| Row | What it means | Action |
 |-------|---------------|--------|
-| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo, hyphen drift, or a link to a page the LLM hasn't written yet. | **Best: ✨ Fix N broken links** under QUICK MAINTENANCE fixes them all in one reviewed batch (v3.0.1-beta.16). Per-row, **Apply** rewrites a link to a scanner-matched target, or ✨ **Ask AI** proposes one. |
-| **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Best: ✨ Rescue N orphans** under QUICK MAINTENANCE finds a home for each orphan in one reviewed batch (v3.0.1-beta.17). Per-row, ✨ **Ask AI** proposes up to 5 pages that should link to it. Or keep/merge/delete from Obsidian — many orphans resolve themselves as the wiki grows. |
-| **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
-| **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version and deletes the concept page, keeping all text from both ([what a merged page looks like](#what-a-merged-page-looks-like)). |
-| **Hyphen variants** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix. The scanner groups files whose normalised form (strip honorifics like `dr-` / `dr.-` / `prof-`, then strip all hyphens, then lowercase) is identical. Example groups: `tali-rezun` + `talirezun` + `dr.-tali-rezun`; `prof-smith` + `smith`. | **Fix** — merges all variants into the canonical slug (no honorific, most hyphens, shortest). See the detailed walk-through below. |
-| **Missing backlinks** | A summary lists an entity or concept (under *Entities Mentioned* or *Concepts Introduced or Referenced*) but that page's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
-| **Summary link lists** *(v3.84.0)* | A summary lists the same page twice, lists concepts under *Entities Mentioned*, or lists entities under *Concepts Introduced or Referenced*. See [Summary link lists](#summary-link-lists-v3840) below. | **Fix** — free and local; moves each link to the right list and removes repeated lines. Also part of **Fix N safe issues**. |
-| **Index gaps** *(v3.83.0)* | `index.md` — the wiki's page catalogue, which your AI agents read through the `get_index` tool — is missing rows for pages that exist, or still has rows for pages that are gone. See [Index gaps and Rebuild index](#index-gaps-and-rebuild-index-v3830) below. Counted as **one** issue however many rows are off. | **Rebuild index** under QUICK MAINTENANCE — free, no AI, previewed before anything is written. There is no Fix or Dismiss on this row. |
+| **Broken links with a known target** | A `[[wikilink]]` points to a page that doesn't exist, and the check already knows which page was meant. | **Repair N** rewrites them. Free. |
+| **Broken links with no target** | The same, with no match. Often a typo, or a link to a page the AI hasn't written yet. | **Find targets for N broken links** in AI help matches them in one reviewed batch and turns the rest into plain text. Or **Leave as is**. |
+| **Pages nothing links to** | An entity or concept page has no incoming links. Not necessarily an error: a page becomes connected as future ingests reference it. | **Find links for N pages nothing links to** in AI help finds a home for each in one reviewed batch. Or **Leave as is**. |
+| **Links written with a folder name** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Repair N** removes the folder name. Free. |
+| **Same name in two folders** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Merge N** asks first, then merges the concept into the entity version and deletes the concept page, keeping all text from both ([what a merged page looks like](#what-a-merged-page-looks-like)). |
+| **Nearly the same name** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix (`tali-rezun`, `talirezun`, `dr.-tali-rezun`). | **Merge N** asks first, then merges them into one page. See [below](#hyphen-variants--when-and-how-v301-beta3). |
+| **Pages missing a link back** | A summary lists an entity or concept (under *Entities Mentioned* or *Concepts Introduced or Referenced*) but that page's *Related* section doesn't link back. | **Repair N** adds the link. Free. |
+| **Summaries with untidy link lists** *(v3.84.0)* | A summary lists the same page twice, lists concepts under *Entities Mentioned*, or lists entities under *Concepts Introduced or Referenced*. See [Summary link lists](#summary-link-lists-v3840) below. | **Repair N**. Free, and no link is removed. |
+| **Pages missing from the page list** *(v3.83.0)* | `index.md`, the wiki's page catalogue your AI agents read through the `get_index` tool, is missing rows for pages that exist, or still has rows for pages that are gone. See [The page list and its rebuild](#index-gaps-and-rebuild-index-v3830) below. | **Preview the rebuild**. Free, and you see it first. |
 
 ### What a press does
 
-Every button in Wiki health answers where you pressed it. *(New in this release; the section's layout is unchanged.)*
+Every button in Wiki health answers where you pressed it.
 
 | When you press | What you see |
 |---|---|
 | **Any button** | Its own label changes straight away ("Repairing…", "Saving…", "Merging…"), at the same width. It is never silent. |
-| **Fix all N** on a free repair that deletes nothing, and **Fix N safe issues** when it would delete nothing | No question. It runs, and the row says **Repaired N**. |
-| **Fix all N** on *Cross-folder duplicates* or *Hyphen variants*, **Fix N safe issues** when it would delete pages, **Merge N spelling variants** | A question opens **directly under the row you pressed**, saying how many pages go, with focus on **Cancel**. Escape closes it. |
-| **The yes of a question**, **Apply this plan** | The card stays open and says what is happening, then says what happened, then leaves. |
-| **An AI button** | Its cost question opens under the buttons, as before. |
+| **Repair N**, **Repair all N** | No question. It runs, and the row says **Repaired N**. **Repair all** runs each free row in turn and says how far it has got. It never runs the two kinds that delete a page. |
+| **Merge N** on *Same name in two folders*, *Nearly the same name* or *Spelling variants* | A question opens **directly under the row you pressed**, saying how many pages go, with the undo warning and focus on **Cancel**. Escape closes it. Its button says **Merge and delete N**, in red. |
+| **Leave as is** | The row stays where it is and says *Left as is.*, with **Undo**. Nothing under it moves, so you can walk down a list. **Check again** clears those rows. |
+| **Review** | Opens the pair list under Possible duplicates. A pair is still decided one at a time: **Preview diff**, then **Merge**. |
+| **An AI button** | Its cost question opens under the row. The yes wears the cost: **Compare for ≈ $0.04**. |
+| **The yes of a question**, **Add these links**, **Apply**, **Rebuild the list** | The card stays open and says what is happening, then says what happened, then leaves. |
 
-**When it is done**, the row holds its outcome for about a second, then closes smoothly. Rows under it slide up; nothing above it moves, and the page does not scroll, even at the very end of the page. What was just done stays in the section's heading, for example "Repaired 2 just now".
+**When it is done**, the row holds its outcome for about a second, then closes smoothly. Rows under it slide up; nothing above it moves, and the page does not scroll, even at the very end of the page. What was just done stays in the lane's heading, for example "Repaired 2 just now".
 
-If you switch domain or leave while it runs, the outcome waits for you on that domain. If you press **Fix all** on something that deletes pages, the button says "Checking…" first, so the number in the question is the number on disk now.
+If you switch domain or leave while it runs, the outcome waits for you on that domain. If you press **Merge N** on something that deletes pages, the button says "Checking…" first, so the number in the question is the number on disk now.
 
 **When it fails**, the row says so and offers **Try again**. That stays until you act on it: it never disappears on a timer. There is no longer a coloured banner at the top of the section.
 
 A repair can settle rows **above** the one you pressed, for instance when a new link rescues an orphan page in a list you have open. Those rows dim and say **Resolved** rather than vanish from under your pointer. They go when you scroll, press something above them, or close their fold.
 
-While a scan re-reads the wiki, the figures stay where they are and a note beside **Rescan** says "Showing the previous result".
+While a check re-reads the wiki, the figures stay where they are and the section's heading says *Checking…*.
 
 **From the keyboard**, focus moves to the next row when a row leaves, and holding Enter does not press the next button. A screen reader hears progress and outcomes through one polite announcement.
 
-**Auto-fixable issues** have a **Fix all N** button on the section's row. **Fix all** runs at once when nothing would be deleted, and asks first when pages would be: see [What a press does](#what-a-press-does). **Broken links** use the same flow per row but with an **Apply** button — only rows where the scanner found a plausible target are applicable. **Orphans** are review-only per row, but you don't have to work through them one at a time; see **Quick maintenance** below.
+**A deletion is stated on the row**, as *deletes 3 pages*, before you press anything. **Repair N** deletes nothing.
 
-### Quick maintenance — the action bar (v3.0.1-beta.17)
+### The AI help lane
 
-This is the recommended way to maintain a wiki, and it's what makes health usable on a large or shared brain with **hundreds or thousands** of issues. A **QUICK MAINTENANCE** block sits inside the Wiki health panel with one button per batch tool — each showing a live count, each only appearing when it has work to do, and **each AI button showing its estimated cost right on the button**:
+This is what makes health usable on a large or shared brain with **hundreds or thousands** of issues.
 
-| Button | What it does | AI? | Cost |
-|---|---|---|---|
-| **Fix N safe issues** | Applies every deterministic fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched. One click, no AI, no preview needed (these are unambiguous). It asks first only if it would delete a page. | No | Free |
-| **Rebuild index** *(v3.83.0)* | Appears only when the scan finds **Index gaps**. Rebuilds `index.md` from the files on disk — adds the missing pages, removes rows for pages that no longer exist. **You see a preview first**, and nothing is written until you click Apply. | No | Free (no sparkles, no cost badge) |
-| **✨ Fix N broken links** | Resolves broken `[[wikilinks]]` in bulk. Free formatting fixes first (slugifying, stripping `.md`), then the AI matches the rest to real pages when they're a clear variant, and removes the brackets on links that point at no real page. **You review the full plan before it's applied.** | Yes | shown on the button |
-| **✨ Rescue N orphans** | For each orphan (a page nothing links to), the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Orphans with no confident match are left for manual review. **You review the plan before it's applied.** | Yes | shown on the button |
-| **✨ Find duplicate pages** | The semantic-duplicate scan (see below). Always offered when a key is configured — there's no free count to gate it on, so the cost is fetched when you open it. | Yes | shown when you open it |
+| Row | What it does | Cost |
+|---|---|---|
+| **Compare pages for duplicates** | The duplicate comparison (see below). The row says how far you are: *500 of 2,108 pairs compared*. | On the button: **Compare the next 500 ≈ $0.04** |
+| **Find targets for N broken links** | Free formatting fixes first (slugifying, stripping `.md`), then the AI matches the rest to real pages when they're a clear variant, and the links that point at no real page become plain text. | On the button: **Suggest ≈ $0.0003** |
+| **Find links for N pages nothing links to** | For each page, the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Pages with no confident match are left for you. | On the button: **Suggest ≈ $0.0004** |
 
-**The pattern for an AI action is always the same:** click → a confirm card names exactly what will happen and what it costs → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki re-scans so you watch the counts drop. The panel itself says so: *"Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet."*
+**The pattern for an AI action is always the same:** press → a question under the row names exactly what is sent and what it costs → confirm → the AI works, counting on the button (*Looking… 12 of 300*) → **you see a plan**, headed *Nothing is written yet.* → **Add these links** or **Apply** → the wiki is checked again so you watch the counts drop.
+
+**Where the cost on Compare comes from.** It needs a pass over every page name, about 18 seconds on 3,500 pages. So a domain nobody compares never pays for it: the pass runs when that row is on screen. While it runs the row says *Working out the cost…* and the button waits. What the question then shows is read again when you press, so it is true at that moment. If a merge changes the figures, the row says *About 500 of 2,108 pairs compared* until the recount lands, in place.
 
 This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
 
-> Don't have an API key configured? You still get **Fix N safe issues** (deterministic, no AI). When there's nothing structural left to fix either, the panel says so and offers an **Open Settings** button to add a key and unlock the AI tools.
+> Don't have an API key configured? **Free repairs** and **Your decision** work as ever. The AI buttons stay on screen, disabled, with a line under them linking to Providers & keys.
 
-> **Buttons grey out while a fix is running** — including a fix you started, then navigated away from and came back to. If you see *"An earlier fix on this domain is still running — please wait for it to finish before starting another,"* that's a real operation still working on disk, not a stuck screen.
+> **Buttons grey out while a fix is running** — including a fix you started, then navigated away from and came back to. If you see *"An earlier fix on this domain is still running. Wait for it to finish before starting another."*, that's a real operation still finishing on disk.
 
 > **The first time you use any AI action**, a one-time notice explains what leaves your machine. You confirm once.
 
@@ -8090,16 +8112,16 @@ This is the difference between maintaining a 50-page personal wiki and a 3,000-p
 
 Every summary ends with two lists of the pages it created or touched: **Entities Mentioned** (people, products, organisations) and **Concepts Introduced or Referenced** (ideas). Before v3.84.0 The Curator put *every* page under Entities Mentioned, and a few link rewrites left the same line twice. **Summary link lists** finds the summaries where that happened, one row per summary, for example `summaries/foo.md — 3 repeated lines · 12 concepts filed under Entities`.
 
-| What the row counts | What **Fix** does |
+| What the row counts | What **Repair** does |
 |---|---|
 | **Repeated lines** — the same link listed twice in one list | Keeps one line |
 | **Concepts filed under Entities** — a page from `concepts/` in *Entities Mentioned* | Moves the line to *Concepts Introduced or Referenced* |
 | **Entities filed under Concepts** — the reverse | Moves the line to *Entities Mentioned* |
 
-- **Free, local, no AI.** It is included in **Fix N safe issues** and can be applied per row.
+- **Free, local, no AI.** It is included in **Repair all N** and can be applied per row.
 - **Every link stays on the page.** A line that carries a label or description is never dropped for being "the same link"; only an exact copy is. Nothing outside the two lists changes, and The Curator refuses to write a page if it would change them.
 - **New ingests are filed correctly from the start**, so this only needs doing once on a wiki that existed before v3.84.0.
-- **Expect "Missing backlinks" to jump after updating.** Concepts listed in the second list now get a link back from the summary like entities always did, so wikis that never had them show many more (the maintainer's two wikis went from 4 to 338 and from 0 to 512). They are safe fixes: **Fix N safe issues** clears them.
+- **Expect "Missing backlinks" to jump after updating.** Concepts listed in the second list now get a link back from the summary like entities always did, so wikis that never had them show many more (the maintainer's two wikis went from 4 to 338 and from 0 to 512). They are safe fixes: **Repair all N** clears them.
 
 ### Index gaps and Rebuild index (v3.83.0)
 
@@ -8114,12 +8136,12 @@ Every wiki has an `index.md`: one row per page, with a one-line description. You
 | Rows against each other | **Duplicates**; rows that **can be repointed** to the page they actually name | Merges the duplicates; repoints the rows |
 | An existing row's description | — | **Keeps it exactly as written**; a new row's description comes from the page's own title or first line |
 
-**To rebuild:** open the domain's **Wiki health** panel and click **Rebuild index · N pages missing** under QUICK MAINTENANCE (or **Preview rebuild** on the Index gaps row). A card appears headed **Plan ready — nothing written yet**, telling you how many pages will be added, how many stale rows removed, how many existing descriptions are kept, and how large `index.md` will become (on that 3,000-page wiki: 146 KB to 614 KB). Click **Apply this plan** to write it, or **Discard** to walk away. The scan then re-runs and the Index gaps row disappears.
+**To rebuild:** open the domain's **Wiki health** panel and press **Preview the rebuild** on the *Pages missing from the page list* row. A card opens under the row, headed **Nothing is written yet.**, telling you how many pages will be added, how many stale rows removed, how many existing descriptions are kept, and how large `index.md` will become (on that 3,000-page wiki: 146 KB to 614 KB). Click **Apply this plan** to write it, or **Discard** to walk away. The scan then re-runs and the Index gaps row disappears.
 
 - **It is free and uses no AI.** The rebuild is deterministic: the same wiki always produces the same index.
-- **The preview is a promise.** If anything in the wiki changed after you looked — a page, or the index itself — Apply refuses with *"The wiki changed after this preview, so nothing was written. Preview the rebuild again."* The app never writes text it was handed by the browser; it re-plans from the files at the moment you click.
-- **Some pages are left out, and the card says so.** A page whose file name cannot be linked (a leading or trailing space, or any of `| [ ] #`) and a concept that shares its name with an entity page (fix **Cross-folder duplicates** first) are listed in the card rather than silently skipped.
-- **It cannot be dismissed, and "Fix N safe issues" never touches it.** Rebuilding is a rewrite of a whole file, so it always goes through its own preview.
+- **The preview is a promise.** If anything in the wiki changed after you looked — a page, or the index itself — Apply refuses with *"The wiki changed since this was worked out. Press Preview the rebuild again."* The app never writes text it was handed by the browser; it re-plans from the files at the moment you click.
+- **Some pages are left out, and the card says so.** A page whose file name cannot be linked (a leading or trailing space, or any of `| [ ] #`) and a concept that shares its name with an entity page (merge **Same name in two folders** first) are listed in the card rather than silently skipped.
+- **It cannot be left as is, and "Repair all" never touches it.** Rebuilding is a rewrite of a whole file, so it always goes through its own preview.
 - **Read-only Shared Brain mirrors are not checked.** A mirror's `index.md` is a stub the app never maintains; the Index gaps check would be red forever with nothing to do about it.
 - **Since v3.83.0 it stays complete on its own.** Every ingest, every Compile and every agent's `compile_to_wiki` adds a row for **every** page it touched that the index lacks. Only a deletion, or a sync that lost a row, can open a gap again — and Health will show it.
 
@@ -8131,9 +8153,9 @@ Every wiki has an `index.md`: one row per page, with a one-line description. You
 
 1. Click **Domains** in the rail
 2. Pick a domain — the health scan runs automatically
-3. **For bulk maintenance** (recommended): use the **QUICK MAINTENANCE** buttons — start with **Fix N safe issues**, then the AI tools (each previews before applying)
-4. **For granular control**: expand the per-type sections below and use **Fix all N**, **Dismiss** and the row's own buttons
-5. After any fix the wiki re-scans so you see counts drop; when you're happy, push from **Sync**
+3. **Start with Free repairs**: **Repair all N** is free and deletes nothing
+4. **Then Your decision**: the rows that delete a page say so and ask first; **Leave as is** what you mean to keep. **Then AI help**, which shows its cost on every button and previews before writing
+5. After any repair the wiki is checked again so you see counts drop; when you're happy, push from **Sync**
 
 ### When to run it
 
@@ -8159,9 +8181,9 @@ All four cases collapse to the same canonical slug after the scanner's normalisa
 
 **Step-by-step fix walk-through:**
 
-1. **Open the domain.** The **Hyphen variants** chip shows a count if any are detected.
-2. **Expand the Hyphen variants section.** Each row shows the canonical file (kept) plus the variants that will be merged into it. Canonical selection priorities: (a) no honorific prefix; (b) most hyphens; (c) shortest length.
-3. **Click Fix on the row** (or **Fix all** on the section header). The Curator:
+1. **Open the domain.** The **Nearly the same name** row in *Your decision* shows a count if any are detected, and how many pages a merge deletes.
+2. **Open that row.** Each row shows the canonical file (kept) plus the variants that will be merged into it. Canonical selection priorities: (a) no honorific prefix; (b) most hyphens; (c) shortest length.
+3. **Press Merge N on the row**, and answer its question. The Curator:
    - Adds each variant's bullets to the same-named sections of the canonical file, without repeats
    - Adds everything else the canonical file lacks under `## Merged from <variant>` ([what a merged page looks like](#what-a-merged-page-looks-like))
    - **Repoints every `[[link]]` in the domain that pointed at a variant, onto the canonical slug**
@@ -8184,7 +8206,7 @@ The button on those two says **Merge and delete**, not "Fix now" — the wording
 
 ### What a merged page looks like
 
-Every merge that deletes a page works the same way: a duplicate pair, **Merge N spelling variants**, cross-folder duplicates, hyphen variants, **Fix N safe issues**, and an agent using `fix_wiki_issue`. **A merge never loses text.** The page you keep stays the base, whichever page is longer, and whatever the removed page said that the kept page lacks is added to it.
+Every merge that deletes a page works the same way: a duplicate pair, **Spelling variants**, **Same name in two folders**, **Nearly the same name**, and an agent using `fix_wiki_issue`. **A merge never loses text.** The page you keep stays the base, whichever page is longer, and whatever the removed page said that the kept page lacks is added to it.
 
 ```markdown
 ---
@@ -8245,7 +8267,7 @@ Good to know:
 
 ### Semantic duplicates (v2.4.5+)
 
-In a domain's **Wiki health** panel, click **✨ Find duplicate pages** under **QUICK MAINTENANCE** (it appears whenever an API key is configured — including on a wiki that is otherwise structurally clean). This finds pages that the algorithm can't catch — like `[[rag]]` and `[[retrieval-augmented-generation]]`, or `[[email]]` and `[[e-mail]]`, or `[[neural-network]]` and `[[neural-networks]]`.
+In a domain's **Wiki health** panel, press **Compare the next N** on the *Compare pages for duplicates* row in **AI help** (it stays on screen even when a wiki is otherwise clean, so "nothing to fix" never claims there are no duplicates). This finds pages that the algorithm can't catch — like `[[rag]]` and `[[retrieval-augmented-generation]]`, or `[[email]]` and `[[e-mail]]`, or `[[neural-network]]` and `[[neural-networks]]`.
 
 Unlike the other health fixes, this one:
 
@@ -8254,7 +8276,7 @@ Unlike the other health fixes, this one:
 - **Is opt-in and user-gated.** Nothing happens until you click, then confirm.
 - **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug. Its text is not: everything it said moves to the kept page ([what a merged page looks like](#what-a-merged-page-looks-like)).
 
-Each candidate comes back as its own card showing `remove-slug → keep-slug`, a confidence level (high / medium / low), and the AI's reasoning. Four buttons:
+What it finds waits in **Your decision → Possible duplicates**. Press **Review** to open the list. Each pair is its own card showing `remove-slug → keep-slug`, a confidence level (high / medium / low), and the AI's reasoning. Four buttons:
 
 | Button | What it does |
 |---|---|
@@ -8263,16 +8285,19 @@ Each candidate comes back as its own card showing `remove-slug → keep-slug`, a
 | **Merge** | Performs the merge. **Disabled until you have previewed that specific pair** — the card says *"Preview required before Merge"* until you do, then *"✓ previewed"*. |
 | **Skip** | Dismisses this pair so it stops coming back on future scans. |
 
-**How far through the domain you are.** A line at the top of the results says where you stand, and it is there even when nothing was found:
+**How far through the domain you are.** The *Compare pages for duplicates* row says where you stand, and it is there even when nothing was found:
 
 | What you see | What it means | What to do |
 |---|---|---|
-| *Checked 500 of 36,333 possible pairs. 35,833 still to check.* | This computer has answers for those 500 | **Check the next 500**, when you have dealt with the pairs on screen |
-| *All 943 possible pairs have been checked.* | Nothing left to send. Running it again costs nothing | Work through what is listed |
-| *12 found by earlier scans and not yet decided are listed again, at no cost.* | Pairs from earlier runs that you have not merged or skipped | Nothing special: they are ordinary cards |
-| *Counting the pairs…* | You came back, or a merge changed the list. The pairs are already there and the figures are on their way; on a large domain that takes about 15 seconds | Carry on: everything still works |
-| *20 pairs could not be checked because the AI call failed. They will be tried again next time.* | Part of the run failed | **Check the next** tries them again |
-| *None found so far* | No duplicates yet, with pairs still to check | **Check the next** |
+| *500 of 36,333 pairs compared* | This computer has answers for those 500 | **Compare the next 500**, when you have dealt with the pairs in Your decision |
+| *All 943 pairs compared* | Nothing left to send | Work through what is listed |
+| *No pairs compared yet* | No run on this computer | **Compare the next N** |
+| *No two page names look alike* | There is nothing to compare | Nothing |
+| *Working out the cost…* | The pass over every page name is running; on a large domain that takes about 15 seconds | Carry on: everything else still works |
+| *About 500 of 36,333 pairs compared* | A merge changed the list, and the true figures are on their way | Carry on |
+| *20 pairs could not be compared because the AI call failed. They will be tried again next time.* | Part of the run failed | **Compare the next** tries them again |
+
+Pairs found by earlier runs and not yet decided come back into Possible duplicates at no cost.
 
 ```mermaid
 flowchart LR
@@ -8283,7 +8308,7 @@ flowchart LR
     E --> C
 ```
 
-A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. A long list shows 50 pairs at a time with **Show 50 more**; the counts and the batch button always cover all of them. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Check everything again**, at the end of the card, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
+A pair is checked again when the opening of either page changes (the AI reads only the first 500 characters of each) or when you change the model. A long list shows 50 pairs at a time with **Show 50 more**; the counts and the Spelling variants row always cover all of them. If a batch fails, nothing is remembered for it, and its pairs stay in the "still to check" count. **Forget all comparisons**, in that row's fold, forgets this domain's answers so the next scan starts over and costs money again; pairs you skipped stay skipped, and nothing in your wiki changes.
 
 The answers live in your app data folder, not in your wiki, so they do not travel through Sync: each computer keeps its own, and losing them costs a re-check, never any data.
 
@@ -8323,17 +8348,17 @@ Not every flagged issue is a real problem. Two pages you intentionally keep sepa
 
 Now dismissals stick.
 
-A **Dismiss** button appears on every review-only health row (orphans, broken links without an auto-fix suggestion), and **Skip** does the same job on a semantic-duplicate pair card. Click it once and the issue stops appearing on future scans.
+A **Leave as is** button appears on every row only you can judge (pages nothing links to, broken links with no target), and **Skip** does the same job on a pair card. Press it once and the issue stops appearing on future checks. Until the next **Check again** the row stays in place with **Undo**.
 
-The line under the panel's headline (*"Scanned 600 entities · 2,651 concepts · 83 summaries · 4 dismissed"*) tells you how many issues are being filtered out. Below the regular sections, a collapsible **Dismissed (N)** list shows everything you've dismissed, with a **Restore** button on each row to bring an item back.
+**Scan details** says how many issues are being filtered out, and **Left as is (N)** at the end of *Your decision* lists everything you've set aside, with **Bring back** on each row.
 
 **Three actions you'll see, in order of permanence:**
 
 | Button | Where | What it does |
 |---|---|---|
-| **Apply** / **Fix** | Auto-fixable rows | Performs the repair now. The issue is resolved. |
-| **Dismiss** / **Skip** | Review-only rows · semantic-dupe cards | Marks the issue as not-a-problem. Won't surface on future scans. Reversible from the Dismissed section. |
-| **Cancel** | Inside a confirm card or an ✨ Ask AI panel | Backs out without doing anything. The underlying issue stays flagged on future scans. Use **Dismiss** if you want it gone for good. |
+| **Repair N** / **Merge N** | The rows the app can do | Performs the repair now. The issue is resolved. |
+| **Leave as is** / **Skip** | Rows only you can judge · pair cards | Marks the issue as not-a-problem. Won't surface on future checks. Reversible with **Bring back**. |
+| **Cancel** | Inside a question under a row | Backs out without doing anything. The underlying issue stays flagged on future checks. Use **Leave as is** if you want it gone for good. |
 
 **Dismissals sync between your computers.** They live inside the wiki folder (`<wiki>/.health-dismissed.jsonl`), so your existing GitHub sync carries them along. Skip a 70-pair semantic scan on your laptop, sync, and the same false positives stay skipped on your desktop.
 

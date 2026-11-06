@@ -1973,7 +1973,7 @@ Broken links are SPLIT, and the distinction is the whole safety story:
 
   brokenLinks WITH issue.suggestedTarget  → auto-fixable. In AUTO_FIXABLE,
       and included in fixAllSafe()'s TYPES list — so one click on
-      "Fix N safe issues" rewrites every one of them across the domain.
+      "Repair all N" rewrites every one of them across the domain.
       The target came from the deterministic scanner, not from an LLM.
   brokenLinks WITHOUT a suggestedTarget   → review-only. fixIssue()'s
       fix-all path filters these out (`issues.filter(i => i.suggestedTarget)`),

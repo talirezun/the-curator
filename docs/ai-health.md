@@ -114,7 +114,7 @@ link the app declined to trust was indistinguishable from one that never had a c
 
 ## Bulk orphan rescue (v3.0.1-beta.17)
 
-The per-orphan **✨ Ask AI** button is fine for a few orphans, but a mature domain can have hundreds (one real articles domain had **604**). The **✨ Rescue N orphans** button in the Quick maintenance bar handles them in one reviewed batch.
+The per-orphan **✨ Ask AI** button is fine for a few orphans, but a mature domain can have hundreds (one real articles domain had **604**). **Find links for N pages nothing links to** (it was **Find links for N pages nothing links to**** button in the Quick maintenance bar handles them in one reviewed batch.
 
 For each orphan, the AI picks the ONE existing page that should most naturally link *to* it, and writes a short relationship description. Applying injects `- [[orphan]] — description` into that page's *Related* section — giving the orphan an incoming link so it drops off the orphan list. The flow is the familiar one: estimate → confirm → plan (with progress) → **preview** → Apply → auto re-scan.
 
@@ -126,9 +126,9 @@ For each orphan, the AI picks the ONE existing page that should most naturally l
 
 ---
 
-## One-click "Fix N safe issues" (v3.0.1-beta.17)
+## Free repairs, and Repair all (v3.0.1-beta.17; the lanes since the Wiki health redesign)
 
-The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It runs on the press with its result on the button, unless it would delete a page: then a question opens under the row first, with the page count. It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). Its merges keep all text from both pages: see *What a merged page looks like*. It's one write-locked operation, then the wiki re-scans.
+The **Free repairs** lane holds every *deterministic* fix that deletes nothing: links written with a folder name, pages missing a link back, summaries with untidy link lists, and broken links the check already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step. **Repair N** runs one row on the press, with its result on the row; **Repair all N** runs them one after another in the order the server's own fix-all uses, and says how far it has got. The two kinds that delete a page, **Same name in two folders** and **Nearly the same name**, are never in this lane: they are in **Your decision**, say on the row how many pages they delete, and ask first. The `fix-all-safe` route still exists, and still does all six, for its other callers; the app's screen no longer calls it. Agents use `fix_wiki_issue` as before.
 
 ---
 
@@ -136,7 +136,7 @@ The **Fix N safe issues** button runs every *deterministic* fix at once — fold
 
 Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
 
-Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** open **Domains**, pick a domain, and in its **Wiki health** panel click **Scan wiki health** (or **Rescan**) first, then click the **✨ Find duplicate pages** button under the **✨ QUICK MAINTENANCE** eyebrow below the scan row. (In the pre-redesign interface, deleted in v3.41.0, the same flow started from the top-level **Health** tab.) (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
+Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** open **Domains**, pick a domain, and in its **Wiki health** panel press **Compare the next N** on the *Compare pages for duplicates* row in the **AI help** lane. The button wears its cost; it reads the estimate when the row comes on screen, because the estimate needs a pass over every page name, and what the question then says is read again at the press. (In the pre-redesign interface, deleted in v3.41.0, the same flow started from the top-level **Health** tab.) (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
 
 ### The pipeline
 
@@ -177,7 +177,7 @@ On a large domain one run reaches only a small part of the possible pairs (measu
 
 ### What a merged page looks like
 
-This applies to every merge that deletes a page: a merged pair, **Merge N spelling variants**, **Cross-folder duplicates**, **Hyphen variants**, **Fix N safe issues** and the MCP's `fix_wiki_issue`. A merge never loses text. Whatever either page said is on the kept page afterwards.
+This applies to every merge that deletes a page: a merged pair, **Spelling variants**, **Same name in two folders**, **Nearly the same name** and the MCP's `fix_wiki_issue`. A merge never loses text. Whatever either page said is on the kept page afterwards.
 
 ```markdown
 ---
@@ -303,13 +303,13 @@ In v2.5.1, dismissals persist.
 
 ### What you can dismiss
 
-A **Dismiss** button appears on every review-only Health row:
+A **Leave as is** button appears on every review-only Health row:
 
 - **Orphans** — pages with no incoming links (with or without ✨ Ask AI suggestions).
 - **Broken links** that have no auto-fix suggestion — anything where AI couldn't propose a target, or you didn't accept the proposal.
 - **Semantic-duplicate pair cards** — the existing **Skip** button now persists (this is the change that motivated the feature).
 
-Auto-fixable issues (broken links *with* a suggested target, folder-prefix violations, cross-folder duplicates, hyphen variants, missing backlinks) deliberately do **not** have a Dismiss button — the right action there is **Apply**, not skip. If you change your mind later, you can dismiss anything from the Dismissed section.
+Auto-fixable issues (broken links *with* a suggested target, folder-prefix violations, cross-folder duplicates, hyphen variants, missing backlinks) deliberately do **not** have a Leave as is button — the right action there is **Repair** or **Merge**, not skip. Until the next **Check again**, a row left as is stays in place and offers **Undo**.
 
 ### How it persists
 
@@ -317,11 +317,11 @@ Dismissals are stored in `domains/<your-domain>/wiki/.health-dismissed.jsonl` �
 
 The format is line-oriented and append-only, so concurrent dismissals on different machines merge cleanly through git's standard 3-way merge.
 
-### The Dismissed section
+### The Left as is row
 
-Below the regular Health issue list — and below the Semantic Duplicates panel, which renders first — a collapsible **Dismissed** row with a count pill lists every previously-dismissed item. Each row has an **Un-dismiss** button — restore an item to the active scan with one click. Empty when N=0; hidden entirely if you've never dismissed anything.
+At the end of the **Your decision** lane, a **Left as is** row with a count pill lists every previously-dismissed item. Each row has **Bring back**, which restores an item to the active check. Hidden entirely if nothing is set aside.
 
-The scan reading inside the **Scan** row carries a `dismissed` line telling you how many issues are being filtered.
+The monitor inside **Scan details** carries a `left as is` line telling you how many issues are being filtered.
 
 ### Stale records
 
@@ -356,7 +356,7 @@ The provider's privacy policy applies to the excerpt and slug list you send. See
 
 OpenRouter is an aggregator, so a third party serves the request behind it. The Curator sends routing preferences that forbid OpenRouter from substituting a different upstream provider for the one the model you picked belongs to, so the request is served by the provider that model comes from. It does **not** send a data-collection preference of its own; whether an upstream may train on your requests is governed by your OpenRouter account settings and by that upstream's own policy. If your wiki content is sensitive, settle that against OpenRouter's current policy before pointing an AI Health action at it.
 
-A one-time disclosure modal summarises this the first time you launch an ✨ AI action in a browser (a Quick maintenance button in the current interface; through v3.40.0 the pre-redesign shell's per-row **Ask AI** button read the same acknowledgement key, so a user was never asked twice regardless of which interface they used). Accepting it stores the acknowledgement in `localStorage` under the key `curator-ai-health-disclosure-seen-v1`.
+A one-time disclosure modal summarises this the first time you launch an ✨ AI action in a browser (a button in the AI help lane in the current interface; through v3.40.0 the pre-redesign shell's per-row **Ask AI** button read the same acknowledgement key, so a user was never asked twice regardless of which interface they used). Accepting it stores the acknowledgement in `localStorage` under the key `curator-ai-health-disclosure-seen-v1`.
 
 ---
 

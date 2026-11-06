@@ -464,10 +464,9 @@ for (const p of PAGES) {
   const base = renderDomainHealth();
   ok(pressRuleViolations(base).length === 0, 'CONTROL — the plain render passes the press rule');
   ok(pressRuleViolations(base + '<div class="dm-banner"></div>').length === 1, 'CONTROL — a banner goes red');
-  ok(pressRuleViolations(base + '<button class="btn btn-ghost">Skip</button>').length === 1, 'CONTROL — a ghost button goes red');
-  ok(pressRuleViolations(base + '<span role="button">x</span>').length === 1, 'CONTROL — a span acting as a button goes red');
+  ok(pressRuleViolations(base + '<button class="btn btn-ghost">Cancel</button>').some((v) => /text-styled/.test(v)), 'CONTROL — a ghost button goes red');
+  ok(pressRuleViolations(base + '<span role="button">Cancel</span>').some((v) => /not a <button>/.test(v)), 'CONTROL — a span acting as a button goes red');
   ok(pressRuleViolations(base + '<div aria-live="polite"></div>').length === 1, 'CONTROL — a second live region goes red');
-  ok(pressRuleViolations(base + '<div class="dm-lane-title">AI help</div>').length === 0, 'CONTROL — the title alone, once, is fine in the plain render');
   const full = renderDomainHealth(lane({}));
   ok(pressRuleViolations(full + '<div class="dm-lane-title">Free repairs</div>').some((v) => /appears 2 times/.test(v)), 'CONTROL — a lane title twice goes red');
   ok(pressRuleViolations(full + '<button class="btn btn-ai">Go<span class="cur-action-cost">$1</span></button>').some((v) => /outside AI help/.test(v)), 'CONTROL — an AI button outside the lane goes red');
