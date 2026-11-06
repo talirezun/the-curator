@@ -452,13 +452,13 @@ export async function resumeCompareAll(domain) {
  * What it compared stays remembered; only the job's record says it is over.
  */
 export async function stopCompareAll(domain) {
-  if (_run && _run.domain === domain) throw busyError(_run);
   const record = await readRecord(domain);
   const shown = record ? present(record, { live: false }) : null;
   if (!shown || shown.state !== 'paused') {
     throw new CompareAllError('JOB_NOT_PAUSED', 409, 'There is no paused comparison in this domain to stop.');
   }
-  // An `await` above: a resume may have got in during it.
+  // After the read, so a resume that got in during it is seen. A running job's record reads
+  // as paused from here, because this reads it as a dead process's would be.
   if (_run && _run.domain === domain) throw busyError(_run);
   const now = new Date().toISOString();
   Object.assign(record, { state: 'stopped', stopReason: 'user', pauseReason: null, reason: null, recovered: false, updatedAt: now, finishedAt: now });

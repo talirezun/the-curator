@@ -27,6 +27,7 @@ section('1. The confirm');
   const w = words(estimate());
   ok(w.title === 'Compare all 3,120 remaining pairs?', '1.1 the full count', w.title);
   ok(w.body.includes('About 1,014,000 tokens and $0.1400, about 9 minutes.'), '1.2 tokens, dollars and a measured time', w.body);
+  ok(words(estimate({ estimatedSeconds: 20 })).body.includes('and $0.1400, under a minute.'), '1.2b nor in the question');
   ok(w.body.includes('It stops if it reaches $0.1680.'), '1.3 the stop is 120% of what is confirmed', w.body);
   ok(w.body.includes('You can pause and carry on later.') && w.body.includes('Nothing is merged.'), '1.4 the deck\'s other two sentences');
   ok(w.warn.includes('Priced on this model.'), '1.5 the fallback is stated with the figure', w.warn);
@@ -71,6 +72,7 @@ section('2. What the row says');
 
   const d = compareJobDetail(job(), c);
   ok(d === '$0.5000 spent · 3 new pairs found so far · about 10 minutes left', '2.9 the line while it runs', d);
+  ok(compareJobDetail(job({ secondsLeft: 20 }), c).endsWith(' · under a minute left'), '2.9b never "about under a minute"');
   ok(compareJobDetail(job({ secondsLeft: null }), c).indexOf('left') === -1, '2.10 no time until a batch has measured one');
   ok(compareJobDetail(job({ progress: { totalPairs: 9, checkedPairs: 1, found: 1 } }), c).includes('1 new pair found so far'), '2.11 one pair');
   const rec = compareJobDetail(job({ state: 'paused', pauseReason: 'restart', recovered: true }), c);
@@ -224,9 +226,8 @@ section('5. A tick does not paint');
   const w = world();
   await w.api.sync('alpha');
   w.slug = 'other';
-  await wait(20);
   const n = w.calls.length;
-  await wait(30);
+  await wait(40);
   ok(w.calls.length === n, '5.8 the domain left the screen: the page stops asking (the job does not stop)');
   w.slug = 'alpha'; w.mounted = true;
   await w.api.sync('alpha');
@@ -328,6 +329,11 @@ section('8. A read-only mirror');
   w.api.afterPaint(c0);
   await wait(5);
   ok(w.calls.length === 0, '8.4 and reads no quote');
+  // A job read before the domain became a mirror (a Shared Brain join) is not shown or offered.
+  const was = world({ status: job({ state: 'paused', pauseReason: 'user' }) });
+  await was.api.sync('alpha');
+  was.mirror = true;
+  ok(was.api.actions('alpha', 'NEXT', c0) === 'NEXT' && was.api.reading('alpha') === null, '8.5 a job read earlier is not offered on a mirror either');
 }
 
 section('9. The buttons');

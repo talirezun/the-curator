@@ -38,15 +38,21 @@ export function formatDuration(seconds) {
   return m > 0 && m < 60 ? hours + ' ' + m + ' minutes' : hours;
 }
 
+/** "about 12 minutes", but never "about under a minute". */
+function aboutTime(seconds) {
+  const t = formatDuration(seconds);
+  return !t ? null : t === 'under a minute' ? t : 'about ' + t;
+}
+
 /** What the confirm says, from the estimate the server just returned. Pure. */
 export function compareAllConfirmCopy(est, { modelName, cost, usd }) {
   const pairs = est.pairs;
   const priced = typeof est.estimatedUsd === 'number';
   const stop = priced ? usd(est.estimatedUsd * est.stopMargin) : n0(Math.ceil(est.estimatedTokens * est.stopMargin)) + ' tokens';
-  const time = est.timeBasis === 'measured' ? formatDuration(est.estimatedSeconds) : null;
+  const time = est.timeBasis === 'measured' ? aboutTime(est.estimatedSeconds) : null;
   const figures = priced
-    ? 'About ' + n0(est.estimatedTokens) + ' tokens and ' + cost(est) + (time ? ', about ' + time + '.' : '.')
-    : 'About ' + n0(est.estimatedTokens) + ' tokens' + (time ? ', about ' + time : '') + '. ' + (est.costNote || 'Cost unknown.');
+    ? 'About ' + n0(est.estimatedTokens) + ' tokens and ' + cost(est) + (time ? ', ' + time + '.' : '.')
+    : 'About ' + n0(est.estimatedTokens) + ' tokens' + (time ? ', ' + time : '') + '. ' + (est.costNote || 'Cost unknown.');
   const warn = [];
   if (est.overCeiling) {
     warn.push('This is above your limit of ' + n0(est.costCeilingTokens) + ' tokens for one run. This one confirm may go over it, because it shows the whole total, and it stops by itself at ' + stop + '.');
@@ -91,7 +97,7 @@ export function compareJobDetail(job, { usd }) {
     parts.push(spentWords(job, usd) + ' spent' + (job.recovered ? ', perhaps one call more' : ''));
   }
   if ((ACTIVE.has(job.state) || job.state === 'paused') && p.found > 0) parts.push(n0(p.found) + plural(p.found, ' new pair found so far', ' new pairs found so far'));
-  if (ACTIVE.has(job.state) && Number.isFinite(job.secondsLeft) && job.secondsLeft > 0) parts.push('about ' + formatDuration(job.secondsLeft) + ' left');
+  if (ACTIVE.has(job.state) && Number.isFinite(job.secondsLeft) && job.secondsLeft > 0) parts.push(aboutTime(job.secondsLeft) + ' left');
   return parts.join(' · ');
 }
 
