@@ -396,12 +396,13 @@ async function walk(app) {
   await headIntoView(page);
   await shot(app, '8-never-compared');
   await auditWords(app, '8, never compared', seen, known);
-  await page.evaluate(() => { const b = document.querySelector('.hr-desk details[data-group-key="reviewFamily"] summary') || document.querySelector('[data-group-key="reviewFamily"] summary'); if (b) b.click(); });
-  await delay(150);
+  await press(app, '[data-group-key="reviewFamily"] summary');
+  await waitFor(page, () => /The AI never compared these with/.test(document.querySelector('.hr-desk').innerText), 'the fold');
   t = await deskText(page);
   step('the fold: three groups, each named', t.includes('The AI never compared these with claude-opus') && t.includes('The AI said these are the same as claude-opus') && t.includes('The AI said these are not the same as claude-opus'), t.slice(-600));
   await auditWords(app, '8, the fold', seen, known);
-  await page.evaluate(() => { const b = document.querySelector('[data-group-key="reviewFamily"] summary'); if (b) b.click(); });
+  await press(app, '[data-group-key="reviewFamily"] summary');
+  await waitFor(page, () => !/The AI never compared these with/.test(document.querySelector('.hr-desk').innerText), 'the fold shut');
 
   // Merge one that was never compared: through the same gate.
   await readUntilOpen(app);
@@ -438,7 +439,7 @@ async function walk(app) {
   if (!profile.full) { await press(app, '#hr-done'); await delay(150); await press(app, '#hr-done'); await delay(150); }
   if (profile.reduced) {
     const dur = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--t-layout').trim());
-    step('reduced motion: the tokens are zero', /^0(ms|s)?$/.test(dur), dur);
+    step("reduced motion: the tokens are zero", /^0(ms|s)?\b/.test(dur), dur);
   }
   if (profile.full) await fullWalks(app, seen, known);
   step('no provider was called', !readFileSync(app.stubLog, 'utf8').includes('blocked'), readFileSync(app.stubLog, 'utf8').slice(0, 200));

@@ -40,7 +40,7 @@ import { renderFoldRow, renderFoldItem, renderFoldRows } from '../shared/section
 import {
   planDecisions, newFamily, applyFacts, relationOf, orderFor, counts, isFresh, leftovers, evidence, countLine,
   renderMarks, renderRunning, afterLineWalk, renderWalkFold, renderChoose, renderFinish, chooseRows, undecidedCount, familyWaiting,
-  slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST,
+  slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST, walkPagesWithNoPair,
 } from './health-family.js';
 
 /** How long the comparison must be on screen before Merge opens. */
@@ -491,6 +491,9 @@ export function createReviewDesk(d) {
       d.disarm(r.scan);
       // Finished, it has said what it had to. What is left comes back by itself as pairs.
       for (const f of r.scan.families || []) if (f.stays && undecidedCount(f) === 0) retire(r, f);
+      // Leaving a walk, the lanes still have to offer it: a merge may have closed the only pair
+      // that named a page still waiting, and "the family is still listed" has to stay true.
+      r.scan.walkWaiting = walkPagesWithNoPair(r.scan);
     }
     const merged = r ? tally(r.scan.pairs).merged - r.mergedAtOpen + r.familyMerged : 0;
     live('');

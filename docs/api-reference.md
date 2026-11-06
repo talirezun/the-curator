@@ -2354,6 +2354,26 @@ READ-ONLY, no LLM call, no candidate pass. The open pairs (remembered `yes`, sti
 
 ---
 
+## POST /api/health/:domain/semantic-dupes/family
+
+READ-ONLY, no LLM call, no candidate pass, one read of the wiki's files. What a family walk at the review desk states, for pages the view names. A POST only because a long family's names do not fit a URL. Body `{pages: ["concepts/x", …], textOf?: "concepts/x"}`, at most 2,000 pages; anything but a page in `entities/` or `concepts/` is a 400.
+
+```json
+{
+  "ok": true,
+  "pages": [{ "page": "concepts/a", "folder": "concepts", "slug": "a", "exists": true, "opening": "...", "length": 1100, "links": 11 }],
+  "answers": [{ "a": "concepts/a", "b": "concepts/b", "compared": "same", "rationale": "..." }],
+  "kept": [["concepts/a", "concepts/c"]],
+  "keptText": { "text": "...", "truncated": false }
+}
+```
+
+`answers` holds only pairs the AI really answered: `same`, `different` (both still applying) or `stale` (about other openings or on another model; no reason is given). **A pair absent from it was never compared**, and nothing joins A~B and B~C. `links` counts links in from other pages, as the comparison does. `kept` is the pairs the user kept apart. `keptText` is present with `textOf`, for the page that stays.
+
+The view reads this once when a family opens and keeps it: a merge closes the pairs naming the page it deleted, and neither that nor anything else may change what the screen says about a comparison that happened. A `different` answer has a `rationale` only if it was compared since family groups shipped; older ones kept no reason.
+
+---
+
 ## GET /api/health/:domain/semantic-dupes/compare-all/estimate
 
 The confirm for **Compare all remaining**: every pair not yet answered. No LLM call and no write. Besides coverage it returns `pairs`, `batches`, `estimatedTokens`, `estimatedUsd`, `priceKnown`, `costNote`, `estimatedSeconds`, `rateBasis`, `timeBasis`, `provider`, `model`, `fallbackNote`, `costCeilingTokens`, `overCeiling`, `stopMargin` (1.2), `runsOn` and `job` (as `/status`).

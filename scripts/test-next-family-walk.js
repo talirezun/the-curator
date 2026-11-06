@@ -342,6 +342,16 @@ section('§7 Stop any time; the end');
   await two.press('hr-fam-residue'); await two.paint();
   ok(text(two.html()).includes('Pair 1 of 1') && !text(two.html()).includes('Family'), 'and two pages open as a pair', text(two.html()).slice(0, 120));
 
+  // A merge can close the only pair naming a page still waiting. The lanes must still offer the walk.
+  const quiet = await opened([pair('b', 'a'), pair('c', 'b')], { facts: { pages: FACTS().pages.slice(0, 3), answers: FACTS().answers.slice(0, 2), kept: [] } });
+  await pick(quiet, 'a');
+  quiet.seen(); await quiet.press('hr-merge'); await quiet.paint();
+  await quiet.press('hr-done'); await quiet.paint();
+  ok(text(quiet.html()).includes('1 page not decided'), 'c waits, with no open pair left to name it');
+  await quiet.press('hr-done');
+  ok(quiet.scan.pairs.every((p) => p.status !== 'open') && quiet.scan.walkWaiting === 1, 'the lanes are told, so Review is still offered', quiet.scan.walkWaiting);
+  ok(quiet.desk.open() === true && text(quiet.html()).includes('a stays.'), 'and it opens on the walk');
+
   // Merged with no comparison: named on the way out.
   const nv = await opened(CHAIN(), { facts: { ...FACTS(), pages: FACTS().pages.slice(0, 4), answers: FACTS().answers.slice(0, 3) } });
   await pick(nv, 'a');

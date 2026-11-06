@@ -113,6 +113,18 @@ export function planDecisions(scan) {
   return items;
 }
 
+/** Pages waiting on a walk under way that no open pair names, so nothing else would list them. */
+export function walkPagesWithNoPair(scan) {
+  const named = new Set();
+  for (const p of scan.pairs) if (p.status === 'open') { named.add(keepOf(p)); named.add(removeOf(p)); }
+  let n = 0;
+  for (const f of scan.families || []) {
+    if (f.retired || !f.stays) continue;
+    for (const p of f.order) if (!f.dec[p] && !named.has(p)) n++;
+  }
+  return n;
+}
+
 // ── THE FACTS ─────────────────────────────────────────────────────────────
 /**
  * What the server read, kept for as long as the family is open. A pair the desk holds as open

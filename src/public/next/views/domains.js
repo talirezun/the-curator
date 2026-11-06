@@ -7580,7 +7580,7 @@ function healthGroupAlive(key) {
   if (key === 'aiOrphans') return (r.orphans || []).length > 0;
   if (key === 'aiBroken') return (r.brokenLinks || []).length > 0;
   if (key === 'spelling') return liveBatchPairs().length > 0 || state.busyKey === 'semanticMerge';
-  if (key === 'duplicates') { const s = activeSemanticScan(); return !!s && s.pairs.some((p) => p.status === 'open'); }
+  if (key === 'duplicates') { const s = activeSemanticScan(); return !!s && (s.walkWaiting > 0 || s.pairs.some((p) => p.status === 'open')); }
   if (key === 'dismissed') return Number(r.dismissedRecords) > 0;
   if (key === 'brokenLinks') return (r.brokenLinks || []).some((i) => i.suggestedTarget);
   if (key === 'brokenLinksOpen') return (r.brokenLinks || []).some((i) => !i.suggestedTarget);
@@ -8107,7 +8107,7 @@ function renderHealthPanel(domain, readonly) {
   }
 
   // What the section's one reading counts: every row with something to look at.
-  const openPairs = (activeSemanticScan() ? activeSemanticScan().pairs : []).filter((p) => p.status === 'open').length;
+  const openPairs = (activeSemanticScan() ? activeSemanticScan().pairs : []).filter((p) => p.status === 'open').length + ((activeSemanticScan() || {}).walkWaiting || 0);
   const toLook = total + openPairs + (state.compareArrivals && state.compareArrivals.slug === domain.slug ? state.compareArrivals.count : 0);
   const pageCount = (Number(report.counts.entities) || 0) + (Number(report.counts.concepts) || 0) + (Number(report.counts.summaries) || 0);
   const clean = total + openPairs === 0;
@@ -8268,7 +8268,7 @@ const reviewDesk = createReviewDesk({
 function reviewPanelReading() {
   const report = state.health;
   const scan = activeSemanticScan();
-  const openPairs = scan ? scan.pairs.filter((p) => p.status === 'open').length : 0;
+  const openPairs = scan ? scan.pairs.filter((p) => p.status === 'open').length + (scan.walkWaiting || 0) : 0;
   const total = report ? totalOpenIssues(report) : 0;
   const toLook = total + openPairs;
   const lookedAt = report && report.scannedAt;
@@ -8556,11 +8556,13 @@ function renderDecisionLane(report, readonly, crossMountBusy) {
   const rows = [];
   const scan = activeSemanticScan();
   const open = scan ? scan.pairs.filter((p) => p.status === 'open') : [];
+  // A walk you left can hold pages no open pair names: the merge that closed their pair was yours.
+  const waitingHere = open.length + ((scan && scan.walkWaiting) || 0);
   // SPELLING VARIANTS COMES FIRST. A batch settles pairs in the list under Possible
   // duplicates, and pairs settled above the press moved it by 973 px at 1280.
   const duplicatesAt = rows.length;
-  if (open.length > 0) {
-    rows.push(renderPlainRow('duplicates', 'Possible duplicates', n0(open.length), '',
+  if (waitingHere > 0) {
+    rows.push(renderPlainRow('duplicates', 'Possible duplicates', n0(waitingHere), '',
       readonly ? '' : '<button class="btn btn-secondary dm-review-btn" data-review="1">Review</button>'));
   }
   const batch = readonly || (scan && scan.holdSpelling) ? [] : liveBatchPairs();
@@ -9131,7 +9133,7 @@ function onHealthToggle(e) {
   const key = el.dataset.groupKey;
   if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
   // The desk's list draws its rows only while it is open: a list of thousands costs nothing shut.
-  if (key === 'reviewPairs') { render(myMountToken); return; }
+  if (key === 'reviewPairs' || key === 'reviewFamily' || key.startsWith('reviewFam')) { render(myMountToken); return; }
   releaseHeldRows(e.currentTarget, (row) => el === row || el.contains(row), healthRowKey);
   // A question inside a fold that just closed would be a question behind a
   // chevron (v3.16.1): the paint moves it out from under the row.

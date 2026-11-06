@@ -149,7 +149,7 @@
   .hr-merge-label { -webkit-line-clamp: 3; line-clamp: 3; }
   /* The count takes a line of its own, so its length never moves what is under it. */
   .hr-desk-family { --hr-marks-h: 54px; --hr-running-h: 40px; }
-  .hr-desk-family .hr-count { flex-basis: 100%; }
+  .hr-desk-family .hr-count { flex-basis: 100%; min-height: 36px; }
   .hr-marks-words { flex-basis: 100%; text-align: left; }
   .hr-marks { gap: 5px; }
   .hr-mark { width: 10px; }
