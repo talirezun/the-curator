@@ -413,7 +413,7 @@ ok(canMergeSemanticPair(__state().semanticScan.pairs[0]).allowed === true, 'a pr
   ok(s.walkPairs[0].status === 'merged', 'its own status is written in its own list');
   ok(canMergeSemanticPair(s.walkPairs[0]).allowed === false, 'and decided, it is shut');
   ok(!liveBatchPairs().some((p) => p.walk), 'the batch cannot reach one');
-  delete s.walkPairs; s.preview = null; s.previewed.clear();
+  delete s.walkPairs; s.preview = null;
 }
 // Now make the stamp stale WITHOUT clearing anything — this is exactly the
 // state layer 1 is supposed to prevent, and layer 2 must catch it anyway.
