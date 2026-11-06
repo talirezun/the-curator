@@ -114,6 +114,7 @@ const FNS = [
   'rawPreviewedKeys',
   'markSemanticPreviewed',
   'isSemanticPreviewed',
+  'semanticListOf',
   'canMergeSemanticPair',
   'flipSemanticPair',
   'liveBatchPairs',

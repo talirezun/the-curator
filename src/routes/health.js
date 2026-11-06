@@ -29,6 +29,7 @@ import {
   describeHealthRun,
   estimateCompareAll,
   semanticFamilies,
+  semanticFamilyFacts,
 } from '../brain/health-ai.js';
 import {
   startCompareAll,
@@ -513,6 +514,20 @@ router.get('/:domain/semantic-dupes/families', async (req, res) => {
     res.json({ ok: true, ...(await semanticFamilies(domain, { stay })) });
   } catch (err) {
     console.error('[semantic-dupes families]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// What a family walk states about the pages the view names: links, size, and every answer the AI
+// gave between two of them. READ-ONLY, and a POST only because a long family's names do not fit a URL.
+router.post('/:domain/semantic-dupes/family', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const { pages, textOf } = req.body || {};
+    res.json({ ok: true, ...(await semanticFamilyFacts(domain, pages, { textOf: typeof textOf === 'string' ? textOf : null })) });
+  } catch (err) {
+    if (!err.status) console.error('[semantic-dupes family]', err);
     res.status(err.status || 500).json({ error: err.message });
   }
 });

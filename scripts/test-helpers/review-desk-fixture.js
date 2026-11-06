@@ -35,13 +35,16 @@ export function deskFixture(pairs, over = {}) {
   const calls = { merge: [], keep: [], back: [], read: [], compare: [], closed: [], render: 0 };
   const fx = { state, scan, calls, nextCompare: null, nextMerge: { merged: true, alsoResolved: 0 }, nextKeep: { kept: true }, nextBack: null, holdCompare: null };
   const scanNow = () => (fx.gone ? null : scan);
+  // The same choice as domains.js's semanticListOf: a walk's pairs are not the scan's.
+  const listOf = (p) => (p && p.walk ? (scan.walkPairs || []) : scan.pairs);
+  const at = (p) => { const list = listOf(p); return [list, list.findIndex((x) => key(x) === key(p))]; };
   fx.desk = createReviewDesk({
     state,
     scan: scanNow,
     slug: () => fx.activeSlug || 'alpha',
     pairKey: key,
     gate: (p) => {
-      const k = scan.pairs.find((x) => key(x) === key(p));
+      const k = listOf(p).find((x) => key(x) === key(p));
       if (!k) return { allowed: false, reason: 'gone' };
       if (k.status !== 'open') return { allowed: false, reason: 'handled' };
       return scan.previewed.has(key(k)) ? { allowed: true, reason: null } : { allowed: false, reason: 'Read the comparison for this pair before merging it.' };
@@ -55,13 +58,13 @@ export function deskFixture(pairs, over = {}) {
       scan.pairs[i] = { ...o, keepSlug: o.removeSlug, keepFolder: o.removeFolder, removeSlug: o.keepSlug, removeFolder: o.keepFolder };
       scan.previewed.clear(); scan.preview = null;
     },
-    status: (p, st) => { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], status: st }; },
+    status: (p, st) => { const [list, i] = at(p); list[i] = { ...list[i], status: st }; },
     compare: async (slug, p) => {
       calls.compare.push(key(p));
       if (fx.holdCompare) await fx.holdCompare;
       const next = fx.nextCompare; fx.nextCompare = null;
       if (next && next.error) { scan.preview = { key: key(p), error: next.error }; return next; }
-      if (next && next.settled) { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], status: 'resolved' }; return next; }
+      if (next && next.settled) { const [list, i] = at(p); list[i] = { ...list[i], status: 'resolved' }; return next; }
       const data = (next && next.data) || comparison(p);
       scan.preview = { key: key(p), data }; scan.bases[key(p)] = data.basis;
       return { data };
@@ -69,15 +72,22 @@ export function deskFixture(pairs, over = {}) {
     merge: async (slug, p, cb) => {
       calls.merge.push(key(p));
       const out = fx.nextMerge;
-      if (out.merged || out.gone) { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], status: out.merged ? 'merged' : 'resolved' }; }
-      if (out.error) { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], error: out.error, errorAction: 'merge' }; }
+      if (out.merged || out.gone) {
+        const [list, i] = at(p); list[i] = { ...list[i], status: out.merged ? 'merged' : 'resolved' };
+        // THE CASCADE, as resolvePairsTouching does it: every open pair naming the deleted page.
+        if (out.merged) {
+          const gone = p.removeFolder + '/' + p.removeSlug;
+          scan.pairs.forEach((x, n) => { if (x.status === 'open' && (x.keepFolder + '/' + x.keepSlug === gone || x.removeFolder + '/' + x.removeSlug === gone)) scan.pairs[n] = { ...x, status: 'resolved' }; });
+        }
+      }
+      if (out.error) { const [list, i] = at(p); list[i] = { ...list[i], error: out.error, errorAction: 'merge' }; }
       cb(out);
     },
     keepBoth: async (slug, p, cb) => {
       calls.keep.push(key(p));
       const out = fx.nextKeep;
-      if (out.kept) { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], status: 'skipped' }; }
-      if (out.error) { const i = scan.pairs.findIndex((x) => key(x) === key(p)); scan.pairs[i] = { ...scan.pairs[i], error: out.error, errorAction: 'skip' }; }
+      if (out.kept) { const [list, i] = at(p); list[i] = { ...list[i], status: 'skipped' }; }
+      if (out.error) { const [list, i] = at(p); list[i] = { ...list[i], error: out.error, errorAction: 'skip' }; }
       cb(out);
     },
     bringBack: async (slug, p) => { calls.back.push(key(p)); if (fx.nextBack) throw new Error(fx.nextBack); },
@@ -95,7 +105,7 @@ export function deskFixture(pairs, over = {}) {
   /** A paint: the desk fetches what it is missing. */
   fx.paint = async () => { for (let i = 0; i < 4; i++) { fx.desk.afterPaint(); await new Promise((r) => setTimeout(r, 0)); } };
   /** The comparison has been on screen for 500 ms: what the browser's watcher does. */
-  fx.seen = () => { const p = scan.pairs[state.review.index]; return scan.preview && scan.preview.key === key(p) && scan.preview.data ? (scan.previewed.add(key(p)), true) : false; };
+  fx.seen = () => { const r = state.review; const p = r.family ? (scan.walkPairs || []).find((x) => x.family === r.family.id && x.removeFolder + '/' + x.removeSlug === r.family.order[r.family.i]) : scan.pairs[r.index]; return scan.preview && scan.preview.key === key(p) && scan.preview.data ? (scan.previewed.add(key(p)), true) : false; };
   fx.press = (id, data) => fx.desk.onClick({ id, dataset: data || {} });
   fx.key = key;
   fx.html = () => fx.desk.html();

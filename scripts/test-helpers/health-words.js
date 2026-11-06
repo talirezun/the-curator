@@ -102,6 +102,40 @@ export const DECK = [
   'Could not load the comparison: {msg}', 'All pairs decided.', '{n} merged · {n} kept both · {n} settled by another merge',
   '{n} pairs have not been compared yet, shown in AI help.', '1 pair has not been compared yet, shown in AI help.',
   'All {n} pairs', 'waiting', 'merged', 'settled by another merge', 'this pair', '{name} → {name}',
+  // A family (families/COPY.md). Step 1
+  'Family of {n} pages', 'Decision {n} of {n}',
+  '{n} pages, {n} links pointing to them, {name} of text. The AI compared {n} of the {n} possible pairs here. A match between two pages says nothing about a third.',
+  '{n} pages, 1 link pointing to them, {name} of text. The AI compared {n} of the {n} possible pairs here. A match between two pages says nothing about a third.',
+  'Which page stays?', 'Press it. Nothing is merged yet: the others then come up one at a time, beside it, for you to decide.',
+  '{n} links · {name} · AI compared it with {n} of the other {n}', '1 link · {name} · AI compared it with {n} of the other {n}',
+  'Read', 'Show the other {n}', 'No page in this family has that in its name.',
+  'Different things that only look alike?', 'Keep all {n} apart',
+  'Kept these {n} pages apart. They will not come back. Pairs the AI has not compared may still come up later.',
+  // Step 2: the walk
+  'Page {n} of {n} · {n} merged · {n} kept · {n} left',
+  '{name} stays.', '{name} stays. It has taken in {n} pages so far.', '{name} stays. It has taken in 1 page so far.', 'Choose again',
+  'The AI compared these two pages and said they are the same.', 'The AI compared these two pages and said they are not the same.',
+  'The AI never compared these two pages.', 'Only your reading decides this one.',
+  'It is here because the AI matched it with {name}. That says nothing about {name}. Only your reading decides this one.',
+  'It is here because the AI matched it with {name}, which you have since merged in. That says nothing about {name}. Only your reading decides this one.',
+  'Merge {name} into {name}', 'All {n} pages', 'this page',
+  'Merged {name} into {name}.', 'Kept {name} and {name} apart. This pair will not come back.', 'Brought back {name}.',
+  'Now {name} stays, and {name} is one of the pages to go through.', 'You chose {name} earlier. {n} merged, {n} kept, {n} left.',
+  'This page is settled: {name} no longer exists. Moving on.',
+  'Merged', 'This page no longer exists', 'Its text is on the page that stays, under Merged from {name}.',
+  'Merged into {name}. Nothing more to decide here.', 'You kept {name} and {name} apart.',
+  'The AI said these are the same as {name} ({n})', 'The AI never compared these with {name} ({n})', 'The AI said these are not the same as {name} ({n})',
+  // Finished
+  'All decided', '{n} pages not decided', '1 page not decided', 'Go back to it', 'Go back to them',
+  'Took in {n} pages. Links pointing to it went from {n} to {n}, its text from {name} to {name}.', 'Took in 1 page. Links pointing to it went from {n} to {n}, its text from {name} to {name}.',
+  'Took in {n} pages.', 'Took in 1 page.', 'Nothing was merged into it.',
+  'You merged {n} pages the AI never compared with {name}: {name} and {name}. Only your reading decided them.',
+  'You merged 1 page the AI never compared with {name}: {name}. Only your reading decided it.',
+  'You merged {n} pages the AI never compared with {name}. Only your reading decided them.',
+  'Merged in', '{n} pages deleted', '1 page deleted', 'Their text is on {name}, each under "Merged from" and its name.', 'the AI never compared it',
+  '{n} pages kept', '1 page kept', 'These stay separate from {name}, and that pair will not come back.',
+  'Not decided', '{n} pages waiting', '1 page waiting', 'Nothing happened to these.',
+  '{n} pages left over still match one another, so they may be a smaller family of their own.', 'Review those {n}',
 ];
 
 /**
@@ -138,6 +172,13 @@ export const OUTSIDE_THE_DECK = [
   'Read the comparison for this pair before merging it.',       // the gate's re-check at execution
   'Could not merge: this merge would lose text, so nothing was changed.',
   'Could not merge: the pages did not pass the check on disk, so nothing was changed.',
+  // A family, where COPY.md has no line for what the server really holds. A comparison made on
+  // other text or another model is neither "compared" nor "never compared". An old "not the
+  // same" answer has no reason to quote: the cache kept none until this release.
+  'The AI compared older versions of these two pages.', 'Its answer no longer applies. Only your reading decides this one.',
+  'The AI compared older versions of these and {name} ({n})', 'the AI compared older versions', 'The reason it gave was not kept.',
+  // The list of decisions, when a family is in it.
+  'All {n} decisions',
 ];
 
 
@@ -150,6 +191,8 @@ const ITEM_FACT = new RegExp('^' + FACT + '(?: · ' + FACT + ')*$');
 // All N pairs' summary: the deck's row states and facts, counted. Each part only when it is not zero.
 const STATE = '[\\d,]+ (?:waiting|merged|kept both|settled by another merge)';
 const RELATION = '(?:Spelling variant|Version numbers differ|Different names) [\\d,]+';
+const MARK = '[\\d,]+ (?:the AI said (?:is|are) the same|it never compared|it compared in older versions|it said (?:is|are) not the same)';
+const MARKS_LINE = new RegExp('^' + MARK + '(?: · ' + MARK + ')*$');
 const FOLD_LINE = new RegExp('^(?:' + STATE + '(?: · ' + STATE + ')*|' + RELATION + '(?: · ' + RELATION + ')*)$');
 function toRegex(line) {
   const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -165,7 +208,7 @@ const COMPILED = [...DECK, ...OUTSIDE_THE_DECK].map(toRegex);
 export function wordAllowed(line) {
   const t = String(line).replace(/\s+/g, ' ').trim();
   if (!t) return true;
-  return ITEM_FACT.test(t) || FOLD_LINE.test(t) || COMPILED.some((re) => re.test(t));
+  return ITEM_FACT.test(t) || FOLD_LINE.test(t) || MARKS_LINE.test(t) || COMPILED.some((re) => re.test(t));
 }
 
 /**

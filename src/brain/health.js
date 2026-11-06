@@ -270,7 +270,7 @@ function normKey(slug) {
  * subdirectory of one), and the escaping shape — the symlinked leaf — is
  * the one explicitly checked.
  */
-async function walkMdFiles(rootDir) {
+export async function walkMdFiles(rootDir) {
   const out = [];
   async function walk(dir) {
     let entries;

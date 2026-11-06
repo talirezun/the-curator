@@ -28,11 +28,20 @@
 // on Merge when the next pair arrives must leave it and come back before it opens, and by
 // touch the wait is longer. A person who moved the pointer to read never meets either.
 //
-// A FAMILY WALK (Stage 6) IS THE SAME DESK. `renderDesk` draws a model and knows nothing
-// about pairs: title, count, the two facts lines, two panes, the after line, the two
-// decision buttons, the note, the outcome line and the fold. A walk fills in the same slots.
+// A FAMILY WALK IS THE SAME DESK. `renderDesk` draws a model and knows nothing about pairs:
+// title, count, the two facts lines, two panes, the after line, the two decision buttons, the
+// note, the outcome line and the fold. A walk fills in the same slots. Each press is one merge
+// through the same gate (seen 500 ms, `basis`, the pointer re-arm). There is no queue and no
+// "merge all": the kept page changes with each merge, so a queue would show a page that will no
+// longer exist when its turn comes, and its basis would be refused. views/health-family.js holds
+// the grouping and the words; what may be said about two pages is decided there, in one place.
 
 import { renderFoldRow, renderFoldItem, renderFoldRows } from '../shared/section.js';
+import {
+  planDecisions, newFamily, applyFacts, relationOf, orderFor, counts, isFresh, leftovers, evidence, countLine,
+  renderMarks, renderRunning, afterLineWalk, renderWalkFold, renderChoose, renderFinish, chooseRows, undecidedCount, familyWaiting,
+  slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST,
+} from './health-family.js';
 
 /** How long the comparison must be on screen before Merge opens. */
 export const ARM_MS = 500;
@@ -162,8 +171,8 @@ function navButton(id, label, disabled) {
 }
 
 function renderPane(p) {
-  const named = (p.role === 'Stays' ? 'Page that stays: ' : 'Page that goes away: ') + p.page;
-  return '<article class="hr-pane hr-pane-' + (p.role === 'Stays' ? 'stays' : 'goes') + '" aria-label="' + esc(named) + '">' +
+  const named = p.role === 'Merged' ? 'Merged: ' + p.page : (p.role === 'Stays' ? 'Page that stays: ' : 'Page that goes away: ') + p.page;
+  return '<article class="hr-pane hr-pane-' + (p.role === 'Stays' ? 'stays' : p.role === 'Merged' ? 'merged' : 'goes') + '" aria-label="' + esc(named) + '">' +
       '<header class="hr-pane-head">' +
         '<span class="hr-pane-role">' + p.role + '</span>' +
         '<span class="mono hr-pane-name">' + esc(p.page) + '</span>' +
@@ -171,7 +180,7 @@ function renderPane(p) {
       '</header>' +
       '<div class="hr-pane-body" tabindex="0" role="group" aria-label="' + esc('Text of ' + p.page) + '">' + p.bodyHtml + '</div>' +
       '<div class="hr-pane-foot">' +
-        '<button type="button" class="btn btn-secondary btn-xs" id="' + p.readId + '" aria-label="' + esc('Read full page: ' + p.page) + '">Read full page</button>' +
+        (p.readId ? '<button type="button" class="btn btn-secondary btn-xs" id="' + p.readId + '" aria-label="' + esc('Read full page: ' + p.page) + '">Read full page</button>' : '') +
         (p.flip ? '<button type="button" class="btn btn-secondary btn-xs" id="hr-flip"' + (p.flip.disabled ? ' disabled' : '') + '>Keep this one instead</button>' : '') +
       '</div>' +
     '</article>';
@@ -185,29 +194,29 @@ export function renderDesk(m) {
         (m.countText ? '<span class="hr-count">' + esc(m.countText) + '</span>' : '') +
       '</div>' +
       '<div class="hr-nav">' +
-        (m.end ? '' : navButton('hr-prev', 'Previous', m.navDisabled) + navButton('hr-next', 'Next', m.navDisabled)) +
+        (m.navHtml !== undefined ? m.navHtml : (m.end ? '' : navButton('hr-prev', 'Previous', m.navDisabled) + navButton('hr-next', 'Next', m.navDisabled))) +
         navButton('hr-done', 'Done', m.doneDisabled) +
       '</div>' +
     '</div>';
-  const middle = m.end
+  const middle = m.customHtml !== undefined ? m.customHtml : m.end
     ? '<div class="hr-facts"></div>' +
       '<div class="hr-panes hr-end"><p class="hr-end-line">' + esc(m.end.counts) + '</p>' +
         (m.end.more ? '<p class="hr-end-line">' + esc(m.end.more) + '</p>' : '') + '</div>' +
       '<div class="hr-after"></div>' +
       '<div class="hr-decide"></div>' +
       '<div class="hr-gate"></div>'
-    : '<div class="hr-facts">' + m.factsHtml + '</div>' +
+    : (m.leadHtml || '') + '<div class="hr-facts">' + m.factsHtml + '</div>' +
       '<div class="hr-panes" data-review-key="' + esc(m.reviewKey) + '">' + renderPane(m.goes) + renderPane(m.stays) + '</div>' +
       '<div class="hr-after">' + (m.afterHtml || '') + '</div>' +
-      '<div class="hr-decide">' +
+      '<div class="hr-decide">' + (m.decideHtml !== undefined ? m.decideHtml :
         '<div class="hr-decide-btns">' +
           '<button type="button" class="btn btn-secondary" id="hr-keep"' + m.keepAttrs + '>' + m.keepLabel + '</button>' +
           '<button type="button" class="btn btn-danger" id="hr-merge" aria-describedby="hr-gate"' + m.mergeAttrs + ' aria-label="' + esc(m.mergeSpoken) + '"><span class="hr-merge-label">' + m.mergeLabelHtml + '</span></button>' +
         '</div>' +
-        '<p class="hr-note">' + m.noteHtml + '</p>' +
+        '<p class="hr-note">' + m.noteHtml + '</p>') +
       '</div>' +
       '<div class="hr-gate" id="hr-gate">' + esc(m.gateText || '') + '</div>';
-  return '<div class="hr-desk' + (m.busy ? ' hr-desk-busy' : '') + '">' + head + middle +
+  return '<div class="hr-desk' + (m.busy ? ' hr-desk-busy' : '') + (m.familyClass ? ' ' + m.familyClass : '') + '">' + head + middle +
       '<div class="hr-outcome' + (m.outcome && m.outcome.tone === 'error' ? ' hr-outcome-failed' : '') + '">' + (m.outcome ? m.outcome.html : '') + '</div>' +
       m.foldHtml +
     '</div>';
@@ -289,6 +298,9 @@ export function armDelay(pointerType, hoverNone) {
  *   coverageLeft()   pairs not compared yet
  *   headIntoView()   brings the section's head on screen, when it is off
  */
+const NOT_MINE = Symbol('not-mine');
+const FOLD_KEYS = ['reviewPairs', 'reviewFamily', 'reviewFamMerged', 'reviewFamKept', 'reviewFamLeft'];
+
 export function createReviewDesk(d) {
   let cancelWatch = null;
   let watchedEl = null;
@@ -337,7 +349,14 @@ export function createReviewDesk(d) {
     watchedKey = null;
   }
 
-  const current = (r) => r.scan.pairs[r.index] || null;
+  const walkPairOf = (r, fam, page) => (r.scan.walkPairs || []).find((p) => p.family === fam.id && removeOf(p) === page) || null;
+  /** What the desk is deciding now: a scan's pair, or on a walk the page that stays against this page. */
+  const current = (r) => {
+    if (!r.family) return r.scan.pairs[r.index] || null;
+    const fam = r.family;
+    if (fam.view !== 'walk') return null;
+    return walkPairOf(r, fam, fam.order[fam.i]);
+  };
   const isBusy = (key) => {
     const b = d.state.busyKey || '';
     return b === 'semanticMergeOne:' + key || b === 'semanticSkip:' + key;
@@ -373,7 +392,59 @@ export function createReviewDesk(d) {
     }
   }
 
+  // ── A list of decisions, when any pairs share pages ───────────────────
+  // Without a family `r.items` is null and everything below is the plain walk through the pairs.
+  const itemWaits = (r, it) => (it.kind === 'family' ? familyWaiting(it.fam) : !!(r.scan.pairs[it.at] && r.scan.pairs[it.at].status === 'open'));
+  function nextItem(r, from, step) {
+    const n = r.items.length;
+    const dir = step < 0 ? -1 : 1;
+    for (let i = 1; i <= n; i++) {
+      const at = (((from + dir * i) % n) + n) % n;
+      if (itemWaits(r, r.items[at])) return at;
+    }
+    return -1;
+  }
+  const waitingItems = (r) => r.items.filter((it) => itemWaits(r, it)).length;
+
+  function enterItem(r, pos) {
+    const it = r.items[pos];
+    r.pos = pos;
+    r.ended = false;
+    if (r.outcome && (r.outcome.undoPage || r.outcome.familyMessage)) r.outcome = null;
+    if (it.kind === 'pair') { r.family = null; goTo(r, it.at); return; }
+    const fam = it.fam;
+    r.family = fam;
+    resetForPage(r);
+    if (fam.stays && fam.view !== 'choose') {
+      const c = counts(fam);
+      fam.view = 'walk';
+      const first = fam.order.findIndex((p) => !fam.dec[p]);
+      fam.i = first === -1 ? 0 : first;
+      if (c.m || c.k) {
+        const tail = ' earlier. ' + n0(c.m) + ' merged, ' + n0(c.k) + ' kept, ' + n0(c.left) + ' left.';
+        r.outcome = { tone: 'info', familyMessage: true, html: 'You chose ' + name(slugOf(fam.stays)) + tail, spoken: 'You chose ' + slugOf(fam.stays) + tail };
+      }
+    }
+  }
+
+  /** A page on the walk, or the walk's own screens: nothing is armed on arrival, whichever it is. */
+  function resetForPage(r) {
+    stopWatch();
+    r.checkHover = true;
+    r.unseen = false;
+    if (r.outcome && r.outcome.retry) r.outcome = null;
+    r.comparison = null;
+    r.refreshing = false;
+    d.disarm(r.scan);
+  }
+
   function goToWaiting(r, from, step) {
+    if (r.items) {
+      const pos = nextItem(r, r.pos, step);
+      if (pos === -1) { stopWatch(); d.disarm(r.scan); r.comparison = null; r.family = null; r.ended = true; return false; }
+      enterItem(r, pos);
+      return true;
+    }
     const at = nextWaiting(r.scan.pairs, from, step);
     if (at === -1) { stopWatch(); d.disarm(r.scan); r.comparison = null; r.ended = true; return false; }
     r.ended = false;
@@ -385,16 +456,26 @@ export function createReviewDesk(d) {
     const scan = d.scan();
     if (!scan) return false;
     const first = scan.pairs.findIndex((p) => p.status === 'open');
-    if (first === -1) return false;
-    d.state.expandedGroups.delete('reviewPairs');
+    const items = d.familyFacts ? planDecisions(scan) : null;
+    if (first === -1 && !(items && items.some((it) => it.kind === 'family' && familyWaiting(it.fam)))) return false;
+    for (const k of FOLD_KEYS) d.state.expandedGroups.delete(k);
     d.state.review = { slug: d.slug(), scan, index: first, comparison: null, outcome: null, foldOpen: false,
-      foldStart: null, foldCount: null, ended: false, refreshing: false, mergedAtOpen: tally(scan.pairs).merged };
+      foldStart: null, foldCount: null, ended: false, refreshing: false, mergedAtOpen: tally(scan.pairs).merged,
+      items, pos: 0, family: null, familyMerged: 0 };
+    const r = d.state.review;
     d.disarm(scan);
     stopWatch();
     pointer.stale = false;
     listen(true);
-    const t = tally(scan.pairs);
-    live('Pair ' + n0(first + 1) + ' of ' + n0(t.total) + '.');
+    if (items) {
+      const pos = items.findIndex((it) => itemWaits(r, it));
+      if (pos === -1) { d.state.review = null; return false; }
+      enterItem(r, pos);
+      sayArrival(r);
+    } else {
+      const t = tally(scan.pairs);
+      live('Pair ' + n0(first + 1) + ' of ' + n0(t.total) + '.');
+    }
     d.render();
     focusTitle();
     return true;
@@ -405,9 +486,13 @@ export function createReviewDesk(d) {
     stopWatch();
     listen(false);
     d.state.review = null;
-    d.state.expandedGroups.delete('reviewPairs');
-    if (r) d.disarm(r.scan);
-    const merged = r ? tally(r.scan.pairs).merged - r.mergedAtOpen : 0;
+    for (const k of FOLD_KEYS) d.state.expandedGroups.delete(k);
+    if (r) {
+      d.disarm(r.scan);
+      // Finished, it has said what it had to. What is left comes back by itself as pairs.
+      for (const f of r.scan.families || []) if (f.stays && undecidedCount(f) === 0) retire(r, f);
+    }
+    const merged = r ? tally(r.scan.pairs).merged - r.mergedAtOpen + r.familyMerged : 0;
     live('');
     if (d.onClosed) d.onClosed(merged);
   }
@@ -418,8 +503,9 @@ export function createReviewDesk(d) {
     const r = review();
     if (!r) { stopWatch(); listen(false); return; }
     listen(true);
-    if (typeof document !== 'undefined') { paintPanes(); fitFacts(r); }
+    if (typeof document !== 'undefined') { paintPanes(); fitFacts(r); wireFind(r); }
     if (r.ended) return;
+    if (r.family && familyAfterPaint(r)) return;
     // The label has its new width now. Still on Merge when the pair arrived: not a new press.
     if (r.checkHover) { r.checkHover = false; pointer.stale = pointer.type !== 'touch' && pointer.type !== 'pen' && overMerge(); }
     const pair = current(r);
@@ -447,6 +533,7 @@ export function createReviewDesk(d) {
     const desk = document.querySelector('.hr-desk');
     const box = document.querySelector('.hr-facts');
     if (!desk || !box) return;
+    if (r.family) { fitEvidence(r, desk, box); return; }
     if (typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 720px)').matches) {
       desk.style.removeProperty('--hr-facts-h');
       r.factsFit = null;
@@ -466,6 +553,277 @@ export function createReviewDesk(d) {
     probe.remove();
     r.factsPx = Math.max(need, 40) + 'px';
     desk.style.setProperty('--hr-facts-h', r.factsPx);
+  }
+
+  // THE LINE ABOUT WHAT THE AI KNOWS IS ALWAYS WHOLE, and the buttons under it do not move: as tall
+  // as the longest of this walk's lines needs, measured once at this width. Only a very long quote
+  // on a wide screen scrolls, and the sentence that matters is its first line.
+  function fitEvidence(r, desk, box) {
+    const fam = r.family;
+    const wide = typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 720px)').matches;
+    const fit = fam.id + '|' + fam.stays + '|' + box.clientWidth;
+    if (r.factsFit === fit || !box.clientWidth) { if (r.factsPx) desk.style.setProperty('--hr-facts-h', r.factsPx); return; }
+    r.factsFit = fit;
+    let longest = '';
+    for (const p of fam.order) { const e = evidence(fam, p, RELATION_LABELS['version-differs'], true).html; if (e.length > longest.length) longest = e; }
+    const probe = box.cloneNode(false);
+    probe.style.cssText = 'position:absolute;visibility:hidden;height:auto;width:' + box.clientWidth + 'px';
+    probe.innerHTML = longest;
+    box.parentNode.appendChild(probe);
+    const need = Math.ceil(probe.getBoundingClientRect().height);
+    probe.remove();
+    r.factsPx = Math.max(wide ? Math.min(need, 112) : need, 40) + 'px';
+    desk.style.setProperty('--hr-facts-h', r.factsPx);
+  }
+
+  function wireFind(r) {
+    const input = document.getElementById('hr-fam-find');
+    if (!input || input.__wired) return;
+    input.__wired = true;
+    input.addEventListener('input', () => {
+      const now = review();
+      if (!now || !now.family) return;
+      now.family.q = input.value;
+      d.render();
+    });
+  }
+
+  // ── A family ─────────────────────────────────────────────────────────
+  function retire(r, fam) {
+    fam.retired = true;
+    if (r.scan.walkPairs) r.scan.walkPairs = r.scan.walkPairs.filter((p) => p.family !== fam.id);
+  }
+
+  async function loadFacts(r, fam) {
+    if (fam.loadingFacts) return;
+    fam.loadingFacts = true;
+    try {
+      const res = await d.familyFacts(r.slug, fam.pages);
+      if (review() !== r) return;
+      // Taken once and kept. See health-family.js: a merge must not change what this says.
+      applyFacts(fam, res, r.scan.pairs);
+      if (r.family === fam && r.outcome && r.outcome.retry === 'facts') r.outcome = null;
+    } catch (err) {
+      if (review() !== r) return;
+      fam.factsError = err.message;
+      if (r.family === fam) {
+        r.outcome = { tone: 'error', retry: 'facts', html: 'Could not load the comparison: ' + esc(err.message) + retryButton(), spoken: 'Could not load the comparison: ' + err.message };
+        live(r.outcome.spoken);
+      }
+    } finally {
+      fam.loadingFacts = false;
+    }
+    if (review() === r) d.render();
+  }
+
+  // The page that stays, as it is now: for its figures on the last screen, and to read beside a
+  // page already merged, when no comparison exists to carry it.
+  async function loadKept(r, fam) {
+    const at = fam.mergedOrder.length;
+    if (fam.keptAt === at || fam.loadingKept === at) return;
+    fam.loadingKept = at;
+    try {
+      const res = await d.familyFacts(r.slug, [fam.stays], fam.stays);
+      if (review() !== r) return;
+      const p = (res.pages || [])[0];
+      if (!p || p.exists === false) throw new Error(slugOf(fam.stays) + ' no longer exists');
+      const text = res.keptText ? res.keptText.text : '';
+      fam.kept = { links: p.links || 0, length: p.length || 0, html: d.markdown(pageBody(text)) };
+    } catch (err) {
+      if (review() !== r) return;
+      fam.kept = { failed: err.message };
+    } finally {
+      fam.keptAt = at;
+      fam.loadingKept = -1;
+    }
+    d.render();
+  }
+
+  /** Decides what a family on screen waits for. True when the pair path has nothing to add. */
+  function familyAfterPaint(r) {
+    const fam = r.family;
+    if (!fam.facts) { if (!fam.factsError) loadFacts(r, fam); return true; }
+    if (fam.view === 'choose') return true;
+    if (fam.view === 'finish') { loadKept(r, fam); return true; }
+    if (r.checkHover) { r.checkHover = false; pointer.stale = pointer.type !== 'touch' && pointer.type !== 'pen' && overMerge(); }
+    const page = fam.order[fam.i];
+    if (fam.dec[page] === 'merged') { loadKept(r, fam); return true; }
+    const pair = walkPairOf(r, fam, page);
+    if (!pair) return true;
+    const key = d.pairKey(pair);
+    const held = r.scan.preview;
+    if (!(held && held.key === key)) {
+      if (r.loadingKey !== key && !isBusy(key)) load(r, pair, key);
+      return true;
+    }
+    if (held.error || !held.data || fam.dec[page] || d.armed(pair) || isBusy(key)) return true;
+    startArm(r, pair, key);
+    return true;
+  }
+
+  /** The page that stays. Nothing is merged by this; each other page gets its own pair. */
+  function pickStays(r, fam, page) {
+    if (r.scan.walkPairs) r.scan.walkPairs = r.scan.walkPairs.filter((p) => p.family !== fam.id);
+    const list = r.scan.walkPairs || (r.scan.walkPairs = []);
+    fam.stays = page;
+    fam.order = orderFor(fam, page);
+    fam.dec = {};
+    fam.pre = {};
+    fam.mergedOrder = [];
+    fam.keptReal = {};
+    fam.kept = null;
+    fam.keptAt = -1;
+    fam.foldCount = 50;
+    const info = fam.facts.info.get(page);
+    fam.baseline = { links: info.links || 0, length: info.length || 0 };
+    for (const other of fam.order) {
+      const rel = relationOf(fam, other, page);
+      const apart = fam.facts.kept.has(other < page ? other + '||' + page : page + '||' + other);
+      if (apart) { fam.dec[other] = 'both'; fam.pre[other] = true; }
+      list.push({ walk: true, family: fam.id,
+        keepFolder: folderOf(page), keepSlug: slugOf(page), removeFolder: folderOf(other), removeSlug: slugOf(other),
+        rationale: rel.reason || '', status: apart ? 'skipped' : 'open' });
+    }
+    const first = fam.order.findIndex((p) => !fam.dec[p]);
+    fam.i = first === -1 ? 0 : first;
+    fam.view = first === -1 ? 'finish' : 'walk';
+    r.factsFit = null;
+    resetForPage(r);
+  }
+
+  function factOfPage(r, fam, page) {
+    const c = r.comparison;
+    const pair = walkPairOf(r, fam, page);
+    if (c && pair && c.key === d.pairKey(pair) && c.data && c.data.nameRelation) fam.relations = { ...(fam.relations || {}), [page]: c.data.nameRelation };
+    const relation = fam.relations && fam.relations[page];
+    return relation ? RELATION_LABELS[relation] : '';
+  }
+
+  function nextUndecided(fam, from) {
+    for (let j = from + 1; j < fam.order.length; j++) if (!fam.dec[fam.order[j]]) return j;
+    return -1;
+  }
+
+  function toFinish(r, fam) {
+    resetForPage(r);
+    fam.view = 'finish';
+  }
+
+  /** After a decision: the next page still waiting, or the summary. */
+  function advanceWalk(r, fam) {
+    const j = nextUndecided(fam, fam.i);
+    if (j === -1) toFinish(r, fam);
+    else { resetForPage(r); fam.i = j; }
+    sayArrival(r);
+    d.render();
+    focusTitle();
+  }
+
+  /** A page gone from under the walk: not a decision, so it leaves the walk. */
+  function familySettled(r, fam, missing, page) {
+    const gone = missing || page;
+    const said = 'This page is settled: ' + slugOf(gone) + ' no longer exists. Moving on.';
+    r.outcome = { tone: 'info', familyMessage: true, html: 'This page is settled: ' + name(slugOf(gone)) + ' no longer exists. Moving on.', spoken: said };
+    const message = r.outcome;
+    if (gone === fam.stays) {
+      retire(r, fam);
+      goToWaiting(r, 0, 1);
+      r.outcome = message;
+    } else {
+      const at = fam.order.indexOf(gone);
+      if (at !== -1) {
+        fam.order.splice(at, 1);
+        delete fam.dec[gone];
+        if (at < fam.i) fam.i--;
+      }
+      const j = nextUndecided(fam, fam.i - 1);
+      if (j === -1) toFinish(r, fam);
+      else { resetForPage(r); fam.i = j; }
+    }
+    sayArrival(r);
+    d.render();
+    focusTitle();
+  }
+
+  /** Keep all apart: the pairs the AI matched, so they do not come back. Nothing half done. */
+  async function keepAllApart(r, fam) {
+    if (fam.savingApart) return;
+    const pairs = r.scan.pairs.filter((p) => p.status === 'open' && fam.pages.includes(keepOf(p)) && fam.pages.includes(removeOf(p)));
+    fam.savingApart = true;
+    r.outcome = null;
+    d.render();
+    const done = [];
+    try {
+      for (const p of pairs) { await d.keepApart(r.slug, p); done.push(p); }
+    } catch (err) {
+      for (const p of done) { try { await d.bringBack(r.slug, p); } catch { /* the failure below stands */ } }
+      fam.savingApart = false;
+      if (review() !== r) return;
+      r.outcome = { tone: 'error', retry: 'apart', html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      live(r.outcome.spoken);
+      d.render();
+      return;
+    }
+    fam.savingApart = false;
+    if (review() !== r) return;
+    for (const p of pairs) d.status(p, 'skipped');
+    fam.keptAll = pairs;
+    const n = fam.pages.length;
+    const said = 'Kept these ' + n0(n) + ' pages apart. They will not come back. Pairs the AI has not compared may still come up later.';
+    const message = { tone: 'success', undoAll: fam, spoken: said, html: said + ' ' + undoButton() };
+    const moved = goToWaiting(r, 0, 1);
+    r.outcome = message;
+    sayArrival(r);
+    d.render();
+    if (moved) focusTitle();
+    if (d.reload) d.reload(r.slug);
+  }
+
+  async function undoAllApart(r, fam) {
+    const pairs = fam.keptAll || [];
+    r.outcome = { ...r.outcome, html: String(r.outcome.html).replace(undoButton(), undoButton(true)) };
+    d.render();
+    try {
+      for (const p of pairs) await d.bringBack(r.slug, p);
+    } catch (err) {
+      if (review() !== r) return;
+      r.outcome = { tone: 'error', undoAllRetry: fam, html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      live(r.outcome.spoken);
+      d.render();
+      return;
+    }
+    if (review() !== r) return;
+    for (const p of pairs) d.status(p, 'open');
+    fam.keptAll = null;
+    const pos = r.items.findIndex((it) => it.kind === 'family' && it.fam === fam);
+    r.outcome = null;
+    if (pos !== -1) enterItem(r, pos);
+    r.outcome = { tone: 'success', familyMessage: true, html: 'Brought back.', spoken: 'Brought back.' };
+    live('Brought back.');
+    d.render();
+    focusTitle();
+    if (d.reload) d.reload(r.slug);
+  }
+
+  /** Leftovers: each group of them becomes a decision of its own, right after this one. */
+  function reviewLeftovers(r, fam) {
+    const groups = leftovers(fam, r.scan.pairs);
+    if (!groups.length) return;
+    retire(r, fam);
+    const made = groups.map((g) => {
+      if (g.pages.length >= 3) {
+        const nf = newFamily(g.pages, 'different-names');
+        (r.scan.families || (r.scan.families = [])).push(nf);
+        return { kind: 'family', fam: nf };
+      }
+      return { kind: 'pair', at: g.first };
+    });
+    r.items.splice(r.pos + 1, 0, ...made);
+    r.outcome = null;
+    enterItem(r, r.pos + 1);
+    sayArrival(r);
+    d.render();
+    focusTitle();
   }
 
   // A new pair fades in over the old one's place. Its text starts at the top by itself:
@@ -516,6 +874,10 @@ export function createReviewDesk(d) {
     const now = review();
     if (!now || now !== r) return;
     const p = current(r);
+    if (res.settled && pair.walk) {
+      if (r.family) familySettled(r, r.family, res.missing, removeOf(pair));
+      return;
+    }
     if (res.settled) {
       const page = res.missing || (pair.removeFolder + '/' + pair.removeSlug);
       r.outcome = { tone: 'info', html: 'This pair is settled: ' + name(page) + ' no longer exists. Moving on.',
@@ -538,6 +900,7 @@ export function createReviewDesk(d) {
       d.render();
       return;
     }
+    if (!res.data) { d.render(); return; }
     r.comparison = { key, data: res.data, goes: d.markdown(pageBody(res.data.originals && res.data.originals.remove.text)),
       stays: d.markdown(pageBody(res.data.originals && res.data.originals.keep.text)) };
     if (r.refreshing) {
@@ -554,8 +917,26 @@ export function createReviewDesk(d) {
   function sayArrival(r) {
     const t = tally(r.scan.pairs);
     const lead = r.outcome && r.outcome.spoken ? r.outcome.spoken + ' ' : '';
+    if (r.items && !r.ended) {
+      if (r.family) {
+        const fam = r.family;
+        if (fam.view === 'walk') {
+          const page = fam.order[fam.i];
+          live(lead + 'Page ' + n0(fam.i + 1) + ' of ' + n0(fam.order.length) + '. ' + evidence(fam, page, '').line1);
+        } else if (fam.view === 'finish') {
+          const c = counts(fam);
+          live(lead + (c.left ? (c.left === 1 ? '1 page not decided.' : n0(c.left) + ' pages not decided.') : 'All decided.'));
+        } else live(lead + 'Family of ' + n0(fam.pages.length) + ' pages. Decision ' + n0(r.pos + 1) + ' of ' + n0(r.items.length) + '.');
+        return;
+      }
+      const solo = soloPairs(r);
+      live(lead + 'Pair ' + n0(solo.indexOf(r.scan.pairs[r.index]) + 1) + ' of ' + n0(solo.length) + '.');
+      return;
+    }
     live(r.ended ? lead + 'All pairs decided.' : lead + 'Pair ' + n0(r.index + 1) + ' of ' + n0(t.total) + '.');
   }
+
+  const soloPairs = (r) => r.items.filter((it) => it.kind === 'pair').map((it) => r.scan.pairs[it.at]);
 
   function moveOn(r, step) {
     const moved = goToWaiting(r, r.index, step);
@@ -569,10 +950,26 @@ export function createReviewDesk(d) {
     if (!pair) return undefined;
     r.outcome = null;
     stopWatch();
+    if (pair.walk) live('Merging.');
     return d.merge(r.slug, pair, (out) => {
       const now = review();
       if (now !== r) return;
       const key = d.pairKey(pair);
+      if (pair.walk && r.family && (out.merged || out.gone)) {
+        const fam = r.family;
+        const page = removeOf(pair);
+        if (out.gone) { familySettled(r, fam, out.missing, page); return; }
+        const links = r.comparison && r.comparison.key === key && r.comparison.data && r.comparison.data.originals
+          ? Number(r.comparison.data.originals.remove.linksIn.links) || 0 : 0;
+        const moved = links === 0 ? '' : links === 1 ? ' 1 link moved.' : ' ' + n0(links) + ' links moved.';
+        fam.dec[page] = 'merged';
+        fam.mergedOrder.push(page);
+        r.familyMerged++;
+        r.outcome = { tone: 'success', familyMessage: true, html: 'Merged ' + name(pair.removeSlug) + ' into ' + name(pair.keepSlug) + '.' + moved,
+          spoken: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' + moved };
+        advanceWalk(r, fam);
+        return;
+      }
       if (out.merged) {
         const links = r.comparison && r.comparison.key === key && r.comparison.data && r.comparison.data.originals
           ? Number(r.comparison.data.originals.remove.linksIn.links) || 0 : 0;
@@ -603,6 +1000,42 @@ export function createReviewDesk(d) {
     });
   }
 
+  const undoButton = (saving) => '<button type="button" class="btn btn-secondary btn-xs" id="hr-undo"' + (saving ? ' aria-busy="true" aria-disabled="true">Saving…' : '>Undo') + '</button>';
+
+  /** Undo on a walk: the pair is a question again, and the desk goes to it. */
+  async function undoPage(r, fam, page) {
+    const pair = walkPairOf(r, fam, page);
+    if (!pair) return;
+    const o = r.outcome;
+    if (o && o.undoPage === page) { r.outcome = { ...o, html: o.html.replace(undoButton(), undoButton(true)) }; d.render(); }
+    try {
+      await d.bringBack(r.slug, pair);
+    } catch (err) {
+      if (review() !== r) return;
+      r.outcome = { tone: 'error', undoPageRetry: page, family: fam, html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      live(r.outcome.spoken);
+      d.render();
+      return;
+    }
+    if (review() !== r) return;
+    delete fam.dec[page];
+    delete fam.pre[page];
+    d.status(pair, 'open');
+    if (fam.keptReal[page]) {
+      const real = r.scan.pairs.find((p) => d.pairKey(p) === fam.keptReal[page]);
+      if (real && real.status === 'skipped') d.status(real, 'open');
+      delete fam.keptReal[page];
+    }
+    resetForPage(r);
+    fam.view = 'walk';
+    fam.i = fam.order.indexOf(page);
+    r.outcome = { tone: 'success', familyMessage: true, html: 'Brought back ' + name(slugOf(page)) + '.', spoken: 'Brought back ' + slugOf(page) + '.' };
+    sayArrival(r);
+    d.render();
+    focusTitle();
+    if (d.reload) d.reload(r.slug);
+  }
+
   const undoLine = (pair, saving) => 'Kept ' + name(pair.removeSlug) + ' and ' + name(pair.keepSlug) + ' apart. They will not come back. ' +
     '<button type="button" class="btn btn-secondary btn-xs" id="hr-undo"' + (saving ? ' aria-busy="true" aria-disabled="true">Saving…' : '>Undo') + '</button>';
 
@@ -614,6 +1047,19 @@ export function createReviewDesk(d) {
     const kept = pair;
     return d.keepBoth(r.slug, pair, (out) => {
       if (review() !== r) return;
+      if (out.kept && pair.walk && r.family) {
+        const fam = r.family;
+        const page = removeOf(pair);
+        fam.dec[page] = 'both';
+        // The AI's own pair for these two, in either direction, is decided too: the lanes count it.
+        const real = r.scan.pairs.find((p) => p.status === 'open' && ((keepOf(p) === fam.stays && removeOf(p) === page) || (keepOf(p) === page && removeOf(p) === fam.stays)));
+        if (real) { d.status(real, 'skipped'); fam.keptReal[page] = d.pairKey(real); }
+        const said = 'Kept ' + pair.removeSlug + ' and ' + pair.keepSlug + ' apart. This pair will not come back.';
+        r.outcome = { tone: 'success', familyMessage: true, undoPage: page, family: fam, spoken: said,
+          html: 'Kept ' + name(pair.removeSlug) + ' and ' + name(pair.keepSlug) + ' apart. This pair will not come back. ' + undoButton() };
+        advanceWalk(r, fam);
+        return;
+      }
       if (out.kept) {
         r.outcome = { tone: 'success', undo: kept, html: undoLine(kept, false),
           spoken: 'Kept ' + kept.removeSlug + ' and ' + kept.keepSlug + ' apart. They will not come back.' };
@@ -641,7 +1087,11 @@ export function createReviewDesk(d) {
       d.status(pair, 'open');
       const wasEnded = r.ended;
       r.outcome = { tone: 'success', html: 'Brought back.', spoken: 'Brought back.' };
-      if (wasEnded) goToWaiting(r, r.scan.pairs.indexOf(pair) - 1, 1);
+      if (wasEnded && r.items) {
+        const at = r.scan.pairs.findIndex((p) => d.pairKey(p) === d.pairKey(pair));
+        const pos = r.items.findIndex((it) => it.kind === 'pair' && it.at === at);
+        if (pos !== -1) enterItem(r, pos);
+      } else if (wasEnded) goToWaiting(r, r.scan.pairs.indexOf(pair) - 1, 1);
       live('Brought back.');
     } catch (err) {
       if (review() !== r) return;
@@ -655,6 +1105,9 @@ export function createReviewDesk(d) {
   function onClick(btn) {
     const r = review();
     if (!r) return undefined;
+    if (btn.id === 'hr-undo' && r.outcome && r.outcome.undoAll) return undoAllApart(r, r.outcome.undoAll);
+    if (btn.id === 'hr-retry' && r.outcome && r.outcome.undoAllRetry) { const fam = r.outcome.undoAllRetry; r.outcome = { html: '', spoken: '' }; return undoAllApart(r, fam); }
+    if (r.family) { const handled = familyClick(r, btn); if (handled !== NOT_MINE) return handled; }
     const pair = current(r);
     const key = pair ? d.pairKey(pair) : null;
     switch (btn.id) {
@@ -716,6 +1169,16 @@ export function createReviewDesk(d) {
     }
     if (btn.dataset && btn.dataset.reviewJump !== undefined) {
       const at = Number(btn.dataset.reviewJump);
+      if (r.items) {
+        if (Number.isInteger(at) && r.items[at] && itemWaits(r, r.items[at])) {
+          enterItem(r, at);
+          sayArrival(r);
+          d.render();
+          focusTitle();
+          if (d.headIntoView) d.headIntoView();
+        }
+        return undefined;
+      }
       if (Number.isInteger(at) && r.scan.pairs[at] && r.scan.pairs[at].status === 'open') {
         r.ended = false;
         goTo(r, at);
@@ -729,12 +1192,246 @@ export function createReviewDesk(d) {
     return undefined;
   }
 
+  function familyClick(r, btn) {
+    const fam = r.family;
+    const data = btn.dataset || {};
+    const page = fam.view === 'walk' ? fam.order[fam.i] : null;
+    const go = () => { sayArrival(r); d.render(); focusTitle(); };
+    if (data.famPick !== undefined) {
+      if (!fam.facts || !fam.pages.includes(data.famPick)) return undefined;
+      r.outcome = null;
+      pickStays(r, fam, data.famPick);
+      go();
+      return undefined;
+    }
+    if (data.famRead !== undefined) return fam.pages.includes(data.famRead) ? d.readPage(data.famRead + '.md', slugOf(data.famRead)) : undefined;
+    if (data.famJump !== undefined) {
+      const at = fam.order.indexOf(data.famJump);
+      if (at === -1) return undefined;
+      r.outcome = null;
+      resetForPage(r);
+      fam.i = at;
+      go();
+      if (d.headIntoView) d.headIntoView();
+      return undefined;
+    }
+    if (data.famUndo !== undefined) return undoPage(r, fam, data.famUndo);
+    switch (btn.id) {
+      case 'hr-done':
+        if (fam.view === 'walk' && !isFresh(fam)) { r.outcome = null; toFinish(r, fam); go(); return undefined; }
+        close();
+        return undefined;
+      case 'hr-next':
+        if (fam.view === 'choose') { moveOn(r, 1); focusTitle(); return undefined; }
+        {
+          r.outcome = null;
+          const j = nextUndecided(fam, fam.i);
+          if (j !== -1) { resetForPage(r); fam.i = j; } else if (fam.i < fam.order.length - 1) { resetForPage(r); fam.i += 1; } else toFinish(r, fam);
+          go();
+        }
+        return undefined;
+      case 'hr-prev':
+        if (fam.view === 'choose') { moveOn(r, -1); focusTitle(); return undefined; }
+        if (fam.i > 0) { r.outcome = null; resetForPage(r); fam.i -= 1; go(); }
+        return undefined;
+      case 'hr-fam-show': {
+        const rows = chooseRows(fam);
+        fam.shown += fam.shown === CHOOSE_FIRST && rows.rest <= 50 ? rows.rest : 50;
+        d.render();
+        return undefined;
+      }
+      case 'hr-fam-apart': return keepAllApart(r, fam);
+      case 'hr-fam-rechoose':
+        if (!isFresh(fam)) return undefined;
+        if (r.scan.walkPairs) r.scan.walkPairs = r.scan.walkPairs.filter((p) => p.family !== fam.id);
+        fam.stays = null; fam.view = 'choose'; fam.order = []; fam.dec = {}; fam.pre = {};
+        r.outcome = null;
+        resetForPage(r);
+        go();
+        return undefined;
+      case 'hr-flip': {
+        if (!page || !isFresh(fam)) return undefined;
+        const old = fam.stays;
+        pickStays(r, fam, page);
+        const said = 'Now ' + slugOf(page) + ' stays, and ' + slugOf(old) + ' is one of the pages to go through.';
+        r.outcome = { tone: 'info', familyMessage: true, html: 'Now ' + name(slugOf(page)) + ' stays, and ' + name(slugOf(old)) + ' is one of the pages to go through.', spoken: said };
+        go();
+        return undefined;
+      }
+      case 'hr-read-goes': return page ? d.readPage(page + '.md', slugOf(page)) : undefined;
+      case 'hr-read-stays': return d.readPage(fam.stays + '.md', slugOf(fam.stays));
+      case 'hr-keep': return page && !fam.dec[page] ? keepBoth(r) : undefined;
+      case 'hr-merge': {
+        if (!page || fam.dec[page]) return undefined;
+        const pair = walkPairOf(r, fam, page);
+        const key = pair ? d.pairKey(pair) : null;
+        if (!pair || !r.comparison || r.comparison.key !== key || !r.comparison.data || !d.gate(pair).allowed || pointer.stale) return undefined;
+        return merge(r);
+      }
+      case 'hr-undo': {
+        const o = r.outcome;
+        if (o && o.undoPage) return undoPage(r, o.family, o.undoPage);
+        return page && fam.dec[page] === 'both' ? undoPage(r, fam, page) : undefined;
+      }
+      case 'hr-retry': {
+        const o = r.outcome;
+        const what = o && o.retry;
+        if (o && o.undoPageRetry) { r.outcome = null; return undoPage(r, o.family, o.undoPageRetry); }
+        r.outcome = null;
+        if (what === 'facts') { fam.factsError = null; d.render(); return undefined; }
+        if (what === 'apart') return keepAllApart(r, fam);
+        const pair = page ? walkPairOf(r, fam, page) : null;
+        if (pair) clearPairMessage(pair);
+        if (what === 'merge') return merge(r);
+        if (what === 'keep') return keepBoth(r);
+        if (pair && r.scan.preview && r.scan.preview.key === d.pairKey(pair)) r.scan.preview = null;
+        if (r.comparison && r.comparison.error) r.comparison = null;
+        d.render();
+        return undefined;
+      }
+      case 'hr-fam-fold-more': fam.foldCount += 50; d.render(); return undefined;
+      case 'hr-fam-back': {
+        const first = fam.order.findIndex((p) => !fam.dec[p]);
+        if (first === -1) return undefined;
+        r.outcome = null;
+        resetForPage(r);
+        fam.view = 'walk';
+        fam.i = first;
+        go();
+        return undefined;
+      }
+      case 'hr-fam-residue': return reviewLeftovers(r, fam);
+      default: break;
+    }
+    if (btn.id && btn.id.startsWith('hr-fam-res-more')) { fam.foldCount += 50; d.render(); return undefined; }
+    return NOT_MINE;
+  }
+
   // ── The model ───────────────────────────────────────────────────────────
+  function familyModel(r) {
+    const fam = r.family;
+    const base = { familyClass: 'hr-desk-family', outcome: r.outcome, foldHtml: '', titleHtml: 'Family of ' + n0(fam.pages.length) + ' pages' };
+    const stateOpen = (k) => d.state.expandedGroups.has(k);
+    if (fam.view === 'choose') {
+      const saving = !!fam.savingApart;
+      const shut = saving || waitingItems(r) < 2;
+      return { ...base, countText: 'Decision ' + n0(r.pos + 1) + ' of ' + n0(r.items.length), doneDisabled: saving, busy: saving,
+        navHtml: navButton('hr-prev', 'Previous', shut) + navButton('hr-next', 'Next', shut),
+        customHtml: renderChoose(fam, { size: formatSize, busy: saving, saving, fact: RELATION_LABELS[fam.relation], loading: !fam.factsError }) };
+    }
+    if (fam.view === 'finish') {
+      const c = counts(fam);
+      const note = typeof d.note === 'function' ? d.note() : d.note;
+      return { ...base, countText: c.left ? (c.left === 1 ? '1 page not decided' : n0(c.left) + ' pages not decided') : 'All decided',
+        navHtml: c.left ? navButton('hr-fam-back', c.left === 1 ? 'Go back to it' : 'Go back to them', false) : '', doneDisabled: false, busy: false,
+        customHtml: renderFinish(fam, { size: formatSize, open: stateOpen, leftovers: leftovers(fam, r.scan.pairs), note: note || '' }) };
+    }
+    const page = fam.order[fam.i];
+    const status = fam.dec[page];
+    const pair = walkPairOf(r, fam, page);
+    const key = pair ? d.pairKey(pair) : null;
+    const merging = !!pair && d.state.busyKey === 'semanticMergeOne:' + key;
+    const saving = !!pair && d.state.busyKey === 'semanticSkip:' + key;
+    const busy = merging || saving;
+    const goes = slugOf(page);
+    const stays = slugOf(fam.stays);
+    const fresh = isFresh(fam);
+    const c = status === 'merged' ? null : (r.comparison && r.comparison.key === key ? r.comparison : null);
+    const data = c && c.data ? c.data : null;
+    const paneGoes = status === 'merged'
+      ? { role: 'Merged', page: goes, meta: 'This page no longer exists', readId: null, flip: null,
+          bodyHtml: '<p class="hr-fam-pane-note">Its text is on the page that stays, under Merged from ' + name(goes) + '.</p>' }
+      : { role: 'Goes away', page: goes, readId: 'hr-read-goes', flip: fresh && !status ? { disabled: busy } : null,
+          meta: data && data.originals ? folderOf(page) + ' · ' + linksMeta(data.originals.remove.linksIn) + ' · ' + formatSize(data.originals.remove.length) : folderOf(page),
+          bodyHtml: data && data.originals ? '<div class="hr-pane-text">' + c.goes + '</div>' + (data.originals.remove.truncated ? '<p class="hr-pane-capped">(showing the first ' + n0(String(data.originals.remove.text).length) + ' characters)</p>' : '')
+            : (c && c.error ? '' : '<p class="hr-pane-wait">Loading the page…</p>') };
+    const kept = fam.kept && !fam.kept.failed && fam.keptAt === fam.mergedOrder.length ? fam.kept : null;
+    const paneStays = { role: 'Stays', page: stays, readId: 'hr-read-stays', flip: null,
+      meta: status === 'merged'
+        ? (kept ? folderOf(fam.stays) + ' · ' + linksMeta({ links: kept.links }) + ' · ' + formatSize(kept.length) : folderOf(fam.stays))
+        : (data && data.originals ? folderOf(fam.stays) + ' · ' + linksMeta(data.originals.keep.linksIn) + ' · ' + formatSize(data.originals.keep.length) : folderOf(fam.stays)),
+      bodyHtml: status === 'merged'
+        ? (kept ? '<div class="hr-pane-text">' + kept.html + '</div>' : '<p class="hr-pane-wait">Loading the page…</p>')
+        : (data && data.originals ? '<div class="hr-pane-text">' + c.stays + '</div>' + (data.originals.keep.truncated ? '<p class="hr-pane-capped">(showing the first ' + n0(String(data.originals.keep.text).length) + ' characters)</p>' : '')
+          : (c && c.error ? '' : '<p class="hr-pane-wait">Loading the page…</p>')) };
+    const gate = pair ? d.gate(pair) : { allowed: false };
+    const armedNow = !!(gate.allowed && data);
+    const delay = armDelay(pointer.type, typeof matchMedia === 'function' && matchMedia('(hover: none)').matches);
+    const decided = status === 'merged'
+      ? { afterHtml: 'Merged into ' + name(stays) + '. Nothing more to decide here.', decideHtml: '' }
+      : status === 'both'
+        ? { afterHtml: 'You kept ' + name(goes) + ' and ' + name(stays) + ' apart.', decideHtml: '<div class="hr-decide-btns">' + undoButton() + '</div>' }
+        : { afterHtml: data && data.originals ? afterLineWalk(goes, stays, data.originals.remove.linksIn.links) : '' };
+    return { ...base, busy,
+      reviewKey: (status === 'merged' ? 'merged:' : '') + (key || page),
+      countText: countLine(fam),
+      navHtml: navButton('hr-prev', 'Previous', busy || fam.i === 0) + navButton('hr-next', 'Next', busy),
+      doneDisabled: busy,
+      leadHtml: renderMarks(fam, true) + renderRunning(fam),
+      factsHtml: evidence(fam, page, factOfPage(r, fam, page)).html,
+      goes: paneGoes, stays: paneStays,
+      afterHtml: decided.afterHtml,
+      ...(decided.decideHtml !== undefined ? { decideHtml: decided.decideHtml } : {}),
+      keepLabel: saving ? 'Saving…' : 'Keep both',
+      keepAttrs: saving ? ' aria-busy="true" aria-disabled="true"' : (merging ? ' disabled' : ''),
+      mergeLabelHtml: merging ? 'Merging…' : 'Merge ' + name(goes) + ' into ' + name(stays),
+      mergeSpoken: merging ? 'Merging' : 'Merge ' + goes + ' into ' + stays,
+      mergeAttrs: merging ? ' aria-busy="true" aria-disabled="true"' : ((!armedNow || saving || pointer.stale) ? ' disabled' : ''),
+      gateText: status || busy ? '' : (armedNow && pointer.stale) ? 'Move the pointer off Merge and back to press it.'
+        : (!armedNow && data && r.unseen) ? 'Merge opens once you have had both pages on screen.'
+        : (!armedNow && data && delay !== ARM_MS) ? 'Merge opens in a moment, so both pages can be read.' : '',
+      noteHtml: 'Merging deletes ' + name(goes) + '. ' + esc(typeof d.warn === 'function' ? d.warn() : d.warn),
+      foldHtml: renderWalkFold(fam, stateOpen('reviewFamily'), busy),
+    };
+  }
+
+  /** "All N decisions" when a family is in the list: the plain list when there is none. */
+  function renderItemsFold(r, m) {
+    const body = [];
+    if (m.foldOpen) {
+      const w = foldWindow(r.items.length, r.pos, m.foldStart, m.foldCount);
+      body.push(foldSummary(m.tally));
+      if (w.from > 0) body.push(moreButton('hr-fold-earlier', Math.min(w.from, FOLD_PAGE)));
+      for (let i = w.from; i < w.to; i++) {
+        const it = r.items[i];
+        const waits = itemWaits(r, it);
+        const here = i === r.pos && !r.ended;
+        let label; let state;
+        if (it.kind === 'family') {
+          label = 'Family of ' + n0(it.fam.pages.length) + ' pages';
+          state = waits ? 'waiting' : 'All decided';
+        } else {
+          const p = r.scan.pairs[it.at];
+          label = name(p.removeSlug) + ' → ' + name(p.keepSlug);
+          state = here && waits ? 'this pair' : waits ? 'waiting' : (ROW_STATE[p.status] || 'waiting');
+        }
+        body.push(renderFoldItem({ alias: 'dm', hostClass: 'hr-fold-row',
+          mainHtml: waits && !here ? '<button type="button" class="btn btn-secondary btn-xs hr-jump" data-review-jump="' + i + '"' + (m.busy ? ' disabled' : '') + '>' + label + '</button>' : label,
+          meta: state }));
+      }
+      if (w.to < r.items.length) body.push(moreButton('hr-fold-more', Math.min(r.items.length - w.to, FOLD_PAGE)));
+    }
+    return renderFoldRows(renderFoldRow({ key: 'reviewPairs', label: 'All ' + n0(r.items.length) + ' decisions', open: !!m.foldOpen, alias: 'dm', hostClass: 'hr-fold', bodyHtml: body.join('') }), { alias: 'dm' });
+  }
+
+  /** The end's figures: a family's pages count once each, never its pairs settled by a merge. */
+  function tallyWithFamilies(r) {
+    const t = tally(soloPairs(r));
+    for (const it of r.items) {
+      if (it.kind !== 'family') continue;
+      const c = counts(it.fam);
+      t.total += c.m + c.k + c.left; t.merged += c.m; t.kept += c.k; t.open += c.left; t.decided += c.m + c.k;
+      if (it.fam.keptAll) { t.total += it.fam.pages.length; t.kept += it.fam.pages.length; t.decided += it.fam.pages.length; }
+    }
+    return t;
+  }
+
   function model() {
     const r = review();
     if (!r) return null;
+    if (r.family && !r.ended) return familyModel(r);
     const pairs = r.scan.pairs;
-    const t = tally(pairs);
+    const t = r.items ? tallyWithFamilies(r) : tally(pairs);
     const foldOpen = d.state.expandedGroups.has('reviewPairs');
     r.foldOpen = foldOpen;
     const pair = r.ended ? null : current(r);
@@ -743,7 +1440,7 @@ export function createReviewDesk(d) {
     const saving = !!pair && d.state.busyKey === 'semanticSkip:' + key;
     const busy = merging || saving;
     const common = { outcome: r.outcome, pairs, index: r.index, tally: t, busy, foldOpen, foldStart: r.foldStart, foldCount: r.foldCount };
-    common.foldHtml = renderPairsFold(common);
+    common.foldHtml = r.items ? renderItemsFold(r, common) : renderPairsFold(common);
     if (r.ended || !pair) {
       const left = d.coverageLeft ? d.coverageLeft() : 0;
       return { ...common, end: {
@@ -774,9 +1471,9 @@ export function createReviewDesk(d) {
     const staysPage = pair.keepSlug;
     const outcomeBase = { ...common,
       reviewKey: key,
-      titleHtml: 'Pair ' + n0(r.index + 1) + ' of ' + n0(t.total),
-      countText: n0(t.decided) + ' decided · ' + n0(t.open) + ' left',
-      navDisabled: busy || t.open < 2,
+      titleHtml: r.items ? 'Pair ' + n0(soloPairs(r).indexOf(pair) + 1) + ' of ' + n0(soloPairs(r).length) : 'Pair ' + n0(r.index + 1) + ' of ' + n0(t.total),
+      countText: r.items ? (() => { const s = tally(soloPairs(r)); return n0(s.decided) + ' decided · ' + n0(s.open) + ' left'; })() : n0(t.decided) + ' decided · ' + n0(t.open) + ' left',
+      navDisabled: busy || (r.items ? waitingItems(r) < 2 : t.open < 2),
       doneDisabled: busy,
       factsHtml: facts,
       goes: pane('remove', 'Goes away', 'hr-read-goes', { disabled: busy }),
