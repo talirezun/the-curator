@@ -986,6 +986,8 @@ section('M. Keep both across the two folders sticks');
   ok((await loadDismissed(t.name)).records.length === 0, 'M.12 and one naming the wrong folder is retired');
   writeFileSync(f2, JSON.stringify({ type: 'semanticDupe', slugs: ['one', 'two'], folderA: 'entities', folderB: 'concepts', dismissedAt: 'x' }) + '\n');
   ok((await loadDismissed(t.name)).records.length === 0, 'M.13 each page is looked for in its own folder');
+  writeFileSync(f2, JSON.stringify({ type: 'semanticDupe', slugs: ['one', 'two'], folder: 'mixed', dismissedAt: 'x' }) + '\n');
+  ok((await loadDismissed(t.name)).records.length === 1, 'M.14 "mixed" alone is no folder: the pages are looked for in both');
 }
 
 section('N. The next N is priced as the whole pass is');
