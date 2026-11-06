@@ -132,6 +132,7 @@ export function createCompareAll(deps) {
   let pollSlug = null;
   let pressing = null;       // 'pause' | 'resume' | 'stop' while its request is out
   let pulling = false;
+  let chipDrawn = false;
   let foundSeen = new Map(); // slug → progress.found when pairs were last read
 
   const api = (slug, tail) => '/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/compare-all/' + tail;
@@ -323,7 +324,7 @@ export function createCompareAll(deps) {
     reading: (slug) => compareJobReading(shownJob(slug), copy),
 
     /** The row's buttons. `nextChip` is what the row would show with no job. */
-    actions(slug, nextChip, c, { noKeyAttrs = '', disabled = false } = {}) {
+    actions(slug, nextChip, c, { noKeyAttrs = '', disabled = false, frozen = false } = {}) {
       const job = shownJob(slug);
       if (job && ACTIVE.has(job.state)) {
         const busy = job.state === 'pausing' || pressing === 'pause';
@@ -337,7 +338,11 @@ export function createCompareAll(deps) {
           '<button class="btn btn-secondary dm-compare-job-stop" id="dm-compare-job-stop" data-compare-do="stop"' + (r || s ? ' aria-busy="true" aria-disabled="true"' : '') + '>' + (s ? deps.ring() + ' Stopping…' : 'Stop') + '</button>';
       }
       // "Compare the next N" already covers it when what is left fits in one run.
-      const offered = c && c.checked > 0 && c.left > c.next && deps.offered(slug);
+      const wanted = !!(c && c.checked > 0 && c.left > c.next && deps.offered(slug));
+      // A question being answered sits under this row. A chip that came or went now would move
+      // it at phone width, where the chips stack, so that waits until the question has closed.
+      const offered = frozen ? (chipDrawn && !!c) : wanted;
+      chipDrawn = offered;
       if (!offered) return nextChip;
       const q = quotes.get(slug);
       const est = q && q.est;

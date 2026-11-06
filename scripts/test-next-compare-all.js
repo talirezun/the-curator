@@ -319,6 +319,20 @@ section('7. The chip');
   ok(/disabled/.test(q.api.actions('alpha', 'NEXT', c0)), '7.10 Forget takes the figure with it');
 }
 
+{
+  // A question being answered is under this row: a chip that comes or goes would move it.
+  const w = world({ status: { state: 'none' } });
+  await w.api.sync('alpha');
+  w.api.noteQuote('alpha', estimate());
+  const none = { checked: 0, left: 500, next: 40, total: 500 };
+  ok(w.api.actions('alpha', 'NEXT', none) === 'NEXT', '7.11 before a first run: no chip');
+  ok(w.api.actions('alpha', 'NEXT', c0, { frozen: true }) === 'NEXT', '7.12 the run lands while its question is still closing: the chip waits');
+  ok(w.api.actions('alpha', 'NEXT', c0).includes('Compare all'), '7.13 and comes when it has closed');
+  const fits = { checked: 490, left: 10, next: 10, total: 500 };
+  ok(w.api.actions('alpha', 'NEXT', fits, { frozen: true }).includes('Compare all'), '7.14 the same the other way: it does not leave under a question');
+  ok(w.api.actions('alpha', 'NEXT', fits) === 'NEXT', '7.15 and leaves after');
+}
+
 section('8. A read-only mirror');
 {
   const w = world({ mirror: true });
