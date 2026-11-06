@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.93.0` | Wiki health is three lanes in plain words; quiet counts filter the candidate memo after a merge; the backend for the desk, Compare all and families landed dormant. |
 | `v3.92.0` | Wiki health follows the press rule on its old layout: `shared/morph.js` keeps nodes across a paint, the control answers, outcomes and questions land on the row; free repairs run on press; a fixed-length atomic temp name. |
 | `v3.91.1` | A merge no longer loses text: `page-merge.js` is the one composer for every delete-after-merge path, the kept page is the base, and `findLostLines` refuses a delete that would lose a line. |
 | `v3.91.0` | "Find duplicate pages" finishes: remembered answers per domain, coverage, a relation prompt chosen by measurement, spelling-variant-only bulk merge checked by the server, and `isMergeableSlug`. |
