@@ -1176,6 +1176,7 @@ async function reviewDeskScene(app, profile) {
   step(`[${pn}] Keep both says so and offers Undo`, /^Kept .+ and .+ apart\. They will not come back\./.test(keptLine) && await page.evaluate(() => !!document.getElementById('hr-undo')), keptLine);
   step(`[${pn}] focus goes to the pair title`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
   await shot('desk-kept');
+  await bringIn('#hr-undo');
   await deciding('Undo', () => press('#hr-undo'));
   step(`[${pn}] Undo: Brought back.`, (await page.evaluate((s) => document.querySelector(s).innerText, SEL.deskOutcome)) === 'Brought back.');
   step(`[${pn}] Undo leaves focus on the title, not the body`, await page.evaluate(() => document.activeElement && document.activeElement.id === 'hr-title'));
@@ -1271,6 +1272,7 @@ async function reviewDeskScene(app, profile) {
   await press(SEL.deskMerge);
   await delay(250);
   await shot('desk-merging'); await audit('merging');
+  step(`[${pn}] and it is spoken`, (await page.evaluate(() => document.querySelector('.dm-health .dm-health-live').textContent)) === 'Merging.');
   step(`[${pn}] while it merges, Keep both is shut and Merge says so`, await page.evaluate(() => document.getElementById('hr-keep').disabled && document.getElementById('hr-merge').getAttribute('aria-busy') === 'true' && /Merging…/.test(document.getElementById('hr-merge').innerText)));
   await delay(1100);
   await page.evaluate(() => { if (window.__realFetch2) window.fetch = window.__realFetch2; });

@@ -8233,6 +8233,7 @@ function busyRingLabel(key) {
   if (!key) return null;
   if (Object.prototype.hasOwnProperty.call(BUSY_LABELS, key)) return BUSY_LABELS[key];
   if (key.indexOf('group:') === 0) return 'Repairing.';
+  if (key.indexOf('semanticMergeOne:') === 0) return 'Merging.';
   return 'Saving…';
 }
 
