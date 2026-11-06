@@ -556,11 +556,15 @@ function leadTarget(bulletLine) {
  * @param {string} incomingText
  * @param {object} [opts]
  * @param {string} [opts.keepFolder]
+ * @param {boolean} [opts.repeatSource] this same source was ingested here before, so
+ *   no wording joins the page however new its words look: a model finds new vocabulary
+ *   on every reading, and the mostly-new test alone never reaches zero (measured +14,000
+ *   characters a round; +5,500 with new link targets still allowed).
  * @param {string[]} [opts.dropped] receives each passage left out for repeating the
  *   page, so the caller can say so. An exact repeat is not listed: nothing is lost.
  * @returns {string}
  */
-export function composeReusedPage(keepText, incomingText, { keepFolder, dropped = [] } = {}) {
+export function composeReusedPage(keepText, incomingText, { keepFolder, dropped = [], repeatSource = false } = {}) {
   const original = String(keepText ?? '');
   const bom = original.startsWith('\ufeff') ? '\ufeff' : '';
   const crlf = (original.match(/\r\n/g) || []).length;
@@ -569,7 +573,9 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
   const keep = splitPage(original);
   const inc = splitPage(withoutWriteBookkeeping(incomingText));
   const wantType = keepFolder === 'entities' ? 'entity' : keepFolder === 'concepts' ? 'concept' : null;
-  const fm = composeFrontmatter(keep, inc, wantType);
+  const fm = repeatSource
+    ? { lines: keep.hasFrontmatter ? keep.frontmatter : null, conflicts: [] }
+    : composeFrontmatter(keep, inc, wantType);
 
   const keepTokens = tokenize(keep.body);
   const sections = sectionIndex(keepTokens);
@@ -660,7 +666,10 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
     const whole = t.lines.join(' ');
     if (t.kind === 'bullet') {
       const target = group && LINK_SECTIONS.has(group.key) ? leadTarget(t.lines[0]) : null;
-      if (target) {
+      if (repeatSource) {
+        if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
+        continue;
+      } else if (target) {
         if (!linkTargets.has(group.key)) {
           linkTargets.set(group.key, new Set((sections.get(group.key)?.bullets || []).map((b) => leadTarget(b.lines[0])).filter(Boolean)));
         }
@@ -671,6 +680,9 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
         if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
         continue;
       }
+    } else if (repeatSource) {
+      dropped.push(whole);
+      continue;
     } else if (t.kind === 'para') {
       if (t.lines.every((l) => l.startsWith('|'))) {
         if (!isMostlyNew(whole, pageWords)) { dropped.push(whole); continue; }
@@ -746,7 +758,7 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
   }
 
   // A page with no `# title` takes the incoming one, which is otherwise not text.
-  if (!keptHasTitle) {
+  if (!keptHasTitle && !repeatSource) {
     const title = tokenize(splitPage(incomingText).body).find((t) => t.kind === 'heading' && t.level === 1);
     if (title) body.unshift(title.lines[0], ...(body.length && !isBlank(body[0]) ? [''] : []));
   }

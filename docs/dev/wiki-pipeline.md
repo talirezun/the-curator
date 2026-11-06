@@ -64,6 +64,9 @@ POST /api/ingest
            concept whose name is a spelling variant (isSpellingVariant) of an existing
            page, or of another page in the plan, moves there and is marked as a fold.
            Any other close name keeps both, with a notice. No prompt text changes.
+      5.7 findCompletedIngest: the same bytes already ingested here (manifest sha256,
+           completed, summary on disk) means writePage runs with repeatSource: existing
+           pages stay byte-identical, new pages are created, one notice says so.
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
            a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md
@@ -202,7 +205,7 @@ find domains/articles/wiki -name "*.md" -print0 | xargs -0 sed -i '' \
 - `type/concept` → Green nodes
 - `type/summary` → Purple nodes
 
-**Merge strategy** — nothing on an existing page is lost, and new wording joins only when it is mostly new, in any section: the test reads every sentence, list line and bullet against all the page's words. Related and the summary link sections go by link target. The page's title and opening stay. A page written under a name the model did not choose (a fold) and a Health merge that deletes a page use `composeMergedPage`, whose moved text lives under `## Merged from <page>`, a block later writes keep. A stub page is replaced.
+**Merge strategy** — nothing on an existing page is lost. An identical source re-ingested adds nothing to existing pages. Otherwise new wording joins only when it is mostly new, in any section: the test reads every sentence, list line and bullet against all the page's words. Related and the summary link sections go by link target. The page's title and opening stay. A page written under a name the model did not choose (a fold) and a Health merge that deletes a page use `composeMergedPage`, whose moved text lives under `## Merged from <page>`, a block later writes keep. A stub page is replaced.
 
 ---
 

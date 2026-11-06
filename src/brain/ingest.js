@@ -26,12 +26,13 @@ import { parseIndex, ensurePagesInIndex, indexEntriesFrom } from './wiki-index.j
 // converting it (or anything else in that cycle) to a `const` arrow would make
 // it undefined at module-evaluation time on some load orders.
 import { tokenize } from './sharedbrain-delta.js';
+import { existsSync } from 'node:fs';
 import { writeFileAtomic } from './atomic-write.js';
 import { isSpellingVariant } from './duplicate-checks.js';
 // Track 7 Part II. raw-store imports extractText from THIS module, but does so
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
-import { appendManifestRecord, hashRawSource, readManifest } from './raw-store.js';
+import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
 import { createHash } from 'crypto';
 import { listOtherInstances, describeOthers } from './instance-probe.js';
 
@@ -1908,7 +1909,7 @@ const AGGREGATABLE_WARNINGS = [
       `${n} pages had to be rewritten more briefly: the AI's first attempt at each came back unusable, ` +
       `so The Curator asked for a shorter version and saved that instead (${renderExamples(ex)}). ` +
       `These are real content, but they are briefer than the rest — open them in the Wiki tab and ` +
-      `re-ingest if any reads too thin.`,
+      `add to any that reads too thin.`,
   },
   {
     id: 'stub-page',
@@ -3068,14 +3069,25 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // raw/ stays local (gitignored). That is the point: a second machine can
   // then say "this summary came from report.pdf, 2.4 MB, ingested 12 March
   // — not on this machine" instead of having no idea it ever existed.
-  hashRawSource(destPath)
-    .then(sha256 => appendManifestRecord(domain, {
-      filename: originalName,
-      sha256,
-      bytes: buffer.length,
-      ingestedAt: new Date().toISOString(),
-      summaryPath,
-    }))
+  //
+  // The manifest is read BEFORE this ingest adds its own line, to tell whether these
+  // exact bytes were ingested here before (findCompletedIngest). If so, existing pages
+  // take no new wording: a model rewords and finds new vocabulary on every reading, so
+  // otherwise an identical source grows the wiki for ever. Nothing is blocked and no
+  // call is skipped. The hash is awaited for this, about a second on a 126 MB file.
+  const sourceHash = await hashRawSource(destPath);
+  const repeatSource = Boolean(findCompletedIngest(
+    await readManifest(domain),
+    sourceHash,
+    (p) => existsSync(path.join(wikiPath(domain), p)),
+  ));
+  const manifestRecord = {
+    filename: originalName,
+    sha256: sourceHash,
+    bytes: buffer.length,
+    summaryPath,
+  };
+  appendManifestRecord(domain, { ...manifestRecord, ingestedAt: new Date().toISOString(), completed: false })
     .catch(() => { /* best-effort: never surfaces to the user */ });
 
   // v3.0.1-beta.8: extract text inside a try/catch so a corrupt / encrypted /
@@ -3470,6 +3482,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const canonicalPaths = [];
   const changes = [];
   const writeRecords = [];
+  let repeatLeftOut = 0;
   const plannedFolds = new Map(
     (Array.isArray(result.outlinePages) ? result.outlinePages : [])
       .filter(p => p && p[FOLDED_FROM])
@@ -3485,6 +3498,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     const record = await writePage(domain, page.path, page.content, {
       onWarn: (w) => warnings.push(w),
       ...(foldedFrom ? { foldedFrom } : {}),
+      ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
     });
     writeRecords.push(record ? { originalPath: page.path, record } : null);
     if (record) {
@@ -3500,6 +3514,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
         changes.push(record);
       }
     }
+  }
+
+  if (repeatSource) {
+    warnings.push(
+      `This source was already ingested into this domain (same content), so existing pages kept their text and took ` +
+      `no new wording (${repeatLeftOut} passage${repeatLeftOut === 1 ? '' : 's'} left out), including any page reported ` +
+      `as merged above. New pages were still created. To change a page, edit it or change the source.`
+    );
   }
 
   // Post-write: reconcile the summary's "Entities Mentioned" with every entity
@@ -3611,6 +3633,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // the batch prompt's byte-stable prefix.
   const logEntry = `## [${localDateStamp()}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
+  // The pages are on disk: only now does this source count as ingested.
+  await appendManifestRecord(domain, { ...manifestRecord, ingestedAt: new Date().toISOString(), completed: true });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this
   // module is imported by the MCP child process (v2.5.2).

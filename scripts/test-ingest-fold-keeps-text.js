@@ -20,6 +20,7 @@
  *   §5  Exact-name reuse: title and opening stay, mostly new wording goes below
  *       the kept text, a rewording is left out and reported. A stub is replaced.
  *   §5b ACCEPTANCE: replay adds nothing; a fixed reworded corpus grows at most 10%.
+ *   §5c The identical source: existing pages take no new wording; never on a failed run.
  *   §6  Warnings: truthful wording, the view's buckets, the one aggregator.
  *   §7  The cached batch prefix is byte-identical across batches with a fold.
  *   §8  The run-time guard: a lossy or throwing composer writes nothing.
@@ -562,7 +563,7 @@ Tags: extra-tag
       return JSON.stringify({ title: 'Note', pages: [{ path: 'summaries/note-s.md', content: `# Note\n\nSource: note-s.md\nTags: t\n\n${o}\n\n## Key Takeaways\n- ${t}\n` }] });
     };
     await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', false, null, { llm: v('Barley harvests failed.', 'Yields dropped sharply') }));
-    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', true, null, { llm: v('Copper kettles arrived.', 'Exports expanded abroad') }));
+    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', `${SHORT} Revised.`), 'note-s.md', true, null, { llm: v('Copper kettles arrived.', 'Exports expanded abroad') }));
     const body = dom.read('summaries/note-s.md');
     for (const l of ['Barley harvests failed.', 'Copper kettles arrived.', '- Yields dropped sharply', '- Exports expanded abroad']) ok(hasLine(body, l), `summary re-ingest: "${l}"`);
   }
@@ -594,11 +595,12 @@ Tags: extra-tag
     const size = () => paths.reduce((n, p) => n + dom.read(p).length, 0);
     const reply = (i) => singlePass('corpus.md', paths.map((p) => ({ path: p, content: ROUNDS[i][p] })));
     const reports = [];
+    // A slightly changed source each round: the identical one is §5c.
     await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', false, null, { llm: reply(0) }));
     const after1 = size();
-    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(1) })));
+    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', `${SHORT} Second edition.`), 'corpus.md', true, null, { llm: reply(1) })));
     const after2 = size();
-    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(2) })));
+    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', `${SHORT} Third edition.`), 'corpus.md', true, null, { llm: reply(2) })));
     const after3 = size();
     const growth = (after3 - after1) / after1;
     console.log(`    corpus: round 1 ${after1} chars, round 2 +${after2 - after1}, round 3 +${after3 - after2} (${(growth * 100).toFixed(1)}% by round 3)`);
@@ -612,8 +614,88 @@ Tags: extra-tag
 
     // Replay every reply already seen.
     const snapshot = paths.map((p) => dom.read(p));
-    for (const i of [0, 1, 2]) await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(i) }));
+    for (const i of [0, 1, 2]) await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', `${SHORT} Edition ${i}.`), 'corpus.md', true, null, { llm: reply(i) }));
     paths.forEach((p, i) => eq(dom.read(p), snapshot[i], `replaying the same replies adds nothing: ${p}`));
+  }
+
+  // ── §5c ───────────────────────────────────────────────────────────────────
+  section('§5c The identical source again: existing pages take no new wording');
+  {
+    const first = (extra = '') => singlePass('same.md', [
+      { path: 'concepts/orchards.md', content: `# Orchards\n\nOrchards shelter apples.\n\n## Definition\nPlanted fruit trees.\n\n## Related\n- [[harbour]] — a place\n${extra}` },
+    ]);
+    const NEW_WORDS = singlePass('same.md', [
+      { path: 'concepts/orchards.md', content: '# Orchards Again\nTags: brand-new-tag\n\nCompletely different vocabulary describing quince cultivation.\n\n## Definition\nZygotes germinate beneath volcanic loam.\n\n## Key Facts\n- Yields reached 900 tonnes\n\n## Fresh Section\nPollinators migrate northward.\n\n## Related\n- [[harbour]] — reworded place\n- [[quince]] — a link to a page never mentioned before\n' },
+      { path: 'concepts/brand-new-page.md', content: '# Brand New Page\n\nIts first words.\n' },
+    ]);
+    const dom = makeDomain();
+    await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', false, null, { llm: first() }));
+    const before = dom.read('concepts/orchards.md');
+    const beforeSummary = dom.read('summaries/same.md');
+    const calls = { n: 0 };
+    const counted = async (...a) => { calls.n++; return NEW_WORDS(...a); };
+    const res = await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm: counted }));
+    const body = dom.read('concepts/orchards.md');
+    for (const l of ['Completely different vocabulary describing quince cultivation.', 'Zygotes germinate beneath volcanic loam.', '- Yields reached 900 tonnes', 'Pollinators migrate northward.', '- [[harbour]] — reworded place']) ok(!hasLine(body, l), `same source, no new wording: "${l}"`);
+    ok(!/brand-new-tag/.test(body), 'same source: tags stand');
+    eq(calls.n, 1, 'the ingest ran and spent as usual: it is not blocked');
+    eq(body, before, 'the page is byte-identical, a link to a new target included');
+    eq(dom.read('summaries/same.md'), `${beforeSummary.trimEnd()}\n- [[brand-new-page]]\n`, 'the summary only gains the link to the new page');
+    ok(hasLine(dom.read('concepts/brand-new-page.md'), 'Its first words.'), 'a new page is still created');
+    ok(res.warnings.some((w) => /already ingested into this domain \(same content\)/.test(w) && /6 passages left out/.test(w)), 'the report says so, with the count', JSON.stringify(res.warnings).slice(0, 400));
+
+    // Another name, the same bytes.
+    const r2 = await quiet(() => ingestFile(dom.name, sourceFile('renamed.md', SHORT), 'renamed.md', false, null, { llm: singlePass('renamed.md', [{ path: 'concepts/orchards.md', content: '# O\n\nSomething altogether unprecedented happening.\n' }]) }));
+    ok(!hasLine(dom.read('concepts/orchards.md'), 'Something altogether unprecedented happening.'), 'the same bytes under another file name are the same source');
+    ok(r2.warnings.some((w) => /already ingested/.test(w)), '…and it says so');
+    ok(dom.has('summaries/renamed.md'), '…with its own summary');
+
+    // A changed source is ordinary reuse.
+    const r3 = await quiet(() => ingestFile(dom.name, sourceFile('same.md', `${SHORT} A new edition.`), 'same.md', true, null, { llm: singlePass('same.md', [{ path: 'concepts/orchards.md', content: '# O\n\nMarmalade exports doubled unexpectedly.\n' }]) }));
+    ok(hasLine(dom.read('concepts/orchards.md'), 'Marmalade exports doubled unexpectedly.'), 'a changed source adds what is mostly new');
+    ok(!r3.warnings.some((w) => /already ingested/.test(w)), '…and no such notice');
+  }
+  {
+    // A failed ingest leaves a record and no pages: the retry is a first ingest.
+    const dom = makeDomain({ 'concepts/rivers.md': KEPT });
+    const boom = async () => { throw new Error('boom'); };
+    let threw = false;
+    try { await quiet(() => ingestFile(dom.name, sourceFile('fail.md', SHORT), 'fail.md', false, null, { llm: boom })); } catch { threw = true; }
+    ok(threw, 'CONTROL: the first ingest failed');
+    const res = await quiet(() => ingestFile(dom.name, sourceFile('fail.md', SHORT), 'fail.md', true, null, { llm: singlePass('fail.md', [{ path: 'concepts/rivers.md', content: '# R\n\nSalmon spawn upstream annually.\n' }]) }));
+    ok(hasLine(dom.read('concepts/rivers.md'), 'Salmon spawn upstream annually.'), 'the retry adds its text');
+    ok(!res.warnings.some((w) => /already ingested/.test(w)), '…and is not called a repeat');
+    // A changed file failing beside an older good summary does not count either.
+    const dom2 = makeDomain();
+    await quiet(() => ingestFile(dom2.name, sourceFile('v.md', SHORT), 'v.md', false, null, { llm: singlePass('v.md', [{ path: 'concepts/rivers.md', content: '# R\n\nFirst words about salmon.\n' }]) }));
+    try { await quiet(() => ingestFile(dom2.name, sourceFile('v.md', `${SHORT} Two.`), 'v.md', true, null, { llm: boom })); } catch { /* expected */ }
+    await quiet(() => ingestFile(dom2.name, sourceFile('v.md', `${SHORT} Two.`), 'v.md', true, null, { llm: singlePass('v.md', [{ path: 'concepts/rivers.md', content: '# R\n\nGlaciers feed tributaries seasonally.\n' }]) }));
+    ok(hasLine(dom2.read('concepts/rivers.md'), 'Glaciers feed tributaries seasonally.'), 'a retried changed file adds its text, with an older summary on disk');
+    // Stub still heals; a deleted summary means start again.
+    const stub = '---\ntype: concept\ntags: [type/concept]\n---\n# s\n\n> ⚠ **Stub page — AI failed to write this on ingest.**\n> Re-ingest "w.md" to fix this.\n';
+    const dom3 = makeDomain();
+    await quiet(() => ingestFile(dom3.name, sourceFile('w.md', SHORT), 'w.md', false, null, { llm: singlePass('w.md', []) }));
+    writeFileSync(path.join(dom3.wiki, 'concepts/stubbed.md'), stub);
+    await quiet(() => ingestFile(dom3.name, sourceFile('w.md', SHORT), 'w.md', true, null, { llm: singlePass('w.md', [{ path: 'concepts/stubbed.md', content: '# Real\n\nReal words at last.\n' }]) }));
+    ok(hasLine(dom3.read('concepts/stubbed.md'), 'Real words at last.') && !/Stub page/.test(dom3.read('concepts/stubbed.md')), 'the same source still heals a stub: "re-ingest to fix" holds');
+    rmSync(path.join(dom3.wiki, 'summaries/w.md'));
+    const dom3Page = 'concepts/stubbed.md';
+    const r4 = await quiet(() => ingestFile(dom3.name, sourceFile('w.md', SHORT), 'w.md', true, null, { llm: singlePass('w.md', [{ path: dom3Page, content: '# Real\n\nPeppercorn tariffs tripled overnight.\n' }]) }));
+    ok(hasLine(dom3.read(dom3Page), 'Peppercorn tariffs tripled overnight.') && !r4.warnings.some((w) => /already ingested/.test(w)), 'with its summary deleted, it counts as new again');
+    // A record older than the field counts on its summary.
+    const dom4 = makeDomain({ 'concepts/rivers.md': KEPT, 'summaries/old.md': '---\ntype: summary\ntags: [type/summary]\n---\n# Old\n\n## Key Takeaways\n- x\n' });
+    const src4 = sourceFile('old.md', SHORT);
+    const { createHash } = await import('node:crypto');
+    writeFileSync(path.join(dom4.wiki, '.raw-manifest.jsonl'), JSON.stringify({ filename: 'old.md', sha256: createHash('sha256').update(SHORT).digest('hex'), bytes: SHORT.length, ingestedAt: '2026-01-01T00:00:00.000Z', summaryPath: 'summaries/old.md' }) + '\n');
+    const r5 = await quiet(() => ingestFile(dom4.name, src4, 'old.md', true, null, { llm: singlePass('old.md', [{ path: 'concepts/rivers.md', content: '# R\n\nSturgeon populations recovered recently.\n' }]) }));
+    ok(!hasLine(dom4.read('concepts/rivers.md'), 'Sturgeon populations recovered recently.') && r5.warnings.some((w) => /already ingested/.test(w)), 'a record older than the completed field counts on its summary');
+    // A fold is held too.
+    const dom5 = makeDomain({ 'concepts/agent.md': KEPT });
+    const firstFold = singlePass('f.md', [{ path: 'concepts/agents.md', content: '# Agents\n\nFirst wording here completely.\n' }]);
+    await quiet(() => ingestFile(dom5.name, sourceFile('f.md', SHORT), 'f.md', false, null, { llm: firstFold }));
+    const heldFold = dom5.read('concepts/agent.md');
+    await quiet(() => ingestFile(dom5.name, sourceFile('f.md', SHORT), 'f.md', true, null, { llm: singlePass('f.md', [{ path: 'concepts/agents.md', content: '# Agents\n\nSecond wording unrelated elsewhere.\n' }]) }));
+    eq(dom5.read('concepts/agent.md'), heldFold, 'a spelling variant of an identical source moves nothing either');
   }
 
   // ── §6 ────────────────────────────────────────────────────────────────────

@@ -1382,6 +1382,8 @@ async function linkRewriterFor(domain) {
 }
 
 export async function writePage(domain, relativePath, content, opts = {}) {
+  // opts.repeatSource: this same source was ingested into this domain before: the
+  // existing page takes no new wording, and opts.onLeftOut(count) hears what went.
   // opts.keepLines: the caller read this page and rewrote it (hub linkification);
   // used with opts.replace, the dedup still may not drop a line.
   // opts.foldedFrom: the slug the model proposed, when ingest's spelling guard
@@ -1637,9 +1639,9 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     // page this exists to protect: it ends at the refusal below.
     try {
       const keepFolder = canonPath.split('/')[0];
-      final = isFold
+      final = (isFold && !opts.repeatSource)
         ? (__foldComposeForTest || composeMergedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { sourceLabel: foldLabel, keepFolder })
-        : (__foldComposeForTest || composeReusedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { keepFolder, dropped: leftOut });
+        : (__foldComposeForTest || composeReusedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { keepFolder, dropped: leftOut, repeatSource: opts.repeatSource === true });
     } catch {
       final = null;
     }
@@ -1689,14 +1691,16 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     //     of markdown nobody thought of costs one refused page, never the text of
     //     the page it landed on.
     if (guarded) {
-      const moved = isFold ? rewriteLinks(processed) : '';
+      const moved = (isFold && !opts.repeatSource) ? rewriteLinks(processed) : '';
       if (findLostLines(rewriteLinks(existingContent), moved, final).length) return refuseWrite();
     }
   }
 
   // If the pipeline drops what the model produced, the report says so. One line per
   // page; aggregated across pages at the ingest chokepoint ('reworded').
-  if (leftOut.length) {
+  if (opts.repeatSource) {
+    if (leftOut.length && typeof opts.onLeftOut === 'function') opts.onLeftOut(leftOut.length);
+  } else if (leftOut.length) {
     const sample = leftOut[0].length > 80 ? `${leftOut[0].slice(0, 80)}…` : leftOut[0];
     warn(`Page "${canonPath}": ${leftOut.length} passage${leftOut.length === 1 ? '' : 's'} not added, because the page already says mostly the same (for example "${sample}").`);
   }
