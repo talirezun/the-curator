@@ -289,7 +289,8 @@ section('7. The chip');
 {
   const w = world({ status: { state: 'none' } });
   await w.api.sync('alpha');
-  ok(w.api.actions('alpha', 'NEXT', { checked: 0, left: 500, next: 40, total: 500 }) === 'NEXT', '7.1 never run: only the next batch (the deck)');
+  const first = w.api.actions('alpha', 'NEXT', { checked: 0, left: 500, next: 40, total: 500 });
+  ok(first.startsWith('NEXT') && !first.includes('Compare all') && first.includes('dm-compare-all-slot'), '7.1 never run: only the next batch (the deck), and the chip\'s line kept at phone width', first);
   ok(w.api.actions('alpha', 'NEXT', { checked: 10, left: 30, next: 30, total: 40 }) === 'NEXT', '7.2 the rest fits in one run: Compare the next covers it');
   ok(/disabled/.test(w.api.actions('alpha', 'NEXT', c0)), '7.3 no figure yet: it waits, a paying button wears its cost');
   w.api.afterPaint(c0);
@@ -317,20 +318,6 @@ section('7. The chip');
   ok(q.calls.filter((c) => c === 'GET estimate').length === 0, '7.9 and need no read');
   q.api.forgetQuote('alpha');
   ok(/disabled/.test(q.api.actions('alpha', 'NEXT', c0)), '7.10 Forget takes the figure with it');
-}
-
-{
-  // A question being answered is under this row: a chip that comes or goes would move it.
-  const w = world({ status: { state: 'none' } });
-  await w.api.sync('alpha');
-  w.api.noteQuote('alpha', estimate());
-  const none = { checked: 0, left: 500, next: 40, total: 500 };
-  ok(w.api.actions('alpha', 'NEXT', none) === 'NEXT', '7.11 before a first run: no chip');
-  ok(w.api.actions('alpha', 'NEXT', c0, { frozen: true }) === 'NEXT', '7.12 the run lands while its question is still closing: the chip waits');
-  ok(w.api.actions('alpha', 'NEXT', c0).includes('Compare all'), '7.13 and comes when it has closed');
-  const fits = { checked: 490, left: 10, next: 10, total: 500 };
-  ok(w.api.actions('alpha', 'NEXT', fits, { frozen: true }).includes('Compare all'), '7.14 the same the other way: it does not leave under a question');
-  ok(w.api.actions('alpha', 'NEXT', fits) === 'NEXT', '7.15 and leaves after');
 }
 
 section('8. A read-only mirror');

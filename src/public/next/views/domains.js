@@ -8618,7 +8618,7 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   const canForget = !!(c && c.checked > 0);
   const row = renderFoldRow({
     key: 'compare', hostClass: canForget ? '' : 'dm-group-nofold', label: 'Compare pages for duplicates',
-    open: canForget && state.expandedGroups.has('compare'), alias: 'dm', metaHtml: meta, actionHtml: compareAll.actions(state.activeSlug, button, c, { noKeyAttrs, disabled: !!(busy || crossMountBusy), frozen: !!(state.confirm && state.confirm.busy) }),
+    open: canForget && state.expandedGroups.has('compare'), alias: 'dm', metaHtml: meta, actionHtml: compareAll.actions(state.activeSlug, button, c, { noKeyAttrs, disabled: !!(busy || crossMountBusy) }),
     bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting) || compareAll.running(state.activeSlug)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
   });
   const arrivals = state.compareArrivals && state.compareArrivals.slug === state.activeSlug ? state.compareArrivals.count : 0;

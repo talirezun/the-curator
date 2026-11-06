@@ -28,7 +28,10 @@
 }
 .dm-compare-job-note { margin-top: 2px; }
 
+.dm-compare-all-slot { display: none; }
+
 @media (max-width: 640px) {
+  .dm-health .dm-lane .dm-group-summary > .dm-compare-all-slot { display: block; order: 4; flex: 0 0 100%; height: var(--control-sm); }
   /* Figures that grow by a digit may wrap: the room is there from the start, so a tick
      never moves what is under it. */
   .dm-compare-job { padding-left: 0; }
