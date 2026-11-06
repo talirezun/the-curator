@@ -253,7 +253,8 @@ function quickSandbox(state) {
   kit.renderPendingPlan = () => '';
   kit.renderOutcomeLine = () => '';
   return buildSandbox(domainsSrc, ['formatUsd', 'costReadout', 'pluralize', 'n0', 'quickAiButton', 'renderAiLane', 'renderCompareRow', 'renderSuggestRow',
-    'renderPlainRow', 'renderLaneHead', 'renderAnchorHere', 'renderAnchorStack', 'activeSemanticQuote', 'semanticCoverageFrom', 'renderConfirmCard'], kit);
+    'renderPlainRow', 'renderLaneHead', 'renderAnchorHere', 'renderAnchorStack', 'activeSemanticQuote', 'semanticCoverageFrom', 'renderConfirmCard'],
+    { ...kit, compareAll: { reading: () => null, actions: (slug, next) => next, line: () => '', running: () => false } });
 }
 const REPORT = { brokenLinks: [{}, {}, {}], orphans: [{}, {}], crossFolderDupes: [], hyphenVariants: [],
   folderPrefixLinks: [], missingBacklinks: [] };
