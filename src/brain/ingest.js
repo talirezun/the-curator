@@ -1795,6 +1795,9 @@ ${ANNOUNCED_PRODUCT_RULE}
    fine-grained — apply the consolidation rule.
 
 7. Add cross-references between related pages using [[page-name]] syntax.
+   Link ONLY to a page you return in this reply or a file listed under EXISTING
+   WIKI FILES above. A sub-idea you consolidated into a parent page (rule 5) has
+   no page of its own: write its name as plain text, never as a [[link]].
 
 8. DO NOT touch index.md — the application maintains it after this call.
 
@@ -3722,9 +3725,10 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
  * Conservative matching (avoid false positives):
  *   - Only operates on CONCEPT pages with ≥5 list items AND ≤2 existing
  *     wikilinks ("hub" pattern — enumerates many things, links to few)
- *   - Matches the page's first heading (Title Case) — these are the
- *     anchors the LLM uses to refer to sibling pages
- *   - Skips code blocks, inline code, and content already inside `[[]]`
+ *   - Matches the page's `# title` (Title Case), else its slug in words — these
+ *     are the anchors the LLM uses to refer to sibling pages
+ *   - Skips frontmatter, headings, code blocks, inline code, and content
+ *     already inside `[[]]`
  *   - Skips self-references (a hub page doesn't link to itself)
  *   - Uses `[[slug|Display Title]]` so the user-visible text stays the
  *     same as the LLM wrote — purely additive change
@@ -3741,7 +3745,11 @@ async function linkifyHubPages(domain, canonicalPaths) {
     const slug = relPath.split('/').pop().replace(/\.md$/, '');
     try {
       const content = await readFile(path.join(wikiDir, relPath), 'utf8');
-      const titleMatch = content.match(/^#{1,3}\s+(.+)$/m);
+      // The # title only. A page the model wrote without one opens on a SECTION
+      // heading: taking "Related" or "How It Works" as its name wrapped that word
+      // in every hub ("## [[the-curator-team|Related]]"), which also broke the
+      // hub's own Related section (Health then reports missing backlinks).
+      const titleMatch = content.replace(/```[\s\S]*?```/g, '').match(/^#\s+(.+)$/m);
       const title = titleMatch ? titleMatch[1].trim() : slug.replace(/-/g, ' ');
       slugToTitle.set(slug, title);
     } catch {
@@ -3774,7 +3782,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
     // producing nested malformed brackets (`[[[[microsoft]]` etc.).
     // Discovered during the v3.0.1-beta.11 deep test on the live REAL-1
     // ingest where 30 broken `[[[[X]]` patterns appeared on a single page.
-    let modified = content;
+    // Frontmatter stays out of it: a tag is not a mention of a page.
+    const frontmatter = (content.match(/^---\n[\s\S]*?\n---\n?/) || [''])[0];
+    let modified = content.slice(frontmatter.length);
     let pageLinks = 0;
 
     for (const [slug, title] of slugToTitle.entries()) {
@@ -3799,7 +3809,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
         // Re-split on every candidate iteration. Performance is fine
         // because hubs are small (few KB) and the candidate count is
         // bounded by the number of slugs in this ingest.
-        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\])/g);
+        // A heading is protected too: `## [[slug|Related]]` is no longer the
+        // section `## Related` that every reader of the page looks for.
+        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\]|^#{1,6}[ \t][^\n]*$)/gm);
         let candidateLinks = 0;
         for (let i = 0; i < segments.length; i++) {
           if (i % 2 === 1) continue;
@@ -3823,7 +3835,7 @@ async function linkifyHubPages(domain, canonicalPaths) {
       // bullet dedup, variant-link normalisation Pass A/B/C) still apply.
       // replace: `modified` is this page with links added, so it IS the page. A
       // reuse would read each linked line as new wording and add it again.
-      await writePage(domain, relPath, modified, { replace: true, keepLines: true });
+      await writePage(domain, relPath, frontmatter + modified, { replace: true, keepLines: true });
       hubsModified++;
       linksAdded += pageLinks;
     }
@@ -3889,6 +3901,7 @@ async function auditBrokenWikilinks(domain, recentlyWrittenPaths) {
 // Not part of the public API — callers should use ingestFile() instead.
 export const __testing = {
   FOLDED_FROM,
+  linkifyHubPages,
   buildOutlinePrompt,
   buildPrompt,
   buildBatchPrompt,

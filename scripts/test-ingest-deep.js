@@ -1292,6 +1292,19 @@ async function main() {
   // was one ⏭ glyph away from going invisible to CI (v3.7.0's failure shape).
   console.log(`\n  Passed: ${passedAssertions}   Failed: ${totalAssertions - passedAssertions}`);
 
+  // WHICH MODEL ANSWERED, not only which was asked for. ENV-0 names the requested
+  // model; a key that cannot use it walks the fallback chain without a sign in
+  // this suite's output. On 2026-11-06 a Q5 failure took hours to pin on the
+  // model because no CI log said which one had answered. Logged last, so it lands
+  // in the tail run-tests.js prints for a failed suite.
+  {
+    const { getFallbackStatus, getProviderInfo } = await import('../src/brain/llm.js');
+    const fallback = getFallbackStatus();
+    logIssue('INFO', 'ENV', fallback
+      ? `${fallback.requestedModel} unavailable to this key; ${fallback.usingModel} answered`
+      : `no fallback recorded; ${getProviderInfo().model} answered`);
+  }
+
   if (issuesFound.length > 0) {
     console.log('\n  Issues collected (for analysis):');
     for (const i of issuesFound.slice(0, 30)) {

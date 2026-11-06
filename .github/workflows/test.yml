@@ -434,6 +434,7 @@ jobs:
   live:
     name: Live API tests (Gemini + Anthropic)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: offline
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main')

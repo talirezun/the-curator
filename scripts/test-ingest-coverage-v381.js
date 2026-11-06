@@ -95,7 +95,13 @@ section('1. the announced-product rule — outline and single-pass prompts');
     single: 'f6f3fcacc81849c4436e0749907f6c55af97977c165a7698d66d628de88af7c1',
     strict: '9fbe638de477518c2a49c0cbf0e585ca95cbeec017e6b6af8cd6a057fcb508bc',
   };
-  const minus = (p) => p.replace('\n' + ANNOUNCED_PRODUCT_RULE, '');
+  // The single-pass link rule (2026-11-06) is the one later addition, so these
+  // digests still prove nothing else in the prompts has moved since v3.80.0.
+  const LINK_RULE = `
+   Link ONLY to a page you return in this reply or a file listed under EXISTING
+   WIKI FILES above. A sub-idea you consolidated into a parent page (rule 5) has
+   no page of its own: write its name as plain text, never as a [[link]].`;
+  const minus = (p) => p.replace('\n' + ANNOUNCED_PRODUCT_RULE, '').replace(LINK_RULE, '');
   eq(digest(minus(outline)), V380.outline, 'outline minus the rule is byte-identical to v3.80.0');
   eq(digest(minus(single)), V380.single, 'single-pass minus the rule is byte-identical to v3.80.0');
   eq(digest(minus(strict)), V380.strict, 'strict single-pass minus the rule is byte-identical to v3.80.0');

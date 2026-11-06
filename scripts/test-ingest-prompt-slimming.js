@@ -1789,6 +1789,33 @@ section('22. aggregateWarnings — one repeated slip cannot drown the report');
     'aggregation happens before any consumer reads the array');
 }
 
+section('Single-pass: a consolidated sub-idea is plain text, never a link to a page nobody writes');
+{
+  // Measured 2026-11-06 on gemini-3.1-flash-lite, the first Gemini fallback rung:
+  // the consolidation rule made it return the hub, the summary and the author, and
+  // still write [[cornell-method]] and seven more, so 61-80% of the ingest's links
+  // pointed at pages it never wrote. Without this rule 18 of 30 runs broke links;
+  // with it 1 of 30 did, and gemini-2.5-flash-lite stayed at 11 pages (9 of 10).
+  const single = buildPrompt(TODAY, '', SMALL_FILES, 'src.pdf', SOURCE_TEXT, false, false, SUMMARY_PATH);
+  const rule = single.indexOf('Link ONLY to a page you return in this reply');
+  ok(rule > 0, 'the single-pass prompt limits links to pages that will exist');
+  ok(/consolidated into a parent page \(rule 5\)[^.]*plain text, never as a \[\[link\]\]/.test(single),
+    'a consolidated sub-idea is named as plain text');
+  ok(single.indexOf('EXISTING WIKI FILES') >= 0 && single.indexOf('EXISTING WIKI FILES') < rule,
+    'the list the rule points at appears before the rule');
+  ok(single.indexOf('CONSOLIDATION RULE') >= 0 && single.includes('5. CONSOLIDATION RULE'),
+    'rule 5, which the rule names, is still rule 5');
+  const strict = buildPrompt(TODAY, '', SMALL_FILES, 'src.pdf', SOURCE_TEXT, true, false, SUMMARY_PATH);
+  ok(strict.includes('Link ONLY to a page you return in this reply'), 'the strict-brevity retry carries it too');
+
+  // A batch reply writes only part of the plan, so "a page you return in this
+  // reply" would forbid every legitimate link to a later batch's page.
+  const pages = [{ path: 'concepts/a.md', summary: 'a' }, { path: 'concepts/b.md', summary: 'b' }];
+  const batch = buildBatchPromptParts(TODAY, 'src.pdf', SOURCE_TEXT, pages.slice(0, 1), SMALL_FILES, pages);
+  ok(typeof batch.prefix === 'string' && !`${batch.prefix}${batch.suffix}`.includes('Link ONLY to a page you return'),
+    'the batch prompt does not carry it: a batch links to pages other batches write');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {
