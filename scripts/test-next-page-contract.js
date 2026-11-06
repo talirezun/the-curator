@@ -240,6 +240,7 @@ function renderDomainHealth(stateOver) {
     renderBanner: () => '', gatedLoader: () => '', loadGate: null,
     renderMirrorNote: () => renderStatus({ title: 'This domain is a read-only Shared Brain mirror', detail: 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.' }),
     activeSemanticScan: () => (stateOver && stateOver.semanticScan) || null,
+    compareAll: { reading: () => null, actions: (slug, next) => next, line: () => '', running: () => false, onClick: () => false, afterPaint() {}, sync() {}, noteQuote() {}, acknowledge() {}, forgetQuote() {} },
     renderMonitor, freshnessTier, formatAge, renderStatus, renderDescription, explainerMark, formatUsdHonest,
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     progressRingHtml: () => '<span class="cur-ring"></span>', ringValueFromCounts: () => null,

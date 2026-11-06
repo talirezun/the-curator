@@ -88,7 +88,7 @@ section('2. What the row says');
   const unknown = compareJobNote(job({ state: 'stopped', stopReason: 'price-unknown', reason: 'No price.' }), c);
   ok(unknown.text.includes('$0.5000 spent.'), '2.17 any other stop also says what was spent', unknown.text);
   ok(compareJobNote(job({ state: 'stopped', stopReason: 'user' }), c) === null, '2.18 Stop you pressed needs no note');
-  ok(compareJobNote(job({ state: 'failed', reason: 'The comparison stopped: x.' }), c).text.includes('$0.5000 spent.'), '2.19 failed');
+  ok(compareJobNote(job({ state: 'failed', reason: 'The comparison stopped: x.' }), c).text.includes('$0.5000 spent.'), '2.19 a job that broke');
   ok(compareJobNote(job({ state: 'done', progress: { failedPairs: 4 } }), c).text.startsWith('4 pairs could not be compared'), '2.20 done with failures: the deck\'s line');
   ok(compareJobNote(job({ state: 'done' }), c) === null, '2.21 done with none: nothing');
 }
@@ -120,7 +120,7 @@ function world(over = {}) {
     modelName: () => 'Flash Lite 2.5',
     cost, usd,
     chip: (o) => '<chip ' + o.label + '|' + (o.cost || '') + '|' + (o.attrs || '') + '>',
-    ring: () => '', sparkles: () => '',
+    ring: () => '', sparkles: () => '', alert: () => '',
     escape: (t) => String(t),
     scanCounting: () => false,
     setCoverage: (t, c) => { w.covers.push([t, c]); },

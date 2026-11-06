@@ -8106,11 +8106,12 @@ const compareAll = createCompareAll({
   focusAfterStart: () => { state.pressOpener = '#dm-compare-job-btn'; },
   focusAfterStop: () => { const b = document.querySelector('.dm-health .dm-quick-btn[data-action="compareAll"], .dm-health .dm-quick-btn[data-action="semanticDupes"]'); if (b && !b.disabled) b.focus({ preventScroll: true }); },
   modelName: (est) => healthModelName(est),
-  cost: (est, opts) => costReadout(est, opts),
+  cost: costReadout,
   usd: (v) => formatUsd(v),
   chip: (o) => actionChip({ tier: 'ai', action: 'compareAll', alias: 'dm', ...o }),
   ring: () => buttonRingHtml(),
   sparkles: () => icon('sparkles', 12),
+  alert: () => icon('alertCircle', 14),
   escape: (t) => escapeHtml(t),
   scanCounting: () => { const s = activeSemanticScan(); return !!(s && s.counting); },
   setCoverage: (total, checked) => {

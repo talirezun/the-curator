@@ -27,7 +27,6 @@
   min-height: 18px;
 }
 .dm-compare-job-note { margin-top: 2px; }
-.dm-compare-job-note-error { color: var(--danger-text); }
 
 @media (max-width: 640px) {
   /* Figures that grow by a digit may wrap: the room is there from the start, so a tick

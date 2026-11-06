@@ -296,6 +296,8 @@ function confirmSemanticReset(s) { calls.push('reset ' + s); }
 function confirmFixAllOfType(s, t) { calls.push('fixall ' + s + ' ' + t); }
 function activeSemanticScan() { return state.semanticScan; }
 function semanticPairKey(p) { return p.key; }
+const compareAll = { onClick: () => false };
+function releaseArrivals() {}
 const reviewDesk = { open() { calls.push('desk open'); return true; }, onClick(b) { calls.push('desk ' + b.id); } };
 function healthHeadIntoView() {}
 async function dismissIssue(s, t, i) { calls.push('dismiss ' + s + ' ' + t + ' ' + i.path); }

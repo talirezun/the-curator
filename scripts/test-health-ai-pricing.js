@@ -89,7 +89,7 @@ section('1. Source-level guard — exactly one price table, reachable everywhere
   ok(/import\s*\{[^}]*\bgetModelPrice\b[^}]*\}\s*from\s*['"]\.\/llm\.js['"]/.test(src),
     'getModelPrice is imported from ./llm.js');
   const callSiteCount = (src.match(/\.\.\.costFields\(/g) || []).length;
-  eq(callSiteCount, 6, 'all 6 known cost-payload call sites spread ...costFields(...)');
+  eq(callSiteCount, 7, 'all 7 known cost-payload call sites spread ...costFields(...)');
   // No stray hardcoded per-1M-token literal near a model id — a loose regex
   // on purpose (this is a smell check, not exhaustive), catching a partial
   // revert that re-adds numbers without re-adding the MODEL_PRICING name.

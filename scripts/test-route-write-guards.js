@@ -1083,6 +1083,8 @@ const HEALTH_GUARD_CLASSES = [
         'the same job as /compare-all/start, with the same reasons: no write under domains/, and its own single-flight gate.' },
       { method: 'POST', path: '/:domain/semantic-dupes/compare-all/pause', reason:
         'sets a flag on the running job and answers; writes nothing under domains/.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/stop', reason:
+        'closes a paused job\'s record in the user-data dir; writes nothing under domains/, and refuses while a job runs.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'runs the deterministic pre-pass + AI batches and streams the plan; read-only — the write happens in the separate, guarded /broken-links/apply route.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1136,6 +1138,8 @@ const HEALTH_GUARD_CLASSES = [
         'writes nothing into domains/<domain>/: the cache it clears is this machine\'s and a Pull never touches it.' },
       { method: 'POST', path: '/:domain/semantic-dupes/compare-all/pause', reason:
         'stops spending on a job that is already running; refusing that on a mirror would keep the spend going. Writes nothing into domains/<domain>/.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/compare-all/stop', reason:
+        'closes a job that is not spending, so the row can go back to normal; writes nothing into domains/<domain>/.' },
       { method: 'POST', path: '/:domain/broken-links/plan', reason:
         'read-only planning stage; the write is in /broken-links/apply, which carries the guard.' },
       { method: 'POST', path: '/:domain/orphans/plan', reason:
@@ -1349,7 +1353,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 20, // v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
+    expectedMutatingCount: 21, // +POST compare-all/stop; v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via

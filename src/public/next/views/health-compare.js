@@ -365,7 +365,10 @@ export function createCompareAll(deps) {
           '<button class="btn btn-secondary btn-xs dm-review-btn dm-compare-review" data-review="1">Review</button>' : '';
       return '<div class="dm-compare-job" data-row-key="compare-job">' +
         ((detail || review) ? '<div class="dm-compare-job-line"><span data-compare-detail>' + deps.escape(detail) + '</span>' + review + '</div>' : '') +
-        (note ? '<div class="dm-compare-job-note' + (note.tone === 'error' ? ' dm-compare-job-note-error' : '') + '" data-row-key="compare-job-note">' + deps.escape(note.text) + '</div>' : '') +
+        (note ? (note.tone === 'error'
+          // The row's own failure look: it stays until you act on it (press rule 8).
+          ? '<div class="dm-outcome dm-outcome-failed dm-compare-job-note" data-row-key="compare-job-note">' + deps.alert() + '<span class="dm-outcome-text">' + deps.escape(note.text) + '</span></div>'
+          : '<div class="dm-compare-job-note" data-row-key="compare-job-note">' + deps.escape(note.text) + '</div>') : '') +
       '</div>';
     },
 
