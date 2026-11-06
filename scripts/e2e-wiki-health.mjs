@@ -761,6 +761,7 @@ async function scenarios(app, profile) {
   if (run('S12') && sub('S12')) {
     await openDomain(app, 'h12'); await slowFix(1200);
     await act(app, profile, 'stale-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
+    await delay(400); // a question has to be on screen a moment before it can be answered
     await page.evaluate((s) => document.querySelector(s).click(), SEL.confirmYes);
     await delay(150);
     await page.evaluate(() => document.querySelector('#rail .rail-btn[data-view="chat"]').click());
@@ -890,6 +891,7 @@ async function scenarios(app, profile) {
     await slow('semantic-dupes/scan', 2500);
     await page.evaluate((s) => document.querySelector(s).click(), SEL.findDupes);
     await waitFor(page, exists, 'confirm', 200, SEL.confirmYes);
+    await delay(400); // a question has to be on screen a moment before it can be answered
     await page.evaluate((s) => document.querySelector(s).click(), SEL.confirmYes);
     await delay(300);
     step(`[${profile.name}] the run says so on its own domain`, /Comparing/.test(await healthText()));
@@ -917,6 +919,7 @@ async function scenarios(app, profile) {
     await delay(100);
     const ask = await page.evaluate((c, b) => ({ q: !!document.querySelector(c), label: document.querySelector(b).innerText }), SEL.confirmCard, mb);
     step(`[${profile.name}] Merge asks at once, with a read running behind it`, ask.q && !/Checking/.test(ask.label), JSON.stringify(ask) + ' ' + (Date.now() - t0) + ' ms');
+    await delay(400); // a question has to be on screen a moment before it can be answered
     await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.confirmYes);
     await delay(5500);
     const focus = await page.evaluate(() => { const a = document.activeElement; return { tag: a && a.tagName, ai: !!(a && a.classList.contains('btn-ai')), text: a && a.innerText.slice(0, 24), inSection: !!(a && a.closest('.dm-health')) }; });
@@ -925,6 +928,7 @@ async function scenarios(app, profile) {
     await openDomain(app, 'hdup');
     await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.fixAll('crossFolderDupes'));
     await waitFor(page, exists, 'question', 200, SEL.confirmYes);
+    await delay(400); // a question has to be on screen a moment before it can be answered
     await page.evaluate((s) => { const b = document.querySelector(s); b.focus(); b.click(); }, SEL.confirmYes);
     await delay(3200);
     const landed = await page.evaluate(() => { const a = document.activeElement; return { id: a && a.id, text: a && a.innerText && a.innerText.slice(0, 24), merged: !document.querySelector('[data-group-key="crossFolderDupes"]') }; });

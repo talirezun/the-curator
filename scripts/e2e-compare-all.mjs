@@ -82,7 +82,7 @@ globalThis.fetch = async (url, opts) => {
 // ── The world ───────────────────────────────────────────────────────────────
 const page_ = (t, s) => `---\ntype: concept\ntags: [type/concept]\n---\n\n# ${t}\n\n${s}\n\n## Related\n\n- [[wiki-hub]]\n`;
 const CONS = 'bcdfghjklmnpqrstvwxz';
-function buildDomain(root, name, topics, filler, { twinEvery = 1 } = {}) {
+function buildDomain(root, name, topics, filler, { twinEvery = 1, groupSize = 0 } = {}) {
   const w = path.join(root, name, 'wiki');
   for (const f of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, f), { recursive: true });
   writeFileSync(path.join(root, name, 'CLAUDE.md'), `# ${name}\n`);
@@ -91,7 +91,9 @@ function buildDomain(root, name, topics, filler, { twinEvery = 1 } = {}) {
   const linked = [];
   // Near names the candidate pass pairs up; the stub calls only a plural the same page.
   for (let i = 0; i < topics; i++) {
-    const a = 'guide-' + word(5);
+    // `families` pages to a shared first word, as a real wiki has: all in one, 3,000 pages came
+    // to 4.5 million pairs, over a hundred times the largest real domain measured (36,333).
+    const a = (groupSize ? 'topic' + Math.floor(i / groupSize) + '-' : 'guide-') + word(5);
     const b = i % twinEvery === 0 ? a + 's' : a + '-notes';
     for (const s of [a, b]) { writeFileSync(path.join(w, 'concepts', s + '.md'), page_(s, 'Notes about ' + s + '.')); linked.push(s); }
   }
@@ -127,7 +129,7 @@ async function startApp(profile) {
   buildDomain(ws.domains, 'quiet', 60, 10);
   buildDomain(ws.domains, 'shared-mirror', 20, 10);
   writeFileSync(path.join(ws.domains, 'shared-mirror', 'CLAUDE.md'), '---\nreadonly: true\n---\n\n# shared-mirror\n');
-  if (profile.big) buildDomain(ws.domains, 'huge', 1500, 500, { twinEvery: 50 });
+  if (profile.big) buildDomain(ws.domains, 'huge', 1500, 500, { twinEvery: 50, groupSize: 10 });
   writeFileSync(path.join(ws.userData, '.curator-config.json'), JSON.stringify({ activeProvider: 'gemini', domainsPath: ws.domains,
     geminiApiKey: 'AIza-E2E-FAKE-KEY-not-a-credential', aiHealth: { semanticDupeMaxPairs: 40, costCeilingTokens: profile.big ? 20000000 : 40000 } }, null, 2), { mode: 0o600 });
   app.port = await new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
