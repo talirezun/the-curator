@@ -1143,6 +1143,17 @@ async function reviewDeskScene(app, profile) {
   await bringIn(SEL.deskPanes);
   await armed();
 
+  // Looked away inside the 500 ms: the time starts again when you look back.
+  await page.evaluate((s) => document.querySelector(s).click(), SEL.deskNext);
+  await waitFor(page, (s) => !!document.querySelector(s), 'text', 200, SEL.deskText);
+  await delay(80);
+  await page.evaluate((m) => { document.querySelector(m).scrollTop = 0; }, SEL.main);
+  await delay(900);
+  const awayOff = await page.evaluate((p) => { const r = document.querySelector(p).getBoundingClientRect(); return r.bottom < 0 || r.top > innerHeight; }, SEL.deskPanes);
+  step(`[${pn}] scrolled away inside the 500 ms, Merge stays shut`, awayOff && (await mergeState()).disabled, 'off screen: ' + awayOff);
+  await bringIn(SEL.deskPanes);
+  await armed();
+
   // ── Keep this one instead: this direction only, re-armed, nothing moved.
   await bringIn(SEL.deskFlip);
   const nameBefore = await page.evaluate(() => document.querySelector('.hr-pane-stays .hr-pane-name').innerText);

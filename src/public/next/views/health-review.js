@@ -356,7 +356,7 @@ export function createReviewDesk(d) {
   function afterPaint() {
     const r = review();
     if (!r) { stopWatch(); return; }
-    if (typeof document !== 'undefined') paintPanes(r);
+    if (typeof document !== 'undefined') paintPanes();
     if (r.ended) return;
     const pair = current(r);
     if (!pair) { close(); return; }
@@ -376,23 +376,19 @@ export function createReviewDesk(d) {
     startArm(r, pair, key);
   }
 
-  // A pair's text starts at its top, and a new pair fades in over the old one's place.
-  function paintPanes(r) {
+  // A new pair fades in over the old one's place. Its text starts at the top by itself:
+  // the pane holds "Loading the page…" first, which leaves nothing to be scrolled.
+  function paintPanes() {
     const panes = document.querySelector('.hr-panes[data-review-key]');
     if (!panes) return;
     const key = panes.getAttribute('data-review-key');
-    const shown = r.comparison && r.comparison.key === key && r.comparison.data ? key + '|text' : key + '|wait';
-    if (panes.__shown !== shown) {
-      if (panes.__shown === undefined || panes.__shown.split('|')[0] !== key || shown.endsWith('|text')) {
-        panes.querySelectorAll('.hr-pane-body').forEach((b) => { b.scrollTop = 0; });
-      }
-      if (panes.__shown !== undefined && panes.__shown.split('|')[0] !== key) {
-        panes.classList.remove('hr-swap');
-        void panes.offsetWidth;
-        panes.classList.add('hr-swap');
-      }
-      panes.__shown = shown;
+    if (panes.__shown === key) return;
+    if (panes.__shown !== undefined) {
+      panes.classList.remove('hr-swap');
+      void panes.offsetWidth;
+      panes.classList.add('hr-swap');
     }
+    panes.__shown = key;
   }
 
   function startArm(r, pair, key) {

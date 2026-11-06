@@ -280,7 +280,7 @@ section('§5 A list of thousands');
   const ms = performance.now() - t0;
   console.log('    (one paint of the desk with 5,000 pairs and the list open: ' + Math.round(ms * 10) / 10 + ' ms)');
   ok((h.match(/hr-fold-row/g) || []).length === FOLD_PAGE, 'open, it draws one window of rows, not the list');
-  ok(h.indexOf('hr-fold-summary') < h.indexOf('hr-fold-row'), 'and the summary first');
+  ok(h.indexOf('hr-fold-summary') !== -1 && h.indexOf('hr-fold-summary') < h.indexOf('hr-fold-row'), 'and the summary first');
   ok(ms < 100, 'a paint costs what fifty rows cost', ms);
   ok(/id="hr-fold-more"/.test(h) && text(h).includes('Show 50 more'), 'and offers the next page');
   const sum = text(foldSummary(tally([pair('a', 'b'), pair('c', 'd', { status: 'merged' }), pair('e', 'f', { status: 'skipped', nameRelation: 'spelling-variant' }), pair('g', 'h', { status: 'resolved' })])));
