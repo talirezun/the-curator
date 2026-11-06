@@ -229,7 +229,8 @@ const POSITIONS = () => {
   const box = (s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top) }; };
   const m = document.querySelector('#main');
   const desk = document.querySelector('.hr-desk');
-  return { scroll: m ? m.scrollTop : 0, h: desk ? Math.round(desk.getBoundingClientRect().height) : 0,
+  const parts = desk ? [...desk.children].map((c) => String(c.className).split(' ')[0] + ':' + Math.round(c.getBoundingClientRect().height)).join(' ') : '';
+  return { parts, scroll: m ? m.scrollTop : 0, h: desk ? Math.round(desk.getBoundingClientRect().height) : 0,
     keep: box('#hr-keep'), merge: box('#hr-merge'), title: box('#hr-title'), prev: box('#hr-prev'), next: box('#hr-next'), done: box('#hr-done'), panes: box('.hr-panes'), note: box('.hr-note'), outcome: box('.hr-outcome') };
 };
 const sameSpots = (a, b) => {
@@ -239,7 +240,7 @@ const sameSpots = (a, b) => {
     const dy = Math.abs((a[k].y + a.scroll) - (b[k].y + b.scroll)); const dx = Math.abs(a[k].x - b[k].x);
     if (dx > 1 || dy > 1) moved.push(`${k} ${dx},${dy}`);
   }
-  if (a.h !== b.h) moved.push(`desk height ${a.h}→${b.h}`);
+  if (a.h !== b.h) moved.push(`desk height ${a.h}→${b.h} [${a.parts}] → [${b.parts}]`);
   return moved;
 };
 const noOverflow = (page) => page.evaluate(() => {
@@ -491,7 +492,8 @@ async function fullWalks(app, seen, known) {
     await leave(app);
     await waitFor(page, () => !!document.querySelector('.hr-pane-text'), 'the comparison');
     await headIntoView(page);
-    await delay(60);
+    // The fold's row settles after the one move from choosing to walking; from then on nothing may.
+    await delay(i === 0 ? 500 : 60);
     spots.push(await page.evaluate(POSITIONS));
     await page.evaluate(() => { document.querySelector('#hr-keep').click(); });
     await waitFor(page, (n) => new RegExp('· ' + n + ' kept').test(document.querySelector('.hr-desk').innerText), 'the next page', 400, i + 1);
