@@ -345,6 +345,7 @@ export function worstSlots({ goes, stays, warn, family }) {
   const label = family ? 'Merge ' + name(goes) + ' into ' + name(stays) : 'Merge into ' + name(stays);
   return {
     '.hr-running': { css: '--hr-running-h', html: '<span>' + name(stays) + ' stays. It has taken in 9,999 pages so far.</span>' + btn('', 'Choose again') },
+    '.hr-decide-btns': { css: '--hr-decide-btns-h', html: '<button type="button" class="btn btn-secondary">Keep both</button><button type="button" class="btn btn-danger"><span class="hr-merge-label">' + label + '</span></button>' },
     '.hr-after': { css: '--hr-after-h', html: afterLineWalk(goes, stays, 9999) },
     '.hr-decide': { css: '--hr-decide-h', html: '<div class="hr-decide-btns"><button type="button" class="btn btn-secondary">Keep both</button><button type="button" class="btn btn-danger"><span class="hr-merge-label">' + label + '</span></button></div>' +
       '<p class="hr-note">Merging deletes ' + name(goes) + '. ' + esc(warn) + '</p>' },

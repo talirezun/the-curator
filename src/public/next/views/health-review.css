@@ -143,7 +143,7 @@
   /* Never a box to scroll: afterPaint sizes it for the longest reason in this walk. */
   .hr-facts { overflow-y: visible; }
   .hr-end { height: calc(2 * var(--hr-pane-h) + var(--space-3)); }
-  .hr-decide { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-content: start; gap: var(--space-2); }
+  .hr-decide { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--hr-decide-btns-h, auto) auto; align-content: start; gap: var(--space-2); }
   .hr-decide-btns { flex-direction: column; align-items: stretch; }
   .hr-decide-btns .btn-secondary { align-self: flex-start; }
   /* The count takes a line of its own, so its length never moves what is under it. */

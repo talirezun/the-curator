@@ -299,6 +299,7 @@ export function armDelay(pointerType, hoverNone) {
  *   headIntoView()   brings the section's head on screen, when it is off
  */
 const NOT_MINE = Symbol('not-mine');
+const LINE_PX = 18;
 let leftSerial = 0;
 const plural0 = (v) => (v === 1 ? '1 page' : n0(v) + ' pages');
 const FOLD_KEYS = ['reviewPairs', 'reviewFamily', 'reviewFamMerged', 'reviewFamKept', 'reviewFamLeft'];
@@ -629,7 +630,8 @@ export function createReviewDesk(d) {
       if (!real) continue;
       const need = Math.max(...[].concat(slot.html).map((h) => measure(real, h)));
       const base = sel === '.hr-pane-head' ? 0 : Math.ceil(real.getBoundingClientRect().height);
-      px[slot.css] = Math.max(need, base) + 'px';
+      // The longest name by letters is not always the one that wraps worst: one line in hand.
+      px[slot.css] = (need > base ? need + LINE_PX : base) + 'px';
     }
     const marks = desk.querySelector('.hr-marks-row');
     if (marks) px['--hr-marks-h'] = Math.max(measure(marks, marks.innerHTML), Math.ceil(marks.getBoundingClientRect().height)) + 'px';

@@ -159,15 +159,16 @@ async function waitFor(page, fn, label, tries = 400, ...args) {
   return false;
 }
 
-async function openDomain(app) {
+async function openDomain(app, { reload = false } = {}) {
   const { page, origin, profile } = app;
   await page.navigate(origin + '/api/version');
-  await page.evaluate((theme) => {
-    localStorage.clear(); sessionStorage.clear();
+  await page.evaluate((theme, again) => {
+    if (!again) localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem('curator-next-theme', theme); localStorage.setItem('curator-next-view', 'domains');
     localStorage.setItem('curator-next-onboarding-dismissed-v1', '1'); localStorage.setItem('curator-ai-health-disclosure-seen-v1', 'yes');
     sessionStorage.setItem('curator-next-instance-banner-dismissed-v1', '1');
-  }, profile.light ? 'light' : 'dark');
+  }, profile.light ? 'light' : 'dark', reload);
   await page.navigate(origin);
   for (let i = 0; i < 100 && !(await page.evaluate(() => !!window.__curatorBooted)); i++) await delay(100);
   await page.evaluate(() => { const b = document.querySelector('#rail .rail-btn[data-view="domains"]'); if (b) b.click(); });
@@ -602,8 +603,6 @@ async function fullWalks(app, seen, known) {
   await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review');
 
   // The leftovers of the 8: a smaller family, with its facts read afresh.
-  await press(app, '#hr-done');
-  await waitFor(page, () => !document.querySelector('.hr-desk'), 'the lanes');
   await press(app, '.dm-review-btn');
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');
   await toFamily(app, 8);
@@ -621,7 +620,7 @@ async function fullWalks(app, seen, known) {
   await press(app, '#hr-done');
   await waitFor(page, () => !document.querySelector('.hr-desk'), 'the lanes');
   await delay(600);
-  await openDomain(app);
+  await openDomain(app, { reload: true });
   await waitFor(page, () => !!document.querySelector('.dm-review-btn'), 'Review', 600);
   await press(app, '.dm-review-btn');
   await waitFor(page, () => !!document.querySelector('.hr-desk'), 'the desk');

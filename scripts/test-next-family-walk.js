@@ -665,6 +665,7 @@ section('§12 What the server reads (semanticFamilyFacts)');
   const saved = await saveDuplicateChecks('alpha', [
     [pairKey('concepts', 'a', 'concepts', 'b'), { ...base, openings: hash('a', 'b'), verdict: 'yes', keep: 'concepts/a', remove: 'concepts/b', confidence: 'high', rationale: 'Same thing.' }],
     [pairKey('concepts', 'a', 'concepts', 'c'), { ...base, openings: hash('a', 'c'), verdict: 'no', rationale: 'Different subject.' }],
+    [pairKey('concepts', 'a', 'concepts', 'x'), { ...base, openings: 'x', verdict: 'no' }],
     [pairKey('concepts', 'b', 'concepts', 'c'), { ...base, openings: 'an-older-hash', verdict: 'yes', keep: 'concepts/b', remove: 'concepts/c', confidence: 'high', rationale: 'Older.' }],
   ]);
   ok(saved === true, 'answers saved for the test', saved);
@@ -680,6 +681,15 @@ section('§12 What the server reads (semanticFamilyFacts)');
   ok(ans['a~c'].compared === 'different' && ans['a~c'].rationale === 'Different subject.', 'a no that applies is different, with the reason now kept');
   ok(ans['b~c'].compared === 'stale' && !ans['b~c'].rationale, 'an answer about older text is stale, and quotes nothing', JSON.stringify(ans['b~c']));
   ok(r.answers.length === 3, 'nothing is inferred: three answers in, three out');
+  ok(ans['b~c'].changed === 'text', 'a lapsed answer says what lapsed it: the text', JSON.stringify(ans['b~c']));
+  const dcAll = await import('../src/brain/duplicate-checks.js');
+  const again = async (rec) => { await dcAll.saveDuplicateChecks('alpha', new Map([[pairKey('concepts', 'a', 'concepts', 'c'), rec]])); const o = await semanticFamilyFacts('alpha', [c('a'), c('c')]); return o.answers[0]; };
+  const leaned = await again({ ...base, openings: hash('a', 'c'), verdict: 'no', leaned: 'same', rationale: 'Maybe.' });
+  ok(leaned.compared === 'unsure' && leaned.rationale === 'Maybe.', 'a low-confidence same is unsure, with its reason, never "different"', JSON.stringify(leaned));
+  const model = await again({ ...base, model: 'an-older-model', openings: hash('a', 'c'), verdict: 'yes', keep: 'concepts/a', remove: 'concepts/c', confidence: 'high', rationale: 'r' });
+  ok(model.compared === 'stale' && model.changed === 'model' && model.model === 'an-older-model' && !model.rationale, 'another model: says so, and names it', JSON.stringify(model));
+  const asked = await again({ ...base, prompt: 'an-older-prompt', openings: hash('a', 'c'), verdict: 'yes', keep: 'concepts/a', remove: 'concepts/c', confidence: 'high', rationale: 'r' });
+  ok(asked.changed === 'prompt', 'another question: says so', JSON.stringify(asked));
   const noD = await semanticFamilyFacts('alpha', [c('a'), c('b')]);
   ok(noD.answers.length === 1, 'an answer naming a page outside the family stays out');
   const gone = await semanticFamilyFacts('alpha', [c('a'), c('ghost')]);
