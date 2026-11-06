@@ -12,6 +12,8 @@
   --hr-decide-h: 66px;
   --hr-gate-h: 18px;
   --hr-outcome-h: 44px;
+  --hr-decide-btns-h: auto;
+  --hr-pane-head-h: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
