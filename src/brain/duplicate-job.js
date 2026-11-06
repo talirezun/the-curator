@@ -232,8 +232,10 @@ function noteUsage(run, u) {
   if (model !== record.model) record.fallbackAnswered = true;
   run.largestCall = Math.max(run.largestCall, record.limit.kind === 'usd' ? (usd || 0) : tokens);
 
-  // Two bills the confirmed amount cannot govern, so neither is allowed to continue.
-  if (record.limit.kind === 'usd' && usd === null) {
+  // Three bills the confirmed amount cannot govern, so none is allowed to continue.
+  if (tokens === 0) {
+    run.stop = { kind: 'stop', stopReason: 'price-unknown', reason: 'The provider answered without saying how much it used, so what this costs can no longer be checked against what you confirmed. Answers so far are saved.' };
+  } else if (record.limit.kind === 'usd' && usd === null) {
     run.stop = { kind: 'stop', stopReason: 'price-unknown', reason: `The answer came from ${model}, which has no published price, so what this costs can no longer be checked against what you confirmed. Answers so far are saved.` };
   } else if (record.limit.kind === 'tokens' && model !== record.model && usd !== 0) {
     run.stop = { kind: 'stop', stopReason: 'fallback-not-confirmed', reason: `The answer came from ${model} instead of ${record.model}, which is not what you confirmed, so the comparison stopped. Answers so far are saved.` };

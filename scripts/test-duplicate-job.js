@@ -498,6 +498,15 @@ section('E. The stop at 120%, retries and fallbacks in the spend');
   s = await status(g.name);
   ok(s.stopReason === 'price-unknown' && llm.calls === 1, 'E.17 an answer with no price stops it at once', JSON.stringify({ r: s.stopReason, c: llm.calls }));
   ok(/no published price/.test(s.reason), 'E.18 and says why');
+
+  // A provider that reports no usage would otherwise read as free, for ever.
+  const z = family(30);
+  llm = fakeLLM({ usage: () => ({ model: MODEL, provider: 'gemini' }) });
+  job.__setCompareAllLlmForTest(llm);
+  await start(z.name);
+  await settled();
+  s = await status(z.name);
+  ok(s.stopReason === 'price-unknown' && llm.calls === 1 && /without saying/.test(s.reason), 'E.19 an answer with no usage stops it at once', JSON.stringify({ r: s.stopReason, c: llm.calls }));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

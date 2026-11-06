@@ -170,6 +170,11 @@ section('2. The comparison');
   writeFileSync(big.keepFile, longText + 'edit past the cut\n');
   const rc = await fix(big, PAIR, { basis: rb.body.basis });
   ok(rc.status === 409 && rc.body.code === 'MERGE_BASIS_STALE', '2.16 an edit past the cut still makes the basis stale');
+
+  const self = fixture();
+  writeFileSync(self.keepFile, KEEP_TEXT + '\nSee [[data-privacy]].\n');
+  const rs = await preview(self, PAIR);
+  ok(rs.body.originals.keep.linksIn.links === 1 && !rs.body.originals.keep.linksIn.from.includes('concepts/data-privacy.md'), '2.17 a page\'s link to itself is not a link in', JSON.stringify(rs.body.originals.keep.linksIn));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
