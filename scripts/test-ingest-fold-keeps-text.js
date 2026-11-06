@@ -17,8 +17,9 @@
  *   §2  Digits and single letters count in the guard.
  *   §3  A single-pass reply loses no page body.
  *   §4  Spelling variants fold; nothing else does.
- *   §5  Exact-name reuse: title and opening stay, a differing section's new
- *       wording goes below the kept text, nothing repeats. A stub is replaced.
+ *   §5  Exact-name reuse: title and opening stay, mostly new wording goes below
+ *       the kept text, a rewording is left out and reported. A stub is replaced.
+ *   §5b ACCEPTANCE: replay adds nothing; a fixed reworded corpus grows at most 10%.
  *   §6  Warnings: truthful wording, the view's buckets, the one aggregator.
  *   §7  The cached batch prefix is byte-identical across batches with a fold.
  *   §8  The run-time guard: a lossy or throwing composer writes nothing.
@@ -27,7 +28,7 @@
  *       and shares no code with the composer or findLostLines.
  *
  * NOT ENFORCED. Whether a real model's text reads well (the orchestrator measures
- * live). A model that rewords adds a paragraph per write: identity is by the words.
+ * live). The threshold is measured on one domain's replies, labelled by one reader.
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
@@ -402,52 +403,88 @@ try {
   }
 
   // ── §5 ────────────────────────────────────────────────────────────────────
-  section('§5  Exact-name reuse loses nothing (owner\'s decision, 2026-11-06)');
+  section('§5  Exact-name reuse keeps the page, and adds only what is mostly new');
   {
+    const NEW = `# Agents
+
+Autonomous helpers negotiate booking contracts overnight.
+
+The kept opening sentence, reworded slightly.
+
+## Definition
+The definition kept, written by hand.
+
+Software negotiating binding contracts independently across marketplaces.
+
+## Key Facts
+- Launched during winter trials across Norway
+- [[alice]] left during 2005
+
+## Why It Matters
+Regulators increasingly demand audit trails.
+
+Tags: extra-tag
+`;
     const dom = makeDomain({ 'concepts/agent.md': KEPT });
-    const res = await writePage(dom.name, 'concepts/agent.md', PROPOSED);
+    const warnings = [];
+    const res = await writePage(dom.name, 'concepts/agent.md', NEW, { onWarn: (w) => warnings.push(w) });
     const body = dom.read('concepts/agent.md');
     for (const l of KEPT_LINES) ok(hasLine(body, l), `kept: "${l}"`);
-    for (const l of PROPOSED_LINES) ok(hasLine(body, l), `new: "${l}"`);
+    for (const l of ['Autonomous helpers negotiate booking contracts overnight.', 'Software negotiating binding contracts independently across marketplaces.', '- Launched during winter trials across Norway', 'Regulators increasingly demand audit trails.']) ok(hasLine(body, l), `mostly new, added: "${l}"`);
+    for (const l of ['The kept opening sentence, reworded slightly.', 'The definition kept, written by hand.', '- [[alice]] left during 2005']) ok(!hasLine(body, l), `a rewording, left out: "${l}"`);
+    ok(warnings.some((w) => /^Page "concepts\/agent.md": 3 passages not added/.test(w)), 'the report counts what was left out', JSON.stringify(warnings));
     ok(!hasLine(body, '# Agents'), 'the current title stays and the incoming title is not added');
     ok(!/Merged from/.test(body), 'no Merged from block: this is the model\'s own page');
-    ok(hasLine(body, 'kept-tag') || /kept-tag/.test(body), 'tags keep');
+    ok(/extra-tag/.test(body) && /kept-tag/.test(body), 'tags union');
     const order = (a, c) => body.indexOf(a) < body.indexOf(c);
-    ok(order('# Agent\n', 'Kept opening sentence.') && order('Kept opening sentence.', 'Proposed opening sentence.') && order('Proposed opening sentence.', '## Definition'), 'title, kept opening, new opening, then the sections');
+    ok(order('# Agent\n', 'Kept opening sentence.') && order('Kept opening sentence.', 'Autonomous helpers') && order('Autonomous helpers', '## Definition'), 'title, kept opening, new opening, then the sections');
     const defn = body.slice(body.indexOf('## Definition'), body.indexOf('## Key Facts'));
-    ok(defn.indexOf('The kept definition') >= 0 && defn.indexOf('The kept definition') < defn.indexOf('The proposed definition'), 'Definition: kept first, new wording directly below, in that section');
+    ok(defn.indexOf('The kept definition') >= 0 && defn.indexOf('The kept definition') < defn.indexOf('Software negotiating'), 'Definition: kept first, new wording directly below, in that section');
     eq((body.match(/^## Definition/gm) || []).length, 1, 'one Definition heading');
     const why = body.slice(body.indexOf('## Why It Matters'));
-    ok(why.indexOf('Kept reason.') < why.indexOf('Proposed reason.') && why.indexOf('Proposed reason.') > 0, 'any other prose section: the same rule');
+    ok(why.indexOf('Kept reason.') < why.indexOf('Regulators') && why.indexOf('Regulators') > 0, 'any other prose section: the same rule');
     ok(res.status === 'updated', 'reported as updated');
-
-    const again = await writePage(dom.name, 'concepts/agent.md', PROPOSED);
+    const again = await writePage(dom.name, 'concepts/agent.md', NEW, { onWarn: () => {} });
     eq(again.status, 'unchanged', 'the same text again adds nothing');
-    eq((dom.read('concepts/agent.md').match(/The proposed definition/g) || []).length, 1, '…once on the page');
+  }
+  {
+    // The number rule: everything else matches, and it is a new fact.
+    const dom = makeDomain({ 'concepts/n.md': '---\ntype: concept\ntags: [type/concept]\n---\n# N\n\n## Key Facts\n- Lumina has been running 25 years in Oslo\n' });
+    await writePage(dom.name, 'concepts/n.md', '# N\n\n## Key Facts\n- Lumina has been running 30 years in Oslo\n- Lumina has been running for many years in Oslo\n');
+    const body = dom.read('concepts/n.md');
+    ok(hasLine(body, '- Lumina has been running 30 years in Oslo'), 'a new number is new');
+    ok(!hasLine(body, '- Lumina has been running for many years in Oslo'), 'the same words without one are not');
+    ok(hasLine(body, '- Lumina has been running 25 years in Oslo'), 'the old figure stays');
+  }
+  {
+    // Sentence level: a paragraph with one new sentence adds that sentence.
+    const dom = makeDomain({ 'concepts/s.md': '---\ntype: concept\ntags: [type/concept]\n---\n# S\n\n## Definition\nTide gauges measure sea level along the coast.\n' });
+    await writePage(dom.name, 'concepts/s.md', '# S\n\n## Definition\nTide gauges measure the sea level on a coast. Satellites calibrate readings against orbital altimetry.\n');
+    const body = dom.read('concepts/s.md');
+    ok(hasLine(body, 'Satellites calibrate readings against orbital altimetry.'), 'the new sentence is added, on its own');
+    ok(!/on a coast/.test(body), 'the reworded one in the same paragraph is not');
   }
   {
     // Sections outside the accumulating list: measured at 28% of all bullet lines.
-    const dom = makeDomain({ 'concepts/p.md': '---\ntype: concept\ntags: [type/concept]\n---\n# P\n\n## How It Works\n- step one\n- step two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n## Notes\n```js\n## not a heading\n```\n' });
-    await writePage(dom.name, 'concepts/p.md', '# P\n\n## How It Works\n- step three\n- step one\n\n## Notes\nA new note.\n\n### Deep\nDeep text.\n\n## Brand New\nFresh words.\n');
+    const dom = makeDomain({ 'concepts/p.md': '---\ntype: concept\ntags: [type/concept]\n---\n# P\n\n## How It Works\n- gather barley\n- malt grain\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n## Notes\n```js\n## not a heading\n```\n' });
+    await writePage(dom.name, 'concepts/p.md', '# P\n\n## How It Works\n- ferment wort slowly\n- gather barley\n\n## Notes\nCopper kettles conduct heat evenly.\n\n### Deep\nYeast strains vary regionally.\n\n```js\nnewCode();\n```\n\n## Brand New\nFresh hops arrive seasonally.\n\n## Empty Words\nThe barley.\n');
     const body = dom.read('concepts/p.md');
-    for (const l of ['- step one', '- step two', '- step three', '| 1 | 2 |', '## not a heading', 'A new note.', '### Deep', 'Deep text.', '## Brand New', 'Fresh words.']) ok(hasLine(body, l), `other sections: "${l}"`);
-    eq((body.match(/- step one/g) || []).length, 1, 'a bullet already held is not repeated');
-    ok(body.indexOf('- step three') < body.indexOf('| 1 | 2 |') || body.indexOf('- step three') > 0, 'the new bullet is in its section');
+    for (const l of ['- gather barley', '- malt grain', '- ferment wort slowly', '| 1 | 2 |', '## not a heading', 'Copper kettles conduct heat evenly.', '### Deep', 'Yeast strains vary regionally.', 'newCode();', '## Brand New', 'Fresh hops arrive seasonally.']) ok(hasLine(body, l), `other sections: "${l}"`);
+    eq((body.match(/- gather barley/g) || []).length, 1, 'a bullet already held is not repeated');
+    ok(!/## Empty Words/.test(body), 'a new section with nothing new in it is not added');
     ok(/## not a heading\n```/.test(body), 'a fence stays whole');
+    const before = dom.read('concepts/p.md');
+    await writePage(dom.name, 'concepts/p.md', '# P\n\n## Notes\n### Deep\nYeast strains vary regionally.\n');
+    eq(dom.read('concepts/p.md'), before, 'a sub-heading with nothing new under it is not repeated');
   }
   {
-    // Same first link, different words: both stay, on this write and the next.
-    const dom = makeDomain({ 'concepts/l.md': '---\ntype: concept\ntags: [type/concept]\n---\n# L\n\n## Related\n- [[alpha]] old description\n- [[beta]]\n' });
-    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Related\n- [[alpha]] new description\n- [[beta]]\n- [[beta]] now with words\n');
-    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Key Facts\n- later\n');
+    // Link sections go by target. What is on the page stays, and a new target is added.
+    const dom = makeDomain({ 'concepts/l.md': '---\ntype: concept\ntags: [type/concept]\n---\n# L\n\n## Related\n- [[alpha]] old description\n- [[alpha]] another description, on disk already\n- [[beta]]\n' });
+    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Related\n- [[alpha]] new description\n- [[Alpha|The Alpha]]\n- [[concepts/beta]] now with words\n- [[gamma]] barely different words alpha\n');
+    await writePage(dom.name, 'concepts/l.md', '# L\n\n## Key Facts\n- Later arrival mentioned once\n');
     const body = dom.read('concepts/l.md');
-    for (const l of ['- [[alpha]] old description', '- [[alpha]] new description', '- [[beta]] now with words']) ok(hasLine(body, l), `same-link bullet: "${l}"`);
-    eq((body.match(/^- \[\[beta\]\]$/gm) || []).length, 1, 'a bare link stays once');
-    const dom2 = makeDomain({ 'concepts/m.md': '---\ntype: concept\ntags: [type/concept]\n---\n# M\n\n## Related\n- [[gamma]] with words\n- [[gamma]]\n\n## Notes\n- [[delta]] with words\n' });
-    await writePage(dom2.name, 'concepts/m.md', '# M\n\n## Notes\n- [[delta]]\n');
-    const body2 = dom2.read('concepts/m.md');
-    ok(!/^- \[\[gamma\]\]$/m.test(body2) && hasLine(body2, '- [[gamma]] with words'), 'a bare link the section already names goes: it holds no text');
-    ok(!/^- \[\[delta\]\]$/m.test(body2), 'nor is a bare link added beside a line that names it, in any section');
+    for (const l of ['- [[alpha]] old description', '- [[alpha]] another description, on disk already', '- [[beta]]', '- [[gamma]] barely different words alpha']) ok(hasLine(body, l), `link section: "${l}"`);
+    for (const l of ['- [[alpha]] new description', '- [[beta]] now with words']) ok(!hasLine(body, l), `a known target is not added: "${l}"`);
   }
   {
     // The AI's stub said "re-ingest to fix": that has to keep working.
@@ -468,22 +505,21 @@ try {
   {
     // A page with no title takes the incoming one; a frontmatter claim stays visible.
     const dom = makeDomain({ 'concepts/n.md': '---\ntype: concept\ntags: [type/concept]\nauthor: kept\n---\nNo title yet.\n' });
-    await writePage(dom.name, 'concepts/n.md', '---\ntags: [x]\nauthor: other\n---\n# Now Titled\n\nMore.\n');
+    await writePage(dom.name, 'concepts/n.md', '---\ntags: [x]\nauthor: other\n---\n# Now Titled\n\nBarley malted slowly.\n');
     const body = dom.read('concepts/n.md');
-    ok(hasLine(body, '# Now Titled') && hasLine(body, 'No title yet.') && hasLine(body, 'More.'), 'no kept title: the incoming one is used');
+    ok(hasLine(body, '# Now Titled') && hasLine(body, 'No title yet.') && hasLine(body, 'Barley malted slowly.'), 'no kept title: the incoming one is used');
     ok(hasLine(body, 'author: kept') && hasLine(body, 'author: other'), 'a differing frontmatter value is kept as text');
   }
   {
     // Bookkeeping of a write is not text, and a summary's sync keeps same-link lines.
-    const dom = makeDomain({ 'summaries/d.md': '---\ntype: summary\nsource: d.md\ndate: 2024-01-01\ntags: [type/summary]\ncreated: 2024-01-01\n---\n# D\n\n## Entities Mentioned\n- [[alpha]] the founder\n\n## Key Takeaways\n- one\n' });
+    const dom = makeDomain({ 'summaries/d.md': '---\ntype: summary\nsource: d.md\ndate: 2024-01-01\ntags: [type/summary]\ncreated: 2024-01-01\n---\n# D\n\n## Entities Mentioned\n- [[alpha]] the founder\n- [[alpha]] another description\n\n## Key Takeaways\n- one\n' });
     const rec = await writePage(dom.name, 'summaries/d.md', '---\ntype: summary\nsource: d.md\ndate: 2026-11-06\ntags: [type/summary]\ncreated: 2026-11-06\n---\n# D\n\n## Key Takeaways\n- one\n');
     eq(rec.status, 'unchanged', 'a later date is not new text');
     ok(hasLine(dom.read('summaries/d.md'), 'date: 2024-01-01'), 'the first date stays');
-    await writePage(dom.name, 'summaries/d.md', '# D\n\n## Entities Mentioned\n- [[alpha]] another description\n');
     await writePage(dom.name, 'entities/beta.md', '# Beta\n\nBody.\n');
     await files.syncSummaryEntities(dom.name, 'summaries/d.md', ['summaries/d.md', 'entities/beta.md']);
-    ok(hasLine(dom.read('summaries/d.md'), '- [[beta]]'), 'CONTROL: the sync really rewrote the summary');
     const body = dom.read('summaries/d.md');
+    ok(hasLine(body, '- [[beta]]'), 'CONTROL: the sync really rewrote the summary');
     ok(hasLine(body, '- [[alpha]] the founder') && hasLine(body, '- [[alpha]] another description'), 'the post-write sync keeps both same-link lines');
   }
   {
@@ -492,31 +528,69 @@ try {
       const dom = makeDomain({ [existing]: existing.startsWith('entities') ? asEntity(KEPT) : KEPT });
       await quiet(() => writePage(dom.name, asked, PROPOSED));
       const body = dom.read(existing);
-      ok(!/Merged from/.test(body) && hasLine(body, 'The kept definition, written by hand.') && hasLine(body, 'The proposed definition, from one source.'), `${asked} is reuse`);
+      ok(!/Merged from/.test(body) && hasLine(body, 'The kept definition, written by hand.'), `${asked} is reuse`);
     }
-  }
-  {
-    // Re-ingest of one source: the summary and its pages hold still.
-    const dom = makeDomain();
-    const llm = singlePass('note-r.md', [{ path: 'concepts/rivers.md', content: PROPOSED }, { path: 'entities/harbour.md', content: '# Harbour\n\nA town.\n\n## Key Facts\n- on a river\n' }]);
-    await quiet(() => ingestFile(dom.name, sourceFile('note-r.md', SHORT), 'note-r.md', false, null, { llm }));
-    const first = ['concepts/rivers.md', 'entities/harbour.md', 'summaries/note-r.md'].map((p) => dom.read(p));
-    const res = await quiet(() => ingestFile(dom.name, sourceFile('note-r.md', SHORT), 'note-r.md', true, null, { llm }));
-    const second = ['concepts/rivers.md', 'entities/harbour.md', 'summaries/note-r.md'].map((p) => dom.read(p));
-    first.forEach((b, i) => eq(second[i], b, `re-ingest with the same words: page ${i + 1} byte-identical`));
-    ok(res.changes.filter((c) => /rivers|harbour|note-r/.test(c.canonPath)).every((c) => c.status === 'unchanged'), 're-ingest: reported unchanged');
   }
   {
     // A summary keeps its text across a re-ingest with new words.
     const dom = makeDomain();
-    const v = (w) => async (a, b, c, d, e, opts) => {
+    const v = (o, t) => async (a, b, c, d, e, opts) => {
       usage(opts);
-      return JSON.stringify({ title: 'Note', pages: [{ path: 'summaries/note-s.md', content: `# Note\n\nSource: note-s.md\nTags: t\n\n${w} opening.\n\n## Key Takeaways\n- ${w} point\n` }] });
+      return JSON.stringify({ title: 'Note', pages: [{ path: 'summaries/note-s.md', content: `# Note\n\nSource: note-s.md\nTags: t\n\n${o}\n\n## Key Takeaways\n- ${t}\n` }] });
     };
-    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', false, null, { llm: v('First') }));
-    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', true, null, { llm: v('Second') }));
+    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', false, null, { llm: v('Barley harvests failed.', 'Yields dropped sharply') }));
+    await quiet(() => ingestFile(dom.name, sourceFile('note-s.md', SHORT), 'note-s.md', true, null, { llm: v('Copper kettles arrived.', 'Exports expanded abroad') }));
     const body = dom.read('summaries/note-s.md');
-    for (const l of ['First opening.', 'Second opening.', '- First point', '- Second point']) ok(hasLine(body, l), `summary re-ingest: "${l}"`);
+    for (const l of ['Barley harvests failed.', 'Copper kettles arrived.', '- Yields dropped sharply', '- Exports expanded abroad']) ok(hasLine(body, l), `summary re-ingest: "${l}"`);
+  }
+
+  // ── §5b ───────────────────────────────────────────────────────────────────
+  section('§5b ACCEPTANCE: replay adds nothing, and a reworded corpus stops growing');
+  {
+    // Invented, in the shape of captured re-ingest rounds: one source, reworded by a
+    // model three times, with two genuinely new points along the way.
+    const ROUNDS = [
+      {
+        'concepts/owner-sign-off.md': '# Owner Sign-Off\n\nOwner sign-off means an agent pauses before a binding action until a person confirms it.\n\n## Definition\nA rule requiring a person to confirm every binding action an agent proposes.\n\n## How It Works\n- The agent shows the full text of the action on screen\n- The person confirms with a fingerprint\n- Nothing binding happens before confirmation\n\n## Related\n- [[governed-agent]] — the framework that applies it\n- [[tide-agent]] — an example agent\n',
+        'entities/tide-agent.md': '# Tide Agent\n\nThe Tide Agent connects an AI assistant to live tide data for coastal towns.\n\n## Key Facts\n- Built as the data side of the harbour demo\n- Publishes readings for twelve harbours\n\n## Related\n- [[owner-sign-off]] — source of its approval step\n',
+        'concepts/governed-agent.md': '# Governed Agent\n\nA governed agent runs under written rules its owner can read and change.\n\n## Key Facts\n- The rules live in one plain text file\n- It never sends or pays without confirmation\n\n## Related\n- [[owner-sign-off]] — the approval rule\n',
+      },
+      {
+        'concepts/owner-sign-off.md': '# Owner Sign-Off\n\nOwner sign-off is when an agent stops before any binding action until a person has confirmed it.\n\n## Definition\nThe rule that a person must confirm each binding action an agent proposes.\n\n## How It Works\n- The agent displays the full action text on screen\n- The person confirms using a fingerprint\n- No binding action happens before the confirmation\n- Refusals are logged with a timestamp for later audit\n\n## Related\n- [[governed-agent]] — framework applying this rule\n- [[tide-agent]] — example\n',
+        'entities/tide-agent.md': '# Tide Agent\n\nThe Tide Agent is an AI assistant implementation connecting to live tide data for coastal towns.\n\n## Key Facts\n- Serves as the data side of the harbour demo\n- Publishes the readings of twelve harbours\n\n## Related\n- [[owner-sign-off]] — its approval step\n',
+        'concepts/governed-agent.md': '# Governed Agent\n\nA governed agent operates under written rules that its owner can read and change.\n\n## Key Facts\n- Its rules live in a single plain text file\n- It never pays or sends without a confirmation\n\n## Related\n- [[owner-sign-off]] — approval\n',
+      },
+      {
+        'concepts/owner-sign-off.md': '# Owner Sign-Off\n\nUnder owner sign-off an agent pauses ahead of a binding action until a person confirms.\n\n## Definition\nA rule by which a person confirms any binding action proposed by an agent.\n\n## How It Works\n- The full text of the action is displayed on screen by the agent\n- A person confirms by fingerprint\n- Confirmation comes before anything binding happens\n\n## Related\n- [[governed-agent]] — framework\n- [[tide-agent]] — sample agent\n',
+        'entities/tide-agent.md': '# Tide Agent\n\nThe Tide Agent links an AI assistant with live tide data for coastal towns.\n\n## Key Facts\n- Forms the data side of the harbour demo\n- Readings are published for twelve harbours\n- Storm surge warnings reach 240 subscribers\n\n## Related\n- [[owner-sign-off]] — approval step\n',
+        'concepts/governed-agent.md': '# Governed Agent\n\nA governed agent works under written rules its owner may read and change.\n\n## Key Facts\n- One plain text file holds its rules\n- Without confirmation it never sends or pays\n\n## Related\n- [[owner-sign-off]] — rule\n',
+      },
+    ];
+    const paths = Object.keys(ROUNDS[0]);
+    const dom = makeDomain();
+    const size = () => paths.reduce((n, p) => n + dom.read(p).length, 0);
+    const reply = (i) => singlePass('corpus.md', paths.map((p) => ({ path: p, content: ROUNDS[i][p] })));
+    const reports = [];
+    await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', false, null, { llm: reply(0) }));
+    const after1 = size();
+    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(1) })));
+    const after2 = size();
+    reports.push(await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(2) })));
+    const after3 = size();
+    const growth = (after3 - after1) / after1;
+    console.log(`    corpus: round 1 ${after1} chars, round 2 +${after2 - after1}, round 3 +${after3 - after2} (${(growth * 100).toFixed(1)}% by round 3)`);
+    ok(growth <= 0.1, 'BOUND: growth by round 3 is at most 10% of round 1', `${(growth * 100).toFixed(1)}%`);
+    const sign = dom.read('concepts/owner-sign-off.md');
+    ok(hasLine(sign, '- Refusals are logged with a timestamp for later audit'), 'a new point in round 2 accumulated');
+    ok(hasLine(dom.read('entities/tide-agent.md'), '- Storm surge warnings reach 240 subscribers'), 'a new point in round 3 accumulated');
+    eq(sign.split('\n').filter((l) => /confirm/i.test(l) && /binding/i.test(l) && !l.startsWith('- ')).length, 2, 'no pile of near-identical definitions: the first opening and definition only');
+    eq(sign.match(/^- \[\[governed-agent\]\]/gm).length, 1, 'Related holds a target once, however it is described');
+    ok(reports.every((r) => r.warnings.some((w) => w.includes('new wording was not added') && w.includes('On 3 pages'))), 'the report says so, aggregated across pages', JSON.stringify(reports[0].warnings).slice(0, 300));
+
+    // Replay every reply already seen.
+    const snapshot = paths.map((p) => dom.read(p));
+    for (const i of [0, 1, 2]) await quiet(() => ingestFile(dom.name, sourceFile('corpus.md', SHORT), 'corpus.md', true, null, { llm: reply(i) }));
+    paths.forEach((p, i) => eq(dom.read(p), snapshot[i], `replaying the same replies adds nothing: ${p}`));
   }
 
   // ── §6 ────────────────────────────────────────────────────────────────────
@@ -600,10 +674,6 @@ try {
     eq(rec, null, 'reuse, a lossy composer: nothing written');
     eq(dom.read('concepts/agent.md'), KEPT, 'reuse, a lossy composer: byte-identical');
     ok(warnings.some((w) => w.includes('without losing text')), 'reuse, a lossy composer: reported');
-    __setFoldComposeForTest((keep) => keep);
-    try { rec = await writePage(dom.name, 'concepts/agent.md', PROPOSED, { onWarn: () => {} }); }
-    finally { __setFoldComposeForTest(null); }
-    eq(rec, null, 'reuse, a composer dropping the new wording: refused');
   }
   {
     // The second dedup key: a different sentence opening with the same link.
@@ -640,9 +710,9 @@ try {
   {
     // A summary is never a fold: re-ingesting a source merges into its summary.
     const dom = makeDomain({ 'summaries/foo-bar.md': '---\ntype: summary\ntags: [type/summary]\n---\n# Old\n\nOld body.\n\n## Key Takeaways\n- old point\n' });
-    await writePage(dom.name, 'summaries/foo_bar.md', '# New\n\nNew body.\n\n## Key Takeaways\n- new point\n');
+    await writePage(dom.name, 'summaries/foo_bar.md', '# New\n\nBarley harvests failed.\n\n## Key Takeaways\n- Exports expanded abroad\n');
     const body = dom.read('summaries/foo-bar.md');
-    ok(!/Merged from/.test(body) && hasLine(body, 'New body.') && hasLine(body, '- old point'), 'a summary merges the ordinary way');
+    ok(!/Merged from/.test(body) && hasLine(body, 'Barley harvests failed.') && hasLine(body, '- old point'), 'a summary reuses, never folds');
   }
   {
     // A mirror pull replaces; a fold must never reach it.
@@ -875,11 +945,11 @@ try {
           domain: d.name,
           title: `Reuse ${seed}`,
           summary_content: `# Reuse ${seed}\n\n## Key Takeaways\n- r${seed}\n`,
-          additional_pages: [{ path: `entities/mcp-page-${seed}.md`, content: `# Other\n\nReuse opening ${seed}.\n\n## Definition\nReuse definition ${seed}.\n` }],
+          additional_pages: [{ path: `entities/mcp-page-${seed}.md`, content: `# Other\n\nZephyr${seed} barometers oscillate.\n\n## Definition\nQuartz${seed} lattices refract.\n` }],
           broken_link_policy: 'keep',
         } });
         ok(!re.error && !re.result.isError, `mcp seed ${seed}: reuse ran`);
-        record('reuse mcp', seed, afterFold, `# Proposed\n\nReuse opening ${seed}.\n\n## Definition\nReuse definition ${seed}.\n`, d.read(`entities/mcp-page-${seed}.md`));
+        record('reuse mcp', seed, afterFold, `# Proposed\n\nZephyr${seed} barometers oscillate.\n\n## Definition\nQuartz${seed} lattices refract.\n`, d.read(`entities/mcp-page-${seed}.md`));
       }
       mcpChild.stdin.end();
       mcpChild.kill();

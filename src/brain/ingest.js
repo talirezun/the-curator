@@ -1943,6 +1943,14 @@ const AGGREGATABLE_WARNINGS = [
       `its folder, and its content merged there. Nothing was lost; if one belongs in the other folder, move it by hand.`,
   },
   {
+    id: 'reworded',
+    // Emitted by writePage on exact-name reuse: new wording that repeats the page.
+    match: /^Page "(.+?)": \d+ passages? not added, because the page already says/,
+    render: (n, ex) =>
+      `On ${n} pages (${renderExamples(ex)}), new wording was not added because the page already says mostly the same. ` +
+      `What each page held is untouched. A point that is mostly new, or holds a new number, is always added.`,
+  },
+  {
     id: 'no-path',
     match: /^The AI returned a page with no path/,
     render: (n) =>

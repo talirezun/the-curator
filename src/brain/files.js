@@ -7,7 +7,7 @@ import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { acquireFileLock } from './write-registry.js';
 import { moveToTrash, countFiles } from './trash.js';
-import { composeMergedPage, composeReusedPage, incomingForLossCheck, findLostLines } from './page-merge.js';
+import { composeMergedPage, composeReusedPage, findLostLines } from './page-merge.js';
 
 // v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
 // process-kill mid-write (e.g. /api/restart killing the old process while
@@ -1631,6 +1631,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     // page that is a redirect like any other, so it says so here.
     warn(`Page "${relativePath}" is a spelling variant of the existing "${canonPath}" — redirected to canonical "${canonPath}"; its content was merged into that page.`);
   }
+  const leftOut = [];
   if (guarded) {
     // A composer that throws must not fall through to a plain overwrite of the
     // page this exists to protect: it ends at the refusal below.
@@ -1638,7 +1639,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
       const keepFolder = canonPath.split('/')[0];
       final = isFold
         ? (__foldComposeForTest || composeMergedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { sourceLabel: foldLabel, keepFolder })
-        : (__foldComposeForTest || composeReusedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { keepFolder });
+        : (__foldComposeForTest || composeReusedPage)(rewriteLinks(existingContent), rewriteLinks(processed), { keepFolder, dropped: leftOut });
     } catch {
       final = null;
     }
@@ -1681,14 +1682,23 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     final = dedup(final);
 
     // 5e. The guarantee, checked on the bytes about to be written. Every line of
-    //     both pages must be here, up to the link tidy (so that is applied to the
-    //     originals before comparing). findLostLines shares no tokenizer with the
-    //     composers, so a shape of markdown nobody thought of costs one refused
-    //     page, never the text of the page it landed on.
+    //     the existing page must be here, up to the link tidy (so that is applied
+    //     to the original before comparing), and on a fold every line of the moved
+    //     page too. A reuse may leave out wording that repeats the page, and says
+    //     so below. findLostLines shares no tokenizer with the composers, so a shape
+    //     of markdown nobody thought of costs one refused page, never the text of
+    //     the page it landed on.
     if (guarded) {
-      const incoming = rewriteLinks(processed);
-      if (findLostLines(rewriteLinks(existingContent), isReuse ? incomingForLossCheck(incoming) : incoming, final).length) return refuseWrite();
+      const moved = isFold ? rewriteLinks(processed) : '';
+      if (findLostLines(rewriteLinks(existingContent), moved, final).length) return refuseWrite();
     }
+  }
+
+  // If the pipeline drops what the model produced, the report says so. One line per
+  // page; aggregated across pages at the ingest chokepoint ('reworded').
+  if (leftOut.length) {
+    const sample = leftOut[0].length > 80 ? `${leftOut[0].slice(0, 80)}…` : leftOut[0];
+    warn(`Page "${canonPath}": ${leftOut.length} passage${leftOut.length === 1 ? '' : 's'} not added, because the page already says mostly the same (for example "${sample}").`);
   }
 
   await writeFileAtomic(fullPath, final, 'utf8');

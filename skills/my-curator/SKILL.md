@@ -204,14 +204,14 @@ lose the user's work.
 
 | Section kind | What happens on merge |
 |---|---|
-| Bullet sections — Key Facts, Key Ideas, Key Points, Key Takeaways, Related, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples | Genuinely accumulate. Existing bullets are kept, yours are added, duplicates are removed. Safe. |
-| Prose sections — Definition, Summary, Why It Matters, Overview, anything else | **Nothing is replaced.** The existing text stays first and your different wording goes directly below it, verbatim. The title and opening stay too. |
+| Bullet sections — Key Facts, Key Ideas, Key Points, Key Takeaways, Applications, Examples | Existing bullets are kept. Yours are added under the same test, so a rewording is left out. In Related, Entities Mentioned and Concepts Introduced or Referenced a link is added once per target. |
+| Prose sections — Definition, Summary, Why It Matters, Overview, anything else | **Nothing is replaced.** The existing text stays first; your wording goes below it only if at least half its content words are new to the page or it holds a new number. The rest is left out and named in `warnings`. |
 
 So when a page in `additional_pages` already exists:
 
 - **Adding facts?** Send only the bullet sections. This is the safe default.
-- **Adding to the prose?** Call `get_node(domain, slug)` first and send only what is new: a
-  reworded copy of a section stays on the page beside the original.
+- **Adding to the prose?** Call `get_node(domain, slug)` first and send only what is new. Check
+  `warnings` in the reply: a point stated in the page's own words can be left out as a rewording.
 - **Correcting the prose?** This tool cannot. Tell the user which file to edit.
 - **Not sure whether the page exists?** It was in the list from step 2 — check.
 

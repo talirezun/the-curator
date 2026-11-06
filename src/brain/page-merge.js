@@ -480,40 +480,94 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
 // ── Reuse: the model named a page that exists ───────────────────────────────
 
 /**
- * THE RULE (owner's decision, 2026-11-06). Exact-name reuse used to take the
- * incoming page as the base, so every section it repeated was replaced. Now:
- * the page's title and opening stay; in any `##` section the incoming page
- * repeats, the kept text stays first and the new wording goes directly below it,
- * verbatim; a block already on the page is not added again; a section the page
- * lacks is added at the foot.
+ * Whether new wording says something the page does not. Deterministic, no model.
  *
- * WHY EVERY SECTION, NOT A LIST. Measured on a copy of a 3,407-page domain: 812
- * distinct `##` headings. 10,294 of 36,121 bullet lines sat in sections outside
- * the accumulating list (How It Works 3,260, Key Aspects 890), and replacing
- * those lost them just as it lost Definition (2,045 lines) and Summary (552). No
- * list of names could hold the rule, so the composer has none.
+ * THE RULE (owner's decision, 2026-11-06, after a live re-test). Keeping every
+ * wording added 50,000 characters per re-ingest round on one domain and never
+ * converged: one page held six near-identical definitions. So a sentence, line or
+ * bullet joins the page only when at least half of its content words are on no
+ * line of the page, or it holds a number the page lacks ("30 years" beside "25
+ * years" shares every other word, and is a new fact).
  *
- * Not text, on purpose: the incoming `# title` when the page has one (the current
- * title stays), and `created` and `date` (bookkeeping of a write). See
- * `incomingForLossCheck`, which the guard reads so it cannot disagree.
+ * WHY 0.5, AND WHY THE WHOLE PAGE. Measured on the replies of three real re-ingest
+ * rounds, 79 lines labelled by one reader: at 0.5 on the whole page, 86% of what is
+ * dropped really was a rewording and 92% of real new points are kept, the best
+ * precision of the grid; 0.45 and 0.55 are lower, and comparing with the single
+ * closest line is no better. Added characters per round fell from about 40,000 to
+ * about 13,000. It does not reach zero: a model finds new details on each reading.
+ * Known failure: on a long page a new point in the page's own vocabulary is
+ * dropped, which is why every drop is reported.
  *
- * Idempotent on identical text: nothing to add returns the kept bytes. It cannot
- * see that reworded text means the same: a model that rewords adds a paragraph.
+ * It can only ever drop new text. Replaying a reply adds nothing, because what it
+ * added is now on the page and what it dropped has less chance than before.
+ */
+export const NEW_WORDING_MIN_SHARE = 0.5;
+
+const STOP_WORDS = new Set(('a an and are as at be been but by can could did do does for from had has have how if in into is it '
+  + 'its may might more most no not of on or our she so some such than that the their them then there these they this those '
+  + 'to us was we were what when where which while who why will with would you your he his her i my me also both each very '
+  + 'just only over under about between through within without per via using use used uses make makes made one two new').split(' '));
+
+function contentWords(text) {
+  const plain = String(text).toLowerCase()
+    .replace(/\[\[([^\]|]*\/)?([^\]|]+)(\|([^\]]+))?\]\]/g, (m, a, slug, c, alias) => ` ${(alias || slug).replace(/[-_]/g, ' ')} `)
+    .replace(/(\d),(?=\d)/g, '$1')
+    .replace(/[^\p{L}\p{N}.$%-]+/gu, ' ')
+    .replace(/(?<!\d)[.-]|[.-](?!\d)/g, ' ');
+  const stem = (w) => {
+    if (/\d/.test(w)) return w;
+    if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+    if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+    return w;
+  };
+  return [...new Set(plain.split(/\s+/).filter((w) => w && !STOP_WORDS.has(w)).map(stem))];
+}
+
+/** Is this mostly new against the words on the page? A text with no content word never is. */
+export function isMostlyNew(text, pageWords) {
+  const words = contentWords(text);
+  if (!words.length) return false;
+  const fresh = words.filter((w) => !pageWords.has(w));
+  return fresh.length / words.length >= NEW_WORDING_MIN_SHARE || fresh.some((w) => /\d/.test(w));
+}
+
+const splitSentences = (text) => text.split(/(?<=[.!?])\s+(?=[A-Z\[`"“*])/).map((x) => x.trim()).filter(Boolean);
+const LINK_SECTIONS = new Set(['related', 'entities mentioned', 'concepts introduced or referenced']);
+const LIST_LINE_RE = /^[ \t]*(\d+[.)]|[*+]|>)[ \t]/;
+function leadTarget(bulletLine) {
+  const m = bulletLine.match(/^-\s+\[\[([^\]|#]+)/);
+  return m ? m[1].trim().replace(/\.md$/, '').replace(/^(entities|concepts)\//, '').toLowerCase() : null;
+}
+
+/**
+ * Exact-name reuse: the model named a page that exists. The page's text always
+ * stays, title and opening first; in any `##` section the incoming page repeats,
+ * wording that passes isMostlyNew goes directly below the kept text, verbatim; a
+ * section the page lacks goes at the foot if anything in it passes. The test runs
+ * on every sentence, list line and bullet against ALL the page, so it holds for
+ * every heading (812 distinct ones on one measured domain). In Related and the
+ * summary link sections a link-led bullet is decided by its target instead: a new
+ * target is always added, a known one never.
+ *
+ * Not text, on purpose: the incoming `# title` when the page has one, and `created`
+ * and `date` (bookkeeping of a write).
  *
  * @param {string} keepText
  * @param {string} incomingText
  * @param {object} [opts]
  * @param {string} [opts.keepFolder]
+ * @param {string[]} [opts.dropped] receives each passage left out for repeating the
+ *   page, so the caller can say so. An exact repeat is not listed: nothing is lost.
  * @returns {string}
  */
-export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
+export function composeReusedPage(keepText, incomingText, { keepFolder, dropped = [] } = {}) {
   const original = String(keepText ?? '');
   const bom = original.startsWith('\ufeff') ? '\ufeff' : '';
   const crlf = (original.match(/\r\n/g) || []).length;
   const eol = crlf * 2 > (original.match(/\n/g) || []).length ? '\r\n' : '\n';
 
   const keep = splitPage(original);
-  const inc = splitPage(incomingForLossCheck(incomingText));
+  const inc = splitPage(withoutWriteBookkeeping(incomingText));
   const wantType = keepFolder === 'entities' ? 'entity' : keepFolder === 'concepts' ? 'concept' : null;
   const fm = composeFrontmatter(keep, inc, wantType);
 
@@ -521,6 +575,8 @@ export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
   const sections = sectionIndex(keepTokens);
   const keptHasTitle = keepTokens.some((t) => t.kind === 'heading' && t.level === 1);
   let hay = hayOf(keep.body);
+  const pageWords = new Set(contentWords(keep.body.join('\n')));
+  const absorb = (text) => { for (const w of contentWords(text)) pageWords.add(w); };
 
   // Where the opening ends: before the first `##`, or a second `#`.
   let openingEnd = 0;
@@ -564,6 +620,7 @@ export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
   const incTokens = tokenize(inc.body);
   let group = null;                 // null: the opening
   let pending = [];                 // a heading waits for something new under it
+  const linkTargets = new Map();    // link section → the targets it names
   const place = (block, direct) => {
     if (group === null) {
       addAt(openingEnd, block);
@@ -587,9 +644,8 @@ export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
     }
     if (t.kind === 'heading') {
       if (group) group.direct = false;
-      const line = t.level === 1 ? demote(t) : t.lines[0];
-      if (hay.includes('\n' + line.trimEnd() + '\n')) pending.push([line]);
-      else { for (const h of pending) place(h, false); pending = []; remember([line]); place([line], false); }
+      // A sub-heading goes on the page only with something new under it.
+      pending.push([t.level === 1 ? demote(t) : t.lines[0]]);
       continue;
     }
     if (t.kind === 'bullet' && group) {
@@ -597,13 +653,50 @@ export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
     } else if (hay.includes(hayOf(t.lines))) {
       continue;
     }
+
+    // What of this block says something new. A fence is code: only an exact repeat
+    // goes (above). A table is one unit. Prose goes sentence by sentence.
+    let lines = t.lines;
+    const whole = t.lines.join(' ');
+    if (t.kind === 'bullet') {
+      const target = group && LINK_SECTIONS.has(group.key) ? leadTarget(t.lines[0]) : null;
+      if (target) {
+        if (!linkTargets.has(group.key)) {
+          linkTargets.set(group.key, new Set((sections.get(group.key)?.bullets || []).map((b) => leadTarget(b.lines[0])).filter(Boolean)));
+        }
+        const known = linkTargets.get(group.key);
+        if (known.has(target)) { dropped.push(whole); continue; }
+        known.add(target);
+      } else if (!isMostlyNew(whole, pageWords)) {
+        if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
+        continue;
+      }
+    } else if (t.kind === 'para') {
+      if (t.lines.every((l) => l.startsWith('|'))) {
+        if (!isMostlyNew(whole, pageWords)) { dropped.push(whole); continue; }
+      } else {
+        const everyLine = t.lines.every((l) => LIST_LINE_RE.test(l));
+        const units = everyLine ? t.lines : splitSentences(whole);
+        const fresh = [];
+        for (const u of units) {
+          if (isMostlyNew(u, pageWords)) { fresh.push(u); absorb(u); } else dropped.push(u);
+        }
+        if (!fresh.length) continue;
+        if (fresh.length !== units.length) lines = everyLine ? fresh : [fresh.join(' ')];
+      }
+    }
+    absorb(lines.join(' '));
+
     const direct = !group || group.direct;
-    for (const h of pending) place(h, direct);
+    for (const h of pending) {
+      if (!hay.includes(`\n${h[0].trimEnd()}\n`)) { remember(h); absorb(h[0]); place(h, direct); }
+    }
     pending = [];
-    remember(t.lines);
+    remember(lines);
     const closer = t.kind === 'fence' && !t.closed ? t.marker[0].repeat(t.marker.length) : null;
-    place(closer ? [...t.lines, closer] : t.lines, direct);
+    place(closer ? [...lines, closer] : lines, direct);
   }
+  for (const [key, section] of tailSections) if (!section.lines.length) tailSections.delete(key);
 
   const conflicts = fm.conflicts.length ? ['```yaml', ...fm.conflicts, '```'] : null;
   const addConflicts = conflicts && !hay.includes(hayOf(conflicts));
@@ -664,10 +757,9 @@ export function composeReusedPage(keepText, incomingText, { keepFolder } = {}) {
 
 /**
  * The incoming page without what a reuse deliberately does not carry: its first
- * `# title`, when no text comes before it, and its `date`. composeReusedPage and
- * the guard in writePage both read this, so what is "not text" has one definition.
+ * `# title`, when no text comes before it, and its `date`.
  */
-export function incomingForLossCheck(incomingText) {
+function withoutWriteBookkeeping(incomingText) {
   const page = splitPage(incomingText);
   const body = page.body.slice();
   const first = body.findIndex((l) => !isBlank(l));
