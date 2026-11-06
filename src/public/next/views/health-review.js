@@ -305,6 +305,7 @@ export function createReviewDesk(d) {
   function goTo(r, index) {
     stopWatch();
     r.index = index;
+    if (r.outcome && r.outcome.retry) r.outcome = null; // "Try again" belongs to the pair that failed, never the next one
     r.comparison = null;
     r.refreshing = false;
     d.disarm(r.scan);
