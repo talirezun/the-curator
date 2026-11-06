@@ -566,6 +566,8 @@ The scan is careful on purpose. It asks how two pages relate and only "the same 
 
 It does not catch everything. Two pages are only compared if their names share a word, look alike, are spelling variants, or one is the initials of the other, so `car` and `automobile` are never compared.
 
+After an ingest, the result may say "6 of 19 new pages have names close to other pages. Compare them under Wiki health." That means only that the names look alike, and nothing has been read or charged. Ingest does not fold a new page onto an old one unless the names are spelling variants. The next comparison in that domain starts with the pairs touching those new pages, ahead of older pairs. The order is kept on that computer only.
+
 What it finds waits under Possible duplicates: press **Review**. Each pair is its own card showing `remove-slug → keep-slug`, a confidence level and the AI's reasoning, with four buttons: **Preview diff**, which opens the exact paths, the link rewrites and the first 4,000 characters of the merged page inline, which are what Merge will write; **Flip**, which swaps which side is kept, and so whose title and opening stay at the top; **Merge**, disabled until you have previewed that specific pair; and **Skip**, which dismisses the pair permanently. The preview gate is per pair and resets when you re-check, switch domains or flip a pair.
 
 There is a batch row, **Spelling variants**, with **Merge N**. It takes only pairs the AI rated high confidence whose names are the same word spelled differently, such as `hand-off` and `handoff`. Every other pair needs its own Preview, including high-confidence pairs whose names differ, because a merge deletes a page and the AI's confidence alone has proved wrong.
