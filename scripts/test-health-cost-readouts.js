@@ -348,8 +348,8 @@ section('18. After a plan or a scan → what ran and what it cost, on THIS domai
     for (const plan of kind === 'semantic' ? [null] : [[{ a: 1 }], []]) {
       const state = { aiSpent: { slug: 'x', spent: SPENT }, estimates: {} };
       let spentAtStart = 'unset';
-      const fn = new Function('state', 'render', 'streamSSE', 'isCurrentMount', 'noteAiProgress', 'emptyPlanNotice',
-        'newSemanticScan', 'myMountToken', `return (async ${body});`)(state,
+      const fn = new Function('compareAll', 'state', 'render', 'streamSSE', 'isCurrentMount', 'noteAiProgress', 'emptyPlanNotice',
+        'newSemanticScan', 'myMountToken', `return (async ${body});`)({ acknowledge() {} }, state,
         () => { if (spentAtStart === 'unset') spentAtStart = state.aiSpent; },
         async (_u, _b, on) => { on('done', kind === 'semantic' ? { pairs: [], spent: SPENT } : { plan, summary: {}, spent: SPENT }); },
         () => true, () => {}, () => 'empty', () => ({}), 1);
