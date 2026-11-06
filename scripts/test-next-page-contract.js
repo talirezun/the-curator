@@ -443,7 +443,7 @@ function visibleLines(root) {
   const lines = [];
   walk(root, (n) => {
     if (n.tag === '#text' || n.tag === 'svg' || n.tag === 'style') return;
-    if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail')) return;
+    if (hasClass(n, 'visually-hidden') || hasClass(n, 'mono') || hasClass(n, 'dm-plan-data') || hasClass(n, 'ai-run-model') || hasClass(n, 'tx-status-detail') || hasClass(n, 'hr-fam-pick-open')) return;
     if (ancestorWith(n, (p) => hasClass(p, 'visually-hidden') || hasClass(p, 'mono') || hasClass(p, 'dm-plan-data'))) return;
     if (ancestorWith(n, (p) => hasClass(p, 'hr-pane-text'))) return;
     let t = ''; let own = false;
@@ -485,7 +485,7 @@ function healthContractViolations(html) {
       const ownText = (m) => (m.children || []).map((c) => (c.tag === '#text' ? (c.text || c.value || '') : ownText(c))).join('');
       const label = ownText(n).trim();
       const block = ancestorWith(n, (p) => hasClass(p, 'dm-confirm-card') || hasClass(p, 'hr-decide'));
-      if (!/^(Merge and delete [\d,]+|Merging|Merge into \S)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
+      if (!/^(Merge and delete [\d,]+|Merging|Merge into \S|Merge \S+ into \S)/.test(label)) bad.push('btn-danger whose label does not name its result: ' + label);
       if (!block || !html.includes(WARN)) bad.push('btn-danger without the undo warning in its block');
     }
   });

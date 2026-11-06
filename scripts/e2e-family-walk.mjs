@@ -206,17 +206,19 @@ async function auditWords(app, label, seen, known) {
     const copy = desk.cloneNode(true);
     copy.querySelectorAll('.hr-pane-body, .hr-fam-pick-open').forEach((n) => n.remove());
     const host = document.createElement('div');
-    host.style.cssText = 'position:absolute;visibility:hidden;width:' + desk.clientWidth + 'px';
+    host.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + desk.clientWidth + 'px';
     host.appendChild(copy); document.body.appendChild(host);
     const out = copy.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
     host.remove();
     return out;
   });
+  if (lines.length < 3) { step(`the audit read the screen: ${label}`, false, lines.join(' | ')); return; }
   const bad = [];
   for (const raw of lines) {
-    let line = raw;
+    // The fact sits beside its sentence, a small button at the end of its line.
+    let line = raw.replace(/^(Spelling variant|Version numbers differ|Different names) (?=[^\d\s])/, '').replace(/ (Undo|Try again)$/, '');
     for (const n of known) if (line === n) line = '';
-    if (!line) continue;
+    if (!line || /^[→·\s]*$/.test(line)) continue;
     if (seen) seen.add(line);
     if (BANNED.test(line) || !wordAllowed(line)) bad.push(line);
   }

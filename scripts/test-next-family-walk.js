@@ -45,6 +45,7 @@ function family(pairs, over = {}) {
   const facts = over.facts || FACTS(over);
   const fx = deskFixture(pairs, { deps: { familyFacts: async (slug, pages, textOf) => {
     fx.calls.facts = (fx.calls.facts || 0) + 1;
+    if (!textOf) fx.calls.factsWhole = (fx.calls.factsWhole || 0) + 1;
     if (fx.nextFacts) { const e = fx.nextFacts; fx.nextFacts = null; throw new Error(e); }
     if (textOf) return { pages: [{ page: textOf, exists: true, length: 4242, links: 21 }], answers: [], kept: [], keptText: { text: '# ' + textOf + '\n\n## Merged from x\n', truncated: false } };
     return { ...facts, pages: facts.pages.filter((p) => pages.includes(p.page)), answers: facts.answers };
@@ -170,6 +171,7 @@ section('§4 The walk: the same desk, the same gate');
   // THE SNAPSHOT. The merge closed B~C, the only pair that brought C in.
   ok(fx.scan.pairs.find((p) => p.removeSlug === 'c').status === 'resolved', 'the cascade closed the pair that brought C in');
   ok(fam(fx).order.includes(c('c')) && fam(fx).order[fam(fx).i] === c('c'), 'and C has not left the walk');
+  ok(fx.calls.factsWhole === 1, 'the facts were read once, when the family opened, and never again', fx.calls.factsWhole);
   t = text(fx.html());
   ok(t.includes('The AI never compared these two pages.') && !t.includes('The AI compared these two pages'), 'and it is never treated as compared');
   ok(t.includes('It is here because the AI matched it with b, which you have since merged in. That says nothing about a. Only your reading decides this one.'), 'it says plainly why C is here', t);
@@ -224,6 +226,20 @@ section('§4 The walk: the same desk, the same gate');
   h = fx.html(); t = text(h);
   ok(t.includes('You kept c and a apart.') && /id="hr-undo"/.test(h) && !/id="hr-merge"/.test(h), 'back on a kept page: it says so, with Undo', t);
   ok(/Page that goes away: c/.test(h) && t.includes('Text of c'), 'and its text as usual');
+}
+
+section('§4b The AI\'s own pair follows a decision on the walk');
+{
+  const fx = await opened();
+  await pick(fx, 'a');
+  // The AI's pair is b -> a: the same two pages as the walk's, whichever way round it was stored.
+  fx.scan.pairs[0] = { ...fx.scan.pairs[0], keepSlug: 'b', removeSlug: 'a' };
+  fx.seen();
+  await fx.press('hr-keep'); await fx.paint();
+  ok(fx.scan.pairs[0].status === 'skipped', 'Keep both decides it too, or the lanes would still count it');
+  await fx.press('hr-undo'); await fx.paint();
+  ok(fx.scan.pairs[0].status === 'open', 'and Undo brings it back');
+  ok(fx.calls.keep.length === 1 && fx.calls.keep[0] === 'concepts/a||concepts/b', 'one record, in the walk\'s direction');
 }
 
 section('§5 The AI\'s three answers, and the fourth');
@@ -322,6 +338,7 @@ section('§7 Stop any time; the end');
   ok(t.includes('All decided'), 'every page decided', t.slice(0, 100));
   ok(t.includes('3 pages left over still match one another, so they may be a smaller family of their own.') && t.includes('Review those 3'), 'the pages left over are offered', t);
   ok(leftovers(fam(walk), walk.scan.pairs).length === 1, 'as one family, because C~D and D~E share D');
+  ok(!leftovers(fam(walk), walk.scan.pairs)[0].pages.includes(c('a')), 'and the page that stays is never one of them');
   await walk.press('hr-fam-residue'); await walk.paint();
   t = text(walk.html());
   ok(t.includes('Family of 3 pages') && t.includes('Which page stays?'), 'Review those 3: a smaller family, from the start', t.slice(0, 160));

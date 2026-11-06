@@ -381,7 +381,7 @@ export function renderFinish(fam, ctx) {
   const groups = ctx.leftovers;
   const nLeft = groups.reduce((a, g) => a + g.pages.length, 0);
   return (SHOW_MARKS ? renderMarks(fam, false) : '') +
-    '<div class="hr-fam-card"><div class="hr-fam-card-text">Stays<span class="mono hr-fam-card-name">' + esc(stays) + '</span>' + grew + '</div>' + btn('hr-read-stays', 'Read full page', ' aria-label="' + esc('Read full page: ' + stays) + '"') + '</div>' +
+    '<div class="hr-fam-card"><div class="hr-fam-card-text"><div>Stays</div><div class="mono hr-fam-card-name">' + esc(stays) + '</div><div>' + grew + '</div></div>' + btn('hr-read-stays', 'Read full page', ' aria-label="' + esc('Read full page: ' + stays) + '"') + '</div>' +
     neverLine + renderFoldRows(folds, { alias: 'dm' }) +
     (nLeft ? '<div class="hr-fam-left"><p>' + plural(nLeft, 'page') + ' left over still match one another, so they may be a smaller family of their own.</p>' + btn('hr-fam-residue', 'Review those ' + n0(nLeft)) + '</div>' : '') +
     '<p class="hr-note hr-fam-foot">' + esc(ctx.note) + '</p>';
