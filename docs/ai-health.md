@@ -166,6 +166,8 @@ The estimate stays at 400 tokens per pair, split 60/40. Measured on Haiku 5.5, a
 
 ### What a scan remembers
 
+**New pages go first.** After an ingest, the pairs touching the pages it created are compared ahead of older pairs, so a new duplicate does not wait behind tens of thousands of old pairs. Within each side the order is unchanged, so spelling variants still lead among the new pairs. Those pairs stop going first as soon as they are answered, and the scan moves on to the old ones. The record is one JSON file per domain in the user-data directory, outside `domains/` (`src/brain/recent-new-pages.js`): names only, at most 2,000, oldest out first, never synced. A missing or corrupt file gives the old order. Ingest makes no extra model call for this and writes nothing else to the wiki. It runs after `findSemanticCandidatePairs`, whose output does not change. Pages created by Compile or `compile_to_wiki` are not recorded.
+
 On a large domain one run reaches only a small part of the possible pairs (measured: 36,333 on a 3,407-page domain, against a default of 500 per run). So each answer is kept, in one JSON file per domain at `<user data>/.duplicate-checks/<domain>.json`, written atomically after each batch.
 
 - **It is a cache, on this computer only.** It sits outside `domains/`, so a scan still writes nothing into the wiki and Sync never carries it. A missing or corrupt file behaves as a first scan. Losing it costs money, never data.

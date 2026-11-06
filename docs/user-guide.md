@@ -3485,6 +3485,19 @@ Asking **Chat** why is not useful: Chat reads your wiki's pages and the domain's
 
 The result panel will show which pages were "updated" vs "unchanged" — you can confirm at a glance that nothing was duplicated.
 
+**New pages that may repeat old ones.** Ingest does not fold a new page onto an existing one unless the names are spelling variants, because a wrong fold has no in-app undo. It tells you afterwards instead, in one line of the result:
+
+> 6 of 19 new pages have names close to other pages. Compare them under Wiki health.
+
+| | |
+|---|---|
+| **What it means** | Those pages' *names* look like other pages' names. It does not say they are duplicates: nothing has read them yet. |
+| **What it costs** | Nothing, and nothing happens, until you press **Compare** in Wiki health. That press shows its price first. |
+| **What changes** | The next comparison in this domain starts with the pairs that touch recently created pages, ahead of older pairs. |
+| **When there is no line** | No new page was created, none has a close name, or every such pair has already been answered or dismissed. |
+
+It cannot see a repeat whose name looks nothing like the original (`car` and `automobile`), and the order is kept on this computer only, so a page created on your other computer and synced here takes its ordinary place. On a large wiki most new pages have a close name somewhere, so expect the line on most ingests.
+
 > There is no list of previously-ingested files in the app — re-ingesting means handing The Curator the file again. The original files live in `domains/<domain>/raw/` on the machine you ingested them on, if you need to find one.
 
 > In a **batch**, the same check happens at the confirm screen instead: already-ingested files are marked **Skipped** before anything is uploaded, and the **Overwrite existing pages for files already ingested** checkbox re-includes them.
