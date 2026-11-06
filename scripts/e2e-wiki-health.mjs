@@ -824,7 +824,7 @@ async function scenarios(app, profile) {
       await shot('spelling-confirm'); await audit('spelling confirm');
       await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(300);
     }
-    await act(app, profile, 'lane-review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
+    await act(app, profile, 'lane-review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
     await shot('review-open'); await audit('review open');
     const key = await pickCard(page, 1);
     if (key) {
@@ -859,7 +859,7 @@ async function scenarios(app, profile) {
     await openDomain(app, 'h4'); await compareReady(page);
     await act(app, profile, 'find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 300, runs: true });
     await act(app, profile, 'find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 800, settle: 1800, runs: true });
-    await act(app, profile, 'review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
+    await act(app, profile, 'review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
     const ncards = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     note(`[${profile.name}] pair cards after the first scan: ${ncards}`);
     if (await page.evaluate((s) => !!document.querySelector(s), SEL.checkNext)) {
@@ -900,7 +900,7 @@ async function scenarios(app, profile) {
     await act(app, profile, 'big-find-press', { press: SEL.findDupes, place: 300, outcome: OUT_CONFIRM, until: (a, b) => !!document.querySelector(a) || !!document.querySelector(b), args: [SEL.confirmYes, SEL.outcome], untilTries: 6000, settle: 300, runs: true });
     note(`[${profile.name}] after pressing Compare: ${await page.evaluate(() => { const o = document.querySelector('.dm-health .dm-outcome'); return o ? o.innerText : 'no outcome line'; })}`);
     await act(app, profile, 'big-find-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM], until: exists, args: [SEL.review], untilTries: 2400, settle: 1800, runs: true });
-    await act(app, profile, 'big-review', { press: SEL.review, place: 300, outcome: [SEL.card], until: exists, args: [SEL.card], settle: 300 });
+    await act(app, profile, 'big-review', { press: SEL.review, place: 300, outcome: ['[data-group-key="duplicates"] .dm-plan-card'], until: exists, args: [SEL.card], settle: 300 });
     const n = await page.evaluate((s) => document.querySelectorAll(s).length, SEL.card);
     const key = await pickCard(page, 2);
     step(`[${profile.name}] the big run lists hundreds of pairs, the first page of them on screen`, n === 50 && !!key && await page.evaluate(() => /[1-9]\d\d/.test(document.querySelector('[data-group-key="duplicates"] .cur-fold-pill').innerText)), String(n));
