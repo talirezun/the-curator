@@ -364,7 +364,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     totalOpenIssues: (r) => (r && r.brokenLinks ? r.brokenLinks.length : 0),
     renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
     renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '', renderChangesRow: () => '',
-    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
+    GIT_UNDO_NOTE: 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     
@@ -523,7 +523,7 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     totalOpenIssues: () => 0,
     renderBanner: () => '', renderMirrorNote: () => '',
     renderHealthLanes: () => '', renderAnchorHere: () => '', renderChangesRow: () => '',
-    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
+    GIT_UNDO_NOTE: 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     HEALTH_CATEGORIES: [], inFlightWriteSlugs: new Set(),

@@ -957,7 +957,7 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   const stripComments9 = (src) => src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+  const NOTE = 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.';
   const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
   // The claim, in any of the phrasings the codebase actually used:

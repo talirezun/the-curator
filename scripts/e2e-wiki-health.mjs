@@ -99,6 +99,7 @@ const SEL = {
   dismissIn: (group) => `[data-group-key="${group}"] .dm-issue-row .dm-dismiss-btn`,
   leftUndo: '.dm-left-undo-btn',
   restore: '.dm-restore-btn',
+  changeUndo: '[data-group-key="changes"] .dm-change-undo-btn',
   fold: (key) => `[data-group-key="${key}"]`,
   lane: (name) => `.dm-lane[data-row-key="lane:${name}"]`,
   laneTitle: '.dm-lane-title',
@@ -309,6 +310,18 @@ async function startApp(profile) {
     writeFileSync(path.join(w, 'concepts', 'same.md'), '---\ntype: concept\n---\n\n# Same\n\nThe concept.\n\n## Related\n\n- [[alpha]]\n');
     writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[same]]\n');
     writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hdup\n\n## Entities\n\n| Page | Summary |\n|---|---|\n| [[same]] | The entity. |\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n');
+    writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
+  // S17: one name in two folders and a page linking to it, for a merge that Recent changes undoes.
+  { const w = path.join(ws.domains, 'hundo', 'wiki'); rmSync(w, { recursive: true, force: true });
+    for (const d of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(w, d), { recursive: true });
+    writeFileSync(path.join(ws.domains, 'hundo', 'CLAUDE.md'), '# hundo\n');
+    writeFileSync(path.join(w, 'entities', 'same.md'), '---\ntype: entity\n---\n\n# Same\n\nThe entity.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'concepts', 'same.md'), '---\ntype: concept\n---\n\n# Same\n\nThe concept, with its own words.\n\n## Related\n\n- [[alpha]]\n');
+    writeFileSync(path.join(w, 'concepts', 'alpha.md'), '---\ntype: concept\n---\n\n# Alpha\n\nA first page.\n\n## Related\n\n- [[same]]\n- [[nowhere]]\n');
+    // Two things that stay to look at, so the merge and its undo never turn the wiki clean (a
+    // clean wiki draws its own line above the lanes, which is another action's measurement).
+    writeFileSync(path.join(w, 'concepts', 'lonely.md'), '---\ntype: concept\n---\n\n# Lonely\n\nNothing links here.\n');
+    writeFileSync(path.join(w, 'index.md'), '# Wiki Index — hundo\n\n## Entities\n\n| Page | Summary |\n|---|---|\n| [[same]] | The entity. |\n\n## Concepts\n\n| Page | Summary |\n|---|---|\n| [[alpha]] | A first page. |\n');
     writeFileSync(path.join(w, 'log.md'), '# Log\n'); }
   // One page nothing links to, and nothing else to do.
   { const w = path.join(ws.domains, 'hone', 'wiki'); rmSync(w, { recursive: true, force: true });
@@ -1009,6 +1022,65 @@ async function scenarios(app, profile) {
   }
   // S16 — the review desk.
   if (run('S16') && sub('S16')) await reviewDeskScene(app, profile);
+  // S17 — Recent changes (Undo, owner's decision 2026-11-07): a merge is listed, its Undo
+  // asks on its own row and puts every file back byte for byte; a page changed since refuses.
+  if (run('S17') && sub('S17')) await undoScene(app, profile);
+}
+
+async function undoScene(app, profile) {
+  const { page } = app;
+  const OUT_CONFIRM = [SEL.confirmCard];
+  const HELD = 1900;
+  const shot = async (state) => { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); const b = await page.send('Page.captureScreenshot', { format: 'png' }); writeFileSync(path.join(SHOTS, `${state}--${profile.name}.png`), Buffer.from(b.data, 'base64')); };
+  const audit = async (label) => { const a = await wordAudit(page); step(`[${profile.name}] words, ${label}: every visible string is in the deck`, a.bad.length === 0, a.bad.slice(0, 8).join(' | ')); step(`[${profile.name}] words, ${label}: none banned`, a.banned.length === 0, a.banned.slice(0, 8).join(' | ')); };
+  const wiki = path.join(app.ws.domains, 'hundo', 'wiki');
+  const treeOf = () => { const out = {}; const walk = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const q = path.join(d, e.name); if (e.isDirectory()) walk(q); else out[path.relative(wiki, q)] = createHash('sha256').update(readFileSync(q)).digest('hex'); } }; walk(wiki); return JSON.stringify(out); };
+  const toHealth = () => page.evaluate((s, m) => { const e = document.querySelector(s); document.querySelector(m).scrollTop += e.getBoundingClientRect().top - 40; }, '.dm-health', SEL.main);
+  const text = (s) => page.evaluate((q) => (document.querySelector(q) || {}).innerText || '', s);
+  await openDomain(app, 'hundo'); await waitFor(page, exists, 'health', 400, SEL.healthReady); await toHealth(); await delay(500);
+  const before = treeOf();
+  await openFoldsOn(page, ['crossFolderDupes']);
+  // The merge itself is pressed, not measured here: a completed cross-folder merge moves the
+  // rows above it by 26 px at 375 (and the scroll by 27 at 1280) with or without Recent
+  // changes (measured with the row switched off, 2026-11-07). That is the merge's own
+  // defect, reported, and this scene measures the undo.
+  await place(page, SEL.fixAll('crossFolderDupes'), 400);
+  await page.evaluate((s) => document.querySelector(s).click(), SEL.fixAll('crossFolderDupes'));
+  await waitFor(page, exists, 'question', 200, SEL.confirmYes); await delay(400);
+  await page.evaluate((s) => document.querySelector(s).click(), SEL.confirmYes);
+  await waitFor(page, exists, 'Recent changes', 400, SEL.fold('changes'));
+  await delay(HELD);
+  step(`[${profile.name}] the merge changed the wiki`, treeOf() !== before);
+  step(`[${profile.name}] Recent changes appears, counting 1`, /Recent changes\s*1/.test(await text(SEL.fold('changes'))), await text(SEL.fold('changes')));
+  await place(page, SEL.fold('changes'), 300);
+  await page.evaluate((s) => { document.querySelector(s + ' summary').click(); }, SEL.fold('changes'));
+  await waitFor(page, exists, 'the Undo button', 200, SEL.changeUndo); await delay(300);
+  const row = await text(SEL.fold('changes'));
+  step(`[${profile.name}] the list says what changed, how many pages, when`, /Merged concepts\/same into entities\/same/.test(row) && /\d+ pages( and the page list)? · (just now|.+ ago)/.test(row), row);
+  step(`[${profile.name}] Undo is a real button`, await page.evaluate((s) => { const b = document.querySelector(s); return !!b && b.tagName === 'BUTTON' && b.innerText.trim() === 'Undo'; }, SEL.changeUndo));
+  await shot('recent-changes'); await audit('recent changes');
+  await act(app, profile, 'undo-press', { press: SEL.changeUndo, place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmYes], settle: 400, runs: true });
+  const q = await text(SEL.confirmCard);
+  step(`[${profile.name}] the question names the pages and says this computer only`, /^Undo “Merged concepts\/same into entities\/same”\?/.test(q) && /concepts\/same comes back\./.test(q) && /this computer only/.test(q), q);
+  await shot('undo-confirm'); await audit('undo confirm');
+  await delay(400);
+  await act(app, profile, 'undo-run', { press: SEL.confirmYes, outcome: [ON_CONFIRM, SEL.outcome], until: (s) => /Undone\./.test((document.querySelector(s) || {}).innerText || ''), args: ['.dm-health'], settle: 900, runs: true });
+  await delay(600);
+  step(`[${profile.name}] after Undo every file is byte-identical to before the merge`, treeOf() === before);
+  const after = await text(SEL.fold('changes'));
+  step(`[${profile.name}] the row says Undone, and offers no second Undo`, /Undone/.test(after) && !(await page.evaluate((s) => !!document.querySelector(s), SEL.changeUndo)), after);
+  await shot('undo-done'); await audit('undo done');
+  // A page changed since: merge again, edit the kept page on disk, and Undo refuses on the row.
+  await page.evaluate(async (slug) => { await fetch('/api/health/' + slug + '/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'crossFolderDupes', issue: { keep: 'entities/same.md', remove: 'concepts/same.md' } }) }); }, 'hundo');
+  writeFileSync(path.join(wiki, 'entities', 'same.md'), readFileSync(path.join(wiki, 'entities', 'same.md'), 'utf8') + '\nEdited by hand after the merge.\n');
+  const edited = treeOf();
+  await page.evaluate((s) => document.querySelector(s).click(), SEL.rescan);
+  await waitFor(page, (s) => document.querySelectorAll(s).length > 0, 'the new change', 400, SEL.changeUndo); await delay(400);
+  await act(app, profile, 'undo-refused', { press: SEL.changeUndo, place: 400, outcome: [SEL.outcome], until: (s) => /Nothing was undone/.test((document.querySelector(s) || {}).innerText || ''), args: ['.dm-health'], settle: 600, runs: true });
+  const refusal = await text(SEL.outcome);
+  step(`[${profile.name}] a page changed since: Undo refuses on its row and names the page`, /Nothing was undone\. entities\/same was changed after this change/.test(refusal) && !(await page.evaluate((s) => !!document.querySelector(s), SEL.confirmCard)), refusal);
+  step(`[${profile.name}] and nothing was written`, treeOf() === edited);
+  await shot('undo-refused'); await audit('undo refused');
 }
 
 // ═══ THE REVIEW DESK ════════════════════════════════════════════════════════

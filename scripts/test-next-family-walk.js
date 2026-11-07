@@ -25,7 +25,7 @@ const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').rep
 const buttonOf = (html, id) => (new RegExp('<button[^>]*id="' + id + '"[^>]*>').exec(html) || [''])[0];
 const shut = (html, id) => / disabled/.test(buttonOf(html, id));
 const c = (s) => 'concepts/' + s;
-const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+const NOTE = 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.';
 
 // A~B, B~C, C~D, and one the AI said is not the same. A is never compared with C or D.
 const CHAIN = () => [pair('b', 'a', { rationale: 'A and B match.' }), pair('c', 'b', { rationale: 'B and C match.' }), pair('d', 'c', { rationale: 'C and D match.' })];

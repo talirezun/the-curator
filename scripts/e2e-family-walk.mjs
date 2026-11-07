@@ -442,7 +442,7 @@ async function walk(app) {
   t = await deskText(page);
   step('the summary: what stayed and how it grew', /Took in 2 pages\. Links pointing to it went from \d+ to \d+, its text from [\d.]+ (KB|B) to [\d.]+ KB\./.test(t), t.slice(0, 400));
   step('the summary: names a page merged without a comparison', t.includes('You merged 1 page the AI never compared with claude-opus: ' + neverPage + '. Only your reading decided it.'), t.slice(0, 600));
-  step('the summary: the pinned note', t.includes('You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.'));
+  step('the summary: the pinned note', t.includes('Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.'));
   await headIntoView(page);
   await shot(app, '8-finished');
   await auditWords(app, '8, finished', seen, known);

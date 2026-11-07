@@ -1630,8 +1630,16 @@ export function describeFixChange(type, issue, s) {
       break;
     }
     case 'crossFolderDupes': {
+      // The two pages share a name, so the folder is what tells them apart.
       const keep = issue ? splitWikiRef(issue.keep) : null;
-      if (deleted.length === 1 && keep) return `Merged ${deleted[0]} into ${keep.slug}`;
+      if (s.deleted.length === 1 && keep) return `Merged ${s.deleted[0].replace(/\.md$/i, '')} into ${keep.folder}/${keep.slug}`;
+      // Fix all: the kept page is the changed one in the other folder with the same name.
+      if (s.deleted.length === 1) {
+        const [gone] = s.deleted;
+        const kept = s.changed.find((c) => c.split('/')[0] !== gone.split('/')[0] && /^(entities|concepts)\//.test(c)
+          && crossFolderKey(c.split('/')[1]) === crossFolderKey(gone.split('/')[1]));
+        if (kept) return `Merged ${gone.replace(/\.md$/i, '')} into ${kept.replace(/\.md$/i, '')}`;
+      }
       return `Merged ${deleted.length === 1 ? '1 page' : deleted.length + ' pages'} that had the same name in two folders`;
     }
     case 'hyphenVariants': {

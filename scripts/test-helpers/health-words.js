@@ -8,7 +8,7 @@
  * `{n}` is a figure with thousands separators, `{age}` a relative time, `{x}` a cost,
  * `{name}` free data (a page name, a model), `{msg}` a server's message.
  */
-const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+const NOTE = 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.';
 const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
 export const DECK = [
@@ -56,6 +56,28 @@ export const DECK = [
   '1 page is deleted and its links move to the page that stays.', 'Merge {n} groups with nearly the same name?', 'Merge 1 group with nearly the same name?',
   WARN, 'Merge and delete {n}', 'Merging {n} of {n}…', 'Merged {n}.', 'Merged {n}', 'Merged {n} of {n}. {n} now need your review.', 'Merged {n} {age}',
   'Could not merge: {msg}', 'Nothing left to merge.', 'Saving…', 'Left as is.', 'Undo', 'Brought back.', 'Could not save: {msg}',
+  // Recent changes (Undo, owner's decision 2026-11-07). The change's own title is
+  // page data (mono) and not audited here; test-health-undo.js pins its words.
+  'Recent changes',
+  'Kept for 30 days on this computer. Undo puts back every page of a change exactly as it was, or none: it refuses if any of them has changed since, and never reaches other computers.',
+  '{n} pages · {age}', '1 page · {age}', '{n} pages and the page list · {age}', '1 page and the page list · {age}',
+  'Undone', 'Could not finish undoing · {n} pages', 'Could not finish undoing · 1 page',
+  'Undo “{name}”?',
+  'Puts back these {n} pages exactly as they were before this change: {name}.',
+  'Puts back these {n} pages and the page list exactly as they were before this change: {name}.',
+  'Puts back these {n} pages exactly as they were before this change: {name}. {name} comes back.',
+  'Puts back these {n} pages and the page list exactly as they were before this change: {name}. {name} comes back.',
+  'Puts back these {n} pages exactly as they were before this change: {name}. {name} come back.',
+  'Puts back these {n} pages and the page list exactly as they were before this change: {name}. {name} come back.',
+  'Puts back this page exactly as it was before this change: {name}.',
+  'Puts back this page and the page list exactly as they were before this change: {name}.',
+  'This works on this computer only. Another computer that already has this change gets these pages back after both computers sync again.',
+  'Undoing…', 'Undone. {n} pages are back as they were.', 'Undone. The page is back as it was.',
+  'Nothing was undone. {name} was changed after this change: an edit, a later ingest, or a sync from another computer. Undo puts back every page or none, and never overwrites a newer change.',
+  'Nothing was undone. {name} was deleted after this change: an edit, a later ingest, or a sync from another computer. Undo puts back every page or none, and never overwrites a newer change.',
+  'Nothing was undone. {name} was created again after this change: an edit, a later ingest, or a sync from another computer. Undo puts back every page or none, and never overwrites a newer change.',
+  'Nothing was undone. {name} was changed by a later change, "{name}". Undo that one first. Undo puts back every page or none, and never overwrites a newer change.',
+  'This change was already undone.', 'Could not undo: {msg}', 'Could not check this change: {msg}',
   // Lane 3
   'AI help', 'Uses your AI model. Each action shows its cost first.', 'each action shows its cost', 'Change model',
   'Runs on {name} · each action shows its cost · Change model', 'Runs on {name}', 'Last run: {name}', 'Last run: {name} · {x}', '{x}',

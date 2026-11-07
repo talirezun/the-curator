@@ -412,7 +412,7 @@ const FAMILY_PAIRS = () => [deskPair('b', 'a', { rationale: 'A and B match.' }),
 const FAMILY_FACTS = { pages: ['a', 'b', 'c', 'd'].map((s, i) => ({ page: 'concepts/' + s, folder: 'concepts', slug: s, exists: true, opening: 'Opening of ' + s + '.', length: 1000 + i, links: 9 - i })),
   answers: [{ a: 'concepts/a', b: 'concepts/b', compared: 'same', rationale: 'A and B match.' }, { a: 'concepts/b', b: 'concepts/c', compared: 'same', rationale: 'B and C match.' }, { a: 'concepts/c', b: 'concepts/d', compared: 'same', rationale: 'C and D match.' }, { a: 'concepts/a', b: 'concepts/d', compared: 'different', rationale: 'Another subject.' }], kept: [] };
 const familyOpen = async (fn) => {
-  const f = deskFixture(FAMILY_PAIRS(), { deps: { familyFacts: async (s, pages, textOf) => (textOf ? { pages: [{ page: textOf, exists: true, length: 5000, links: 20 }], answers: [], kept: [], keptText: { text: '# a\n', truncated: false } } : { ...FAMILY_FACTS, pages: FAMILY_FACTS.pages.filter((p) => pages.includes(p.page)) }), keepApart: async () => {}, reload: () => {}, note: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.' } });
+  const f = deskFixture(FAMILY_PAIRS(), { deps: { familyFacts: async (s, pages, textOf) => (textOf ? { pages: [{ page: textOf, exists: true, length: 5000, links: 20 }], answers: [], kept: [], keptText: { text: '# a\n', truncated: false } } : { ...FAMILY_FACTS, pages: FAMILY_FACTS.pages.filter((p) => pages.includes(p.page)) }), keepApart: async () => {}, reload: () => {}, note: 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.' } });
   f.desk.open(); await f.paint();
   if (fn) await fn(f);
   return renderDeskSection(f.html());
@@ -425,7 +425,7 @@ DESK_ARMS.push(
   ['a family, the list open', await familyOpen(async (f) => { await famPick(f); f.state.expandedGroups.add('reviewFamily'); }), ['All 3 pages', 'The AI never compared these with', 'this page', 'hr-fam-jump']],
   ['a family, a merged page gone back to', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['This page no longer exists', 'Nothing more to decide here.']],
   ['a family, a kept page gone back to', await familyOpen(async (f) => { await famPick(f); await f.press('hr-keep'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['apart.', 'id="hr-undo"', 'Goes away']],
-  ['a family, finished', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-done'); await f.paint(); for (const k of ['reviewFamMerged', 'reviewFamLeft']) f.state.expandedGroups.add(k); }), ['Took in 1 page.', 'Merged in', 'Not decided', 'Go back to them', 'Review those', 'You can undo this in Recent changes']],
+  ['a family, finished', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-done'); await f.paint(); for (const k of ['reviewFamMerged', 'reviewFamLeft']) f.state.expandedGroups.add(k); }), ['Took in 1 page.', 'Merged in', 'Not decided', 'Go back to them', 'Review those', 'Every change here can be undone in Recent changes']],
   ['a family, kept apart', await familyOpen(async (f) => { await f.press('hr-fam-apart'); await f.paint(); }), ['Kept these 4 pages apart.', 'id="hr-undo"']],
 );
 for (const [label, html, must] of DESK_ARMS) {

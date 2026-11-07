@@ -410,7 +410,7 @@ const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolder
 // and "Recent changes" at the end of Wiki health puts them back. The two
 // sentences now say exactly what that covers and no more: 30 days, this
 // computer only, and only while the pages are as the change left them.
-const GIT_UNDO_NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+const GIT_UNDO_NOTE = 'Every change here can be undone in Recent changes for 30 days, on this computer, while its pages stay unchanged.';
 const GIT_UNDO_WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
 // ── What a domain IS, said once ────────────────────────────────────────────
@@ -2537,10 +2537,10 @@ async function loadHealth(slug, token, opts) {
     state.healthSlug = slug;
     state.healthStale = false;
     // A new change since the list was read: an open list reads it again, a shut one forgets it.
-    if (Array.isArray(state.changeRecords) && Number.isInteger(report.recentChanges) && report.recentChanges !== state.changeRecords.length) {
-      if (state.expandedGroups.has('changes')) loadChangeRecords(slug).catch(reportAsyncActionFailure);
-      else state.changeRecords = null;
-    }
+    // An open list that a full reading emptied is read again too, or it would say Loading… for ever.
+    const changesStale = Array.isArray(state.changeRecords) && Number.isInteger(report.recentChanges) && report.recentChanges !== state.changeRecords.length;
+    if (state.expandedGroups.has('changes') && (changesStale || state.changeRecords === null)) loadChangeRecords(slug).catch(reportAsyncActionFailure);
+    else if (changesStale) state.changeRecords = null;
     if (state.cache) (state.cache[slug] || (state.cache[slug] = {})).health = report;
     state.healthSummary[slug] = {
       count: totalOpenIssues(report),
@@ -8994,7 +8994,6 @@ function recentChangeCount() {
 function changeMeta(c) {
   const pages = c.pages === 1 ? '1 page' : n0(c.pages) + ' pages';
   const when = '<span data-age-at="' + escapeHtml(c.at) + '" data-age-text>' + escapeHtml(relTime(c.at)) + '</span>';
-  if (c.status === 'undone') return 'Undone · ' + escapeHtml(pages);
   if (c.status === 'stuck') return 'Could not finish undoing · ' + escapeHtml(pages);
   return escapeHtml(pages) + (c.index ? ' and the page list' : '') + ' · ' + when;
 }
@@ -9016,7 +9015,9 @@ function renderChangesRow(readonly, crossMountBusy) {
           ? '<button class="btn btn-secondary dm-change-undo-btn" data-change-id="' + escapeHtml(c.id) + '"' +
               (busy ? ' aria-busy="true" aria-disabled="true"' : ((state.busyKey || crossMountBusy) ? ' disabled' : '')) + '>' +
               (busy ? 'Checking…' : 'Undo') + '</button>'
-          : '';
+          // Undone keeps the row's shape: the mark stands where the button stood, so
+          // nothing under it (the question, its answer) moves when the list is read again.
+          : c.status === 'undone' ? '<span class="dm-change-done">' + icon('check', 13) + '<span>Undone</span></span>' : '';
         return renderFoldItem({ alias: 'dm', rowKey, main: c.title, metaHtml: changeMeta(c), actionHtml: action,
           afterHtml: renderAnchorStack(rowKey, crossMountBusy) });
       }).join('');
@@ -9076,7 +9077,7 @@ async function askUndoChange(slug, id) {
     anchor: rowKey,
     title: 'Undo “' + c.title + '”?',
     body: 'Puts back ' + (c.pages === 1 ? 'this page' : 'these ' + n0(c.pages) + ' pages') + (c.index ? ' and the page list' : '') +
-      ' exactly as they were before this change: ' + listPages(c.pageList) + '.' +
+      (c.pages === 1 && !c.index ? ' exactly as it was' : ' exactly as they were') + ' before this change: ' + listPages(c.pageList) + '.' +
       (c.deleted && c.deleted.length ? ' ' + listPages(c.deleted) + (c.deleted.length === 1 ? ' comes back.' : ' come back.') : ''),
     warn: 'This works on this computer only. Another computer that already has this change gets these pages back after both computers sync again.',
     confirmLabel: 'Undo',
@@ -9094,7 +9095,7 @@ async function runUndoChange(slug, id) {
     if (!isCurrentMount(token)) return;
     const n = res.change && res.change.pages;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'success', text: 'Undone. ' + (n === 1 ? 'The page is' : n0(n) + ' pages are') + ' back as they were.' };
+    state.rowNote = { key: rowKey, tone: 'success', text: n === 1 ? 'Undone. The page is back as it was.' : 'Undone. ' + n0(n) + ' pages are back as they were.' };
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
@@ -9305,6 +9306,10 @@ function onHealthToggle(e) {
   const el = e.target;
   if (!el || !el.dataset || !el.dataset.groupKey || !el.classList.contains('dm-group')) return;
   const key = el.dataset.groupKey;
+  // A row waiting above the press is hidden, so nobody toggled it: a fold put back
+  // OPEN by a paint (an Undo brings a merged group back) fires `toggle` by itself,
+  // and releasing it here opened it above the press, moving what was pressed.
+  if (el.hasAttribute('data-row-waiting')) return;
   if (el.open) state.expandedGroups.add(key); else state.expandedGroups.delete(key);
   // The desk's list draws its rows only while it is open: a list of thousands costs nothing shut.
   if (key === 'reviewPairs' || key === 'reviewFamily' || key.startsWith('reviewFam')) { render(myMountToken); return; }
