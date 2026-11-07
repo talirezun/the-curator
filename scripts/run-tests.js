@@ -662,6 +662,12 @@ const LIVE_SUITE_TIMEOUT_MS = {
   // plans 47-66 pages; Phase 2's page-by-page fallback is O(pages), so a bad
   // run has far more headroom to consume than the default 600s allows.
   'test-ingest-deep.js': 900_000,           // 15 min
+  // e2e-wiki-health.mjs is a STUBBED-model browser walk (no provider latency):
+  // 8 profiles at 1280 and 375 in light and dark, reduced motion, plus two
+  // 3,500-page "big" profiles. Measured 852 s and 846 s standalone on this
+  // machine (2026-11-07), so the flat 600 s cap killed a passing suite every
+  // time. 1,800 s is ~2.1x the measurement, the same margin as beta15 above.
+  'e2e-wiki-health.mjs': 1_800_000,         // 30 min
 };
 
 // ── Args ────────────────────────────────────────────────────────────────────
