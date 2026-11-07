@@ -228,7 +228,7 @@ function renderDomainHealth(stateOver) {
   const FNS = ['shouldKeepHealthOnReload', 'healthScanLabel', 'healthSection', 'renderHealthPanel',
     'renderHealthLanes', 'renderFreeLane', 'renderDecisionLane', 'renderAiLane', 'renderLaneHead', 'renderLaneTrace', 'renderPlainRow', 'renderShowMore', 'renderIssueFold', 'repairButton', 'mergeRowButton', 'deletesReading', 'renderCompareRow', 'renderSuggestRow', 'activeSemanticQuote', 'renderAnchorHere', 'freeRepairCount', 'n0', 'deletedPageCount', 'semanticCoverageFrom', 'liveBatchPairs',
     'quickAiButton', 'costReadout', 'formatUsd', 'pluralize', 'semanticPairKey', 'isSemanticPreviewed', 'canMergeSemanticPair',
-    'countOf', 'totalOpenIssues', 'renderIssueRow', 'renderDismissedGroup',
+    'countOf', 'totalOpenIssues', 'renderIssueRow', 'renderDismissedGroup', 'renderChangesRow', 'recentChangeCount', 'changeMeta',
     'describeDismissed', 'relTime', 'renderConfirmCard', 'renderPendingPlan', 'renderOutcomeLine', 'renderAnchorStack',
     'busyRingLabel', 'fmtKB'];
   const CONSTS = ['HEALTH_CATEGORIES', 'AUTO_FIX_TYPES', 'GIT_UNDO_NOTE', 'HEALTH_INFO', 'BUSY_LABELS', 'DESTRUCTIVE_FIX_TYPES', 'ISSUE_PAGE', 'FREE_ROWS'];
@@ -330,7 +330,7 @@ const PAGES = [
 // clean state; the desk's arms follow them.
 const WITH_YES = { ...DOMAIN_HEALTH_CONTRACT };
 const ASKED = { title: 'Merge 2 pages with the same name?', body: '2 pages are deleted and their links move to the page that stays.',
-  warn: 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.', tier: 'danger', confirmLabel: 'Merge and delete 2', run() {} };
+  warn: 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.', tier: 'danger', confirmLabel: 'Merge and delete 2', run() {} };
 const AI_ASKED = { title: 'Ask AI to find a page that should link to each?', body: 'Sends each page’s opening and the list of your page names to Flash Lite 2.5. About $0.0004. Nothing is written yet.', tier: 'ai', confirmLabel: 'Ask for', costText: '≈ $0.0004', run() {} };
 const FORGET = { title: 'Forget all comparisons?', body: 'The Curator forgets which pairs it has compared in this domain, so the next run starts over and costs money again. Pairs you kept apart stay that way. Nothing in your wiki changes.', confirmLabel: 'Forget', run() {} };
 const FIRST_USE = { title: 'Before you use AI help.', body: 'These actions send the opening of the pages involved, and usually a list of your other page names, to your AI provider (Google Gemini). The next step shows what it sends and what it costs before anything runs. The provider’s own privacy policy applies. To turn this off, remove your API key in Settings.', confirmLabel: 'Continue', run() {} };
@@ -412,7 +412,7 @@ const FAMILY_PAIRS = () => [deskPair('b', 'a', { rationale: 'A and B match.' }),
 const FAMILY_FACTS = { pages: ['a', 'b', 'c', 'd'].map((s, i) => ({ page: 'concepts/' + s, folder: 'concepts', slug: s, exists: true, opening: 'Opening of ' + s + '.', length: 1000 + i, links: 9 - i })),
   answers: [{ a: 'concepts/a', b: 'concepts/b', compared: 'same', rationale: 'A and B match.' }, { a: 'concepts/b', b: 'concepts/c', compared: 'same', rationale: 'B and C match.' }, { a: 'concepts/c', b: 'concepts/d', compared: 'same', rationale: 'C and D match.' }, { a: 'concepts/a', b: 'concepts/d', compared: 'different', rationale: 'Another subject.' }], kept: [] };
 const familyOpen = async (fn) => {
-  const f = deskFixture(FAMILY_PAIRS(), { deps: { familyFacts: async (s, pages, textOf) => (textOf ? { pages: [{ page: textOf, exists: true, length: 5000, links: 20 }], answers: [], kept: [], keptText: { text: '# a\n', truncated: false } } : { ...FAMILY_FACTS, pages: FAMILY_FACTS.pages.filter((p) => pages.includes(p.page)) }), keepApart: async () => {}, reload: () => {}, note: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.' } });
+  const f = deskFixture(FAMILY_PAIRS(), { deps: { familyFacts: async (s, pages, textOf) => (textOf ? { pages: [{ page: textOf, exists: true, length: 5000, links: 20 }], answers: [], kept: [], keptText: { text: '# a\n', truncated: false } } : { ...FAMILY_FACTS, pages: FAMILY_FACTS.pages.filter((p) => pages.includes(p.page)) }), keepApart: async () => {}, reload: () => {}, note: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.' } });
   f.desk.open(); await f.paint();
   if (fn) await fn(f);
   return renderDeskSection(f.html());
@@ -425,7 +425,7 @@ DESK_ARMS.push(
   ['a family, the list open', await familyOpen(async (f) => { await famPick(f); f.state.expandedGroups.add('reviewFamily'); }), ['All 3 pages', 'The AI never compared these with', 'this page', 'hr-fam-jump']],
   ['a family, a merged page gone back to', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['This page no longer exists', 'Nothing more to decide here.']],
   ['a family, a kept page gone back to', await familyOpen(async (f) => { await famPick(f); await f.press('hr-keep'); await f.paint(); await f.press('hr-prev'); await f.paint(); }), ['apart.', 'id="hr-undo"', 'Goes away']],
-  ['a family, finished', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-done'); await f.paint(); for (const k of ['reviewFamMerged', 'reviewFamLeft']) f.state.expandedGroups.add(k); }), ['Took in 1 page.', 'Merged in', 'Not decided', 'Go back to them', 'Review those', 'If you use GitHub Sync']],
+  ['a family, finished', await familyOpen(async (f) => { await famPick(f); f.seen(); await f.press('hr-merge'); await f.paint(); await f.press('hr-done'); await f.paint(); for (const k of ['reviewFamMerged', 'reviewFamLeft']) f.state.expandedGroups.add(k); }), ['Took in 1 page.', 'Merged in', 'Not decided', 'Go back to them', 'Review those', 'You can undo this in Recent changes']],
   ['a family, kept apart', await familyOpen(async (f) => { await f.press('hr-fam-apart'); await f.paint(); }), ['Kept these 4 pages apart.', 'id="hr-undo"']],
 );
 for (const [label, html, must] of DESK_ARMS) {
@@ -435,7 +435,7 @@ for (const [label, html, must] of DESK_ARMS) {
 // ── THE WORDS AND THE LANES (PLAN §3). Each is proved to fail, below, and each by
 // mutating the real code in the stage's mutation run.
 const LANE_TITLES = ['Free repairs', 'Your decision', 'AI help'];
-const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 const hasClass = (n, c) => (n.classes || []).includes(c);
 const ancestorWith = (n, pred) => { for (let p = n.parent; p; p = p.parent) if (pred(p)) return p; return null; };
 // What a person reads: every element's own text, with page names and page text out.

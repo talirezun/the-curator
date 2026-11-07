@@ -404,8 +404,14 @@ const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolder
 // exists, and so the next person to add a Health action inherits the true
 // wording instead of copying the old promise from a neighbouring string.
 // Kept consistent with docs/ai-health.md's "How to actually undo a Health fix".
-const GIT_UNDO_NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
-const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+//
+// SINCE 2026-11-07 THERE IS AN UNDO (owner's decision, src/brain/health-undo.js):
+// every Health action saves a copy of each file it changes, on this computer,
+// and "Recent changes" at the end of Wiki health puts them back. The two
+// sentences now say exactly what that covers and no more: 30 days, this
+// computer only, and only while the pages are as the change left them.
+const GIT_UNDO_NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+const GIT_UNDO_WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
 // ── What a domain IS, said once ────────────────────────────────────────────
 // Static prose: identical for every user, read once, and therefore the
@@ -520,6 +526,7 @@ const state = {
 
   expandedGroups: new Set(),   // category keys (+ 'dismissed') currently expanded
   dismissedRecords: null,      // lazily loaded full dismissal list for the active domain
+  changeRecords: null,         // lazily loaded "Recent changes" for the active domain (Undo)
 
   confirm: null,          // { title, body, confirmLabel, run }
   busyKey: null,          // action key currently in flight, or null
@@ -2360,7 +2367,7 @@ function resetDomainScopedHealthState(opts) {
   } else {
     state.estimates = {};
   }
-  if (!(opts && opts.silent)) state.dismissedRecords = null;
+  if (!(opts && opts.silent)) { state.dismissedRecords = null; state.changeRecords = null; }
   state.pendingPlan = null;
   if (state.semanticQuote) {
     if (quietReading) state.semanticQuote.stale = true;
@@ -2529,6 +2536,11 @@ async function loadHealth(slug, token, opts) {
     state.health = report;
     state.healthSlug = slug;
     state.healthStale = false;
+    // A new change since the list was read: an open list reads it again, a shut one forgets it.
+    if (Array.isArray(state.changeRecords) && Number.isInteger(report.recentChanges) && report.recentChanges !== state.changeRecords.length) {
+      if (state.expandedGroups.has('changes')) loadChangeRecords(slug).catch(reportAsyncActionFailure);
+      else state.changeRecords = null;
+    }
     if (state.cache) (state.cache[slug] || (state.cache[slug] = {})).health = report;
     state.healthSummary[slug] = {
       count: totalOpenIssues(report),
@@ -7584,6 +7596,7 @@ function healthGroupAlive(key) {
   if (key === 'spelling') return liveBatchPairs().length > 0 || state.busyKey === 'semanticMerge';
   if (key === 'duplicates') { const s = activeSemanticScan(); return !!s && (s.walkWaiting > 0 || s.pairs.some((p) => p.status === 'open')); }
   if (key === 'dismissed') return Number(r.dismissedRecords) > 0;
+  if (key === 'changes') return recentChangeCount() > 0;
   if (key === 'brokenLinks') return (r.brokenLinks || []).some((i) => i.suggestedTarget);
   if (key === 'brokenLinksOpen') return (r.brokenLinks || []).some((i) => !i.suggestedTarget);
   return Array.isArray(r[key]) && r[key].length > 0;
@@ -7600,6 +7613,11 @@ function healthStackHome(anchor) {
     const list = state.health[a.slice(6, cut)];
     const want = a.slice(cut + 1);
     return (Array.isArray(list) && list.some((i) => JSON.stringify(i) === want)) || (state.leftRows && state.leftRows[a]) ? a : 'lane-end:decision';
+  }
+  if (a.indexOf('change:') === 0) {
+    const id = a.slice(7);
+    return Array.isArray(state.changeRecords) && state.expandedGroups.has('changes') &&
+      state.changeRecords.some((c) => c.id === id) ? a : 'quick';
   }
   if (a.indexOf('restore:') === 0) {
     const want = a.slice(8);
@@ -7977,6 +7995,7 @@ function healthMorphKey(el) {
   if (a('data-fixall')) return 'fixall:' + a('data-fixall');
   if (a('data-dismiss-issue')) return 'dismiss:' + a('data-dismiss-type') + ':' + a('data-dismiss-issue');
   if (a('data-restore-key')) return 'restore:' + a('data-restore-key');
+  if (a('data-change-id')) return 'change:' + a('data-change-id');
   if (a('data-outcome-key')) return 'retry:' + a('data-outcome-key');
   if (a('data-review')) return 'review';
   if (a('data-review-jump')) return 'review-jump:' + a('data-review-jump');
@@ -8134,7 +8153,7 @@ function renderHealthPanel(domain, readonly) {
       (crossMountBusy && !busy ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running. Wait for it to finish before starting another.' }) : '') +
       (readonly ? renderMirrorNote() : '') +
       renderHealthLanes(domain, report, readonly, crossMountBusy) +
-      renderFoldRows(scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
+      renderFoldRows(renderChangesRow(readonly, crossMountBusy) + scanRow, { alias: 'dm', hostClass: 'dm-groups-scan' }) +
       (readonly ? '' : renderDescription(GIT_UNDO_NOTE)),
     { alias: 'dm', hostClass: healthRevealCls.trim() }), reading);
 }
@@ -8963,6 +8982,130 @@ function renderDismissedGroup(count) {
   });
 }
 
+// ── RECENT CHANGES (Undo, owner's decision 2026-11-07) ─────────────────────
+// What Wiki health changed on this computer in the last 30 days, newest first,
+// each with Undo. Undo asks first (the server checks every page is as the
+// change left it), and its question and outcome draw under its own row.
+function recentChangeCount() {
+  if (Array.isArray(state.changeRecords)) return state.changeRecords.length;
+  return state.health && Number.isInteger(state.health.recentChanges) ? state.health.recentChanges : 0;
+}
+
+function changeMeta(c) {
+  const pages = c.pages === 1 ? '1 page' : n0(c.pages) + ' pages';
+  const when = '<span data-age-at="' + escapeHtml(c.at) + '" data-age-text>' + escapeHtml(relTime(c.at)) + '</span>';
+  if (c.status === 'undone') return 'Undone · ' + escapeHtml(pages);
+  if (c.status === 'stuck') return 'Could not finish undoing · ' + escapeHtml(pages);
+  return escapeHtml(pages) + (c.index ? ' and the page list' : '') + ' · ' + when;
+}
+
+function renderChangesRow(readonly, crossMountBusy) {
+  if (readonly) return '';
+  const count = recentChangeCount();
+  if (!count) return '';
+  const open = state.expandedGroups.has('changes');
+  let body = '';
+  if (open && state.changeRecords === null) {
+    body = gatedLoader(loadGate, 'Loading…', 'cur-fold-item cur-fold-item-meta dm-issue-row dm-issue-meta');
+  } else if (open) {
+    body = renderFoldItem({ alias: 'dm', meta: 'Kept for 30 days on this computer. Undo puts back every page of a change exactly as it was, or none: it refuses if any of them has changed since, and never reaches other computers.' }) +
+      state.changeRecords.map((c) => {
+        const rowKey = 'change:' + c.id;
+        const busy = !!(state.rowBusy && state.rowBusy.has(rowKey));
+        const action = c.status === 'ready'
+          ? '<button class="btn btn-secondary dm-change-undo-btn" data-change-id="' + escapeHtml(c.id) + '"' +
+              (busy ? ' aria-busy="true" aria-disabled="true"' : ((state.busyKey || crossMountBusy) ? ' disabled' : '')) + '>' +
+              (busy ? 'Checking…' : 'Undo') + '</button>'
+          : '';
+        return renderFoldItem({ alias: 'dm', rowKey, main: c.title, metaHtml: changeMeta(c), actionHtml: action,
+          afterHtml: renderAnchorStack(rowKey, crossMountBusy) });
+      }).join('');
+  }
+  return renderFoldRow({
+    key: 'changes', hostClass: 'dm-group-changes', label: 'Recent changes', labelClass: 'dm-dismissed-label',
+    pill: count, open, alias: 'dm', bodyHtml: body,
+  });
+}
+
+async function loadChangeRecords(slug) {
+  const token = myMountToken;
+  const gate = loadGate;
+  if (gate) gate.begin();
+  try {
+    const data = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/changes');
+    if (slug === state.activeSlug && isCurrentMount(token)) state.changeRecords = data.changes || [];
+  } catch {
+    if (slug === state.activeSlug && isCurrentMount(token)) state.changeRecords = [];
+  }
+  settleGate(gate, () => render(token));
+}
+
+function listPages(list) {
+  const shown = list.slice(0, 5).join(', ');
+  return list.length > 5 ? shown + ' and ' + n0(list.length - 5) + ' more' : shown;
+}
+
+// Undo, pressed: the server says whether every page is still as the change left
+// it. If one is not, the row says which, and nothing is offered that would write.
+async function askUndoChange(slug, id) {
+  const token = myMountToken;
+  const rowKey = 'change:' + id;
+  state.rowBusy.add(rowKey);
+  render(token);
+  let check;
+  try {
+    check = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/changes/' + encodeURIComponent(id));
+  } catch (err) {
+    state.rowBusy.delete(rowKey);
+    if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not check this change: ' + err.message, retry: () => askUndoChange(slug, id) };
+    render(token);
+    return;
+  }
+  state.rowBusy.delete(rowKey);
+  if (!isCurrentMount(token) || slug !== state.activeSlug) return;
+  if (!check.ok) {
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = { key: rowKey, tone: 'error', text: check.message || 'This change cannot be undone now.' };
+    render(token);
+    return;
+  }
+  const c = check.change;
+  state.confirm = {
+    anchor: rowKey,
+    title: 'Undo “' + c.title + '”?',
+    body: 'Puts back ' + (c.pages === 1 ? 'this page' : 'these ' + n0(c.pages) + ' pages') + (c.index ? ' and the page list' : '') +
+      ' exactly as they were before this change: ' + listPages(c.pageList) + '.' +
+      (c.deleted && c.deleted.length ? ' ' + listPages(c.deleted) + (c.deleted.length === 1 ? ' comes back.' : ' come back.') : ''),
+    warn: 'This works on this computer only. Another computer that already has this change gets these pages back after both computers sync again.',
+    confirmLabel: 'Undo',
+    busyLabel: 'Undoing…',
+    run: () => runUndoChange(slug, id),
+  };
+  render(token);
+}
+
+async function runUndoChange(slug, id) {
+  const token = myMountToken;
+  const rowKey = 'change:' + id;
+  try {
+    const res = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/changes/' + encodeURIComponent(id) + '/undo', { method: 'POST' });
+    if (!isCurrentMount(token)) return;
+    const n = res.change && res.change.pages;
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = { key: rowKey, tone: 'success', text: 'Undone. ' + (n === 1 ? 'The page is' : n0(n) + ' pages are') + ' back as they were.' };
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.rowNoteFrom = { slug, token };
+    state.rowNote = err.status === 409
+      ? { key: rowKey, tone: 'error', text: err.message }
+      : { key: rowKey, tone: 'error', text: 'Could not undo: ' + err.message, retry: () => askUndoChange(slug, id) };
+  }
+  if (state.expandedGroups.has('changes')) await loadChangeRecords(slug);
+  await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+}
+
 function describeDismissed(r) {
   switch (r.type) {
     case 'brokenLinks': return r.sourceFile + ' → [[' + r.linkText + ']]';
@@ -9134,6 +9277,13 @@ function onHealthClick(e) {
   }
   if (btn.classList.contains('dm-restore-btn') && data.restoreKey) {
     undismissIssue(domain.slug, JSON.parse(data.restoreKey)).catch(reportAsyncActionFailure);
+    return;
+  }
+  if (btn.classList.contains('dm-change-undo-btn') && data.changeId) {
+    // The question and the outcome draw under this row (press rule).
+    state.pressAnchor = 'change:' + data.changeId;
+    state.pressOpener = 'change:' + data.changeId;
+    dispatchHealthAction(() => askUndoChange(domain.slug, data.changeId));
   }
 }
 
@@ -9168,6 +9318,9 @@ function onHealthToggle(e) {
   }
   if (key === 'dismissed' && el.open && state.dismissedRecords === null) {
     loadDismissedRecords(e.currentTarget.__dmHealthDomain.slug).catch(reportAsyncActionFailure);
+  }
+  if (key === 'changes' && el.open && state.changeRecords === null) {
+    loadChangeRecords(e.currentTarget.__dmHealthDomain.slug).catch(reportAsyncActionFailure);
   }
 }
 
@@ -10093,7 +10246,7 @@ function mergeSemanticDuplicates(slug) {
     // referencing the module constant here throws ReferenceError inside it. The
     // copy is not unguarded: §8 of test-beta16-broken-links.js asserts that this
     // exact sentence is byte-identical to GIT_UNDO_WARN.
-    warn: 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.',
+    warn: 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.',
     tier: 'danger',
     confirmLabel: 'Merge and delete ' + count,
     busyLabel: 'Merging…',

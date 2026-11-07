@@ -7,7 +7,7 @@
  */
 import { createReviewDesk } from '../../src/public/next/views/health-review.js';
 
-export const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+export const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
 export const pair = (remove, keep, over) => ({
   removeFolder: 'concepts', removeSlug: remove, keepFolder: 'concepts', keepSlug: keep,

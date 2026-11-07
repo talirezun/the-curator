@@ -502,6 +502,7 @@ console.log('\n7. every count applyBrokenLinkFixes returns must reach the wire A
   // shown" would be a bad invariant — it pressures people to dump numbers on
   // screen. This list is the escape valve, and adding to it is a deliberate act.
   const NOT_RENDERED = {
+    undo: 'not a count: Wiki health\'s undo recorder (src/brain/health-undo.js) attaches the change it recorded, and only when files changed. The plan card does not render it; Recent changes lists it.',
     totalActions: 'the number of distinct links in the plan — the user already approved exactly this in the preview card before applying.',
     occurrencesReplaced: 'the SUM of retargeted + stripped occurrences, both of which are rendered separately and more informatively. /next used to render this ALONE, under the single label "Repointed", which reported bracket removals as repoints.',
   };
@@ -519,8 +520,14 @@ console.log('\n7. every count applyBrokenLinkFixes returns must reach the wire A
   // CONDITIONAL, so a renderer reads undefined only for some runs — the hardest
   // version of this bug to notice.
   const empty = await applyBrokenLinkFixes('classinv', [{ linkText: 'nope', action: 'bogus' }]);
-  const keys = Object.keys(applied).sort();
+  // `undo` is the recorder's, not the producer's: present exactly when files
+  // changed (a record exists), so it is left out of the shape comparison and
+  // asserted on its own below.
+  const keys = Object.keys(applied).filter((k) => k !== 'undo').sort();
   const emptyKeys = Object.keys(empty).sort();
+  assert(applied.undo && applied.undo.id && !('undo' in empty),
+    'the change is recorded for Undo exactly when the plan wrote, and not when it wrote nothing',
+    JSON.stringify({ applied: applied.undo, empty: empty.undo }));
   assert(keys.length > 0, 'PRECONDITION: the producer returns at least one count', JSON.stringify(applied));
   assert(keys.join(',') === emptyKeys.join(','),
     'both return paths carry an IDENTICAL key set — the wire shape is never conditional',
@@ -950,8 +957,8 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   const stripComments9 = (src) => src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  const NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
-  const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+  const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+  const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
   // The claim, in any of the phrasings the codebase actually used:
   //   "revertable from Sync" / "can be reverted from Sync" / "revert from the
@@ -1034,7 +1041,12 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   for (const [label, src] of [['/next', nextRaw]]) {
     assert(src.includes(NOTE), `${label}: carries the honest informational wording`);
     assert(src.includes(WARN), `${label}: carries the honest destructive-action wording`);
-    assert(/no Undo button/.test(src), `${label}: says plainly that the app has no Undo button`);
+    // Since 2026-11-07 the app HAS an undo (Wiki health › Recent changes,
+    // src/brain/health-undo.js), and the honest copy names where it is and its
+    // limits: 30 days, this computer, unchanged pages. Still never a revert
+    // "from Sync" — (a) and (b) above keep holding that.
+    assert(/Recent changes/.test(src) && /on this computer/.test(src), `${label}: names where undo is and that it is this computer only`);
+    assert(!/no Undo button/.test(stripComments9(src)), `${label}: no executable string still says the app has no Undo button`);
   }
   // The one place /next must inline WARN rather than reference the constant
   // (test-next-semantic-gate.js's sandbox has a fixed const allow-list this
@@ -1069,8 +1081,14 @@ console.log('\n9. no user-facing string may claim a revert/undo control that doe
   // "Sync", so it matches the raw detector. Asserting BOTH halves proves the
   // scrub is doing real work — a no-op scrub would make the first of these
   // fail, and a detector too weak to see NOTE would make it fail too.
-  assert(CLAIM.test('z = "' + NOTE + '";'),
-    'CONTROL: the honest NOTE *does* match the raw detector — which is why the scrub exists', NOTE);
+  // Since 2026-11-07 NOTE names the app's own undo (Recent changes) and no Sync
+  // at all, so it no longer matches even unscrubbed. The scrub's own work is
+  // proved on a sentence that does match: the missed shape, scrubbed as honest.
+  assert(!CLAIM.test('z = "' + NOTE + '";'),
+    'CONTROL: the honest NOTE promises no revert from Sync even before the scrub', NOTE);
+  assert(CLAIM.test('z = "' + missedShape + '";') &&
+    ![missedShape].reduce((s, h) => s.split(h).join(' [honest-copy] '), 'z = "' + missedShape + '";').match(CLAIM),
+    'CONTROL: the scrub mechanism removes a matching sentence it is given', missedShape);
   assert(!CLAIM.test(scrubHonest('z = "' + NOTE + '";')),
     'CONTROL: and does NOT fire once the honest copy is scrubbed (otherwise it would be unsatisfiable)', NOTE);
   assert(!CLAIM.test(scrubHonest('z = "' + WARN + '";')),

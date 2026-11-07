@@ -25,7 +25,7 @@ const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').rep
 const buttonOf = (html, id) => (new RegExp('<button[^>]*id="' + id + '"[^>]*>').exec(html) || [''])[0];
 const shut = (html, id) => / disabled/.test(buttonOf(html, id));
 const c = (s) => 'concepts/' + s;
-const NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
+const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
 
 // A~B, B~C, C~D, and one the AI said is not the same. A is never compared with C or D.
 const CHAIN = () => [pair('b', 'a', { rationale: 'A and B match.' }), pair('c', 'b', { rationale: 'B and C match.' }), pair('d', 'c', { rationale: 'C and D match.' })];
@@ -149,7 +149,7 @@ section('§4 The walk: the same desk, the same gate');
   ok(t.includes('a stays.') && /id="hr-fam-rechoose"/.test(h) && t.includes('Choose again'), 'the running line, and it can still change', t);
   ok(/class="hr-pane hr-pane-goes"[^>]*aria-label="Page that goes away: b"/.test(h) && /aria-label="Page that stays: a"/.test(h), 'the same panes, named');
   ok(t.includes('Merge b into a') && /aria-label="Merge b into a"/.test(h), 'Merge names both pages');
-  ok(t.includes('Merging deletes b.') && t.includes('otherwise it cannot be undone'), 'the deletion and the pinned warning are on screen');
+  ok(t.includes('Merging deletes b.') && t.includes('Recent changes for 30 days'), 'the deletion and the pinned warning are on screen');
   ok(/btn btn-danger" id="hr-merge"/.test(h) && !/btn-primary/.test(h), 'Merge is the danger button, never primary');
   ok(t.includes('The AI compared these two pages and said they are the same.') && t.includes('The AI says: "A and B match."'), 'what the AI knows about THIS pair');
   ok(t.includes('Lists from b join the sections of the same name, and everything else moves under "Merged from b". 4 links move to it.'), 'the after line, as agreed', t);

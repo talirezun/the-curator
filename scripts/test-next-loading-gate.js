@@ -634,9 +634,9 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     icon: () => '', escapeHtml: (x) => String(x), pluralize: (n, w) => `${n} ${w}`,
     relTime: () => 'just now', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: () => 6, renderBanner: () => '', renderMirrorNote: () => '',
-    renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '',
-    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
-    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
+    renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '', renderChangesRow: () => '',
+    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
+    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     

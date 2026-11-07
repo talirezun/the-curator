@@ -2377,6 +2377,8 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     extractFunction(SRC, 'renderIssueFold') + '\n' +
     extractFunction(SRC, 'renderDecisionLane') + '\n' +
     extractFunction(SRC, 'renderDismissedGroup') + '\n' +
+    extractFunction(SRC, 'recentChangeCount') + '\n' +
+    extractFunction(SRC, 'renderChangesRow') + '\n' +
     extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
   );
   const REPORT = {

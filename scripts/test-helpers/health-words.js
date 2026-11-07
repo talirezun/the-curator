@@ -8,8 +8,8 @@
  * `{n}` is a figure with thousands separators, `{age}` a relative time, `{x}` a cost,
  * `{name}` free data (a page name, a model), `{msg}` a server's message.
  */
-const NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
-const WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+const NOTE = 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.';
+const WARN = 'You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since.';
 
 export const DECK = [
   // Section head

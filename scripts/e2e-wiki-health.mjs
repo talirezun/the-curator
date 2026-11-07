@@ -842,7 +842,7 @@ async function scenarios(app, profile) {
     await shot('folds-open'); await audit('folds open');
     await act(app, profile, 'lane-merge-press', { press: SEL.fixAll('crossFolderDupes'), place: 400, outcome: OUT_CONFIRM, until: exists, args: [SEL.confirmNo], settle: 300 });
     await shot('merge-confirm'); await audit('merge confirm');
-    const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /otherwise it cannot be undone/.test(c.innerText) }; }, SEL.confirmYes);
+    const conf = await page.evaluate((y) => { const b = document.querySelector(y); const c = b.closest('.dm-confirm-card'); return { cls: b.className, label: b.innerText, warn: /Recent changes for 30 days/.test(c.innerText) }; }, SEL.confirmYes);
     step(`[${profile.name}] the deleting yes is danger, names its result and carries the warning`, /btn-danger/.test(conf.cls) && /^Merge and delete \d+$/.test(conf.label) && conf.warn, JSON.stringify(conf));
     await page.evaluate((n) => document.querySelector(n).click(), SEL.confirmNo); await delay(400);
     const m = await act(app, profile, 'lane-repair-row', { press: SEL.fixAll('missingBacklinks'), place: 450, outcome: [SEL.done], settle: 120, runs: true });

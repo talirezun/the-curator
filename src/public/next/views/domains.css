@@ -839,6 +839,7 @@
    rendered page. Their type is unchanged; only the box grew. */
 .dm-dismiss-btn,
 .dm-restore-btn,
+.dm-change-undo-btn,
 .dm-left-undo-btn {
   flex: none;
   height: var(--control-sm);
@@ -1773,7 +1774,8 @@
 /* A label that answers needs room for its answer at rest, or the answer clips. */
 .dm-group-fixall-btn { min-width: 112px; }
 .dm-dismiss-btn,
-.dm-restore-btn { min-width: 72px; flex: none; }
+.dm-restore-btn,
+.dm-change-undo-btn { min-width: 72px; flex: none; }
 
 .dm-health .btn[aria-busy="true"] { cursor: progress; overflow: hidden; flex-wrap: nowrap; }
 .dm-health .btn[aria-busy="true"] .dm-quick-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

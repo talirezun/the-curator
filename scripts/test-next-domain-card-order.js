@@ -450,9 +450,11 @@ section('S3 -- "Check this wiki" vs "Check again" (the words of Stage 2; the rul
     relTime: () => '10s ago', buttonRingHtml: () => '<RING/>',
     totalOpenIssues: () => 2, renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
     renderHealthLanes: () => '<QUICK/><GROUPS/>', renderAnchorHere: () => '',
-    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
-    GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
+    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
+    GIT_UNDO_NOTE: 'You can undo this in Recent changes for 30 days, on this computer, while the pages stay unchanged.',
     renderConfirmCard: () => '', renderPendingPlan: () => '',
+    // Recent changes (Undo): a fold row of its own, rendered by its own suites.
+    renderChangesRow: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
