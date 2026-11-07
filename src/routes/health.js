@@ -48,6 +48,7 @@ import { getAiHealthSettings, setAiHealthSettings, DEFAULT_AI_HEALTH } from '../
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
 import { domainPath } from '../brain/files.js';
 import { recordHealthSummary } from '../brain/health-summary.js';
+import { listHealthChanges, checkHealthUndo, undoHealthChange, UNDO_KEEP_DAYS } from '../brain/health-undo.js';
 import {
   registerWrite,
   acquireFileLock,
@@ -157,7 +158,11 @@ router.get('/:domain', async (req, res) => {
     // `scannedAt` is when the wiki was READ, and a cache hit keeps the older one.
     // `checkedAt` is when it was last looked at, which a person pressing Rescan asks.
     const checkedAt = new Date().toISOString();
-    res.json(dismissedRecords === null ? { ...report, checkedAt } : { ...report, dismissedRecords, checkedAt });
+    // Additive: how many entries "Recent changes" lists (this computer, 30 days).
+    let recentChanges = null;
+    try { recentChanges = (await listHealthChanges(domain)).length; } catch { recentChanges = null; }
+    const extra = { checkedAt, ...(recentChanges === null ? {} : { recentChanges }) };
+    res.json(dismissedRecords === null ? { ...report, ...extra } : { ...report, dismissedRecords, ...extra });
   } catch (err) {
     console.error('[health scan]', err);
     res.status(err.status || 500).json({ error: err.message });
@@ -1004,6 +1009,68 @@ const DISMISSIBLE_TYPES = new Set([
   'missingBacklinks',
   'semanticDupe',
 ]);
+
+// ── RECENT CHANGES AND UNDO (owner's decision, 2026-11-07) ───────────────────
+//
+// Every Health action that writes copies each file it changes first
+// (src/brain/health-undo.js). The list and the check are read-only; Undo puts
+// every file back or none, under the same locks as a fix, and refuses when any
+// file changed since. Machine-local: the copies are on this computer only.
+router.get('/:domain/changes', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const changes = await listHealthChanges(domain);
+    res.json({ ok: true, changes, keepDays: UNDO_KEEP_DAYS, thisComputerOnly: true });
+  } catch (err) {
+    if (!err.status) console.error('[health changes]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.get('/:domain/changes/:id', async (req, res) => {
+  try {
+    const { domain, id } = req.params;
+    await assertDomain(domain);
+    res.json(await checkHealthUndo(domain, id));
+  } catch (err) {
+    if (!err.status) console.error('[health change check]', err);
+    res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
+});
+
+router.post('/:domain/changes/:id/undo', async (req, res) => {
+  const { domain, id } = req.params;
+  try { await assertWritableDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`undo a change in domain "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'health-undo');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'health-undo' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({
+      error: `Another process is already writing to "${domain}" (file lock held). Nothing was undone.`,
+      conflict: 'file_lock',
+    });
+  }
+  try {
+    const change = await undoHealthChange(domain, id);
+    res.json({ ok: true, change });
+  } catch (err) {
+    if (!err.status) console.error('[health undo]', err);
+    res.status(err.status || 500).json({
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      ...(Array.isArray(err.conflicts) ? { conflicts: err.conflicts } : {}),
+    });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
+  }
+});
 
 router.get('/:domain/dismissed', async (req, res) => {
   try {

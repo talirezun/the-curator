@@ -52,6 +52,23 @@ import {
 } from 'fs';
 import path from 'path';
 import { randomBytes } from 'crypto';
+import { AsyncLocalStorage } from 'async_hooks';
+
+/**
+ * THE UNDO RECORDER'S SEAM (owner's decision, 2026-11-07). While a Wiki health
+ * action runs, `src/brain/health-undo.js` puts a recorder in this store, and
+ * every write below asks it first: it saves a copy of the file as it is now,
+ * and only then may the write go ahead. A copy that cannot be saved THROWS, so
+ * the write never happens. This is the one chokepoint because every page write
+ * in the app is a `writeFileAtomic` (ingest, compile, every Health fix, the
+ * index): an action cannot reach a page around it.
+ *
+ * Outside a Health action the store is empty and nothing changes: one
+ * `getStore()` per write. The recorder decides itself which paths it covers
+ * (that domain's wiki folder only), so a config or credential write made
+ * during an action is never copied.
+ */
+export const writeRecorder = new AsyncLocalStorage();
 
 /**
  * Normalise the third argument, which historically was an encoding string.
@@ -131,6 +148,8 @@ export async function writeFileAtomic(targetPath, content, opts = 'utf8') {
       `If you intentionally want to replace this file, remove the symlink first.`
     );
   }
+  const recorder = writeRecorder.getStore();
+  if (recorder) await recorder.beforeWrite(targetPath);
   const tmpPath = nextTmpName(targetPath);
   let written = false;
   try {
@@ -171,6 +190,12 @@ export function writeFileAtomicSync(targetPath, content, opts = 'utf8') {
       `Refusing to write through symlink: ${targetPath}. ` +
       `If you intentionally want to replace this file, remove the symlink first.`
     );
+  }
+  // A synchronous write cannot wait for a copy, so inside a Health action it
+  // may not touch a page at all: refused, never written without its copy.
+  const recorder = writeRecorder.getStore();
+  if (recorder && recorder.covers(targetPath)) {
+    throw new Error(`Refusing a synchronous write to ${path.basename(targetPath)} during a Wiki health change: it could not be copied for Undo first.`);
   }
   const tmpPath = nextTmpName(targetPath);
   let written = false;

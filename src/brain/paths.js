@@ -672,6 +672,22 @@ export function getDuplicateChecksDir() {
 }
 
 /**
+ * Wiki health's undo copies (owner's decision, 2026-11-07): before a Health
+ * action changes a page, `src/brain/health-undo.js` saves the page's bytes here,
+ * so "Recent changes" can put them back.
+ *
+ * OUTSIDE `domains/`, and never synced, on purpose: `getDomainsDir()` is
+ * Personal Sync's git work-tree, and a copy of a page there would be a second
+ * page. A copy is a fact about THIS computer's files, so undo works only on
+ * the computer that made the change. Expires after 30 days.
+ *
+ * Pure resolver — never creates the directory.
+ */
+export function getHealthUndoDir() {
+  return userDataPath('.health-undo');
+}
+
+/**
  * Which pages recent ingests created, one JSON file per domain, written by
  * `src/brain/recent-new-pages.js`. OUTSIDE `domains/` like the two around it: it
  * only orders this machine's duplicate scan. Lost, the scan uses its old order.

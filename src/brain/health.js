@@ -15,7 +15,10 @@
  * This module is the single source of truth used by both the /api/health
  * route and (in the future) the CLI repair scripts.
  */
-import { readFile, writeFile, readdir, rm, stat, lstat } from 'fs/promises';
+import { readFile, writeFile, readdir, stat, lstat } from 'fs/promises';
+// `rm` is health-undo's: a page is copied for Undo before it is deleted. Kept
+// under the name `rm` so every delete site below still reads `await rm(`.
+import { withHealthUndo, removeWikiFile as rm } from './health-undo.js';
 import { existsSync } from 'fs';
 import { createHash } from 'crypto';
 import path from 'path';
@@ -970,6 +973,11 @@ export async function planIndexRebuild(domain, opts = {}) {
  * @returns {Promise<{ written: boolean, summary: object }>}
  */
 export async function applyIndexRebuild(domain, basis, opts = {}) {
+  return withHealthUndo(domain, { kind: 'indexRebuild', title: () => 'Rebuilt the page list (index.md)' },
+    () => applyIndexRebuildNow(domain, basis, opts));
+}
+
+async function applyIndexRebuildNow(domain, basis, opts) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
   const plan = await composeIndexRebuild(wikiDir, opts);
@@ -1605,6 +1613,50 @@ async function buildEntityConceptSlugs(wikiDir) {
  *
  * @param {boolean|{ok: boolean, reason: string|null}} r
  */
+/**
+ * The plain words "Recent changes" shows for a recorded Health action. `s` is
+ * what the action actually did to files ({deleted, created, changed}, wiki-
+ * relative paths), so a count is what happened, never what was asked.
+ */
+export function describeFixChange(type, issue, s) {
+  const name = (rel) => String(rel).replace(/\.md$/i, '').replace(/^(entities|concepts|summaries)\//, '');
+  const pages = (s.deleted.length + s.created.length + s.changed.filter((r) => r !== 'index.md' && r !== 'log.md').length);
+  const inPages = pages === 1 ? '1 page' : `${pages} pages`;
+  const deleted = s.deleted.map(name);
+  switch (type) {
+    case 'semanticDupe': {
+      const keep = issue && typeof issue.keepSlug === 'string' ? issue.keepSlug : null;
+      if (deleted.length === 1 && keep) return `Merged ${deleted[0]} into ${keep}`;
+      break;
+    }
+    case 'crossFolderDupes': {
+      const keep = issue ? splitWikiRef(issue.keep) : null;
+      if (deleted.length === 1 && keep) return `Merged ${deleted[0]} into ${keep.slug}`;
+      return `Merged ${deleted.length === 1 ? '1 page' : deleted.length + ' pages'} that had the same name in two folders`;
+    }
+    case 'hyphenVariants': {
+      const keep = issue && typeof issue.suggestedSlug === 'string' ? issue.suggestedSlug : null;
+      if (keep && deleted.length) return `Merged ${deleted.join(', ')} into ${keep}`;
+      return `Merged ${deleted.length === 1 ? '1 page' : deleted.length + ' pages'} with nearly the same name`;
+    }
+    case 'semanticBatch': return `Merged ${deleted.length === 1 ? '1 spelling variant' : deleted.length + ' spelling variants'}`;
+    case 'brokenLinks': return `Fixed broken links in ${inPages}`;
+    case 'brokenLinksPlan': return `Fixed broken links with AI help in ${inPages}`;
+    case 'folderPrefixLinks': return `Fixed links that named a folder in ${inPages}`;
+    case 'missingBacklinks': return `Added missing links to summaries in ${inPages}`;
+    case 'orphanLink': {
+      if (issue && issue.orphanSlug && issue.targetSlug) return `Linked ${issue.orphanSlug} from ${issue.targetSlug}`;
+      break;
+    }
+    case 'orphanRescue': return `Linked pages nothing linked to, in ${inPages}`;
+    case 'summaryLinkSections': return `Tidied the link lists in ${inPages}`;
+    case 'fixAllSafe': return `Ran the safe repairs on ${inPages}`;
+    default: break;
+  }
+  if (deleted.length) return `Merged ${deleted.join(', ')} into another page`;
+  return `Changed ${inPages}`;
+}
+
 function normaliseFixOutcome(r) {
   if (typeof r === 'boolean') return { ok: r, reason: null, missing: null, partial: false, merged: null, refused: null };
   // `missing` rides the same channel as `reason` and for the same purpose: a
@@ -1635,6 +1687,12 @@ export async function fixIssue(domain, type, issue = null) {
   if (!AUTO_FIXABLE.has(type)) {
     throw new Error(`Issue type "${type}" is review-only and cannot be auto-fixed.`);
   }
+  // Every file this changes is copied first, for Wiki health's Undo.
+  return withHealthUndo(domain, { kind: type, title: (s) => describeFixChange(type, issue, s) },
+    () => fixIssueNow(domain, type, issue));
+}
+
+async function fixIssueNow(domain, type, issue) {
   const wikiDir = wikiPath(domain);
 
   // Fix one specific issue
@@ -2527,6 +2585,11 @@ async function batchRefusals(wikiDir, domain, list) {
 }
 
 export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () => {}) {
+  return withHealthUndo(domain, { kind: 'semanticBatch', title: (s) => describeFixChange('semanticBatch', null, s) },
+    () => fixSemanticDuplicatesBatchNow(domain, pairs, onProgress));
+}
+
+async function fixSemanticDuplicatesBatchNow(domain, pairs, onProgress) {
   const wikiDir = wikiPath(domain);
   const list = Array.isArray(pairs) ? pairs : [];
   const total = list.length;
@@ -2603,6 +2666,11 @@ export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () 
  * @returns {Promise<{retargeted, stripped, filesChanged, occurrencesReplaced, totalActions, downgraded}>}
  */
 export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) {
+  return withHealthUndo(domain, { kind: 'brokenLinksPlan', title: (s) => describeFixChange('brokenLinksPlan', null, s) },
+    () => applyBrokenLinkFixesNow(domain, plan, onProgress));
+}
+
+async function applyBrokenLinkFixesNow(domain, plan, onProgress) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
@@ -2703,6 +2771,11 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
  * @returns {Promise<{rescued, skipped, total}>}
  */
 export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
+  return withHealthUndo(domain, { kind: 'orphanRescue', title: (s) => describeFixChange('orphanRescue', null, s) },
+    () => applyOrphanRescueNow(domain, plan, onProgress));
+}
+
+async function applyOrphanRescueNow(domain, plan, onProgress) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
@@ -2765,6 +2838,11 @@ export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
  * Reuses fixIssue(domain, type, null) — the same chokepoint as fix-all.
  */
 export async function fixAllSafe(domain) {
+  return withHealthUndo(domain, { kind: 'fixAllSafe', title: (s) => describeFixChange('fixAllSafe', null, s) },
+    () => fixAllSafeNow(domain));
+}
+
+async function fixAllSafeNow(domain) {
   // summaryLinkSections runs LAST: the types before it merge pages and rewrite
   // links, which changes which folder a summary's links resolve to.
   const TYPES = ['crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks', 'brokenLinks', 'summaryLinkSections'];

@@ -197,6 +197,10 @@ AuthKey_*.p8
 .duplicate-jobs/
 .recent-new-pages/
 
+# Wiki health's undo copies (src/brain/paths.js getHealthUndoDir()):
+# copies of the owner's pages, machine-local, never synced or committed.
+.health-undo/
+
 # MCP install manifest (v3.85.0, src/brain/paths.js getMcpInstallManifestPath()) —
 # every write the app made to another tool's MCP config, with ABSOLUTE paths on
 # this Mac and its backup names. Machine-local; in REPO mode it lands beside

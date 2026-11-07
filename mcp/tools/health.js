@@ -183,7 +183,8 @@ export const fixWikiIssueDefinition = {
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
     "Without a preview having been performed in this MCP session, a preview: false call on semanticDupe is refused. " +
     "A preview covers exactly what it showed: the same page kept and the same text on both pages. If either changed, or you swap which page stays, the merge is refused (reason: 'preview-stale'), nothing is written, and you preview again. " +
-    "indexDrift is app-only and is refused here (reason: 'app-only'): the user rebuilds index.md in the app's Wiki health.",
+    "indexDrift is app-only and is refused here (reason: 'app-only'): the user rebuilds index.md in the app's Wiki health. " +
+    "UNDO: a fix that changes pages first saves a copy of each one on this computer, and the reply's undo field names the change. The user can undo it in the app (Wiki health, Recent changes) for 30 days, on this computer only: every page back or none, refused if a page changed since. There is no undo over the MCP; say where it is, never that the change is permanent.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -372,6 +373,8 @@ export async function fixWikiIssueHandler(args, storage) {
     // corpus where `claude-opus-5` and `claude-opus` are different pages,
     // a parsed-out guess is how the wrong page gets merged next.
     ...(result?.missing ? { missing: result.missing } : {}),
+    // The change Wiki health's Recent changes lists, when files changed. Undone in the app only.
+    ...(result?.undo ? { undo: { ...result.undo, where: 'The Curator app: Wiki health, Recent changes (this computer only)' } } : {}),
     details: result || null,
     report: result?.fixed
       ? `Fixed 1 ${type} issue in '${domain.value}'.`
