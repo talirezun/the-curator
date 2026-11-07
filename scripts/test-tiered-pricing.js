@@ -233,11 +233,14 @@ section('§5 catalogue — the 5.5 generation in, two-generations-old out, chain
     ok(llm.isOfferableModel('anthropic', id), `${id} (the previous generation) stays offerable`);
   }
   for (const [id, r] of Object.entries(llm.RETIRED_MODELS)) {
-    ok(!llm.isOfferableModel('anthropic', id), `${id} is NOT offerable`);
+    ok(!llm.isOfferableModel(r.provider, id), `${id} is NOT offerable`);
     ok(llm.getModelPrice(id) === null, `${id} carries no price`);
-    ok(!FALLBACK_CHAINS.anthropic.includes(id) && DEFAULTS.anthropic !== id, `${id} is neither a rung nor the default`);
-    ok(llm.isBuildLaneModel('anthropic', r.successor), `${id} → ${r.successor}, which can build (a build pick moved forward must still build)`);
-    ok(r.successor.split('-')[1] === id.split('-')[1], `${id} moves within its own family`);
+    ok(!FALLBACK_CHAINS[r.provider].includes(id) && DEFAULTS[r.provider] !== id, `${id} is neither a rung nor the default`);
+    ok(llm.isBuildLaneModel(r.provider, r.successor), `${id} → ${r.successor}, which can build (a build pick moved forward must still build)`);
+    // An Anthropic retirement is a generation rule and stays in its family; a model the
+    // provider stopped serving moves to that provider's default and must say why.
+    if (r.provider === 'anthropic') ok(r.successor.split('-')[1] === id.split('-')[1], `${id} moves within its own family`);
+    else ok(r.successor === DEFAULTS[r.provider] && /no longer serves/.test(llm.retirementNoteText(id, r.successor, 'build')), `${id} moves to the provider default, and the note says why`);
   }
   ok(Object.keys(llm.AWAITING_MEASUREMENT).length === 0, 'nothing awaits measurement (opus-4-7/4-6 were retired, not measured)');
   ok(DEFAULTS.anthropic === 'claude-haiku-4-5', 'the Anthropic default is unchanged (claude-haiku-4-5 was not retired)');

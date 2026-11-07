@@ -5166,7 +5166,7 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
       }
     }
   }
-  ok(checkedFlagged >= 8, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
+  ok(checkedFlagged >= 7, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
   // (2026-10-08: floors 18 → 16 — the Anthropic retirement removed four static
   // entries and the 5.5 generation added two.)
   ok(checkedPrice >= 16, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
@@ -5186,7 +5186,7 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
     }
     const noLat = ['gemini', 'anthropic', 'openrouter']
       .flatMap((p) => WIRE[p] || []).filter((m) => m.medianLatencyMs == null);
-    ok(noLat.length >= 14, `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
+    ok(noLat.length >= 13, `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
     for (const m of noLat) {
       const head = summaryOf(renderModelOption(m, 1, ''));
       ok(!/per ingest call|measured at about/.test(head), `${m.id}: no speed clause where nothing was measured`);
@@ -5332,7 +5332,7 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
   ok(CORPUS.length >= 190, `corpus: ${CORPUS.length} models — real scale, not a 4-row fixture`);
   const freeCount = CORPUS.filter((m) => m.free === true).length;
   ok(freeCount >= 6, `corpus contains ${freeCount} FREE models`);
-  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 11, // 12 before minimax/minimax-m3:free was withdrawn (2026-09-25)
+  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 10, // 11 before Granite (2026-11-07); 12 before minimax/minimax-m3:free was withdrawn (2026-09-25)
 
     `corpus contains ${CORPUS.filter(isCuratorMeasured).length} MEASURED models`);
   ok(CORPUS.filter((m) => !isCuratorMeasured(m)).length >= 190,
@@ -5363,7 +5363,7 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
 
   // ── 22b. MEASURED-ONLY — absent is ABSENT, never a zero score ─────────
   const onlyMeasured = filterModels(CORPUS, F({ measuredOnly: true }));
-  ok(onlyMeasured.length >= 11 && onlyMeasured.length < 40,
+  ok(onlyMeasured.length >= 10 && onlyMeasured.length < 40,
     `"Measured by The Curator" narrows ${CORPUS.length} to ${onlyMeasured.length}`);
   ok(onlyMeasured.every((m) => typeof m.jsonRaw === 'boolean'),
     'every model in the measured view carries a real measurement marker');
@@ -5738,7 +5738,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   ok(fetched.filter((e) => e.contextLength === null).length === 1
      && fetched.find((e) => e.contextLength === null).id === UNSIZED_ID,
     'corpus: exactly ONE fetched row publishes no context window — the largest-context unranked block');
-  ok(staticRows.length >= 11 && staticRows.every((e) => e.createdUnixSec === null),
+  ok(staticRows.length >= 10 && staticRows.every((e) => e.createdUnixSec === null),
     `corpus: ${staticRows.length} STATIC rows, every one UNDATED — the newest-sort absence assertions are non-vacuous BY CONSTRUCTION`);
   ok(staticRows.every((e) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     '…and every one SIZED since v3.45.0, which is why the unsized fetched row above had to be added');

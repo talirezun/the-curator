@@ -265,44 +265,40 @@ eq(audit.failures.length, 0, 'every static offer and every fallback rung passes,
 // 18 since 2026-09-25: minimax/minimax-m3:free was withdrawn by OpenRouter and removed.
 // 19 since v3.82.0: claude-haiku-5-5 (chat-only — tiered price).
 // 19 → 17 on 2026-10-08: four Anthropic entries retired, Sonnet 5.5 and Opus 5.5 added.
-eq(audit.offers.length, 17, 'the audit covers all 17 hand-typed offers');
+// 17 → 16 on 2026-11-07: Granite 4.0 H Micro, withdrawn by OpenRouter.
+eq(audit.offers.length, 16, 'the audit covers all 16 hand-typed offers');
 eq(audit.rungs.length, 6, '…and all 6 fallback rungs');
 ok(audit.rungs.every(r => r.offered === true),
   'every fallback rung is itself an offerable entry — a rung nobody could pick has been held to nothing');
 eq(audit.exemptionsUnused.length, 0,
   'no exemption is listed and unused — a stale waiver is a standing permission for the next model to take that id');
 {
-  // ── ⟨ANTI-VACUITY⟩ FOUND BY MUTATION ─────────────────────────────────────
-  // The assertion above passes against `exemptionsUnused: []` too, because the
-  // shipped registry holds exactly one exemption and it IS used — so deleting
-  // the entire detector changes nothing observable. Driven against a registry
-  // that DOES carry a stale waiver, through the audit's test-only seam.
-  const stale = llm.auditStaticOffers({
+  // ── THE REGISTRY IS EMPTY SINCE 2026-11-07 ───────────────────────────────
+  // Granite, its one entry, was withdrawn by OpenRouter. The MECHANISM still guards the
+  // next waiver, so it is driven here through the audit's test-only seam: a floor the
+  // rung cannot clear, a waiver naming the rung, and a waiver nothing offers.
+  eq(Object.keys(llm.STATIC_ELIGIBILITY_EXEMPTIONS).length, 0, 'no exemption is shipped');
+  eq(audit.exemptionsUsed.length, 0, '…and none is relied on');
+  const rung = llm.__testing.FALLBACK_CHAINS.openrouter[0];
+  const waived = llm.auditStaticOffers({
+    buildContextFloorTokens: 2000000,
     exemptions: {
-      'ibm-granite/granite-4.0-h-micro': llm.STATIC_ELIGIBILITY_EXEMPTIONS['ibm-granite/granite-4.0-h-micro'],
+      [rung]: { rule: 'context_window', lane: 'build', reason: 'fixture' },
       'zz/retired-model-nobody-offers': { rule: 'context_window', lane: 'build', reason: 'stale' },
     },
   });
-  ok(stale.exemptionsUnused.includes('zz/retired-model-nobody-offers'),
+  ok(waived.exemptionsUnused.includes('zz/retired-model-nobody-offers'),
     '⟨ANTI-VACUITY⟩ a waiver for a model nothing offers IS reported as unused — the detector is real');
-  ok(!stale.exemptionsUnused.includes('ibm-granite/granite-4.0-h-micro'),
+  ok(!waived.exemptionsUnused.includes(rung),
     '…while the one genuinely in use is not, so the detector discriminates rather than listing everything');
-  eq(stale.failures.length, 0, '…and a surplus waiver does not, by itself, make the audit fail');
-}
-eq(audit.exemptionsUsed.length, 1, 'exactly ONE exemption is relied on');
-eq(audit.exemptionsUsed[0], 'ibm-granite/granite-4.0-h-micro', '…and it is the OpenRouter fallback rung');
-{
-  const ex = llm.STATIC_ELIGIBILITY_EXEMPTIONS['ibm-granite/granite-4.0-h-micro'];
-  eq(ex.rule, 'context_window', 'the exemption names the RULE it waives');
-  eq(ex.lane, 'build', '…and the LANE it waives it for, so it cannot silently widen');
-  eq(ex.shortfallTokens, 72, '…and the exact shortfall: 72 tokens');
-  ok(/9\/9|measured/i.test(ex.reason), '…and cites the measurement that outranks the proxy');
-  const row = audit.offers.find(o => o.id === 'ibm-granite/granite-4.0-h-micro');
+  ok(waived.exemptionsUsed.includes(rung), '…and the used one is named');
+  const row = waived.offers.find(o => o.id === rung);
   ok(row.pass === true && row.buildClaimed === true && row.buildSupported === false,
-    'the exempt model genuinely FALLS SHORT — it passes admission, claims the build lane, and does not clear its floor');
-  eq(row.contextLength, 131000, '…by publishing 131,000 against a 131,072 floor');
-  ok(131000 > BUILD_NEED,
-    '…while clearing the MEASURED requirement by 21,424 tokens, which is what makes the waiver defensible rather than convenient');
+    'the exempt model genuinely FALLS SHORT at that floor — it passes admission, claims the build lane, and does not clear it');
+  eq(waived.rungs.filter(r => r.ok === true).map(r => r.id).join(), rung,
+    '…and the one rung that survives is the one with the waiver, not the one that happens to be listed');
+  eq(llm.auditStaticOffers({ buildContextFloorTokens: 2000000 }).rungs.filter(r => r.ok === true).length, 0,
+    '…and without the waiver no rung survives that floor');
 }
 
 // ── ⟨ANTI-VACUITY⟩ THE AUDIT CAN FAIL ────────────────────────────────────────
@@ -323,15 +319,8 @@ eq(audit.exemptionsUsed[0], 'ibm-granite/granite-4.0-h-micro', '…and it is the
   const strictRungs = strict.rungs;
   ok(strictRungs.every(r => r.offered === true),
     '⟨PREMISE⟩ at the raised floor every rung is STILL an offered entry, so `offered` cannot be doing the work');
-  ok(strictRungs.filter(r => r.ok === false).length === 5,
-    '…while five of the six rungs are NOT ok — a rung must SUPPORT the build lane, not merely be pickable');
-  ok(strictRungs.filter(r => r.ok === true).length === 1
-     && strictRungs.find(r => r.ok === true).id === 'ibm-granite/granite-4.0-h-micro',
-    '…and the one that survives is the one with a named exemption, not the one that happens to be listed');
-  // The exemption must NOT rescue a model from a rule it was not written for.
-  const granite = strict.failures.find(f => f.id === 'ibm-granite/granite-4.0-h-micro');
-  ok(granite === undefined || granite.exemption !== null,
-    'the exemption stays scoped to its own model and does not become a general waiver');
+  ok(strictRungs.filter(r => r.ok === false).length === strictRungs.length,
+    '…while NONE of the rungs is ok, with no waiver shipped — a rung must SUPPORT the build lane, not merely be pickable');
   // And a raised ADMISSION gate produces real `reasons`, not just lane flips.
   const gated = llm.auditStaticOffers({ contextFloorTokens: 2000000 });
   ok(gated.failures.length > 0 && gated.failures.some(f => f.reasons.length > 0),
@@ -346,7 +335,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
   for (const p of ['gemini', 'anthropic', 'openrouter']) {
     for (const e of (llm.OFFERABLE_MODELS[p] || [])) ALL.push({ p, e });
   }
-  eq(ALL.length, 17, 'seventeen hand-typed entries (minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0; four 2-gen-old Anthropic entries retired and Sonnet/Opus 5.5 added 2026-10-08)');
+  eq(ALL.length, 16, 'sixteen hand-typed entries (Granite withdrawn 2026-11-07; minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0; four 2-gen-old Anthropic entries retired and Sonnet/Opus 5.5 added 2026-10-08)');
   ok(ALL.every(({ e }) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     'every one carries a positive integer context window');
   ok(ALL.every(({ e }) => e.contextLength >= 100000 && e.contextLength <= 10000000),
@@ -364,7 +353,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
     // GET /v1/models/<id> → max_input_tokens, read 2026-10-08 (claude-opus-4-5's
     // 200000 left with its retirement the same day).
     'claude-haiku-5-5': 1000000, 'claude-sonnet-5-5': 1000000, 'claude-opus-5-5': 1000000,
-    'ibm-granite/granite-4.0-h-micro': 131000, 'upstage/solar-pro4': 524288,
+    'upstage/solar-pro4': 524288,
     'z-ai/glm-5.3-flash': 1048576, 'moonshotai/kimi-k2-0905': 262144,
   };
   for (const [id, ctx] of Object.entries(PINNED)) {
