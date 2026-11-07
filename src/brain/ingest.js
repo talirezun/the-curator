@@ -12,6 +12,7 @@ import {
   appendLog,
   syncSummaryEntities,
   mergeWikiPage,
+  tidyWrittenLinks,
 } from './files.js';
 // v3.83.0: index.md is DATA — rows are ensured, never LLM-written, through the
 // one shared module (ingest, compile and the MCP's compile_to_wiki all use it).
@@ -3525,6 +3526,10 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // now, whatever happens below. Never fails an ingest.
   const createdPages = createdPageKeys(changes);
   await recordRecentNewPages(domain, createdPages, wikiDir);
+
+  // Every page of this ingest is on disk now, so a link to one written later can
+  // resolve. Before the backlink sync below, which reads these lists.
+  await tidyWrittenLinks(domain, canonicalPaths);
 
   if (repeatSource) {
     warnings.push(

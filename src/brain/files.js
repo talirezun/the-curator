@@ -1381,6 +1381,66 @@ async function linkRewriterFor(domain) {
   );
 }
 
+/**
+ * Tidy the links of pages one write run just wrote, once ALL its pages are on disk.
+ *
+ * writePage's rewriter sees the wiki as it stands at that page's own write, so a link
+ * to a page written later in the same run cannot resolve yet, and stays as the model
+ * spelled it: `[[AgentLink]]` in a summary written before `entities/agentlink.md`. The
+ * reply order decides it, which is why it looked random between runs (Gemini 3.1, 3 of 4
+ * runs). A model that writes the page's NAME, `[[Model Context Protocol]]`, never
+ * matched at all. Only a target whose letters and digits equal one real page's slug is
+ * touched; an acronym or a guess stays as it is, and stays reported.
+ *
+ * In a sentence the reader keeps the model's wording, through an alias; a list row that
+ * is only a link takes the bare slug, so two spellings of one link become one row; a
+ * table row takes no alias, because the pipe would split the cell. Words are never
+ * touched, only link targets.
+ *
+ * @returns {Promise<number>} pages changed
+ */
+export async function tidyWrittenLinks(domain, relPaths) {
+  const wiki = wikiPath(domain);
+  const rewrite = await linkRewriterFor(domain);
+  const known = new Map();
+  const exact = new Set();
+  for (const folder of ['entities', 'concepts']) {
+    let files = [];
+    try { files = await readdir(path.join(wiki, folder)); } catch { /* none yet */ }
+    for (const f of files) {
+      if (!f.endsWith('.md')) continue;
+      const key = linkNameKey(f.slice(0, -3));
+      exact.add(f.slice(0, -3));
+      if (key && !known.has(key)) known.set(key, f.slice(0, -3));
+    }
+  }
+  const byName = (line) => line.replace(/\[\[([^\]|#\n/]+?)\]\]/g, (match, target) => {
+    if (exact.has(target)) return match;
+    const hit = known.get(linkNameKey(target));
+    if (!hit) return match;
+    const onlyLink = /^\s*[-*+]\s+\[\[[^\]]+\]\]\s*$/.test(line);
+    const inTable = line.trimStart().startsWith('|');
+    return onlyLink || inTable ? `[[${hit}]]` : `[[${hit}|${target}]]`;
+  });
+  let changed = 0;
+  for (const rel of new Set(relPaths)) {
+    const full = path.join(wiki, rel);
+    let before;
+    try { before = await readFile(full, 'utf8'); } catch { continue; }
+    const named = before.split('\n').map(byName).join('\n');
+    const after = dedupRewrittenBullets(before, rewrite(named));
+    if (after === before) continue;
+    await writeFileAtomic(full, after, 'utf8');
+    changed++;
+  }
+  return changed;
+}
+
+/** A link target or slug with case, spaces, hyphens and underscores gone. */
+function linkNameKey(name) {
+  return String(name).trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
 export async function writePage(domain, relativePath, content, opts = {}) {
   // opts.repeatSource: this same source was ingested into this domain before: the
   // existing page takes no new wording, and opts.onLeftOut(count) hears what went.
