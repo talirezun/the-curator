@@ -33,7 +33,15 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, '.curator-config.json');
+// The provider is forced by writing a config file, so that file must be THROWAWAY:
+// CURATOR_TEST_USER_DATA_DIR puts the config (and every other credential path) in a
+// tempdir before any app module loads. It used to write the real repo-root config
+// and restore it from memory at exit, which a kill would strand. Keys therefore come
+// from the environment / .env only, never from a stored config.
+const USER_DATA_TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-beta15-userdata-'));
+process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA_TMP;
+process.on('exit', () => { try { rmSync(USER_DATA_TMP, { recursive: true, force: true }); } catch {} });
+const CONFIG_FILE = path.join(USER_DATA_TMP, '.curator-config.json');
 
 // Isolate every createDomain() into a throwaway tempdir (beats config) so this
 // test never touches the real domains/ folder on a configured machine.

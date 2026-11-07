@@ -47,14 +47,13 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-beta8-live-'));
 process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
 
-// Mute .curator-config.json by setting a fake path so config.js falls back to env
-const origConfig = path.join(PROJECT_ROOT, '.curator-config.json');
-const stashed = existsSync(origConfig);
-if (stashed) {
-  // Move it aside for the duration of the test so getDomainsDir() reads the env
-  copyFileSync(origConfig, origConfig + '.beta8-test-bak');
-  rmSync(origConfig);
-}
+// The real .curator-config.json is made unreachable by a SEAM, never by moving it:
+// this suite used to copy the real file aside, delete it and restore it in cleanup(),
+// and a kill in between stranded the user's keys. The user-data dir (where the
+// config lives) now points at a tempdir, so getDomainsDir() and the keys read env.
+const userDataDir = path.join(tempRoot, '.user-data');
+mkdirSync(userDataDir, { recursive: true });
+process.env.CURATOR_TEST_USER_DATA_DIR = userDataDir;
 
 let passed = 0;
 let failed = 0;
@@ -71,9 +70,6 @@ function assertTrue(cond, label, detail) { if (cond) return ok(label); fail(labe
 
 async function cleanup() {
   try { rmSync(tempRoot, { recursive: true, force: true }); } catch {}
-  if (stashed) {
-    try { copyFileSync(origConfig + '.beta8-test-bak', origConfig); rmSync(origConfig + '.beta8-test-bak'); } catch {}
-  }
 }
 
 process.on('exit', () => { /* sync cleanup handled in main */ });
