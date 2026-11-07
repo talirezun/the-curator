@@ -257,7 +257,7 @@ function fenceRuns(content) {
     if (open !== null) {
       if (t.trim().length >= open.length && new RegExp(`^ {0,3}\\${open[0]}+$`).test(t)) open = null;
     } else {
-      const m = t.match(/^ {0,3}(`{3,}|~{3,})/);
+      const m = t.match(/^ {0,3}(\x60{3,}|~{3,})/);
       if (m) { open = m[1]; fenced = true; }
     }
     const last = runs[runs.length - 1];
