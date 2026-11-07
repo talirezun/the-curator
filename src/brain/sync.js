@@ -1764,7 +1764,9 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   if (!SETUP_MODES.includes(mode)) {
     throw refusal('invalid-mode', `mode must be one of ${SETUP_MODES.join(', ')}`);
   }
-  await ensureDomainsGitignore();
+  // Not before a pull: the file would be an untracked collision with the remote's own,
+  // which refused every second computer with "would overwrite 0 files".
+  if (mode !== 'pull') await ensureDomainsGitignore();
   await applyLeaveOut(opts.leaveOut);
 
   const remoteUrl = buildRemoteUrl(repoUrl, token);
@@ -2001,7 +2003,9 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // Confirmed overwrite. `reset --hard` is the only command that will do
     // this, and it will do it to any file: the caller has been shown the
     // count and said yes.
-    await git('reset --hard origin/main', { gitDir });
+    // On a new repo HEAD is the default branch, often `master`: `reset --hard` left no
+    // `main`, and every later push failed. `-B` makes the branch, `-f` is the overwrite.
+    await git('checkout -f -B main origin/main', { gitDir });
   }
 
   await saveConfig(repoUrl, token, adoptedDir);

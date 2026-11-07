@@ -1041,6 +1041,11 @@ section('§15 A repair stays out of code fences and other tools\' folders');
   writeFileSync(path.join(d3.wiki, '.trash/n.md'), '[[concepts/same]]\n');
   await health.fixIssue(d3.name, 'crossFolderDupes', { keep: 'entities/same.md', remove: 'concepts/same.md' });
   ok(d3.read('.trash/n.md') === '[[concepts/same]]\n', '15.5 a merge does not repoint inside .trash');
+
+  // Nor inside a fence: the inbound link moves, the example in code stays as written.
+  const d4 = mkDomain({ 'entities/keep.md': '# K\n\nA.\n', 'entities/old.md': '# O\n\nB.\n', 'entities/in.md': '# I\n\nSee [[old]].\n\n```\nexample [[old]]\n```\n' });
+  const rm4 = await health.fixIssue(d4.name, 'semanticDupe', pair('keep', 'old', 'entities', 'entities'));
+  ok(rm4.fixed === 1 && d4.read('entities/in.md') === '# I\n\nSee [[keep]].\n\n```\nexample [[old]]\n```\n', '15.6 a merge repoints the link and leaves the fence', d4.read('entities/in.md'));
 }
 
 // ── §16 The two model-read sources agree on which page stays ────────────────

@@ -718,6 +718,56 @@ try {
     ok(fn('push', { pushed: true, filesChanged: 2, warning }).includes('vault'), 'push names it');
     eq(fn('sync', { pullResult: {}, pushResult: { pushed: false } }), 'Sync complete — everything was already up to date.', 'no gap, the sentence is unchanged');
   }
+  section('A second computer connects, on a git whose default branch is not main');
+  {
+    const r = newRemote();
+    const a = computer(r, 'second-a');
+    write(a.domains, 'd/CLAUDE.md', 'schema\n');
+    write(a.domains, 'd/wiki/entities/a.md', '# a\n');
+    await setup(a.url, 'x', 'push');
+
+    const b = computer(r, 'second-b');
+    const gitB = (args) => sh(`git --git-dir="${b.gitDir}" ${args}`).trim();
+    const pre = await preflightSetup(b.url, 'x');
+    eq(pre.recommendedMode, 'pull', 'an empty folder is recommended a pull');
+    const done = await setup(b.url, 'x', 'pull', { confirmOverwrite: false });
+    eq(done.mode, 'pull', 'and the pull connects with no question about 0 files');
+    ok(existsSync(path.join(b.domains, 'd/wiki/entities/a.md')), 'the pages arrive');
+    eq(gitB('symbolic-ref --short HEAD'), 'main', 'on main, not on whatever git calls a new branch');
+    write(b.domains, 'd/wiki/entities/b.md', '# b\n');
+    await push();
+    ok(remotePaths(r).includes('d/wiki/entities/b.md'), 'and its next Sync reaches the remote');
+
+    const c = computer(r, 'second-c');
+    write(c.domains, 'd/wiki/entities/a.md', '# local a\n');
+    let refused = null;
+    try { await setup(c.url, 'x', 'pull', { confirmOverwrite: false }); } catch (e) { refused = syncRefusalOf(e); }
+    eq(refused && refused.details.overwriteSample, ['d/wiki/entities/a.md'], 'a real collision is still refused, and named');
+    await setup(c.url, 'x', 'pull', { confirmOverwrite: true });
+    const gitC = (args) => sh(`git --git-dir="${c.gitDir}" ${args}`).trim();
+    eq(gitC('symbolic-ref --short HEAD'), 'main', 'a confirmed overwrite also lands on main');
+    eq(readFileSync(path.join(c.domains, 'd/wiki/entities/a.md'), 'utf8'), '# a\n', 'and did the overwrite it was confirmed for');
+    write(c.domains, 'd/wiki/entities/c.md', '# c\n');
+    await push();
+    ok(remotePaths(r).includes('d/wiki/entities/c.md'), 'and it can push');
+  }
+
+  section('A folder named like a secret is not a secret');
+  {
+    const r = newRemote();
+    const a = computer(r, 'named');
+    for (const dom of ['credentials', 'secrets.json', 'my.key']) {
+      write(a.domains, `${dom}/CLAUDE.md`, 'schema\n');
+      write(a.domains, `${dom}/wiki/entities/page.md`, '# p\n');
+      write(a.domains, `${dom}/credentials.json`, `${SECRET_LOOKING}\n`);
+    }
+    await setup(a.url, 'x', 'push');
+    const paths = remotePaths(r);
+    for (const dom of ['credentials', 'secrets.json', 'my.key']) {
+      ok(paths.includes(`${dom}/wiki/entities/page.md`), `the domain "${dom}" is backed up`);
+      ok(!paths.includes(`${dom}/credentials.json`), `and a secret file inside it is still not`);
+    }
+  }
 } finally {
   __setSyncTestOverrides({});
   __setDomainsDirOverride(null);

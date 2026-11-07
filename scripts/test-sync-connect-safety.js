@@ -312,8 +312,8 @@ console.log('\n4. setup(mode:"pull") REFUSES rather than overwriting, and cleans
   eq(refusal && refusal.details.overwriteCount, 2, '4c: and the count of what it would have destroyed');
   eq(refusal && refusal.details.source, 'measured',
      '4c2: WHICH LAYER REFUSED. There are two — the measurement above the checkout, and git\'s own untracked-overwrite refusal below it — and a mutation deleting the first left the suite GREEN, because the second catches the same collision. They are not interchangeable: only the measurement produces a count and a file list BEFORE anything is attempted, and it is the only one a preview can use at all. Pinning the source is what makes deleting it visible');
-  eq(JSON.stringify(changedPaths(before, await treeMap(domains))), JSON.stringify(['.gitignore']),
-     '4d: NOT ONE WIKI FILE MOVED — the handoff and the append-only journal survive. The only path that changed is the domains .gitignore, which ensureDomainsGitignore() writes on every connect, push and pull and always has');
+  eq(JSON.stringify(changedPaths(before, await treeMap(domains))), JSON.stringify([]),
+     '4d: NOT ONE FILE MOVED — the handoff and the append-only journal survive, and a refused pull has not written .gitignore either, because setup() does not write it before a pull');
   ok(!existsSync(gitDir),
      '4e: ROLLBACK — the git dir this call created is removed. isConfigured() tests for it, so leaving it would make the app claim sync is configured when no credentials were ever saved');
   ok(!existsSync(configFile), '4f: and no credentials were written');
@@ -461,8 +461,8 @@ let adoptFixture = null;
   ok(setupErr === null,
      `7d0: setup completes rather than throwing${setupErr ? ` (threw: ${setupErr.message.slice(0, 90)})` : ''}`);
   eq(r && r.adopted, true, '7d: setup adopts, and the requested MODE becomes irrelevant — even "pull" writes nothing');
-  eq(JSON.stringify(changedPaths(before, await treeMap(domains))), JSON.stringify(['.gitignore']),
-     '7e: NOT ONE WIKI FILE MOVED. Adoption is safe to do automatically precisely because closing the split costs no file — the only path that changed is the managed .gitignore');
+  eq(JSON.stringify(changedPaths(before, await treeMap(domains))), JSON.stringify([]),
+     '7e: NOT ONE FILE MOVED. Adoption is safe to do automatically precisely because closing the split costs no file; the requested mode here is pull, which does not write .gitignore');
   ok(!existsSync(appDefault), '7f: no second sync repo was created');
   const cfg = existsSync(configFile) ? JSON.parse(await readFile(configFile, 'utf8')) : {};
   eq(cfg.gitDir, browserGit, '7g: the adoption is RECORDED as a stored fact, not re-derived by a heuristic on every call');

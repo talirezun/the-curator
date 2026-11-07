@@ -39,7 +39,9 @@ const CREDENTIAL_DIRS = ['.ssh', '.gnupg', '.knowledge-git'];
 
 /** The same table as gitignore lines. A pattern holding a slash needs `**\/`. */
 export const CREDENTIAL_GITIGNORE_RULES = [
-  ...CREDENTIAL_BASENAMES,
+  // `!name/`: gitignore has no files-only form, so `credentials` alone would also drop a
+  // whole domain or folder of that name from the backup, without a word.
+  ...CREDENTIAL_BASENAMES.flatMap((b) => [b, `!${b}/`]),
   ...CREDENTIAL_TAILS.map((t) => `**/${t.join('/')}`),
   ...CREDENTIAL_DIRS.map((d) => `${d}/`),
 ];

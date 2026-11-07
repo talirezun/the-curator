@@ -1336,7 +1336,7 @@ function retiredLinkRewriter(retired, keepSlug, keepFolder) {
     // v3.84.0: after a merge, `- [[old]]` and `- [[keep]]` on one page become
     // two copies of `- [[keep]]` — the rewritten copy goes.
     apply: (content) => dedupRewrittenBullets(content,
-      content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`)),
+      replaceOutsideFences(content, linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`)),
   };
 }
 
