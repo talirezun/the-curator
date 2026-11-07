@@ -1081,9 +1081,56 @@ async function main() {
   // ── SYN-8: re-ingest SYN-1 (idempotency) ────────────────────────────
   {
     const sc = startScenario('SYN-8', 're-ingest SYN-1 — verifies merge-not-duplicate behaviour');
-    // Use the SYN-1 wiki that already exists; re-ingest the same file
+    // Use the SYN-1 wiki that already exists; re-ingest the same file.
+    // v3.96.2: the SAME model that already read these bytes makes no call and says so;
+    // a DIFFERENT model reads once (REPEAT_READ_BY_OTHER_MODEL).
+    const snapshotWiki = (dir) => {
+      const out = new Map();
+      const walk = (d) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          const p = path.join(d, e.name);
+          if (e.isDirectory()) walk(p); else out.set(path.relative(dir, p), readFileSync(p));
+        }
+      };
+      if (existsSync(dir)) walk(dir);
+      return out;
+    };
+    const syn1Wiki = path.join(tempRoot, 'syn1', 'wiki');
+    const before = snapshotWiki(syn1Wiki);
     const result = await runIngest('syn1', path.join(INPUTS_DIR, '01-tiny-baseline.md'), '01-tiny-baseline.md', sc);
-    assertTrue(sc, result.pagesWritten.length >= 1, 'SYN-8: re-ingest produced page records');
+    assertEq(sc, result.tokenUsage?.calls, 0, 'SYN-8: same-model re-ingest made no AI call');
+    assertEq(sc, (result.tokenUsage?.inputTokens || 0) + (result.tokenUsage?.outputTokens || 0), 0,
+      'SYN-8: same-model re-ingest spent no tokens');
+    assertTrue(sc, result.nothingToChange === true, 'SYN-8: same-model re-ingest reports nothingToChange');
+    assertTrue(sc, (result.warnings || []).some(w => /no AI call was made/i.test(w) && /nothing was charged/i.test(w)),
+      'SYN-8: the plain "no AI call, nothing charged" notice is shown',
+      (result.warnings || []).join(' | ').slice(0, 300));
+    assertEq(sc, result.pagesWritten.length, 0, 'SYN-8: same-model re-ingest wrote no page records');
+    const after = snapshotWiki(syn1Wiki);
+    const changed = [...before.keys()].filter(k => !after.has(k) || !after.get(k).equals(before.get(k)))
+      .concat([...after.keys()].filter(k => !before.has(k)));
+    // The manifest and log are bookkeeping, not pages.
+    const changedPages = changed.filter(k => /^(entities|concepts|summaries)\//.test(k) || k === 'index.md');
+    assertEq(sc, changedPages.length, 0, 'SYN-8: no existing page or index changed (byte-identical)');
+    if (changedPages.length) console.log(`    changed: ${changedPages.join(', ')}`);
+
+    // A different model has not read these bytes: it reads once and produces records.
+    {
+      const { getProviderInfo } = await import('../src/brain/llm.js');
+      const current = getProviderInfo().model;
+      const other = current === 'gemini-3.1-flash-lite' ? 'gemini-3.5-flash-lite' : 'gemini-3.1-flash-lite';
+      const savedModel = process.env.LLM_MODEL;
+      process.env.LLM_MODEL = other;
+      let other8;
+      try {
+        assertTrue(sc, getProviderInfo().model === other, `SYN-8: LLM_MODEL moved the resolved model to ${other}`);
+        other8 = await runIngest('syn1', path.join(INPUTS_DIR, '01-tiny-baseline.md'), '01-tiny-baseline.md', sc);
+      } finally {
+        if (savedModel === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedModel;
+      }
+      assertTrue(sc, (other8.tokenUsage?.calls || 0) >= 1, 'SYN-8: different-model re-ingest made a real reading');
+      assertTrue(sc, other8.pagesWritten.length >= 1, 'SYN-8: different-model re-ingest produced page records');
+    }
 
     // Count summary files — there must be exactly one
     const summariesDir = path.join(tempRoot, 'syn1', 'wiki', 'summaries');
