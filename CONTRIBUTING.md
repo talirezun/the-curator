@@ -1144,8 +1144,8 @@ node scripts/release.js <next-patch>
 Users who already updated get the fix on their next update check — there is no
 push. If the damage is in `domains/` rather than in code, the wiki is
 git-tracked and a user with Personal Sync configured recovers with a git
-client; there is no in-app revert and never has been (see CLAUDE.md's
-semantic-duplicate note).
+client; the only in-app revert is Wiki health's Undo, which covers Health's
+own changes on that computer only (see CLAUDE.md's Health undo rule).
 
 **If the gate went red instead**, nothing was deployed and there is nothing to
 revert. Fix it with a commit on top of `release/vX.Y.Z`, push, and re-run — the

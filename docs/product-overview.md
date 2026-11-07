@@ -373,8 +373,9 @@ which files change, how many links get rewritten and what the merged page will l
 that gate resets on rescan, on switching domain, and on flipping which page survives. Batch
 merging is offered for high-confidence pairs only; medium and low stay one at a time.
 
-**There is no in-app undo, and the app says so on the panel that launches the deletion.** The
-recovery route is a git client, via Personal Sync — and only if you use it.
+**A merge can be undone from Wiki health › Recent changes for 30 days, on the computer that made
+it, while none of its pages has changed since; the panel that launches the deletion says so.**
+Beyond that, the recovery route is a git client, via Personal Sync — and only if you use it.
 
 **Dismissals are persistent and synced.** An issue you decide not to act on stays dismissed
 across machines, with a restore list, and stale dismissals clean themselves up. On a read-only
