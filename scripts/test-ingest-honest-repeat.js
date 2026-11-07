@@ -131,6 +131,43 @@ section('§1 A real link to a real page resolves, whatever order the pages were 
   ok(res.warnings.some((w) => /1 of \d+ wikilinks/.test(w)), '…and stays reported', JSON.stringify(res.warnings));
 }
 
+// ── §4 ─────────────────────────────────────────────────────────────────────
+section('§4 The estimate against what the run billed, on the same footing');
+{
+  const { __testing: q } = await import('../src/brain/ingest-queue.js');
+  const llm = await import('../src/brain/llm.js');
+  const est = (model, name, size) => q.estimateOneFile({ f: { name, size }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-11-07', price: llm.getModelPrice(model), model });
+  // The bills: production-test matrix, fresh domain, metered at the wire. Typed, not derived.
+  const CELLS = [
+    ['claude-haiku-5-5', 'short-agentlink.md', 9856, 0.0030, 6109, 4778],
+    ['claude-sonnet-5-5', 'short-agentlink.md', 9856, 0.0613, 6109, 4911],
+  ];
+  for (const [model, name, size, usd, inTok, outTok] of CELLS) {
+    const e = est(model, name, size);
+    const r = usd / e.usdHigh;
+    ok(r >= 0.6 && r <= 1.1, `${model} on ${name}: billed $${usd}, estimated $${e.usdHigh.toFixed(4)} (billed/estimate ${r.toFixed(2)}; it was above 2)`);
+    ok(e.inputTokens >= inTok * 0.8 && e.inputTokens <= inTok * 1.2, `  input tokens ${e.inputTokens} against ${inTok} billed`);
+    ok(e.outputTokens >= outTok * 0.8 && e.outputTokens <= outTok * 1.3, `  output tokens ${e.outputTokens} against ${outTok} billed`);
+  }
+  const multi = est('claude-haiku-5-5', 'text-energy-water.txt', 17346);
+  ok(multi.mode === 'multi-phase' && multi.outputTokens === multi.totalCalls * 3300, 'multi-phase on Claude uses the measured 3,300 a call');
+  const rm = 0.0139 / multi.usdHigh;
+  ok(rm >= 0.6 && rm <= 1.3, `Haiku 5.5, multi-phase: billed $0.0139, estimated $${multi.usdHigh.toFixed(4)} (billed/estimate ${rm.toFixed(2)}; it was 2.17)`);
+  ok(multi.totalCalls >= 5 && multi.totalCalls <= 8, `planned ${multi.totalCalls} calls; a 17,346-character source measured 5 on Gemini 3.1, 8 on Haiku 5.5`);
+  const g = est('gemini-2.5-flash-lite', 'short-agentlink.md', 9856);
+  eq(g.outputTokens, 1667, 'Gemini keeps its figure: it was not understated');
+
+  const { renderSpent } = await import('../src/public/next/shared/ai-run.js');
+  const spent = { model: 'claude-haiku-5-5', modelLabel: 'Haiku 5.5', inputTokens: 6109, outputTokens: 4778, usd: 0.003 };
+  const estimate = { model: 'claude-haiku-5-5', usdLow: 0.0035, usdHigh: 0.0035, inputTokens: 5574, outputTokensHigh: 5900 };
+  const line = renderSpent(spent, { estimate }).replace(/<[^>]+>/g, '');
+  ok(/6,109 in \/ 4,778 out/.test(line) && /estimated before the run: 5,574 in \/ 5,900 out/.test(line), 'real and estimate print the same fields in the same format', line);
+  ok(/\$0\.0030/.test(line) && /\$0\.0035/.test(line), '...with the same dollar format', line);
+  ok(!/estimated/.test(renderSpent({ ...spent, fallbackFrom: 'claude-sonnet-5-5' }, { estimate })), 'another model answered: its estimate is not set against this bill');
+  ok(!/estimated/.test(renderSpent(spent, { estimate: { ...estimate, model: 'claude-sonnet-5-5' } })), 'an estimate for another model is left out');
+  ok(!/estimated/.test(renderSpent(spent)), 'no estimate, no clause');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 rmSync(TMP_ROOT, { recursive: true, force: true });
 if (failed) { console.log('❌ FAILURES'); process.exit(1); }

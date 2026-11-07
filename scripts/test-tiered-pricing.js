@@ -176,12 +176,10 @@ section('§3 estimates are conservative — a call that COULD cross is quoted up
   const one = { name: 'note.md', size: 5000 };
   const est1 = q.estimateOneFile({ f: one, promptFiles: bigFiles, index: bigIndex, today: '2026-10-08', price, model: H55 });
   const flat1 = q.estimateOneFile({ f: one, promptFiles: bigFiles, index: bigIndex, today: '2026-10-08', price, model: null });
-  // The upper tier is 5x on both rates; the tiered branch also applies the
-  // model's measured 1.329x tokenizer premium to input, so the ratio lands in
-  // [5, 5 x 1.329].
-  const ratio1 = est1.usdHigh / flat1.usdHigh;
-  ok(est1.totalCalls === 1 && ratio1 >= 5 - 1e-9 && ratio1 <= 5 * 1.329 + 1e-9,
-    `★ batch estimate, one call carrying a large wiki's index: $${est1.usdHigh.toFixed(4)} — the upper tier (${ratio1.toFixed(2)}x the lower-tier $${flat1.usdHigh.toFixed(4)})`);
+  void flat1;
+  const want1 = (est1.inputTokens / 1e6) * 0.50 + (5900 / 1e6) * 2.50;
+  ok(est1.totalCalls === 1 && Math.abs(est1.usdHigh - want1) < 1e-6,
+    `★ batch estimate, one call carrying a large wiki's index: $${est1.usdHigh.toFixed(4)} — the upper tier, $0.50/$2.50`);
   // A long document: the outline carries the index (upper), the batches do not.
   const f = { name: 'doc.md', size: 40000 };
   const est = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price, model: H55 });
@@ -190,12 +188,18 @@ section('§3 estimates are conservative — a call that COULD cross is quoted up
     `multi-phase on a large wiki: $${est.usdHigh.toFixed(4)} — priced per planned call, between all-lower ($${flatLower.usdHigh.toFixed(4)}) and all-upper`);
   const small = q.estimateOneFile({ f: { name: 'n.md', size: 2000 }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-10-08', price, model: H55 });
   const smallFlat = q.estimateOneFile({ f: { name: 'n.md', size: 2000 }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-10-08', price, model: null });
-  const rs = small.usdHigh / smallFlat.usdHigh;
-  ok(rs >= 1 - 1e-4 && rs <= 1.329 + 1e-4, `a small file on an empty wiki is quoted at the LOWER tier (${rs.toFixed(3)}x the flat figure — only the tokenizer premium, never 5x)`);
+  void smallFlat;
+  const smallWant = (small.inputTokens / 1e6) * 0.10 + (5900 / 1e6) * 0.50;
+  ok(Math.abs(small.usdHigh - smallWant) < 1e-6, `a small file on an empty wiki is quoted at the LOWER tier, $0.10/$0.50, on Claude's measured 5,900 output tokens ($${small.usdHigh.toFixed(5)})`);
   const s5 = llm.getModelPrice('claude-sonnet-5');
   const a = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: s5, model: 'claude-sonnet-5' });
   const b = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: s5, model: null });
-  ok(a.usdHigh === b.usdHigh && a.usdLow === b.usdLow, 'a FLAT model\'s estimate is byte-identical to the pre-tier arithmetic');
+  ok(Math.abs(a.inputTokens / b.inputTokens - 1.329) < 0.001, 'a FLAT Claude model counts the tokenizer premium too');
+  ok(a.usdHigh > b.usdHigh, '...and so quotes above the un-premiumed arithmetic');
+  const g = llm.getModelPrice('gemini-2.5-flash-lite');
+  const ga = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: g, model: 'gemini-2.5-flash-lite' });
+  const gb = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: g, model: null });
+  ok(ga.usdHigh === gb.usdHigh && ga.usdLow === gb.usdLow, 'a model with no premium and no Claude output figure is byte-identical to the old arithmetic');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
