@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import { localDateStamp } from './local-date.js';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { generateText, isAbortError, makeAbortError, isAboveTierCall } from './llm.js';
+import { generateText, isAbortError, makeAbortError, isAboveTierCall, getProviderInfo } from './llm.js';
 import {
   readSchema,
   readIndex,
@@ -12,6 +12,9 @@ import {
   appendLog,
   syncSummaryEntities,
   mergeWikiPage,
+  tidyWrittenLinks,
+  repairSummaryLayout,
+  isStubPage,
 } from './files.js';
 // v3.83.0: index.md is DATA — rows are ensured, never LLM-written, through the
 // one shared module (ingest, compile and the MCP's compile_to_wiki all use it).
@@ -101,7 +104,80 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
   const list = missing.length === 1 ? missing[0]
     : missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1];
   return `The summary "${summaryPath}" is missing ${list} — the AI did not follow the summary layout. ` +
-    `Open it in the Wiki tab; re-ingesting "${originalName}" usually fixes it.`;
+    `Open it in the Wiki tab. Re-ingesting "${originalName}" adds what is missing if the model writes it; ` +
+    `nothing already on the page changes.`;
+}
+
+/**
+ * ── WHAT A PRESS OF "RE-INGEST" CAN REALLY CHANGE, KNOWN BEFORE ANY CALL ───
+ *
+ * Measured 2026-11-07 on two real sources, a re-reading through the add-only-new composer:
+ *   same model again:  Gemini 3.1 +1,089 and +581 characters, 0 of 12 hand-picked facts;
+ *                      Haiku 5.5 +2,337 and +1,605, 1 fact; on the other source +1,785, 2.
+ *   another model:     3.1 > Haiku 5.5, 8 facts of 12; 3.1 > Sonnet 5.5, 7; Haiku > Sonnet, 5;
+ *                      on the other source 3.1 > Haiku 5.5, 5 of 11.
+ * So the owner's rule of 2026-11-06 holds where it was measured: the same model reading the
+ * same bytes rewords, never converges, and finds little. What it gave up is real, though:
+ * a user who built a domain on a cheap model and presses re-ingest on a stronger one wants
+ * exactly what the matrix shows it can deliver. Hence, by (these bytes, this model):
+ *
+ *   'nothing'      this model has read these bytes and no gap is known: NO CALL, NO COST.
+ *   'gaps'         same model, but a page is a stub, or the summary has no Key Takeaways,
+ *                  or that run warned that it fell short: a call, once, and new pages and
+ *                  stubs only. Existing text takes no new wording.
+ *   'other-model'  this model has not read these bytes: a real reading, under add-only-new.
+ *                  Each (bytes, model) reads once, so growth is bounded by the models a
+ *                  user pays for, and old text is never overwritten.
+ *   'unknown'      the current model cannot be told: behaves as gaps, the old behaviour.
+ *
+ * REPEAT_READ_BY_OTHER_MODEL = false restores "the identical source adds nothing" for every
+ * model, should the owner prefer it.
+ *
+ * Reads only. Never throws for a bookkeeping reason: on any doubt it answers 'unknown'.
+ *
+ * @returns {Promise<{sameContent:boolean, kind:string|null, previous:object|null,
+ *   model:string|null, gaps:string[]}>}
+ */
+export const REPEAT_READ_BY_OTHER_MODEL = true;
+
+// The warnings that tell the user a reading fell short: a page the model did not write, or
+// a page plan it never returned. Their promise is a new reading, so they count as a gap.
+const FELL_SHORT_RE = /wrote a stub|Stub page created|stub pages were created|did not make it into the wiki|almost certainly incomplete|no content from the AI/i;
+
+export async function planRepeatIngest(domain, sha256, model) {
+  const wikiDir = wikiPath(domain);
+  const none = { sameContent: false, kind: null, previous: null, model: model || null, gaps: [] };
+  let records;
+  try { records = await readManifest(domain); } catch { return none; }
+  const exists = (p) => existsSync(path.join(wikiDir, p));
+  if (!findCompletedIngest(records, sha256, exists)) return none;
+  const readings = records.filter((r) => r.sha256 === sha256 && r.completed !== false
+    && typeof r.summaryPath === 'string' && exists(r.summaryPath));
+  const latest = readings[readings.length - 1];
+  const previous = { filename: latest.filename, ingestedAt: latest.ingestedAt, model: latest.model || null, summaryPath: latest.summaryPath };
+  const out = { sameContent: true, kind: 'nothing', previous, model: model || null, gaps: [] };
+  if (!model) { out.kind = 'unknown'; return out; }
+  if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
+
+  // Which gaps a reading could still fill. Read off the disk, and off what that run said.
+  try {
+    const summary = await readFile(path.join(wikiDir, latest.summaryPath), 'utf8');
+    if (isStubPage(summary)) out.gaps.push('the summary is a stub');
+    else if (/Key Takeaways/.test(summaryShapeWarning(latest.summaryPath, summary, latest.filename) || '')) out.gaps.push('the summary has no Key Takeaways');
+    let stubs = 0;
+    for (const m of summary.matchAll(/\[\[([^\]|#\n/]+)(?:\|[^\]]*)?\]\]/g)) {
+      for (const folder of ['entities', 'concepts']) {
+        try { if (isStubPage(await readFile(path.join(wikiDir, folder, `${m[1].trim()}.md`), 'utf8'))) stubs++; } catch { /* no such page */ }
+      }
+    }
+    if (stubs) out.gaps.push(`${stubs} stub page${stubs === 1 ? '' : 's'}`);
+  } catch { /* an unreadable summary: nothing to judge */ }
+  if (latest.gaps > 0) out.gaps.push('the last reading warned that it fell short');
+  // A gap earns this model ONE more reading. A model that leaves the same gap twice would
+  // otherwise bill every press for ever, the very thing this plan exists to stop.
+  const byThisModel = readings.filter((r) => r.model === model).length;
+  if (out.gaps.length && byThisModel < 2) out.kind = 'gaps';
+  return out;
 }
 
 /**
@@ -1920,7 +1996,7 @@ const AGGREGATABLE_WARNINGS = [
     match: /^Stub page created for "(.+?)"/,
     render: (n, ex) =>
       `${n} stub pages were created because the AI could not generate content for them ` +
-      `(${renderExamples(ex)}). These are placeholders, not real pages — re-ingest this source to fix them.`,
+      `(${renderExamples(ex)}). These are placeholders, not real pages — re-ingesting this source fills them in.`,
   },
   {
     id: 'batch-overflow',
@@ -2853,7 +2929,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
             warnings.push(
               `The AI's first attempt at "${singlePage.path}" came back unusable, so The Curator asked ` +
               `for a shorter version and saved that instead. This is real content, but it is ` +
-              `briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.`
+              `briefer than the rest — open it in the Wiki tab; if it reads too thin, re-ingest with another model.`
             );
           }
         }
@@ -3080,11 +3156,38 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // otherwise an identical source grows the wiki for ever. Nothing is blocked and no
   // call is skipped. The hash is awaited for this, about a second on a 126 MB file.
   const sourceHash = await hashRawSource(destPath);
-  const repeatSource = Boolean(findCompletedIngest(
-    await readManifest(domain),
-    sourceHash,
-    (p) => existsSync(path.join(wikiPath(domain), p)),
-  ));
+  // Which model this run will use. The test seam names its own; a provider failure here
+  // is reported properly by the first call, so it only means "cannot tell" for now.
+  let plannedModel = typeof opts?.buildModel === 'string' ? opts.buildModel : null;
+  if (!plannedModel && !(opts && typeof opts.llm === 'function')) {
+    try { plannedModel = getProviderInfo().model; } catch { plannedModel = null; }
+  }
+  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel);
+  // See planRepeatIngest: only another model's reading may bring in new wording.
+  const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model';
+  if (repeatPlan.kind === 'nothing') {
+    // No call, no cost. What is known without a model is still put right.
+    const summaryRel = repeatPlan.previous.summaryPath;
+    const fixed = await repairSummaryLayout(domain, summaryRel, {
+      title: path.basename(repeatPlan.previous.filename, path.extname(repeatPlan.previous.filename)),
+      source: repeatPlan.previous.filename,
+    });
+    const notice = fixed.length
+      ? `This source's content has not changed and this model has already read it, so no AI call was made. The summary gained its missing ${fixed.join(' and ')}, at no cost.`
+      : `This source's content has not changed and this model has already read it, so no AI call was made and nothing was charged. Pick another model to read it again.`;
+    if (fixed.length) await appendLog(domain, `## [${localDateStamp()}] repair | ${originalName}\nThe summary gained its missing ${fixed.join(' and ')}. No AI call.\n`);
+    progress(100, 'Nothing to do');
+    return {
+      title: originalName,
+      pagesWritten: fixed.length ? [summaryRel] : [],
+      changes: [],
+      warnings: [notice],
+      truncated: false,
+      tokenUsage: { calls: 0, inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0, provider: null, model: null },
+      newPagesToCompare: null,
+      nothingToChange: true,
+    };
+  }
   const manifestRecord = {
     filename: originalName,
     sha256: sourceHash,
@@ -3526,6 +3629,16 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const createdPages = createdPageKeys(changes);
   await recordRecentNewPages(domain, createdPages, wikiDir);
 
+  // Every page of this ingest is on disk now, so a link to one written later can
+  // resolve. Before the backlink sync below, which reads these lists.
+  await tidyWrittenLinks(domain, canonicalPaths);
+
+  if (repeatPlan.kind === 'other-model') {
+    warnings.push(
+      `This source's content has not changed, and ${repeatPlan.previous.model || 'an earlier model'} read it before. ` +
+      `This reading added new pages and what was mostly new to a page; no existing text changed.`
+    );
+  }
   if (repeatSource) {
     warnings.push(
       `This source was already ingested into this domain (same content), so existing pages kept their text and took ` +
@@ -3541,6 +3654,15 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const summaryCanonPath = canonicalPaths.find(p => p.startsWith('summaries/'));
   if (summaryCanonPath) {
     await syncSummaryEntities(domain, summaryCanonPath, canonicalPaths);
+    // What the model left off, added without touching a line it wrote. A title and a
+    // source are known without asking, and Key Takeaways come from this run's reply.
+    const replySummary = result.pages.find((p) => p && p.path === summaryPath);
+    const parsedTitle = typeof result.title === 'string' ? result.title : null;
+    await repairSummaryLayout(domain, summaryCanonPath, {
+      title: parsedTitle || path.basename(originalName, path.extname(originalName)),
+      source: originalName,
+      incoming: replySummary && typeof replySummary.content === 'string' ? replySummary.content : undefined,
+    });
     // v3.84.0: say so when the summary ON DISK lacks the layout every reader
     // of it assumes. Read back after the write, so it judges what was saved.
     try {
@@ -3613,7 +3735,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (brokenAudit.brokenCount > 0) {
       const pct = ((brokenAudit.brokenCount / brokenAudit.totalCount) * 100).toFixed(1);
       const samples = brokenAudit.samples.slice(0, 3).map(s => `${s.target}`).join(', ');
-      const msg = `${brokenAudit.brokenCount} of ${brokenAudit.totalCount} wikilinks (${pct}%) don't resolve to an existing page. Examples: ${samples}${brokenAudit.samples.length > 3 ? '…' : ''}. Run Wiki Health → Ask AI to fix or strip them, or re-ingest with broader entity coverage.`;
+      const msg = `${brokenAudit.brokenCount} of ${brokenAudit.totalCount} wikilinks (${pct}%) don't resolve to an existing page. Examples: ${samples}${brokenAudit.samples.length > 3 ? '…' : ''}. Run Wiki Health → Ask AI to fix or strip them.`;
       warnings.push(msg);
     }
   } catch (auditErr) {
@@ -3644,7 +3766,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const logEntry = `## [${localDateStamp()}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
   // The pages are on disk: only now does this source count as ingested.
-  await appendManifestRecord(domain, { ...manifestRecord, ingestedAt: new Date().toISOString(), completed: true });
+  await appendManifestRecord(domain, {
+    ...manifestRecord,
+    ingestedAt: new Date().toISOString(),
+    completed: true,
+    model: usage.totals.model || plannedModel,
+    gaps: warnings.filter((w) => FELL_SHORT_RE.test(w)).length,
+  });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this
   // module is imported by the MCP child process (v2.5.2).

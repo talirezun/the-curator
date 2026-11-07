@@ -27,6 +27,7 @@ import {
   writePage,
   appendLog,
   syncSummaryEntities,
+  tidyWrittenLinks,
 } from '../../src/brain/files.js';
 import { generateText } from '../../src/brain/llm.js';
 import { getDefaultDomain } from '../../src/brain/config.js';
@@ -598,6 +599,8 @@ export async function compileToWikiHandler(args, storage) {
 
   // 4c. Sync summary backlinks (entities mentioned → backlink to summary)
   const canonicalPaths = writeRecords.map(w => w.record.canonPath);
+  // A link to a page written later in this call can resolve now.
+  await tidyWrittenLinks(domain, canonicalPaths);
   const summaryCanon = canonicalPaths.find(p => p.startsWith('summaries/'));
   if (summaryCanon) {
     await syncSummaryEntities(domain, summaryCanon, canonicalPaths);

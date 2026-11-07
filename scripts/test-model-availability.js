@@ -108,10 +108,11 @@ const llm = await import('../src/brain/llm.js');
 // the id left the table (2026-09-25). Every property this suite needs is
 // "a SHIPPED, offerable, build-lane, hand-measured id the provider's listing
 // lacks", and the CHEAPEST such id, so that `cheapestMeasured` names it until
-// the listing arrives. Granite is all of those; the fixture listings below
-// simply leave it out. (It is also the chain's only rung, which §4 does not
-// depend on: §4 drives `fallbackRungsFor` with its own heads.)
-const WITHDRAWN = 'ibm-granite/granite-4.0-h-micro';
+// the listing arrives. GLM 5.3 Flash is all of those since Granite really was
+// withdrawn (2026-11-07); the fixture listings below simply leave it out. (It is
+// also the chain's only rung, which §4 does not depend on: §4 drives
+// `fallbackRungsFor` with its own heads.)
+const WITHDRAWN = 'z-ai/glm-5.3-flash';
 const adapterMod = await import('../src/brain/openrouter-adapter.js');
 const { OpenRouterAdapter, OpenRouterError, classifyBadRequestReason, classifyNotFoundReason } = adapterMod;
 const { modelGoneError, MODEL_GONE_CODE } = await import('../src/brain/model-gone.js');
@@ -229,7 +230,6 @@ eq(llm.getLiveModelListing('openrouter'), null, 'and there is no listing to desc
   const LIVE = [
     'minimax/minimax-m3',
     'upstage/solar-pro4',
-    'z-ai/glm-5.3-flash',
     'moonshotai/kimi-k2-0905',
     'nex-agi/nex-n2.5-mini:free',
   ];

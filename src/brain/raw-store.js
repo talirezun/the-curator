@@ -438,6 +438,11 @@ export async function appendManifestRecord(domain, record) {
       // false at the start of an ingest, true on a second line once its pages are
       // written. Absent on a record older than this field. findCompletedIngest reads it.
       ...(typeof record.completed === 'boolean' ? { completed: record.completed } : {}),
+      // On the completed line: the model that really read the source, and how many of
+      // that ingest's warnings promised a re-ingest would fix something. Absent on
+      // older records; planRepeatIngest reads them.
+      ...(typeof record.model === 'string' && record.model ? { model: record.model } : {}),
+      ...(Number.isFinite(record.gaps) && record.gaps > 0 ? { gaps: record.gaps } : {}),
     });
 
     const target = manifestFilePath(domain);

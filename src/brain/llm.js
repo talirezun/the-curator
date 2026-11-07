@@ -764,7 +764,19 @@ const FALLBACK_CHAINS = {
    * upstream we did not pick. This list is the ONLY substitution that can
    * happen, which is why it is short and hand-checked.
    */
-  openrouter: ['ibm-granite/granite-4.0-h-micro'],
+  //
+  // ── ⚠ GRANITE WITHDRAWN (measured 2026-11-07) ──────────────────────────────
+  // The rung the comment above defends, `ibm-granite/granite-4.0-h-micro`, has 0
+  // OpenRouter endpoints and left /api/v1/models: the safety net could no longer
+  // catch anything, and `test-openrouter-live` went red on it. See RETIRED_MODELS.
+  // GLM 5.3 Flash replaces it: measured on the real ingest prompt (8 of 9 returned a
+  // body, all 8 raw JSON, 25-28 outline pages), priced, cheaper on both axes than the
+  // default it backs up, and served by 42 endpoints, so it is the rung least likely to
+  // vanish. Its measured cost is SPEED (median 188 s a call) and hidden reasoning,
+  // which is an acceptable trade only for the day the default has gone. Solar Pro 4 is
+  // the default, so it cannot also be the rung; Kimi K2 0905 is dearer and measured to
+  // run away about once in nine, and a chain picks silently for the user.
+  openrouter: ['z-ai/glm-5.3-flash'],
 };
 
 /**
@@ -890,7 +902,6 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // FREE_MODELS, and `getModelPrice()` must keep returning null for it — an
   // `{input: 0, output: 0}` entry here is truthy and would silently re-arm
   // v3.3.0's inert budget cap.
-  'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
   //
   // ── ⚠ RE-MEASURED 2026-09-16: THIS ID GOT 3x MORE EXPENSIVE AND NOTHING
   //    IN THE APP NOTICED ────────────────────────────────────────────────────
@@ -910,7 +921,10 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // picker copy that called it "roughly a third of the cheapest Gemini option"
   // had to change: at $0.09/$0.36 against Gemini's $0.10/$0.40 it is roughly
   // NINE TENTHS, not a third.
-  'upstage/solar-pro4':              { input: 0.09,  output: 0.36  },
+  // ⚠ RE-MEASURED 2026-11-07: UP AGAIN. Both endpoints publish $0.15/$0.60, and a cold
+  // call of 472 in + 6 out billed `usage.cost` 0.0000744, which is that rate to the last
+  // digit. The table's $0.09/$0.36 understated every OpenRouter default run by 1.67x.
+  'upstage/solar-pro4':              { input: 0.15,  output: 0.60  },
   //
   // ── ADDED 2026-08-28. THE PRICE OF AN OPENROUTER ID IS A PROPERTY OF THE
   //    ENDPOINT THAT SERVES IT, NOT OF THE ID ────────────────────────────────
@@ -967,7 +981,10 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // half of this pair that could jump without the input rate moving — the
   // live-price comparison (`liveCataloguePrice`) watches the headline, and the
   // note says the rate can move.
-  'z-ai/glm-5.3-flash':              { input: 0.045, output: 0.14  },
+  // ⚠ RE-MEASURED 2026-11-07: five cold calls were served by OpenInference and billed
+  // $0.03/$0.24 to the last digit (246 in + 199 out = 0.00005514). Cheaper input, 1.7x
+  // the output, and output is what this model spends on hidden reasoning.
+  'z-ai/glm-5.3-flash':              { input: 0.03,  output: 0.24  },
   'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
 };
 
@@ -1024,10 +1041,9 @@ const PRICE_VERIFIED_ON = Object.freeze({
   'claude-opus-5-5':                 '2026-10-08',
   'claude-sonnet-5':                 '2026-10-08',
   'claude-opus-5':                   '2026-10-08',
-  'ibm-granite/granite-4.0-h-micro': '2026-09-25',
-  'upstage/solar-pro4':              '2026-09-25',
-  'z-ai/glm-5.3-flash':              '2026-09-25',
-  'moonshotai/kimi-k2-0905':         '2026-09-25',
+  'upstage/solar-pro4':              '2026-11-07',
+  'z-ai/glm-5.3-flash':              '2026-11-07',
+  'moonshotai/kimi-k2-0905':         '2026-11-07',
 });
 
 /**
@@ -1060,7 +1076,6 @@ const MEASURED_ON = Object.freeze({
   'claude-opus-5-5':                 '2026-10-08',
   'claude-sonnet-5':                 '2026-08-26',
   'claude-opus-5':                   '2026-08-26',
-  'ibm-granite/granite-4.0-h-micro': '2026-08-27',
   'upstage/solar-pro4':              '2026-08-27',
   'z-ai/glm-5.3-flash':              '2026-08-28',
   'moonshotai/kimi-k2-0905':         '2026-08-28',
@@ -1665,12 +1680,17 @@ export const AWAITING_MEASUREMENT = Object.freeze({});
  *
  * The maintainer's rule (2026-10-08): The Curator offers the CURRENT Anthropic
  * generation and the one immediately before it, and nothing older — Haiku 5.5 /
- * 4.5 (there is no Haiku 5), Sonnet 5.5 / 5, Opus 5.5 / 5. Anthropic only;
- * Gemini and OpenRouter are untouched. Every id below still ANSWERS on the API
- * today (GET /v1/models listed all of them on 2026-10-08) — this is a
+ * 4.5 (there is no Haiku 5), Sonnet 5.5 / 5, Opus 5.5 / 5. Every Anthropic id
+ * below still ANSWERS on the API (GET /v1/models listed all of them on 2026-10-08) — this is a
  * different idea from test-chat-model.js §9's RETIRED list, which is ids that
  * 404. Neither the Fable line (claude-fable-5, -5-1) nor any Mythos model was
  * ever in the catalogue, so nothing here concerns them.
+ *
+ * THE OTHER REASON AN ID IS HERE (2026-11-07): the provider stopped serving it.
+ * Granite 4.0 H Micro has 0 OpenRouter endpoints and left /api/v1/models, so a
+ * stored pick of it can only fail. Such an entry carries `why`, the note's own
+ * sentence, because the generation rule above does not explain it. Its successor
+ * is the OpenRouter default, which COSTS MORE than Granite did: the note says so.
  *
  * Removing a model from OFFERABLE_MODELS already made a stored pick of it fall
  * back to the provider DEFAULT on the read side — which would have quietly
@@ -1696,6 +1716,10 @@ export const RETIRED_MODELS = Object.freeze({
   'claude-opus-4-7':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.7',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
   'claude-opus-4-6':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.6',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
   'claude-opus-4-5':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.5',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
+  'ibm-granite/granite-4.0-h-micro': Object.freeze({
+    provider: 'openrouter', label: 'Granite 4.0 H Micro', successor: 'upstage/solar-pro4', retiredOn: '2026-11-07',
+    why: 'OpenRouter no longer serves Granite 4.0 H Micro. Solar Pro 4 is the OpenRouter default, and it costs more: Granite was $0.017 in and $0.112 out per million tokens.',
+  }),
 });
 
 /** The successor a retired id migrates to, or null (not retired / successor not offered). */
@@ -1721,6 +1745,7 @@ export function retirementNoteText(from, to, lane) {
   const fromLabel = r ? r.label : from;
   const toLabel = r ? labelOfOffer(r.provider, to) : to;
   const where = lane === 'chat' ? 'Your chat model' : 'The model that builds your wiki';
+  if (r && r.why) return `${where} moved from ${fromLabel} to ${toLabel}. ${r.why}`;
   return `${where} moved from ${fromLabel} to ${toLabel}: The Curator now offers only the current Anthropic ` +
     `generation and the one before it, so ${fromLabel} was retired and you were moved to the same family's newest model.`;
 }
@@ -2780,22 +2805,6 @@ export const OFFERABLE_MODELS = Object.freeze({
     // id falls back to the provider default and the Providers page says so
     // (`buildModel.selectedHonoured: false`); the paid slug stays reachable for
     // chat through the runtime catalogue at its own live price.
-    defineOfferableModel('openrouter', {
-      id: 'ibm-granite/granite-4.0-h-micro',
-      label: 'Granite 4.0 H Micro',
-      contextLength: 131000,
-      maxOutput: 117900,
-      thinks: false, jsonRaw: true, tokenizerFactor: 1.036,
-      suitability: 'caution',
-      outlinePagesLow: 7, outlinePagesHigh: 13, outlinePagesMedian: 9,
-      cautionReason:
-        'The thinnest outlines measured here — a less detailed wiki from the same source.',
-      note:
-        'The cheapest OpenRouter model offered for building a wiki. Perfectly clean — 9 of 9 runs ' +
-        'parsed as raw JSON with no jsonrepair and no hidden reasoning tokens — but THIN: 7-13 outline ' +
-        'pages (median 9) where solar-pro4 plans a median of 23 on the identical prompt. Fewer planned ' +
-        'pages means a less detailed wiki from the same source, so pick it when cost dominates.',
-    }),
     // ── ⚠ ORDER CHANGED 2026-09-16, AND IT IS NOT A PREFERENCE ───────────────
     // `z-ai/glm-5.3-flash` now precedes `upstage/solar-pro4` because this list
     // is CHEAPEST-FIRST — a shipped promise the picker renders in order and an
@@ -2803,8 +2812,8 @@ export const OFFERABLE_MODELS = Object.freeze({
     // up from $0.03/$0.12) inverted the pair against glm's then-unchanged
     // $0.075/$0.25 (glm re-billed at $0.045/$0.14 on 2026-09-25; same order).
     // The PINNED DEFAULT is still solar-pro4: the head of this list has never
-    // been the default here (Granite leads it since the free entry that used
-    // to was withdrawn), and the default is chosen on measured coverage and
+    // been the default here (GLM leads it since Granite was withdrawn, 2026-11-07),
+    // and the default is chosen on measured coverage and
     // JSON cleanliness, not on position. See MODEL_PRICES_USD_PER_MTOK for the bill that settled it.
     defineOfferableModel('openrouter', {
       id: 'z-ai/glm-5.3-flash',
@@ -2845,7 +2854,7 @@ export const OFFERABLE_MODELS = Object.freeze({
         'which fences its JSON 3/3 and depends entirely on the repair path — and 14-36 outline pages ' +
         '(median 23). No hidden reasoning tokens in any run, so the whole output budget goes to ' +
         'the answer. ⚠ Its price tripled on 2026-09-16 without the id changing, so it is no ' +
-        'longer the affordability pick: Granite 4.0 H Micro and GLM 5.3 Flash both cost less.',
+        'longer the affordability pick: GLM 5.3 Flash costs less.',
     }),
     defineOfferableModel('openrouter', {
       id: 'moonshotai/kimi-k2-0905',
@@ -4268,7 +4277,10 @@ export function isBuildLaneModel(provider, modelId) {
  * shortfall that is not listed here, so adding a model that falls short of a
  * rule means either fixing the model or defending it in this object.
  *
- * ── THE ONE ENTRY, AND WHY IT IS DEFENSIBLE ─────────────────────────────────
+ * ── EMPTY SINCE 2026-11-07: Granite, the one entry, was withdrawn by OpenRouter ──
+ * The defence of that entry is kept below as the record of how a waiver is argued.
+ *
+ * ── THE ONE ENTRY, AND WHY IT WAS DEFENSIBLE ────────────────────────────────
  *
  * The build floor (131,072) is DERIVED as the measured requirement (~109,576
  * tokens: an 85,000-token outline prompt plus the 24,576-token output budget)
@@ -4294,19 +4306,6 @@ export function isBuildLaneModel(provider, modelId) {
  * JSON, price or alias rules, and it does not exempt any other model.
  */
 export const STATIC_ELIGIBILITY_EXEMPTIONS = Object.freeze({
-  'ibm-granite/granite-4.0-h-micro': Object.freeze({
-    rule: 'context_window',
-    lane: 'build',
-    since: 'v3.45.0',
-    shortfallTokens: 72,
-    reason:
-      'Published context 131,000 against a derived build floor of 131,072 — 72 tokens short of the ' +
-      'rounded tier boundary, and 21,424 tokens ABOVE the measured requirement the floor is derived ' +
-      'from (85,000 prompt + 24,576 output). Measured 9/9 raw-parseable JSON on the real ingest ' +
-      'outline prompt, so there is direct evidence from the workload itself rather than a proxy for ' +
-      'its absence. Lowering the floor to admit it would destroy the floor\'s derivation; this ' +
-      'records the disagreement instead.',
-  }),
 });
 
 /**

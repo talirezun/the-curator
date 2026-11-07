@@ -1605,7 +1605,7 @@ section('21. Warning classification against the real app.js buckets');
 
   const CONCISE = 'The AI\'s first attempt at "concepts/x.md" came back unusable, so The Curator asked '
     + 'for a shorter version and saved that instead. This is real content, but it is '
-    + 'briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.';
+    + 'briefer than the rest — open it in the Wiki tab; if it reads too thin, re-ingest with another model.';
   ok(src.includes('`for a shorter version and saved that instead. This is real content, but it is `'),
     'the concise-retry warning in ingest.js matches the string under test');
   eq(classify(CONCISE), 'review',
@@ -1662,7 +1662,7 @@ section('22. aggregateWarnings — one repeated slip cannot drown the report');
   }
 
   const mdW      = p => `Page path "${p}" was missing the .md extension — wrote it as "${p}.md".`;
-  const conciseW = p => `The AI's first attempt at "${p}" came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.`;
+  const conciseW = p => `The AI's first attempt at "${p}" came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it in the Wiki tab; if it reads too thin, re-ingest with another model.`;
   const stubW    = p => `Stub page created for "${p}" — LLM could not generate content. Re-ingest to fix.`;
   const batchW   = (n, t) => `Batch ${n} of ${t} was too large for the AI's output limit — wrote those pages individually instead.`;
   const noPathW  = () => 'The AI returned a page with no path — it could not be written.';

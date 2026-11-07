@@ -4,7 +4,8 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
-import { ingestFile } from '../brain/ingest.js';
+import { ingestFile, planRepeatIngest } from '../brain/ingest.js';
+import { hashRawSource } from '../brain/raw-store.js';
 // v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
 // run reports. Static import is safe: this route is a leaf, and brain/ingest.js
 // (imported just above) is fully evaluated before ai-run.js's graph starts.
@@ -63,6 +64,28 @@ export function ingestDoneEvent(result, overwrite) {
     ...(r.newPagesToCompare ? { newPagesToCompare: r.newPagesToCompare } : {}),
     ...(usage ? { spent: spentFromUsage(usage) } : {}),
   };
+}
+
+/** What pressing "re-ingest" can change for this upload. Free; never throws. */
+async function repeatPlanFor(domain, filePath) {
+  const empty = { sameContent: false, kind: null, previous: null, model: null, gaps: [] };
+  try {
+    let model = null;
+    try { model = llmModule.getProviderInfo().model; } catch { model = null; }
+    return await planRepeatIngest(domain, await hashRawSource(filePath), model);
+  } catch {
+    return empty;
+  }
+}
+
+function labelForPlan(modelId) {
+  if (!modelId) return null;
+  try {
+    const provider = llmModule.getProviderInfo().provider;
+    return llmModule.listOfferableModels(provider).find((m) => m.id === modelId)?.label || modelId;
+  } catch {
+    return modelId;
+  }
 }
 
 const upload = multer({
@@ -179,13 +202,19 @@ router.post('/', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
 
     // ── Duplicate check ──────────────────────────────────────────────────────
+    // Before any spend: the same bytes under ANY name, and what a press can really change.
+    // A plan that cannot be read never blocks: the ingest itself decides again.
     const existingPath = path.join(rawPath(domain), req.file.originalname);
-    if (existsSync(existingPath) && overwrite !== 'true') {
-      return res.status(409).json({
-        duplicate: true,
-        filename: req.file.originalname,
-        message: `"${req.file.originalname}" has already been ingested into this domain.`,
-      });
+    if (overwrite !== 'true') {
+      const plan = await repeatPlanFor(domain, req.file.path);
+      if (existsSync(existingPath) || plan.sameContent) {
+        return res.status(409).json({
+          duplicate: true,
+          filename: req.file.originalname,
+          message: `"${req.file.originalname}" has already been ingested into this domain.`,
+          plan: { ...plan, modelLabel: labelForPlan(plan.model), previousModelLabel: labelForPlan(plan.previous?.model) },
+        });
+      }
     }
 
     // v3.0.1-beta.8: refuse to start a new ingest while the app updater is

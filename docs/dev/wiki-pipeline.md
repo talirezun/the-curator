@@ -64,9 +64,10 @@ POST /api/ingest
            concept whose name is a spelling variant (isSpellingVariant) of an existing
            page, or of another page in the plan, moves there and is marked as a fold.
            Any other close name keeps both, with a notice. No prompt text changes.
-      5.7 findCompletedIngest: the same bytes already ingested here (manifest sha256,
-           completed, summary on disk) means writePage runs with repeatSource: existing
-           pages stay byte-identical, new pages are created, one notice says so.
+      5.7 planRepeatIngest: the same bytes already ingested here (manifest sha256,
+           completed, summary on disk). A model that read them, no gap: return with no
+           call. A gap: repeatSource (existing pages byte-identical, new pages created).
+           A model that has not read them: an ordinary reading under add-only-new.
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
            a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md

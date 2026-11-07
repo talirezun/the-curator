@@ -778,6 +778,35 @@ export const CHARS_PER_TOKEN = 3.53;
 const AVG_OUTPUT_TOKENS_PER_CALL = 1667;
 
 /**
+ * Output tokens per call on Claude, measured on v3.96.1's real ingests (2026-11-07).
+ * The 1,667 above is a blend from one 2026 PDF on an older model. Claude 5.5 writes far
+ * more, and output is most of a short source's bill, so that figure understated Haiku 5.5
+ * up to 2.42x and Sonnet 5.5 up to 2.44x (the production-test matrix).
+ *
+ *   one call (single-pass), per call: Haiku 5.5 4,778 4,735 7,816 5,906 4,755;
+ *     Sonnet 5.5 4,911 7,022. Mean about 5,900.
+ *   multi-phase, blended per call: Haiku 5.5 2,742 3,751 3,671 2,840. Mean about 3,300.
+ *
+ * Haiku 4.5 is NOT like them, measured through OpenRouter: 2,292 on the one-call source
+ * and about 1,290 a call on a 17,346-character one (10,300 out over 25 pages). One run of
+ * each, so it takes 2,300 and keeps 1,667.
+ *
+ * NOT MEASURED: Sonnet 5, Opus 5 and Opus 5.5. They take the 5.5 figure because they share
+ * its tokenizer and a quote too high is the safer side. Haiku and Sonnet 5.5 wrote less
+ * through OpenRouter (2,218-3,717 and 4,313-5,020 a call) than directly, unexplained; the
+ * figure is the direct one, which is the route the app uses for Claude. Gemini 3.1
+ * measured 856-1,250 per call, under 1,667, so it quotes a little high; the Gemini and
+ * OpenRouter figure is left alone.
+ */
+const CLAUDE_OUTPUT_TOKENS_PER_CALL = Object.freeze({ 'single-pass': 5900, 'multi-phase': 3300 });
+
+function outputTokensPerCall(model, mode) {
+  if (model === 'claude-haiku-4-5') return mode === 'single-pass' ? 2300 : AVG_OUTPUT_TOKENS_PER_CALL;
+  if (typeof model === 'string' && model.startsWith('claude-')) return CLAUDE_OUTPUT_TOKENS_PER_CALL[mode];
+  return AVG_OUTPUT_TOKENS_PER_CALL;
+}
+
+/**
  * Total-LLM-call-count interpolation, built ONLY from cited real anchors in
  * docs/ingestion-pipeline.md §8 ("Performance characteristics"):
  *   <=12,000 chars  -> single-pass, 1 call
@@ -785,17 +814,16 @@ const AVG_OUTPUT_TOKENS_PER_CALL = 1667;
  *   ~20,000 chars   -> 1 outline + 6 batches = 7 total calls
  *   ~55,000 chars   -> 1 outline + 14 batches = 15 total calls
  *   80,000 chars (TEXT_CAP) -> 1 outline + 20 batches = 21 total calls
- * The (15000, 2) knot is NOT from the table — it is a reasoned floor (the
- * smallest multi-phase outline plans at least one batch of up to
- * BATCH_SIZE=4 pages, so outline + 1 batch = 2 calls), used only to anchor
- * the interpolation's low end; flagged here so it is never mistaken for a
- * measured figure.
+ * The (15000, 5) knot is NOT from the table. It was a reasoned floor of 2 until
+ * real ingests measured it on 2026-11-07: a 17,346-character source took 5 calls on
+ * Gemini 3.1 and 8 on Haiku 5.5, 10,603-17,120-character files 2.7-4 a file, where the
+ * floor of 2 planned 4. Too few planned calls is an estimate too low on every provider.
  */
 function estimateCallCounts(chars) {
   if (chars <= MULTI_PHASE_INPUT_THRESHOLD) {
     return { mode: 'single-pass', totalCalls: 1, numBatches: 0 };
   }
-  const knots = [[MULTI_PHASE_INPUT_THRESHOLD, 2], [20000, 7], [55000, 15], [80000, 21]];
+  const knots = [[MULTI_PHASE_INPUT_THRESHOLD, 5], [20000, 7], [55000, 15], [80000, 21]];
   let totalCalls = knots[knots.length - 1][1];
   for (let i = 0; i < knots.length - 1; i++) {
     const [x0, y0] = knots[i];
@@ -870,8 +898,13 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
     callChars = [outline.length, ...Array(numBatches).fill(batchChars)];
   }
 
-  const inputTokens = Math.round(promptChars / CHARS_PER_TOKEN);
-  const outputTokens = totalCalls * AVG_OUTPUT_TOKENS_PER_CALL;
+  // The model's measured tokenizer premium counts in the figure, on every path: the
+  // same text is 1.329x the tokens on the newer Anthropic tokenizer, and this was
+  // applied to tiered models only. A model with no premium (factor 1) is unchanged.
+  const factor = model ? tokenizerFactorOf(model) : 1;
+  const inputTokens = Math.round((promptChars / CHARS_PER_TOKEN) * factor);
+  const perCallOut = outputTokensPerCall(model, mode);
+  const outputTokens = totalCalls * perCallOut;
 
   if (!price) {
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: null, usdHigh: null };
@@ -889,17 +922,12 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
   // their arithmetic below is byte-for-byte what it was.
   if (model && estimateCallRates(model, 0, CHARS_PER_TOKEN)?.tiered) {
     let high = 0, rawIn = 0;
-    // The model's measured tokenizer premium IS applied to the token count here
-    // (it is what decided the tier, two lines down), so the dollars and the
-    // tier come from one token figure. The flat path below predates the field
-    // and does not apply it — a known, documented under-count on the newer
-    // Anthropic tokenizer, left unchanged so flat estimates stay byte-stable.
-    const factor = tokenizerFactorOf(model);
+    // The dollars and the tier come from one token figure.
     for (const chars of callChars) {
       const r = estimateCallRates(model, chars, CHARS_PER_TOKEN);
       const inTok = (chars / CHARS_PER_TOKEN) * factor;
       rawIn += (inTok / 1e6) * r.input;
-      high += (inTok / 1e6) * r.input + (AVG_OUTPUT_TOKENS_PER_CALL / 1e6) * r.output;
+      high += (inTok / 1e6) * r.input + (perCallOut / 1e6) * r.output;
     }
     const low = Math.max(0, high - rawIn * cachingSavingsFraction(totalCalls));
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high };
@@ -1552,6 +1580,8 @@ function chargeForItem(job, item) {
   // missing entirely names no model, so it still takes the estimate share even
   // on a free-model job. Closing that needs the model persisted on the job
   // manifest, which is a schema change and a separate piece of work.
+  // No call was made (an unchanged source, nothing to change): nothing to charge or estimate.
+  if (u && u.calls === 0) return 0;
   if (u && isFreeModel(u.model)) return 0;
   const price = u && u.model ? getModelPrice(u.model) : null;
   // ── ONE FORMULA, IN llm.js (2026-10-08) ─────────────────────────────────

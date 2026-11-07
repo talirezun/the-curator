@@ -40,6 +40,7 @@ import {
   writePage,
   appendLog,
   syncSummaryEntities,
+  tidyWrittenLinks,
 } from './files.js';
 
 // A single rich question→answer exchange is worth compiling (v3.0.1-beta.15).
@@ -505,6 +506,9 @@ export async function compileConversation(domain, conversationId, onProgress = (
       changes.push(record);
     }
   }
+
+  // A link to a page written later in this compile can resolve now.
+  await tidyWrittenLinks(domain, canonicalPaths);
 
   // 9. Reconcile the summary's "Entities Mentioned" with every entity/concept
   //    actually written this compile (mirrors the ingest pipeline's step).

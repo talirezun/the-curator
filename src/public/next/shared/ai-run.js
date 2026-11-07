@@ -163,6 +163,11 @@ export function renderRunsOn(runsOn, opts) {
  * @param {string}  [opts.id]
  * @param {boolean} [opts.lastRun=false]     ADDITIVE: the short form, "Last run: <model> · <cost>",
  *                                           for a line that stays beside the actions it prices
+ * @param {object}  [opts.estimate]          ADDITIVE: the `runsOn` shown before this run. Printed
+ *                                           on the same footing, the same fields in the same
+ *                                           formats, so the two can be read against each other.
+ *                                           Left out when another model answered: it priced a
+ *                                           model that did not run.
  * @returns {string} HTML, or '' when no call reported a model (nothing ran)
  */
 export function renderSpent(spent, opts) {
@@ -179,6 +184,15 @@ export function renderSpent(spent, opts) {
     parts.push(fig((spent.estimated === true ? 'approx. ' : '') + usd));
   } else {
     parts.push('price not published');
+  }
+  const est = o.estimate;
+  if (est && typeof est === 'object' && !spent.fallbackFrom && isNum(est.usdLow) && isNum(est.usdHigh)
+      && (!est.model || est.model === spent.model)) {
+    const inHi = isCount(est.inputTokensHigh) ? est.inputTokensHigh : est.inputTokens;
+    const outHi = isCount(est.outputTokensHigh) ? est.outputTokensHigh : null;
+    const tokens = isCount(inHi) && isCount(outHi)
+      ? inHi.toLocaleString('en-US') + ' in / ' + outHi.toLocaleString('en-US') + ' out, ' : '';
+    parts.push('estimated before the run: ' + fig(tokens + approxRange(est.usdLow, est.usdHigh, formatUsdHonest)));
   }
   return wrap(parts.join(SEP), o.id);
 }

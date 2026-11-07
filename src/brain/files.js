@@ -1383,6 +1383,122 @@ async function linkRewriterFor(domain) {
   );
 }
 
+/**
+ * Tidy the links of pages one write run just wrote, once ALL its pages are on disk.
+ *
+ * writePage's rewriter sees the wiki as it stands at that page's own write, so a link
+ * to a page written later in the same run cannot resolve yet, and stays as the model
+ * spelled it: `[[AgentLink]]` in a summary written before `entities/agentlink.md`. The
+ * reply order decides it, which is why it looked random between runs (Gemini 3.1, 3 of 4
+ * runs). A model that writes the page's NAME, `[[Model Context Protocol]]`, never
+ * matched at all. Only a target whose letters and digits equal one real page's slug is
+ * touched; an acronym or a guess stays as it is, and stays reported.
+ *
+ * In a sentence the reader keeps the model's wording, through an alias; a list row that
+ * is only a link takes the bare slug, so two spellings of one link become one row; a
+ * table row takes no alias, because the pipe would split the cell. Words are never
+ * touched, only link targets.
+ *
+ * @returns {Promise<number>} pages changed
+ */
+export async function tidyWrittenLinks(domain, relPaths) {
+  const wiki = wikiPath(domain);
+  const rewrite = await linkRewriterFor(domain);
+  const known = new Map();
+  const exact = new Set();
+  for (const folder of ['entities', 'concepts']) {
+    let files = [];
+    try { files = await readdir(path.join(wiki, folder)); } catch { /* none yet */ }
+    for (const f of files) {
+      if (!f.endsWith('.md')) continue;
+      const key = linkNameKey(f.slice(0, -3));
+      exact.add(f.slice(0, -3));
+      if (key && !known.has(key)) known.set(key, f.slice(0, -3));
+    }
+  }
+  const byName = (line) => line.replace(/\[\[([^\]|#\n/]+?)\]\]/g, (match, target) => {
+    if (exact.has(target)) return match;
+    const hit = known.get(linkNameKey(target));
+    if (!hit) return match;
+    const onlyLink = /^\s*[-*+]\s+\[\[[^\]]+\]\]\s*$/.test(line);
+    const inTable = line.trimStart().startsWith('|');
+    return onlyLink || inTable ? `[[${hit}]]` : `[[${hit}|${target}]]`;
+  });
+  let changed = 0;
+  for (const rel of new Set(relPaths)) {
+    const full = path.join(wiki, rel);
+    let before;
+    try { before = await readFile(full, 'utf8'); } catch { continue; }
+    const named = before.split('\n').map(byName).join('\n');
+    const after = dedupRewrittenBullets(before, rewrite(named));
+    if (after === before) continue;
+    await writeFileAtomic(full, after, 'utf8');
+    changed++;
+  }
+  return changed;
+}
+
+/** Was this page written by The Curator because the AI failed? */
+export function isStubPage(text) {
+  return STUB_MARK_RE.test(String(text ?? ''));
+}
+
+/**
+ * Give a summary the parts of its layout it lacks, without touching a line it has.
+ *
+ * Measured 2026-11-07: Gemini 3.1 left the `# title` off 22 of 24 summaries, Haiku 5.5 off
+ * 4 of 6, and the warning told the user that re-ingesting "usually fixes it", which has
+ * been false since the identical source stopped adding anything. A title and a source are
+ * known without asking a model, so they cost nothing and need no re-ingest. Key Takeaways
+ * is the model's own text: it comes from this run's reply when the reply has it.
+ *
+ * @param {object} parts
+ * @param {string} [parts.title]    the source's title (validated by the caller)
+ * @param {string} [parts.source]   the source's file name
+ * @param {string} [parts.incoming] this run's reply for the page
+ * @returns {Promise<string[]>} what was added: 'title', 'source', 'takeaways'
+ */
+export async function repairSummaryLayout(domain, relPath, { title, source, incoming } = {}) {
+  const full = path.join(wikiPath(domain), relPath);
+  let before;
+  try { before = await readFile(full, 'utf8'); } catch { return []; }
+  if (STUB_MARK_RE.test(before)) return [];
+  const eol = /\r\n/.test(before) ? '\r\n' : '\n';
+  const fm = before.match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
+  let head = fm ? fm[0] : '';
+  let body = fm ? before.slice(fm[0].length) : before;
+  const added = [];
+
+  const hasTakeaways = (t) => /^#{2,6}[ \t]*key takeaways\b[^\n]*\r?\n(?:(?!^#{1,6}[ \t])[\s\S])*?^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/im.test(t);
+  if (!hasTakeaways(body) && typeof incoming === 'string') {
+    const inc = incoming.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
+    const m = inc.match(/^#{2,6}[ \t]*key takeaways\b[^\n]*\r?\n(?:(?!^#{1,6}[ \t]).*(?:\r?\n|$))*/im);
+    if (m && hasTakeaways(m[0]) && !/^#{2,6}[ \t]*key takeaways\b/im.test(body)) {
+      body = `${body.replace(/\s*$/, '')}${eol}${eol}${m[0].trim().split(/\r?\n/).join(eol)}${eol}`;
+      added.push('takeaways');
+    }
+  }
+  const cleanTitle = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim() : '';
+  if (cleanTitle && !/^#[ \t]+\S/m.test(body)) {
+    body = `# ${cleanTitle}${eol}${eol}${body.replace(/^\s+/, '')}`;
+    added.push('title');
+  }
+  if (head && typeof source === 'string' && source && !/^source:[ \t]*\S/im.test(head)) {
+    head = head.replace(/^---\r?\n/, (m) => `${m}source: ${source}${eol}`);
+    added.push('source');
+  }
+  if (!added.length) return [];
+  const after = head + body;
+  if (findLostLines(before, '', after).length) return [];
+  await writeFileAtomic(full, after, 'utf8');
+  return added;
+}
+
+/** A link target or slug with case, spaces, hyphens and underscores gone. */
+function linkNameKey(name) {
+  return String(name).trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
 export async function writePage(domain, relativePath, content, opts = {}) {
   // opts.repeatSource: this same source was ingested into this domain before: the
   // existing page takes no new wording, and opts.onLeftOut(count) hears what went.

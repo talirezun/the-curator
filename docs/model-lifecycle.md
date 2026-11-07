@@ -50,14 +50,14 @@ const FALLBACK_CHAINS = {
     'claude-sonnet-5',              // $2/$10 — tie on price, older
   ],
   openrouter: [
-    'ibm-granite/granite-4.0-h-micro',  // $0.017/$0.112 — cheaper than the default it backs up
+    'z-ai/glm-5.3-flash',  // $0.03/$0.24 billed — cheaper than the default it backs up
   ],
 };
 ```
 
 **OpenRouter's chain has exactly one rung, and both the inclusion and the exclusions are deliberate.** An earlier draft of this document argued that a chain here would be *wrong in principle*. That argument rested on there being no pinned default to rescue — which is no longer true — and it is superseded. What survives from it is the narrower point, which still holds: every OpenRouter request carries routing preferences forbidding OpenRouter from serving it out of a different upstream, and never sends the request shape that would let it swap the *model*. This chain is therefore the **only** substitution that can happen, which is why it is short and hand-checked.
 
-`ibm-granite/granite-4.0-h-micro` qualifies on three counts: it was measured clean on the real ingest prompt, it is **paid** (so its availability does not depend on a shared free queue), and it is **cheaper** than the default it backs up — a safety net that cannot cost more than the thing it replaces. Its measured weakness is coverage, not correctness: it plans a thinner outline. Degrading to a thinner plan is the right trade when the alternative is not ingesting at all, and it mirrors what the Gemini chain already does.
+**Granite was withdrawn on 2026-11-07, and this is the replacement.** `ibm-granite/granite-4.0-h-micro` had 0 endpoints and had left `/api/v1/models`, so the chain's only rung could catch nothing and `test-openrouter-live` failed on it. It is in `RETIRED_MODELS` with `upstage/solar-pro4` as its successor and a `why` the note prints, because the Anthropic generation rule does not explain it and the successor costs more. `z-ai/glm-5.3-flash` qualifies on the same counts: measured on the real ingest prompt, **paid**, and **cheaper** than the default it backs up. Its measured weakness is speed and hidden reasoning, an acceptable trade only on the day the default has gone. The same check found two prices stale, both corrected against a cold call's `usage.cost`: Solar Pro 4 $0.15/$0.60 (was $0.09/$0.36, 1.67x under) and GLM 5.3 Flash $0.03/$0.24 (was $0.045/$0.14).
 
 **The free model is deliberately not a rung**, and the reason is a rule rather than a preference: a chain picks *for* the user, silently. Free routing may carry different data-handling terms from paid routing — an open question this project does not claim to have settled, set out under [Free models and privacy](#free-models-and-privacy--an-open-question-stated-rather-than-answered) — and that is not a change to make on someone's behalf without them choosing it. **A chain may degrade capability; it may not degrade privacy.**
 
@@ -635,8 +635,8 @@ A build-lane model writes a whole wiki, so none was admitted on catalogue metada
 
 | Model | Runs raw-parseable | Median outline pages | Price (in/out per 1M) |
 |---|---|---|---|
-| `upstage/solar-pro4` — **pinned default** | 9 of 9, no repair pass | **23** (range 14–36) | **$0.09 / $0.36** (was $0.03/$0.12 when measured on 2026-08-27; re-measured against the bill 2026-09-16) |
-| `ibm-granite/granite-4.0-h-micro` — **fallback rung** | 9 of 9, no repair pass | **9** (range 7–13) | $0.017 / $0.112 |
+| `upstage/solar-pro4` — **pinned default** | 9 of 9, no repair pass | **23** (range 14–36) | **$0.15 / $0.60** billed 2026-11-07 (was $0.09/$0.36, and $0.03/$0.12 when measured on 2026-08-27; re-measured against the bill 2026-09-16) |
+| `ibm-granite/granite-4.0-h-micro` — **withdrawn 2026-11-07** | 9 of 9, no repair pass | **9** (range 7–13) | $0.017 / $0.112 |
 | `minimax/minimax-m3:free` — **free, chat-oriented** | 8 of 9 raw, 1 needed the repair pass, 0 unrepairable | **21** (range 15–40) | free — no price recorded |
 
 `solar-pro4` is the default because it was the only candidate that was simultaneously clean, richly covering and reliably reachable. It is worth noting that its JSON is **stricter than this app's own Anthropic default**, which fences its outline 3 times out of 3 and depends entirely on the repair path.
@@ -1039,7 +1039,7 @@ prevents spend is the pre-spend gate, which runs at the moment it matters.
 
 ### A chain may degrade capability; it may not start billing you
 
-`FALLBACK_CHAINS.openrouter` is `['ibm-granite/granite-4.0-h-micro']`, which is
+`FALLBACK_CHAINS.openrouter` is `['z-ai/glm-5.3-flash']`, which is
 **paid**. `minimax/minimax-m3:free` is a shipped free build-lane entry that the
 provider has withdrawn. A retirement-shaped 404 on it — the one shape allowed to
 classify as `model-retired`, and so the one that can drive a walk — would have
@@ -1048,7 +1048,7 @@ silently, and reported success.
 
 A walk that starts from a **free** id may now only land on another free id. The
 rule is a property of the *pair*, not of the table, so it cannot be expressed by
-removing a rung: granite is the right rung for every paid head on that provider.
+removing a rung: the paid rung is right for every paid head on that provider.
 A paid head is byte-unchanged and gets the full chain, in order.
 
 The honest cost: a genuinely retired free model now surfaces an error instead of

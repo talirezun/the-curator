@@ -230,12 +230,12 @@ section('§4. The withdrawn free model is gone');
     'no hand-listed OpenRouter id is a `:free` id');
   ok(!Object.hasOwn(PRICES, 'minimax/minimax-m3'),
     'the PAID slug was NOT slipped in as a replacement: it measured 0/9 parseable, and measurements never carry across sibling ids');
-  eq(OFFERABLE_MODELS.openrouter[0].id, 'ibm-granite/granite-4.0-h-micro',
+  eq(OFFERABLE_MODELS.openrouter[0].id, 'z-ai/glm-5.3-flash',
     'the list is still cheapest-first, led by the cheapest paid entry');
   const orPrices = OFFERABLE_MODELS.openrouter.map(e => PRICES[e.id].input);
   ok(orPrices.every((p, i) => i === 0 || orPrices[i - 1] <= p), '…in non-decreasing input price');
-  eq(PRICES['z-ai/glm-5.3-flash'].input, 0.045, 'glm-5.3-flash is quoted at what it BILLED on 2026-09-25 ($0.045 in)');
-  eq(PRICES['z-ai/glm-5.3-flash'].output, 0.14, '…and $0.14 out');
+  eq(PRICES['z-ai/glm-5.3-flash'].input, 0.03, 'glm-5.3-flash is quoted at what it BILLED on 2026-11-07 ($0.03 in)');
+  eq(PRICES['z-ai/glm-5.3-flash'].output, 0.24, '…and $0.24 out');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -368,10 +368,6 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
         && near(std('claude-opus-5').input * tf('claude-opus-5') / std('claude-haiku-4-5').input, 6.6)
         && near(std('claude-opus-5').input / std('claude-haiku-4-5').input, 5)],
     ],
-    'ibm-granite/granite-4.0-h-micro': [
-      ['The cheapest OpenRouter model offered for building a wiki', () => std('ibm-granite/granite-4.0-h-micro').input === minIn(orBuild())],
-      ['pick it when cost dominates', () => std('ibm-granite/granite-4.0-h-micro').input === minIn(orBuild())],
-    ],
     'z-ai/glm-5.3-flash': [
       ['Two measured costs', NOT_A_RATE],
       ['79-86%', NOT_A_RATE],
@@ -381,9 +377,7 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
     'upstage/solar-pro4': [
       ['rather than on price', NOT_A_RATE],
       ['Its price tripled on 2026-09-16', NOT_A_RATE], // a dated historical event, recorded beside MODEL_PRICES
-      ['Granite 4.0 H Micro and GLM 5.3 Flash both cost less', () =>
-        std('ibm-granite/granite-4.0-h-micro').input < std('upstage/solar-pro4').input
-        && std('z-ai/glm-5.3-flash').input < std('upstage/solar-pro4').input],
+      ['GLM 5.3 Flash costs less', () => std('z-ai/glm-5.3-flash').input < std('upstage/solar-pro4').input],
     ],
     'moonshotai/kimi-k2-0905': [
       ['cost $0.107 against ~$0.048 for a normal run', NOT_A_RATE], // one measured run's bill, not a rate

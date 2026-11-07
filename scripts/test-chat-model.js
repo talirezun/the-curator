@@ -675,7 +675,6 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
   const HAND_TYPED_CEILINGS = Object.freeze({
     // 'minimax/minimax-m3:free' (943718) REMOVED 2026-09-25 with its offer —
     // OpenRouter withdrew the free route (llm.js FREE_MODELS).
-    'ibm-granite/granite-4.0-h-micro': 117900,
     'upstage/solar-pro4':              131072,
     // Added 2026-08-28, read from `top_provider.max_completion_tokens` on the
     // live catalogue in the same session that measured their notes. Both clear
@@ -956,7 +955,6 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
   // derive from, so changing one must be seen by a person. Each was confirmed
   // against `usage.cost` on a cold probe run to six decimal places.
   const OPENROUTER_VERIFIED_PRICES = Object.freeze({
-    'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
     // ⚠ CHANGED 2026-09-16, WHICH IS THIS GATE DOING ITS JOB. It read
     // 0.03 / 0.12 from 2026-08-27 and went red the moment llm.js was corrected —
     // exactly the "a person must see this" outcome the gate exists for. The new
@@ -967,13 +965,16 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // endpoints publish the same rate, so it cannot route to another. The old
     // figure computed 0.00000315 — a third of the truth, on the surface whose
     // whole job is telling a user what a model costs before they pick it.
-    'upstage/solar-pro4':              { input: 0.09,  output: 0.36  },
+    // ⚠ CHANGED 2026-11-07: both endpoints publish $0.15/$0.60 and a cold call of 472 in +
+    // 6 out billed usage.cost 0.0000744, that rate to the last digit.
+    'upstage/solar-pro4':              { input: 0.15,  output: 0.60  },
     // ⚠ CHANGED 2026-09-25, the gate again doing its job. Three cold calls (41-42
     // prompt + 64 completion tokens) were served by InferenceNet and billed
     // upstream_inference_prompt_cost 1.845e-6 for 41 tokens (= $0.045/1M) and
     // ..._completions_cost 8.96e-6 for 64 (= $0.14/1M). It read 0.075 / 0.25
     // (DeepInfra's rate, still published, no longer the endpoint that answers).
-    'z-ai/glm-5.3-flash':              { input: 0.045, output: 0.14  },
+    // ⚠ CHANGED 2026-11-07: served by OpenInference, 246 in + 199 out billed 0.00005514 = $0.03/$0.24.
+    'z-ai/glm-5.3-flash':              { input: 0.03,  output: 0.24  },
     'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
   });
   {
@@ -1079,7 +1080,6 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     'claude-haiku-5-5': 1.329,
     // OpenRouter, measured 2026-08-27 across 9 runs each on the real ingest
     // outline prompt; deterministic to the token on a byte-identical prompt.
-    'ibm-granite/granite-4.0-h-micro': 1.036,
     // 'minimax/minimax-m3:free' (1.015) REMOVED 2026-09-25 with its offer.
     // Measured 2026-08-28 in a SECOND session whose prompt was 343,716 chars,
     // not the first session's 341,005 — the `articles` domain grew between
@@ -2342,7 +2342,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
       `${e.id}: the median lies inside its own measured range`);
     medianChecked++;
   }
-  ok(medianChecked >= 4, `corpus: ${medianChecked} entries carry a median — the median assertions are not vacuous`);
+  ok(medianChecked >= 3, `corpus: ${medianChecked} entries carry a median — the median assertions are not vacuous`);
 
   // NOT ENFORCED, and said plainly rather than implied away: there is no
   // equivalent note-anchor for latency. Two of the three figures were recorded
@@ -2363,7 +2363,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
   const noPages = ALL.filter(({ e }) => e.outlinePagesLow === null);
   const noLatency = ALL.filter(({ e }) => e.medianLatencyMs === null);
   ok(noPages.length >= 1, `corpus: ${noPages.length} entry with NO page measurement — the absent-case assertions can fire`);
-  ok(noLatency.length >= 14, `corpus: ${noLatency.length} entries with NO latency — the common case is represented`);
+  ok(noLatency.length >= 13, `corpus: ${noLatency.length} entries with NO latency — the common case is represented`);
   for (const { e } of ALL) {
     for (const f of ['outlinePagesLow', 'outlinePagesHigh', 'outlinePagesMedian', 'medianLatencyMs']) {
       ok(e[f] === null || (Number.isFinite(e[f]) && e[f] > 0),
@@ -2379,7 +2379,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
   // understand. llm.js refuses to BUILD such an entry; this asserts the result
   // over the real table and, below, that the refusal is real.
   const flagged = ALL.filter(({ e }) => e.suitability === 'caution' || e.dominated === true);
-  ok(flagged.length >= 8, `corpus: ${flagged.length} flagged entries`);
+  ok(flagged.length >= 7, `corpus: ${flagged.length} flagged entries`);
   for (const { e } of flagged) {
     ok(typeof e.cautionReason === 'string' && e.cautionReason.trim().length > 0,
       `${e.id}: FLAGGED -> carries a cautionReason`);

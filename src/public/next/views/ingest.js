@@ -122,6 +122,7 @@ import {
 // copies of these two — see the shared module's own header comment.
 import {
   queueBusyTransition, formatQueueBytes, formatTokenRange,
+  duplicateCopy,
   pausedReasonCopy, statusPillMeta, resolveEstimateFileList, dedupeQueueFiles,
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
   computeQueueStatusCounts,
@@ -226,6 +227,7 @@ function freshState() {
     // destination lands (`singleRunsOnKey` says which one it is for).
     singleRunsOnKey: null,
     singleRunLineHtml: '',
+    singleRunsOn: null,
     singleKeyAttrs: '',
 
     // ── Server-backed activity (v3.24.0) ─────────────────────────────
@@ -2647,16 +2649,24 @@ function renderRemoteOutcome() {
   );
 }
 
+function duplicateText(dup) {
+  return '<strong>' + escapeHtml(dup.filename) + '</strong> has already been ingested into this domain. ' +
+    escapeHtml(duplicateCopy(dup.plan).sentence);
+}
+
 function renderDuplicate() {
   if (!state.duplicate) return '';
+  const dupCopy = duplicateCopy(state.duplicate.plan);
   return (
     '<div class="ing-duplicate">' +
       icon('alertTriangle', 15) +
       '<div class="ing-duplicate-body">' +
-        '<strong>' + escapeHtml(state.duplicate.filename) + '</strong> has already been ingested into this domain.' +
+        duplicateText(state.duplicate) +
         '<div class="ing-duplicate-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" id="ing-dup-overwrite">Re-ingest &amp; update wiki</button>' +
-          '<button type="button" class="btn btn-ghost btn-xs" id="ing-dup-cancel">Cancel</button>' +
+          (dupCopy.action
+            ? '<button type="button" class="btn btn-secondary btn-xs" id="ing-dup-overwrite">' + escapeHtml(dupCopy.action) + '</button>'
+            : '') +
+          '<button type="button" class="btn btn-ghost btn-xs" id="ing-dup-cancel">' + (dupCopy.action ? 'Cancel' : 'OK') + '</button>' +
         '</div>' +
       '</div>' +
     '</div>'
@@ -2694,7 +2704,7 @@ function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
   // model and the in/out totals, so the token readout under it keeps only
   // what the line does not say (calls, and the cache split); without it the
   // readout is exactly what it was.
-  const spentHtml = renderSpent(r.spent);
+  const spentHtml = renderSpent(r.spent, r.estimate ? { estimate: r.estimate } : undefined);
   const tokenHtml = formatTokenUsageHtml(r.tokenUsage, { spentShown: !!spentHtml });
   const shownChanges = Array.isArray(r.changes) ? r.changes.length : 0;
   const truncNote = (Number.isFinite(r.changesTotal) && r.changesTotal > shownChanges)
@@ -3411,6 +3421,8 @@ function clearSelectedFile(token) {
   // than through clearSingleRunLine: this body is lifted by
   // test-next-ingest-view, whose sandbox binds `state` and not that helper.
   state.singleRunsOnKey = null;
+  state.singleRunsOn = null;
+  state.singleRunsOn = null;
   state.singleRunLineHtml = '';
   state.singleKeyAttrs = '';
   const fileInput = document.getElementById('ing-file-input');
@@ -3423,6 +3435,7 @@ const SINGLE_RUNLINE_ID = 'ing-runline';
 
 function clearSingleRunLine() {
   state.singleRunsOnKey = null;
+  state.singleRunsOn = null;
   state.singleRunLineHtml = '';
   state.singleKeyAttrs = '';
 }
@@ -3474,6 +3487,7 @@ async function refreshSingleEstimate(token) {
   const runsOn = (body && body.runsOn && typeof body.runsOn === 'object') ? body.runsOn : null;
   if (!runsOn) { if (!body) state.singleRunsOnKey = null; return; }
   state.singleRunLineHtml = renderRunsOn(runsOn, { id: SINGLE_RUNLINE_ID });
+  state.singleRunsOn = runsOn;
   state.singleKeyAttrs = aiActionDisabledAttrs(runsOn, SINGLE_RUNLINE_ID);
   ensureAiRunDoors();
   if (isCurrentMount(token)) render(token);
@@ -3493,6 +3507,7 @@ async function runIngest(token, overwrite) {
   if (!state.file || !state.domain) return;
   const domain = state.domain;
   const file = state.file;
+  const estimateAtPress = state.singleRunsOn || null;
 
   state.submitting = true;
   state.errorMessage = null;
@@ -3563,7 +3578,7 @@ async function runIngest(token, overwrite) {
       if (res.status === 409 && data.duplicate) {
         if (isCurrentMount(token)) {
           state.progress = null;
-          state.duplicate = { filename: data.filename || file.name };
+          state.duplicate = { filename: data.filename || file.name, plan: data.plan || null };
           render(token);
         }
         return;
@@ -3646,6 +3661,8 @@ async function runIngest(token, overwrite) {
         // v3.67.0: what the run cost, from the route's spentFromUsage() over
         // this ingest's own token totals. Absent on an older server.
         spent: (finalData.spent && typeof finalData.spent === 'object') ? finalData.spent : null,
+        // What the line before the run said, read against what the run cost.
+        estimate: estimateAtPress,
         newPagesToCompare: finalData.newPagesToCompare || null,
         unchangedExpanded: false,
       };
