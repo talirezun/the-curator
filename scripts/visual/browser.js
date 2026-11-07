@@ -20,6 +20,37 @@ import path from 'path';
 import os from 'os';
 import { setTimeout as delay } from 'timers/promises';
 
+// ── NO BROWSER OUTLIVES ITS RUN ────────────────────────────────────────────
+// Headless Chromes were found running 17-21 HOURS after their suites ended.
+// close() only runs on a path that reaches it, and a suite that throws, is
+// interrupted or is SIGKILLed by the runner's timeout never does. Three nets,
+// each signalling ONLY the exact pid this module spawned (never a pattern):
+//   1. process 'exit' kills every still-live child synchronously;
+//   2. SIGINT / SIGTERM / SIGHUP kill them and exit with the signal's code;
+//   3. a detached watchdog shell per browser that ends it when THIS process
+//      is gone, which is the only net that survives SIGKILL of the parent.
+const LIVE_BROWSERS = new Set();
+let netsInstalled = false;
+function killLive() {
+  for (const pid of LIVE_BROWSERS) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  LIVE_BROWSERS.clear();
+}
+function installNets() {
+  if (netsInstalled) return;
+  netsInstalled = true;
+  process.on('exit', killLive);
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+    // Exit ourselves only when nobody else is listening, so a suite's own
+    // SIGINT cleanup (a tempdir, a server) still runs.
+    process.on(sig, () => { killLive(); if (process.listenerCount(sig) <= 1) process.exit(code); });
+  }
+}
+/** Exported for the test: the watchdog script, as an argv list for /bin/sh. */
+export const WATCHDOG_SCRIPT =
+  'while kill -0 "$1" 2>/dev/null && kill -0 "$2" 2>/dev/null; do sleep 2; done; ' +
+  'if kill -0 "$2" 2>/dev/null; then kill -TERM "$2" 2>/dev/null; sleep 2; kill -KILL "$2" 2>/dev/null; fi; exit 0';
+export function liveBrowserPids() { return [...LIVE_BROWSERS]; }
+
 /**
  * Candidate binaries, most-preferred first. An explicit
  * CURATOR_VISUAL_BROWSER always wins so a machine with a browser somewhere
@@ -101,6 +132,18 @@ export async function launchBrowser({ headless = true } = {}) {
   let stderr = '';
   child.stderr.on('data', (d) => { stderr += d.toString().slice(0, 2000); });
   child.on('error', () => { /* surfaced below as "never wrote DevToolsActivePort" */ });
+  if (child.pid) {
+    installNets();
+    LIVE_BROWSERS.add(child.pid);
+    child.on('exit', () => LIVE_BROWSERS.delete(child.pid));
+    if (process.platform !== 'win32' && !process.env.CURATOR_TEST_NO_BROWSER_WATCHDOG) {
+      try {
+        const dog = spawn('/bin/sh', ['-c', WATCHDOG_SCRIPT, 'sh', String(process.pid), String(child.pid)], { detached: true, stdio: 'ignore' });
+        dog.on('error', () => {});
+        dog.unref();
+      } catch { /* the in-process nets still apply */ }
+    }
+  }
   // THE DISPLAY MUST STAY ON WHILE THIS BROWSER RUNS (macOS). Measured: when the display
   // slept on its idle timer, the page went to visibilityState "hidden" and
   // requestAnimationFrame stopped for good, and neither focus emulation nor bringToFront

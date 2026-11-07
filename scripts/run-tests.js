@@ -347,6 +347,7 @@ const OFFLINE = [
   'test-mcp-install-routes.js',              // v3.85.0. /api/mcp/install/{status,plan,apply}: Origin REQUIRED on the POSTs (missing / foreign / wrong-port 403), non-macOS 409, body allow-list 400, token single-use + expiry, busy 409, per-item refusals never a 500, usedAt a LABEL only; plus the REAL server spawned with a fake HOME (status → plan → apply → connected → remove); write-config untouched, mcp/ never imports the installer
   'test-mcp-install-windows.js',             // v3.86.0. One-click install into CLAUDE DESKTOP ON WINDOWS, on an in-memory Windows filesystem (path.win32, backslashes, case-insensitive containment) AND the real disk: exactly one LIVE candidate is written (a .user-data-left marker / ~copying sibling makes one not live; two → config_ambiguous; the Store file #2 and the read-only extras never written; create only on a confirmed legacy .exe; a lone %APPDATA% file beside an MSIX install not trusted; redirected AppData refused), BOM + CRLF byte-exact through install → remove, read-only refused, rename retried on EBUSY/EPERM/EACCES with the CAS re-checked before every attempt then file_locked, other tools refused on Windows, Claude Desktop's exe by path (never the CLI's claude.exe), no ps/shell/PowerShell spawned under a test home, the routes status → plan → apply → connected → remove on win32. Also runs on the CI `windows` job
   'test-subprocess-env.js',                  // v3.87.0. The subprocesses a Windows one-line install starts, with macOS proven UNCHANGED: the subprocess PATH off Windows is byte-identical to a transcribed copy of the v3.86.0 expression (synthetic inputs and this machine's live process); on win32 it is ';'-joined with the node folder first, no POSIX folders, and ONE path key with the inherited spelling (never a Path/PATH pair). Browser auto-open per platform as argv only (open / rundll32 by absolute path / xdg-open), CURATOR_NO_OPEN always wins. Restart spawn options identical off Windows, windowsHide on Windows. The REAL updateHandler through its deps seam: build-app.sh only off win32, every command on the helper's PATH. pick-folder / pick-path run Windows' own folder dialog on win32 (v3.87.1; faked here) and never osascript; reveal-config / reveal-log are macOS-only (darwin controls spawn once).
+  'test-suites-never-open-a-browser.js',     // the harness guard: every suite that spawns src/server.js sets CURATOR_NO_OPEN (a forgotten one opened hundreds of tabs in the maintainer's real Chrome), and the runner hands it to every suite. Mutation-proven in-process.
   'test-win-folder-picker.js',               // v3.87.1. "Use existing folder" on Windows: the FolderBrowserDialog runs as powershell.exe by ABSOLUTE path with -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -EncodedCommand <constant script>, execFile/no shell, hidden, a 10-minute timeout (a REAL child killed by a short one), the prompt as an env var never code, a TopMost invisible owner; non-ASCII paths via UTF-8 base64, cancel, CLIXML errors, PowerShell missing → no-dialog. pick-folder applies through the same post-pick rules as macOS; pick-path only reports; darwin controls unchanged. POST /api/config/domains-path validates a typed path (relative, missing, a file, traversal, the app's own folders incl. via symlink, quotes, Windows drive/UNC rules). Domains and Settings render the typed-path fallback after a picker refusal and send it to that route.
   'test-linux-folder-picker.js',             // v3.89.1. "Use existing folder" on Linux: zenity then kdialog then yad, each by ABSOLUTE path found on PATH (relative/empty PATH entries never searched), execFile argv/no shell, skipped with no DISPLAY/WAYLAND_DISPLAY, a 10-minute timeout (a REAL child killed) read as a cancel, UTF-8 paths, exit 1 + no output = cancel, no tool -> 501 no-dialog with the paste message, never the macOS hint; pick-folder applies via accept(), pick-path only reports; darwin and win32 unchanged.
   'test-windows-installer-static.js',        // v3.87.0. Static checks of install.ps1 and scripts/windows/*.ps1 (no PowerShell needed): pinned Node/MinGit hashes are 64-hex over https URLs, no bare npm, no `exit` under irm|iex, ShellExecute start, balanced braces. The real proof is CI's 'Windows one-line install' job.
@@ -497,6 +498,11 @@ const LIVE_LOCAL = [
   // each value's Range box against the element at 1400/1280/1100/900/700,
   // with a planted-clip control first. Self-skips at exit 0 with no browser.
   'test-chat-composer-pills.js',
+  // test-browser-never-orphaned: a browser, like its neighbours, $0. Headless Chromes launched by
+  // scripts/visual/browser.js were found alive 17-21 hours after their suites; each way a run can end
+  // (process.exit, a throw, SIGTERM, SIGKILL) is driven in a child and the browser pid must be gone.
+  // The SIGKILL case is shown to need the watchdog by a mutation. Self-skips at exit 0 with no browser.
+  'test-browser-never-orphaned.js',
 ];
 
 // All live suites, for labelling.
@@ -665,6 +671,12 @@ const LIVE_SUITE_TIMEOUT_MS = {
   // plans 47-66 pages; Phase 2's page-by-page fallback is O(pages), so a bad
   // run has far more headroom to consume than the default 600s allows.
   'test-ingest-deep.js': 900_000,           // 15 min
+  // e2e-wiki-health.mjs is a STUBBED-model browser walk (no provider latency):
+  // 8 profiles at 1280 and 375 in light and dark, reduced motion, plus two
+  // 3,500-page "big" profiles. Measured 852 s and 846 s standalone on this
+  // machine (2026-11-07), so the flat 600 s cap killed a passing suite every
+  // time. 1,800 s is ~2.1x the measurement, the same margin as beta15 above.
+  'e2e-wiki-health.mjs': 1_800_000,         // 30 min
 };
 
 // ── Args ────────────────────────────────────────────────────────────────────
@@ -696,7 +708,11 @@ if (process.env.RUN_TESTS_LIVE_ONLY) {
 // ── Runner ────────────────────────────────────────────────────────────────
 function runSuite(file, { stripCreds, timeoutMs }) {
   return new Promise((resolve) => {
-    const env = { ...process.env };
+    // CURATOR_NO_OPEN: src/server.js opens the default browser on start unless this
+    // is set, and a suite that spawns the real server and forgets it opened a tab in
+    // the maintainer's real Chrome on every run (hundreds, 2026-11-07). Every suite
+    // gets it here; test-suites-never-open-a-browser.js holds each spawner to it too.
+    const env = { ...process.env, CURATOR_NO_OPEN: '1' };
     if (stripCreds) for (const k of CREDENTIAL_ENV) delete env[k];
 
     const started = Date.now();

@@ -33,7 +33,15 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, '.curator-config.json');
+// The provider is forced by writing a config file, so that file must be THROWAWAY:
+// CURATOR_TEST_USER_DATA_DIR puts the config (and every other credential path) in a
+// tempdir before any app module loads. It used to write the real repo-root config
+// and restore it from memory at exit, which a kill would strand. Keys therefore come
+// from the environment / .env only, never from a stored config.
+const USER_DATA_TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-beta15-userdata-'));
+process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA_TMP;
+process.on('exit', () => { try { rmSync(USER_DATA_TMP, { recursive: true, force: true }); } catch {} });
+const CONFIG_FILE = path.join(USER_DATA_TMP, '.curator-config.json');
 
 // Isolate every createDomain() into a throwaway tempdir (beats config) so this
 // test never touches the real domains/ folder on a configured machine.
@@ -269,8 +277,16 @@ async function runProseSuite() {
       '# Curation\n\n## Definition\nCuration is the deliberate selection and arrangement of knowledge with a clear point of view.\n\n## Why It Matters\nWithout a viewpoint, curation collapses into mere link-sharing. The act of curating leaves a trace of judgment.\n\n## Key Facts\n- Requires domain competence\n- Is a form of applied metacognition\n');
 
     // Second write: a THIN update that drops the prose (only Key Facts + Related).
+    // Two new bullets: one with wording that is NEW, one that mostly repeats a
+    // sentence the page already says ("leaves a trace of judgment"). Since v3.94.0
+    // (exact-name reuse, composeReusedPage) the page's own text stays and a
+    // passage that "looked mostly like what the page already says" is left out
+    // WITH a warning, so the repeat bullet is asserted DROPPED + DISCLOSED below.
+    // Before v3.94.0 this suite expected that bullet to be added, and went red.
+    const warnings = [];
     const rec = await files.writePage(domain, 'concepts/curation.md',
-      '# Curation\n\n## Key Facts\n- Leaves an auditable trace\n\n## Related\n- [[metacognition]]\n');
+      '# Curation\n\n## Key Facts\n- Leaves an auditable trace\n- Applied in museum exhibition design\n\n## Related\n- [[metacognition]]\n',
+      { onWarn: (m) => warnings.push(m) });
     ok(!!rec, 'thin re-write returned a change record');
 
     const finalPath = path.join(wiki, 'concepts', 'curation.md');
@@ -280,7 +296,9 @@ async function runProseSuite() {
     ok(/## Why It Matters/.test(finalContent), 'Why It Matters section preserved');
     ok(/collapses into mere link-sharing/.test(finalContent), 'Why It Matters prose body preserved');
     ok(/Requires domain competence/.test(finalContent), 'existing Key Facts bullet accumulated');
-    ok(/Leaves an auditable trace/.test(finalContent), 'new Key Facts bullet present');
+    ok(/Applied in museum exhibition design/.test(finalContent), 'new Key Facts bullet with new wording present');
+    ok(!/Leaves an auditable trace/.test(finalContent) && warnings.some(w => /not added.*looked mostly like what the page already says/s.test(w)),
+      'a bullet that mostly repeats existing prose is left out and the user is told (v3.94.0)');
     ok(/\[\[metacognition\]\]/.test(finalContent), 'new Related link present');
     // No duplicated headings.
     ok((finalContent.match(/## Definition/g) || []).length === 1, 'Definition heading appears exactly once');
