@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.95.0` | Duplicates one decision at a time: the review desk with a server basis gate, Compare all remaining as one resumable job, and new ingest pages compared first. |
 | `v3.94.0` | Re-ingesting or updating a page never overwrites: old text stays, new wording is added only when mostly new (threshold 0.5), and an identical source leaves existing pages byte-identical. |
 | `v3.93.1` | Ingest folds no longer lose kept text; only a spelling variant redirects, and Jaccard folding is retired, after a digit and letter bug folded `phase-2-build` at 1.00. |
 | `v3.93.0` | Wiki health is three lanes in plain words; quiet counts filter the candidate memo after a merge; the backend for the desk, Compare all and families landed dormant. |
