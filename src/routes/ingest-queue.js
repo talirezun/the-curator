@@ -174,13 +174,16 @@ function sendError(res, err, fallback) {
 
 router.post('/estimate', async (req, res) => {
   try {
-    const { domain, files } = req.body || {};
+    const { domain, files, overwrite } = req.body || {};
     if (!domain) return res.status(400).json({ error: 'domain is required' });
     const domains = await listDomains();
     if (!domains.includes(domain)) return res.status(400).json({ error: `Unknown domain: ${domain}` });
     if (!Array.isArray(files)) return res.status(400).json({ error: 'files must be an array of {name, size}' });
 
-    const result = await estimateIngestQueueCost(domain, files);
+    // `overwrite` only when the caller says so: a batch confirm gate does, so a name
+    // already in raw/ (which the batch will skip) is priced at $0. Absent, it is priced.
+    const result = await estimateIngestQueueCost(domain, files,
+      typeof overwrite === 'boolean' ? { overwrite } : {});
     res.json({ ...result, runsOn: ingestRunsOn(result) });
   } catch (err) {
     console.error('[ingest-queue] estimate error:', err);

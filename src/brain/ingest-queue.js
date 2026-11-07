@@ -197,8 +197,10 @@ import {
   ingestFile as realIngestFile,
   capExistingFilesForPrompt,
   makeUsageAccumulator,
+  planRepeatIngest,
   __testing as ingestTesting,
 } from './ingest.js';
+import { hashRawSource } from './raw-store.js';
 import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
@@ -525,6 +527,8 @@ function wireItem(item) {
     // Additive, allow-listed and capped like every other field here. Null when
     // the failure has no code — see where it is set.
     errorCode: wireStr(item.errorCode, 64),
+    // True only on a DONE item whose measured call count was zero (see processItemInner).
+    noCall: item.status === 'done' && item.noCall === true,
     result: r && typeof r === 'object' ? {
       title: wireStr(r.title, 512),
       pagesWritten: wireNum(r.pagesWritten),
@@ -1085,11 +1089,56 @@ export function largestFirst(a, b) {
   return (b.size || 0) - (a.size || 0);
 }
 
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Which accepted files will finish WITHOUT an AI call, and why — so the estimate prices
+ * them at $0 and plans no calls for them (2026-11-07: a batch quoted about $0.02 for a
+ * file that then returned before any call). Three reasons, each the SAME decision the
+ * run makes, never a guess:
+ *   'already-ingested'   — the name is in raw/ and overwrite is OFF: createJob skips it.
+ *                          Only when the caller says `overwrite: false` explicitly; the
+ *                          single-file run line does not, and keeps its price.
+ *   'same-name-in-batch' — a later file with the same name (case-insensitive, in run
+ *                          order): createJob skips it, whatever overwrite says.
+ *   'unchanged'          — these exact bytes (the caller's sha256, or createJob's own
+ *                          hash of the staged file) were read before by the model this
+ *                          run will use, with nothing left to fill: `planRepeatIngest`
+ *                          answers 'nothing', and ingestFile returns before any call.
+ * A file with no valid hash is priced (the safe direction for a cost gate).
+ *
+ * @param {Array<{name:string, size:number, sha256?:string}>} accepted  in run order
+ * @returns {Promise<Map<string, string>>} name -> reason
+ */
+async function findNoCallFiles(domain, accepted, { overwrite, model }) {
+  const out = new Map();
+  const seen = new Set();
+  const rawDir = rawPath(domain);
+  for (const f of accepted) {
+    const base = path.basename(f.name);
+    const key = base.toLowerCase();
+    if (seen.has(key)) { out.set(f.name, 'same-name-in-batch'); continue; }
+    seen.add(key);
+    if (overwrite === false && existsSync(path.join(rawDir, base))) { out.set(f.name, 'already-ingested'); continue; }
+    if (model && typeof f.sha256 === 'string' && SHA256_RE.test(f.sha256)) {
+      try {
+        const plan = await planRepeatIngest(domain, f.sha256, model);
+        if (plan && plan.kind === 'nothing') out.set(f.name, 'unchanged');
+      } catch { /* cannot tell: priced */ }
+    }
+  }
+  return out;
+}
+
 /**
  * @param {string} domain
- * @param {Array<{name: string, size: number}>} files  metadata only — no bytes read
+ * @param {Array<{name: string, size: number, sha256?: string}>} files  metadata only — no
+ *   bytes read. `sha256` (optional, lowercase hex) lets a file this model already read
+ *   be priced at $0; see findNoCallFiles.
+ * @param {{overwrite?: boolean}} [opts]  `overwrite: false` prices a name already in raw/
+ *   at $0, because createJob will skip it.
  */
-export async function estimateIngestQueueCost(domain, files) {
+export async function estimateIngestQueueCost(domain, files, opts = {}) {
   const list = Array.isArray(files) ? files : [];
   if (list.length > MAX_ESTIMATE_FILES) {
     throw statusErr(400,
@@ -1124,7 +1173,8 @@ export async function estimateIngestQueueCost(domain, files) {
       rejected.push({ name, reason: `File is too large (${(size / 1024 / 1024).toFixed(1)} MB, max ${MAX_FILE_MB} MB).` });
       continue;
     }
-    accepted.push({ name, size });
+    const sha256 = typeof f?.sha256 === 'string' ? f.sha256.toLowerCase() : null;
+    accepted.push(sha256 ? { name, size, sha256 } : { name, size });
     totalBytes += size;
   }
   // The preview lists these in the order the run will process them.
@@ -1183,7 +1233,11 @@ export async function estimateIngestQueueCost(domain, files) {
   let stats = null;
   try { stats = await getDomainStats(domain); } catch { /* best-effort context only */ }
 
-  const perFile = accepted.map(f => estimateOneFile({ f, promptFiles, index, today, price, model }));
+  // A file that will finish without a call costs nothing and plans no calls. It stays in
+  // `accepted` (the list the user confirms) and is named in `files.noCall`.
+  const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model });
+  const priced = accepted.filter(f => !noCall.has(f.name));
+  const perFile = priced.map(f => estimateOneFile({ f, promptFiles, index, today, price, model }));
 
   // The SAME files, the SAME code, against an EMPTY domain. This is what makes
   // "how much is my wiki's size costing me" answerable for the batch actually
@@ -1192,7 +1246,7 @@ export async function estimateIngestQueueCost(domain, files) {
   // Pure string work on much smaller prompts — no I/O, no extra readdir. On
   // the real `articles` domain a 100-file estimate measures 33 ms before this
   // and 46 ms after.
-  const perFileFresh = accepted.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price, model }));
+  const perFileFresh = priced.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price, model }));
   const matureInputTokens = perFile.reduce((n, e) => n + (e.inputTokens || 0), 0);
   const freshInputTokens = perFileFresh.reduce((n, e) => n + (e.inputTokens || 0), 0);
   // Deliberately independent of `price`: the ratio is meaningful even when no
@@ -1233,6 +1287,8 @@ export async function estimateIngestQueueCost(domain, files) {
       totalBytes,
       accepted: accepted.map(a => a.name),
       rejected,
+      // The accepted files that will finish without an AI call, priced at $0 above.
+      noCall: [...noCall].map(([name, reason]) => ({ name, reason })),
     },
     estimate,
     domainContext: { pageCount: stats?.pageCount ?? null, indexBytes: index.length },
@@ -1381,10 +1437,16 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
   // that total by the non-skipped count, inflating the per-file fallback
   // charge by exactly the proportion of the batch that was skipped.
   const plannedFiles = items.filter(i => i.status === 'pending');
-  const estimate = await estimateIngestQueueCost(
-    domain,
-    plannedFiles.map(i => ({ name: i.name, size: i.bytes }))
-  );
+  // Each staged file hashed HERE, from its real bytes, so a file this model already read
+  // is priced at $0 in the job's estimate (and in the budget fallback's share below).
+  const plannedMeta = [];
+  for (const i of plannedFiles) {
+    const sha256 = i.stagedPath ? await hashRawSource(i.stagedPath) : null;
+    plannedMeta.push(sha256 ? { name: i.name, size: i.bytes, sha256 } : { name: i.name, size: i.bytes });
+  }
+  const estimate = await estimateIngestQueueCost(domain, plannedMeta);
+  const expectedNoCall = new Set((estimate.files.noCall || []).map(e => e.name));
+  for (const i of plannedFiles) if (expectedNoCall.has(i.name)) i.estimatedNoCall = true;
 
   // A cap that cannot be enforced must not be accepted. `chargeForItem`
   // returns 0 from BOTH branches when the active model has no published
@@ -1598,7 +1660,8 @@ function chargeForItem(job, item) {
     if (typeof usd === 'number' && Number.isFinite(usd)) return usd;
   }
   job.spendIsEstimated = true;
-  const plannedCount = job.items.filter(i => i.status !== 'skipped').length || 1;
+  // The estimate priced neither skipped files nor files expected to need no call.
+  const plannedCount = job.items.filter(i => i.status !== 'skipped' && i.estimatedNoCall !== true).length || 1;
   // v3.72.1 (truth audit, Ingest F1): with no number to share, the charge is
   // not "zero" — it is UNKNOWN. Adding 0 here is harmless to the arithmetic
   // (nothing is capped: createJob refuses a cap it cannot price), but a UI
@@ -2170,6 +2233,10 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       newPagesToCompare: result?.newPagesToCompare || null,
     };
     it.tokenUsage = result && result.tokenUsage ? result.tokenUsage : null;
+    // MADE NO AI CALL — read off the measured counts, never inferred: the ingest's own
+    // usage says zero calls AND the per-call accumulator saw none. A result with no
+    // usage at all is unknown, not zero, so it is not labelled.
+    it.noCall = !!(it.tokenUsage && it.tokenUsage.calls === 0 && itemUsage.totals.calls === 0);
     // v3.72.1 (truth audit F12): the model that ACTUALLY answered, by the run
     // line's own names, captured now — the fallback status it reads is live
     // state, so "your model was unavailable" is only knowable at this moment.
