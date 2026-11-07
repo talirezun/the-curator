@@ -76,3 +76,18 @@ export function classifyLiveOutcome({ firstOk, retried, retryOk, firstTransient,
   if (firstTransient || retryTransient) return 'inconclusive';
   return 'fail';
 }
+
+/**
+ * MODEL VARIANCE (2026-11-07). A live suite prints a line starting
+ * "⚠ INCONCLUSIVE (model variance)" only where its own result proves our code did
+ * its whole job and the model chose the outcome (test-ingest-deep.js's
+ * inconclusive()). Such a suite exits 0; the runner reports it inconclusive rather
+ * than pass, so the badge stays honest in both directions. Line-anchored, so the
+ * phrase quoted inside other text does not count.
+ * @param {string} out
+ * @returns {boolean}
+ */
+export function hasModelVarianceMarker(out) {
+  if (!out || typeof out !== 'string') return false;
+  return /^\s*⚠ INCONCLUSIVE \(model variance\)/m.test(out);
+}

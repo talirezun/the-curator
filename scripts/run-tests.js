@@ -26,7 +26,7 @@ import { spawn } from 'child_process';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { hasTransientMarker, classifyLiveOutcome } from './ci-flake.js';
+import { hasTransientMarker, hasModelVarianceMarker, classifyLiveOutcome } from './ci-flake.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -126,6 +126,7 @@ const OFFLINE = [
   'test-chat-model.js',            // per-chat model (provider) selector + getDefaultModel exposure
   'test-tiered-pricing.js',        // 2026-10-08: tier-aware money path (Haiku 5.5 builds), Anthropic 5.5 catalogue, retirement of 2-gen-old Anthropic models + forward migration (server config + browser localStorage, one-time note)
   'test-ingest-honest-repeat.js',  // 2026-11-07: four promises. A real link resolves whatever order the pages were written in; a summary's title, source and Key Takeaways are really repaired; the identical source is known before any call (same model no spend, another model one real reading under add-only-new, a gap the same model may fill), at the route and at the chokepoint; and Claude's estimate against bills typed from the production-test matrix, on the same footing as the run line.
+  'test-ingest-followup-retry.js', // 2026-11-07: a follow-up source whose reply had no entity or concept page while it clearly covers existing ones: the same model once more, then gemini-3.1-flash-lite (asserted), never a loop, one plain notice with the extra cost, each model priced at its own rates; no paid retry for an unrelated, first, short or already-good reply.
   'test-openrouter-withdrawn.js',  // 2026-11-07: Granite 4.0 H Micro has 0 OpenRouter endpoints. It left the catalogue and the chain, a stored pick moves forward to the default with a note giving the real reason and the higher price, and the offered ids and billed prices are pinned against what OpenRouter's free metadata said that day.
   'test-chat-cancel.js',           // chat cancellation. The discriminator was MEASURED, not guessed: express.json() drains the body before the handler runs, so `req.destroyed` is true and `req.on('close')` has already fired on 25/25 NORMAL requests — both useless — and `res.on('close')` fires on a healthy request too, so `res.on('close', abort)` would cancel every successful turn. Only the response's own write state discriminates (`writableEnded` false at close, 25/25 aborted). §3/§4 assert a cancelled turn leaves the conversation file byte-identical (sha256) or absent; §7 asserts the OPPOSITE user is served too — an open-but-idle connection is not a disconnect, so a turn whose reader navigated away still completes and still persists.
   'test-chat-streaming.js',        // the SERVER half of chat streaming. Content-negotiated: without `stream: true` the route is byte-for-byte what it was (§1 checks the SDK-side request object too, not just the body, and that NO delta listeners were attached) because /old reads `await res.json()` and test-chat-cancel.js does the same across ~40 assertions. §3 pins the contract generateText's docblock states and nothing enforced anywhere: the deltas are a PREVIEW of the authoritative return value, asserted in the one case where the two visibly DIFFER — stripCatalogueEcho runs ONCE on the return value and never on the deltas, so a consumer that appends instead of replacing both doubles the answer and keeps the un-stripped text. §5 pins that every refusal happens BEFORE flushHeaders (after it there is no status code left to send); §6 that a mid-stream failure is an in-band 200 frame with absolute paths SCRUBBED, a deliberate divergence from ingest/compile which both emit a raw err.message; §9 the persistence decision streaming forced — bytes already on screen followed by a throw persist NOTHING, because the accumulated deltas never went through stripCatalogueEcho or citation extraction and would seed the next prompt with a message shaped unlike every other.
@@ -906,6 +907,14 @@ function tail(out, n = 12) {
       }
     }
 
+    // MODEL VARIANCE (2026-11-07). A live suite that PASSED but printed
+    // "⚠ INCONCLUSIVE (model variance)" missed a check only where its own evidence
+    // showed our code did its whole job and the model chose the outcome (see
+    // test-ingest-deep.js's inconclusive()). That is not a pass and not a bug.
+    if (r.ok && isLive && !r.inconclusive && hasModelVarianceMarker(r.out)) {
+      r = { ...r, skipped: true, inconclusive: true, variance: true };
+    }
+
     results.push(r);
     const label = r.inconclusive
       ? '\x1b[33m⚠ flake\x1b[0m'
@@ -913,7 +922,10 @@ function tail(out, n = 12) {
         ? (r.skipped ? '\x1b[33m⏭ skip\x1b[0m' : '\x1b[32m✓ pass\x1b[0m')
         : '\x1b[31m✗ FAIL\x1b[0m';
     console.log(`  ${label}  ${file.padEnd(38)} ${(r.ms + 'ms').padStart(7)}${isLive ? '  (live)' : ''}`);
-    if (r.inconclusive) {
+    if (r.inconclusive && r.variance) {
+      console.log(`         ⚠ inconclusive — model variance: the code did its job and the model chose the outcome. NOT counted as a failure.`);
+      for (const l of String(r.out || '').split('\n').filter((x) => /INCONCLUSIVE \(model variance\)/.test(x)).slice(0, 6)) console.log('           ' + l.trim().slice(0, 300));
+    } else if (r.inconclusive) {
       console.log(`         ⚠ inconclusive — transient provider error (503 / rate-limit / dropped stream) on both attempts. NOT counted as a failure.`);
     } else if (!r.ok) {
       console.log(`         reason: ${r.reason || `exit ${r.code}`}`);
@@ -936,13 +948,13 @@ function tail(out, n = 12) {
   console.log(`\n  ────────────────────────────────────────`);
   console.log(
     `  ${results.length} suites · ${passed} passed · ${failed.length} failed` +
-    `${inconclusive.length ? ` · ${inconclusive.length} inconclusive (provider flake)` : ''}` +
+    `${inconclusive.length ? ` · ${inconclusive.length} inconclusive (provider flake or model variance)` : ''}` +
     `${skipped.length ? ` · ${skipped.length} skipped` : ''}`
   );
   console.log(`  ────────────────────────────────────────\n`);
 
   if (inconclusive.length) {
-    console.log('  ⚠ INCONCLUSIVE (transient provider errors — not gating the build):');
+    console.log('  ⚠ INCONCLUSIVE (transient provider errors or model variance — not gating the build):');
     for (const r of inconclusive) console.log(`    ⚠ ${r.file}`);
     console.log('    Re-run the live job when the provider has recovered to get a clean signal.\n');
   }

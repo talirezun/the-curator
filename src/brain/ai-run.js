@@ -40,6 +40,7 @@ import {
   answeringModel,
   estimateRates,
   priceUsageUsd,
+  priceUsageTotalsUsd,
   cacheRatesFor,
 } from './llm.js';
 import { estimateInputTokens } from './compile-estimate.js';
@@ -243,7 +244,7 @@ export function spentFromUsage(totals) {
       // The ONE tier-aware formula (llm.js `priceUsageUsd`): the cache rates of
       // the model that ran and, for a tiered model, the per-call tier split the
       // accumulator recorded (a total without one is priced at the upper tier).
-      const usd = priceUsageUsd(model, t);
+      const usd = priceUsageTotalsUsd(t);
       if (typeof usd === 'number' && Number.isFinite(usd)) out.usd = usd;
     }
 

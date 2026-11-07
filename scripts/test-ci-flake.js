@@ -10,7 +10,7 @@
  * Exit: 0 if all green; non-zero on any failure.
  */
 
-import { hasTransientMarker, classifyLiveOutcome, TRANSIENT_MARKERS } from './ci-flake.js';
+import { hasTransientMarker, hasModelVarianceMarker, classifyLiveOutcome, TRANSIENT_MARKERS } from './ci-flake.js';
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -102,6 +102,14 @@ ok(classifyLiveOutcome({ firstOk: false, retried: true, retryOk: false, firstTra
 // A truly broken compile (no provider error) must still fail, even with a retry.
 ok(classifyLiveOutcome({ firstOk: false, retried: true, retryOk: false, firstTransient: hasTransientMarker(realAssertFail), retryTransient: hasTransientMarker(realAssertFail) }) === 'fail',
   'a real reproducible compile bug → still fail (not masked)');
+
+// ── 5. Model variance (2026-11-07) ──────────────────────────────────────────────
+section('5. Model variance is recognised only as the suite\'s own line');
+ok(hasModelVarianceMarker('  Passed: 200   Failed: 0\n  ⚠ INCONCLUSIVE (model variance) 1 check(s): the model chose.\n'),
+  'the suite\'s variance line → recognised');
+ok(!hasModelVarianceMarker('  Passed: 200   Failed: 0\n'), 'a clean pass → not variance');
+ok(!hasModelVarianceMarker('  ✗ Q5: a note mentioning ⚠ INCONCLUSIVE (model variance) in passing'), 'the phrase inside another line → not variance');
+ok(!hasModelVarianceMarker(null) && !hasModelVarianceMarker(''), 'no output → not variance');
 
 // ── Report ──────────────────────────────────────────────────────────────────────
 console.log(`\n${'─'.repeat(50)}`);

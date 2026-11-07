@@ -171,6 +171,8 @@ flowchart LR
     D5 --> Z
 ```
 
+**A follow-up that comes back as the summary only (2026-11-07).** When a single-pass reply has no entity or concept page, the source is not a re-reading, and it clearly covers an existing page (its name, singularised, appears at least twice in a source of 800+ characters, `coveredExistingTopics`), `followupRetry` asks the same model once more. On Gemini it then asks `gemini-3.1-flash-lite` once, after asserting that it resolves to that exact id. It never loops; a reply counts only if it has a topic page; one warning names the models and the extra cost, and the cost readout prices each model at its own rates (`priceUsageTotalsUsd`). Measured reason: Flash Lite 3.5 returned summary-only on a covering follow-up 9 of 20 times, and Flash Lite 3.1 0 of 6. Multi-phase outlines are not covered. Full record: `docs/dev/decisions-knowledge.md`.
+
 **Why the 15k threshold?** Anything beyond ~15k chars produces 10-20k chars of JSON in single-pass, which is enough for accumulated unescaped quotes to break parsing. Multi-phase keeps each batch's output to ~3k chars of JSON — far more reliable.
 
 **Why the 8k retry limit?** If the single-pass response is already large AND parsing failed, retrying with "strict brevity" prompts the same LLM to produce a similarly large response. Skipping straight to multi-phase saves an LLM call.

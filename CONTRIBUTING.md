@@ -103,7 +103,7 @@ Escape hatch, rarely the right answer: `git commit --no-verify`.
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (351 suites total — 322 OFFLINE
+The Curator has an extensive battle-test suite (352 suites total — 323 OFFLINE
 + 15 LIVE_CI + 14 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the

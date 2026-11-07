@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import { localDateStamp } from './local-date.js';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { generateText, isAbortError, makeAbortError, isAboveTierCall, getProviderInfo, answeringModel } from './llm.js';
+import { generateText, isAbortError, makeAbortError, isAboveTierCall, getProviderInfo, answeringModel, listOfferableModels, priceUsageUsd } from './llm.js';
 import {
   readSchema,
   readIndex,
@@ -2307,6 +2307,29 @@ export function makeUsageAccumulator(forward = null) {
       }
       if (r.provider) totals.provider = r.provider;
       if (r.model)    totals.model = r.model;
+      // Per-model subtotals: when more than one model answered (a fallback rung, or
+      // the follow-up retry on another model), `priceUsageTotalsUsd` prices each
+      // model's tokens at that model's own rates instead of all at the last one's.
+      if (r.model) {
+        if (!totals.byModel) totals.byModel = {};
+        const m = totals.byModel[r.model] || (totals.byModel[r.model] = {
+          provider: r.provider || null, calls: 0, inputTokens: 0, outputTokens: 0,
+          cachedReadTokens: 0, cacheWriteTokens: 0,
+          aboveTier: { calls: 0, inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 },
+        });
+        m.calls++;
+        m.inputTokens      += num(r.inputTokens);
+        m.outputTokens     += num(r.outputTokens);
+        m.cachedReadTokens += num(r.cachedReadTokens);
+        m.cacheWriteTokens += num(r.cacheWriteTokens);
+        if (crossed) {
+          m.aboveTier.calls++;
+          m.aboveTier.inputTokens      += num(r.inputTokens);
+          m.aboveTier.outputTokens     += num(r.outputTokens);
+          m.aboveTier.cachedReadTokens += num(r.cachedReadTokens);
+          m.aboveTier.cacheWriteTokens += num(r.cacheWriteTokens);
+        }
+      }
       if (typeof forward === 'function') {
         try { forward(u); }
         catch (err) { console.error(`[ingest] usage forward callback threw (ignored): ${err && err.message}`); }
@@ -3068,6 +3091,154 @@ const SINGLE_PASS_RESPONSE_LIMIT = 8_000;
 const MULTI_PHASE_INPUT_THRESHOLD = 15_000;
 
 /**
+ * ── A FOLLOW-UP SOURCE THAT CAME BACK AS A SUMMARY ONLY (owner decision 2026-11-07) ──
+ *
+ * Measured 2026-11-07 on the SYN-10 fixture (a second article on a topic the wiki
+ * already has a page for), single-pass, same prompt on both code versions:
+ * gemini-3.5-flash-lite replied with the summary and NO entity or concept page in
+ * 5 of 11 runs on v3.97.0 and 4 of 9 on v3.96.1 code (valid JSON, about 270 output
+ * tokens, nothing filtered by us); gemini-3.1-flash-lite did so 0 of 6 times. A first
+ * ingest into an empty domain wrote entity or concept pages 16 of 16 times. So the
+ * ladder below runs only for a FOLLOW-UP: the reply has no entity/concept page, the
+ * domain already has some, and the source CLEARLY COVERS at least one of them.
+ *
+ * "Clearly covers", deterministic and free: an existing entity/concept page whose name
+ * (its slug's words, each singularised, so "Experts Roundups" matches expert-roundup)
+ * occurs at least FOLLOWUP_MIN_MENTIONS times as a whole-word run in a source of at
+ * least FOLLOWUP_MIN_CHARS characters. Measured on the suite's fixtures against the
+ * pages their sibling runs wrote: 09b covers expert-roundup (8 mentions); none of the
+ * other fixtures covers a SYN-10 page or 09b a SYN-2 page. A re-reading of the same
+ * bytes never triggers it (planRepeatIngest owns that case).
+ *
+ * The ladder, never a loop: (1) the same model once more, told which existing pages
+ * the source develops; (2) if that is still summary-only and the provider is Gemini,
+ * the same step on FOLLOWUP_RETRY_MODEL, after asserting it resolves to that id. A
+ * reply is taken only when it parses and has an entity or concept page; otherwise the
+ * first reply stands. Every call goes through the ingest's usage accumulator, so the
+ * cost readout includes it, priced per model; one plain line tells the user what ran
+ * and what it cost.
+ */
+export const FOLLOWUP_MIN_CHARS = 800;
+export const FOLLOWUP_MIN_MENTIONS = 2;
+export const FOLLOWUP_RETRY_MODEL = 'gemini-3.1-flash-lite';
+
+const singularToken = (t) => (t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t);
+function topicTokens(s) {
+  return String(s).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .split(/[^a-z0-9]+/).filter(Boolean).map(singularToken);
+}
+
+/** Existing entity/concept pages the source clearly covers, most-mentioned first. */
+export function coveredExistingTopics(text, existingFiles) {
+  if (typeof text !== 'string' || text.length < FOLLOWUP_MIN_CHARS) return [];
+  const src = topicTokens(text);
+  const at = new Map();
+  src.forEach((t, i) => { if (!at.has(t)) at.set(t, []); at.get(t).push(i); });
+  const out = [];
+  for (const folder of ['entities', 'concepts']) {
+    const files = existingFiles && Array.isArray(existingFiles[folder]) ? existingFiles[folder] : [];
+    for (const f of files) {
+      if (typeof f !== 'string') continue;
+      const slug = f.replace(/\.md$/, '');
+      const name = topicTokens(slug);
+      if (!name.length || name.join('').length < 4) continue;
+      let n = 0;
+      for (const i of at.get(name[0]) || []) {
+        let ok = true;
+        for (let j = 1; j < name.length; j++) if (src[i + j] !== name[j]) { ok = false; break; }
+        if (ok) n++;
+      }
+      if (n >= FOLLOWUP_MIN_MENTIONS) out.push({ path: `${folder}/${slug}.md`, mentions: n });
+    }
+  }
+  return out.sort((a, b) => b.mentions - a.mentions || a.path.localeCompare(b.path));
+}
+
+const nodePageCount = (r) => (r && Array.isArray(r.pages)
+  ? r.pages.filter((p) => p && typeof p.path === 'string' && /^(entities|concepts)\//.test(p.path)).length : 0);
+
+function modelLabel(provider, model) {
+  try {
+    for (const e of listOfferableModels(provider)) if (e && e.id === model && e.label) return e.label;
+  } catch { /* the id is the label */ }
+  return model || 'the model';
+}
+
+/**
+ * Runs the follow-up ladder. Returns the reply to use (the first one when no rung
+ * produced an entity or concept page), the notice for the user, and the record.
+ * An abort is rethrown; any other error ends the ladder and keeps what there is.
+ */
+async function followupRetry({ llm, schema, prompt, first, covered, usage, signal, progress, buildModel }) {
+  let provider = null; let model = buildModel || null;
+  try { const i = getProviderInfo(); provider = i.provider; model = model || answeringModel(i.provider, i.model); } catch { /* the test seam, or no key */ }
+  const names = covered.slice(0, 3).map((c) => c.path.replace(/^(entities|concepts)\//, '').replace(/\.md$/, ''));
+  const note = `\n\nNOTE: your previous reply returned only the summary page. This source develops topics ` +
+    `that already have pages in this wiki: ${covered.slice(0, 8).map((c) => c.path).join(', ')}. Return those ` +
+    `pages too, with what this source adds to them, and any new entity or concept page it introduces.`;
+  const record = { covered: covered.map((c) => c.path), attempts: [], accepted: null };
+  let extraUsd = 0; let priced = true;
+  const attempt = async (rungModel) => {
+    const calls = [];
+    const tap = (u) => { calls.push(u); usage.onUsage(u); };
+    const opts = { onUsage: tap, signal };
+    if (rungModel) opts.model = rungModel;
+    let reply = null; let error = null;
+    try {
+      const raw = String(await llm(schema, prompt + note, 65536, 'json', (msg) => progress(15, msg, 'wait'), opts)).trim();
+      reply = parseJSON(raw);
+      if (!reply || !Array.isArray(reply.pages)) reply = null;
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      error = String(err && err.message || err).slice(0, 160);
+      reply = null;
+    }
+    for (const u of calls) {
+      const usd = priceUsageUsd(u && u.model, u);
+      if (typeof usd === 'number' && Number.isFinite(usd)) extraUsd += usd; else priced = false;
+    }
+    const answered = calls.length ? calls[calls.length - 1].model || rungModel || model : (rungModel || model);
+    const nodes = nodePageCount(reply);
+    record.attempts.push({ model: answered, nodes, ...(error ? { error } : {}) });
+    return { reply: nodes > 0 ? reply : null, answered };
+  };
+
+  throwIfCancelled(signal);
+  progress(15, 'The reply had no topic pages — asking once more…');
+  let got = await attempt(null);
+  let rung2 = null;
+  if (!got.reply && provider === 'gemini' && model !== FOLLOWUP_RETRY_MODEL) {
+    // Assert the override resolves to exactly that id before paying for it.
+    let resolved = null;
+    try { resolved = getProviderInfo(null, FOLLOWUP_RETRY_MODEL).model; } catch { resolved = null; }
+    if (resolved === FOLLOWUP_RETRY_MODEL) {
+      throwIfCancelled(signal);
+      progress(15, `Still no topic pages — trying ${modelLabel(provider, FOLLOWUP_RETRY_MODEL)}…`);
+      rung2 = await attempt(FOLLOWUP_RETRY_MODEL);
+      if (rung2.reply) got = rung2;
+    } else {
+      console.error(`[ingest] follow-up retry: ${FOLLOWUP_RETRY_MODEL} resolved to ${resolved}; that rung was not run.`);
+    }
+  }
+  const first_ = modelLabel(provider, model);
+  const cost = priced ? `$${extraUsd.toFixed(4)}` : 'price not published for one of the models';
+  const topics = names.join(', ');
+  let notice;
+  if (got.reply && !rung2) {
+    record.accepted = got.answered;
+    notice = `${first_} planned no entity or concept pages for this source, though it covers existing topics (${topics}), so it was asked once more and wrote ${nodePageCount(got.reply)}. Extra cost: ${cost}.`;
+  } else if (got.reply) {
+    record.accepted = got.answered;
+    notice = `${first_} twice planned no entity or concept pages for this source, though it covers existing topics (${topics}), so that step ran on ${modelLabel(provider, got.answered)}, which wrote ${nodePageCount(got.reply)}. Extra cost: ${cost}.`;
+  } else {
+    const tried = rung2 ? `${first_} twice and ${modelLabel(provider, rung2.answered)} once` : `${first_} twice`;
+    notice = `This source covers existing topics (${topics}), but ${tried} planned no entity or concept pages, so only the summary was written. Extra cost: ${cost}.`;
+  }
+  record.extraUsd = priced ? extraUsd : null;
+  return { result: got.reply || first, notice, record };
+}
+
+/**
  * @param {{signal?: AbortSignal}} [opts]  v3.3.x — optional cancellation.
  *   When the batch-ingest queue's per-item AbortController fires, the ingest
  *   stops at the NEXT LLM call boundary and throws a `curatorAborted` error,
@@ -3426,6 +3597,29 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       singlePassFailed = true;
     } else {
       throw err;
+    }
+  }
+
+  // ── A follow-up that came back as the summary only (see followupRetry) ──────
+  let followup = null;
+  let replyNodePages = null;
+  if (!singlePassFailed && result) {
+    replyNodePages = nodePageCount(result);
+    // An empty domain has nothing to cover, so a first ingest never reaches a retry.
+    if (replyNodePages === 0 && !repeatPlan.sameContent) {
+      const covered = coveredExistingTopics(text, existingFiles);
+      if (covered.length) {
+        const out = await followupRetry({
+          llm, schema, first: result, covered, usage, signal, progress,
+          prompt: buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath),
+          buildModel: plannedModel,
+        });
+        result = out.result;
+        followup = out.record;
+        replyNodePages = nodePageCount(result);
+        console.warn(`[ingest] Follow-up retry: ${out.notice}`);
+        warnings.push(out.notice);
+      }
     }
   }
 
@@ -3814,6 +4008,11 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // inputTokens + cachedReadTokens + cacheWriteTokens and a cost calculation
     // never has to branch on which provider ran.
     tokenUsage: usage.totals,
+    // Additive: entity/concept pages in the single-pass reply the pipeline worked from
+    // (null on multi-phase), and the follow-up ladder's record when it ran (else null).
+    // Lets a live suite tell the model's choice from a page this code dropped.
+    replyNodePages,
+    followupRetry: followup,
     // {newPages, comparable, pairs}, or null when no page was created or no comparison could run.
     newPagesToCompare: toCompare,
   };

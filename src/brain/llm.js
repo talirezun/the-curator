@@ -1593,6 +1593,35 @@ export function priceUsageUsd(modelId, usage, atMs = Date.now()) {
 }
 
 /**
+ * USD for an ingest's usage TOTALS (`makeUsageAccumulator`), across every model that
+ * answered. With per-model subtotals (`totals.byModel`) that account for every call,
+ * each model's tokens are priced at its own rates and summed; a model with no
+ * published price makes the whole figure null (never a partial sum shown as the
+ * bill). Without them (an older or hand-built total), it is `priceUsageUsd` on
+ * `totals.model`, exactly as before.
+ */
+export function priceUsageTotalsUsd(totals, atMs = Date.now()) {
+  if (!totals || typeof totals !== 'object') return null;
+  const by = totals.byModel && typeof totals.byModel === 'object' ? Object.entries(totals.byModel) : [];
+  const callsIn = by.reduce((s, [, u]) => s + (u && Number.isFinite(u.calls) ? u.calls : 0), 0);
+  if (by.length > 0 && callsIn === totals.calls) {
+    let sum = 0;
+    // A total that has lost its tier split is priced as blind (the upper tier), as
+    // `priceUsageUsd` does: subtotals never make it cheaper than the total says.
+    const blind = !(totals.aboveTier && typeof totals.aboveTier === 'object');
+    for (const [model, u0] of by) {
+      let u = u0;
+      if (blind && u && typeof u === 'object') { const { aboveTier, ...rest } = u; u = rest; }
+      const usd = priceUsageUsd(model, u, atMs);
+      if (typeof usd !== 'number' || !Number.isFinite(usd)) return null;
+      sum += usd;
+    }
+    return sum;
+  }
+  return priceUsageUsd(totals.model, totals, atMs);
+}
+
+/**
  * Does this id LOOK like a moving alias?
  *
  * The authoritative signal is OpenRouter's `alias_target`, read by

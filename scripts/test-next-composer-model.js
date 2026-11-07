@@ -179,7 +179,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOfferableModel, priceUsageUsd } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOfferableModel, priceUsageUsd, priceUsageTotalsUsd } from '../src/brain/llm.js';
 // The REAL shared formatter the view imports, driven directly — not a stub. A
 // stub would let a bespoke re-implementation in the view pass unnoticed, which
 // is mutation M4.
@@ -379,6 +379,8 @@ const QUEUE_INJECTED = {
   // The tier-aware money formula itself (llm.js). Injected REAL, never stubbed,
   // so §11.1 measures the mirror against the shipping arithmetic.
   priceUsageUsd,
+  // The same formula across every model that answered (a fallback or follow-up rung).
+  priceUsageTotalsUsd,
   // `cacheRateProvider` decides whose cache RATES apply by exact-`===`
   // catalogue membership. Injecting the REAL predicate, not a stub, so §11.1c
   // measures the shipping decision against the shipping catalogue — a stub

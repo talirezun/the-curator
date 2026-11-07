@@ -201,7 +201,7 @@ import {
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
-import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
+import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, priceUsageTotalsUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -1658,7 +1658,8 @@ function chargeForItem(job, item) {
   // This is the budget cap's input, so it must never charge a crossing call at
   // the lower rate.
   if (u && price) {
-    const usd = priceUsageUsd(u.model, u);
+    // Every model that answered, at its own rates (a fallback or follow-up retry rung).
+    const usd = priceUsageTotalsUsd(u);
     if (typeof usd === 'number' && Number.isFinite(usd)) return usd;
   }
   job.spendIsEstimated = true;

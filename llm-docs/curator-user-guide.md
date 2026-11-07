@@ -404,6 +404,7 @@ Below the change list a small footer reports the real usage for that ingest, not
 - **Clean up copy-pasted text.** If you paste an article from a website, remove the navigation menus, cookie banners and footer text first. Cleaner input makes better pages.
 - **Mind the free-tier rate limits.** Ingesting five or more documents on Gemini's free tier will often hit a quota partway through.
 - **Read the warnings panel after each ingest.** If it says the source was truncated or a stub page was created, the ingest finished but with reduced quality, and the entry tells you what to do. Re-ingesting is always safe.
+- **A second source on a topic you already have can cost one or two extra calls.** If the AI's reply adds no entity or concept page although the source clearly covers pages you already have, The Curator asks the same model once more, and on Gemini then asks Flash Lite 3.1 once. One line in the result names the models and the extra cost, which is included in what the ingest says it cost. It never asks more than twice, and an unrelated, short or first source never triggers it.
 
 ## Who sets the instructions an ingest follows?
 

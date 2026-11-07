@@ -3305,6 +3305,7 @@ In practice, The Curator's ingest pipeline currently caps the **input** at 80,00
 - **Clean up copy-pasted text.** If you paste an article from a website, remove the navigation menus, cookie banners, and footer text first. Cleaner input = better wiki pages.
 - **Mind the rate limits on the free tier.** If you're ingesting a batch of 5+ documents and you're on Gemini's free tier, expect to hit `429 RESOURCE_EXHAUSTED` partway through — see [§19](#19-api-keys-cost--free-tier).
 - **Watch the warnings panel after each ingest.** If you see "⚠ Source truncated to 80,000 chars" or "⚠ Stub page created", the ingest finished but with reduced quality — the warning tells you exactly what to do. Re-ingesting the same source is safe (see below).
+- **A second source on a topic you already have can cost one or two extra calls.** If the AI's reply adds no entity or concept page although the source clearly covers pages you already have, The Curator asks the same model once more, and on Gemini then asks Flash Lite 3.1 once. One line in the result names the models and the extra cost, which is included in what the ingest says it cost. It never asks more than twice, and an unrelated, short or first source never triggers it.
 
 ### Understanding the ingest report (what those "warnings" really mean)
 
