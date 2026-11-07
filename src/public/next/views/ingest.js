@@ -122,6 +122,7 @@ import {
 // copies of these two — see the shared module's own header comment.
 import {
   queueBusyTransition, formatQueueBytes, formatTokenRange,
+  duplicateCopy,
   pausedReasonCopy, statusPillMeta, resolveEstimateFileList, dedupeQueueFiles,
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
   computeQueueStatusCounts,
@@ -2648,16 +2649,24 @@ function renderRemoteOutcome() {
   );
 }
 
+function duplicateText(dup) {
+  return '<strong>' + escapeHtml(dup.filename) + '</strong> has already been ingested into this domain. ' +
+    escapeHtml(duplicateCopy(dup.plan).sentence);
+}
+
 function renderDuplicate() {
   if (!state.duplicate) return '';
+  const dupCopy = duplicateCopy(state.duplicate.plan);
   return (
     '<div class="ing-duplicate">' +
       icon('alertTriangle', 15) +
       '<div class="ing-duplicate-body">' +
-        '<strong>' + escapeHtml(state.duplicate.filename) + '</strong> has already been ingested into this domain.' +
+        duplicateText(state.duplicate) +
         '<div class="ing-duplicate-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" id="ing-dup-overwrite">Re-ingest &amp; update wiki</button>' +
-          '<button type="button" class="btn btn-ghost btn-xs" id="ing-dup-cancel">Cancel</button>' +
+          (dupCopy.action
+            ? '<button type="button" class="btn btn-secondary btn-xs" id="ing-dup-overwrite">' + escapeHtml(dupCopy.action) + '</button>'
+            : '') +
+          '<button type="button" class="btn btn-ghost btn-xs" id="ing-dup-cancel">' + (dupCopy.action ? 'Cancel' : 'OK') + '</button>' +
         '</div>' +
       '</div>' +
     '</div>'
@@ -3569,7 +3578,7 @@ async function runIngest(token, overwrite) {
       if (res.status === 409 && data.duplicate) {
         if (isCurrentMount(token)) {
           state.progress = null;
-          state.duplicate = { filename: data.filename || file.name };
+          state.duplicate = { filename: data.filename || file.name, plan: data.plan || null };
           render(token);
         }
         return;

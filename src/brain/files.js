@@ -1436,6 +1436,62 @@ export async function tidyWrittenLinks(domain, relPaths) {
   return changed;
 }
 
+/** Was this page written by The Curator because the AI failed? */
+export function isStubPage(text) {
+  return STUB_MARK_RE.test(String(text ?? ''));
+}
+
+/**
+ * Give a summary the parts of its layout it lacks, without touching a line it has.
+ *
+ * Measured 2026-11-07: Gemini 3.1 left the `# title` off 22 of 24 summaries, Haiku 5.5 off
+ * 4 of 6, and the warning told the user that re-ingesting "usually fixes it", which has
+ * been false since the identical source stopped adding anything. A title and a source are
+ * known without asking a model, so they cost nothing and need no re-ingest. Key Takeaways
+ * is the model's own text: it comes from this run's reply when the reply has it.
+ *
+ * @param {object} parts
+ * @param {string} [parts.title]    the source's title (validated by the caller)
+ * @param {string} [parts.source]   the source's file name
+ * @param {string} [parts.incoming] this run's reply for the page
+ * @returns {Promise<string[]>} what was added: 'title', 'source', 'takeaways'
+ */
+export async function repairSummaryLayout(domain, relPath, { title, source, incoming } = {}) {
+  const full = path.join(wikiPath(domain), relPath);
+  let before;
+  try { before = await readFile(full, 'utf8'); } catch { return []; }
+  if (STUB_MARK_RE.test(before)) return [];
+  const eol = /\r\n/.test(before) ? '\r\n' : '\n';
+  const fm = before.match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
+  let head = fm ? fm[0] : '';
+  let body = fm ? before.slice(fm[0].length) : before;
+  const added = [];
+
+  const hasTakeaways = (t) => /^#{2,6}[ \t]*key takeaways\b[^\n]*\r?\n(?:(?!^#{1,6}[ \t])[\s\S])*?^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/im.test(t);
+  if (!hasTakeaways(body) && typeof incoming === 'string') {
+    const inc = incoming.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
+    const m = inc.match(/^#{2,6}[ \t]*key takeaways\b[^\n]*\r?\n(?:(?!^#{1,6}[ \t]).*(?:\r?\n|$))*/im);
+    if (m && hasTakeaways(m[0]) && !/^#{2,6}[ \t]*key takeaways\b/im.test(body)) {
+      body = `${body.replace(/\s*$/, '')}${eol}${eol}${m[0].trim().split(/\r?\n/).join(eol)}${eol}`;
+      added.push('takeaways');
+    }
+  }
+  const cleanTitle = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim() : '';
+  if (cleanTitle && !/^#[ \t]+\S/m.test(body)) {
+    body = `# ${cleanTitle}${eol}${eol}${body.replace(/^\s+/, '')}`;
+    added.push('title');
+  }
+  if (head && typeof source === 'string' && source && !/^source:[ \t]*\S/im.test(head)) {
+    head = head.replace(/^---\r?\n/, (m) => `${m}source: ${source}${eol}`);
+    added.push('source');
+  }
+  if (!added.length) return [];
+  const after = head + body;
+  if (findLostLines(before, '', after).length) return [];
+  await writeFileAtomic(full, after, 'utf8');
+  return added;
+}
+
 /** A link target or slug with case, spaces, hyphens and underscores gone. */
 function linkNameKey(name) {
   return String(name).trim().toLowerCase().replace(/[\s_-]+/g, '');

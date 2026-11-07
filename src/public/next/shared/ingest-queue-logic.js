@@ -348,3 +348,46 @@ export {
   computeQueueSpentLabel,
   BIDI_CONTROL_RE,
 };
+
+/**
+ * What a press of "re-ingest" will truly do, in plain words, before anything is spent.
+ * Pure: `plan` is the 409's plan (planRepeatIngest), or nothing from an older server.
+ * A null action means there is nothing to press: the same model, the same bytes, no gap.
+ *
+ * @returns {{sentence: string, action: string|null}}
+ */
+export function duplicateCopy(plan) {
+  const when = (p) => {
+    const d = p && p.previous && p.previous.ingestedAt ? new Date(p.previous.ingestedAt) : null;
+    return d && !Number.isNaN(d.getTime()) ? ' on ' + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  };
+  const kept = 'Nothing already written changes.';
+  const p = plan && typeof plan === 'object' ? plan : null;
+  if (p && p.sameContent && p.kind === 'nothing') {
+    const by = p.previousModelLabel || p.modelLabel;
+    return {
+      sentence: 'Its content has not changed, and ' + (by || 'this model') + ' already read it' + when(p) +
+        '. Reading it again would cost money and change nothing, so there is nothing to do. To get more from it, pick a stronger model.',
+      action: null,
+    };
+  }
+  if (p && p.sameContent && p.kind === 'other-model') {
+    const now = p.modelLabel || 'your current model';
+    const by = p.previousModelLabel ? p.previousModelLabel + ' read it' + when(p) : 'It was read' + when(p) + ' by a model that was not recorded';
+    return {
+      sentence: 'Its content has not changed. ' + by + '. ' + now + ' can add what that reading missed: new pages, and sentences mostly new to a page. ' + kept,
+      action: 'Read it with ' + now,
+    };
+  }
+  if (p && p.sameContent) {
+    const gaps = Array.isArray(p.gaps) && p.gaps.length ? p.gaps.join(', ') : 'whatever is still missing';
+    return {
+      sentence: 'Its content has not changed, so reading it again can only fill gaps (' + gaps + '). Pages with real text stay exactly as they are.',
+      action: 'Read it again to fill the gaps',
+    };
+  }
+  return {
+    sentence: 'The file has changed since then. Reading it adds new pages, and sentences mostly new to a page. ' + kept,
+    action: 'Re-ingest & update wiki',
+  };
+}

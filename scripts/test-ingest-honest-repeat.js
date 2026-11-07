@@ -131,6 +131,188 @@ section('§1 A real link to a real page resolves, whatever order the pages were 
   ok(res.warnings.some((w) => /1 of \d+ wikilinks/.test(w)), '…and stays reported', JSON.stringify(res.warnings));
 }
 
+// ── §2 ─────────────────────────────────────────────────────────────────────
+section('§2 A summary\'s title, source and Key Takeaways');
+{
+  // The reply shape Gemini 3.1 returned on 22 of 24 summaries: frontmatter, no title.
+  const NO_TITLE = `---\ntype: summary\nsource: a.md\ntags: [type/summary]\n---\n## Key Takeaways\n- A point.\n`;
+  const dom = makeDomain();
+  const res = await quiet(() => ingestFile(dom.name, sourceFile('a.md', SHORT), 'a.md', false, null, { llm: reply('A Readable Title', [{ path: 'summaries/a.md', content: NO_TITLE }]) }));
+  const body = dom.read('summaries/a.md');
+  ok(/^# A Readable Title$/m.test(body), 'the model\'s own title goes on the page, at no cost', body);
+  ok(!res.warnings.some((w) => /missing a title/.test(w)), 'so the warning does not fire', JSON.stringify(res.warnings));
+  ok(body.startsWith('---\n') && body.indexOf('# A Readable Title') > body.indexOf('\n---\n'), 'below the frontmatter');
+  ok(/^- A point\.$/m.test(body), 'every line the model wrote stays');
+}
+{
+  // A summary an older version wrote, the identical source, the same model: free, no call.
+  const SHA = (t) => createHash('sha256').update(t).digest('hex');
+  const dom = makeDomain({ 'summaries/old.md': `---\ntype: summary\nsource: old.md\ntags: [type/summary]\n---\n## Key Takeaways\n- Kept point.\n` });
+  writeFileSync(path.join(dom.wiki, '.raw-manifest.jsonl'), JSON.stringify({ filename: 'old.md', sha256: SHA(SHORT), bytes: SHORT.length, summaryPath: 'summaries/old.md', completed: true, model: 'fake-1' }) + '\n');
+  const llm = reply('old.md', []);
+  const r = await quiet(() => ingestFile(dom.name, sourceFile('old.md', SHORT), 'old.md', true, null, { llm, buildModel: 'fake-1' }));
+  eq(llm.calls, 0, 're-ingesting a summary with no title makes no call');
+  ok(/^# old$/m.test(dom.read('summaries/old.md')), '...and the warning\'s promise comes true: it has a title');
+  ok(/^- Kept point\.$/m.test(dom.read('summaries/old.md')), '...with every old line in place');
+  ok(r.warnings.some((w) => /gained its missing title/.test(w) && /no AI call/i.test(w)), '...and it says so');
+}
+{
+  // Key Takeaways needs the model. The reply has them this time; nothing else may move.
+  const dom = makeDomain();
+  const NONE = `---\ntype: summary\nsource: k.md\ntags: [type/summary]\n---\n# K\n\nOnly a sentence the first reading wrote.\n`;
+  const first = await quiet(() => ingestFile(dom.name, sourceFile('k.md', SHORT), 'k.md', false, null, { llm: reply('K', [{ path: 'summaries/k.md', content: NONE }]) }));
+  ok(first.warnings.some((w) => /missing a Key Takeaways section/.test(w) && /adds what is missing if the model writes it/.test(w)), 'first reading: the warning says what a re-ingest can do', JSON.stringify(first.warnings));
+  ok(!first.warnings.some((w) => /usually fixes/.test(w)), '...not "usually fixes it"');
+  const before = dom.read('summaries/k.md');
+  const llm = reply('K', [{ path: 'summaries/k.md', content: `# K\n\nA reworded sentence nobody asked for.\n\n## Key Takeaways\n- A real takeaway.\n` }]);
+  const r2 = await quiet(() => ingestFile(dom.name, sourceFile('k.md', SHORT), 'k.md', true, null, { llm, buildModel: 'fake-1' }));
+  const after = dom.read('summaries/k.md');
+  eq(llm.calls, 1, 'a gap is the one thing the same model may spend on');
+  ok(/^## Key Takeaways$/m.test(after) && /^- A real takeaway\.$/m.test(after), 're-ingesting really brought in the section');
+  ok(!/reworded sentence/.test(after), '...and no new wording came with it');
+  ok(before.split('\n').filter((l) => l.trim()).every((l) => after.includes(l)), '...and no old line went');
+  ok(!r2.warnings.some((w) => /missing a Key Takeaways/.test(w)), '...and the warning is gone');
+}
+
+// ── §3 ─────────────────────────────────────────────────────────────────────
+section('§3 The identical source again: known before any call, never spent for nothing');
+const OLD_PAGE = '# Orchards\n\nOrchards shelter apples.\n\n## Definition\nPlanted fruit trees.\n';
+const firstPages = [{ path: 'summaries/same.md', content: SUMMARY_OK('same') }, { path: 'concepts/orchards.md', content: OLD_PAGE }];
+const secondPages = [{ path: 'summaries/same.md', content: SUMMARY_OK('same') }, { path: 'concepts/orchards.md', content: '# Orchards Again\n\nZygotes germinate beneath volcanic loam in quiet terraces.\n\n## Definition\nCompletely different wording about planted fruit trees.\n' }];
+const seed = async (model = 'model-a') => {
+  const dom = makeDomain();
+  await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', false, null, { llm: reply('same', firstPages, model), buildModel: model }));
+  return dom;
+};
+{
+  const dom = await seed('model-a');
+  const manifest = dom.read('.raw-manifest.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+  eq(manifest.filter((r) => r.completed).length, 1, 'the manifest records one finished reading');
+  eq(manifest.find((r) => r.completed).model, 'model-a', '...naming the model that ran');
+
+  const before = dom.read('concepts/orchards.md');
+  const beforeSummary = dom.read('summaries/same.md');
+  const same = reply('same', secondPages, 'model-a');
+  const r = await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm: same, buildModel: 'model-a' }));
+  eq(same.calls, 0, 'SAME BYTES, SAME MODEL: no call');
+  eq(r.tokenUsage.calls, 0, '...the result reports none');
+  eq(dom.read('concepts/orchards.md'), before, '...the page is byte-identical');
+  eq(dom.read('summaries/same.md'), beforeSummary, '...the summary too');
+  ok(r.warnings.some((w) => /no AI call was made and nothing was charged/.test(w)), '...and it says so', JSON.stringify(r.warnings));
+  const renamed = reply('same', secondPages, 'model-a');
+  await quiet(() => ingestFile(dom.name, sourceFile('renamed.md', SHORT), 'renamed.md', false, null, { llm: renamed, buildModel: 'model-a' }));
+  eq(renamed.calls, 0, 'the same bytes under another name: no call either');
+
+  // Another model: a real reading, under add-only-new.
+  const other = reply('same', secondPages, 'model-b');
+  const r2 = await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm: other, buildModel: 'model-b' }));
+  eq(other.calls, 1, 'ANOTHER MODEL: it reads');
+  const page = dom.read('concepts/orchards.md');
+  ok(/Zygotes germinate beneath volcanic loam/.test(page), '...and what is mostly new joins the page');
+  for (const l of before.split('\n').filter((x) => x.trim())) ok(page.split('\n').includes(l), `...and old text stands: "${l}"`);
+  ok(r2.warnings.some((w) => /model-a read it before/.test(w)), '...and the report names the earlier model', JSON.stringify(r2.warnings));
+  const m = dom.read('.raw-manifest.jsonl').trim().split('\n').map((l) => JSON.parse(l));
+  eq(m.filter((x) => x.completed).at(-1).model, 'model-b', '...and that reading is recorded');
+
+  // Bounded: each model reads these bytes once.
+  const sizeBefore = dom.read('concepts/orchards.md');
+  for (const mdl of ['model-a', 'model-b']) {
+    const again = reply('same', secondPages, mdl);
+    await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm: again, buildModel: mdl }));
+    eq(again.calls, 0, `a second press on ${mdl} spends nothing`);
+  }
+  eq(dom.read('concepts/orchards.md'), sizeBefore, 'so a wiki cannot grow by pressing again');
+}
+{
+  // A changed source is still an ordinary reading on the same model.
+  const dom = await seed('model-a');
+  const llm = reply('same', secondPages, 'model-a');
+  await quiet(() => ingestFile(dom.name, sourceFile('same.md', `${SHORT} A new edition.`), 'same.md', true, null, { llm, buildModel: 'model-a' }));
+  eq(llm.calls, 1, 'CHANGED BYTES: it reads');
+  ok(/Zygotes germinate/.test(dom.read('concepts/orchards.md')), '...and what is mostly new joins');
+}
+{
+  // A gap: the same model may fill it, and may do nothing else.
+  const dom = await seed('model-a');
+  dom.write('concepts/stubbed.md', '---\ntype: concept\ntags: [type/concept]\n---\n# s\n\n> ⚠ **Stub page — AI failed to write this on ingest.**\n> Re-ingest "same.md" to fix this.\n');
+  dom.write('summaries/same.md', `${dom.read('summaries/same.md').trimEnd()}\n\n## Concepts Introduced or Referenced\n- [[stubbed]]\n`);
+  const before = dom.read('concepts/orchards.md');
+  const llm = reply('same', [...secondPages, { path: 'concepts/stubbed.md', content: '# Real\n\nReal words at last.\n' }], 'model-a');
+  const r = await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm, buildModel: 'model-a' }));
+  eq(llm.calls, 1, 'A STUB: the same model reads');
+  ok(/Real words at last/.test(dom.read('concepts/stubbed.md')), '...the stub is filled, as its own text promised');
+  eq(dom.read('concepts/orchards.md'), before, '...and a page with real text takes no new wording');
+  ok(!r.warnings.some((w) => /no AI call/.test(w)), '...and it does not claim no call was made');
+}
+{
+  // Older records name no model: one real reading, then bounded.
+  const dom = makeDomain({ 'concepts/orchards.md': OLD_PAGE, 'summaries/old2.md': SUMMARY_OK('old2') });
+  writeFileSync(path.join(dom.wiki, '.raw-manifest.jsonl'), JSON.stringify({ filename: 'old2.md', sha256: createHash('sha256').update(SHORT).digest('hex'), bytes: SHORT.length, summaryPath: 'summaries/old2.md' }) + '\n');
+  const llm = reply('old2', [{ path: 'summaries/old2.md', content: SUMMARY_OK('old2') }], 'model-a');
+  const r = await quiet(() => ingestFile(dom.name, sourceFile('old2.md', SHORT), 'old2.md', true, null, { llm, buildModel: 'model-a' }));
+  eq(llm.calls, 1, 'A RECORD WITH NO MODEL: it reads once');
+  ok(r.warnings.some((w) => /an earlier model read it before/.test(w)), '...and does not name a model it does not know', JSON.stringify(r.warnings));
+  const again = reply('old2', [], 'model-a');
+  await quiet(() => ingestFile(dom.name, sourceFile('old2.md', SHORT), 'old2.md', true, null, { llm: again, buildModel: 'model-a' }));
+  eq(again.calls, 0, '...then is known');
+}
+{
+  // The model cannot be told: exactly the previous behaviour, never a free pass or a new wording.
+  const dom = await seed('model-a');
+  const before = dom.read('concepts/orchards.md');
+  const llm = reply('same', secondPages);
+  await quiet(() => ingestFile(dom.name, sourceFile('same.md', SHORT), 'same.md', true, null, { llm }));
+  eq(llm.calls, 1, 'NO MODEL KNOWN: it reads, as before');
+  eq(dom.read('concepts/orchards.md'), before, '...and takes no new wording');
+}
+{
+  // What the panel says, before anything is spent.
+  const { duplicateCopy } = await import('../src/public/next/shared/ingest-queue-logic.js');
+  const previous = { filename: 'x.md', ingestedAt: '2026-11-07T10:00:00Z', model: 'gemini-3.1-flash-lite' };
+  const nothing = duplicateCopy({ sameContent: true, kind: 'nothing', previous, previousModelLabel: 'Flash Lite 3.1', modelLabel: 'Flash Lite 3.1', gaps: [] });
+  eq(nothing.action, null, 'NOTHING CAN CHANGE: there is no button to spend with');
+  ok(/change nothing/.test(nothing.sentence) && /stronger model/.test(nothing.sentence), '...and it says why, and what would help');
+  const other = duplicateCopy({ sameContent: true, kind: 'other-model', previous, previousModelLabel: 'Flash Lite 3.1', modelLabel: 'Sonnet 5.5', gaps: [] });
+  eq(other.action, 'Read it with Sonnet 5.5', 'ANOTHER MODEL: the button names it');
+  ok(/Flash Lite 3\.1 read it/.test(other.sentence) && /Nothing already written changes/.test(other.sentence), '...and the sentence says what will and will not happen');
+  const gaps = duplicateCopy({ sameContent: true, kind: 'gaps', previous, gaps: ['2 stub pages'] });
+  ok(/only fill gaps \(2 stub pages\)/.test(gaps.sentence) && /stay exactly/.test(gaps.sentence), 'A GAP: named');
+  const changed = duplicateCopy({ sameContent: false, kind: null, gaps: [] });
+  eq(changed.action, 'Re-ingest & update wiki', 'CHANGED: the old button is now true');
+  eq(duplicateCopy(null).action, 'Re-ingest & update wiki', 'an older server without a plan keeps working');
+}
+{
+  // The route answers before any spend: over real HTTP, on a real upload.
+  const { default: express } = await import('express');
+  const { default: ingestRouter } = await import('../src/routes/ingest.js');
+  const { createServer } = await import('node:http');
+  const app = express();
+  app.use('/api/ingest', ingestRouter);
+  const server = createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}/api/ingest`;
+  const post = async (domain, name, text, overwrite) => {
+    const fd = new FormData();
+    fd.append('domain', domain);
+    if (overwrite) fd.append('overwrite', 'true');
+    fd.append('file', new Blob([text], { type: 'text/markdown' }), name);
+    return fetch(base, { method: 'POST', body: fd });
+  };
+  const dom = await seed('model-a');
+  const r1 = await post(dom.name, 'different-name.md', SHORT);
+  eq(r1.status, 409, 'the same bytes under a NEW name no longer go straight to a paid run');
+  const b1 = await r1.json();
+  ok(b1.plan && b1.plan.sameContent === true && b1.plan.previous.filename === 'same.md', '...the answer carries the plan', JSON.stringify(b1).slice(0, 200));
+  const r2 = await post(dom.name, 'same.md', `${SHORT} changed`);
+  eq(r2.status, 409, 'a changed file under the old name still asks first');
+  eq((await r2.json()).plan.sameContent, false, '...and is told apart');
+  const dom2 = makeDomain();
+  const r3 = await post(dom2.name, 'brand-new.md', 'x');
+  ok(r3.status !== 409, 'a new file is not held up');
+  await r3.text().catch(() => {});
+  await new Promise((r) => server.close(r));
+}
+
 // ── §4 ─────────────────────────────────────────────────────────────────────
 section('§4 The estimate against what the run billed, on the same footing');
 {
@@ -156,6 +338,10 @@ section('§4 The estimate against what the run billed, on the same footing');
   ok(multi.totalCalls >= 5 && multi.totalCalls <= 8, `planned ${multi.totalCalls} calls; a 17,346-character source measured 5 on Gemini 3.1, 8 on Haiku 5.5`);
   const g = est('gemini-2.5-flash-lite', 'short-agentlink.md', 9856);
   eq(g.outputTokens, 1667, 'Gemini keeps its figure: it was not understated');
+
+  const job = { items: [{ status: 'done' }], estimate: { usdHigh: 1 } };
+  eq(q.chargeForItem(job, { tokenUsage: { calls: 0, inputTokens: 0, outputTokens: 0, model: null } }), 0, 'a batch item that made no call is charged nothing, not a share of the estimate');
+  ok(!job.spendIsEstimated, '...and the batch total stays exact');
 
   const { renderSpent } = await import('../src/public/next/shared/ai-run.js');
   const spent = { model: 'claude-haiku-5-5', modelLabel: 'Haiku 5.5', inputTokens: 6109, outputTokens: 4778, usd: 0.003 };

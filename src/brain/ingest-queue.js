@@ -784,17 +784,24 @@ const AVG_OUTPUT_TOKENS_PER_CALL = 1667;
  * up to 2.42x and Sonnet 5.5 up to 2.44x (the production-test matrix).
  *
  *   one call (single-pass), per call: Haiku 5.5 4,778 4,735 7,816 5,906 4,755;
- *     Sonnet 5.5 4,911 7,022; Haiku 4.5 MEASURED_HAIKU_45. Mean about 5,900.
+ *     Sonnet 5.5 4,911 7,022. Mean about 5,900.
  *   multi-phase, blended per call: Haiku 5.5 2,742 3,751 3,671 2,840. Mean about 3,300.
  *
- * NOT MEASURED: Sonnet 5, Opus 5 and Opus 5.5. They take the same figure on the reasoning
- * that the same family's newer and older models both land there, and that a quote too
- * high is the safer side. Gemini 3.1 measured 856-1,250 per call, under 1,667, so it
- * quotes a little high; the Gemini and OpenRouter figure is left alone.
+ * Haiku 4.5 is NOT like them, measured through OpenRouter: 2,292 on the one-call source
+ * and about 1,290 a call on a 17,346-character one (10,300 out over 25 pages). One run of
+ * each, so it takes 2,300 and keeps 1,667.
+ *
+ * NOT MEASURED: Sonnet 5, Opus 5 and Opus 5.5. They take the 5.5 figure because they share
+ * its tokenizer and a quote too high is the safer side. Haiku and Sonnet 5.5 wrote less
+ * through OpenRouter (2,218-3,717 and 4,313-5,020 a call) than directly, unexplained; the
+ * figure is the direct one, which is the route the app uses for Claude. Gemini 3.1
+ * measured 856-1,250 per call, under 1,667, so it quotes a little high; the Gemini and
+ * OpenRouter figure is left alone.
  */
 const CLAUDE_OUTPUT_TOKENS_PER_CALL = Object.freeze({ 'single-pass': 5900, 'multi-phase': 3300 });
 
 function outputTokensPerCall(model, mode) {
+  if (model === 'claude-haiku-4-5') return mode === 'single-pass' ? 2300 : AVG_OUTPUT_TOKENS_PER_CALL;
   if (typeof model === 'string' && model.startsWith('claude-')) return CLAUDE_OUTPUT_TOKENS_PER_CALL[mode];
   return AVG_OUTPUT_TOKENS_PER_CALL;
 }
@@ -1573,6 +1580,8 @@ function chargeForItem(job, item) {
   // missing entirely names no model, so it still takes the estimate share even
   // on a free-model job. Closing that needs the model persisted on the job
   // manifest, which is a schema change and a separate piece of work.
+  // No call was made (an unchanged source, nothing to change): nothing to charge or estimate.
+  if (u && u.calls === 0) return 0;
   if (u && isFreeModel(u.model)) return 0;
   const price = u && u.model ? getModelPrice(u.model) : null;
   // ── ONE FORMULA, IN llm.js (2026-10-08) ─────────────────────────────────
