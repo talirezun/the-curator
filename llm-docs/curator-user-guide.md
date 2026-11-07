@@ -376,7 +376,7 @@ A still percentage with a moving timer means it is working normally — several 
 
 Yes. The pipeline is idempotent on re-ingest. The summary slug is computed from the source filename, so `report.pdf` always lands on `summaries/report.md` and the second ingest merges into it. Entity and concept pages are deduplicated by three passes at write time, index rows for slugs already present are skipped, and duplicate bullets are removed after every write.
 
-To re-ingest one source: open **Ingest**, pick the same domain, drop the same file in and click **Ingest**. The Curator recognises it and stops before spending anything — "*filename* has already been ingested into this domain." Click **Re-ingest & update wiki** to proceed or **Cancel** to back out. In a batch, the same check happens at the confirm screen and the **Overwrite existing pages for files already ingested** checkbox re-includes the file.
+To re-ingest one source: open **Ingest**, pick the same domain, drop the same file in and click **Ingest**. The Curator recognises it, under any file name, and says what a press would do before spending anything. A changed file, or an unchanged one with a model that has not read it, gets a real reading: new pages and sentences mostly new to a page, with nothing already written changed. An unchanged file on the same model has nothing to add: there is no button to spend with and no AI call, unless a gap remains (a stub page, no Key Takeaways), which gets one more reading. Measured: the same model found 0-2 more of 12 hand-picked facts a press, another model 5-8.
 
 There is no list of previously ingested files in the app. Your originals live in `domains/<domain>/raw/` on the machine you ingested them on.
 

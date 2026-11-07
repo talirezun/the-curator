@@ -809,7 +809,7 @@ section('8. Route-layer contract (source guards)');
   const ing = readFileSync(path.join(REPO, 'src/brain/ingest.js'), 'utf8');
   assert(/export async function extractText/.test(ing), 'ingest exports extractText');
   assert(/appendManifestRecord\(domain,/.test(ing), 'ingest appends a manifest record');
-  const idx = ing.indexOf('hashRawSource(destPath)');
+  const idx = ing.indexOf('const manifestRecord = {');
   const window = ing.slice(idx, idx + 600);
   assert(/\.catch\(/.test(window),
     'the manifest append is best-effort (has a .catch) — an ingest never fails on it');

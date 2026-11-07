@@ -368,6 +368,9 @@ Ingest a file into a domain. Sends a `multipart/form-data` request.
 |-------|------|----------|-------------|
 | `domain` | string | Yes | Domain slug (must match a directory under `domains/`) |
 | `file` | file | Yes | File to ingest (`.txt`, `.md`, `.pdf`; max 50MB) |
+| `overwrite` | string | No | `"true"` to go ahead after a `409` below |
+
+**`409`, before anything is spent.** Without `overwrite`, a file whose name is already in `raw/`, or whose bytes were already ingested here under any name, answers `{duplicate: true, filename, message, plan}`. `plan` says what a press can change: `sameContent` (boolean); `kind`, `null` for a changed file, otherwise `nothing` (the current model read these bytes and no gap remains), `gaps` (one more reading to fill `gaps`, an array of plain phrases), `other-model` (a real reading, adding only what is new) or `unknown` (the model cannot be told); `previous` (`filename`, `ingestedAt`, `model`, `summaryPath`); `model`, `modelLabel`, `previousModelLabel`. With `overwrite`, `kind: nothing` makes no AI call: the stream's `done` event carries `tokenUsage.calls: 0`, no pages, and a notice in `warnings`.
 
 **Example (curl)**
 

@@ -344,7 +344,8 @@ try {
     const shape = r.warnings.filter(w => /did not follow the summary layout/.test(w));
     eq(shape.length, 1, 'ONE shape warning for a summary with no title and a label instead of a heading');
     ok(shape[0] && shape[0].includes('summaries/bad-shape.md'), '…naming the summary');
-    ok(shape[0] && /title/.test(shape[0]) && /Key Takeaways/.test(shape[0]), '…and what is missing');
+    ok(shape[0] && /Key Takeaways/.test(shape[0]) && !/a title/.test(shape[0]), '…and what is still missing: the title is added without asking (2026-11-07)');
+    ok(/^# Bad$/m.test(readFileSync(path.join(dom.wiki, 'summaries/bad-shape.md'), 'utf8')), '…which it was, from the reply\'s own title');
     const saved = readFileSync(path.join(dom.wiki, 'summaries/bad-shape.md'), 'utf8');
     ok(/^source: bad-shape\.md$/m.test(saved), 'a summary with no Source line gets source: <filename> in its frontmatter');
     ok(shape[0] && !/a source/.test(shape[0]), '…so "a source" is not among the missing parts');
