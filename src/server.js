@@ -445,8 +445,9 @@ function providerStartupLabel(provider) {
 let server;
 function startListen(retriesLeft = MAX_BIND_RETRIES) {
   server = app.listen(PORT, BIND_HOST, () => {
-    // Wiki health's Undo: an undo a crash left part-way is finished now, before
-    // anyone acts on the wiki (src/brain/health-undo.js). Local files only; never throws.
+    // Wiki health's Undo: an undo a crash left part-way is finished at start; any
+    // list, undo or Health action on a domain finishes that domain's first too
+    // (src/brain/health-undo.js). Local files only; never throws.
     recoverAllHealthUndo().catch((err) => console.error('[health-undo] recovery at start failed:', err.message));
     // Retired-model migration (2026-10-08): move a stored build pick that names
     // a model the catalogue retired FORWARD to its successor, once, and record

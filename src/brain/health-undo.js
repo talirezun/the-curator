@@ -61,7 +61,7 @@
  * Never writes to stdout: reachable from the MCP (fix_wiki_issue).
  */
 
-import { open, readFile, readdir, rename, rm, mkdir, lstat, stat } from 'fs/promises';
+import { open, readFile, readdir, rename, rm, mkdir, lstat, stat, readlink, symlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { createHash, randomBytes } from 'crypto';
@@ -78,7 +78,7 @@ const STALE_RECORDING_MS = 60 * 60 * 1000;
 const RECORD_FILE = 'record.json';
 // Sorts by time: milliseconds, then a per-process counter, then a random tail.
 const ID_RE = /^\d{8}T\d{9}Z-[0-9a-f]{12}$/;
-const DOMAIN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 
 export const UNDO_COPY_FAILED = 'undo-copy-failed';
 export const UNDO_CONFLICT = 'undo-conflict';
@@ -120,7 +120,8 @@ function newId(now = new Date()) {
 }
 
 function assertDomainName(domain) {
-  if (typeof domain !== 'string' || !DOMAIN_RE.test(domain) || domain.includes('..')) {
+  // Any folder name the app accepts, but never one that leaves the store.
+  if (typeof domain !== 'string' || !domain || domain === '.' || domain === '..' || /[\/\\\0]/.test(domain)) {
     const err = new Error('Invalid domain name.');
     err.status = 400;
     throw err;
@@ -172,6 +173,12 @@ async function fileState(abs) {
   let st;
   try { st = await lstat(abs); }
   catch (err) { if (err.code === 'ENOENT') return { exists: false }; throw err; }
+  // A page that is a symbolic link (a merge may remove one) is recorded as the
+  // link, not the file it points at, and put back as that link.
+  if (st.isSymbolicLink()) {
+    const link = await readlink(abs);
+    return { exists: true, link, sha: sha256('symlink:' + link), size: 0 };
+  }
   if (!st.isFile()) {
     const err = new Error(`${path.basename(abs)} is not a plain file.`);
     err.code = 'NOT_A_FILE';
@@ -272,7 +279,10 @@ class Recorder {
         if (_fault && _fault.copy) await _fault.copy(rel);
         const before = await fileState(abs);
         const entry = { rel, before: { exists: before.exists }, after: null };
-        if (before.exists) {
+        if (before.exists && before.link !== undefined) {
+          entry.before.link = before.link;
+          entry.before.sha = before.sha;
+        } else if (before.exists) {
           const copyName = 'f' + this.rec.files.length;
           await durableWrite(path.join(this.dir, copyName), before.bytes);
           entry.copy = copyName;
@@ -537,7 +547,11 @@ async function restoreFiles(domain, rdir, rec) {
       throw refusal(UNDO_CONFLICT, `${pageName(f.rel)} changed while the undo was unfinished.`, 409, { page: pageName(f.rel) });
     }
     if (_fault && _fault.restore) await _fault.restore(i, f.rel);
-    if (f.before.exists) {
+    if (f.before.exists && f.before.link !== undefined) {
+      await rm(abs, { force: true });
+      await symlink(f.before.link, abs);
+      await syncDir(path.dirname(abs));
+    } else if (f.before.exists) {
       const bytes = await readFile(path.join(rdir, f.copy));
       if (sha256(bytes) !== f.before.sha) throw refusal(UNDO_CONFLICT, `The saved copy of ${pageName(f.rel)} is damaged.`, 409);
       await mkdir(path.dirname(abs), { recursive: true });
@@ -566,7 +580,7 @@ export async function undoHealthChange(domain, id) {
   }
   // Every copy must be whole before anything is written.
   for (const f of rec.files) {
-    if (!f.before.exists) continue;
+    if (!f.before.exists || f.before.link !== undefined) continue;
     let bytes;
     try { bytes = await readFile(path.join(rdir, f.copy)); } catch { bytes = null; }
     if (!bytes || sha256(bytes) !== f.before.sha) {

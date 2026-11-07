@@ -1618,7 +1618,7 @@ async function buildEntityConceptSlugs(wikiDir) {
  * what the action actually did to files ({deleted, created, changed}, wiki-
  * relative paths), so a count is what happened, never what was asked.
  */
-export function describeFixChange(type, issue, s) {
+function describeFixChange(type, issue, s) {
   const name = (rel) => String(rel).replace(/\.md$/i, '').replace(/^(entities|concepts|summaries)\//, '');
   const pages = (s.deleted.length + s.created.length + s.changed.filter((r) => r !== 'index.md' && r !== 'log.md').length);
   const inPages = pages === 1 ? '1 page' : `${pages} pages`;

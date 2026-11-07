@@ -223,6 +223,17 @@ section('§1b The record: plain words, page counts, the deleted page');
   });
   ok(!same0.undo && (await undo.listHealthChanges(d.name)).length === 1, 'rewriting a page with its own bytes records nothing', JSON.stringify(same0));
 
+  // A removed page that was a symbolic link comes back as that link.
+  const { symlinkSync, lstatSync, readlinkSync } = await import('node:fs');
+  const sd = mkDomain({ 'concepts/real.md': '# Real\n\nOnly copy.\n' });
+  symlinkSync(path.join(sd.wiki, 'concepts/real.md'), path.join(sd.wiki, 'concepts/alias.md'));
+  const sr = await health.fixIssue(sd.name, 'semanticDupe', { keepSlug: 'real', keepFolder: 'concepts', removeSlug: 'alias', removeFolder: 'concepts' });
+  ok(sr.fixed === 1 && sr.undo, 'a merge that removes a symbolic link is recorded', JSON.stringify(sr));
+  await undo.undoHealthChange(sd.name, sr.undo.id);
+  const alias = path.join(sd.wiki, 'concepts/alias.md');
+  ok(lstatSync(alias).isSymbolicLink() && readlinkSync(alias) === path.join(sd.wiki, 'concepts/real.md') && readFileSync(path.join(sd.wiki, 'concepts/real.md'), 'utf8') === '# Real\n\nOnly copy.\n',
+    'and undo puts the link back as a link, and the page as it was');
+
   // A batch of spelling variants is ONE change, undone all at once.
   const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
   const files = {};

@@ -1357,7 +1357,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/health.js', {
     label: 'health.js',
-    expectedMutatingCount: 22, // +POST semantic-dupes/family; +POST compare-all/stop; v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
+    expectedMutatingCount: 23, // 2026-11-07: +POST /:domain/changes/:id/undo; +POST semantic-dupes/family; +POST compare-all/stop; v3.83.0: +POST /:domain/index/plan, +POST /:domain/index/apply; +POST /:domain/semantic-dupes/forget; +POST compare-all/{start,pause,resume}
     // Defined once, at module scope, as HEALTH_GUARD_CLASSES (above section
     // 6) -- NOT re-typed here. Section 13's coverage pin and section 14's
     // mutation-proof fixtures read the SAME object via
@@ -1745,6 +1745,9 @@ const WRITABILITY_ROUTES = [
   // both axes. The mirror refusal precedes body validation on both.
   { method: 'POST', path: '/index/plan',                 body: {},                             label: '/index/plan' },
   { method: 'POST', path: '/index/apply',                body: {},                             label: '/index/apply' },
+  // 2026-11-07 — Wiki health's Undo: it rewrites pages, so a mirror refuses it
+  // before the change id is looked at (a mirror's next pull would undo the undo).
+  { method: 'POST', path: '/changes/20260101T000000000Z-000000000000/undo', pattern: '/changes/:id/undo', body: {}, label: '/changes/:id/undo' },
 ];
 
 console.log('\n=== 13. BEHAVIOURAL: every writability-class route refuses a read-only mirror ===');
@@ -1822,7 +1825,7 @@ console.log('\n=== 13. BEHAVIOURAL: every writability-class route refuses a read
         `health.js's writability class contains ${u}, whose HTTP method this harness has no driver for — add one instead of silently excluding it from the behavioural sweep (finding 9b)`);
     }
     eq(undrivable.length, 0, 'no writability-class route today needs a method this harness cannot drive');
-    const covered = WRITABILITY_ROUTES.map(r => r.method + ' ' + r.path).sort();
+    const covered = WRITABILITY_ROUTES.map(r => r.method + ' ' + (r.pattern || r.path)).sort();
     eq(JSON.stringify(covered), JSON.stringify(required),
       'the behavioural sweep covers EXACTLY the writability class from HEALTH_GUARD_CLASSES — every mutating method, not just POST (no route in the class is left undriven)');
   }
