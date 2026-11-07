@@ -115,6 +115,7 @@ import {
 // unified design AND a distinguished design, so this can be distinguished from
 // other sections, other cards."* Both call sites are now the same call.
 import { renderMonitor } from '../shared/monitor.js';
+import { backupReportHtml, connectNeedsReview, connectReviewHtml, reviewFolders } from './sync-backup.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
 
 function freshState() {
@@ -265,7 +266,7 @@ function onSyncRunChanged(mountToken) {
   seedFromSyncRun(state, run, lastSyncOutcome());
   render(mountToken);
   if (!run && wasActing && SYNC_RUN_KINDS.indexOf(wasActing) !== -1) {
-    Promise.all([loadStatus(mountToken), loadDomains(mountToken)])
+    Promise.all([loadStatus(mountToken), loadDomains(mountToken), loadBackup(mountToken)])
       .then(() => { if (isCurrentMount(mountToken)) render(mountToken); })
       .catch(reportAsyncActionFailure);
   }
@@ -342,7 +343,7 @@ async function loadAll(token) {
   // loader that is legitimately up. A cancelled gate ignores settle(), so
   // the stale path becomes a no-op instead.
   const gate = loadGate;
-  await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token), loadJob(token)]);
+  await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token), loadJob(token), loadBackup(token)]);
   if (!isCurrentMount(token)) return;
   // Delay-gated: settle() paints immediately when no loader was ever shown
   // (the measured case here — this load lands in ~3 ms), and holds the
@@ -384,6 +385,18 @@ async function loadJob(token) {
     if (!isCurrentMount(token)) return;
     adoptServerSyncJob(data);
   } catch { /* no job information — the page shows what it knows */ }
+}
+
+// What is not backed up. Local, no fetch. A failure here leaves the panel away
+// rather than saying "nothing is left out", which would be a claim it cannot make.
+async function loadBackup(token) {
+  try {
+    const res = await fetch('/api/sync/backup-report');
+    const data = res.ok ? await res.json() : null;
+    if (isCurrentMount(token)) state.backup = data;
+  } catch {
+    if (isCurrentMount(token)) state.backup = null;
+  }
 }
 
 async function loadDomains(token) {
@@ -669,6 +682,8 @@ function renderSetupDecision(f) {
     );
   }
 
+  if (d.kind === 'review') return connectReviewHtml(d.backup, { busy, leavingOut: !!f.leaveOut });
+
   // remote-empty / remote-not-empty and anything else setup() refuses with a
   // written sentence. Rendered as text plus a way back, never as a dead end.
   return (
@@ -793,6 +808,8 @@ function renderConfigured(s) {
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
       (state.actionError ? '<div class="settings-inline-error" style="margin-top:8px">' + escapeHtml(state.actionError) + '</div>' : '') +
     '</div>' +
+
+    backupReportHtml(state.backup) +
 
     renderSharedBrainRow() +
 
@@ -937,7 +954,12 @@ function wireListeners() {
     const dOver = document.getElementById('btn-decide-overwrite');
     if (dOver) dOver.addEventListener('click', () => runSetup('pull', true, myMountToken));
     const dGo = document.getElementById('btn-decide-go');
-    if (dGo) dGo.addEventListener('click', () => runSetup(state.setupForm.mode, false, myMountToken));
+    if (dGo) dGo.addEventListener('click', () => { state.setupForm.leaveOut = null; runSetup(state.setupForm.mode, false, myMountToken); });
+    const dLeave = document.getElementById('btn-decide-leave-out');
+    if (dLeave) dLeave.addEventListener('click', () => {
+      state.setupForm.leaveOut = reviewFolders(state.setupForm.decision.backup);
+      runSetup(state.setupForm.mode, false, myMountToken);
+    });
     const dCancel = document.getElementById('btn-decide-cancel');
     if (dCancel) dCancel.addEventListener('click', () => {
       state.setupForm.decision = null;
@@ -1042,6 +1064,12 @@ async function onConnect(token) {
       render(token);
       return;
     }
+    // Before anything goes up: what is not a domain, and what stays behind.
+    if (state.setupForm.mode !== 'pull' && connectNeedsReview(pre.backup)) {
+      state.setupForm.decision = { kind: 'review', backup: pre.backup };
+      render(token);
+      return;
+    }
   }
 
   await runSetup(state.setupForm.mode, false, token);
@@ -1065,7 +1093,7 @@ async function runSetup(mode, confirmOverwrite, token) {
     const res = await fetch('/api/sync/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repoUrl, token: pat, mode, confirmOverwrite: confirmOverwrite === true }),
+      body: JSON.stringify({ repoUrl, token: pat, mode, confirmOverwrite: confirmOverwrite === true, leaveOut: state.setupForm.leaveOut || undefined }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -1098,7 +1126,7 @@ async function runSetup(mode, confirmOverwrite, token) {
     if (!isCurrentMount(token)) return;
     // v3.72.1 (F4): a pull-mode connect brings domains in — the sidebar's
     // list is re-read with the status, not left at the pre-connect set.
-    await Promise.all([loadStatus(token), loadDomains(token)]);
+    await Promise.all([loadStatus(token), loadDomains(token), loadBackup(token)]);
     if (!isCurrentMount(token)) return;
     state.setupForm = freshState().setupForm;
   } catch (err) {
@@ -1227,21 +1255,25 @@ function describePruneKept(kept) {
 }
 
 function describeResult(kind, data) {
+  // What was not backed up goes in the same sentence as what was. A "Sync
+  // complete" alone over a folder that never reached GitHub was the defect.
+  const warning = kind === 'sync' ? (data.pushResult || {}).warning : data.warning;
+  const said = (text) => (warning ? text + ' ' + warning : text);
   if (kind === 'push') {
-    if (data.pushed === false) return data.message || 'Everything is already up to date.';
-    return 'Pushed ' + fileCount(data.filesChanged || 0) + ' to GitHub.';
+    if (data.pushed === false) return said(data.message || 'Everything is already up to date.');
+    return said('Pushed ' + fileCount(data.filesChanged || 0) + ' to GitHub.');
   }
 
   if (kind === 'pull') {
     const n = data.filesChanged || 0;
     const pruned = describePruned(data.pruned);
     const kept = describePruneKept(data.prunedKept);
-    if (n === 0 && !pruned && !kept) return 'Already up to date — nothing new on GitHub.';
+    if (n === 0 && !pruned && !kept) return said('Already up to date — nothing new on GitHub.');
     const parts = [];
     if (n > 0) parts.push('Pulled ' + fileCount(n) + ' from GitHub');
     if (pruned) parts.push(pruned);
     if (kept) parts.push(kept);
-    return parts.join(', ') + '.';
+    return said(parts.join(', ') + '.');
   }
 
   // Bidirectional. sync() runs pull() FIRST, then push(), and both results
@@ -1263,8 +1295,12 @@ function describeResult(kind, data) {
   const kept = describePruneKept(pullResult.prunedKept);
   if (kept) parts.push(kept);
 
-  if (!parts.length) return 'Sync complete — everything was already up to date.';
-  return 'Sync complete — ' + parts.join(', ') + '.';
+  if (!parts.length) {
+    return warning ? 'Nothing new to sync. ' + warning : 'Sync complete — everything was already up to date.';
+  }
+  return warning
+    ? 'Synced, with a gap: ' + parts.join(', ') + '. ' + warning
+    : 'Sync complete — ' + parts.join(', ') + '.';
 }
 
 async function onDisconnect(token) {

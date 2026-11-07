@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { mkdir, mkdtemp, readFile, readdir, unlink, rm, chmod } from 'fs/promises';
@@ -9,6 +9,10 @@ import { writeFileAtomic } from './atomic-write.js';
 import { clearStaleLock } from './write-registry.js';
 import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
+import {
+  CREDENTIAL_GITIGNORE_RULES, isCredentialPath, scanWorkTree, anchoredIgnoreLine,
+  writeExcludeBlock, classifyLeftOut,
+} from './sync-safety.js';
 
 // v3.1.0+: the git dir and the stored PAT are USER DATA — they resolve through
 // paths.js so they can live outside a read-only .app bundle. In a repo install
@@ -280,6 +284,21 @@ function friendlyError(err) {
     return 'Another sync check was running at the same time, so this one stopped early. ' +
            'Nothing was changed — wait a moment and try again.';
   }
+  // A credential-shaped file is held back on this computer (stageAll) and an
+  // older install pushed a change to the same file. Long and specific, so it
+  // cannot shadow anything, and above the auth branch for the same SHA reason.
+  if (msg.includes('local changes to the following files would be overwritten')) {
+    return 'Pull stopped because a file you changed here was also changed on GitHub, and that file ' +
+           'is not one Sync sends. Nothing was replaced. Open the Sync page to see which files are ' +
+           'held back, and move the file out of your knowledge folder before syncing again.';
+  }
+  // refreshSyncSafety() excludes a nested repository before `git add`, so these
+  // only appear if one arrived between that walk and the add.
+  if (msg.includes('does not have a commit checked out') ||
+      msg.includes('modified content') || msg.includes('untracked content')) {
+    return 'A folder inside your knowledge folder has its own git history, so Sync cannot back it up. ' +
+           'Sync again: The Curator will leave that folder out and name it on the Sync page.';
+  }
   // GIT ITSELF IS MISSING. This MUST stay above the repository-not-found
   // branch below, which tests the bare substring `not found` — so
   // "/bin/sh: git: command not found" currently resolves to "Repository not
@@ -429,6 +448,11 @@ const DOMAINS_GITIGNORE_RULES = [
   '*.base',
   'Untitled.md',
   'Untitled 1.md',
+  // Credential-shaped files never leave this computer (sync-safety.js holds the
+  // table and the reasons). These rules keep them out of `git add -A` and off the
+  // pending count; stageAll() is the guard behind them, because a rule cannot
+  // stop a `!.env` in a nested .gitignore and does nothing for a tracked file.
+  ...CREDENTIAL_GITIGNORE_RULES,
 ];
 
 async function ensureDomainsGitignore() {
@@ -1007,8 +1031,17 @@ export async function preflightSetup(repoUrl, token) {
       overwriteSample = a.overwrite.slice(0, 10);
       createCount = a.createCount;
     }
+    // What a connect would and would not send. The throwaway repo stands in for
+    // the folder's .gitignore, which a preview must not write. A failure here
+    // never blocks the preview.
+    let backup = null;
+    try {
+      await writeExcludeBlock(tmpGitDir, DOMAINS_GITIGNORE_RULES);
+      backup = await buildBackupReport(await scanForSafety({ gitDir: tmpGitDir }), { gitDir: tmpGitDir });
+    } catch { /* the connect has its own guards */ }
     return {
       ok: true,
+      backup,
       remoteHasMain,
       localHasContent: await domainsFolderHasContent(),
       overwriteCount,
@@ -1028,6 +1061,288 @@ export async function preflightSetup(repoUrl, token) {
     };
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// ── What Sync must not send, and what it did not send ─────────────────────────
+//
+// ONE staging chokepoint. Every `git add -A` in this file is stageAll(), so a new
+// commit path cannot grow a way round it. The rules in .gitignore are the first
+// layer; this is the second, and each does something the other cannot:
+//
+//   .gitignore / info/exclude  keeps a file off the pending count, and keeps a
+//                              repository with no commits away from `git add`,
+//                              which otherwise fails outright on it.
+//   dropUnsafeFromIndex()      catches what no ignore rule can: a tracked file
+//                              that changed, a `!.env` in a nested .gitignore,
+//                              and a gitlink an earlier version already committed.
+//
+// NON-DOMAIN FOLDERS STAY BACKED UP, and are named. Leaving them out by default
+// was weighed and rejected, on evidence: the knowledge folder is a documented
+// Obsidian vault root, whose pasted images live in an attachments folder there
+// (pruneGhostDomainDirs records the deleted-Attachments incident); a domain being
+// written by hand has no CLAUDE.md yet; and `git rm --cached` on a tracked folder
+// DELETES it from every other computer on its next pull. Silently losing a
+// backup is the worse failure, so the choice is put to the user at connect
+// instead (`leaveOut`) and the Sync page keeps naming them.
+
+/** Git without a shell, for anything carrying a name from the user's folder. */
+function gitArgv(args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', [
+      `--git-dir=${opts.gitDir || currentGitDir()}`, `--work-tree=${getDomainsDir()}`, ...args,
+    ], { cwd: ROOT, env: SUBPROCESS_ENV, timeout: opts.timeout || 60000 });
+    const out = [];
+    const errOut = [];
+    child.stdout.on('data', (d) => out.push(d));
+    child.stderr.on('data', (d) => errOut.push(d));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0 || (opts.okCodes || []).includes(code)) {
+        resolve({ stdout: Buffer.concat(out).toString('utf8'), code });
+      } else {
+        reject(new Error(sanitize(`git ${args[0]} failed: ${Buffer.concat(errOut).toString('utf8')}`)));
+      }
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(opts.input || '');
+  });
+}
+
+const zSplit = (s) => String(s || '').split('\0').filter(Boolean);
+
+async function headExists(opts) {
+  try { await git('rev-parse --verify -q HEAD', opts); return true; } catch { return false; }
+}
+
+/**
+ * The walk, minus repositories the user's own rules already ignore (a repo
+ * inside `raw/` is not news). check-ignore -v names the rule's source, so this
+ * block's own lines in info/exclude from the last sync do not count.
+ */
+async function scanForSafety(opts = {}) {
+  const scan = await scanWorkTree(getDomainsDir());
+  if (!scan.nestedRepos.length) return scan;
+  try {
+    const { stdout } = await gitArgv(['check-ignore', '--no-index', '-v', '-z', '--stdin'], {
+      ...opts, okCodes: [1], input: scan.nestedRepos.map((p) => `${p}/`).join('\0') + '\0',
+    });
+    const f = stdout.split('\0');
+    const ignored = new Set();
+    for (let i = 0; i + 3 < f.length; i += 4) {
+      if (!f[i].endsWith(path.join('info', 'exclude'))) ignored.add(f[i + 3].replace(/\/$/, ''));
+    }
+    scan.nestedRepos = scan.nestedRepos.filter((p) => !ignored.has(p));
+  } catch { /* cannot tell: report it. Saying "not backed up" of an ignored folder is still true */ }
+  return scan;
+}
+
+/** Start of every push, pull and connect: walk, then refresh the machine-local excludes. */
+async function refreshSyncSafety(opts = {}) {
+  const scan = await scanForSafety(opts);
+  await writeExcludeBlock(opts.gitDir || currentGitDir(), [
+    ...scan.nestedRepos.map((p) => anchoredIgnoreLine(p, { dir: true })),
+    ...scan.secretPluginFiles.map((p) => anchoredIgnoreLine(p)),
+  ]);
+  return { ...scan, repaired: [], heldBack: [], opts };
+}
+
+/**
+ * Take out of the index what must not be committed. Never touches a file on
+ * disk and never rewrites history.
+ *
+ *   gitlink (mode 160000)       removed. It holds no content, so nothing on the
+ *                               remote is lost, and it is what made every later
+ *                               Sync fail. This is the repair of the bad state.
+ *   new credential file         removed from the index.
+ *   changed tracked credential  back to the committed version, so a rotated key
+ *                               is not pushed on top of the old one. A DELETION
+ *                               is let through: that is how a user gets a
+ *                               tracked secret out of the latest version.
+ */
+async function dropUnsafeFromIndex(safety) {
+  const { opts } = safety;
+  const { stdout: stage } = await gitArgv(['ls-files', '-s', '-z'], opts);
+  for (const rec of zSplit(stage)) {
+    if (!rec.startsWith('160000 ')) continue;
+    const p = rec.slice(rec.indexOf('\t') + 1);
+    await gitArgv(['--literal-pathspecs', 'rm', '-q', '--cached', '--', p], opts);
+    if (!safety.repaired.includes(p)) safety.repaired.push(p);
+  }
+  const isHeld = (p) => isCredentialPath(p) || safety.secretPluginFiles.includes(p);
+  if (await headExists(opts)) {
+    const { stdout } = await gitArgv(['diff', '--cached', '--name-status', '--no-renames', '-z', 'HEAD'], opts);
+    const f = zSplit(stdout);
+    for (let i = 0; i + 1 < f.length; i += 2) {
+      const [status, p] = [f[i], f[i + 1]];
+      if (status === 'D' || !isHeld(p)) continue;
+      if (status === 'A') await gitArgv(['--literal-pathspecs', 'rm', '-q', '--cached', '--', p], opts);
+      else await gitArgv(['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', p], opts);
+      if (!safety.heldBack.includes(p)) safety.heldBack.push(p);
+    }
+  } else {
+    const { stdout } = await gitArgv(['ls-files', '-z'], opts);
+    for (const p of zSplit(stdout)) {
+      if (!isHeld(p)) continue;
+      await gitArgv(['--literal-pathspecs', 'rm', '-q', '--cached', '--', p], opts);
+      if (!safety.heldBack.includes(p)) safety.heldBack.push(p);
+    }
+  }
+}
+
+async function stageAll(safety) {
+  await git('add -A', safety.opts);
+  await dropUnsafeFromIndex(safety);
+}
+
+/**
+ * A clean index has three wordings, and only the first was ever guarded:
+ * "nothing to commit", "nothing added to commit" (untracked files remain), "no
+ * changes added to commit" (unstaged changes remain: a dirty gitlink, or a
+ * held-back credential). The third is what made every Sync after a gitlink fail.
+ */
+function isCleanIndexError(err) {
+  return /nothing to commit|nothing added to commit|no changes added to commit/.test(err.message);
+}
+
+async function guardedCommit(message, opts = {}) {
+  try {
+    await git(`commit -m "${message}"`, opts);
+    return true;
+  } catch (err) {
+    if (!isCleanIndexError(err)) throw err;
+    return false;
+  }
+}
+
+const REPORT_SAMPLE = 25;
+const bucket = () => ({ count: 0, files: [] });
+const addTo = (b, p) => { b.count++; if (b.files.length < REPORT_SAMPLE) b.files.push(p); };
+
+/**
+ * What is and is not in the backup, from git's own lists. Local, no network,
+ * writes nothing; never on the rail badge's hot path, because it walks the folder.
+ */
+async function buildBackupReport(scan, opts = {}) {
+  const base = getDomainsDir();
+  const nested = scan.nestedRepos;
+  const inNested = (p) => nested.some((n) => p === n || p.startsWith(`${n}/`));
+  const isHeld = (p) => isCredentialPath(p) || scan.secretPluginFiles.includes(p);
+
+  const [{ stdout: stage }, { stdout: ignored }, { stdout: others }] = await Promise.all([
+    gitArgv(['ls-files', '-s', '-z'], opts),
+    gitArgv(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'], opts),
+    gitArgv(['ls-files', '--others', '--exclude-standard', '-z'], opts),
+  ]);
+
+  const report = {
+    nestedRepos: nested,
+    brokenLinks: [],
+    credentialsLeftOut: bucket(),
+    credentialsInRepo: bucket(),
+    rawSources: bucket(),
+    obsidianFiles: bucket(),
+    ownRules: bucket(),
+    housekeepingCount: 0,
+    nonDomain: [],
+    backedUpFiles: 0,
+  };
+
+  const tops = new Map();
+  const noteBackedUp = (p) => {
+    if (p === '.gitignore') return;
+    report.backedUpFiles++;
+    const parts = p.split('/');
+    const top = parts.length === 1 ? null : parts[0];
+    if (top && (top === '.obsidian' || existsSync(path.join(base, top, 'CLAUDE.md')))) return;
+    if (!top && p === '.gitkeep') return;
+    tops.set(top, (tops.get(top) || 0) + 1);
+  };
+
+  for (const rec of zSplit(stage)) {
+    const p = rec.slice(rec.indexOf('\t') + 1);
+    if (rec.startsWith('160000 ')) { report.brokenLinks.push(p); continue; }
+    if (isHeld(p)) { addTo(report.credentialsInRepo, p); continue; }
+    if (!inNested(p)) noteBackedUp(p);
+  }
+  for (const p of zSplit(others)) {
+    if (inNested(p)) continue;
+    if (isHeld(p)) addTo(report.credentialsLeftOut, p);
+    else noteBackedUp(p);
+  }
+  for (const p of zSplit(ignored)) {
+    if (inNested(p)) continue;
+    if (isHeld(p)) { addTo(report.credentialsLeftOut, p); continue; }
+    const kind = classifyLeftOut(p);
+    if (kind === 'raw') addTo(report.rawSources, p);
+    else if (kind === 'obsidian') addTo(report.obsidianFiles, p);
+    else if (kind === 'housekeeping') report.housekeepingCount++;
+    else addTo(report.ownRules, p);
+  }
+  report.nonDomain = [...tops.entries()]
+    .map(([name, files]) => ({ name, files, isFolder: name !== null }))
+    .sort((a, b) => (a.isFolder === b.isFolder ? String(a.name).localeCompare(String(b.name)) : a.isFolder ? -1 : 1));
+  return report;
+}
+
+const nameJoin = (names) => {
+  const shown = names.slice(0, 5);
+  return shown.join(', ') + (names.length > shown.length ? `, and ${names.length - shown.length} more` : '');
+};
+
+/** The sentence that goes beside any result where something was not backed up. */
+function notBackedUpWarning(report) {
+  if (!report || !report.nestedRepos.length) return null;
+  const n = report.nestedRepos.length;
+  return `${n === 1 ? 'A folder was' : `${n} folders were`} not backed up: ${nameJoin(report.nestedRepos)} ` +
+    `${n === 1 ? 'has its' : 'have their'} own git history, so nothing in ${n === 1 ? 'it' : 'them'} is on GitHub.`;
+}
+
+/** Report on a finished operation. A report that fails never fails the sync that succeeded. */
+async function finishWithBackup(result, safety) {
+  let backup = null;
+  try { backup = await buildBackupReport(safety, safety.opts); } catch { /* unknown, so say nothing */ }
+  return {
+    ...result,
+    backup,
+    partial: !!(backup && backup.nestedRepos.length),
+    warning: notBackedUpWarning(backup),
+    repairedLinks: safety.repaired,
+    heldBack: safety.heldBack,
+  };
+}
+
+/** GET /api/sync/backup-report: writes nothing, not even info/exclude. */
+export async function getBackupReport() {
+  if (!isConfigured()) return { configured: false };
+  const scan = await scanForSafety();
+  return { configured: true, ...(await buildBackupReport(scan)) };
+}
+
+/**
+ * The user's answer at connect: "leave these folders out". Only a top-level
+ * folder that is not a domain qualifies, checked here and not by the client.
+ * Written to the folder's .gitignore, so it holds on every computer.
+ */
+async function applyLeaveOut(names) {
+  if (!Array.isArray(names) || !names.length) return;
+  const base = getDomainsDir();
+  const lines = [];
+  for (const name of names) {
+    const sound = typeof name === 'string' && name && name !== '.' && name !== '..' && !/[/\\\r\n]/.test(name) &&
+      existsSync(path.join(base, name)) && !existsSync(path.join(base, name, 'CLAUDE.md'));
+    if (!sound) {
+      throw refusal('invalid-leave-out', 'Only a folder at the top of your knowledge folder that is not a domain can be left out.');
+    }
+    lines.push(anchoredIgnoreLine(name, { dir: true }));
+  }
+  const p = path.join(base, '.gitignore');
+  let existing = '';
+  try { existing = await readFile(p, 'utf8'); } catch { /* ensureDomainsGitignore writes it first */ }
+  const have = new Set(existing.split('\n').map((l) => l.trim()));
+  const add = lines.filter((l) => !have.has(l));
+  if (add.length) {
+    await writeFileAtomic(p, (existing && !existing.endsWith('\n') ? existing + '\n' : existing) + add.join('\n') + '\n', 'utf8');
   }
 }
 
@@ -1429,11 +1744,28 @@ export const SETUP_MODES = ['push', 'pull', 'merge'];
  * escape hatch (disconnect the other install, or move/rename its
  * `.knowledge-git`).
  */
+async function refuseIfOnlyNestedRepos(safety, gitDir, preexisting, adoptedDir) {
+  if (!safety.nestedRepos.length) return;
+  const report = await buildBackupReport(safety, { gitDir });
+  if (report.backedUpFiles > 0) return;
+  // Same rollback rule as the pull refusals below: a repo this call created must
+  // not leave isConfigured() true with no config saved.
+  if (!preexisting && !adoptedDir) await rm(gitDir, { recursive: true, force: true }).catch(() => {});
+  throw refusal(
+    'only-nested-repos',
+    `Nothing here could be backed up: ${nameJoin(safety.nestedRepos)} ` +
+    `${safety.nestedRepos.length === 1 ? 'has its' : 'have their'} own git history, and Sync cannot copy ` +
+    'a folder like that. Choose that folder itself as your knowledge folder, and connect again.',
+    { nestedRepos: safety.nestedRepos },
+  );
+}
+
 export async function setup(repoUrl, token, mode, opts = {}) {
   if (!SETUP_MODES.includes(mode)) {
     throw refusal('invalid-mode', `mode must be one of ${SETUP_MODES.join(', ')}`);
   }
   await ensureDomainsGitignore();
+  await applyLeaveOut(opts.leaveOut);
 
   const remoteUrl = buildRemoteUrl(repoUrl, token);
   const foreign = await detectForeignSyncRepo(repoUrl);
@@ -1465,7 +1797,9 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // than leave a token at whatever umask `git init` produced. Best-effort:
     // a failed chmod must not fail a connect that otherwise succeeded.
     await chmod(path.join(foreign.path, 'config'), 0o600).catch(() => {});
-    return { adopted: true, gitDir: foreign.path };
+    // Writes the work tree nothing; the next Sync does the staging.
+    return finishWithBackup({ adopted: true, gitDir: foreign.path },
+      await refreshSyncSafety({ gitDir: foreign.path }));
   }
 
   // currentGitDir(), NOT getSyncGitDir(). Two things depend on it: the
@@ -1486,11 +1820,14 @@ export async function setup(repoUrl, token, mode, opts = {}) {
 
   if (mode === 'push') {
     await prepareRemote(gitDir, remoteUrl, 120000);
-    await git('add -A', { gitDir });
+    const safety = await refreshSyncSafety({ gitDir });
+    await refuseIfOnlyNestedRepos(safety, gitDir, preexisting, adoptedDir);
+    await stageAll(safety);
     try {
       await git('commit -m "Initial The Curator sync"', { gitDir });
     } catch (err) {
-      if (!err.message.includes('nothing to commit')) throw err;
+      // `isCleanIndexError` is the wider form of `includes('nothing to commit')`.
+      if (!isCleanIndexError(err)) throw err;
     }
     await git('branch -M main', { gitDir });
     try {
@@ -1518,7 +1855,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     }
     await saveConfig(repoUrl, token, adoptedDir);
     await recordSyncSuccess(gitDir);
-    return { adopted: !!adoptedDir, mode: 'push' };
+    return finishWithBackup({ adopted: !!adoptedDir, mode: 'push' }, safety);
   }
 
   // Both remaining modes need the remote's history.
@@ -1541,12 +1878,14 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // recoverable: whatever the merge decides, the pre-merge state of every
     // local file is reachable from the merge commit's first parent, so the
     // worst case is a `git checkout <sha> -- path`, not a loss.
-    await git('add -A', { gitDir });
+    const safety = await refreshSyncSafety({ gitDir });
+    await refuseIfOnlyNestedRepos(safety, gitDir, preexisting, adoptedDir);
+    await stageAll(safety);
     let haveLocalCommit = true;
     try {
       await git('commit -m "Local wiki, before connecting sync"', { gitDir });
     } catch (err) {
-      if (!err.message.includes('nothing to commit')) throw err;
+      if (!isCleanIndexError(err)) throw err;
       haveLocalCommit = false;
     }
     if (!haveLocalCommit) {
@@ -1556,7 +1895,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
       await git('checkout -b main origin/main', { gitDir });
       await saveConfig(repoUrl, token, adoptedDir);
       await recordSyncSuccess(gitDir);
-      return { adopted: !!adoptedDir, mode: 'merge', degradedToPull: true };
+      return finishWithBackup({ adopted: !!adoptedDir, mode: 'merge', degradedToPull: true }, safety);
     }
     await git('branch -M main', { gitDir });
     // `--allow-unrelated-histories` is required and is not a warning sign
@@ -1590,7 +1929,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     await saveConfig(repoUrl, token, adoptedDir);
     invalidateRemoteCache();
     await recordSyncSuccess(gitDir);
-    return { adopted: !!adoptedDir, mode: 'merge' };
+    return finishWithBackup({ adopted: !!adoptedDir, mode: 'merge' }, safety);
   }
 
   // ── PULL — the destructive route, now gated ───────────────────────────
@@ -1668,7 +2007,8 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   await saveConfig(repoUrl, token, adoptedDir);
   invalidateRemoteCache();
   await recordSyncSuccess(gitDir);
-  return { adopted: !!adoptedDir, mode: 'pull', overwrote: assessment.overwriteCount };
+  return finishWithBackup({ adopted: !!adoptedDir, mode: 'pull', overwrote: assessment.overwriteCount },
+    await refreshSyncSafety({ gitDir }));
 }
 
 export async function push() {
@@ -1677,6 +2017,10 @@ export async function push() {
   // otherwise — it was previously only called from setup(). Idempotent no-op
   // when the file is already current.
   await ensureDomainsGitignore();
+  const safety = await refreshSyncSafety();
+  // A gitlink an earlier version committed stays broken with a clean status, so
+  // this is not left to the staging below (which only runs on a dirty one).
+  await dropUnsafeFromIndex(safety);
 
   // Self-heal part 2: the gitignore rule only keeps FUTURE .write-lock /
   // .DS_Store files from being tracked — it does nothing for ones already
@@ -1715,7 +2059,7 @@ export async function push() {
     const now  = new Date();
     const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    await git('add -A');
+    await stageAll(safety);
     // `add -A` can legitimately cancel out everything `status --porcelain`
     // counted above — most concretely, untrackStaleWriteLocks() staging a
     // "D  <domain>/.write-lock" deletion (counted as 1+ of uncommittedCount)
@@ -1725,11 +2069,7 @@ export async function push() {
     // delete back to a clean index, and an unguarded commit then throws
     // "nothing to commit" and takes push() down with it. setup() and pull()
     // already guard their own commits this way; push() must match.
-    try {
-      await git(`commit -m "The Curator sync — ${date} ${time} — ${uncommittedCount} change${uncommittedCount !== 1 ? 's' : ''}"`);
-    } catch (err) {
-      if (!err.message.includes('nothing to commit')) throw err;
-    }
+    await guardedCommit(`The Curator sync — ${date} ${time} — ${uncommittedCount} change${uncommittedCount !== 1 ? 's' : ''}`);
   }
 
   // Determine what will be pushed BEFORE pushing. We want the union of files
@@ -1770,11 +2110,12 @@ export async function push() {
   }
 
   if (aheadCount === 0) {
+    const done = await finishWithBackup({ pushed: false, filesChanged: 0, commitsAhead: 0 }, safety);
     return {
-      pushed: false,
-      filesChanged: 0,
-      commitsAhead: 0,
-      message: 'Everything is already up to date — nothing new to sync.',
+      ...done,
+      message: done.partial
+        ? 'Everything else is already up to date.'
+        : 'Everything is already up to date — nothing new to sync.',
     };
   }
 
@@ -1786,14 +2127,14 @@ export async function push() {
   // records a sync, although its commit (made further up) stays behind.
   await recordSyncSuccess();
 
-  return {
+  return finishWithBackup({
     pushed: true,
     filesChanged: filesToPush,
     commitsAhead: aheadCount,
     files: filePreview,
     // Back-compat: `changesCount` was the field the UI used before v2.3.7
     changesCount: filesToPush,
-  };
+  }, safety);
 }
 
 /**
@@ -1840,18 +2181,15 @@ export async function pull() {
   // it only writes a config FILE, never touches a path the incoming merge
   // might also want to write.
   await ensureDomainsGitignore();
+  const safety = await refreshSyncSafety();
 
   // Auto-commit local changes so the pull merge succeeds — unchanged,
   // pre-existing behaviour (real content, unrelated to hygiene).
   const { stdout } = await git('status --porcelain');
   if (stdout.trim()) {
     const date = new Date().toLocaleString();
-    await git('add -A');
-    try {
-      await git(`commit -m "Auto-save before sync — ${date}"`);
-    } catch (err) {
-      if (!err.message.includes('nothing to commit')) throw err;
-    }
+    await stageAll(safety);
+    await guardedCommit(`Auto-save before sync — ${date}`);
   }
 
   // The prune's baseline — see pruneGhostDomainDirs(). Captured HERE, after
@@ -1979,6 +2317,8 @@ export async function pull() {
   await untrackStaleObsidianWorkspace();
   await untrackStaleObsidianLeftovers();
   await cleanupStaleLocalLocks();
+  // The merge can have brought a gitlink another computer pushed.
+  await dropUnsafeFromIndex(safety);
 
   // If the post-merge untrack staged anything, commit it now so pull() still
   // fully self-heals in one call — matches push()'s existing behaviour of
@@ -1986,12 +2326,8 @@ export async function pull() {
   // with dangling uncommitted changes after a "Pull only" click.
   const { stdout: postStatus } = await git('status --porcelain');
   if (postStatus.trim()) {
-    await git('add -A');
-    try {
-      await git(`commit -m "Sync hygiene cleanup — ${new Date().toLocaleString()}"`);
-    } catch (err) {
-      if (!err.message.includes('nothing to commit')) throw err;
-    }
+    await stageAll(safety);
+    await guardedCommit(`Sync hygiene cleanup — ${new Date().toLocaleString()}`);
   }
 
   // Prune ghost domain directories. When another machine deletes a domain, the
@@ -2005,7 +2341,7 @@ export async function pull() {
   invalidateRemoteCache();
   await recordSyncSuccess();
 
-  return {
+  return finishWithBackup({
     pulled: true,
     filesChanged: filesPulled,
     commitsPulled,
@@ -2018,7 +2354,7 @@ export async function pull() {
     // to read `pruned` only, so this field never affected it while it lived.
     prunedKept: keptLocalContent,
     details: pullOut,
-  };
+  }, safety);
 }
 
 /**
@@ -2272,7 +2608,7 @@ async function pruneGhostDomainDirs(preMergeHead) {
 
   const base = getDomainsDir();
 
-  let nominated, trackedTops, unpushedTops;
+  let nominated, trackedTops, unpushedTops, protectedTops;
   try {
     // 1. What did this merge actually delete? Empty ⇒ nothing to do, which
     //    is the common case (most pulls delete nothing).
@@ -2293,6 +2629,18 @@ async function pruneGhostDomainDirs(preMergeHead) {
 
     const { stdout: status } = await git('status --porcelain -z');
     unpushedTops = topLevelSegments(status, '?? ');
+
+    // 5. Holds something that exists nowhere else and that git was told not to
+    //    offer: a repository with its own history, or a credential file. Both
+    //    are ignored, so rule 4 cannot see them, and repairing a gitlink nominates
+    //    the very folder that holds the repository. Added because that rm would
+    //    have deleted the nested repo on the OTHER computer.
+    const { nestedRepos } = await scanWorkTree(base);
+    const { stdout: ignored } = await git('ls-files --others --ignored --exclude-standard -z');
+    protectedTops = new Set([
+      ...nestedRepos.map((p) => p.split('/')[0]),
+      ...zSplit(ignored).filter(isCredentialPath).map((p) => p.split('/')[0]),
+    ]);
   } catch {
     // Cannot prove anything ⇒ delete nothing.
     return { pruned, keptLocalContent };
@@ -2324,7 +2672,7 @@ async function pruneGhostDomainDirs(preMergeHead) {
     //    commit and this call: the MCP server or an ingest in ANOTHER
     //    process, which this app genuinely has. See section 5 / 5b of
     //    test-sync-prune-safety.js, which drives both halves.
-    if (unpushedTops.has(entry.name)) {
+    if (unpushedTops.has(entry.name) || protectedTops.has(entry.name)) {
       keptLocalContent.push(entry.name);
       continue;
     }
@@ -2397,6 +2745,8 @@ export const __testing = {
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,
+  isCleanIndexError,
+  buildBackupReport,
   recoverHygieneMergeConflict,
   isHygieneJunkPath,
   extractUntrackedOverwritePaths,

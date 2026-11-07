@@ -35,9 +35,43 @@ Compared to alternatives:
 | MCP write log (`.mcp-write-log.jsonl`) | No | A per-domain record of what Claude wrote through the MCP. Machine-private by design |
 | Batch-ingest queue (`.ingest-queue/`) | No | Mid-batch operational state plus staged source files. It normally lives outside your knowledge folder entirely; the rule is a safety net |
 | Obsidian workspace state (`.obsidian/workspace.json`) | No | Obsidian rewrites it on essentially every pane move or tab switch, so tracking it makes the sync badge tick constantly. Deliberately narrow — the rest of `.obsidian/` (appearance, graph and plugin settings) **does** sync, since whether those follow you between machines is your preference, not ours (v3.5.1) |
-| Obsidian leftovers (`*.base`, `Untitled.md`, `Untitled 1.md`) | No | Empty stub notes Obsidian auto-creates when a wikilink resolves to nothing or the vault root is pointed at the wrong folder (v3.5.1) |
+| Obsidian Bases and Untitled notes (`*.base`, `Untitled.md`, `Untitled 1.md`) | No | Added for the empty stubs Obsidian creates when a wikilink resolves to nothing (v3.5.1). A `.base` file you made yourself is skipped too, so keep your own copy. The Sync page lists them |
+| Files that look like secrets (`.env*`, `*.pem`, `*.key`, `id_rsa`, `credentials.json`, `secrets.yaml`, `.npmrc`, `.ssh/` and similar) | No | Refused by name, in any folder, however the folder was chosen. See "Secrets" below |
+| Obsidian plugin settings that hold a key (`.obsidian/plugins/*/data.json`) | No | AI plugins keep your API key there in plain text. Only a settings file that actually holds a key value stays behind; other plugin settings still sync |
+| A folder with its own git history (a `.git` inside it) | No | Sync cannot copy it. See "A folder with its own git history" below |
+| Other folders and files that are not domains | **Yes** | See "Folders that are not domains" below |
 
-> The authoritative list is `DOMAINS_GITIGNORE_RULES` in [`src/brain/sync.js`](../src/brain/sync.js). The app rewrites `domains/.gitignore` from it on every push and pull, so an install configured before a rule was added picks it up automatically.
+> The authoritative list is `DOMAINS_GITIGNORE_RULES` in [`src/brain/sync.js`](../src/brain/sync.js), with the secret patterns in [`src/brain/sync-safety.js`](../src/brain/sync-safety.js). The app adds any missing rule to `domains/.gitignore` on every push and pull, and keeps your own lines.
+
+**You can see all of this.** The Sync page has a section called "What Sync does not back up", which names the files in each group above. Connecting shows the same list first when there is something to decide.
+
+### Secrets
+
+A file that looks like a secret stays on your computer, and the Sync page names it. This goes by the file's **name**. A key pasted into a note is not detected, and a page called `credentials.md` is treated as an ordinary page. A Keynote deck also ends in `.key`, so it is left out too; rename it or export a PDF if you want it backed up.
+
+**If a secret is already in your repository**, because an earlier version sent it, the Sync page warns you. Sync no longer sends changes to that file, but The Curator never rewrites history, so:
+
+1. Replace the key or password with a new one. The old one stays in the repository's history.
+2. Move the file out of your knowledge folder, Sync once, and move it back. It then stays on this computer only. Your other computers lose their copy on their next Sync, so copy it first.
+3. To remove the history as well, make a new empty private repository, Disconnect, connect to the new one with **Push my wiki**, then delete the old repository on GitHub.
+
+### Folders that are not domains
+
+A folder without a `CLAUDE.md`, and any loose file at the top of your knowledge folder, **is backed up**. That is deliberate: this folder is often an Obsidian vault, and pasted images live in an attachments folder there. Stopping the backup of a folder that is already in the repository would also delete it from your other computers on their next Sync.
+
+Before the first push you are shown these folders and can choose **Connect, and leave out those folders**. Later on, add a line such as `/Private Journal/` to the `.gitignore` file in your knowledge folder before that folder's first sync. A line added after that does not remove what is already in the repository.
+
+### A folder with its own git history
+
+Sync cannot copy a folder that has its own `.git`. It leaves that folder out, backs up everything else, and says so on the Sync page and in every result. Nothing in that folder is touched. Your options:
+
+- Keep it as it is, if its own repository pushes somewhere.
+- Choose that folder itself as your knowledge folder (Domains, **Use existing folder**). A `.git` at the top of the knowledge folder is fine.
+- Delete its `.git` folder if you do not need its history, then Sync. The files are then backed up like any others.
+
+If that folder is the only thing there, connecting is refused, because nothing could be backed up.
+
+**If an earlier version already connected such a folder**, your repository holds an empty link in its place and every Sync failed with a long git message. The next Sync removes the link. Nothing is lost, because the link held no content, and the files in the folder are not changed. They are still not on GitHub until you choose one of the options above.
 
 ### Working state and why its path has a machine name in it
 
@@ -505,7 +539,7 @@ Your repository is **private**. GitHub employees do not read private repository 
 
 Your Personal Access Token is stored only in `.sync-config.json` on your local machine — it is gitignored and never uploaded anywhere.
 
-Your AI provider API keys are also never synced — whichever providers you use. They live in `.curator-config.json` when you save them in Settings (or in `.env` if you use the developer fallback), both of which are gitignored and stay on the machine you entered them on.
+Files that look like secrets inside your knowledge folder are refused as well (see "Secrets" above). Your AI provider API keys are also never synced — whichever providers you use. They live in `.curator-config.json` when you save them in Settings (or in `.env` if you use the developer fallback), both of which are gitignored and stay on the machine you entered them on.
 
 ---
 

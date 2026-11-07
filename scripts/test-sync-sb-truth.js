@@ -336,6 +336,7 @@ section('§5  Render helpers — the Sync view and the Shared Brain labels');
     'function reportAsyncActionFailure(e) { calls.push("fail:" + e.message); }\n' +
     'async function loadStatus() { calls.push("loadStatus"); }\n' +
     'async function loadDomains() { calls.push("loadDomains"); }\n' +
+    'async function loadBackup() { calls.push("loadBackup"); }\n' +
     'function refreshSyncBadge() {}\n' +
     'async function refreshSyncRemoteBadge() {}\n' +
     'function describeResult() { return "done"; }\n' +
