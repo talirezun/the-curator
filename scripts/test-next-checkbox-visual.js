@@ -377,7 +377,11 @@ try {
       `[${theme}] disabled computes opacity 0.45 — the design system's value, not one of the five ` +
       `others this tree uses (got ${dis.opacity})`, dis.opacity);
     ok(dis.cursor === 'not-allowed', `[${theme}] disabled computes cursor: not-allowed`, dis.cursor);
-    ok(off.cursor === 'pointer', `[${theme}] an enabled box computes cursor: pointer`, off.cursor);
+    // `default`, not `pointer`: since v3.44.0 (shared/checkbox.css, "The hand
+    // cursor leaves the foundation layer too") a checkbox shows the macOS
+    // arrow, the hand being a web idiom for a link. This asserted `pointer`
+    // and went stale then; the disabled arm above still pins `not-allowed`.
+    ok(off.cursor === 'default', `[${theme}] an enabled box computes cursor: default (the arrow, never the hand)`, off.cursor);
     ok(off.rect.w === off.rect.h && off.rect.w >= 15 && off.rect.w <= 17,
       `[${theme}] the default box is square at the system's 16px (${off.rect.w}x${off.rect.h})`, off.rect);
     ok(sm.rect.w < off.rect.w && sm.rect.w >= 12,
@@ -582,7 +586,7 @@ try {
   }, PORT);
 
   const realSites = [];
-  for (const view of ['chat', 'shared']) {
+  for (const view of ['chat']) {
     const res = await page.evaluate(function (port, v) {
       if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
       const btn = document.querySelector(`#rail .rail-btn[data-view="${v}"]`);
@@ -592,6 +596,13 @@ try {
     }, PORT, view);
     if (!res.ok) continue;
     await new Promise(r => setTimeout(r, 900));
+    // Chat draws a per-row checkbox only in Select mode (v3.72.0: the Select
+    // MODE of views/chat-list.js); before that press the list has none.
+    await page.evaluate(function (port) {
+      if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
+      document.getElementById('chat-select-btn')?.click();
+    }, PORT);
+    await new Promise(r => setTimeout(r, 500));
     const found = await page.evaluate(function (port) {
       if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
       return [...document.querySelectorAll('input[type="checkbox"]')].map(el => {
@@ -616,6 +627,20 @@ try {
   // The Shared Brain view is behind a per-install feature flag, off in a fresh
   // fixture. Enabling it writes ONLY into the throwaway user-data dir and only
   // turns the UI on; it creates no connection and contributes nothing.
+  // Shared Brain has no rail button any more (v3.65.3 / v3.72.x: it is a section
+  // of the domain page). Its section says "off on this install" and offers one
+  // door, "Open Shared Brain", which navigates to the full view that hosts the
+  // enable button and the wizard CTAs. Enter that way, as a user does.
+  await page.evaluate(function (port) {
+    if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
+    document.querySelector('#rail .rail-btn[data-view="domains"]')?.click();
+  }, PORT);
+  await new Promise(r => setTimeout(r, 1500));
+  await page.evaluate(function (port) {
+    if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
+    document.getElementById('btn-sb-open-view')?.click();
+  }, PORT);
+  await new Promise(r => setTimeout(r, 1200));
   await page.evaluate(async function (port) {
     if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
     const btn = document.getElementById('btn-sb-enable');
@@ -677,7 +702,7 @@ try {
     realSites.map(s => ({ view: s.view, radius: s.radius })));
 
   // ── §7b THE ONE SITE THAT DIMS THE COMPONENT ─────────────────────────
-  section('§7b — the chat row dims the component at rest, and that is measured, not assumed');
+  section('§7b — the chat row checkbox is at full strength at rest (the v3.72.0 Select mode), measured not assumed');
 
   /* views/chat.css sets `.chat-conv-check { opacity: 0.45 }` so an unticked
      conversation row stays visually quiet, and restores opacity 1 on :checked,
@@ -703,6 +728,12 @@ try {
     document.querySelector('#rail .rail-btn[data-view="chat"]')?.click();
   }, PORT);
   await new Promise(r => setTimeout(r, 1300));
+  // Select mode again: the row checkbox exists only while it is on.
+  await page.evaluate(function (port) {
+    if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
+    document.getElementById('chat-select-btn')?.click();
+  }, PORT);
+  await new Promise(r => setTimeout(r, 500));
 
   const dim = await page.evaluate(function (port, resolverSrc) {
     if (String(location.port) !== String(port)) throw new Error('origin guard: wrong port ' + location.port);
@@ -804,12 +835,21 @@ try {
     const bd = dim.rest.backdrop || [0, 0, 0, 1];
     const eff = [dim.rest.border[0], dim.rest.border[1], dim.rest.border[2], dim.rest.opacity];
     const restRatio = round2(contrastRatio(compositeOver(eff, bd), bd));
+    // v3.72.0 (P3): the 0.45 resting dim and its :checked / :focus-visible /
+    // :hover reveal rules went with the always-drawn boxes. Boxes now exist only
+    // in Select mode and are painted at FULL strength, so this is asserted as
+    // the NEW behaviour: resting opacity 1 and the resting border clears the
+    // non-text floor on its own row. (The old arm asserted opacity < 1 and a
+    // :hover reveal rule, and went red against correct CSS.)
     console.log(`  · .chat-conv-check RESTING (opacity ${dim.rest.opacity}) border on its row: ${restRatio.toFixed(2)} — ` +
-      `BELOW the ${FLOOR_NON_TEXT.toFixed(2)} floor, by the pre-existing dim, reported not asserted`);
-    console.log(`  · reveal rules found: ${dim.revealSelectors.join(' | ') || '(none)'}`);
-    ok(dim.rest.opacity < 1,
-      `the resting dim is real and still in force (opacity ${dim.rest.opacity}) — if it were 1 this ` +
-      'whole section would be measuring nothing', dim.rest.opacity);
+      `floor ${FLOOR_NON_TEXT.toFixed(2)}, asserted below`);
+    console.log(`  · reveal rules found: ${dim.revealSelectors.join(' | ') || '(none — none are needed at full strength)'}`);
+    ok(dim.rest.opacity === 1,
+      `the resting box is at full strength, no dim (opacity ${dim.rest.opacity})`, dim.rest.opacity);
+    ok(restRatio >= FLOOR_NON_TEXT,
+      `the RESTING unchecked border on its real row clears the ${FLOOR_NON_TEXT.toFixed(2)}:1 non-text floor (${restRatio.toFixed(2)})`, restRatio);
+    ok(dim.revealSelectors.length === 0,
+      'no opacity reveal rule is left behind for a dim that no longer exists', dim.revealSelectors);
     ok(dim.checkedOpacity === 1,
       'TICKING it restores full opacity, so a selected row is never sub-floor', dim.checkedOpacity);
     ok(dim.focusedIsCheck && /chat-conv-check/.test(dim.focusedIsCheck.cls || '') && dim.focusedIsCheck.fv,
@@ -817,10 +857,8 @@ try {
       'assertion below would be measuring some other element', dim.focusedIsCheck);
     ok(dim.focusOpacity === 1,
       'KEYBOARD FOCUS restores full opacity, so a user arriving by Tab sees the control at full ' +
-      'contrast — the mitigation that makes the resting dim defensible rather than a defect',
+      'contrast',
       dim.focusOpacity);
-    ok(dim.revealSelectors.some(s => /:hover/.test(s)),
-      `a row :hover rule also restores it (${dim.revealSelectors.join(' | ')})`, dim.revealSelectors);
   }
 
   // ── console hygiene ──────────────────────────────────────────────────
