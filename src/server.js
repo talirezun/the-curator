@@ -5,7 +5,7 @@ import { readFileSync, chmodSync, existsSync, openSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
 import { planBrowserOpen } from './brain/subprocess-env.js';
-import { recoverAllHealthUndo } from './brain/health-undo.js';
+import { startHealthUndo } from './brain/health-undo.js';
 import domainsRouter from './routes/domains.js';
 import ingestRouter from './routes/ingest.js';
 import queryRouter from './routes/query.js';
@@ -445,10 +445,10 @@ function providerStartupLabel(provider) {
 let server;
 function startListen(retriesLeft = MAX_BIND_RETRIES) {
   server = app.listen(PORT, BIND_HOST, () => {
-    // Wiki health's Undo: an undo a crash left part-way is finished at start; any
-    // list, undo or Health action on a domain finishes that domain's first too
-    // (src/brain/health-undo.js). Local files only; never throws.
-    recoverAllHealthUndo().catch((err) => console.error('[health-undo] recovery at start failed:', err.message));
+    // Wiki health's Undo: at start, an undo a crash left part-way is finished and
+    // copies older than 30 days expire. A list or undo also finishes a crashed undo,
+    // and every Health action expires old copies again (src/brain/health-undo.js). Never throws.
+    startHealthUndo();
     // Retired-model migration (2026-10-08): move a stored build pick that names
     // a model the catalogue retired FORWARD to its successor, once, and record
     // the one-time note — before the first provider resolution below logs it.

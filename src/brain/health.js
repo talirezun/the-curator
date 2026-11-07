@@ -1626,6 +1626,8 @@ function describeFixChange(type, issue, s) {
   switch (type) {
     case 'semanticDupe': {
       const keep = issue && typeof issue.keepSlug === 'string' ? issue.keepSlug : null;
+      // Two pages of one name in two folders: the folders are what tell them apart.
+      if (deleted.length === 1 && keep && deleted[0] === keep) return `Merged ${s.deleted[0].replace(/\.md$/i, '')} into ${issue.keepFolder}/${keep}`;
       if (deleted.length === 1 && keep) return `Merged ${deleted[0]} into ${keep}`;
       break;
     }

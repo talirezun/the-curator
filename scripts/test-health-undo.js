@@ -44,6 +44,7 @@ __setDomainsDirOverride(DOMAINS);
 const health = await import(path.join(REPO, 'src/brain/health.js'));
 const undo = await import(path.join(REPO, 'src/brain/health-undo.js'));
 const { getHealthUndoDir } = await import(path.join(REPO, 'src/brain/paths.js'));
+const { SECTION_KIT: SECTION_KIT_OBJ } = await import(path.join(REPO, 'scripts/test-helpers/section-kit.js'));
 
 let pass = 0;
 let fail = 0;
@@ -598,6 +599,68 @@ section('§8 A record applies only to the folder it was made in');
   ok(err && err.status === 404, 'and cannot undo the first folder\'s change', err && err.message);
   __setDomainsDirOverride(DOMAINS);
   ok((await undo.listHealthChanges('samename')).length === 1, 'back in its folder, it is listed again');
+}
+
+// ── §10 The words, the row, and start-up ───────────────────────────────────
+section('§10 Words true for every change, the row always there, a refusal cleared, expiry at start');
+{
+  const { extractFunction } = await import(path.join(REPO, 'scripts/test-helpers/mcp-page-sandbox.js'));
+  const SRC = readFileSync(path.join(REPO, 'src/public/next/views/domains.js'), 'utf8');
+  const lift = (names, deps, ret) => new Function('state', ...Object.keys(deps),
+    names.map((n) => extractFunction(SRC, n)).join('\n') + '\nreturn ' + ret + ';');
+  const n0 = (v) => (Number(v) || 0).toLocaleString('en-US');
+  const words = lift(['undoWords', 'listPages'], { n0 }, 'undoWords')({}, n0);
+
+  // A Rebuild, recorded for real: index.md alone.
+  const g = generatedWiki(mulberry32(81));
+  const d = mkDomain(g.files);
+  const plan = await health.planIndexRebuild(d.name);
+  const rb = await health.applyIndexRebuild(d.name, plan.basis);
+  ok(rb.undo && rb.undo.pages === 0 && rb.undo.index === true, 'a Rebuild is recorded as the page list and no page', JSON.stringify(rb.undo));
+  const w = words(rb.undo);
+  ok(w.meta === 'The page list' && w.body === 'Puts back the page list exactly as it was before this change.' && w.done === 'Undone. The page list is back as it was.',
+    'a Rebuild reads as the page list, everywhere', JSON.stringify(w));
+  ok(!/\b0 pages\b|: \./.test(JSON.stringify(w)), 'and never "0 pages" or an empty list', JSON.stringify(w));
+  // A merge that also touched index.md, and a plain merge.
+  const wm = words({ pages: 3, index: true, pageList: ['a', 'b', 'c'], deleted: ['c'] });
+  ok(wm.meta === '3 pages and the page list' && /^Puts back these 3 pages and the page list exactly as they were before this change: a, b, c\. c comes back\.$/.test(wm.body) &&
+    wm.done === 'Undone. 3 pages and the page list are back as they were.', 'a merge with the page list', JSON.stringify(wm));
+  const w1 = words({ pages: 1, index: false, pageList: ['a'], deleted: [] });
+  ok(w1.meta === '1 page' && w1.body === 'Puts back this page exactly as it was before this change: a.' && w1.done === 'Undone. The page is back as it was.', 'one page', JSON.stringify(w1));
+
+  // The same name in two folders: the title names the folders.
+  const sd = mkDomain({ 'concepts/neural-networks.md': page('NN', 'Concept.', 'concept'), 'entities/neural-networks.md': page('NN', 'Entity.') });
+  const sm = await health.fixIssue(sd.name, 'semanticDupe', { keepSlug: 'neural-networks', keepFolder: 'concepts', removeSlug: 'neural-networks', removeFolder: 'entities' });
+  ok(sm.fixed === 1 && sm.undo.title === 'Merged entities/neural-networks into concepts/neural-networks', 'a same-name merge shows both folders', JSON.stringify(sm.undo));
+
+  // The row is there at 0 (so a first change never makes it appear under a press), never on a mirror.
+  const rowDeps = {
+    escapeHtml: (x) => String(x), icon: () => '', n0, relTime: () => 'just now', gatedLoader: () => '', loadGate: null,
+    renderAnchorStack: () => '', ...SECTION_KIT_OBJ,
+  };
+  const row = lift(['recentChangeCount', 'changeMeta', 'undoWords', 'listPages', 'renderChangesRow'], rowDeps, 'renderChangesRow');
+  const st = { health: { recentChanges: 0 }, changeRecords: null, expandedGroups: new Set(), rowBusy: new Set(), busyKey: null };
+  const html0 = row(st, ...Object.values(rowDeps))(false, false);
+  ok(/data-group-key="changes"/.test(html0) && /Recent changes/.test(html0), 'Recent changes is drawn with nothing in it', html0.slice(0, 300));
+  ok(row(st, ...Object.values(rowDeps))(true, false) === '', 'and not on a read-only mirror');
+  const open0 = row({ ...st, changeRecords: [], expandedGroups: new Set(['changes']) }, ...Object.values(rowDeps))(false, false);
+  ok(/Nothing was changed here in the last 30 days\./.test(open0), 'open and empty, it says so', open0.slice(0, 400));
+
+  // Undo pressed: an earlier refusal on a change row goes; other outcomes stay.
+  const st2 = { rowOutcomes: { 'change:a': { tone: 'error' }, 'change:b': { tone: 'error' }, 'issue:x': { tone: 'error' } } };
+  lift(['pressUndoRow'], {}, 'pressUndoRow')(st2)('b');
+  ok(!st2.rowOutcomes['change:a'] && !st2.rowOutcomes['change:b'] && st2.rowOutcomes['issue:x'] && st2.pressAnchor === 'change:b',
+    'a new Undo clears the old refusals on change rows, and only those', JSON.stringify(st2));
+
+  // Start-up expires old copies without waiting for a Health action.
+  const ed = mkDomain(generatedWiki(mulberry32(82)).files);
+  const er = await health.fixIssue(ed.name, 'crossFolderDupes', { keep: 'entities/google.md', remove: 'concepts/google.md' });
+  const f = path.join(undo.domainUndoDir(ed.name), er.undo.id, 'record.json');
+  const rec = JSON.parse(readFileSync(f, 'utf8'));
+  rec.createdAt = new Date(Date.now() - 31 * 86400000).toISOString();
+  writeFileSync(f, JSON.stringify(rec));
+  await undo.startHealthUndo();
+  ok(!existsSync(path.dirname(f)), 'the server start expires a 31-day copy');
 }
 
 // ── §9 Where the copies live ───────────────────────────────────────────────

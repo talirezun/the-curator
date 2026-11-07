@@ -8991,21 +8991,55 @@ function recentChangeCount() {
   return state.health && Number.isInteger(state.health.recentChanges) ? state.health.recentChanges : 0;
 }
 
+// What a change puts back, in words that are true for every shape it can have: a
+// merge (pages), a repair that also touched index.md (pages and the page list) and a
+// Rebuild (the page list alone, which counts as no page). Pure, so a suite can read it.
+function undoWords(c) {
+  const n = Number(c.pages) || 0;
+  const index = !!c.index;
+  const what = n === 0 ? (index ? 'the page list' : 'nothing')
+    : (n === 1 ? '1 page' : n0(n) + ' pages') + (index ? ' and the page list' : '');
+  const one = (n === 1 && !index) || (n === 0 && index);
+  const listed = (c.pageList || []).length ? ': ' + listPages(c.pageList) + '.' : '.';
+  const these = n === 0 ? (index ? 'the page list' : 'nothing')
+    : (n === 1 ? 'this page' : 'these ' + n0(n) + ' pages') + (index ? ' and the page list' : '');
+  return {
+    meta: what.charAt(0).toUpperCase() + what.slice(1),
+    body: 'Puts back ' + these + (one ? ' exactly as it was' : ' exactly as they were') + ' before this change' + listed +
+      (c.deleted && c.deleted.length ? ' ' + listPages(c.deleted) + (c.deleted.length === 1 ? ' comes back.' : ' come back.') : ''),
+    done: n === 0 && index ? 'Undone. The page list is back as it was.'
+      : one ? 'Undone. The page is back as it was.'
+      : 'Undone. ' + what.charAt(0).toUpperCase() + what.slice(1) + ' are back as they were.',
+  };
+}
+
 function changeMeta(c) {
-  const pages = c.pages === 1 ? '1 page' : n0(c.pages) + ' pages';
+  const words = undoWords(c).meta;
   const when = '<span data-age-at="' + escapeHtml(c.at) + '" data-age-text>' + escapeHtml(relTime(c.at)) + '</span>';
-  if (c.status === 'stuck') return 'Could not finish undoing · ' + escapeHtml(pages);
-  return escapeHtml(pages) + (c.index ? ' and the page list' : '') + ' · ' + when;
+  if (c.status === 'stuck') return 'Could not finish undoing · ' + escapeHtml(words);
+  return escapeHtml(words) + ' · ' + when;
+}
+
+// Undo pressed on a row: its question and outcome draw under that row, and an
+// earlier refusal on any change row goes, so the new question stands alone.
+function pressUndoRow(id) {
+  state.pressAnchor = 'change:' + id;
+  state.pressOpener = 'change:' + id;
+  for (const k of Object.keys(state.rowOutcomes)) if (k.indexOf('change:') === 0) delete state.rowOutcomes[k];
 }
 
 function renderChangesRow(readonly, crossMountBusy) {
   if (readonly) return '';
+  // THE ROW IS ALWAYS THERE (outside a mirror), even at 0. A first change used to
+  // make it appear under whatever was pressed, and the Scan details row under it
+  // jumped 5 px in one frame (the light profiles of the browser walk).
   const count = recentChangeCount();
-  if (!count) return '';
   const open = state.expandedGroups.has('changes');
   let body = '';
   if (open && state.changeRecords === null) {
     body = gatedLoader(loadGate, 'Loading…', 'cur-fold-item cur-fold-item-meta dm-issue-row dm-issue-meta');
+  } else if (open && !state.changeRecords.length) {
+    body = renderFoldItem({ alias: 'dm', meta: 'Nothing was changed here in the last 30 days.' });
   } else if (open) {
     body = renderFoldItem({ alias: 'dm', meta: 'Kept for 30 days on this computer. Undo puts back every page of a change exactly as it was, or none: it refuses if any of them has changed since, and never reaches other computers.' }) +
       state.changeRecords.map((c) => {
@@ -9076,9 +9110,7 @@ async function askUndoChange(slug, id) {
   state.confirm = {
     anchor: rowKey,
     title: 'Undo “' + c.title + '”?',
-    body: 'Puts back ' + (c.pages === 1 ? 'this page' : 'these ' + n0(c.pages) + ' pages') + (c.index ? ' and the page list' : '') +
-      (c.pages === 1 && !c.index ? ' exactly as it was' : ' exactly as they were') + ' before this change: ' + listPages(c.pageList) + '.' +
-      (c.deleted && c.deleted.length ? ' ' + listPages(c.deleted) + (c.deleted.length === 1 ? ' comes back.' : ' come back.') : ''),
+    body: undoWords(c).body,
     warn: 'This works on this computer only. Another computer that already has this change gets these pages back after both computers sync again.',
     confirmLabel: 'Undo',
     busyLabel: 'Undoing…',
@@ -9093,9 +9125,8 @@ async function runUndoChange(slug, id) {
   try {
     const res = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/changes/' + encodeURIComponent(id) + '/undo', { method: 'POST' });
     if (!isCurrentMount(token)) return;
-    const n = res.change && res.change.pages;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'success', text: n === 1 ? 'Undone. The page is back as it was.' : 'Undone. ' + n0(n) + ' pages are back as they were.' };
+    state.rowNote = { key: rowKey, tone: 'success', text: undoWords(res.change || {}).done };
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
@@ -9281,9 +9312,7 @@ function onHealthClick(e) {
     return;
   }
   if (btn.classList.contains('dm-change-undo-btn') && data.changeId) {
-    // The question and the outcome draw under this row (press rule).
-    state.pressAnchor = 'change:' + data.changeId;
-    state.pressOpener = 'change:' + data.changeId;
+    pressUndoRow(data.changeId);
     dispatchHealthAction(() => askUndoChange(domain.slug, data.changeId));
   }
 }

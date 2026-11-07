@@ -655,6 +655,16 @@ export async function recoverHealthUndo(domain) {
   }
 }
 
+/**
+ * What the server runs at start: finish what a crash left, then expire copies
+ * older than 30 days (and over the cap), so they do not wait for the next
+ * Health action to go. Never throws.
+ */
+export async function startHealthUndo() {
+  try { await recoverAllHealthUndo(); } catch (err) { console.error('[health-undo] recovery at start failed:', err.message); }
+  try { await pruneHealthUndo(); } catch (err) { console.error('[health-undo] expiry at start failed:', err.message); }
+}
+
 /** Every domain folder that has records: run recovery for each. For the server's start. */
 export async function recoverAllHealthUndo() {
   let names;
