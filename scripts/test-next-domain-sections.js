@@ -2402,9 +2402,10 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     const keys = rows.map((r) => r.key);
     // CONTROL FIRST. Four rows have to BE there, or "none of them is open" is
     // a statement about an empty list -- the vacuity this suite keeps finding.
-    eq('CONTROL -- section 5 renders four fold rows', keys.length, 4);
-    ok('...and they are the two issue kinds and Left as is, in the lane, then Scan details',
-      keys.join(',') === 'orphans,brokenLinksOpen,dismissed,scan', keys.join(','));
+    // Five since 2026-11-07: Recent changes (Undo) is always drawn above Scan details.
+    eq('CONTROL -- section 5 renders five fold rows', keys.length, 5);
+    ok('...and they are the two issue kinds and Left as is, in the lane, then Recent changes and Scan details',
+      keys.join(',') === 'orphans,brokenLinksOpen,dismissed,changes,scan', keys.join(','));
     ok('EVERY one of them ships CLOSED when the preference names none -- the headline '
       + 'in each summary IS the reading, and the breakdown is the dive-in',
       rows.every((r) => !r.open), rows.map((r) => r.key + '=' + r.open).join(' '));
@@ -2413,7 +2414,7 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
   // ...AND EACH ONE OPENS, ON ITS OWN, WHEN THE PREFERENCE NAMES IT. Without
   // this half, "nothing is open" is satisfiable by a panel that can never open
   // anything at all.
-  for (const key of ['scan', 'brokenLinksOpen', 'orphans', 'dismissed']) {
+  for (const key of ['scan', 'brokenLinksOpen', 'orphans', 'dismissed', 'changes']) {
     const html = callOrFail('the panel renders with ' + key + ' remembered', () => render([key]));
     if (!html) continue;
     const rows = rowsOf(html);
@@ -2421,7 +2422,7 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     const others = rows.filter((r) => r.key !== key);
     ok('`' + key + '` opens when the preference names it, and ONLY it -- so the state '
       + 'that decides is read per row rather than shared',
-      !!mine && mine.open && others.length === 3 && others.every((r) => !r.open),
+      !!mine && mine.open && others.length === 4 && others.every((r) => !r.open),
       rows.map((r) => r.key + '=' + r.open).join(' '));
   }
 

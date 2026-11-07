@@ -9036,7 +9036,7 @@ function renderChangesRow(readonly, crossMountBusy) {
   const count = recentChangeCount();
   const open = state.expandedGroups.has('changes');
   let body = '';
-  if (open && state.changeRecords === null) {
+  if (open && !Array.isArray(state.changeRecords)) {
     body = gatedLoader(loadGate, 'Loading…', 'cur-fold-item cur-fold-item-meta dm-issue-row dm-issue-meta');
   } else if (open && !state.changeRecords.length) {
     body = renderFoldItem({ alias: 'dm', meta: 'Nothing was changed here in the last 30 days.' });
