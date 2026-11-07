@@ -6424,8 +6424,13 @@ Here is the recommended way to use The Curator day-to-day:
 | ✓ Domain schemas | ✗ App code |
 | ✓ Working state — each project's brief, handoffs, Journal and Documents | ✗ Each agent tool's MCP entry, skills and hooks |
 | ✓ Health dismissals | ✗ Your project's own code repository — `CLAUDE.md`, `AGENTS.md`, `.curator-project` travel by that project's git, never by Sync |
+| ✓ Other folders and files in your knowledge folder, even if they are not domains | ✗ Files that look like secrets (`.env`, key files, `credentials.json` and similar) |
+| | ✗ Any folder with its own git history (a `.git` inside it) |
+| | ✗ Obsidian Bases (`*.base`) and `Untitled.md` notes |
 
-**Sync now** always syncs your **whole** knowledge folder, every domain. For what travels by which
+The Sync page has a section called **What Sync does not back up**, which names these files. Before your first push you see the folders that are not domains, and you can leave them out. If a secret is already in your repository, or a folder has its own git history, the page says what to do; [docs/sync.md](sync.md) has the steps.
+
+**Sync now** always syncs your **whole** knowledge folder, every domain, apart from the files above. For what travels by which
 route when you work on one project from two computers, see
 [What travels between your computers, and how](#what-travels-between-your-computers-and-how).
 

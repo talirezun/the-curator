@@ -2649,7 +2649,7 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 
 ## Personal Sync endpoints (`/api/sync`)
 
-Mounted at `/api/sync/` (`src/routes/sync.js`). Eight routes, and **that is the whole
+Mounted at `/api/sync/` (`src/routes/sync.js`). Nine routes, and **that is the whole
 surface** — there is deliberately no revert, discard or history endpoint. Every mutating
 route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
 `conflictResponse` rather than letting a git command race it.
@@ -2658,6 +2658,7 @@ route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
 |---|---|---|
 | `GET /status` | no | no |
 | `GET /remote-status` | no | no (network; 5-minute server-side TTL cache) |
+| `GET /backup-report` | no | no (local; walks the folder, so it is not part of `/status`) |
 | `POST /preflight` | yes | **no — measures only** |
 | `POST /setup` | yes | depends on `mode`; see below |
 | `POST /push` | yes | commits + pushes |
@@ -2718,6 +2719,10 @@ field above them keeps its name, type and meaning.
 
 The **path** of an adopted git dir is not returned here. It is returned exactly once, by
 `POST /setup`'s adopt branch.
+
+### GET /api/sync/backup-report
+
+What is and is not in the backup, with no network and no write. Unconfigured: `{ "configured": false }`. Otherwise `nestedRepos` and `brokenLinks` (arrays of paths), `credentialsLeftOut`, `credentialsInRepo`, `rawSources`, `obsidianFiles` and `ownRules` (each `{ count, files }`, at most 25 names), `housekeepingCount`, `backedUpFiles`, and `nonDomain` (`[{ name, files, isFolder }]`; `name` is `null` for loose files at the top). It reports names only, never a value. `POST /preflight` returns the same shape as `backup` (or `null`), and `POST /push`, `/pull` and `/setup` return it as `backup` beside `partial`, `warning`, `repairedLinks` and `heldBack`.
 
 ### POST /api/sync/preflight
 

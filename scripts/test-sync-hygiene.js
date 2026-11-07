@@ -838,7 +838,9 @@ try {
       const before = src.slice(Math.max(0, idx - 60), idx);
       const after = src.slice(idx, idx + 260);
       assertTrue(/try\s*\{[\s\S]*$/.test(before), `commit call at offset ${idx} is preceded by a try {`);
-      assertTrue(/catch\s*\(\w+\)\s*\{[\s\S]*nothing to commit/.test(after),
+      // isCleanIndexError is the same check in its three git wordings; what it
+      // accepts is pinned, and mutation-proved, in test-sync-foreign-folders.js §7.
+      assertTrue(/catch\s*\(\w+\)\s*\{[\s\S]*(nothing to commit|isCleanIndexError)/.test(after),
         `commit call at offset ${idx} is followed by a catch (any parameter name) that checks 'nothing to commit'`);
     }
 

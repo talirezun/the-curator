@@ -152,6 +152,7 @@ const sandboxSrc =
   `function isAnyWriteBusy() { return false; }\n` +
   `function getDomainWriteLabel() { return null; }\n` +
   `function renderStatus() { return '<div class="stub-status"></div>'; }\n` +
+  `function backupReportHtml() { return ''; }\n` +
   extractObjectOrSimpleConst(appSrc, 'ICON_BODY', 'app.js') + '\n' +
   extractObjectOrSimpleConst(appSrc, 'MISSING_ICON_BODY', 'app.js') + '\n' +
   APP_FNS.map((n) => extractFunction(appSrc, n, 'app.js')).join('\n\n') + '\n' +

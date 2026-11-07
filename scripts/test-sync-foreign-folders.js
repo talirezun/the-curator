@@ -117,8 +117,12 @@ function fingerprint(dir) {
 }
 
 /** The state v3.96.1 left behind: a commit on the remote holding a gitlink. */
-function makeBadState(c) {
-  nestedRepo(c.domains, 'vault');
+async function makeBadState(c, { noSchema = false } = {}) {
+  // The .gitignore goes in the bad commit, as setup() put it there. Without this
+  // the first sync finds a dirty folder and the CLEAN case is never exercised.
+  await sync.__testing.ensureDomainsGitignore();
+  const v = nestedRepo(c.domains, 'vault');
+  if (noSchema) sh('git rm -q CLAUDE.md && git -c user.email=t@t.t -c user.name=T commit -qm no-schema', v);
   write(c.domains, 'real/CLAUDE.md');
   write(c.domains, 'real/wiki/entities/r.md');
   const G = `git --git-dir="${c.gitDir}" --work-tree="${c.domains}"`;
@@ -178,6 +182,7 @@ try {
     ok(r.backup.credentialsLeftOut.files.includes('alpha/server.pem'), 'and names it');
     ok(!JSON.stringify(r.backup).includes(SECRET_LOOKING), 'no value reaches the report');
     ok(!r.partial, 'a left-out secret alone is not a partial backup');
+    eq((await sync.getStatus()).changesCount, 0, 'and it does not sit on the pending count');
   }
 
   section('1b. The second layer: a `!.env` in a nested .gitignore cannot bring it back');
@@ -207,6 +212,8 @@ try {
     const m = computer(remote, 'merge');
     write(m.domains, 'beta/CLAUDE.md');
     write(m.domains, 'beta/.env');
+    // A negated rule, so every path here is held by the chokepoint alone.
+    write(m.domains, 'beta/.gitignore', '!.env\n!*.key\n');
     await setup(m.url, 't', 'merge');
     await push();
     let tree = remotePaths(remote);
@@ -238,6 +245,7 @@ try {
     ok(!tree.includes('.obsidian/plugins/copilot/data.json'), 'settings holding a key stay here');
     ok(tree.includes('.obsidian/plugins/calm/data.json') && tree.includes('.obsidian/app.json'), 'the rest of .obsidian still syncs');
     ok(r.backup.credentialsLeftOut.files.includes('.obsidian/plugins/copilot/data.json'), 'and it is named');
+    eq((await sync.getStatus()).changesCount, 0, 'and it does not sit on the pending count');
   }
 
   section('2. Already on the remote: warned, not pushed again, history untouched');
@@ -433,6 +441,7 @@ try {
     write(c5.domains, 'deep/er/sibling.md');
     await push();
     ok(remotePaths(c5.remote).includes('deep/er/sibling.md'), 'its sibling still goes');
+    eq((await sync.getStatus()).changesCount, 0, 'and the name was excluded literally, so nothing stays pending');
 
     // Merge connect.
     const remote6 = newRemote();
@@ -482,7 +491,7 @@ try {
   {
     const remote = newRemote();
     const c = computer(remote);
-    makeBadState(c);
+    await makeBadState(c);
     ok(remoteTree(remote).some((e) => e.mode === '160000'), 'precondition: the remote holds a gitlink');
     const badHead = remoteHead(remote);
     const vault = path.join(c.domains, 'vault');
@@ -507,7 +516,7 @@ try {
     // The reported failure: a dirty gitlink, through sync(), whose first step is pull().
     const remote2 = newRemote();
     const d = computer(remote2);
-    makeBadState(d);
+    await makeBadState(d);
     write(path.join(d.domains, 'vault'), 'wiki/entities/dirty.md');
     write(path.join(d.domains, 'vault'), 'CLAUDE.md', 'modified\n');
     let threw = null;
@@ -520,7 +529,7 @@ try {
   {
     const remote = newRemote();
     const a = computer(remote, 'a');
-    makeBadState(a);
+    await makeBadState(a);
 
     // B connected before the repair, with its own real repository at that path.
     const b = computer(remote, 'b');
@@ -543,6 +552,52 @@ try {
     ok(existsSync(path.join(bVault, '.git/HEAD')), 'B’s nested repository survives');
     eq(fingerprint(bVault), bBefore, 'byte for byte');
     ok(res && !(res.pruned || []).includes('vault'), 'it is not reported as pruned');
+
+    // The hard case for prune: B's history still holds the gitlink and its status
+    // is CLEAN (its vault is at the linked commit), so nothing repairs it before
+    // the merge, and the merge's deletion nominates the folder holding the repo.
+    const remoteC = newRemote();
+    const a2 = computer(remoteC, 'a2');
+    // No CLAUDE.md: a domain's schema would keep the folder under rule 2 alone.
+    await makeBadState(a2, { noSchema: true });
+    const b2 = computer(remoteC, 'b2');
+    const GB = `git --git-dir="${b2.gitDir}" --work-tree="${b2.domains}"`;
+    mkdirSync(b2.gitDir);
+    sh(`${GB} init -q -b main && ${GB} config user.email t@t.t && ${GB} config user.name T && ${GB} remote add origin "${b2.url}"`, ROOT_TMP);
+    sh(`${GB} fetch -q origin main && ${GB} reset -q FETCH_HEAD && ${GB} checkout -q -f -B main FETCH_HEAD && ${GB} branch -q -u origin/main`, ROOT_TMP);
+    writeFileSync(b2.configFile, JSON.stringify({ repoUrl: b2.url, token: 't' }));
+    rmSync(path.join(b2.domains, 'vault'), { recursive: true, force: true });
+    sh(`git clone -q "${path.join(a2.domains, 'vault')}" "${path.join(b2.domains, 'vault')}"`, ROOT_TMP);
+    const b2Vault = path.join(b2.domains, 'vault');
+    const b2Before = fingerprint(b2Vault);
+    ok(sh(`${GB} status --porcelain`, ROOT_TMP).trim() === '', 'precondition: B is clean, with the gitlink in its history');
+    a2.use();
+    await push();
+    b2.use();
+    const b2res = await pull();
+    ok(existsSync(path.join(b2Vault, '.git/HEAD')), 'a clean computer keeps its repository through the repair');
+    eq(fingerprint(b2Vault), b2Before, 'byte for byte');
+    ok((b2res.prunedKept || []).includes('vault') && !(b2res.pruned || []).includes('vault'), 'and it is reported as kept, not pruned');
+
+    // A healthy computer pulls a gitlink an older version just pushed.
+    const remote3 = newRemote();
+    const old = computer(remote3, 'old');
+    await makeBadState(old);
+    const healthy = computer(remote3, 'healthy');
+    write(healthy.domains, 'h/CLAUDE.md');
+    await setup(healthy.url, 't', 'merge');
+    await push();
+    old.use();
+    write(old.domains, 'real/wiki/entities/later.md');
+    const G3 = `git --git-dir="${old.gitDir}" --work-tree="${old.domains}"`;
+    sh(`${G3} pull -q --no-rebase --no-edit origin main`, ROOT_TMP);
+    sh(`${G3} add real && ${G3} commit -qm later && ${G3} update-index --add --cacheinfo 160000,${sh(`git -C "${path.join(old.domains, 'vault')}" rev-parse HEAD`).trim()},again && ${G3} commit -qm link-again && ${G3} push -q origin main`, ROOT_TMP);
+    ok(remoteTree(remote3).some((e) => e.path === 'again' && e.mode === '160000'), 'precondition: an old version pushed a new gitlink');
+    healthy.use();
+    const hr = await pull();
+    ok(hr.repairedLinks.includes('again'), 'the pull repairs a gitlink the merge brought');
+    await push();
+    ok(!remoteTree(remote3).some((e) => e.mode === '160000'), 'and the next push clears the remote');
 
     // A secret alone in a folder another computer deleted stays too.
     const remote2 = newRemote();
@@ -633,6 +688,13 @@ try {
       body = await res.json();
       eq(res.status, 409, 'nothing but a nested repository is a 409');
       eq(body.code, 'only-nested-repos', 'with its code');
+
+      const c4 = computer(newRemote());
+      write(c4.domains, 'real/CLAUDE.md');
+      write(c4.domains, 'Journal/d.md');
+      res = await post('/setup', { repoUrl: c4.url, token: 't', mode: 'push', leaveOut: ['Journal'] });
+      eq(res.status, 200, 'POST /setup takes leaveOut');
+      ok(!remotePaths(c4.remote).includes('Journal/d.md'), 'and honours it');
 
       const c3 = computer(newRemote());
       write(c3.domains, 'real/CLAUDE.md');

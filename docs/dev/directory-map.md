@@ -55,6 +55,7 @@ src/
     chat.js       — multi-turn chat against the wiki
     recent-new-pages.js — which pages recent ingests created (per domain, in the user-data dir, outside domains/); only orders the duplicate scan
     sync.js       — GitHub sync (git --git-dir / --work-tree)
+    sync-safety.js — what Sync must not send: secret-shaped names, nested repositories, plugin settings holding a key; no git, no network
     duplicate-checks.js — what "Find duplicate pages" remembers (per domain, in the user-data dir, outside domains/) and the spelling-variant test that gates batch merge
     health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks);
                     v3.83.0: the `indexDrift` check (report-only) + planIndexRebuild/applyIndexRebuild (the previewed index.md rebuild);
