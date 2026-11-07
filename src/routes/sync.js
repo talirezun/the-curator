@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  isConfigured, getStatus, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
+  isConfigured, getStatus, getBackupReport, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
   SETUP_MODES, push, pull, sync, disconnect, friendlyError,
 } from '../brain/sync.js';
 import { noteRemoteStatus } from '../brain/tray-summary.js';
@@ -52,6 +52,17 @@ router.get('/status', async (req, res) => {
     res.json(await getStatus());
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// What is and is not in the backup: read by the Sync page. Local (no fetch) and
+// writes nothing, so it needs no guard, but it walks the folder, which is why it
+// is its own route and not part of /status, which the rail badge polls.
+router.get('/backup-report', async (req, res) => {
+  try {
+    res.json(await getBackupReport());
+  } catch (err) {
+    res.status(500).json({ error: friendlyError(err) || err.message });
   }
 });
 
@@ -159,7 +170,7 @@ router.post('/preflight', guardConcurrent('check sync'), async (req, res) => {
 // without the middleware.
 router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
   try {
-    const { repoUrl, token, mode, confirmOverwrite } = req.body;
+    const { repoUrl, token, mode, confirmOverwrite, leaveOut } = req.body;
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl is required' });
     if (!token)   return res.status(400).json({ error: 'token is required' });
     if (!SETUP_MODES.includes(mode))
@@ -176,11 +187,14 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     // that cannot be taught a new dialog means the safety has to live on
     // this side of the wire, and that still holds for any client today.
     const result = await runSyncJob('setup', async () => {
-      const r = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
+      const r = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true, leaveOut });
       await recordDomainIdentities();
       return r;
     }, JOB_OPTS);
-    res.json({ success: true, ...result, ...(await getStatus()) });
+    // `success` is about the backup, not the connection: a folder that was left
+    // out because it has its own git history was NOT backed up. Connected, and
+    // said so, but never a plain success.
+    res.json({ success: !result.partial, ...result, ...(await getStatus()) });
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
     // A REFUSAL IS NOT A CRASH. setup()'s guards raise a written sentence
