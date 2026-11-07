@@ -214,6 +214,15 @@ section('§1b The record: plain words, page counts, the deleted page');
   const r2 = await health.fixIssue(d.name, 'semanticDupe', { keepSlug: 'neural-network', keepFolder: 'concepts', removeSlug: 'neural-networks', removeFolder: 'concepts' });
   ok(r2.fixed === 0 && !r2.undo && (await undo.listHealthChanges(d.name)).length === 1, 'a refused action leaves no record', JSON.stringify(r2));
 
+  // A write of the same bytes is not a change: no record, no copy left behind.
+  const { writeFileAtomic } = await import(path.join(REPO, 'src/brain/atomic-write.js'));
+  const same0 = await undo.withHealthUndo(d.name, { kind: 'test', title: 'same bytes' }, async () => {
+    const f = path.join(d.wiki, 'concepts/linker.md');
+    await writeFileAtomic(f, readFileSync(f));
+    return {};
+  });
+  ok(!same0.undo && (await undo.listHealthChanges(d.name)).length === 1, 'rewriting a page with its own bytes records nothing', JSON.stringify(same0));
+
   // A batch of spelling variants is ONE change, undone all at once.
   const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
   const files = {};
@@ -285,6 +294,16 @@ section('§2 A page changed since refuses the whole undo');
   let again = null;
   try { await undo.undoHealthChange(d.name, first.undo.id); } catch (e) { again = e; }
   ok(again && again.code === undo.UNDO_NOT_READY && /already undone/.test(again.message), 'a second undo is refused', again && again.message);
+  // A damaged copy refuses before anything is written.
+  const third = await health.fixIssue(d.name, 'hyphenVariants', { suggestedSlug: 'e-mail', files: ['e-mail', 'email'] });
+  const recDir = path.join(undo.domainUndoDir(d.name), third.undo.id);
+  const rec3 = JSON.parse(readFileSync(path.join(recDir, 'record.json'), 'utf8'));
+  writeFileSync(path.join(recDir, rec3.files[rec3.files.length - 1].copy), 'damaged');
+  const merged3 = tree(d.wiki);
+  let dmg = null;
+  try { await undo.undoHealthChange(d.name, third.undo.id); } catch (e) { dmg = e; }
+  ok(dmg && /missing or damaged/.test(dmg.message) && same(tree(d.wiki), merged3), 'a damaged copy refuses the undo and writes nothing', dmg && dmg.message);
+
   // A forged id is refused before any path is built.
   let forged = null;
   try { await undo.undoHealthChange(d.name, '../../etc'); } catch (e) { forged = e; }
