@@ -196,8 +196,8 @@ section('§3 estimates are conservative — a call that COULD cross is quoted up
   const b = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: s5, model: null });
   ok(Math.abs(a.inputTokens / b.inputTokens - 1.329) < 0.001, 'a FLAT Claude model counts the tokenizer premium too');
   ok(a.usdHigh > b.usdHigh, '...and so quotes above the un-premiumed arithmetic');
-  const g = llm.getModelPrice('gemini-2.5-flash-lite');
-  const ga = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: g, model: 'gemini-2.5-flash-lite' });
+  const g = llm.getModelPrice('gemini-3.5-flash-lite');
+  const ga = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: g, model: 'gemini-3.5-flash-lite' });
   const gb = q.estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: bigIndex, today: '2026-10-08', price: g, model: null });
   ok(ga.usdHigh === gb.usdHigh && ga.usdLow === gb.usdLow, 'a model with no premium and no Claude output figure is byte-identical to the old arithmetic');
 }
@@ -294,7 +294,7 @@ section('§6 migration — forward to the same family\'s newest model, told once
   ok(pendingRetirementNotes(storage).length === 1 && /Your chat model moved from Sonnet 4\.6 to Sonnet 5\.5/.test(pendingRetirementNotes(storage)[0].text), 'one chat note, in words');
   migrateStoredChatModel('claude-sonnet-5-5', retired, storage);
   ok(pendingRetirementNotes(storage).length === 1, 'a pick that is not retired adds nothing (shown once)');
-  ok(migrateChatModelId('gemini-2.5-flash-lite', retired).note === null, 'a non-Anthropic or current pick is left alone');
+  ok(migrateChatModelId('gemini-3.5-flash-lite', retired).note === null, 'a current (not retired) pick is left alone');
   mem.delete(LS_RETIREMENT_NOTES);
   ok(pendingRetirementNotes(storage).length === 0, 'cleared notes stay cleared');
 }

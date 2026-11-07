@@ -179,10 +179,10 @@ const checked = (id) => PRICES[id];
 
   // Nonsense prices record nothing.
   llm.__testing.recordLiveStaticPrices({ [SOLAR]: { input: 0, output: 0 }, [GLM]: { input: -1, output: 5 },
-    'gemini-2.5-flash-lite': { input: 9, output: 9 }, 'zz/not-ours': { input: 1, output: 1 } }, {});
+    'gemini-3.5-flash-lite': { input: 9, output: 9 }, 'zz/not-ours': { input: 1, output: 1 } }, {});
   eq(byId[SOLAR].livePrice, null, 'a zero price records nothing — absent, never "free"');
   eq(byId[GLM].livePrice, null, 'a negative (router "-1") price records nothing');
-  eq(llm.liveCataloguePrice('gemini-2.5-flash-lite'), null, 'a non-OpenRouter id never takes a live figure');
+  eq(llm.liveCataloguePrice('gemini-3.5-flash-lite'), null, 'a non-OpenRouter id never takes a live figure');
   eq(llm.liveCataloguePrice('zz/not-ours'), null, 'nor does an id we do not hand-price');
   eq(T.liveStaticPriceFromRecord({ pricing: { prompt: '1e-7', completion: '0.0000002' } }), null,
     'scientific notation is unparseable and records nothing (the adapter\'s exact converter)');
@@ -259,22 +259,20 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
   // id -> [[exact substring, check]]. The substring must be IN the text; every
   // detector hit must fall inside one of them; every check must hold.
   const CLAIMS = {
-    'gemini-2.5-flash-lite': [
-      ['the cheapest Gemini model', () => std('gemini-2.5-flash-lite').input === minIn(listOf('gemini'))],
-    ],
+    // 2026-11-07: the default is gemini-3.5-flash-lite ($0.30/$2.50); the
+    // 2.5 ids are retired. Per-source dollar figures and fact-capture
+    // percentages are MEASURED bills and counts (MEASURE.md), not rates.
     'gemini-3.1-flash-lite': [
-      ['2.5x the input and 3.75x the output price of the default', () =>
-        near(std('gemini-3.1-flash-lite').input / std('gemini-2.5-flash-lite').input, 2.5)
-        && near(std('gemini-3.1-flash-lite').output / std('gemini-2.5-flash-lite').output, 3.75)],
-      ['Dearer than the default', () => std('gemini-3.1-flash-lite').input > std('gemini-2.5-flash-lite').input],
-    ],
-    'gemini-2.5-flash': [
-      ['at 3x the input price', () => near(std('gemini-2.5-flash').input / std('gemini-2.5-flash-lite').input, 3)],
+      ['Cheaper per token than the default ($0.25/$1.50 against $0.30/$2.50)', () =>
+        $pair('gemini-3.1-flash-lite') === '$0.25/$1.5' && $pair('gemini-3.5-flash-lite') === '$0.3/$2.5'
+        && std('gemini-3.1-flash-lite').input < std('gemini-3.5-flash-lite').input
+        && std('gemini-3.1-flash-lite').output < std('gemini-3.5-flash-lite').output],
+      ['it put 28% of the facts into the wiki where Flash Lite 3.5 put 39%, at about $0.026 a source against $0.033', NOT_A_RATE],
+      ['Cheaper per token than the default, but captured fewer facts.', () =>
+        std('gemini-3.1-flash-lite').input < std('gemini-3.5-flash-lite').input],
     ],
     'gemini-3.5-flash-lite': [
-      ['gemini-2.5-flash costs exactly the same', () =>
-        std('gemini-2.5-flash').input === std('gemini-3.5-flash-lite').input
-        && std('gemini-2.5-flash').output === std('gemini-3.5-flash-lite').output],
+      ["it put 39% of the sources' facts into the wiki (24% on a stricter judge), at about $0.033 a source; Flash Lite 3.1 put 28% (16%) at $0.026, and Haiku 5.5 88% (78%) at $0.020.", NOT_A_RATE],
     ],
     'gemini-3.7-flash': [
       ['PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from 2027-01-01', () =>
@@ -282,7 +280,9 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
         && T.PROMOTIONAL_PRICES['gemini-3.7-flash'].untilIso === '2026-12-31'
         && std('gemini-3.7-flash').input === 1.5 && std('gemini-3.7-flash').output === 7.5],
       ['the standard price is what standardInput/standardOutput carry', () => byId['gemini-3.7-flash'].standardInput === std('gemini-3.7-flash').input],
-      ['far cheaper default', () => std('gemini-2.5-flash-lite').input * 5 <= promo('gemini-3.7-flash').input],
+      ['the same coverage as the cheaper default', () => std('gemini-3.5-flash-lite').input < promo('gemini-3.7-flash').input
+        && std('gemini-3.5-flash-lite').output < promo('gemini-3.7-flash').output],
+      ['Dearer than the default', () => promo('gemini-3.7-flash').input > std('gemini-3.5-flash-lite').input],
       ['the promotional price doubles when it ends', () => near(std('gemini-3.7-flash').input / promo('gemini-3.7-flash').input, 2)],
     ],
     'gemini-3.6-flash': [
@@ -296,9 +296,9 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
     'gemini-3.5-flash': [
       ['The most expensive Gemini model here', () => std('gemini-3.5-flash').output === Math.max(...listOf('gemini').map(i => std(i).output))
         && std('gemini-3.5-flash').input === maxIn(listOf('gemini'))],
-      ['15x the input and 22.5x the output price of the default', () =>
-        near(std('gemini-3.5-flash').input / std('gemini-2.5-flash-lite').input, 15)
-        && near(std('gemini-3.5-flash').output / std('gemini-2.5-flash-lite').output, 22.5)],
+      ['5x the input and 3.6x the output price of the default', () =>
+        near(std('gemini-3.5-flash').input / std('gemini-3.5-flash-lite').input, 5)
+        && near(std('gemini-3.5-flash').output / std('gemini-3.5-flash-lite').output, 3.6)],
       ['The dearest Gemini here', () => std('gemini-3.5-flash').input === maxIn(listOf('gemini'))],
     ],
     'claude-haiku-4-5': [
@@ -430,7 +430,7 @@ section('§5. Every price claim in a model note is registered and recomputed [F5
 
   // The two sentences the audit found false, by name.
   ok(!/20x the pinned default/.test(byId['moonshotai/kimi-k2-0905'].note), 'the false "20x the pinned default" is gone from Kimi K2 0905');
-  ok(!/cheapest model on either provider/.test(byId['gemini-2.5-flash-lite'].note), 'the false "cheapest model on either provider" is gone');
+  ok(!/cheapest model on either provider/.test(OFFERABLE_MODELS.gemini.map(e => e.note).join(' ')), 'the false "cheapest model on either provider" is gone');
   ok(!/\$0\.075|\$0\.03\/\$0\.12|nine tenths|a sixth/.test(OFFERABLE_MODELS.openrouter.map(e => e.note).join(' ')),
     'no OpenRouter note restates a rate or a ratio that the price table and its date now carry');
 }

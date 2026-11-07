@@ -846,6 +846,32 @@ export function addModelMigrationNotes(notes) {
   return next;
 }
 
+/**
+ * ── Default-change acknowledgements (2026-11-07) ─────────────────────────────
+ * A user with NO stored pick runs the provider default, so moving a default
+ * (gemini-2.5-flash-lite → gemini-3.5-flash-lite) changes their model AND their
+ * price without any pick to migrate. llm.js records ONE note for such a user and
+ * remembers here which default it announced, so the note is never repeated.
+ * `{ [provider]: modelId }`, own string entries only.
+ */
+export function getDefaultChangeAcks() {
+  const raw = readRaw().defaultChangeAcks;
+  const out = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const p of MODEL_PROVIDERS) {
+      if (Object.hasOwn(raw, p) && typeof raw[p] === 'string' && raw[p].length <= 200) out[p] = raw[p];
+    }
+  }
+  return out;
+}
+
+export function setDefaultChangeAck(provider, modelId) {
+  if (!MODEL_PROVIDERS.includes(provider) || typeof modelId !== 'string' || !modelId) return;
+  const cfg = readRaw();
+  cfg.defaultChangeAcks = { ...getDefaultChangeAcks(), [provider]: modelId };
+  writeRaw(cfg);
+}
+
 /** Dismiss: the notes are removed, so they are never shown again. */
 export function dismissModelMigrationNotes() {
   const cfg = readRaw();

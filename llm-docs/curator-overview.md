@@ -133,7 +133,7 @@ The Curator itself is free, open-source software. The only paid component is the
 
 | Model | Provider | Free? | Price per 1,000,000 tokens | Note |
 |---|---|---|---|---|
-| Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) | Google Gemini | Free tier available, rate-limited | $0.10 in, $0.40 out | The pinned default. About 5 euros a month at heavy solo use |
+| Gemini 3.5 Flash Lite (`gemini-3.5-flash-lite`) | Google Gemini | Free tier available, rate-limited | $0.30 in, $2.50 out | The Gemini default since 7 November 2026, when Google stopped serving Gemini 2.5 Flash Lite ($0.10 in, $0.40 out) and 2.5 Flash to new API keys. A saved 2.5 pick moves to 3.5 Flash Lite, and a one-time note gives both prices |
 | Claude Haiku 4.5 (`claude-haiku-4-5`) | Anthropic | No | $1.00 in, $5.00 out | The Anthropic default. 10 times the Gemini bill on input, 12.5 times on output |
 | Claude Haiku 5.5 (`claude-haiku-5-5`) | Anthropic | No | $0.10 in, $0.50 out on a call whose prompt is up to 100,000 tokens; $0.50 in, $2.50 out on a call over it | Added 8 October 2026; can build the wiki and chat. Each call is charged at its own rate, and cost estimates assume the higher rate for any call that could cross the line. The cheapest Anthropic model, but not the default |
 | Solar Pro 4 (`upstage/solar-pro4`) | OpenRouter | No | $0.15 in, $0.60 out | The OpenRouter default (measured against a billed call on 7 November 2026) |
@@ -143,7 +143,7 @@ Those are the defaults, not the only options. A hand-measured catalogue spans al
 
 An administrator running cohort-scale Shared Brain synthesis weekly is more like 10 to 20 euros a month.
 
-The app does not rank models and will not tell you which is best. Rows carry price, output ceiling, context window and what the measurement found. The one comparative label anywhere is *cheapest measured*, which is a fact. The word *verified* is never used about a model, because nine clean runs are still consistent with a meaningful failure rate.
+The app does not rank models. Rows carry price, output ceiling, context window and what the measurement found. Two comparative labels exist: *cheapest measured*, which is a fact, and, only when an Anthropic key is saved, *Recommended for ingest: Haiku 5.5*. That one comes from a measurement on 7 November 2026: six real sources into a 3,400-page wiki, where Haiku 5.5 kept 88% of the facts at $0.020 a source, Gemini 3.5 Flash Lite 39% at $0.033, and 3.1 Flash Lite 28% at $0.026. Every model stays in the list. The word *verified* is never used about a model, because nine clean runs are still consistent with a meaningful failure rate.
 
 **Since version 3.67.0, one model runs every AI job** — ingest, compile, wiki health, Shared Brain and reading plans — and every button that spends money shows what it will cost before it runs and what it actually cost after: "Runs on Flash Lite 2.5 · ≈6k tokens · ≈$0.0012 · Change model", then, once it has run, "Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008". A model with no published price still runs, and the line says so instead of guessing a figure. With no provider key, the same buttons stay visible but disabled, with a link to add one. Chat keeps its own per-message model picker, separate from the one model everything else runs on.
 

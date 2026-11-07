@@ -71,7 +71,10 @@ async function repeatPlanFor(domain, filePath) {
   const empty = { sameContent: false, kind: null, previous: null, model: null, gaps: [] };
   try {
     let model = null;
-    try { model = llmModule.getProviderInfo().model; } catch { model = null; }
+    try {
+      const i = llmModule.getProviderInfo();
+      model = typeof llmModule.answeringModel === 'function' ? llmModule.answeringModel(i.provider, i.model) : i.model;
+    } catch { model = null; }
     return await planRepeatIngest(domain, await hashRawSource(filePath), model);
   } catch {
     return empty;

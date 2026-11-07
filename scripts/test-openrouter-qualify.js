@@ -439,14 +439,18 @@ eq(llm.isBuildLaneModel('openrouter', GLM), true, 'and it is restored when the m
 
 section('12. A local run may FILL A GAP, never OVERTURN our own negative finding');
 
-// gemini-3.5-flash-lite is chat-only with jsonRaw FALSE: nine live runs found
-// unrepairable JSON in 2 of them. A user who gets nine clean runs on their own
-// wiki has sampled the other 78%, not refuted it.
+// gemini-3.5-flash-lite carries jsonRaw FALSE: nine live runs (2026-08-26)
+// found unrepairable JSON in 2 of them. It was chat-only until 2026-11-07, when
+// the owner made it the Gemini default (the 2.5 models it was measured against
+// were retired), so it is now IN the build lane by OUR decision. What a local
+// record must still never do is change a NON-OpenRouter verdict in either
+// direction: the lane answer after recording equals the one before.
 const gem = llm.listOfferableModels('gemini').find(m => m.jsonRaw === false);
-ok(!!gem, 'control: there IS a hand-measured chat-only model with jsonRaw false to attack');
+ok(!!gem, 'control: there IS a hand-measured Gemini model with jsonRaw false to attack');
+const gemLaneBefore = llm.isBuildLaneModel('gemini', gem.id);
 llm.recordLocalQualification(record({ modelId: gem.id }));
 eq(llm.isLocallyQualified('gemini', gem.id), false, 'a local record cannot qualify a NON-OpenRouter model');
-eq(llm.isBuildLaneModel('gemini', gem.id), false, `…and ${gem.id} stays out of the build lane`);
+eq(llm.isBuildLaneModel('gemini', gem.id), gemLaneBefore, `…and ${gem.id}'s build-lane verdict is OURS, unchanged by the record`);
 
 // ── THE SAME RULE INSIDE OPENROUTER ────────────────────────────────────────
 // `jsonRaw === null` is llm.js's own marker for "no measurement is recorded on
@@ -571,8 +575,10 @@ eq(llm.isBuildLaneModel('openrouter', GLM), true,
 // The most important hand-edit: claiming a pass for a model WE measured as bad.
 fs.writeFileSync(file, JSON.stringify({ version: 1, records: [record({ modelId: gem.id })] }));
 llm.restoreLocalQualifications();
-eq(llm.isBuildLaneModel('gemini', gem.id), false,
-  'a hand-written record cannot promote a model WE measured and found unfit');
+eq(llm.isLocallyQualified('gemini', gem.id), false,
+  'a hand-written record cannot qualify a model WE measured (a non-OpenRouter id)');
+eq(llm.isBuildLaneModel('gemini', gem.id), gemLaneBefore,
+  '…and its build-lane verdict stays the one WE recorded');
 
 section('15. THE UI STRINGS — the honesty rules are IN the rendered output');
 

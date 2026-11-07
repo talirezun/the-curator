@@ -176,11 +176,11 @@ section('3. Every id llm.js prices resolves through health-ai — none silently 
 section('4. Regression guard — stale ~25%-low Gemini-default pricing cannot come back silently');
 {
   const staleUsd = 1_000_000 * 0.075 + 1_000_000 * 0.30; // the OLD hardcoded table
-  const got = estimateUsdCost('gemini', 'gemini-2.5-flash-lite', 1_000_000, 1_000_000);
-  ok(got !== staleUsd, `gemini-2.5-flash-lite no longer prices at the old stale rate ($${staleUsd})`);
-  const live = getModelPrice('gemini-2.5-flash-lite');
+  const got = estimateUsdCost('gemini', 'gemini-3.5-flash-lite', 1_000_000, 1_000_000);
+  ok(got !== staleUsd, `gemini-3.5-flash-lite no longer prices at the old stale rate ($${staleUsd})`);
+  const live = getModelPrice('gemini-3.5-flash-lite');
   eq(got, live.input * 1_000_000 / 1_000_000 * 1 + live.output * 1_000_000 / 1_000_000 * 1,
-    'gemini-2.5-flash-lite prices at the CURRENT llm.js rate (whatever that is today)');
+    'gemini-3.5-flash-lite prices at the CURRENT llm.js rate (whatever that is today)');
 }
 
 // ── 5. Previously-uncovered models now price ─────────────────────────────────
@@ -193,12 +193,8 @@ section('4. Regression guard — stale ~25%-low Gemini-default pricing cannot co
 // LLM_MODEL — both surface identically to health-ai as `model`), and none of
 // them existed in the old local table.
 //
-// `gemini-3.5-flash-lite` was on this list until 2026-08-26, when it was
-// REMOVED from FALLBACK_CHAINS.gemini in llm.js (strictly dominated by
-// gemini-2.5-flash — same price, worse JSON reliability; see the removal note
-// above that chain). It no longer ships, so llm.js correctly returns no price
-// for it and asserting one here would fail for the right reason — do not
-// re-add it to this list without also re-adding the chain rung + its price.
+// (`gemini-3.5-flash-lite` left this list on 2026-08-26 and is the Gemini
+// DEFAULT since 2026-11-07, priced; §4 covers it.)
 section('5. Fallback-chain rungs + claude-sonnet-4-5 — the specific "shows nothing" models');
 {
   const previouslyMissing = [
@@ -217,7 +213,7 @@ section('5. Fallback-chain rungs + claude-sonnet-4-5 — the specific "shows not
 // ── 6. costFields — the honest-unavailable signal ────────────────────────────
 section('6. costFields — additive honesty signal, unchanged estimatedUsd contract');
 {
-  const known = costFields('gemini', 'gemini-2.5-flash-lite', 1000, 1000);
+  const known = costFields('gemini', 'gemini-3.5-flash-lite', 1000, 1000);
   eq(known.priceKnown, true, 'known model: priceKnown true');
   ok(typeof known.estimatedUsd === 'number' && known.estimatedUsd >= 0,
     'known model: estimatedUsd is a non-negative number');
@@ -232,8 +228,8 @@ section('6. costFields — additive honesty signal, unchanged estimatedUsd contr
   // A consumer that only ever checked `estimatedUsd != null` (the pre-existing
   // contract) must keep working byte-identically — priceKnown/costNote are
   // pure additions, never a replacement.
-  eq(costFields('gemini', 'gemini-2.5-flash-lite', 1000, 1000).estimatedUsd,
-    estimateUsdCost('gemini', 'gemini-2.5-flash-lite', 1000, 1000),
+  eq(costFields('gemini', 'gemini-3.5-flash-lite', 1000, 1000).estimatedUsd,
+    estimateUsdCost('gemini', 'gemini-3.5-flash-lite', 1000, 1000),
     'costFields.estimatedUsd matches a bare estimateUsdCost call — no behavioural change to the numeric field');
 }
 
@@ -247,7 +243,7 @@ section('7. estimateUsdCost — defensive inputs');
     'prototype-key model id → null, not inherited garbage (getModelPrice uses Object.hasOwn)');
   eq(estimateUsdCost('gemini', 'constructor', 1000, 1000), null,
     'prototype-key model id ("constructor") → null');
-  eq(estimateUsdCost('gemini', 'gemini-2.5-flash-lite', 0, 0), 0,
+  eq(estimateUsdCost('gemini', 'gemini-3.5-flash-lite', 0, 0), 0,
     'zero tokens → zero cost, not null (distinct from "unpriced")');
 }
 
@@ -410,7 +406,13 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
     return sent[0] || { status: 0, body: {} };
   };
   const without = (o, k) => { const c = { ...o }; delete c[k]; return c; };
-  const close = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-6;
+  // runsOn prices WHOLE token counts (the split shares are rounded) and is rounded to
+  // six places, so it may differ from the confirm by at most one token at each rate plus
+  // that rounding. On the $0.10/$0.40 default that sat under 1e-6; on the $0.30/$2.50
+  // default (2026-11-07) one output token is $0.0000025, so the bound is stated.
+  const p35 = getModelPrice('gemini-3.5-flash-lite');
+  const TOL = (p35.input + p35.output) / 1e6 + 1e-6;
+  const close = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) <= TOL;
   try {
     withKey();
     const domain = 'zztest-health-ai-run';
@@ -476,7 +478,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
     withKey();
 
     section('11. v3.67.0 — every Health plan and scan reports what it actually cost (spent)');
-    const MODEL = { provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+    const MODEL = { provider: 'gemini', model: 'gemini-3.5-flash-lite' };
     const fakeLLM = (reply, usagePerCall, { throwAfter = false } = {}) => {
       const seen = [];
       const fn = async (_s, _u, _m, _f, _w, opts = {}) => {
@@ -526,7 +528,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
       ok(llm.seen.length >= 1, `semantic scan: precondition — it made ${llm.seen.length} call(s)`);
       ok(same(done.spent, expectedSpent(llm.seen)), 'semantic scan: done.spent equals spentFromUsage of its calls');
       eq(Object.keys(done).slice(0, 4).join(','), 'type,pairs,cost,spent', 'semantic scan: done keeps pairs/cost, plus spent (coverage is additive after them)');
-      ok(typeof done.spent.usd === 'number' && done.spent.model === 'gemini-2.5-flash-lite', 'semantic scan: spent is priced on the model that billed');
+      ok(typeof done.spent.usd === 'number' && done.spent.model === 'gemini-3.5-flash-lite', 'semantic scan: spent is priced on the model that billed');
     }
     // (d) no call at all → spent is the nothing-ran shape, usd null (never $0).
     {

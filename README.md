@@ -542,7 +542,7 @@ structural Health scans and the MCP bridge itself cost nothing at all.
 
 | Provider | Free tier? | Paid price | Real-world |
 |---|---|---|---|
-| **Gemini 2.5 Flash Lite** *(default)* | Yes, but [rate-limited](https://ai.google.dev/gemini-api/docs/rate-limits) — enough to try, not to work | $0.10/M in · $0.40/M out | **~€5/month** at heavy solo use |
+| **Gemini 3.5 Flash Lite** *(default since 7 Nov 2026)* | Yes, but [rate-limited](https://ai.google.dev/gemini-api/docs/rate-limits) — enough to try, not to work | $0.30/M in · $2.50/M out | Google stopped serving 2.5 Flash Lite ($0.10/$0.40) to new keys; a saved 2.5 pick moves here with a note giving both prices |
 | **Anthropic Claude Haiku 4.5** | No | $1/M in · $5/M out | 10× the Gemini bill on input, 12.5× on output |
 | **Anthropic Claude Haiku 5.5** | No | $0.10/M in · $0.50/M out on calls up to 100k prompt tokens; 5× on a call over it | The cheapest Anthropic model; each call is charged at its own tier. About a fifth of Haiku 4.5 per ingest, under half on a 3,300-page wiki |
 | **Anthropic Claude Sonnet 5.5 / Opus 5.5** | No | $2/$10 · $4/$20 per M | Added 8 Oct 2026 with Haiku 5.5. Anthropic models two generations old (Sonnet 4.x, Opus 4.x) were retired; a saved pick moves forward to the 5.5 model of its family |

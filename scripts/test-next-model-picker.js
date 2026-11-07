@@ -2094,9 +2094,31 @@ section('§7  Rendered order is the DELIVERED order (cheapest first)');
         `"${prov}": the build lane is rendered ABOVE the chat-only lane`);
     }
   }
-  // Neither arm may be vacuous. Both are reached by the real catalogue today
-  // (gemini is mixed, anthropic is build-only); if that ever stops being true
-  // this says so instead of quietly asserting nothing.
+  // ── THE GROUPED ARM, ON A FIXTURE (2026-11-07) ────────────────────────
+  // Gemini was the mixed catalogue until gemini-3.5-flash-lite, its one
+  // chat-only entry, became the default and joined the build lane. No shipped
+  // static catalogue mixes lanes now, so the grouped path is driven by the real
+  // Gemini catalogue plus ONE chat-only row appended (dearest, so delivered
+  // order stays cheapest-first) — the renderer is what is under test.
+  {
+    const realChat = POPULATED.some((prov) => WIRE[prov].some(isChatLane));
+    if (!realChat) {
+      const extra = { ...WIRE.gemini[WIRE.gemini.length - 1], id: 'zz-chat-only-fixture', label: 'Chat-only fixture',
+        suitability: 'chat-only', jsonRaw: null };
+      const mixed = WIRE.gemini.concat([extra]);
+      const html = renderModelPicker(rowFor('gemini'), keysFor('gemini', { offerable: { ...WIRE, gemini: mixed } }));
+      const rendered = idsInOrder(html);
+      const want = mixed.filter((m) => !isChatLane(m)).concat(mixed.filter(isChatLane)).map((m) => escapeHtml(m.id));
+      ok(rendered.join('|') === want.join('|'), 'fixture mixed catalogue: build lane first, delivered order within each lane');
+      ok(html.includes('model-lane-head-build') && html.includes('model-lane-head-chat'),
+        'fixture mixed catalogue: both lane headings render');
+      ok(html.indexOf('model-lane-head-build') < html.indexOf('model-lane-head-chat'),
+        'fixture mixed catalogue: the build lane is ABOVE the chat-only lane');
+      groupedProviders++;
+    }
+  }
+  // Neither arm may be vacuous; if that ever stops being true this says so
+  // instead of quietly asserting nothing.
   ok(flatProviders > 0, `at least one real provider exercises the FLAT path (${flatProviders})`);
   ok(groupedProviders > 0, `at least one real provider exercises the GROUPED path (${groupedProviders})`);
   // Control: the delivered order is actually cheapest-first, so §7 is
@@ -2746,7 +2768,7 @@ section('§14  The COLLAPSED header answers "what am I running?" without an expa
     keysFor('gemini', { models: { gemini: '', anthropic: '' } }));
   ok(!/undefined|null/.test(/<summary[\s\S]*?<\/summary>/.exec(noDefault)[0]),
     'a missing default renders no placeholder text in the header');
-  ok(/<summary[\s\S]*?<\/summary>/.exec(noDefault)[0].includes('7 models'),
+  ok(/<summary[\s\S]*?<\/summary>/.exec(noDefault)[0].includes(WIRE.gemini.length + ' models'), // 7 before the 2.5 retirement (2026-11-07)
     'and the count is still there, so the header is never empty');
 }
 
@@ -4414,12 +4436,21 @@ section('§36  Models admitted through the REAL runtime path are chat-only, mark
       `${m.id}: a fetched, unmeasured model never appears in the build list at all`);
   }
 
-  // gemini-3.5-flash-lite is the OTHER kind of chat-only: MEASURED, and found
-  // unfit. It must be unpinnable too, and must NOT be badged "never measured".
+  // A MEASURED chat-only model is the OTHER kind of chat-only: measured, and
+  // found unfit. It must be unpinnable too, and must NOT be badged "never
+  // measured". gemini-3.5-flash-lite was the real one until it became the
+  // default (2026-11-07); with none shipped, a real measured row re-labelled
+  // chat-only stands in, so the renderer is still held to it.
   {
-    const gHtml = renderModelPicker(rowFor('gemini'), keysFor('gemini'), true, false);
-    const measuredChatOnly = WIRE.gemini.filter((m) => m.suitability === 'chat-only');
-    ok(measuredChatOnly.length > 0, 'the real Gemini catalogue contains a MEASURED chat-only model — this case is not hypothetical');
+    let gList = WIRE.gemini;
+    let measuredChatOnly = gList.filter((m) => m.suitability === 'chat-only');
+    if (measuredChatOnly.length === 0) {
+      const src = WIRE.gemini.find((m) => typeof m.jsonRaw === 'boolean');
+      gList = WIRE.gemini.concat([{ ...src, id: 'zz-measured-chat-only-fixture', suitability: 'chat-only', jsonRaw: false }]);
+      measuredChatOnly = gList.filter((m) => m.suitability === 'chat-only');
+    }
+    const gHtml = renderModelPicker(rowFor('gemini'), keysFor('gemini', { offerable: { ...WIRE, gemini: gList } }), true, false);
+    ok(measuredChatOnly.length > 0, 'a MEASURED chat-only model is present — this case is not vacuous');
     for (const m of measuredChatOnly) {
       const li = liFor(gHtml, m.id);
       ok(!li.includes('data-pick-model='),
@@ -5166,18 +5197,27 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
       }
     }
   }
-  ok(checkedFlagged >= 7, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
+  // (2026-11-07: floors 7/16/16 → 6/14/14 — gemini-2.5-flash-lite and
+  // gemini-2.5-flash were retired, and 3.5 Flash Lite is no longer flagged.)
+  ok(checkedFlagged >= 6, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
   // (2026-10-08: floors 18 → 16 — the Anthropic retirement removed four static
   // entries and the 5.5 generation added two.)
-  ok(checkedPrice >= 16, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
-  ok(checkedNote >= 16, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
+  ok(checkedPrice >= 14, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
+  ok(checkedNote >= 14, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
 
   // (d) ABSENT IS NOT ZERO, on the real screen. One shipping model has NO page
   // measurement at all; several have no latency. Their rows must omit the
   // clause rather than render a zero.
   {
-    const noPages = ['gemini', 'anthropic', 'openrouter']
+    let noPages = ['gemini', 'anthropic', 'openrouter']
       .flatMap((p) => WIRE[p] || []).filter((m) => m.outlinePagesLow == null && m.outlinePagesMedian == null);
+    // 2026-11-07: the one shipping model with no page measurement (3.5 Flash
+    // Lite, chat-only) became the measured default. A real row with its page
+    // fields removed keeps (d) able to fire.
+    if (noPages.length === 0) {
+      const { outlinePagesLow, outlinePagesHigh, outlinePagesMedian, ...rest } = WIRE.gemini[0];
+      noPages = [{ ...rest, id: 'zz-no-pages-fixture' }];
+    }
     ok(noPages.length >= 1, `corpus: ${noPages.length} shipping model has NO page measurement — (d) can fire`);
     for (const m of noPages) {
       const head = summaryOf(renderModelOption(m, 1, ''));
@@ -5186,7 +5226,8 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
     }
     const noLat = ['gemini', 'anthropic', 'openrouter']
       .flatMap((p) => WIRE[p] || []).filter((m) => m.medianLatencyMs == null);
-    ok(noLat.length >= 13, `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
+    ok(noLat.length >= 11, // 13 before the two 2.5 Gemini entries were retired (2026-11-07)
+      `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
     for (const m of noLat) {
       const head = summaryOf(renderModelOption(m, 1, ''));
       ok(!/per ingest call|measured at about/.test(head), `${m.id}: no speed clause where nothing was measured`);
@@ -5332,7 +5373,7 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
   ok(CORPUS.length >= 190, `corpus: ${CORPUS.length} models — real scale, not a 4-row fixture`);
   const freeCount = CORPUS.filter((m) => m.free === true).length;
   ok(freeCount >= 6, `corpus contains ${freeCount} FREE models`);
-  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 10, // 11 before Granite (2026-11-07); 12 before minimax/minimax-m3:free was withdrawn (2026-09-25)
+  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 8, // 10 before the two 2.5 Gemini retirements (2026-11-07); 11 before Granite (2026-11-07); 12 before minimax/minimax-m3:free was withdrawn (2026-09-25)
 
     `corpus contains ${CORPUS.filter(isCuratorMeasured).length} MEASURED models`);
   ok(CORPUS.filter((m) => !isCuratorMeasured(m)).length >= 190,
@@ -5363,7 +5404,7 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
 
   // ── 22b. MEASURED-ONLY — absent is ABSENT, never a zero score ─────────
   const onlyMeasured = filterModels(CORPUS, F({ measuredOnly: true }));
-  ok(onlyMeasured.length >= 10 && onlyMeasured.length < 40,
+  ok(onlyMeasured.length >= 8 && onlyMeasured.length < 40, // floor 10 -> 8: the two 2.5 Gemini retirements (2026-11-07)
     `"Measured by The Curator" narrows ${CORPUS.length} to ${onlyMeasured.length}`);
   ok(onlyMeasured.every((m) => typeof m.jsonRaw === 'boolean'),
     'every model in the measured view carries a real measurement marker');
@@ -5689,7 +5730,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   {
     const statics = (OFFERABLE_MODELS.gemini || []).concat(
       OFFERABLE_MODELS.anthropic || [], OFFERABLE_MODELS.openrouter || []);
-    ok(statics.length >= 16, `control: ${statics.length} hand-measured entries built — the module loaded`);
+    ok(statics.length >= 14, `control: ${statics.length} hand-measured entries built — the module loaded`);
     ok(statics.every((e) => Object.hasOwn(e, 'createdUnixSec') && e.createdUnixSec === null),
       'EVERY hand-typed entry carries `createdUnixSec: null` — the field is additive and absent means unpublished');
     // REVERSED FOR `contextLength` IN v3.45.0: every hand-typed entry now
@@ -5738,7 +5779,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   ok(fetched.filter((e) => e.contextLength === null).length === 1
      && fetched.find((e) => e.contextLength === null).id === UNSIZED_ID,
     'corpus: exactly ONE fetched row publishes no context window — the largest-context unranked block');
-  ok(staticRows.length >= 10 && staticRows.every((e) => e.createdUnixSec === null),
+  ok(staticRows.length >= 8 && staticRows.every((e) => e.createdUnixSec === null),
     `corpus: ${staticRows.length} STATIC rows, every one UNDATED — the newest-sort absence assertions are non-vacuous BY CONSTRUCTION`);
   ok(staticRows.every((e) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     '…and every one SIZED since v3.45.0, which is why the unsized fetched row above had to be added');
@@ -6178,16 +6219,24 @@ section('§40  ONE VOCABULARY — cost, who measured it, and one plain line');
   // the one screen built for comparing, and make the two pickers disagree.
   {
     const dom = [];
+    // DOMINATED_MODELS is EMPTY since 2026-11-07 (its one entry, 3.5 Flash Lite,
+    // became the Gemini default). A real row flagged dominated stands in.
+    const realDom = POPULATED.some((prov) => WIRE[prov].some((m) => m.dominated));
     for (const prov of POPULATED) {
-      const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
-      for (const m of WIRE[prov]) {
+      const last = WIRE[prov][WIRE[prov].length - 1];
+      const list = (!realDom && prov === 'gemini')
+        ? WIRE.gemini.concat([{ ...last, id: 'zz-dominated-fixture', dominated: true,
+          cautionReason: last.cautionReason || 'A same-priced sibling measured better.' }])
+        : WIRE[prov];
+      const html = renderModelPicker(rowFor(prov), keysFor(prov, { offerable: { ...WIRE, [prov]: list } }), true, false);
+      for (const m of list) {
         if (!m.dominated) continue;
         dom.push(m.id);
         okContains(liFor(html, m.id), '>out-performed<',
           `"${m.id}": the dominated flag keeps its word (matches chat.js)`);
       }
     }
-    ok(dom.length > 0, `the real catalogue contains a dominated model (${dom.join(', ')})`);
+    ok(dom.length > 0, `a dominated model is present (${dom.join(', ')})`);
   }
 
   // ── 40f. Price is a displayed FACT and never a gate ─────────────────────

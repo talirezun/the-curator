@@ -97,7 +97,7 @@ Yes, and on Linux it is the easiest route. On Windows you can tell the agent to 
 | Provider | Free tier | Notes | Where |
 |---|---|---|---|
 | Google Gemini | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost and the app's default. | https://aistudio.google.com/app/apikey |
-| Anthropic Claude | No, paid only | Roughly 10 times the Gemini bill for the same workload. Defaults to Claude Haiku 4.5. Claude Haiku 5.5 is far cheaper and can also build the wiki. | https://console.anthropic.com/ |
+| Anthropic Claude | No, paid only | Defaults to Claude Haiku 4.5. Claude Haiku 5.5 is far cheaper, can build the wiki, and is what Settings recommends for ingest: it kept 88% of the facts against 39% for Gemini's default on a 7 November 2026 test. | https://console.anthropic.com/ |
 | OpenRouter | Free `:free` models exist in its catalogue for chat, with a daily request cap; none is currently hand-listed for building the wiki | One key onto many vendors. It can build your wiki on several hand-measured, paid models — the list is live in Settings and grows over time. | https://openrouter.ai/keys |
 
 To create a Gemini key: sign in at the link above, click **Create API key**, and copy it. It starts with `AIza` and is about 40 characters long. Strongly recommended: click **Set up Billing** in the same console. The free tier is enough to try the app on a few articles, but Gemini 2.5 Flash Lite on the free tier is capped at 15 requests per minute, 1,000 requests per day and 250,000 tokens per minute, and a batch of 5 to 10 PDFs can stall mid-run with `429 RESOURCE_EXHAUSTED`. The paid price is low enough that most users pay between 1 and 10 euros a month.

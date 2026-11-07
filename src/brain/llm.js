@@ -12,7 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel, setSelectedModel, addModelMigrationNotes } from './config.js';
+import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel, setSelectedModel, addModelMigrationNotes, getDefaultChangeAcks, setDefaultChangeAck } from './config.js';
 // RETRY_CLASSIFIER_TOKENS / MODEL_NOT_FOUND_CLAUSES are the census of message
 // substrings the recovery classifiers below key on. They are DECLARED in the
 // adapter, beside the neutralisers that must strip them, and imported here so
@@ -253,9 +253,19 @@ function buildServiceUnavailableMessage(providerName, providerId) {
 // only when the pinned model is actually retired, or on a deliberate, separately
 // justified cost/quality decision.
 const DEFAULTS = {
-  gemini:    'gemini-2.5-flash-lite',
-  // Haiku is the low-cost tier, matching the cost profile of
-  // gemini-2.5-flash-lite. See docs/model-lifecycle.md for rationale.
+  // ── 2026-11-07: MOVED FORWARD FROM gemini-2.5-flash-lite (owner decision) ──
+  // Measured that day on a new paid key: gemini-2.5-flash-lite AND
+  // gemini-2.5-flash both return 404 "no longer available to new users", so a
+  // new user on the 2.5 default was silently served by the first fallback rung
+  // (gemini-3.1-flash-lite) at that rung's price while the app named 2.5. Of the
+  // Lite models a new key can call, 3.5 Lite captured the most facts (39% vs
+  // 3.1 Lite's 28%, Judge A, 12 runs each; 24% vs 16% on the strict judge) at
+  // $0.033 against $0.026 a source, and ran 12 of 12 ingests with no JSON
+  // failure (it was 2 of 9 unrepairable on 2026-08-26, which is why it was
+  // chat-only; 12 clean runs narrow that, they do not disprove it).
+  // 2.5 is in RETIRED_MODELS: a stored pick of it moves FORWARD with a notice.
+  gemini:    'gemini-3.5-flash-lite',
+  // Haiku is the low-cost tier. See docs/model-lifecycle.md for rationale.
   //
   // ⚠ JSON FENCING (measured 2026-08-26 with the real buildOutlinePrompt via
   // ingest.js's __testing export): claude-haiku-4-5 wraps its ingest-outline
@@ -403,10 +413,8 @@ Object.freeze(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS);
  * `defineOfferableModel` refuse the model outright.
  */
 const GEMINI_MODEL_MAX_OUTPUT_TOKENS = {
-  'gemini-2.5-flash-lite': 65536,   // current default
+  'gemini-3.5-flash-lite': 65536,   // current default (2026-11-07)
   'gemini-3.1-flash-lite': 65536,
-  'gemini-3.5-flash-lite': 65536,
-  'gemini-2.5-flash':      65536,
   'gemini-3.7-flash':      65536,
   'gemini-3.6-flash':      65536,
   'gemini-3.5-flash':      65536,
@@ -670,8 +678,20 @@ const FALLBACK_CHAINS = {
   // a toy "return this JSON" probe will not reproduce the failure (see the
   // Anthropic thinking-block lesson in docs/model-lifecycle.md for why prompt
   // realism matters when probing a fallback rung).
+  //
+  // ── 2026-11-07: REBUILT FORWARD FROM gemini-3.5-flash-lite ────────────────
+  // The default moved to 3.5 Lite, so every rung must be NEWER than it: 3.1
+  // Lite (older, and the rung that silently served new 2.5 users) and
+  // gemini-2.5-flash (404 for new keys, retired) left the chain. Cheapest-first
+  // among the newer, priced, measured build-lane models, tie broken newest-first:
+  // gemini-3.7-flash then gemini-3.6-flash, both $0.75/$3.75 promotional through
+  // 2026-12-31 and $1.50/$7.50 after. Both cost MORE than the default, which is
+  // what getFallbackStatus's costTier and the banner say.
   gemini: [
-    'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
+    'gemini-3.7-flash',             // newest Flash; dearer than the default, least hidden reasoning
+    'gemini-3.6-flash',             // same price, older
+  ],
+  // (Kept for the record: the retired gemini-2.5-flash rung's measured trait.)
     // ⚠ THINKING TOKENS: gemini-2.5-flash spends hidden reasoning tokens out of
     // the SAME maxOutputTokens budget, and they are billed as output. Probed
     // 2026-08-24: at maxOutputTokens 30 it returned finishReason MAX_TOKENS with
@@ -682,8 +702,6 @@ const FALLBACK_CHAINS = {
     // compensates for it (a budget nudge would be guesswork), but a caller
     // debugging "MAX_TOKENS with an empty response on the last fallback rung"
     // should know the budget is shared, not reserved for visible output.
-    'gemini-2.5-flash',             // higher (costlier) tier — last resort
-  ],
   // Repaired 2026-08-24. FOUR of the five previous rungs were dead — probed with
   // the Curator's exact call shape (messages.stream().finalMessage()), all four
   // returned 404 not_found_error, and none appear in GET /v1/models:
@@ -821,15 +839,11 @@ const FALLBACK_CHAINS = {
  */
 const MODEL_PRICES_USD_PER_MTOK = {
   // ── Gemini ──
-  'gemini-2.5-flash-lite':     { input: 0.10, output: 0.40 },   // current default
-  'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // 2.5x in / 3.75x out vs default
-  'gemini-2.5-flash':          { input: 0.30, output: 2.50 },
-  // gemini-3.5-flash-lite is priced again as of 2026-08-26 — NOT a reversal of
-  // its removal from FALLBACK_CHAINS, which stands. It is priced because it is
-  // OFFERABLE (a user may pick it deliberately, with its measured JSON defect
-  // shown) while remaining banned from the chain (which picks FOR the user).
-  // Those are two different lists with two different rules; see DOMINATED_MODELS.
-  'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },
+  // gemini-2.5-flash-lite ($0.10/$0.40) and gemini-2.5-flash ($0.30/$2.50) were
+  // RETIRED on 2026-11-07 (404 for new keys) — see RETIRED_MODELS — and their
+  // prices removed, per this table's "only the ids we ship" contract.
+  'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },   // current default (2026-11-07)
+  'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // CHEAPER per token than the default, captures fewer facts
   // ⚠ PROMOTIONAL — the numbers here are the STANDARD prices that take effect
   // 2027-01-01. Both models bill at $0.75/$3.75 through 2026-12-31; that
   // discount lives in PROMOTIONAL_PRICES and getModelPrice() switches over on
@@ -1028,9 +1042,7 @@ Object.freeze(MODEL_PRICES_USD_PER_MTOK);
  * A date that moves without a check is the invented fact this exists to stop.
  */
 const PRICE_VERIFIED_ON = Object.freeze({
-  'gemini-2.5-flash-lite':           '2026-09-25',
   'gemini-3.1-flash-lite':           '2026-09-25',
-  'gemini-2.5-flash':                '2026-09-25',
   'gemini-3.5-flash-lite':           '2026-09-25',
   'gemini-3.7-flash':                '2026-09-25',
   'gemini-3.6-flash':                '2026-09-25',
@@ -1063,10 +1075,8 @@ const PRICE_VERIFIED_ON = Object.freeze({
  * A fetched catalogue entry has no date here because nobody measured it.
  */
 const MEASURED_ON = Object.freeze({
-  'gemini-2.5-flash-lite':           '2026-08-26',
-  'gemini-3.1-flash-lite':           '2026-08-26',
-  'gemini-2.5-flash':                '2026-08-26',
-  'gemini-3.5-flash-lite':           '2026-08-26',
+  'gemini-3.1-flash-lite':           '2026-11-07',
+  'gemini-3.5-flash-lite':           '2026-11-07',
   'gemini-3.7-flash':                '2026-08-26',
   'gemini-3.6-flash':                '2026-08-26',
   'gemini-3.5-flash':                '2026-08-26',
@@ -1636,15 +1646,9 @@ function looksLikeMovingAlias(modelId) {
  * caught by the same invariant instead of needing its own bespoke pair.
  */
 export const DOMINATED_MODELS = Object.freeze({
-  'gemini-3.5-flash-lite': Object.freeze({
-    dominatedBy: 'gemini-2.5-flash',
-    reason:
-      'Identical published price ($0.30/$2.50) to gemini-2.5-flash, but 2 of 9 live runs against ' +
-      'this repo\'s REAL ingest outline prompt returned JSON that neither JSON.parse nor jsonrepair ' +
-      'could fix — a dropped object key, with finishReason STOP, so a generation defect rather than ' +
-      'truncation that the output-token-limit ladder could route around. gemini-2.5-flash was 3/3 ' +
-      'clean on the identical probe and plans wider outlines (17-19 pages vs 12-16).',
-  }),
+  // 'gemini-3.5-flash-lite' (dominated by gemini-2.5-flash) left this list on
+  // 2026-11-07: gemini-2.5-flash is retired (404 for new keys), so nothing at
+  // its price dominates it any more, and it is now the Gemini default.
   // 'claude-opus-4-5' (dominated by claude-opus-5) left this list when it was
   // retired from the catalogue on 2026-10-08 — see RETIRED_MODELS.
 });
@@ -1716,10 +1720,59 @@ export const RETIRED_MODELS = Object.freeze({
   'claude-opus-4-7':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.7',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
   'claude-opus-4-6':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.6',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
   'claude-opus-4-5':   Object.freeze({ provider: 'anthropic', label: 'Opus 4.5',   successor: 'claude-opus-5-5',   retiredOn: '2026-10-08' }),
+  // 2026-11-07: Google answers 404 "no longer available to new users" for both
+  // 2.5 ids on a new key. A model the provider stopped serving moves to the
+  // provider DEFAULT (the Granite rule), and both notes name the price: Flash
+  // Lite 2.5's successor costs more; Flash 2.5's costs exactly the same.
+  'gemini-2.5-flash-lite': Object.freeze({
+    provider: 'gemini', label: 'Flash Lite 2.5', successor: 'gemini-3.5-flash-lite', retiredOn: '2026-11-07',
+    why: 'Google no longer serves Flash Lite 2.5 to new API keys. Flash Lite 3.5, the Gemini default, costs more: $0.30 in and $2.50 out per million tokens, against $0.10 and $0.40.',
+  }),
+  'gemini-2.5-flash': Object.freeze({
+    provider: 'gemini', label: 'Flash 2.5', successor: 'gemini-3.5-flash-lite', retiredOn: '2026-11-07',
+    why: 'Google no longer serves Flash 2.5 to new API keys. Flash Lite 3.5, the Gemini default, costs the same, $0.30 in and $2.50 out per million tokens. Flash 3.7 is the newer full Flash model, at $0.75 and $3.75 until 2026-12-31, then $1.50 and $7.50.',
+  }),
   'ibm-granite/granite-4.0-h-micro': Object.freeze({
     provider: 'openrouter', label: 'Granite 4.0 H Micro', successor: 'upstage/solar-pro4', retiredOn: '2026-11-07',
     why: 'OpenRouter no longer serves Granite 4.0 H Micro. Solar Pro 4 is the OpenRouter default, and it costs more: Granite was $0.017 in and $0.112 out per million tokens.',
   }),
+});
+
+/**
+ * ── DEFAULT CHANGES: a user with NO stored pick is moved too ─────────────────
+ * RETIRED_MODELS moves a stored pick. A user who never picked runs DEFAULTS,
+ * and moving a default moves their model and their price with nothing stored to
+ * migrate — the silent price change this repo refuses. Each entry here is
+ * announced ONCE (config `defaultChangeAcks`) to a user who has that provider's
+ * key saved and no stored pick when the server starts.
+ */
+export const DEFAULT_CHANGES = Object.freeze({
+  gemini: Object.freeze({
+    from: 'gemini-2.5-flash-lite', to: 'gemini-3.5-flash-lite', on: '2026-11-07',
+    text: 'The Gemini model that builds your wiki is now Flash Lite 3.5. Google no longer serves Flash Lite 2.5 to new API keys ' +
+      '(on those keys Flash Lite 3.1 was answering instead). Flash Lite 3.5 costs $0.30 in and $2.50 out per million tokens, ' +
+      'against $0.10 and $0.40 for 2.5. You can pick another model in Settings.',
+  }),
+});
+
+/**
+ * ── THE INGEST RECOMMENDATION (owner decision, 2026-11-07) ───────────────────
+ * Shown in the model picker when an Anthropic key is saved. Measured that day:
+ * the real ingestFile, six real sources into a copy of a 3,407-page wiki, two
+ * runs per source per model, facts written before any model ran, judged blind
+ * (Haiku 5.5) and cross-checked by a second judge (gemini-3.7-flash) and a
+ * regex with no model. Facts captured, judge A (strict judge B), cost a source:
+ *   claude-haiku-5-5       88% (78%)  $0.020
+ *   gemini-3.5-flash-lite  39% (24%)  $0.033
+ *   gemini-3.1-flash-lite  28% (16%)  $0.026
+ * Haiku 5.5 is slower (about 87 s a source against 13-16 s). One domain, six
+ * sources: a measurement, not a guarantee. No model is hidden by it.
+ */
+export const INGEST_RECOMMENDATION = Object.freeze({
+  provider: 'anthropic',
+  model: 'claude-haiku-5-5',
+  why: 'On six real sources it put 88% of the facts into the wiki, against 39% for Flash Lite 3.5, ' +
+    'and cost less per source ($0.020 against $0.033); it is slower, about 90 seconds a source.',
 });
 
 /** The successor a retired id migrates to, or null (not retired / successor not offered). */
@@ -1765,6 +1818,19 @@ export function migrateRetiredModelSelections(now = new Date()) {
       if (!to) continue;
       setSelectedModel(provider, to);
       notes.push({ lane: 'build', provider, from, to, at: now.toISOString(), text: retirementNoteText(from, to, 'build') });
+    }
+    // A user on the DEFAULT (no stored pick) whose default moved: one note, once.
+    let acks = {};
+    try { acks = getDefaultChangeAcks() || {}; } catch { acks = {}; }
+    const keys = getApiKeys();
+    const saved = { gemini: keys.geminiApiKey, anthropic: keys.anthropicApiKey, openrouter: keys.openrouterApiKey };
+    for (const provider of KNOWN_PROVIDERS) {
+      const change = Object.hasOwn(DEFAULT_CHANGES, provider) ? DEFAULT_CHANGES[provider] : null;
+      if (!change || DEFAULTS[provider] !== change.to || acks[provider] === change.to) continue;
+      if (!saved[provider]) continue;           // no key, nothing ran, nothing to announce
+      if (getSelectedModel(provider)) continue;  // a stored pick is handled above, or stays
+      notes.push({ lane: 'build', provider, from: change.from, to: change.to, at: now.toISOString(), text: change.text });
+      setDefaultChangeAck(provider, change.to);
     }
     if (notes.length) addModelMigrationNotes(notes);
   } catch (err) {
@@ -2389,18 +2455,6 @@ function defineOfferableModel(provider, spec, opts = {}) {
 export const OFFERABLE_MODELS = Object.freeze({
   gemini: Object.freeze([
     defineOfferableModel('gemini', {
-      id: 'gemini-2.5-flash-lite',
-      label: 'Flash Lite 2.5',
-      contextLength: 1048576,
-      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
-      suitability: 'general',
-      outlinePagesLow: 18, outlinePagesHigh: 20,
-      note:
-        'The Gemini default, and the cheapest Gemini model. Measured 3/3 clean raw JSON, no ' +
-        'hidden reasoning tokens, and the widest outline coverage of any Gemini model probed ' +
-        '(18-20 pages on the reference source). No Gemini model here beats it on value for ingest.',
-    }),
-    defineOfferableModel('gemini', {
       id: 'gemini-3.1-flash-lite',
       label: 'Flash Lite 3.1',
       contextLength: 1048576,
@@ -2408,39 +2462,33 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'caution',
       outlinePagesLow: 5, outlinePagesHigh: 12,
       cautionReason:
-        'Dearer than the default and plans thinner outlines.',
+        'Cheaper per token than the default, but captured fewer facts.',
       note:
-        '2.5x the input and 3.75x the output price of the default, and measured THINNER than it: ' +
-        '5-12 outline pages where the default plans 18-20 on the same source. Clean JSON (3/3) and ' +
-        'no hidden reasoning tokens, so it is safe — just a worse deal for ingest. It is here ' +
-        'because it is the closest live successor to the default and the first fallback rung.',
-    }),
-    defineOfferableModel('gemini', {
-      id: 'gemini-2.5-flash',
-      label: 'Flash 2.5',
-      contextLength: 1048576,
-      thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
-      suitability: 'general',
-      outlinePagesLow: 17, outlinePagesHigh: 19,
-      note:
-        'Clean raw JSON 3/3 and 17-19 outline pages — coverage on a par with the default at 3x the ' +
-        'input price. Spends 1,700-2,629 hidden reasoning tokens per call: those are billed as ' +
-        'OUTPUT and drawn from the SAME output budget as the answer, so leave headroom.',
+        'Cheaper per token than the default ($0.25/$1.50 against $0.30/$2.50), but on six real sources ' +
+        '(12 runs, 2026-11-07) it put 28% of the facts into the wiki where Flash Lite 3.5 put 39%, at ' +
+        'about $0.026 a source against $0.033, and it invented concept names the source did not use. ' +
+        'It planned 5-12 outline pages on the 2026-08-26 reference source. Clean JSON and no hidden reasoning tokens.',
     }),
     defineOfferableModel('gemini', {
       id: 'gemini-3.5-flash-lite',
       label: 'Flash Lite 3.5',
       contextLength: 1048576,
+      // jsonRaw stays false: 2 of 9 outline runs on 2026-08-26 returned JSON
+      // nothing could repair. 12 of 12 ingests on 2026-11-07 ran clean, which
+      // narrows that finding without disproving it.
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
-      suitability: 'chat-only',
-      cautionReason:
-        '2 of 9 ingest runs returned JSON that nothing could repair.',
+      // BUILD LANE since 2026-11-07 (owner decision): the 2.5 models it was
+      // measured against are retired, and of the Lite models a new key can call
+      // it captured the most facts.
+      suitability: 'general',
+      outlinePagesLow: 12, outlinePagesHigh: 16,
       note:
-        'Not recommended for ingest. 2 of 9 live runs against the real ingest outline prompt ' +
-        'returned JSON that neither JSON.parse nor jsonrepair could repair (a dropped object key, ' +
-        'finishReason STOP — a generation defect, not truncation). Chat is text mode and is ' +
-        'unaffected, so it stays pickable there. gemini-2.5-flash costs exactly the same and was ' +
-        '3/3 clean on the identical probe.',
+        'The Gemini default since 2026-11-07. On six real sources into a 3,400-page wiki (12 runs) it put ' +
+        '39% of the sources\' facts into the wiki (24% on a stricter judge), at about $0.033 a source; ' +
+        'Flash Lite 3.1 put 28% (16%) at $0.026, and Haiku 5.5 88% (78%) at $0.020. 12 of 12 of those ' +
+        'ingests completed with no JSON failure, but on 2026-08-26 2 of 9 outline runs returned JSON ' +
+        'that nothing could repair, so a rare failed ingest is possible. It planned 12-16 outline pages on ' +
+        'the 2026-08-26 reference source. No hidden reasoning tokens.',
     }),
     defineOfferableModel('gemini', {
       id: 'gemini-3.7-flash',
@@ -2450,12 +2498,12 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'caution',
       outlinePagesLow: 12, outlinePagesHigh: 16,
       cautionReason:
-        'Thinner outlines than the far cheaper default, and the promotional price doubles when it ends.',
+        'Dearer than the default, and the promotional price doubles when it ends.',
       note:
         'PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from ' +
         '2027-01-01 — the standard price is what standardInput/standardOutput carry, and it applies ' +
-        'itself on the date. Measured 3/3 clean raw JSON and 12-16 outline pages (thinner than the ' +
-        'far cheaper default). Spends 915-1,066 hidden reasoning tokens per call, billed as output ' +
+        'itself on the date. Measured 3/3 clean raw JSON and 12-16 outline pages, the same coverage as ' +
+        'the cheaper default. The first fallback rung. Spends 915-1,066 hidden reasoning tokens per call, billed as output ' +
         '— the least of any thinking model here.',
     }),
     defineOfferableModel('gemini', {
@@ -2483,9 +2531,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       cautionReason:
         'The dearest Gemini here, and it plans thinner outlines than the default.',
       note:
-        'The most expensive Gemini model here and not the strongest: 15x the input and 22.5x the ' +
+        'The most expensive Gemini model here and not the strongest: 5x the input and 3.6x the ' +
         'output price of the default, yet measured THINNER than it at 8-14 outline pages against ' +
-        '18-20. Clean JSON 3/3, but it also spends 1,614-2,067 hidden reasoning tokens per call, ' +
+        '12-16. Clean JSON 3/3, but it also spends 1,614-2,067 hidden reasoning tokens per call, ' +
         'billed as output. Pick it only for a specific reason.',
     }),
   ]),
@@ -4514,6 +4562,20 @@ let _activeFallback = null;
  * returned unchanged, and `/api/config/api-keys` passes this object straight
  * through, so the frontend gets the flag with no route change.
  */
+/**
+ * The model that ANSWERED the last call made for `model` on `provider`: the
+ * fallback rung when the chain walked away from it, otherwise `model` itself.
+ * A label or estimate that names a model must name this one — the 2026-11-07
+ * measurement found new keys labelled "Flash Lite 2.5" while every call was
+ * answered (and billed) by Flash Lite 3.1.
+ */
+export function answeringModel(provider, model) {
+  const fb = _activeFallback;
+  if (fb && fb.provider === provider && fb.requestedModel === model
+      && typeof fb.usingModel === 'string' && fb.usingModel) return fb.usingModel;
+  return model;
+}
+
 export function getFallbackStatus() {
   if (!_activeFallback) return null;
   const costTier = compareModelCost(_activeFallback.requestedModel, _activeFallback.usingModel);

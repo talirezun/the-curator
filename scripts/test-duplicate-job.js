@@ -62,7 +62,8 @@ const llmMod = await import(path.join(REPO, 'src/brain/llm.js'));
 const { addDismissal, removeDismissal, loadDismissed } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
 const { getDuplicateJobsDir, getDuplicateChecksDir } = await import(path.join(REPO, 'src/brain/paths.js'));
 
-const MODEL = 'gemini-2.5-flash-lite';
+// 2026-11-07: the Gemini default (gemini-2.5-flash-lite was retired; 404 for new keys).
+const MODEL = 'gemini-3.5-flash-lite';
 const USAGE = { inputTokens: 6000, outputTokens: 900 };
 const CALL_USD = llmMod.priceUsageUsd(MODEL, { ...USAGE, calls: 1 });
 
@@ -195,9 +196,12 @@ section('A. The estimate');
   ok(st === 200 && e.pairs === 1035, 'A.1 every pair left, not one run\'s cap', JSON.stringify({ st, pairs: e.pairs, left: e.leftPairs }));
   ok(e.pairs === e.leftPairs, 'A.2 pairs is leftPairs');
   const per1000 = (e.estimatedUsd / e.pairs) * 1000;
-  ok(approx(per1000, 0.046, 0.002), 'A.3 Flash Lite at the measured $0.046 per 1,000 pairs', String(per1000));
-  ok(approx(e.estimatedSeconds / e.pairs, 0.165, 0.002) && e.timeBasis === 'measured', 'A.4 the measured 165 ms per pair', String(e.estimatedSeconds));
-  ok(e.rateBasis === 'measured' && e.model === MODEL, 'A.5 says the rate is measured, and on which model');
+  // The $0.046 / 165 ms figures were measured on Flash Lite 2.5, now retired. On the
+  // 3.5 Lite default nothing is measured, so the assumed 290 in + 160 out tokens per
+  // pair apply at $0.30/$2.50: (290 x 0.30 + 160 x 2.50) / 1e6 x 1000 = $0.487.
+  ok(approx(per1000, 0.487, 0.002), 'A.3 Flash Lite 3.5 at the assumed $0.487 per 1,000 pairs', String(per1000));
+  ok(approx(e.estimatedSeconds / e.pairs, 0.165, 0.002) && e.timeBasis === 'assumed', 'A.4 165 ms per pair, stated as assumed off the model it was measured on', String(e.estimatedSeconds));
+  ok(e.rateBasis === 'assumed' && e.model === MODEL, 'A.5 says the rate is assumed, and on which model');
   ok(/costs more/.test(e.fallbackNote) && /really billed/.test(e.fallbackNote), 'A.6 says what a fallback does to the figure');
   ok(e.stopMargin === 1.2, 'A.7 states the stop');
   ok(treeHash(path.join(DOMAINS_DIR, d.name)) === before, 'A.8 an estimate writes nothing');
@@ -485,9 +489,12 @@ section('E. The stop at 120%, retries and fallbacks in the spend');
   ok(s.stopReason === 'spend-limit' && calls2 === 2, 'E.11 the limit stops a retry between the halves of a split', `${calls2} calls`);
 
   // A dearer fallback answers: spend is at ITS price, and the stop comes sooner.
-  const rung = 'gemini-3.1-flash-lite';
+  // The real first Gemini rung since 2026-11-07. At 6,000 in / 900 out it bills
+  // $0.007875 on the $0.75/$3.75 promotional rate (more after 2026-12-31) against
+  // the default's $0.00405 — 1.94x.
+  const rung = 'gemini-3.7-flash';
   const dear = llmMod.priceUsageUsd(rung, { ...USAGE, calls: 1 });
-  ok(dear > CALL_USD * 2, 'E.12 (control) the rung really costs more', `${dear} vs ${CALL_USD}`);
+  ok(dear > CALL_USD * 1.5, 'E.12 (control) the rung really costs more', `${dear} vs ${CALL_USD}`);
   const f = family(30);
   llm = fakeLLM({ usage: (fn) => ({ ...USAGE, model: fn.calls >= 2 ? rung : MODEL, provider: 'gemini' }) });
   job.__setCompareAllLlmForTest(llm);

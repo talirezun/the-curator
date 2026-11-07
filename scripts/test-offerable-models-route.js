@@ -664,10 +664,22 @@ section('§5b. POST /api-keys/model — a chat-only model cannot be pinned as th
     return { status: res.status, body: await res.json() };
   }
 
+  // 2026-11-07: no STATIC entry is chat-only any more (gemini-3.5-flash-lite,
+  // the last one, became the Gemini default). Every FETCHED OpenRouter entry
+  // still arrives chat-only, so the refusal is driven over one admitted
+  // through the real catalogue door — the shape a user actually meets.
+  const FETCHED_CHAT_ONLY = 'zz-route-probe/fetched-chat-only';
+  llmModule.setOpenRouterCatalogue([{
+    id: FETCHED_CHAT_ONLY, label: 'Fetched Chat Only', thinks: false, tokenizerFactor: 1.0,
+    suitability: 'chat-only', maxOutput: 32768, price: { input: 0.05, output: 0.2 },
+    note: 'Synthetic fetched entry, used only to drive the build-lane refusal over the wire.',
+  }]);
   const all = llmModule.OFFERABLE_MODELS ?? {};
-  const chatOnly = Object.values(all).flat().find(m => m && m.suitability === 'chat-only');
+  const chatOnly = ['gemini', 'anthropic', 'openrouter'].flatMap(p =>
+    llmModule.listOfferableModels(p).map(m => ({ ...m, provider: m.provider || p })))
+    .find(m => m && m.suitability === 'chat-only');
   const general  = Object.values(all).flat().find(m => m && m.suitability !== 'chat-only');
-  ok(!!chatOnly, 'fixture sanity: the shipped catalogue contains a chat-only model to refuse (without one this section would pass vacuously)');
+  ok(!!chatOnly, 'fixture sanity: the catalogue contains a chat-only model to refuse (without one this section would pass vacuously)');
   ok(!!general,  'fixture sanity: the shipped catalogue contains a build-lane model to accept');
 
   if (chatOnly && general) {
@@ -723,6 +735,7 @@ section('§5b. POST /api-keys/model — a chat-only model cannot be pinned as th
     ok(!(bogus.body.error || '').includes('Injected'),
       'the allow-list refusal does NOT echo the caller\'s string back — the two refusals differ deliberately, and only the one that has already validated the string may name it');
   }
+  llmModule.setOpenRouterCatalogue([]);
 }
 
 
@@ -1046,11 +1059,15 @@ section('§7. Availability fields are additive [M7, M21]');
   // Adding one legitimately means updating this line in the same commit — and
   // that edit IS the human look.
   const BUILD_CONTRACT_KEYS = [
-    'cheapestMeasured', 'facts', 'liveListing', 'liveMissing', 'model', 'provider', 'source',
+    // 2026-11-07: `recommendedIngest` (the measured ingest recommendation,
+    // with a saved Anthropic key) and `requestedModel` (the model asked for
+    // when a fallback rung answers) joined the contract deliberately.
+    'cheapestMeasured', 'facts', 'liveListing', 'liveMissing', 'model', 'provider',
+    'recommendedIngest', 'requestedModel', 'source',
   ].join(',');
   if (after.build) {
     eq(Object.keys(after.build).sort().join(','), BUILD_CONTRACT_KEYS,
-      "★★ `build` carries EXACTLY the seven fields the wire contract names [M21: any eighth reds here, and only here]");
+      "★★ `build` carries EXACTLY the nine fields the wire contract names [M21: any tenth reds here, and only here]");
   }
   eq(JSON.stringify(Object.fromEntries(Object.entries(after.models).map(([k, v]) => [k, typeof v]))), modelsShape,
     '★ `models` is STILL a map of strings — the /old "[object Object]" hazard §3 pins is untouched by any of this');

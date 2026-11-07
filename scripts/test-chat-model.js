@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          isCostlierModel, anthropicMaxOutputTokens, ANTHROPIC_MAX_OUTPUT_TOKENS,
-         OFFERABLE_MODELS, DOMINATED_MODELS, AWAITING_MEASUREMENT,
+         OFFERABLE_MODELS, DOMINATED_MODELS, AWAITING_MEASUREMENT, RETIRED_MODELS,
          isOfferableModel, resolveModelPrice, getFallbackStatus,
          isFreeModel, isBuildLaneModel, isKnownProvider, listOfferableModels,
          setOpenRouterCatalogue, normalizeOpenRouterUsage,
@@ -61,7 +61,8 @@ section('1. getDefaultModel — current default model id per provider');
   const savedModel = process.env.LLM_MODEL;
   try {
     delete process.env.LLM_MODEL;
-    eq(getDefaultModel('gemini'), 'gemini-2.5-flash-lite', 'gemini default model');
+    // 2026-11-07: moved forward from gemini-2.5-flash-lite (404 for new keys).
+    eq(getDefaultModel('gemini'), 'gemini-3.5-flash-lite', 'gemini default model');
     eq(getDefaultModel('anthropic'), 'claude-haiku-4-5', 'anthropic default model');
     eq(getDefaultModel('foo'), null, 'unknown provider → null');
     eq(getDefaultModel(null), null, 'null → null');
@@ -79,7 +80,7 @@ section('1. getDefaultModel — current default model id per provider');
     } else {
       // No key configured anywhere (clean CI checkout) — no active provider,
       // so the override must not apply to either.
-      eq(getDefaultModel('gemini'), 'gemini-2.5-flash-lite',
+      eq(getDefaultModel('gemini'), 'gemini-3.5-flash-lite',
         'no active provider → LLM_MODEL does not apply (gemini)');
       eq(getDefaultModel('anthropic'), 'claude-haiku-4-5',
         'no active provider → LLM_MODEL does not apply (anthropic)');
@@ -312,8 +313,11 @@ section('6. compareModelCost — every rung of every shipped chain');
     // removed from the chain 2026-08-26 — strictly dominated by
     // gemini-2.5-flash on price AND JSON reliability — so it has no entry
     // here; this map is looked up only for rungs actually in the chain.)
-    'gemini-3.1-flash-lite':     'costlier',   // $0.25/$1.50 vs $0.10/$0.40
-    'gemini-2.5-flash':          'costlier',   // $0.30/$2.50
+    // Rebuilt 2026-11-07 forward from the gemini-3.5-flash-lite default
+    // ($0.30/$2.50): both rungs are promotional $0.75/$3.75 until 2026-12-31,
+    // then $1.50/$7.50 — costlier either way.
+    'gemini-3.7-flash':          'costlier',
+    'gemini-3.6-flash':          'costlier',
     // Anthropic (rebuilt 2026-10-08 on the 5.5 generation): the first rung is
     // claude-haiku-5-5, NOT costlier even at its UPPER tier ($0.50/$2.50 vs
     // $1/$5 — compareModelCost compares a tiered rung at its upper tier), then
@@ -328,9 +332,10 @@ section('6. compareModelCost — every rung of every shipped chain');
         `${provider}: ${DEFAULTS[provider]} → ${rung}`);
     }
   }
-  eq(compareModelCost('gemini-2.5-flash-lite', 'gemini-2.5-flash-lite'), 'similar',
+  eq(compareModelCost('gemini-3.5-flash-lite', 'gemini-3.5-flash-lite'), 'similar',
     'identical models → similar');
-  eq(compareModelCost('gemini-2.5-flash', 'gemini-2.5-flash-lite'), 'similar',
+  // $0.25/$1.50 landing from $0.30/$2.50: cheaper on both axes.
+  eq(compareModelCost('gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'), 'similar',
     'a cheaper fallback is not costlier');
 }
 
@@ -344,7 +349,7 @@ section('7. compareModelCost — unknown ids never imply parity');
   eq(compareModelCost(null, undefined), 'unknown', 'null/undefined → unknown');
   ok(isCostlierModel('gemini-2.5-flash-lite', 'gemini-9.9-unreleased') === false,
     'the legacy boolean is false for unknown (why the banner uses costTier)');
-  ok(isCostlierModel('gemini-2.5-flash-lite', 'gemini-3.1-flash-lite') === true,
+  ok(isCostlierModel('gemini-3.5-flash-lite', 'gemini-3.7-flash') === true,
     'the legacy boolean is true for a confirmed costlier fallback');
   // Prototype keys must not resolve through the plain object.
   for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
@@ -493,8 +498,11 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
   // only from llm.js: a guard whose expectations come entirely from the data it
   // guards cannot notice that data being deleted. Removing an id from
   // DOMINATED_MODELS and re-adding it to a chain must go red.
+  // EMPTY since 2026-11-07: 'gemini-3.5-flash-lite' (dominated by
+  // gemini-2.5-flash) left when gemini-2.5-flash was retired (404 for new
+  // keys) and 3.5 Lite became the Gemini default. The loop below still holds
+  // any future entry to every rule; the ban below pins the departed id.
   const EXPECT_DOMINATED = {
-    'gemini-3.5-flash-lite': 'gemini-2.5-flash',
     // 'claude-opus-4-5' (dominated by claude-opus-5) left with its retirement
     // from the catalogue on 2026-10-08 — see test-tiered-pricing.js §5.
   };
@@ -527,6 +535,10 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
       `the dominator "${rec.dominatedBy}" is itself offerable (you can actually choose the better model)`);
   }
   ok(Object.isFrozen(DOMINATED_MODELS), 'DOMINATED_MODELS is frozen');
+  ok(!Object.hasOwn(DOMINATED_MODELS, 'gemini-3.5-flash-lite'),
+    'gemini-3.5-flash-lite is NOT dominated — it is the Gemini default, and its dominator gemini-2.5-flash is retired');
+  ok(Object.hasOwn(RETIRED_MODELS, 'gemini-2.5-flash') && !isOfferableModel('gemini', 'gemini-2.5-flash'),
+    '⟨PREMISE⟩ …because gemini-2.5-flash really is retired and not offered');
 
   // ── AWAITING MEASUREMENT: real models we deliberately refuse to offer ─────
   // A model may not be offered for a feature it has never been measured
@@ -2308,7 +2320,8 @@ section('19. Promoted measurements — the fields both pickers summarise from');
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
   // 2026-10-08: 17 → the Anthropic retirement removed four entries and the
   // 5.5 generation added two (Haiku 5.5 was already in), so the floor drops by 2.
-  ok(ALL.length >= 16, `corpus: ${ALL.length} static offerable entries`);
+  // 16 → 14 on 2026-11-07: gemini-2.5-flash-lite and gemini-2.5-flash retired.
+  ok(ALL.length >= 14, `corpus: ${ALL.length} static offerable entries`);
 
   // ── 19a. THE FIELD AND THE NOTE BENEATH IT CANNOT DISAGREE ────────────
   // The strongest guard available, and it is mechanical rather than a promise:
@@ -2330,7 +2343,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
     ok(re.test(e.note), `${e.id}: the ${lo}-${hi} page range in the FIELD also appears in its own note`);
     rangeChecked++;
   }
-  ok(rangeChecked >= 15, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
+  ok(rangeChecked >= 14, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
 
   let medianChecked = 0;
   for (const { e } of ALL) {
@@ -2362,8 +2375,12 @@ section('19. Promoted measurements — the fields both pickers summarise from');
   // never 0, because 0 is a truthy-looking measurement that renders.
   const noPages = ALL.filter(({ e }) => e.outlinePagesLow === null);
   const noLatency = ALL.filter(({ e }) => e.medianLatencyMs === null);
-  ok(noPages.length >= 1, `corpus: ${noPages.length} entry with NO page measurement — the absent-case assertions can fire`);
-  ok(noLatency.length >= 13, `corpus: ${noLatency.length} entries with NO latency — the common case is represented`);
+  // ⟨PREMISE CHANGED 2026-11-07⟩ The one entry with no page range was
+  // gemini-3.5-flash-lite while it was chat-only; as the default it carries its
+  // measured 12-16 (2026-08-26). The absent case stays exercised by latency,
+  // which most entries do not record.
+  ok(noPages.length === 0, `corpus: ${noPages.length} entries with NO page measurement — every static entry now records one`);
+  ok(noLatency.length >= 11, `corpus: ${noLatency.length} entries with NO latency — the common case is represented`);
   for (const { e } of ALL) {
     for (const f of ['outlinePagesLow', 'outlinePagesHigh', 'outlinePagesMedian', 'medianLatencyMs']) {
       ok(e[f] === null || (Number.isFinite(e[f]) && e[f] > 0),
@@ -2379,7 +2396,8 @@ section('19. Promoted measurements — the fields both pickers summarise from');
   // understand. llm.js refuses to BUILD such an entry; this asserts the result
   // over the real table and, below, that the refusal is real.
   const flagged = ALL.filter(({ e }) => e.suitability === 'caution' || e.dominated === true);
-  ok(flagged.length >= 7, `corpus: ${flagged.length} flagged entries`);
+  // 7 → 6 on 2026-11-07: 3.5 Lite (dominated) became the default.
+  ok(flagged.length >= 6, `corpus: ${flagged.length} flagged entries`);
   for (const { e } of flagged) {
     ok(typeof e.cautionReason === 'string' && e.cautionReason.trim().length > 0,
       `${e.id}: FLAGGED -> carries a cautionReason`);
@@ -2476,7 +2494,8 @@ section('20. Two PUBLISHED facts — optional, additive, and never derived');
 {
   const ALL = [];
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
-  ok(ALL.length >= 16, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
+  // 16 → 14 on 2026-11-07: gemini-2.5-flash-lite and gemini-2.5-flash retired.
+  ok(ALL.length >= 14, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
 
   // ── 20a. ADDITIVE: every hand-typed entry carries them as UNKNOWN ──────
   ok(ALL.every(({ e }) => Object.hasOwn(e, 'createdUnixSec') && Object.hasOwn(e, 'contextLength')),

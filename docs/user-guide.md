@@ -631,7 +631,7 @@ The app uses an AI provider to read your documents and power chat. You need an A
 
 > ⚠️ **About "free" — read this before you commit to free-tier-only usage.**
 >
-> The Gemini free tier exists, and it's enough to *try* the app and ingest a few articles. It is **not enough for serious use.** As of the [December 2025 quota tightening](https://ai.google.dev/gemini-api/docs/rate-limits), Gemini 2.5 Flash Lite (the model The Curator uses by default) is capped at:
+> The Gemini free tier exists, and it's enough to *try* the app and ingest a few articles. It is **not enough for serious use.** As of the [December 2025 quota tightening](https://ai.google.dev/gemini-api/docs/rate-limits), Gemini 2.5 Flash Lite (the model The Curator used by default until 7 Nov 2026; the default is now 3.5 Flash Lite, whose free-tier limits we have not checked) was capped at:
 >
 > - **15 requests per minute** (RPM)
 > - **1,000 requests per day** (RPD)
@@ -3777,8 +3777,8 @@ Model are picked per question**, so you can change either between messages in th
 
 **Compile to Wiki** saves the thread on screen — *this* conversation's questions and answers — as
 wiki pages. Before it spends anything, the confirmation names what will run and, when a fallback is
-possible, what happens if your chosen model is unavailable at the moment: *"If gemini-2.5-flash-lite
-is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input /
+possible, what happens if your chosen model is unavailable at the moment: *"If gemini-3.5-flash-lite
+is unavailable, The Curator may fall back to gemini-3.7-flash, priced $0.75 / $3.75 per 1M input /
 output tokens."* — naming both the model it would fall back to and its price, before you confirm,
 never a silent substitution after the fact.
 
@@ -4037,7 +4037,7 @@ The range is deliberately generous on the high side. Across eleven real measured
 
 An unknown cost is always said out loud. The dialog will never render an unpriced or unknown compile as **$0.00**.
 
-**If your chosen model is unavailable when the compile actually runs, the dialog says so before you confirm, not after (v3.72.0).** When a fallback rung exists, the dialog's message gains a sentence naming it: *"If gemini-2.5-flash-lite is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input / output tokens."* A model with no further rung, or one that is itself free, names none — the chain only ever moves forward to a newer rung, never sideways or back to something cheaper.
+**If your chosen model is unavailable when the compile actually runs, the dialog says so before you confirm, not after (v3.72.0).** When a fallback rung exists, the dialog's message gains a sentence naming it: *"If gemini-3.5-flash-lite is unavailable, The Curator may fall back to gemini-3.7-flash, priced $0.75 / $3.75 per 1M input / output tokens."* A model with no further rung, or one that is itself free, names none — the chain only ever moves forward to a newer rung, never sideways or back to something cheaper.
 
 **Two more things worth knowing:**
 
@@ -6813,7 +6813,7 @@ The banner usually carries a second line:
 
 > 💰 This model costs more than your usual one — every ingest, compile and chat is billed at the higher rate until the default is restored.
 
-Take it seriously: on Gemini, **every** model the app can fall back to is more expensive than the default — the closest successor costs 2.5× more per input token and 3.75× more per output token, and a big ingest is where that shows up on your bill. On Anthropic the same is true if you were on the default `claude-haiku-4-5`; if you had *pinned* a pricier model ([§16b](#16b-choosing-your-ai-model)) the fallback can land you on something genuinely cheaper, in which case no cost line appears at all. The line compares what you asked for against what is actually running, so it is right either way.
+Take it seriously: on Gemini, **every** model the app can fall back to is more expensive than the default — Flash 3.7 and Flash 3.6 cost $0.75 / $3.75 per 1M tokens until 31 Dec 2026 and $1.50 / $7.50 after, against Flash Lite 3.5's $0.30 / $2.50 — and a big ingest is where that shows up on your bill. While a fallback is answering, the build model card, the run line and the batch estimate all name and price the model that is **actually answering**, and the card says which model did not answer. On Anthropic the same is true if you were on the default `claude-haiku-4-5`; if you had *pinned* a pricier model ([§16b](#16b-choosing-your-ai-model)) the fallback can land you on something genuinely cheaper, in which case no cost line appears at all. The line compares what you asked for against what is actually running, so it is right either way.
 
 **The fallback list is fixed and does not follow your pick.** It is a short per-provider list chosen for the app, not a search for the nearest match to your model. So if the model you pinned disappears, you land on that provider's fallback list rather than on something similar to your choice — one more reason the banner names both ids.
 
@@ -7577,9 +7577,11 @@ along with the folder.
 
 For most of its life The Curator ran exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still what you get if you never touch anything. But it also meant that if you wanted more capability out of a big wiki, and were willing to pay for it on your own key, there was no way to ask.
 
-Now there is. A list of **hand-measured models** is on offer across all three providers, and it grows as more are measured — the live list is the one in Settings, so this guide doesn't print a running total. Every model on it was measured by hand against The Curator's real ingest prompt before being offered, and **all but one of them can build your wiki** — the exception is `gemini-3.5-flash-lite`, which was measured and found unfit for ingest specifically, and is offered for chat with the reason on its row. On top of that hand-measured list, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
+Now there is. A list of **hand-measured models** is on offer across all three providers, and it grows as more are measured — the live list is the one in Settings, so this guide doesn't print a running total. Every model on it was measured by hand against The Curator's real ingest prompt before being offered, and **every one of them can build your wiki**. On top of that hand-measured list, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
 
-> **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour. (On Anthropic the default is no longer the cheapest model that can build: `claude-haiku-5-5` is. The default moves only when it is retired.)
+> **The defaults are `gemini-3.5-flash-lite` and `claude-haiku-4-5`.** The default moves only when it is retired. On 7 Nov 2026 Google stopped serving `gemini-2.5-flash-lite` and `gemini-2.5-flash` to new API keys (both answer "no longer available to new users"), so on a new key the old 2.5 default was silently answered by Flash Lite 3.1, at 3.1's price, while the app still named 2.5. The Gemini default is now Flash Lite 3.5. **What existing users see:** if you had picked a 2.5 model, your pick moves to Flash Lite 3.5 and a one-time note says so and gives both prices (Flash Lite 2.5 → 3.5: $0.10 / $0.40 → $0.30 / $2.50; Flash 2.5 → Flash Lite 3.5: the same $0.30 / $2.50). If you never picked a model and have a Gemini key, you see one note saying the default changed, with both prices. Nothing moves silently. (On Anthropic the default is not the cheapest model that can build: `claude-haiku-5-5` is.)
+>
+> **With an Anthropic key, the model card recommends Haiku 5.5 for ingest**, with its reason in one line and a Use it button. It is a recommendation from one measurement (below), not a hidden choice: every model stays in the list.
 >
 > **The one exception: a retired Anthropic model.** On 8 October 2026 The Curator started offering only the current Anthropic generation and the one before it — Haiku 5.5 and 4.5, Sonnet 5.5 and 5, Opus 5.5 and 5. If the model building your wiki, or the one your chat remembered, was an older one (Sonnet 4.6 or 4.5, Opus 4.8 or 4.5), it was moved **forward** to the same family's newest model — Sonnet 5.5 or Opus 5.5 — never down to the default, and a note at the top of the app says what changed until you dismiss it.
 
@@ -7815,7 +7817,7 @@ The measurement is nine runs, and on the slowest models a single run has taken o
 
 Two examples, because the principle matters more than the specifics:
 
-**`gemini-3.5-flash-lite` is offered for chat, but the app will not build with it.** In 2 of 9 live runs against the real ingest prompt it returned structured data that neither the parser nor the repair pass could fix — a genuine generation defect, not a length problem the app could work around. Chat doesn't ask for structured data at all, so it's unaffected and the model stays genuinely useful there. It also happens to cost **exactly the same** as `gemini-2.5-flash`, which was clean on every run of the identical test and plans wider outlines. So it is flagged, and its cleaner twin is one row away.
+**`gemini-3.5-flash-lite` builds your wiki again, and is the Gemini default (7 Nov 2026).** In Aug 2026, 2 of 9 live runs against the real ingest prompt returned structured data that nothing could repair, so it was offered for chat only. On 7 Nov 2026 it completed 12 of 12 real ingests with no such failure. That narrows the finding but does not disprove it, so a rare failed ingest is possible. The model it was compared against then, `gemini-2.5-flash`, is no longer served to new keys.
 
 **`claude-haiku-5-5` carries its price rule on the row.** It is the cheapest Anthropic model, but its rates are five times higher on any call whose prompt is over 100,000 tokens — and the first call of an ingest into a large wiki is exactly that. The row says so unfolded, beside the price, and the app charges and estimates such calls at the higher rate.
 
@@ -7857,7 +7859,7 @@ The three below are the ones with published numbers in this guide and cover the 
 Two things are worth reading off that table rather than skipping:
 
 - **Fewer planned pages means a less detailed wiki from the same document.** Granite's median of 9 against Solar's 23 was the difference between a thorough wiki and a sketch. If Solar Pro 4 itself ever disappears, GLM 5.3 Flash is the automatic backup: measured on the same prompt, and cheaper, but slow.
-- **Solar Pro 4 now costs more than the cheapest Gemini option** — **$0.15 / $0.60** against Gemini Flash Lite’s **$0.10 / $0.40** — at wider coverage (a median of 23 pages per document against 18–20). Its price has now moved twice without the name changing: $0.03 / $0.12, then $0.09 / $0.36, then this.
+- **Solar Pro 4 costs $0.15 / $0.60.** It cost more than Gemini Flash Lite 2.5's $0.10 / $0.40; 2.5 is retired, and the cheapest Gemini model offered now, Flash Lite 3.1, is $0.25 / $1.50. It plans wider coverage (a median of 23 pages per document against 18–20). Its price has now moved twice without the name changing: $0.03 / $0.12, then $0.09 / $0.36, then this.
   > **This figure was wrong here until it was billed.** The table quoted **$0.03 / $0.12** — OpenRouter’s published price for the model — and a cold run’s own `usage.cost` came back at **three times that**, because what bills you is the ENDPOINT that serves the request, not the model’s headline. It is the same finding v3.16.0 recorded when it refused three otherwise-clean models on price honesty, and this guide said "roughly a third the price of Gemini" on the strength of the quoted number. It is not; it is close to level on input. **A price you have not been billed is a quotation, not a measurement.**
 
 **A note on the free one (historical — since withdrawn).** While it was offered, it was genuinely free and genuinely useful, but free models draw on a **shared pool**, so whether one answers is not just about your account. In a ten-minute availability check during measurement (27 Aug 2026), this model answered **8 of 8** attempts while **three of its free siblings answered 0 of 8**, all reporting they were rate-limited upstream — same account, same moment. There is currently no hand-listed free model for building the wiki; free `:free` models from OpenRouter's own catalogue still appear in the **chat** model list after a catalogue sync. Combined with a large ingest being **40+ separate calls**, treat free as a real option when one is offered, not a guaranteed one.
@@ -7868,12 +7870,24 @@ Three real sources on an empty domain, one run per cell, the same check on each.
 
 | Model | Pages, long PDF | Facts kept: long PDF · short note · text file | Cost: long PDF · short note · text file | In plain words |
 |---|---|---|---|---|
-| **Gemini 2.5 Flash Lite** | 39 | 5/12 · 4/12 · 6/11 | $0.008 · $0.0009 · $0.006 | The cheapest. Many pages, about half the facts, and the most links to pages that do not exist (43 on the PDF). |
+| **Gemini 2.5 Flash Lite** (retired 7 Nov 2026) | 39 | 5/12 · 4/12 · 6/11 | $0.008 · $0.0009 · $0.006 | The cheapest. Many pages, about half the facts, and the most links to pages that do not exist (43 on the PDF). |
 | **Gemini 3.1 Flash Lite** | 13 | 1/12 · 2/12 · 5/11 | $0.018 · $0.0025 · $0.012 | Fewest pages and fewest facts, at about the same cost as Haiku 5.5 on these. |
 | **Claude Haiku 5.5** | 19 | 11/12 · 7/12 · 10/11 | $0.018 · $0.003 · $0.014 | Kept most of the facts. On a very large wiki it costs more: above 100,000 tokens in one call its price is five times higher. |
 | **Claude Sonnet 5.5** | not run | – · 11/12 · – | – · $0.061 · – | The most thorough on the one source it read, at about twenty times Haiku 5.5. |
 
 One 12,946-byte file on a 3,400-page domain cost $0.009, $0.022, $0.071 and $0.31 in the same order. **How far to trust it:** repeats vary a lot on the same model (3.1 on the short note 0-2 of 12; 2.5 Flash Lite on the PDF 1-7 of 12), so one cell is an indication. 2.5 Flash Lite ran through OpenRouter. Nothing here was measured on Opus, Sonnet 5 or Haiku 4.5 beyond a single run.
+
+#### Facts captured on a large wiki (7 Nov 2026)
+
+Six real sources (a product page, an article PDF, a technical proposal, a journal PDF with numbers, a business plan and a 36 KB lecture) ingested into a copy of a 3,407-page wiki, two runs per source per model. 95 facts were written down from the sources before any model ran. A fact counts only if it appears in text the ingest added. Judge A is Haiku 5.5, blind to which model wrote the text; judge B is a stricter second model (Gemini 3.7 Flash) on one run per source; a plain text match with no model gave the same order.
+
+| Model | Facts captured (judge A) | Strict judge B | Cost per source | Time per source |
+|---|---|---|---|---|
+| **Claude Haiku 5.5** | 88% | 78% | $0.020 | about 87 s |
+| **Gemini 3.5 Flash Lite** (the Gemini default) | 39% | 24% | $0.033 | about 13 s |
+| **Gemini 3.1 Flash Lite** | 28% | 16% | $0.026 | about 16 s |
+
+This is why the model card recommends Haiku 5.5 for ingest when you have an Anthropic key. **How far to trust it:** one wiki, six sources, wide run-to-run variance; Haiku 5.5 is a judge here as well as a contestant, though the stricter judge and the plain text match rank the models the same way.
 
 #### Why two standards — and why it is not fussiness
 

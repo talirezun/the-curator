@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import { localDateStamp } from './local-date.js';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { generateText, isAbortError, makeAbortError, isAboveTierCall, getProviderInfo } from './llm.js';
+import { generateText, isAbortError, makeAbortError, isAboveTierCall, getProviderInfo, answeringModel } from './llm.js';
 import {
   readSchema,
   readIndex,
@@ -3160,7 +3160,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // is reported properly by the first call, so it only means "cannot tell" for now.
   let plannedModel = typeof opts?.buildModel === 'string' ? opts.buildModel : null;
   if (!plannedModel && !(opts && typeof opts.llm === 'function')) {
-    try { plannedModel = getProviderInfo().model; } catch { plannedModel = null; }
+    try { const i = getProviderInfo(); plannedModel = answeringModel(i.provider, i.model); } catch { plannedModel = null; }
   }
   const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel);
   // See planRepeatIngest: only another model's reading may bring in new wording.

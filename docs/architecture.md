@@ -1154,7 +1154,7 @@ activeProvider set but its
   key missing               →  falls through to whichever provider still has a key
 Neither set                 →  Error on first LLM call
 
-default models (DEFAULTS in llm.js):  gemini-2.5-flash-lite  /  claude-haiku-4-5  /  (none)
+default models (DEFAULTS in llm.js):  gemini-3.5-flash-lite  /  claude-haiku-4-5  /  (none)
 ```
 
 **The legacy ladder is append-only, and that is load-bearing.** It re-resolves configs written before `activeProvider` existed, so its order decides *retroactively* which provider an existing user is billed to. `openrouter` therefore sits **last**, reached only after both original providers have failed — i.e. only in cases that previously resolved to nothing at all. A pre-OpenRouter config cannot contain an OpenRouter key field, so every such config resolves byte-identically to before. Inserting anywhere earlier would silently move real users onto a different provider, and therefore a different bill, with no on-screen signal.

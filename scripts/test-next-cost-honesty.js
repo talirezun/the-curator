@@ -345,7 +345,7 @@ eq(costReadout({ error: 'boom' }), null, 'an errored estimate -> null');
 section('2. DEFECT 1 — chargePartialSpend attributes MEASURED partial spend');
 // ═══════════════════════════════════════════════════════════════════════
 
-// A job shaped like a real manifest. gemini-2.5-flash-lite is the pinned
+// A job shaped like a real manifest. gemini-3.5-flash-lite is the pinned
 // default and has a published price, so the "real" branch is reachable.
 function jobFixture(over) {
   return Object.assign({
@@ -364,7 +364,7 @@ function usage(over) {
   return Object.assign({
     calls: 10, inputTokens: 400000, outputTokens: 20000,
     cachedReadTokens: 0, cacheWriteTokens: 0,
-    provider: 'gemini', model: 'gemini-2.5-flash-lite',
+    provider: 'gemini', model: 'gemini-3.5-flash-lite',
   }, over || {});
 }
 
@@ -502,7 +502,7 @@ section('4. DEFECT 1 — the makeUsageAccumulator forward seam');
 {
   const seen = [];
   const acc = makeUsageAccumulator((u) => seen.push(u));
-  const frame = { inputTokens: 100, outputTokens: 10, cachedReadTokens: 5, cacheWriteTokens: 1, provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+  const frame = { inputTokens: 100, outputTokens: 10, cachedReadTokens: 5, cacheWriteTokens: 1, provider: 'gemini', model: 'gemini-3.5-flash-lite' };
   acc.onUsage(frame);
   acc.onUsage(frame);
   eq(seen.length, 2, 'the forward observer sees every completed provider call');
@@ -512,7 +512,7 @@ section('4. DEFECT 1 — the makeUsageAccumulator forward seam');
   eq(acc.totals.outputTokens, 20, 'output tokens summed');
   eq(acc.totals.cachedReadTokens, 10, 'cached-read tokens summed');
   eq(acc.totals.cacheWriteTokens, 2, 'cache-write tokens summed');
-  eq(acc.totals.model, 'gemini-2.5-flash-lite', 'model recorded');
+  eq(acc.totals.model, 'gemini-3.5-flash-lite', 'model recorded');
 }
 {
   // Back-compat: every pre-existing caller passes nothing.

@@ -402,7 +402,7 @@ section('\u00a73. A free model renders as `free` \u2014 never $0.00, never blank
     'the real default build model is PAID, and both prices arrive as numbers');
   eq(paid.free, false, '\u2026with `free: false` stated rather than left to be inferred');
   okContains(renderWith(wire()), PRICE_CHIP_OPEN, 'so block 2 carries a price chip\u2026');
-  okContains(renderWith(wire()), priceChip('$0.10 in \u00b7 $0.40 out per 1M tokens'),
+  okContains(renderWith(wire()), priceChip('$0.30 in \u00b7 $2.50 out per 1M tokens'),
     '\u2026quoting the real per-token rate the route sent');
 
   // ── THE FREE ARM ──────────────────────────────────────────────────────
@@ -504,6 +504,56 @@ section('\u00a75. The whole real payload renders without throwing');
   }
   okContains(renderWith(wire()), WIRE.build.model,
     'and it names the model the route actually resolved');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('§5b. The ingest recommendation and the model that answers (2026-11-07)');
+// ═════════════════════════════════════════════════════════════════════════════
+{
+  const REC_TAG = '<span class="build-cheapest-tag">Recommended for ingest</span>';
+  eq(WIRE.build.model, 'gemini-3.5-flash-lite', 'a Gemini-only install builds with Flash Lite 3.5');
+  eq(WIRE.build.recommendedIngest, null, 'with no Anthropic key, nothing is recommended');
+  okMissing(renderWith(wire()), REC_TAG, '...and the card shows no recommendation');
+
+  await postKeys({ anthropicApiKey: 'FAKE-TEST-ANTHROPIC-KEY-do-not-use-1234567890abcdef' });
+  const W2 = await getKeys();
+  const rec = W2.build && W2.build.recommendedIngest;
+  ok(rec && rec.model === 'claude-haiku-5-5' && rec.provider === 'anthropic', 'with an Anthropic key saved, Haiku 5.5 is recommended for ingest');
+  ok(rec && /88%/.test(rec.why) && /39%/.test(rec.why) && /\$0\.020/.test(rec.why) && /\$0\.033/.test(rec.why),
+    'the reason states the measured facts-captured and per-source figures');
+  const h2 = renderWith(JSON.parse(JSON.stringify(W2)));
+  okContains(h2, REC_TAG, 'the card shows the recommendation');
+  okContains(h2, rec ? rec.why : 'x', '...with its reason in one line');
+  const at = h2.indexOf(REC_TAG);
+  const recBlock = at >= 0 ? h2.slice(at, h2.indexOf('</div>', at)) : '';
+  okContains(recBlock, 'data-build-model="claude-haiku-5-5"', '...and a Use it control for it, inside the recommendation');
+  ok(W2.offerable && W2.offerable.gemini.some((m) => m.id === 'gemini-3.5-flash-lite')
+    && W2.offerable.gemini.some((m) => m.id === 'gemini-3.1-flash-lite'), 'no Gemini model is hidden by the recommendation');
+
+  // A walk: Anthropic active, its configured model 404s, the next rung answers.
+  const act = await fetch(BASE + '/api/config/api-keys/active', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'anthropic' }),
+  });
+  ok(act.ok && llm.getProviderInfo().provider === 'anthropic', 'fixture: Anthropic is now the active provider');
+  const asked = llm.getProviderInfo().model;
+  llm.__setAnthropicClientFactory(() => ({ messages: {
+    stream(body) {
+      if (body.model === asked) { const e = new Error(`404 model not found: ${body.model}`); e.status = 404; throw e; }
+      return { finalMessage: async () => ({ stop_reason: 'end_turn', model: body.model,
+        usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: 'ok' }] }) };
+    },
+    create(body) { return this.stream(body).finalMessage(); },
+  } }));
+  let ran = null;
+  try {
+    await llm.generateText('sys', 'user', 32, 'text', null, { provider: 'anthropic', onUsage: (u) => { ran = u.model; } });
+  } finally { llm.__setAnthropicClientFactory(null); }
+  ok(ran && ran !== asked, `fixture: the chain walked (asked ${asked}, answered ${ran})`);
+  const W3 = await getKeys();
+  eq(W3.build.model, ran, 'the build card names the model that ANSWERED, not the one asked for');
+  eq(W3.build.source, 'fallback', '...as a fallback');
+  eq(W3.build.requestedModel, asked, '...and says which model did not answer');
+  okContains(renderWith(JSON.parse(JSON.stringify(W3))), 'did not answer', 'the card says so in words');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

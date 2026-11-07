@@ -3686,6 +3686,17 @@ function buildLaneFacts(k) {
       // line without the swap offer rather than claiming a difference.
       same: ch.same === true,
     } : null,
+    // The model asked for that did not answer (fallback source only).
+    requestedModel: typeof raw.requestedModel === 'string' ? raw.requestedModel : '',
+    // Server-derived, like `cheapest`: present only with a saved Anthropic key.
+    recommended: (raw.recommendedIngest && typeof raw.recommendedIngest === 'object'
+      && typeof raw.recommendedIngest.model === 'string' && raw.recommendedIngest.model) ? {
+      model: raw.recommendedIngest.model,
+      provider: typeof raw.recommendedIngest.provider === 'string' ? raw.recommendedIngest.provider : '',
+      label: typeof raw.recommendedIngest.label === 'string' ? raw.recommendedIngest.label : raw.recommendedIngest.model,
+      why: typeof raw.recommendedIngest.why === 'string' ? raw.recommendedIngest.why : '',
+      same: raw.recommendedIngest.same === true,
+    } : null,
   };
 }
 
@@ -5319,6 +5330,12 @@ function renderBuildCurrent(k, pickDisabled, opts) {
       'That overrides anything chosen here, so a choice below will not take effect until it is unset.';
   } else if (b.source === 'selected' && b.honoured) {
     why = 'You chose this one, so app updates will not move you off it.';
+  } else if (b.source === 'fallback' && b.requestedModel) {
+    // The chain walked: the card names the model that ANSWERS (and bills), and
+    // says which one was asked for.
+    why = '<code class="mono">' + escapeHtml(b.requestedModel) + '</code> did not answer, so <strong>' +
+      escapeHtml(modelName) + '</strong> is answering every call, at its own price. The Curator goes back ' +
+      'to your model as soon as it answers again.';
   } else if (b.source === 'selected' || b.source === 'fallback') {
     // ── THE HEDGE IS SPLIT INTO ITS TWO REAL CAUSES ──────────────────────
     // It read "(it may no longer be offered, or may never have been measured
@@ -5476,6 +5493,19 @@ function renderBuildCurrent(k, pickDisabled, opts) {
     }
   }
 
+  // ── RECOMMENDED FOR INGEST — server-derived, with its reason in one line ──
+  let recommended = '';
+  if (b.recommended) {
+    const r = b.recommended;
+    recommended = '<div class="build-cheapest"><span class="build-cheapest-tag">Recommended for ingest</span>' +
+      '<span><strong>' + escapeHtml(r.label) + '</strong>' + (r.same ? ', the one you are using' : '') + '. ' +
+      escapeHtml(r.why) +
+      (r.same ? '' : ' <button type="button" class="btn btn-secondary btn-xs" data-build-model="' +
+        escapeHtml(r.model) + '" data-build-provider="' + escapeHtml(r.provider) +
+        '"' + (pickDisabled ? ' disabled' : '') + '>Use it</button>') +
+      '</span></div>';
+  }
+
   // The popup, or — with nothing to switch to — the name as a statement.
   const head = o.popupHtml
     ? '<span class="build-current-popup">' + o.popupHtml + '</span>'
@@ -5501,6 +5531,7 @@ function renderBuildCurrent(k, pickDisabled, opts) {
            : (clear ? '<span class="build-current-why">' + clear + '</span>' : '')) +
       inert +
       cheapest +
+      recommended +
     '</div>'
   );
 }

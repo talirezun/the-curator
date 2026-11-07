@@ -240,10 +240,22 @@ const NO_KEY_OLD = 'THROW:No LLM API key found. Add one in Settings, or set GEMI
 const NO_KEY_NEW = 'THROW:No LLM API key found. Add one in Settings › Providers & keys (Gemini, Anthropic or OpenRouter), ' +
   'or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.';
 
+// ── THE SECOND PERMITTED DIFFERENCE (2026-11-07, owner decision) ──────────
+// The Gemini default moved FORWARD (gemini-2.5-flash-lite → gemini-3.5-flash-
+// lite) and both 2.5 ids were retired (404 for new keys); a stored 2.5 Flash
+// pick moves to the provider default too (the withdrawn-model rule). Matched as an EXACT
+// rewrite of the baseline's answer: a difference is permitted only when
+// replacing those two quoted ids in the baseline result yields the current
+// result byte for byte, so any other change still reds.
+const FORWARD_2026_11_07 = (r) => r
+  .replace(/"gemini-2\.5-flash-lite"/g, '"gemini-3.5-flash-lite"')
+  .replace(/"gemini-2\.5-flash"/g, '"gemini-3.5-flash-lite"');
+
 /** Run the whole matrix through two modules and return every disagreement. */
 function runMatrix(a, b) {
   const diffs = [];
   const permitted = [];
+  const forward = [];
   let comparisons = 0;
   for (const [shapeLabel, cfg, env] of SHAPES) {
     writeConfig(cfg);
@@ -254,17 +266,20 @@ function runMatrix(a, b) {
       const ra = probe(a, fn);
       const rb = probe(b, fn);
       if (ra === NO_KEY_OLD && rb === NO_KEY_NEW) permitted.push(`${shapeLabel} :: ${callLabel}`);
+      else if (ra !== rb && FORWARD_2026_11_07(ra) === rb) forward.push(`${shapeLabel} :: ${callLabel}`);
       else if (ra !== rb) diffs.push(`${shapeLabel} :: ${callLabel} :: baseline=${ra} current=${rb}`);
     }
     for (const [k, v] of Object.entries(restore)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   }
-  return { diffs, comparisons, permitted };
+  return { diffs, comparisons, permitted, forward };
 }
 
 if (OLD) {
-  const { diffs, comparisons, permitted } = runMatrix(OLD, NEW);
+  const { diffs, comparisons, permitted, forward } = runMatrix(OLD, NEW);
+  ok(forward.length > 0,
+    `the Gemini default moved forward on ${forward.length} probes — the 2026-11-07 difference is real, so its permission is not vacuous`);
   ok(permitted.length === 7 && permitted.every((p) => p.startsWith('no keys at all (the throwing branch) :: getProviderInfo')),
     `the ONLY difference is the contract-named no-key sentence, on the no-keys shape's 7 getProviderInfo calls (${permitted.length})`);
   ok(NO_KEY_NEW.startsWith('THROW:No LLM API key found.') && NO_KEY_OLD.startsWith('THROW:No LLM API key found.'),
@@ -393,7 +408,7 @@ ok(NEW.getOpenRouterCatalogueMeta(NOW).stale === NEW.openRouterCatalogueNeedsSyn
 // ═════════════════════════════════════════════════════════════════════════
 section('§4. measurementProvenance — curator / user / null, one producer, fails closed');
 
-ok(NEW.measurementProvenance('gemini', 'gemini-2.5-flash-lite') === 'curator',
+ok(NEW.measurementProvenance('gemini', 'gemini-3.5-flash-lite') === 'curator',
   'a hand-typed static entry reports "curator" — membership of OFFERABLE_MODELS IS the measurement claim');
 ok(NEW.measurementProvenance('anthropic', 'claude-haiku-4-5') === 'curator',
   'the Anthropic default reports "curator"');
@@ -401,11 +416,13 @@ ok(NEW.measurementProvenance('openrouter', 'upstage/solar-pro4') === 'curator',
   'a HAND-MEASURED OpenRouter route reports "curator" even though its provider also has a fetched half');
 ok(NEW.measurementProvenance('openrouter', 'vendor/alpha') === null,
   'a FETCHED catalogue entry with no local run reports null — it exists, we quote its price, we claim nothing else');
-ok(NEW.measurementProvenance('gemini', 'gemini-3.5-flash-lite') === 'curator',
-  'a hand-measured entry we judged CHAT-ONLY still reports "curator" — measured is not the same axis as good');
+// (Until 2026-11-07 this used gemini-3.5-flash-lite, then chat-only; it is now
+// the Gemini default. gemini-3.1-flash-lite carries a measured CAUTION.)
+ok(NEW.measurementProvenance('gemini', 'gemini-3.1-flash-lite') === 'curator',
+  'a hand-measured entry we judged CAUTION still reports "curator" — measured is not the same axis as good');
 ok(NEW.measurementProvenance('gemini', 'no-such-model') === null,
   'an unknown id fails closed to null');
-ok(NEW.measurementProvenance('__proto__', 'gemini-2.5-flash-lite') === null,
+ok(NEW.measurementProvenance('__proto__', 'gemini-3.5-flash-lite') === null,
   'an unknown provider fails closed to null (no object is indexed by the caller string)');
 ok(NEW.measurementProvenance('gemini', null) === null && NEW.measurementProvenance('gemini', 42) === null,
   'a non-string id fails closed rather than throwing');
@@ -578,7 +595,7 @@ ok(out.status === 200 && out.json.providerSwitched === false && out.json.activeM
 // The old per-provider route still exists and is deliberately unchanged.
 const legacy = await fetch(`${BASE}/api/config/api-keys/model`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ provider: 'gemini', model: 'gemini-2.5-flash' }),
+  body: JSON.stringify({ provider: 'gemini', model: 'gemini-3.7-flash' }),
 });
 const legacyJson = await legacy.json();
 ok(legacy.status === 200 && legacyJson.activeProvider === 'anthropic',
@@ -600,9 +617,22 @@ ok(out.status === 400 && /No openrouter key is saved/i.test(out.json.error || ''
 out = await post({ provider: 'gemini', model: 'no-such-model-anywhere' });
 ok(out.status === 400 && !/no-such-model-anywhere/.test(JSON.stringify(out.json)),
   'a non-offerable id is refused WITHOUT echoing the caller string back (log-forgery, v3.0.1-beta.20)');
-out = await post({ provider: 'gemini', model: 'gemini-3.5-flash-lite' });
-ok(out.status === 400 && out.json.reason === 'not_build_lane',
-  'a CHAT-ONLY model is refused as the build model — the badge is now enforced, not decorative');
+// No STATIC entry is chat-only since 2026-11-07 (gemini-3.5-flash-lite became
+// the Gemini default), so the refusal is driven over a FETCHED OpenRouter entry,
+// which always arrives chat-only. The OpenRouter key is saved for this one
+// request only, so the earlier no-saved-key refusal above still stands.
+{
+  const cfgNow = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  writeConfig({ ...cfgNow, openrouterApiKey: OK_ });
+  NEW.setOpenRouterCatalogue([dynSpec('vendor/chat-only-probe', 0.5, 1.5)]);
+  ok(NEW.isOfferableModel('openrouter', 'vendor/chat-only-probe') && !NEW.isBuildLaneModel('openrouter', 'vendor/chat-only-probe'),
+    'fixture: the fetched entry is offerable and NOT build-lane');
+  out = await post({ provider: 'openrouter', model: 'vendor/chat-only-probe' });
+  ok(out.status === 400 && out.json.reason === 'not_build_lane',
+    'a CHAT-ONLY model is refused as the build model — the badge is now enforced, not decorative');
+  NEW.setOpenRouterCatalogue([]);
+  writeConfig(cfgNow);
+}
 
 // Nothing was written by any refusal.
 ok(NEW.getProviderInfo().provider === 'anthropic' && NEW.getProviderInfo().model === 'claude-opus-5',

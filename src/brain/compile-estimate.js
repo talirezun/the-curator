@@ -41,7 +41,8 @@
  *
  * ── WHAT WAS MEASURED, AND HOW MUCH IT COST ─────────────────────────────────
  * Every constant below comes from real compiles run against a real model
- * (`gemini-2.5-flash-lite`, the shipping Gemini default) on isolated temporary
+ * (`gemini-2.5-flash-lite`, then the shipping Gemini default; retired 2026-11-07 and
+ * these figures NOT re-measured on its successor, gemini-3.5-flash-lite) on isolated temporary
  * domains on 2026-08-30. Ten paid calls, $0.009462 total. Seven full compiles,
  * two summary-only calls, three of the full compiles being byte-identical
  * replicates run to measure variance rather than to add a data point.

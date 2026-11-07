@@ -20,11 +20,15 @@ Providers rename and retire models. When Google retires `gemini-2.5-flash-lite` 
 
 ```js
 const DEFAULTS = {
-  gemini:    'gemini-2.5-flash-lite',   // Google's low-cost tier
+  gemini:    'gemini-3.5-flash-lite',   // since 2026-11-07; was gemini-2.5-flash-lite
   anthropic: 'claude-haiku-4-5',        // Anthropic's low-cost tier
   openrouter: 'upstage/solar-pro4',     // measured build-lane model — see below
 };
 ```
+
+**The Gemini default moved forward on 2026-11-07 (owner decision).** Measured that day on a new paid key: `gemini-2.5-flash-lite` and `gemini-2.5-flash` both answer `404 "no longer available to new users"`. So a new user on the 2.5 default was answered on every call by the first fallback rung, `gemini-3.1-flash-lite`, at that rung's price, while the build card, run line and estimates still named 2.5 (the card compared the rung with the *requested* model, so it could never say "fallback"). Both 2.5 ids are now in `RETIRED_MODELS` and unpriced; a stored pick of either moves to the default, `gemini-3.5-flash-lite`, with a one-time note that gives both prices (`$0.10/$0.40 → $0.30/$2.50` for Flash Lite 2.5; the same `$0.30/$2.50` for Flash 2.5). A user with a Gemini key and **no** pick gets one note too (`DEFAULT_CHANGES`, remembered in `defaultChangeAcks`), because moving a default moves their price with nothing stored to migrate. Why 3.5 Lite and not 3.1 Lite: on six real sources into a 3,407-page wiki (12 runs each) 3.5 Lite captured 39% of the facts (24% on a strict second judge) at $0.033 a source; 3.1 Lite captured 28% (16%) at $0.026. Its old JSON defect (2 of 9 unrepairable in Aug 2026) did not recur in 12 ingests, which narrows it without disproving it. With an Anthropic key the model card **recommends** `claude-haiku-5-5` for ingest (88% / 78% at $0.020 a source; `INGEST_RECOMMENDATION` in `llm.js`). Older keys were not tested: one that can still reach 2.5 natively also moves, and pays the higher price, with the note telling it so.
+
+**A label names the model that answers.** `answeringModel(provider, model)` returns the fallback rung while the chain is walking away from `model`. The build model card (`build.model`, `source: 'fallback'`, `requestedModel`), `describeRun` (the run line on every AI job, plus `answeringFor`), the batch-ingest estimate and the ingest repeat plan all use it.
 
 All three pinned defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output pick a different model in **Settings → Providers & keys**, or per-chat from the composer — see [Choosing a model](#choosing-a-model-multi-model-support) below and [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). (Developers additionally have the unrestricted `LLM_MODEL` escape hatch; it bypasses the allow-list and outranks the stored Settings choice.)
 
@@ -40,9 +44,9 @@ When a provider retires or supersedes one of these, we bump the constant in a ne
 
 ```js
 const FALLBACK_CHAINS = {
-  gemini: [
-    'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
-    'gemini-2.5-flash',             // higher (costlier) tier — last resort
+  gemini: [                         // rebuilt 2026-11-07, forward from gemini-3.5-flash-lite
+    'gemini-3.7-flash',             // $0.75/$3.75 promo to 2026-12-31, then $1.50/$7.50
+    'gemini-3.6-flash',             // same price, older
   ],
   anthropic: [                      // rebuilt 2026-10-08 on the 5.5 generation
     'claude-haiku-5-5',             // $0.10/$0.50 (≤100k prompt), $0.50/$2.50 above — tiered, newest Haiku
@@ -104,7 +108,7 @@ The first model that responds is the one used for that call. Subsequent calls re
 
 **Chains run forward in time, cheapest-first.** A chain only fires because the primary was *retired*, so escalating **backwards** to an older generation is the wrong direction — an older model is more likely to be retired than the one that just replaced it. Each rung is therefore the closest-priced live successor first, then progressively pricier ones. This was a real defect: until v3.0.15 the Gemini chain escalated to `gemini-1.5-flash` and `gemini-1.5-flash-latest`, and a live probe on 2026-08-22 (with the Curator's exact call shape — JSON mode, `maxOutputTokens: 65536`) found **both already returning 404**. Two of the three rungs were dead, so a real retirement of `gemini-2.5-flash-lite` would have fallen through to a single working model. Verify every rung against the live API when you edit a chain — a fallback chain is untested by definition until the day it is needed.
 
-**The default is deliberately NOT bumped to the successor.** `gemini-2.5-flash-lite` stays the pinned default because it is 2.5x cheaper on input and 3.75x cheaper on output than `gemini-3.1-flash-lite`, its own closest successor (and cheaper still than the rungs below it). The chain exists to keep users *working* when the default disappears, not to move them off it early — which is also precisely why a fallback warrants a cost warning.
+**The default is deliberately NOT bumped to the successor** while the default still answers. (`gemini-2.5-flash-lite` stayed pinned for that reason until 2026-11-07, when Google stopped serving it to new keys; see above.) The chain exists to keep users *working* when the default disappears, not to move them off it early — which is also precisely why a fallback warrants a cost warning.
 
 **Only `model-not-found` errors trigger fallback.** Rate limits (429), service-unavailable (503), and authentication failures (401) go through their existing retry / surface paths. They don't cascade through the chain.
 
@@ -150,13 +154,13 @@ Prices verified 2026-08-26 against [ai.google.dev/gemini-api/docs/pricing](https
 
 | Model | Input / 1M | Output / 1M | vs its default |
 |---|---|---|---|
-| `gemini-2.5-flash-lite` *(default)* | $0.10 | $0.40 | — |
-| `gemini-3.1-flash-lite` | $0.25 | $1.50 | 2.5× / 3.75× |
-| `gemini-2.5-flash` | $0.30 | $2.50 | 3× / 6.25× |
-| `gemini-3.5-flash-lite` | $0.30 | $2.50 | 3× / 6.25× |
-| `gemini-3.7-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
-| `gemini-3.6-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
-| `gemini-3.5-flash` | $1.50 | $9.00 | 15× / 22.5× |
+| `gemini-3.1-flash-lite` | $0.25 | $1.50 | 0.83× / 0.6× |
+| `gemini-3.5-flash-lite` *(default since 2026-11-07)* | $0.30 | $2.50 | — |
+| `gemini-3.7-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 2.5× / 1.5× *(5× / 3× from 2027)* |
+| `gemini-3.6-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 2.5× / 1.5× *(5× / 3× from 2027)* |
+| `gemini-3.5-flash` | $1.50 | $9.00 | 5× / 3.6× |
+
+*(Retired 2026-11-07 and unpriced: `gemini-2.5-flash-lite` $0.10/$0.40, `gemini-2.5-flash` $0.30/$2.50.)*
 | `claude-haiku-5-5` | $0.10 *(→ $0.50 on a call whose prompt is over 100k tokens)* | $0.50 *(→ $2.50)* | 0.1× / 0.1× *(0.5× / 0.5× over the threshold; ≈0.13× input on real text)* |
 | `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
 | `claude-sonnet-5-5` | $2.00 | $10.00 | 2× / 2× *(≈2.66× input on real text; cache reads 0.05×)* |
@@ -189,9 +193,9 @@ For most of its life The Curator could run exactly **two** models — one per pr
 
 `OFFERABLE_MODELS` in [`llm.js`](../src/brain/llm.js) is that ask: the set of models the app will let you select, per provider, **cheapest first**. Every entry was probed live on 2026-08-26 against this repo's **real** ingest outline prompt on real prose — never a toy `return this JSON` probe — and carries what that probe measured, so the cost *and* the trade-off are visible at the moment of choosing.
 
-**The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned. On Gemini the default is still the cheapest model that can build a wiki; on Anthropic it no longer is — `claude-haiku-5-5` (added 2026-10-08, allowed to build the same day once the money path became tier-aware) is cheaper — and the default stays put by the maintainer's decision: a default moves when it is retired, and Haiku 4.5 is the previous generation, not a retired one. See [The Anthropic 5.5 generation and tiered pricing](#the-anthropic-55-generation-and-tiered-pricing-2026-10-08) below. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
+**The defaults move only when retired.** `gemini-3.5-flash-lite` (since 2026-11-07, see above) and `claude-haiku-4-5` are pinned. Neither is the cheapest model that can build on its provider (`gemini-3.1-flash-lite` and `claude-haiku-5-5` are); on Anthropic — `claude-haiku-5-5` (added 2026-10-08, allowed to build the same day once the money path became tier-aware) is cheaper — and the default stays put by the maintainer's decision: a default moves when it is retired, and Haiku 4.5 is the previous generation, not a retired one. See [The Anthropic 5.5 generation and tiered pricing](#the-anthropic-55-generation-and-tiered-pricing-2026-10-08) below. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
 
-The hand-measured catalogue holds **seven Gemini and six Anthropic entries, plus a set of OpenRouter routes that grows as candidates are measured** — this document deliberately prints no running total, because the OpenRouter half moves with measurement; read `listOfferableModels(provider)` for the live list. Almost every entry may enter the build lane; `gemini-3.5-flash-lite` is the hand-measured exception, offered as `chat-only` for a measured JSON defect. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved). On Anthropic the catalogue is **the current generation and the one before it** — Haiku 5.5 / 4.5, Sonnet 5.5 / 5, Opus 5.5 / 5 — and everything older is in `RETIRED_MODELS` (see [Retiring two-generation-old Anthropic models](#retiring-two-generation-old-anthropic-models-and-moving-picks-forward-2026-10-08)). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because a *second*, much larger chat-lane list is read from the provider's live catalogue rather than hand-typed here. **That overlay is populated on demand**, by `POST /api/config/openrouter/sync` — so `listOfferableModels('openrouter')` returns the hand-measured entries above until a user refreshes, and those plus every admitted catalogue entry afterwards. A fetched entry is `chat-only` by construction and can never be promoted by a refresh; the one route out of that lane is a user's own [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages), which is a **third lane state** and never entry into this hand-measured one. The OpenRouter entries here were admitted the same way every other entry was, by measurement against the real ingest prompt.
+The hand-measured catalogue holds **five Gemini and six Anthropic entries, plus a set of OpenRouter routes that grows as candidates are measured** — this document deliberately prints no running total, because the OpenRouter half moves with measurement; read `listOfferableModels(provider)` for the live list. Every hand-measured entry may enter the build lane (`gemini-3.5-flash-lite` was `chat-only` until 2026-11-07). Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved). On Anthropic the catalogue is **the current generation and the one before it** — Haiku 5.5 / 4.5, Sonnet 5.5 / 5, Opus 5.5 / 5 — and everything older is in `RETIRED_MODELS` (see [Retiring two-generation-old Anthropic models](#retiring-two-generation-old-anthropic-models-and-moving-picks-forward-2026-10-08)). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because a *second*, much larger chat-lane list is read from the provider's live catalogue rather than hand-typed here. **That overlay is populated on demand**, by `POST /api/config/openrouter/sync` — so `listOfferableModels('openrouter')` returns the hand-measured entries above until a user refreshes, and those plus every admitted catalogue entry afterwards. A fetched entry is `chat-only` by construction and can never be promoted by a refresh; the one route out of that lane is a user's own [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages), which is a **third lane state** and never entry into this hand-measured one. The OpenRouter entries here were admitted the same way every other entry was, by measurement against the real ingest prompt.
 
 ### The Anthropic 5.5 generation and tiered pricing (2026-10-08)
 
@@ -332,7 +336,7 @@ That split is the whole point. A **fallback chain** picks *for* the user, silent
 
 Current entries:
 
-- **`gemini-3.5-flash-lite`** — dominated by `gemini-2.5-flash`. Identical $0.30/$2.50, but 2 of 9 live runs against the real ingest prompt returned JSON that *neither* `JSON.parse` nor `jsonrepair` could fix (a dropped object key, `finishReason: STOP` — a generation defect, not truncation the output-token-limit ladder could route around). `gemini-2.5-flash` was 3/3 clean on the identical probe and plans wider outlines. It was pulled from the Gemini chain on 2026-08-26 by a bespoke pair of assertions naming it specifically; those are now folded into this list, so the *next* dominated model is caught by the same class invariant instead of needing its own pair.
+- *(none since 2026-11-07.)* **`gemini-3.5-flash-lite`** was dominated by `gemini-2.5-flash` until that model was retired; the record: Identical $0.30/$2.50, but 2 of 9 live runs against the real ingest prompt returned JSON that *neither* `JSON.parse` nor `jsonrepair` could fix (a dropped object key, `finishReason: STOP` — a generation defect, not truncation the output-token-limit ladder could route around). `gemini-2.5-flash` was 3/3 clean on the identical probe and plans wider outlines. It was pulled from the Gemini chain on 2026-08-26 by a bespoke pair of assertions naming it specifically; those are now folded into this list, so the *next* dominated model is caught by the same class invariant instead of needing its own pair.
 - *(`claude-opus-4-5`, dominated by `claude-opus-5` at the identical $5/$25, left this list when it was retired from the catalogue on 2026-10-08, together with `claude-opus-4-8` and `claude-sonnet-4-5`, the two models this section recorded as considered and deliberately not listed.)*
 
 `claude-sonnet-5` and `claude-sonnet-5-5` share a price ($2/$10); the newer one measured wider plans (22–25 pages against 19 on the same source) and cheaper cached reads, but Sonnet 5 is **not** listed as dominated: it is a live fallback rung, and the comparison rests on one source and a handful of runs.

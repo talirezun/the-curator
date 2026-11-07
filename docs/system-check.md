@@ -62,7 +62,7 @@ sends a tiny "reply OK" request to your configured model.
 It then reports:
 
 - ✅ **AI connection works** — with the provider, model, and how long it took to
-  respond (e.g. *"gemini · gemini-2.5-flash-lite · responded in 773 ms"*).
+  respond (e.g. *"gemini · gemini-3.5-flash-lite · responded in 773 ms"*).
 - ❌ **AI connection failed** — with the exact error, so you can tell whether
   it's a bad/expired key, a provider outage (e.g. an HTTP 503 "overloaded"),
   or a rate limit.

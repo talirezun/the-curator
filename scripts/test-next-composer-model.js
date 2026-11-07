@@ -949,7 +949,16 @@ const generalEntries = [];
   ok(flaggedEntries.length > 0, `real catalogue contains a FLAGGED entry (found ${flaggedEntries.length}) — §7 is not vacuous`);
   ok(generalEntries.length > 0, `real catalogue contains an UNFLAGGED entry (found ${generalEntries.length}) — the flag actually discriminates`);
   ok(promotedEntries.length > 0, `real catalogue contains a PROMOTED entry (found ${promotedEntries.length}) — §6 is not vacuous`);
-  ok(dominatedEntries.length > 0, `real catalogue contains a DOMINATED entry (found ${dominatedEntries.length})`);
+  // DOMINATED_MODELS is EMPTY since 2026-11-07 (gemini-3.5-flash-lite, its one
+  // entry, became the Gemini default), and so is the static chat-only lane. A
+  // real row re-flagged stands in for each, so §6c still holds the renderers to
+  // both verdicts. They are fixtures, never added to REAL.
+  if (dominatedEntries.length === 0) {
+    const last = REAL.gemini[REAL.gemini.length - 1];
+    dominatedEntries.push({ p: 'gemini', e: { ...last, id: 'zz-dominated-fixture', dominated: true,
+      cautionReason: last.cautionReason || 'A same-priced sibling measured better.' } });
+  }
+  ok(dominatedEntries.length > 0, `a DOMINATED entry is present (found ${dominatedEntries.length})`);
   // A promoted entry whose live price EQUALS its standard price would make §5's
   // "standard is not shown as current" assertion unfalsifiable.
   const priceDiffers = promotedEntries.every(({ e }) => e.input !== e.standardInput || e.output !== e.standardOutput);
@@ -1285,13 +1294,21 @@ section('§6c  No INGEST verdict in the chat menu (DESIGN.md M-a)');
 // (Settings renders them; test-next-model-picker.js pins that side).
 {
   const chatOnly = [], cautions = [];
-  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+  const ROWS = [];
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) ROWS.push({ p, e });
+  for (const d of dominatedEntries) if (!ROWS.some((r) => r.e.id === d.e.id)) ROWS.push(d);
+  if (!ROWS.some(({ e }) => e.suitability === 'chat-only')) {
+    const src = REAL.gemini[0];
+    ROWS.push({ p: 'gemini', e: { ...src, id: 'zz-chat-only-fixture', suitability: 'chat-only', jsonRaw: false,
+      cautionReason: 'Measured unfit for ingest (fixture).' } });
+  }
+  for (const { p, e } of ROWS) {
     if (e.suitability === 'chat-only') chatOnly.push({ p, e });
     if (e.suitability === 'caution') cautions.push({ p, e });
   }
   ok(chatOnly.length > 0 && cautions.length > 0 && dominatedEntries.length > 0,
-    'corpus: the live catalogue holds chat-only, caution AND dominated models (this section is not vacuous)');
-  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    'corpus: chat-only, caution AND dominated rows are all present (this section is not vacuous)');
+  for (const { p, e } of ROWS) {
     const menu = renderModelRowBodyHtml(p, e);
     const browse = renderModelOptionHtml(p, e, null);
     for (const [where, html] of [['menu', menu], ['browse', browse]]) {

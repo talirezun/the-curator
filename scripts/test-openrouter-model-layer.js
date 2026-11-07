@@ -966,14 +966,22 @@ section('3. Price conversion is EXACT, not approximate');
 // ═════════════════════════════════════════════════════════════════════════════
 section('4. isBuildLaneModel — a chat-only model may be chatted with, never pinned as the build model');
 {
-  // The live instance this closes. `gemini-3.5-flash-lite` is OFFERABLE (a user
-  // may pick it for chat) and NOT build-lane (it emits JSON that neither the
-  // parser nor the repair pass could fix in 2 of 9 real ingest runs). Before
-  // v3.15.0 nothing in the code knew the difference — the verdict existed only
-  // as a badge.
-  const CHAT_ONLY = Object.values(llm.OFFERABLE_MODELS).flat().filter(m => m.suitability === 'chat-only');
+  // The live instance this closed was `gemini-3.5-flash-lite`: OFFERABLE for
+  // chat, NOT build-lane (2 of 9 real ingest runs emitted unrepairable JSON).
+  // On 2026-11-07 it became the Gemini default by the owner's decision, so no
+  // STATIC entry is chat-only any more. The lane still exists — every fetched
+  // OpenRouter catalogue entry arrives chat-only — so the section drives a
+  // fetched one, registered through the real catalogue door.
+  const FETCHED_CHAT_ONLY = 'zz-vendor/zz-fetched-chat-only';
+  setOpenRouterCatalogue([{
+    id: FETCHED_CHAT_ONLY, label: 'Fetched Chat Only', suitability: 'chat-only', maxOutput: 131072,
+    contextWindow: 204800, thinks: false, tokenizerFactor: 1, note: 'admitted from the live catalogue',
+    price: { input: 0.5, output: 2 },
+  }]);
+  const ALL_OFFERS = ['gemini', 'anthropic', 'openrouter'].flatMap(p => listOfferableModels(p).map(m => ({ ...m, provider: m.provider || p })));
+  const CHAT_ONLY = ALL_OFFERS.filter(m => m.suitability === 'chat-only');
   ok(CHAT_ONLY.length > 0,
-    `fixture sanity: the catalogue ships at least one chat-only model (${CHAT_ONLY.length}) — without one this whole section would pass vacuously`);
+    `fixture sanity: the catalogue carries at least one chat-only model (${CHAT_ONLY.length}) — without one this whole section would pass vacuously`);
   for (const m of CHAT_ONLY) {
     eq(isOfferableModel(m.provider, m.id), true,
       `${m.id}: STILL OFFERABLE — a chat-only verdict must not hide a working model from the chat picker`);
@@ -1017,12 +1025,12 @@ section('4. isBuildLaneModel — a chat-only model may be chatted with, never pi
   eq(applyModelOverride(general.provider, DEFAULTS[general.provider], general.id, true), general.id,
     `control: a build-lane model ("${general.id}") is honoured WITH requireBuildLane — the flag refuses selectively, not universally`);
 
-  // The refusal direction is money-safe: it lands on the provider default,
-  // which is the CHEAPEST model on that provider (OFFERABLE_MODELS is
-  // cheapest-first and its head IS the default).
-  const list = llm.OFFERABLE_MODELS[chatOnly.provider];
-  eq(list[0].id, dflt,
-    `the refusal target for ${chatOnly.provider} is the CHEAPEST offerable model — the worst case of a lane refusal is spending less than the user asked for, never more`);
+  // The refusal lands on the provider DEFAULT, which can build and is priced.
+  // (The head of the list is no longer always the default: Gemini's cheapest
+  // per token, 3.1 Lite, captured fewer facts than the 3.5 Lite default.)
+  ok(isBuildLaneModel(chatOnly.provider, dflt) && !!getModelPrice(dflt),
+    `the refusal target for ${chatOnly.provider} ("${dflt}") can build a wiki and carries a price`);
+  setOpenRouterCatalogue([]);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

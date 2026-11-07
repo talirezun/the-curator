@@ -60,7 +60,7 @@ const ALL = PROVIDERS.flatMap((p) => REAL[p].map((e) => ({ p, e })));
 section('§1  Formatters — every figure from the catalogue, none rounded away');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  ok(ALL.length >= 15, `corpus: ${ALL.length} real catalogue entries across ${PROVIDERS.length} providers`);
+  ok(ALL.length >= 13, `corpus: ${ALL.length} real catalogue entries across ${PROVIDERS.length} providers`);
   // Exact prices — the old composer printed $0.075 as "$0.08".
   const cases = [[0.075, '$0.075'], [0.017, '$0.017'], [0.1, '$0.10'], [2, '$2.00'], [10, '$10.00'], [0.0001, '$0.0001'], [0, '$0.00']];
   for (const [n, want] of cases) ok(formatPricePerM(n) === want, `formatPricePerM(${n}) === "${want}" (got "${formatPricePerM(n)}")`);

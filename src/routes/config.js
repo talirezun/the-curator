@@ -1601,6 +1601,31 @@ function cheapestMeasuredBuild(keys, currentProvider, currentModel) {
   });
 }
 
+/**
+ * The ingest recommendation, or null. A recommendation is a claim we can show
+ * our working for: Haiku 5.5 measured 88% of facts captured (78% on a stricter
+ * judge) at $0.020 a source, against Flash Lite 3.5's 39% (24%) at $0.033 and
+ * Flash Lite 3.1's 28% (16%) at $0.026 — six real sources, 12 runs each,
+ * 2026-11-07. Null without a saved Anthropic key, when the model is not
+ * build-lane, or when the provider's live list says it is gone.
+ */
+function recommendedIngestFor(keys, currentProvider, currentModel) {
+  const rec = llmModule.INGEST_RECOMMENDATION;
+  if (!rec || !keys || !keys.anthropicApiKey) return null;
+  try {
+    if (!isBuildLaneAllowed(rec.provider, rec.model)) return null;
+    if (liveMissingFor(rec.provider, rec.model) === true) return null;
+  } catch { return null; }
+  const entry = offerableFor(rec.provider).find(e => e && e.id === rec.model) || null;
+  return {
+    provider: rec.provider,
+    model: rec.model,
+    label: entry && entry.label ? entry.label : rec.model,
+    why: rec.why,
+    same: currentProvider === rec.provider && currentModel === rec.model,
+  };
+}
+
 /** GET /api/config/api-keys — returns masked keys + active provider info */
 router.get('/api-keys', (_req, res) => {
   const keys = getApiKeys();
@@ -1843,17 +1868,31 @@ router.get('/api-keys', (_req, res) => {
     build: (() => {
       const p = provider?.provider || null;
       if (!p) return null;
-      const model = provider?.model || null;
+      // ── NAME THE MODEL THAT ANSWERS (2026-11-07) ──────────────────────────
+      // `provider.model` is the model ASKED for. When the fallback chain walked
+      // away from it, every call is answered (and billed) by the rung, and this
+      // card named the request: measured on a new Gemini key, it read "Flash
+      // Lite 2.5" while Flash Lite 3.1 answered every call. The old test here
+      // compared the rung with the REQUEST, so it could never be true.
+      const requested = provider?.model || null;
+      const model = (requested && typeof llmModule.answeringModel === 'function')
+        ? llmModule.answeringModel(p, requested) : requested;
+      const onFallback = !!model && model !== requested;
       const selected = getSelectedModel(p);
       const envModel = (process.env.LLM_MODEL && p === getActiveProvider())
         ? process.env.LLM_MODEL : null;
-      const fb = typeof llmModule.getFallbackStatus === 'function' ? llmModule.getFallbackStatus() : null;
-      const onFallback = !!fb && fb.provider === p && fb.usingModel === model;
       const entry = offerableFor(p).find(e => e && e.id === model) || null;
       return {
         model,
         provider: p,
         source: onFallback ? 'fallback' : (envModel ? 'env' : (selected ? 'selected' : 'default')),
+        // The model that was asked for and did not answer, on the fallback
+        // source only; null otherwise.
+        requestedModel: onFallback ? requested : null,
+        // ── RECOMMENDED FOR INGEST (owner decision, 2026-11-07) ──────────────
+        // Offered only when an Anthropic key is SAVED and Haiku 5.5 can build.
+        // The figures are the measured ones (docs/user-guide.md model table).
+        recommendedIngest: recommendedIngestFor(keys, p, model),
         // The facts a user makes a spending decision from, all read off the
         // catalogue entry — never re-typed, never inferred from a family name.
         // Every one is null when the entry does not carry it: absent means

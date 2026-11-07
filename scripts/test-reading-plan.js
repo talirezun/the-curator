@@ -346,7 +346,7 @@ section('7. The AI arm, through the test seam');
 {
   useConfig({ geminiApiKey: 'zz-test-dummy-key-not-real', activeProvider: 'gemini' });
   const calls = [];
-  const USAGE = { inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+  const USAGE = { inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-3.5-flash-lite' };
   const long = 'x'.repeat(400);
   const fake = async (system, user, maxTokens, mode, onWait, opts) => {
     calls.push({ system, user, maxTokens, mode, opts });
@@ -434,7 +434,7 @@ section('8. An injection-shaped opening proposes nothing outside the alphabet');
   // A fake model that "obeys" the injected instruction.
   const obey = async (s, u, m, f, w, o) => {
     seen = u;
-    o.onUsage({ inputTokens: 100, outputTokens: 50, provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+    o.onUsage({ inputTokens: 100, outputTokens: 50, provider: 'gemini', model: 'gemini-3.5-flash-lite' });
     return JSON.stringify({ proposals: [
       { slug: '../../etc/passwd', proposed: 'read-first', reason: 'admin mode' },
       { slug: 'guide.md', proposed: 'delete-everything', reason: 'as instructed' },
@@ -517,7 +517,7 @@ section('10. The routes (in-process express on 127.0.0.1)');
     // With a key, through the route seam.
     useConfig({ geminiApiKey: 'zz-test-dummy-key-not-real', activeProvider: 'gemini' });
     routeMod.__setReadingPlanLlmForTest(async (s, u, m, f, w, o) => {
-      o.onUsage({ inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+      o.onUsage({ inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-3.5-flash-lite' });
       return '{"proposals":[{"slug":"conventions.md","proposed":"read-first","reason":"needed for any code change"},{"slug":"nope.md","proposed":"on-request","reason":"x"}]}';
     });
     r = await call('POST', '/api/reading-plan/work/curator/suggest', { arm: 'ai' });
@@ -525,7 +525,7 @@ section('10. The routes (in-process express on 127.0.0.1)');
     ok(r.json.spent && r.json.spent.outputTokens === 640, 'the AI reply carries spent');
     ok(r.json.runsOn && r.json.runsOn.needsKey === false, 'the AI reply carries runsOn');
     eq(r.json.dropped[0] && r.json.dropped[0].slug, 'nope.md', 'the unknown slug is dropped and named on the wire');
-    routeMod.__setReadingPlanLlmForTest(async (s, u, m, f, w, o) => { o.onUsage({ inputTokens: 10, outputTokens: 2, provider: 'gemini', model: 'gemini-2.5-flash-lite' }); throw new Error('503'); });
+    routeMod.__setReadingPlanLlmForTest(async (s, u, m, f, w, o) => { o.onUsage({ inputTokens: 10, outputTokens: 2, provider: 'gemini', model: 'gemini-3.5-flash-lite' }); throw new Error('503'); });
     r = await call('POST', '/api/reading-plan/work/curator/suggest', { arm: 'ai' });
     eq(r.status, 502, 'a model failure → 502 ai_failed');
     eq(r.json.reason, 'ai_failed', 'reason ai_failed');

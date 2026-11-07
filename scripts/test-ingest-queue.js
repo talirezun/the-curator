@@ -972,20 +972,20 @@ async function testBudgetCapWithRealUsage() {
   const domain = await makeDomain();
   const files = [];
   for (let i = 0; i < 5; i++) files.push(await makeUpload(`m${i}.md`, 1000 - i, userDataDir));
-  // gemini-2.5-flash-lite is priced ($0.10 in / $0.40 out per MTok — see
-  // MODEL_PRICES_USD_PER_MTOK in llm.js). 1,000,000 in + 0 out => exactly
-  // $0.10 per item at full price.
-  const tokenUsage = { provider: 'gemini', model: 'gemini-2.5-flash-lite', calls: 1, inputTokens: 1_000_000, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 };
+  // gemini-3.5-flash-lite, the Gemini default since 2026-11-07, is priced
+  // ($0.30 in / $2.50 out per MTok). 1,000,000 in + 0 out => exactly
+  // $0.30 per item at full price.
+  const tokenUsage = { provider: 'gemini', model: 'gemini-3.5-flash-lite', calls: 1, inputTokens: 1_000_000, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 };
   const fake = makeFakeIngestFile(domain, { 'm0.md': 'ok', 'm1.md': 'ok', 'm2.md': 'ok', 'm3.md': 'ok', 'm4.md': 'ok' }, { tokenUsage });
   // Budget check runs BEFORE starting an item, against spend already
-  // accumulated from COMPLETED items. At $0.10/item: after item1 spend is
-  // $0.10 (< $0.15, item2 starts); after item2 spend is $0.20 (>= $0.15,
+  // accumulated from COMPLETED items. At $0.30/item: after item1 spend is
+  // $0.30 (< $0.45, item2 starts); after item2 spend is $0.60 (>= $0.45,
   // paused before item3). So exactly 2 items complete.
-  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.15 });
+  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.45 });
   await startOrResumeJob(job.jobId, { ingestFile: fake });
   const paused = await waitStatus(job.jobId, 'paused');
   assertEq(paused.pausedReason, 'budget', 'paused with reason budget');
-  assert(paused.spentUsd >= 0.15 && paused.spentUsd < 0.30, `spentUsd (${paused.spentUsd}) reflects exactly the completed items' real cost`);
+  assert(paused.spentUsd >= 0.45 && paused.spentUsd < 0.90, `spentUsd (${paused.spentUsd}) reflects exactly the completed items' real cost`);
   assertEq(paused.spendIsEstimated, false, 'spendIsEstimated stays false when real tokenUsage was usable');
   const doneCount = paused.items.filter(i => i.status === 'done').length;
   assertEq(doneCount, 2, 'exactly 2 items completed before the cap engaged');
@@ -1034,15 +1034,16 @@ async function testBudgetCapWithoutTokenUsage() {
  *
  * WHY THE FIXTURE IS SHAPED LIKE THIS. Every item reports 1,000,000 cached-read
  * tokens and NOTHING else, so the charge is the cached-read term alone and the
- * multiplier is the only variable. `gemini-2.5-flash-lite` bills $0.10/MTok
+ * multiplier is the only variable. `gemini-3.5-flash-lite` (the default since
+ * 2026-11-07; this read gemini-2.5-flash-lite at $0.10 before) bills $0.30/MTok
  * input, so per item:
  *
- *     OLD (universal 0.1x):  1e6/1e6 x $0.10 x 0.1  = $0.01
- *     NEW (full price):      1e6/1e6 x $0.10 x 1.0  = $0.10
+ *     OLD (universal 0.1x):  1e6/1e6 x $0.30 x 0.1  = $0.03
+ *     NEW (full price):      1e6/1e6 x $0.30 x 1.0  = $0.30
  *
- * Against a $0.15 cap over 5 items the two differ in OUTCOME, not in a decimal:
- * at $0.10 the cap is reached after item 2 and the job PAUSES with 2 done; at
- * $0.01 it never reaches $0.15 at all and the whole batch runs to `done`. So
+ * Against a $0.45 cap over 5 items the two differ in OUTCOME, not in a decimal:
+ * at $0.30 the cap is reached after item 2 and the job PAUSES with 2 done; at
+ * $0.03 it never reaches $0.45 at all (5 x $0.03 = $0.15) and the whole batch runs to `done`. So
  * this asserts a pause the pre-fix code could not have produced, rather than a
  * figure that merely looks different.
  */
@@ -1052,13 +1053,13 @@ async function testBudgetCapChargesCachedReadsAtProviderRate() {
   const files = [];
   for (let i = 0; i < 5; i++) files.push(await makeUpload(`c${i}.md`, 1000 - i, userDataDir));
   const tokenUsage = {
-    provider: 'gemini', model: 'gemini-2.5-flash-lite', calls: 1,
+    provider: 'gemini', model: 'gemini-3.5-flash-lite', calls: 1,
     inputTokens: 0, outputTokens: 0, cachedReadTokens: 1_000_000, cacheWriteTokens: 0,
   };
   const plan = {};
   for (let i = 0; i < 5; i++) plan[`c${i}.md`] = 'ok';
   const fake = makeFakeIngestFile(domain, plan, { tokenUsage });
-  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.15 });
+  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.45 });
   await startOrResumeJob(job.jobId, { ingestFile: fake });
   const paused = await waitSettled(job.jobId);
   assertEq(paused.status, 'paused',
@@ -1068,8 +1069,8 @@ async function testBudgetCapChargesCachedReadsAtProviderRate() {
     'the figure the cap fired on is MEASURED, not an estimate share');
   const doneCount = paused.items.filter(i => i.status === 'done').length;
   assertEq(doneCount, 2, 'exactly 2 items completed before the cap engaged — 5 would mean the discount is still being applied');
-  assert(paused.spentUsd >= 0.15 && paused.spentUsd < 0.30,
-    `spentUsd (${paused.spentUsd}) is the full-price figure (~$0.20), not the 10x-discounted $0.02 the old formula produced`);
+  assert(paused.spentUsd >= 0.45 && paused.spentUsd < 0.90,
+    `spentUsd (${paused.spentUsd}) is the full-price figure (~$0.60), not the 10x-discounted $0.06 the old formula produced`);
   await requestCancel(job.jobId);
 }
 
@@ -1976,7 +1977,7 @@ async function testSpentOnTheSingleIngestDoneEvent() {
   const { ingestDoneEvent } = await import('../src/routes/ingest.js');
   const { spentFromUsage } = await import('../src/brain/ai-run.js');
   const tokenUsage = { calls: 2, inputTokens: 9000, outputTokens: 1400, cachedReadTokens: 3000, cacheWriteTokens: 500,
-    provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+    provider: 'gemini', model: 'gemini-3.5-flash-lite' };
   const base = { title: 'T', pagesWritten: ['summaries/t.md'], changes: [], warnings: ['w'], truncated: false };
   const PRE_V367 = 'type,title,pagesWritten,changes,warnings,truncated,wasOverwrite,tokenUsage';
 

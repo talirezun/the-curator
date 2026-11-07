@@ -485,14 +485,14 @@ curl http://localhost:3333/api/ingest/activity
         "wasOverwrite": false,
         "tokenUsage": {
           "provider": "gemini",
-          "model": "gemini-2.5-flash-lite",
+          "model": "gemini-3.5-flash-lite",
           "calls": 6,
           "inputTokens": 148320,
           "outputTokens": 9114,
           "cachedReadTokens": 0,
           "cacheWriteTokens": 0
         },
-        "spent": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "usd": 0.021, "estimated": true }
+        "spent": { "provider": "gemini", "model": "gemini-3.5-flash-lite", "usd": 0.021, "estimated": true }
       }
     }
   ]
@@ -619,8 +619,8 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
       "attempts": 1,
       "error": null,
       "result": { "title": "...", "pagesWritten": 6, "warningCount": 0, "changeCounts": { "created": 4, "updated": 2, "unchanged": 0 } },
-      "tokenUsage": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "inputTokens": 180000, "outputTokens": 9000 },
-      "ranOn": { "provider": "gemini", "providerLabel": "Gemini", "model": "gemini-2.5-flash-lite", "modelLabel": "Gemini 2.5 Flash Lite", "fallbackFrom": null }
+      "tokenUsage": { "provider": "gemini", "model": "gemini-3.5-flash-lite", "inputTokens": 180000, "outputTokens": 9000 },
+      "ranOn": { "provider": "gemini", "providerLabel": "Gemini", "model": "gemini-3.5-flash-lite", "modelLabel": "Gemini 3.5 Flash Lite", "fallbackFrom": null }
     }
   ]
 }
@@ -685,7 +685,7 @@ Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs th
 {
   "ok": true,
   "provider": "gemini",
-  "model": "gemini-2.5-flash-lite",
+  "model": "gemini-3.5-flash-lite",
   "files": {
     "count": 1,
     "totalBytes": 812345,
@@ -696,7 +696,7 @@ Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs th
     "inputTokensLow": 180000, "inputTokensHigh": 180000,
     "outputTokensLow": 9000, "outputTokensHigh": 9000,
     "usdLow": 1.9, "usdHigh": 2.4,
-    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" against the \"ai-tech\" domain, currently 40 entities, 90 concepts, 12 KB index. Cost depends heavily on how large this wiki ALREADY is, not just on the files being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) what is already there. For THIS batch, that existing content works out to about 3.1x the input tokens the same files would cost against an empty domain. ... Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did.",
+    "basis": "Estimated for Gemini \"gemini-3.5-flash-lite\" against the \"ai-tech\" domain, currently 40 entities, 90 concepts, 12 KB index. Cost depends heavily on how large this wiki ALREADY is, not just on the files being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) what is already there. For THIS batch, that existing content works out to about 3.1x the input tokens the same files would cost against an empty domain. ... Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did.",
     "basisLede": "Sized against this wiki's real page list — about 3.1x an empty domain. Actual spend can land above the range."
   },
   "domainContext": { "pageCount": 140, "indexBytes": 12288 },
@@ -914,7 +914,7 @@ a user is asking what the next compile costs.
   "compilable": true,
   "refusal": null,
   "provider": "gemini",
-  "model": "gemini-2.5-flash-lite",
+  "model": "gemini-3.5-flash-lite",
   "conversation": {
     "title": "RAG vs fine-tuning",
     "userTurns": 4, "messageCount": 8, "transcriptChars": 3219,
@@ -928,9 +928,9 @@ a user is asking what the next compile costs.
     "priceKnown": true,
     "costUnknown": null,
     "tokenizerFactor": 1,
-    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" compiling a 4-turn conversation … THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE … If gemini-2.5-flash-lite is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input / output tokens.",
+    "basis": "Estimated for Gemini \"gemini-3.5-flash-lite\" compiling a 4-turn conversation … THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE … If gemini-3.5-flash-lite is unavailable, The Curator may fall back to gemini-3.7-flash, priced $0.75 / $3.75 per 1M input / output tokens.",
     "fallback": {
-      "provider": "gemini", "model": "gemini-2.5-flash", "free": false,
+      "provider": "gemini", "model": "gemini-3.7-flash", "free": false,
       "priceKnown": true, "inPerM": 0.3, "outPerM": 2.5, "rungs": 1
     }
   },
@@ -1975,7 +1975,7 @@ Probe for whether the **✨ Ask AI** feature (v2.4.3+) is available — i.e. whe
 **Success response** `200 OK` — key configured
 
 ```json
-{ "available": true, "provider": "gemini", "model": "gemini-2.5-flash-lite" }
+{ "available": true, "provider": "gemini", "model": "gemini-3.5-flash-lite" }
 ```
 
 **Success response** `200 OK` — no key configured
@@ -1999,7 +1999,7 @@ Run the **free, local** self-diagnostics behind the Settings → General → Sys
   "checks": [
     { "id": "version",      "label": "Installed version",            "status": "info", "detail": "The Curator v3.25.0" },
     { "id": "install-mode", "label": "Install mode",                 "status": "info", "detail": "Source install (git checkout) (repo). Updates in place from GitHub." },
-    { "id": "provider",     "label": "AI provider key",              "status": "ok",   "detail": "Configured: gemini · gemini-2.5-flash-lite" },
+    { "id": "provider",     "label": "AI provider key",              "status": "ok",   "detail": "Configured: gemini · gemini-3.5-flash-lite" },
     { "id": "domains",      "label": "Knowledge folder",             "status": "ok",   "detail": "Readable and writable: /…/domains" },
     { "id": "credentials",  "label": "Credential file permissions",  "status": "ok",   "detail": "All 4 credential file(s) are owner-only (0600)." },
     { "id": "git",          "label": "Git",                          "status": "ok",   "detail": "git version 2.48.1" },
@@ -2102,13 +2102,13 @@ was built one release ahead of its caller.
 **Success response** `200 OK` — provider responded
 
 ```json
-{ "ok": true, "provider": "gemini", "model": "gemini-2.5-flash-lite", "latencyMs": 773, "sample": "OK", "fallback": null }
+{ "ok": true, "provider": "gemini", "model": "gemini-3.5-flash-lite", "latencyMs": 773, "sample": "OK", "fallback": null }
 ```
 
 **Success response** `200 OK` — call failed (still HTTP 200; check `ok`)
 
 ```json
-{ "ok": false, "provider": "gemini", "model": "gemini-2.5-flash-lite", "latencyMs": 41203, "error": "⚠ Gemini infrastructure is temporarily overloaded (HTTP 503). …" }
+{ "ok": false, "provider": "gemini", "model": "gemini-3.5-flash-lite", "latencyMs": 41203, "error": "⚠ Gemini infrastructure is temporarily overloaded (HTTP 503). …" }
 ```
 
 ---
@@ -2256,7 +2256,7 @@ Returns the user's AI Health limits. Persisted in `.curator-config.json` under t
   "costCeilingTokens": 200000,
   "semanticDupeMaxPairs": 500,
   "defaults": { "costCeilingTokens": 200000, "semanticDupeMaxPairs": 500 },
-  "defaultRunsOn": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "estimatedUsd": 0.03 }
+  "defaultRunsOn": { "provider": "gemini", "model": "gemini-3.5-flash-lite", "estimatedUsd": 0.03 }
 }
 ```
 
@@ -2300,7 +2300,7 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
   "estimatedTokens": 200000,
   "estimatedUsd": 0.033,
   "provider": "gemini",
-  "model": "gemini-2.5-flash-lite",
+  "model": "gemini-3.5-flash-lite",
   "costCeilingTokens": 200000,
   "maxPairs": 500
 }
@@ -2392,7 +2392,7 @@ The confirm for **Compare all remaining**: every pair not yet answered. No LLM c
 
 ## POST /api/health/:domain/semantic-dupes/compare-all/start
 
-**Request body:** `{ "confirmedModel": "gemini-2.5-flash-lite", "confirmedUsd": 1.67 }`, or `confirmedTokens` for a free or unpriced model. Answers at once with `{ok: true, job}`; the job keeps running if the client leaves. It stops by itself before the call that would pass 120% of the confirmed amount. Refused on a read-only mirror (400).
+**Request body:** `{ "confirmedModel": "gemini-3.5-flash-lite", "confirmedUsd": 1.67 }`, or `confirmedTokens` for a free or unpriced model. Answers at once with `{ok: true, job}`; the job keeps running if the client leaves. It stops by itself before the call that would pass 120% of the confirmed amount. Refused on a read-only mirror (400).
 
 ## POST /api/health/:domain/semantic-dupes/compare-all/pause
 
@@ -2512,7 +2512,7 @@ v3.0.1-beta.16. No LLM calls. Returns the breakdown used by the bulk-fix confirm
   "estimatedTokens": 149388,
   "estimatedUsd": 0.0162,
   "provider": "gemini",
-  "model": "gemini-2.5-flash-lite"
+  "model": "gemini-3.5-flash-lite"
 }
 ```
 
@@ -6333,33 +6333,35 @@ Returns masked API key status, the active provider, and the model-picker catalog
   "hasOpenrouterKey": false,
   "connected": { "gemini": true, "anthropic": false, "openrouter": false },
   "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-flash-lite",
+  "activeModel": "gemini-3.5-flash-lite",
   "build": {
-    "model": "gemini-2.5-flash-lite",
+    "model": "gemini-3.5-flash-lite",
     "provider": "gemini",
     "source": "default",
+    "requestedModel": null,
+    "recommendedIngest": null,
     "facts": {
       "contextLength": 1048576,
-      "priceIn": 0.10,
-      "priceOut": 0.40,
+      "priceIn": 0.30,
+      "priceOut": 2.50,
       "measured": true,
       "thinks": false,
-      "outlineNote": "plans 18–20 pages per source"
+      "outlineNote": "plans 12–16 pages per source"
     },
     "cheapestMeasured": {
-      "model": "gemini-2.5-flash-lite",
+      "model": "gemini-3.1-flash-lite",
       "provider": "gemini",
-      "priceIn": 0.10,
-      "priceOut": 0.40,
-      "same": true
+      "priceIn": 0.25,
+      "priceOut": 1.50,
+      "same": false
     },
     "liveMissing": false,
     "liveListing": { "checkedAt": "2026-09-16T13:38:55.201Z", "source": "network", "count": 41 }
   },
   "catalogueCounts": { "total": 7, "canBuild": 6, "measured": 7, "free": 0, "batchHidden": null },
-  "chat": { "startsOn": { "model": "gemini-2.5-flash-lite", "provider": "gemini" }, "count": 7 },
+  "chat": { "startsOn": { "model": "gemini-3.5-flash-lite", "provider": "gemini" }, "count": 7 },
   "models": {
-    "gemini": "gemini-2.5-flash-lite",
+    "gemini": "gemini-3.5-flash-lite",
     "anthropic": "claude-haiku-4-5",
     "openrouter": "upstage/solar-pro4"
   },
@@ -6372,9 +6374,9 @@ Returns masked API key status, the active provider, and the model-picker catalog
   "offerable": {
     "gemini": [
       {
-        "id": "gemini-2.5-flash-lite",
+        "id": "gemini-3.5-flash-lite",
         "provider": "gemini",
-        "label": "Flash Lite 2.5",
+        "label": "Flash Lite 3.5",
         "maxOutput": 65536,
         "thinks": false,
         "jsonRaw": true,
@@ -6413,6 +6415,8 @@ Returns masked API key status, the active provider, and the model-picker catalog
   "minRunsToQualify": 9
 }
 ```
+
+`build.model` is the model that **answers**: while the fallback chain is walking away from the configured model, it is the rung, `source` is `"fallback"`, and `requestedModel` names the model that did not answer (null otherwise). `recommendedIngest` (since 2026-11-07) is null unless an Anthropic key is saved; then it is `{ provider: "anthropic", model: "claude-haiku-5-5", label, why, same }`, where `why` is the one-line measured reason and `same` says it is already the build model.
 
 - `geminiApiKey` / `anthropicApiKey` / `openrouterApiKey` — masked (`••••••••` + last 4 chars), or
   `""` if unset. The raw key is never sent back over this endpoint.
@@ -6586,7 +6590,7 @@ exactly, with no field or storage change. See
 {
   "ok": true,
   "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-flash-lite",
+  "activeModel": "gemini-3.5-flash-lite",
   "skippedActivation": [],
   "activationDeferred": [{ "provider": "anthropic", "activeProvider": "gemini" }],
   "activationPolicy": "derived"
@@ -6871,7 +6875,7 @@ This pins the **build model** — the one that runs ingest, Health and Compile.
   "selectedModel": "claude-sonnet-5",
   "effectiveModel": "claude-sonnet-5",
   "activeProvider": "gemini",
-  "activeModel": "gemini-2.5-flash-lite"
+  "activeModel": "gemini-3.5-flash-lite"
 }
 ```
 

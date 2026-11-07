@@ -37,6 +37,7 @@ import {
   isOfferableModel,
   listOfferableModels,
   getFallbackStatus,
+  answeringModel,
   estimateRates,
   priceUsageUsd,
   cacheRatesFor,
@@ -111,11 +112,14 @@ export function describeRun({
   // shipping provider carries one, so it is unreachable today). Both mean
   // "nothing can run until Providers & keys is visited", which is the door
   // the no-key line opens.
-  let provider, model;
+  let provider, model, requested;
   try {
     const info = getProviderInfo();
     provider = info.provider;
-    model = info.model;
+    requested = info.model;
+    // NAME AND PRICE THE MODEL THAT ANSWERS (2026-11-07): when the fallback
+    // chain walked away from the configured model, the rung answers and bills.
+    model = typeof answeringModel === 'function' ? answeringModel(provider, requested) : requested;
   } catch {
     return { job, jobLabel, needsKey: true };
   }
@@ -136,6 +140,7 @@ export function describeRun({
     model,
     modelLabel: (entry && typeof entry.label === 'string' && entry.label) ? entry.label : model,
   };
+  if (requested && requested !== model) out.answeringFor = requested;
 
   // ── TOKENS ─────────────────────────────────────────────────────────────
   let input = pair(inputTokensLow, inputTokensHigh);

@@ -327,7 +327,7 @@ section('4. spentFromUsage === the batch queue\'s chargeForItem, over the same t
 {
   useConfig({ geminiApiKey: 'zz-test-dummy-key-not-real', activeProvider: 'gemini' });
   const MODELS = [
-    ['gemini', 'gemini-2.5-flash-lite'], ['gemini', 'gemini-2.5-flash'],
+    ['gemini', 'gemini-3.5-flash-lite'], ['gemini', 'gemini-3.1-flash-lite'],
     ['anthropic', 'claude-haiku-4-5'], ['anthropic', 'claude-sonnet-5'],
     ['openrouter', 'upstage/solar-pro4'], ['openrouter', FREE_FIXTURE],
   ];
@@ -355,9 +355,9 @@ section('4. spentFromUsage === the batch queue\'s chargeForItem, over the same t
   if (bad.length) console.log('    ' + bad.join('\n    '));
   // The cached-read term is really exercised (a vacuous grid would agree on zeros).
   const a = spentFromUsage({ calls: 1, inputTokens: 0, outputTokens: 0, cachedReadTokens: 1e6, cacheWriteTokens: 0, provider: 'anthropic', model: 'claude-haiku-4-5' });
-  const g = spentFromUsage({ calls: 1, inputTokens: 0, outputTokens: 0, cachedReadTokens: 1e6, cacheWriteTokens: 0, provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+  const g = spentFromUsage({ calls: 1, inputTokens: 0, outputTokens: 0, cachedReadTokens: 1e6, cacheWriteTokens: 0, provider: 'gemini', model: 'gemini-3.5-flash-lite' });
   eq(a.usd, getModelPrice('claude-haiku-4-5').input * 0.1, 'Anthropic cached reads bill at 0.1x input');
-  eq(g.usd, getModelPrice('gemini-2.5-flash-lite').input * 1, 'every other provider\'s cached reads bill at full input');
+  eq(g.usd, getModelPrice('gemini-3.5-flash-lite').input * 1, 'every other provider\'s cached reads bill at full input');
 
   const free = spentFromUsage({ calls: 1, inputTokens: 999, outputTokens: 99, provider: 'openrouter', model: FREE_FIXTURE });
   eq(free.usd, 0, 'free model: usd 0 (membership, first)');
@@ -368,7 +368,7 @@ section('4. spentFromUsage === the batch queue\'s chargeForItem, over the same t
   const none = spentFromUsage({ calls: 0, inputTokens: 0, outputTokens: 0, provider: null, model: null });
   eq(none.usd, null, 'nothing ran (no model reported): usd null');
   eq(none.modelLabel, null, 'nothing ran: no label');
-  const shape = spentFromUsage({ calls: 1, inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+  const shape = spentFromUsage({ calls: 1, inputTokens: 5812, outputTokens: 640, provider: 'gemini', model: 'gemini-3.5-flash-lite' });
   eq(Object.keys(shape).join(','),
     'provider,providerLabel,model,modelLabel,inputTokens,outputTokens,cachedReadTokens,cacheWriteTokens,calls,usd,estimated,fallbackFrom',
     'spent carries exactly the join fields');

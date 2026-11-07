@@ -201,7 +201,7 @@ import {
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
-import { getProviderInfo, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
+import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -1184,7 +1184,9 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
   try {
     const info = getProviderInfo();
     provider = info.provider;
-    model = info.model;
+    // The model that ANSWERS: a fallback rung prices and labels the estimate
+    // when the chain has walked away from the configured model (2026-11-07).
+    model = answeringModel(provider, info.model);
     price = getModelPrice(model);
   } catch { /* no key configured — degrades to nulls below */ }
 

@@ -445,10 +445,10 @@ The LLM dispatch lives in `src/brain/llm.js`. **Three providers can run an inges
 
 ### 7.1 — Google Gemini (default)
 
-- **Default model**: `gemini-2.5-flash-lite`
+- **Default model**: `gemini-3.5-flash-lite` (since 2026-11-07; `gemini-2.5-flash-lite` and `gemini-2.5-flash` answer 404 for new keys and are retired — see [model-lifecycle.md](model-lifecycle.md))
 - **JSON mode**: native — `responseMimeType: 'application/json'` forces token-level JSON validity
 - **Truncation detection** (v3.0.1-beta.8+): if `finishReason === 'MAX_TOKENS'`, throws an actionable error before the truncated text reaches `parseJSON`
-- **Fallback chain** (re-verified live and reordered forward-in-time in v3.0.15 — the prior chain's `gemini-1.5-flash` / `gemini-1.5-flash-latest` rungs both 404'd): `gemini-3.1-flash-lite` → `gemini-2.5-flash` (`gemini-3.5-flash-lite` was removed 2026-08-26 as strictly dominated)
+- **Fallback chain** (re-verified live and reordered forward-in-time in v3.0.15 — the prior chain's `gemini-1.5-flash` / `gemini-1.5-flash-latest` rungs both 404'd): `gemini-3.7-flash` → `gemini-3.6-flash` (rebuilt forward from the 3.5 Lite default on 2026-11-07; before that `gemini-3.1-flash-lite` → `gemini-2.5-flash`)
 - **Prompt caching**: implicit — 2.5-family models cache a stable prompt prefix automatically once the v3.0.16 reorder (§1b) makes that prefix byte-stable across a multi-phase ingest's batches. No API call or code change is needed to enable it. Observed live hit rate on the real `articles` domain: **84.6% and 91.9%** across two runs.
 
 ### 7.2 — Anthropic Claude

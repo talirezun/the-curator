@@ -207,7 +207,7 @@ section('8. spent — summed across every ladder rung (v3.67.0)');
     concise:        { inputTokens: 11300, outputTokens: 65536, cachedReadTokens: 0, cacheWriteTokens: 0 },
     'summary-only': { inputTokens: 11700, outputTokens:   900, cachedReadTokens: 0, cacheWriteTokens: 0 },
   };
-  const MODEL = { provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+  const MODEL = { provider: 'gemini', model: 'gemini-3.5-flash-lite' };
   // A fake that REPORTS usage the way generateText does (6th argument's
   // onUsage), then behaves per mode.
   function billingLLM(behaviors) {
@@ -264,7 +264,7 @@ section('8. spent — summed across every ladder rung (v3.67.0)');
       'spent equals spentFromUsage of the accumulated totals of all three calls, field for field');
     ok(typeof sp.usd === 'number' && sp.usd > expectedFor(['summary-only']).usd * 10,
       'and its dollar figure is the three-call bill, many times the last rung\'s alone');
-    ok(sp.model === 'gemini-2.5-flash-lite' && sp.modelLabel && sp.estimated === false,
+    ok(sp.model === 'gemini-3.5-flash-lite' && sp.modelLabel && sp.estimated === false,
       'spent names the model that billed, with its human label, not estimated');
     ok(forwarded.length === 3, `opts.onUsage is forwarded once per billed call (got ${forwarded.length})`);
   }

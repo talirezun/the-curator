@@ -49,7 +49,7 @@ process.env.CURATOR_NO_OPEN = '1';
 for (const k of ['LLM_PROVIDER', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY']) delete process.env[k];
 // A PRICED model, so a priced estimate is non-zero and a zero means something. The key
 // is a placeholder: every call goes through the fake `opts.llm`, never a provider.
-const MODEL = 'gemini-2.5-flash-lite';
+const MODEL = 'gemini-3.5-flash-lite';
 process.env.LLM_MODEL = MODEL;
 writeFileSync(path.join(USER_DATA, '.curator-config.json'), JSON.stringify({
   geminiApiKey: 'offline-test-placeholder-no-request-is-ever-made', activeProvider: 'gemini',

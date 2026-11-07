@@ -266,7 +266,8 @@ eq(audit.failures.length, 0, 'every static offer and every fallback rung passes,
 // 19 since v3.82.0: claude-haiku-5-5 (chat-only — tiered price).
 // 19 → 17 on 2026-10-08: four Anthropic entries retired, Sonnet 5.5 and Opus 5.5 added.
 // 17 → 16 on 2026-11-07: Granite 4.0 H Micro, withdrawn by OpenRouter.
-eq(audit.offers.length, 16, 'the audit covers all 16 hand-typed offers');
+// 16 → 14 on 2026-11-07: gemini-2.5-flash-lite and gemini-2.5-flash, 404 for new keys.
+eq(audit.offers.length, 14, 'the audit covers all 14 hand-typed offers');
 eq(audit.rungs.length, 6, '…and all 6 fallback rungs');
 ok(audit.rungs.every(r => r.offered === true),
   'every fallback rung is itself an offerable entry — a rung nobody could pick has been held to nothing');
@@ -335,7 +336,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
   for (const p of ['gemini', 'anthropic', 'openrouter']) {
     for (const e of (llm.OFFERABLE_MODELS[p] || [])) ALL.push({ p, e });
   }
-  eq(ALL.length, 16, 'sixteen hand-typed entries (Granite withdrawn 2026-11-07; minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0; four 2-gen-old Anthropic entries retired and Sonnet/Opus 5.5 added 2026-10-08)');
+  eq(ALL.length, 14, 'fourteen hand-typed entries (gemini-2.5-flash-lite and gemini-2.5-flash retired 2026-11-07; Granite withdrawn 2026-11-07; minimax/minimax-m3:free removed 2026-09-25; claude-haiku-5-5 added v3.82.0; four 2-gen-old Anthropic entries retired and Sonnet/Opus 5.5 added 2026-10-08)');
   ok(ALL.every(({ e }) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     'every one carries a positive integer context window');
   ok(ALL.every(({ e }) => e.contextLength >= 100000 && e.contextLength <= 10000000),
@@ -348,7 +349,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
   // is a silent lie on a spending screen, so they are named rather than ranged.
   const byId = new Map(ALL.map(({ e }) => [e.id, e.contextLength]));
   const PINNED = {
-    'gemini-2.5-flash-lite': 1048576, 'gemini-3.7-flash': 1048576,
+    'gemini-3.5-flash-lite': 1048576, 'gemini-3.7-flash': 1048576,
     'claude-haiku-4-5': 200000, 'claude-sonnet-5': 1000000,
     // GET /v1/models/<id> → max_input_tokens, read 2026-10-08 (claude-opus-4-5's
     // 200000 left with its retirement the same day).
@@ -454,7 +455,7 @@ let buildBody = null;
   eq(f.thinks, false, 'facts.thinks is the measured verdict, not a guess');
   ok(typeof f.outlineNote === 'string' && /pages/.test(f.outlineNote),
     `facts.outlineNote states the measured coverage ("${f.outlineNote}")`);
-  ok(/18–20 pages/.test(f.outlineNote),
+  ok(/12–16 pages/.test(f.outlineNote),
     '…as the measured RANGE when the entry records low/high rather than a median — a range is a measurement, not a gap');
   ok(!/\b0 pages\b|\b0s\b/.test(f.outlineNote),
     '…and never renders a zero, which would state a measurement nobody took');
@@ -477,8 +478,10 @@ section('§5d. `cheapestMeasured` comes from the UNFILTERED price-ordered list')
   const cm = buildBody.build.cheapestMeasured;
   ok(cm && typeof cm === 'object', 'build.cheapestMeasured is an object when something measured is connected');
   eq(cm.provider, 'gemini', 'on a Gemini-only install it is a Gemini model');
-  eq(cm.model, 'gemini-2.5-flash-lite', '…the cheapest measured build-lane model on that provider');
-  eq(cm.same, true, '…and `same` is true, because it IS the model in force');
+  // 2026-11-07: the default is 3.5 Lite ($0.30/$2.50); 3.1 Lite ($0.25/$1.50)
+  // is cheaper per token and build-lane, so it is the cheapest measured row.
+  eq(cm.model, 'gemini-3.1-flash-lite', '…the cheapest measured build-lane model on that provider');
+  eq(cm.same, false, '…and `same` is false, because the default in force (3.5 Lite) costs more per token');
   // THE DEFECT THIS FIELD EXISTS TO AVOID: the client's `cheapest` badge was
   // index 0 of an ALREADY SORTED AND FILTERED list, so under "most expensive
   // first" the dearest row wore it. Asserted as a PROPERTY of the whole
@@ -553,9 +556,17 @@ section('§5d-ii. Both filters are individually necessary — driven where the r
   }
   ok(pairs > 0, `⟨PREMISE⟩ the redundancy is measured over ${pairs} real offers, not asserted`);
   eq(violations, 0, 'over the SHIPPED catalogue, every build-lane model is also measured — which is why the two filters are indistinguishable here');
-  ok(llm.listOfferableModels('gemini').some(e => !llm.isBuildLaneModel('gemini', e.id)
-      && llm.measurementProvenance('gemini', e.id) !== null),
-    '…while the converse does NOT hold: a measured, chat-only model exists, so the implication is one-way');
+  // ⟨PREMISE CHANGED 2026-11-07⟩ The converse used to fail on a real model:
+  // gemini-3.5-flash-lite was measured AND chat-only. It became the Gemini
+  // default, so no shipped model is both today — recorded as the measurement it
+  // is, so the day one returns this reads as a changed premise.
+  let measuredChatOnly = 0;
+  for (const p of ['gemini', 'anthropic', 'openrouter']) {
+    for (const e of llm.listOfferableModels(p)) {
+      if (!llm.isBuildLaneModel(p, e.id) && llm.measurementProvenance(p, e.id) !== null) measuredChatOnly++;
+    }
+  }
+  eq(measuredChatOnly, 0, '⟨PREMISE⟩ no shipped model is both measured and chat-only (3.5 Lite left that lane on 2026-11-07)');
 }
 
 section('§5e. `catalogueCounts` and `chat` — counted over the population, never over a view');
@@ -567,8 +578,11 @@ section('§5e. `catalogueCounts` and `chat` — counted over the population, nev
   ok(c.measured === c.total,
     'every hand-typed Gemini entry is measured, so measured === total here (a fact about the table, asserted as one)');
   eq(c.free, 0, 'no Gemini entry is free');
-  ok(c.canBuild < c.total,
-    '⟨ANTI-VACUITY⟩ canBuild is strictly smaller than total — the chat-only entry is excluded, so the filter runs');
+  // ⟨PREMISE CHANGED 2026-11-07⟩ Gemini has no chat-only entry since 3.5 Lite
+  // became the default, so on a Gemini-only install every row can build. The
+  // filter's exclusion is exercised over a fetched chat-only entry elsewhere
+  // (test-openrouter-model-layer.js §4).
+  eq(c.canBuild, c.total, 'every Gemini entry can build, so canBuild === total on a Gemini-only install');
   eq(b.chat.startsOn.provider, 'gemini', 'chat.startsOn names the provider a new thread answers on');
   eq(b.chat.startsOn.model, b.build.model, '…and the same model the engine resolved');
   eq(b.chat.count, c.total, 'chat.count is the whole connected population — chat has no build-lane gate');
@@ -711,6 +725,8 @@ const ANTHROPIC_FIXTURE = {
 };
 const GEMINI_FIXTURE = {
   models: [
+    { name: 'models/gemini-3.5-flash-lite', displayName: 'Flash Lite 3.5',
+      inputTokenLimit: 1048576, supportedGenerationMethods: ['generateContent'] },
     { name: 'models/gemini-2.5-flash-lite', displayName: 'Flash Lite 2.5',
       inputTokenLimit: 1048576, supportedGenerationMethods: ['generateContent'] },
     { name: 'models/gemini-9.9-experimental', displayName: 'Experimental 9.9',
@@ -771,7 +787,8 @@ section('§7a. Unlisted ids are found; ids we already have a record of are not')
   const g = r.providers.gemini;
   const gIds = g.models.map(m => m.id);
   ok(gIds.includes('gemini-9.9-experimental'), 'an unlisted Gemini id is reported');
-  ok(!gIds.includes('gemini-2.5-flash-lite'), '…while the shipped default is not');
+  ok(!gIds.includes('gemini-3.5-flash-lite'), '…while the shipped default is not');
+  ok(!gIds.includes('gemini-2.5-flash-lite'), '…nor the RETIRED 2.5 Lite — a recorded decision is not a discovery');
   ok(!gIds.includes('embedding-004'),
     '…and a model that cannot generateContent is filtered out entirely — it is not a chat or build candidate');
 
