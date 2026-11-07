@@ -245,6 +245,18 @@ const seed = async (model = 'model-a') => {
   ok(!r.warnings.some((w) => /no AI call/.test(w)), '...and it does not claim no call was made');
 }
 {
+  // A model that leaves the same gap again does not get to bill every press.
+  const dom = makeDomain();
+  const NONE = `---\ntype: summary\nsource: g.md\ntags: [type/summary]\n---\n# G\n\nNo takeaways, ever.\n`;
+  const counts = [];
+  for (let i = 0; i < 4; i++) {
+    const llm = reply('G', [{ path: 'summaries/g.md', content: NONE }], 'model-a');
+    await quiet(() => ingestFile(dom.name, sourceFile('g.md', SHORT), 'g.md', i > 0, null, { llm, buildModel: 'model-a' }));
+    counts.push(llm.calls);
+  }
+  eq(counts.join(), '1,1,0,0', 'a gap earns one more reading, then the press is free');
+}
+{
   // Older records name no model: one real reading, then bounded.
   const dom = makeDomain({ 'concepts/orchards.md': OLD_PAGE, 'summaries/old2.md': SUMMARY_OK('old2') });
   writeFileSync(path.join(dom.wiki, '.raw-manifest.jsonl'), JSON.stringify({ filename: 'old2.md', sha256: createHash('sha256').update(SHORT).digest('hex'), bytes: SHORT.length, summaryPath: 'summaries/old2.md' }) + '\n');

@@ -123,8 +123,8 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
  *
  *   'nothing'      this model has read these bytes and no gap is known: NO CALL, NO COST.
  *   'gaps'         same model, but a page is a stub, or the summary has no Key Takeaways,
- *                  or that run warned that it fell short: a call, and new pages and stubs
- *                  only. Existing text takes no new wording.
+ *                  or that run warned that it fell short: a call, once, and new pages and
+ *                  stubs only. Existing text takes no new wording.
  *   'other-model'  this model has not read these bytes: a real reading, under add-only-new.
  *                  Each (bytes, model) reads once, so growth is bounded by the models a
  *                  user pays for, and old text is never overwritten.
@@ -173,7 +173,10 @@ export async function planRepeatIngest(domain, sha256, model) {
     if (stubs) out.gaps.push(`${stubs} stub page${stubs === 1 ? '' : 's'}`);
   } catch { /* an unreadable summary: nothing to judge */ }
   if (latest.gaps > 0) out.gaps.push('the last reading warned that it fell short');
-  if (out.gaps.length) out.kind = 'gaps';
+  // A gap earns this model ONE more reading. A model that leaves the same gap twice would
+  // otherwise bill every press for ever, the very thing this plan exists to stop.
+  const byThisModel = readings.filter((r) => r.model === model).length;
+  if (out.gaps.length && byThisModel < 2) out.kind = 'gaps';
   return out;
 }
 
