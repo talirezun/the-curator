@@ -805,6 +805,8 @@ section('§11 A foreign block stays byte for byte');
   const crlf = composeMergedPage(`${crlfHead}# X\r\n\r\nBody.\r\n`, inc, { sourceLabel: 'y', keepFolder: 'concepts' });
   ok(crlf.startsWith('---\r\ndue date: 1\r\nnested:\r\n  a: 1\r\ntags: [new-tag]\r\n---\r\n'), '11.4 a CRLF block stays CRLF, new line included', JSON.stringify(crlf.slice(0, 80)));
   ok(!/[^\r]\n/.test(crlf), '11.4 no bare LF on a CRLF page', JSON.stringify(crlf));
+  const crlfAdded = composeMergedPage('---\r\nk y: 1\r\n---\r\n# X\r\n', '---\nnew key: 2\n---\n# X\n', { sourceLabel: 'y', keepFolder: 'concepts' });
+  ok(crlfAdded.startsWith('---\r\nk y: 1\r\nnew key: 2\r\n---\r\n'), '11.4 a key from the other page takes the block\'s ending', JSON.stringify(crlfAdded));
   const fence = composeMergedPage('---   \nk y: 1\n---  \n# X\n\nBody.\n', '---\ntype: entity\n---\n# X\n\nMore words.\n', { sourceLabel: 'y', keepFolder: 'concepts' });
   ok(fence.startsWith('---   \nk y: 1\n---  \n'), '11.4 fences keep their trailing spaces', JSON.stringify(fence.slice(0, 40)));
   const mixed = composeMergedPage('---\nk y: 1\n---\n# X\r\n\r\nBody.\r\n\r\nAll CRLF.\r\n', '# Z\n\nMore words.\n', { sourceLabel: 'y', keepFolder: 'concepts' });
@@ -837,6 +839,8 @@ section('§11 A foreign block stays byte for byte');
   }
   ok(tagOut('tags: ["a, b"]', '["a, b"]') === 'tags: ["a, b"]', '11.5 a tag with a comma is one tag: nothing to add, nothing rewritten');
   ok(tagOut('tags: [a]', '["x y: z"]') === 'tags: [a, "x y: z"]', '11.5 a new tag YAML would misread is quoted');
+  ok(tagOut('tags: [x]', '["a, b"]') === 'tags: [x, "a, b"]', '11.5 an incoming tag with a comma stays one tag', tagOut('tags: [x]', '["a, b"]'));
+  ok(tagOut('tags: [type/entity]', '[type/entity]') === 'tags: [type/concept]', '11.5 the type tag follows the folder with nothing else to add', tagOut('tags: [type/entity]', '[type/entity]'));
 
   // `type` moves only when it is plainly the other kind; anything else stands.
   const typed = (line, folder) => composeMergedPage(`---\n${line}\nk y: 1\n---\n# X\n`, '# X\n\nMore words.\n', { sourceLabel: 'y', keepFolder: folder }).split('\n')[1];
@@ -921,6 +925,11 @@ section('§13 A line differing only in case is not lost-safe');
   }
   ok(findLostLines(k, r, m).length === 0, '13.1 the guard finds nothing lost', JSON.stringify(findLostLines(k, r, m)));
   ok(composeMergedPage(m, r, o) === m, '13.1 a second merge adds nothing');
+  const headK = '# K\n\n## Key Facts\n- first\n';
+  const headR = '# K\n\n## KEY FACTS\n- a new bullet\n';
+  const headM = composeMergedPage(headK, headR, o);
+  ok(headM.includes('KEY FACTS') && headM.includes('## Key Facts\n- first\n- a new bullet') && findLostLines(headK, headR, headM).length === 0,
+    '13.1b a section heading in another case: the bullet joins the section, the spelling moves as text', headM);
   ok(m.startsWith(k.slice(0, k.indexOf('## Key Facts'))) && m.includes('## Key Facts\n- apple ships the iphone'), '13.1 the kept page is untouched', m);
 
   // The dumb check on its own: it must not excuse case, wherever the line is.
@@ -950,6 +959,9 @@ section('§13 A line differing only in case is not lost-safe');
   // Reuse still treats a model's reworded capitalisation as a repeat: nothing was on disk to lose.
   const reuse = composeReusedPage('# K\n\n## Key Facts\n- Foo Bar\n', '# K\n\n## Key Facts\n- foo bar\n', { keepFolder: 'concepts', dropped: [] });
   ok(reuse === '# K\n\n## Key Facts\n- Foo Bar\n', '13.6 reuse: the same words in another case add nothing', reuse);
+  const said = [];
+  composeReusedPage('# K\n\n## Key Facts\n- Foo Bar\n', '# K\n\n## Key Facts\n- foo bar\n', { keepFolder: 'concepts', dropped: said });
+  ok(said.length === 0, '13.6 and it is a repeat, not wording left out', JSON.stringify(said));
 }
 
 // ── §14 Windows device names ────────────────────────────────────────────────
