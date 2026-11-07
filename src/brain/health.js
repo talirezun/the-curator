@@ -21,7 +21,7 @@ import { createHash } from 'crypto';
 import path from 'path';
 import {
   wikiPath, injectSingleBacklink, injectRelatedLink, isDomainReadonly,
-  tidySummaryLinkSections, dedupRewrittenBullets,
+  tidySummaryLinkSections, dedupRewrittenBullets, fenceRuns,
   SUMMARY_ENTITIES_HEADING, SUMMARY_CONCEPTS_HEADING,
 } from './files.js';
 import { localDateStamp } from './local-date.js';
@@ -241,30 +241,6 @@ export async function listMd(wikiDir, folder) {
 /** One name in two folders, hyphens aside: the scan's test, and the fix's check of a claim. */
 function crossFolderKey(file) {
   return file.replace(/-/g, '').toLowerCase();
-}
-
-/**
- * The page cut into runs inside and outside code fences. A link in a fence is an
- * example, not a link: the scan does not count it and a repair does not edit it. An
- * unclosed fence runs to the end of the page, as a markdown reader treats it.
- */
-function fenceRuns(content) {
-  const runs = [];
-  let open = null;
-  for (const line of content.split(/(?<=\n)/)) {
-    const t = line.trimEnd();
-    let fenced = open !== null;
-    if (open !== null) {
-      if (t.trim().length >= open.length && new RegExp(`^ {0,3}\\${open[0]}+$`).test(t)) open = null;
-    } else {
-      const m = t.match(/^ {0,3}(\x60{3,}|~{3,})/);
-      if (m) { open = m[1]; fenced = true; }
-    }
-    const last = runs[runs.length - 1];
-    if (last && last.fenced === fenced) last.text += line;
-    else runs.push({ text: line, fenced });
-  }
-  return runs;
 }
 
 const withoutFences = (content) => fenceRuns(content).filter((r) => !r.fenced).map((r) => r.text).join('');

@@ -486,6 +486,48 @@ function deduplicateBulletSections(content) {
 }
 
 /**
+ * The page cut into runs inside and outside code fences. A link in a fence is an
+ * example, not a link: the scan does not count it and a repair does not edit it. An
+ * unclosed fence runs to the end of the page, as a markdown reader treats it.
+ * Shared by Health (health.js) and the ingest/compile link tidy (tidyWrittenLinks).
+ */
+export function fenceRuns(content) {
+  const runs = [];
+  let open = null;
+  for (const line of content.split(/(?<=\n)/)) {
+    const t = line.trimEnd();
+    let fenced = open !== null;
+    if (open !== null) {
+      if (t.trim().length >= open.length && new RegExp(`^ {0,3}\\${open[0]}+$`).test(t)) open = null;
+    } else {
+      const m = t.match(/^ {0,3}(\x60{3,}|~{3,})/);
+      if (m) { open = m[1]; fenced = true; }
+    }
+    const last = runs[runs.length - 1];
+    if (last && last.fenced === fenced) last.text += line;
+    else runs.push({ text: line, fenced });
+  }
+  return runs;
+}
+
+// A leading YAML block, as repairSummaryLayout reads it. A page opening with a rule
+// and a later `---` also matches: for the link tidy that only means fewer links
+// tidied, the safe direction.
+const LEADING_FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/** One flag per `text.split('\n')` line: true for frontmatter and fenced lines. */
+function blockLineFlags(text) {
+  const fm = text.match(LEADING_FRONTMATTER_RE);
+  const head = fm ? fm[0] : '';
+  const flags = head ? head.replace(/\n$/, '').split('\n').map(() => true) : [];
+  for (const run of fenceRuns(text.slice(head.length))) {
+    const lines = run.text.replace(/\n$/, '').split('\n');
+    for (const _ of lines) flags.push(run.fenced);
+  }
+  return flags;
+}
+
+/**
  * After a line-for-line link rewrite (`before` → `after`, same line count),
  * drop each bullet line the rewrite CHANGED that is now IDENTICAL to another
  * bullet in the same section (headings of any level delimit sections).
@@ -502,14 +544,18 @@ export function dedupRewrittenBullets(before, after) {
   const a = String(before).split('\n');
   const b = String(after).split('\n');
   if (a.length !== b.length || before === after) return after;
+  // Frontmatter and fenced lines are not the page's sections or bullets: a `# comment`
+  // in a fence is no heading, and a fenced `- [[x]]` holds no key, so neither drops a
+  // body line.
+  const block = blockLineFlags(String(before));
   // Section id per line; bullets grouped by section.
   const sectionOf = new Array(b.length);
   let sec = 0;
   for (let i = 0; i < b.length; i++) {
-    if (/^#{1,6}\s/.test(b[i])) sec++;
+    if (!block[i] && /^#{1,6}\s/.test(b[i])) sec++;
     sectionOf[i] = sec;
   }
-  const isBullet = (l) => l.startsWith('- ');
+  const isBullet = (l, i) => !block[i] && l.startsWith('- ');
   // Identical text only (trimmed). `[[x]]` vs `[[x|Alias]]` is NOT merged
   // here: the rewriters preserve aliases verbatim, and dropping the aliased
   // line would lose the label a user wrote.
@@ -518,12 +564,12 @@ export function dedupRewrittenBullets(before, after) {
   const held = new Map(); // section → Set(keys)
   const hold = (s, k) => { if (!held.has(s)) held.set(s, new Set()); held.get(s).add(k); };
   for (let i = 0; i < b.length; i++) {
-    if (isBullet(b[i]) && a[i] === b[i]) hold(sectionOf[i], keyOf(b[i]));
+    if (isBullet(b[i], i) && a[i] === b[i]) hold(sectionOf[i], keyOf(b[i]));
   }
   const out = [];
   for (let i = 0; i < b.length; i++) {
     const line = b[i];
-    if (isBullet(line) && a[i] !== line) {
+    if (isBullet(line, i) && a[i] !== line) {
       const k = keyOf(line);
       const s = sectionOf[i];
       if (held.has(s) && held.get(s).has(k)) continue; // a copy remains
@@ -1397,7 +1443,8 @@ async function linkRewriterFor(domain) {
  * In a sentence the reader keeps the model's wording, through an alias; a list row that
  * is only a link takes the bare slug, so two spellings of one link become one row; a
  * table row takes no alias, because the pipe would split the cell. Words are never
- * touched, only link targets.
+ * touched, only link targets. Frontmatter and code fences (backtick or tilde, indented
+ * up to three spaces, unclosed to the end) are left byte-identical.
  *
  * @returns {Promise<number>} pages changed
  */
@@ -1429,8 +1476,14 @@ export async function tidyWrittenLinks(domain, relPaths) {
     const full = path.join(wiki, rel);
     let before;
     try { before = await readFile(full, 'utf8'); } catch { continue; }
-    const named = before.split('\n').map(byName).join('\n');
-    const after = dedupRewrittenBullets(before, rewrite(named));
+    // Frontmatter and code fences stay byte-identical: a fenced link is an example,
+    // and frontmatter is metadata. Only the body outside fences is tidied.
+    const fm = before.match(LEADING_FRONTMATTER_RE);
+    const head = fm ? fm[0] : '';
+    const body = fenceRuns(before.slice(head.length))
+      .map((r) => (r.fenced ? r.text : rewrite(r.text.split('\n').map(byName).join('\n'))))
+      .join('');
+    const after = dedupRewrittenBullets(before, head + body);
     if (after === before) continue;
     await writeFileAtomic(full, after, 'utf8');
     changed++;
