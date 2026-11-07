@@ -495,6 +495,11 @@ const LIVE_LOCAL = [
   // each value's Range box against the element at 1400/1280/1100/900/700,
   // with a planted-clip control first. Self-skips at exit 0 with no browser.
   'test-chat-composer-pills.js',
+  // test-browser-never-orphaned: a browser, like its neighbours, $0. Headless Chromes launched by
+  // scripts/visual/browser.js were found alive 17-21 hours after their suites; each way a run can end
+  // (process.exit, a throw, SIGTERM, SIGKILL) is driven in a child and the browser pid must be gone.
+  // The SIGKILL case is shown to need the watchdog by a mutation. Self-skips at exit 0 with no browser.
+  'test-browser-never-orphaned.js',
 ];
 
 // All live suites, for labelling.
