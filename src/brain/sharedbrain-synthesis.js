@@ -43,6 +43,7 @@ import { parseJSON } from './ingest.js';
 import { jaccardSimilarity, tokenize } from './sharedbrain-delta.js';
 import { createStorageAdapter } from './sharedbrain-storage-factory.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
+import { isWindowsReservedName } from './reserved-names.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -797,6 +798,11 @@ export async function runLocalSynthesis(connection, opts = {}) {
     // the per-page guard → page marked failed → its submissions stay
     // unprocessed and retry next run.
     const existingContent = await adapter.readPage(connection.shared_domain, pagePath);
+    // A contribution cannot create a page Windows could not open on a member's computer.
+    if (existingContent === null && isWindowsReservedName(pagePath.split('/').pop().replace(/\.md$/, ''))) {
+      onProgress('warn', `${pagePath}: not added to the collective, because Windows keeps that name for a device.`);
+      continue;
+    }
 
     const existingBody = existingContent ? stripFrontmatter(existingContent) : '';
     const existingTitle = existingContent ? extractTitleFromContent(existingContent) : null;

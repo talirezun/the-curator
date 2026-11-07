@@ -8220,7 +8220,7 @@ The button on those two says **Merge and delete**, not "Fix now" — the wording
 
 ### What a merged page looks like
 
-Every merge that deletes a page works the same way: a duplicate pair, **Spelling variants**, **Same name in two folders**, **Nearly the same name**, and an agent using `fix_wiki_issue`. **A merge never loses text.** The page you keep stays the base, whichever page is longer, and whatever the removed page said that the kept page lacks is added to it.
+Every merge that deletes a page works the same way: a duplicate pair, **Spelling variants**, **Same name in two folders**, **Nearly the same name**, and an agent using `fix_wiki_issue`. **A merge never loses text.** The page you keep stays the base, however long the other page is, and whatever the removed page said that the kept page lacks is added to it.
 
 ```markdown
 ---
@@ -8250,10 +8250,11 @@ The removed page's opening paragraph.
 
 | From the removed page | Where it goes |
 |---|---|
-| Tags | Added to the kept page's tags. `type` follows the kept page's folder |
+| Tags | Added to the kept page's tags. `type` follows the kept page's folder. **Nothing else in the kept page's frontmatter changes, byte for byte**, whatever your vault keeps there: nested values, dates, `due date`, `review.status`, `größe`, `日本語` |
 | Bullets under a heading the kept page also has | Into that section, without repeats |
 | Bullets in a standard section the kept page lacks (Key Facts, Related, Examples and the like) | A new section of that name |
 | Its title, opening paragraph, prose, tables, code blocks and every other section | Under `## Merged from <page>`, whole and in order |
+| A line the kept page has only in another case (`# Nvidia` beside `# NVIDIA`) | Under `## Merged from <page>` too: a capital can be a name. Only a bare link (`- [[nvidia]]`) counts as the same line, because it names the same page |
 
 ```mermaid
 flowchart TD

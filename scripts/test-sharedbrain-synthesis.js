@@ -561,6 +561,31 @@ assert(synth3.ok, 'idempotent re-run returns ok');
 assertEq(synth3.processed_contributions, 0, '0 new contributions on re-run');
 assertEq(synth3.pages_written, 0, '0 pages written on re-run');
 
+// ── 8b. Windows device names ───────────────────────────────────
+
+section('A contribution cannot create a page Windows could not open');
+
+const fellowFdir = makeFellowDomainsDir('fellow-f');
+const wikiF = makeDomain(fellowFdir, 'work-ai');
+writePage(wikiF, 'concepts/con.md', '# Con\n\nA reserved name.\n');
+writePage(wikiF, 'concepts/nul.md', '# Nul\n\nAlready in the collective.\n');
+writePage(wikiF, 'concepts/console-page.md', '# Console\n\nAn ordinary name.\n');
+await adapter.writePage('work-ai', 'concepts/nul.md', '# Nul\n\n## Key Facts\n- Was there before\n');
+const connF = makeConnection('Cohort', 'Fay');
+connections[connF.id] = connF;
+await pushDomain(connF, 'work-ai', { llmFn: deltaLLM, domainsDir: fellowFdir, patchFn });
+const reservedNotes = [];
+const synthF = await runLocalSynthesis(connections[connF.id], {
+  llmFn: makeMockResolver(),
+  patchFn,
+  onProgress: (kind, msg) => { if (kind === 'warn') reservedNotes.push(msg); },
+});
+assert(synthF.ok, 'synthesis with a reserved name returned ok');
+assert((await adapter.readPage('work-ai', 'concepts/con.md')) === null, 'concepts/con.md was not created in the collective');
+assert(reservedNotes.some((m) => m.includes('concepts/con.md') && m.includes('Windows')), 'and the run says so');
+assert((await adapter.readPage('work-ai', 'concepts/console-page.md')) !== null, 'an ordinary name in the same run was written');
+assert(!reservedNotes.some((m) => m.includes('concepts/nul.md')), 'a reserved name already in the collective is not refused');
+
 // ── 9. Index rebuild ────────────────────────────────────────────────────
 
 section('Index rebuild (Rule 5)');

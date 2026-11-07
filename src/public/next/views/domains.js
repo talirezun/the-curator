@@ -9517,7 +9517,8 @@ async function fixAllOfType(slug, type) {
         ? { key: 'group:' + type, held: true, tone: 'success', text: (merges ? 'Merged ' : 'Repaired ') + result.fixed, trace: (merges ? 'Merged ' : 'Repaired ') + result.fixed, lane: merges ? 'decision' : 'free', drop: { type } }
         : { key: 'group:' + type, tone: 'error',
             text: (merges ? 'Merged ' : 'Repaired ') + result.fixed + ' of ' + result.total + '. ' + (result.total - result.fixed) +
-              (merges ? ' could not be merged.' : ' could not be repaired.'),
+              (merges ? ' could not be merged.' : ' could not be repaired.')
+              + (result.partial ? ' Some of their pages were merged; the rest are still on the list.' : ''),
             retry: () => confirmFixAllOfType(slug, type) };
     }
   } catch (err) {

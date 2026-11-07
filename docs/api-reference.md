@@ -1851,6 +1851,10 @@ Apply a single fix for a specific issue.
 
 `type` must be one of the auto-fixable types. `issue` must be an exact issue object returned by `GET /api/health/:domain`.
 
+**`crossFolderDupes` and `hyphenVariants` check the claim.** They delete pages with no preview, so the server applies the scan's own rule to what you send: one `entities` page and one `concepts` page with the same name (hyphens and case aside), or a group whose every name is a variant of `suggestedSlug`. Anything else answers **409** `{ "code": "merge-not-related", "error": "…", "fixed": 0 }`, and no file changes.
+
+A `hyphenVariants` group where only some pages could merge answers `{ "fixed": 0, "total": 1, "partial": true, "merged": [slug…], "refused": [{ "slug", "reason" }…], "reason" }`: the pages in `merged` are gone, those in `refused` are untouched. In the type-only form, `partial` counts such groups. `reason: "merge-page-missing"` means a page in the request no longer exists.
+
 **Read-only mirrors (v3.0.2+):** every mutating Health endpoint returns **400** when `:domain` is a read-only Shared Brain mirror (`readonly: true` in the domain's `CLAUDE.md`) — a write to a mirror would be overwritten on the next Pull. The full list is `/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch`, and `/dismiss` and `/undismiss`.
 
 Those last two were missing the refusal until v3.6.2, while their MCP twins (`dismiss_wiki_issue`, `undismiss_wiki_issue`) had carried it since v3.0.0-beta.1. The store they write, `<domain>/wiki/.health-dismissed.jsonl`, lives *inside* the git-tracked `wiki/` folder and therefore syncs, so a dismissal recorded on a mirror was silently discarded by the next Pull exactly like a "fix" would be.

@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { isDomainReadonly, assertKnownDomain, readSchema, extractDomainDisplayName } from '../brain/files.js';
-import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild, collapseRepeatedLinks } from '../brain/health.js';
+import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild, collapseRepeatedLinks, MERGE_NOT_RELATED, MERGE_NOT_RELATED_MESSAGE } from '../brain/health.js';
 import {
   suggestBrokenLinkTarget,
   suggestOrphanHomes,
@@ -267,6 +267,11 @@ router.post('/:domain/fix', async (req, res) => {
       if (refusal) return res.status(refusal.status).json({ error: refusal.error, code: refusal.code, fixed: 0 });
     }
     const result = await fixIssue(domain, type, issue || null);
+    // A request the scan's rule does not support, not a page that happened to be
+    // refused: the screen never sends one, because it sends what the scan listed.
+    if (result.reason === MERGE_NOT_RELATED) {
+      return res.status(409).json({ error: MERGE_NOT_RELATED_MESSAGE, code: MERGE_NOT_RELATED, fixed: 0 });
+    }
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health fix]', err);

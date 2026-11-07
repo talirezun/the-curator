@@ -22,12 +22,14 @@
  * §3 preview = the bytes on disk. §4 idempotence and no repetition. §5 Flip.
  * §6 refusals: the cross-check and the same-file guard. §7 a later ingest.
  * §8 named shapes and links. §9 real runs of the manual repair scripts.
+ * §10 a delete must match the scan's own rule. §11 frontmatter stays byte for byte.
+ * §12 a group merged in part says so. §13 case is text. §14 Windows device names.
  *
  * Isolation: __setDomainsDirOverride plus CURATOR_TEST_USER_DATA_DIR. Nothing
  * here reads a real domain, config or credential, and no provider is called.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, linkSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -43,8 +45,9 @@ mkdirSync(process.env.CURATOR_TEST_USER_DATA_DIR, { recursive: true });
 const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
 __setDomainsDirOverride(DOMAINS);
 const health = await import(path.join(REPO, 'src/brain/health.js'));
-const { composeMergedPage, findLostLines } = await import(path.join(REPO, 'src/brain/page-merge.js'));
-const { mergeWikiPage } = await import(path.join(REPO, 'src/brain/files.js'));
+const { composeMergedPage, composeReusedPage, findLostLines } = await import(path.join(REPO, 'src/brain/page-merge.js'));
+const { mergeWikiPage, writePage } = await import(path.join(REPO, 'src/brain/files.js'));
+const { isWindowsReservedName } = await import(path.join(REPO, 'src/brain/reserved-names.js'));
 const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
 
 let pass = 0;
@@ -396,6 +399,16 @@ section('§2b The MCP fix_wiki_issue tool');
       ok(r.fixed === 1, `mcp semantic seed ${seed}: merged`, JSON.stringify(r));
       checkPair('mcp', seed, keep, remove, d.read(`concepts/mcp-keep-${seed}.md`), !d.has(`concepts/mcp-old-${seed}.md`));
     }
+    // The MCP route to a delete checks the claim, and its report says what happened.
+    writeFileSync(path.join(d.wiki, 'entities/stranger-one.md'), '# One\n\nOne.\n');
+    writeFileSync(path.join(d.wiki, 'concepts/stranger-two.md'), '# Two\n\nTwo.\n');
+    const rx = await call({ type: 'crossFolderDupes', issue: { keep: 'entities/stranger-one.md', remove: 'concepts/stranger-two.md' } });
+    ok(rx.fixed === 0 && rx.reason === 'merge-not-related' && /REFUSED/.test(rx.report) && /nothing was deleted/.test(rx.report)
+      && d.has('concepts/stranger-two.md') && d.read('entities/stranger-one.md') === '# One\n\nOne.\n',
+      'mcp: an unrelated cross-folder pair is refused and nothing moves', JSON.stringify(rx));
+    const ry = await call({ type: 'hyphenVariants', issue: { suggestedSlug: 'stranger-one', files: ['stranger-one', 'bob-ray'] } });
+    ok(ry.fixed === 0 && ry.reason === 'merge-not-related' && d.has('entities/bob-ray.md'),
+      'mcp: an unrelated hyphen group is refused and nothing moves', JSON.stringify(ry));
     const rc = await call({ type: 'crossFolderDupes', issue: { keep: 'entities/gamma.md', remove: 'concepts/gamma.md' } });
     ok(rc.fixed === 1, 'mcp cross-folder: merged', JSON.stringify(rc));
     checkPair('mcp-cross', 0, crossKeep, crossRemove, d.read('entities/gamma.md'), !d.has('concepts/gamma.md'));
@@ -450,7 +463,10 @@ for (let seed = 1; seed <= SEEDS; seed++) {
   ok(composeMergedPage(page, page, { sourceLabel: 'x', keepFolder: 'concepts' }) === page, '4.1 identical pages leave the bytes alone');
   const k = '# K\n\n## Key Facts\n- Case Fact\n- [[alice]]\n';
   const r = '# K\n\n## Key Facts\n- case fact\n- [[ALICE]]\n';
-  ok(composeMergedPage(k, r, { sourceLabel: 'x' }) === k, '4.2 a bullet differing only in case, or a bare repeat of a link, adds nothing');
+  const m42 = composeMergedPage(k, r, { sourceLabel: 'x' });
+  ok(m42.includes('- case fact') && m42.includes('- Case Fact'), '4.2a a bullet differing only in case is text, and stays', m42);
+  ok(!m42.includes('[[ALICE]]'), '4.2b a bare repeat of a link, in any case, adds nothing', m42);
+  ok(composeMergedPage(m42, r, { sourceLabel: 'x' }) === m42, '4.2c and a second merge adds nothing');
 }
 
 // ── §5 Flip really changes the result ───────────────────────────────────────
@@ -482,7 +498,13 @@ section('§6 Nothing is deleted on a refusal');
 
   const d = mkDomain({ 'concepts/same.md': '# Same\n\nOnly copy.\n' });
   const r1 = await health.fixIssue(d.name, 'crossFolderDupes', { keep: 'concepts/same.md', remove: 'concepts/same.md' });
-  ok(r1.fixed === 0 && r1.reason === 'merge-same-file', '6.3 a page merged into itself is refused', JSON.stringify(r1));
+  ok(r1.fixed === 0 && r1.reason === 'merge-not-related' && d.read('concepts/same.md') === '# Same\n\nOnly copy.\n',
+    '6.3 a page merged into itself is refused', JSON.stringify(r1));
+  const dl = mkDomain({ 'entities/link-one.md': '# One\n\nOnly copy.\n' });
+  linkSync(path.join(dl.wiki, 'entities/link-one.md'), path.join(dl.wiki, 'concepts/link-one.md'));
+  const rl = await health.fixIssue(dl.name, 'crossFolderDupes', { keep: 'entities/link-one.md', remove: 'concepts/link-one.md' });
+  ok(rl.fixed === 0 && rl.reason === 'merge-same-file' && dl.has('entities/link-one.md') && dl.has('concepts/link-one.md'),
+    '6.3b two names of one file, in two folders, are refused by the same-file guard', JSON.stringify(rl));
   ok(d.has('concepts/same.md') && d.read('concepts/same.md').includes('Only copy.'), '6.4 and the only copy is still there');
 
   // A kept name that is a link to the removed file: deleting the file would
@@ -611,6 +633,349 @@ section('§9 Manual repair scripts');
   const r3 = run('fix-wiki-structure.js', [d3.name]);
   ok(r3.status === 0, '9 fix-wiki-structure.js ran', r3.stderr);
   check('fix-wiki-structure.js', d3, 'entities/ada.md', 'people/ada.md');
+}
+
+// ── §10 A delete must match the scan's own rule ─────────────────────────────
+section('§10 crossFolderDupes and hyphenVariants check the claim on the server');
+{
+  const FILES = {
+    'entities/openai.md': '# OpenAI\n\nA lab.\n',
+    'concepts/photosynthesis.md': '# Photosynthesis\n\nPlants.\n',
+    'summaries/openai.md': '# A source about OpenAI\n\nA summary.\n',
+    'concepts/openai.md': '# OpenAI, the idea\n\nAn idea.\n',
+    'entities/alice-smith.md': '# Alice\n\nA person.\n',
+    'entities/bob-jones.md': '# Bob\n\nAnother.\n',
+    'entities/alicesmith.md': '# Alice again\n\nThe same person.\n',
+  };
+  const untouched = (d) => Object.entries(FILES).every(([rel, body]) => d.has(rel) && d.read(rel) === body);
+  const REFUSED = [
+    ['unrelated names', 'crossFolderDupes', { keep: 'entities/openai.md', remove: 'concepts/photosynthesis.md' }],
+    ['a summary of the same name', 'crossFolderDupes', { keep: 'entities/openai.md', remove: 'summaries/openai.md' }],
+    ['one folder', 'crossFolderDupes', { keep: 'entities/alice-smith.md', remove: 'entities/alicesmith.md' }],
+    ['a path out of the wiki', 'crossFolderDupes', { keep: 'entities/openai.md', remove: 'concepts/../../openai.md' }],
+    ['no fields', 'crossFolderDupes', { keep: 'entities/openai.md' }],
+    ['a stranger in the group', 'hyphenVariants', { suggestedSlug: 'alice-smith', files: ['alice-smith', 'bob-jones'] }],
+    ['a stranger beside a real variant', 'hyphenVariants', { suggestedSlug: 'alice-smith', files: ['alice-smith', 'alicesmith', 'bob-jones'] }],
+    ['an empty group', 'hyphenVariants', { suggestedSlug: 'alice-smith', files: [] }],
+    ['no list', 'hyphenVariants', { suggestedSlug: 'alice-smith' }],
+    ['a non-string in the group', 'hyphenVariants', { suggestedSlug: 'alice-smith', files: ['alicesmith', 7] }],
+    ['a path as a name', 'hyphenVariants', { suggestedSlug: 'alice-smith', files: ['../concepts/openai'] }],
+    ['a path as the kept name', 'hyphenVariants', { suggestedSlug: '../alice-smith', files: ['../alice-smith'] }],
+  ];
+  for (const [label, type, issue] of REFUSED) {
+    const d = mkDomain(FILES);
+    const r = await health.fixIssue(d.name, type, issue);
+    ok(r.fixed === 0 && r.reason === 'merge-not-related', `10.1 ${label}: refused with the stable code`, JSON.stringify(r));
+    ok(untouched(d), `10.1 ${label}: every page is byte-identical`);
+  }
+
+  // What the scan lists still goes through, by the same rule: hyphens aside, either way round.
+  const d2 = mkDomain({ 'entities/email.md': '# Email\n\nA.\n', 'concepts/e-mail.md': '# E-mail\n\nB.\n' });
+  const rows = (await health.scanWiki(d2.name)).crossFolderDupes;
+  ok(rows.length === 1, '10.2 the scan offers concepts/e-mail + entities/email', JSON.stringify(rows));
+  const r2 = await health.fixIssue(d2.name, 'crossFolderDupes', rows[0]);
+  ok(r2.fixed === 1 && !d2.has('concepts/e-mail.md') && d2.read('entities/email.md').includes('B.'), '10.2 and the row it lists merges', JSON.stringify(r2));
+  const d3 = mkDomain({ 'entities/same.md': '# Same\n\nA.\n', 'concepts/same.md': '# Same\n\nB.\n' });
+  const r3 = await health.fixIssue(d3.name, 'crossFolderDupes', { keep: 'concepts/same.md', remove: 'entities/same.md' });
+  ok(r3.fixed === 1 && !d3.has('entities/same.md') && d3.read('concepts/same.md').includes('A.'), '10.3 the other way round is the same pair', JSON.stringify(r3));
+
+  // The honorific and article rule of the hyphen scan, and names the old private regex refused.
+  const d4 = mkDomain({
+    'entities/tali-rezun.md': '# Tali\n\nA.\n', 'entities/dr.-tali-rezun.md': '# Dr Tali\n\nB.\n', 'entities/talirezun.md': '# T\n\nC.\n',
+    'entities/čapek-karel.md': '# Čapek\n\nD.\n', 'entities/čapekkarel.md': '# Capek\n\nE.\n',
+  });
+  for (const row of (await health.scanWiki(d4.name)).hyphenVariants) {
+    const r = await health.fixIssue(d4.name, 'hyphenVariants', row);
+    ok(r.fixed === 1, `10.4 the scan's group ${row.suggestedSlug} merges`, JSON.stringify(r));
+  }
+  ok(!d4.has('entities/dr.-tali-rezun.md') && !d4.has('entities/talirezun.md') && !d4.has('entities/čapekkarel.md'), '10.4 its variants are gone');
+  ok(d4.read('entities/čapek-karel.md').includes('E.'), '10.4 and a name with č merged its text');
+
+  // A page gone since the scan is a different answer from a stranger.
+  const d5 = mkDomain({ 'entities/gone-one.md': '# G\n\nA.\n' });
+  const r5 = await health.fixIssue(d5.name, 'crossFolderDupes', { keep: 'entities/gone-one.md', remove: 'concepts/gone-one.md' });
+  ok(r5.fixed === 0 && r5.reason === 'merge-page-missing' && d5.has('entities/gone-one.md'), '10.5 cross-folder: a gone page is named as gone', JSON.stringify(r5));
+  const r6 = await health.fixIssue(d5.name, 'hyphenVariants', { suggestedSlug: 'gone-one', files: ['gone-one', 'goneone'] });
+  ok(r6.fixed === 0 && r6.reason === 'merge-page-missing', '10.5 hyphen: nothing left to merge is not "fixed"', JSON.stringify(r6));
+
+  // The route: stable code, plain message, nothing deleted. The screen's bulk call still works.
+  const { default: express } = await import('express');
+  const { createServer } = await import('node:http');
+  const routes = await import(path.join(REPO, 'src/routes/health.js'));
+  const app = express();
+  app.use(express.json());
+  app.use('/api/health', routes.default);
+  const server = createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}/api/health`;
+  try {
+    const post = async (dom, body) => {
+      const res = await fetch(`${base}/${dom}/fix`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: res.status, json: await res.json() };
+    };
+    const d6 = mkDomain(FILES);
+    const a = await post(d6.name, { type: 'crossFolderDupes', issue: { keep: 'entities/openai.md', remove: 'concepts/photosynthesis.md' } });
+    ok(a.status === 409 && a.json.code === 'merge-not-related' && a.json.fixed === 0 && /nothing was merged or deleted/.test(a.json.error),
+      '10.6 POST /fix: 409, a stable code and a plain message', JSON.stringify(a));
+    const b = await post(d6.name, { type: 'hyphenVariants', issue: { suggestedSlug: 'alice-smith', files: ['alice-smith', 'bob-jones'] } });
+    ok(b.status === 409 && b.json.code === 'merge-not-related', '10.6 POST /fix, hyphen: the same', JSON.stringify(b));
+    ok(untouched(d6), '10.6 every page is byte-identical');
+    const c = await post(d6.name, { type: 'crossFolderDupes' });
+    ok(c.status === 200 && c.json.fixed === 1 && c.json.total === 1 && !d6.has('concepts/openai.md'), "10.7 the screen's call, the type alone, merges what the scan lists", JSON.stringify(c));
+    const e = await post(d6.name, { type: 'hyphenVariants' });
+    ok(e.status === 200 && e.json.fixed === 1 && !d6.has('entities/alicesmith.md') && d6.has('entities/bob-jones.md'), "10.7 and so does the hyphen group's", JSON.stringify(e));
+    const d7 = mkDomain({ 'entities/fix-safe.md': '# F\n\nA.\n', 'concepts/fix-safe.md': '# F\n\nB.\n' });
+    const res = await health.fixAllSafe(d7.name);
+    ok(res.byType.crossFolderDupes.fixed === 1 && !d7.has('concepts/fix-safe.md'), '10.7 Fix-all-safe still merges', JSON.stringify(res));
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+// ── §11 Frontmatter ─────────────────────────────────────────────────────────
+section('§11 A foreign block stays byte for byte');
+{
+  const BLOCKS = {
+    'a key with a space': 'due date: 2026-01-01',
+    'a key with a dot': 'review.status: open',
+    'a non-ASCII key': 'größe: 3',
+    'č as a key and a value': 'č: žaba\nčas: "dvě hodiny"',
+    'a Japanese key': '日本語: 値',
+    'nested YAML': 'author:\n  name: Ada\n  address:\n    city: "Ljubljana, SI"',
+    'a list, indented': 'aliases:\n  - Ada\n  - "A. L."',
+    'a list at the margin': 'aliases:\n- Ada\n- Lovelace',
+    'quoted values': `title: "A: B"\nsub: 'it''s'`,
+    'a quoted key': '"my key": 1\n\'other: key\': 2',
+    'dates': 'published: 2026-01-01\nat: 2026-01-01T10:00:00Z',
+    'a block scalar': 'note: |\n  line one\n  --- not a fence\n\n  line three',
+    'a flow map': 'meta: {a: 1, b: [2, 3]}',
+    'a comment first': '# from a template\nkey: value',
+    'a blank line first': '\nkey: value',
+    'odd spacing': 'key :   value   \nother:\t1',
+    'a line YAML cannot parse': 'key: value\nthis line has no colon',
+  };
+  const inc = '---\ntype: entity\ntags: [new-tag]\n---\n# X\n\nBody.\n\n## Key Facts\n- one\n- A completely different brand new fact about zebras\n';
+  const dashes = (t) => t.split(/\r?\n/).filter((l) => l.trimEnd() === '---').length;
+  const untag = (head) => head.replace(/^tags: \[new-tag\]\r?\n/m, '');
+  for (const [label, block] of Object.entries(BLOCKS)) {
+    const head = `---\n${block}\n---\n`;
+    const keep = `${head}# X\n\nBody.\n\n## Key Facts\n- one\n`;
+    const wantDashes = dashes(keep);
+    for (const [how, compose] of [
+      ['reuse', (k) => composeReusedPage(k, inc, { keepFolder: 'concepts', dropped: [] })],
+      ['merge', (k) => composeMergedPage(k, inc, { sourceLabel: 'y', keepFolder: 'concepts' })],
+    ]) {
+      const once = compose(keep);
+      const close = once.indexOf('\n---\n', head.indexOf(block) + block.length - 1);
+      const gotHead = once.slice(0, close + 5);
+      ok(dashes(once) === wantDashes, `11.1 ${label}, ${how}: one frontmatter block, not two`, once);
+      ok(untag(gotHead) === head, `11.1 ${label}, ${how}: the block is byte for byte, the new tag aside`, JSON.stringify(gotHead));
+      ok(once.includes('tags: [new-tag]\n---\n'), `11.1 ${label}, ${how}: the tag joined the block`, once);
+      ok(compose(once) === once, `11.1 ${label}, ${how}: a second write changes nothing`, compose(once));
+    }
+    // With nothing to add the file's bytes stand, whichever path.
+    const quiet = '# X\n\nBody.\n\n## Key Facts\n- one\n';
+    ok(composeReusedPage(keep, quiet, { keepFolder: 'concepts', dropped: [] }) === keep, `11.2 ${label}: nothing new leaves the bytes alone (reuse)`);
+    ok(composeMergedPage(keep, quiet, { sourceLabel: 'y', keepFolder: 'concepts' }) === keep, `11.2 ${label}: nothing new leaves the bytes alone (merge)`);
+    ok(findLostLines(keep, inc, composeMergedPage(keep, inc, { sourceLabel: 'y', keepFolder: 'concepts' })).length === 0, `11.2 ${label}: the guard agrees`);
+  }
+
+  // Empty frontmatter, in both shapes.
+  for (const head of ['---\n---\n', '---\n\n---\n']) {
+    const keep = `${head}# X\n\nBody.\n`;
+    const quiet = '# X\n\nBody.\n';
+    ok(composeReusedPage(keep, quiet, { keepFolder: 'concepts', dropped: [] }) === keep, `11.3 empty ${JSON.stringify(head)}: bytes stand`);
+    const m = composeMergedPage(keep, '---\ntags: [t]\n---\n# X\n\nBody.\n', { sourceLabel: 'y', keepFolder: 'concepts' });
+    ok(m.startsWith(head.replace(/---\n$/, 'tags: [t]\n---\n')) && dashes(m) === 2, `11.3 empty ${JSON.stringify(head)}: one block, the tag in it`, JSON.stringify(m));
+  }
+
+  // Line endings: a CRLF block, a fence with spaces, a block in another ending than its page.
+  const crlfHead = '---\r\ndue date: 1\r\nnested:\r\n  a: 1\r\n---\r\n';
+  const crlf = composeMergedPage(`${crlfHead}# X\r\n\r\nBody.\r\n`, inc, { sourceLabel: 'y', keepFolder: 'concepts' });
+  ok(crlf.startsWith('---\r\ndue date: 1\r\nnested:\r\n  a: 1\r\ntags: [new-tag]\r\n---\r\n'), '11.4 a CRLF block stays CRLF, new line included', JSON.stringify(crlf.slice(0, 80)));
+  ok(!/[^\r]\n/.test(crlf), '11.4 no bare LF on a CRLF page', JSON.stringify(crlf));
+  const fence = composeMergedPage('---   \nk y: 1\n---  \n# X\n\nBody.\n', '---\ntype: entity\n---\n# X\n\nMore words.\n', { sourceLabel: 'y', keepFolder: 'concepts' });
+  ok(fence.startsWith('---   \nk y: 1\n---  \n'), '11.4 fences keep their trailing spaces', JSON.stringify(fence.slice(0, 40)));
+  const mixed = composeMergedPage('---\nk y: 1\n---\n# X\r\n\r\nBody.\r\n\r\nAll CRLF.\r\n', '# Z\n\nMore words.\n', { sourceLabel: 'y', keepFolder: 'concepts' });
+  ok(mixed.startsWith('---\nk y: 1\n---\n# X\r\n'), '11.4 a block keeps its ending on a page in another', JSON.stringify(mixed.slice(0, 40)));
+  const bomKeep = '\ufeff---\nk y: 1\n---\n# X\n\nBody.\n';
+  ok(composeMergedPage(bomKeep, '# Z\n\nMore words.\n', { sourceLabel: 'y' }).startsWith(bomKeep.slice(0, 15)), '11.4 a BOM stays');
+
+  // The one tag rule, form by form: what is there keeps its spelling.
+  const tagOut = (block, tags = '[new, type/entity]', folder = 'concepts') => {
+    const m = composeMergedPage(`---\n${block}\n---\n# X\n`, `---\ntags: ${tags}\n---\n# X\n`, { sourceLabel: 'y', keepFolder: folder });
+    return m.slice(4, m.indexOf('\n---\n', 4));
+  };
+  const FORMS = [
+    ['flow', 'tags: [a, b]', 'tags: [a, b, new, type/concept]'],
+    ['flow with inner spaces', 'tags: [ a, b ]', 'tags: [ a, b, new, type/concept ]'],
+    ['flow, quoted, a comma inside', 'tags: ["a, b", \'c\']', 'tags: ["a, b", \'c\', new, type/concept]'],
+    ['flow with a comment', 'tags: [a] # mine', 'tags: [a, new, type/concept] # mine'],
+    ['flow over lines', 'tags: [a,\n  b]', 'tags: [a,\n  b, new, type/concept]'],
+    ['flow, empty', 'tags: []', 'tags: [new, type/concept]'],
+    ['block', 'tags:\n  - a\n  - "b c"', 'tags:\n  - a\n  - "b c"\n  - new\n  - type/concept'],
+    ['block at the margin', 'tags:\n- a', 'tags:\n- a\n- new\n- type/concept'],
+    ['one word', 'tags: a', 'tags: [a, new, type/concept]'],
+    ['no value', 'tags:', 'tags: [new, type/concept]'],
+    ['the type tag follows the folder', 'tags: [type/entity, a]', 'tags: [type/concept, a, new]'],
+    ['a key in another case', 'Tags: [a]', 'Tags: [a, new, type/concept]'],
+    ['a quoted key', '"tags": [a]', '"tags": [a, new, type/concept]'],
+  ];
+  for (const [label, block, want] of FORMS) {
+    ok(tagOut(block) === want, `11.5 tags, ${label}`, JSON.stringify(tagOut(block)));
+  }
+  ok(tagOut('tags: ["a, b"]', '["a, b"]') === 'tags: ["a, b"]', '11.5 a tag with a comma is one tag: nothing to add, nothing rewritten');
+  ok(tagOut('tags: [a]', '["x y: z"]') === 'tags: [a, "x y: z"]', '11.5 a new tag YAML would misread is quoted');
+
+  // `type` moves only when it is plainly the other kind; anything else stands.
+  const typed = (line, folder) => composeMergedPage(`---\n${line}\nk y: 1\n---\n# X\n`, '# X\n\nMore words.\n', { sourceLabel: 'y', keepFolder: folder }).split('\n')[1];
+  ok(typed('type: entity', 'concepts') === 'type: concept', '11.6 type follows the kept folder');
+  ok(typed('type: "entity"', 'concepts') === 'type: "entity"', '11.6 a quoted type is not understood, and stands');
+  ok(typed('type: note', 'concepts') === 'type: note', '11.6 a foreign type stands');
+
+  // A tags shape this module cannot add to: never rewritten, and a delete is refused.
+  const odd = '---\ntags: {a: 1}\nk y: 2\n---\n# X\n\nBody.\n';
+  const oddReuse = composeReusedPage(odd, '---\ntags: [t]\n---\n# X\n\nBody.\n', { keepFolder: 'concepts', dropped: [] });
+  ok(oddReuse.startsWith(odd.slice(0, odd.indexOf('# X'))), '11.7 reuse: an unknown tags shape is byte for byte', oddReuse);
+  ok(oddReuse.includes('tags: [t]'), '11.7 reuse: what it would have gained is kept as text', oddReuse);
+  const dOdd = mkDomain({ 'entities/odd-one.md': odd, 'entities/oddone.md': '---\ntags: [t]\n---\n# X\n\nOther.\n' });
+  const rOdd = await health.fixIssue(dOdd.name, 'hyphenVariants', { suggestedSlug: 'odd-one', files: ['odd-one', 'oddone'] });
+  ok(rOdd.fixed === 0 && rOdd.reason === 'merge-would-lose-text' && dOdd.has('entities/oddone.md') && dOdd.read('entities/odd-one.md') === odd,
+    '11.7 merge: refused, both pages stand', JSON.stringify(rOdd));
+
+  // A rule pair is still text; what opens with a key is the block YAML would call one.
+  const hrKeep = '---\nnot frontmatter, a sentence\n---\nBody.\n';
+  const hrOut = composeReusedPage(hrKeep, '---\ntags: [t]\n---\n# T\n\nBody.\n', { keepFolder: 'concepts', dropped: [] });
+  ok(hrOut.startsWith('---\ntype: concept\ntags: [t]\n---\n') && hrOut.includes('not frontmatter, a sentence'), '11.8 a rule pair with a sentence stays body text', hrOut);
+
+  // The real write path: ingest reuse, through writePage, three times over.
+  const FOREIGN = '---\ndue date: 2026-01-01\nreview.status: open\nčas: 3\n日本語: 値\nauthor:\n  name: Ada\ntags: [mine]\ncreated: 2020-01-01\n---\n# Page\n\nOpening.\n\n## Key Facts\n- first\n';
+  const dw = mkDomain({ 'concepts/foreign.md': FOREIGN });
+  for (const [i, word] of ['zebras gallop', 'walruses dive', 'herons wade'].entries()) {
+    await writePage(dw.name, 'concepts/foreign.md', `---\ntype: concept\ntags: [mine]\n---\n# Page\n\n## Key Facts\n- ${word} across wide unfamiliar plains ${i}\n`);
+  }
+  const onDisk = dw.read('concepts/foreign.md');
+  // injectFrontmatter gives every write its `type/` tag: the one tag edit, on the one line.
+  ok(onDisk.replace('tags: [mine, type/concept]', 'tags: [mine]').startsWith(FOREIGN.slice(0, FOREIGN.indexOf('# Page'))),
+    '11.9 writePage: three reuses leave the block byte for byte, the tag aside', onDisk);
+  ok(dashes(onDisk) === 2 && onDisk.includes('herons wade'), '11.9 writePage: one block, and the new text landed', onDisk);
+
+  // And a merge on disk.
+  const dm = mkDomain({ 'entities/foreign-page.md': FOREIGN, 'concepts/foreignpage.md': '---\ntags: [mine]\n---\n# Other\n\nMoved text.\n' });
+  const rm1 = await health.fixIssue(dm.name, 'crossFolderDupes', { keep: 'entities/foreign-page.md', remove: 'concepts/foreignpage.md' });
+  ok(rm1.fixed === 1 && dm.read('entities/foreign-page.md').startsWith(FOREIGN.slice(0, FOREIGN.indexOf('# Page'))), '11.9 fixIssue: a merge leaves the block byte for byte', dm.read('entities/foreign-page.md'));
+}
+
+// ── §12 Part of a group ─────────────────────────────────────────────────────
+section('§12 A hyphen group merged in part reports the truth');
+{
+  const seed = () => {
+    const d = mkDomain({ 'entities/tali-rezun.md': '# Tali\n\nCanon.\n', 'entities/talirezun.md': '# Variant\n\nFrom variant.\n' });
+    // Two names of one file: the same-file guard refuses this variant, and only this one.
+    linkSync(path.join(d.wiki, 'entities/tali-rezun.md'), path.join(d.wiki, 'entities/tali-re-zun.md'));
+    return d;
+  };
+  const issue = { suggestedSlug: 'tali-rezun', files: ['tali-rezun', 'talirezun', 'tali-re-zun'] };
+
+  const d = seed();
+  const r = await health.fixIssue(d.name, 'hyphenVariants', issue);
+  ok(r.fixed === 0, '12.1 not reported as fixed', JSON.stringify(r));
+  ok(r.partial === true && r.reason === 'merge-same-file', '12.1 partial, with the reason', JSON.stringify(r));
+  ok(JSON.stringify(r.merged) === '["talirezun"]', '12.1 names what merged', JSON.stringify(r));
+  ok(r.refused.length === 1 && r.refused[0].slug === 'tali-re-zun' && r.refused[0].reason === 'merge-same-file', '12.1 names what did not', JSON.stringify(r));
+  ok(!d.has('entities/talirezun.md') && d.has('entities/tali-re-zun.md') && d.read('entities/tali-rezun.md').includes('From variant.'), '12.1 and that is what happened on disk');
+
+  const allRefused = mkDomain({ 'entities/one-two.md': '# O\n\nCanon.\n' });
+  linkSync(path.join(allRefused.wiki, 'entities/one-two.md'), path.join(allRefused.wiki, 'entities/onetwo.md'));
+  const r2 = await health.fixIssue(allRefused.name, 'hyphenVariants', { suggestedSlug: 'one-two', files: ['one-two', 'onetwo'] });
+  ok(r2.fixed === 0 && !r2.partial && r2.reason === 'merge-same-file' && r2.refused.length === 1, '12.2 all refused is a refusal, not partial', JSON.stringify(r2));
+
+  const dBulk = seed();
+  const rb = await health.fixIssue(dBulk.name, 'hyphenVariants');
+  ok(rb.total === 1 && rb.fixed === 0 && rb.partial === 1, '12.3 bulk: the group does not count as fixed, and is counted as partial', JSON.stringify(rb));
+  const dSafe = seed();
+  const rs = await health.fixAllSafe(dSafe.name);
+  ok(rs.byType.hyphenVariants.fixed === 0 && rs.byType.hyphenVariants.partial === 1, '12.3 Fix-all-safe: the same', JSON.stringify(rs.byType.hyphenVariants));
+}
+
+// ── §13 Case is text ────────────────────────────────────────────────────────
+section('§13 A line differing only in case is not lost-safe');
+{
+  const o = { sourceLabel: 'apple-inc', keepFolder: 'entities' };
+  const k = '# Apple\n\nThe opening.\n\n## Key Facts\n- apple ships the iphone\n\n## Notes\nsome prose here\n\n```\nmixed code\n```\n';
+  const r = '# APPLE\n\nTHE OPENING.\n\n## Key facts\n- Apple ships the iPhone\n\n## Notes\nSOME PROSE HERE\n\n```\nMIXED code\n```\n';
+  const m = composeMergedPage(k, r, o);
+  for (const line of ['# APPLE', 'THE OPENING.', 'Key facts', '- Apple ships the iPhone', 'SOME PROSE HERE', 'MIXED code']) {
+    ok(m.includes(line), `13.1 "${line}" stays`, m);
+  }
+  ok(findLostLines(k, r, m).length === 0, '13.1 the guard finds nothing lost', JSON.stringify(findLostLines(k, r, m)));
+  ok(composeMergedPage(m, r, o) === m, '13.1 a second merge adds nothing');
+  ok(m.startsWith(k.slice(0, k.indexOf('## Key Facts'))) && m.includes('## Key Facts\n- apple ships the iphone'), '13.1 the kept page is untouched', m);
+
+  // The dumb check on its own: it must not excuse case, wherever the line is.
+  for (const [label, kept, removed, merged] of [
+    ['a bullet', '# K\n', '# K\n\n- Name Here\n', '# K\n\n- name here\n'],
+    ['prose', '# K\n', '# K\n\nProper Noun.\n', '# K\n\nproper noun.\n'],
+    ['a title', '# k\n', '# K\n', '# k\n'],
+    ['a kept line', '# K\n\nKept Text.\n', '', '# K\n\nkept text.\n'],
+    ['a frontmatter line', '---\nk y: Value\n---\n# K\n', '', '---\nk y: value\n---\n# K\n'],
+  ]) {
+    ok(findLostLines(kept, removed, merged).length === 1, `13.2 the guard names ${label} that changed case`, JSON.stringify(findLostLines(kept, removed, merged)));
+  }
+  ok(findLostLines('# K\n\n- [[alice]]\n', '- [[ALICE]]\n', '# K\n\n- [[alice]]\n').length === 0, '13.3 a bare repeat of one link, in another case, is one link');
+
+  // Through the real deleting path.
+  const d = mkDomain({ 'entities/nvidia.md': '# NVIDIA\n\nChips.\n', 'concepts/nvidia.md': '# Nvidia\n\nchips.\n' });
+  const res = await health.fixIssue(d.name, 'crossFolderDupes', { keep: 'entities/nvidia.md', remove: 'concepts/nvidia.md' });
+  const kept = d.read('entities/nvidia.md');
+  ok(res.fixed === 1 && kept.includes('Nvidia') && kept.includes('chips.') && kept.startsWith('# NVIDIA\n\nChips.\n'), '13.4 fixIssue: both spellings survive the delete', kept);
+
+  // A page already holding both, in an accumulating section, stays writable by ingest.
+  const dw = mkDomain({ 'concepts/both.md': '# Both\n\n## Key Facts\n- Foo Bar\n- foo bar\n' });
+  const rec = await writePage(dw.name, 'concepts/both.md', '# Both\n\n## Key Facts\n- walruses dive across wide unfamiliar plains\n');
+  const onDisk = dw.read('concepts/both.md');
+  ok(rec && onDisk.includes('- Foo Bar') && onDisk.includes('- foo bar') && onDisk.includes('walruses'), '13.5 writePage keeps both lines and takes the new one', onDisk);
+
+  // Reuse still treats a model's reworded capitalisation as a repeat: nothing was on disk to lose.
+  const reuse = composeReusedPage('# K\n\n## Key Facts\n- Foo Bar\n', '# K\n\n## Key Facts\n- foo bar\n', { keepFolder: 'concepts', dropped: [] });
+  ok(reuse === '# K\n\n## Key Facts\n- Foo Bar\n', '13.6 reuse: the same words in another case add nothing', reuse);
+}
+
+// ── §14 Windows device names ────────────────────────────────────────────────
+section('§14 A name Windows keeps for a device is never created');
+{
+  for (const name of ['con', 'CON', 'Con', 'prn', 'aux', 'nul', 'com1', 'COM9', 'lpt1', 'LPT9', 'com0', 'con.txt', 'nul.backup', 'aux.tar.gz', 'conin$', 'conout$', 'com\u00b9']) {
+    ok(isWindowsReservedName(name), `14.1 ${name} is reserved`);
+  }
+  for (const name of ['console', 'con-artist', 'aux-power', 'auxiliary', 'null', 'nullable', 'com10', 'com', 'lpt', 'lpt10', 'prns', 'x.con', 'icon', 'conin', '']) {
+    ok(!isWindowsReservedName(name), `14.1 ${JSON.stringify(name)} is not`);
+  }
+  ok(!isWindowsReservedName(undefined), '14.1 not a string is not reserved');
+
+  const d = mkDomain({});
+  for (const rel of ['concepts/con.md', 'concepts/NUL.md', 'entities/aux.md', 'entities/com1.md', 'summaries/lpt1.md', 'concepts/con.txt.md', 'concepts/prn']) {
+    const warnings = [];
+    const rec = await writePage(d.name, rel, '# Title\n\nThe text.\n', { onWarn: (w) => warnings.push(w) });
+    ok(rec === null, `14.2 ${rel}: not written`, JSON.stringify(rec));
+    ok(!d.has(rel.endsWith('.md') ? rel : `${rel}.md`), `14.2 ${rel}: no file`);
+    ok(warnings.some((w) => /Windows keeps the name/.test(w) && /not saved/.test(w)), `14.2 ${rel}: the user is told`, JSON.stringify(warnings));
+  }
+  const ordinary = await writePage(d.name, 'concepts/console.md', '# Console\n\nA word.\n');
+  ok(ordinary && d.has('concepts/console.md'), '14.3 a name that only begins the same is written');
+
+  // A page already there stays usable, and is not deleted or renamed.
+  const existing = mkDomain({ 'concepts/con.md': '# Con\n\nOriginal text.\n\n## Key Facts\n- first\n' });
+  const rec = await writePage(existing.name, 'concepts/con.md', '# Con\n\n## Key Facts\n- walruses dive across wide unfamiliar plains\n');
+  ok(rec && existing.read('concepts/con.md').includes('Original text.') && existing.read('concepts/con.md').includes('walruses'), '14.4 an existing page is still updated', JSON.stringify(rec));
+  const scan = await health.scanWiki(existing.name);
+  ok(scan && existing.has('concepts/con.md'), '14.4 and Health leaves it alone');
+  const merging = mkDomain({ 'entities/aux.md': '# Aux\n\nA.\n', 'concepts/aux.md': '# Aux\n\nB.\n' });
+  const rMerge = await health.fixIssue(merging.name, 'crossFolderDupes', { keep: 'entities/aux.md', remove: 'concepts/aux.md' });
+  ok(rMerge.fixed === 1 && merging.read('entities/aux.md').includes('B.'), '14.4 and can still be merged', JSON.stringify(rMerge));
+
+  // A redirect onto an existing page is not a new name.
+  const redirected = mkDomain({ 'concepts/null.md': '# Null\n\nThe value.\n' });
+  ok(await writePage(redirected.name, 'concepts/null.md', '# Null\n\nThe value.\n') !== null, '14.5 `null` is an ordinary page');
 }
 
 rmSync(TMP, { recursive: true, force: true });

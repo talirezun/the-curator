@@ -242,7 +242,7 @@ The removed page's opening paragraph.
 
 **One thing changes in moved text: heading levels.** Under `## Merged from`, `# Title` and `## Section` become `###`, and deeper headings drop one level. They have to: a later ingest treats a `## X` as a section its own `## X` can replace, and a stray `# Title` would end the block early. Under one heading the moved text outlives later ingests. Lines inside a code block are never changed. Links to the deleted page are repointed everywhere, moved text included.
 
-**Which page stays decides the text.** The kept page's title, frontmatter and opening stay at the top, whichever page is longer. **Keep this one instead** gives you the other page at the top with this one's text below it.
+**Which page stays decides the text.** The kept page's title, frontmatter and opening stay at the top, however long the other page is. **Keep this one instead** gives you the other page at the top with this one's text below it.
 
 **Three limits, stated plainly.** The moved text is not rewritten, so `## Merged from` can read as two pages, and tidying it is yours to do. Near-identical paragraphs both stay, because nothing here judges meaning. And a later ingest still follows the ingest rules: it can replace the kept page's opening and its own prose sections, and `deduplicateBulletSections` keeps only the first bullet per first link in the accumulating sections.
 

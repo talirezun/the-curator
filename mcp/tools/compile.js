@@ -577,7 +577,7 @@ export async function compileToWikiHandler(args, storage) {
       summaryHint: title.slice(0, 160),
     });
   } else {
-    return { ok: false, error: 'Failed to write summary page (writePage returned null)' };
+    return { ok: false, error: writeWarnings[writeWarnings.length - 1] || 'Failed to write summary page (writePage returned null)' };
   }
 
   // 4b. Additional pages

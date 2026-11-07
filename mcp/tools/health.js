@@ -176,7 +176,8 @@ export const fixWikiIssueDefinition = {
     "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, summaryLinkSections, and brokenLinks that already carry a suggestedTarget. " +
     "summaryLinkSections rewrites ONE summary's two link lists only: a page listed twice keeps one line, a concept page filed under 'Entities Mentioned' moves to 'Concepts Introduced or Referenced' (and an entity page the other way); every link stays on the page and nothing else on it changes — the fix refuses to write otherwise (reason: 'link-guard'). Pass { summary } from the scan row. " +
     "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the AI broken-link fixer in the app's Health panel (Domains view), which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
-    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed; the deleted page's text moves to the kept page, whichever is longer): tell the user which page disappears before you call them. " +
+    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed; the page kept is the one named keep or suggestedSlug, however long the other is, and the deleted page's text moves onto it): tell the user which page disappears before you call them. " +
+    "The server checks the claim: a request whose pages are not spellings of one name by the scan's own rule is refused (reason: 'merge-not-related') and nothing is deleted. A hyphenVariants group where only some pages could merge reports fixed: 0 with partial: true, merged and refused. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
@@ -361,6 +362,7 @@ export async function fixWikiIssueHandler(args, storage) {
     domain: domain.value,
     type,
     fixed: result?.fixed || 0,
+    ...(result?.partial ? { partial: true, merged: result.merged, refused: result.refused } : {}),
     // Machine-readable twin of the prose in `report`, so a caller can branch
     // without string-matching. Absent when the fix applied.
     ...(result?.reason ? { reason: result.reason } : {}),
@@ -373,7 +375,9 @@ export async function fixWikiIssueHandler(args, storage) {
     details: result || null,
     report: result?.fixed
       ? `Fixed 1 ${type} issue in '${domain.value}'.`
-      : noOpReport(type, result?.reason, domain.value, result?.missing),
+      : result?.partial
+        ? `PARTLY DONE — merged and deleted ${result.merged.join(', ')} into '${issue?.suggestedSlug}'; ${result.refused.map((r) => `${r.slug} (${r.reason})`).join(', ')} stayed, untouched. Tell the user which pages stayed; do not retry.`
+        : noOpReport(type, result?.reason, domain.value, result?.missing),
   };
 }
 
@@ -401,6 +405,12 @@ function noOpReport(type, reason, domainName, missing) {
       return `ALREADY RESOLVED — nothing was written, and nothing needs to be. ${missing || 'One page of this pair'} no longer exists: an earlier merge in this session already consumed it. The semantic-duplicate scan emits EVERY pair above threshold, so a family of near-identical pages produces many overlapping pairs and merging one of them resolves its siblings. Do NOT retry this pair and do not re-run the paid scan to "refresh" it — move on to the next pair, and re-run scan_semantic_duplicates only when you have finished the list.`;
     case 'merge-would-lose-text':
       return `REFUSED — nothing was written and nothing was deleted. The merged page would have been missing text from one of the two pages, so The Curator kept both. Both pages are still there. Tell the user; do not retry.`;
+    case 'merge-not-related':
+      return `REFUSED — nothing was written and nothing was deleted. These pages are not spellings of one name by the scan's own rule, so this is not a duplicate The Curator will merge unasked. Pass the issue object exactly as scan_wiki_health returned it. If you believe two different names are one page, that is type="semanticDupe", with its preview.`;
+    case 'merge-page-missing':
+      return `No changes applied — a page in this request no longer exists in '${domainName}', so it may already have been merged. Re-run scan_wiki_health and act on what it lists now.`;
+    case 'merge-name-invalid':
+      return `REFUSED — nothing was written and nothing was deleted. A page in this group has a name that cannot be merged, because a [[wikilink]] could not carry it. Tell the user; rename it by hand.`;
     case 'merge-same-file':
       return `REFUSED — nothing was written and nothing was deleted. Both names reach the same file, so deleting one would delete the only copy. Tell the user.`;
     case 'wiki-missing':

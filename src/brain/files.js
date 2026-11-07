@@ -8,6 +8,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { acquireFileLock } from './write-registry.js';
 import { moveToTrash, countFiles } from './trash.js';
 import { composeMergedPage, composeReusedPage, findLostLines } from './page-merge.js';
+import { isWindowsReservedName } from './reserved-names.js';
 
 // v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
 // process-kill mid-write (e.g. /api/restart killing the old process while
@@ -1303,7 +1304,8 @@ function dedupBulletsKeepingText(content) {
       lines = new Set();
       keys = new Set();
     } else if (inSection && line.startsWith('- ')) {
-      const norm = line.trim().toLowerCase();
+      // Case kept: on a write that may not lose text, `- Foo` and `- foo` are two lines.
+      const norm = line.trim();
       const key = dedupKey(line);
       if (lines.has(norm) || (linkOnlyTarget(line) !== null && keys.has(key))) continue;
       lines.add(norm);
@@ -1602,6 +1604,14 @@ export async function writePage(domain, relativePath, content, opts = {}) {
       const fromSlug = path.basename(requestedPath, '.md');
       foldLabel = fromSlug === canonSlug && askedSlug === canonSlug ? requestedPath.replace(/\.md$/, '') : askedSlug;
     }
+  }
+
+  // A name Windows keeps for a device is never created; a page already there stays
+  // usable. stat, not existsSync: on Windows a device name "exists" in every folder.
+  if (isWindowsReservedName(path.basename(canonPath, '.md'))
+    && !(await stat(fullPath).then((s) => s.isFile(), () => false))) {
+    warn(`Page "${canonPath}" was not written: Windows keeps the name "${path.basename(canonPath, '.md')}" for a device, so the file could not open on a Windows computer. Its content was not saved.`);
+    return null;
   }
 
   // Capture pre-write state once — used both by the merge step below and by

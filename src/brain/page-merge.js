@@ -13,7 +13,10 @@
  * beyond the v2.2.0 first draft; it only ever chose which text to throw away.
  *
  * THE RULE. The kept page is the base and its lines are not edited, except:
- *   - frontmatter `tags` become the union, and `type` follows the kept folder;
+ *   - frontmatter `tags` gain what the other page adds, and `type` follows the
+ *     kept folder. Every other byte of the block stays, line endings included:
+ *     foreign vaults keep nested YAML, dates, quoted values and keys this module
+ *     has no opinion on, and what it does not understand it does not rewrite;
  *   - the removed page's content that the kept page lacks is added.
  * From the removed page:
  *   - a top-level `- ` bullet (with its indented children) directly under a
@@ -64,7 +67,28 @@ const HEADING_RE = /^(#{1,6})[ \t]+(\S.*?)[ \t]*$/;
 const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const ANY_INDENT_FENCE_RE = /^[ \t]*(`{3,}|~{3,})/;
 const BARE_LINK_BULLET_RE = /^-\s+\[\[([^\]|]+)\]\]\s*$/;
-const FM_KEY_RE = /^([A-Za-z_][A-Za-z0-9_-]*):(.*)$/;
+
+/**
+ * A top-level YAML key, as a foreign vault writes it: `due date:`, `review.status:`,
+ * `größe:`, `日本語:`, `"quoted key":`. `key:value` with no space is not YAML, but this
+ * module always read it as a key, and a page may hold one. Returns the key, unquoted,
+ * and where its value starts; null for anything else, which includes every markdown
+ * shape a rule pair could hold (a bullet, a table, a quote, a link reference).
+ */
+const BARE_KEY_RE = /^([A-Za-z_][A-Za-z0-9_-]*):/;
+const QUOTED_KEY_RE = /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)')[ \t]*:(?=[ \t]|$)/;
+const PLAIN_KEY_RE = /^([^\s#:\-?!&*|>%@`'"{}[\],](?:[^:]|:(?=\S))*?)[ \t]*:(?=[ \t]|$)/;
+const noCR = (line) => line.replace(/\r$/, '');
+
+function fmKey(rawLine) {
+  const line = noCR(rawLine);
+  const bare = line.match(BARE_KEY_RE);
+  if (bare) return { key: bare[1], valueAt: bare[0].length };
+  const quoted = line.match(QUOTED_KEY_RE);
+  if (quoted) return { key: quoted[1] ?? quoted[2], valueAt: quoted[0].length };
+  const plain = line.match(PLAIN_KEY_RE);
+  return plain ? { key: plain[1], valueAt: plain[0].length } : null;
+}
 
 const headingKey = (text) => text.replace(/[ \t]+#+[ \t]*$/, '').trim().toLowerCase();
 const isBlank = (line) => line.trim() === '';
@@ -79,68 +103,195 @@ function closesFence(line, marker) {
 /**
  * A real frontmatter block only. A page opening with a horizontal rule and a
  * later `---` must stay body text, or its lines would be treated as metadata.
+ *
+ * It is frontmatter when every line has a YAML shape, or when it opens with a key.
+ * The second clause is what a markdown reader does with a block YAML cannot parse:
+ * calling such a block body text gave the page a SECOND frontmatter block on the next
+ * write, for good, because the composers then build a fresh one above it.
+ *
+ * Frontmatter lines are split on `\n` alone, so a `\r` stays on its line, and the
+ * two fence lines are carried as written: joined with `\n` they are the file's bytes.
  */
 function splitPage(text) {
-  const raw = String(text ?? '').replace(/^﻿/, '');
-  const lines = raw.split(/\r?\n/);
-  if (lines[0].trimEnd() === '---') {
-    for (let j = 1; j < lines.length; j++) {
-      if (lines[j].trimEnd() !== '---') continue;
-      const fm = lines.slice(1, j);
-      const looksLikeYaml = fm.every((l) => isBlank(l) || FM_KEY_RE.test(l) || /^[ \t]/.test(l) || /^- /.test(l) || /^#/.test(l));
-      if (looksLikeYaml) return { hasFrontmatter: true, frontmatter: fm, body: lines.slice(j + 1) };
+  const raw = String(text ?? '').replace(/^\ufeff/, '');
+  const rawLines = raw.split('\n');
+  if (rawLines[0].trimEnd() === '---') {
+    for (let j = 1; j < rawLines.length; j++) {
+      if (rawLines[j].trimEnd() !== '---') continue;
+      const fm = rawLines.slice(1, j);
+      const firstReal = fm.find((l) => !isBlank(l) && !/^#/.test(l));
+      const looksLikeYaml = fm.every((l) => isBlank(l) || fmKey(l) || /^[ \t]/.test(l) || /^- /.test(l) || /^#/.test(l))
+        || (firstReal !== undefined && fmKey(firstReal));
+      if (looksLikeYaml) {
+        return {
+          hasFrontmatter: true, frontmatter: fm, open: rawLines[0], close: rawLines[j],
+          body: rawLines.slice(j + 1).join('\n').split(/\r?\n/),
+        };
+      }
       break;
     }
   }
-  return { hasFrontmatter: false, frontmatter: [], body: lines };
+  return { hasFrontmatter: false, frontmatter: [], body: raw.split(/\r?\n/) };
+}
+
+/** What goes above the body. A kept block keeps its own fences and line endings. */
+function headText(keep, fmLines, eol) {
+  if (fmLines === null) return '';
+  if (keep.hasFrontmatter) return [keep.open, ...fmLines, keep.close].join('\n') + '\n';
+  return ['---', ...fmLines, '---'].join(eol) + eol;
 }
 
 /** Frontmatter lines → entries; a key owns the indented or `- ` lines under it. */
 function frontmatterEntries(fm) {
   const entries = [];
   for (const line of fm) {
-    const m = line.match(FM_KEY_RE);
-    if (m) entries.push({ key: m[1], lines: [line] });
+    const k = fmKey(line);
+    if (k) entries.push({ key: k.key, valueAt: k.valueAt, lines: [line] });
     else if (entries.length) entries[entries.length - 1].lines.push(line);
-    else if (!isBlank(line)) entries.push({ key: null, lines: [line] });
+    else entries.push({ key: null, lines: [line] });
   }
   return entries;
 }
 
-function parseTags(entry) {
-  if (!entry) return [];
-  const clean = (s) => s.trim().replace(/^["']|["']$/g, '');
-  const first = entry.lines[0].replace(/^tags:/, '').trim();
-  const out = first.replace(/^\[|\]$/g, '').split(',').map(clean).filter(Boolean);
-  for (const l of entry.lines.slice(1)) {
-    const m = l.match(/^\s*-\s+(.+)$/);
-    if (m) out.push(clean(m[1]));
+const isTagsEntry = (e) => e.key !== null && e.key.toLowerCase() === 'tags';
+
+/** Split on commas outside quotes. */
+function splitFlowItems(inner) {
+  const items = [];
+  let cur = '';
+  let quote = null;
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (quote) {
+      cur += c;
+      if (c === '\\' && quote === '"') { cur += inner[++i] ?? ''; continue; }
+      if (c === quote) quote = null;
+    } else if ((c === '"' || c === "'") && cur.trim() === '') {
+      quote = c;
+      cur += c;
+    } else if (c === ',') {
+      items.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
   }
-  return [...new Set(out)];
+  items.push(cur);
+  return items;
+}
+
+function cleanTag(item) {
+  const t = item.trim();
+  const q = t.match(/^(["'])(.*)\1$/);
+  return q ? q[2] : t.replace(/[ \t]+#.*$/, '');
+}
+
+/**
+ * How a `tags` entry is written. `unknown` means this module cannot add to it
+ * without guessing, so it is left exactly as it is.
+ */
+function tagShape(entry) {
+  const lines = entry.lines.map(noCR);
+  const value = lines[0].slice(entry.valueAt).trim();
+  const rest = lines.slice(1).filter((l) => !isBlank(l));
+  if (value === '' && rest.length === 0) return { form: 'empty', items: [] };
+  if (value === '') {
+    const items = rest.filter((l) => !/^\s*#/.test(l));
+    if (!items.length || !items.every((l) => /^\s*-\s+\S/.test(l))) return { form: 'unknown', items: [] };
+    return { form: 'block', items: items.map((l) => cleanTag(l.replace(/^\s*-\s+/, ''))) };
+  }
+  if (value.startsWith('[')) {
+    const joined = [value, ...rest.map((l) => l.trim())].join(' ');
+    const m = joined.match(/^\[(.*)\](?:[ \t]+#.*)?$/);
+    if (!m) return { form: 'unknown', items: [] };
+    return { form: 'flow', items: splitFlowItems(m[1]).map(cleanTag).filter(Boolean) };
+  }
+  if (rest.length || /^[{|>&!*]/.test(value)) return { form: 'unknown', items: [] };
+  const comment = value.match(/[ \t]+#.*$/);
+  const scalar = comment ? value.slice(0, comment.index) : value;
+  return {
+    form: 'scalar', comment: comment ? comment[0] : '',
+    items: splitFlowItems(scalar).map(cleanTag).filter(Boolean),
+    spelled: splitFlowItems(scalar).map((x) => x.trim()).filter(Boolean),
+  };
+}
+
+const parseTags = (entry) => (entry ? [...new Set(tagShape(entry).items)] : []);
+
+/** A tag this module adds, quoted only when YAML would misread it bare. */
+const spellTag = (t) => (/^[\p{L}\p{N}_./-]+$/u.test(t) ? t : JSON.stringify(t));
+
+/**
+ * The `tags` entry with the `type/` tag following the folder and `added` appended.
+ * Only those edits: what is there keeps its spelling, quotes, spacing and comments.
+ * Null when the entry's shape is unknown.
+ */
+function editTagEntry(entry, shape, otherType, wantType, added, cr) {
+  if (shape.form === 'unknown') return null;
+  const swap = otherType
+    ? (l) => l.replace(new RegExp(`(^|[\\s\\[,"'])type/${otherType}(?=$|[\\s\\],"'#])`, 'g'), `$1type/${wantType}`)
+    : (l) => l;
+  const lines = entry.lines.map(noCR);
+  const body = [lines[0].slice(0, entry.valueAt) + swap(lines[0].slice(entry.valueAt)), ...lines.slice(1).map(swap)];
+  const spelled = added.map(spellTag);
+  if (spelled.length) {
+    if (shape.form === 'empty') {
+      body[0] = `${body[0].trimEnd()} [${spelled.join(', ')}]`;
+    } else if (shape.form === 'scalar') {
+      const items = shape.spelled.map(swap);
+      body[0] = `${body[0].slice(0, entry.valueAt)} [${[...items, ...spelled].join(', ')}]${shape.comment}`;
+    } else if (shape.form === 'block') {
+      let last = body.length - 1;
+      while (last > 0 && !/^\s*-\s+\S/.test(body[last])) last--;
+      const indent = (body[last].match(/^(\s*)-/) || [, '  '])[1];
+      body.splice(last + 1, 0, ...spelled.map((t) => `${indent}- ${t}`));
+    } else {
+      let last = body.length - 1;
+      while (last > 0 && !body[last].includes(']')) last--;
+      const at = body[last].lastIndexOf(']');
+      const before = body[last].slice(0, at);
+      const kept = before.trimEnd();
+      const gap = before.slice(kept.length);
+      const sep = shape.items.length === 0 ? '' : ', ';
+      body[last] = `${kept}${sep}${spelled.join(', ')}${gap}${body[last].slice(at)}`;
+    }
+  }
+  // The original line's own ending where the line is still there; a new line takes the block's.
+  return body.map((l, i) => {
+    const orig = entry.lines.find((o) => noCR(o) === l);
+    if (orig !== undefined) return orig;
+    return l + (i < entry.lines.length && entry.lines[i].endsWith('\r') ? '\r' : cr);
+  });
 }
 
 function composeFrontmatter(keep, remove, wantType) {
   const otherType = wantType === 'entity' ? 'concept' : wantType === 'concept' ? 'entity' : null;
   const typeTag = (t) => (otherType && t === `type/${otherType}` ? `type/${wantType}` : t);
+  // New lines take the block's own line ending.
+  const cr = keep.frontmatter.filter((l) => l.endsWith('\r')).length * 2 > keep.frontmatter.length ? '\r' : '';
 
   const keepEntries = frontmatterEntries(keep.frontmatter);
   const removeEntries = frontmatterEntries(remove.frontmatter);
-  const keepTagEntry = keepEntries.find((e) => e.key === 'tags');
+  const keepTagEntry = keepEntries.find(isTagsEntry);
   const before = parseTags(keepTagEntry);
-  const union = [...new Set([...before.map(typeTag),
-    ...parseTags(removeEntries.find((e) => e.key === 'tags')).map(typeTag)])];
-  const tagsChanged = union.length !== before.length || union.some((t, i) => t !== before[i]);
+  const incoming = parseTags(removeEntries.find(isTagsEntry)).map(typeTag);
+  const union = [...new Set([...before.map(typeTag), ...incoming])];
+  const had = new Set(before.map(typeTag));
+  const newTags = union.filter((t) => !had.has(t));
+  const typeTagMoves = before.some((t) => typeTag(t) !== t);
 
+  const comparable = (e) => e.lines.filter((l) => !isBlank(l)).map((l) => l.trimEnd()).join('\n');
   const added = [];
   const conflicts = [];
   for (const e of removeEntries) {
-    if (e.key !== null && BOOKKEEPING_KEYS.has(e.key)) continue;
+    if (e.key !== null && (BOOKKEEPING_KEYS.has(e.key) || isTagsEntry(e))) continue;
     const mine = e.key === null ? null : keepEntries.find((k) => k.key === e.key);
+    const text = e.lines.filter((l) => e.key !== null || !isBlank(l)).map(noCR);
     if (!mine) {
-      if (e.key === null) conflicts.push(...e.lines);
-      else added.push(...e.lines);
-    } else if (mine.lines.map((l) => l.trimEnd()).join('\n') !== e.lines.map((l) => l.trimEnd()).join('\n')) {
-      conflicts.push(...e.lines);
+      if (e.key === null) conflicts.push(...text);
+      else added.push(...text);
+    } else if (comparable(mine) !== comparable(e)) {
+      conflicts.push(...text);
     }
   }
 
@@ -148,28 +299,32 @@ function composeFrontmatter(keep, remove, wantType) {
     if (!union.length && !added.length) return { lines: null, conflicts };
     const lines = [];
     if (wantType) lines.push(`type: ${wantType}`);
-    if (union.length) lines.push(`tags: [${union.join(', ')}]`);
+    if (union.length) lines.push(`tags: [${union.map(spellTag).join(', ')}]`);
     return { lines: [...lines, ...added], conflicts };
   }
 
   const lines = [];
   for (const e of keepEntries) {
-    if (e === keepTagEntry && tagsChanged) {
-      const blockForm = e.lines.length > 1 && e.lines[0].replace(/^tags:/, '').trim() === '';
-      if (blockForm) {
-        const indent = (e.lines[1].match(/^(\s*)-/) || [, '  '])[1];
-        lines.push('tags:', ...union.map((t) => `${indent}- ${t}`));
-      } else {
-        lines.push(`tags: [${union.join(', ')}]`);
+    if (e === keepTagEntry && (newTags.length || typeTagMoves)) {
+      const edited = editTagEntry(e, tagShape(e), otherType, wantType, newTags, cr);
+      if (edited) lines.push(...edited);
+      else {
+        // A shape this module cannot add to: the entry stands, and what it would have
+        // gained is kept as text. On a deleting merge findLostLines then refuses the
+        // delete, because the tag is not in `tags`: nothing goes, and the pages stay.
+        lines.push(...e.lines);
+        if (newTags.length) conflicts.push(`tags: [${newTags.map(spellTag).join(', ')}]`);
       }
-    } else if (e.key === 'type' && otherType && e.lines[0].trim().match(new RegExp(`^type:\\s*${otherType}$`))) {
-      lines.push(`type: ${wantType}`, ...e.lines.slice(1));
+    } else if (e.key === 'type' && otherType && noCR(e.lines[0]).trim().match(new RegExp(`^type:\\s*${otherType}$`))) {
+      const first = noCR(e.lines[0]);
+      const ending = e.lines[0].endsWith('\r') ? '\r' : '';
+      lines.push(first.slice(0, e.valueAt) + first.slice(e.valueAt).replace(otherType, wantType) + ending, ...e.lines.slice(1));
     } else {
       lines.push(...e.lines);
     }
   }
-  if (!keepTagEntry && union.length) lines.push(`tags: [${union.join(', ')}]`);
-  lines.push(...added);
+  if (!keepTagEntry && union.length) lines.push(`tags: [${union.map(spellTag).join(', ')}]${cr}`);
+  lines.push(...added.map((l) => l + cr));
   return { lines, conflicts };
 }
 
@@ -281,28 +436,32 @@ function demote(token) {
 /** Where a bullet's section stands: what it holds, and what this merge adds. */
 function bulletTarget(section) {
   const exact = new Set();
+  const lower = new Set();
   const keys = new Set();
   const multi = [];
   for (const b of section ? section.bullets : []) {
-    exact.add(b.lines[0].trim().toLowerCase());
+    exact.add(b.lines[0].trim());
+    lower.add(b.lines[0].trim().toLowerCase());
     keys.add(dedupKey(b.lines[0]));
     if (b.lines.length > 1) multi.push(hayOf(b.lines));
   }
-  return { exact, keys, multi, inserts: [] };
+  return { exact, lower, keys, multi, inserts: [] };
 }
 
 function placeBullet(target, token) {
   const top = token.lines[0];
   const isSingle = token.lines.length === 1;
-  const lower = top.trim().toLowerCase();
   const key = dedupKey(top);
 
-  if (isSingle && target.exact.has(lower)) return 'drop';
+  // Same words in another case is not the same text: a capital can be a name. It
+  // falls through to `keys`, and so to `## Merged from`.
+  if (isSingle && target.exact.has(top.trim())) return 'drop';
   if (!isSingle && target.multi.includes(hayOf(token.lines))) return 'drop';
   if (target.keys.has(key)) {
     return isSingle && BARE_LINK_BULLET_RE.test(top.trim()) ? 'drop' : 'material';
   }
-  target.exact.add(lower);
+  target.exact.add(top.trim());
+  target.lower.add(top.trim().toLowerCase());
   target.keys.add(key);
   if (!isSingle) target.multi.push(hayOf(token.lines));
   target.inserts.push(...token.lines);
@@ -337,7 +496,9 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
 
   const keepTokens = tokenize(keep.body);
   const sections = sectionIndex(keepTokens);
-  const known = new Set(keepTokens.filter((t) => t.kind === 'heading').map((t) => headingKey(t.text)));
+  // Heading text exactly as written: `# Nvidia` beside `# NVIDIA` is text that moves.
+  // `sections` stays case-blind: that only decides where a bullet goes.
+  const known = new Set(keepTokens.filter((t) => t.kind === 'heading').map((t) => t.text));
   let hay = hayOf(keep.body);
 
   const targets = new Map();       // section key → bullet target, kept sections and new ones
@@ -360,9 +521,9 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
 
   let group = null;  // { key, canMerge, direct, sawContent, heading, headingHandled }
   const closeGroup = () => {
-    if (group && group.heading && !group.sawContent && !known.has(group.key)) {
+    if (group && group.heading && !group.sawContent && !known.has(group.heading.text)) {
       flushPending();
-      known.add(group.key);
+      known.add(group.heading.text);
       accept([demote(group.heading)]);
     }
     pending = [];
@@ -373,17 +534,18 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
       closeGroup();
       if (t.level === 1) {
         group = null;
-        const key = headingKey(t.text);
-        if (!known.has(key)) { known.add(key); accept([demote(t)]); }
+        if (!known.has(t.text)) { known.add(t.text); accept([demote(t)]); }
         continue;
       }
       const key = headingKey(t.text);
       const inKept = sections.has(key) || newSections.has(key);
       const canMerge = inKept || ACCUMULATING.has(key);
       group = { key, canMerge, direct: true, sawContent: false, heading: t };
-      if (canMerge || known.has(key)) pending.push(demote(t));
+      if (known.has(t.text) || (canMerge && !inKept)) pending.push(demote(t));
       else {
-        known.add(key);
+        // Includes a section the kept page has in another case: its bullets go to
+        // that section, and this spelling of the heading moves as text.
+        known.add(t.text);
         accept([demote(t)]);
         group.heading = null;
       }
@@ -394,11 +556,10 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
 
     if (t.kind === 'heading') {
       if (group) group.direct = false;
-      const key = headingKey(t.text);
-      if (known.has(key)) pending.push(demote(t));
+      if (known.has(t.text)) pending.push(demote(t));
       else {
         flushPending();
-        known.add(key);
+        known.add(t.text);
         accept([demote(t)]);
       }
       continue;
@@ -409,7 +570,7 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
       const where = placeBullet(targets.get(group.key), t);
       if (where === 'section' && !sections.has(group.key) && !newSections.has(group.key)) {
         newSections.set(group.key, group.heading.text);
-        known.add(group.key);
+        known.add(group.heading.text);
       }
       if (where === 'section') hay += normLines(t.lines).join('\n') + '\n';
       if (where !== 'material') continue;
@@ -422,7 +583,7 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
   if (fm.conflicts.length) {
     const block = ['```yaml', ...fm.conflicts, '```'];
     if (!hay.includes(hayOf(block))) {
-      if (!known.has('frontmatter')) { known.add('frontmatter'); accept(['### Frontmatter']); }
+      if (!known.has('Frontmatter')) { known.add('Frontmatter'); accept(['### Frontmatter']); }
       accept(block);
     }
   }
@@ -473,8 +634,7 @@ export function composeMergedPage(keepText, removeText, { sourceLabel, keepFolde
     body.push('');
   }
 
-  const head = fm.lines === null ? [] : ['---', ...fm.lines, '---'];
-  return bom + [...head, ...body].join(eol);
+  return bom + headText(keep, fm.lines, eol) + body.join(eol);
 }
 
 // ── Reuse: the model named a page that exists ───────────────────────────────
@@ -614,10 +774,10 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
     const target = bulletsOf(key);
     const top = token.lines[0];
     const single = token.lines.length === 1;
-    if (single && target.exact.has(top.trim().toLowerCase())) return true;
+    if (single && target.lower.has(top.trim().toLowerCase())) return true;
     if (!single && target.multi.includes(hayOf(token.lines))) return true;
     if (single && BARE_LINK_BULLET_RE.test(top.trim()) && target.keys.has(dedupKey(top))) return true;
-    if (single) target.exact.add(top.trim().toLowerCase());
+    if (single) { target.exact.add(top.trim()); target.lower.add(top.trim().toLowerCase()); }
     else target.multi.push(hayOf(token.lines));
     target.keys.add(dedupKey(top));
     return false;
@@ -763,8 +923,7 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
     if (title) body.unshift(title.lines[0], ...(body.length && !isBlank(body[0]) ? [''] : []));
   }
 
-  const head = fm.lines === null ? [] : ['---', ...fm.lines, '---'];
-  return bom + [...head, ...body].join(eol);
+  return bom + headText(keep, fm.lines, eol) + body.join(eol);
 }
 
 /**
@@ -788,20 +947,22 @@ function withoutWriteBookkeeping(incomingText) {
  *
  * Deliberately not built on `tokenize`, and it knows nothing about sections:
  * it fails for different reasons than the composer can. Allowed differences,
- * each of them no loss of text: case and surrounding spaces; a heading's level;
- * a bare `- [[x]]` when `[[x]]` is on the page; `type`, `created` and `updated`
- * in frontmatter (`type` follows the folder, the dates belong to a deleted
- * file); `tags`, which are checked one by one apart from the `type/` tag.
+ * each of them no loss of text: surrounding spaces; a heading's level; a bare
+ * `- [[x]]` when `[[x]]` is on the page, in any case, because a link names one page
+ * however it is capitalised and the write path's own dedup key says so; `type`,
+ * `created` and `updated` in frontmatter (`type` follows the folder, the dates
+ * belong to a deleted file); `tags`, which are checked one by one apart from the
+ * `type/` tag. Case is NOT allowed anywhere else: a capital can be a name.
  */
 export function findLostLines(keepText, removeText, mergedText) {
-  const norm = (l) => l.trim().toLowerCase();
+  const norm = (l) => l.trim();
   const stripHashes = (l) => norm(l).replace(/^#{1,6}\s+/, '');
   const merged = splitPage(mergedText);
   const mergedAll = [...merged.frontmatter, ...merged.body];
   const have = new Set(mergedAll.map(norm));
   const haveHeadingText = new Set(mergedAll.filter((l) => /^#{1,6}\s/.test(l)).map(stripHashes));
   const wholeLower = mergedAll.join('\n').toLowerCase();
-  const mergedTags = new Set(parseTags(frontmatterEntries(merged.frontmatter).find((e) => e.key === 'tags')));
+  const mergedTags = new Set(parseTags(frontmatterEntries(merged.frontmatter).find(isTagsEntry)));
   const lost = [];
 
   for (const [name, text] of [['kept', keepText], ['removed', removeText]]) {
@@ -817,7 +978,7 @@ export function findLostLines(keepText, removeText, mergedText) {
       lost.push({ page: name, line });
     }
     for (const e of frontmatterEntries(page.frontmatter)) {
-      if (e.key === 'tags') {
+      if (isTagsEntry(e)) {
         for (const tag of parseTags(e)) {
           if (!tag.startsWith('type/') && !mergedTags.has(tag)) lost.push({ page: name, line: `tags: ${tag}` });
         }

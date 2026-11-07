@@ -238,6 +238,11 @@ export async function listMd(wikiDir, folder) {
   } catch { return []; }
 }
 
+/** One name in two folders, hyphens aside: the scan's test, and the fix's check of a claim. */
+function crossFolderKey(file) {
+  return file.replace(/-/g, '').toLowerCase();
+}
+
 function normKey(slug) {
   return slug
     .replace(HONORIFIC_PREFIX_RE, '')   // dr.-tali-rezun → tali-rezun
@@ -654,10 +659,10 @@ async function scanWikiUncached(domain) {
 
   // Cross-folder duplicates (concepts/X + entities/X where X matches hyphen-normalised)
   const entityNormMap = new Map();
-  for (const f of entityFiles) entityNormMap.set(f.replace(/-/g, '').toLowerCase(), f);
+  for (const f of entityFiles) entityNormMap.set(crossFolderKey(f), f);
   const crossFolderDupes = [];
   for (const cf of conceptFiles) {
-    const norm = cf.replace(/-/g, '').toLowerCase();
+    const norm = crossFolderKey(cf);
     const match = entityNormMap.get(norm);
     if (match) {
       crossFolderDupes.push({ keep: `entities/${match}`, remove: `concepts/${cf}` });
@@ -1332,20 +1337,37 @@ async function isSameFile(wikiDir, keepRel, removeRel) {
 // Refusals, not failures: nothing was written and nothing was deleted.
 const MERGE_WOULD_LOSE_TEXT = 'merge-would-lose-text';
 const MERGE_SAME_FILE = 'merge-same-file';
+const MERGE_PAGE_MISSING = 'merge-page-missing';
+const MERGE_NAME_INVALID = 'merge-name-invalid';
+
+/**
+ * The request names pages the scan's own rule does not relate. These two types
+ * carry no preview and no basis, and `issue` comes from a browser or a model, so
+ * the relation is checked here, on every call, rather than trusted: the scan's
+ * rule is the only thing that makes either delete safe to run unasked. Refused
+ * before any file is read, so nothing is written or deleted.
+ */
+export const MERGE_NOT_RELATED = 'merge-not-related';
+export const MERGE_NOT_RELATED_MESSAGE = 'These pages are not two spellings of one name, so nothing was merged or deleted. Run the check again and use what it lists.';
 
 async function fixCrossFolderDupe(wikiDir, issue) {
   // Folder + slug are needed to repoint inbound links before the delete.
-  // Refusing an unsplittable reference is fail-safe: nothing is merged and
-  // nothing is deleted. The scan always emits `<folder>/<file>.md`; only a
-  // hand-crafted MCP `fix_wiki_issue` payload can reach the null branch.
+  // The scan always emits `entities/<file>.md` + `concepts/<file>.md`; either way
+  // round is the same pair, and a summary is never one (summaries/openai is a page
+  // about a source, not a second openai).
   const keepRef = splitWikiRef(issue && issue.keep);
   const removeRef = splitWikiRef(issue && issue.remove);
-  if (!keepRef || !removeRef) return false;
+  if (!keepRef || !removeRef) return { ok: false, reason: MERGE_NOT_RELATED };
+  const folders = [keepRef.folder, removeRef.folder].sort().join('+');
+  if (folders !== 'concepts+entities'
+    || crossFolderKey(`${keepRef.slug}.md`) !== crossFolderKey(`${removeRef.slug}.md`)) {
+    return { ok: false, reason: MERGE_NOT_RELATED };
+  }
 
   const keepPath = wikiFile(wikiDir, issue.keep);
   const removePath = wikiFile(wikiDir, issue.remove);
-  if (!keepPath || !removePath) return false;
-  if (!existsSync(keepPath) || !existsSync(removePath)) return false;
+  if (!keepPath || !removePath) return { ok: false, reason: MERGE_NOT_RELATED };
+  if (!existsSync(keepPath) || !existsSync(removePath)) return { ok: false, reason: MERGE_PAGE_MISSING };
 
   if (await isSameFile(wikiDir, issue.keep, issue.remove)) return { ok: false, reason: MERGE_SAME_FILE };
 
@@ -1372,42 +1394,45 @@ async function fixCrossFolderDupe(wikiDir, issue) {
 }
 
 async function fixHyphenVariant(wikiDir, issue) {
-  // Slug regex allows alphanumerics, hyphens, AND single embedded periods —
-  // the LLM occasionally produces slugs like "dr.-tali-rezun" by preserving
-  // the dot from "Dr." (v3.0.1-beta.3). The explicit `..` + `/` checks below
-  // close the path-traversal hole that a permissive character class would
-  // otherwise open. `resolveInsideWiki` is the final chokepoint.
-  const SLUG_RE = /^[a-z0-9][a-z0-9.\-]*$/i;
-  const isSafeSlug = (s) =>
-    typeof s === 'string' &&
-    !s.includes('..') &&
-    !s.includes('/') &&
-    !s.includes('\\') &&
-    SLUG_RE.test(s);
-
-  const canonical = issue.suggestedSlug;
-  if (!isSafeSlug(canonical)) return false;
+  // Every name must be a variant of the kept one by the scan's own rule, checked
+  // before anything is read: one stranger in the list refuses the whole request.
+  // isMergeableSlug is the one test of a name that can merge (it used to be a private
+  // regex here, so a group with `č` or `_` in a name reported fixed and did nothing);
+  // `wikiFile` is the final chokepoint on the path.
+  const canonical = issue && issue.suggestedSlug;
+  const files = issue && issue.files;
+  if (typeof canonical !== 'string' || !isMergeableSlug(canonical)
+    || !Array.isArray(files) || files.length === 0
+    || !files.every((s) => typeof s === 'string' && normKey(s) === normKey(canonical))) {
+    return { ok: false, reason: MERGE_NOT_RELATED };
+  }
   const canonPath = wikiFile(wikiDir, 'entities', `${canonical}.md`);
-  if (!canonPath || !existsSync(canonPath)) return false;
+  if (!canonPath) return { ok: false, reason: MERGE_NOT_RELATED };
+  if (!existsSync(canonPath)) return { ok: false, reason: MERGE_PAGE_MISSING };
 
   let canonContent = await readFile(canonPath, 'utf8');
   const retiredSlugs = [];
   const canonRef = { folder: 'entities', slug: canonical };
-  let refusal = null;
-  for (const slug of (issue.files || [])) {
+  const refused = [];
+  for (const slug of new Set(files)) {
     if (slug === canonical) continue;
-    if (!isSafeSlug(slug)) continue;
+    if (!isMergeableSlug(slug)) { refused.push({ slug, reason: MERGE_NAME_INVALID }); continue; }
     const dupPath = wikiFile(wikiDir, 'entities', `${slug}.md`);
-    if (!dupPath || !existsSync(dupPath)) continue;
-    if (await isSameFile(wikiDir, `entities/${canonical}.md`, `entities/${slug}.md`)) { refusal = MERGE_SAME_FILE; continue; }
+    if (!dupPath) { refused.push({ slug, reason: MERGE_NAME_INVALID }); continue; }
+    if (!existsSync(dupPath)) continue;
+    if (await isSameFile(wikiDir, `entities/${canonical}.md`, `entities/${slug}.md`)) { refused.push({ slug, reason: MERGE_SAME_FILE }); continue; }
     const dupContent = await readFile(dupPath, 'utf8');
     const { merged, lost } = composeMerge(canonContent, dupContent, canonRef, { folder: 'entities', slug });
     // A refused variant stays on disk and is offered again by the next scan.
-    if (lost.length) { refusal = MERGE_WOULD_LOSE_TEXT; continue; }
+    if (lost.length) { refused.push({ slug, reason: MERGE_WOULD_LOSE_TEXT }); continue; }
     canonContent = merged;
     retiredSlugs.push(slug);
   }
-  if (refusal && retiredSlugs.length === 0) return { ok: false, reason: refusal };
+  if (retiredSlugs.length === 0) {
+    return refused.length
+      ? { ok: false, reason: refused[0].reason, refused }
+      : { ok: false, reason: MERGE_PAGE_MISSING };
+  }
 
   // Persist the merged canonical page BEFORE repointing. The merge folds the
   // duplicate's body in, and that body routinely contains links to the
@@ -1429,6 +1454,9 @@ async function fixHyphenVariant(wikiDir, issue) {
     if (!dupAbs || !existsSync(dupAbs)) continue;
     await rm(dupAbs);
   }
+  // Part of a group is not a fixed group. It stays on the next scan's list, so the
+  // caller hears exactly what moved and what did not, rather than `fixed: 1`.
+  if (refused.length) return { ok: false, partial: true, reason: refused[0].reason, merged: retiredSlugs, refused };
   return true;
 }
 
@@ -1567,11 +1595,14 @@ async function buildEntityConceptSlugs(wikiDir) {
  * @param {boolean|{ok: boolean, reason: string|null}} r
  */
 function normaliseFixOutcome(r) {
-  if (typeof r === 'boolean') return { ok: r, reason: null, missing: null };
+  if (typeof r === 'boolean') return { ok: r, reason: null, missing: null, partial: false, merged: null, refused: null };
   // `missing` rides the same channel as `reason` and for the same purpose: a
   // refusal a caller can act on. It names the `folder/slug` that is gone on
   // the two semanticDupe staleness reasons, and is null everywhere else.
-  return { ok: !!r?.ok, reason: r?.reason ?? null, missing: r?.missing ?? null };
+  return {
+    ok: !!r?.ok, reason: r?.reason ?? null, missing: r?.missing ?? null,
+    partial: !!r?.partial, merged: r?.merged ?? null, refused: r?.refused ?? null,
+  };
 }
 
 /**
@@ -1606,12 +1637,15 @@ export async function fixIssue(domain, type, issue = null) {
     if (type === 'orphanLink')        raw = await fixOrphanLink(wikiDir, issue);
     if (type === 'semanticDupe')      raw = await fixSemanticDuplicate(wikiDir, issue);
     if (type === 'summaryLinkSections') raw = await fixSummaryLinkSections(wikiDir, issue);
-    const { ok, reason, missing } = normaliseFixOutcome(raw);
+    const { ok, reason, missing, partial, merged, refused } = normaliseFixOutcome(raw);
     return {
       fixed: ok ? 1 : 0,
       total: 1,
       ...(ok || !reason ? {} : { reason }),
       ...(ok || !missing ? {} : { missing }),
+      // Pages were merged and deleted, and `fixed` is 0: `partial` says so.
+      ...(partial ? { partial: true, merged } : {}),
+      ...(refused ? { refused } : {}),
     };
   }
 
@@ -1631,6 +1665,7 @@ export async function fixIssue(domain, type, issue = null) {
   const knownTargets = type === 'brokenLinks' ? (await buildTargetInventory(wikiDir)).valid : null;
   const knownSlugs = type === 'summaryLinkSections' ? await buildEntityConceptSlugs(wikiDir) : null;
   let fixed = 0;
+  let partial = 0;
   for (const it of issues) {
     let raw = false;
     try {
@@ -1648,13 +1683,20 @@ export async function fixIssue(domain, type, issue = null) {
     // every refused link as fixed and report a clean sweep over an untouched
     // wiki. That is the same class of defect this whole change is repairing,
     // so it is pinned behaviourally in test-mcp-e2e.js §9.
-    if (normaliseFixOutcome(raw).ok) fixed++;
+    const outcome = normaliseFixOutcome(raw);
+    if (outcome.ok) fixed++;
+    else if (outcome.partial) partial++;
   }
   // `total` counts occurrences, which is what the scan lists. `distinct` is how many
   // links those are: one fix rewrites every occurrence of a link in its page, so a page
   // writing it twice ends at fixed 1 of total 2 with nothing left undone.
   const repeatable = type === 'brokenLinks' || type === 'folderPrefixLinks';
-  return { fixed, total: issues.length, distinct: repeatable ? new Set(issues.map((i) => i.sourceFile + '|' + i.linkText)).size : issues.length };
+  return {
+    fixed,
+    total: issues.length,
+    distinct: repeatable ? new Set(issues.map((i) => i.sourceFile + '|' + i.linkText)).size : issues.length,
+    ...(partial ? { partial } : {}),
+  };
 }
 
 /**
