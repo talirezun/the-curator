@@ -407,23 +407,20 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 
 ## How to actually undo a Health fix
 
-> **⚠ How to actually undo a Health fix — there is no Undo button, in either interface.**
->
-> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `remote-status`, `preflight` (v3.32.0 — a read-only measurement, it changes nothing), `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js` — enumerate its `router.<verb>` calls rather than trusting this list) — there is no revert or discard endpoint, and the Sync view says as much behind its ⓘ (*"There is no revert control in the app, but a git client pointed at your knowledge-base folder can browse that history and roll back"*). The pre-redesign shell's Sync tab (deleted in v3.41.0) never had a discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
->
-> If you have Personal Sync configured, and **before you push**:
->
-> ```bash
-> # See what changed
-> git --git-dir="$HOME/the-curator/.knowledge-git" \
->     --work-tree="<your Knowledge Base Location>" status
->
-> # Throw the uncommitted changes away
-> git --git-dir="$HOME/the-curator/.knowledge-git" \
->     --work-tree="<your Knowledge Base Location>" checkout -- .
-> ```
->
-> Your Knowledge Base Location is shown in **Settings → Knowledge base**. If you have already pushed, the change is a commit in your GitHub repo and `git revert` is the tool. If you have **not** set up Personal Sync at all, there is no history to go back to — take a copy of your domains folder before running a bulk AI fix. A merge reverted this way brings back the deleted file, but only a version that a sync committed before the merge.
+**Wiki health › Recent changes** (since 2026-11-07). Before any Health action changes a page — a merge (one pair, a batch of spelling variants, a family walk, same name in two folders, nearly the same name), a link repair, the AI broken-link or orphan fixes, a page-list rebuild, or a fix an agent made with `fix_wiki_issue` — The Curator saves a copy of every file it is about to change: both pages of a merge, every page whose links it repoints, and `index.md` when it is touched. If that copy cannot be saved, the action does not run.
+
+At the end of Wiki health, **Recent changes** lists what changed in the last 30 days: what it was, how many pages, and when. Each has an **Undo** button. Undo asks first, naming the pages, then puts every one of them back exactly as it was (byte for byte), and a deleted page comes back.
+
+What Undo does **not** do, said plainly:
+
+- **It works only on the computer that made the change.** The copies are kept on that computer, outside your knowledge folder, and never synced. If Sync already carried the merge to another computer, that computer gets the pages back after both computers sync again.
+- **It refuses if any of the pages changed since** — an edit, a later ingest, a sync from another computer, or a later Health change. It names the page and changes nothing: Undo puts back every page or none, and never overwrites a newer change. If a later Health change touched the same page, undo that one first.
+- **It covers Wiki health only.** Ingest, compile and an agent's `compile_to_wiki` writes are not recorded. There is no undo over the MCP; an agent can only tell you where the button is.
+- **Copies expire after 30 days**, and the oldest go first if they pass 256 MB per domain (the newest is always kept).
+
+If the app stops part-way through an undo, it finishes the undo the next time it starts, so the pages end as they were before the change.
+
+**Older changes, or another computer.** Your wiki is also a git working tree if you set up Personal Sync, and a git client pointed at your knowledge folder can browse that history. The Sync view itself has no revert control (`src/routes/sync.js` has none).
 
 ---
 

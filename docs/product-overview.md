@@ -1414,10 +1414,11 @@ lives only in memory for as long as the app is running, and the answer says so. 
 would write into a folder the next pull overwrites, and refusing to answer at all would remove
 the capability the mirror exists for.
 
-**It has no undo.**
-Not for a Health merge, not for deleting a domain, not for anything else. The recovery route is
-git, through Personal Sync, and only if you set that up. Browsing or reverting history from
-inside the app is not built.
+**Its undo is narrow.**
+Wiki health changes (merges and repairs) can be undone from Recent changes for 30 days, on the
+computer that made them, and only while none of the pages has changed since. Nothing else has an
+undo: not ingest, not compile. A deleted domain goes to The Curator's trash. Beyond that the
+recovery route is git, through Personal Sync, and only if you set that up.
 
 **It is not multi-user, and it is not a server.**
 It binds to loopback only, so it is not reachable from your local network, and a guard rejects

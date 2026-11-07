@@ -2548,7 +2548,7 @@ v3.0.1-beta.16. DESTRUCTIVE. SSE stream. Applies a plan (from `/plan`) to disk. 
 
 **SSE events**: `start { actions }`, `progress { done, total }`, `done { retargeted, stripped, downgraded, filesChanged, occurrencesReplaced, totalActions }`, `error { error }`.
 
-Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so recoverable — but via git on the command line, **not** from the Sync view: there is no revert or discard endpoint (`src/routes/sync.js` exposes status/remote-status/preflight/setup/push/pull/sync/disconnect only — enumerate its `router.<verb>` calls rather than trusting this list). See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
+Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Every Health write saves a copy of each file first, so it can be undone from Wiki health › Recent changes for 30 days, on the computer that made it, while none of its pages has changed since. See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix). The Sync routes still have no revert or discard endpoint.
 
 ---
 
@@ -2609,7 +2609,7 @@ v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semant
 | `done` | `{ merged, stale, skipped, ineligible, errors, total, results }` — the five counts sum to `total`; `results` is `[{keepSlug, removeSlug, status, reason?}]`. |
 | `error` | `{ error }` |
 
-Because the whole wiki is git-tracked, a regretted batch is recoverable with git — there is no in-app revert. See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
+A regretted batch is ONE change in Wiki health › Recent changes, undone all at once. Every Health write saves a copy of each file first, so it can be undone from Wiki health › Recent changes for 30 days, on the computer that made it, while none of its pages has changed since. See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix). The Sync routes still have no revert or discard endpoint.
 
 ---
 
@@ -2653,6 +2653,18 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 **`fix-all` is a no-op for `semanticDupe`** — per-pair only, deliberately.
 
 ---
+
+### Recent changes and Undo (`/api/health/:domain/changes`)
+
+Before a Health action writes, `src/brain/health-undo.js` copies every file it will change, outside `domains/`, never synced. A copy that cannot be saved stops the action.
+
+| Route | What it does |
+|---|---|
+| `GET /api/health/:domain/changes` | `{ ok, changes, keepDays: 30, thisComputerOnly: true }`. Each change: `{ id, at, kind, title, status: 'ready'\|'undone'\|'stuck', pages, pageList, deleted, index, interrupted? }`, newest first, last 30 days. Read-only. |
+| `GET /api/health/:domain/changes/:id` | Can it be undone now? `{ ok, change, conflicts: [{page, why, laterChange?}], message? }`. Read-only. |
+| `POST /api/health/:domain/changes/:id/undo` | Puts every file back exactly, or none. `409 { code: 'undo-conflict', conflicts }` when any file changed since; `404` for an unknown or expired change; `400` on a read-only mirror. Takes the domain's write lock. |
+
+`GET /api/health/:domain` also returns `recentChanges` (how many the list shows). Every write route's reply gains `undo: { id, title, pages, … }` when it changed files. There is no undo over the MCP.
 
 ## Personal Sync endpoints (`/api/sync`)
 

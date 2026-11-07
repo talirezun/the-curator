@@ -8253,7 +8253,9 @@ All four cases collapse to the same canonical slug after the scanner's normalisa
 
 **Merges now repoint links, and the confirm dialog says how many pages will be deleted.** This changed: a merge used to delete a page and leave every `[[link]]` to it dangling, so the Hyphen-variants fix had to be followed by a Broken-links pass to clean up after itself. It doesn't any more. Both destructive fix types — **Hyphen variants** and **Cross-folder duplicates** — now rewrite inbound links before deleting anything, and their confirmation spells out the damage before you commit:
 
-> *"This MERGES each group and DELETES the duplicate pages, then repoints every `[[link]]` that pointed at them. **3 pages will be deleted.** There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone."*
+> *"This MERGES each group and DELETES the duplicate pages, then repoints every `[[link]]` that pointed at them. **3 pages will be deleted.** You can undo this in Recent changes for 30 days, on this computer only, while none of these pages has changed since."*
+
+**Undo.** Every Wiki health change is listed under **Recent changes**, at the end of Wiki health, for 30 days, with an **Undo** button that puts every page of that change back exactly as it was, or none. It works only on the computer that made the change, and it refuses (naming the page) if any of those pages changed since — an edit, a later ingest, or a sync. Ingest and compile are not covered.
 
 The button on those two says **Merge and delete**, not "Fix now" — the wording tells you which kind of action you're about to take. Non-destructive fixes keep the plain **Fix now**.
 

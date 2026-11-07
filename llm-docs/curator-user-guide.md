@@ -580,9 +580,9 @@ You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** 
 
 ## Can I undo a health fix or a merge?
 
-Not inside the app. There is no Undo button and no revert screen. A merge deletes the duplicate page and rewrites every link to it, and the confirmation says so before you commit: it names how many pages will be deleted, and the button on the two destructive fix types — hyphen variants and cross-folder duplicates — reads **Merge and delete**, not "Fix now".
+Yes, from **Wiki health › Recent changes**, for 30 days. Before any Health fix or merge changes a page, The Curator saves a copy of every page it will change, on your computer. Recent changes lists each change (what, how many pages, when) with an **Undo** button that puts every page back exactly as it was, deleted pages included, or none.
 
-The safety net is git. Every sync is a real git commit, so if you use Personal Sync a git client pointed at your knowledge base folder can browse and revert today. Without sync, a merge cannot be undone.
+Its limits: it works only on the computer that made the change; it refuses, naming the page, if any of those pages changed since (an edit, a later ingest, a sync); ingest and compile are not covered; and an agent cannot undo over the MCP. For anything older, git through Personal Sync is the route.
 
 A merge never loses text. The page you keep stays the base, however long the other page is. The removed page's bullets join same-named sections, and everything else the kept page lacks (its title, opening, prose, tables, code blocks, other sections) goes under a heading `## Merged from <page>`, whole. Tags become the union. Merging twice repeats nothing. Merges on earlier versions worked differently: the longer page was the base and only bullets were carried over, so the other page's opening and prose were lost, and if the deleted page was the longer one the kept page lost its own. That text can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge.
 
