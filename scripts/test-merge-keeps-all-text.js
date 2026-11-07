@@ -24,6 +24,7 @@
  * §8 named shapes and links. §9 real runs of the manual repair scripts.
  * §10 a delete must match the scan's own rule. §11 frontmatter stays byte for byte.
  * §12 a group merged in part says so. §13 case is text. §14 Windows device names.
+ * §15 a repair stays out of code fences and other tools' folders.
  *
  * Isolation: __setDomainsDirOverride plus CURATOR_TEST_USER_DATA_DIR. Nothing
  * here reads a real domain, config or credential, and no provider is called.
@@ -753,6 +754,13 @@ section('§11 A foreign block stays byte for byte');
     'a blank line first': '\nkey: value',
     'odd spacing': 'key :   value   \nother:\t1',
     'a line YAML cannot parse': 'key: value\nthis line has no colon',
+    // The foreign-vault run's 31 shapes, as it wrote them.
+    plain: 'type: x', date: 'date: 2026-01-01', 'caps key': 'Title: x', underscore: 'a_b: x', hyphen: 'a-b: x',
+    'space key': 'due date: 2026-01-01', 'dot key': 'review.status: open', 'umlaut key': 'größe: 3', 'cjk key': '別名: x', 'č key': 'čas: x',
+    'digit start': '1st: x', 'quoted key': '"a": 1', 'space before colon': 'a : 1', 'at key': '@type: x', 'dollar key': '$k: x',
+    'list indented': 'tags:\n  - a\n  - b', 'list unindented': 'tags:\n- a\n- b', 'flow list': 'tags: [a, b]', 'flow map': 'm: {a: 1}',
+    nested: 'n:\n  k: v\n  l:\n    - a', 'block scalar': 'm: |\n  one\n\n  three', folded: 'm: >-\n  one\n  two', 'blank line': 'a: 1\n\nb: 2', comment: '# note\na: 1',
+    'inline comment': 'a: 1 # c', 'multiline plain': 'a: one\n  two', 'empty value': 'a:', 'link value': 'up: "[[x]]"', 'url value': 'u: https://x.y/z', 'colon value': 't: "a: b"', 'doc end': 'a: 1\n...',
   };
   const inc = '---\ntype: entity\ntags: [new-tag]\n---\n# X\n\nBody.\n\n## Key Facts\n- one\n- A completely different brand new fact about zebras\n';
   const dashes = (t) => t.split(/\r?\n/).filter((l) => l.trimEnd() === '---').length;
@@ -769,8 +777,11 @@ section('§11 A foreign block stays byte for byte');
       const close = once.indexOf('\n---\n', head.indexOf(block) + block.length - 1);
       const gotHead = once.slice(0, close + 5);
       ok(dashes(once) === wantDashes, `11.1 ${label}, ${how}: one frontmatter block, not two`, once);
-      ok(untag(gotHead) === head, `11.1 ${label}, ${how}: the block is byte for byte, the new tag aside`, JSON.stringify(gotHead));
-      ok(once.includes('tags: [new-tag]\n---\n'), `11.1 ${label}, ${how}: the tag joined the block`, once);
+      // A block with its own `tags` gains the tag inside that entry; everything else, at its foot.
+      const ownTags = /^tags:/m.test(block);
+      const expected = ownTags ? gotHead.replace(', new-tag]', ']').replace(/^\s*- new-tag\n/m, '') : untag(gotHead);
+      ok(expected === head, `11.1 ${label}, ${how}: the block is byte for byte, the new tag aside`, JSON.stringify(gotHead));
+      ok(/new-tag/.test(gotHead), `11.1 ${label}, ${how}: the tag joined the block`, once);
       ok(compose(once) === once, `11.1 ${label}, ${how}: a second write changes nothing`, compose(once));
     }
     // With nothing to add the file's bytes stand, whichever path.
@@ -882,13 +893,13 @@ section('§12 A hyphen group merged in part reports the truth');
   ok(r.fixed === 0, '12.1 not reported as fixed', JSON.stringify(r));
   ok(r.partial === true && r.reason === 'merge-same-file', '12.1 partial, with the reason', JSON.stringify(r));
   ok(JSON.stringify(r.merged) === '["talirezun"]', '12.1 names what merged', JSON.stringify(r));
-  ok(r.refused.length === 1 && r.refused[0].slug === 'tali-re-zun' && r.refused[0].reason === 'merge-same-file', '12.1 names what did not', JSON.stringify(r));
+  ok(r.refused?.length === 1 && r.refused[0].slug === 'tali-re-zun' && r.refused[0].reason === 'merge-same-file', '12.1 names what did not', JSON.stringify(r));
   ok(!d.has('entities/talirezun.md') && d.has('entities/tali-re-zun.md') && d.read('entities/tali-rezun.md').includes('From variant.'), '12.1 and that is what happened on disk');
 
   const allRefused = mkDomain({ 'entities/one-two.md': '# O\n\nCanon.\n' });
   linkSync(path.join(allRefused.wiki, 'entities/one-two.md'), path.join(allRefused.wiki, 'entities/onetwo.md'));
   const r2 = await health.fixIssue(allRefused.name, 'hyphenVariants', { suggestedSlug: 'one-two', files: ['one-two', 'onetwo'] });
-  ok(r2.fixed === 0 && !r2.partial && r2.reason === 'merge-same-file' && r2.refused.length === 1, '12.2 all refused is a refusal, not partial', JSON.stringify(r2));
+  ok(r2.fixed === 0 && !r2.partial && r2.reason === 'merge-same-file' && r2.refused?.length === 1, '12.2 all refused is a refusal, not partial', JSON.stringify(r2));
 
   const dBulk = seed();
   const rb = await health.fixIssue(dBulk.name, 'hyphenVariants');
@@ -976,6 +987,60 @@ section('§14 A name Windows keeps for a device is never created');
   // A redirect onto an existing page is not a new name.
   const redirected = mkDomain({ 'concepts/null.md': '# Null\n\nThe value.\n' });
   ok(await writePage(redirected.name, 'concepts/null.md', '# Null\n\nThe value.\n') !== null, '14.5 `null` is an ordinary page');
+}
+
+// ── §15 What a repair may touch ─────────────────────────────────────────────
+section('§15 A repair stays out of code fences and other tools\' folders');
+{
+  const FENCED = '# P\n\nSee [[concepts/rag]].\n\n```\n[[concepts/in-code]] and [[concepts/rag]]\n```\n\n~~~md\n[[entities/x]]\n```\nstill code [[concepts/rag]]\n~~~\n\nAfter [[concepts/rag|the rag]].\n';
+  const WANT = FENCED.replace('See [[concepts/rag]]', 'See [[rag]]').replace('After [[concepts/rag|the rag]]', 'After [[rag|the rag]]');
+  const OTHER = 'Old [[concepts/rag]] and [[ragg]].\n';
+  const d = mkDomain({ 'concepts/rag.md': '# Rag\n\nA page.\n', 'entities/page.md': FENCED, 'concepts/un.md': '# U\n\n```\n[[concepts/rag]]\n\nA fence that never closes [[concepts/rag]].\n' });
+  for (const rel of ['.obsidian/plugins/dv/README.md', '.trash/Deleted Note.md']) {
+    mkdirSync(path.dirname(path.join(d.wiki, rel)), { recursive: true });
+    writeFileSync(path.join(d.wiki, rel), OTHER);
+  }
+  const report = await health.scanWiki(d.name);
+  ok(report.folderPrefixLinks.every((r) => r.sourceFile === 'entities/page.md' && r.linkText === 'concepts/rag'), '15.1 the scan lists only links outside fences and dot-folders', JSON.stringify(report.folderPrefixLinks));
+  ok(!report.brokenLinks.some((r) => r.linkText.includes('in-code') || r.linkText === 'entities/x' || r.sourceFile.startsWith('.')), '15.1 and calls nothing there broken', JSON.stringify(report.brokenLinks));
+  const r = await health.fixIssue(d.name, 'folderPrefixLinks');
+  ok(r.fixed >= 1, '15.2 the repair ran', JSON.stringify(r));
+  ok(d.read('entities/page.md') === WANT, '15.2 outside the fence is repaired, inside is byte for byte', d.read('entities/page.md'));
+  ok(d.read('.obsidian/plugins/dv/README.md') === OTHER && d.read('.trash/Deleted Note.md') === OTHER, '15.2 dot-folders are untouched');
+  ok(d.read('concepts/un.md').includes('A fence that never closes [[concepts/rag]].'), '15.2 an unclosed fence runs to the end of the page');
+
+  const crafted = await health.fixIssue(d.name, 'folderPrefixLinks', { sourceFile: '.trash/Deleted Note.md', linkText: 'concepts/rag' });
+  ok(crafted.fixed === 0 && d.read('.trash/Deleted Note.md') === OTHER, '15.3 a request naming a dot-folder is refused', JSON.stringify(crafted));
+  const craftedB = await health.fixIssue(d.name, 'brokenLinks', { sourceFile: '.trash/Deleted Note.md', linkText: 'ragg', suggestedTarget: 'rag' });
+  ok(craftedB.fixed === 0 && d.read('.trash/Deleted Note.md') === OTHER, '15.3 the same for a broken link', JSON.stringify(craftedB));
+
+  const d2 = mkDomain({ 'concepts/rag.md': '# Rag\n\nA page.\n', 'entities/b.md': '# B\n\n[[ragg]]\n\n```\n[[ragg]]\n```\n' });
+  const rb = await health.fixIssue(d2.name, 'brokenLinks', { sourceFile: 'entities/b.md', linkText: 'ragg', suggestedTarget: 'rag' });
+  ok(rb.fixed === 1 && d2.read('entities/b.md') === '# B\n\n[[rag]]\n\n```\n[[ragg]]\n```\n', '15.4 a broken-link repair leaves the fence', d2.read('entities/b.md'));
+  await health.applyBrokenLinkFixes(d2.name, [{ linkText: 'ragg', action: 'strip' }]);
+  ok(d2.read('entities/b.md').includes('```\n[[ragg]]\n```'), '15.4 and a plan-based fix does too', d2.read('entities/b.md'));
+  const d2b = mkDomain({ 'entities/c.md': '# C\n\n[[gone]]\n\n```\n[[gone]]\n```\n' });
+  await health.applyBrokenLinkFixes(d2b.name, [{ linkText: 'gone', action: 'strip' }]);
+  ok(d2b.read('entities/c.md') === '# C\n\ngone\n\n```\n[[gone]]\n```\n', '15.4 outside it is stripped, inside it is not', d2b.read('entities/c.md'));
+
+  // A merge skips other tools' folders as well.
+  const d3 = mkDomain({ 'entities/same.md': '# S\n\nA.\n', 'concepts/same.md': '# S\n\nB.\n' });
+  mkdirSync(path.join(d3.wiki, '.trash'), { recursive: true });
+  writeFileSync(path.join(d3.wiki, '.trash/n.md'), '[[concepts/same]]\n');
+  await health.fixIssue(d3.name, 'crossFolderDupes', { keep: 'entities/same.md', remove: 'concepts/same.md' });
+  ok(d3.read('.trash/n.md') === '[[concepts/same]]\n', '15.5 a merge does not repoint inside .trash');
+}
+
+// ── §16 The two model-read sources agree on which page stays ────────────────
+section('§16 The tool description and the skill do not say the longer page is kept');
+{
+  const { fixWikiIssueDefinition } = await import(path.join(REPO, 'mcp/tools/health.js'));
+  const skill = readFileSync(path.join(REPO, 'skills/my-curator/SKILL.md'), 'utf8');
+  for (const [label, text] of [['description', fixWikiIssueDefinition.description], ['skill', skill]]) {
+    ok(!/whichever is longer/.test(text), `16.1 ${label}: no "whichever is longer"`);
+    ok(/however long the other/.test(text), `16.1 ${label}: says length plays no part`);
+    ok(/merge-not-related/.test(text), `16.1 ${label}: names the refusal`);
+  }
 }
 
 rmSync(TMP, { recursive: true, force: true });

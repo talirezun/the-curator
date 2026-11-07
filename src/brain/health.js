@@ -243,6 +243,37 @@ function crossFolderKey(file) {
   return file.replace(/-/g, '').toLowerCase();
 }
 
+/**
+ * The page cut into runs inside and outside code fences. A link in a fence is an
+ * example, not a link: the scan does not count it and a repair does not edit it. An
+ * unclosed fence runs to the end of the page, as a markdown reader treats it.
+ */
+function fenceRuns(content) {
+  const runs = [];
+  let open = null;
+  for (const line of content.split(/(?<=\n)/)) {
+    const t = line.trimEnd();
+    let fenced = open !== null;
+    if (open !== null) {
+      if (t.trim().length >= open.length && new RegExp(`^ {0,3}\\${open[0]}+$`).test(t)) open = null;
+    } else {
+      const m = t.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (m) { open = m[1]; fenced = true; }
+    }
+    const last = runs[runs.length - 1];
+    if (last && last.fenced === fenced) last.text += line;
+    else runs.push({ text: line, fenced });
+  }
+  return runs;
+}
+
+const withoutFences = (content) => fenceRuns(content).filter((r) => !r.fenced).map((r) => r.text).join('');
+const replaceOutsideFences = (content, re, fn) =>
+  fenceRuns(content).map((r) => (r.fenced ? r.text : r.text.replace(re, fn))).join('');
+
+/** A scan row, or a request, naming a file under a dot-folder is not ours to edit. */
+const inDotFolder = (rel) => typeof rel === 'string' && rel.split(/[\\/]/).some((seg) => seg.startsWith('.'));
+
 function normKey(slug) {
   return slug
     .replace(HONORIFIC_PREFIX_RE, '')   // dr.-tali-rezun → tali-rezun
@@ -283,7 +314,9 @@ export async function walkMdFiles(rootDir) {
     catch { return; }
     for (const e of entries) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory()) { await walk(full); continue; }
+      // A dot-folder (.obsidian, .trash, .git) belongs to another tool: not a page,
+      // not scanned, and never rewritten by a repair or a merge.
+      if (e.isDirectory()) { if (!e.name.startsWith('.')) await walk(full); continue; }
       if (!e.name.endsWith('.md')) continue;
       if (e.isSymbolicLink()) {
         const rel = path.relative(rootDir, full);
@@ -585,7 +618,7 @@ async function scanWikiUncached(domain) {
     if (relPath === 'index.md' || relPath === 'log.md') continue;
 
     const content = await readFile(full, 'utf8');
-    const links = [...content.matchAll(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g)];
+    const links = [...withoutFences(content).matchAll(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g)];
 
     // v3.84.0 — summaryLinkSections: would the deterministic tidy change this
     // summary's two link sections? Uses the content this loop already read and
@@ -1092,6 +1125,7 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
   const known = validTargets || (await buildTargetInventory(wikiDir)).valid;
   const wanted = String(issue.suggestedTarget).replace(/^(entities|concepts)\//, '');
   if (!known.has(wanted)) return { ok: false, reason: 'target-not-found' };
+  if (inDotFolder(issue.sourceFile)) return { ok: false, reason: 'source-file-not-found' };
   const full = wikiFile(wikiDir, issue.sourceFile);
   if (!full || !existsSync(full)) return { ok: false, reason: 'source-file-not-found' };
   const before = await readFile(full, 'utf8');
@@ -1099,7 +1133,7 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
   // Allow whitespace inside [[ ... ]] — the scanner trims linkText but the source
   // file may have `[[ Cline]]` or `[[Cline ]]` with stray spaces from LLM output.
   const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
-  const rewritten = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
+  const rewritten = replaceOutsideFences(before, re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
   // The ONE reason that genuinely means "already resolved": the target exists,
   // the source file exists, and the link is simply not in it any more.
   if (rewritten === before) return { ok: false, reason: 'link-not-present' };
@@ -1111,11 +1145,12 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
 }
 
 async function fixFolderPrefixLink(wikiDir, issue) {
+  if (inDotFolder(issue.sourceFile)) return false;
   const full = wikiFile(wikiDir, issue.sourceFile);
   if (!full || !existsSync(full)) return false;
   let content = await readFile(full, 'utf8');
   const before = content;
-  content = content.replace(/\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
+  content = replaceOutsideFences(content, /\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
     (_m, _folder, slug, alias) => `[[${slug}${alias || ''}]]`);
   // v3.84.0: `- [[concepts/rag]]` beside `- [[rag]]` becomes a copy — drop it.
   content = dedupRewrittenBullets(before, content);
@@ -2653,7 +2688,7 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
     if (rel === 'index.md' || rel === 'log.md') { processed++; continue; }
     const before = await readFile(full, 'utf8');
     let changedHere = 0;
-    const replaced = before.replace(linkRe, (m0, inner, alias) => {
+    const replaced = replaceOutsideFences(before, linkRe, (m0, inner, alias) => {
       const act = actions.get(inner.trim());
       if (!act) return m0;
       changedHere++;

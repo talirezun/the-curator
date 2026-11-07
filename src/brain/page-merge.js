@@ -77,7 +77,7 @@ const BARE_LINK_BULLET_RE = /^-\s+\[\[([^\]|]+)\]\]\s*$/;
  */
 const BARE_KEY_RE = /^([A-Za-z_][A-Za-z0-9_-]*):/;
 const QUOTED_KEY_RE = /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)')[ \t]*:(?=[ \t]|$)/;
-const PLAIN_KEY_RE = /^([^\s#:\-?!&*|>%@`'"{}[\],](?:[^:]|:(?=\S))*?)[ \t]*:(?=[ \t]|$)/;
+const PLAIN_KEY_RE = /^([^\s#:\-?!&*|>%`'"{}[\],](?:[^:]|:(?=\S))*?)[ \t]*:(?=[ \t]|$)/;
 const noCR = (line) => line.replace(/\r$/, '');
 
 function fmKey(rawLine) {
