@@ -157,11 +157,16 @@ try {
   // that has quietly stopped working cannot be reported as "no defects found".
   section('§1 Detector controls — each defect planted in the live page, then removed');
   {
-    // Sync is chosen deliberately: it is the view that renders two info marks,
-    // which the cross-header control needs. §3 fails loudly if that ever stops
-    // being true, so this choice cannot rot into a control that plants nothing.
-    const nav = await page.evaluate(probes.gotoView, server.port, 'sync');
-    ok(nav.ok && nav.active === 'sync', 'entered Sync (the two-mark view the controls are planted in)', nav);
+    // Settings is chosen deliberately: it renders five info marks, one produced
+    // by the view header and four by settings.js's local infoMark, so a mark can
+    // be repointed at a panel OUTSIDE its own header, which the cross-header
+    // control needs. It was Sync until Sync lost its second mark (the rail moved
+    // to three places and Shared Brain left the Sync page); the control then
+    // planted nothing and failed on a stale premise, not a product defect.
+    // §3 fails loudly if no view renders two marks, so this choice cannot rot
+    // into a control that plants nothing.
+    const nav = await page.evaluate(probes.gotoView, server.port, 'settings');
+    ok(nav.ok && nav.active === 'settings', 'entered Settings (the multi-mark view the controls are planted in)', nav);
     await delay(VIEW_SETTLE_MS);
 
     const survey = () => page.evaluate(probes.infoPanelSurvey, server.port);
