@@ -16,21 +16,22 @@
  *   node scripts/test-beta13-fixes.js
  */
 
-import { mkdtempSync, rmSync, copyFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-beta13-'));
+// ISOLATION BY SEAM, NEVER BY SIDELINING THE REAL FILE. This suite used to copy the
+// REAL .curator-config.json aside, delete it and restore it in cleanup(); a kill
+// (SIGKILL, a timeout, a crash) between the two stranded the user's keys, against
+// the standing rule that `npm test` never touches a real credential file. Both
+// the user-data dir (where the config lives) and the domains dir now point at a
+// tempdir before any app module loads, so the real file is never read or moved.
+const userData = path.join(tempRoot, 'user-data');
+mkdirSync(userData, { recursive: true });
+process.env.CURATOR_TEST_USER_DATA_DIR = userData;
+process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
 process.env.DOMAINS_PATH = tempRoot;
-
-const realCfg = path.resolve('.curator-config.json');
-const stash = realCfg + '.beta13-bak';
-let stashed = false;
-if (existsSync(realCfg)) {
-  copyFileSync(realCfg, stash);
-  rmSync(realCfg);
-  stashed = true;
-}
 
 let passed = 0, failed = 0;
 function ok(label) { passed++; console.log(`  ✓ ${label}`); }
@@ -43,7 +44,6 @@ function truthy(cond, label, detail) { if (cond) return ok(label); return fail(l
 
 async function cleanup() {
   try { rmSync(tempRoot, { recursive: true, force: true }); } catch {}
-  if (stashed) try { copyFileSync(stash, realCfg); rmSync(stash); } catch {}
 }
 process.on('SIGINT', async () => { await cleanup(); process.exit(130); });
 
@@ -146,6 +146,17 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('  v3.0.1-beta.13 offline regression tests');
   console.log('═══════════════════════════════════════════════════════════════');
+
+  // ── Test 0: the real credential file is unreachable from this process ───
+  console.log('\n[0] isolation — the real .curator-config.json cannot be reached');
+  {
+    const paths = await import('../src/brain/paths.js');
+    const cfg = paths.getCuratorConfigFile();
+    truthy(cfg.startsWith(userData + path.sep) || cfg.startsWith(userData),
+      'the resolved config path is inside this run\'s tempdir', `resolved to ${cfg}`);
+    truthy(!cfg.startsWith(path.resolve('.')) || cfg.startsWith(tempRoot),
+      'it is not the repo-root config file');
+  }
 
   // ── Test 1: detectEntityPivots — multi-token slug, two-token query ─────
   console.log('\n[1] detectEntityPivots — multi-token slug match');
