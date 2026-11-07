@@ -3817,6 +3817,23 @@ function resetQueueSelection(token) {
   render(token);
 }
 
+// A file's sha256 as lowercase hex, or null when it cannot be computed here (no Web
+// Crypto, an unreadable file). Cached per File object, so a re-estimate does not re-read
+// it. A null only means the file is priced, the safe direction.
+const queueFileHashes = new WeakMap();
+async function queueFileSha256(file) {
+  try {
+    if (!file || typeof file.arrayBuffer !== 'function' || !globalThis.crypto || !globalThis.crypto.subtle) return null;
+    if (queueFileHashes.has(file)) return queueFileHashes.get(file);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+    queueFileHashes.set(file, hex);
+    return hex;
+  } catch {
+    return null;
+  }
+}
+
 // Re-estimates against whatever state.selectedFiles CURRENTLY holds —
 // every add/remove call site above updates it first, then calls this with
 // no argument beyond the token, so the estimate shown always matches the
@@ -3828,7 +3845,17 @@ async function startQueueSelection(token) {
   state.queueEstimateLoading = true;
   render(token);
   try {
-    const body = { domain: state.domain, files: files.map((f) => ({ name: f.name, size: f.size })) };
+    // Each file's sha256 (when the browser can hash it) and the overwrite choice, so the
+    // server can price at $0 a file that will finish without an AI call.
+    // One at a time: a large batch is never held in memory at once.
+    const hashes = [];
+    for (const f of files) hashes.push(await queueFileSha256(f));
+    if (!isCurrentMount(token)) return;
+    const body = {
+      domain: state.domain,
+      overwrite: !!state.queueOverwriteInput,
+      files: files.map((f, i) => (hashes[i] ? { name: f.name, size: f.size, sha256: hashes[i] } : { name: f.name, size: f.size })),
+    };
     const res = await fetch(QUEUE_API + '/estimate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4385,6 +4412,8 @@ function estimateCostText(e, runsOn) {
 function renderQueueEstimate(est, opts) {
   const fileList = resolveEstimateFileList(est, state.selectedFiles);
   const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
+  const noCallByName = new Map((Array.isArray(est.files && est.files.noCall) ? est.files.noCall : [])
+    .filter((e) => e && typeof e.name === 'string').map((e) => [e.name, String(e.reason || '')]));
   const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
   const totalBytes = est.files && est.files.totalBytes;
   // ONE SPELLING OF THE MODEL (v3.72.1, truth audit F15): the run line's own
@@ -4414,7 +4443,7 @@ function renderQueueEstimate(est, opts) {
     '<div class="ing-queue-section">' +
       '<div class="ing-queue-section-label">Will be ingested (largest first)</div>' +
       '<ul class="ing-queue-file-list" id="ing-queue-file-list">' +
-        fileList.map((f) => renderQueueFileListItem(f, { removable: true })).join('') +
+        fileList.map((f) => renderQueueFileListItem(f, { removable: true, noCall: noCallByName.get(f && f.name) || null })).join('') +
       '</ul>' +
     '</div>';
 
@@ -4544,7 +4573,15 @@ function renderQueueFileListItem(entry, opts) {
   const removeBtn = removable
     ? '<button type="button" class="ing-queue-file-remove" data-name="' + escapeHtml(rawName) + '" data-bytes="' + escapeHtml(rawBytes) + '" title="Remove this file" aria-label="Remove ' + name + '">' + icon('x', 12) + '</button>'
     : '';
-  return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + removeBtn + '</li>';
+  // A file the estimate priced at $0 because it will finish without an AI call says so
+  // (the server's `files.noCall` reason, passed in by renderQueueEstimate).
+  const reason = opts && opts.noCall;
+  const noCallNote = reason === 'already-ingested' ? 'already ingested, will be skipped · no AI call · $0'
+    : reason === 'same-name-in-batch' ? 'same name as another file, will be skipped · no AI call · $0'
+    : reason === 'unchanged' ? 'already read by this model · no AI call · $0'
+    : '';
+  const noteHtml = noCallNote ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote) + '</span>' : '';
+  return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + noteHtml + removeBtn + '</li>';
 }
 
 function renderQueueRejectedItem(entry) {
@@ -4799,6 +4836,10 @@ function renderQueueDoneSummary(job) {
     ? '<span><span class="ing-num">' + pageTally.unchanged + '</span> unchanged</span>'
     : '';
   const ranOnLine = queueRanOnLine(items);
+  const noCallN = items.filter((i) => i && i.status === 'done' && i.noCall === true).length;
+  const noCallSpan = noCallN > 0
+    ? '<span><span class="ing-num">' + noCallN + '</span> needed no AI call</span>'
+    : '';
   const warningsN = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.warningCount) ? i.result.warningCount : 0), 0);
   // COST HONESTY, two changes on one line's worth of readout:
   //
@@ -4861,6 +4902,7 @@ function renderQueueDoneSummary(job) {
       failReasonLine +
       '<div class="ing-queue-done-totals">' +
         '<span><span class="ing-num">' + doneN + '</span> done</span>' +
+        noCallSpan +
         '<span><span class="ing-num">' + failedN + '</span> failed</span>' +
         '<span><span class="ing-num">' + skippedN + '</span> skipped</span>' +
         '<span><span class="ing-num">' + cancelledN + '</span> stopped</span>' +
@@ -5010,6 +5052,14 @@ function renderQueueItemRow(item, opts) {
     const w = pc ? pc.written : 0;
     pagesHtml = '<span class="ing-num">' + w + '</span> page' + (w === 1 ? '' : 's');
   }
+  // NO AI CALL (2026-11-07): the server sets `noCall` from the measured call count, on a
+  // done item only. Said plainly, instead of a bare "Done — 0 pages"; a page the run
+  // repaired for free is still counted.
+  if (item && item.status === 'done' && item.noCall === true) {
+    const w = pc ? pc.written : 0;
+    pagesHtml = 'No AI call was needed, so nothing was spent' +
+      (w > 0 ? ' · <span class="ing-num">' + w + '</span> page' + (w === 1 ? '' : 's') + ' repaired' : '');
+  }
   const resultLine = (item && item.status === 'done' && item.result)
     ? '<div class="ing-queue-item-result">' + escapeHtml(sanitizeDisplayName(item.result.title || item.name || '')) + ' — ' + pagesHtml + '</div>'
     : '';
@@ -5155,7 +5205,11 @@ function wireQueueListeners() {
   const budgetInput = document.getElementById('ing-queue-budget');
   if (budgetInput) budgetInput.addEventListener('input', (e) => { state.queueBudgetInput = e.target.value; });
   const overwriteInput = document.getElementById('ing-queue-overwrite');
-  if (overwriteInput) overwriteInput.addEventListener('change', (e) => { state.queueOverwriteInput = !!e.target.checked; });
+  // Overwrite changes which files will be skipped, so it changes the estimate.
+  if (overwriteInput) overwriteInput.addEventListener('change', (e) => {
+    state.queueOverwriteInput = !!e.target.checked;
+    if (state.selectedFiles.length) startQueueSelection(myMountToken);
+  });
   const fileListEl = document.getElementById('ing-queue-file-list');
   if (fileListEl) {
     // One delegated listener for every per-row remove button, rather than
