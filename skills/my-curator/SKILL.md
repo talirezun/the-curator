@@ -86,14 +86,14 @@ When the user asks a question of their wiki, your job is to traverse the graph e
 | **Bidirectional tracing** | `get_node` + `get_backlinks` | "Every source that mentions Y". Pull the entity page; then list every page that links to it. |
 | **Multi-hop traversal** | `get_connected_nodes` | "How is X connected to the rest?". Returns the neighborhood up to 2 hops, ranked by hop+degree. |
 | **Tag-driven clusters** | `get_tags` (with `filter`) → `get_node` | "Pages tagged ai-safety, then synthesise". Tag inventory then per-page fetch. |
-| **Verbatim / exact figure** | `get_summary` or `get_node` first, `get_raw_source` only on escalation | "What's the exact quote?" / "Check the actual source for that number." See §4.1 — this is the one pattern where reaching for the tool too early is a mistake, not a shortcut. |
+| **Verbatim / exact figure** | `get_summary` (check its `## Key Facts` first) or `get_node`, then `get_raw_source` only on escalation | "What's the exact quote?" / "Check the actual source for that number." See §4.1 — this is the one pattern where reaching for the tool too early is a mistake, not a shortcut. |
 
 ### §4.1 — Compiled first, verbatim only on escalation
 
 The wiki is compiled knowledge, not a retrieval index — every summary already distilled what mattered from its source. **Default to the wiki for everything.** `get_raw_source` (the original document a summary was built from, text-extracted) is an **escalation**, reached for only when the compiled version genuinely isn't enough:
 
 - The user needs an **exact quote** or the author's own wording.
-- The user needs a **precise figure** they'll be held to (a statistic, a date, a dollar amount) — don't launder an approximate number from a summary as if it were exact.
+- The user needs a **precise figure** they'll be held to (a statistic, a date, a dollar amount) — check the summary's `## Key Facts` first, then escalate here; don't launder an approximate number from a summary as if it were exact.
 - The summary is silent on something you have specific reason to believe the source covers.
 
 Do NOT reach for `get_raw_source` as your first move on a research question, and do not call it for every citation "just to be safe" — that defeats the reason a compiled wiki exists in the first place (see §1) and floods your own context with verbatim text the wiki already distilled for you.
@@ -155,6 +155,8 @@ For what a page is ABOUT, `get_index(domain)` returns index.md with one-line des
 - A slug you're creating in this same `additional_pages` array
 
 Anything else is a broken link the user will have to fix later. Do not invent slugs.
+
+**Keep hard data.** When what you compile carries hard data (prices, budgets, dates, thresholds, results, measurements, or technical specifics such as services, endpoints, ports, config defaults, versions, decisions with reasons), put it in a `## Key Facts` section on the summary, directly after `## Key Takeaways`. One bullet per fact, at most 40, no nested bullets, never an empty section. Write each figure as the source states it, with its unit or currency, what it is, its condition, and its period, as-of date or version (never a bare number); put identifiers (endpoint paths, config keys, file names, field names, version strings) in backticks. Keep figures that belong to one entity or concept on that page, with the same period or version. Never invent, round or convert a figure. On merge, Key Facts bullets dedup on the whole line, so a changed figure is added as new.
 
 **Step 5 — Choose the right `broken_link_policy`** when calling `compile_to_wiki`:
 

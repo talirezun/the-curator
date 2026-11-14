@@ -80,7 +80,7 @@ You decide the summary will introduce three new concepts (`[[multi-agent-orchest
 compile_to_wiki({
   domain: "projects",
   title: "Lumina Pro — Project Research Summary",
-  summary_content: "## Key Takeaways\n- ...\n## Concepts Introduced or Referenced\n- [[multi-agent-orchestration]] — ...\n- [[lumina-ai]] — already exists, references the umbrella project\n## Entities Mentioned\n- [[lumina-pro]] — ...",
+  summary_content: "## Key Takeaways\n- ...\n## Key Facts\n- Pilot budget: $40,000 USD for Q3 2026, approved pending a security review\n- Gateway timeout default: 30 s in `config.yaml` key `gateway.timeout`, as of v2.1\n## Concepts Introduced or Referenced\n- [[multi-agent-orchestration]] — ...\n- [[lumina-ai]] — already exists, references the umbrella project\n## Entities Mentioned\n- [[lumina-pro]] — ...",
   additional_pages: [
     { path: "entities/lumina-pro.md", content: "..." },
     { path: "concepts/multi-agent-orchestration.md", content: "..." },
