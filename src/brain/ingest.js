@@ -37,7 +37,7 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
-import { decodeTextBuffer, conversionNotice } from './text-decode.js';
+import { decodeTextBuffer, conversionNotice, unrecognisedNotice } from './text-decode.js';
 import { assertIngestCanWrite } from './ingest-preflight.js';
 import { existingFactsFor, renderExistingFactsBlock, renderExistingFactsOutlineNote } from './existing-facts.js';
 import {
@@ -2975,10 +2975,14 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     warnings.push(w);
   }
 
-  // An existing page this source updates (existing-facts.js) that the outline left out
-  // is planned anyway, so its new or changed facts have a batch to be written in. It is
-  // a page that exists, so a batch that writes nothing for it leaves it as it was (the
-  // plan-only rule below), and the merge keeps every line it already has.
+  // A STRONG existing page this source updates (existing-facts.js: named twice, or two
+  // shared identifiers) that the outline left out is planned anyway, marked
+  // `existingUpdate`, so its new or changed facts have a batch to be written in. The block
+  // tells the model to leave out a page the source does not change, so for such a page
+  // an empty or missing reply MEANS "unchanged": the page-by-page fallback below skips
+  // it (no retry, no stub, no write), and the merge keeps every line it already has.
+  // At most EXISTING_FACTS_MAX_PAGES pages, so at most 2 more batches, which the
+  // estimate prices (ingest-queue.js).
   if (updates && Array.isArray(updates.selection) && updates.selection.length) {
     const planned = new Set(outline.pages.map((p) => p && typeof p.path === 'string' ? withMdExtension(p.path) : null));
     const described = new Map();
@@ -2989,9 +2993,9 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     } catch { /* no index: the neutral line below */ }
     const added = [];
     for (const u of updates.selection) {
-      if (planned.has(u.path)) continue;
+      if (!u.strong || planned.has(u.path)) continue;
       const slug = path.basename(u.path, '.md').toLowerCase();
-      outline.pages.push({ path: u.path, summary: String(described.get(slug) || 'An existing page this source updates').replace(/"/g, "'").slice(0, 160) });
+      outline.pages.push({ path: u.path, existingUpdate: true, summary: String(described.get(slug) || 'An existing page this source updates').replace(/"/g, "'").slice(0, 160) });
       planned.add(u.path);
       added.push(u.path);
     }
@@ -3107,6 +3111,12 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       // it: either this batch writes >= 2 pages, or other batches follow.
       const cacheSinglePages = cacheAcrossBatches || batch.length >= 2;
       for (const singlePage of batch) {
+        // An existing page planned only because this source might update it: no reply
+        // for it means the source changes nothing there. Never retried, never stubbed.
+        if (singlePage && singlePage.existingUpdate) {
+          console.error(`[ingest]   = ${singlePage.path} — existing page, nothing new from this source`);
+          continue;
+        }
         // The fallback is itself one LLM call per page — a cancel must stop it
         // between pages, not only between batches.
         throwIfCancelled(signal);
@@ -3635,8 +3645,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   try {
     const extracted = await extractTextWithEncoding(destPath);
     fullText = extracted.text;
-    if (extracted.converted) {
-      const note = conversionNotice(originalName, extracted);
+    if (extracted.converted || extracted.unrecognised) {
+      const note = extracted.converted ? conversionNotice(originalName, extracted) : unrecognisedNotice(originalName);
       console.warn(`[ingest] ${note}`);
       warnings.push(note);
     }
@@ -3885,8 +3895,12 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // An empty domain has nothing to cover, so a first ingest never reaches a retry.
     if (replyNodePages === 0 && !repeatPlan.sameContent) {
       const covered = coveredExistingTopics(text, existingFiles);
-      // The pages this source updates count as covered too (named in the prompt above).
-      for (const u of factsSelection) if (!covered.some((c) => c.path === u.path)) covered.push({ path: u.path, mentions: 0 });
+      // A STRONG page this source updates counts as covered too (named in the prompt
+      // above), in a source long enough for the original trigger (FOLLOWUP_MIN_CHARS):
+      // one shared identifier in a short note is not a follow-up (audit 2026-11-14).
+      if (text.length >= FOLLOWUP_MIN_CHARS) {
+        for (const u of factsSelection) if (u.strong && !covered.some((c) => c.path === u.path)) covered.push({ path: u.path, mentions: 0 });
+      }
       if (covered.length) {
         const out = await followupRetry({
           llm, schema, first: result, covered, usage, signal, progress,

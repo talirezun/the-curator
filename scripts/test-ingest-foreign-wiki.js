@@ -333,5 +333,51 @@ try {
   for (const d of readdirSync(DOMAINS)) { try { chmodSync(path.join(DOMAINS, d, 'wiki'), 0o755); } catch { /* */ } }
   rmSync(TMP_ROOT, { recursive: true, force: true });
 } catch { /* temp dir */ }
+section('§9 Weak evidence: one bad byte, a single shared letter, signs, and encodings it does not read (audit 2026-11-14)');
+{
+  // Fixture encoders from the platform's own decoders (independent of the scoring).
+  const rev = (label) => { const d = new TextDecoder(label); const m = new Map(); for (let b = 0x80; b < 0x100; b++) { const ch = d.decode(Buffer.from([b])); if (!m.has(ch)) m.set(ch, b); } return m; };
+  const R1250 = rev('windows-1250'), RI2 = rev('iso-8859-2'), R1251 = rev('windows-1251');
+  const byMap = (m) => (t) => Buffer.from([...t].map((ch) => { const c = ch.codePointAt(0); if (c < 0x80) return c; if (!m.has(ch)) throw new Error(`fixture: no byte for ${ch}`); return m.get(ch); }));
+  const e1250 = byMap(R1250), eI2 = byMap(RI2), e1251 = byMap(R1251);
+  const same = (label, buf, want, wantEnc) => {
+    const r = decodeTextBuffer(buf);
+    ok(r.text === want && (!wantEnc || r.encoding === wantEnc), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 70))}`);
+  };
+  const u = Buffer.from(SLOVENE.repeat(10), 'utf8');
+  const stray = Buffer.concat([u.subarray(0, 500), Buffer.from([0xe8]), u.subarray(500)]);
+  same('UTF-8 with one stray byte: the old UTF-8 read (one U+FFFD), not a re-decode', stray, stray.toString('utf8'), 'utf-8');
+  const cut = u.subarray(0, u.lastIndexOf(Buffer.from('č')) + 1);
+  same('UTF-8 cut mid-character: the old UTF-8 read', cut, cut.toString('utf8'), 'utf-8');
+  const en = Buffer.from('The café’s “résumé” costs €5 — naïve. 東京 📚 '.repeat(30), 'utf8');
+  const pasted = Buffer.concat([en.subarray(0, 300), Buffer.from([0x69, 0x74, 0x92, 0x73]), en.subarray(300)]);
+  same('English UTF-8 with one pasted 0x92: the old UTF-8 read', pasted, pasted.toString('utf8'), 'utf-8');
+  ok(!decodeTextBuffer(stray).converted && !decodeTextBuffer(stray).unrecognised && !decodeTextBuffer(pasted).unrecognised,
+    'and no conversion is claimed, nor an unrecognised encoding (it is UTF-8)');
+  const { __plausibilityForTest: score } = await import('../src/brain/text-decode.js');
+  ok(score('Cost Ł250 and ą5 here', 'iso-8859-2') < 0 && score('Cost bą5 and oką7 here', 'iso-8859-2') < 0, 'a letter glued to a digit (Ł250, ą5, bą5) counts against a table');
+  ok(score('per m˛ and ˝ now', 'iso-8859-2') < 0, 'a spacing diacritic (˛ ˝) counts against a table');
+  ok(score('Cost £250 and ±5 here', 'windows-1252') === 1, 'CONTROL: the same bytes as Western signs are plausible');
+  const onlyC = 'Račun je plačan. Več o tem na sestanku. Če bo čas, pokličem.';
+  same('Slovene with only č, Windows-1250: č, not è', e1250(onlyC), onlyC, 'windows-1250');
+  same('Slovene with only č, ISO-8859-2: č, not è', eI2(onlyC), onlyC);
+  same('Hungarian with only ő: ő, not õ', e1250('A nő elment. Erdő, mező, idő.'), 'A nő elment. Erdő, mező, idő.');
+  const signs = 'Price £250 per m² ±5 %, ½ now. © 2025 Acme. 10 µm.';
+  same('Windows-1252 signs (£ ² ± ½ © µ): not read as ISO-8859-2 letters', enc1252(signs), signs, 'windows-1252');
+  same('CONTROL: French with è stays Windows-1252', enc1252('Il est très bien, à la mère du père.'), 'Il est très bien, à la mère du père.', 'windows-1252');
+  same('CONTROL: Portuguese õ before e/s stays Windows-1252', enc1252('Ação, coração, não, informações, três, põe.'), 'Ação, coração, não, informações, três, põe.', 'windows-1252');
+  const ru = 'Привет, мир. Годовой отчёт компании за 2025 год.';
+  const r1251 = decodeTextBuffer(e1251(ru));
+  ok(r1251.encoding === 'utf-8' && r1251.unrecognised === true && !r1251.converted, 'Windows-1251 (Cyrillic): not claimed as a Western table; flagged unrecognised', `${r1251.encoding}`);
+  const mac = decodeTextBuffer(Buffer.from([0x43, 0x61, 0x66, 0x8e, 0x20, 0x8e, 0x74, 0x8e, 0x20, 0xd2, 0x68, 0x69, 0xd3]));
+  ok(mac.encoding === 'utf-8' && mac.unrecognised === true, 'MacRoman: not claimed as Windows-1250; flagged unrecognised', `${mac.encoding} ${JSON.stringify(mac.text)}`);
+  // Through ingest: the unrecognised file says so, and claims no encoding.
+  const dom = makeDomain();
+  const llm = script('cyr', pagesFor('cyr'));
+  const res = await run(dom, 'cyr.md', e1251(`${ru} `.repeat(8)), llm);
+  ok((res.warnings || []).some((w) => /its encoding is not one The Curator recognises/.test(w) && w.includes('"cyr.md"')), 'ingest: one plain notice that the encoding was not recognised');
+  eq(convNotes(res).length, 0, 'ingest: no "read it as Windows-…" claim');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

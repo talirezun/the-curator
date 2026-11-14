@@ -28,7 +28,7 @@
  * This module reads files and never writes; diagnostics go to stderr only (it is
  * reachable from the MCP child, whose stdout is JSON-RPC).
  */
-import { readFile } from 'fs/promises';
+import { readFile, lstat, realpath } from 'fs/promises';
 import path from 'path';
 
 /** The whole block (header, excerpts and instructions) is at most this many characters. */
@@ -90,6 +90,39 @@ function wordSet(text) {
     .filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !STOP.has(w)));
 }
 
+// Single words too common to name a page by one mention or two (an audit selected pages
+// called `price`, `data` and `2025` on "The data shows price pressure in 2025").
+const COMMON_NAMES = new Set(('price prices data cost costs revenue revenues sales profit year years month quarter plan plans '
+  + 'report reports team teams product products service services market markets customer customers user users order orders '
+  + 'payment payments project projects model models system systems process strategy budget value values growth risk risks '
+  + 'security design time date dates number numbers rate rates total summary overview analysis research policy policies '
+  + 'company companies business people work money tax taxes fee fees contract contracts note notes list table tables').split(' '));
+
+/**
+ * Whether the source NAMES a page, distinctively (audit 2026-11-14). A bare year or
+ * number never names a page; a single common word never does; a single other word
+ * needs two mentions and at least one written as a proper name mid-sentence ("ask
+ * Tidewater", not "| Price |" or a sentence start); a name of two or more words needs
+ * two mentions, or one written with a capital ("# Halcyon Bakeries — Annual Report").
+ */
+function namesDistinctively(text, slug, mentions) {
+  const words = slugTokens(slug);
+  if (!mentions || words.every((w) => /^\d+$/.test(w))) return false;
+  if (words.length === 1 && (COMMON_NAMES.has(words[0]) || STOP.has(words[0]))) return false;
+  const phrase = slug.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^A-Za-z0-9]+');
+  if (!phrase) return false;
+  const re = new RegExp(`(?<![A-Za-z0-9])${phrase}s?(?![A-Za-z0-9])`, 'gi');
+  let capital = false, midSentence = false;
+  for (const m of String(text).matchAll(re)) {
+    if (!/^[A-Z]/.test(m[0])) continue;
+    capital = true;
+    const before = String(text).slice(Math.max(0, m.index - 3), m.index);
+    if (/[a-z0-9,][ \t]+$/.test(before)) midSentence = true;
+  }
+  if (words.length === 1) return mentions >= 2 && midSentence;
+  return mentions >= 2 || capital;
+}
+
 /** How often each existing page's name occurs in the source, as a whole-word run. */
 export function nameMentions(text, existingFiles) {
   const src = slugTokens(text);
@@ -109,10 +142,21 @@ export function nameMentions(text, existingFiles) {
         for (let j = 1; j < name.length; j++) if (src[i + j] !== name[j]) { ok = false; break; }
         if (ok) n++;
       }
-      out.set(`${folder}/${slug}.md`, n);
+      out.set(`${folder}/${slug}.md`, namesDistinctively(text, slug, n) ? n : 0);
     }
   }
   return out;
+}
+
+/**
+ * A credential-shaped line is never excerpted: the provider keys the pre-commit hook
+ * refuses, other `sk-`/AWS/Bearer tokens, a private key, an IBAN, or a line that says
+ * what it holds (password, secret, API key, token, bank account, card number).
+ */
+const SECRET_TOKEN_RE = /AIza[0-9A-Za-z_-]{20,}|sk-ant-[0-9A-Za-z_-]{8,}|sk-or-[0-9A-Za-z_-]{8,}|\bsk-[A-Za-z0-9_-]{8,}|(github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[0-9A-Za-z_]{12,}|\bAKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,}/;
+const SECRET_LABEL_RE = /\b(pass(word|wd|phrase)?|pwd|secrets?|api[ _-]?keys?|access[ _-]?keys?|private[ _-]?keys?|tokens?|credentials?|iban|bank[ _-]?account|card[ _-]?number|cvv|pin[ _-]?code)\b/i;
+export function looksSecret(line) {
+  return SECRET_TOKEN_RE.test(line) || SECRET_LABEL_RE.test(line);
 }
 
 const LINK_SECTION_RE = /^(related|entities mentioned|concepts introduced or referenced|sources?|see also|backlinks)$/i;
@@ -122,9 +166,11 @@ const LINK_SECTION_RE = /^(related|entities mentioned|concepts introduced or ref
  * headings, code fences and link sections. Each with the section it sits in.
  */
 export function figureLines(content) {
-  const lines = String(content || '').split('\n');
+  // Any line ending: a CRLF file's frontmatter is still frontmatter (audit: an
+  // `api_key:` line reached the excerpt).
+  const lines = String(content || '').replace(/\r\n?/g, '\n').split('\n');
   let i = 0;
-  if (lines[0] === '---') { i = 1; while (i < lines.length && lines[i] !== '---') i++; i++; }
+  if (/^---\s*$/.test(lines[0] || '')) { i = 1; while (i < lines.length && !/^---\s*$/.test(lines[i])) i++; i++; }
   const out = [];
   let section = '';
   let fence = false;
@@ -139,6 +185,7 @@ export function figureLines(content) {
     if (!line || /^(Type|Tags|Source|Date Ingested|Aliases?)\s*:/i.test(line)) continue;
     if (/^\|[\s|:-]+\|$/.test(line)) continue;              // a table's separator row
     if (!/\d|`/.test(line)) continue;                        // not a figure or an identifier
+    if (looksSecret(line)) continue;                          // never send a credential-shaped line
     if (/^[-*]\s*\[\[[^\]]+\]\]\s*(—|-|:|$)/.test(line) && !/\d/.test(line.replace(/\[\[[^\]]*\]\]/g, ''))) continue;
     out.push({ line, section, keyFacts: /^key (facts|figures)\b/i.test(section.trim()) });
   }
@@ -166,6 +213,7 @@ export function selectExistingFacts(text, pages, mentions = new Map()) {
     if (!p || typeof p.path !== 'string' || typeof p.content !== 'string') continue;
     const named = mentions.get(p.path) || 0;
     let idHits = 0;
+    const sharedIds = new Set();
     const lines = figureLines(p.content).map((l, order) => {
       const lid = identifierAnchors(l.line);
       const ln = numberAnchors(l.line);
@@ -174,6 +222,7 @@ export function selectExistingFacts(text, pages, mentions = new Map()) {
       const sn = [...ln].filter((x) => nums.has(x)).length;
       const sw = Math.min(3, [...lw].filter((x) => words.has(x)).length);
       idHits += sid;
+      for (const x of lid) if (ids.has(x)) sharedIds.add(x);
       return { ...l, order, score: 3 * sid + 2 * sn + sw };
     });
     if (!lines.length) continue;
@@ -188,7 +237,11 @@ export function selectExistingFacts(text, pages, mentions = new Map()) {
       .slice(0, EXISTING_FACTS_MAX_LINES_PER_PAGE)
       .sort((a, b) => a.order - b.order);
     const pageScore = 4 * Math.min(named, 3) + keep.reduce((n, l) => n + l.score, 0);
-    scored.push({ path: p.path, named: named > 0 ? 1 : 0, score: pageScore, lines: keep.map((l) => clip(l.line)) });
+    // STRONG: named twice, or two distinct shared identifiers. Only a strong page is
+    // planned into multi-phase or triggers the follow-up retry (audit: one shared
+    // identifier in a 450-character note had tripled its calls).
+    const strong = named >= 2 || sharedIds.size >= 2;
+    scored.push({ path: p.path, named: named > 0 ? 1 : 0, strong, score: pageScore, lines: keep.map((l) => clip(l.line)) });
   }
   // A page the source names comes first: it is the subject, whatever its lines score.
   scored.sort((a, b) => b.named - a.named || b.score - a.score || a.path.localeCompare(b.path));
@@ -204,7 +257,7 @@ export function selectExistingFacts(text, pages, mentions = new Map()) {
     }
     if (!lines.length) continue;
     used += cost;
-    out.push({ path: s.path, lines });
+    out.push({ path: s.path, lines, strong: s.strong });
   }
   return out;
 }
@@ -254,8 +307,19 @@ export async function existingFactsFor(wikiDir, existingFiles, text) {
       .slice(0, EXISTING_FACTS_MAX_READ);
     if (!candidates.length) return [];
     const pages = [];
+    // Never a link, never a file outside this domain's wiki (audit: a page symlinked to
+    // a private file elsewhere was read and sent to the model).
+    const root = await realpath(wikiDir);
     for (const c of candidates) {
-      try { pages.push({ path: c.path, content: await readFile(path.join(wikiDir, c.path), 'utf8') }); } catch { /* gone or unreadable: skipped */ }
+      try {
+        const abs = path.join(wikiDir, c.path);
+        const st = await lstat(abs);
+        if (!st.isFile()) continue;
+        const real = await realpath(abs);
+        const rel = path.relative(root, real);
+        if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+        pages.push({ path: c.path, content: await readFile(real, 'utf8') });
+      } catch { /* gone or unreadable: skipped */ }
     }
     return selectExistingFacts(text, pages, mentions);
   } catch (err) {

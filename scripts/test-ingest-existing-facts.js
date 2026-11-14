@@ -89,7 +89,8 @@ const FOLLOW = `# Tidewater Ledger — changes in v1.5\n\nReleased 2 June 2028. 
   + '`risk-svc` now listens on port 7113 (was 7103) and exposes metrics on port 8113. '
   + '`ORDERS_RISK_TIMEOUT_MS` now defaults to `180` (was `120`) because model `rm-2028.06` has a p99 of 151 ms. '
   + 'The €250 fallback stays; real-time dashboards are unchanged. `disputes-svc` (port 7109) owns chargebacks; evidence: at most 20 files of 5 MB. '
-  + '`DELETE /v2/api-keys/{id}` is removed; use `POST /v2/api-keys/{id}/revoke`, 410 from 1 July 2028. Payments took 250 ms, 10 minutes, 30 minutes.\n';
+  + '`DELETE /v2/api-keys/{id}` is removed; use `POST /v2/api-keys/{id}/revoke`, 410 from 1 July 2028. Payments took 250 ms, 10 minutes, 30 minutes.\n'
+  + '\nWebhook retries: `NOTIFY_MAX_ATTEMPTS` stays at 7; the 24 h step becomes 12 h. Ledger writes keep `LEDGER_WRITE_TIMEOUT_MS` at 800. The edge keeps 2,350 rps peak. Reconciliation still runs at 02:30 UTC and alerts above €5,000 or 0.01% of volume.\n';
 const PROSE = readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'test-ingest-deep-inputs', '02-trunk-cluster.md'), 'utf8');
 
 // ── 1 ────────────────────────────────────────────────────────────────────────
@@ -253,11 +254,34 @@ section('3. multi-phase: an updated page the outline left out is planned, and it
   ok(prefixes.every((p) => p === prefixes[0]) && prefixes[0].includes('port 7103 (v1.4)'), 'every batch prefix is byte-identical and carries the excerpt');
   ok(batches.every((c) => c.prefixChars === prefixes[0].length), 'the cache breakpoint is still the whole prefix');
   const askedAll = batches.flatMap((c) => c.asked);
-  ok(askedAll.includes('entities/tidewater-ledger.md') && askedAll.includes('concepts/risk-scoring.md'), 'the updated pages the outline left out were planned and asked for');
+  ok(askedAll.includes('entities/tidewater-ledger.md'), 'the strong updated page the outline left out was planned and asked for');
+  ok(!askedAll.includes('concepts/risk-scoring.md'), 'a weak one (one shared identifier) is shown but not planned');
   const after = d.read('entities/tidewater-ledger.md');
   ok(after.includes('- As of v1.5 (big): `risk-svc` listens on port 7113 (was 7103)'), 'the changed fact is on the page');
   ok(after.includes('- `risk-svc` listens on port 7103 (v1.4)') && after.includes('- Serves 4,800 merchants'), 'and the old facts stay');
-  eq(d.read('concepts/risk-scoring.md').includes('- A score above 910 is declined'), true, 'a page written with nothing new keeps its text');
+  eq(d.read('concepts/risk-scoring.md'), RISK, 'a page not planned is untouched');
+}
+
+section('3b. an empty reply for a planned existing page means "unchanged": no retry, no stub, no write');
+{
+  const d = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT, 'concepts/risk-scoring.md': RISK });
+  const LONG = FOLLOW + Array.from({ length: 420 }, (_, i) => `- \`svc-${i}\` change ${i}: limit ${1000 + i} requests.`).join('\n');
+  const calls = [];
+  const res = await quiet(() => ingestFile(d.name, sourceFile('big2.md', LONG), 'big2.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => {
+      usage(opts);
+      const asked = askedPaths(prompt);
+      calls.push(asked);
+      if (!asked.length) return JSON.stringify({ title: 'Big', pages: ['summaries/big2.md', 'entities/a.md', 'concepts/b.md', 'concepts/c.md'].map((p) => ({ path: p, summary: `about ${p}` })) });
+      // The model leaves out every existing page, as the block tells it to when nothing changed.
+      return JSON.stringify({ pages: asked.filter((p) => !d.has(p)).map((p) => ({ path: p, summary: 's', content: `# ${p}\n\n- point about ${p}\n` })) });
+    },
+  }));
+  const batches = calls.filter((a) => a.length);
+  ok(batches.some((a) => a.length === 1 && a[0] === 'entities/tidewater-ledger.md'), 'the planned existing page had a batch of its own', JSON.stringify(batches));
+  eq(batches.length, 2, 'two batch calls, no page-by-page retries for the existing page');
+  eq(d.read('entities/tidewater-ledger.md'), PRODUCT, 'the existing page is byte-identical: no stub, no write');
+  ok(!(res.warnings || []).some((w) => /stub/i.test(w) && w.includes('tidewater-ledger')), 'and no stub warning names it');
 }
 
 // ── 4 ────────────────────────────────────────────────────────────────────────
@@ -281,6 +305,71 @@ section('4. a summary-only reply to an update triggers the follow-up retry, nami
 }
 
 // ── 5 ────────────────────────────────────────────────────────────────────────
+section('4b. a short note sharing one identifier is not a follow-up: one call');
+{
+  const d = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT });
+  const NOTE = 'Ops note. `risk-svc` restarted at 04:10 after 3 alerts; 2 pods, 41 s downtime, 120 ms p99, 7 retries, 12 errors, 99.2% ok.\n';
+  ok(NOTE.length < ingest.FOLLOWUP_MIN_CHARS && ingest.sourceHasHardData(NOTE), 'CONTROL: a short hard-data note');
+  const prompts = [];
+  await quiet(() => ingestFile(d.name, sourceFile('note.md', NOTE.repeat(2)), 'note.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); prompts.push(prompt); return JSON.stringify({ title: 'n', pages: [{ path: 'summaries/note.md', content: '# n\n\n## Key Takeaways\n- a\n' }] }); },
+  }));
+  eq(prompts.length, 1, 'a summary-only reply to it makes no retry');
+  // Long enough, but the page shares only ONE identifier with it (a weak selection).
+  const d2 = makeDomain({ 'concepts/risk-scoring.md': RISK });
+  const LONGNOTE = `${NOTE} `.repeat(8);
+  ok(LONGNOTE.length >= ingest.FOLLOWUP_MIN_CHARS, 'CONTROL: the long note is past the length rule');
+  const p2 = [];
+  const r2 = await quiet(() => ingestFile(d2.name, sourceFile('note2.md', LONGNOTE), 'note2.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); p2.push(prompt); return JSON.stringify({ title: 'n', pages: [{ path: 'summaries/note2.md', content: '# n\n\n## Key Takeaways\n- a\n' }] }); },
+  }));
+  ok(r2.existingFactsShown && r2.existingFactsShown.pages.includes('concepts/risk-scoring.md'), 'CONTROL: the weak page is shown');
+  eq(p2.length, 1, 'a weak selection makes no retry, however long the source');
+  // A strong page (two shared identifiers), but a source shorter than the rule.
+  const d3 = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT });
+  const SHORT = 'v1.5 note: `risk-svc` port 7113 (was 7103); `ORDERS_RISK_TIMEOUT_MS` 180 (was 120); 8113 metrics; 40 ms saved.\n';
+  ok(SHORT.repeat(3).length < ingest.FOLLOWUP_MIN_CHARS && ingest.sourceHasHardData(SHORT), 'CONTROL: short and hard data');
+  const p3 = [];
+  const r3 = await quiet(() => ingestFile(d3.name, sourceFile('short.md', SHORT.repeat(3)), 'short.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); p3.push(prompt); return JSON.stringify({ title: 'n', pages: [{ path: 'summaries/short.md', content: '# n\n\n## Key Takeaways\n- a\n' }] }); },
+  }));
+  ok(r3.existingFactsShown && r3.existingFactsShown.pages.length === 1, 'CONTROL: the strong page is shown');
+  eq(p3.length, 1, 'a strong selection in a short source makes no retry');
+}
+
+section('4c. the audit: CRLF frontmatter, secrets, links outside the wiki, common names');
+{
+  const { looksSecret } = ef;
+  ok(figureLines('---\r\ntype: entity\r\nphone: 041 555 123\r\n---\r\n# Acme\r\n\r\n- Revenue 2024: €3.6M\r\n').map((l) => l.line).join('|') === '- Revenue 2024: €3.6M',
+    'CRLF frontmatter is skipped like LF frontmatter');
+  ok(looksSecret('- Password for staging is `hunter2-4471`') && looksSecret('key sk-live-4471-AAAAAAAA') && looksSecret('IBAN SI56 1910 0000 0123 438')
+    && looksSecret('- API key for the sandbox: 12ab') && !looksSecret('- `risk-svc` listens on port 7103'), 'credential-shaped lines are recognised; an ordinary fact is not');
+  ok(!figureLines('# A\n\n- Password for staging is `hunter2-4471`\n- Revenue 2025: €4.2M\n').some((l) => /hunter2/.test(l.line)), 'and never excerpted');
+  const files = { entities: ['data.md', 'acme-holdings.md', 'tidewater.md'], concepts: ['price.md', '2025.md'] };
+  const SRC = '# Acme Holdings order 4471\n\n| Item | Price |\n|---|---|\n| Widget | 250 |\n\nRevenue 2025: €4.2M. The data shows price pressure in 2025, and data again. We asked Tidewater, then Tidewater replied.';
+  const m = nameMentions(SRC, files);
+  eq(m.get('concepts/price.md'), 0, 'a common word ("price") does not name a page');
+  eq(m.get('entities/data.md'), 0, 'nor does "data", twice');
+  eq(m.get('concepts/2025.md'), 0, 'nor a year');
+  eq(m.get('entities/acme-holdings.md'), 1, 'a two-word name written with capitals does, once');
+  eq(m.get('entities/tidewater.md'), 2, 'a single proper name written mid-sentence twice does');
+  const files2 = { entities: ['data.md', 'kestrel.md'], concepts: ['price.md', '2025-2026.md'] };
+  const SRC2 = 'We cut the Price twice, and the Price held. The Data team and the Data lake grew. From 2025-2026 to 2025-2026 again; kestrel and kestrel.';
+  const m2 = nameMentions(SRC2, files2);
+  eq(m2.get('concepts/price.md'), 0, 'a common word written as a capital mid-sentence still does not name a page');
+  eq(m2.get('entities/data.md'), 0, 'nor "Data"');
+  eq(m2.get('concepts/2025-2026.md'), 0, 'a name of numbers only never does, however often');
+  eq(m2.get('entities/kestrel.md'), 0, 'a single word never written as a proper name does not');
+  // A page linked to a file outside the wiki is never read.
+  const d = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT });
+  const outside = path.join(TMP_ROOT, 'outside-secret.md');
+  writeFileSync(outside, '# Private\n\n## Key Facts\n- `risk-svc` private note 7103 order 4471\n');
+  const { symlinkSync } = await import('node:fs');
+  symlinkSync(outside, path.join(DOMAINS, d.name, 'wiki', 'entities', 'risk-svc-private.md'));
+  const sel = await ef.existingFactsFor(path.join(DOMAINS, d.name, 'wiki'), { entities: ['tidewater-ledger.md', 'risk-svc-private.md'], concepts: [] }, FOLLOW);
+  ok(sel.length >= 1 && !sel.some((s) => s.path.includes('risk-svc-private')), 'a page that is a link to a file outside the wiki is never read', JSON.stringify(sel.map((s) => s.path)));
+}
+
 section('5. the estimate prices the block on a domain with pages, and only there');
 {
   for (const M of ['gemini-3.5-flash-lite', 'claude-haiku-5-5']) {
@@ -296,7 +385,12 @@ section('5. the estimate prices the block on a domain with pages, and only there
     ok(onFull.usdHigh > onEmpty.usdHigh, `${M}: so the dear bound is higher`);
     eq(offFull.inputTokens, offFullBase.inputTokens, `${M}: prose: unchanged`);
     const big = est(full, 'on', 40000), bigEmpty = est(empty, 'on', 40000);
-    ok(big.mode === 'multi-phase' && big.inputTokens - bigEmpty.inputTokens >= big.totalCalls * EXISTING_FACTS_MAX_CHARS / 4 * 0.9, `${M}: multi-phase: the block on every call`);
+    const perCall = bigEmpty.inputTokens / bigEmpty.totalCalls;
+    const blockOnly = big.inputTokens - bigEmpty.inputTokens - queue.EXISTING_FACTS_EXTRA_BATCHES * perCall;
+    ok(big.mode === 'multi-phase' && blockOnly >= bigEmpty.totalCalls * EXISTING_FACTS_MAX_CHARS / 4 * 0.8, `${M}: multi-phase: the block on every call`, `${Math.round(blockOnly)}`);
+    eq(big.totalCalls - bigEmpty.totalCalls, queue.EXISTING_FACTS_EXTRA_BATCHES, `${M}: multi-phase: the extra batches for planned existing pages are planned calls`);
+    ok(queue.EXISTING_FACTS_EXTRA_BATCHES * 4 >= EXISTING_FACTS_MAX_PAGES, `${M}: enough batches for every page that can be planned`);
+    eq(est(full, 'on', 3000).totalCalls, est(empty, 'on', 3000).totalCalls, `${M}: single pass: no extra call`);
   }
 }
 

@@ -25,7 +25,13 @@
  *      letters of ONE real language using that encoding (Slovene, French,
  *      German, Czech, …), with punctuation like “ ” – … € neutral and a C1
  *      control (what ISO-8859-x makes of bytes 0x80-0x9F) counted against it.
- *      Ties go to windows-1252, the most common.
+ *      A letter in a place no language of that table puts it (a capital mid-word,
+ *      a letter glued to a digit, Windows-1252's è before a vowel where Slovene has
+ *      č) counts against it; ties go to windows-1252, then windows-1250.
+ *   3b. Bytes that are UTF-8 apart from a few bad ones (at least 90% of the high
+ *      bytes in well-formed sequences) get the old UTF-8 read, one U+FFFD each.
+ *   5. When no table reads as a language (score below MIN_PLAUSIBILITY: Cyrillic,
+ *      MacRoman), nothing is claimed: the old UTF-8 read, flagged `unrecognised`.
  *
  * No dependency: Node's built-in TextDecoder (full ICU) decodes windows-1250
  * and iso-8859-2. NOT windows-1252: Node 22's TextDecoder('windows-1252')
@@ -111,15 +117,61 @@ function decodeAs(enc, buf) {
 
 function isC1(code) { return code >= 0x80 && code <= 0x9f; }
 
-/** How well `text` reads as one language of `enc`: 0..1, higher is better. */
+const isLetter = (ch) => ch !== undefined && /\p{L}/u.test(ch);
+const isDigit = (ch) => ch !== undefined && ch >= '0' && ch <= '9';
+const isLower = (ch) => isLetter(ch) && ch === ch.toLowerCase() && ch !== ch.toUpperCase();
+const isUpper = (ch) => isLetter(ch) && ch === ch.toUpperCase() && ch !== ch.toLowerCase();
+const VOWELS = new Set([...'aeiouyàáâãäåæèéêëìíîïòóôõöøùúûüýœăąęěőůű']);
+const isVowel = (ch) => ch !== undefined && VOWELS.has(ch.toLowerCase());
+
+// Symbols a Western text uses next to numbers (£250, m², ±5, ½, © 2025, 10 µm). What
+// ISO-8859-2 makes of the same bytes is a letter glued to a digit (Ł250, ą5), a spacing
+// diacritic (˛ ˝) or a lone capital (Š 2025), each counted against it below.
+const SYMBOLS = new Set([...'£¢¥¤©®²³¹±½¼¾µªº¬¦¯']);
+// Spacing diacritics never stand on their own in text: a sign of the wrong table.
+const SPACING_MARKS = new Set([...'˘˛˝ˇ˙¸´¨']);
+// A letter that may stand alone as a word.
+const ONE_LETTER_WORDS = new Set([...'àèéòóùäöåÀÈÉ']);
+
+/**
+ * Letters in a context no language of `enc` puts them in (2026-11-14, after an audit
+ * proved that Slovene "č"-only text read as Windows-1252 "è" and Hungarian "ő" as "õ").
+ * Windows-1252's è ì ò ù õ ã share bytes with Central European č ě ň ů ő ă; in French,
+ * Italian and Portuguese they sit in narrow places (è before a consonant or at a word's
+ * end, ì ò ù at a word's end, õ before e or s, ã before o e s n), so one in any other
+ * place is evidence against 1252.
+ */
+function implausibleHere(ch, prev, next, enc) {
+  if (SPACING_MARKS.has(ch)) return true;
+  if (isLetter(ch)) {
+    if (isDigit(prev) || isDigit(next)) return true;                        // Ł250, ą5
+    if (isUpper(ch) && isLower(prev)) return true;                          // CafŽ (a capital mid-word)
+    if (!isLetter(prev) && !isLetter(next) && !ONE_LETTER_WORDS.has(ch)) return true; // a lone Š
+  }
+  if (SYMBOLS.has(ch) && isLetter(prev) && isLetter(next)) return true;     // a sign inside a word
+  if (enc === 'windows-1252') {
+    const c = ch.toLowerCase();
+    if (c === 'è' && (isVowel(next) || (isVowel(prev) && !isLetter(next)))) return true;
+    if ((c === 'ì' || c === 'ò' || c === 'ù') && isLetter(next)) return true;
+    if (c === 'õ' && !(next && /[es]/i.test(next))) return true;
+    if (c === 'ã' && isLetter(next) && !/[oesn]/i.test(next)) return true;
+  }
+  return false;
+}
+
+/** How well `text` reads as one language of `enc`: at most 1, higher is better. */
 function plausibility(text, enc) {
   const counts = new Map();
   let total = 0, bad = 0;
-  for (const ch of text) {
+  const chars = [...text];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
     const code = ch.codePointAt(0);
     if (code < 0x80) continue;
     if (isC1(code) || code === 0xfffd) { bad++; total++; continue; }
     if (NEUTRAL.has(ch)) continue;
+    if (implausibleHere(ch, chars[i - 1], chars[i + 1], enc)) { bad++; total++; continue; }
+    if (enc === 'windows-1252' && SYMBOLS.has(ch)) continue;               // a plausible Western sign
     const lower = ch.toLowerCase();
     counts.set(lower, (counts.get(lower) || 0) + 1);
     total++;
@@ -133,6 +185,31 @@ function plausibility(text, enc) {
   }
   return (best - 2 * bad) / total;
 }
+
+/**
+ * Bytes that are UTF-8 apart from a few bad ones (a file cut mid-character, one byte
+ * pasted from another program). Counted over the bytes at or above 0x80: those inside a
+ * well-formed multi-byte sequence, and the rest. An audit proved that one stray byte
+ * otherwise sent a whole UTF-8 file through the single-byte decoders, turning every
+ * č into "ÄŤ"; the old read gave one U+FFFD.
+ */
+export const MOSTLY_UTF8_MIN_SHARE = 0.9;
+function utf8Shape(buf) {
+  let good = 0, badBytes = 0;
+  for (let i = 0; i < buf.length;) {
+    const b = buf[i];
+    if (b < 0x80) { i++; continue; }
+    let n = 0;
+    if (b >= 0xc2 && b <= 0xdf) n = 1; else if (b >= 0xe0 && b <= 0xef) n = 2; else if (b >= 0xf0 && b <= 0xf4) n = 3;
+    let ok = n > 0;
+    for (let k = 1; ok && k <= n; k++) { const c = buf[i + k]; if (c === undefined || c < 0x80 || c > 0xbf) ok = false; }
+    if (ok) { good += n + 1; i += n + 1; } else { badBytes++; i++; }
+  }
+  return { good, bad: badBytes };
+}
+
+/** Below this, no single-byte table read the text as a language: it is not claimed. */
+export const MIN_PLAUSIBILITY = 0.5;
 
 /** A NUL, or more than 2% control characters, means this is not a text file. */
 function looksBinary(buf) {
@@ -151,6 +228,9 @@ function looksBinary(buf) {
  * @returns {{ text: string, encoding: string, converted: boolean, label: string }}
  *   `converted` is true when the bytes were NOT UTF-8 and were decoded as `encoding`.
  */
+/** Test seam: the score one table gives a decoded text. */
+export function __plausibilityForTest(text, enc) { return plausibility(text, enc); }
+
 export function decodeTextBuffer(input) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(input || []);
   const result = (text, encoding, converted) => ({ text, encoding, converted, label: ENCODING_LABELS[encoding] || encoding });
@@ -171,14 +251,34 @@ export function decodeTextBuffer(input) {
   // 3. Binary is left exactly as before, so every binary refusal downstream still fires.
   if (looksBinary(buf)) return result(buf.toString('utf8'), 'utf-8', false);
 
-  // 4. The single-byte encoding whose letters read as one real language.
+  // 3b. UTF-8 apart from a few bad bytes: the old read (one U+FFFD each), not a re-decode.
+  const shape = utf8Shape(buf);
+  if (shape.good > 0 && shape.good / (shape.good + shape.bad) >= MOSTLY_UTF8_MIN_SHARE) {
+    return result(buf.toString('utf8'), 'utf-8', false);
+  }
+
+  // 4. The single-byte encoding whose letters read as one real language. A tie keeps
+  // the earlier candidate (1252, then 1250, then ISO-8859-2); a tie is now rare, since a
+  // letter in a place its language never puts it counts against that table.
   let best = null;
   for (const enc of CANDIDATES) {
     const text = decodeAs(enc, buf);
     const score = plausibility(text, enc);
     if (!best || score > best.score) best = { enc, text, score };
   }
+  // 5. No table reads it as a language (Cyrillic, MacRoman, ...): nothing is claimed. The
+  // old UTF-8 read stands, and the caller says the encoding was not recognised.
+  if (best.score < MIN_PLAUSIBILITY) {
+    return { ...result(buf.toString('utf8'), 'utf-8', false), unrecognised: true };
+  }
   return result(best.text, best.enc, true);
+}
+
+/** The line an ingest adds when a source is not UTF-8 and no known encoding fits. */
+export function unrecognisedNotice(originalName) {
+  return `"${originalName}" is not saved as UTF-8, and its encoding is not one The Curator recognises ` +
+    `(it reads Windows-1252, Windows-1250 and ISO-8859-2), so it was read as UTF-8 and letters outside ` +
+    `plain English may show as "\uFFFD". Re-save the file as UTF-8 and ingest it again.`;
 }
 
 /** The one plain line an ingest adds when a source was not UTF-8. */

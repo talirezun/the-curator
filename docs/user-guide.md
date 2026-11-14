@@ -3165,7 +3165,7 @@ If the figures matter, ingest that source with the stronger model (see [§16b](#
 
 > **PDF tip:** Only text-based PDFs work. If a PDF is a scanned image (like a photo of a page), the text cannot be extracted. In that case, copy-paste the text into a `.txt` file instead.
 
-> **Text encodings:** `.txt` and `.md` files are best saved as UTF-8, but older files saved as Windows-1252 / ISO-8859-1 (Western European), Windows-1250 or ISO-8859-2 (Central European, e.g. Slovene č š ž), or UTF-16 with a byte-order mark are recognised and converted, so letters like č, ž and é arrive intact. The ingest's report says when a file was converted and which encoding was assumed; the copy kept in `raw/` stays exactly as you uploaded it. If letters still look wrong, re-save the file as UTF-8 and ingest it again.
+> **Text encodings:** `.txt` and `.md` files are best saved as UTF-8, but older files saved as Windows-1252 / ISO-8859-1 (Western European), Windows-1250 or ISO-8859-2 (Central European, e.g. Slovene č š ž), or UTF-16 with a byte-order mark are recognised and converted, so letters like č, ž and é arrive intact. The ingest's report says when a file was converted and which encoding was assumed; the copy kept in `raw/` stays exactly as you uploaded it. A UTF-8 file with one stray bad byte is still read as UTF-8 (that character shows as a replacement mark). A file in an encoding The Curator does not read (for example Cyrillic Windows-1251, or old Mac text) is not guessed: the report says the encoding was not recognised. If letters still look wrong, re-save the file as UTF-8 and ingest it again.
 
 ### How to ingest
 

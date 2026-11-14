@@ -202,7 +202,7 @@ import {
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
-import { EXISTING_FACTS_MAX_CHARS } from './existing-facts.js';
+import { EXISTING_FACTS_MAX_CHARS, EXISTING_FACTS_MAX_PAGES } from './existing-facts.js';
 import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, priceUsageTotalsUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
@@ -911,6 +911,7 @@ function existingFactsExtraOutput(model) {
   const fam = /^gemini/.test(String(model || '')) ? 'gemini' : /^claude/.test(String(model || '')) ? 'anthropic' : 'openrouter';
   return EXISTING_FACTS_EXTRA_OUTPUT_TOKENS[fam];
 }
+export const EXISTING_FACTS_EXTRA_BATCHES = Math.ceil(EXISTING_FACTS_MAX_PAGES / ingestTesting.BATCH_SIZE);
 const hasPages = (promptFiles) => Boolean(promptFiles && ((promptFiles.entities || []).length || (promptFiles.concepts || []).length));
 
 function estimateOneFile({ f, promptFiles, index, today, price, model = null, keyFacts = 'off' }) {
@@ -938,13 +939,21 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   // negative value reaching `'x'.repeat()` throws a RangeError that surfaced
   // as an HTTP 500 (`{"error":"Invalid count value: -5000"}`).
   const chars = Math.max(0, Math.min(f.size, TEXT_CAP));
-  const { mode, totalCalls, numBatches } = estimateCallCounts(chars);
+  const counts = estimateCallCounts(chars);
+  const { mode } = counts;
+  // The existing-facts block, on a domain that has pages (see EXISTING_FACTS_EXTRA_OUTPUT_TOKENS).
+  const factsChars = withKeyFacts && hasPages(promptFiles) ? EXISTING_FACTS_MAX_CHARS + 2 : 0;
+  // Multi-phase plans each strong existing page the outline left out: at most
+  // EXISTING_FACTS_MAX_PAGES pages, so at most EXISTING_FACTS_EXTRA_BATCHES more batch
+  // calls, each priced like any batch (audit 2026-11-14: a 31 KB follow-up billed above
+  // the high quote in 2 of 4 runs when only an output allowance covered them).
+  const extraBatches = factsChars && mode === 'multi-phase' ? EXISTING_FACTS_EXTRA_BATCHES : 0;
+  const numBatches = counts.numBatches + extraBatches;
+  const totalCalls = counts.totalCalls + extraBatches;
   const syntheticText = 'x'.repeat(chars);
   const placeholderSummaryPath = 'summaries/estimate-placeholder.md';
 
   let promptChars;
-  // The existing-facts block, on a domain that has pages (see EXISTING_FACTS_EXTRA_OUTPUT_TOKENS).
-  const factsChars = withKeyFacts && hasPages(promptFiles) ? EXISTING_FACTS_MAX_CHARS + 2 : 0;
   // The planned calls' own prompt sizes, kept so a TIERED model (whose rate
   // depends on each call's prompt) can be quoted per call — see below.
   let callChars;
