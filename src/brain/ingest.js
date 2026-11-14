@@ -39,6 +39,7 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
 import { decodeTextBuffer, conversionNotice } from './text-decode.js';
 import { assertIngestCanWrite } from './ingest-preflight.js';
+import { existingFactsFor, renderExistingFactsBlock, renderExistingFactsOutlineNote } from './existing-facts.js';
 import {
   HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
   HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
@@ -902,7 +903,7 @@ function keyFactsGate(text) {
   return keyFactsGateOverride === null ? sourceHasHardData(text) : keyFactsGateOverride;
 }
 
-function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
+function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath, updatesNote = '') {
   const overwriteNote = isOverwrite
     ? 'NOTE: This document has been ingested before. Update existing pages rather than duplicating content.'
     : '';
@@ -925,7 +926,7 @@ ${entityFileList}
 
 Existing concept files:
 ${conceptFileList}
-
+${updatesNote ? `\n${updatesNote}\n` : ''}
 Current wiki index:
 ${indexForPrompt(index, text).text || '(empty — this is the first ingest)'}
 
@@ -1075,7 +1076,7 @@ function progressTail(narrate) {
  *
  * @returns {{prefix: string, suffix: string}}  prefix + suffix === the prompt
  */
-function buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
+function buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = [], existingFacts = '') {
   const pageList = pageBatch
     .map(p => `  { "path": "${p.path}", "summary": "${p.summary}" }`)
     .join(',\n');
@@ -1115,7 +1116,7 @@ Guidelines:
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 - LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 - HUB-PAGE RULE: if your page enumerates many sibling concepts (e.g. a "library", "taxonomy", or "comparison" page), you MUST wikilink to each item using the exact slugs listed below. Plain-text item names without brackets leave the hub disconnected from the items in the graph.
-${keyFactsGate(text) ? `\n${KEY_FACTS_RULE}\n` : ''}
+${keyFactsGate(text) ? `\n${KEY_FACTS_RULE}\n` : ''}${existingFacts ? `\n${existingFacts}\n` : ''}
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
 Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(', ')}
@@ -1170,8 +1171,8 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 }
 
 /** The assembled Phase 2 batch prompt. Kept for callers/tests that want the string. */
-function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
-  const { prefix, suffix } = buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles, allOutlinePages);
+function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = [], existingFacts = '') {
+  const { prefix, suffix } = buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles, allOutlinePages, existingFacts);
   return prefix + suffix;
 }
 
@@ -2000,7 +2001,7 @@ export function filterBatchReply(pages, { requestedPaths = [], plannedPaths = []
  * See the note on buildOutlinePrompt: removing index.md from this prompt was
  * implemented and then deferred for the same reason. Byte-identical to v3.0.15.
  */
-function buildPrompt(today, index, existingFiles, originalName, text, strict, isOverwrite = false, summaryPath = null) {
+function buildPrompt(today, index, existingFiles, originalName, text, strict, isOverwrite = false, summaryPath = null, existingFacts = '') {
   const conciseness = strict
     ? 'CRITICAL: Maximum 3 bullet points per page. No prose. The shorter the better.'
     : 'Keep each page concise — 3 to 8 bullet points or sentences max. No long prose.';
@@ -2076,7 +2077,7 @@ ${ANNOUNCED_PRODUCT_RULE}
 8. DO NOT touch index.md — the application maintains it after this call.
 
 ${conciseness}
-${keyFactsGate(text) ? `\n${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}\n` : ''}
+${keyFactsGate(text) ? `\n${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}\n` : ''}${existingFacts ? `\n${existingFacts}\n` : ''}
 Page body rules:
 - Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
 - Entity pages: include a "Type: <entity-type>" line and a "Tags: tag1, tag2" line in the body.
@@ -2709,8 +2710,12 @@ ${sourceLine}Tags: stub, type/${type}
  *   This function touches no filesystem, so injecting the LLM makes the whole
  *   multi-phase orchestration testable offline. Production callers pass nothing.
  */
-async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText, signal = null, narrate = null) {
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText, signal = null, narrate = null, updates = null) {
   // `narrate` is `{ startedAt, calls, otherInstances }` — see progressTail().
+  // `updates` is `{ selection, block, note }` (existing-facts.js), only for a hard-data
+  // source that updates existing pages; null leaves every prompt as it was.
+  const factsBlock = updates && updates.block ? updates.block : '';
+  const factsNote = updates && updates.note ? updates.note : '';
   // Optional and defaulted, so every existing caller (including
   // scripts/test-ingest-prompt-slimming.js, which calls this positionally
   // through __testing) is byte-identical in behaviour without it.
@@ -2748,7 +2753,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   try {
     outlineRaw = (await llm(
       schema,
-      buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath),
+      buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath, factsNote),
       MULTI_PHASE_OUTLINE_TOKENS,
       'json',
       // A retry wait is narrated with WHICH phase is waiting and for how long
@@ -2800,7 +2805,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     progress(13, `Phase 1 (page plan): retrying with a stricter prompt…${tail()}`, 'wait');
     throwIfCancelled(signal);
 
-    const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath)
+    const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath, factsNote)
       + '\n\nIMPORTANT — STRICT JSON REQUIREMENTS:\n'
       + '1. Return ONLY the JSON object. No markdown fences, no "```json" wrapper, no commentary before or after.\n'
       + '2. Inside "summary" string values: do NOT use double quotes. Use single quotes if you need quotation marks. Avoid backslashes and special characters.\n'
@@ -2970,6 +2975,29 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     warnings.push(w);
   }
 
+  // An existing page this source updates (existing-facts.js) that the outline left out
+  // is planned anyway, so its new or changed facts have a batch to be written in. It is
+  // a page that exists, so a batch that writes nothing for it leaves it as it was (the
+  // plan-only rule below), and the merge keeps every line it already has.
+  if (updates && Array.isArray(updates.selection) && updates.selection.length) {
+    const planned = new Set(outline.pages.map((p) => p && typeof p.path === 'string' ? withMdExtension(p.path) : null));
+    const described = new Map();
+    try {
+      for (const r of parseIndex(index).rows || []) {
+        if (r && typeof r.target === 'string' && r.description) described.set(r.target.split('/').pop().toLowerCase(), r.description);
+      }
+    } catch { /* no index: the neutral line below */ }
+    const added = [];
+    for (const u of updates.selection) {
+      if (planned.has(u.path)) continue;
+      const slug = path.basename(u.path, '.md').toLowerCase();
+      outline.pages.push({ path: u.path, summary: String(described.get(slug) || 'An existing page this source updates').replace(/"/g, "'").slice(0, 160) });
+      planned.add(u.path);
+      added.push(u.path);
+    }
+    if (added.length) console.error(`[ingest] existing pages this source updates, added to the plan: ${added.join(', ')}`);
+  }
+
   const allPages = outline.pages; // [{path, summary}]
   const totalBatches = Math.ceil(allPages.length / BATCH_SIZE);
 
@@ -3024,7 +3052,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     let batchRaw = null;
     // prefix is byte-identical across every batch; only `suffix` carries the
     // per-batch page list — that split is what makes the prefix cacheable.
-    const batchParts = buildBatchPromptParts(today, originalName, text, batch, promptFiles, allPages);
+    const batchParts = buildBatchPromptParts(today, originalName, text, batch, promptFiles, allPages, factsBlock);
     try {
       batchRaw = (await llm(
         schema,
@@ -3083,7 +3111,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         // between pages, not only between batches.
         throwIfCancelled(signal);
         let singleRaw = null;
-        const singleParts = buildBatchPromptParts(today, originalName, text, [singlePage], promptFiles, allPages);
+        const singleParts = buildBatchPromptParts(today, originalName, text, [singlePage], promptFiles, allPages, factsBlock);
         try {
           singleRaw = (await llm(
             schema,
@@ -3739,6 +3767,21 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     console.error(`[ingest] index shortened for prompt: ${indexView.kept}/${indexView.total}`);
   }
 
+  // A hard-data source that updates pages the wiki already has: what those pages say
+  // now, so the page-writing step can add the new or changed facts with their version
+  // or period beside the old ones (existing-facts.js). Free and deterministic. Never for
+  // a prose source (keyFactsGate), an empty domain, or a reading of bytes already
+  // ingested (planRepeatIngest owns that), so those prompts stay byte-identical.
+  let factsSelection = [];
+  if (keyFactsGate(text) && !repeatPlan.sameContent && (existingFiles.entities.length || existingFiles.concepts.length)) {
+    factsSelection = await existingFactsFor(wikiDir, existingFiles, text);
+  }
+  const existingFacts = renderExistingFactsBlock(factsSelection, originalName);
+  const updates = existingFacts
+    ? { selection: factsSelection, block: existingFacts, note: renderExistingFactsOutlineNote(factsSelection) }
+    : null;
+  if (updates) console.error(`[ingest] existing pages this source updates: ${factsSelection.map((s) => s.path).join(', ')} (${existingFacts.length} chars)`);
+
   // v3.0.16: real token spend, gathered out-of-band from every LLM call this
   // ingest makes (including retries and model-fallback rungs).
   //
@@ -3769,7 +3812,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     progress(15, 'AI is analyzing the document…');
     const raw = (await llm(
       schema,
-      buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath),
+      buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath, existingFacts),
       65536,
       'json',
       (msg) => progress(15, msg, 'wait'),
@@ -3799,7 +3842,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
 
         const raw2 = (await llm(
           schema,
-          buildPrompt(today, index, promptFiles, originalName, text, true, isOverwrite, summaryPath),
+          buildPrompt(today, index, promptFiles, originalName, text, true, isOverwrite, summaryPath, existingFacts),
           65536,
           'json',
           (msg) => progress(15, msg, 'wait'),
@@ -3842,10 +3885,12 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // An empty domain has nothing to cover, so a first ingest never reaches a retry.
     if (replyNodePages === 0 && !repeatPlan.sameContent) {
       const covered = coveredExistingTopics(text, existingFiles);
+      // The pages this source updates count as covered too (named in the prompt above).
+      for (const u of factsSelection) if (!covered.some((c) => c.path === u.path)) covered.push({ path: u.path, mentions: 0 });
       if (covered.length) {
         const out = await followupRetry({
           llm, schema, first: result, covered, usage, signal, progress,
-          prompt: buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath),
+          prompt: buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath, existingFacts),
           buildModel: plannedModel,
         });
         result = out.result;
@@ -3870,6 +3915,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       // The narration context. `calls` is a function so every emission reads
       // the LIVE count from the accumulator every provider call already feeds.
       { startedAt: ingestStartedAt, calls: () => usage.totals.calls, otherInstances },
+      updates,
     );
   } else {
     // v3.0.1-beta.1: single-pass also runs through the outline validator so a
@@ -4293,6 +4339,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // Lets a live suite tell the model's choice from a page this code dropped.
     replyNodePages,
     followupRetry: followup,
+    // The existing pages whose current facts were shown to the model (existing-facts.js).
+    existingFactsShown: updates ? { pages: factsSelection.map((s) => s.path), chars: existingFacts.length } : null,
     // {newPages, comparable, pairs}, or null when no page was created or no comparison could run.
     newPagesToCompare: toCompare,
   };

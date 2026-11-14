@@ -416,7 +416,7 @@ The Curator counts figures, code names and table rows first; an ordinary article
 
 Model choice matters for data-heavy sources: on one pricing document with 29 facts, Gemini 3.5 Flash Lite kept about 19 and Claude Haiku 5.5 about 26.
 
-Limits: a follow-up document's changed figures land on its own summary, and the existing company or product page usually keeps the old values (updating it is the next step); a technical document written as plain prose may not be recognised; large tables are summarised; chat matches words exactly.
+Figures compound: a later source with figures (next year's report, a changelog) that updates pages the wiki already has is shown what those pages say now, and adds each new or changed fact to them as a Key Facts line with its year or version and the earlier value ("As of v1.5: port 7113 (was 7103)"). The old line always stays, so a page shows how a value changed. Measured on a product changelog: the new value reached the existing pages in 8 of 9 runs on Claude Haiku 5.5 (0 of 9 before); the AI can still put a change only on the new summary. It adds about $0.01 a follow-up on Haiku 5.5, included in the estimate. Limits: a technical document written as plain prose may not be recognised; large tables are summarised; chat matches words exactly.
 
 Ingesting technical documents into a domain makes knowledge that compounds with later sources and that chat can answer across. A project's Documents (foundations) are different: canonical text kept verbatim for agents. Both are valid, for different purposes.
 

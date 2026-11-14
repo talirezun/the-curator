@@ -202,6 +202,7 @@ import {
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
+import { EXISTING_FACTS_MAX_CHARS } from './existing-facts.js';
 import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, priceUsageTotalsUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
@@ -892,6 +893,26 @@ function keyFactsExtraOutput(model, mode) {
   return KEY_FACTS_EXTRA_OUTPUT_TOKENS[fam][m] || Math.max(...Object.values(KEY_FACTS_EXTRA_OUTPUT_TOKENS).map((x) => x[m]));
 }
 
+/**
+ * Existing facts (existing-facts.js): a data source that updates pages the domain already
+ * has gets at most EXISTING_FACTS_MAX_CHARS of those pages' current facts in every
+ * page-writing call, and writes the new or changed facts onto those pages. The estimate
+ * has no bytes, so on a domain with pages it carries the block's full size on every call
+ * and a measured output allowance wherever it carries the Key Facts rule (an empty domain
+ * never gets the block, so its figure is unchanged). Measured on the follow-up scenario
+ * (an architecture changelog into a domain holding v1, 2026-11-14): output tokens per
+ * source, median after minus median before. Haiku 5.5 2,824 -> 4,216 (9 runs each arm);
+ * solar-pro4 2,243 -> 2,893 (9 each); Gemini 3.5 Flash Lite 1,425 -> 2,408 (9 before, 3
+ * after: the project's spend cap stopped the rest). The largest reply measured (Haiku
+ * 6,865) stays under the Key Facts single-pass dear bound, which already covers it.
+ */
+export const EXISTING_FACTS_EXTRA_OUTPUT_TOKENS = { gemini: 1000, anthropic: 1400, openrouter: 700 };
+function existingFactsExtraOutput(model) {
+  const fam = /^gemini/.test(String(model || '')) ? 'gemini' : /^claude/.test(String(model || '')) ? 'anthropic' : 'openrouter';
+  return EXISTING_FACTS_EXTRA_OUTPUT_TOKENS[fam];
+}
+const hasPages = (promptFiles) => Boolean(promptFiles && ((promptFiles.entities || []).length || (promptFiles.concepts || []).length));
+
 function estimateOneFile({ f, promptFiles, index, today, price, model = null, keyFacts = 'off' }) {
   const base = estimateOneFileBase({ f, promptFiles, index, today, price, model, withKeyFacts: false });
   if (keyFacts === 'off') return base;
@@ -922,12 +943,14 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   const placeholderSummaryPath = 'summaries/estimate-placeholder.md';
 
   let promptChars;
+  // The existing-facts block, on a domain that has pages (see EXISTING_FACTS_EXTRA_OUTPUT_TOKENS).
+  const factsChars = withKeyFacts && hasPages(promptFiles) ? EXISTING_FACTS_MAX_CHARS + 2 : 0;
   // The planned calls' own prompt sizes, kept so a TIERED model (whose rate
   // depends on each call's prompt) can be quoted per call — see below.
   let callChars;
   if (mode === 'single-pass') {
     const prompt = buildPrompt(today, index, promptFiles, f.name, syntheticText, false, false, placeholderSummaryPath);
-    promptChars = prompt.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
+    promptChars = prompt.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 + factsChars : 0);
     callChars = [promptChars];
   } else {
     const outline = buildOutlinePrompt(today, index, promptFiles, f.name, syntheticText, false, placeholderSummaryPath);
@@ -936,9 +959,11 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
     // few hundred chars) — negligible next to the 80k-char source + 100k+
     // char inventory this prefix already carries. Documented, not silent.
     const batchParts = buildBatchPromptParts(today, f.name, syntheticText, [], promptFiles, []);
-    const batchChars = batchParts.prefix.length + batchParts.suffix.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
-    promptChars = outline.length + numBatches * batchChars;
-    callChars = [outline.length, ...Array(numBatches).fill(batchChars)];
+    const batchChars = batchParts.prefix.length + batchParts.suffix.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 + factsChars : 0);
+    // The outline gets only the pages' names (a line of paths), well within the same allowance.
+    const outlineChars = outline.length + (withKeyFacts ? factsChars : 0);
+    promptChars = outlineChars + numBatches * batchChars;
+    callChars = [outlineChars, ...Array(numBatches).fill(batchChars)];
   }
 
   // The model's measured tokenizer premium counts in the figure, on every path: the
@@ -948,7 +973,7 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   const inputTokens = Math.round((promptChars / CHARS_PER_TOKEN) * factor);
   const perCallOut = outputTokensPerCall(model, mode);
   // The Key Facts allowance is per FILE (measured per source), spread over its calls.
-  const extraOut = withKeyFacts ? keyFactsExtraOutput(model, mode) : 0;
+  const extraOut = withKeyFacts ? keyFactsExtraOutput(model, mode) + (factsChars ? existingFactsExtraOutput(model) : 0) : 0;
   const outputTokens = totalCalls * perCallOut + extraOut;
 
   if (!price) {

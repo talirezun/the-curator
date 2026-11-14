@@ -164,6 +164,7 @@ llm-docs/            — self-contained markdown written for language models (th
 - A broken-link rate from one run is noise, not a gate.
 - Phase-2 batch replies are filtered to the pages that batch was asked for (`filterBatchReply`; set-aside copies are a reserve, never a warning); a summary lacking title, source or takeaways warns (`summaryShapeWarning`); a different source with the same summary slug gets a hash-suffixed slug (`resolveSummaryPath`).
 - The batch queue lives outside `domains/`, runs strictly sequentially, decides duplicates at create time, and recovers PAUSED — nothing auto-starts spend.
+- A hard-data source that names existing pages or shares a distinctive identifier with them is shown a bounded excerpt of their current facts (`existing-facts.js`, ≤ 4,000 chars, in the batch PREFIX) and adds only new or changed facts with their version; prose, empty domains and re-readings stay byte-identical.
 
 ### Chat and compile → [decisions-knowledge.md#chat-and-compile](docs/dev/decisions-knowledge.md#chat-and-compile)
 - Intent routing classifies the ASK (`extractAsk`); response style is orthogonal to intent; chat truncation is graceful and the MAX_TOKENS message is context-neutral.
