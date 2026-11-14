@@ -727,8 +727,9 @@ const ANNOUNCED_PRODUCT_RULE =
  * MULTI_PHASE_BATCH_TOKENS (16,384) and a single page under 8,192. The strict and
  * concise retries keep the section at 15 bullets, a table at 8 rows.
  *
- * ADDITIVE BY CONSTRUCTION. Each prompt is the shipped prompt plus this block in one
- * place; `scripts/test-ingest-key-facts.js` removes the block and checks the rest is
+ * ADDITIVE BY CONSTRUCTION. Sent only when `sourceHasHardData` (below); otherwise the
+ * prompt is the shipped one byte for byte. When sent, each prompt is the shipped prompt
+ * plus this block in one place; `scripts/test-ingest-key-facts.js` removes the block and checks the rest is
  * byte-identical to the pinned digests. It goes in the batch PREFIX (stable, so every
  * batch of one ingest still shares a byte-identical, cacheable prefix).
  */
@@ -750,6 +751,53 @@ export const KEY_FACTS_RULE_STRICT =
 export const KEY_FACTS_CONCISE =
 `
 5. If the page has a "## Key Facts" section, keep it, at most 15 bullets (a table at most 8 rows), every figure exactly as the source writes it.`;
+
+/**
+ * WHEN THE RULE IS SENT: only for a source that measurably carries hard data.
+ *
+ * Sent to every source, the block gave ordinary articles a Key Facts section too
+ * (measured 2026-11-14: 3 of 3 runs on a 17 KB prose fixture with every model, the
+ * summary +0.8 to +3.8 KB, and on a 3 KB article Gemini 3.5 Flash Lite wrote 11 pages
+ * instead of 6), although the block told it not to. The owner's rule is that this is
+ * strictly additive, so the decision is made here, deterministically, and a source
+ * below the line gets the shipped prompt byte for byte.
+ *
+ * The measure: data items per 1,000 characters, where an item is a number that is not
+ * a bare year, a year range or a single digit (a currency sign and a % belong to it), an
+ * inline `code` span, or a table data row. Measured on 18 sources: every data source
+ * 10.1 to 44.8 (three short annual reports 10.1 to 11.9, a price list 31.0, a pricing
+ * strategy 28.4, an architecture document 28.0, its changelog 25.8, an operating plan
+ * 44.8); every prose fixture 0 to 6.6. The line is 8, and at least 6 items, so a tiny
+ * note with two prices is not a data source.
+ * Known: a technical document written as prose (no numbers, no backticks, no tables)
+ * stays below it and is ingested exactly as before; a prose article dense with
+ * statistics passes it and may get a Key Facts section.
+ */
+export const HARD_DATA_MIN_PER_1000 = 8;
+export const HARD_DATA_MIN_ITEMS = 6;
+
+export function hardDataDensity(text) {
+  const body = String(text || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  const numbers = (body.match(/[€$£¥]?\d[\d,.:/–-]*%?/g) || [])
+    .map((x) => x.replace(/[.,:/–-]+$/, ''))
+    .filter((x) => !/^((19|20)\d\d)([–-]((19|20)?\d\d))?$/.test(x) && !/^\d$/.test(x));
+  const code = (body.match(/`[^`\n]+`/g) || []).length;
+  const rows = (body.match(/^\|.*\|[ \t]*$/gm) || []).filter((r) => !/^\|[\s|:-]+\|[ \t]*$/.test(r)).length;
+  const items = numbers.length + code + rows;
+  return { items, perThousand: body.length ? (items * 1000) / body.length : 0 };
+}
+
+export function sourceHasHardData(text) {
+  const d = hardDataDensity(text);
+  return d.items >= HARD_DATA_MIN_ITEMS && d.perThousand >= HARD_DATA_MIN_PER_1000;
+}
+
+let keyFactsGateOverride = null;
+/** Test seam: force the gate (true/false) or restore it (null). */
+export function __setKeyFactsGateForTest(v) { keyFactsGateOverride = v; }
+function keyFactsGate(text) {
+  return keyFactsGateOverride === null ? sourceHasHardData(text) : keyFactsGateOverride;
+}
 
 function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
   const overwriteNote = isOverwrite
@@ -964,9 +1012,7 @@ Guidelines:
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 - LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 - HUB-PAGE RULE: if your page enumerates many sibling concepts (e.g. a "library", "taxonomy", or "comparison" page), you MUST wikilink to each item using the exact slugs listed below. Plain-text item names without brackets leave the hub disconnected from the items in the graph.
-
-${KEY_FACTS_RULE}
-
+${keyFactsGate(text) ? `\n${KEY_FACTS_RULE}\n` : ''}
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
 Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(', ')}
@@ -1927,9 +1973,7 @@ ${ANNOUNCED_PRODUCT_RULE}
 8. DO NOT touch index.md — the application maintains it after this call.
 
 ${conciseness}
-
-${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}
-
+${keyFactsGate(text) ? `\n${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}\n` : ''}
 Page body rules:
 - Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
 - Entity pages: include a "Type: <entity-type>" line and a "Tags: tag1, tag2" line in the body.
@@ -2968,7 +3012,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
           try {
             conciseRaw = (await llm(
               schema,
-              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE + KEY_FACTS_CONCISE,
+              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE + (keyFactsGate(text) ? KEY_FACTS_CONCISE : ''),
               MULTI_PHASE_SINGLE_PAGE_TOKENS,
               'json',
               (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches}, page ${singlePage.path} (shorter retry) — ${msg}${tail()}`, 'wait'),

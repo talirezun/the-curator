@@ -142,29 +142,75 @@ section('1. the rule reaches the model on every path that writes a page');
   ok(singles.length >= 1 && concise.length === 1, 'the failed batch fell to page by page, then one concise retry', `${singles.length} singles, ${concise.length} concise`);
   ok(concise[0] && concise[0].prompt.endsWith(CONCISE_PAGE_DIRECTIVE + KEY_FACTS_CONCISE), 'the concise retry ends with the brevity directive plus the Key Facts line (suffix only)');
   ok(d2.read('concepts/e.md').includes('## Key Facts'), 'the page the concise retry wrote keeps its Key Facts');
+
+  // The same failure on a source without hard data: the shipped prompts, no Key Facts line.
+  const d3 = makeDomain();
+  const calls3 = [];
+  let fails3 = 0;
+  const PROSE_LONG = Array.from({ length: 400 }, (_, i) => `Paragraph about orchards, rivers and the harbour town, part ${i % 9}.`).join('\n');
+  await quiet(() => ingestFile(d3.name, sourceFile('essay.md', PROSE_LONG), 'essay.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => {
+      usage(opts);
+      const asked = askedPaths(prompt);
+      if (!asked.length) return JSON.stringify({ title: 'Essay', pages: ['summaries/essay.md', ...plan].map((p) => ({ path: p, summary: `about ${p}` })) });
+      calls3.push(prompt);
+      if (asked.includes('concepts/e.md') && asked.length > 1) return '{"pages": []}';
+      if (asked.length === 1 && asked[0] === 'concepts/e.md' && fails3++ === 0) return 'not json';
+      return JSON.stringify({ pages: asked.map((p) => ({ path: p, summary: `s ${p}`, content: `# ${p}\n\n- a point\n` })) });
+    },
+  }));
+  ok(calls3.length > 0 && calls3.every((p) => !p.includes('HARD DATA')), 'prose: no Phase 2 call carries the rule');
+  const concise3 = calls3.filter((p) => p.includes('BE BRIEF'));
+  ok(concise3.length === 1 && concise3[0].endsWith(CONCISE_PAGE_DIRECTIVE), 'prose: the concise retry is the shipped one, no Key Facts line');
 }
 
 // ── 2 ────────────────────────────────────────────────────────────────────────
-section('2. the block is the only change to each prompt');
+section('2. sent only for a source with hard data, and then the only change');
 {
   const strip = (p) => p.replace('\n\n' + KEY_FACTS_RULE_STRICT, '').replace('\n\n' + KEY_FACTS_RULE, '');
-  const single = buildPrompt('2026-09-30', '| idx |', FILES, 'src.md', 'SOURCE TEXT', false, false, 'summaries/src.md');
-  const strict = buildPrompt('2026-09-30', '', FILES, 'src.md', 'SOURCE TEXT', true, true, 'summaries/src.md');
+  const DATA = 'Pricing for 2028. Basic tier: €10 a month, 50 seats, 99.5% uptime. Pro tier: €20 a month, 200 seats, 99.9% uptime.\n'
+    + '| Tier | Fee | Seats |\n|---|---|---|\n| Basic | €10 | 50 |\n| Pro | €20 | 200 |\n'
+    + 'The API listens on `port 9310`; `TIMEOUT_MS` defaults to `3000`. Quotes are valid for 45 days.\n';
+  const PROSE = readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'test-ingest-deep-inputs', '04-multi-phase.md'), 'utf8');
+
+  ok(ingest.sourceHasHardData(DATA), 'the gate: a price list with a table and config keys is a data source', JSON.stringify(ingest.hardDataDensity(DATA)));
+  ok(!ingest.sourceHasHardData(PROSE), 'the gate: the 17 KB prose fixture is not', JSON.stringify(ingest.hardDataDensity(PROSE)));
+  const FIXDIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'test-ingest-deep-inputs');
+  const { readdirSync } = await import('node:fs');
+  const above = readdirSync(FIXDIR).filter((f) => ingest.sourceHasHardData(readFileSync(path.join(FIXDIR, f), 'utf8')));
+  eq(above.join(','), '', 'the gate: none of the live suite\'s prose fixtures is a data source');
+  ok(!ingest.sourceHasHardData('Buy milk (€2) and bread (€3).'), 'the gate: a tiny note with two prices is not (fewer than 6 items)');
+  ok(!ingest.sourceHasHardData('In 2024 and 2025 the team grew, and in 2026 it moved. Chapter 1, 2 and 3 cover this.'.repeat(4)), 'the gate: bare years and small counts are not data');
+
+  // A source without hard data gets the shipped prompt, byte for byte (pinned digests).
+  const single0 = buildPrompt('2026-09-30', '| idx |', FILES, 'src.md', PROSE, false, false, 'summaries/src.md');
+  ok(!single0.includes('HARD DATA') && !single0.includes('Key Facts'), 'prose: the single-pass prompt carries no part of the rule');
+  const all = [{ path: 'summaries/s.md', summary: 'S' }, { path: 'entities/alice.md', summary: 'A' }, { path: 'entities/trust-grader.md', summary: 'T' }, { path: 'concepts/rag.md', summary: 'R' }, { path: 'concepts/x.md', summary: 'X' }];
+  // The v3.80.0 prefix digest over these fixtures, recorded in test-ingest-coverage-v381.js.
+  eq(digest(buildBatchPromptParts('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all).prefix),
+    '9ebe04513c603696ba37f3d088da59bb5029ebed7beb75337e72086eb783733a', 'no hard data: the batch prefix is the shipped v3.80.0 prefix');
+
+  // A data source: the block once, in the right place, and removing it gives exactly
+  // the prompt the gate-off path builds for the same text.
+  const single = buildPrompt('2026-09-30', '| idx |', FILES, 'src.md', DATA, false, false, 'summaries/src.md');
+  const strict = buildPrompt('2026-09-30', '', FILES, 'src.md', DATA, true, true, 'summaries/src.md');
   eq(single.split(KEY_FACTS_RULE).length - 1, 1, 'single pass: the rule exactly once');
   eq(strict.split(KEY_FACTS_RULE_STRICT).length - 1, 1, 'strict: the strict rule exactly once');
   ok(single.indexOf(KEY_FACTS_RULE) > single.indexOf('No long prose.') && single.indexOf(KEY_FACTS_RULE) < single.indexOf('Page body rules:'),
     'single pass: right after the conciseness line it qualifies');
-  // The single-pass and strict digests minus this block are pinned in
-  // test-ingest-coverage-v381.js (section 1), against v3.80.0.
-  ok(strip(single) !== single && strip(strict) !== strict, 'CONTROL: stripping really removes something');
-  // The same fixtures test-ingest-coverage-v381.js recorded the v3.80.0 digest over.
-  const all = [{ path: 'summaries/s.md', summary: 'S' }, { path: 'entities/alice.md', summary: 'A' }, { path: 'entities/trust-grader.md', summary: 'T' }, { path: 'concepts/rag.md', summary: 'R' }, { path: 'concepts/x.md', summary: 'X' }];
-  const p1 = buildBatchPromptParts('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all);
-  const p2 = buildBatchPromptParts('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(4), FILES, all);
+  const p1 = buildBatchPromptParts('2026-09-30', 'src.md', DATA, all.slice(0, 4), FILES, all);
+  const p2 = buildBatchPromptParts('2026-09-30', 'src.md', DATA, all.slice(4), FILES, all);
   eq(p1.prefix, p2.prefix, 'batch prefix: byte-identical across batches');
   ok(p1.prefix.includes(KEY_FACTS_RULE) && !p1.suffix.includes(KEY_FACTS_RULE), 'batch: the rule is in the prefix, not the suffix');
-  // The v3.80.0 prefix digest, recorded in test-ingest-coverage-v381.js.
-  eq(digest(strip(p1.prefix)), '9ebe04513c603696ba37f3d088da59bb5029ebed7beb75337e72086eb783733a', 'batch prefix minus the block is the shipped v3.80.0 prefix');
+  ingest.__setKeyFactsGateForTest(false);
+  const offSingle = buildPrompt('2026-09-30', '| idx |', FILES, 'src.md', DATA, false, false, 'summaries/src.md');
+  const offStrict = buildPrompt('2026-09-30', '', FILES, 'src.md', DATA, true, true, 'summaries/src.md');
+  const offBatch = buildBatchPromptParts('2026-09-30', 'src.md', DATA, all.slice(0, 4), FILES, all);
+  ingest.__setKeyFactsGateForTest(null);
+  eq(strip(single), offSingle, 'single pass minus the block = the shipped prompt for the same text');
+  eq(strip(strict), offStrict, 'strict minus the block = the shipped prompt');
+  eq(strip(p1.prefix), offBatch.prefix, 'batch prefix minus the block = the shipped prefix');
+  eq(p1.suffix, offBatch.suffix, 'the batch suffix is unchanged');
 }
 
 // ── 3 ────────────────────────────────────────────────────────────────────────
