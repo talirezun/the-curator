@@ -108,8 +108,11 @@ export function renderAnswer(raw, opts) {
   const mentions = [];
   const mentioned = new Set();
   const cite = (p) => {
-    const key = String(p == null ? '' : p).trim();
+    let key = String(p == null ? '' : p).trim();
     if (!key || key.length > 512) return 0;
+    // `entities/x` (no .md) is the page `entities/x.md` - only a path-shaped
+    // key, so a word like "catalogue" is never turned into a page.
+    if (!isPage(key) && key.indexOf('/') !== -1 && !/\.md$/i.test(key) && isPage(key + '.md')) key += '.md';
     if (!isPage(key)) {
       if (!mentioned.has(key)) { mentioned.add(key); mentions.push(key); }
       return 0;

@@ -299,6 +299,68 @@ section('9. v3.76.0 (truth audit F9) — only a citation that resolves to a page
     'CONTROL: an older call site writes no citedPages key');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('v3.98.1. What models actually write: repeated `source:`, no `.md`, `;`, no run-together');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const chat = await import('../src/brain/chat.js');
+  // The split rule, and the server's copy of it, over one table.
+  const table = [
+    ['a.md, source: b.md', ['a.md', 'b.md']],
+    ['summaries/x.md, Source:entities/y.md,  SOURCE :  concepts/z.md', ['summaries/x.md', 'entities/y.md', 'concepts/z.md']],
+    ['a.md; b.md', ['a.md', 'b.md']],
+    ['a.md; source: b.md, c.md', ['a.md', 'b.md', 'c.md']],
+    ['entities/a, concepts/b', ['entities/a', 'concepts/b']],
+    ['summaries/r&amp;d.md; b.md', ['summaries/r&amp;d.md', 'b.md']],
+    ['a.md, source: the brief', ['a.md, source: the brief']],
+    ['source: source', ['source: source']],
+  ];
+  for (const [inp, want] of table) {
+    ok(JSON.stringify(MD.splitCitationParts(inp)) === JSON.stringify(want), 'split(' + JSON.stringify(inp) + ')');
+  }
+  ok(table.every(([t]) => JSON.stringify(chat.citationParts(t)) === JSON.stringify(MD.splitCitationParts(t))),
+    '★ server citationParts equals renderer splitCitationParts over the v3.98.1 table');
+
+  // The owner's two real answers, through the real renderer + hook.
+  const wiki = ['summaries/siq-pricing-strategy-2027.md', 'entities/tali-rezun.md',
+    'entities/slovenian-institute-of-quality-and-metrology.md', 'concepts/course-run-threshold.md'];
+  const raw = '[source: summaries/siq-pricing-strategy-2027.md, source: entities/tali-rezun.md, ' +
+    'source: entities/slovenian-institute-of-quality-and-metrology]\n\n' +
+    '[source: summaries/siq-pricing-strategy-2027.md, source: concepts/course-run-threshold.md]';
+  const r = A.renderAnswer(raw, { pages: wiki });
+  ok(JSON.stringify(r.sources.map((x) => x.path)) === JSON.stringify([wiki[0], wiki[1], wiki[2], wiki[3]]),
+    'the owner\'s answer: every part becomes a numbered source, the extension-less one resolved to its .md page');
+  ok((r.html.match(/data-cite-n=/g) || []).length === 5 && !/chat-cite-unresolved/.test(r.html) && !/source:/.test(face(r.html)),
+    '...five chips, none unresolved, no "source:" text left on the face');
+  const semi = A.renderAnswer('[source: entities/tali-rezun.md; concepts/course-run-threshold.md]', { pages: wiki });
+  ok((semi.html.match(/data-cite-n=/g) || []).length === 2, 'a semicolon separates like a comma');
+  const word = A.renderAnswer('[source: catalogue/notes, entities/tali-rezun.md]', { pages: wiki });
+  ok(/chat-cite-unresolved/.test(word.html) && word.sources.length === 1, 'CONTROL: an unknown extension-less path is still unresolved');
+  const noPages = A.renderAnswer('[source: entities/a] and [source: catalogue]');
+  ok(noPages.sources.length === 1 && noPages.sources[0].path === 'entities/a.md', 'without a pages list, `entities/a` resolves to entities/a.md');
+  ok(!noPages.sources.some((x) => x.path === 'catalogue.md'), '...and a bare word is never turned into a page');
+
+  // Unresolved parts never run together.
+  const un = A.renderAnswer('[source: ghost/one.md, ghost/two.md, entities/tali-rezun.md, ghost/three.md]', { pages: wiki });
+  const flat = face(un.html);
+  ok(/ghost\/one\.md ghost\/two\.md/.test(flat) && /ghost\/two\.md/.test(flat) && !/\.mdghost/.test(flat),
+    'unresolved parts are separated by a space');
+  ok(/<\/span> <button/.test(un.html) || /\/span> <span class="chat-cite-unresolved">ghost\/three/.test(un.html),
+    '...and from chips on either side');
+  ok(!/<\/button><span class="chat-cite-unresolved">/.test(un.html) && !/<\/span><button/.test(un.html.replace(/<span class="visually-hidden">[^<]*<\/span>/g, 'V')) ,
+    '...never adjacent to a chip with no gap');
+  // Chips next to chips are unchanged.
+  const cc = A.renderAnswer('[source: entities/tali-rezun.md, concepts/course-run-threshold.md]', { pages: wiki });
+  ok(/<\/button><button/.test(cc.html), 'CONTROL: two chips stay adjacent exactly as before');
+  // A part with markup keeps the existing inert path.
+  const mk = A.renderAnswer('[source: a.md, [[b]]]', { pages: wiki });
+  ok(/chat-cite-unresolved/.test(mk.html) && !/<button/.test(mk.html), 'CONTROL: a capture with markup is still one inert unresolved span');
+  // buildCitedPages resolves the extension-less form.
+  const w2 = wiki.map((p) => ({ path: p, content: '# X' }));
+  ok(JSON.stringify(chat.buildCitedPages(['summaries/siq-pricing-strategy-2027.md, source: entities/slovenian-institute-of-quality-and-metrology'], w2))
+    === JSON.stringify([wiki[0], wiki[2]]), 'server buildCitedPages resolves `source:` prefix and the extension-less path');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }
