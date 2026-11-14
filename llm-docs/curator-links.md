@@ -44,6 +44,7 @@ Each row links straight to that section.
 | 6b. The menu bar icon (Mac app) | The optional macOS menu bar readout | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#6b-the-menu-bar-icon-mac-app |
 | 7. Finding your way around | The left rail and screens | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#7-finding-your-way-around |
 | 8. Ingest a source | Adding a PDF or article | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#8-ingest-a-source |
+| 8. What ingest keeps from a document full of numbers or technical detail | Key Facts, the one-time re-reading, model choice, limits, domain or Documents | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail |
 | 9. Chat with your brain | Asking questions of your wiki | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#9-chat-with-your-brain |
 | 10. Manage your domains | Creating, editing and removing domains | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#10-manage-your-domains |
 | 11. Read a wiki page | Browsing pages inside the app | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#11-read-a-wiki-page |

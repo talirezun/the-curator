@@ -190,6 +190,21 @@ Feed it customer interview transcripts, investor updates, and market research. Q
 **Personal Growth & Self-Analysis**
 Ingest journal entries, book highlights, and podcast notes. Query recurring patterns across months of writing. The Curator provides the objectivity of a third party on your own thinking.
 
+### Brains that hold numbers and technical knowledge *(v3.98.0)*
+
+A brain earns its value over years, and it has to hold more than ideas from articles: how a company evolved from one year to the next, what was charged, what was agreed, how a product is built. Since v3.98.0 a source full of figures, code names or tables keeps them, exactly as written, in a **Key Facts** section ([what ingest keeps](#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail)).
+
+| Brain | What you ingest | What you can ask later |
+|---|---|---|
+| A company or team brain | Annual plans, budgets, quarterly results, price lists | "What did the Pro tier cost in 2026, and in 2027?" |
+| A product brain | Architecture documents, specs, API references, decision records | "Which port does the search service use, and why did we pick Postgres?" |
+| Consultants and freelancers | Proposals, rate cards, contract terms | "What day rate and payment terms did we agree with this client?" |
+| Researchers | Results sections, measurement tables, lab reports | "What was the measured error at 40 °C?" |
+| Teaching and training | Syllabi, schedules, pricing per run of a course | "How much does a run with 14 participants earn?" |
+| An organisation's Shared Brain | Shared policies, prices, targets, agreed figures | The same exact figure for everyone in the team |
+
+Two limits to know before relying on it: a follow-up document's changed figures do not yet reliably update the existing company or product page (they land on the new document's own summary), and cheaper models keep fewer facts than stronger ones.
+
 → See [docs/use-cases.md](use-cases.md) for detailed workflows for each profile.
 
 ---
@@ -3059,7 +3074,77 @@ flowchart TD
 
 **The part that matters most is the merge.** Ingesting a second document about the same person does not create a second page about them — it adds to the one that exists. That is why the wiki gets *better* the more you feed it, rather than just bigger, and it is the whole difference between this and a folder of files.
 
-**Numbers and technical details are kept.** Not everything you ingest is an article. A price list, a budget, a plan, a spec sheet, a contract, a set of results or an architecture document is valuable for its specifics, so its summary page gets a **Key Facts** section: each figure written exactly as the source has it, with its unit, what it means, any condition, and its year, quarter or version when the source says ("Q3 2025 revenue: €3.8M", "as of v2.1, `search-api` listens on port 9310"). Names of endpoints, settings, files and versions are kept letter for letter, in `code` style. The prompt allows a short data table (up to 15 rows), but models rarely write one (0 of 9 measured runs on real sources): expect the figures as bullets. A source with more than 40 table rows says, in the ingest report, that the wiki keeps a selection of its table data and that the full tables stay in the original file in the domain's `raw/` folder. The entity and concept pages keep the figures that belong to them too, so chat can answer and calculate from them later (chat reads a summary's Key Facts when it chooses which pages to load) ("what does the Pro tier cost for 12 seats?"). An ordinary article whose numbers are incidental is ingested exactly as before, with no Key Facts section (The Curator decides by counting the figures, code names and table rows in the source), and a re-ingest or a later source that changes a figure adds the new figure beside the old one rather than dropping it.
+**Numbers and technical details are kept.** A price list, a budget, a plan, a contract, a spec or an architecture document is valuable for its specifics, so its summary page also gets a **Key Facts** section with the figures exactly as the source writes them. Ordinary articles are unchanged. See [What ingest keeps from a document full of numbers or technical detail](#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail) below.
+
+### What ingest keeps from a document full of numbers or technical detail
+
+*(v3.98.0)* A second brain, a team brain or a Shared Brain earns its value over years, and much of what it has to hold is not an idea from an article: what a company charged, what was agreed, how a budget moved from one year to the next, how a product is built. When a source is measurably full of numbers, code names or tables, ingest keeps them.
+
+**When it switches on.** The Curator counts the figures, code-style names and table rows in the source before it asks the AI for pages. Below the threshold the ingest is exactly what it was before v3.98.0, with no Key Facts section.
+
+| Source | Key Facts section? |
+|---|---|
+| Pricing, budgets, plans, reports, contracts, results | Yes |
+| Architecture documents, specs, API references, decision records with code names or tables | Yes |
+| Articles, essays, interviews, notes whose numbers are incidental | No: ingested as before |
+| A technical document written as plain prose, with few code names or figures | May not be recognised, and is then ingested as an ordinary article |
+| An essay dense with dates or citations | Can pass the threshold and get a Key Facts section |
+
+**What it keeps.**
+
+| | What you get |
+|---|---|
+| The summary page | A `## Key Facts` section after Key Takeaways, up to 40 bullets: each figure exactly as written, with its unit, what it is, its condition, and its period, date or version when the source gives one. Never a bare number. |
+| Identifiers | Endpoint paths, configuration keys, file names, field names and version strings stay letter for letter, in `code` style. |
+| Entity and concept pages | Keep the figures that belong to them (the product page keeps its price, the service page its port), with the same period or version. |
+| Tables | A short table (up to 15 rows) is allowed, but models rarely write one: expect bullets. A source with more than 40 table rows says in the ingest report that the wiki keeps a selection; the full tables stay in the original file in the domain's `raw/` folder. |
+| Chat | Reads a summary's Key Facts when it chooses which pages to load, so it can answer and calculate from them ("what do I earn with 14 participants?"). |
+
+**What it looks like.** An excerpt from a summary page, written from a made-up pricing document (synthetic figures):
+
+```markdown
+## Key Takeaways
+- The 2027 workshop moves to a per-seat price with a team discount.
+
+## Key Facts
+- List price 2027: €480 per participant, VAT excluded
+- Team discount: 15% for 5 or more participants from one company
+- Minimum to run a session: 8 participants; maximum: 18
+- Early-bird price: €420 per participant, until 31 March 2027
+- Cancellation fee: 30% of the price, from 14 days before the start
+- Booking API: `POST /v2/bookings`, field `seat_count` (integer, 1–18)
+```
+
+And from a made-up architecture document:
+
+```markdown
+## Key Facts
+- As of v2.1, `search-api` listens on port 9310 and owns the `documents` index
+- `ingest-worker` calls `search-api` over gRPC; retries 3 times, then dead-letters to `ingest-dlq`
+- Config key `SEARCH_TIMEOUT_MS`, default 2500
+- Decision (ADR-014): Postgres over a document store for the auth service, for row-level security
+```
+
+**Reading an older source again.** A source with figures, code names or tables that was ingested before v3.98.0 can be read once more with the same model to add its Key Facts. Drop it in again: the dialog says why and what it will cost before you press, and in a batch the estimate includes it and names the file. It is one reading; after it, reading the file again with that model makes no AI call. Nothing already written changes. See [Re-ingesting a source](#re-ingesting-a-source-and-why-its-safe).
+
+**Which model to use for data-heavy sources.** Cheaper models keep fewer facts. Measured on one real pricing document with 29 facts, 3 runs per model (v3.98.0):
+
+| Model | Facts kept, of 29 |
+|---|---|
+| Gemini 3.5 Flash Lite | about 19 |
+| Claude Haiku 5.5 | about 26 |
+
+If the figures matter, ingest that source with the stronger model (see [§16b](#16b-choosing-your-ai-model)).
+
+**Known limits.**
+
+- **A follow-up document does not yet reliably update the existing pages.** When next year's price list arrives, its changed values land on its own summary page; the company or product page usually keeps the old values (in 1 of 9 measured runs the new values reached it). Neither set of figures is lost: each stays on its own source's summary. Updating the existing pages is the next step.
+- A technical document written as plain prose may not be recognised (see the table above).
+- Large tables are summarised, not copied row by row.
+- Chat matches words exactly: ask with the words the document uses.
+- Through Shared Brain, facts travel as one-line statements, so a table does not cross as a table.
+
+**A domain or a project's Documents?** Ingesting an architecture document or a spec into a domain turns it into wiki pages that compound with every later source: the service page grows as more documents mention it, and chat can answer across them. A project's [Documents](#documents--the-files-that-travel-with-a-project) (foundations) are something else: canonical text kept word for word and handed to an agent at the start of a session, never summarised. Both are valid. Use a domain for knowledge you want to ask and build on; use Documents for the text an agent must work against exactly.
 
 ### Supported file types
 
@@ -3270,7 +3355,7 @@ Two things make this clearer:
 
 The AI reads your document and creates:
 
-- **1 summary page** — the key takeaways in bullet points
+- **1 summary page** — the key takeaways in bullet points, plus a **Key Facts** section when the source is full of figures, code names or tables ([what it keeps](#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail))
 - **Entity pages** — one page for each person, tool, company, or framework mentioned
 - **Concept pages** — one page for each key idea or technique
 - **Cross-references** — every page links to related pages

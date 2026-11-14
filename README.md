@@ -652,6 +652,12 @@ interviews past their own recency bias · architecture teams asking *why* a deci
 ago · anyone orchestrating agents across sessions, tools and machines — building code, most often,
 or research, design, a product.
 
+**It keeps the numbers, not only the ideas** *(v3.98.0)*. A document full of figures, code names
+or tables (pricing, budgets, plans, results, contracts, architecture documents, specs) gets a
+**Key Facts** section with every figure exactly as written, with its period or version — so a
+company, team or product brain can hold what was charged, agreed and built, year after year
+([what ingest keeps](docs/user-guide.md#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail)).
+
 → Worked-through scenarios for every profile, plus cohort, team and monetization patterns:
 [docs/use-cases.md](docs/use-cases.md)
 

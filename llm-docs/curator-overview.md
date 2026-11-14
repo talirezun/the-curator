@@ -10,7 +10,7 @@ optional — what your agents read and save).
 
 The Curator is the context engine, and you run it on your own computer. It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — and carries all three across sessions, machines, AI tools and models.
 
-The building half is what you touch first. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other.
+The building half is what you touch first. You drop in the things you read — PDFs, Markdown and text files: articles, notes, transcripts — and it turns them into a connected personal wiki: a page for every person, tool and idea worth one, all linked to each other. It keeps hard data too: since v3.98.0 a document full of figures, code names or tables (pricing, budgets, plans, results, contracts, architecture documents, specs) keeps them exactly as written, so a brain can hold how a company or product evolved over years, not only ideas from articles.
 
 Every new source updates the pages that already exist instead of adding another copy, so the wiki gets better the more you feed it. You can ask it questions in ordinary language and get answers that point at the pages they came from.
 
@@ -31,6 +31,8 @@ Everything The Curator holds for you is one of three kinds. They are all plain m
 | Canonical documents — foundations, added in version 3.59.0 | A project's architecture, decisions, conventions and roadmap, held verbatim | Replaced whole: never merged, never paraphrased, never summarised by a model. Since v3.69.0 one project can mix documents written here, copied in, and mirrored byte-for-byte from up to 8 folders and code repositories at once |
 
 **Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the rule to learn before using it. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
+
+An architecture document can go either way: ingested into a domain it becomes wiki pages that compound with later sources; added to a project's Documents it is kept verbatim for agents. Both are valid.
 
 The three kinds are what is carried. The three layers below are who reads it.
 
@@ -75,14 +77,17 @@ The tradeoff is real. The writing pass costs money and time up front, and ingest
 | Profile | What they use it for |
 |---|---|
 | Content creators — writers, podcasters, YouTubers | Turning years of reading into a fully cited script or outline instead of facing a blank page |
-| Researchers and academics | Batch-loading 20 or more PDFs and hunting the gaps between methodologies that no existing paper has addressed |
+| Researchers and academics | Batch-loading 20 or more PDFs, hunting the gaps between methodologies, and keeping the actual measurements |
 | Executives and strategists | Synthesising quarterly reports, competitor analyses and interview transcripts past their own recency bias |
 | Software architects and development teams | Asking why a decision was made years ago, from ingested decision records, post-mortems and API specs |
 | Medical and scientific researchers | Building a knowledge graph of genes, proteins, drugs and pathways across a dense literature corpus |
 | Entrepreneurs and startup founders | Grounding strategy in the full history of customer interviews, investor updates and market research |
 | Personal growth and self-analysis | Connecting journal entries, book highlights and therapy notes to see recurring patterns |
+| Companies and teams | A company or team brain tracking plans, budgets, results and pricing year to year, and a product brain built from architecture documents, specs and decision records |
+| Consultants and freelancers | Keeping proposals, rates and agreed terms, exactly as written |
+| Teachers and trainers | Syllabi, schedules and the pricing of each run of a course |
 | Anyone orchestrating agents across sessions, tools and machines — building code, most often, or research, design, a product | Carrying where the work stands from one session, tool, model or computer to the next |
-| Educational cohorts, research teams, consultancies and product teams | Building one collective wiki together through Shared Brain, without merging anyone's private notes |
+| Educational cohorts, research teams, consultancies and product teams | Building one collective wiki together through Shared Brain, holding exact shared facts, without merging anyone's private notes |
 | Independent experts, educators and consultancies | Selling recurring access to a curated brain they maintain |
 
 ## Which of the two things is it for me?
@@ -253,7 +258,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 
 ## What version is it, and is the project active?
 
-Version **3.71.0**, as of 24 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 95 stars and 15 forks on 23 September 2026; the live count is on the repository page.
+Version **3.98.0**, as of 14 November 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 95 stars and 15 forks on 23 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 

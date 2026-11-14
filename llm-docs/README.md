@@ -100,6 +100,11 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
+**Outstanding for v3.98.0**: ingest keeps a source's hard data (Key Facts, the one-time
+re-reading, the table warning, model choice, the limits, domain versus Documents).
+`curator-user-guide.md`, `curator-overview.md` and `curator-links.md` changed; re-upload the whole
+set to Lumina, then remove this note.
+
 **Outstanding for v3.69.0** (supersedes the v3.68.0 note below — this documentation sync covers
 v3.68.1 and v3.69.0 together): project-wide foundations "ownership" is **retired** — a project may
 now hold documents written here, copied in, and mirrored from up to 8 folders and/or GitHub

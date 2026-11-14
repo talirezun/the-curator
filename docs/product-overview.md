@@ -153,7 +153,7 @@ The Curator does the opposite. When you ingest a source, a model **reads it once
 persistent pages**: one summary page for the source, plus entity pages (people, tools,
 companies, datasets) and concept pages (ideas, techniques, principles). Every later ingest
 **updates those same pages** rather than creating duplicates, and inserts cross-links in both
-directions. The knowledge is compiled once and kept current, not re-derived per query.
+directions. The knowledge is compiled once and kept current, not re-derived per query. Since v3.98.0 a source full of figures, code names or tables also keeps them exactly as written, in a **Key Facts** section on its summary ([what ingest keeps](user-guide.md#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail)).
 
 | | **Retrieval (RAG)** | **The Curator (compiled)** |
 |---|---|---|
