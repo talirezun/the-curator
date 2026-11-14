@@ -309,6 +309,8 @@ Default knowledge folder: `~/Library/Application Support/The Curator/domains` in
 
 Only text-based PDFs work. A scanned PDF is an image of a page and has no extractable text; there is no OCR step. Run OCR first — macOS Preview → Tools, or `ocrmypdf` — or copy the text into a `.txt` file.
 
+A `.txt` or `.md` file need not be UTF-8: Windows-1252 / ISO-8859-1, Windows-1250, ISO-8859-2 and UTF-16 with a byte-order mark are recognised and converted, so č, ž and é arrive intact. The ingest's report says when a file was converted and which encoding was assumed; the copy in `raw/` is kept exactly as uploaded.
+
 ## How do I ingest a document?
 
 1. Click **Domains** in the rail, pick your destination domain, and open its **Ingest** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
@@ -930,7 +932,7 @@ Three different causes that look the same. You are running an older Mac app buil
 
 ## Why does an ingest spin for a long time and then fail?
 
-Check your internet connection, since the app needs to reach the provider's API. Check that your key is still valid in the provider's console. Try a smaller file first to confirm the setup works. If the failure mentions `log.md`, your pages were written safely and only the last step — recording the ingest in the domain's log file — failed because that file is missing; this only happens on a domain whose folders were created by hand. Create an empty `domains/<your-domain>/wiki/log.md` and re-ingest.
+Check your internet connection, since the app needs to reach the provider's API. Check that your key is still valid in the provider's console. Try a smaller file first to confirm the setup works. A missing `wiki/log.md` or `wiki/index.md` no longer fails an ingest: it is created. If the ingest is refused at once with "Nothing was sent to the AI and nothing was charged", it found something it could not write to before spending anything (a file where a page folder should be, `log.md` or `index.md` as a folder or a symbolic link, a read-only folder); the message names the path. Fix that and ingest again.
 
 ## Why do I get 429 or "Rate limit exceeded" during ingest?
 

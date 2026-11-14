@@ -3156,6 +3156,8 @@ If the figures matter, ingest that source with the stronger model (see [§16b](#
 
 > **PDF tip:** Only text-based PDFs work. If a PDF is a scanned image (like a photo of a page), the text cannot be extracted. In that case, copy-paste the text into a `.txt` file instead.
 
+> **Text encodings:** `.txt` and `.md` files are best saved as UTF-8, but older files saved as Windows-1252 / ISO-8859-1 (Western European), Windows-1250 or ISO-8859-2 (Central European, e.g. Slovene č š ž), or UTF-16 with a byte-order mark are recognised and converted, so letters like č, ž and é arrive intact. The ingest's report says when a file was converted and which encoding was assumed; the copy kept in `raw/` stays exactly as you uploaded it. If letters still look wrong, re-save the file as UTF-8 and ingest it again.
+
 ### How to ingest
 
 ![The Ingest section of the Early Computing demo domain with a two-file batch staged. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The section heads 'Batch ingest — 2 files' over '1.5 KB total · Gemini · Flash Lite 2.5', a Domain picker, a dashed drop zone reading Drop more files here, and WILL BE INGESTED (LARGEST FIRST) listing manchester-baby.md (875 B) and the-z3.md (615 B), each with a remove cross. A card reads Estimated cost ≈$0.0019, sized against this wiki's real page list, and Estimated tokens 5,192 in / 3,334 out · 2 AI calls, with the line 'Runs on Flash Lite 2.5 · ≈9k tokens · ≈$0.0019 · Change model' and a 'How this range was worked out' info mark. Under it an optional Budget cap field reading No cap, an unticked 'Overwrite existing pages for files already ingested' box, and three buttons: a violet-tinted Start batch, Add more files and Clear all.](images/curator-ingest.png)
@@ -8747,9 +8749,11 @@ Press `Cmd/Ctrl + R` in Obsidian to force a refresh, or close and reopen the vau
 
 See [*Why didn't the ingest create a page for X?*](#why-didnt-the-ingest-create-a-page-for-x) in §8: check the ingest's report (also in `wiki/log.md`), look for the page under a similar name or in the other folder, run Wiki health, then re-ingest or ask your agent to create it. Chat cannot tell you why — it never sees how an ingest ran.
 
-**An ingest (single-file or batch) fails right at the end with a cryptic error mentioning `log.md`**
+**An ingest is refused with "Nothing was sent to the AI and nothing was charged"**
 
-This means the AI already did its work and your pages are safely written to disk — the failure happens at the very last step, recording the ingest in the domain's log file, because that log file is missing. This can only happen on a domain whose folder structure was created by hand rather than through the app (creating a domain normally always creates the log file). **Nothing was lost.** The fix: create an empty file at `domains/<your-domain>/wiki/log.md`, then re-ingest the same file — re-ingesting is always safe (see *Re-ingesting a source* above) and this time the log step will succeed.
+Before its first AI call, an ingest checks that it can save what it will be paid for. A wiki built elsewhere (Obsidian, Logseq, a plain folder) sometimes has a file where The Curator needs a folder (`wiki/entities`, `wiki/concepts`, `wiki/summaries`), a folder or a symbolic link where it keeps a file (`wiki/log.md`, `wiki/index.md`, the source's summary page), or a read-only folder. The message names the path and what to change; fix it and ingest again. A **missing** `log.md`, `index.md` or page folder is not a problem: the ingest creates it. (Before this check, a domain without `log.md` failed at the very last step, after the AI calls.)
+
+If something changes under a running ingest (a sync, another app) and one page cannot be saved, the report names that page and every other page is still written. If `log.md` cannot be updated at the end, the report says so and the pages stay saved.
 
 **"The Curator could not start" dialog appears when clicking the Dock icon**
 

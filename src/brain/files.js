@@ -2009,7 +2009,18 @@ export async function writePage(domain, relativePath, content, opts = {}) {
 
 export async function appendLog(domain, entry) {
   const logFile = path.join(wikiPath(domain), 'log.md');
-  const existing = await readFile(logFile, 'utf8');
+  // A wiki built elsewhere (Obsidian, Logseq, a plain folder) often has no
+  // log.md. It is created, with the heading a new domain gets, rather than
+  // failing a write whose pages are already on disk (and, for an ingest, paid
+  // for). Any other read error still throws.
+  let existing;
+  try {
+    existing = await readFile(logFile, 'utf8');
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+    await mkdir(path.dirname(logFile), { recursive: true });
+    existing = `# Ingest Log — ${domain}\n`;
+  }
   await writeFileAtomic(logFile, existing + entry + '\n', 'utf8');
 }
 

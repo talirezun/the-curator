@@ -37,6 +37,8 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
+import { decodeTextBuffer, conversionNotice } from './text-decode.js';
+import { assertIngestCanWrite } from './ingest-preflight.js';
 import {
   HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
   HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
@@ -169,7 +171,8 @@ export async function sourceTextForGate(filePath, originalName) {
       const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
       return String((await pdfParse(await readFile(filePath))).text || '').slice(0, 80_000);
     }
-    return (await readFile(filePath, 'utf8')).slice(0, 80_000);
+    // The same decode as extractText, so the gate reads what the model will read.
+    return decodeTextBuffer(await readFile(filePath)).text.slice(0, 80_000);
   } catch { return null; }
 }
 
@@ -633,17 +636,27 @@ export function indexForPrompt(index, sourceText, budgetChars = INDEX_PROMPT_BUD
  * implementation, so what a reader sees can never disagree with what the
  * LLM saw at ingest time. Callers outside ingest must cap and binary-check
  * the result themselves (see readRawSourceText in raw-store.js): this
- * function falls through to a utf8 read for any non-PDF, and Node's utf8
- * decoder substitutes U+FFFD rather than failing on binary input.
+ * function decodes any non-PDF as text (decodeTextBuffer), and binary input
+ * gets the old lossy utf8 read, which substitutes U+FFFD rather than failing.
  */
 export async function extractText(filePath) {
+  return (await extractTextWithEncoding(filePath)).text;
+}
+
+/**
+ * extractText, plus how a text source was decoded (see src/brain/text-decode.js):
+ * `{ text, encoding, converted, label }`. A valid UTF-8 file reads exactly as the
+ * old `readFile(p, 'utf8')` did; a Windows-1252 / -1250 / ISO-8859-2 file is
+ * decoded as that, and `converted` says so. A PDF is never `converted`.
+ */
+export async function extractTextWithEncoding(filePath) {
   if (/\.pdf$/i.test(String(filePath))) {   // `.PDF` too, as sourceTextForGate tests it
     const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
     const buffer = await readFile(filePath);
     const data = await pdfParse(buffer);
-    return data.text;
+    return { text: data.text, encoding: 'pdf', converted: false, label: 'PDF' };
   }
-  return readFile(filePath, 'utf8');
+  return decodeTextBuffer(await readFile(filePath));
 }
 
 /**
@@ -661,7 +674,7 @@ export async function extractText(filePath) {
  * so a user whose empty `.md` was refused was told "this usually means the PDF
  * is image-only … run ocrmypdf". The Curator ingests .txt, .md and .pdf
  * (`src/routes/ingest.js` fileFilter), and only .pdf goes through pdf-parse —
- * for the other two `extractText` is a plain utf8 `readFile`, so there is no
+ * for the other two `extractText` decodes the bytes as text (text-decode.js), so there is no
  * OCR path and none of that advice can ever apply.
  *
  * This keeps the v3.0.1-beta.4 property the whole error surface rests on: a
@@ -3489,6 +3502,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     warnings.push(resolvedSummary.warning);
   }
 
+  // Before anything is saved or spent: can this ingest finish writing? A wiki
+  // built elsewhere may have a file where a folder should be, a log.md that is
+  // a folder or a link, or a read-only folder. Each would otherwise fail AFTER
+  // every paid call (see ingest-preflight.js). A missing log.md, index.md or
+  // page folder is not a problem: those are created.
+  await assertIngestCanWrite(domain, summaryPath);
+
   // Save to raw/
   progress(4, 'Saving source file…');
   const rawDir = rawPath(domain);
@@ -3585,7 +3605,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const MIN_TEXT_LEN = 200;          // empirical: useful sources are far longer
   let fullText;
   try {
-    fullText = await extractText(destPath);
+    const extracted = await extractTextWithEncoding(destPath);
+    fullText = extracted.text;
+    if (extracted.converted) {
+      const note = conversionNotice(originalName, extracted);
+      console.warn(`[ingest] ${note}`);
+      warnings.push(note);
+    }
   } catch (err) {
     // Best-effort cleanup of the raw file so the user can retry without
     // hitting the duplicate-check 409.
@@ -3991,6 +4017,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const canonicalPaths = [];
   const changes = [];
   const writeRecords = [];
+  const writeFailures = [];
   let repeatLeftOut = 0;
   const plannedFolds = new Map(
     (Array.isArray(result.outlinePages) ? result.outlinePages : [])
@@ -4004,12 +4031,25 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     // A fold is on the entry itself (single-pass) or on its plan entry
     // (multi-phase: the batch reply is a new object naming the redirected path).
     const foldedFrom = page[FOLDED_FROM] || plannedFolds.get(withMdExtension(page.path));
-    const record = await writePage(domain, page.path, page.content, {
-      onWarn: (w) => warnings.push(w),
-      splitHeadings: true,   // fresh model output: a swallowed template heading may be split
-      ...(foldedFrom ? { foldedFrom } : {}),
-      ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
-    });
+    // One page that cannot be written (a page file that is a link or a folder,
+    // a disk error) must not throw away every other page this run paid for:
+    // it is named in a warning and the rest are written. Only when NOT ONE page
+    // could be written does the ingest fail, below.
+    let record;
+    try {
+      record = await writePage(domain, page.path, page.content, {
+        onWarn: (w) => warnings.push(w),
+        splitHeadings: true,   // fresh model output: a swallowed template heading may be split
+        ...(foldedFrom ? { foldedFrom } : {}),
+        ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
+      });
+    } catch (err) {
+      record = null;
+      writeFailures.push({ path: page.path, message: String(err && err.message || err).slice(0, 200) });
+      const msg = `The page "${page.path}" could not be saved, so its content did not make it into the wiki (${String(err && err.message || err).slice(0, 200)}).`;
+      console.warn(`[ingest] ${msg}`);
+      warnings.push(msg);
+    }
     writeRecords.push(record ? { originalPath: page.path, record } : null);
     if (record) {
       canonicalPaths.push(record.canonPath);
@@ -4026,6 +4066,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     }
   }
 
+  if (writeFailures.length > 0 && canonicalPaths.length === 0) {
+    throw new Error(
+      `The AI's reply was received (and charged), but not one of its ${writeFailures.length} page(s) could be saved: ` +
+      `${writeFailures[0].message}. Check that the domain's wiki folder is writable, then ingest the source again.`
+    );
+  }
+
   // Which pages this ingest created, beside the wiki rather than in it, so the next
   // duplicate scan compares them first. Written here because the pages are on disk
   // now, whatever happens below. Never fails an ingest.
@@ -4034,7 +4081,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
 
   // Every page of this ingest is on disk now, so a link to one written later can
   // resolve. Before the backlink sync below, which reads these lists.
-  await tidyWrittenLinks(domain, canonicalPaths);
+  // From here on the pages are on disk and the calls are paid for. A step below
+  // that fails (a file changed under us, a disk error) is said in a warning and
+  // the ingest goes on: it never throws the paid result away.
+  const afterWrite = async (what, fn, sink = warnings) => {
+    try { return await fn(); } catch (err) {
+      const msg = `${what} did not finish (${String(err && err.message || err).slice(0, 200)}). The pages above were saved; run Wiki health to tidy what is left.`;
+      console.warn(`[ingest] ${msg}`);
+      sink.push(msg);
+      return null;
+    }
+  };
+  await afterWrite('Tidying the new pages\' links', () => tidyWrittenLinks(domain, canonicalPaths));
 
   if (repeatPlan.kind === 'key-facts') {
     // Said as it is: the reading is recorded whatever it wrote, so the promise holds.
@@ -4067,7 +4125,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // (dr-tali-rezun → tali-rezun) appear correctly in the summary and backlinks.
   progress(93, 'Syncing entity backlinks…');
   const summaryCanonPath = canonicalPaths.find(p => p.startsWith('summaries/'));
-  if (summaryCanonPath) {
+  if (summaryCanonPath) await afterWrite('Updating the summary\'s page lists', async () => {
     await syncSummaryEntities(domain, summaryCanonPath, canonicalPaths);
     // What the model left off, added without touching a line it wrote. A title and a
     // source are known without asking, and Key Takeaways come from this run's reply.
@@ -4085,7 +4143,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       const w = summaryShapeWarning(summaryCanonPath, saved, originalName);
       if (w) { console.warn(`[ingest] ${w}`); warnings.push(w); }
     } catch { /* unreadable → nothing to judge; never fails an ingest */ }
-  }
+  });
 
   // v3.0.1-beta.1: programmatic index merge replaces the old LLM-driven
   // Phase-3 index regeneration. v3.83.0: EVERY page this ingest touched —
@@ -4106,7 +4164,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       }
     }
   }
-  const indexRecord = await ensurePagesInIndex(domain, indexEntriesFrom(result.pages, writeRecords));
+  const indexRecord = await afterWrite('Adding the new pages to index.md', () => ensurePagesInIndex(domain, indexEntriesFrom(result.pages, writeRecords)));
   if (indexRecord) changes.push(indexRecord);
 
   // v3.0.1-beta.11: post-batch hub-page linkification.
@@ -4179,7 +4237,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // Greenwich read "dated ahead". `today` itself is left alone: it is inside
   // the batch prompt's byte-stable prefix.
   const logEntry = `## [${localDateStamp()}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
-  await appendLog(domain, logEntry);
+  await afterWrite('Adding this ingest to log.md', () => appendLog(domain, logEntry), reportWarnings);
   // The pages are on disk: only now does this source count as ingested.
   await appendManifestRecord(domain, {
     ...manifestRecord,

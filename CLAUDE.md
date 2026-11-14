@@ -155,6 +155,7 @@ llm-docs/            — self-contained markdown written for language models (th
 
 ### Ingest → [decisions-knowledge.md#ingest](docs/dev/decisions-knowledge.md#ingest)
 - The batch prompt's stable prefix must be byte-identical across batches, or caching silently costs more.
+- An ingest checks it can write BEFORE its first paid call (`assertIngestCanWrite`; a missing `log.md`/`index.md`/page folder is created, not refused) and never throws a paid result away after it; text sources are decoded by `decodeTextBuffer` (valid UTF-8 byte-identical, 1252 by table — never Node's `TextDecoder('windows-1252')`), `raw/` keeps the original bytes.
 - An ingest fold redirects only a spelling variant (`isSpellingVariant`) and goes through the same no-lost-line guarantee; Jaccard folding is retired.
 - Exact-name reuse never overwrites: old text stays and new wording is added only when mostly new (threshold 0.5, notice on drop); a source with the same sha256 already completed leaves existing pages byte-identical.
 - The `index.md` embedded in the outline and single-pass prompts is capped at `INDEX_PROMPT_BUDGET_CHARS` (150,000) by `indexForPrompt`, INSIDE the builders; under the cap the prompt is byte-identical, over it the rows most related to the source are kept, and it logs to stderr only (nothing the model produced is dropped). A complete index without this cap overflows Haiku 4.5's window.
