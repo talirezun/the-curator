@@ -148,12 +148,35 @@ try {
       'd/wiki/summaries/a.md', 'd/state/p/s/m/current.md', 'd/conversations/x.json', 'd/wiki/../wiki/log.md']) {
       eq(records.recordKind(p), null, `never a record file: ${p}`);
     }
+    const L = (b, o, t) => records.mergeLineRecords(b == null ? null : Buffer.from(b, 'latin1'), Buffer.from(o, 'latin1'), Buffer.from(t, 'latin1')).toString('latin1');
+    const G = (b, o, t) => records.mergeLogBlocks(b == null ? null : Buffer.from(b, 'latin1'), Buffer.from(o, 'latin1'), Buffer.from(t, 'latin1')).toString('latin1');
     const base = 'a\nb\nc\n';
-    eq(records.mergeLineRecords(base, 'a\nb\nc\nours\n', 'a\nb\nc\ntheirs\n'), 'a\nb\nc\nours\ntheirs\n', 'both appends kept, ours first');
-    eq(records.mergeLineRecords(base, 'a\nb\nc\nnew\n', 'a\nb\n'), 'a\nb\nnew\n', 'a deletion by theirs is respected');
-    eq(records.mergeLineRecords(base, 'a\n', 'a\nb\nc\nnew\n'), 'a\nnew\n', 'a deletion by ours is respected');
-    eq(records.mergeLineRecords(base, 'a\nb\nc\nsame\n', 'a\nb\nc\nsame\n'), 'a\nb\nc\nsame\n', 'an identical append appears once');
-    eq(records.mergeLineRecords('', 'x\n', 'y\n'), 'x\ny\n', 'no base: both kept');
+    eq(L(base, 'a\nb\nc\nours\n', 'a\nb\nc\ntheirs\n'), 'a\nb\nc\nours\ntheirs\n', 'both appends kept, ours first');
+    eq(L(base, 'a\nb\nc\nnew\n', 'a\nb\n'), 'a\nb\nnew\n', 'a deletion by theirs is respected');
+    eq(L(base, 'a\n', 'a\nb\nc\nnew\n'), 'a\nnew\n', 'a deletion by ours is respected');
+    eq(L(base, 'a\nb\nc\nsame\n', 'a\nb\nc\nsame\n'), 'a\nb\nc\nsame\n', 'an identical append on both sides appears once');
+    eq(L(null, 'x\n', 'y\n'), 'x\ny\n', 'no base: both kept');
+    eq(L(base, 'a\nb\nc\no\n', 'a\nb\nc\ndup\ndup\n'), 'a\nb\nc\no\ndup\ndup\n', 'a line the other side added twice stays twice (multiplicity)');
+    eq(L('a\na\n', 'a\na\nx\n', 'a\n'), 'a\nx\n', 'removing one of two identical lines removes one');
+    // Bytes, not text: a non-UTF-8 byte and CRLF round-trip exactly.
+    const bin = Buffer.from([0x7b, 0x22, 0xe9, 0x22, 0x7d, 0x0a]);   // {"\xe9"}\n, invalid UTF-8
+    const out = records.mergeLineRecords(Buffer.from('a\n'), Buffer.concat([Buffer.from('a\n'), bin]), Buffer.from('a\nt\n'));
+    ok(out.equals(Buffer.concat([Buffer.from('a\n'), bin, Buffer.from('t\n')])), 'a non-UTF-8 byte round-trips exactly (no U+FFFD)');
+    eq(L('a\r\nb\r\n', 'a\r\nb\r\no\r\n', 'a\r\nb\r\nt\r\n'), 'a\r\nb\r\no\r\nt\r\n', 'CRLF line endings are kept');
+    eq(L('a\nb\n', 'a\nb\no\n', 'a\r\nb\r\n'), 'a\nb\no\n', 'the same line LF here and CRLF there is one record');
+    // log.md: fences, untouched bytes, no inserted blank lines.
+    const foreign = '# Log\nnotes  \n## e1\n```\n## not a heading\n```\n## e2\ntext   \n';
+    eq(G(foreign, foreign + '## mine\n', foreign + '## theirs\n'), foreign + '## mine\n## theirs\n',
+      'a foreign log keeps every byte; nothing inserted; a ## inside a code fence is not an entry');
+    eq(G(foreign, foreign, foreign.replace('## e2\ntext   \n', '')), '# Log\nnotes  \n## e1\n```\n## not a heading\n```\n',
+      'an entry removed on the other side is removed whole, fenced text untouched');
+    eq(G(foreign, foreign + '## mine\n', '# Log\nnotes  \n## e2\ntext   \n'), '# Log\nnotes  \n## e2\ntext   \n## mine\n',
+      'an entry holding a fenced "## " line is one entry: removed on the other side, it goes whole');
+    eq(G(foreign, foreign + '## mine\n', foreign.replace('## not a heading\n', '## not a heading\nedited\n')),
+      '# Log\nnotes  \n## e2\ntext   \n## mine\n## e1\n```\n## not a heading\nedited\n```\n',
+      'an edit inside the fence moves the WHOLE entry, never splits it at the fenced "## "');
+    eq(G('# L\n\n','# L\n\n## a\nx\n\n', '# L\n\n## b\nx\n\n## b\nx\n\n'), '# L\n\n## a\nx\n\n## b\nx\n\n## b\nx\n\n',
+      'an entry the other side wrote twice stays twice');
   }
 
   section('1. Two computers append to every record file, then sync: nothing is dropped');
@@ -233,6 +256,56 @@ try {
       ok(t.startsWith('# Log (renamed)\n') && t.includes('## [2026-11-14] ingest | Later\n'),
         `a header change on one side and an entry on the other both land, header first (computer ${c.name.toUpperCase()})`);
     }
+  }
+
+  section('3b. Bytes, CRLF and a foreign log survive a real two-computer sync');
+  {
+    const X = await pair();
+    const bin = Buffer.from([0x7b, 0x22, 0xff, 0xfe, 0x22, 0x7d, 0x0a]);
+    await race(X,
+      (d) => appendFileSync(path.join(d, MANIFEST), bin),
+      (d) => append(d, MANIFEST, '{"filename":"b.md"}\r\n'));
+    for (const c of [X.A, X.B]) {
+      const buf = readFileSync(path.join(c.domains, MANIFEST));
+      ok(buf.includes(bin), `a non-UTF-8 record keeps its exact bytes on computer ${c.name.toUpperCase()}`);
+      ok(buf.includes(Buffer.from('{"filename":"b.md"}\r\n')), `a CRLF record keeps its CRLF on computer ${c.name.toUpperCase()}`);
+    }
+    const Y = await pair();
+    const foreignLog = '# Log\nhand note  \n## [2026-11-01] e1\n```\n## inside a fence\n```\n';
+    Y.A.use(); write(Y.A.domains, LOG, foreignLog); await sync.sync();
+    Y.B.use(); await pull();
+    await race(Y, (d) => append(d, LOG, '## [2026-11-14] from A\n- a\n'), (d) => append(d, LOG, '## [2026-11-14] from B\n- b\n'));
+    for (const c of [Y.A, Y.B]) {
+      eq(read(c.domains, LOG), foreignLog + '## [2026-11-14] from B\n- b\n## [2026-11-14] from A\n- a\n',
+        `a foreign log gains both entries and nothing else (computer ${c.name.toUpperCase()})`);
+    }
+  }
+
+  section('3c. A sync killed between its merge and the record step heals on the next sync (audit case 23)');
+  {
+    const K = await pair();
+    K.A.use(); append(K.A.domains, MANIFEST, '{"filename":"from-a.md"}\n'); await sync.sync();
+    K.B.use(); append(K.B.domains, MANIFEST, '{"filename":"from-b.md"}\n');
+    // What a sync killed right after git's merge leaves behind: the old merge, no record step.
+    const G = `git --git-dir="${K.B.gitDir}" --work-tree="${K.B.domains}"`;
+    sh(`${G} add -A && ${G} commit -qm local && ${G} pull -q --no-rebase -X theirs origin main`);
+    ok(!read(K.B.domains, MANIFEST).includes('from-b.md'), 'PREMISE: the killed sync dropped this computer\'s line');
+    await sync.sync();
+    for (const c of [K.B]) {
+      const t = read(c.domains, MANIFEST);
+      ok(t.includes('from-a.md') && t.includes('from-b.md'), 'the next sync brings the dropped line back');
+    }
+    K.A.use(); await pull();
+    ok(read(K.A.domains, MANIFEST).includes('from-b.md'), 'and the other computer receives it');
+    // A file changed after the merge is never overwritten by the heal.
+    const K2 = await pair();
+    K2.A.use(); append(K2.A.domains, MANIFEST, '{"filename":"a2.md"}\n'); await sync.sync();
+    K2.B.use(); append(K2.B.domains, MANIFEST, '{"filename":"b2.md"}\n');
+    const G2 = `git --git-dir="${K2.B.gitDir}" --work-tree="${K2.B.domains}"`;
+    sh(`${G2} add -A && ${G2} commit -qm local && ${G2} pull -q --no-rebase -X theirs origin main`);
+    append(K2.B.domains, MANIFEST, '{"filename":"after-crash.md"}\n');
+    await sync.sync();
+    ok(read(K2.B.domains, MANIFEST).includes('after-crash.md'), 'a line written after the crash is never overwritten by the heal');
   }
 
   section('4. What must not change');

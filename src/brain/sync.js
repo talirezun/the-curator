@@ -390,9 +390,10 @@ async function loadConfig() {
 // top (nothing is amended, nothing pushed is rewritten). A fast-forward has
 // nothing to reconcile. Wiki pages and index.md are never touched here.
 
+/** A committed file's exact bytes, or null when that revision has no such file. */
 async function showBlob(rev, p, opts) {
   try {
-    const { stdout } = await gitArgv(['--literal-pathspecs', 'show', `${rev}:${p}`], opts);
+    const { stdout } = await gitArgv(['show', `${rev}:${p}`], { ...opts, raw: true });
     return stdout;
   } catch { return null; }
 }
@@ -406,17 +407,29 @@ async function changedSince(base, rev, opts) {
 }
 
 /**
- * Returns the paths it rewrote. `preMergeHead` is HEAD before the merge; the
- * step runs only when HEAD is now a merge commit whose first parent is it.
+ * Re-merges the record files of the merge commit at HEAD. Returns the paths it
+ * rewrote.
+ *
+ * `preMergeHead`: the HEAD this sync's merge started from, so a merge commit
+ * whose first parent is anything else is left alone. `null` is the SELF-HEAL
+ * call at the start of pull(): it reconciles whatever merge commit HEAD is, so a
+ * sync killed between its merge and this step is completed on the next sync
+ * (provided nothing was committed on top since; otherwise the earlier merge is
+ * no longer HEAD and is not revisited). Idempotent: a merge already reconciled
+ * is followed by its own commit, so HEAD is no longer it.
+ *
+ * A file is written only when it still holds exactly what the merge committed.
+ * One the user (or an ingest) has changed since is left alone, so this can never
+ * overwrite work that is not in git yet.
  */
 async function reconcileRecordFiles(preMergeHead, opts = {}) {
-  if (!preMergeHead) return [];
   let ours; let theirs;
   try {
     ours = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^1'], opts)).stdout.trim();
     theirs = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^2'], opts)).stdout.trim();
   } catch { return []; }
-  if (!ours || !theirs || ours !== preMergeHead) return [];
+  if (!ours || !theirs) return [];
+  if (preMergeHead !== null && ours !== preMergeHead) return [];
   let base = '';
   try { base = (await gitArgv(['merge-base', ours, theirs], opts)).stdout.trim(); } catch { /* unrelated histories */ }
 
@@ -429,13 +442,15 @@ async function reconcileRecordFiles(preMergeHead, opts = {}) {
     const o = await showBlob(ours, p, opts);
     const t = await showBlob(theirs, p, opts);
     if (o === null || t === null) continue;   // a deletion on one side: git's answer stands
-    const b = base ? await showBlob(base, p, opts) : null;
-    const merged = mergeRecordFile(kind, b ?? '', o, t);
+    const committed = await showBlob('HEAD', p, opts);
+    if (committed === null) continue;
     const abs = path.join(getDomainsDir(), p);
     let current = null;
-    try { current = await readFile(abs, 'utf8'); } catch { /* removed */ }
-    if (current === merged) continue;
-    await writeFileAtomic(abs, merged, 'utf8');
+    try { current = await readFile(abs); } catch { /* removed since */ }
+    if (!current || !current.equals(committed)) continue;   // changed since the merge: not ours to touch
+    const merged = mergeRecordFile(kind, base ? await showBlob(base, p, opts) : null, o, t);
+    if (merged.equals(committed)) continue;
+    await writeFileAtomic(abs, merged);
     await gitArgv(['--literal-pathspecs', 'add', '--', p], opts);
     rewritten.push(p);
   }
@@ -1166,7 +1181,8 @@ function gitArgv(args, opts = {}) {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0 || (opts.okCodes || []).includes(code)) {
-        resolve({ stdout: Buffer.concat(out).toString('utf8'), code });
+        const buf = Buffer.concat(out);
+        resolve({ stdout: opts.raw ? buf : buf.toString('utf8'), code });
       } else {
         reject(new Error(sanitize(`git ${args[0]} failed: ${Buffer.concat(errOut).toString('utf8')}`)));
       }
@@ -2256,6 +2272,10 @@ export async function pull() {
   // might also want to write.
   await ensureDomainsGitignore();
   const safety = await refreshSyncSafety();
+
+  // Self-heal: a sync killed between its merge and the record step below left
+  // HEAD on an unreconciled merge. Before the auto-save, which would bury it.
+  await reconcileRecordFiles(null);
 
   // Auto-commit local changes so the pull merge succeeds — unchanged,
   // pre-existing behaviour (real content, unrelated to hygiene).
