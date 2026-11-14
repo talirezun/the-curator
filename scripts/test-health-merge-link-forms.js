@@ -416,6 +416,61 @@ section('10. The audit\'s cases: code means one thing, and the forms it found');
   ok(scan.folderPrefixLinks.length === 0, '10.18 …and the scan does not call that folder name a mistake', JSON.stringify(scan.folderPrefixLinks));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('11. The re-audit\'s cases');
+{
+  const d = mkDomain({
+    'entities/hand-off.md': page('Hand-off', 'entity'),
+    'entities/handoff.md': page('Handoff', 'entity'),
+    'entities/hub.md': [
+      '# Hub', '',
+      'Alias with code: [[handoff|`hand off`]] here.', '',
+      'Code link text: [`handoff`](handoff.md) done.', '',
+      '[Note]: handoff happens at night', '[Q]: handoff', '[N2]: handoff.md is where it lives', '', '[real]: handoff.md "Title"', '',
+      '# Heading with ` tick', '[[handoff]] after heading `', '',
+      '> quote `code [[handoff]]', '> still code` and [[handoff]] live', '',
+    ].join('\n'),
+  });
+  const s0 = await health.scanWiki(d.name, { noCache: true });
+  await health.fixIssue(d.name, 'semanticDupe', { keepSlug: 'hand-off', keepFolder: 'entities', removeSlug: 'handoff', removeFolder: 'entities' });
+  const s1 = await health.scanWiki(d.name, { noCache: true });
+  const hub = read(d, 'entities/hub.md');
+  const has = (line, label) => ok(hub.split('\n').includes(line), label, hub);
+  ok(s1.brokenLinks.length <= s0.brokenLinks.length && s1.brokenLinks.length === 0, '11.0 nothing reads as broken after the merge', JSON.stringify(s1.brokenLinks));
+  has('Alias with code: [[hand-off|`hand off`]] here.', '11.1 a link whose alias holds code is a link, repointed, its code kept');
+  has('Code link text: [`handoff`](hand-off.md) done.', '11.2 a markdown link whose text is code is repointed, its code kept');
+  has('[Note]: handoff happens at night', '11.3 a sentence after `[Note]:` is prose, never a destination');
+  has('[Q]: handoff', '11.4 a definition with no .md is left alone');
+  has('[N2]: handoff.md is where it lives', '11.4b nor one followed by words');
+  has('[real]: hand-off.md "Title"', '11.5 a real definition is repointed, its title kept');
+  has('[[hand-off]] after heading `', '11.6 a heading is one line: its backtick opens nothing on the next');
+  has('> quote `code [[handoff]]', '11.7 a code span over two quote lines is code…');
+  has('> still code` and [[hand-off]] live', '11.8 …and the link after it is repointed');
+}
+{
+  // Another case: one loose match ACROSS all folders, or none.
+  const d = mkDomain({
+    'entities/hand-off.md': page('Hand-off', 'entity'),
+    'entities/handoff.md': page('Handoff', 'entity'),
+    'concepts/Handoff.md': page('Another Handoff', 'concept'),
+    'summaries/s.md': '# S\n\n- [[HANDOFF]] two pages have this name loosely\n- [[handoff]] exact\n',
+  });
+  await health.fixIssue(d.name, 'semanticDupe', { keepSlug: 'hand-off', keepFolder: 'entities', removeSlug: 'handoff', removeFolder: 'entities' });
+  ok(read(d, 'summaries/s.md') === '# S\n\n- [[HANDOFF]] two pages have this name loosely\n- [[hand-off]] exact\n',
+    '11.9 a loose name two folders share reaches neither, and stays', read(d, 'summaries/s.md'));
+}
+{
+  // A later ingest's link tidy keeps the folder a merge wrote on purpose.
+  const files = await import(path.join(REPO, 'src/brain/files.js'));
+  const d = mkDomain({
+    'concepts/bar.md': page('Bar', 'concept'), 'entities/bar.md': page('Bar E', 'entity'), 'concepts/baz.md': page('Baz', 'concept'),
+    'entities/l.md': '# L\n\n- [[concepts/bar]] the concept\n- [[concepts/baz]] a plain prefix\n- [[entities/bar]] the entity\n',
+  });
+  await files.tidyWrittenLinks(d.name, ['entities/l.md']);
+  ok(read(d, 'entities/l.md') === '# L\n\n- [[concepts/bar]] the concept\n- [[baz]] a plain prefix\n- [[bar]] the entity\n',
+    '11.10 tidyWrittenLinks keeps [[concepts/bar]] beside an entity bar, and strips the rest', read(d, 'entities/l.md'));
+}
+
 ok(fp(REAL_CONFIG) === CONFIG_BEFORE, '9. the real .curator-config.json is byte-identical');
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

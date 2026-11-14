@@ -58,6 +58,9 @@ const BLANK_RE = /^[ \t]*\r?\n?$/;
 // A line that begins a new block for inline spans: a span never crosses it.
 const BLOCK_START_RE = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|#{1,6}(?:[ \t]|$)|>|\|)/;
 const TABLE_ROW_RE = /^[ \t]*\|/;
+const HEADING_RE = /^ {0,3}#{1,6}(?:[ \t]|\r?\n|$)/;
+const QUOTE_RE = /^ {0,3}>/;
+const QUOTE_BLANK_RE = /^ {0,3}>[ \t]*\r?\n?$/;
 
 /**
  * The text cut into code and not code, in order, every byte once.
@@ -81,7 +84,8 @@ export function codeSegments(text) {
   }
   let unit = '';               // the prose lines of one block, searched for inline spans together
   let unitIsTable = false;
-  const flush = () => { if (unit) { inlineSpans(unit, push, unitIsTable); unit = ''; } unitIsTable = false; };
+  let unitIsQuote = false;
+  const flush = () => { if (unit) { inlineSpans(unit, push, unitIsTable); unit = ''; } unitIsTable = false; unitIsQuote = false; };
   let prevBlank = true;
   let inList = false;
   let inIndented = false;
@@ -97,11 +101,21 @@ export function codeSegments(text) {
       }
       if (LIST_ITEM_RE.test(line)) inList = true;
       else if (prevBlank && !INDENTED_RE.test(line)) inList = false;
+      prevBlank = false;
+      // A heading is one line: no span enters or leaves it.
+      if (HEADING_RE.test(line)) { flush(); unit = line; flush(); continue; }
+      // The lines of one quoted paragraph are one block; a `>` alone ends it.
+      if (QUOTE_RE.test(line)) {
+        if (!unitIsQuote || QUOTE_BLANK_RE.test(line)) flush();
+        unit += line;
+        unitIsQuote = true;
+        if (QUOTE_BLANK_RE.test(line)) flush();
+        continue;
+      }
       const table = TABLE_ROW_RE.test(line);
-      if (BLOCK_START_RE.test(line) || table || unitIsTable) flush();
+      if (BLOCK_START_RE.test(line) || table || unitIsTable || unitIsQuote) flush();
       unitIsTable = table;
       unit += line;
-      prevBlank = false;
     }
   }
   flush();
@@ -142,14 +156,48 @@ function inlineSpans(t, push, table = false) {
   emit(t.length, false);
 }
 
-/** The text outside code, pieces joined by a newline so no link forms across a gap. */
+/**
+ * The text with every character of code replaced by `mask` (newlines kept), so a link
+ * whose alias or link text holds code is still one link, and nothing in code matches.
+ */
+export function maskCode(text, mask = MASK) {
+  return codeSegments(text).map((seg) => (seg.code ? seg.text.replace(/[^\r\n]/g, mask) : seg.text)).join('');
+}
+const MASK = '\u0001';
+
+/**
+ * The text a link scan reads: code becomes newlines, which no link target can hold (an
+ * alias can, so `[[x|`code`]]` is still a link to x).
+ */
 export function withoutCode(text) {
-  return codeSegments(text).filter((s) => !s.code).map((s) => s.text).join('\n');
+  return maskCode(text, '\n');
 }
 
-/** `text.replace(re, fn)` outside code only. */
+/**
+ * `text.replace(re, fn)` on the text outside code. The pattern runs over the masked
+ * text; a replacement that carries masked characters (an alias holding code) gets the
+ * original characters back, in order, so code is never changed.
+ */
 export function replaceOutsideCode(text, re, fn) {
-  return codeSegments(text).map((s) => (s.code ? s.text : s.text.replace(re, fn))).join('');
+  const src = String(text);
+  const mk = maskCode(src);
+  if (mk === src) return src.replace(re, fn);
+  let out = '';
+  let last = 0;
+  mk.replace(re, (...args) => {
+    const whole = args[0];
+    const offset = typeof args[args.length - 1] === 'object' ? args[args.length - 3] : args[args.length - 2];
+    let rep = fn(...args);
+    const orig = src.slice(offset, offset + whole.length);
+    const hidden = [];
+    for (let k = 0; k < whole.length; k++) if (whole[k] === MASK) hidden.push(orig[k]);
+    let h = 0;
+    rep = String(rep).replace(/\u0001/g, () => (h < hidden.length ? hidden[h++] : ''));
+    out += src.slice(last, offset) + rep;
+    last = offset + whole.length;
+    return whole;
+  });
+  return out + src.slice(last);
 }
 
 // ── Anchors ─────────────────────────────────────────────────────────────────
@@ -247,8 +295,10 @@ export function makeRetiredLinkRewriter(o) {
   };
   const reachBare = (slug, pages = existing) => {
     for (const f of WIKI_FOLDERS) if (pages.has(`${f}/${slug}.md`)) return `${f}/${slug}.md`;
-    for (const f of WIKI_FOLDERS) { const r = reach(`${f}/${slug}.md`, pages); if (r) return r; }
-    return null;
+    // No exact name: a page of that name in another case or form, if exactly one has it,
+    // counted over all three folders (two in different folders is no answer).
+    const loose = WIKI_FOLDERS.flatMap((f) => (byLoose.get(looseKey(`${f}/${slug}.md`)) || []).filter((x) => pages.has(x)));
+    return loose.length === 1 ? loose[0] : null;
   };
   // After the delete: which name reaches the kept page.
   const after = new Set([...existing].filter((x) => !goneRels.has(x)));
@@ -258,8 +308,8 @@ export function makeRetiredLinkRewriter(o) {
   // ── [[...]] ──────────────────────────────────────────────────────────────
   // The scan's own shape: a name up to | # ] or a newline, `.md` optional, a heading or
   // block, an alias (a table writes it `\|`, and an alias may run over lines).
-  const wikiRe = /\[\[([^\]|#\n\\]+?)(\.md)?([^\S\n]*)(#[^\]|\n\\]*)?([^\S\n]*)(\\?\|[^\]]+)?\]\]/g;
-  const rewriteWiki = (seg, stats) => seg.replace(wikiRe, (whole, target, md, _w1, anchor, _w2, alias) => {
+  const wikiRe = /\[\[([^\]|#\n\\\u0001]+?)(\.md)?([^\S\n]*)(#[^\]|\n\\\u0001]*)?([^\S\n]*)(\\?\|[^\]]+)?\]\]/g;
+  const rewriteWiki = (seg, stats) => replaceOutsideCode(seg, wikiRe, (whole, target, md, _w1, anchor, _w2, alias) => {
     const name = target.trim();
     if (!name) return whole;
     let reached = null;
@@ -342,22 +392,24 @@ export function makeRetiredLinkRewriter(o) {
     return angle ? `<${written}${anchor}>` : `${written}${anchor}`;
   };
 
-  const inlineRe = /\]\(([ \t]*)(<[^<>\n]*>|[^\s()<>]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\))/g;
-  const refRe = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3}\[(?!\^)[^\]\n]+\]:[ \t]*)(<[^<>\n]*>|\S+)/gm;
-  const rewriteMd = (seg, fromRel, stats) => seg
-    .replace(inlineRe, (whole, sp, dest, rest, at, str) => {
+  const inlineRe = /\]\(([ \t]*)(<[^<>\n\u0001]*>|[^\s()<>\u0001]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\))/g;
+  const refRe = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3}\[(?!\^)[^\]\n]+\]:[ \t]*)(<[^<>\n\u0001]*>|[^\s<\u0001]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*)(?=\r?$)/gm;
+  const rewriteMd = (seg, fromRel, stats) => {
+    const inline = replaceOutsideCode(seg, inlineRe, (whole, sp, dest, rest, at, str) => {
       if (!closesLinkText(str, at)) return whole;                       // `a](x.md)` in a URL is no link
       const n = retarget(dest, fromRel, stats);
       return n === null ? whole : `](${sp}${n}${rest}`;
-    })
-    .replace(refRe, (whole, head, dest) => {
-      const n = retarget(dest, fromRel, stats);
-      return n === null ? whole : `${head}${n}`;
     });
+    // A definition's destination is one token naming a `.md` file: `[Note]: handoff
+    // happens at night` is a sentence, and `[Q]: handoff` a label and a word.
+    return replaceOutsideCode(inline, refRe, (whole, head, dest, title) => {
+      if (!/\.md(?:#[^\s>]*)?>?$/i.test(dest)) return whole;
+      const n = retarget(dest, fromRel, stats);
+      return n === null ? whole : `${head}${n}${title}`;
+    });
+  };
 
-  const rewriteText = (text, fromRel, stats) => codeSegments(text)
-    .map((s) => (s.code ? s.text : rewriteMd(rewriteWiki(s.text, stats), fromRel, stats)))
-    .join('');
+  const rewriteText = (text, fromRel, stats) => rewriteMd(rewriteWiki(text, stats), fromRel, stats);
 
   const apply = (text, fromRel) => {
     const stats = { links: 0, anchors: [] };
