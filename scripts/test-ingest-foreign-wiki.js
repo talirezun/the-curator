@@ -361,7 +361,26 @@ section('§9 Weak evidence: one bad byte, a single shared letter, signs, and enc
   const onlyC = 'Račun je plačan. Več o tem na sestanku. Če bo čas, pokličem.';
   same('Slovene with only č, Windows-1250: č, not è', e1250(onlyC), onlyC, 'windows-1250');
   same('Slovene with only č, ISO-8859-2: č, not è', eI2(onlyC), onlyC);
-  same('Hungarian with only ő: ő, not õ', e1250('A nő elment. Erdő, mező, idő.'), 'A nő elment. Erdő, mező, idő.');
+  // Hungarian ő and Estonian õ share the byte: no evidence for either, so it is declined, never õ.
+  { const r = decodeTextBuffer(e1250('A nő elment. Erdő, mező, idő.')); ok(!r.text.includes('õ') && (r.text === 'A nő elment. Erdő, mező, idő.' || r.unrecognised), 'Hungarian with only ő: ő or declined, never õ', r.text); }
+  // Re-audit 2026-11-15: never a wrong letter where the old read gave U+FFFD.
+  const notWrong = (label, buf, want) => { const r = decodeTextBuffer(buf); ok(r.text === want || (r.unrecognised && r.text === buf.toString('utf8')), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 60))}`); };
+  const declined = (label, buf) => { const r = decodeTextBuffer(buf); ok(r.unrecognised === true && r.text === buf.toString('utf8'), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 60))}`); };
+  for (const t of ['Cena: 120 zł.', 'Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.', 'Cena: 5zł, 10zł. Łącznie 15zł za sztukę.']) {
+    notWrong(`Polish with ł as its letter, 1250: never "z³" (${t.slice(0, 20)})`, e1250(t), t);
+    notWrong(`Polish with ł as its letter, ISO-8859-2 (${t.slice(0, 20)})`, eI2(t), t);
+  }
+  same('Polish invoice with ł as its only letter, 1250: decoded right ("zł", not "z³")', e1250('Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.'), 'Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.');
+  // 1252 "Èrn krè" and 1250 "Črn krč" read equally well: a tie with different text is declined.
+  declined('A tie between two supported tables (Slovene "Črn krč, grč, črv."): declined, never 1252 "Èrn"', e1250('Črn krč, grč, črv.'));
+  notWrong('ISO-8859-2 "miš, koš, peš" ties with 1250 "mią, koą, peą": declined, never the 1250 letters', eI2('miš, koš, peš.'), 'miš, koš, peš.');
+  const rival = (label) => { const d = new TextDecoder(label); const m = new Map(); for (let b = 0x80; b < 0x100; b++) { const ch = d.decode(Buffer.from([b])); if (!m.has(ch)) m.set(ch, b); } return byMap(m); };
+  declined('Turkish (Windows-1254): declined, not 1252 "Þirket"', rival('windows-1254')('Şirket yıllık raporu: gelirler arttı, kâr 4 milyon. Çalışanlar için iyi bir yıl.'));
+  declined('Turkish short: declined', rival('windows-1254')('Teşekkürler, iyi günler.'));
+  declined('Greek (Windows-1253): declined', rival('windows-1253')('Ετήσια έκθεση: τα έσοδα αυξήθηκαν, το κέρδος ήταν 4 εκατομμύρια.'));
+  declined('Latvian (Windows-1257): declined', rival('windows-1257')('Gada pārskats: ieņēmumi pieauga, peļņa bija 4 miljoni. Rīga, šodien.'));
+  notWrong('Estonian (Windows-1257): never claimed as 1250', rival('windows-1257')('Aastaaruanne: tulu kasvas. Õhtu, öö, üks, šokolaad, žürii, täna.'), '\u0000');
+  same('CONTROL: Spanish prose stays Windows-1252 (not 1250 "żDónde", "mańana")', enc1252('Informe anual: los ingresos crecieron un 12 %. ¿Dónde? En España, mañana, niño. '), 'Informe anual: los ingresos crecieron un 12 %. ¿Dónde? En España, mañana, niño. ', 'windows-1252');
   const signs = 'Price £250 per m² ±5 %, ½ now. © 2025 Acme. 10 µm.';
   same('Windows-1252 signs (£ ² ± ½ © µ): not read as ISO-8859-2 letters', enc1252(signs), signs, 'windows-1252');
   same('CONTROL: French with è stays Windows-1252', enc1252('Il est très bien, à la mère du père.'), 'Il est très bien, à la mère du père.', 'windows-1252');

@@ -3031,6 +3031,9 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   // placeholder pages the page-by-page fallback created.
   const reserve = new Map();
   const stubEntries = new Set();
+  // Existing pages planned for an update whose batch reply could not be read (cut off,
+  // not JSON): NOT "unchanged", so the user is told (re-audit 2026-11-15).
+  const unreadExisting = [];
   let deferredCount = 0;
   let deferredSummaryCount = 0;
 
@@ -3053,6 +3056,9 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     // outside the try, so a max_tokens error killed the whole ingest; now it
     // recovers, but only for token-limit/parse — not for genuine outages.
     let batchResult = null;
+    // A reply that parsed and holds a page list, empty or not: the model answered. For a
+    // planned existing page only such an answer means "unchanged" when it is left out.
+    let batchWellFormed = false;
     let batchRaw = null;
     // prefix is byte-identical across every batch; only `suffix` carries the
     // per-batch page list — that split is what makes the prefix cacheable.
@@ -3096,6 +3102,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       // construction: the only two ways batchResult becomes non-null are this
       // gate and the fallback's own `{ pages: [] }`.
       const batchPages = extractPageArray(batchRaw);
+      try { const j = parseJSON(batchRaw); batchWellFormed = Boolean(j && Array.isArray(j.pages)); } catch { batchWellFormed = false; }
       if (batchPages) batchResult = { pages: batchPages };
       else console.warn(`[ingest] Batch ${batchNum} returned no usable pages (${batchRaw.length} chars) — retrying page-by-page...`);
     }
@@ -3114,7 +3121,8 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         // An existing page planned only because this source might update it: no reply
         // for it means the source changes nothing there. Never retried, never stubbed.
         if (singlePage && singlePage.existingUpdate) {
-          console.error(`[ingest]   = ${singlePage.path} — existing page, nothing new from this source`);
+          if (batchWellFormed) console.error(`[ingest]   = ${singlePage.path} — existing page, nothing new from this source`);
+          else { unreadExisting.push(singlePage.path); console.warn(`[ingest]   ? ${singlePage.path} — existing page, the batch reply could not be read`); }
           continue;
         }
         // The fallback is itself one LLM call per page — a cancel must stop it
@@ -3298,6 +3306,18 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   for (const w of reconciled.warnings) {
     console.warn(`[ingest] Phase 2 path check: ${w}`);
     warnings.push(w);
+  }
+
+  // Said after the reserve: a page another batch wrote after all is not "not updated".
+  {
+    const written = new Set(reconciled.pages.filter((p) => p && typeof p.content === 'string' && p.content.trim() && !stubEntries.has(p)).map((p) => withMdExtension(p.path)));
+    const unread = unreadExisting.filter((p) => !written.has(withMdExtension(p)));
+    if (unread.length) {
+      const n = unread.length;
+      const w = `The Curator could not read the AI's reply for ${n} existing page${n === 1 ? '' : 's'} this source may update (${unread.join(', ')}), so ${n === 1 ? 'it was' : 'they were'} not updated with this source's facts. ${n === 1 ? 'Its' : 'Their'} text is unchanged.`;
+      console.warn(`[ingest] ${w}`);
+      warnings.push(w);
+    }
   }
 
   // No Phase 3 — index is merged programmatically by the caller.

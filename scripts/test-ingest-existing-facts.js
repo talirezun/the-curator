@@ -282,6 +282,24 @@ section('3b. an empty reply for a planned existing page means "unchanged": no re
   eq(batches.length, 2, 'two batch calls, no page-by-page retries for the existing page');
   eq(d.read('entities/tidewater-ledger.md'), PRODUCT, 'the existing page is byte-identical: no stub, no write');
   ok(!(res.warnings || []).some((w) => /stub/i.test(w) && w.includes('tidewater-ledger')), 'and no stub warning names it');
+  ok(!(res.warnings || []).some((w) => /could not read the AI's reply/.test(w)), 'a well-formed empty reply is "unchanged": no warning');
+
+  // The same, but the reply for that batch is cut off: not "unchanged", and the user is told.
+  const d2 = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT, 'concepts/risk-scoring.md': RISK });
+  const calls2 = [];
+  const res2 = await quiet(() => ingestFile(d2.name, sourceFile('big3.md', LONG), 'big3.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => {
+      usage(opts);
+      const asked = askedPaths(prompt);
+      calls2.push(asked);
+      if (!asked.length) return JSON.stringify({ title: 'Big', pages: ['summaries/big3.md', 'entities/a.md', 'concepts/b.md', 'concepts/c.md'].map((p) => ({ path: p, summary: `about ${p}` })) });
+      if (asked.some((p) => d2.has(p))) return 'Sorry, the response was cut off';
+      return JSON.stringify({ pages: asked.map((p) => ({ path: p, summary: 's', content: `# ${p}\n\n- point about ${p}\n` })) });
+    },
+  }));
+  eq(calls2.filter((a) => a.length).length, 2, 'a cut-off reply for the existing page is not retried page by page either');
+  eq(d2.read('entities/tidewater-ledger.md'), PRODUCT, 'the page is unchanged');
+  ok((res2.warnings || []).some((w) => /could not read the AI's reply for 1 existing page/.test(w) && w.includes('entities/tidewater-ledger.md')), 'and a warning names it as not updated', JSON.stringify(res2.warnings));
 }
 
 // ── 4 ────────────────────────────────────────────────────────────────────────
@@ -360,6 +378,16 @@ section('4c. the audit: CRLF frontmatter, secrets, links outside the wiki, commo
   eq(m2.get('entities/data.md'), 0, 'nor "Data"');
   eq(m2.get('concepts/2025-2026.md'), 0, 'a name of numbers only never does, however often');
   eq(m2.get('entities/kestrel.md'), 0, 'a single word never written as a proper name does not');
+  // Re-audit 2026-11-15: legitimate names the first rule missed.
+  const files3 = { entities: ['lumina.md', 'zaba.md', 'acme.md', 'siq.md', 'tali-rezun.md', 'git.md'], concepts: [] };
+  const named = (src, slug) => nameMentions(src, files3).get(`entities/${slug}.md`) > 0;
+  ok(named('# Lumina pricing 2027\n\n| Plan | Price |\n|---|---|\n| Lumina Starter | €35 |\n\nLumina: 500 credits.', 'lumina'), 'a name seen only in a heading, a table cell and a line start');
+  ok(named('Družba Žaba je ustvarila 4,2 mio EUR. V podjetju Žaba je 57 zaposlenih.', 'zaba'), 'a name with a diacritic ("Žaba" names `zaba`)');
+  ok(named('Acme revenue was €4.2M.\nAcme headcount rose to 57.', 'acme'), 'a name at line starts only');
+  ok(named('The list price at SIQ is now €2,300. The fee paid by SIQ is €1,050.', 'siq'), 'a three-letter acronym in capitals, twice');
+  ok(!named('The siq of it and siq again.', 'siq'), 'CONTROL: a three-letter name not in capitals does not');
+  ok(named('Instructor: dr. Tali Režun. Fee 38%.', 'tali-rezun'), 'a two-word name with a diacritic, once, with capitals');
+  ok(!named('We moved to git 2.51; the new git changes defaults; run git 2.51.', 'git'), 'CONTROL: a lowercase single word, however often, does not');
   // A page linked to a file outside the wiki is never read.
   const d = makeDomain({ 'entities/tidewater-ledger.md': PRODUCT });
   const outside = path.join(TMP_ROOT, 'outside-secret.md');
@@ -390,7 +418,12 @@ section('5. the estimate prices the block on a domain with pages, and only there
     ok(big.mode === 'multi-phase' && blockOnly >= bigEmpty.totalCalls * EXISTING_FACTS_MAX_CHARS / 4 * 0.8, `${M}: multi-phase: the block on every call`, `${Math.round(blockOnly)}`);
     eq(big.totalCalls - bigEmpty.totalCalls, queue.EXISTING_FACTS_EXTRA_BATCHES, `${M}: multi-phase: the extra batches for planned existing pages are planned calls`);
     ok(queue.EXISTING_FACTS_EXTRA_BATCHES * 4 >= EXISTING_FACTS_MAX_PAGES, `${M}: enough batches for every page that can be planned`);
-    eq(est(full, 'on', 3000).totalCalls, est(empty, 'on', 3000).totalCalls, `${M}: single pass: no extra call`);
+    eq(est(full, 'on', 3000).totalCalls, est(empty, 'on', 3000).totalCalls, `${M}: single pass: no extra planned call`);
+    const sp = est(full, 'on', 3000), spEmpty = est(empty, 'on', 3000);
+    const rungs = /^gemini/.test(M) ? 2 : 1;
+    // Rung 1 is the same model; on Gemini rung 2 is FOLLOWUP_RETRY_MODEL, at its own (lower) price.
+    ok(sp.usdHigh - sp.usdLow >= sp.usdLow * (rungs === 2 ? 1.2 : 0.9), `${M}: single pass: the dear bound carries the summary-only retry (${rungs} more call${rungs > 1 ? 's' : ''})`, `${sp.usdLow} ${sp.usdHigh}`);
+    ok(Math.abs(spEmpty.usdHigh - spEmpty.usdLow) < 1e-12, `${M}: an empty domain: no retry in the quote`);
   }
 }
 

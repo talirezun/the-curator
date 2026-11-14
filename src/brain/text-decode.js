@@ -90,6 +90,24 @@ const NEUTRAL = new Set([...'\u00a0€‚„…†‡‰‹›‘’“”•–
 
 const CANDIDATES = ['windows-1252', 'windows-1250', 'iso-8859-2'];
 
+/**
+ * RIVALS: encodings The Curator does NOT convert, scored only to recognise them. If
+ * one reads the bytes as its language better than every supported table, the file is
+ * declined (the old UTF-8 read and the "not recognised" note), never decoded into wrong
+ * letters (re-audit 2026-11-15: Turkish was claimed as 1252, "Şirket" → "Þirket";
+ * Greek, Latvian and Estonian as 1250). The governing rule: a wrong letter silently in
+ * the wiki is worse than a replacement character, so decode only on positive evidence.
+ */
+const RIVALS = {
+  'windows-1254': { turkish: 'çğıöşüâîû' },
+  'windows-1253': { greek: 'αβγδεζηθικλμνξοπρστυφχψωάέήίόύώϊϋΐΰς' },
+  'windows-1257': { latvian: 'āčēģīķļņšūž', lithuanian: 'ąčęėįšųūž', estonian: 'äöõüšž' },
+  'windows-1251': { cyrillic: 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяіїєґўђћџљњ' },
+  'macintosh': { french: 'àâæçéèêëîïôœùûüÿ', german: 'äöüß', spanish: 'áéíóúñü' },
+};
+
+const alphabetsOf = (enc) => LANGS[enc] || RIVALS[enc];
+
 // windows-1252's 0x80-0x9F (WHATWG; the five undefined bytes stay C1 code points).
 const CP1252_HIGH = [
   0x20ac, 0x81, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8d, 0x017d, 0x8f,
@@ -118,6 +136,7 @@ function decodeAs(enc, buf) {
 function isC1(code) { return code >= 0x80 && code <= 0x9f; }
 
 const isLetter = (ch) => ch !== undefined && /\p{L}/u.test(ch);
+const scriptOf = (ch) => (/\p{Script=Greek}/u.test(ch) ? 'greek' : /\p{Script=Cyrillic}/u.test(ch) ? 'cyrillic' : 'latin');
 const isDigit = (ch) => ch !== undefined && ch >= '0' && ch <= '9';
 const isLower = (ch) => isLetter(ch) && ch === ch.toLowerCase() && ch !== ch.toUpperCase();
 const isUpper = (ch) => isLetter(ch) && ch === ch.toUpperCase() && ch !== ch.toLowerCase();
@@ -128,6 +147,8 @@ const isVowel = (ch) => ch !== undefined && VOWELS.has(ch.toLowerCase());
 // ISO-8859-2 makes of the same bytes is a letter glued to a digit (Ł250, ą5), a spacing
 // diacritic (˛ ˝) or a lone capital (Š 2025), each counted against it below.
 const SYMBOLS = new Set([...'£¢¥¤©®²³¹±½¼¾µªº¬¦¯']);
+// Signs that never touch a letter in Western text (except m² m³, allowed above).
+const GLUE_SIGNS = new Set([...'¹²³¼½¾£¥¤¢']);
 // Spacing diacritics never stand on their own in text: a sign of the wrong table.
 const SPACING_MARKS = new Set([...'˘˛˝ˇ˙¸´¨']);
 // A letter that may stand alone as a word.
@@ -144,11 +165,18 @@ const ONE_LETTER_WORDS = new Set([...'àèéòóùäöåÀÈÉ']);
 function implausibleHere(ch, prev, next, enc) {
   if (SPACING_MARKS.has(ch)) return true;
   if (isLetter(ch)) {
+    // A word in two scripts ("Grφίe", "Ћivljenje") is a Latin text read through a
+    // Greek or Cyrillic table: what keeps those rivals from matching every Latin file.
+    if ((isLetter(prev) && scriptOf(prev) !== scriptOf(ch)) || (isLetter(next) && scriptOf(next) !== scriptOf(ch))) return true;
     if (isDigit(prev) || isDigit(next)) return true;                        // Ł250, ą5
     if (isUpper(ch) && isLower(prev)) return true;                          // CafŽ (a capital mid-word)
+    if (isLower(ch) && isUpper(next)) return true;                          // żDónde (a capital right after a small letter)
     if (!isLetter(prev) && !isLetter(next) && !ONE_LETTER_WORDS.has(ch)) return true; // a lone Š
   }
   if (SYMBOLS.has(ch) && isLetter(prev) && isLetter(next)) return true;     // a sign inside a word
+  // A superscript, fraction or currency sign glued to a letter (Polish "zł" read as
+  // 1252 "z³", "Łącznie" as "£¹cznie"); m² and m³ (and km², cm³) are the exception.
+  if (GLUE_SIGNS.has(ch) && (isLetter(next) || GLUE_SIGNS.has(next) || (isLetter(prev) && !(/[²³]/.test(ch) && /m/i.test(prev))))) return true;
   if (enc === 'windows-1252') {
     const c = ch.toLowerCase();
     if (c === 'è' && (isVowel(next) || (isVowel(prev) && !isLetter(next)))) return true;
@@ -178,7 +206,7 @@ function plausibility(text, enc) {
   }
   if (total === 0) return 1;
   let best = 0;
-  for (const alphabet of Object.values(LANGS[enc])) {
+  for (const alphabet of Object.values(alphabetsOf(enc))) {
     let hit = 0;
     for (const [c, n] of counts) if (alphabet.includes(c)) hit += n;
     if (hit > best) best = hit;
@@ -210,6 +238,8 @@ function utf8Shape(buf) {
 
 /** Below this, no single-byte table read the text as a language: it is not claimed. */
 export const MIN_PLAUSIBILITY = 0.5;
+/** Two readings within this of each other are a tie, and a tie is declined. */
+export const TIE_MARGIN = 0.05;
 
 /** A NUL, or more than 2% control characters, means this is not a text file. */
 function looksBinary(buf) {
@@ -260,15 +290,20 @@ export function decodeTextBuffer(input) {
   // 4. The single-byte encoding whose letters read as one real language. A tie keeps
   // the earlier candidate (1252, then 1250, then ISO-8859-2); a tie is now rare, since a
   // letter in a place its language never puts it counts against that table.
-  let best = null;
-  for (const enc of CANDIDATES) {
-    const text = decodeAs(enc, buf);
-    const score = plausibility(text, enc);
-    if (!best || score > best.score) best = { enc, text, score };
-  }
+  const scored = CANDIDATES.map((enc) => { const text = decodeAs(enc, buf); return { enc, text, score: plausibility(text, enc) }; });
+  let best = scored[0];
+  for (const c of scored) if (c.score > best.score) best = c;
+  // Decline on a tie between two supported tables that give DIFFERENT text: no
+  // positive evidence for either (two that give the same text are one answer).
+  const tied = scored.some((c) => c !== best && c.text !== best.text && c.score >= best.score - TIE_MARGIN);
+  // Decline when an encoding we do not convert reads it at least as well.
+  const rival = Object.keys(RIVALS).some((enc) => {
+    let text; try { text = new TextDecoder(enc).decode(buf); } catch { return false; }
+    return text !== best.text && plausibility(text, enc) >= best.score - TIE_MARGIN;
+  });
   // 5. No table reads it as a language (Cyrillic, MacRoman, ...): nothing is claimed. The
   // old UTF-8 read stands, and the caller says the encoding was not recognised.
-  if (best.score < MIN_PLAUSIBILITY) {
+  if (best.score < MIN_PLAUSIBILITY || tied || rival) {
     return { ...result(buf.toString('utf8'), 'utf-8', false), unrecognised: true };
   }
   return result(best.text, best.enc, true);

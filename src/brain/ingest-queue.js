@@ -199,6 +199,7 @@ import {
   makeUsageAccumulator,
   planRepeatIngest,
   KEY_FACTS_RULE as ingestKeyFactsRule,
+  FOLLOWUP_RETRY_MODEL,
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
@@ -989,6 +990,25 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: null, usdHigh: null };
   }
 
+  // The summary-only retry (ingest.js followupRetry) can fire on a single-pass data
+  // source that updates existing pages: one more call on the same model, and on Gemini
+  // one on FOLLOWUP_RETRY_MODEL. Not planned, so in the dear bound only (re-audit
+  // 2026-11-15: 3 calls billed where 1 was quoted).
+  let retryHigh = 0;
+  if (factsChars && mode === 'single-pass') {
+    const inTok = (promptChars / CHARS_PER_TOKEN) * factor;
+    const outTok = perCallOut + extraOut;
+    const callUsd = (m, p) => {
+      const r = m && estimateCallRates(m, promptChars, CHARS_PER_TOKEN)?.tiered ? estimateCallRates(m, promptChars, CHARS_PER_TOKEN) : p;
+      return r ? (inTok / 1e6) * r.input + (outTok / 1e6) * r.output : 0;
+    };
+    retryHigh += callUsd(model, price);
+    if (/^gemini/.test(String(model || '')) && model !== FOLLOWUP_RETRY_MODEL) {
+      const p2 = getModelPrice(FOLLOWUP_RETRY_MODEL);
+      retryHigh += Math.max(callUsd(FOLLOWUP_RETRY_MODEL, p2), 0);
+    }
+  }
+
   // ── TIERED PRICE (claude-haiku-5-5): PRICE EACH PLANNED CALL ON ITS OWN ──
   // A tiered model's rate depends on the size of EACH call's prompt, so one
   // blended rate over the file's total is wrong in both directions. Each planned
@@ -1010,13 +1030,14 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
     }
     if (extraOut) high += (extraOut / 1e6) * estimateCallRates(model, callChars[0], CHARS_PER_TOKEN).output;
     const low = Math.max(0, high - rawIn * cachingSavingsFraction(totalCalls));
-    return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high };
+    return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high + retryHigh };
   }
 
-  const usdHigh = (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output;
+  const planned = (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output;
+  const usdHigh = planned + retryHigh;
   const inputCostRaw = (inputTokens / 1e6) * price.input;
   const savings = cachingSavingsFraction(totalCalls);
-  const usdLow = Math.max(0, usdHigh - inputCostRaw * savings);
+  const usdLow = Math.max(0, planned - inputCostRaw * savings);
 
   return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow, usdHigh };
 }

@@ -49,9 +49,10 @@ const STOP = new Set(('a an and are as at be been but by can could did do does f
 
 const singular = (t) => (t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t);
 function slugTokens(s) {
-  return String(s).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+  return String(s).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/đ/g, 'd')
     .split(/[^a-z0-9]+/).filter(Boolean).map(singular);
 }
+
 
 /** A number as a comparable token: separators dropped, a bare year or one digit is no anchor. */
 function numberAnchors(text) {
@@ -99,27 +100,27 @@ const COMMON_NAMES = new Set(('price prices data cost costs revenue revenues sal
   + 'company companies business people work money tax taxes fee fees contract contracts note notes list table tables').split(' '));
 
 /**
- * Whether the source NAMES a page, distinctively (audit 2026-11-14). A bare year or
- * number never names a page; a single common word never does; a single other word
- * needs two mentions and at least one written as a proper name mid-sentence ("ask
- * Tidewater", not "| Price |" or a sentence start); a name of two or more words needs
- * two mentions, or one written with a capital ("# Halcyon Bakeries — Annual Report").
+ * Whether the source NAMES a page, distinctively (audits 2026-11-14 and -15). A bare
+ * year or number never names a page; a single common word never does; any other single
+ * word needs two mentions, at least one written with a capital (a proper name, an
+ * acronym; a heading, a table cell or a line start all count: "| Lumina Pro |",
+ * "Acme revenue was"); a name of two or more words needs two mentions or one written
+ * with a capital ("Tali Režun", "# Halcyon Bakeries — Annual Report"). Matching folds
+ * diacritics, so the page `zaba` is named by "Žaba".
  */
+const fold = (t) => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, (c) => (c === 'đ' ? 'd' : 'D')).replace(/[łŁ]/g, (c) => (c === 'ł' ? 'l' : 'L'));
 function namesDistinctively(text, slug, mentions) {
   const words = slugTokens(slug);
   if (!mentions || words.every((w) => /^\d+$/.test(w))) return false;
   if (words.length === 1 && (COMMON_NAMES.has(words[0]) || STOP.has(words[0]))) return false;
-  const phrase = slug.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^A-Za-z0-9]+');
+  const phrase = fold(slug).split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^A-Za-z0-9]+');
   if (!phrase) return false;
   const re = new RegExp(`(?<![A-Za-z0-9])${phrase}s?(?![A-Za-z0-9])`, 'gi');
-  let capital = false, midSentence = false;
-  for (const m of String(text).matchAll(re)) {
-    if (!/^[A-Z]/.test(m[0])) continue;
-    capital = true;
-    const before = String(text).slice(Math.max(0, m.index - 3), m.index);
-    if (/[a-z0-9,][ \t]+$/.test(before)) midSentence = true;
-  }
-  if (words.length === 1) return mentions >= 2 && midSentence;
+  // A name under four letters (SIQ, AWS) counts only written in capitals, as an acronym.
+  const short = words.join('').length < 4;
+  let capital = false;
+  for (const m of fold(text).matchAll(re)) if (short ? !/[a-z]/.test(m[0]) : /^[A-Z]/.test(m[0])) { capital = true; break; }
+  if (words.length === 1) return mentions >= 2 && capital;
   return mentions >= 2 || capital;
 }
 
@@ -135,7 +136,7 @@ export function nameMentions(text, existingFiles) {
       if (typeof f !== 'string') continue;
       const slug = f.replace(/\.md$/, '');
       const name = slugTokens(slug);
-      if (!name.length || name.join('').length < 4) continue;
+      if (!name.length || name.join('').length < 3) continue;
       let n = 0;
       for (const i of at.get(name[0]) || []) {
         let ok = true;
