@@ -704,6 +704,53 @@ const ANNOUNCED_PRODUCT_RULE =
    it its own entities/ page (e.g. entities/<product-name>.md — never concepts/),
    even when concept pages cover its features or method. NEVER omit it.`;
 
+/**
+ * KEY FACTS — the rule that keeps a source's hard data (owner request, 2026-11-14).
+ *
+ * WHY. Not every source is an article. A 7 KB pricing document became 3 summary
+ * bullets: most of its prices, its tables and its deadlines were gone, so chat could
+ * not calculate from them. Every page prompt asked for "3 to 8 concise bullet points"
+ * and nothing asked for numbers.
+ * The same holds for a technical document, whose hard data is names, endpoints, ports,
+ * config keys and the reasons behind decisions.
+ *
+ * WHAT. One block of text, identical on every path that writes a page (single pass,
+ * every Phase 2 batch, the page-by-page fallback): the summary gets a `## Key Facts`
+ * section, entity and concept pages keep the figures that belong to them, each fact
+ * carries its period or version, identifiers go in backticks, and a source whose
+ * numbers are incidental (an essay, an opinion piece) gets no section at all.
+ * `## Key Facts` is the name entity pages already use in the tech and business
+ * templates, and an accumulating section everywhere in files.js.
+ *
+ * THE CAP: 40 bullets, a table at most 15 rows. Measured: at that size the section is
+ * at most about 2,500 output tokens, so a Phase 2 batch of four pages stays well under
+ * MULTI_PHASE_BATCH_TOKENS (16,384) and a single page under 8,192. The strict and
+ * concise retries keep the section at 15 bullets, a table at 8 rows.
+ *
+ * ADDITIVE BY CONSTRUCTION. Each prompt is the shipped prompt plus this block in one
+ * place; `scripts/test-ingest-key-facts.js` removes the block and checks the rest is
+ * byte-identical to the pinned digests. It goes in the batch PREFIX (stable, so every
+ * batch of one ingest still shares a byte-identical, cacheable prefix).
+ */
+export const KEY_FACTS_RULE =
+`HARD DATA — apply only when the source's value lies in specific data (a plan, budget, price list, specification, contract, report, results, or a technical or architecture document). An essay, article or opinion piece whose numbers are incidental gets none of this.
+- The summary page gets a "## Key Facts" section, directly after "## Key Takeaways". It lists the specific facts the source states: amounts, prices, percentages, counts, dates and deadlines, thresholds, limits, rates, durations, measurements, versions, named options or tiers and the rules or decisions attached to them; for a technical document also each component or service and what it owns, ports, API endpoints (method and path), data models and field names, configuration keys and their defaults, dependencies, data flows (A calls B over X), invariants ("never", "must") and decisions with their reasons.
+- State each figure EXACTLY as the source does, with its unit or currency, what it is, its condition, and its period or as-of date or version when the source gives one (e.g. "Q3 2025 revenue: €3.8M", "as of v2.1, \`search-api\` listens on port 9310"). Never a bare number.
+- Write identifiers (endpoint paths, configuration keys, file names, field names, version strings) in \`backticks\`, exactly as the source writes them. Never put a [[link]] inside backticks.
+- A source table that carries data may stay a markdown table of at most 15 rows; for a longer table keep the rows the source stresses (totals, decisions, limits) and add "(N more rows in the source)".
+- The bullet limit above does not apply to Key Facts; it has its own limit of 40 bullets, table rows included. If there are more, keep decisions, totals and limits first.
+- Entity and concept pages keep the specific figures that belong to them, with the same period or version and source context (e.g. "Minimum order for the 2028 price list: 50 units"), not only a general definition.
+- Never write an empty Key Facts section and never invent a figure.`;
+
+/** The strict single-pass retry: shorter prose, but the hard data stays, at a smaller cap. */
+export const KEY_FACTS_RULE_STRICT =
+`HARD DATA — if the source's value lies in specific data (a plan, budget, price list, specification, contract, report, results, or a technical document), the summary page still gets a "## Key Facts" section after "## Key Takeaways": at most 15 bullets (a table at most 8 rows), each figure or identifier exactly as the source writes it, with its unit, meaning and period or version; identifiers in \`backticks\`. Otherwise no Key Facts section.`;
+
+/** Appended to the page-by-page concise retry (the SUFFIX, never the prefix). */
+export const KEY_FACTS_CONCISE =
+`
+5. If the page has a "## Key Facts" section, keep it, at most 15 bullets (a table at most 8 rows), every figure exactly as the source writes it.`;
+
 function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
   const overwriteNote = isOverwrite
     ? 'NOTE: This document has been ingested before. Update existing pages rather than duplicating content.'
@@ -917,6 +964,8 @@ Guidelines:
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 - LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 - HUB-PAGE RULE: if your page enumerates many sibling concepts (e.g. a "library", "taxonomy", or "comparison" page), you MUST wikilink to each item using the exact slugs listed below. Plain-text item names without brackets leave the hub disconnected from the items in the graph.
+
+${KEY_FACTS_RULE}
 
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
@@ -1878,6 +1927,8 @@ ${ANNOUNCED_PRODUCT_RULE}
 8. DO NOT touch index.md — the application maintains it after this call.
 
 ${conciseness}
+
+${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}
 
 Page body rules:
 - Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
@@ -2917,7 +2968,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
           try {
             conciseRaw = (await llm(
               schema,
-              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE,
+              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE + KEY_FACTS_CONCISE,
               MULTI_PHASE_SINGLE_PAGE_TOKENS,
               'json',
               (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches}, page ${singlePage.path} (shorter retry) — ${msg}${tail()}`, 'wait'),
@@ -4138,7 +4189,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
         // bounded by the number of slugs in this ingest.
         // A heading is protected too: `## [[slug|Related]]` is no longer the
         // section `## Related` that every reader of the page looks for.
-        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\]|^#{1,6}[ \t][^\n]*$)/gm);
+        // A table row is protected too (2026-11-14): `[[slug|Title]]` puts a pipe in a cell
+        // and splits it, and a Key Facts table is data, not prose to link.
+        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\]|^#{1,6}[ \t][^\n]*$|^[ \t]*\|[^\n]*$)/gm);
         let candidateLinks = 0;
         for (let i = 0; i < segments.length; i++) {
           if (i % 2 === 1) continue;

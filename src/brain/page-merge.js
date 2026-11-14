@@ -683,12 +683,38 @@ function contentWords(text) {
   return [...new Set(plain.split(/\s+/).filter((w) => w && !STOP_WORDS.has(w)).map(stem))];
 }
 
-/** Is this mostly new against the words on the page? A text with no content word never is. */
-export function isMostlyNew(text, pageWords) {
+/**
+ * Is this mostly new against the words on the page? A text with no content word never is.
+ *
+ * `pageLines` (optional: one Set of content words per line of the page) catches a
+ * CHANGED figure (2026-11-14). "Monthly fee: €3,500" beside an old
+ * "Monthly fee: €3,200" is new even when 3500 already appears elsewhere on the
+ * page (a table row, another bullet): if the lines that share at least half of this
+ * text's words all lack one of its numbers, the figure changed, and the text is new.
+ * A line that repeats a statement with the same numbers is untouched by this test, so
+ * the 0.5 measurement for prose stands as it was.
+ */
+export function isMostlyNew(text, pageWords, pageLines = null) {
   const words = contentWords(text);
   if (!words.length) return false;
   const fresh = words.filter((w) => !pageWords.has(w));
-  return fresh.length / words.length >= NEW_WORDING_MIN_SHARE || fresh.some((w) => /\d/.test(w));
+  if (fresh.length / words.length >= NEW_WORDING_MIN_SHARE || fresh.some((w) => /\d/.test(w))) return true;
+  return Array.isArray(pageLines) && changesAFigure(words, pageLines);
+}
+
+/** A statement the page makes, with at least one of its numbers different. */
+function changesAFigure(words, pageLines) {
+  const nums = words.filter((w) => /\d/.test(w));
+  const plain = words.filter((w) => !/\d/.test(w));
+  if (!nums.length || !plain.length) return false;
+  let siblings = 0;
+  for (const line of pageLines) {
+    const shared = plain.filter((w) => line.has(w)).length;
+    if (shared / plain.length < NEW_WORDING_MIN_SHARE) continue;
+    if (nums.every((n) => line.has(n))) return false;   // the page already says it, figures and all
+    siblings++;
+  }
+  return siblings > 0;
 }
 
 const splitSentences = (text) => text.split(/(?<=[.!?])\s+(?=[A-Z\[`"“*])/).map((x) => x.trim()).filter(Boolean);
@@ -742,7 +768,12 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
   const keptHasTitle = keepTokens.some((t) => t.kind === 'heading' && t.level === 1);
   let hay = hayOf(keep.body);
   const pageWords = new Set(contentWords(keep.body.join('\n')));
-  const absorb = (text) => { for (const w of contentWords(text)) pageWords.add(w); };
+  const pageLines = keep.body.map((l) => new Set(contentWords(l))).filter((x) => x.size);
+  const absorb = (text) => {
+    const ws = contentWords(text);
+    for (const w of ws) pageWords.add(w);
+    if (ws.length) pageLines.push(new Set(ws));
+  };
 
   // Where the opening ends: before the first `##`, or a second `#`.
   let openingEnd = 0;
@@ -836,7 +867,7 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
         const known = linkTargets.get(group.key);
         if (known.has(target)) { dropped.push(whole); continue; }
         known.add(target);
-      } else if (!isMostlyNew(whole, pageWords)) {
+      } else if (!isMostlyNew(whole, pageWords, pageLines)) {
         if (!BARE_LINK_BULLET_RE.test(t.lines[0].trim())) dropped.push(whole);
         continue;
       }
@@ -845,13 +876,13 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
       continue;
     } else if (t.kind === 'para') {
       if (t.lines.every((l) => l.startsWith('|'))) {
-        if (!isMostlyNew(whole, pageWords)) { dropped.push(whole); continue; }
+        if (!isMostlyNew(whole, pageWords, pageLines)) { dropped.push(whole); continue; }
       } else {
         const everyLine = t.lines.every((l) => LIST_LINE_RE.test(l));
         const units = everyLine ? t.lines : splitSentences(whole);
         const fresh = [];
         for (const u of units) {
-          if (isMostlyNew(u, pageWords)) { fresh.push(u); absorb(u); } else dropped.push(u);
+          if (isMostlyNew(u, pageWords, pageLines)) { fresh.push(u); absorb(u); } else dropped.push(u);
         }
         if (!fresh.length) continue;
         if (fresh.length !== units.length) lines = everyLine ? fresh : [fresh.join(' ')];

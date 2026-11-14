@@ -44,7 +44,10 @@ const chat = await import('../src/brain/chat.js');
 const compileMod = await import('../src/brain/compile.js');
 
 const { buildOutlinePrompt, buildPrompt, buildBatchPromptParts, buildBatchPrompt, ANNOUNCED_PRODUCT_RULE } = ingest.__testing;
-const { aggregateWarnings } = ingest;
+const { aggregateWarnings, KEY_FACTS_RULE, KEY_FACTS_RULE_STRICT } = ingest;
+// The Key Facts block (2026-11-14) is one addition per prompt; stripping it must give
+// back the pinned prompt byte for byte (test-ingest-key-facts.js asserts the block itself).
+const noKeyFacts = (p) => p.replace('\n\n' + KEY_FACTS_RULE_STRICT, '').replace('\n\n' + KEY_FACTS_RULE, '');
 const { WIKI_ONLY_CLAUSE, PROJECT_CONFLICT_CLAUSE } = chat.__testing;
 const chatBuildPrompt = chat.__testing.buildPrompt;
 
@@ -101,7 +104,7 @@ section('1. the announced-product rule — outline and single-pass prompts');
    Link ONLY to a page you return in this reply or a file listed under EXISTING
    WIKI FILES above. A sub-idea you consolidated into a parent page (rule 5) has
    no page of its own: write its name as plain text, never as a [[link]].`;
-  const minus = (p) => p.replace('\n' + ANNOUNCED_PRODUCT_RULE, '').replace(LINK_RULE, '');
+  const minus = (p) => noKeyFacts(p).replace('\n' + ANNOUNCED_PRODUCT_RULE, '').replace(LINK_RULE, '');
   eq(digest(minus(outline)), V380.outline, 'outline minus the rule is byte-identical to v3.80.0');
   eq(digest(minus(single)), V380.single, 'single-pass minus the rule is byte-identical to v3.80.0');
   eq(digest(minus(strict)), V380.strict, 'strict single-pass minus the rule is byte-identical to v3.80.0');
@@ -121,7 +124,7 @@ section('2. the Phase 2 batch prompt — unchanged, and its prefix stable across
   eq(p1.prefix, p2.prefix, 'batch 1 and batch 2 share a byte-identical prefix (the cache invariant)');
   ok(p1.suffix !== p2.suffix, 'CONTROL: the two batches really are different batches');
   // Recorded from v3.80.0 (ccdc68e) over these fixtures.
-  eq(digest(p1.prefix), '9ebe04513c603696ba37f3d088da59bb5029ebed7beb75337e72086eb783733a',
+  eq(digest(noKeyFacts(p1.prefix)), '9ebe04513c603696ba37f3d088da59bb5029ebed7beb75337e72086eb783733a',
     'the batch prefix is byte-identical to v3.80.0 (the rule did not leak into it)');
   // v3.84.0 changed the SUFFIX only (after the cache breakpoint): it states the
   // page count and that every other page — the summary included — is written
@@ -129,7 +132,7 @@ section('2. the Phase 2 batch prompt — unchanged, and its prefix stable across
   // path instead of a summary. Measured live on Flash-Lite 2.5 (40,939-char
   // source): batches returning pages they were not asked for 5/6 → 0/7,
   // output tokens 30,564 → 10,489. The PREFIX pin above stays at v3.80.0.
-  eq(digest(buildBatchPrompt('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all)),
+  eq(digest(noKeyFacts(buildBatchPrompt('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all))),
     'f46cda962d565a5020471fb19c636da5ddfb78fe301acf2dd18d8aa23667d64c',
     'the whole batch prompt is byte-identical to v3.84.0 (v3.80.0 prefix + the v3.84.0 suffix)');
   eq(digest(p1.prefix + p1.suffix), digest(buildBatchPrompt('2026-09-30', 'src.md', 'SOURCE TEXT', all.slice(0, 4), FILES, all)),

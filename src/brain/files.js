@@ -303,6 +303,18 @@ export function dedupKey(line) {
 }
 
 /**
+ * The dedup key of a bullet in a named section. In Key Facts a bullet that carries a
+ * figure or an identifier (a digit or a backtick) keys on its whole text: two facts
+ * that open with the same link (`- [[corvane]] Fleet tier: €13,800`, `- [[corvane]]
+ * Lite tier: €2,490`) are two facts, and the first-link key would drop the second.
+ * Every other bullet keeps dedupKey, so nothing else changes.
+ */
+export function sectionDedupKey(sectionName, line) {
+  if (/^key facts$/i.test(String(sectionName).trim()) && /[\d`]/.test(line)) return line.trim().toLowerCase();
+  return dedupKey(line);
+}
+
+/**
  * The target of a bullet that is ONLY a wikilink — `- [[x]]` or `- [[x|Alias]]`,
  * nothing else on the line but whitespace — with the alias stripped and the
  * target trimmed. Case preserved. null for anything else.
@@ -336,9 +348,9 @@ function injectBulletsIntoSection(content, sectionName, extraBullets) {
   for (const line of lines) {
     if (re.test(line))                 { inSection = true;  continue; }
     if (inSection && /^##/.test(line)) { inSection = false; }
-    if (inSection && line.startsWith('- ')) seen.add(dedupKey(line));
+    if (inSection && line.startsWith('- ')) seen.add(sectionDedupKey(sectionName, line));
   }
-  const newBullets = extraBullets.filter(b => !seen.has(dedupKey(b)));
+  const newBullets = extraBullets.filter(b => !seen.has(sectionDedupKey(sectionName, b)));
   if (!newBullets.length) return content;
 
   // If section doesn't exist at all, append it so backlinks are never silently dropped.
@@ -464,18 +476,20 @@ function deduplicateBulletSections(content) {
   const lines = content.split('\n');
   const result = [];
   let inSection = false;
+  let sectionName = '';
   let seenInSection = new Set();
 
   for (const line of lines) {
     const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
     if (headingMatch && headingMatch[1] === '##') {
-      inSection = ACCUMULATE.has(headingMatch[2].trim());
+      sectionName = headingMatch[2].trim();
+      inSection = ACCUMULATE.has(sectionName);
       seenInSection = new Set();
       result.push(line);
       continue;
     }
     if (inSection && line.startsWith('- ')) {
-      const key = dedupKey(line);
+      const key = sectionDedupKey(sectionName, line);
       if (seenInSection.has(key)) continue; // drop duplicate bullet
       seenInSection.add(key);
     }
@@ -508,6 +522,69 @@ export function fenceRuns(content) {
     else runs.push({ text: line, fenced });
   }
   return runs;
+}
+
+/**
+ * Template headings a model sometimes runs into their first sentence:
+ * `## Definition A baseline monetary floor…` on ONE line (measured on a Flash-Lite
+ * ingest, 2026-11-14). Only these names, only `##`/`###`, and only when what follows
+ * reads as a sentence: at least five words AND sentence punctuation (it ends in . ! ?
+ * or holds ". "). A real heading such as `## Summary Statistics for the 2024 Cohort`
+ * or `## Related Work` has neither, so it is left alone.
+ */
+const SWALLOW_HEADINGS = ['Definition', 'Overview', 'Summary', 'Key Points', 'Key Takeaways', 'Key Facts', 'Key Figures', 'Examples', 'Related', 'Notes'];
+const SWALLOW_RE = new RegExp(`^(#{2,3})[ \\t]+(${SWALLOW_HEADINGS.join('|')})(?:[ \\t]*[:—–-][ \\t]*|[ \\t]+)(\\S.*)$`);
+
+function splitSwallowedLine(line) {
+  const m = line.match(SWALLOW_RE);
+  if (!m) return null;
+  const rest = m[3].trimEnd();
+  const words = rest.split(/\s+/).filter(Boolean).length;
+  if (words < 5 || !/[.!?…]$|[.!?]\s/.test(rest)) return null;
+  return [`${m[1]} ${m[2]}`, '', rest];
+}
+
+/**
+ * Split a known template heading from the sentence it swallowed (see SWALLOW_HEADINGS).
+ * Deterministic; frontmatter and fenced code are never touched. Used on the INCOMING
+ * page in writePage only, so an existing page's lines are never changed by it.
+ */
+export function splitSwallowedHeadings(text) {
+  const src = String(text);
+  if (!/^#{2,3}[ \t]+(Definition|Overview|Summary|Key|Examples|Related|Notes)/m.test(src)) return src;
+  const fm = src.match(LEADING_FRONTMATTER_RE);
+  const head = fm ? fm[0] : '';
+  let changed = false;
+  const body = fenceRuns(src.slice(head.length)).map((run) => {
+    if (run.fenced) return run.text;
+    return run.text.split('\n').map((line) => {
+      const eol = line.endsWith('\r') ? '\r' : '';
+      const parts = splitSwallowedLine(eol ? line.slice(0, -1) : line);
+      if (!parts) return line;
+      changed = true;
+      return parts.map((p) => p + eol).join('\n');
+    }).join('\n');
+  }).join('');
+  return changed ? head + body : src;
+}
+
+/**
+ * Apply a text rewrite outside code only: fenced blocks and inline `code` spans pass
+ * through byte-identical. A [[link]] written inside backticks is an identifier the
+ * source spelled that way, not a link to tidy.
+ */
+export function outsideCode(fn) {
+  return (text) => fenceRuns(String(text)).map((run) => {
+    if (run.fenced) return run.text;
+    // Split on inline code spans (same-length backtick runs, one line).
+    return run.text.split(/((`+)[^`\n]+\2(?!`))/).map((seg, i) => {
+      // String.split with two groups yields [text, span, ticks, text, span, ticks, …].
+      const k = i % 3;
+      if (k === 1) return seg;        // the code span itself
+      if (k === 2) return '';         // the captured backtick run (already in the span)
+      return fn(seg);
+    }).join('');
+  }).join('');
 }
 
 // A leading YAML block, as repairSummaryLayout reads it. A page opening with a rule
@@ -1422,11 +1499,13 @@ async function linkRewriterFor(domain) {
     return match;
   });
 
-  return (text) => variants(
+  // Never inside code (2026-11-14): a `[[x]]` in backticks or a fence is text the
+  // source wrote, and an identifier must stay exactly as written.
+  return outsideCode((text) => variants(
     text
       .replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]')
       .replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]')
-  );
+  ));
 }
 
 /**
@@ -1754,7 +1833,8 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     } catch { /* sibling dir may not exist yet */ }
   }
 
-  const processed = injectFrontmatter(content, canonPath, today);
+  // A template heading that swallowed its first sentence is split (incoming text only).
+  const processed = splitSwallowedHeadings(injectFrontmatter(content, canonPath, today));
   const fullPath = path.join(wikiPath(domain), canonPath);
   const dir = path.dirname(fullPath);
   await mkdir(dir, { recursive: true });
@@ -2316,6 +2396,9 @@ created: YYYY-MM-DD
 
 ## Key Takeaways
 - Bullet list of main points
+
+## Key Facts
+- Only when the source states specific data: each figure or identifier exactly as written, with its unit, meaning and period or version (e.g. "Q3 2025 revenue: €3.8M"). Leave the section out otherwise.
 
 ## Concepts Introduced or Referenced
 - [[concept-name]]

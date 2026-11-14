@@ -406,6 +406,10 @@ Below the change list a small footer reports the real usage for that ingest, not
 - **Read the warnings panel after each ingest.** If it says the source was truncated or a stub page was created, the ingest finished but with reduced quality, and the entry tells you what to do. Re-ingesting is always safe.
 - **A second source on a topic you already have can cost one or two extra calls.** If the AI's reply adds no entity or concept page although the source clearly covers pages you already have, The Curator asks the same model once more, and on Gemini then asks Flash Lite 3.1 once. One line in the result names the models and the extra cost, which is included in what the ingest says it cost. It never asks more than twice, and an unrelated, short or first source never triggers it.
 
+## Does ingest keep numbers, prices and technical details?
+
+Yes. A source whose value lies in specific data (a price list, budget, plan, spec sheet, contract, results, or an architecture document) gets a **Key Facts** section on its summary page: each figure exactly as written, with its unit, meaning, condition and period or version ("Q3 2025 revenue: €3.8M"). Endpoints, setting names, file names and versions stay letter for letter, in code style; a data table can stay a table of up to 15 rows. Entity and concept pages keep their own figures too, so chat can answer and calculate from them. An ordinary article gets no such section. A later source that changes a figure adds the new one beside the old one.
+
 ## Who sets the instructions an ingest follows?
 
 Two sets of instructions go to the AI on every ingest. The first is the domain's schema, its `CLAUDE.md`: scope, what counts as an entity or a concept, the page formats. It is written from the template when you create the domain, and after that it is yours to edit; The Curator never rewrites it. The second is the app's own ingest instructions, built into The Curator and the same in every domain: one summary per source, a page for the author, reuse existing page names, keep to the three folders, plan roughly 5 to 30 pages. You cannot edit those; they change only with a release.
