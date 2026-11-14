@@ -1464,10 +1464,22 @@ export function normalizeChatModel(provider, model) {
 export function citationParts(text) {
   const whole = String(text == null ? '' : text).trim();
   if (!whole) return [];
-  const parts = whole.split(',').map((s) => s.trim()).filter(Boolean);
-  if (!parts.length) return [];   // only commas: nothing was cited
+  // The SAME rule as the renderer's splitCitationParts (one table holds both).
+  const parts = [];
+  let cur = '';
+  for (const ch of whole) {
+    if (ch === ',' || (ch === ';' && !/&(?:amp|lt|gt|quot|#39)$/.test(cur))) { parts.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  parts.push(cur.trim());
+  const listed = parts.filter(Boolean);
+  if (!listed.length) return [];   // only separators: nothing was cited
   const pathy = (s) => /\.md$/i.test(s) || s.indexOf('/') !== -1;
-  return parts.length > 1 && parts.every(pathy) ? parts : [whole];
+  if (listed.length > 1) {
+    const bare = listed.map((s) => s.replace(/^source\s*:\s*/i, '').trim()).filter(Boolean);
+    if (bare.length === listed.length && bare.every(pathy)) return bare;
+  }
+  return [whole];
 }
 
 /**
@@ -1487,7 +1499,9 @@ export function buildCitedPages(citations, pages) {
   }
   const out = [];
   for (const c of citations) {
-    for (const part of citationParts(c)) {
+    for (const raw of citationParts(c)) {
+      // A model often drops `.md`: `entities/x` is the page `entities/x.md`.
+      const part = !known.has(raw) && raw.indexOf('/') !== -1 && !/\.md$/i.test(raw) ? raw + '.md' : raw;
       if (known.has(part) && !out.includes(part)) out.push(part);
     }
   }

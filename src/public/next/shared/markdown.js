@@ -327,12 +327,32 @@ function formatSegment(t, cite) {
 function looksLikePath(s) {
   return /\.md$/i.test(s) || s.indexOf('/') !== -1;
 }
+// v3.98.1: models write `[source: a.md, source: b.md]` and `a.md; b.md`. A
+// separator is `,` or `;` (a `;` ending an escaped entity is NOT one), and a
+// repeated `source:` prefix (any case, spaces optional) is stripped from every
+// part before the "does every part look like a path" test. A capture that is
+// not accepted as a list stays whole and unstripped, exactly as before.
+function splitOnSeparators(whole) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < whole.length; i++) {
+    const ch = whole.charAt(i);
+    if (ch === ',' || (ch === ';' && !/&(?:amp|lt|gt|quot|#39)$/.test(cur))) { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
 export function splitCitationParts(text) {
   const whole = String(text == null ? '' : text).trim();
   if (!whole) return [];
-  const parts = whole.split(',').map((s) => s.trim()).filter(Boolean);
-  if (!parts.length) return [];   // only commas: nothing was cited
-  return parts.length > 1 && parts.every(looksLikePath) ? parts : [whole];
+  const parts = splitOnSeparators(whole).map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return [];   // only separators: nothing was cited
+  if (parts.length > 1) {
+    const bare = parts.map((s) => s.replace(/^source\s*:\s*/i, '').trim()).filter(Boolean);
+    if (bare.length === parts.length && bare.every(looksLikePath)) return bare;
+  }
+  return [whole];
 }
 
 function citationMarkup(p, cite) {
@@ -348,9 +368,14 @@ function citationMarkup(p, cite) {
     return parts.map(legacyCitationTag).join(' ');
   }
   let out = '';
+  let prevUnresolved = false;
   for (const part of parts) {
     const n = cite(unescHtml(part));
-    if (Number.isInteger(n) && n > 0 && n < 100000) {
+    const resolved = Number.isInteger(n) && n > 0 && n < 100000;
+    // An unresolved part never runs into its neighbour: a space on either side.
+    if (out && (prevUnresolved || !resolved)) out += ' ';
+    prevUnresolved = !resolved;
+    if (resolved) {
       const num = String(n);
       out += '<button type="button" class="chat-cite-n" data-cite-n="' + num + '">' +
         '<span aria-hidden="true">' + num + '</span>' +
