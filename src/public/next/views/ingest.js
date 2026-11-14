@@ -121,6 +121,7 @@ import {
 // returned) had fallen on the wrong side of it. Do not reintroduce local
 // copies of these two — see the shared module's own header comment.
 import {
+  queueRowNote,
   queueBusyTransition, formatQueueBytes, formatTokenRange,
   duplicateCopy,
   pausedReasonCopy, statusPillMeta, resolveEstimateFileList, dedupeQueueFiles,
@@ -4576,14 +4577,8 @@ function renderQueueFileListItem(entry, opts) {
     : '';
   // A file the estimate priced at $0 because it will finish without an AI call says so
   // (the server's `files.noCall` reason, passed in by renderQueueEstimate).
-  const reason = opts && opts.noCall;
-  const noCallNote = reason === 'already-ingested' ? 'already ingested, will be skipped · no AI call · $0'
-    : reason === 'same-name-in-batch' ? 'same name as another file, will be skipped · no AI call · $0'
-    : reason === 'unchanged' ? 'already read by this model · no AI call · $0'
-    : '';
-  // Priced in the estimate, with its reason (planRepeatIngest 'key-facts', 2026-11-14).
-  const keyFactsNote = !noCallNote && opts && opts.keyFacts ? 'read before figures were kept · one more reading if it holds figures, priced above (at most)' : '';
-  const noteHtml = (noCallNote || keyFactsNote) ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote || keyFactsNote) + '</span>' : '';
+  const note = queueRowNote(opts && opts.noCall, !!(opts && opts.keyFacts));
+  const noteHtml = note ? '<span class="ing-queue-file-reason">' + escapeHtml(note) + '</span>' : '';
   return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + noteHtml + removeBtn + '</li>';
 }
 

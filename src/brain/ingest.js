@@ -154,6 +154,23 @@ export const REPEAT_READ_BY_OTHER_MODEL = true;
 export const KEY_FACTS_VERSION = 1;
 
 /**
+ * What a completed ingest records about Key Facts. Every run of this code is marked,
+ * except a Key Facts re-reading whose summary still has no `## Key Facts` section (the
+ * model answered with the summary only, 1 of 9 audited runs): that one is recorded as a
+ * try, which earns ONE more offer (cost shown); a second try is marked whatever it wrote,
+ * so it can never loop.
+ */
+async function keyFactsMarkerFor(domain, repeatPlan, summaryPath, sha256) {
+  if (!repeatPlan || repeatPlan.kind !== 'key-facts') return { keyFacts: KEY_FACTS_VERSION };
+  let has = false;
+  try { has = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiPath(domain), summaryPath), 'utf8')); } catch { has = false; }
+  if (has) return { keyFacts: KEY_FACTS_VERSION };
+  let tries = 0;
+  try { tries = (await readManifest(domain)).filter((r) => r.sha256 === sha256 && r.completed !== false && r.keyFactsTry).length; } catch { tries = 0; }
+  return tries >= 1 ? { keyFacts: KEY_FACTS_VERSION } : { keyFactsTry: 1 };
+}
+
+/**
  * The text the gate reads from bytes in hand (an upload, a staged queue file), whatever
  * the file is called on disk: the ORIGINAL name decides PDF or text. null when unreadable.
  */
@@ -192,7 +209,12 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   if (!model) { out.kind = 'unknown'; return out; }
   if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
   // Read before Key Facts existed, and a data source: one fresh reading (owner, 2026-11-14).
-  if (!((Number(latest.keyFacts) || 0) >= KEY_FACTS_VERSION)) {
+  // A summary that already has a Key Facts section counts as marked: Sync can drop this
+  // computer's manifest lines (a pre-existing defect of the pull's `-X theirs`), while
+  // the page itself arrives, so a lost marker does not buy a second reading.
+  let summaryHasKeyFacts = false;
+  try { summaryHasKeyFacts = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiDir, latest.summaryPath), 'utf8')); } catch { summaryHasKeyFacts = false; }
+  if (!summaryHasKeyFacts && !((Number(latest.keyFacts) || 0) >= KEY_FACTS_VERSION)) {
     // The gate reads the BYTES IN HAND when the caller has them (`opts.sourceText`: the
     // upload in the 409 plan, the file in ingestFile), so the plan and the run decide on
     // the same text. raw/ is not synced, so on a second computer it is often empty, and
@@ -206,7 +228,11 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
       text = await opts.sourceText();
       known = typeof text === 'string';
     } else {
-      text = await rawSourceText(domain, latest.filename);
+      // Only a raw copy whose bytes ARE the incoming bytes: the name may have been reused
+      // for a newer version (an audit measured "$0.000, no AI call", then a $0.0150 bill).
+      let same = false;
+      try { same = (await hashRawSource(path.join(rawPath(domain), latest.filename))) === sha256; } catch { same = false; }
+      text = same ? await rawSourceText(domain, latest.filename) : null;
       known = typeof text === 'string';
     }
     if (known && sourceHasHardData(text)) {
@@ -214,6 +240,7 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
       out.reason = 'This source holds figures that earlier versions did not keep; reading it again keeps them.';
       return out;
     }
+    if (known) out.gateCheckedFalse = true;   // ingestFile records it: the next estimate is exact
     if (!known) {
       out.kind = 'key-facts';
       out.gateUnknown = true;
@@ -238,7 +265,7 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   if (latest.gaps > 0) out.gaps.push('the last reading warned that it fell short');
   // A gap earns this model ONE more reading. A model that leaves the same gap twice would
   // otherwise bill every press for ever, the very thing this plan exists to stop.
-  const byThisModel = readings.filter((r) => r.model === model).length;
+  const byThisModel = readings.filter((r) => r.model === model && !r.noCall).length;
   if (out.gaps.length && byThisModel < 2) out.kind = 'gaps';
   return out;
 }
@@ -3548,6 +3575,15 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       ? `This source's content has not changed and this model has already read it, so no AI call was made. The summary gained its missing ${fixed.join(' and ')}, at no cost.`
       : `This source's content has not changed and this model has already read it, so no AI call was made and nothing was charged. Pick another model to read it again.`;
     if (fixed.length) await appendLog(domain, `## [${localDateStamp()}] repair | ${originalName}\nThe summary gained its missing ${fixed.join(' and ')}. No AI call.\n`);
+    // The gate was read on these bytes and said no: record it, so a batch estimate without
+    // the bytes stops pricing "one more reading (at most)" for this source (no call made).
+    if (repeatPlan.gateCheckedFalse) {
+      await appendManifestRecord(domain, {
+        filename: repeatPlan.previous.filename, sha256: sourceHash, bytes: buffer.length, summaryPath: summaryRel,
+        ingestedAt: new Date().toISOString(), completed: true, model: repeatPlan.previous.model || plannedModel || undefined,
+        keyFacts: KEY_FACTS_VERSION, noCall: true,
+      });
+    }
     progress(100, 'Nothing to do');
     return {
       title: originalName,
@@ -4180,7 +4216,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     completed: true,
     model: usage.totals.model || plannedModel,
     gaps: warnings.filter((w) => FELL_SHORT_RE.test(w)).length,
-    keyFacts: KEY_FACTS_VERSION,
+    ...(await keyFactsMarkerFor(domain, repeatPlan, summaryPath, sourceHash)),
   });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this

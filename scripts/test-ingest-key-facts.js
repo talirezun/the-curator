@@ -518,6 +518,115 @@ section('10. one Key Facts reading for a data source read before Key Facts exist
   if (hadKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = hadKey;
 }
 
+// ── 11 ───────────────────────────────────────────────────────────────────────
+section('11. second audit: no $0 quote before a spend, exact estimates, one try then marked');
+{
+  const { appendManifestRecord, readManifest, hashRawSource } = await import('../src/brain/raw-store.js');
+  const DATA_SRC = 'Price list for 2028: Basic tier €10 a month, Pro tier €20 a month, billed yearly.\n'.repeat(12);
+  const PROSE_SRC = 'A short essay about orchards and rivers in the harbour town, and the people there. '.repeat(14);
+  const llmMod = await import('../src/brain/llm.js');
+  const hadKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = hadKey || 'placeholder-for-an-offline-estimate';
+  let M = 'fake-1';
+  try { const i = llmMod.getProviderInfo(); M = llmMod.answeringModel(i.provider, i.model); } catch { /* keep fake-1 */ }
+  const calls = { n: 0, summaryOnly: false };
+  const reply = (name) => async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); calls.n++;
+    const kf = calls.summaryOnly ? '' : '\n## Key Facts\n- Basic tier (2028): €10 a month\n';
+    return JSON.stringify({ title: 'T', pages: [{ path: `summaries/${name}.md`, content: `# T\n\n## Key Takeaways\n- one\n${kf}` }] }); };
+  async function legacy(name, text, rawText = text) {
+    const d = makeDomain({ [`summaries/${name}.md`]: '# T\n\n## Key Takeaways\n- one\n' });
+    const raw = path.join(DOMAINS, d.name, 'raw', `${name}.md`);
+    writeFileSync(raw, text, 'utf8');
+    const sha256 = await hashRawSource(raw);
+    if (rawText !== text) writeFileSync(raw, rawText, 'utf8');   // the name now holds OTHER bytes
+    await appendManifestRecord(d.name, { filename: `${name}.md`, sha256, bytes: Buffer.byteLength(text), summaryPath: `summaries/${name}.md`,
+      ingestedAt: new Date().toISOString(), completed: true, model: M, gaps: 0 });
+    return { d, sha256 };
+  }
+  const q = await import('../src/brain/ingest-queue.js');
+  const estimate = (d, name, text, sha256) => quiet(() => q.estimateIngestQueueCost(d.name, [{ name, size: Buffer.byteLength(text), sha256 }]));
+
+  // C. raw/<name> holds DIFFERENT bytes (a newer version reused the name): never "$0".
+  const C1 = await legacy('reused', DATA_SRC, PROSE_SRC);
+  const pc = await ingest.planRepeatIngest(C1.d.name, C1.sha256, M);
+  ok(pc.kind === 'key-facts' && pc.gateUnknown === true, 'C: a raw copy with other bytes is not read: the plan is the priced upper bound');
+  const ec = await estimate(C1.d, 'reused.md', DATA_SRC, C1.sha256);
+  ok(!ec.files.noCall.some((x) => x.name === 'reused.md') && ec.files.keyFactsReread.includes('reused.md'), 'C: the batch estimate prices it, never "unchanged · $0"');
+  ok(ec.estimate.usdHigh > 0, 'C: with a dollar figure', String(ec.estimate.usdHigh));
+
+  // A. A known Key Facts reading is priced with the rule and its output in both bounds; a
+  //    fresh file (gate unknown) in the dear bound only.
+  const { __testing: qt } = q;
+  const price = llmMod.getModelPrice(M);
+  const one = (keyFacts) => qt.estimateOneFile({ f: { name: 'p.md', size: 7000 }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-11-14', price, model: M, keyFacts });
+  const off = one('off'), maybe = one('maybe'), on = one('on');
+  if (price) {
+    ok(on.usdLow > off.usdLow && on.usdHigh > off.usdHigh, 'A: a known data source costs more in both bounds');
+    ok(maybe.usdLow === off.usdLow && maybe.usdHigh === on.usdHigh, 'A: an unknown source: the cheap bound is prose, the dear bound a data source');
+    ok(on.outputTokens - off.outputTokens >= 800, 'A: the measured Key Facts output allowance is in the figure', `${on.outputTokens - off.outputTokens}`);
+  } else ok(false, 'A: the estimate must have a price here');
+
+  // D. A prose source with no raw copy: the run reads the bytes, makes no call, and records
+  //    it, so the next estimate is exact ($0, no "at most").
+  const D1 = await legacy('essay2', PROSE_SRC);
+  rmSync(path.join(DOMAINS, D1.d.name, 'raw', 'essay2.md'));
+  ok((await estimate(D1.d, 'essay2.md', PROSE_SRC, D1.sha256)).files.keyFactsReread.includes('essay2.md'), 'D: before: priced as "at most" (no bytes, no raw copy)');
+  calls.n = 0;
+  await quiet(() => ingestFile(D1.d.name, sourceFile('essay2.md', PROSE_SRC), 'essay2.md', true, null, { llm: reply('essay2'), buildModel: M }));
+  eq(calls.n, 0, 'D: the run with the bytes makes no call');
+  rmSync(path.join(DOMAINS, D1.d.name, 'raw', 'essay2.md'));
+  const ed = await estimate(D1.d, 'essay2.md', PROSE_SRC, D1.sha256);
+  ok(ed.files.noCall.some((x) => x.name === 'essay2.md' && x.reason === 'unchanged') && !ed.files.keyFactsReread.includes('essay2.md'), 'D: after: the estimate is exact, $0, even with no raw copy');
+
+  // E. A reading that wrote no Key Facts: one more offer, then marked (never a loop).
+  const E1 = await legacy('plan5', DATA_SRC);
+  calls.summaryOnly = true; calls.n = 0;
+  await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
+  eq(calls.n, 1, 'E: the first reading ran');
+  eq((await ingest.planRepeatIngest(E1.d.name, E1.sha256, M)).kind, 'key-facts', 'E: it wrote no Key Facts, so it is offered once more');
+  calls.n = 0;
+  await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
+  eq(calls.n, 1, 'E: the second reading ran');
+  eq((await ingest.planRepeatIngest(E1.d.name, E1.sha256, M)).kind, 'nothing', 'E: and then it is marked whatever it wrote');
+  calls.summaryOnly = false;
+
+  // B. A marker lost in a sync, with the summary's Key Facts on disk: no second reading.
+  const B1 = await legacy('synced', DATA_SRC);
+  writeFileSync(path.join(DOMAINS, B1.d.name, 'wiki', 'summaries', 'synced.md'), '# T\n\n## Key Takeaways\n- one\n\n## Key Facts\n- Basic (2028): €10\n');
+  eq((await ingest.planRepeatIngest(B1.d.name, B1.sha256, M)).kind, 'nothing', 'B: a summary that already has Key Facts counts as marked');
+
+  // F1/F2. The run and the 409 route decide on the BYTES IN HAND, not on raw/.
+  // Same bytes under a NEW name, the old name's raw copy gone: only the bytes can say prose.
+  const F1 = await legacy('old-essay', PROSE_SRC);
+  rmSync(path.join(DOMAINS, F1.d.name, 'raw', 'old-essay.md'));
+  calls.n = 0;
+  await quiet(() => ingestFile(F1.d.name, sourceFile('new-essay.md', PROSE_SRC), 'new-essay.md', true, null, { llm: reply('new-essay'), buildModel: M }));
+  eq(calls.n, 0, 'F: ingestFile reads the bytes in hand: a prose source under a new name makes no call');
+  const { default: express } = await import('express');
+  const { default: ingestRouter } = await import('../src/routes/ingest.js');
+  const { createServer } = await import('node:http');
+  const app = express(); app.use('/api/ingest', ingestRouter);
+  const server = createServer(app); await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}/api/ingest`;
+  const post = async (domain, name, text) => { const fd = new FormData(); fd.append('domain', domain); fd.append('file', new Blob([text], { type: 'text/markdown' }), name); return fetch(base, { method: 'POST', body: fd }); };
+  const F2 = await legacy('route-essay', PROSE_SRC);
+  rmSync(path.join(DOMAINS, F2.d.name, 'raw', 'route-essay.md'));
+  const rp = await (await post(F2.d.name, 'route-essay-2.md', PROSE_SRC)).json();
+  eq(rp.plan && rp.plan.kind, 'nothing', 'F: the 409 plan reads the upload: prose with no raw copy is "nothing", not a priced reading');
+  const F3 = await legacy('route-plan', DATA_SRC);
+  rmSync(path.join(DOMAINS, F3.d.name, 'raw', 'route-plan.md'));
+  const rd = await (await post(F3.d.name, 'route-plan-2.md', DATA_SRC)).json();
+  ok(rd.plan && rd.plan.kind === 'key-facts' && !rd.plan.gateUnknown, 'F: the 409 plan reads the upload: a data source is a known Key Facts reading');
+  ok(rd.plan && rd.plan.estimate && Number(rd.plan.estimate.usdHigh) > 0, 'F: and it carries its estimate, so the dialog can say "about $X"', JSON.stringify(rd.plan && rd.plan.estimate));
+  await new Promise((r) => server.close(r));
+
+  // F4. The batch row says why the file gets one more reading.
+  const { queueRowNote } = await import('../src/public/next/shared/ingest-queue-logic.js');
+  ok(/one more reading if it holds figures, priced above \(at most\)/.test(queueRowNote(null, true)), 'F: the batch row note for a Key Facts reading');
+  eq(queueRowNote('unchanged', true), 'already read by this model · no AI call · $0', 'F: a free file keeps its own note');
+  if (hadKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = hadKey;
+}
+
 console.log(`\n${'─'.repeat(60)}\nPassed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ FAILURES'); process.exit(1); }
 console.log('✅ All key-facts assertions green');

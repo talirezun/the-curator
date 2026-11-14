@@ -446,6 +446,10 @@ export async function appendManifestRecord(domain, record) {
       // The Key Facts version the ingest ran with (2026-11-14). Absent: it ran before Key
       // Facts existed, which earns a data source one more reading (planRepeatIngest).
       ...(Number.isInteger(record.keyFacts) && record.keyFacts > 0 ? { keyFacts: record.keyFacts } : {}),
+      // A Key Facts re-reading that wrote no Key Facts section: one more offer, then marked.
+      ...(Number.isInteger(record.keyFactsTry) && record.keyFactsTry > 0 ? { keyFactsTry: record.keyFactsTry } : {}),
+      // A record the no-call path wrote to note the gate's answer; not a reading.
+      ...(record.noCall === true ? { noCall: true } : {}),
     });
 
     const target = manifestFilePath(domain);

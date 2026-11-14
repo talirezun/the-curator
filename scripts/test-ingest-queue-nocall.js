@@ -239,7 +239,7 @@ try {
     ok(bodies.every(Boolean), 'setup: the renderers were extracted', names.filter((n, i) => !bodies[i]).join(', '));
     const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const v = new Function('escapeHtml', 'formatUsdHonest', 'computeQueueStatusCounts', 'formatHealthCounts', 'statusPillMeta',
-      'sanitizeDisplayName', 'formatQueueBytes', `
+      'sanitizeDisplayName', 'formatQueueBytes', 'queueRowNote', `
       const icon = () => '<svg></svg>';
       const renderStatus = () => '';
       const progressRingHtml = () => '';
@@ -247,7 +247,7 @@ try {
       ${bodies.join('\n')}
       return { renderQueueDoneSummary, renderQueueItemRow, renderQueueFileListItem };
     `)(esc, formatUsdHonest, logic.computeQueueStatusCounts, logic.formatHealthCounts, logic.statusPillMeta,
-      logic.sanitizeDisplayName, logic.formatQueueBytes);
+      logic.sanitizeDisplayName, logic.formatQueueBytes, logic.queueRowNote);
     const text = (h) => String(h).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
 
     const noCall = { status: 'done', idx: 0, name: 'copy.md', noCall: true, tokenUsage: { calls: 0 },

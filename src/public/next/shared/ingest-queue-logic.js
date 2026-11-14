@@ -350,6 +350,20 @@ export {
 };
 
 /**
+ * The note under a file in the batch estimate: why it is free, or (2026-11-14) why it gets
+ * one more reading. Pure, so a suite holds the words.
+ * @param {string|null} noCall  the server's `files.noCall` reason
+ * @param {boolean} keyFacts    listed in the server's `files.keyFactsReread`
+ */
+export function queueRowNote(noCall, keyFacts) {
+  if (noCall === 'already-ingested') return 'already ingested, will be skipped · no AI call · $0';
+  if (noCall === 'same-name-in-batch') return 'same name as another file, will be skipped · no AI call · $0';
+  if (noCall === 'unchanged') return 'already read by this model · no AI call · $0';
+  if (keyFacts) return 'read before figures were kept · one more reading if it holds figures, priced above (at most)';
+  return '';
+}
+
+/**
  * What a press of "re-ingest" will truly do, in plain words, before anything is spent.
  * Pure: `plan` is the 409's plan (planRepeatIngest), or nothing from an older server.
  * A null action means there is nothing to press: the same model, the same bytes, no gap.
