@@ -31,3 +31,10 @@ Foundations marked "read first" arrive with their text; the rest arrive as an in
 Open any of them by name with `get_project_context` and `slugs` when the work calls
 for it — the brief's "Read before you…" section says which. An index entry with no
 text is a document waiting to be asked for, not one that is missing.
+
+## Model tiers for delegated work
+
+When this project's work is split across agents: **Fable 5.2** (`claude-fable-5-2`) for
+truly complex audits (independent reviews, security and data-safety audits, proven
+repros); the newest **Opus** (Opus 5.5) for complex builds and read-only design passes;
+**Sonnet** for mechanical work. Fable 5.2 replaces Fable 5.1 for audits from 2026-11-14.

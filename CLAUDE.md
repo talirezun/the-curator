@@ -51,6 +51,11 @@ Open any of them by name with `get_project_context` and `slugs` when the work ca
 for it — the brief's "Read before you…" section says which. An index entry with no
 text is a document waiting to be asked for, not one that is missing.
 
+## Model tiers for delegated work
+
+- **Fable 5.2** (`claude-fable-5-2`, Agent tool `model: "fable"`): truly complex audits — independent reviews, security and data-safety audits, proven repros. Replaces Fable 5.1 from 2026-11-14.
+- **Newest Opus** (Opus 5.5, `model: "opus"`): complex builds and read-only design passes. **Sonnet**: mechanical work.
+
 ## Where the rest lives — open by name, on demand
 
 | File | What it holds |
