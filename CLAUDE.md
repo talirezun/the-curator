@@ -176,6 +176,7 @@ llm-docs/            — self-contained markdown written for language models (th
 - The admin token is shown ONCE; GitHub APIs are eventually consistent — never read-after-write on a correctness path; a truncated tree THROWS.
 - A prior version is content or `null`, never `''`; pages that never reached the collective are never diffed.
 - `push()`, `pull()` and `setup()` all guard their commit.
+- Line-record files (`.raw-manifest.jsonl`, `.health-dismissed.jsonl`, `log.md`, state journals) merge `merge=union` via `<git dir>/info/attributes` (`LINE_RECORD_MERGE_RULES`), never `-X theirs`; wiki pages and `index.md` are never listed.
 
 ### The MCP → [decisions-agents.md#my-curator-mcp](docs/dev/decisions-agents.md#my-curator-mcp)
 - The MCP is a full read+write client of the SAME brain functions; count tools from `mcp/tools/index.js`, never from prose.

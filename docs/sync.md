@@ -364,6 +364,7 @@ If you forget to **Sync now** on one machine and then do new work on another mac
 
 Read precisely, because the scope matters:
 
+- **Record files keep both machines' lines.** The ingest record (`wiki/.raw-manifest.jsonl`), Health dismissals, `wiki/log.md` and working-state journals are merged by keeping every line from both machines, so two computers that each ingested or dismissed something before syncing both keep it (before this release one machine's line was dropped).
 - This affects **only genuinely conflicting sections** of a page edited on both machines since the last sync. Everything else from both sides merges normally.
 - **Your local version is not destroyed.** The auto-save commit runs *before* the merge, so the pre-merge content is still in the local git history and can be recovered.
 - To recover it, look at the auto-save commit for that page:

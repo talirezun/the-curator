@@ -378,6 +378,72 @@ async function loadConfig() {
   try { return JSON.parse(await readFile(currentConfigFile(), 'utf8')); } catch { return null; }
 }
 
+// ── Line-record files merge as a UNION (2026-11-14) ───────────────────────────
+//
+// pull() merges with `-X theirs`, and that preference also decides a hunk BOTH
+// computers changed. Two computers that each APPEND a line to the same file
+// change the same hunk (the end of the file), so `-X theirs` kept the other
+// computer's line and silently dropped this one's. Reproduced with plain git.
+// For `.raw-manifest.jsonl` that meant a source read here was forgotten: the
+// same-model no-call rule and duplicate detection no longer knew it, and the
+// next re-ingest made a paid call.
+//
+// The files below are records the app only appends to (one JSON object, or one
+// log entry, per event), so the right merge keeps BOTH sides' lines: git's
+// built-in `union` driver, which wins over `-X theirs` for these paths only.
+// Measured with git 2.48: both appended lines survive, ours first, then theirs;
+// an identical line appended on both sides is kept once. That last part has
+// one visible effect: log.md entries end in a blank line, and when both sides
+// append an entry the shared trailing blank line is kept once, so the two new
+// entries abut (every content line is kept; headings still parse). Wiki pages and
+// index.md are NOT listed and merge exactly as before.
+//
+//   */wiki/.raw-manifest.jsonl    completed-ingest records (raw-store.js, appended)
+//   */wiki/.health-dismissed.jsonl Health dismissals (rewritten whole, but a new
+//                                  one lands at the end, so two computers
+//                                  dismissing collide exactly like an append)
+//   */wiki/log.md                 the ingest/compile log (appendLog adds a block
+//                                  at the end; union keeps both blocks whole)
+//   */state/**/journal.jsonl      working-state journals: per-machine paths, so
+//                                  normally one writer; listed as a net
+//
+// WHY `<git dir>/info/attributes` AND NOT A COMMITTED `.gitattributes`. It is
+// read on every merge, applies to an EXISTING repository on its next sync with
+// no commit and no history rewrite, and never touches the user's folder: a
+// `.gitattributes` the user keeps in their vault is left alone (git reads both;
+// ours wins only for the four paths above). The cost, stated: a computer still
+// on an older version merges the old way until it updates.
+//
+// Not listed, on purpose: `.mcp-write-log.jsonl` and `.write-lock` are ignored
+// (never synced); conversations are whole JSON files, not line records; the
+// batch queue, duplicate-check memory and Health undo copies live outside
+// `domains/`.
+const LINE_RECORD_MERGE_RULES = [
+  '*/wiki/.raw-manifest.jsonl merge=union',
+  '*/wiki/.health-dismissed.jsonl merge=union',
+  '*/wiki/log.md merge=union',
+  '*/state/**/journal.jsonl merge=union',
+];
+const MERGE_BLOCK_START = '# >>> The Curator: line-record files keep both computers\' lines (rewritten on every sync)';
+const MERGE_BLOCK_END = '# <<< The Curator';
+
+/** Writes the managed block into `<gitDir>/info/attributes`; anything else in that file is kept. */
+async function ensureLineRecordMerge(gitDir = currentGitDir()) {
+  const file = path.join(gitDir, 'info', 'attributes');
+  let existing = '';
+  try { existing = await readFile(file, 'utf8'); } catch { /* none yet */ }
+  const start = existing.indexOf(MERGE_BLOCK_START);
+  const end = start === -1 ? -1 : existing.indexOf(MERGE_BLOCK_END, start);
+  const kept = start !== -1 && end > start
+    ? existing.slice(0, start) + existing.slice(end + MERGE_BLOCK_END.length).replace(/^\n/, '')
+    : existing;
+  const next = (kept && !kept.endsWith('\n') ? kept + '\n' : kept) +
+    [MERGE_BLOCK_START, ...LINE_RECORD_MERGE_RULES, MERGE_BLOCK_END].join('\n') + '\n';
+  if (next === existing) return;
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFileAtomic(file, next, 'utf8');
+}
+
 // ── Domains .gitignore ────────────────────────────────────────────────────────
 
 // What we want excluded from sync, per-domain:
@@ -977,6 +1043,8 @@ async function prepareRemote(gitDir, remoteUrl, timeout) {
   await git('config user.email "thecurator@local"', { gitDir });
   await git('config user.name "The Curator"', { gitDir });
   await git('config push.autoSetupRemote true', { gitDir });
+  // Before any merge a connect may make (mode 'merge').
+  await ensureLineRecordMerge(gitDir);
   try {
     await git(`remote add origin "${remoteUrl}"`, { gitDir });
   } catch {
@@ -2185,6 +2253,8 @@ export async function pull() {
   // it only writes a config FILE, never touches a path the incoming merge
   // might also want to write.
   await ensureDomainsGitignore();
+  // Existing repositories get the union rule here, before the merge below.
+  await ensureLineRecordMerge();
   const safety = await refreshSyncSafety();
 
   // Auto-commit local changes so the pull merge succeeds — unchanged,
@@ -2749,6 +2819,8 @@ export const __testing = {
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,
+  ensureLineRecordMerge,
+  LINE_RECORD_MERGE_RULES,
   isCleanIndexError,
   buildBackupReport,
   recoverHygieneMergeConflict,
