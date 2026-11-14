@@ -4412,6 +4412,7 @@ function estimateCostText(e, runsOn) {
 function renderQueueEstimate(est, opts) {
   const fileList = resolveEstimateFileList(est, state.selectedFiles);
   const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
+  const keyFactsNames = new Set(Array.isArray(est.files && est.files.keyFactsReread) ? est.files.keyFactsReread : []);
   const noCallByName = new Map((Array.isArray(est.files && est.files.noCall) ? est.files.noCall : [])
     .filter((e) => e && typeof e.name === 'string').map((e) => [e.name, String(e.reason || '')]));
   const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
@@ -4443,7 +4444,7 @@ function renderQueueEstimate(est, opts) {
     '<div class="ing-queue-section">' +
       '<div class="ing-queue-section-label">Will be ingested (largest first)</div>' +
       '<ul class="ing-queue-file-list" id="ing-queue-file-list">' +
-        fileList.map((f) => renderQueueFileListItem(f, { removable: true, noCall: noCallByName.get(f && f.name) || null })).join('') +
+        fileList.map((f) => renderQueueFileListItem(f, { removable: true, noCall: noCallByName.get(f && f.name) || null, keyFacts: keyFactsNames.has(f && f.name) })).join('') +
       '</ul>' +
     '</div>';
 
@@ -4580,7 +4581,9 @@ function renderQueueFileListItem(entry, opts) {
     : reason === 'same-name-in-batch' ? 'same name as another file, will be skipped · no AI call · $0'
     : reason === 'unchanged' ? 'already read by this model · no AI call · $0'
     : '';
-  const noteHtml = noCallNote ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote) + '</span>' : '';
+  // Priced in the estimate, with its reason (planRepeatIngest 'key-facts', 2026-11-14).
+  const keyFactsNote = !noCallNote && opts && opts.keyFacts ? 'read before figures were kept · one more reading, priced above' : '';
+  const noteHtml = (noCallNote || keyFactsNote) ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote || keyFactsNote) + '</span>' : '';
   return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + noteHtml + removeBtn + '</li>';
 }
 

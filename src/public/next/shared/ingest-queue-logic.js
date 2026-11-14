@@ -371,6 +371,16 @@ export function duplicateCopy(plan) {
       action: null,
     };
   }
+  if (p && p.sameContent && p.kind === 'key-facts') {
+    const e = p.estimate && typeof p.estimate === 'object' ? p.estimate : null;
+    const usd = e && Number.isFinite(e.usdHigh) ? e.usdHigh : e && Number.isFinite(e.usdLow) ? e.usdLow : null;
+    const cost = usd === null ? 'the cost is shown before it starts' : 'about $' + (usd < 0.01 ? usd.toFixed(3) : usd.toFixed(2));
+    return {
+      sentence: 'This source holds figures that earlier versions did not keep; reading it again keeps them — ' + cost +
+        '. This happens once: after it, reading it again with this model makes no AI call. ' + kept,
+      action: 'Read it again to keep its figures',
+    };
+  }
   if (p && p.sameContent && p.kind === 'other-model') {
     const now = p.modelLabel || 'your current model';
     const by = p.previousModelLabel ? p.previousModelLabel + ' read it' + when(p) : 'It was read' + when(p) + ' by a model that was not recorded';

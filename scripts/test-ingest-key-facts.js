@@ -425,6 +425,83 @@ section('9. audit follow-ups: tables, sibling figures, the gate, the response li
   ok(/no nested bullets/.test(KEY_FACTS_RULE), 'the rule asks for no nested bullets in Key Facts');
 }
 
+// ── 10 ───────────────────────────────────────────────────────────────────────
+section('10. one Key Facts reading for a data source read before Key Facts existed (owner, 2026-11-14)');
+{
+  const { appendManifestRecord, readManifest, hashRawSource } = await import('../src/brain/raw-store.js');
+  const DATA_SRC = 'Price list for 2028: Basic tier €10 a month, Pro tier €20 a month, billed yearly.\n'.repeat(12);
+  const PROSE_SRC = 'A short essay about orchards and rivers in the harbour town, and the people there. '.repeat(14);
+  const reply = (name) => async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); calls10.n++;
+    return JSON.stringify({ title: 'T', pages: [{ path: `summaries/${name}.md`, content: '# T\n\n## Key Takeaways\n- one\n\n## Key Facts\n- Basic tier (2028): €10 a month\n' }] }); };
+  const calls10 = { n: 0 };
+  // An ingest made before Key Facts: same bytes, same model, a completed record with no marker.
+  async function legacyDomain(name, text) {
+    const d = makeDomain({ [`summaries/${name}.md`]: '# T\n\n## Key Takeaways\n- one\n' });
+    const raw = path.join(DOMAINS, d.name, 'raw', `${name}.md`);
+    writeFileSync(raw, text, 'utf8');
+    const sha256 = await hashRawSource(raw);
+    await appendManifestRecord(d.name, { filename: `${name}.md`, sha256, bytes: Buffer.byteLength(text), summaryPath: `summaries/${name}.md`,
+      ingestedAt: new Date().toISOString(), completed: true, model: 'fake-1', gaps: 0 });
+    return { d, sha256 };
+  }
+  const L1 = await legacyDomain('plan', DATA_SRC);
+  const plan1 = await ingest.planRepeatIngest(L1.d.name, L1.sha256, 'fake-1');
+  eq(plan1.kind, 'key-facts', 'plan: a data source read before Key Facts by this model → one key-facts reading');
+  ok(/figures that earlier versions did not keep/.test(plan1.reason || ''), 'with the plain reason');
+  const L2 = await legacyDomain('essay', PROSE_SRC);
+  eq((await ingest.planRepeatIngest(L2.d.name, L2.sha256, 'fake-1')).kind, 'nothing', 'plan: a source below the gate still makes no call');
+
+  // The reading itself: add-only-new (not repeatSource), it records the marker, the next press is free.
+  calls10.n = 0;
+  const r1 = await quiet(() => ingestFile(L1.d.name, sourceFile('plan.md', DATA_SRC), 'plan.md', true, null, { llm: reply('plan'), buildModel: 'fake-1' }));
+  eq(calls10.n, 1, 'ingest: the key-facts reading makes its one call');
+  ok(L1.d.read('summaries/plan.md').includes('## Key Facts') && L1.d.read('summaries/plan.md').includes('- one'), 'the summary gains Key Facts and keeps its text');
+  ok(r1.warnings.some((w) => /next re-ingest with this model makes no AI call/.test(w)), 'and the report says it happens once');
+  const last = (await readManifest(L1.d.name)).filter((r) => r.completed).pop();
+  eq(last.keyFacts, ingest.KEY_FACTS_VERSION, 'the completed record carries the Key Facts marker');
+  eq((await ingest.planRepeatIngest(L1.d.name, L1.sha256, 'fake-1')).kind, 'nothing', 'plan: marker present → no call');
+  calls10.n = 0;
+  const r2 = await quiet(() => ingestFile(L1.d.name, sourceFile('plan.md', DATA_SRC), 'plan.md', true, null, { llm: reply('plan'), buildModel: 'fake-1' }));
+  ok(calls10.n === 0 && r2.nothingToChange === true, 'ingest: the press after it makes no call');
+  calls10.n = 0;
+  const r3 = await quiet(() => ingestFile(L2.d.name, sourceFile('essay.md', PROSE_SRC), 'essay.md', true, null, { llm: reply('essay'), buildModel: 'fake-1' }));
+  ok(calls10.n === 0 && r3.nothingToChange === true, 'ingest: the prose source read before Key Facts still makes no call');
+
+  // The run decides on raw/ as it was before the upload, like the estimate: no raw copy
+  // before → the estimate said 'nothing' ($0), so the run must not read (measured bug).
+  const L4 = await legacyDomain('gone', DATA_SRC);
+  rmSync(path.join(DOMAINS, L4.d.name, 'raw', 'gone.md'));
+  eq((await ingest.planRepeatIngest(L4.d.name, L4.sha256, 'fake-1')).kind, 'nothing', 'plan: no raw copy to read → nothing (what the estimate shows)');
+  calls10.n = 0;
+  const r4 = await quiet(() => ingestFile(L4.d.name, sourceFile('gone.md', DATA_SRC), 'gone.md', true, null, { llm: reply('gone'), buildModel: 'fake-1' }));
+  ok(calls10.n === 0 && r4.nothingToChange === true, 'ingest: then the run makes no call either, although it saved a raw copy first');
+
+  // Cost shown first: the dialog sentence names the price, the queue lists the file with its reason and prices it.
+  const { duplicateCopy } = await import('../src/public/next/shared/ingest-queue-logic.js');
+  const c = duplicateCopy({ sameContent: true, kind: 'key-facts', estimate: { usdLow: 0.004, usdHigh: 0.006 } });
+  ok(/figures that earlier versions did not keep; reading it again keeps them — about \$0\.006/.test(c.sentence) && c.action, 'dialog: reason and "about $X" before the press', c.sentence);
+  ok(/cost is shown before it starts/.test(duplicateCopy({ sameContent: true, kind: 'key-facts' }).sentence), 'dialog: with no estimate it says the cost comes first');
+  const llmMod = await import('../src/brain/llm.js');
+  const hadKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = hadKey || 'placeholder-for-an-offline-estimate';   // no call is made: the estimate is arithmetic
+  let estModel = null;
+  try { const i = llmMod.getProviderInfo(); estModel = llmMod.answeringModel(i.provider, i.model); } catch { estModel = null; }
+  const L3 = await legacyDomain('plan', DATA_SRC);
+  if (estModel) {   // the record says the estimate's own model read it, before Key Facts
+    await appendManifestRecord(L3.d.name, { filename: 'plan.md', sha256: L3.sha256, bytes: Buffer.byteLength(DATA_SRC), summaryPath: 'summaries/plan.md',
+      ingestedAt: new Date().toISOString(), completed: true, model: estModel, gaps: 0 });
+  }
+  const est = await quiet(async () => {
+    const q = await import('../src/brain/ingest-queue.js');
+    return q.estimateIngestQueueCost(L3.d.name, [{ name: 'plan.md', size: Buffer.byteLength(DATA_SRC), sha256: L3.sha256 }]).catch((e) => ({ error: e.message }));
+  });
+  if (est && est.files && estModel) {
+    ok(!est.files.noCall.some((x) => x.name === 'plan.md'), 'queue estimate: the file is NOT priced at $0');
+    ok(est.files.keyFactsReread.includes('plan.md'), 'queue estimate: it is listed with its reason (keyFactsReread)');
+  } else ok(false, 'queue estimate: the estimate must resolve a model here', JSON.stringify(est && est.error));
+  if (hadKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = hadKey;
+}
+
 console.log(`\n${'─'.repeat(60)}\nPassed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ FAILURES'); process.exit(1); }
 console.log('✅ All key-facts assertions green');

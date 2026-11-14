@@ -130,6 +130,13 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
  *                  user pays for, and old text is never overwritten.
  *   'unknown'      the current model cannot be told: behaves as gaps, the old behaviour.
  *
+ *   'key-facts'    (owner's decision, 2026-11-14) this model read these bytes, but before
+ *                  Key Facts existed (the latest completed record has no `keyFacts`
+ *                  marker), and the source passes the hard-data gate: ONE fresh reading,
+ *                  under add-only-new (not repeatSource), so the figures earlier versions
+ *                  dropped can reach the wiki. The cost is shown first, as for any priced
+ *                  run. Its record carries the marker, so the next press is 'nothing'.
+ *
  * REPEAT_READ_BY_OTHER_MODEL = false restores "the identical source adds nothing" for every
  * model, should the owner prefer it.
  *
@@ -140,11 +147,22 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
  */
 export const REPEAT_READ_BY_OTHER_MODEL = true;
 
+/**
+ * The Key Facts version a completed ingest ran with, recorded on its manifest line from
+ * 2026-11-14 on. A record without it ran before Key Facts existed.
+ */
+export const KEY_FACTS_VERSION = 1;
+
+/** The source's text as the gate reads it, from the copy kept in raw/. null when unknown. */
+async function rawSourceText(domain, filename) {
+  try { return (await extractText(path.join(rawPath(domain), filename))).slice(0, 80_000); } catch { return null; }
+}
+
 // The warnings that tell the user a reading fell short: a page the model did not write, or
 // a page plan it never returned. Their promise is a new reading, so they count as a gap.
 const FELL_SHORT_RE = /wrote a stub|Stub page created|stub pages were created|did not make it into the wiki|almost certainly incomplete|no content from the AI/i;
 
-export async function planRepeatIngest(domain, sha256, model) {
+export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   const wikiDir = wikiPath(domain);
   const none = { sameContent: false, kind: null, previous: null, model: model || null, gaps: [] };
   let records;
@@ -158,6 +176,20 @@ export async function planRepeatIngest(domain, sha256, model) {
   const out = { sameContent: true, kind: 'nothing', previous, model: model || null, gaps: [] };
   if (!model) { out.kind = 'unknown'; return out; }
   if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
+  // Read before Key Facts existed, and a data source: one fresh reading (owner, 2026-11-14).
+  if (!((Number(latest.keyFacts) || 0) >= KEY_FACTS_VERSION)) {
+    // The gate reads the copy kept in raw/ AS IT WAS BEFORE this upload (`opts.rawBefore`,
+    // from ingestFile): the estimate and the 409 dialog see raw/ before the upload, so the
+    // run must decide on the same thing, or a run could spend where the user was shown $0
+    // (measured: a source whose raw copy was missing planned 'nothing', then read).
+    const rawKnown = !(opts && opts.rawBefore instanceof Set) || opts.rawBefore.has(latest.filename);
+    const text = rawKnown ? await rawSourceText(domain, latest.filename) : null;
+    if (text && sourceHasHardData(text)) {
+      out.kind = 'key-facts';
+      out.reason = 'This source holds figures that earlier versions did not keep; reading it again keeps them.';
+      return out;
+    }
+  }
 
   // Which gaps a reading could still fill. Read off the disk, and off what that run said.
   try {
@@ -3437,6 +3469,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   progress(4, 'Saving source file…');
   const rawDir = rawPath(domain);
   await mkdir(rawDir, { recursive: true });
+  // raw/ before this upload: planRepeatIngest decides on what the estimate saw.
+  const rawBefore = new Set(await readdir(rawDir).catch(() => []));
   const destPath = path.join(rawDir, originalName);
   const buffer = await readFile(filePath);
   // v3.0.1-beta.8: atomic raw save so a kill mid-write doesn't leave a
@@ -3471,9 +3505,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   if (!plannedModel && !(opts && typeof opts.llm === 'function')) {
     try { const i = getProviderInfo(); plannedModel = answeringModel(i.provider, i.model); } catch { plannedModel = null; }
   }
-  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel);
+  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel, { rawBefore });
   // See planRepeatIngest: only another model's reading may bring in new wording.
-  const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model';
+  const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model' && repeatPlan.kind !== 'key-facts';
   if (repeatPlan.kind === 'nothing') {
     // No call, no cost. What is known without a model is still put right.
     const summaryRel = repeatPlan.previous.summaryPath;
@@ -3971,6 +4005,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // resolve. Before the backlink sync below, which reads these lists.
   await tidyWrittenLinks(domain, canonicalPaths);
 
+  if (repeatPlan.kind === 'key-facts') {
+    warnings.push(
+      `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
+      `This one extra reading added its Key Facts, new pages and what was mostly new to a page; no existing text changed. ` +
+      `The next re-ingest with this model makes no AI call.`
+    );
+  }
   if (repeatPlan.kind === 'other-model') {
     warnings.push(
       `This source's content has not changed, and ${repeatPlan.previous.model || 'an earlier model'} read it before. ` +
@@ -4110,6 +4151,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     completed: true,
     model: usage.totals.model || plannedModel,
     gaps: warnings.filter((w) => FELL_SHORT_RE.test(w)).length,
+    keyFacts: KEY_FACTS_VERSION,
   });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this

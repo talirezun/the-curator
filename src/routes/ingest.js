@@ -6,6 +6,7 @@ import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { ingestFile, planRepeatIngest } from '../brain/ingest.js';
 import { hashRawSource } from '../brain/raw-store.js';
+import { estimateIngestQueueCost } from '../brain/ingest-queue.js';
 // v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
 // run reports. Static import is safe: this route is a leaf, and brain/ingest.js
 // (imported just above) is fully evaluated before ai-run.js's graph starts.
@@ -67,7 +68,7 @@ export function ingestDoneEvent(result, overwrite) {
 }
 
 /** What pressing "re-ingest" can change for this upload. Free; never throws. */
-async function repeatPlanFor(domain, filePath) {
+async function repeatPlanFor(domain, filePath, file = null) {
   const empty = { sameContent: false, kind: null, previous: null, model: null, gaps: [] };
   try {
     let model = null;
@@ -75,7 +76,17 @@ async function repeatPlanFor(domain, filePath) {
       const i = llmModule.getProviderInfo();
       model = typeof llmModule.answeringModel === 'function' ? llmModule.answeringModel(i.provider, i.model) : i.model;
     } catch { model = null; }
-    return await planRepeatIngest(domain, await hashRawSource(filePath), model);
+    const sha256 = await hashRawSource(filePath);
+    const plan = await planRepeatIngest(domain, sha256, model);
+    // A Key Facts reading costs money: the plan carries the same estimate the run line
+    // shows, so the dialog can say "about $X" before the press (2026-11-14).
+    if (plan.kind === 'key-facts' && file && Number.isFinite(file.size)) {
+      try {
+        const e = (await estimateIngestQueueCost(domain, [{ name: file.originalname, size: file.size, sha256 }])).estimate || {};
+        plan.estimate = { usdLow: e.usdLow ?? null, usdHigh: e.usdHigh ?? null };
+      } catch { /* no estimate: the dialog says so */ }
+    }
+    return plan;
   } catch {
     return empty;
   }
@@ -209,7 +220,7 @@ router.post('/', upload.single('file'), async (req, res) => {
     // A plan that cannot be read never blocks: the ingest itself decides again.
     const existingPath = path.join(rawPath(domain), req.file.originalname);
     if (overwrite !== 'true') {
-      const plan = await repeatPlanFor(domain, req.file.path);
+      const plan = await repeatPlanFor(domain, req.file.path, req.file);
       if (existsSync(existingPath) || plan.sameContent) {
         return res.status(409).json({
           duplicate: true,

@@ -1110,7 +1110,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
  * @param {Array<{name:string, size:number, sha256?:string}>} accepted  in run order
  * @returns {Promise<Map<string, string>>} name -> reason
  */
-async function findNoCallFiles(domain, accepted, { overwrite, model }) {
+async function findNoCallFiles(domain, accepted, { overwrite, model, keyFacts = null }) {
   const out = new Map();
   const seen = new Set();
   const rawDir = rawPath(domain);
@@ -1124,6 +1124,8 @@ async function findNoCallFiles(domain, accepted, { overwrite, model }) {
       try {
         const plan = await planRepeatIngest(domain, f.sha256, model);
         if (plan && plan.kind === 'nothing') out.set(f.name, 'unchanged');
+        // Priced like any reading; the caller lists it with its reason (2026-11-14).
+        else if (plan && plan.kind === 'key-facts' && keyFacts) keyFacts.add(f.name);
       } catch { /* cannot tell: priced */ }
     }
   }
@@ -1237,7 +1239,8 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
 
   // A file that will finish without a call costs nothing and plans no calls. It stays in
   // `accepted` (the list the user confirms) and is named in `files.noCall`.
-  const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model });
+  const keyFactsReread = new Set();
+  const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model, keyFacts: keyFactsReread });
   const priced = accepted.filter(f => !noCall.has(f.name));
   const perFile = priced.map(f => estimateOneFile({ f, promptFiles, index, today, price, model }));
 
@@ -1291,6 +1294,9 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
       rejected,
       // The accepted files that will finish without an AI call, priced at $0 above.
       noCall: [...noCall].map(([name, reason]) => ({ name, reason })),
+      // Already read by this model before Key Facts existed, and a data source: one more
+      // reading, PRICED in the estimate above, said per file (planRepeatIngest 'key-facts').
+      keyFactsReread: [...keyFactsReread],
     },
     estimate,
     domainContext: { pageCount: stats?.pageCount ?? null, indexBytes: index.length },
