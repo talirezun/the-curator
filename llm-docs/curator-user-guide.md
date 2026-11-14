@@ -408,7 +408,15 @@ Below the change list a small footer reports the real usage for that ingest, not
 
 ## Does ingest keep numbers, prices and technical details?
 
-Yes. A source whose value lies in specific data (a price list, budget, plan, spec sheet, contract, results, or an architecture document) gets a **Key Facts** section on its summary page: each figure exactly as written, with its unit, meaning, condition and period or version ("Q3 2025 revenue: €3.8M"). Endpoints, setting names, file names and versions stay letter for letter, in code style; the figures usually come as bullets (a short table is allowed but rarely written), and a source with more than 40 table rows says in the ingest report that the wiki keeps a selection and the full tables stay in the original file in raw/. Entity and concept pages keep their own figures too, so chat can answer and calculate from them (chat reads a summary's Key Facts when it chooses which pages to load). An ordinary article is ingested exactly as before: The Curator counts the figures, code names and table rows in a source and sends the rule only when there are enough. A later source that changes a figure adds the new one beside the old one.
+Yes, since v3.98.0. A source whose value lies in specific data (pricing, a budget, a plan, a report, a contract, results, an architecture document, a spec, an API reference, a decision record) gets a **Key Facts** section on its summary page, after Key Takeaways, up to 40 bullets: each figure exactly as written, with its unit, meaning, condition and period, date or version ("Q3 2025 revenue: €3.8M"). Endpoints, setting names, file names and versions stay letter for letter, in code style. Entity and concept pages keep the figures that belong to them, and chat reads a summary's Key Facts when it picks pages, so it can answer and calculate from them.
+
+The Curator counts figures, code names and table rows first; an ordinary article gets exactly the ingest it got before, with no Key Facts. A short table is allowed but rarely written, so expect bullets; a source with more than 40 table rows says in the report that the wiki keeps a selection, and the full tables stay in the original file in raw/. A source ingested before v3.98.0 can be read once more with the same model to add its figures: drop it in again and the dialog gives the reason and the price before you press.
+
+Model choice matters for data-heavy sources: on one pricing document with 29 facts, Gemini 3.5 Flash Lite kept about 19 and Claude Haiku 5.5 about 26.
+
+Limits: a follow-up document's changed figures land on its own summary, and the existing company or product page usually keeps the old values (updating it is the next step); a technical document written as plain prose may not be recognised; large tables are summarised; chat matches words exactly.
+
+Ingesting technical documents into a domain makes knowledge that compounds with later sources and that chat can answer across. A project's Documents (foundations) are different: canonical text kept verbatim for agents. Both are valid, for different purposes.
 
 ## Who sets the instructions an ingest follows?
 
