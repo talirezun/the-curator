@@ -1,6 +1,13 @@
 import { buildGraph } from '../graph.js';
 import { rankNodesWithMeta, displayScore } from '../search-score.js';
 
+// A query word common in one domain gives that domain a near-zero weight, and the
+// FLAT slug/tag bonuses divided by it put that domain's pages ahead of every
+// other's (measured: "curator" had weight 0.30 in projects and its first five
+// results were all projects pages; posts:the-curator fell 5 → 7). The divisor is
+// never below 1 (floors 2 and 3 pushed another domain's own page down instead).
+const WEIGHT_FLOOR = 1;
+
 export const searchCrossDefinition = {
   name: 'search_cross_domain',
   description:
@@ -32,9 +39,9 @@ export async function searchCrossHandler({ query, max_results_per_domain = 5 }, 
   // count and word frequencies, so raw scores from two domains are not comparable
   // (merged raw, a large domain buried a small one), and score relative to each
   // domain's best put every domain's best first however weak it was (a round
-  // robin). Results are merged on score / weight — weight being what one plain
-  // mention of every query word scores in that domain (search-score.js) — with
-  // exact-name pages first and ties by raw score.
+  // robin). Results are merged on score / max(weight, 1) — weight being what one
+  // plain mention of every query word scores in that domain (search-score.js) —
+  // with exact-name pages first and ties by raw score.
   const merged = [];
   for (const domain of domains) {
     const graph = await buildGraph(domain, storage);
@@ -48,7 +55,7 @@ export async function searchCrossHandler({ query, max_results_per_domain = 5 }, 
         : node.body.slice(0, 160).replace(/\s+/g, ' ').trim();
       merged.push({
         hit: { domain, slug: node.slug, type: node.type, tags: node.tags, score: displayScore(score), excerpt },
-        exact, score, norm: weight > 0 ? score / weight : 0,
+        exact, score, norm: score / Math.max(weight, WEIGHT_FLOOR),
       });
     }
   }

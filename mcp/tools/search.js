@@ -9,7 +9,8 @@ export const searchWikiDefinition = {
     'each page\'s tags, outgoing link count, and backlink count — so you can ' +
     'prioritise hub nodes (highly connected pages) over isolated ones. A query word ' +
     'matches whole words, and (4+ letters) the start of a word at lower weight, so ' +
-    '"encrypt" finds "encryption"; a rare word counts for more than a common one, ' +
+    '"encrypt" finds "encryption"; a version such as 0.4.11 or gpt-5.6 is one term; ' +
+    'a rare word counts for more than a common one, ' +
     'repeats count less each time, and a page whose slug or title is the query ' +
     'ranks first.',
   inputSchema: {

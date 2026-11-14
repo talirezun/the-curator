@@ -44,7 +44,7 @@ const { createStorageAdapter } = await import('../mcp/storage/local.js');
 const { searchWikiHandler } = await import('../mcp/tools/search.js');
 const { searchCrossHandler } = await import('../mcp/tools/cross.js');
 const { buildGraph } = await import('../mcp/graph.js');
-const { rankNodes, terms, displayScore } = await import('../mcp/search-score.js');
+const { rankNodes, terms, tokens, displayScore } = await import('../mcp/search-score.js');
 
 async function domain(name, pages) {
   const d = path.join(ROOT, name);
@@ -62,7 +62,7 @@ const filler = (n) => Array.from({ length: n }, (_, i) => `Line ${i} about harbo
 await domain('alpha', [
   ['entities/zephyr.md', '# Zephyr\n\nZephyr is a courier relay.\n'],
   ['summaries/zephyr-hub-roundup.md', `# Zephyr hub roundup\n\n${rep('zephyr relay file default storage', 300)}\n${filler(400)}\n`],
-  ['summaries/drop-architecture.md', '# Drop architecture\n\n- The drop keeps each file as ciphertext until expiry after seven days.\n'],
+  ['summaries/drop-architecture.md', '# Drop architecture\n\n- The drop keeps each file in default storage as ciphertext until expiry after seven days.\n'],
   ['concepts/chain-notes.md', '# Chain notes\n\nA blockchain is a chain of blocks.\n', ['blockchain']],
   ['concepts/ai-basics.md', '# AI basics\n\nAI means machine intelligence.\n'],
   ['concepts/agents-only.md', '# Field crews\n\nThe agents work in crews.\n'],
@@ -70,6 +70,9 @@ await domain('alpha', [
   ['concepts/vault-encryption.md', '# Vault encryption\n\nThe vault uses encryption at rest.\n'],
   ['concepts/api-pagination.md', '# API pagination\n\nResults come back with pagination cursors.\n'],
   ['concepts/aim-notes.md', '# Aim notes\n\nWe aim high.\n'],
+  ['summaries/release-notes.md', '# Release notes\n\nVersion 0.4.11 fixed the deploy. v1.0 is next.\n'],
+  ['summaries/model-notes.md', '# Model notes\n\nWe moved to gemini-3.5-flash and tried GPT-5.6.\n'],
+  ...Array.from({ length: 12 }, (_, i) => [`concepts/numbers-${i}.md`, `# Numbers ${i}\n\nStep 4 of 11, version 0 and v1 with 5 and 6 and 3; a file with a default value and storage.\n`]),
   ['concepts/ledger-notes.md', '# Smart Ledgers\n\nNotes on ledgers.\n'],
   ['concepts/smart-ledgers-history.md', `# History of smart ledgers\n\n${rep('smart ledgers', 80)}\n`],
   ['concepts/quokka-farm.md', '# Quokka farm\n\nThe quokka farm pays a quokka tariff.\n'],
@@ -80,6 +83,7 @@ await domain('alpha', [
 ]);
 await domain('gamma', [
   ['concepts/gamma-misc.md', '# Misc\n\nA quokka was seen once.\n'],
+  ['concepts/quokka-sightings.md', '# Sightings\n\nA quokka.\n'],
   ...Array.from({ length: 30 }, (_, i) => [`concepts/gamma-${i}.md`, `# Gamma ${i}\n\nA quokka page.\n`]),
 ]);
 await domain('beta', [
@@ -116,6 +120,35 @@ section('1. whole words only');
   ok(!slugs(await search('ai')).includes('aim-notes'), 'a term under 4 letters matches whole words only ("ai" does not find "aim")');
   ok(slugs(await search('Blockchain!')).includes('chain-notes'), 'punctuation around a query word is ignored; a tag word matches');
   eq(terms('End-to-end, C++ & node.js').join(' '), 'end to c node js', 'terms are the query\'s distinct words');
+}
+
+// ── 1v ───────────────────────────────────────────────────────────────────────
+section('1v. version and decimal tokens stay whole');
+{
+  eq(terms('0.4.11').join(','), '0.4.11', '"0.4.11" is one term, not 0, 4 and 11');
+  eq(terms('Claude Opus 4.7 v1.0').join(','), '4.7,v1.0,claude,opus', 'versions whole, the other words as words');
+  ok(tokens('gemini-3.5-flash').includes('3.5') && tokens('gemini-3.5-flash').includes('gemini-3.5-flash') && tokens('gemini-3.5-flash').includes('gemini'), 'a page\'s hyphen-joined version yields the whole token, its dotted piece and its words');
+  const v = await search('0.4.11');
+  eq(slugs(v).join(','), 'release-notes', '"0.4.11" matches only the page holding it');
+  ok(oldRank(alphaNodes, '0.4.11')[0] === 'release-notes', 'control: the old substring scorer also found only that page');
+  eq(slugs(await search('v1.0')).join(','), 'release-notes', '"v1.0" matches only the page holding it');
+  eq(slugs(await search('1.0')).join(','), 'release-notes', 'a leading "v" is optional ("1.0" finds "v1.0")');
+  eq(slugs(await search('gpt-5.6'))[0], 'model-notes', '"gpt-5.6" ranks the page holding it first');
+  eq(slugs(await search('gemini 3.5'))[0], 'model-notes', '"gemini 3.5" finds "gemini-3.5-flash"');
+  ok(!slugs(await search('0.4.1')).includes('release-notes'), 'a version is never matched by prefix ("0.4.1" does not find "0.4.11")');
+}
+
+// ── 1u ───────────────────────────────────────────────────────────────────────
+section('1u. order uses the UNROUNDED score');
+{
+  // 2,000 synthetic nodes: "alder" on 1,000 of them, "birch" on 999. Page A (first)
+  // holds alder once, page B (second) birch once: B's idf is higher by ~0.001, so the
+  // two round to the same 2-decimal score and only the unrounded score orders them.
+  const nodes = [{ slug: 'page-a', body: 'alder', tags: [] }, { slug: 'page-b', body: 'birch', tags: [] }];
+  for (let i = 0; i < 1998; i++) nodes.push({ slug: `f${i}`, body: i < 999 ? 'alder' : (i < 1997 ? 'birch' : 'oak'), tags: [] });
+  const r = rankNodes(nodes, 'alder birch').filter((x) => x.node.slug.startsWith('page-'));
+  ok(displayScore(r[0].score) === displayScore(r[1].score) && r[0].score !== r[1].score, `the two scores round alike but differ (${r[0].score.toFixed(5)} vs ${r[1].score.toFixed(5)})`);
+  eq(r[0].node.slug, 'page-b', 'the higher unrounded score ranks first, although it comes second in page order');
 }
 
 // ── 1b ───────────────────────────────────────────────────────────────────────
@@ -192,6 +225,10 @@ section('5. search_cross_domain does not bury a small domain');
   ok(iGamma === -1 || iGamma > order.indexOf(`alpha/${alphaRows[1].slug}`), 'a weak domain\'s best does not jump ahead of a strong domain\'s second result', order.join(', '));
   const firstSix = new Set(r.results.slice(0, 6).map((x) => x.domain));
   ok(firstSix.size < Math.min(6, r.results.length), 'the first results are not one per domain');
+  // A word on EVERY page of one domain gives it a near-zero weight; its flat slug
+  // bonus divided by that weight must not put it first (the divisor is floored at 1).
+  const qk = await searchCrossHandler({ query: 'quokka', max_results_per_domain: 5 }, storage);
+  ok(qk.results[0].domain !== 'gamma', 'a domain where the word is on every page does not jump to the top on its slug match', qk.results.slice(0, 4).map((x) => `${x.domain}/${x.slug}`).join(', '));
   const e = await searchCrossHandler({ query: 'zephyr', max_results_per_domain: 5 }, storage);
   eq(`${e.results[0].domain}/${e.results[0].slug}`, 'alpha/zephyr', 'an exact name is first across domains');
   const perDomain = (await search(q, 'alpha', 5)).results.map((x) => x.slug).join(',');

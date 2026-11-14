@@ -34,8 +34,10 @@
  * "agent" in "subagent") no longer matches; a short term (under 4 letters) matches
  * whole words only ("ai" does not find "aim").
  *
+ * VERSIONS: "0.4.11", "v1.0", "gpt-5.6" stay one term (see COMPOUND_RE below).
+ *
  * CROSS-DOMAIN (`weight`): each domain's scores depend on its own page count and word
- * frequencies, so search_cross_domain merges on score ÷ weight, where weight is the
+ * frequencies, so search_cross_domain merges on score ÷ max(weight, 1), where weight is the
  * score a page would get for one plain mention of every term in THAT domain (Σ idf).
  * Merged on raw scores, a large domain buried a small one; merged on score relative
  * to each domain's best, every domain's best came first whatever its strength (the
@@ -43,7 +45,7 @@
  *
  * Measured on 507 labelled questions (300 + an independent audit's 158 + 49 built
  * from pages chat stops loading), agent-style keyword queries, top-5: search_wiki
- * 276 → 436, search_cross_domain 134 → 365; see docs/dev/decisions-agents.md.
+ * 276 → 434, search_cross_domain 134 → 365; see docs/dev/decisions-agents.md.
  *
  * Pure and synchronous; never writes to stdout (it is reachable from mcp/).
  */
@@ -59,9 +61,49 @@ export function words(s) {
   return String(s ?? '').toLowerCase().match(WORD_RE) || [];
 }
 
-/** The query's terms: its distinct words, in first-seen order. */
+// VERSION AND NUMBER TOKENS. Letters and digits joined by "." or "-" with at least
+// one digit ("0.4.11", "v1.0", "3.5", "gpt-5.6", "claude-opus-4.7") are ALSO kept
+// whole, so a query naming a version matches only the pages that hold that version.
+// Split into words alone, "0.4.11" became 0, 4 and 11 and matched every page with a
+// 4 in it (measured: 91 version strings that occur on 1-3 pages, top-1 88 → 36).
+// A page's text yields its words AND every run of 2+ joined pieces that holds a
+// digit ("gemini-3.5-flash" also yields "gemini-3.5", "3.5" and "3.5-flash").
+const COMPOUND_RE = /[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)+/gu;
+const HAS_DIGIT = /\p{N}/u;
+function compoundMatches(lower) {
+  return (lower.match(COMPOUND_RE) || []).filter(m => HAS_DIGIT.test(m));
+}
+/** True for a whole version/number token ("0.4.11", "gpt-5.6"). */
+export function isCompound(term) {
+  return term.includes('.') || term.includes('-');
+}
+/** A string's indexable tokens: its words plus its version/number tokens. */
+export function tokens(s) {
+  const lower = String(s ?? '').toLowerCase();
+  const out = lower.match(WORD_RE) || [];
+  for (const m of compoundMatches(lower)) {
+    // Every contiguous run of 2+ of its pieces that holds a digit, so "gpt-5.6-sol"
+    // also yields "gpt-5.6" and "5.6", "v3.17.x" yields "v3.17", and a leading "v"
+    // is optional ("v0.2.0" is also found as "0.2.0").
+    const parts = m.split(/([.-])/);           // pieces at even indexes, separators at odd
+    const n = Math.min((parts.length + 1) / 2, 10);
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+      const run = parts.slice(2 * a, 2 * b + 1).join('');
+      if (HAS_DIGIT.test(run)) { out.push(run); if (/^v\d/.test(run)) out.push(run.slice(1)); }  // "v0.2.0" is also "0.2.0"
+    }
+  }
+  return out;
+}
+
+/**
+ * The query's terms, distinct, in first-seen order: each version/number token
+ * whole (its words are NOT also terms), then the remaining words.
+ */
 export function terms(query) {
-  return [...new Set(words(query))];
+  const lower = String(query ?? '').toLowerCase();
+  const whole = compoundMatches(lower);
+  const rest = lower.replace(COMPOUND_RE, m => (HAS_DIGIT.test(m) ? ' ' : m));
+  return [...new Set([...whole, ...(rest.match(WORD_RE) || [])])];
 }
 
 // A NAME key for the exact-name rule: the words in order, each with one trailing
@@ -80,13 +122,13 @@ function profile(node) {
   let p = _profiles.get(node);
   if (!p) {
     const tf = new Map();
-    for (const w of words(String(node.slug ?? '') + '\n' + String(node.body ?? ''))) tf.set(w, (tf.get(w) || 0) + 1);
+    for (const w of tokens(String(node.slug ?? '') + '\n' + String(node.body ?? ''))) tf.set(w, (tf.get(w) || 0) + 1);
     const slugWords = words(node.slug);
     const titleMatch = /^#{1,3}\s+(.+)/m.exec(String(node.body ?? ''));
     p = {
       tf,
-      slugWords: new Set(slugWords),
-      tagWords: new Set((node.tags || []).flatMap(t => words(t))),
+      slugWords: new Set(tokens(node.slug)),
+      tagWords: new Set((node.tags || []).flatMap(t => tokens(t))),
       slugKey: nameKey(slugWords),
       titleKey: titleMatch ? nameKey(words(titleMatch[1])) : '',
     };
@@ -142,7 +184,7 @@ export function rankNodesWithMeta(nodes, query) {
   });
   const vocab = vocabOf(all, profiles);
   const pre = t.map(term => {
-    if (term.length < PREFIX_MIN) return [];
+    if (term.length < PREFIX_MIN || isCompound(term)) return [];
     // A trailing "e" is dropped from the prefix ("paginate" also finds "pagination").
     const stem = term.length >= 5 && term.endsWith('e') ? term.slice(0, -1) : term;
     return wordsWithPrefix(vocab, stem).filter(w => w !== term);
