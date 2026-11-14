@@ -78,7 +78,7 @@
  *   §4  THE JOURNAL across machines: append-only, per-machine, no loss and no
  *       duplication through a round-trip. In the collapsed layout it was once
  *       lost alongside current.md (the "and the journal with it" clause of the
- *       v3.17.0 finding); since 2026-11-14 pull() merges it `merge=union`, so
+ *       v3.17.0 finding); since 2026-11-14 pull() re-merges it record by record, so
  *       §2a now asserts it survives (test-sync-line-records.js).
  *   §5  THE PREMISES the argument silently depends on: that `state/` is
  *       genuinely TRACKED (if it were gitignored none of this would matter),
@@ -505,8 +505,8 @@ try {
       const headlines = jLines.map(l => { try { return JSON.parse(l).headline; } catch { return null; } });
       assertTrue(!jLines.some(l => l.includes('<<<<<<<')), '2a: the journal carries no conflict marker either');
       // CHANGED 2026-11-14 (test-sync-line-records.js): this used to assert the journal
-      // did NOT union and lost one machine's entries too. pull() now gives journal.jsonl
-      // git's `merge=union` driver, so even on a collapsed path the journal keeps both
+      // did NOT union and lost one machine's entries too. pull() now re-merges journal.jsonl
+      // record by record (sync-records.js), so even on a collapsed path the journal keeps both
       // machines' lines. current.md above still loses — it is not a line record.
       assertTrue(headlines.includes('handoff from A #9') && headlines.includes('handoff from B #9'),
         '2a: the append-only journal now UNIONS — both machines\' entries survive even on a shared path',

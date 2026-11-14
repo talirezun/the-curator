@@ -9,13 +9,18 @@
  * record that a source was read (the same-model no-call rule, duplicate
  * detection and the `keyFacts` marker all read that file).
  *
- * The fix is a `merge=union` rule for the app's line-record files, written into
- * `<git dir>/info/attributes` by pull() and by every connect. This suite drives
- * the app's OWN setup()/pull()/push()/sync() on two computers and asserts, for
- * each affected file, that both computers' lines survive on both machines and on
- * the remote. It also pins what must NOT change: a wiki page still merges the
- * old way, a user's `.gitattributes` and own info/attributes lines are kept
- * byte-for-byte, and no commit is rewritten.
+ * The fix (sync-records.js + reconcileRecordFiles in sync.js): after git's merge,
+ * every record file BOTH computers changed is recomputed as a three-way merge of
+ * RECORDS (JSONL lines; log.md entry blocks) and committed on top. A first fix
+ * used git's `merge=union`; an independent audit proved it brought undismissed
+ * Health rows back and mis-attributed log.md entries that listed the same pages,
+ * so §2 and §3 pin exactly those cases.
+ *
+ * This suite drives the app's OWN setup()/pull()/push()/sync() on two computers
+ * and reads the files on both computers and the remote. It also pins what must
+ * NOT change: a wiki page still merges `-X theirs`, the user's `.gitattributes`
+ * is untouched, the app writes nothing to info/attributes, and no commit is
+ * rewritten.
  *
  * ISOLATION. Temp dirs only: CURATOR_TEST_USER_DATA_DIR, CURATOR_TEST_DOMAINS_DIR
  * and the sync seams point inside one mkdtemp. CURATOR_NO_OPEN=1. No network.
@@ -35,6 +40,7 @@ mkdirSync(process.env.CURATOR_TEST_USER_DATA_DIR);
 mkdirSync(process.env.CURATOR_TEST_DOMAINS_DIR);
 
 const sync = await import('../src/brain/sync.js');
+const records = await import('../src/brain/sync-records.js');
 const { __setDomainsDirOverride } = await import('../src/brain/config.js');
 const { __setSyncTestOverrides, setup, pull, push } = sync;
 
@@ -48,6 +54,7 @@ function ok(cond, msg) {
   if (cond) { passed++; console.log(`  ✓ ${msg}`); }
   else { failed++; failures.push(msg); console.log(`  ✗ ${msg}`); }
 }
+const eq = (a, b, msg) => ok(a === b, `${msg}${a === b ? '' : ` (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`}`);
 const section = (t) => console.log(`\n${t}\n`);
 
 let n = 0;
@@ -87,120 +94,161 @@ function newRemote() {
   return r;
 }
 const remoteBlob = (remote, p) => sh(`git --git-dir="${remote}" show "main:${p}"`);
+const remoteHead = (remote) => sh(`git --git-dir="${remote}" rev-parse main`).trim();
 const isAncestor = (remote, a, b) => {
   try { sh(`git --git-dir="${remote}" merge-base --is-ancestor ${a} ${b}`); return true; } catch { return false; }
 };
 
-// Every line-record file the app writes into a synced domain, and a line per computer.
 const MANIFEST = 'd/wiki/.raw-manifest.jsonl';
 const DISMISSED = 'd/wiki/.health-dismissed.jsonl';
 const LOG = 'd/wiki/log.md';
 const JOURNAL = 'd/state/proj/claude-code/shared-machine/journal.jsonl';
-const FILES = {
-  [MANIFEST]: (who) => `{"filename":"${who}.md","sha256":null,"completed":true,"model":"m","keyFacts":1}\n`,
-  [DISMISSED]: (who) => `{"type":"orphans","slug":"${who}-page","dismissedAt":"2026-11-14"}\n`,
-  [LOG]: (who) => `## [2026-11-14] ingest | ${who} source\nPages created or updated: ${who}-page\n\n`,
-  // A journal path is per-machine by design; this one is deliberately shared to
-  // prove the net holds if two writers ever meet.
-  [JOURNAL]: (who) => `{"at":"2026-11-14","headline":"${who} saved"}\n`,
-};
-
-// Every non-blank line a computer wrote is a line of the merged file. Blank lines
-// are left out of the check on purpose: log.md entries end in a blank line, and
-// when both computers append one, union keeps that shared blank line ONCE, so two
-// new entries can abut (measured; content is never lost, see sync.js).
-const contentLines = (block) => block.split('\n').filter((l) => l.trim());
-const survives = (text, block) => { const have = new Set(text.split('\n')); return contentLines(block).every((l) => have.has(l)); };
-const onceEach = (text, block) => contentLines(block).every((l) => text.split('\n').filter((x) => x === l).length === 1);
+const dis = (slug) => `{"type":"orphans","slug":"${slug}","dismissedAt":"2026-11-01"}\n`;
+const logEntry = (title, pages, extra = '') =>
+  `## [2026-11-14] ingest | ${title}\nPages created or updated:\n${pages.map((p) => `- ${p}`).join('\n')}\n${extra}\n`;
 
 function seed(base) {
   write(base, 'd/CLAUDE.md', 'schema\n');
   write(base, 'd/wiki/index.md', '# Index\n');
   write(base, 'd/wiki/entities/p.md', '# P\n\nline one\n');
   write(base, MANIFEST, '{"filename":"old.md","completed":true}\n');
-  write(base, DISMISSED, '{"type":"orphans","slug":"old-page","dismissedAt":"2026-11-01"}\n');
-  write(base, LOG, '# Log\n\n## [2026-11-01] ingest | old\nPages created or updated: old\n\n');
+  write(base, DISMISSED, ['x1', 'x2', 'x3', 'x4'].map(dis).join(''));
+  write(base, LOG, `# Log\n\n${logEntry('old', ['summaries/old.md'])}\n`);
   write(base, JOURNAL, '{"at":"2026-11-01","headline":"old"}\n');
 }
 
-try {
-  section('1. Two computers append to every line-record file, then sync: nothing is dropped');
+/** Two computers on one remote, both holding the seed. */
+async function pair(userAttrs) {
   const remote = newRemote();
   const A = computer(remote, 'a');
   seed(A.domains);
-  // A user's own .gitattributes in the vault, which must stay byte-for-byte.
-  const USER_ATTRS = '# mine\n*.png binary\n';
-  write(A.domains, '.gitattributes', USER_ATTRS);
+  if (userAttrs) write(A.domains, '.gitattributes', userAttrs);
   await setup(A.url, 't', 'push');
-
   const B = computer(remote, 'b');
   await setup(B.url, 't', 'pull');
-  ok(existsSync(path.join(B.domains, MANIFEST)), 'the second computer has the domain after connecting');
+  return { remote, A, B };
+}
+/** A changes and syncs, B changes and syncs, A pulls: the ordinary two-computer race. */
+async function race({ A, B }, onA, onB) {
+  A.use(); onA(A.domains); await sync.sync();
+  B.use(); onB(B.domains); await sync.sync();
+  A.use(); await pull();
+}
+const lines = (t) => t.split('\n').filter((l) => l.trim());
+const slugs = (t) => lines(t).map((l) => JSON.parse(l).slug);
 
-  // An existing install, configured before this release: no union block yet.
-  // The next pull() must write it with no user action.
-  for (const c of [A, B]) rmSync(path.join(c.gitDir, 'info', 'attributes'), { force: true });
-  // A user's own machine-local attribute line, which must be kept.
-  write(B.gitDir, 'info/attributes', '*.pdf -diff\n');
+try {
+  section('0. The pure merge (sync-records.js)');
+  {
+    eq(records.recordKind('d/wiki/.raw-manifest.jsonl'), 'lines', 'the manifest is a line-record file');
+    eq(records.recordKind('d/wiki/.health-dismissed.jsonl'), 'lines', 'Health dismissals are line records');
+    eq(records.recordKind('d/wiki/log.md'), 'log', 'log.md merges by entry block');
+    eq(records.recordKind('d/state/p/s/m/journal.jsonl'), 'lines', 'a working-state journal is line records');
+    for (const p of ['d/wiki/index.md', 'd/wiki/entities/log.md', 'd/wiki/concepts/x.md', 'd/state/project.md',
+      'd/wiki/summaries/a.md', 'd/state/p/s/m/current.md', 'd/conversations/x.json', 'd/wiki/../wiki/log.md']) {
+      eq(records.recordKind(p), null, `never a record file: ${p}`);
+    }
+    const base = 'a\nb\nc\n';
+    eq(records.mergeLineRecords(base, 'a\nb\nc\nours\n', 'a\nb\nc\ntheirs\n'), 'a\nb\nc\nours\ntheirs\n', 'both appends kept, ours first');
+    eq(records.mergeLineRecords(base, 'a\nb\nc\nnew\n', 'a\nb\n'), 'a\nb\nnew\n', 'a deletion by theirs is respected');
+    eq(records.mergeLineRecords(base, 'a\n', 'a\nb\nc\nnew\n'), 'a\nnew\n', 'a deletion by ours is respected');
+    eq(records.mergeLineRecords(base, 'a\nb\nc\nsame\n', 'a\nb\nc\nsame\n'), 'a\nb\nc\nsame\n', 'an identical append appears once');
+    eq(records.mergeLineRecords('', 'x\n', 'y\n'), 'x\ny\n', 'no base: both kept');
+  }
 
-  const headBefore = sh(`git --git-dir="${remote}" rev-parse main`).trim();
-
-  A.use();
-  for (const [rel, line] of Object.entries(FILES)) append(A.domains, rel, line('alpha'));
-  write(A.domains, 'd/wiki/entities/p.md', '# P\n\nline one, by A\n');
-  await sync.sync();
-
-  B.use();
-  for (const [rel, line] of Object.entries(FILES)) append(B.domains, rel, line('beta'));
-  write(B.domains, 'd/wiki/entities/p.md', '# P\n\nline one, by B\n');
-  await sync.sync();
-
-  A.use();
-  await pull();
-
-  for (const [rel, line] of Object.entries(FILES)) {
-    for (const [c, label] of [[A, 'computer A'], [B, 'computer B']]) {
-      const text = read(c.domains, rel);
-      ok(survives(text, line('alpha')) && survives(text, line('beta')),
-        `${rel}: both computers' lines survive on ${label}`);
-      ok(onceEach(text, line('alpha')) && onceEach(text, line('beta')),
-        `${rel}: each line appears once on ${label}`);
+  section('1. Two computers append to every record file, then sync: nothing is dropped');
+  const USER_ATTRS = '# mine\n*.png binary\n';
+  const P = await pair(USER_ATTRS);
+  const { remote, A, B } = P;
+  const headBefore = remoteHead(remote);
+  const add = {
+    [MANIFEST]: (w) => `{"filename":"${w}.md","completed":true,"model":"m","keyFacts":1}\n`,
+    [DISMISSED]: (w) => dis(`${w}-page`),
+    [JOURNAL]: (w) => `{"at":"2026-11-14","headline":"${w} saved"}\n`,
+  };
+  await race(P,
+    (d) => { for (const [rel, f] of Object.entries(add)) append(d, rel, f('alpha')); write(d, 'd/wiki/entities/p.md', '# P\n\nline one, by A\n'); },
+    (d) => { for (const [rel, f] of Object.entries(add)) append(d, rel, f('beta')); write(d, 'd/wiki/entities/p.md', '# P\n\nline one, by B\n'); });
+  for (const [rel, f] of Object.entries(add)) {
+    for (const c of [A, B]) {
+      const t = read(c.domains, rel);
+      ok(lines(t).filter((l) => l === f('alpha').trim()).length === 1 && lines(t).filter((l) => l === f('beta').trim()).length === 1,
+        `${rel}: both computers' lines, once each, on computer ${c.name.toUpperCase()}`);
     }
     const r = remoteBlob(remote, rel);
-    ok(survives(r, line('alpha')) && survives(r, line('beta')), `${rel}: both lines are on the remote`);
-    ok(read(A.domains, rel) === read(B.domains, rel), `${rel}: both computers end byte-identical`);
+    ok(r.includes(f('alpha')) && r.includes(f('beta')), `${rel}: both lines on the remote`);
+    eq(read(A.domains, rel), read(B.domains, rel), `${rel}: both computers end byte-identical`);
   }
-  ok(read(A.domains, MANIFEST).startsWith('{"filename":"old.md","completed":true}\n'),
-    'the manifest keeps its earlier record first');
-  ok(read(A.domains, LOG).includes('## [2026-11-14] ingest | alpha source\nPages created or updated: alpha-page\n') &&
-     read(A.domains, LOG).includes('## [2026-11-14] ingest | beta source\nPages created or updated: beta-page\n'),
-    'log.md keeps each entry whole (heading with its own lines)');
+  ok(read(A.domains, MANIFEST).startsWith('{"filename":"old.md","completed":true}\n'), 'the manifest keeps its earlier record first');
 
-  section('2. What must not change');
-  ok(read(B.domains, 'd/wiki/entities/p.md') === '# P\n\nline one, by A\n',
-    'a wiki page both computers edited still merges -X theirs (the remote side), as before');
-  ok(read(A.domains, 'd/wiki/entities/p.md') === read(B.domains, 'd/wiki/entities/p.md'), 'and both computers agree on it');
-  ok(read(A.domains, '.gitattributes') === USER_ATTRS && read(B.domains, '.gitattributes') === USER_ATTRS,
-    "the user's own .gitattributes is untouched on both computers");
-  ok(remoteBlob(remote, '.gitattributes') === USER_ATTRS, 'and the remote carries it unchanged (the app commits none of its own)');
-  const bAttrs = read(B.gitDir, 'info/attributes');
-  ok(bAttrs.startsWith('*.pdf -diff\n'), "a user's own info/attributes line is kept");
-  for (const rule of sync.__testing.LINE_RECORD_MERGE_RULES) ok(bAttrs.includes(`${rule}\n`), `info/attributes carries: ${rule}`);
-  ok(!/index\.md|entities|concepts|summaries/.test(sync.__testing.LINE_RECORD_MERGE_RULES.join('\n')),
-    'no rule names a wiki page or index.md');
-  ok(isAncestor(remote, headBefore, sh(`git --git-dir="${remote}" rev-parse main`).trim()),
-    'no history rewritten: the earlier remote head is an ancestor of the new one');
-
-  section('3. The managed block is idempotent');
+  section('2. Health dismissals: an undismiss is respected, a new dismissal is kept (audit case 7)');
   {
-    await sync.__testing.ensureLineRecordMerge(B.gitDir);
-    await sync.__testing.ensureLineRecordMerge(B.gitDir);
-    const again = read(B.gitDir, 'info/attributes');
-    ok(again === bAttrs, 'writing it again changes nothing');
-    ok(again.split('merge=union').length - 1 === sync.__testing.LINE_RECORD_MERGE_RULES.length, 'one copy of each rule');
+    const Q = await pair();
+    await race(Q,
+      (d) => write(d, DISMISSED, ['x1', 'x2', 'x3'].map(dis).join('')),               // A undismisses the LAST (x4)
+      (d) => append(d, DISMISSED, dis('x5')));                                         // B dismisses a new one
+    for (const c of [Q.A, Q.B]) eq(slugs(read(c.domains, DISMISSED)).join(','), 'x1,x2,x3,x5', `undismissed x4 stays gone, x5 kept (computer ${c.name.toUpperCase()})`);
+
+    const R = await pair();
+    await race(R,
+      (d) => write(d, DISMISSED, ['x1', 'x4'].map(dis).join('')),                      // A undismisses x2, x3 (adjacent)
+      (d) => write(d, DISMISSED, ['x1', 'x2', 'x3', 'x4', 'x6'].map(dis).join('')));   // B adds x6
+    for (const c of [R.A, R.B]) eq(slugs(read(c.domains, DISMISSED)).join(','), 'x1,x4,x6', `two adjacent undismissals stay gone (computer ${c.name.toUpperCase()})`);
+
+    const S = await pair();
+    await race(S,
+      (d) => write(d, DISMISSED, ''),                                                   // A undismisses everything
+      (d) => append(d, DISMISSED, dis('x7')));
+    for (const c of [S.A, S.B]) eq(slugs(read(c.domains, DISMISSED)).join(','), 'x7', `undismiss-all keeps only the new dismissal (computer ${c.name.toUpperCase()})`);
+
+    const T = await pair();
+    await race(T,
+      (d) => write(d, DISMISSED, ['x1', 'x3', 'x4'].map(dis).join('')),               // both undismiss, different rows
+      (d) => write(d, DISMISSED, ['x1', 'x2', 'x3'].map(dis).join('')));
+    for (const c of [T.A, T.B]) eq(slugs(read(c.domains, DISMISSED)).join(','), 'x1,x3', `both computers' undismissals hold (computer ${c.name.toUpperCase()})`);
   }
 
-  section('4. Both computers create the same file (no common base) — both lines still kept');
+  section('3. log.md: each computer\'s entry stays whole, even when they list the same pages (audit case 8)');
+  {
+    const L = await pair();
+    const entA = logEntry('Report A', ['summaries/report-a.md', 'entities/acme.md', 'concepts/pricing.md']);
+    const entB = logEntry('Report B', ['summaries/report-b.md', 'entities/acme.md', 'concepts/pricing.md'], '\nWarnings:\n- something\n');
+    await race(L, (d) => append(d, LOG, entA + '\n'), (d) => append(d, LOG, entB + '\n'));
+    for (const c of [L.A, L.B]) {
+      const t = read(c.domains, LOG);
+      ok(t.includes(entA.trimEnd()), `Report A's entry is whole on computer ${c.name.toUpperCase()}`);
+      ok(t.includes(entB.trimEnd()), `Report B's entry is whole, its pages under its own heading, on computer ${c.name.toUpperCase()}`);
+      ok(t.startsWith('# Log\n\n## [2026-11-14] ingest | old\n'), `the header and the earlier entry stay first on computer ${c.name.toUpperCase()}`);
+      eq(t.split('## [').length - 1, 3, `three entries, none duplicated, on computer ${c.name.toUpperCase()}`);
+    }
+    eq(read(L.A.domains, LOG), read(L.B.domains, LOG), 'both computers end byte-identical');
+    ok(remoteBlob(L.remote, LOG).includes(entB.trimEnd()), 'and the remote has both entries whole');
+
+    const L2 = await pair();
+    await race(L2,
+      (d) => write(d, LOG, read(d, LOG).replace('# Log', '# Log (renamed)')),
+      (d) => append(d, LOG, logEntry('Later', ['summaries/later.md']) + '\n'));
+    for (const c of [L2.A, L2.B]) {
+      const t = read(c.domains, LOG);
+      ok(t.startsWith('# Log (renamed)\n') && t.includes('## [2026-11-14] ingest | Later\n'),
+        `a header change on one side and an entry on the other both land, header first (computer ${c.name.toUpperCase()})`);
+    }
+  }
+
+  section('4. What must not change');
+  eq(read(B.domains, 'd/wiki/entities/p.md'), '# P\n\nline one, by A\n', 'a wiki page both computers edited still merges -X theirs (the remote side), as before');
+  eq(read(A.domains, 'd/wiki/entities/p.md'), read(B.domains, 'd/wiki/entities/p.md'), 'and both computers agree on it');
+  ok(read(A.domains, '.gitattributes') === USER_ATTRS && read(B.domains, '.gitattributes') === USER_ATTRS, "the user's own .gitattributes is untouched on both computers");
+  eq(remoteBlob(remote, '.gitattributes'), USER_ATTRS, 'and the remote carries it unchanged');
+  for (const c of [A, B]) {
+    const f = path.join(c.gitDir, 'info', 'attributes');
+    ok(!existsSync(f) || !/curator|merge=/i.test(readFileSync(f, 'utf8')), `the app writes nothing to info/attributes (computer ${c.name.toUpperCase()})`);
+  }
+  ok(isAncestor(remote, headBefore, remoteHead(remote)), 'no history rewritten: the earlier remote head is an ancestor of the new one');
+  ok(/Sync: kept both computers' records/.test(sh(`git --git-dir="${remote}" log --format=%s main`)),
+    'the reconciliation is its own commit, named for what it did');
+
+  section('5. Both computers create the same file (no common base) — both records kept');
   {
     A.use();
     write(A.domains, 'e/CLAUDE.md', 'schema\n');
@@ -218,7 +266,7 @@ try {
     }
   }
 
-  section('5. A merge connect (setup mode "merge") unions too');
+  section('6. A merge connect (setup mode "merge") keeps both too');
   {
     const r2 = newRemote();
     const C = computer(r2, 'c');
@@ -233,7 +281,8 @@ try {
     D.use();
     await setup(D.url, 't', 'merge');
     const t = read(D.domains, MANIFEST);
-    ok(t.includes('c-only.md') && t.includes('d-only.md'), 'a first connect by merge keeps both computers\' records');
+    ok(t.includes('c-only.md') && t.includes('d-only.md'), "a first connect by merge keeps both computers' records");
+    eq(sh(`git --git-dir="${D.gitDir}" --work-tree="${D.domains}" status --porcelain`), '', 'and leaves a clean tree');
   }
 } finally {
   __setSyncTestOverrides({});

@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { recordKind, mergeRecordFile } from './sync-records.js';
 import { clearStaleLock } from './write-registry.js';
 import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
@@ -378,70 +379,70 @@ async function loadConfig() {
   try { return JSON.parse(await readFile(currentConfigFile(), 'utf8')); } catch { return null; }
 }
 
-// ── Line-record files merge as a UNION (2026-11-14) ───────────────────────────
+// ── Record files keep both computers' records (2026-11-14) ───────────────────
 //
-// pull() merges with `-X theirs`, and that preference also decides a hunk BOTH
-// computers changed. Two computers that each APPEND a line to the same file
-// change the same hunk (the end of the file), so `-X theirs` kept the other
-// computer's line and silently dropped this one's. Reproduced with plain git.
-// For `.raw-manifest.jsonl` that meant a source read here was forgotten: the
-// same-model no-call rule and duplicate detection no longer knew it, and the
-// next re-ingest made a paid call.
-//
-// The files below are records the app only appends to (one JSON object, or one
-// log entry, per event), so the right merge keeps BOTH sides' lines: git's
-// built-in `union` driver, which wins over `-X theirs` for these paths only.
-// Measured with git 2.48: both appended lines survive, ours first, then theirs;
-// an identical line appended on both sides is kept once. That last part has
-// one visible effect: log.md entries end in a blank line, and when both sides
-// append an entry the shared trailing blank line is kept once, so the two new
-// entries abut (every content line is kept; headings still parse). Wiki pages and
-// index.md are NOT listed and merge exactly as before.
-//
-//   */wiki/.raw-manifest.jsonl    completed-ingest records (raw-store.js, appended)
-//   */wiki/.health-dismissed.jsonl Health dismissals (rewritten whole, but a new
-//                                  one lands at the end, so two computers
-//                                  dismissing collide exactly like an append)
-//   */wiki/log.md                 the ingest/compile log (appendLog adds a block
-//                                  at the end; union keeps both blocks whole)
-//   */state/**/journal.jsonl      working-state journals: per-machine paths, so
-//                                  normally one writer; listed as a net
-//
-// WHY `<git dir>/info/attributes` AND NOT A COMMITTED `.gitattributes`. It is
-// read on every merge, applies to an EXISTING repository on its next sync with
-// no commit and no history rewrite, and never touches the user's folder: a
-// `.gitattributes` the user keeps in their vault is left alone (git reads both;
-// ours wins only for the four paths above). The cost, stated: a computer still
-// on an older version merges the old way until it updates.
-//
-// Not listed, on purpose: `.mcp-write-log.jsonl` and `.write-lock` are ignored
-// (never synced); conversations are whole JSON files, not line records; the
-// batch queue, duplicate-check memory and Health undo copies live outside
-// `domains/`.
-const LINE_RECORD_MERGE_RULES = [
-  '*/wiki/.raw-manifest.jsonl merge=union',
-  '*/wiki/.health-dismissed.jsonl merge=union',
-  '*/wiki/log.md merge=union',
-  '*/state/**/journal.jsonl merge=union',
-];
-const MERGE_BLOCK_START = '# >>> The Curator: line-record files keep both computers\' lines (rewritten on every sync)';
-const MERGE_BLOCK_END = '# <<< The Curator';
+// `-X theirs` silently dropped this computer's line whenever both computers had
+// appended to the same record file (`.raw-manifest.jsonl`, Health dismissals,
+// log.md, working-state journals). sync-records.js holds the reasons, the merge
+// and why git's `merge=union` was rejected. This runs AFTER git's merge: for each
+// record file BOTH parents changed since the merge base, it recomputes the file
+// from the three committed versions and commits the result as a new commit on
+// top (nothing is amended, nothing pushed is rewritten). A fast-forward has
+// nothing to reconcile. Wiki pages and index.md are never touched here.
 
-/** Writes the managed block into `<gitDir>/info/attributes`; anything else in that file is kept. */
-async function ensureLineRecordMerge(gitDir = currentGitDir()) {
-  const file = path.join(gitDir, 'info', 'attributes');
-  let existing = '';
-  try { existing = await readFile(file, 'utf8'); } catch { /* none yet */ }
-  const start = existing.indexOf(MERGE_BLOCK_START);
-  const end = start === -1 ? -1 : existing.indexOf(MERGE_BLOCK_END, start);
-  const kept = start !== -1 && end > start
-    ? existing.slice(0, start) + existing.slice(end + MERGE_BLOCK_END.length).replace(/^\n/, '')
-    : existing;
-  const next = (kept && !kept.endsWith('\n') ? kept + '\n' : kept) +
-    [MERGE_BLOCK_START, ...LINE_RECORD_MERGE_RULES, MERGE_BLOCK_END].join('\n') + '\n';
-  if (next === existing) return;
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFileAtomic(file, next, 'utf8');
+async function showBlob(rev, p, opts) {
+  try {
+    const { stdout } = await gitArgv(['--literal-pathspecs', 'show', `${rev}:${p}`], opts);
+    return stdout;
+  } catch { return null; }
+}
+
+async function changedSince(base, rev, opts) {
+  const args = base
+    ? ['diff', '--name-only', '-z', '--no-renames', base, rev]
+    : ['ls-tree', '-r', '-z', '--name-only', rev];
+  const { stdout } = await gitArgv(args, opts);
+  return new Set(stdout.split('\0').filter(Boolean));
+}
+
+/**
+ * Returns the paths it rewrote. `preMergeHead` is HEAD before the merge; the
+ * step runs only when HEAD is now a merge commit whose first parent is it.
+ */
+async function reconcileRecordFiles(preMergeHead, opts = {}) {
+  if (!preMergeHead) return [];
+  let ours; let theirs;
+  try {
+    ours = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^1'], opts)).stdout.trim();
+    theirs = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^2'], opts)).stdout.trim();
+  } catch { return []; }
+  if (!ours || !theirs || ours !== preMergeHead) return [];
+  let base = '';
+  try { base = (await gitArgv(['merge-base', ours, theirs], opts)).stdout.trim(); } catch { /* unrelated histories */ }
+
+  const mine = await changedSince(base, ours, opts);
+  const other = await changedSince(base, theirs, opts);
+  const rewritten = [];
+  for (const p of [...mine].filter((x) => other.has(x)).sort()) {
+    const kind = recordKind(p);
+    if (!kind) continue;
+    const o = await showBlob(ours, p, opts);
+    const t = await showBlob(theirs, p, opts);
+    if (o === null || t === null) continue;   // a deletion on one side: git's answer stands
+    const b = base ? await showBlob(base, p, opts) : null;
+    const merged = mergeRecordFile(kind, b ?? '', o, t);
+    const abs = path.join(getDomainsDir(), p);
+    let current = null;
+    try { current = await readFile(abs, 'utf8'); } catch { /* removed */ }
+    if (current === merged) continue;
+    await writeFileAtomic(abs, merged, 'utf8');
+    await gitArgv(['--literal-pathspecs', 'add', '--', p], opts);
+    rewritten.push(p);
+  }
+  if (rewritten.length) {
+    await guardedCommit(`Sync: kept both computers' records in ${rewritten.length} file${rewritten.length === 1 ? '' : 's'}`, opts);
+  }
+  return rewritten;
 }
 
 // ── Domains .gitignore ────────────────────────────────────────────────────────
@@ -1043,8 +1044,6 @@ async function prepareRemote(gitDir, remoteUrl, timeout) {
   await git('config user.email "thecurator@local"', { gitDir });
   await git('config user.name "The Curator"', { gitDir });
   await git('config push.autoSetupRemote true', { gitDir });
-  // Before any merge a connect may make (mode 'merge').
-  await ensureLineRecordMerge(gitDir);
   try {
     await git(`remote add origin "${remoteUrl}"`, { gitDir });
   } catch {
@@ -1994,8 +1993,11 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // merge — a page reappearing is visible and fixable, a page vanishing is
     // the thing this whole section exists to prevent — and docs/sync.md says
     // so where the user can read it.
+    const { stdout: localHead } = await git('rev-parse HEAD', { gitDir });
     await git('merge --allow-unrelated-histories --no-edit -X ours FETCH_HEAD',
               { gitDir, timeout: 120000 });
+    // `-X ours` drops the remote side's records the same way; keep both.
+    await reconcileRecordFiles(localHead.trim(), { gitDir });
     await saveConfig(repoUrl, token, adoptedDir);
     invalidateRemoteCache();
     await recordSyncSuccess(gitDir);
@@ -2253,8 +2255,6 @@ export async function pull() {
   // it only writes a config FILE, never touches a path the incoming merge
   // might also want to write.
   await ensureDomainsGitignore();
-  // Existing repositories get the union rule here, before the merge below.
-  await ensureLineRecordMerge();
   const safety = await refreshSyncSafety();
 
   // Auto-commit local changes so the pull merge succeeds — unchanged,
@@ -2379,6 +2379,10 @@ export async function pull() {
     pullOut = await recoverHygieneMergeConflict(err);
   }
 
+  // Record files both computers appended to: keep both sides' records, which
+  // `-X theirs` just dropped. Before any later commit, while HEAD is the merge.
+  const recordsMerged = await reconcileRecordFiles(preMergeHead);
+
   // NOW it's safe: whatever origin had for these paths has already been
   // merged in (or the recovery above resolved the one conflict shape our
   // own hygiene files can cause), so `git rm --cached` here can no longer
@@ -2427,6 +2431,8 @@ export async function pull() {
     // pre-redesign shell (deleted in v3.41.0; /old now redirects to /) used
     // to read `pruned` only, so this field never affected it while it lived.
     prunedKept: keptLocalContent,
+    // Record files whose records from both computers were kept (sync-records.js).
+    recordsMerged,
     details: pullOut,
   }, safety);
 }
@@ -2819,8 +2825,7 @@ export const __testing = {
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,
-  ensureLineRecordMerge,
-  LINE_RECORD_MERGE_RULES,
+  reconcileRecordFiles,
   isCleanIndexError,
   buildBackupReport,
   recoverHygieneMergeConflict,
