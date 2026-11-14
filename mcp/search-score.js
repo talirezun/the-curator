@@ -3,42 +3,47 @@
  *
  * WHY (2026-11-14). Both tools scored a page by the RAW number of times each query
  * term occurred in it as a SUBSTRING, plus 3 for a slug substring and 2 for a tag
- * substring. Three things followed, all measured on six real domains:
- *   - a score that grows with raw counts grows with page SIZE, so big hub pages won
- *     (an AgentLink query ranked a page about a different product first);
- *   - a substring is not a word: "ai" matched "chain", "the" matched "other";
- *   - a word on every page ("what", "file") counted exactly as much as the rare
- *     word that names what was asked about.
- * On a labelled set of 300 questions (the page that holds each answer known), the
- * answer page was in the top 5 for 182 of 300 agent-style keyword queries.
+ * substring. Measured on six real domains: a score that grows with raw counts grows
+ * with page SIZE, so big hub pages won (an AgentLink query ranked a page about a
+ * different product first); "ai" matched "chain"; a word on every page ("what",
+ * "file") counted as much as the rare word that names what was asked about.
  *
  * THE SCORE, per query, over the domain's own pages (nothing stored, no index):
- *   - TERMS are the query's words: runs of letters and digits, lower-cased, each
- *     counted once (`terms`). A term matches a WHOLE WORD of the page, never part of
- *     one; the page's words are split the same way (so `end-to-end` is three words).
- *   - BODY: for each term found c > 0 times in the slug + body, (1 + ln c) × idf,
- *     where idf = ln(1 + (N − df + 0.5) / (df + 0.5)) over the domain's N pages, df
- *     of which hold the term. The tenth mention adds far less than the first, and a
- *     word on every page adds almost nothing.
- *   - NAME: +3 when a term is a word of the slug, +2 when it is a word of a tag —
- *     the same fixed bonuses as before, NOT scaled by idf (measured: scaling them
- *     dropped a page named exactly by the query out of the top 5).
- *   - EXACT NAME FIRST: a page whose slug words or title words are exactly the
- *     query's words (`mcp` → `mcp.md`, "Smart Contracts" → `smart-contracts.md`)
- *     ranks above every page that is not. This is a separate sort key, not a
- *     bonus, so no score can outrank it and no weighting changes it.
- *   - ORDER: exact name, then score, both compared UNROUNDED; ties keep the graph's
- *     page order (a stable sort). Only the returned `score` is rounded, for display.
+ *   - TERMS are the query's distinct words (runs of letters and digits, lower-cased).
+ *     The page's words are split the same way (`end-to-end` is three words).
+ *   - WHOLE WORD: for a term found c > 0 times as a word of slug + body,
+ *     (1 + ln c) × idf, idf = ln(1 + (N − df + 0.5) / (df + 0.5)) over the domain's N
+ *     pages. The tenth mention adds far less than the first; a word on every page
+ *     adds almost nothing.
+ *   - PREFIX, at a quarter of that weight (PREFIX_WEIGHT): a term of PREFIX_MIN (4)
+ *     letters or more also matches the page's words that START with it ("encrypt"
+ *     finds "encryption", "auth" finds "authentication"); a trailing "e" is dropped
+ *     for this ("paginate" finds "pagination"). Its own idf is over the pages holding
+ *     any such word. So a whole-word match outweighs a prefix match of the same count.
+ *   - NAME: +3 when a term is a word of the slug, +2 a word of a tag (a quarter of
+ *     that for a prefix of one). Flat, NOT scaled by idf (scaling them dropped a page
+ *     named exactly by the query out of the top 5).
+ *   - EXACT NAME FIRST: a page whose slug words or title words are the query's words
+ *     (one trailing "s" per word ignored: "smart contract" names `smart-contracts.md`)
+ *     ranks above every page that is not — a separate sort key, never a bonus.
+ *   - ORDER: exact name, then the UNROUNDED score, ties in the graph's page order.
+ *     Only the returned `score` is rounded, for display.
  *
- * WHICH PAGES MATCH changed with whole-word matching, deliberately: a page matches
- * when a term is a whole word of its slug + body, a word of its slug, or a word of
- * a tag. A page that held a term only inside a longer word ("agent" inside
- * "agents", "ai" inside "chain") no longer matches. No plural folding: measured on
- * the same set it was not net-positive (top-5 256 vs 259 without it).
+ * WHICH PAGES MATCH: a page holding a term as a whole word or (4+ letters) as the
+ * start of a word, in slug, body or tags. A term inside a word ("ai" in "chain",
+ * "agent" in "subagent") no longer matches; a short term (under 4 letters) matches
+ * whole words only ("ai" does not find "aim").
  *
- * Measured with this score on the same set: top-5 259 of 300 (was 182), MRR 0.701
- * (was 0.456), better or equal in every domain; whole-question queries 218 of 300
- * in the top 5 (was 56).
+ * CROSS-DOMAIN (`weight`): each domain's scores depend on its own page count and word
+ * frequencies, so search_cross_domain merges on score ÷ weight, where weight is the
+ * score a page would get for one plain mention of every term in THAT domain (Σ idf).
+ * Merged on raw scores, a large domain buried a small one; merged on score relative
+ * to each domain's best, every domain's best came first whatever its strength (the
+ * first six results were one per domain in 129 of 158 audited queries).
+ *
+ * Measured on 507 labelled questions (300 + an independent audit's 158 + 49 built
+ * from pages chat stops loading), agent-style keyword queries, top-5: search_wiki
+ * 276 → 436, search_cross_domain 134 → 365; see docs/dev/decisions-agents.md.
  *
  * Pure and synchronous; never writes to stdout (it is reachable from mcp/).
  */
@@ -46,6 +51,8 @@
 const WORD_RE = /[\p{L}\p{N}]+/gu;
 const SLUG_BONUS = 3;
 const TAG_BONUS = 2;
+const PREFIX_MIN = 4;
+const PREFIX_WEIGHT = 0.25;
 
 /** A string's words, lower-cased, in order (duplicates kept). */
 export function words(s) {
@@ -55,6 +62,14 @@ export function words(s) {
 /** The query's terms: its distinct words, in first-seen order. */
 export function terms(query) {
   return [...new Set(words(query))];
+}
+
+// A NAME key for the exact-name rule: the words in order, each with one trailing
+// "s" dropped when the word is longer than 3 letters, so "smart contract" names
+// `smart-contracts.md` and "agents" names `agent.md`. Used ONLY to decide the
+// exact-name tier; matching and scoring never fold a word.
+function nameKey(ws) {
+  return ws.map(w => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w)).join(' ');
 }
 
 // Per-node word counts, computed once per node object. The graph caches its nodes
@@ -72,12 +87,35 @@ function profile(node) {
       tf,
       slugWords: new Set(slugWords),
       tagWords: new Set((node.tags || []).flatMap(t => words(t))),
-      slugKey: slugWords.join(' '),
-      titleKey: titleMatch ? words(titleMatch[1]).join(' ') : '',
+      slugKey: nameKey(slugWords),
+      titleKey: titleMatch ? nameKey(words(titleMatch[1])) : '',
     };
     _profiles.set(node, p);
   }
   return p;
+}
+
+// The domain's vocabulary (sorted distinct words), cached on the first node object
+// of the node list (a rebuilt graph brings new node objects) and re-made when the
+// page count differs.
+const _vocab = new WeakMap();
+function vocabOf(all, profiles) {
+  const hit = _vocab.get(all[0]);
+  if (hit && hit.n === all.length) return hit.words;
+  const set = new Set();
+  for (const p of profiles) for (const w of p.tf.keys()) set.add(w);
+  for (const p of profiles) for (const w of p.slugWords) set.add(w);
+  for (const p of profiles) for (const w of p.tagWords) set.add(w);
+  const words = [...set].sort();
+  _vocab.set(all[0], { n: all.length, words });
+  return words;
+}
+function wordsWithPrefix(vocab, prefix) {
+  let lo = 0, hi = vocab.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (vocab[m] < prefix) lo = m + 1; else hi = m; }
+  const out = [];
+  for (let k = lo; k < vocab.length && vocab[k].startsWith(prefix); k++) if (vocab[k] !== prefix) out.push(vocab[k]);
+  return out;
 }
 
 /**
@@ -86,17 +124,37 @@ function profile(node) {
  * `score` is unrounded; `exact` is true when the page's slug or title is the query.
  */
 export function rankNodes(nodes, query) {
+  return rankNodesWithMeta(nodes, query).hits;
+}
+
+/** rankNodes plus `weight`: the score a page would get for one plain mention of every term. */
+export function rankNodesWithMeta(nodes, query) {
   const all = [...nodes];
   const t = terms(query);
-  if (t.length === 0 || all.length === 0) return [];
+  if (t.length === 0 || all.length === 0) return { hits: [], weight: 0 };
   const profiles = all.map(profile);
   const N = all.length;
+  const idfOf = (df) => Math.log(1 + (N - df + 0.5) / (df + 0.5));
   const idf = t.map(term => {
     let df = 0;
     for (const p of profiles) if (p.tf.has(term)) df++;
-    return Math.log(1 + (N - df + 0.5) / (df + 0.5));
+    return idfOf(df);
   });
-  const queryKey = words(query).join(' ');
+  const vocab = vocabOf(all, profiles);
+  const pre = t.map(term => {
+    if (term.length < PREFIX_MIN) return [];
+    // A trailing "e" is dropped from the prefix ("paginate" also finds "pagination").
+    const stem = term.length >= 5 && term.endsWith('e') ? term.slice(0, -1) : term;
+    return wordsWithPrefix(vocab, stem).filter(w => w !== term);
+  });
+  const preCount = (p, i) => { let c = 0; for (const w of pre[i]) c += p.tf.get(w) || 0; return c; };
+  const preIdf = t.map((term, i) => {
+    if (!pre[i].length) return 0;
+    let df = 0;
+    for (const p of profiles) if (preCount(p, i) > 0) df++;
+    return idfOf(df);
+  });
+  const queryKey = nameKey(words(query));
 
   const out = [];
   for (let j = 0; j < all.length; j++) {
@@ -108,13 +166,20 @@ export function rankNodes(nodes, query) {
       if (c > 0) { matched = true; score += (1 + Math.log(c)) * idf[i]; }
       if (p.slugWords.has(t[i])) { matched = true; score += SLUG_BONUS; }
       if (p.tagWords.has(t[i])) { matched = true; score += TAG_BONUS; }
+      if (pre[i].length) {
+        const cp = preCount(p, i);
+        if (cp > 0) { matched = true; score += PREFIX_WEIGHT * (1 + Math.log(cp)) * preIdf[i]; }
+        if (!p.slugWords.has(t[i]) && pre[i].some(w => p.slugWords.has(w))) { matched = true; score += PREFIX_WEIGHT * SLUG_BONUS; }
+        if (!p.tagWords.has(t[i]) && pre[i].some(w => p.tagWords.has(w))) { matched = true; score += PREFIX_WEIGHT * TAG_BONUS; }
+      }
     }
     if (!matched) continue;
     const exact = queryKey !== '' && (p.slugKey === queryKey || p.titleKey === queryKey);
     out.push({ node: all[j], score, exact, order: j });
   }
   out.sort((a, b) => (b.exact - a.exact) || (b.score - a.score) || (a.order - b.order));
-  return out.map(({ node, score, exact }) => ({ node, score, exact }));
+  const weight = idf.reduce((a, x) => a + x, 0);
+  return { hits: out.map(({ node, score, exact }) => ({ node, score, exact })), weight };
 }
 
 /** The score as the tools return it. */

@@ -1,5 +1,5 @@
 import { buildGraph } from '../graph.js';
-import { rankNodes, displayScore } from '../search-score.js';
+import { rankNodesWithMeta, displayScore } from '../search-score.js';
 
 export const searchCrossDefinition = {
   name: 'search_cross_domain',
@@ -7,9 +7,10 @@ export const searchCrossDefinition = {
     'Search for a query across ALL available domains simultaneously. Returns ranked ' +
     'results tagged with their domain of origin — use this to find connections between ' +
     'topics that span multiple knowledge areas. Each domain is ranked as search_wiki ' +
-    'ranks it; the lists are merged by each result\'s score RELATIVE to its own ' +
-    'domain\'s best, so a small domain is not buried under a large one. `score` is ' +
-    'the per-domain score: compare it within a domain, not across domains.',
+    'ranks it; the lists are merged on each score divided by what one plain mention ' +
+    'of every query word scores in that domain, so a small domain is not buried under ' +
+    'a large one. `score` is the per-domain score: compare it within a domain, not ' +
+    'across domains.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,16 +28,19 @@ export async function searchCrossHandler({ query, max_results_per_domain = 5 }, 
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return 'Empty query.';
 
-  // MERGING (2026-11-14). Each domain's scores are relative to that domain (its
-  // own page count and word frequencies), so raw scores from two domains are not
-  // comparable, and merging on them put a large domain's results above a small
-  // domain's best. Results are merged on score relative to the domain's own best
-  // (exact-name pages first), ties by raw score; the order is otherwise stable.
+  // MERGING (2026-11-14). Each domain's scores depend on that domain's own page
+  // count and word frequencies, so raw scores from two domains are not comparable
+  // (merged raw, a large domain buried a small one), and score relative to each
+  // domain's best put every domain's best first however weak it was (a round
+  // robin). Results are merged on score / weight — weight being what one plain
+  // mention of every query word scores in that domain (search-score.js) — with
+  // exact-name pages first and ties by raw score.
   const merged = [];
   for (const domain of domains) {
     const graph = await buildGraph(domain, storage);
-    const ranked = rankNodes(graph.nodes.values(), query).slice(0, max_results_per_domain);
-    const best = ranked.reduce((m, r) => Math.max(m, r.score), 0);
+    const meta = rankNodesWithMeta(graph.nodes.values(), query);
+    const ranked = meta.hits.slice(0, max_results_per_domain);
+    const weight = meta.weight;
     for (const { node, score, exact } of ranked) {
       const firstIdx = node.body.toLowerCase().indexOf(terms[0]);
       const excerpt = firstIdx >= 0
@@ -44,14 +48,14 @@ export async function searchCrossHandler({ query, max_results_per_domain = 5 }, 
         : node.body.slice(0, 160).replace(/\s+/g, ' ').trim();
       merged.push({
         hit: { domain, slug: node.slug, type: node.type, tags: node.tags, score: displayScore(score), excerpt },
-        exact, score, relative: best > 0 ? score / best : 0,
+        exact, score, norm: weight > 0 ? score / weight : 0,
       });
     }
   }
 
   if (merged.length === 0) return `No results found for "${query}" across any domain.`;
 
-  merged.sort((a, b) => (b.exact - a.exact) || (b.relative - a.relative) || (b.score - a.score));
+  merged.sort((a, b) => (b.exact - a.exact) || (b.norm - a.norm) || (b.score - a.score));
   const all = merged.map(m => m.hit);
   return {
     query,

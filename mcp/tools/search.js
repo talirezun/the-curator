@@ -7,10 +7,11 @@ export const searchWikiDefinition = {
   description:
     'Full-text search across a domain\'s wiki. Returns ranked results enriched with ' +
     'each page\'s tags, outgoing link count, and backlink count — so you can ' +
-    'prioritise hub nodes (highly connected pages) over isolated ones. Query words ' +
-    'match whole words only (no partial words, no plural folding); a rare word ' +
-    'counts for more than a common one, repeats count less each time, and a page ' +
-    'whose slug or title is exactly the query ranks first.',
+    'prioritise hub nodes (highly connected pages) over isolated ones. A query word ' +
+    'matches whole words, and (4+ letters) the start of a word at lower weight, so ' +
+    '"encrypt" finds "encryption"; a rare word counts for more than a common one, ' +
+    'repeats count less each time, and a page whose slug or title is the query ' +
+    'ranks first.',
   inputSchema: {
     type: 'object',
     properties: {

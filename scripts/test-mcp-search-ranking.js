@@ -62,10 +62,14 @@ const filler = (n) => Array.from({ length: n }, (_, i) => `Line ${i} about harbo
 await domain('alpha', [
   ['entities/zephyr.md', '# Zephyr\n\nZephyr is a courier relay.\n'],
   ['summaries/zephyr-hub-roundup.md', `# Zephyr hub roundup\n\n${rep('zephyr relay file default storage', 300)}\n${filler(400)}\n`],
-  ['summaries/drop-architecture.md', '# Drop architecture\n\n- The drop keeps ciphertext until expiry after seven days.\n'],
+  ['summaries/drop-architecture.md', '# Drop architecture\n\n- The drop keeps each file as ciphertext until expiry after seven days.\n'],
   ['concepts/chain-notes.md', '# Chain notes\n\nA blockchain is a chain of blocks.\n', ['blockchain']],
   ['concepts/ai-basics.md', '# AI basics\n\nAI means machine intelligence.\n'],
   ['concepts/agents-only.md', '# Field crews\n\nThe agents work in crews.\n'],
+  ['concepts/agent-desk.md', '# Desk\n\nOne agent works the desk.\n'],
+  ['concepts/vault-encryption.md', '# Vault encryption\n\nThe vault uses encryption at rest.\n'],
+  ['concepts/api-pagination.md', '# API pagination\n\nResults come back with pagination cursors.\n'],
+  ['concepts/aim-notes.md', '# Aim notes\n\nWe aim high.\n'],
   ['concepts/ledger-notes.md', '# Smart Ledgers\n\nNotes on ledgers.\n'],
   ['concepts/smart-ledgers-history.md', `# History of smart ledgers\n\n${rep('smart ledgers', 80)}\n`],
   ['concepts/quokka-farm.md', '# Quokka farm\n\nThe quokka farm pays a quokka tariff.\n'],
@@ -73,6 +77,10 @@ await domain('alpha', [
   ['concepts/twin-a.md', '# Twin\n\nquokka meadow\n'],
   ['concepts/twin-b.md', '# Twin\n\nquokka meadow\n'],
   ...Array.from({ length: 40 }, (_, i) => [`concepts/common-${i}.md`, `# Common ${i}\n\nA file with a default value and storage.\n${filler(30)}\n`]),
+]);
+await domain('gamma', [
+  ['concepts/gamma-misc.md', '# Misc\n\nA quokka was seen once.\n'],
+  ...Array.from({ length: 30 }, (_, i) => [`concepts/gamma-${i}.md`, `# Gamma ${i}\n\nA quokka page.\n`]),
 ]);
 await domain('beta', [
   ['concepts/quokka-tariffs.md', '# Quokka tariffs\n\nThe quokka tariff is set yearly.\n'],
@@ -104,11 +112,23 @@ section('1. whole words only');
   ok(!slugs(r).includes('chain-notes'), '"ai" no longer matches a page that has it only inside "chain"');
   ok(oldRank(alphaNodes, 'ai').includes('chain-notes'), 'control: the old scorer matched it');
   eq(slugs(r)[0], 'ai-basics', 'the page about AI is found, first');
-  const a = await search('agent');
-  ok(!slugs(a).includes('agents-only'), 'a page holding "agents" but never "agent" no longer matches "agent" (the matching-set change)');
-  ok(slugs(await search('agents')).includes('agents-only'), 'it matches its own word');
+  ok(!slugs(await search('gent')).includes('agents-only'), 'a term INSIDE a word never matches ("gent" does not find "agents")');
+  ok(!slugs(await search('ai')).includes('aim-notes'), 'a term under 4 letters matches whole words only ("ai" does not find "aim")');
   ok(slugs(await search('Blockchain!')).includes('chain-notes'), 'punctuation around a query word is ignored; a tag word matches');
   eq(terms('End-to-end, C++ & node.js').join(' '), 'end to c node js', 'terms are the query\'s distinct words');
+}
+
+// ── 1b ───────────────────────────────────────────────────────────────────────
+section('1b. a word PREFIX matches, at lower weight than the whole word');
+{
+  ok(slugs(await search('encrypt')).includes('vault-encryption'), '"encrypt" finds a page that only says "encryption"');
+  ok(slugs(await search('paginate')).includes('api-pagination'), '"paginate" finds "pagination" (a trailing e is dropped for the prefix)');
+  const a = slugs(await search('agent'));
+  ok(a.includes('agents-only'), '"agent" finds a page that only says "agents"');
+  ok(a.indexOf('agent-desk') < a.indexOf('agents-only'), 'the page with the whole word ranks above the page with only the prefix', a.join(', '));
+  const r = rankNodes(alphaNodes, 'agent');
+  const w = r.find((x) => x.node.slug === 'agent-desk').score, p = r.find((x) => x.node.slug === 'agents-only').score;
+  ok(p < w / 2, `a prefix-only page scores well under the whole-word page (${p.toFixed(2)} vs ${w.toFixed(2)})`);
 }
 
 // ── 2 ────────────────────────────────────────────────────────────────────────
@@ -123,6 +143,7 @@ section('2. an exact name ranks first');
   const rh = rankNodes(alphaNodes, 'smart ledgers');
   ok(rh.find((x) => x.node.slug === 'smart-ledgers-history').score > rh.find((x) => x.node.slug === 'ledger-notes').score, 'control: the history page outscores it');
   eq(slugs(await search('ZEPHYR'))[0], 'zephyr', 'case does not matter');
+  eq(slugs(await search('smart ledger'))[0], 'ledger-notes', 'one trailing "s" per word is ignored for the exact name ("smart ledger" names "Smart Ledgers")');
 }
 
 // ── 3 ────────────────────────────────────────────────────────────────────────
@@ -156,7 +177,7 @@ section('4. order: unrounded score, ties in page order, scores non-increasing');
 // ── 5 ────────────────────────────────────────────────────────────────────────
 section('5. search_cross_domain does not bury a small domain');
 {
-  const q = 'quokka tariff';
+  const q = 'quokka tariff yearly';
   const r = await searchCrossHandler({ query: q, max_results_per_domain: 5 }, storage);
   const order = r.results.map((x) => `${x.domain}/${x.slug}`);
   const iBeta = order.indexOf('beta/quokka-tariffs');
@@ -165,6 +186,12 @@ section('5. search_cross_domain does not bury a small domain');
   ok(alphaRows.length >= 2 && order.indexOf(`alpha/${alphaRows[1].slug}`) > iBeta, 'ahead of the large domain\'s second result');
   const rawFirst = [...r.results].sort((a, b) => b.score - a.score).map((x) => `${x.domain}/${x.slug}`);
   ok(rawFirst.indexOf('beta/quokka-tariffs') > iBeta, 'control: merged on raw scores it would sit lower', rawFirst.join(', '));
+  // Not a round robin: a domain whose best page only mentions one common word once
+  // (gamma: "quokka" on every page) does not jump ahead of a strong match elsewhere.
+  const iGamma = order.findIndex((o) => o.startsWith('gamma/'));
+  ok(iGamma === -1 || iGamma > order.indexOf(`alpha/${alphaRows[1].slug}`), 'a weak domain\'s best does not jump ahead of a strong domain\'s second result', order.join(', '));
+  const firstSix = new Set(r.results.slice(0, 6).map((x) => x.domain));
+  ok(firstSix.size < Math.min(6, r.results.length), 'the first results are not one per domain');
   const e = await searchCrossHandler({ query: 'zephyr', max_results_per_domain: 5 }, storage);
   eq(`${e.results[0].domain}/${e.results[0].slug}`, 'alpha/zephyr', 'an exact name is first across domains');
   const perDomain = (await search(q, 'alpha', 5)).results.map((x) => x.slug).join(',');
