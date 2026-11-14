@@ -256,7 +256,15 @@ section('4. Key Facts: two facts are two bullets, and a table survives');
   ok(s2.includes(TABLE) && s2.split(TABLE).length === 2, 'a re-write keeps the table once, byte for byte');
   ok(s2.includes('€31,500'), 'and adds the new fact');
   eq(files.sectionDedupKey('Key Facts', '- [[x]] costs €5'), '- [[x]] costs €5', 'sectionDedupKey: a figure in Key Facts keys on the whole line');
-  eq(files.sectionDedupKey('Key Facts', '- [[x]] is great'), files.dedupKey('- [[x]] is great'), 'sectionDedupKey: a Key Facts bullet without a figure keeps dedupKey');
+  eq(files.sectionDedupKey('Key Facts', '- [[x]]  is   great'), '- [[x]] is great', 'sectionDedupKey: every Key Facts bullet keys on its whole normalised line');
+  // Audit: five facts about one service, no figures, all opening with or holding its link.
+  const d5 = makeDomain();
+  const FIVE = ['- [[auth-service]] owns API key issuance and rotation', '- The gateway forwards every request to [[auth-service]] over mTLS',
+    '- [[auth-service]] must never log tokens', '- [[auth-service]] keeps the previous key valid after rotation', '- Decision: [[auth-service]] stays separate from billing, for audit reasons'];
+  await quiet(() => writePage(d5.name, 'summaries/arch.md', `# Arch\n\n## Key Takeaways\n- one\n\n## Key Facts\n${FIVE.join('\n')}\n- [[auth-service]] must never log tokens\n`));
+  const a5 = d5.read('summaries/arch.md');
+  ok(FIVE.every((l) => a5.includes(l)), 'all five facts about [[auth-service]] survive a first write (the first-link key kept two)');
+  eq(a5.split('- [[auth-service]] must never log tokens').length - 1, 1, 'an exact repeat is still removed');
   eq(files.sectionDedupKey('Related', '- [[x]] costs €5'), files.dedupKey('- [[x]] costs €5'), 'sectionDedupKey: every other section keeps dedupKey');
 
   const merged = files.mergeWikiPage('# P\n\n## Key Facts\n- [[p]] price (2027): €10\n', '# P\n\n## Key Facts\n- [[p]] price (2028): €12\n');
@@ -277,8 +285,23 @@ section('5. a template heading that swallowed its sentence is split; nothing els
   const FM = '---\ntitle: "## Notes This is a value that looks like text. Really."\n---\n# T\n';
   eq(splitSwallowedHeadings(FM), FM, 'never inside frontmatter');
   const d = makeDomain();
-  await quiet(() => writePage(d.name, 'concepts/floor.md', '# Floor\n\n## Definition A baseline monetary floor for each run of the course. It is paid in full.\n\n## Related\n- [[rag]]\n'));
-  ok(/^## Definition\n\nA baseline monetary floor/m.test(d.read('concepts/floor.md')), 'writePage applies it to the incoming page');
+  const SW = '# Floor\n\n## Definition A baseline monetary floor for each run of the course. It is paid in full.\n\n## Related\n- [[rag]]\n';
+  await quiet(() => writePage(d.name, 'concepts/floor.md', SW, { splitHeadings: true }));
+  ok(/^## Definition\n\nA baseline monetary floor/m.test(d.read('concepts/floor.md')), 'writePage splits it when the caller says the text is fresh model output');
+  await quiet(() => writePage(d.name, 'concepts/floor2.md', SW));
+  ok(d.read('concepts/floor2.md').includes('## Definition A baseline monetary floor'), 'and only then: without opts.splitHeadings the line is written as it came');
+  // Content from disk written back (hub linkify, a mirror pull) is never split.
+  const dd = makeDomain({ 'concepts/floor.md': SW });
+  await quiet(() => writePage(dd.name, 'concepts/floor.md', SW, { replace: true, keepLines: true }));
+  ok(dd.read('concepts/floor.md').includes('## Definition A baseline monetary floor'), 'a replace write-back of an existing page leaves its lines alone');
+  // The audit's legitimate headings, and the corpus check (scripts note: 1 of 6,006 real pages, the original defect).
+  for (const h of ['## Overview of Node.js vs. Deno performance in 2026', "## Summary of Dr. Smith's talk at NeurIPS", '## Related Work by J. Smith et al.',
+    '## Key Facts (as of 1 Jan. 2027, all prices net)', '## Summary — What changed in Q3 2025?', '## Notes on the v2.1 migration. Read first',
+    '## Definition The model reached 86% on the benchmark (Smith et al.', '## Overview The platform is described in detail by Dr.',
+    '## Overview Of The Platform Architecture For Large Teams.', '## Summary The plan changes what we ship this year?']) {
+    eq(splitSwallowedHeadings(h + '\n'), h + '\n', `left alone: "${h}"`);
+  }
+  eq(splitSwallowedHeadings('## Overview The platform runs in two regions on Kubernetes!\n'), '## Overview\n\nThe platform runs in two regions on Kubernetes!\n', 'an exclamation mark ends a sentence too');
 }
 
 // ── 6 ────────────────────────────────────────────────────────────────────────
@@ -334,6 +357,72 @@ section('8. Shared Brain: the deterministic steps keep figures and identifiers')
   ok(d.read('entities/risk.md').includes(`- ${FACT}`), 'and a mirror pull (writePage replace) writes it unchanged');
   ok(synth.sanitizeFellowText('| a | b |\n| 1 | 2 |') === '| a | b | | 1 | 2 |',
     'KNOWN: a multi-line table cannot cross the contribution path as a table (facts are one line each)');
+}
+
+// ── 9 ────────────────────────────────────────────────────────────────────────
+section('9. audit follow-ups: tables, sibling figures, the gate, the response limit, placement');
+{
+  // 4. A table-heavy source says the wiki keeps a selection of its tables.
+  const table = (n) => '| Item | Price (2028) |\n|---|---|\n' + Array.from({ length: n }, (_, i) => `| Part ${i} | €${100 + i} |`).join('\n') + '\n';
+  ok(ingest.tableDataWarning(table(40)) && /41 table rows/.test(ingest.tableDataWarning(table(40))), 'tableDataWarning: 41 table rows (header included) → a warning that names the count');
+  eq(ingest.tableDataWarning(table(39)), null, 'tableDataWarning: 40 rows (the Key Facts cap) → none');
+  eq(ingest.tableDataWarning('An essay about rivers. '.repeat(200)), null, 'tableDataWarning: prose → none');
+  const dT = makeDomain();
+  const resT = await quiet(() => ingestFile(dT.name, sourceFile('parts.md', '# Parts list 2028\n\n' + table(60)), 'parts.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); return JSON.stringify({ title: 'Parts', pages: [{ path: 'summaries/parts.md', content: '# Parts\n\n## Key Takeaways\n- Sixty parts\n' }] }); },
+  }));
+  ok(resT.warnings.some((w) => /61 table rows/.test(w) && /raw\/ folder/.test(w)), 'ingest reports it to the user, with where the full tables are');
+
+  // 5. A changed figure equal to a SIBLING line's figure is still new.
+  const keep = '# Plan\n\n## Key Facts\n- Lite tier monthly fee: €2,490\n- Fleet tier monthly fee: €13,800\n';
+  const dropped = [];
+  const out = merge.composeReusedPage(keep, '# Plan\n\n## Key Facts\n- Lite tier monthly fee: €13,800\n', { keepFolder: 'summaries', dropped });
+  ok(out.includes('- Lite tier monthly fee: €13,800') && !dropped.length, 'the Lite line with the Fleet figure is kept (compared with the line it most resembles)');
+  const same = merge.composeReusedPage(keep, '# Plan\n\n## Key Facts\n- Fleet tier monthly fee: €13,800\n', { keepFolder: 'summaries' });
+  eq(same, keep, 'CONTROL: a line the page already states, figures and all, adds nothing');
+
+  // 6. The re-tuned gate: identifiers and tables count, not only numbers.
+  const codeDoc = Array.from({ length: 25 }, (_, i) => `The service \`svc-${'abcdefghijklmnopqrstuvwxy'[i]}\` owns its own store, keeps its own schema, answers its callers over gRPC and never reads another service's database, which the platform team checks in review.`).join('\n');
+  ok(ingest.hardDataDensity(codeDoc).perThousand < 7, 'CONTROL: that document is below the density line (it passes on code spans alone)');
+  ok(ingest.sourceHasHardData(codeDoc), 'gate: a technical document with 25 code spans passes', JSON.stringify(ingest.hardDataDensity(codeDoc)));
+  const tableDoc = 'A plan for the year, written mostly in prose about what the team wants to achieve and why it matters. '.repeat(30) + '\n' + '| Week | Topic |\n|---|---|\n' + Array.from({ length: 9 }, (_, i) => `| W${i} | topic ${i} |`).join('\n');
+  ok(ingest.sourceHasHardData(tableDoc), 'gate: a plan with a 9-row table passes');
+  ok(ingest.hardDataDensity(tableDoc).perThousand < 7, 'CONTROL: that plan is below the density line (it passes on its table alone)');
+  ok(!ingest.sourceHasHardData('An essay about how teams learn, with a nod to `git` and `make`. '.repeat(3) + 'It goes on about apprenticeship and practice and what people remember. '.repeat(40)), 'gate: an essay with a few code spans does not');
+
+  // 7. A data source's long unparseable single-pass reply still gets the strict retry.
+  const DATA_SRC = 'Price list for 2028: Basic tier €10 a month, Pro tier €20 a month, billed yearly.\n'.repeat(12);
+  const PROSE_SRC = 'A short essay about orchards and rivers in the harbour town, and the people there. '.repeat(14);
+  for (const [name, src, wantStrict] of [['data', DATA_SRC, true], ['prose', PROSE_SRC, false]]) {
+    const prompts = [];
+    let n = 0;
+    await quiet(() => ingestFile(makeDomain().name, sourceFile(`${name}.md`, src), `${name}.md`, false, null, {
+      llm: async (schema, prompt, max, fmt, onWait, opts) => {
+        usage(opts); prompts.push(prompt); n++;
+        if (n === 1) return '}{' + 'x'.repeat(12000);
+        return JSON.stringify({ title: 'T', pages: [{ path: `summaries/${name}.md`, content: '# T\n\n## Key Takeaways\n- one\n' }] });
+      },
+    }));
+    const strict = prompts[1] && /CRITICAL: Maximum 3 bullet points per page/.test(prompts[1]);
+    eq(Boolean(strict), wantStrict, `${name}: a 12 KB unparseable reply ${wantStrict ? 'gets the strict retry (limit 24,000 with Key Facts)' : 'goes to multi-phase (limit 8,000, unchanged)'}`);
+  }
+
+  // 1. Ingest asks writePage to split a swallowed heading in fresh model output.
+  const dS = makeDomain();
+  await quiet(() => ingestFile(dS.name, sourceFile('floor.md', PROSE_SRC), 'floor.md', false, null, {
+    llm: async (schema, prompt, max, fmt, onWait, opts) => { usage(opts); return JSON.stringify({ title: 'Floor', pages: [
+      { path: 'summaries/floor.md', content: '# Floor\n\n## Key Takeaways\n- one\n' },
+      { path: 'concepts/floor.md', content: '# Floor\n\n## Definition A baseline floor for each run of the course. It is paid in full.\n' }] }); },
+  }));
+  ok(/^## Definition\n\nA baseline floor/m.test(dS.read('concepts/floor.md')), 'ingest: a swallowed heading in the model reply is split');
+
+  // 8. A Key Facts section new to a page lands after Key Takeaways, not after Notes.
+  const placed = merge.composeReusedPage('# P\n\n## Key Takeaways\n- one\n\n## Notes\nSome notes.\n', '# P\n\n## Key Takeaways\n- one\n\n## Key Facts\n- Price (2028): €5\n- Seats: 10\n', { keepFolder: 'summaries' });
+  ok(placed.indexOf('## Key Facts') > placed.indexOf('## Key Takeaways') && placed.indexOf('## Key Facts') < placed.indexOf('## Notes'), 'reuse: Key Facts goes right after Key Takeaways');
+  ok(placed.includes('- Price (2028): €5\n- Seats: 10'), 'with its bullets together');
+  const foot = merge.composeReusedPage('# P\n\n## Key Takeaways\n- one\n\n## Notes\nSome notes.\n', '# P\n\n## Examples\n- An example of the plan in use\n', { keepFolder: 'summaries' });
+  ok(foot.trimEnd().endsWith('- An example of the plan in use'), 'CONTROL: any other new section still goes at the foot');
+  ok(/no nested bullets/.test(KEY_FACTS_RULE), 'the rule asks for no nested bullets in Key Facts');
 }
 
 console.log(`\n${'─'.repeat(60)}\nPassed: ${passed}   Failed: ${failed}`);

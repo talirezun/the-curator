@@ -689,8 +689,9 @@ function contentWords(text) {
  * `pageLines` (optional: one Set of content words per line of the page) catches a
  * CHANGED figure (2026-11-14). "Monthly fee: €3,500" beside an old
  * "Monthly fee: €3,200" is new even when 3500 already appears elsewhere on the
- * page (a table row, another bullet): if the lines that share at least half of this
- * text's words all lack one of its numbers, the figure changed, and the text is new.
+ * page (a table row, another bullet): if the line(s) it most resembles (sharing at
+ * least half of its words, the most of any line) lack one of its numbers, the figure
+ * changed, and the text is new.
  * A line that repeats a statement with the same numbers is untouched by this test, so
  * the 0.5 measurement for prose stands as it was.
  */
@@ -702,19 +703,28 @@ export function isMostlyNew(text, pageWords, pageLines = null) {
   return Array.isArray(pageLines) && changesAFigure(words, pageLines);
 }
 
-/** A statement the page makes, with at least one of its numbers different. */
+/**
+ * A statement the page makes, with at least one of its numbers different. Compared with
+ * the line(s) it most resembles, not the whole page: "Lite tier monthly fee: €13,800"
+ * beside "Lite tier monthly fee: €2,490" and "Fleet tier monthly fee: €13,800" is a
+ * changed Lite figure, although the Fleet line holds that number (an audit found the
+ * page-wide version dropped it).
+ */
 function changesAFigure(words, pageLines) {
   const nums = words.filter((w) => /\d/.test(w));
   const plain = words.filter((w) => !/\d/.test(w));
   if (!nums.length || !plain.length) return false;
-  let siblings = 0;
+  let best = 0;
+  const closest = [];
   for (const line of pageLines) {
-    const shared = plain.filter((w) => line.has(w)).length;
-    if (shared / plain.length < NEW_WORDING_MIN_SHARE) continue;
-    if (nums.every((n) => line.has(n))) return false;   // the page already says it, figures and all
-    siblings++;
+    const share = plain.filter((w) => line.has(w)).length / plain.length;
+    if (share < NEW_WORDING_MIN_SHARE || share < best) continue;
+    if (share > best) { best = share; closest.length = 0; }
+    closest.push(line);
   }
-  return siblings > 0;
+  if (!closest.length) return false;
+  // New unless one of the lines it most resembles already says it, figures and all.
+  return !closest.some((line) => nums.every((n) => line.has(n)));
 }
 
 const splitSentences = (text) => text.split(/(?<=[.!?])\s+(?=[A-Z\[`"“*])/).map((x) => x.trim()).filter(Boolean);
@@ -900,6 +910,21 @@ export function composeReusedPage(keepText, incomingText, { keepFolder, dropped 
     place(closer ? [...lines, closer] : lines, direct);
   }
   for (const [key, section] of tailSections) if (!section.lines.length) tailSections.delete(key);
+
+  // A Key Facts section new to the page goes right after Key Takeaways, where ingest
+  // asks for it, not at the foot after Notes (2026-11-14). Every other new section
+  // still goes at the foot, as before.
+  if (tailSections.has('key facts') && sections.has('key takeaways') && !sections.has('key facts')) {
+    const { heading, lines } = tailSections.get('key facts');
+    const block = [`## ${heading}`];
+    lines.forEach((b, i) => {
+      const bothList = i > 0 && lines[i - 1][0].startsWith('- ') && b[0].startsWith('- ');
+      if (i > 0 && !bothList) block.push('');
+      block.push(...b);
+    });
+    addAt(sections.get('key takeaways').sectionEnd, block);
+    tailSections.delete('key facts');
+  }
 
   const conflicts = fm.conflicts.length ? ['```yaml', ...fm.conflicts, '```'] : null;
   const addConflicts = conflicts && !hay.includes(hayOf(conflicts));

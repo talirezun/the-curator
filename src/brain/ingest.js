@@ -739,7 +739,7 @@ export const KEY_FACTS_RULE =
 - State each figure EXACTLY as the source does, with its unit or currency, what it is, its condition, and its period or as-of date or version when the source gives one (e.g. "Q3 2025 revenue: €3.8M", "as of v2.1, \`search-api\` listens on port 9310"). Never a bare number.
 - Write identifiers (endpoint paths, configuration keys, file names, field names, version strings) in \`backticks\`, exactly as the source writes them. Never put a [[link]] inside backticks.
 - A source table that carries data may stay a markdown table of at most 15 rows; for a longer table keep the rows the source stresses (totals, decisions, limits) and add "(N more rows in the source)".
-- The bullet limit above does not apply to Key Facts; it has its own limit of 40 bullets, table rows included. If there are more, keep decisions, totals and limits first.
+- The bullet limit above does not apply to Key Facts; it has its own limit of 40 bullets, table rows included, and no nested bullets (one fact per line). If there are more, keep decisions, totals and limits first.
 - Entity and concept pages keep the specific figures that belong to them, with the same period or version and source context (e.g. "Minimum order for the 2028 price list: 50 units"), not only a general definition.
 - Never write an empty Key Facts section and never invent a figure.`;
 
@@ -762,19 +762,28 @@ export const KEY_FACTS_CONCISE =
  * strictly additive, so the decision is made here, deterministically, and a source
  * below the line gets the shipped prompt byte for byte.
  *
- * The measure: data items per 1,000 characters, where an item is a number that is not
- * a bare year, a year range or a single digit (a currency sign and a % belong to it), an
- * inline `code` span, or a table data row. Measured on 18 sources: every data source
- * 10.1 to 44.8 (three short annual reports 10.1 to 11.9, a price list 31.0, a pricing
- * strategy 28.4, an architecture document 28.0, its changelog 25.8, an operating plan
- * 44.8); every prose fixture 0 to 6.6. The line is 8, and at least 6 items, so a tiny
- * note with two prices is not a data source.
- * Known: a technical document written as prose (no numbers, no backticks, no tables)
- * stays below it and is ingested exactly as before; a prose article dense with
- * statistics passes it and may get a Key Facts section.
+ * The measure, re-tuned after an audit on 122 real sources (labelled by hand: 66 data
+ * or technical, 78 prose, with the synthetic and fixture sources). The first version,
+ * numbers only at 8 per 1,000 characters, caught 25 of 66 data sources: technical
+ * documents carry identifiers and tables more than numbers. A source passes with at
+ * least 6 data items and ANY of:
+ *   - 7 or more data items per 1,000 characters (a number that is not a bare year, a
+ *     year range or a single digit; an inline code span; a table data row);
+ *   - 20 or more inline code spans, at least 1 per 1,000 characters;
+ *   - 8 or more table rows, at least 0.5 per 1,000 characters.
+ * Measured: 57 of 66 data sources pass (the misses are syllabi and progress reports
+ * written as prose), 10 of 78 prose sources pass (mostly social-media campaign plans
+ * laid out in tables), and none of the live suite's prose fixtures. Missing a strategy
+ * document's numbers is the larger harm, so the line errs towards passing.
+ * Known: a technical document written as plain prose stays below it and is ingested
+ * exactly as before; a prose article dense with statistics passes it.
  */
-export const HARD_DATA_MIN_PER_1000 = 8;
+export const HARD_DATA_MIN_PER_1000 = 7;
 export const HARD_DATA_MIN_ITEMS = 6;
+export const HARD_DATA_MIN_CODE_SPANS = 20;
+export const HARD_DATA_MIN_CODE_PER_1000 = 1;
+export const HARD_DATA_MIN_TABLE_ROWS = 8;
+export const HARD_DATA_MIN_TABLE_ROWS_PER_1000 = 0.5;
 
 export function hardDataDensity(text) {
   const body = String(text || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
@@ -782,14 +791,39 @@ export function hardDataDensity(text) {
     .map((x) => x.replace(/[.,:/–-]+$/, ''))
     .filter((x) => !/^((19|20)\d\d)([–-]((19|20)?\d\d))?$/.test(x) && !/^\d$/.test(x));
   const code = (body.match(/`[^`\n]+`/g) || []).length;
+  const tableRows = (body.match(/^\|.*\|[ \t]*$/gm) || []).length;
   const rows = (body.match(/^\|.*\|[ \t]*$/gm) || []).filter((r) => !/^\|[\s|:-]+\|[ \t]*$/.test(r)).length;
   const items = numbers.length + code + rows;
-  return { items, perThousand: body.length ? (items * 1000) / body.length : 0 };
+  const k = body.length / 1000;
+  return {
+    items, code, tableRows,
+    perThousand: body.length ? items / k : 0,
+    codePerThousand: body.length ? code / k : 0,
+    tableRowsPerThousand: body.length ? tableRows / k : 0,
+  };
 }
 
 export function sourceHasHardData(text) {
   const d = hardDataDensity(text);
-  return d.items >= HARD_DATA_MIN_ITEMS && d.perThousand >= HARD_DATA_MIN_PER_1000;
+  if (d.items < HARD_DATA_MIN_ITEMS) return false;
+  return d.perThousand >= HARD_DATA_MIN_PER_1000
+    || (d.code >= HARD_DATA_MIN_CODE_SPANS && d.codePerThousand >= HARD_DATA_MIN_CODE_PER_1000)
+    || (d.tableRows >= HARD_DATA_MIN_TABLE_ROWS && d.tableRowsPerThousand >= HARD_DATA_MIN_TABLE_ROWS_PER_1000);
+}
+
+/**
+ * A table-heavy source cannot be kept whole: Key Facts holds at most 40 bullets and a
+ * table at most 15 rows, so past 40 table data rows the wiki keeps a selection BY
+ * CONSTRUCTION. Measured by an audit: a 22 KB spec with 296 table rows kept 28% of its
+ * figures and no table on Gemini 3.5 Flash Lite, with nothing said. The user is told
+ * once, and where the full tables are (the original file is kept in raw/).
+ */
+export const KEY_FACTS_TABLE_WARN_ROWS = 40;
+export function tableDataWarning(text) {
+  if (!keyFactsGate(text)) return null;
+  const rows = (String(text || '').match(/^\|.*\|[ \t]*$/gm) || []).filter((r) => !/^\|[\s|:-]+\|[ \t]*$/.test(r)).length;
+  if (rows <= KEY_FACTS_TABLE_WARN_ROWS) return null;
+  return `This source has ${rows} table rows. The wiki keeps a selection of the table data (its most important figures, and short tables of at most 15 rows), not every row. The original file, with the full tables, is kept in this domain's raw/ folder.`;
 }
 
 let keyFactsGateOverride = null;
@@ -3178,6 +3212,15 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
 // chars contain enough quoted terms and special characters that even jsonrepair
 // cannot reliably reconstruct them.
 const SINGLE_PASS_RESPONSE_LIMIT = 8_000;
+/**
+ * The same limit for a source that gets the Key Facts rule (2026-11-14). Its replies
+ * are longer by design: measured on 18 single-pass data ingests per model, Haiku 5.5's
+ * median reply rose from 2,050 to 2,795 output tokens (about 10 KB) and its largest to
+ * 5,920 (about 21 KB), so at 8,000 characters a parse failure skipped the strict retry
+ * (and with it KEY_FACTS_RULE_STRICT) and paid for multi-phase instead. 24,000 covers
+ * the largest measured reply; every other source keeps 8,000.
+ */
+const SINGLE_PASS_RESPONSE_LIMIT_KEY_FACTS = 24_000;
 
 // Skip single-pass entirely for medium-to-large input documents.
 // Single-pass for a 20 k+ char source produces 10 000–20 000 chars of JSON —
@@ -3506,6 +3549,10 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     warnings.push(msg);
     progress(8, `⚠ Source truncated to ${TEXT_CAP.toLocaleString()} chars — see warnings.`);
   }
+  {
+    const tableWarning = tableDataWarning(text);
+    if (tableWarning) { console.warn(`[ingest] ${tableWarning}`); warnings.push(tableWarning); }
+  }
 
   // ── PRE-FLIGHT: say it BEFORE the money is spent ──────────────────────────
   //
@@ -3649,8 +3696,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       // If the response is already large, a strict-brevity retry will produce a
       // similarly large (and similarly broken) response — skip it and go straight
       // to multi-phase, which handles content in small, reliable batches.
-      if (raw.length > SINGLE_PASS_RESPONSE_LIMIT) {
-        console.warn(`[ingest] Response ${raw.length} chars > ${SINGLE_PASS_RESPONSE_LIMIT} limit — skipping retry, switching to multi-phase.`);
+      const responseLimit = keyFactsGate(text) ? SINGLE_PASS_RESPONSE_LIMIT_KEY_FACTS : SINGLE_PASS_RESPONSE_LIMIT;
+      if (raw.length > responseLimit) {
+        console.warn(`[ingest] Response ${raw.length} chars > ${responseLimit} limit — skipping retry, switching to multi-phase.`);
         singlePassFailed = true;
       } else {
         // Short response that failed to parse — retry with maximum brevity
@@ -3893,6 +3941,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     const foldedFrom = page[FOLDED_FROM] || plannedFolds.get(withMdExtension(page.path));
     const record = await writePage(domain, page.path, page.content, {
       onWarn: (w) => warnings.push(w),
+      splitHeadings: true,   // fresh model output: a swallowed template heading may be split
       ...(foldedFrom ? { foldedFrom } : {}),
       ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
     });
