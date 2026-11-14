@@ -70,6 +70,9 @@ await domain('alpha', [
   ['concepts/vault-encryption.md', '# Vault encryption\n\nThe vault uses encryption at rest.\n'],
   ['concepts/api-pagination.md', '# API pagination\n\nResults come back with pagination cursors.\n'],
   ['concepts/aim-notes.md', '# Aim notes\n\nWe aim high.\n'],
+  ['entities/harbour-md.md', '# Harbour notes file\n\nA large notes file.\n'],
+  ['concepts/kestrel-notes.md', '# Kestrel notes\n\nHosted on kestrel.io; see old-changelog.md and harbour.md. Costs $3,000, split 50/50.\n'],
+  ['concepts/kestrel-plain.md', '# Kestrel plain\n\nKestrel and io, 3 and 000, 50 and 50, changelog and md.\n'],
   ['concepts/ver-a.md', '# Ver A\n\nShipped 1.2.3.\n'],
   ['concepts/ver-b.md', '# Ver B\n\nShipped 1.2.30.\n'],
   ['summaries/budget-notes.md', '# Budget notes\n\nThe pilot costs $5,000 and grew 22% this year.\n'],
@@ -126,7 +129,7 @@ section('1. whole words only');
   ok(!slugs(await search('gent')).includes('agents-only'), 'a term INSIDE a word never matches ("gent" does not find "agents")');
   ok(!slugs(await search('ai')).includes('aim-notes'), 'a term under 4 letters matches whole words only ("ai" does not find "aim")');
   ok(slugs(await search('Blockchain!')).includes('chain-notes'), 'punctuation around a query word is ignored; a tag word matches');
-  eq(terms('End-to-end, C++ & node.js').join(' '), 'end to c node js', 'terms are the query\'s distinct words');
+  eq(terms('End-to-end, C++ & node.js').join(' '), 'node.js end to c', 'terms: a dotted name whole, then the distinct words');
 }
 
 // ── 1v ───────────────────────────────────────────────────────────────────────
@@ -153,6 +156,11 @@ section('1v. version and decimal tokens stay whole');
   eq(slugs(await search('$5,000'))[0], 'budget-notes', '"$5,000" is one term and finds the page holding it first');
   eq(slugs(await search('22%')).join(','), 'budget-notes', '"22%" matches only the page holding it, not "july-22"');
   ok(slugs(await search('$7,777')).length > 0, 'an amount no page holds falls back to its words');
+  eq(slugs(await search('harbour.md'))[0], 'harbour-md', 'a page NAMED by the query matches and ranks first even when its text lacks the dotted name');
+  eq(slugs(await search('kestrel.io')).join(','), 'kestrel-notes', 'a dotted name ("kestrel.io") is one term: only the page holding it');
+  eq(slugs(await search('changelog.md')).join(','), 'kestrel-notes', 'a dotted name inside a hyphen-joined token is indexed ("old-changelog.md")');
+  eq(slugs(await search('3,000')).join(','), 'kestrel-notes', 'a comma number is one term ("3,000" also inside "$3,000")');
+  eq(slugs(await search('50/50')).join(','), 'kestrel-notes', 'a ratio is one term');
 }
 
 // ── 1u ───────────────────────────────────────────────────────────────────────

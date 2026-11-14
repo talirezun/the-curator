@@ -34,7 +34,7 @@
  * "agent" in "subagent") no longer matches; a short term (under 4 letters) matches
  * whole words only ("ai" does not find "aim").
  *
- * VERSIONS AND AMOUNTS: "0.4.11", "v1.0", "gpt-5.6", "$5,000", "22%" stay one term
+ * WHOLE TERMS: "0.4.11", "v1.0", "gpt-5.6", "claude.ai", "$5,000", "22%", "3,000", "50/50" stay one term
  * (COMPOUND_RE, AMOUNT_RE below), falling back to their words when no page holds them.
  *
  * CROSS-DOMAIN (`weight`): each domain's scores depend on its own page count and word
@@ -69,19 +69,26 @@ export function words(s) {
 // 4 in it (measured: 91 version strings that occur on 1-3 pages, top-1 88 → 36).
 // A page's text yields its words AND every run of 2+ joined pieces that holds a
 // digit ("gemini-3.5-flash" also yields "gemini-3.5", "3.5" and "3.5-flash").
+// DOTTED NAMES without a digit ("claude.ai", "node.js", "next.config.js",
+// "agent.md") are kept whole too (split, "Claude.ai" had ranked its page 148th);
+// hyphen-joined words without a digit ("end-to-end") stay plain words.
 const COMPOUND_RE = /[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)+/gu;
 const HAS_DIGIT = /\p{N}/u;
+const isDottedName = (m) => m.includes('.') && !m.includes('-');
+const isWhole = (m) => HAS_DIGIT.test(m) || isDottedName(m);
 function compoundMatches(lower) {
-  return (lower.match(COMPOUND_RE) || []).filter(m => HAS_DIGIT.test(m));
+  return (lower.match(COMPOUND_RE) || []).filter(isWhole);
 }
 /** True for a whole version/number/amount token ("0.4.11", "gpt-5.6", "$5,000", "22%"). */
 export function isCompound(term) {
-  return /[.\-$€£%,]/.test(term);
+  return /[.\-$€£%,/]/.test(term);
 }
 // PRICES AND PERCENTAGES are kept whole the same way: "$5,000", "€2,000", "$12.5k",
 // "22%", "3.5%" (split into words, "22%" matched "july-22": measured 71 percentages
 // top-1 68 → 50, 72 prices 67 → 50).
-const AMOUNT_RE = /[$€£]\d[\d,]*(?:\.\d+)?[kmb]?(?![\p{L}\p{N}])|\d+(?:[.,]\d+)?%/gu;
+// Also comma-grouped numbers without a sign ("3,000", "1,000,000") and ratios
+// ("5/3", "50/50", "24/7"). A page's "$3,000" is also indexed as "3,000".
+const AMOUNT_RE = /[$€£]\d[\d,]*(?:\.\d+)?[kmb]?(?![\p{L}\p{N}])|\d+(?:[.,]\d+)?%|\d{1,3}(?:,\d{3})+(?![\d])|\d+\/\d+(?![\d])/gu;
 function amountMatches(lower) {
   return (lower.match(AMOUNT_RE) || []).map(m => m.replace(/,+$/, ''));
 }
@@ -93,19 +100,23 @@ const RUN_PIECES_MAX = 6;
 export function tokens(s) {
   const lower = String(s ?? '').toLowerCase();
   const out = lower.match(WORD_RE) || [];
-  out.push(...amountMatches(lower));
-  for (const m of compoundMatches(lower)) {
-    // The whole token, and every contiguous run of 2+ of its pieces (up to
-    // RUN_PIECES_MAX) that holds a digit, so "gpt-5.6-sol" also yields "gpt-5.6" and
-    // "5.6", "v3.17.x" yields "v3.17", and a leading "v" is optional ("v0.2.0" is
-    // also found as "0.2.0").
+  for (const a of amountMatches(lower)) {
+    out.push(a);
+    if (/^[$€£]\d{1,3}(?:,\d{3})+$/.test(a)) out.push(a.slice(1));
+  }
+  for (const m of lower.match(COMPOUND_RE) || []) {
+    // The whole token (when it is one), and every contiguous run of 2+ of its pieces
+    // (up to RUN_PIECES_MAX) that holds a digit or is a dotted name, so "gpt-5.6-sol"
+    // also yields "gpt-5.6" and "5.6", "v3.17.x" yields "v3.17",
+    // "changelog-archive.md" yields "archive.md", and a leading "v" is optional
+    // ("v0.2.0" is also found as "0.2.0").
     const push = (run) => { out.push(run); if (/^v\d/.test(run)) out.push(run.slice(1)); };
-    push(m);
+    if (isWhole(m)) push(m);
     const parts = m.split(/([.-])/);           // pieces at even indexes, separators at odd
     const n = (parts.length + 1) / 2;
     for (let a = 0; a < n; a++) for (let b = a + 1; b < n && b - a < RUN_PIECES_MAX; b++) {
       const run = parts.slice(2 * a, 2 * b + 1).join('');
-      if (run !== m && HAS_DIGIT.test(run)) push(run);
+      if (run !== m && isWhole(run)) push(run);
     }
   }
   return out;
@@ -121,7 +132,7 @@ export function terms(query) {
   const amounts = amountMatches(lower);
   const rest1 = lower.replace(AMOUNT_RE, ' ');
   const whole = compoundMatches(rest1);
-  const rest = rest1.replace(COMPOUND_RE, m => (HAS_DIGIT.test(m) ? ' ' : m));
+  const rest = rest1.replace(COMPOUND_RE, m => (isWhole(m) ? ' ' : m));
   return [...new Set([...amounts, ...whole, ...(rest.match(WORD_RE) || [])])];
 }
 
@@ -256,8 +267,10 @@ export function rankNodesWithMeta(nodes, query, { held = null } = {}) {
         if (!p.tagWords.has(t[i]) && pre[i].some(w => p.tagWords.has(w))) { matched = true; score += PREFIX_WEIGHT * TAG_BONUS; }
       }
     }
-    if (!matched) continue;
+    // A page NAMED by the query always matches, even when the query's whole term is
+    // not in it ("claude.md" names `claude-md.md`, whose text never says "claude.md").
     const exact = queryKey !== '' && (p.slugKey === queryKey || p.titleKey === queryKey);
+    if (!matched && !exact) continue;
     out.push({ node: all[j], score, exact, order: j });
   }
   out.sort((a, b) => (b.exact - a.exact) || (b.score - a.score) || (a.order - b.order));
