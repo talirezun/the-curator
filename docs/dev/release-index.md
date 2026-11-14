@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.97.1` | A follow-up ingest no longer silently skips updating existing pages: one retry, then Gemini 3.1 Flash Lite for that step, with a notice. |
 | `v3.97.0` | Health changes can be undone: every page a Health action changes is copied first, and Wiki health › Recent changes has Undo. |
 | `v3.96.2` | Safety release: Health can no longer delete an unrelated page, page properties stay exact, Sync never pushes secrets, and new users get a working default model. |
 | `v3.96.1` | Ingest no longer leaves links to pages never written on Gemini 3.1 Flash Lite; hub linking no longer rewrites Related; the live job gets a 45-minute limit. |
