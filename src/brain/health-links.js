@@ -1,101 +1,184 @@
 /**
- * What a merge does to every link that names the page it deletes (2026-11-14).
+ * Links and code for Wiki health (2026-11-14): what counts as code, and what a merge
+ * does to every link that names the page it deletes.
  *
- * A Health merge keeps one page and deletes another, and every link to the deleted
- * page must then name the kept one. Until this module only `[[x]]` and `[[x|alias]]`
- * were repointed, so a foreign vault (Obsidian, Logseq, a plain markdown folder) was
- * left with links to a page that no longer exists in every other form it writes:
+ * ── ONE IDEA OF "INSIDE CODE" ──────────────────────────────────────────────
+ * `codeSegments` is the one detector. The scan (health.js `scanWikiUncached`), the
+ * broken-link and folder-prefix repairs, the AI broken-link plan and a merge's
+ * repoint all use it, so a link written as code is neither counted nor rewritten
+ * anywhere. Code is, by CommonMark's rules as far as a link is concerned:
+ *   • a fenced block (``` or ~~~, the same rule as files.js `fenceRuns`);
+ *   • an indented block: lines indented 4 spaces or a tab after a blank line, unless
+ *     they continue a list item (a list's indented paragraphs are text);
+ *   • an inline span: a run of N backticks closed by the next run of exactly N, inside
+ *     one block. A span never crosses a blank line, a new list item, a heading, a
+ *     quote line or a table row, nor a table cell's `|`; a backslash escapes one
+ *     backtick; a run with no partner is text. So one stray backtick never swallows
+ *     the links after it.
+ * Frontmatter is text (a property can hold a link), never code.
  *
- *   [[x#Heading]]  [[x#^block-id]]  [[x#Heading|alias]]  ![[x]]  [[x.md]]
- *   [text](x.md)  [text](../entities/x.md#anchor)  [text](my%20page.md)
- *   [text](<my page.md>)  [label]: entities/x.md   (a reference definition)
- *   an Obsidian canvas's file node ("file": "entities/x.md") and the links in its text cards
+ * ── WHAT A MERGE REPOINTS ──────────────────────────────────────────────────
+ *   [[x]] [[x|a]] [[x\|a]] (a table's alias) [[x#Heading]] [[x#^block]] ![[x…]] [[x.md]]
+ *   [[folder/x]]  [t](x.md) [t](x) [t](../entities/x.md#a) [t](x.md "title")
+ *   [t](my%20page.md) [t](<my page.md>)  [label]: x.md (also inside a > quote)
+ *   an Obsidian canvas's file node and the links in its text cards
+ * with the heading, block and alias kept as written. A heading or block that was only
+ * on the deleted page now sits on the kept page under `## Merged from <slug>`
+ * (headings one level down, block ids verbatim); `anchorsUnresolved` counts the links
+ * whose heading or block the kept page does not show.
  *
- * Every one of them is repointed to the kept page with its heading, block and alias
- * kept as written. A heading or block that was only on the deleted page now sits on
- * the kept page under `## Merged from <slug>` (headings one level down, block ids
- * verbatim), so most still resolve; `anchorsUnresolved` counts the ones the kept page
- * shows no heading or block for, and the outcome says how many.
+ * WHICH LINKS NAME THE DELETED PAGE. The page a link REACHES is decided first, and only
+ * a link that reaches the deleted page changes:
+ *   [[s]]          the first of entities/s, concepts/s, summaries/s that exists (the
+ *                  scan's order); when none has that exact name, a page whose name
+ *                  differs only by case or Unicode form (NFC/NFD) is reached, as
+ *                  Obsidian does, if exactly one does;
+ *   [[folder/s]]   that folder, by the same exact-then-case rule;
+ *   (path)         relative to the linking page, then from the wiki's root, then, for a
+ *                  bare name, by file name when only one file has it; `.md` optional.
+ * The new link reaches the kept page too: a bare `[[keep]]` would reach another page
+ * when an earlier folder has that name, so it is written `[[folder/keep]]` then.
  *
- * WHAT IS NEVER EDITED: text in a code fence or in inline code (an example, not a
- * link), and nothing outside the link itself. Frontmatter is part of the page: a
- * property holding a link (`related: "[[x]]"`, `up: [[x]]`) is a link Obsidian shows
- * in the graph and in backlinks, so it is repointed like any other, and every other
- * byte of the frontmatter stays as it is (only the link's own characters change).
- * The caller decides which files are walked (no dot-folder: `.obsidian`, `.trash`,
- * `.git`), and every write goes through `writeFileAtomic`, so Health's Undo copies
- * each file first.
- *
- * WHICH LINKS NAME THE DELETED PAGE. The rules are the scan's and Obsidian's:
- *   [[s]]          the first of entities/s, concepts/s, summaries/s that exists
- *                  (scanWiki's order), so a link that reaches a DIFFERENT page of the
- *                  same name is left alone;
- *   [[folder/s]]   that folder only;
- *   (path.md)      relative to the linking page first, then from the wiki's root,
- *                  then, for a bare name, by file name when no other file has it.
- *
- * Pure: no file system. `health.js` reads and writes.
+ * NEVER EDITED: code (above), URLs and other schemes, footnotes, the dot-folders the
+ * caller does not walk. Frontmatter links are repointed (Obsidian resolves them in the
+ * graph and backlinks); every other byte of the frontmatter stays. Pure: no file
+ * system; `health.js` reads and writes, through `writeFileAtomic`, so Undo copies it.
  */
 import path from 'path';
+import { fenceRuns } from './files.js';
 
 const posix = path.posix;
 const WIKI_FOLDERS = ['entities', 'concepts', 'summaries'];
 
+// ── Code ────────────────────────────────────────────────────────────────────
+
+const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const INDENTED_RE = /^(?: {4}|\t)/;
+const BLANK_RE = /^[ \t]*\r?\n?$/;
+// A line that begins a new block for inline spans: a span never crosses it.
+const BLOCK_START_RE = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|#{1,6}(?:[ \t]|$)|>|\|)/;
+const TABLE_ROW_RE = /^[ \t]*\|/;
+
 /**
- * A page's text cut into the parts a link may be edited in (`code: false`) and the
- * parts it may not: code fences (`fenceRuns`) and inline code spans, CommonMark's
- * rule: a run of N backticks opens a span that the next run of exactly N closes, in
- * the same paragraph; a run with no partner is text, and a backslash escapes one.
+ * The text cut into code and not code, in order, every byte once.
+ * @returns {Array<{text: string, code: boolean}>}
  */
-export function proseSegments(text, fenceRuns) {
+export function codeSegments(text) {
+  const src = String(text);
   const out = [];
-  for (const run of fenceRuns(String(text))) {
-    if (run.fenced) { out.push({ text: run.text, code: true }); continue; }
-    splitInlineCode(run.text, out);
+  const push = (t, code) => {
+    if (!t) return;
+    const last = out[out.length - 1];
+    if (last && last.code === code && code) last.text += t;
+    else out.push({ text: t, code });
+  };
+  // Frontmatter: text, cut into lines so a stray backtick in a value stays in its line.
+  let body = src;
+  const fm = src.match(/^---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/);
+  if (fm) {
+    for (const line of fm[0].split(/(?<=\n)/)) inlineSpans(line, push);
+    body = src.slice(fm[0].length);
   }
+  let unit = '';               // the prose lines of one block, searched for inline spans together
+  let unitIsTable = false;
+  const flush = () => { if (unit) { inlineSpans(unit, push, unitIsTable); unit = ''; } unitIsTable = false; };
+  let prevBlank = true;
+  let inList = false;
+  let inIndented = false;
+  for (const run of fenceRuns(body)) {
+    if (run.fenced) { flush(); push(run.text, true); prevBlank = false; inIndented = false; continue; }
+    for (const line of run.text.split(/(?<=\n)/)) {
+      const blank = BLANK_RE.test(line);
+      if (inIndented && (blank || INDENTED_RE.test(line))) { push(line, true); prevBlank = blank; continue; }
+      inIndented = false;
+      if (blank) { flush(); unit = line; flush(); prevBlank = true; continue; }
+      if (INDENTED_RE.test(line) && prevBlank && !inList) {
+        flush(); push(line, true); inIndented = true; prevBlank = false; continue;
+      }
+      if (LIST_ITEM_RE.test(line)) inList = true;
+      else if (prevBlank && !INDENTED_RE.test(line)) inList = false;
+      const table = TABLE_ROW_RE.test(line);
+      if (BLOCK_START_RE.test(line) || table || unitIsTable) flush();
+      unitIsTable = table;
+      unit += line;
+      prevBlank = false;
+    }
+  }
+  flush();
   return out;
 }
 
-function splitInlineCode(t, out) {
+/** Inline code spans in one block (`table`: a row, whose `|` also ends a span). */
+function inlineSpans(t, push, table = false) {
   let i = 0;
   let from = 0;
-  const push = (end, code) => { if (end > from) out.push({ text: t.slice(from, end), code }); from = end; };
+  const emit = (end, code) => { if (end > from) push(t.slice(from, end), code); from = end; };
   while (i < t.length) {
     if (t.charCodeAt(i) !== 96) { i++; continue; }
     let bs = 0;
     for (let k = i - 1; k >= 0 && t[k] === '\\'; k--) bs++;
+    if (bs % 2 === 1) { i += 1; continue; }        // an escaped backtick is text
     let n = 0;
     while (t.charCodeAt(i + n) === 96) n++;
-    if (bs % 2 === 1) { i += 1; continue; }     // an escaped backtick is text; the rest of its run is looked at again
     let j = i + n;
     let close = -1;
     while (j < t.length) {
-      if (t.charCodeAt(j) === 96) {
+      const c = t.charCodeAt(j);
+      if (c === 96) {
         let m = 0;
         while (t.charCodeAt(j + m) === 96) m++;
         if (m === n) { close = j; break; }
         j += m;
         continue;
       }
-      // A blank line ends the paragraph, and with it any open span.
-      if (t[j] === '\n' && /^\n[ \t]*\n/.test(t.slice(j, j + 64))) break;
+      if (table && c === 124 && t[j - 1] !== '\\') break;   // a cell ends here
       j++;
     }
     if (close === -1) { i += n; continue; }
-    push(i, false);
+    emit(i, false);
     i = close + n;
-    push(i, true);
+    emit(i, true);
   }
-  push(t.length, false);
+  emit(t.length, false);
 }
+
+/** The text outside code, pieces joined by a newline so no link forms across a gap. */
+export function withoutCode(text) {
+  return codeSegments(text).filter((s) => !s.code).map((s) => s.text).join('\n');
+}
+
+/** `text.replace(re, fn)` outside code only. */
+export function replaceOutsideCode(text, re, fn) {
+  return codeSegments(text).map((s) => (s.code ? s.text : s.text.replace(re, fn))).join('');
+}
+
+// ── Anchors ─────────────────────────────────────────────────────────────────
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function safeDecode(s) { try { return decodeURIComponent(s); } catch { return s; } }
+const anchorKey = (s) => safeDecode(String(s)).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 
-function safeDecode(s) {
-  try { return decodeURIComponent(s); } catch { return s; }
+/**
+ * Would `anchor` (`#Heading`, `#Parent#Child`, `#^block-id`) find something on this
+ * page? A heading at any level outside code, or a block id at a line's end.
+ */
+export function anchorResolves(pageText, anchor) {
+  const a = String(anchor || '').replace(/^#+/, '');
+  if (!a) return true;
+  const outside = codeSegments(String(pageText)).filter((s) => !s.code).map((s) => s.text).join('\n');
+  if (a.startsWith('^')) return new RegExp(`(^|\\s)\\^${escapeRe(a.slice(1).trim())}[ \\t]*\\r?$`, 'm').test(outside);
+  const parts = a.split('#').filter(Boolean);
+  const want = anchorKey(parts[parts.length - 1]);
+  if (!want) return true;
+  for (const m of outside.matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*\r?$/gm)) if (anchorKey(m[1]) === want) return true;
+  return false;
 }
 
-/** A path written into a markdown link, encoded the way the old one was. */
+// ── The merge's rewriter ─────────────────────────────────────────────────────
+
+/** Names compared the way Obsidian finds a page: case and Unicode form aside. */
+const looseKey = (s) => String(s).normalize('NFC').toLowerCase();
+
 function encodeMdPath(p, encodedNonAscii) {
   return p.split('/').map((seg) => {
     if (encodedNonAscii) return encodeURIComponent(seg).replace(/%2E/gi, '.');
@@ -103,27 +186,15 @@ function encodeMdPath(p, encodedNonAscii) {
   }).join('/');
 }
 
-/** Heading and block-id text, compared as a reader would: case, spaces, hyphens and punctuation aside. */
-const anchorKey = (s) => safeDecode(String(s)).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-
-/**
- * Would `anchor` (`#Heading`, `#Parent#Child`, `#^block-id`) find something on this
- * page? A heading anywhere outside a code fence, at any level, or a block id at a
- * line's end.
- */
-export function anchorResolves(pageText, anchor, fenceRuns) {
-  let a = String(anchor || '').replace(/^#+/, '');
-  if (!a) return true;
-  const outside = fenceRuns(String(pageText)).filter((r) => !r.fenced).map((r) => r.text).join('');
-  if (a.startsWith('^')) {
-    const id = a.slice(1).trim();
-    return new RegExp(`(^|\\s)\\^${escapeRe(id)}[ \\t]*$`, 'm').test(outside);
-  }
-  const parts = a.split('#').filter(Boolean);
-  const want = anchorKey(parts[parts.length - 1]);
-  if (!want) return true;
-  for (const m of outside.matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*$/gm)) {
-    if (anchorKey(m[1]) === want) return true;
+/** Is the `]` at `at` the end of a link text: an unclosed `[` before it, on its line? */
+function closesLinkText(s, at) {
+  let depth = 0;
+  for (let k = at - 1; k >= 0; k--) {
+    const c = s[k];
+    if (c === '\n') return false;
+    if (s[k - 1] === '\\') continue;
+    if (c === ']') depth++;
+    else if (c === '[') { if (depth === 0) return true; depth--; }
   }
   return false;
 }
@@ -136,15 +207,13 @@ export function anchorResolves(pageText, anchor, fenceRuns) {
  * @param {string} o.keepSlug
  * @param {string} o.keepFolder
  * @param {Set<string>|null} o.existing  every page in the wiki, wiki-relative posix
- *   (`entities/x.md`), the retired ones included; null treats nothing else as existing
+ *   (`entities/x.md`), the retired ones included
  * @param {string} [o.wikiDir]  absolute; lets a canvas whose vault root is above the
  *   wiki (`"file": "wiki/entities/x.md"`) be recognised
- * @param {Function} o.fenceRuns
  * @param {Function} [o.dedup]  (before, after) → after, run once on a page's text
- * @returns {null | {apply(text, rel): {text, links, anchors}, applyCanvas(text, rel): {text, links, anchors}}}
  */
 export function makeRetiredLinkRewriter(o) {
-  const { retired, keepSlug, keepFolder, fenceRuns } = o;
+  const { retired, keepSlug, keepFolder } = o;
   if (!Array.isArray(retired) || typeof keepSlug !== 'string' || !keepSlug) return null;
   const seen = new Set();
   const gone = [];
@@ -158,129 +227,154 @@ export function makeRetiredLinkRewriter(o) {
   if (gone.length === 0) return null;
   const goneRels = new Set(gone.map((g) => g.rel));
   const keepRel = `${keepFolder}/${keepSlug}.md`;
-  const existing = o.existing instanceof Set ? o.existing : new Set([...goneRels, keepRel]);
-  const has = (rel) => existing.has(rel);
+  const existing = o.existing instanceof Set ? new Set(o.existing) : new Set();
+  for (const g of gone) existing.add(g.rel);
+  existing.add(keepRel);
   const dedup = typeof o.dedup === 'function' ? o.dedup : (_b, a) => a;
 
-  // Which page does a bare [[s]] reach? The scan's order, then a summary.
-  const bareTarget = (s) => {
-    for (const f of WIKI_FOLDERS) if (has(`${f}/${s}.md`)) return `${f}/${s}.md`;
+  // Every page by its loose name, for a link written in another case or form.
+  const byLoose = new Map();
+  for (const rel of existing) {
+    const k = looseKey(rel);
+    if (!byLoose.has(k)) byLoose.set(k, []);
+    byLoose.get(k).push(rel);
+  }
+  /** The page a wiki-relative path reaches: exactly, else the one page of that loose name. */
+  const reach = (rel, pages = existing) => {
+    if (pages.has(rel)) return rel;
+    const list = (byLoose.get(looseKey(rel)) || []).filter((x) => pages.has(x));
+    return list.length === 1 ? list[0] : null;
+  };
+  const reachBare = (slug, pages = existing) => {
+    for (const f of WIKI_FOLDERS) if (pages.has(`${f}/${slug}.md`)) return `${f}/${slug}.md`;
+    for (const f of WIKI_FOLDERS) { const r = reach(`${f}/${slug}.md`, pages); if (r) return r; }
     return null;
   };
-  // A bare [[s]] to a retired page is repointed when s is what reaches it. When none
-  // of the three exist (the caller passed no inventory), a retired slug still counts.
-  const bareRetired = (s) => {
-    const t = bareTarget(s);
-    return t ? goneRels.has(t) : gone.some((g) => g.slug === s);
-  };
+  // After the delete: which name reaches the kept page.
+  const after = new Set([...existing].filter((x) => !goneRels.has(x)));
+  const keepWiki = keepFolder === 'summaries' || reachBare(keepSlug, after) !== keepRel
+    ? `${keepFolder}/${keepSlug}` : keepSlug;
 
-  // ── [[...]] ────────────────────────────────────────────────────────────────
-  // `[^\S\n]*` (whitespace except a newline) where the scan's own `.trim()` lets it
-  // stand: `[[ x ]]` and `[[x |a]]` are live links to the scan, `[[x\n]]` is not.
-  const WS = '[^\\S\\n]*';
-  const slugAlt = [...new Set(gone.map((g) => g.slug))].map(escapeRe).join('|');
-  const wikiRe = new RegExp(
-    `\\[\\[${WS}(?:(entities|concepts|summaries)/)?(${slugAlt})(\\.md)?${WS}(#[^\\]|\\n]*)?${WS}(\\|[^\\]\\n]+)?\\]\\]`, 'g');
-  const keepLink = keepFolder === 'summaries' ? `summaries/${keepSlug}` : keepSlug;
-
-  const rewriteWiki = (seg, stats) => seg.replace(wikiRe, (whole, folder, slug, md, anchor, alias) => {
-    const target = folder ? (goneRels.has(`${folder}/${slug}.md`) ? `${folder}/${slug}.md` : null)
-      : (bareRetired(slug) ? 'bare' : null);
-    if (!target) return whole;
+  // ── [[...]] ──────────────────────────────────────────────────────────────
+  // The scan's own shape: a name up to | # ] or a newline, `.md` optional, a heading or
+  // block, an alias (a table writes it `\|`, and an alias may run over lines).
+  const wikiRe = /\[\[([^\]|#\n\\]+?)(\.md)?([^\S\n]*)(#[^\]|\n\\]*)?([^\S\n]*)(\\?\|[^\]]+)?\]\]/g;
+  const rewriteWiki = (seg, stats) => seg.replace(wikiRe, (whole, target, md, _w1, anchor, _w2, alias) => {
+    const name = target.trim();
+    if (!name) return whole;
+    let reached = null;
+    const slash = name.indexOf('/');
+    if (slash !== -1) {
+      const folder = name.slice(0, slash);
+      const slug = name.slice(slash + 1);
+      if (!WIKI_FOLDERS.includes(folder) || !slug || slug.includes('/')) return whole;
+      reached = reach(`${folder}/${slug}.md`);
+    } else {
+      reached = reachBare(name);
+    }
+    if (!reached || !goneRels.has(reached)) return whole;
     stats.links++;
     const a = anchor ? anchor.replace(/[^\S\n]+$/, '') : '';
     if (a && a !== '#') stats.anchors.push(a);
-    return `[[${keepLink}${md || ''}${a}${alias || ''}]]`;
+    return `[[${keepWiki}${md || ''}${a}${alias || ''}]]`;
   });
 
-  // ── markdown links and reference definitions ───────────────────────────────
-  const basenameCount = new Map();
-  for (const rel of existing) {
-    if (goneRels.has(rel)) continue;
-    const b = posix.basename(rel);
+  // ── markdown links and reference definitions ─────────────────────────────
+  const basenameCount = new Map();   // loose file name → pages left with it
+  for (const rel of after) {
+    const b = looseKey(posix.basename(rel));
     basenameCount.set(b, (basenameCount.get(b) || 0) + 1);
   }
   const goneByBasename = new Map();
   for (const g of gone) {
-    const b = `${g.slug}.md`;
-    goneByBasename.set(b, goneByBasename.has(b) ? null : g.rel); // two retired of one name: neither by name
+    const b = looseKey(`${g.slug}.md`);
+    goneByBasename.set(b, goneByBasename.has(b) ? null : g.rel);
   }
 
-  /** The new destination for `dest`, written from the page at `fromRel`, or null. */
   const retarget = (dest, fromRel, stats) => {
     const angle = dest.startsWith('<') && dest.endsWith('>');
     const inner = angle ? dest.slice(1, -1) : dest;
-    if (!inner || /^[a-z][a-z0-9+.-]*:/i.test(inner)) return null;   // a URL, mailto:, obsidian://
+    if (!inner || /^[a-z][a-z0-9+.-]*:/i.test(inner) || inner.startsWith('//')) return null;
     const hashAt = inner.indexOf('#');
     const rawPath = hashAt === -1 ? inner : inner.slice(0, hashAt);
     const anchor = hashAt === -1 ? '' : inner.slice(hashAt);
-    if (!rawPath) return null;                                        // #anchor on this page
+    if (!rawPath || rawPath.includes('?')) return null;
     const decoded = angle ? rawPath : safeDecode(rawPath);
-    if (!/\.md$/i.test(decoded)) return null;
-    const absolute = decoded.startsWith('/');
-    const p = absolute ? decoded.slice(1) : decoded;
+    let noExt = false;
+    let file = decoded;
+    if (!/\.md$/i.test(file)) {
+      if (/\.[^/.]+$/.test(posix.basename(file))) return null;           // another kind of file
+      file += '.md';
+      noExt = true;
+    }
+    const absolute = file.startsWith('/');
+    const p = absolute ? file.slice(1) : file;
     const fromDir = posix.dirname(fromRel || 'x');
     let style = null;
     if (!absolute) {
       const rel = posix.normalize(posix.join(fromDir, p));
       if (!rel.startsWith('../')) {
-        if (goneRels.has(rel)) style = 'relative';
-        else if (has(rel)) return null;
+        const r = reach(rel);
+        if (r && goneRels.has(r)) style = 'relative';
+        else if (r) return null;
       }
     }
     if (!style) {
-      const root = posix.normalize(p);
-      if (goneRels.has(root)) style = 'root';
-      else if (has(root)) return null;
+      const r = reach(posix.normalize(p));
+      if (r && goneRels.has(r)) style = 'root';
+      else if (r) return null;
     }
     if (!style && !p.includes('/')) {
-      const g = goneByBasename.get(p);
-      if (g && !basenameCount.has(p)) style = 'bare';
+      const k = looseKey(p);
+      if (goneByBasename.get(k) && !basenameCount.has(k)) style = 'bare';
     }
     if (!style) return null;
     let next;
-    if (style === 'relative') next = posix.relative(fromDir, keepRel) || posix.basename(keepRel);
-    else if (style === 'root') next = (absolute ? '/' : '') + keepRel;
-    else next = (basenameCount.get(posix.basename(keepRel)) || 0) <= 1 ? posix.basename(keepRel) : keepRel;
+    if (style === 'relative') {
+      next = posix.relative(fromDir, keepRel) || posix.basename(keepRel);
+      if (p.startsWith('./') && !next.startsWith('../')) next = './' + next;   // as it was written
+    } else if (style === 'root') next = (absolute ? '/' : '') + keepRel;
+    else next = (basenameCount.get(looseKey(posix.basename(keepRel))) || 0) <= 1 ? posix.basename(keepRel) : keepRel;
+    if (noExt) next = next.replace(/\.md$/i, '');
     stats.links++;
     if (anchor && anchor !== '#') stats.anchors.push(anchor);
-    if (next === p && !absolute) return dest;                         // already names the kept file
     const written = angle ? next : encodeMdPath(next, /%[89a-f][0-9a-f]/i.test(rawPath));
     return angle ? `<${written}${anchor}>` : `${written}${anchor}`;
   };
 
-  const inlineRe = /(\]\()([ \t]*)(<[^<>\n]*>|[^\s()<>]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?[ \t]*\))/g;
-  const refRe = /^([ ]{0,3}\[[^\]\n]+\]:[ \t]*)(<[^<>\n]*>|\S+)/gm;
+  const inlineRe = /\]\(([ \t]*)(<[^<>\n]*>|[^\s()<>]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*\))/g;
+  const refRe = /^((?:[ ]{0,3}>[ ]?)*[ ]{0,3}\[(?!\^)[^\]\n]+\]:[ \t]*)(<[^<>\n]*>|\S+)/gm;
   const rewriteMd = (seg, fromRel, stats) => seg
-    .replace(inlineRe, (whole, open, sp, dest, rest) => {
+    .replace(inlineRe, (whole, sp, dest, rest, at, str) => {
+      if (!closesLinkText(str, at)) return whole;                       // `a](x.md)` in a URL is no link
       const n = retarget(dest, fromRel, stats);
-      return n === null ? whole : `${open}${sp}${n}${rest}`;
+      return n === null ? whole : `](${sp}${n}${rest}`;
     })
     .replace(refRe, (whole, head, dest) => {
       const n = retarget(dest, fromRel, stats);
       return n === null ? whole : `${head}${n}`;
     });
 
-  const rewriteText = (text, fromRel, stats) => proseSegments(text, fenceRuns)
+  const rewriteText = (text, fromRel, stats) => codeSegments(text)
     .map((s) => (s.code ? s.text : rewriteMd(rewriteWiki(s.text, stats), fromRel, stats)))
     .join('');
 
   const apply = (text, fromRel) => {
     const stats = { links: 0, anchors: [] };
     const before = String(text);
-    const after = rewriteText(before, fromRel, stats);
-    return { text: after === before ? before : dedup(before, after), links: stats.links, anchors: stats.anchors };
+    const out = rewriteText(before, fromRel, stats);
+    return { text: out === before ? before : dedup(before, out), links: stats.links, anchors: stats.anchors };
   };
 
-  // ── Obsidian canvas ────────────────────────────────────────────────────────
-  // Paths in a canvas are from the vault's root, which may be the wiki or a folder
-  // above it: `wiki/entities/x.md` is the same page when the wiki folder is `wiki`.
+  // ── Obsidian canvas ──────────────────────────────────────────────────────
+  // Paths are from the vault's root, which may be the wiki or a folder above it.
   const wikiTail = o.wikiDir ? path.resolve(o.wikiDir).split(path.sep).filter(Boolean) : [];
   const canvasPrefix = (file) => {
     for (const g of gone) {
-      if (file === g.rel) return '';
-      if (file.endsWith('/' + g.rel)) {
-        const prefix = file.slice(0, -g.rel.length);           // ends with '/'
+      const lf = looseKey(file), lg = looseKey(g.rel);
+      if (lf === lg && !after.has(file)) return '';
+      if (lf.endsWith('/' + lg)) {
+        const prefix = file.slice(0, file.length - g.rel.length);
         const segs = prefix.split('/').filter(Boolean);
         if (segs.length <= wikiTail.length && segs.every((s, k) => s === wikiTail[wikiTail.length - segs.length + k])) return prefix;
       }
@@ -293,30 +387,69 @@ export function makeRetiredLinkRewriter(o) {
     let doc;
     try { doc = JSON.parse(before); } catch { return { text: before, links: 0, anchors: [] }; }
     if (!doc || !Array.isArray(doc.nodes)) return { text: before, links: 0, anchors: [] };
-    // The anchors a file node carries, for the count; the edit itself is on the text.
     for (const node of doc.nodes) {
       if (node && typeof node.file === 'string' && canvasPrefix(node.file) !== null
         && typeof node.subpath === 'string' && node.subpath && node.subpath !== '#') stats.anchors.push(node.subpath);
     }
-    // Each "file" and "text" string is replaced where it stands, so the rest of the
-    // canvas (its layout, its order, its escapes) keeps every byte.
-    const after = before.replace(/("(file|text)"[ \t\r\n]*:[ \t\r\n]*)("(?:[^"\\\n]|\\.)*")/g, (whole, head, key, literal) => {
+    // Only a node's own "file" and "text" change, each string replaced where it stands,
+    // so the rest of the canvas (layout, order, escapes, edges, metadata) keeps its bytes.
+    const edits = [];
+    jsonStrings(before, (p, start, end) => {
+      if (p.length !== 3 || p[0] !== 'nodes' || typeof p[1] !== 'number' || (p[2] !== 'file' && p[2] !== 'text')) return;
       let value;
-      try { value = JSON.parse(literal); } catch { return whole; }
-      if (typeof value !== 'string') return whole;
+      try { value = JSON.parse(before.slice(start, end)); } catch { return; }
       let next = value;
-      if (key === 'file') {
+      if (p[2] === 'file') {
         const prefix = canvasPrefix(value);
-        if (prefix === null) return whole;
+        if (prefix === null) return;
         stats.links++;
         next = prefix + keepRel;
       } else {
         next = rewriteText(value, fromRel, stats);
       }
-      return next === value ? whole : head + JSON.stringify(next);
+      if (next !== value) edits.push([start, end, JSON.stringify(next)]);
     });
-    return { text: after, links: stats.links, anchors: stats.anchors };
+    let out = before;
+    for (const [s, e, v] of edits.reverse()) out = out.slice(0, s) + v + out.slice(e);
+    return { text: out, links: stats.links, anchors: stats.anchors };
   };
 
   return { apply, applyCanvas, keepRel, goneRels };
+}
+
+/**
+ * Every string VALUE in a JSON text, with its path (keys and indices) and its offsets.
+ * The text has already parsed, so this trusts its shape.
+ */
+function jsonStrings(t, onString) {
+  let i = 0;
+  const ws = () => { while (i < t.length && /\s/.test(t[i])) i++; };
+  const str = () => { const s = i; i++; while (i < t.length && t[i] !== '"') i += t[i] === '\\' ? 2 : 1; i++; return [s, i]; };
+  const value = (p) => {
+    ws();
+    const c = t[i];
+    if (c === '"') { const [s, e] = str(); onString(p, s, e); return; }
+    if (c === '{') {
+      i++; ws();
+      if (t[i] === '}') { i++; return; }
+      for (;;) {
+        ws(); const [ks, ke] = str(); const key = JSON.parse(t.slice(ks, ke));
+        ws(); i++;                                   // :
+        value(p.concat(key));
+        ws(); if (t[i] === ',') { i++; continue; }
+        i++; return;                                 // }
+      }
+    }
+    if (c === '[') {
+      i++; ws();
+      if (t[i] === ']') { i++; return; }
+      for (let k = 0; ; k++) {
+        value(p.concat(k));
+        ws(); if (t[i] === ',') { i++; continue; }
+        i++; return;                                 // ]
+      }
+    }
+    while (i < t.length && !/[,\]}\s]/.test(t[i])) i++;
+  };
+  value([]);
 }

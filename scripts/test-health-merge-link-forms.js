@@ -205,12 +205,11 @@ section('1. One pair (semanticDupe): every form, every folder, canvas, frontmatt
   ok(r.links && r.links.anchors > r.links.anchorsUnresolved, '1.8 …and only those: Key Facts, ^blk1 and the canvas subpath resolve');
 
   const after = await health.scanWiki(d.name, { noCache: true });
-  // The scan still counts a [[link]] written in inline code (it skips fences only), and
-  // a merge never edits code: those 2 per linking page are the only links to the
-  // deleted page the scan can still see. Anything more is a form the merge missed.
+  // The scan and the merge share one idea of code (health-links.js codeSegments): a
+  // link written as code is neither counted nor rewritten, so none is left behind.
   const toOld = after.brokenLinks.filter((b) => /^(entities\/)?alpha-old$/.test(b.linkText));
-  ok(toOld.length === 8, '1.9 the real scan sees no link to the deleted page but the 8 written in inline code', JSON.stringify(toOld.map((b) => b.sourceFile)));
-  ok(after.brokenLinks.length === brokenBefore + 8, '1.10 and no other broken link more than before', `${brokenBefore} → ${after.brokenLinks.length}`);
+  ok(toOld.length === 0, '1.9 the real scan sees no link to the deleted page', JSON.stringify(toOld.map((b) => b.sourceFile)));
+  ok(after.brokenLinks.length <= brokenBefore, '1.10 and no broken link more than before', `${brokenBefore} → ${after.brokenLinks.length}`);
 
   // Undo: every file back, byte for byte, the canvases included.
   const changes = await undo.listHealthChanges(d.name);
@@ -328,11 +327,17 @@ section('7. The MCP: fix_wiki_issue preview, then the merge, says what moved');
 // ═══════════════════════════════════════════════════════════════════════════
 section('8. The pieces: code spans and anchors');
 {
-  const seg = (t) => links.proseSegments(t, fenceRuns).map((s) => (s.code ? `<${s.text}>` : s.text)).join('');
+  const seg = (t) => links.codeSegments(t).map((s) => (s.code ? `<${s.text}>` : s.text)).join('');
   ok(seg('a `b` c') === 'a <`b`> c', '8.1 one backtick span');
   ok(seg('a ``b ` c`` d') === 'a <``b ` c``> d', '8.2 a double-backtick span holds a single backtick');
   ok(seg('a `b c') === 'a `b c', '8.3 an unclosed backtick is text');
   ok(seg('a `b\n\nc` d') === 'a `b\n\nc` d', '8.4 a span never crosses a blank line');
+  ok(seg('| ` | x |\n| [[l]] | y |\n| ` | z |\n') === '| ` | x |\n| [[l]] | y |\n| ` | z |\n', '8.4b nor table rows');
+  ok(seg('- a ` b\n- [[l]]\n- c ` d\n') === '- a ` b\n- [[l]]\n- c ` d\n', '8.4c nor list items');
+  ok(seg('| `a|b` |\n') === '| `a|b` |\n', '8.4d nor a table cell');
+  ok(seg('p\n\n    [[x]] code\n\nq') === 'p\n\n<    [[x]] code\n\n>q', '8.4e a 4-space indented block after a blank line is code');
+  ok(seg('- item\n\n    [[x]] more of the item\n') === '- item\n\n    [[x]] more of the item\n', '8.4f but not the indented paragraph of a list item');
+  ok(seg('---\na: `x\nb: [[y]]\n---\nz') === '---\na: `x\nb: [[y]]\n---\nz', '8.4g frontmatter is never code');
   ok(seg('a \\`b` c') === 'a \\`b` c', '8.5 an escaped backtick opens nothing');
   ok(seg('x\n```\n`y`\n```\nz `w`') === 'x\n<```\n`y`\n```\n>z <`w`>', '8.6 a fence is code as a whole');
   const pg = '# T\n\n## Key Facts\n### Merged Section Two\nline ^abc-1\n```\n## In A Fence\n```\n';
@@ -342,6 +347,73 @@ section('8. The pieces: code spans and anchors');
   ok(links.anchorResolves(pg, '#^abc-1', fenceRuns) && !links.anchorResolves(pg, '#^abc', fenceRuns), '8.9 a block id resolves exactly');
   ok(!links.anchorResolves(pg, '#In A Fence', fenceRuns) && !links.anchorResolves(pg, '#Nope', fenceRuns), '8.10 a heading in a fence, or none, does not');
   ok(links.anchorResolves(pg, '#T#Key Facts', fenceRuns), '8.11 a heading path is judged by its last heading');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('10. The audit\'s cases: code means one thing, and the forms it found');
+{
+  const d = mkDomain({
+    'entities/hand-off.md': page('Hand-off', 'entity'),
+    'entities/handoff.md': page('Handoff', 'entity'),
+    'entities/hub.md': [
+      '# Hub', '',
+      'Write it as `[[handoff]]` in your notes.', '',
+      '| key | meaning |', '|---|---|', '| ` | the backtick key |', '| [[handoff]] | a live link |', '| ` | again |', '',
+      '- quote with a ` mark', '- see [[handoff]] and [doc](handoff.md)', '- another ` mark', '',
+      '| a | b |', '|---|---|', '| [[handoff\\|the handoff]] | table alias |', '',
+      '[[Handoff]] case · [n](handoff) no extension · https://example.com/a](handoff.md) a URL', '',
+      '> [!note] A callout', '> [r]: handoff.md', '',
+      '[^1]: handoff.md', '',
+      '    [[handoff]] indented code', '',
+      '- item', '', '    [[handoff]] the item goes on', '',
+      '[[handoff|two', 'lines]]', '',
+    ].join('\n'),
+    'b.canvas': '{"nodes":[{"id":"1","type":"file","file":"entities/handoff.md"},{"id":"2","type":"file","file":"entities/Handoff.md"}],"edges":[{"id":"e","fromNode":"1","toNode":"2","text":"[[handoff]]","file":"entities/handoff.md"}],"meta":{"file":"entities/handoff.md"}}',
+  });
+  const scan0 = await health.scanWiki(d.name, { noCache: true });
+  ok(!scan0.brokenLinks.some((b) => b.linkText.endsWith('\\')), '10.0 the scan reads a table alias `[[x\\|a]]` as a link to x', JSON.stringify(scan0.brokenLinks));
+  const r = await health.fixIssue(d.name, 'semanticDupe', { keepSlug: 'hand-off', keepFolder: 'entities', removeSlug: 'handoff', removeFolder: 'entities' });
+  ok(r.fixed === 1, '10.1 the merge ran', JSON.stringify(r));
+  const hub = read(d, 'entities/hub.md');
+  const has = (line, label) => ok(hub.split('\n').includes(line), label, hub);
+  has('Write it as `[[handoff]]` in your notes.', '10.2 inline code is left alone…');
+  const after = await health.scanWiki(d.name, { noCache: true });
+  ok(after.brokenLinks.length === 0, '10.3 …and the scan does not count it, so nothing reads as broken', JSON.stringify(after.brokenLinks));
+  has('| [[hand-off]] | a live link |', '10.4 a link between two stray backticks in a table is repointed');
+  has('- see [[hand-off]] and [doc](hand-off.md)', '10.5 …and between two in a list');
+  has('| [[hand-off\\|the handoff]] | table alias |', '10.6 a table alias keeps its backslash');
+  has('[[hand-off]] case · [n](hand-off) no extension · https://example.com/a](handoff.md) a URL', '10.7 another case and no extension are repointed; a URL is not');
+  has('> [r]: hand-off.md', '10.8 a reference definition in a callout is repointed');
+  has('[^1]: handoff.md', '10.9 a footnote is not');
+  has('    [[handoff]] indented code', '10.10 an indented code block is not');
+  has('    [[hand-off]] the item goes on', '10.11 a list item\'s indented paragraph is');
+  ok(hub.includes('[[hand-off|two\nlines]]'), '10.12 an alias over two lines is repointed');
+  const canvas = JSON.parse(read(d, 'b.canvas'));
+  ok(canvas.nodes[0].file === 'entities/hand-off.md' && canvas.nodes[1].file === 'entities/hand-off.md', '10.13 canvas file nodes, any case, follow');
+  ok(canvas.edges[0].text === '[[handoff]]' && canvas.edges[0].file === 'entities/handoff.md' && canvas.meta.file === 'entities/handoff.md',
+    '10.14 an edge and the canvas metadata are not nodes, and keep every byte', read(d, 'b.canvas'));
+}
+{
+  // The free repair goes where the scan points and nowhere else: never inside code.
+  const d = mkDomain({
+    'entities/email.md': page('Email', 'entity'),
+    'concepts/c.md': '# C\n\n- [[e-mail]] live\n- `[[e-mail]]` code\n\n| [[e-mail\\|mail]] |\n',
+  });
+  const scan = await health.scanWiki(d.name, { noCache: true });
+  ok(scan.brokenLinks.length === 2 && scan.brokenLinks.every((b) => b.suggestedTarget === 'email'), '10.15 the scan sees the two live links, with a target', JSON.stringify(scan.brokenLinks));
+  await health.fixIssue(d.name, 'brokenLinks', null);
+  ok(read(d, 'concepts/c.md') === '# C\n\n- [[email]] live\n- `[[e-mail]]` code\n\n| [[email\\|mail]] |\n', '10.16 Fix broken links repairs both and leaves the code alone', read(d, 'concepts/c.md'));
+}
+{
+  // The new link must reach the kept page: concepts/bar is kept while entities/bar exists.
+  const d = mkDomain({
+    'entities/foo.md': page('Foo', 'entity'), 'concepts/bar.md': page('Bar', 'concept'), 'entities/bar.md': page('Bar E', 'entity'),
+    'entities/l.md': '# L\n\n- [[foo]]\n- [a](foo.md)\n',
+  });
+  await health.fixIssue(d.name, 'semanticDupe', { keepSlug: 'bar', keepFolder: 'concepts', removeSlug: 'foo', removeFolder: 'entities' });
+  ok(read(d, 'entities/l.md') === '# L\n\n- [[concepts/bar]]\n- [a](../concepts/bar.md)\n', '10.17 a bare [[bar]] would reach entities/bar, so the link names its folder', read(d, 'entities/l.md'));
+  const scan = await health.scanWiki(d.name, { noCache: true });
+  ok(scan.folderPrefixLinks.length === 0, '10.18 …and the scan does not call that folder name a mistake', JSON.stringify(scan.folderPrefixLinks));
 }
 
 ok(fp(REAL_CONFIG) === CONFIG_BEFORE, '9. the real .curator-config.json is byte-identical');

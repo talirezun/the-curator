@@ -38,7 +38,7 @@ import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
 // The text of a merge that deletes a page. Pure; every read, write and delete stays here.
 import { composeMergedPage, findLostLines } from './page-merge.js';
-import { makeRetiredLinkRewriter, anchorResolves } from './health-links.js';
+import { makeRetiredLinkRewriter, anchorResolves, withoutCode, replaceOutsideCode } from './health-links.js';
 import {
   loadDuplicateChecks, pairKey, openingsHash, pageOpening,
   isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs, nameRelation,
@@ -247,9 +247,11 @@ function crossFolderKey(file) {
   return file.replace(/-/g, '').toLowerCase();
 }
 
-const withoutFences = (content) => fenceRuns(content).filter((r) => !r.fenced).map((r) => r.text).join('');
-const replaceOutsideFences = (content, re, fn) =>
-  fenceRuns(content).map((r) => (r.fenced ? r.text : r.text.replace(re, fn))).join('');
+// "Inside code" has ONE meaning for the scan, the repairs and a merge (health-links.js
+// `codeSegments`: fences, indented blocks and inline spans): a link there is an
+// example, so it is neither counted nor rewritten.
+const withoutFences = withoutCode;
+const replaceOutsideFences = replaceOutsideCode;
 
 /** A scan row, or a request, naming a file under a dot-folder is not ours to edit. */
 const inDotFolder = (rel) => typeof rel === 'string' && rel.split(/[\\/]/).some((seg) => seg.startsWith('.'));
@@ -621,10 +623,13 @@ async function scanWikiUncached(domain) {
     }
 
     for (const m of links) {
-      const raw = m[1].trim();
+      // In a table an alias is written `[[x\|alias]]`: the backslash belongs to the pipe.
+      const raw = (m[2] ? m[1].replace(/\\$/, '') : m[1]).trim();
 
-      // Folder-prefix violations (entities/ or concepts/ — summaries/ is intentional)
-      if (raw.startsWith('entities/') || raw.startsWith('concepts/')) {
+      // Folder-prefix violations (entities/ or concepts/ — summaries/ is intentional).
+      // `concepts/x` beside an `entities/x` is not one: the bare name would reach the entity.
+      if (raw.startsWith('entities/')
+        || (raw.startsWith('concepts/') && !entitySlugs.has(raw.slice(9)))) {
         folderPrefixLinks.push({ sourceFile: relPath, linkText: raw });
       }
 
@@ -1129,7 +1134,7 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
   const esc = issue.linkText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Allow whitespace inside [[ ... ]] — the scanner trims linkText but the source
   // file may have `[[ Cline]]` or `[[Cline ]]` with stray spaces from LLM output.
-  const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
+  const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\\\?\\|[^\\]]+)?\\]\\]`, 'g');
   const rewritten = replaceOutsideFences(before, re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
   // The ONE reason that genuinely means "already resolved": the target exists,
   // the source file exists, and the link is simply not in it any more.
@@ -1147,8 +1152,10 @@ async function fixFolderPrefixLink(wikiDir, issue) {
   if (!full || !existsSync(full)) return false;
   let content = await readFile(full, 'utf8');
   const before = content;
+  // `[[concepts/x]]` stays when an entity x exists: the bare `[[x]]` would reach it.
+  const entityNames = new Set((await listMd(wikiDir, 'entities')).map((f) => f.slice(0, -3)));
   content = replaceOutsideFences(content, /\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
-    (_m, _folder, slug, alias) => `[[${slug}${alias || ''}]]`);
+    (m0, folder, slug, alias) => (folder === 'concepts' && entityNames.has(slug.trim()) ? m0 : `[[${slug}${alias || ''}]]`));
   // v3.84.0: `- [[concepts/rag]]` beside `- [[rag]]` becomes a copy — drop it.
   content = dedupRewrittenBullets(before, content);
   if (content !== before) await writeFileAtomic(full, content, 'utf8');
@@ -1291,7 +1298,7 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
     const keptAbs = wikiFile(wikiDir, keepFolder, `${keepSlug}.md`);
     let keptText = '';
     try { keptText = keptAbs ? await readFile(keptAbs, 'utf8') : ''; } catch { keptText = ''; }
-    out.anchorsUnresolved = anchors.filter((x) => !anchorResolves(keptText, x, fenceRuns)).length;
+    out.anchorsUnresolved = anchors.filter((x) => !anchorResolves(keptText, x)).length;
   }
   return out;
 }
@@ -2958,11 +2965,13 @@ async function applyBrokenLinkFixesNow(domain, plan, onProgress) {
     if (rel === 'index.md' || rel === 'log.md') { processed++; continue; }
     const before = await readFile(full, 'utf8');
     let changedHere = 0;
-    const replaced = replaceOutsideFences(before, linkRe, (m0, inner, alias) => {
+    const replaced = replaceOutsideFences(before, linkRe, (m0, rawInner, alias) => {
+      // A table's `[[x\|alias]]`: the backslash belongs to the pipe, as in the scan.
+      const inner = alias ? rawInner.replace(/\\$/, '') : rawInner;
       const act = actions.get(inner.trim());
       if (!act) return m0;
       changedHere++;
-      if (act.action === 'retarget') { retargeted++; return `[[${act.target}${alias || ''}]]`; }
+      if (act.action === 'retarget') { retargeted++; return `[[${act.target}${alias && inner !== rawInner ? '\\' : ''}${alias || ''}]]`; }
       stripped++;
       // Keep readable text: the alias label if the link had one, else the link text.
       return alias ? alias.slice(1).trim() : inner.trim();

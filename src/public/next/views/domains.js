@@ -8744,10 +8744,6 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
     leadHtml: estimating ? buttonRingHtml() : icon('sparkles', 12),
     label, cost: estimating ? '' : cost,
   });
-  // Past the pass's limit the list is the most alike pairs only, and the row says so.
-  const capNote = est && est.capped && Number.isInteger(est.foundPairs) && c
-    ? '<div class="dm-lane-note" data-row-key="compare-capped">This domain has ' + n0(est.foundPairs) + ' look-alike pairs. The Curator works on the ' + n0(c.total) + ' most alike.</div>'
-    : '';
   const failed = s && s.failedPairs > 0 && !s.failedAll
     ? '<div class="dm-lane-note" data-row-key="compare-failed">' + n0(s.failedPairs) + (s.failedPairs === 1 ? ' pair' : ' pairs') + ' could not be compared because the AI call failed. They will be tried again next time.</div>'
     : '';
@@ -8762,7 +8758,7 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
     bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting) || compareAll.running(state.activeSlug)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
   });
   const arrivals = state.compareArrivals && state.compareArrivals.slug === state.activeSlug ? state.compareArrivals.count : 0;
-  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + capNote + failed + compareAll.line(state.activeSlug, arrivals);
+  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + failed + compareAll.line(state.activeSlug, arrivals);
 }
 
 function renderSuggestRow(key, action, labelText, busy, crossMountBusy, runsOn) {
@@ -10221,7 +10217,12 @@ function semanticScanConfirmText(est, runsOnName, cost) {
   return {
     refused: false,
     title: 'Compare the next ' + n(pairs) + ' of ' + n(left) + (left === 1 ? ' pair?' : ' pairs?'),
-    body: 'Sends the opening of each page to ' + runsOnName + '. About ' + n(tokens) + ' tokens' + about + '. Nothing is merged.',
+    // Past the pass's limit the list is the most alike pairs only. Said in the answer to
+    // the press, which is where the press rule puts new words, never as a note that moves
+    // the rows around it.
+    body: 'Sends the opening of each page to ' + runsOnName + '. About ' + n(tokens) + ' tokens' + about + '. Nothing is merged.'
+      + (est.capped && Number.isInteger(est.foundPairs) && Number.isInteger(est.totalPairs)
+        ? ' This domain has ' + n(est.foundPairs) + ' look-alike pairs; the ' + n(est.totalPairs) + ' most alike are compared.' : ''),
   };
 }
 
