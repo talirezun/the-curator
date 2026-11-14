@@ -502,11 +502,16 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   // ── Stage 1: entity-pivot retrieval ────────────────────────────────────
   const pivots = detectEntityPivots(queryText, contentPages);
   const priorityPaths = new Set();
+  // The pivot that FIRST brought each priority page in (insertion order is the
+  // priority order): deferOversizedPriority needs to know which query words were
+  // that pivot's own. Recording it changes nothing about the order.
+  const viaPivot = new Map();
   for (const pivot of pivots) {
-    priorityPaths.add(pivot.page.path);
+    const add = (path) => { if (!priorityPaths.has(path)) { priorityPaths.add(path); viaPivot.set(path, pivot); } };
+    add(pivot.page.path);
     const backlinks = extractSummaryBacklinks(pivot.page.content);
     for (const slug of backlinks) {
-      priorityPaths.add(`summaries/${slug}.md`);
+      add(`summaries/${slug}.md`);
     }
   }
 
@@ -514,7 +519,7 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   const priorityCandidates = [];
   for (const path of priorityPaths) {
     const page = contentPages.find(p => p.path === path);
-    if (page) priorityCandidates.push({ page, score: 1000, priority: true });
+    if (page) priorityCandidates.push({ page, score: 1000, priority: true, via: viaPivot.get(path) });
   }
 
   // ── Stage 2: keyword-scored remaining pages ────────────────────────────
@@ -533,14 +538,14 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
   } else {
-    candidates = [...priorityCandidates, ...scored];
+    candidates = [...deferOversizedPriority(priorityCandidates, queryTokens, contentBudget, maxPages), ...scored];
   }
 
   const selected = [];
   let used = 0;
   for (const { page, score, priority } of candidates) {
     if (selected.length >= maxPages) break;
-    const cost = page.content.length + page.path.length + 30;
+    const cost = pageCost(page);
     if (used + cost > contentBudget) {
       continue;
     }
@@ -554,6 +559,67 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
     pivotCount: pivots.length,
     pivotSlugs: pivots.map(p => p.slug),
   };
+}
+
+/** What one loaded page costs against the content budget (the admission loop's rule). */
+function pageCost(page) { return page.content.length + page.path.length + 30; }
+
+/**
+ * A pivot's linked pages that do NOT all fit: an oversized page that is not named
+ * by the question goes to the END of the priority list instead of being admitted
+ * first.
+ *
+ * WHY (2026-11-14). The priority list is in LINK ORDER and the admission loop is
+ * greedy, so one very large linked page admitted early took most of the 60 KB
+ * budget and every smaller linked page after it was skipped. Measured on a real
+ * 1,008-page domain: a 50.5 KB overview, linked third from the pivot entity, left
+ * room for nothing else, and the 2.4 KB summary holding the answer (linked fifth)
+ * was never loaded.
+ *
+ * THE RULE, and nothing more:
+ *   - It acts only when the priority pages' total cost exceeds the budget, or
+ *     their count exceeds maxPages. When they all fit the list is returned as it
+ *     came, so the selection is exactly what it was before this rule existed.
+ *   - A priority page whose own cost is more than OVERSIZE_SHARE of the budget
+ *     (0.2 = 12 KB at 60 KB) is moved, keeping the relative order, after every
+ *     other priority page. It is still loaded WHOLE if it fits once the smaller
+ *     pages are in; a page is never cut.
+ *   - EXCEPT a page whose slug or title names a word of the question that is not
+ *     one of the words that matched the pivot it came from (digits do not count):
+ *     "the Field Notes launch material" keeps `field-notes-announcement-campaign`
+ *     in place when it came in through another pivot. An overview named only by
+ *     the pivot ("agentlink-overview" for an AgentLink question) is deferred.
+ *   - Link order is kept otherwise, and no keyword-scored page moves ahead of any
+ *     priority page.
+ *
+ * MEASURED on a labelled set of 300 questions over six real domains (answers
+ * labelled by the page that holds them): the answer page was loaded for 253
+ * questions against 243 before, and for 0 fewer. Without the exception, 3
+ * questions whose answer was the large page itself lost it. At 0.12 of the budget
+ * and below, a 10.6 KB summary holding a real answer was deferred out; at 0.2
+ * it stays in link order. See decisions-knowledge.md.
+ */
+export const OVERSIZE_SHARE = 0.2;
+export function deferOversizedPriority(priorityCandidates, queryTokens, contentBudget, maxPages) {
+  const total = priorityCandidates.reduce((n, c) => n + pageCost(c.page), 0);
+  if (total <= contentBudget && priorityCandidates.length <= maxPages) return priorityCandidates;
+  const limit = OVERSIZE_SHARE * contentBudget;
+  const kept = [], deferred = [];
+  for (const c of priorityCandidates) {
+    const defer = pageCost(c.page) > limit && !namesOtherQueryWord(c.page, queryTokens, c.via);
+    (defer ? deferred : kept).push(c);
+  }
+  return [...kept, ...deferred];
+}
+
+/** Does the page's slug or title hold a question word other than its pivot's own? */
+function namesOtherQueryWord(page, queryTokens, via) {
+  const own = new Set(via?.matched || []);
+  const base = page.path.split('/').pop().replace(/\.md$/, '');
+  const titleMatch = page.content.match(/^#{1,3}\s+(.+)/m);
+  const words = new Set([...base.split('-'), ...(titleMatch ? tokenize(titleMatch[1]) : [])]);
+  for (const t of words) if (queryTokens.has(t) && !own.has(t) && !/^\d+$/.test(t)) return true;
+  return false;
 }
 
 // ── Response-style control (Tier 2) ────────────────────────────────────────

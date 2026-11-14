@@ -1,12 +1,16 @@
 import { buildGraph } from '../graph.js';
 import { isValidDomain } from '../util.js';
+import { rankNodes, displayScore } from '../search-score.js';
 
 export const searchWikiDefinition = {
   name: 'search_wiki',
   description:
     'Full-text search across a domain\'s wiki. Returns ranked results enriched with ' +
     'each page\'s tags, outgoing link count, and backlink count — so you can ' +
-    'prioritise hub nodes (highly connected pages) over isolated ones.',
+    'prioritise hub nodes (highly connected pages) over isolated ones. Query words ' +
+    'match whole words only (no partial words, no plural folding); a rare word ' +
+    'counts for more than a common one, repeats count less each time, and a page ' +
+    'whose slug or title is exactly the query ranks first.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -27,17 +31,7 @@ export async function searchWikiHandler({ query, domain, max_results = 10 }, sto
   if (terms.length === 0) return 'Empty query.';
 
   const hits = [];
-  for (const node of graph.nodes.values()) {
-    const haystack = (node.slug + '\n' + node.body).toLowerCase();
-    let score = 0;
-    for (const term of terms) {
-      const matches = haystack.match(new RegExp(escapeRe(term), 'g'));
-      if (matches) score += matches.length;
-      if (node.slug.toLowerCase().includes(term)) score += 3;
-      if (node.tags.some(t => t.toLowerCase().includes(term))) score += 2;
-    }
-    if (score === 0) continue;
-
+  for (const { node, score } of rankNodes(graph.nodes.values(), query)) {
     const firstIdx = node.body.toLowerCase().indexOf(terms[0]);
     const excerpt = firstIdx >= 0
       ? node.body.slice(Math.max(0, firstIdx - 80), firstIdx + 200).replace(/\s+/g, ' ').trim()
@@ -48,14 +42,15 @@ export async function searchWikiHandler({ query, domain, max_results = 10 }, sto
       path: node.path,
       type: node.type,
       tags: node.tags,
-      score,
+      score: displayScore(score),
       outgoing_count: node.outgoing.length,
       backlink_count: node.backlinks.length,
       excerpt,
     });
   }
 
-  hits.sort((a, b) => b.score - a.score);
+  // rankNodes returns the hits already ordered (exact name, then the unrounded
+  // score, then page order); they are not re-sorted on the rounded score.
   const top = hits.slice(0, max_results);
 
   return {
@@ -67,4 +62,3 @@ export async function searchWikiHandler({ query, domain, max_results = 10 }, sto
   };
 }
 
-function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
