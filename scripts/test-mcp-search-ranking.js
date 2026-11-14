@@ -70,8 +70,14 @@ await domain('alpha', [
   ['concepts/vault-encryption.md', '# Vault encryption\n\nThe vault uses encryption at rest.\n'],
   ['concepts/api-pagination.md', '# API pagination\n\nResults come back with pagination cursors.\n'],
   ['concepts/aim-notes.md', '# Aim notes\n\nWe aim high.\n'],
+  ['concepts/ver-a.md', '# Ver A\n\nShipped 1.2.3.\n'],
+  ['concepts/ver-b.md', '# Ver B\n\nShipped 1.2.30.\n'],
+  ['summaries/budget-notes.md', '# Budget notes\n\nThe pilot costs $5,000 and grew 22% this year.\n'],
+  ['summaries/july-22-recap.md', '# July 22 recap\n\nMeeting on july-22 about 22 items and 5 000 things, 7 777 too.\n'],
+  ['summaries/zephyr-relay-field-notes-from-the-14-day-harbour-trial-and-what-it-taught-us.md', '# Field notes\n\nThe trial ran fourteen days.\n'],
   ['summaries/release-notes.md', '# Release notes\n\nVersion 0.4.11 fixed the deploy. v1.0 is next.\n'],
-  ['summaries/model-notes.md', '# Model notes\n\nWe moved to gemini-3.5-flash and tried GPT-5.6.\n'],
+  ['entities/gpt-5.6-sol.md', '# Sol\n\nA model.\n'],
+  ['summaries/model-notes.md', '# Model notes\n\nWe moved to gemini-3.5-flash and tried GPT-5.6: GPT-5.6, GPT-5.6, GPT-5.6 and GPT-5.6 again.\n'],
   ...Array.from({ length: 12 }, (_, i) => [`concepts/numbers-${i}.md`, `# Numbers ${i}\n\nStep 4 of 11, version 0 and v1 with 5 and 6 and 3; a file with a default value and storage.\n`]),
   ['concepts/ledger-notes.md', '# Smart Ledgers\n\nNotes on ledgers.\n'],
   ['concepts/smart-ledgers-history.md', `# History of smart ledgers\n\n${rep('smart ledgers', 80)}\n`],
@@ -89,6 +95,7 @@ await domain('gamma', [
 await domain('beta', [
   ['concepts/quokka-tariffs.md', '# Quokka tariffs\n\nThe quokka tariff is set yearly.\n'],
   ['concepts/beta-other.md', '# Other\n\nNothing to see.\n'],
+  ['concepts/beta-steps.md', '# Steps\n\nStep 1 of 2, then 3.\n'],
 ]);
 const storage = createStorageAdapter({ domainsPath: ROOT });
 const search = (query, domain = 'alpha', max_results = 50) => searchWikiHandler({ query, domain, max_results }, storage);
@@ -133,9 +140,19 @@ section('1v. version and decimal tokens stay whole');
   ok(oldRank(alphaNodes, '0.4.11')[0] === 'release-notes', 'control: the old substring scorer also found only that page');
   eq(slugs(await search('v1.0')).join(','), 'release-notes', '"v1.0" matches only the page holding it');
   eq(slugs(await search('1.0')).join(','), 'release-notes', 'a leading "v" is optional ("1.0" finds "v1.0")');
-  eq(slugs(await search('gpt-5.6'))[0], 'model-notes', '"gpt-5.6" ranks the page holding it first');
+  eq(slugs(await search('gpt-5.6')).slice(0, 2).join(','), 'gpt-5.6-sol,model-notes', '"gpt-5.6": the page whose slug holds it, then the page that mentions it');
+  const rg = rankNodes(alphaNodes, 'gpt-5.6');
+  ok(rg[0].score > rg[1].score && !rg[0].exact, 'the slug page wins on score (a whole version in the slug counts double), not on the exact-name tier');
   eq(slugs(await search('gemini 3.5'))[0], 'model-notes', '"gemini 3.5" finds "gemini-3.5-flash"');
-  ok(!slugs(await search('0.4.1')).includes('release-notes'), 'a version is never matched by prefix ("0.4.1" does not find "0.4.11")');
+  eq(slugs(await search('1.2.3')).join(','), 'ver-a', 'a version is never matched by prefix ("1.2.3" does not find "1.2.30")');
+  const fb = await search('0.4.1'), plain = await search('0 4 1');
+  ok(fb.total_matches > 0 && fb.total_matches === plain.total_matches, `a whole term that no page holds falls back to its words ("0.4.1": ${fb.total_matches} = "0 4 1": ${plain.total_matches})`);
+  const long = 'zephyr-relay-field-notes-from-the-14-day-harbour-trial-and-what-it-taught-us';
+  const lr = await search(long);
+  ok(lr.results[0]?.slug === long && lr.total_matches === 1, 'a pasted slug of 16 joined pieces with a digit is one term: it finds its page, and only it', `${lr.total_matches} matches`);
+  eq(slugs(await search('$5,000'))[0], 'budget-notes', '"$5,000" is one term and finds the page holding it first');
+  eq(slugs(await search('22%')).join(','), 'budget-notes', '"22%" matches only the page holding it, not "july-22"');
+  ok(slugs(await search('$7,777')).length > 0, 'an amount no page holds falls back to its words');
 }
 
 // ── 1u ───────────────────────────────────────────────────────────────────────
@@ -229,6 +246,8 @@ section('5. search_cross_domain does not bury a small domain');
   // bonus divided by that weight must not put it first (the divisor is floored at 1).
   const qk = await searchCrossHandler({ query: 'quokka', max_results_per_domain: 5 }, storage);
   ok(qk.results[0].domain !== 'gamma', 'a domain where the word is on every page does not jump to the top on its slug match', qk.results.slice(0, 4).map((x) => `${x.domain}/${x.slug}`).join(', '));
+  const v = await searchCrossHandler({ query: '1.2.3', max_results_per_domain: 5 }, storage);
+  eq(v.results.map((x) => `${x.domain}/${x.slug}`).join(','), 'alpha/ver-a', 'a version one domain holds does not fall back to its words in another domain');
   const e = await searchCrossHandler({ query: 'zephyr', max_results_per_domain: 5 }, storage);
   eq(`${e.results[0].domain}/${e.results[0].slug}`, 'alpha/zephyr', 'an exact name is first across domains');
   const perDomain = (await search(q, 'alpha', 5)).results.map((x) => x.slug).join(',');

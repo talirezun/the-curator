@@ -34,7 +34,8 @@
  * "agent" in "subagent") no longer matches; a short term (under 4 letters) matches
  * whole words only ("ai" does not find "aim").
  *
- * VERSIONS: "0.4.11", "v1.0", "gpt-5.6" stay one term (see COMPOUND_RE below).
+ * VERSIONS AND AMOUNTS: "0.4.11", "v1.0", "gpt-5.6", "$5,000", "22%" stay one term
+ * (COMPOUND_RE, AMOUNT_RE below), falling back to their words when no page holds them.
  *
  * CROSS-DOMAIN (`weight`): each domain's scores depend on its own page count and word
  * frequencies, so search_cross_domain merges on score ÷ max(weight, 1), where weight is the
@@ -73,37 +74,55 @@ const HAS_DIGIT = /\p{N}/u;
 function compoundMatches(lower) {
   return (lower.match(COMPOUND_RE) || []).filter(m => HAS_DIGIT.test(m));
 }
-/** True for a whole version/number token ("0.4.11", "gpt-5.6"). */
+/** True for a whole version/number/amount token ("0.4.11", "gpt-5.6", "$5,000", "22%"). */
 export function isCompound(term) {
-  return term.includes('.') || term.includes('-');
+  return /[.\-$€£%,]/.test(term);
 }
-/** A string's indexable tokens: its words plus its version/number tokens. */
+// PRICES AND PERCENTAGES are kept whole the same way: "$5,000", "€2,000", "$12.5k",
+// "22%", "3.5%" (split into words, "22%" matched "july-22": measured 71 percentages
+// top-1 68 → 50, 72 prices 67 → 50).
+const AMOUNT_RE = /[$€£]\d[\d,]*(?:\.\d+)?[kmb]?(?![\p{L}\p{N}])|\d+(?:[.,]\d+)?%/gu;
+function amountMatches(lower) {
+  return (lower.match(AMOUNT_RE) || []).map(m => m.replace(/,+$/, ''));
+}
+// Sub-runs of a joined token are indexed up to this many pieces; the WHOLE token is
+// always indexed, however long (a pasted 20-piece slug must find its page).
+const RUN_PIECES_MAX = 6;
+
+/** A string's indexable tokens: its words, its amounts, and its version/number tokens. */
 export function tokens(s) {
   const lower = String(s ?? '').toLowerCase();
   const out = lower.match(WORD_RE) || [];
+  out.push(...amountMatches(lower));
   for (const m of compoundMatches(lower)) {
-    // Every contiguous run of 2+ of its pieces that holds a digit, so "gpt-5.6-sol"
-    // also yields "gpt-5.6" and "5.6", "v3.17.x" yields "v3.17", and a leading "v"
-    // is optional ("v0.2.0" is also found as "0.2.0").
+    // The whole token, and every contiguous run of 2+ of its pieces (up to
+    // RUN_PIECES_MAX) that holds a digit, so "gpt-5.6-sol" also yields "gpt-5.6" and
+    // "5.6", "v3.17.x" yields "v3.17", and a leading "v" is optional ("v0.2.0" is
+    // also found as "0.2.0").
+    const push = (run) => { out.push(run); if (/^v\d/.test(run)) out.push(run.slice(1)); };
+    push(m);
     const parts = m.split(/([.-])/);           // pieces at even indexes, separators at odd
-    const n = Math.min((parts.length + 1) / 2, 10);
-    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+    const n = (parts.length + 1) / 2;
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n && b - a < RUN_PIECES_MAX; b++) {
       const run = parts.slice(2 * a, 2 * b + 1).join('');
-      if (HAS_DIGIT.test(run)) { out.push(run); if (/^v\d/.test(run)) out.push(run.slice(1)); }  // "v0.2.0" is also "0.2.0"
+      if (run !== m && HAS_DIGIT.test(run)) push(run);
     }
   }
   return out;
 }
 
 /**
- * The query's terms, distinct, in first-seen order: each version/number token
- * whole (its words are NOT also terms), then the remaining words.
+ * The query's terms, distinct, in first-seen order: each amount and each
+ * version/number token whole (its words are NOT also terms), then the remaining
+ * words. rankNodesWithMeta falls back to a whole term's words when no page holds it.
  */
 export function terms(query) {
   const lower = String(query ?? '').toLowerCase();
-  const whole = compoundMatches(lower);
-  const rest = lower.replace(COMPOUND_RE, m => (HAS_DIGIT.test(m) ? ' ' : m));
-  return [...new Set([...whole, ...(rest.match(WORD_RE) || [])])];
+  const amounts = amountMatches(lower);
+  const rest1 = lower.replace(AMOUNT_RE, ' ');
+  const whole = compoundMatches(rest1);
+  const rest = rest1.replace(COMPOUND_RE, m => (HAS_DIGIT.test(m) ? ' ' : m));
+  return [...new Set([...amounts, ...whole, ...(rest.match(WORD_RE) || [])])];
 }
 
 // A NAME key for the exact-name rule: the words in order, each with one trailing
@@ -169,13 +188,33 @@ export function rankNodes(nodes, query) {
   return rankNodesWithMeta(nodes, query).hits;
 }
 
+function holds(profiles, term) {
+  return profiles.some(p => p.tf.has(term) || p.slugWords.has(term) || p.tagWords.has(term));
+}
+
+/** The query's whole terms (amounts, versions, joined tokens) that some page in `nodes` holds. */
+export function heldWholeTerms(nodes, query) {
+  const profiles = [...nodes].map(profile);
+  return new Set(terms(query).filter(term => isCompound(term) && holds(profiles, term)));
+}
+
 /** rankNodes plus `weight`: the score a page would get for one plain mention of every term. */
-export function rankNodesWithMeta(nodes, query) {
+export function rankNodesWithMeta(nodes, query, { held = null } = {}) {
   const all = [...nodes];
-  const t = terms(query);
+  let t = terms(query);
   if (t.length === 0 || all.length === 0) return { hits: [], weight: 0 };
   const profiles = all.map(profile);
   const N = all.length;
+  // FALLBACK: a whole term (amount, version, joined token) that no page holds is
+  // replaced by its words, so a query never matches fewer pages than its plain
+  // words would.
+  if (t.some(isCompound)) {
+    // `held` (search_cross_domain): whole terms some OTHER domain holds never fall
+    // back here, so a domain without "gpt-5.6" does not answer with every page
+    // holding a 5 or a 6 and push the domain that has it down.
+    t = [...new Set(t.flatMap(term => (isCompound(term) && !(held && held.has(term)) && !holds(profiles, term)) ? words(term) : [term]))];
+    if (t.length === 0) return { hits: [], weight: 0 };
+  }
   const idfOf = (df) => Math.log(1 + (N - df + 0.5) / (df + 0.5));
   const idf = t.map(term => {
     let df = 0;
@@ -206,7 +245,9 @@ export function rankNodesWithMeta(nodes, query) {
     for (let i = 0; i < t.length; i++) {
       const c = p.tf.get(t[i]) || 0;
       if (c > 0) { matched = true; score += (1 + Math.log(c)) * idf[i]; }
-      if (p.slugWords.has(t[i])) { matched = true; score += SLUG_BONUS; }
+      // A whole version/amount term in the slug counts double: `gpt-5.6-sol` beats
+      // pages that only mention gpt-5.6 more often.
+      if (p.slugWords.has(t[i])) { matched = true; score += isCompound(t[i]) ? 2 * SLUG_BONUS : SLUG_BONUS; }
       if (p.tagWords.has(t[i])) { matched = true; score += TAG_BONUS; }
       if (pre[i].length) {
         const cp = preCount(p, i);

@@ -1,5 +1,5 @@
 import { buildGraph } from '../graph.js';
-import { rankNodesWithMeta, displayScore } from '../search-score.js';
+import { rankNodesWithMeta, heldWholeTerms, displayScore } from '../search-score.js';
 
 // A query word common in one domain gives that domain a near-zero weight, and the
 // FLAT slug/tag bonuses divided by it put that domain's pages ahead of every
@@ -43,9 +43,14 @@ export async function searchCrossHandler({ query, max_results_per_domain = 5 }, 
   // plain mention of every query word scores in that domain (search-score.js) —
   // with exact-name pages first and ties by raw score.
   const merged = [];
-  for (const domain of domains) {
-    const graph = await buildGraph(domain, storage);
-    const meta = rankNodesWithMeta(graph.nodes.values(), query);
+  const graphs = [];
+  for (const domain of domains) graphs.push([domain, await buildGraph(domain, storage)]);
+  // Whole terms ("gpt-5.6", "$5,000") held by ANY domain never fall back to their
+  // words in the others (search-score.js, rankNodesWithMeta).
+  const held = new Set();
+  for (const [, graph] of graphs) for (const t of heldWholeTerms(graph.nodes.values(), query)) held.add(t);
+  for (const [domain, graph] of graphs) {
+    const meta = rankNodesWithMeta(graph.nodes.values(), query, { held });
     const ranked = meta.hits.slice(0, max_results_per_domain);
     const weight = meta.weight;
     for (const { node, score, exact } of ranked) {
