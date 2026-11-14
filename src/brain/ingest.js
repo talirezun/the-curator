@@ -37,7 +37,7 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
-import { decodeTextBuffer, conversionNotice, unrecognisedNotice } from './text-decode.js';
+import { decodeTextBuffer, notUtf8Notice, strayBytesNotice } from './text-decode.js';
 import { assertIngestCanWrite } from './ingest-preflight.js';
 import { existingFactsFor, renderExistingFactsBlock, renderExistingFactsOutlineNote } from './existing-facts.js';
 import {
@@ -646,9 +646,10 @@ export async function extractText(filePath) {
 
 /**
  * extractText, plus how a text source was decoded (see src/brain/text-decode.js):
- * `{ text, encoding, converted, label }`. A valid UTF-8 file reads exactly as the
- * old `readFile(p, 'utf8')` did; a Windows-1252 / -1250 / ISO-8859-2 file is
- * decoded as that, and `converted` says so. A PDF is never `converted`.
+ * `{ text, encoding, converted, label, notUtf8?, strayBytes? }`. Every text file
+ * reads exactly as the old `readFile(p, 'utf8')` did, except UTF-16 with a BOM;
+ * a file that is not UTF-8 is flagged, never converted by guess. A PDF is never
+ * flagged.
  */
 export async function extractTextWithEncoding(filePath) {
   if (/\.pdf$/i.test(String(filePath))) {   // `.PDF` too, as sourceTextForGate tests it
@@ -3665,8 +3666,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   try {
     const extracted = await extractTextWithEncoding(destPath);
     fullText = extracted.text;
-    if (extracted.converted || extracted.unrecognised) {
-      const note = extracted.converted ? conversionNotice(originalName, extracted) : unrecognisedNotice(originalName);
+    const note = extracted.notUtf8 ? notUtf8Notice(originalName)
+      : extracted.strayBytes ? strayBytesNotice(originalName, extracted.strayBytes) : null;
+    if (note) {
       console.warn(`[ingest] ${note}`);
       warnings.push(note);
     }

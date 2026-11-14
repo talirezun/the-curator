@@ -5,14 +5,15 @@
  * src/brain/text-decode.js).
  *
  *   §1 decodeTextBuffer: valid UTF-8 (BOM, ASCII, emoji) reads exactly as
- *      buffer.toString('utf8'); Windows-1252, Windows-1250 and ISO-8859-2 files in
- *      Slovene, Croatian, Czech, Polish, French, German and Spanish decode right;
- *      UTF-16 with a BOM decodes; binary is left as the old lossy read.
- *   §2 An ingest of a Windows-1252 French file and a Windows-1250 / ISO-8859-2
- *      Slovene file: the model sees the right letters, the notes say the file was
- *      converted, raw/ keeps the original bytes; a UTF-8 source has no note.
- *   §3 The hard-data gate's text (sourceTextForGate), extractText on the raw copy
- *      and the MCP's readRawSourceText decode the same way.
+ *      buffer.toString('utf8'); UTF-16 with a BOM decodes; ANY other bytes
+ *      (Windows-1252/-1250, ISO-8859-2, Turkish, Greek, Cyrillic, a stray byte,
+ *      word salad) get that same old read, never a guessed conversion, and are
+ *      flagged (notUtf8 or strayBytes); binary is the old read, unflagged.
+ *   §2 Ingest of such a file: the old text reaches the model, one note names the
+ *      file and says to re-save it as UTF-8, it is in log.md, raw/ keeps the
+ *      original bytes; a UTF-8 source has no note; a stray byte a short note.
+ *   §3 The hard-data gate's text (sourceTextForGate), extractText and the MCP's
+ *      readRawSourceText read the same way.
  *   §4 A wiki with no log.md and no index.md: the ingest succeeds and creates both.
  *   §5 A wiki with no entities/, concepts/ or summaries/: the ingest succeeds.
  *   §6 What cannot be written is refused BEFORE any model call (the stub counts
@@ -104,26 +105,23 @@ section('§1 decodeTextBuffer');
     const r = decodeTextBuffer(buf);
     ok(r.text === buf.toString('utf8') && r.converted === false && r.encoding === 'utf-8', `${label}: read exactly as toString('utf8'), not converted`);
   }
+  // Withdrawn 2026-11-15: no single-byte encoding is guessed. Every non-UTF-8 file,
+  // whatever it was saved as, reads exactly as the old readFile(p, 'utf8') did.
   const cases = [
-    ['Slovene, Windows-1250', SLOVENE.repeat(2), enc1250, 'windows-1250'],
-    ['Slovene, ISO-8859-2', SLOVENE.repeat(2), encIso2, 'iso-8859-2'],
-    ['Croatian, Windows-1250', CROATIAN.repeat(2), enc1250, 'windows-1250'],
-    ['Croatian, ISO-8859-2', CROATIAN.repeat(2), encIso2, 'iso-8859-2'],
-    ['Czech, Windows-1250', CZECH.repeat(2), enc1250, 'windows-1250'],
-    ['Polish, Windows-1250', POLISH.repeat(2), enc1250, 'windows-1250'],
-    ['Polish, ISO-8859-2', POLISH.repeat(2), encIso2, 'iso-8859-2'],
-    ['French with curly quotes and œ, Windows-1252', FRENCH.repeat(2), enc1252, 'windows-1252'],
-    ['French, ISO-8859-1 (no 0x80-0x9F bytes)', 'Le garçon a mangé une crème brûlée à côté de la fenêtre, près du théâtre. '.repeat(2), enc1252, 'windows-1252'],
-    ['German, Windows-1252', GERMAN.repeat(2), enc1252, 'windows-1252'],
-    ['Spanish, Windows-1252', SPANISH.repeat(2), enc1252, 'windows-1252'],
-    ['Slovene with curly quotes, Windows-1250', '„Čudovito“ – je rekla Špela. Žabe so v ribniku. '.repeat(3), enc1250, 'windows-1250'],
+    ['Slovene, Windows-1250', SLOVENE.repeat(2), enc1250],
+    ['Slovene, ISO-8859-2', SLOVENE.repeat(2), encIso2],
+    ['Croatian, Windows-1250', CROATIAN.repeat(2), enc1250],
+    ['Czech, Windows-1250', CZECH.repeat(2), enc1250],
+    ['Polish, ISO-8859-2', POLISH.repeat(2), encIso2],
+    ['French with curly quotes and œ, Windows-1252', FRENCH.repeat(2), enc1252],
+    ['German, Windows-1252', GERMAN.repeat(2), enc1252],
+    ['Spanish, Windows-1252', SPANISH.repeat(2), enc1252],
   ];
-  for (const [label, text, encoder, expect] of cases) {
+  for (const [label, text, encoder] of cases) {
     const buf = encoder(text);
     const r = decodeTextBuffer(buf);
-    eq(r.encoding, expect, `${label}: detected`);
-    ok(r.text === text, `${label}: every letter decoded`, r.text.slice(0, 80));
-    ok(r.converted === true, `${label}: marked converted`);
+    ok(r.text === buf.toString('utf8') && r.encoding === 'utf-8' && !r.converted, `${label}: the old UTF-8 read, never a guessed conversion`);
+    ok(r.notUtf8 === true && !r.strayBytes, `${label}: flagged as not UTF-8`);
   }
   {
     const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SLOVENE, 'utf16le')]);
@@ -136,7 +134,7 @@ section('§1 decodeTextBuffer');
   {
     const bin = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0xe8, 0x9e, 0xff, 0x10, 0x01, 0x80]);
     const r = decodeTextBuffer(bin);
-    ok(r.text === bin.toString('utf8') && !r.converted, 'binary (a NUL) is the old lossy utf8 read, not reinterpreted');
+    ok(r.text === bin.toString('utf8') && !r.converted && !r.notUtf8 && !r.strayBytes, 'binary (a NUL) is the old lossy utf8 read, not reinterpreted');
     const ctrl = Buffer.from(Array.from({ length: 400 }, (_, i) => (i % 7 === 0 ? 0x01 : i % 5 === 0 ? 0xe8 : 0x61)));
     const r2 = decodeTextBuffer(ctrl);
     ok(r2.text === ctrl.toString('utf8') && !r2.converted, 'many control bytes: the old lossy read');
@@ -194,14 +192,14 @@ __setDomainsDirOverride(DOMAINS);
 
 const run = (dom, name, bytes, llm) => quiet(() => ingestFile(dom.name, sourceBytes(name, bytes), name, false, null, { llm }));
 const runCatch = async (dom, name, bytes, llm) => { try { return { res: await run(dom, name, bytes, llm) }; } catch (err) { return { err }; } };
-const convNotes = (res) => (res.warnings || []).filter((w) => /was not saved as UTF-8/.test(w));
+const convNotes = (res) => (res.warnings || []).filter((w) => /is not saved as UTF-8/.test(w));
 
 section('§2 Ingest of non-UTF-8 sources');
 {
-  for (const [label, text, encoder, want, needles] of [
-    ['French, Windows-1252', FRENCH.repeat(3), enc1252, /Windows-1252/, ['été', 'garçon', 'cœur', '« Où']],
-    ['Slovene, Windows-1250', SLOVENE.repeat(2), enc1250, /Windows-1250/, ['Življenje', 'čudovito', 'Češnje', 'šola']],
-    ['Slovene, ISO-8859-2', SLOVENE.repeat(2), encIso2, /ISO-8859-2/, ['Življenje', 'čudovito', 'žaba']],
+  for (const [label, text, encoder] of [
+    ['French, Windows-1252', FRENCH.repeat(3), enc1252],
+    ['Slovene, Windows-1250', SLOVENE.repeat(2), enc1250],
+    ['Slovene, ISO-8859-2', SLOVENE.repeat(2), encIso2],
   ]) {
     const dom = makeDomain();
     const bytes = encoder(text);
@@ -209,14 +207,21 @@ section('§2 Ingest of non-UTF-8 sources');
     const llm = script(slug, pagesFor(slug));
     const res = await run(dom, `${slug}.md`, bytes, llm);
     eq(llm.calls.length, 1, `${label}: one model call`);
-    ok(needles.every((n) => llm.calls[0].prompt.includes(n)), `${label}: the model saw the right letters`);
-    ok(!llm.calls[0].prompt.includes('�'), `${label}: no replacement character in the prompt`);
+    ok(llm.calls[0].prompt.includes(bytes.toString('utf8')), `${label}: the model saw the old UTF-8 read, not a guess`);
     const n = convNotes(res);
-    eq(n.length, 1, `${label}: one conversion note`);
-    ok(want.test(n[0] || '') && (n[0] || '').includes(`"${slug}.md"`), `${label}: the note names the file and the encoding`, n[0]);
+    eq(n.length, 1, `${label}: one note`);
+    ok((n[0] || '').includes(`"${slug}.md"`) && /replaced by \uFFFD/.test(n[0] || '') && /Save it as UTF-8 and ingest it again/.test(n[0] || ''), `${label}: the note names the file, says what was replaced and how to keep it`, n[0]);
     const raw = path.join(dom.dir, 'raw', `${slug}.md`);
     ok(existsSync(raw) && sha(readFileSync(raw)) === sha(bytes), `${label}: raw/ keeps the original bytes unchanged`);
-    ok(dom.read('log.md').includes('was not saved as UTF-8'), `${label}: the note is in log.md too`);
+    ok(dom.read('log.md').includes('is not saved as UTF-8'), `${label}: the note is in log.md too`);
+  }
+  {
+    const dom = makeDomain();
+    const u = Buffer.from(SLOVENE.repeat(4), 'utf8');
+    const stray = Buffer.concat([u.subarray(0, 200), Buffer.from([0xe8]), u.subarray(200)]);
+    const res = await run(dom, 'stray.md', stray, script('stray', pagesFor('stray')));
+    ok((res.warnings || []).some((w) => /"stray\.md" has 1 byte that is not valid UTF-8/.test(w)), 'UTF-8 with one stray byte: a short note');
+    eq(convNotes(res).length, 0, 'UTF-8 with one stray byte: not the full note');
   }
   {
     const dom = makeDomain();
@@ -233,11 +238,11 @@ section('§3 The gate, extractText and the MCP read decode the same way');
 {
   const bytes = enc1250(SLOVENE.repeat(2));
   const p = sourceBytes('gate.txt', bytes);
-  const gate = await sourceTextForGate(p, 'gate.txt');
-  ok(gate === SLOVENE.repeat(2), 'sourceTextForGate decodes Windows-1250');
-  ok(await extractText(p) === SLOVENE.repeat(2), 'extractText decodes Windows-1250');
+  const old = bytes.toString('utf8');
+  ok(await sourceTextForGate(p, 'gate.txt') === old, 'sourceTextForGate: the old UTF-8 read');
+  ok(await extractText(p) === old, 'extractText: the old UTF-8 read');
   const r = await readRawSourceText(p);
-  ok(r.ok && r.text === SLOVENE.repeat(2), 'readRawSourceText (get_raw_source) decodes it', JSON.stringify(r).slice(0, 120));
+  ok((r.ok && r.text === old) || (!r.ok && r.reason === 'binary'), 'readRawSourceText (get_raw_source): the old read, and its old refusal when replacement characters are dense', JSON.stringify(r).slice(0, 120));
   const u = sourceBytes('gate-utf8.md', Buffer.from(FRENCH, 'utf8'));
   ok(await sourceTextForGate(u, 'gate-utf8.md') === FRENCH, 'sourceTextForGate: UTF-8 unchanged');
   const bin = sourceBytes('bin.txt', Buffer.concat([Buffer.from([0, 1, 2, 0xff, 0xfe, 0]), Buffer.alloc(300, 0xe8)]));
@@ -333,69 +338,44 @@ try {
   for (const d of readdirSync(DOMAINS)) { try { chmodSync(path.join(DOMAINS, d, 'wiki'), 0o755); } catch { /* */ } }
   rmSync(TMP_ROOT, { recursive: true, force: true });
 } catch { /* temp dir */ }
-section('§9 Weak evidence: one bad byte, a single shared letter, signs, and encodings it does not read (audit 2026-11-14)');
+section('§9 Never a guessed letter: one bad byte, other encodings, word salad (2026-11-15)');
 {
-  // Fixture encoders from the platform's own decoders (independent of the scoring).
   const rev = (label) => { const d = new TextDecoder(label); const m = new Map(); for (let b = 0x80; b < 0x100; b++) { const ch = d.decode(Buffer.from([b])); if (!m.has(ch)) m.set(ch, b); } return m; };
-  const R1250 = rev('windows-1250'), RI2 = rev('iso-8859-2'), R1251 = rev('windows-1251');
   const byMap = (m) => (t) => Buffer.from([...t].map((ch) => { const c = ch.codePointAt(0); if (c < 0x80) return c; if (!m.has(ch)) throw new Error(`fixture: no byte for ${ch}`); return m.get(ch); }));
-  const e1250 = byMap(R1250), eI2 = byMap(RI2), e1251 = byMap(R1251);
-  const same = (label, buf, want, wantEnc) => {
+  const old = (label, buf, flag) => {
     const r = decodeTextBuffer(buf);
-    ok(r.text === want && (!wantEnc || r.encoding === wantEnc), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 70))}`);
+    ok(r.text === buf.toString('utf8') && !r.converted && (flag ? r[flag] : true), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 60))}`);
   };
   const u = Buffer.from(SLOVENE.repeat(10), 'utf8');
   const stray = Buffer.concat([u.subarray(0, 500), Buffer.from([0xe8]), u.subarray(500)]);
-  same('UTF-8 with one stray byte: the old UTF-8 read (one U+FFFD), not a re-decode', stray, stray.toString('utf8'), 'utf-8');
+  old('UTF-8 with one stray byte: the old read, one U+FFFD', stray, 'strayBytes');
+  eq(decodeTextBuffer(stray).strayBytes, 1, 'and it counts that byte');
+  ok(!decodeTextBuffer(stray).notUtf8, 'not flagged as another encoding');
   const cut = u.subarray(0, u.lastIndexOf(Buffer.from('č')) + 1);
-  same('UTF-8 cut mid-character: the old UTF-8 read', cut, cut.toString('utf8'), 'utf-8');
-  const en = Buffer.from('The café’s “résumé” costs €5 — naïve. 東京 📚 '.repeat(30), 'utf8');
-  const pasted = Buffer.concat([en.subarray(0, 300), Buffer.from([0x69, 0x74, 0x92, 0x73]), en.subarray(300)]);
-  same('English UTF-8 with one pasted 0x92: the old UTF-8 read', pasted, pasted.toString('utf8'), 'utf-8');
-  ok(!decodeTextBuffer(stray).converted && !decodeTextBuffer(stray).unrecognised && !decodeTextBuffer(pasted).unrecognised,
-    'and no conversion is claimed, nor an unrecognised encoding (it is UTF-8)');
-  const { __plausibilityForTest: score } = await import('../src/brain/text-decode.js');
-  ok(score('Cost Ł250 and ą5 here', 'iso-8859-2') < 0 && score('Cost bą5 and oką7 here', 'iso-8859-2') < 0, 'a letter glued to a digit (Ł250, ą5, bą5) counts against a table');
-  ok(score('per m˛ and ˝ now', 'iso-8859-2') < 0, 'a spacing diacritic (˛ ˝) counts against a table');
-  ok(score('Cost £250 and ±5 here', 'windows-1252') === 1, 'CONTROL: the same bytes as Western signs are plausible');
-  const onlyC = 'Račun je plačan. Več o tem na sestanku. Če bo čas, pokličem.';
-  same('Slovene with only č, Windows-1250: č, not è', e1250(onlyC), onlyC, 'windows-1250');
-  same('Slovene with only č, ISO-8859-2: č, not è', eI2(onlyC), onlyC);
-  // Hungarian ő and Estonian õ share the byte: no evidence for either, so it is declined, never õ.
-  { const r = decodeTextBuffer(e1250('A nő elment. Erdő, mező, idő.')); ok(!r.text.includes('õ') && (r.text === 'A nő elment. Erdő, mező, idő.' || r.unrecognised), 'Hungarian with only ő: ő or declined, never õ', r.text); }
-  // Re-audit 2026-11-15: never a wrong letter where the old read gave U+FFFD.
-  const notWrong = (label, buf, want) => { const r = decodeTextBuffer(buf); ok(r.text === want || (r.unrecognised && r.text === buf.toString('utf8')), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 60))}`); };
-  const declined = (label, buf) => { const r = decodeTextBuffer(buf); ok(r.unrecognised === true && r.text === buf.toString('utf8'), label, `${r.encoding}: ${JSON.stringify(r.text.slice(0, 60))}`); };
-  for (const t of ['Cena: 120 zł.', 'Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.', 'Cena: 5zł, 10zł. Łącznie 15zł za sztukę.']) {
-    notWrong(`Polish with ł as its letter, 1250: never "z³" (${t.slice(0, 20)})`, e1250(t), t);
-    notWrong(`Polish with ł as its letter, ISO-8859-2 (${t.slice(0, 20)})`, eI2(t), t);
+  old('UTF-8 cut mid-character: the old read', cut, 'strayBytes');
+  for (const [label, enc, text] of [
+    ['Polish zł (1250)', 'windows-1250', 'Faktura nr 12/2026. Kwota: 1 200 zł netto. Łącznie 15 zł.'],
+    ['Czech Kč (1250)', 'windows-1250', 'Cena 12 Kč. Účet č. 44.'],
+    ['Estonian (1252)', 'windows-1252', 'Õhtul on öö ja täna üks.'],
+    ['French with € (ISO-8859-15)', 'iso-8859-15', 'Le cœur de l’œuvre coûte 250 €.'.replace('’', "'")],
+    ['Turkish (1254)', 'windows-1254', 'Şirket yıllık raporu: gelirler arttı.'],
+    ['Greek (1253)', 'windows-1253', 'Ετήσια έκθεση: τα έσοδα αυξήθηκαν.'],
+    ['Russian (1251)', 'windows-1251', 'Годовой отчёт компании за 2025 год.'],
+    ['MacRoman French', 'macintosh', 'Le garçon a mangé une crème brûlée.'],
+  ]) old(`${label}: the old read, flagged, never converted`, byMap(rev(enc))(text), 'notUtf8');
+  // Word salad: every high byte, in every order. The read is the old one by construction.
+  let wrong = 0;
+  for (let seed = 1; seed <= 400; seed++) {
+    let x = seed; const rnd = () => ((x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32);
+    const bytes = Buffer.from(Array.from({ length: 60 }, () => (rnd() < 0.25 ? 0x80 + Math.floor(rnd() * 128) : 0x61 + Math.floor(rnd() * 26))));
+    const r = decodeTextBuffer(bytes);
+    if (r.text !== bytes.toString('utf8') || r.converted) wrong++;
   }
-  same('Polish invoice with ł as its only letter, 1250: decoded right ("zł", not "z³")', e1250('Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.'), 'Faktura nr 12/2026. Kwota: 1 200 zł netto, 1 476 zł brutto. Termin: 14 dni.');
-  // 1252 "Èrn krè" and 1250 "Črn krč" read equally well: a tie with different text is declined.
-  declined('A tie between two supported tables (Slovene "Črn krč, grč, črv."): declined, never 1252 "Èrn"', e1250('Črn krč, grč, črv.'));
-  notWrong('ISO-8859-2 "miš, koš, peš" ties with 1250 "mią, koą, peą": declined, never the 1250 letters', eI2('miš, koš, peš.'), 'miš, koš, peš.');
-  const rival = (label) => { const d = new TextDecoder(label); const m = new Map(); for (let b = 0x80; b < 0x100; b++) { const ch = d.decode(Buffer.from([b])); if (!m.has(ch)) m.set(ch, b); } return byMap(m); };
-  declined('Turkish (Windows-1254): declined, not 1252 "Þirket"', rival('windows-1254')('Şirket yıllık raporu: gelirler arttı, kâr 4 milyon. Çalışanlar için iyi bir yıl.'));
-  declined('Turkish short: declined', rival('windows-1254')('Teşekkürler, iyi günler.'));
-  declined('Greek (Windows-1253): declined', rival('windows-1253')('Ετήσια έκθεση: τα έσοδα αυξήθηκαν, το κέρδος ήταν 4 εκατομμύρια.'));
-  declined('Latvian (Windows-1257): declined', rival('windows-1257')('Gada pārskats: ieņēmumi pieauga, peļņa bija 4 miljoni. Rīga, šodien.'));
-  notWrong('Estonian (Windows-1257): never claimed as 1250', rival('windows-1257')('Aastaaruanne: tulu kasvas. Õhtu, öö, üks, šokolaad, žürii, täna.'), '\u0000');
-  same('CONTROL: Spanish prose stays Windows-1252 (not 1250 "żDónde", "mańana")', enc1252('Informe anual: los ingresos crecieron un 12 %. ¿Dónde? En España, mañana, niño. '), 'Informe anual: los ingresos crecieron un 12 %. ¿Dónde? En España, mañana, niño. ', 'windows-1252');
-  const signs = 'Price £250 per m² ±5 %, ½ now. © 2025 Acme. 10 µm.';
-  same('Windows-1252 signs (£ ² ± ½ © µ): not read as ISO-8859-2 letters', enc1252(signs), signs, 'windows-1252');
-  same('CONTROL: French with è stays Windows-1252', enc1252('Il est très bien, à la mère du père.'), 'Il est très bien, à la mère du père.', 'windows-1252');
-  same('CONTROL: Portuguese õ before e/s stays Windows-1252', enc1252('Ação, coração, não, informações, três, põe.'), 'Ação, coração, não, informações, três, põe.', 'windows-1252');
-  const ru = 'Привет, мир. Годовой отчёт компании за 2025 год.';
-  const r1251 = decodeTextBuffer(e1251(ru));
-  ok(r1251.encoding === 'utf-8' && r1251.unrecognised === true && !r1251.converted, 'Windows-1251 (Cyrillic): not claimed as a Western table; flagged unrecognised', `${r1251.encoding}`);
-  const mac = decodeTextBuffer(Buffer.from([0x43, 0x61, 0x66, 0x8e, 0x20, 0x8e, 0x74, 0x8e, 0x20, 0xd2, 0x68, 0x69, 0xd3]));
-  ok(mac.encoding === 'utf-8' && mac.unrecognised === true, 'MacRoman: not claimed as Windows-1250; flagged unrecognised', `${mac.encoding} ${JSON.stringify(mac.text)}`);
-  // Through ingest: the unrecognised file says so, and claims no encoding.
+  eq(wrong, 0, 'word salad (400 random files): 0 reads other than the old one');
+  // The ingest's note for an unknown encoding.
   const dom = makeDomain();
-  const llm = script('cyr', pagesFor('cyr'));
-  const res = await run(dom, 'cyr.md', e1251(`${ru} `.repeat(8)), llm);
-  ok((res.warnings || []).some((w) => /its encoding is not one The Curator recognises/.test(w) && w.includes('"cyr.md"')), 'ingest: one plain notice that the encoding was not recognised');
-  eq(convNotes(res).length, 0, 'ingest: no "read it as Windows-…" claim');
+  const res = await run(dom, 'cyr.md', byMap(rev('windows-1251'))('Годовой отчёт компании за 2025 год. '.repeat(8)), script('cyr', pagesFor('cyr')));
+  eq(convNotes(res).length, 1, 'ingest: one plain note for a Cyrillic file too');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

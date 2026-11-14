@@ -309,7 +309,7 @@ Default knowledge folder: `~/Library/Application Support/The Curator/domains` in
 
 Only text-based PDFs work. A scanned PDF is an image of a page and has no extractable text; there is no OCR step. Run OCR first — macOS Preview → Tools, or `ocrmypdf` — or copy the text into a `.txt` file.
 
-A `.txt` or `.md` file need not be UTF-8: Windows-1252 / ISO-8859-1, Windows-1250, ISO-8859-2 and UTF-16 with a byte-order mark are recognised and converted, so č, ž and é arrive intact. The ingest's report says when a file was converted and which encoding was assumed; the copy in `raw/` is kept exactly as uploaded. A UTF-8 file with a stray bad byte is still read as UTF-8 (that one character becomes a replacement mark). A file in another encoding (for example Cyrillic Windows-1251 or old Mac text) is not guessed: the report says the encoding was not recognised, and re-saving it as UTF-8 fixes it.
+Save `.txt` and `.md` files as UTF-8. A file saved in another encoding (an older Windows or Mac encoding, for example) is still ingested, but letters outside plain English (such as č, ž, é) are replaced by a replacement mark, and the ingest's report says so and names the file: re-save it as UTF-8 and ingest it again to keep them. The Curator does not guess the encoding, because a wrong guess would put wrong letters in the wiki without warning. UTF-16 with a byte-order mark is read correctly. The copy in `raw/` is kept exactly as uploaded.
 
 ## How do I ingest a document?
 
