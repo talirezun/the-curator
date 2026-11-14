@@ -2397,9 +2397,6 @@ created: YYYY-MM-DD
 ## Key Takeaways
 - Bullet list of main points
 
-## Key Facts
-- Only when the source states specific data: each figure or identifier exactly as written, with its unit, meaning and period or version (e.g. "Q3 2025 revenue: €3.8M"). Leave the section out otherwise.
-
 ## Concepts Introduced or Referenced
 - [[concept-name]]
 

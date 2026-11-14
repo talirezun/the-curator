@@ -308,11 +308,13 @@ section('6. identifiers in code stay exactly as written');
 // ── 7 ────────────────────────────────────────────────────────────────────────
 section('7. templates and Health accept the section');
 {
+  // The domain template is NOT changed (measured 2026-11-14): with `## Key Facts` in a
+  // new domain's summary template, prose articles got the section too (the schema is
+  // the system prompt, which no gate can reach). The gated prompt rule carries it.
   await createDomain('kf-template', 'KF Template', 'x', 'business');
   const md = readFileSync(path.join(DOMAINS, 'kf-template', 'CLAUDE.md'), 'utf8');
-  const sum = md.slice(md.indexOf('**Summary page:**'));
-  ok(sum.indexOf('## Key Facts') > sum.indexOf('## Key Takeaways') && sum.indexOf('## Key Facts') < sum.indexOf('## Concepts Introduced'),
-    'a new domain\'s summary template shows ## Key Facts after Key Takeaways');
+  const sum = md.slice(md.indexOf('**Summary page:**'), md.indexOf('## Cross-Referencing Rules'));
+  ok(sum.includes('## Key Takeaways') && !sum.includes('## Key Facts'), 'a new domain\'s summary template is unchanged: no Key Facts (it would reach prose)');
   const SUMMARY = '---\ntype: summary\nsource: plan.md\n---\n# Plan\n\n## Key Takeaways\n- Two tiers\n\n## Key Facts\n- Basic (2028): €10\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n## Entities Mentioned\n- [[rag]]\n\n## Concepts Introduced or Referenced\n- [[alice]]\n';
   eq(summaryShapeWarning('summaries/plan.md', SUMMARY, 'plan.md'), null, 'summaryShapeWarning: a summary with Key Facts has no warning');
   const tidied = tidySummaryLinkSections(SUMMARY, { entitySlugs: new Set(['alice']), conceptSlugs: new Set(['rag']) });
