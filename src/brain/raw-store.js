@@ -612,9 +612,10 @@ export async function readRawSourceText(absPath, maxChars = MAX_EXTRACT_CHARS) {
     return { ok: false, reason: 'unreadable', message: 'Extractor returned no text.' };
   }
 
-  // Binary refusal. extractText falls through to a utf8 read for anything
-  // that is not a .pdf, and Node's utf8 decoder does not fail on binary — it
-  // substitutes U+FFFD. So a hand-dropped .docx/.zip/image in raw/ would
+  // Binary refusal. extractText decodes anything that is not a .pdf as text:
+  // every text file gets the old utf8 read (text-decode.js; UTF-16 with a BOM is
+  // decoded), and bytes that look binary (a NUL, many control bytes) get the old lossy utf8
+  // read, and Node's utf8 decoder does not fail on binary — it substitutes U+FFFD. So a hand-dropped .docx/.zip/image in raw/ would
   // otherwise be emitted as a wall of replacement characters. Two signals:
   // a NUL byte (never present in real text) or a high density of U+FFFD.
   const sample = text.slice(0, 8192);

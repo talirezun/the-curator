@@ -309,6 +309,8 @@ Default knowledge folder: `~/Library/Application Support/The Curator/domains` in
 
 Only text-based PDFs work. A scanned PDF is an image of a page and has no extractable text; there is no OCR step. Run OCR first — macOS Preview → Tools, or `ocrmypdf` — or copy the text into a `.txt` file.
 
+Save `.txt` and `.md` files as UTF-8. A file saved in another encoding (an older Windows or Mac encoding, for example) is still ingested, but letters outside plain English (such as č, ž, é) are replaced by a replacement mark, and the ingest's report says so and names the file: re-save it as UTF-8 and ingest it again to keep them. The Curator does not guess the encoding, because a wrong guess would put wrong letters in the wiki without warning. UTF-16 with a byte-order mark is read correctly. The copy in `raw/` is kept exactly as uploaded.
+
 ## How do I ingest a document?
 
 1. Click **Domains** in the rail, pick your destination domain, and open its **Ingest** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
@@ -414,7 +416,7 @@ The Curator counts figures, code names and table rows first; an ordinary article
 
 Model choice matters for data-heavy sources: on one pricing document with 29 facts, Gemini 3.5 Flash Lite kept about 19 and Claude Haiku 5.5 about 26.
 
-Limits: a follow-up document's changed figures land on its own summary, and the existing company or product page usually keeps the old values (updating it is the next step); a technical document written as plain prose may not be recognised; large tables are summarised; chat matches words exactly.
+Figures compound: a later source with figures (next year's report, a changelog) that updates pages the wiki already has is shown what those pages say now, and adds each new or changed fact to them as a Key Facts line with its year or version and the earlier value ("As of v1.5: port 7113 (was 7103)"). The old line always stays, so a page shows how a value changed. Measured on a product changelog: the new value reached the existing pages in 8 of 9 runs on Claude Haiku 5.5 (0 of 9 before); the AI can still put a change only on the new summary. It adds about $0.01 a follow-up on Haiku 5.5, included in the estimate. Limits: a technical document written as plain prose may not be recognised; large tables are summarised; chat matches words exactly.
 
 Ingesting technical documents into a domain makes knowledge that compounds with later sources and that chat can answer across. A project's Documents (foundations) are different: canonical text kept verbatim for agents. Both are valid, for different purposes.
 
@@ -930,7 +932,7 @@ Three different causes that look the same. You are running an older Mac app buil
 
 ## Why does an ingest spin for a long time and then fail?
 
-Check your internet connection, since the app needs to reach the provider's API. Check that your key is still valid in the provider's console. Try a smaller file first to confirm the setup works. If the failure mentions `log.md`, your pages were written safely and only the last step — recording the ingest in the domain's log file — failed because that file is missing; this only happens on a domain whose folders were created by hand. Create an empty `domains/<your-domain>/wiki/log.md` and re-ingest.
+Check your internet connection, since the app needs to reach the provider's API. Check that your key is still valid in the provider's console. Try a smaller file first to confirm the setup works. A missing `wiki/log.md` or `wiki/index.md` no longer fails an ingest: it is created. If the ingest is refused at once with "Nothing was sent to the AI and nothing was charged", it found something it could not write to before spending anything (a file where a page folder should be, `log.md` or `index.md` as a folder or a symbolic link, a read-only folder); the message names the path. Fix that and ingest again.
 
 ## Why do I get 429 or "Rate limit exceeded" during ingest?
 

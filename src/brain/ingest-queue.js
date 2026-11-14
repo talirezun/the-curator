@@ -199,9 +199,11 @@ import {
   makeUsageAccumulator,
   planRepeatIngest,
   KEY_FACTS_RULE as ingestKeyFactsRule,
+  FOLLOWUP_RETRY_MODEL,
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
+import { EXISTING_FACTS_MAX_CHARS, EXISTING_FACTS_MAX_PAGES } from './existing-facts.js';
 import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortError, isOfferableModel, catalogueAbsence, makeModelGoneError, priceUsageUsd, priceUsageTotalsUsd, estimateCallRates, tokenizerFactorOf } from './llm.js';
 import { scanWiki } from './health.js';
 
@@ -892,6 +894,27 @@ function keyFactsExtraOutput(model, mode) {
   return KEY_FACTS_EXTRA_OUTPUT_TOKENS[fam][m] || Math.max(...Object.values(KEY_FACTS_EXTRA_OUTPUT_TOKENS).map((x) => x[m]));
 }
 
+/**
+ * Existing facts (existing-facts.js): a data source that updates pages the domain already
+ * has gets at most EXISTING_FACTS_MAX_CHARS of those pages' current facts in every
+ * page-writing call, and writes the new or changed facts onto those pages. The estimate
+ * has no bytes, so on a domain with pages it carries the block's full size on every call
+ * and a measured output allowance wherever it carries the Key Facts rule (an empty domain
+ * never gets the block, so its figure is unchanged). Measured on the follow-up scenario
+ * (an architecture changelog into a domain holding v1, 2026-11-14): output tokens per
+ * source, median after minus median before. Haiku 5.5 2,824 -> 4,216 (9 runs each arm);
+ * solar-pro4 2,243 -> 2,893 (9 each); Gemini 3.5 Flash Lite 1,425 -> 2,408 (9 before, 3
+ * after: the project's spend cap stopped the rest). The largest reply measured (Haiku
+ * 6,865) stays under the Key Facts single-pass dear bound, which already covers it.
+ */
+export const EXISTING_FACTS_EXTRA_OUTPUT_TOKENS = { gemini: 1000, anthropic: 1400, openrouter: 700 };
+function existingFactsExtraOutput(model) {
+  const fam = /^gemini/.test(String(model || '')) ? 'gemini' : /^claude/.test(String(model || '')) ? 'anthropic' : 'openrouter';
+  return EXISTING_FACTS_EXTRA_OUTPUT_TOKENS[fam];
+}
+export const EXISTING_FACTS_EXTRA_BATCHES = Math.ceil(EXISTING_FACTS_MAX_PAGES / ingestTesting.BATCH_SIZE);
+const hasPages = (promptFiles) => Boolean(promptFiles && ((promptFiles.entities || []).length || (promptFiles.concepts || []).length));
+
 function estimateOneFile({ f, promptFiles, index, today, price, model = null, keyFacts = 'off' }) {
   const base = estimateOneFileBase({ f, promptFiles, index, today, price, model, withKeyFacts: false });
   if (keyFacts === 'off') return base;
@@ -917,7 +940,17 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   // negative value reaching `'x'.repeat()` throws a RangeError that surfaced
   // as an HTTP 500 (`{"error":"Invalid count value: -5000"}`).
   const chars = Math.max(0, Math.min(f.size, TEXT_CAP));
-  const { mode, totalCalls, numBatches } = estimateCallCounts(chars);
+  const counts = estimateCallCounts(chars);
+  const { mode } = counts;
+  // The existing-facts block, on a domain that has pages (see EXISTING_FACTS_EXTRA_OUTPUT_TOKENS).
+  const factsChars = withKeyFacts && hasPages(promptFiles) ? EXISTING_FACTS_MAX_CHARS + 2 : 0;
+  // Multi-phase plans each strong existing page the outline left out: at most
+  // EXISTING_FACTS_MAX_PAGES pages, so at most EXISTING_FACTS_EXTRA_BATCHES more batch
+  // calls, each priced like any batch (audit 2026-11-14: a 31 KB follow-up billed above
+  // the high quote in 2 of 4 runs when only an output allowance covered them).
+  const extraBatches = factsChars && mode === 'multi-phase' ? EXISTING_FACTS_EXTRA_BATCHES : 0;
+  const numBatches = counts.numBatches + extraBatches;
+  const totalCalls = counts.totalCalls + extraBatches;
   const syntheticText = 'x'.repeat(chars);
   const placeholderSummaryPath = 'summaries/estimate-placeholder.md';
 
@@ -927,7 +960,7 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   let callChars;
   if (mode === 'single-pass') {
     const prompt = buildPrompt(today, index, promptFiles, f.name, syntheticText, false, false, placeholderSummaryPath);
-    promptChars = prompt.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
+    promptChars = prompt.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 + factsChars : 0);
     callChars = [promptChars];
   } else {
     const outline = buildOutlinePrompt(today, index, promptFiles, f.name, syntheticText, false, placeholderSummaryPath);
@@ -936,9 +969,11 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
     // few hundred chars) — negligible next to the 80k-char source + 100k+
     // char inventory this prefix already carries. Documented, not silent.
     const batchParts = buildBatchPromptParts(today, f.name, syntheticText, [], promptFiles, []);
-    const batchChars = batchParts.prefix.length + batchParts.suffix.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
-    promptChars = outline.length + numBatches * batchChars;
-    callChars = [outline.length, ...Array(numBatches).fill(batchChars)];
+    const batchChars = batchParts.prefix.length + batchParts.suffix.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 + factsChars : 0);
+    // The outline gets only the pages' names (a line of paths), well within the same allowance.
+    const outlineChars = outline.length + (withKeyFacts ? factsChars : 0);
+    promptChars = outlineChars + numBatches * batchChars;
+    callChars = [outlineChars, ...Array(numBatches).fill(batchChars)];
   }
 
   // The model's measured tokenizer premium counts in the figure, on every path: the
@@ -948,11 +983,30 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
   const inputTokens = Math.round((promptChars / CHARS_PER_TOKEN) * factor);
   const perCallOut = outputTokensPerCall(model, mode);
   // The Key Facts allowance is per FILE (measured per source), spread over its calls.
-  const extraOut = withKeyFacts ? keyFactsExtraOutput(model, mode) : 0;
+  const extraOut = withKeyFacts ? keyFactsExtraOutput(model, mode) + (factsChars ? existingFactsExtraOutput(model) : 0) : 0;
   const outputTokens = totalCalls * perCallOut + extraOut;
 
   if (!price) {
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: null, usdHigh: null };
+  }
+
+  // The summary-only retry (ingest.js followupRetry) can fire on a single-pass data
+  // source that updates existing pages: one more call on the same model, and on Gemini
+  // one on FOLLOWUP_RETRY_MODEL. Not planned, so in the dear bound only (re-audit
+  // 2026-11-15: 3 calls billed where 1 was quoted).
+  let retryHigh = 0;
+  if (factsChars && mode === 'single-pass') {
+    const inTok = (promptChars / CHARS_PER_TOKEN) * factor;
+    const outTok = perCallOut + extraOut;
+    const callUsd = (m, p) => {
+      const r = m && estimateCallRates(m, promptChars, CHARS_PER_TOKEN)?.tiered ? estimateCallRates(m, promptChars, CHARS_PER_TOKEN) : p;
+      return r ? (inTok / 1e6) * r.input + (outTok / 1e6) * r.output : 0;
+    };
+    retryHigh += callUsd(model, price);
+    if (/^gemini/.test(String(model || '')) && model !== FOLLOWUP_RETRY_MODEL) {
+      const p2 = getModelPrice(FOLLOWUP_RETRY_MODEL);
+      retryHigh += Math.max(callUsd(FOLLOWUP_RETRY_MODEL, p2), 0);
+    }
   }
 
   // ── TIERED PRICE (claude-haiku-5-5): PRICE EACH PLANNED CALL ON ITS OWN ──
@@ -976,13 +1030,14 @@ function estimateOneFileBase({ f, promptFiles, index, today, price, model = null
     }
     if (extraOut) high += (extraOut / 1e6) * estimateCallRates(model, callChars[0], CHARS_PER_TOKEN).output;
     const low = Math.max(0, high - rawIn * cachingSavingsFraction(totalCalls));
-    return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high };
+    return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high + retryHigh };
   }
 
-  const usdHigh = (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output;
+  const planned = (inputTokens / 1e6) * price.input + (outputTokens / 1e6) * price.output;
+  const usdHigh = planned + retryHigh;
   const inputCostRaw = (inputTokens / 1e6) * price.input;
   const savings = cachingSavingsFraction(totalCalls);
-  const usdLow = Math.max(0, usdHigh - inputCostRaw * savings);
+  const usdLow = Math.max(0, planned - inputCostRaw * savings);
 
   return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow, usdHigh };
 }

@@ -203,7 +203,7 @@ A brain earns its value over years, and it has to hold more than ideas from arti
 | Teaching and training | Syllabi, schedules, pricing per run of a course | "How much does a run with 14 participants earn?" |
 | An organisation's Shared Brain | Shared policies, prices, targets, agreed figures | The same exact figure for everyone in the team |
 
-Two limits to know before relying on it: a follow-up document's changed figures do not yet reliably update the existing company or product page (they land on the new document's own summary), and cheaper models keep fewer facts than stronger ones.
+Figures compound across documents: when a follow-up document (next year's report, a changelog) changes a value, the change is added to the existing company or product page with its year or version, and the earlier value stays. One limit to know before relying on it: cheaper models keep fewer facts than stronger ones.
 
 → See [docs/use-cases.md](use-cases.md) for detailed workflows for each profile.
 
@@ -3127,6 +3127,16 @@ And from a made-up architecture document:
 
 **Reading an older source again.** A source with figures, code names or tables that was ingested before v3.98.0 can be read once more with the same model to add its Key Facts. Drop it in again: the dialog says why and what it will cost before you press, and in a batch the estimate includes it and names the file. It is one reading; after it, reading the file again with that model makes no AI call. Nothing already written changes. See [Re-ingesting a source](#re-ingesting-a-source-and-why-its-safe).
 
+**When a later document changes a figure.** A source with figures that updates pages your wiki already has (next year's annual report, a v1.5 changelog for a product you ingested at v1) is shown what those pages say now, before it writes. Each page whose facts it changes gets the new or changed facts as Key Facts lines with their year or version and the source, and the earlier value, for example:
+
+```markdown
+## Key Facts
+- `risk-svc` listens on port 7103 (v1.4)
+- As of v1.5 (tidewater-ledger-v1.5-changes): `risk-svc` listens on port 7113 (was 7103)
+```
+
+Nothing is removed: the old line stays, so the page shows how the value changed and chat can answer "what is it now, and since when". Measured on a product's architecture changelog, 9 runs per model: the new port reached the product's existing pages in 8 of 9 runs on Claude Haiku 5.5 (before: 0 of 9) and 7 of 9 on solar-pro4 (before: 1 of 9); the changed timeout in 9 of 9 on both. The AI can still put a change only on the new document's summary, or on a new page of its own. It costs a little more: about $0.01 more per follow-up on Haiku 5.5, and the estimate includes it. An ordinary article, and a first document into an empty domain, are read exactly as before.
+
 **Which model to use for data-heavy sources.** Cheaper models keep fewer facts. Measured on one real pricing document with 29 facts, 3 runs per model (v3.98.0):
 
 | Model | Facts kept, of 29 |
@@ -3138,7 +3148,6 @@ If the figures matter, ingest that source with the stronger model (see [§16b](#
 
 **Known limits.**
 
-- **A follow-up document does not yet reliably update the existing pages.** When next year's price list arrives, its changed values land on its own summary page; the company or product page usually keeps the old values (in 1 of 9 measured runs the new values reached it). Neither set of figures is lost: each stays on its own source's summary. Updating the existing pages is the next step.
 - A technical document written as plain prose may not be recognised (see the table above).
 - Large tables are summarised, not copied row by row.
 - Chat matches words exactly: ask with the words the document uses.
@@ -3155,6 +3164,8 @@ If the figures matter, ingest that source with the stronger model (see [§16b](#
 | Markdown | `.md` | Notes from other apps, written summaries |
 
 > **PDF tip:** Only text-based PDFs work. If a PDF is a scanned image (like a photo of a page), the text cannot be extracted. In that case, copy-paste the text into a `.txt` file instead.
+
+> **Text encodings:** save `.txt` and `.md` files as UTF-8. A file saved in another encoding (an older Windows or Mac encoding, for example) is still ingested, but letters outside plain English, such as č, ž or é, are replaced by a replacement mark (�), and the ingest's report says so and names the file. Re-save it as UTF-8 and ingest it again to keep them. The Curator does not guess the encoding: a wrong guess would put wrong letters into your wiki without warning. UTF-16 with a byte-order mark is read correctly. The copy kept in `raw/` stays exactly as you uploaded it.
 
 ### How to ingest
 
@@ -8747,9 +8758,11 @@ Press `Cmd/Ctrl + R` in Obsidian to force a refresh, or close and reopen the vau
 
 See [*Why didn't the ingest create a page for X?*](#why-didnt-the-ingest-create-a-page-for-x) in §8: check the ingest's report (also in `wiki/log.md`), look for the page under a similar name or in the other folder, run Wiki health, then re-ingest or ask your agent to create it. Chat cannot tell you why — it never sees how an ingest ran.
 
-**An ingest (single-file or batch) fails right at the end with a cryptic error mentioning `log.md`**
+**An ingest is refused with "Nothing was sent to the AI and nothing was charged"**
 
-This means the AI already did its work and your pages are safely written to disk — the failure happens at the very last step, recording the ingest in the domain's log file, because that log file is missing. This can only happen on a domain whose folder structure was created by hand rather than through the app (creating a domain normally always creates the log file). **Nothing was lost.** The fix: create an empty file at `domains/<your-domain>/wiki/log.md`, then re-ingest the same file — re-ingesting is always safe (see *Re-ingesting a source* above) and this time the log step will succeed.
+Before its first AI call, an ingest checks that it can save what it will be paid for. A wiki built elsewhere (Obsidian, Logseq, a plain folder) sometimes has a file where The Curator needs a folder (`wiki/entities`, `wiki/concepts`, `wiki/summaries`), a folder or a symbolic link where it keeps a file (`wiki/log.md`, `wiki/index.md`, the source's summary page), or a read-only folder. The message names the path and what to change; fix it and ingest again. A **missing** `log.md`, `index.md` or page folder is not a problem: the ingest creates it. (Before this check, a domain without `log.md` failed at the very last step, after the AI calls.)
+
+If something changes under a running ingest (a sync, another app) and one page cannot be saved, the report names that page and every other page is still written. If `log.md` cannot be updated at the end, the report says so and the pages stay saved.
 
 **"The Curator could not start" dialog appears when clicking the Dock icon**
 
