@@ -467,14 +467,30 @@ section('10. one Key Facts reading for a data source read before Key Facts exist
   const r3 = await quiet(() => ingestFile(L2.d.name, sourceFile('essay.md', PROSE_SRC), 'essay.md', true, null, { llm: reply('essay'), buildModel: 'fake-1' }));
   ok(calls10.n === 0 && r3.nothingToChange === true, 'ingest: the prose source read before Key Facts still makes no call');
 
-  // The run decides on raw/ as it was before the upload, like the estimate: no raw copy
-  // before → the estimate said 'nothing' ($0), so the run must not read (measured bug).
-  const L4 = await legacyDomain('gone', DATA_SRC);
-  rmSync(path.join(DOMAINS, L4.d.name, 'raw', 'gone.md'));
-  eq((await ingest.planRepeatIngest(L4.d.name, L4.sha256, 'fake-1')).kind, 'nothing', 'plan: no raw copy to read → nothing (what the estimate shows)');
-  calls10.n = 0;
-  const r4 = await quiet(() => ingestFile(L4.d.name, sourceFile('gone.md', DATA_SRC), 'gone.md', true, null, { llm: reply('gone'), buildModel: 'fake-1' }));
-  ok(calls10.n === 0 && r4.nothingToChange === true, 'ingest: then the run makes no call either, although it saved a raw copy first');
+  // raw/ is not synced: on a second computer the raw copy is often missing, and the bytes
+  // being ingested are the only copy. Every combination: the plan made WITH the bytes (the
+  // 409 dialog) and the run decide the same; the no-bytes estimate decides the same when
+  // the raw copy exists, and otherwise prices the reading (gateUnknown) and the run can
+  // only be cheaper.
+  for (const [kind, text] of [['data', DATA_SRC], ['prose', PROSE_SRC]]) for (const rawThere of [true, false]) for (const marked of [false, true]) {
+    const name = `m-${kind}-${rawThere ? 'raw' : 'noraw'}-${marked ? 'kf' : 'old'}`;
+    const L = await legacyDomain(name, text);
+    if (marked) await appendManifestRecord(L.d.name, { filename: `${name}.md`, sha256: L.sha256, bytes: Buffer.byteLength(text), summaryPath: `summaries/${name}.md`,
+      ingestedAt: new Date().toISOString(), completed: true, model: 'fake-1', gaps: 0, keyFacts: ingest.KEY_FACTS_VERSION });
+    if (!rawThere) rmSync(path.join(DOMAINS, L.d.name, 'raw', `${name}.md`));
+    const upload = sourceFile(`${name}.md`, text);
+    const withBytes = await ingest.planRepeatIngest(L.d.name, L.sha256, 'fake-1', { sourceText: () => ingest.sourceTextForGate(upload, `${name}.md`) });
+    const noBytes = await ingest.planRepeatIngest(L.d.name, L.sha256, 'fake-1');
+    calls10.n = 0;
+    await quiet(() => ingestFile(L.d.name, upload, `${name}.md`, true, null, { llm: reply(name), buildModel: 'fake-1' }));
+    const ran = calls10.n > 0;
+    const want = kind === 'data' && !marked;
+    eq(ran, want, `${name}: the run ${want ? 'reads once' : 'makes no call'}`);
+    eq(withBytes.kind === 'key-facts', ran, `${name}: the plan made with the upload agrees with the run`);
+    if (rawThere || marked) eq(noBytes.kind === 'key-facts', ran, `${name}: the no-bytes estimate agrees with the run`);
+    else ok(noBytes.kind === 'key-facts' && noBytes.gateUnknown === true && (ran ? true : true), `${name}: the no-bytes estimate prices it as unknown (the run spends at most that)`);
+    if (ran) eq((await ingest.planRepeatIngest(L.d.name, L.sha256, 'fake-1')).kind, 'nothing', `${name}: and only once`);
+  }
 
   // Cost shown first: the dialog sentence names the price, the queue lists the file with its reason and prices it.
   const { duplicateCopy } = await import('../src/public/next/shared/ingest-queue-logic.js');

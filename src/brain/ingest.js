@@ -153,6 +153,21 @@ export const REPEAT_READ_BY_OTHER_MODEL = true;
  */
 export const KEY_FACTS_VERSION = 1;
 
+/**
+ * The text the gate reads from bytes in hand (an upload, a staged queue file), whatever
+ * the file is called on disk: the ORIGINAL name decides PDF or text. null when unreadable.
+ */
+export async function sourceTextForGate(filePath, originalName) {
+  try {
+    const name = String(originalName || filePath);
+    if (/\.pdf$/i.test(name)) {
+      const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
+      return String((await pdfParse(await readFile(filePath))).text || '').slice(0, 80_000);
+    }
+    return (await readFile(filePath, 'utf8')).slice(0, 80_000);
+  } catch { return null; }
+}
+
 /** The source's text as the gate reads it, from the copy kept in raw/. null when unknown. */
 async function rawSourceText(domain, filename) {
   try { return (await extractText(path.join(rawPath(domain), filename))).slice(0, 80_000); } catch { return null; }
@@ -178,15 +193,31 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
   // Read before Key Facts existed, and a data source: one fresh reading (owner, 2026-11-14).
   if (!((Number(latest.keyFacts) || 0) >= KEY_FACTS_VERSION)) {
-    // The gate reads the copy kept in raw/ AS IT WAS BEFORE this upload (`opts.rawBefore`,
-    // from ingestFile): the estimate and the 409 dialog see raw/ before the upload, so the
-    // run must decide on the same thing, or a run could spend where the user was shown $0
-    // (measured: a source whose raw copy was missing planned 'nothing', then read).
-    const rawKnown = !(opts && opts.rawBefore instanceof Set) || opts.rawBefore.has(latest.filename);
-    const text = rawKnown ? await rawSourceText(domain, latest.filename) : null;
-    if (text && sourceHasHardData(text)) {
+    // The gate reads the BYTES IN HAND when the caller has them (`opts.sourceText`: the
+    // upload in the 409 plan, the file in ingestFile), so the plan and the run decide on
+    // the same text. raw/ is not synced, so on a second computer it is often empty, and
+    // the upload is the only copy. Without bytes (the batch estimate gets names, sizes
+    // and hashes), the copy in raw/ is the same bytes when present; when it is missing,
+    // the gate cannot be read, and the plan says so (`gateUnknown`): the estimate prices
+    // the reading, and the run, which has the bytes, may only make it cheaper.
+    let text = null;
+    let known = false;
+    if (opts && typeof opts.sourceText === 'function') {
+      text = await opts.sourceText();
+      known = typeof text === 'string';
+    } else {
+      text = await rawSourceText(domain, latest.filename);
+      known = typeof text === 'string';
+    }
+    if (known && sourceHasHardData(text)) {
       out.kind = 'key-facts';
       out.reason = 'This source holds figures that earlier versions did not keep; reading it again keeps them.';
+      return out;
+    }
+    if (!known) {
+      out.kind = 'key-facts';
+      out.gateUnknown = true;
+      out.reason = 'This source may hold figures that earlier versions did not keep; if it does, reading it again keeps them.';
       return out;
     }
   }
@@ -3469,8 +3500,6 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   progress(4, 'Saving source file…');
   const rawDir = rawPath(domain);
   await mkdir(rawDir, { recursive: true });
-  // raw/ before this upload: planRepeatIngest decides on what the estimate saw.
-  const rawBefore = new Set(await readdir(rawDir).catch(() => []));
   const destPath = path.join(rawDir, originalName);
   const buffer = await readFile(filePath);
   // v3.0.1-beta.8: atomic raw save so a kill mid-write doesn't leave a
@@ -3505,7 +3534,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   if (!plannedModel && !(opts && typeof opts.llm === 'function')) {
     try { const i = getProviderInfo(); plannedModel = answeringModel(i.provider, i.model); } catch { plannedModel = null; }
   }
-  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel, { rawBefore });
+  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel, { sourceText: () => sourceTextForGate(destPath, originalName) });
   // See planRepeatIngest: only another model's reading may bring in new wording.
   const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model' && repeatPlan.kind !== 'key-facts';
   if (repeatPlan.kind === 'nothing') {

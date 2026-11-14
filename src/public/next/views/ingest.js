@@ -4582,7 +4582,7 @@ function renderQueueFileListItem(entry, opts) {
     : reason === 'unchanged' ? 'already read by this model · no AI call · $0'
     : '';
   // Priced in the estimate, with its reason (planRepeatIngest 'key-facts', 2026-11-14).
-  const keyFactsNote = !noCallNote && opts && opts.keyFacts ? 'read before figures were kept · one more reading, priced above' : '';
+  const keyFactsNote = !noCallNote && opts && opts.keyFacts ? 'read before figures were kept · one more reading if it holds figures, priced above (at most)' : '';
   const noteHtml = (noCallNote || keyFactsNote) ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote || keyFactsNote) + '</span>' : '';
   return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + noteHtml + removeBtn + '</li>';
 }

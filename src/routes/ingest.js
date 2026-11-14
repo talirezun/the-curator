@@ -4,7 +4,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
-import { ingestFile, planRepeatIngest } from '../brain/ingest.js';
+import { ingestFile, planRepeatIngest, sourceTextForGate } from '../brain/ingest.js';
 import { hashRawSource } from '../brain/raw-store.js';
 import { estimateIngestQueueCost } from '../brain/ingest-queue.js';
 // v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
@@ -77,7 +77,8 @@ async function repeatPlanFor(domain, filePath, file = null) {
       model = typeof llmModule.answeringModel === 'function' ? llmModule.answeringModel(i.provider, i.model) : i.model;
     } catch { model = null; }
     const sha256 = await hashRawSource(filePath);
-    const plan = await planRepeatIngest(domain, sha256, model);
+    // The gate reads the upload itself: the run reads the same bytes (2026-11-14).
+    const plan = await planRepeatIngest(domain, sha256, model, file ? { sourceText: () => sourceTextForGate(filePath, file.originalname) } : {});
     // A Key Facts reading costs money: the plan carries the same estimate the run line
     // shows, so the dialog can say "about $X" before the press (2026-11-14).
     if (plan.kind === 'key-facts' && file && Number.isFinite(file.size)) {
