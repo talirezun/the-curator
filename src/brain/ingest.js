@@ -37,6 +37,10 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
+import {
+  HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
+  HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
+} from '../public/next/shared/hard-data.js';
 import { createHash } from 'crypto';
 import { listOtherInstances, describeOthers } from './instance-probe.js';
 
@@ -153,22 +157,6 @@ export const REPEAT_READ_BY_OTHER_MODEL = true;
  */
 export const KEY_FACTS_VERSION = 1;
 
-/**
- * What a completed ingest records about Key Facts. Every run of this code is marked,
- * except a Key Facts re-reading whose summary still has no `## Key Facts` section (the
- * model answered with the summary only, 1 of 9 audited runs): that one is recorded as a
- * try, which earns ONE more offer (cost shown); a second try is marked whatever it wrote,
- * so it can never loop.
- */
-async function keyFactsMarkerFor(domain, repeatPlan, summaryPath, sha256) {
-  if (!repeatPlan || repeatPlan.kind !== 'key-facts') return { keyFacts: KEY_FACTS_VERSION };
-  let has = false;
-  try { has = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiPath(domain), summaryPath), 'utf8')); } catch { has = false; }
-  if (has) return { keyFacts: KEY_FACTS_VERSION };
-  let tries = 0;
-  try { tries = (await readManifest(domain)).filter((r) => r.sha256 === sha256 && r.completed !== false && r.keyFactsTry).length; } catch { tries = 0; }
-  return tries >= 1 ? { keyFacts: KEY_FACTS_VERSION } : { keyFactsTry: 1 };
-}
 
 /**
  * The text the gate reads from bytes in hand (an upload, a staged queue file), whatever
@@ -204,7 +192,10 @@ export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   const readings = records.filter((r) => r.sha256 === sha256 && r.completed !== false
     && typeof r.summaryPath === 'string' && exists(r.summaryPath));
   const latest = readings[readings.length - 1];
-  const previous = { filename: latest.filename, ingestedAt: latest.ingestedAt, model: latest.model || null, summaryPath: latest.summaryPath };
+  // The date and model shown to the user come from the latest record that made a reading;
+  // a no-call press writes a record too (the gate's answer), which is not a reading.
+  const lastRead = readings.filter((r) => !r.noCall).pop() || latest;
+  const previous = { filename: lastRead.filename, ingestedAt: lastRead.ingestedAt, model: lastRead.model || null, summaryPath: lastRead.summaryPath };
   const out = { sameContent: true, kind: 'nothing', previous, model: model || null, gaps: [] };
   if (!model) { out.kind = 'unknown'; return out; }
   if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
@@ -646,7 +637,7 @@ export function indexForPrompt(index, sourceText, budgetChars = INDEX_PROMPT_BUD
  * decoder substitutes U+FFFD rather than failing on binary input.
  */
 export async function extractText(filePath) {
-  if (filePath.endsWith('.pdf')) {
+  if (/\.pdf$/i.test(String(filePath))) {   // `.PDF` too, as sourceTextForGate tests it
     const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
     const buffer = await readFile(filePath);
     const data = await pdfParse(buffer);
@@ -868,38 +859,13 @@ export const KEY_FACTS_CONCISE =
  * Known: a technical document written as plain prose stays below it and is ingested
  * exactly as before; a prose article dense with statistics passes it.
  */
-export const HARD_DATA_MIN_PER_1000 = 7;
-export const HARD_DATA_MIN_ITEMS = 6;
-export const HARD_DATA_MIN_CODE_SPANS = 20;
-export const HARD_DATA_MIN_CODE_PER_1000 = 1;
-export const HARD_DATA_MIN_TABLE_ROWS = 8;
-export const HARD_DATA_MIN_TABLE_ROWS_PER_1000 = 0.5;
-
-export function hardDataDensity(text) {
-  const body = String(text || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
-  const numbers = (body.match(/[€$£¥]?\d[\d,.:/–-]*%?/g) || [])
-    .map((x) => x.replace(/[.,:/–-]+$/, ''))
-    .filter((x) => !/^((19|20)\d\d)([–-]((19|20)?\d\d))?$/.test(x) && !/^\d$/.test(x));
-  const code = (body.match(/`[^`\n]+`/g) || []).length;
-  const tableRows = (body.match(/^\|.*\|[ \t]*$/gm) || []).length;
-  const rows = (body.match(/^\|.*\|[ \t]*$/gm) || []).filter((r) => !/^\|[\s|:-]+\|[ \t]*$/.test(r)).length;
-  const items = numbers.length + code + rows;
-  const k = body.length / 1000;
-  return {
-    items, code, tableRows,
-    perThousand: body.length ? items / k : 0,
-    codePerThousand: body.length ? code / k : 0,
-    tableRowsPerThousand: body.length ? tableRows / k : 0,
-  };
-}
-
-export function sourceHasHardData(text) {
-  const d = hardDataDensity(text);
-  if (d.items < HARD_DATA_MIN_ITEMS) return false;
-  return d.perThousand >= HARD_DATA_MIN_PER_1000
-    || (d.code >= HARD_DATA_MIN_CODE_SPANS && d.codePerThousand >= HARD_DATA_MIN_CODE_PER_1000)
-    || (d.tableRows >= HARD_DATA_MIN_TABLE_ROWS && d.tableRowsPerThousand >= HARD_DATA_MIN_TABLE_ROWS_PER_1000);
-}
+// The gate itself lives in the SERVED tree, so the browser runs the same function on a
+// .md/.txt file it has in hand (src/public/next/shared/hard-data.js; the same pattern as
+// shared/ai-jobs.js). Re-exported here for every server-side caller.
+export {
+  HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
+  HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
+};
 
 /**
  * A table-heavy source cannot be kept whole: Key Facts holds at most 40 bullets and a
@@ -4071,11 +4037,16 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   await tidyWrittenLinks(domain, canonicalPaths);
 
   if (repeatPlan.kind === 'key-facts') {
-    warnings.push(
-      `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
-      `This one extra reading added its Key Facts, new pages and what was mostly new to a page; no existing text changed. ` +
-      `The next re-ingest with this model makes no AI call.`
-    );
+    // Said as it is: the reading is recorded whatever it wrote, so the promise holds.
+    let wroteKeyFacts = false;
+    try { wroteKeyFacts = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiPath(domain), summaryPath), 'utf8')); } catch { wroteKeyFacts = false; }
+    warnings.push(wroteKeyFacts
+      ? `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
+        `This one extra reading added its Key Facts, new pages and what was mostly new to a page; no existing text changed. ` +
+        `The next re-ingest with this model makes no AI call.`
+      : `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
+        `This one extra reading found no figures to add to a Key Facts section; it added only what was mostly new to a page, and no existing text changed. ` +
+        `The next re-ingest with this model makes no AI call.`);
   }
   if (repeatPlan.kind === 'other-model') {
     warnings.push(
@@ -4216,7 +4187,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     completed: true,
     model: usage.totals.model || plannedModel,
     gaps: warnings.filter((w) => FELL_SHORT_RE.test(w)).length,
-    ...(await keyFactsMarkerFor(domain, repeatPlan, summaryPath, sourceHash)),
+    keyFacts: KEY_FACTS_VERSION,   // one Key Facts reading, whatever it wrote (owner)
   });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this

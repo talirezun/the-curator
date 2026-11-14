@@ -870,16 +870,21 @@ export function cachingSavingsFraction(totalCalls) {
  * cannot run the gate: a file that MAY be a data source has the rule's input and a measured
  * output allowance in `usdHigh` only ('maybe'); a file known to get the rule (a Key Facts
  * re-reading whose gate was read) has them in both bounds ('on'); a file known not to, in
- * neither ('off'). The allowance is the measured extra output of a data source with Key
- * Facts over the same source without (v3.97.1 baseline vs this code, 3 runs per model per
- * source, two single-pass and two multi-phase data sources): single pass +847 (Gemini 3.5
- * Flash Lite), +1,302 (Haiku 5.5), +1,260 (solar-pro4) tokens; multi-phase +1,054, +4,150,
- * +2,930. A model of another family takes the largest.
+ * neither ('off'). The browser runs the same gate on a .md/.txt file it has in hand and
+ * sends `hardData` (true/false); only a file it cannot read (a PDF) stays 'maybe'.
+ *
+ * THE ALLOWANCE COVERS THE LARGEST REPLY MEASURED, so the dear bound is a real upper bound:
+ * single-pass data sources with Key Facts measured up to 3,982 output tokens on Gemini 3.5
+ * Flash Lite (the base figure is 1,667), 11,806 on Haiku 5.5 (base 5,900; +6,400 leaves the
+ * input estimate's own error room: one run billed 1.01x at +6,000) and 5,382 on
+ * solar-pro4 (base 1,667), 2026-11-14, 25 runs; an audit found 12 of 19 such runs billed
+ * above a high built on the medians. Multi-phase: +1,054 / +4,150 / +2,930 (medians of the
+ * Key Facts minus baseline difference; multi-phase quotes were measured well above bills).
  */
 export const KEY_FACTS_EXTRA_OUTPUT_TOKENS = {
-  gemini: { 'single-pass': 847, 'multi-phase': 1054 },
-  anthropic: { 'single-pass': 1302, 'multi-phase': 4150 },
-  openrouter: { 'single-pass': 1260, 'multi-phase': 2930 },
+  gemini: { 'single-pass': 2400, 'multi-phase': 1054 },
+  anthropic: { 'single-pass': 6400, 'multi-phase': 4150 },
+  openrouter: { 'single-pass': 3800, 'multi-phase': 2930 },
 };
 function keyFactsExtraOutput(model, mode) {
   const fam = /^gemini/.test(String(model || '')) ? 'gemini' : /^claude/.test(String(model || '')) ? 'anthropic' : 'openrouter';
@@ -1214,7 +1219,9 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
       continue;
     }
     const sha256 = typeof f?.sha256 === 'string' ? f.sha256.toLowerCase() : null;
-    accepted.push(sha256 ? { name, size, sha256 } : { name, size });
+    // `hardData`: the browser's own run of the gate on this file's text (shared/hard-data.js).
+    const hardData = typeof f?.hardData === 'boolean' ? f.hardData : undefined;
+    accepted.push({ name, size, ...(sha256 ? { sha256 } : {}), ...(hardData === undefined ? {} : { hardData }) });
     totalBytes += size;
   }
   // The preview lists these in the order the run will process them.
@@ -1280,7 +1287,13 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
   const keyFactsReread = new Map();
   const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model, keyFacts: keyFactsReread });
   const priced = accepted.filter(f => !noCall.has(f.name));
-  const kfMode = (f) => { const v = keyFactsReread.get(f.name); return v === 'on' ? 'on' : 'maybe'; };
+  const kfMode = (f) => {
+    const v = keyFactsReread.get(f.name);
+    if (v === 'on') return 'on';
+    if (f.hardData === true) return 'on';
+    if (f.hardData === false) return 'off';
+    return 'maybe';   // no bytes were read (a PDF): the dear bound covers a data source
+  };
   const perFile = priced.map(f => estimateOneFile({ f, promptFiles, index, today, price, model, keyFacts: kfMode(f) }));
 
   // The SAME files, the SAME code, against an EMPTY domain. This is what makes

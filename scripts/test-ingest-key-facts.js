@@ -578,17 +578,26 @@ section('11. second audit: no $0 quote before a spend, exact estimates, one try 
   const ed = await estimate(D1.d, 'essay2.md', PROSE_SRC, D1.sha256);
   ok(ed.files.noCall.some((x) => x.name === 'essay2.md' && x.reason === 'unchanged') && !ed.files.keyFactsReread.includes('essay2.md'), 'D: after: the estimate is exact, $0, even with no raw copy');
 
-  // E. A reading that wrote no Key Facts: one more offer, then marked (never a loop).
+  // E. ONE reading, whatever it wrote (owner): marked, said honestly, and the promise holds.
   const E1 = await legacy('plan5', DATA_SRC);
   calls.summaryOnly = true; calls.n = 0;
-  await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
-  eq(calls.n, 1, 'E: the first reading ran');
-  eq((await ingest.planRepeatIngest(E1.d.name, E1.sha256, M)).kind, 'key-facts', 'E: it wrote no Key Facts, so it is offered once more');
+  const e1 = await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
+  eq(calls.n, 1, 'E: the one reading ran');
+  ok(e1.warnings.some((w) => /found no figures to add to a Key Facts section/.test(w) && /next re-ingest with this model makes no AI call/.test(w)), 'E: it wrote none, and the notice says so');
+  eq((await ingest.planRepeatIngest(E1.d.name, E1.sha256, M)).kind, 'nothing', 'E: it is marked whatever it wrote: no second offer');
   calls.n = 0;
-  await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
-  eq(calls.n, 1, 'E: the second reading ran');
-  eq((await ingest.planRepeatIngest(E1.d.name, E1.sha256, M)).kind, 'nothing', 'E: and then it is marked whatever it wrote');
+  const e2 = await quiet(() => ingestFile(E1.d.name, sourceFile('plan5.md', DATA_SRC), 'plan5.md', true, null, { llm: reply('plan5'), buildModel: M }));
+  ok(calls.n === 0 && e2.nothingToChange === true, 'E: the promise holds: the next press makes no AI call');
   calls.summaryOnly = false;
+
+  // 2b. The dialog's "already read it on <date>" is the last READING, not the no-call record.
+  const Pd = await legacy('dated', PROSE_SRC);
+  const firstRead = (await readManifest(Pd.d.name)).filter((r) => r.completed).pop();
+  await new Promise((r) => setTimeout(r, 15));
+  await quiet(() => ingestFile(Pd.d.name, sourceFile('dated.md', PROSE_SRC), 'dated.md', true, null, { llm: reply('dated'), buildModel: M }));
+  const recs = (await readManifest(Pd.d.name)).filter((r) => r.completed);
+  ok(recs[recs.length - 1].noCall === true, '2b: CONTROL: the no-call press wrote its record');
+  eq((await ingest.planRepeatIngest(Pd.d.name, Pd.sha256, M)).previous.ingestedAt, firstRead.ingestedAt, '2b: "already read it on" is the date of the reading');
 
   // B. A marker lost in a sync, with the summary's Key Facts on disk: no second reading.
   const B1 = await legacy('synced', DATA_SRC);
@@ -619,6 +628,32 @@ section('11. second audit: no $0 quote before a spend, exact estimates, one try 
   ok(rd.plan && rd.plan.kind === 'key-facts' && !rd.plan.gateUnknown, 'F: the 409 plan reads the upload: a data source is a known Key Facts reading');
   ok(rd.plan && rd.plan.estimate && Number(rd.plan.estimate.usdHigh) > 0, 'F: and it carries its estimate, so the dialog can say "about $X"', JSON.stringify(rd.plan && rd.plan.estimate));
   await new Promise((r) => server.close(r));
+
+  // 2a. A prose-only wiki's estimate does not change: the browser runs the same gate.
+  const shared = await import('../src/public/next/shared/hard-data.js');
+  ok(shared.sourceHasHardData === ingest.sourceHasHardData, '2a: ONE gate: the browser module is the function the server runs');
+  const pe = await estimate(makeDomain(), 'essay-new.md', PROSE_SRC, undefined);
+  const peKnown = await quiet(() => q.estimateIngestQueueCost(makeDomain().name, [{ name: 'essay-new.md', size: Buffer.byteLength(PROSE_SRC), hardData: false }]));
+  const deKnown = await quiet(() => q.estimateIngestQueueCost(makeDomain().name, [{ name: 'plan-new.md', size: Buffer.byteLength(DATA_SRC), hardData: true }]));
+  const offOne = one('off'), onOne = one('on');
+  ok(Math.abs(peKnown.estimate.usdHigh - peKnown.estimate.usdLow) < 1e-9 || peKnown.estimate.usdHigh < pe.estimate.usdHigh, '2a: a .md the browser read as prose: no Key Facts range', JSON.stringify(peKnown.estimate));
+  ok(peKnown.estimate.usdHigh < pe.estimate.usdHigh, '2a: CONTROL: without the browser\'s answer (a PDF) the high carries the allowance');
+  ok(deKnown.estimate.usdLow > peKnown.estimate.usdLow, '2a: a data file the browser read as data carries it in both bounds');
+  void offOne; void onOne;
+
+  // 3. The allowance covers the largest single-pass data reply measured.
+  ok(qt.estimateOneFile({ f: { name: 'p.md', size: 7000 }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-11-14', price: llmMod.getModelPrice('gemini-3.5-flash-lite'), model: 'gemini-3.5-flash-lite', keyFacts: 'on' }).outputTokens >= 3982,
+    '3: Gemini 3.5 Flash Lite: the quoted output covers the measured 3,982');
+  ok(qt.estimateOneFile({ f: { name: 'p.md', size: 7000 }, promptFiles: { entities: [], concepts: [] }, index: '', today: '2026-11-14', price: llmMod.getModelPrice('claude-haiku-5-5'), model: 'claude-haiku-5-5', keyFacts: 'on' }).outputTokens >= 11806,
+    '3: Haiku 5.5: the quoted output covers the measured 11,806');
+
+  // 4. `.PDF` in capitals is read as a PDF by both readers.
+  const pdfPath = path.join(TMP_ROOT, 'notreally.PDF');
+  writeFileSync(pdfPath, 'plain text, not a PDF', 'utf8');
+  let asText = null;
+  try { asText = await ingest.extractText(pdfPath); } catch { asText = null; }
+  ok(asText !== 'plain text, not a PDF', '4: extractText treats .PDF as a PDF (it does not return the bytes as text)');
+  eq(await ingest.sourceTextForGate(pdfPath, 'notreally.PDF'), null, '4: and so does the gate reader (both case-insensitive)');
 
   // F4. The batch row says why the file gets one more reading.
   const { queueRowNote } = await import('../src/public/next/shared/ingest-queue-logic.js');

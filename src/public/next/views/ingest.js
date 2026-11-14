@@ -128,6 +128,7 @@ import {
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
   computeQueueStatusCounts,
 } from '../shared/ingest-queue-logic.js';
+import { sourceHasHardData } from '../shared/hard-data.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 // Context's one-shot "open this project on your next arrival" request (v3.65.2,
 // I2) — the SAME export views/domains.js already imports, for the same reason
@@ -3477,7 +3478,7 @@ async function refreshSingleEstimate(token) {
     const res = await fetch(QUEUE_API + '/estimate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain, files: [{ name: file.name, size: file.size }] }),
+      body: JSON.stringify({ domain, files: [await withHardData({ name: file.name, size: file.size }, file)] }),
     });
     if (res.ok) body = await res.json();
   } catch { body = null; }
@@ -3818,6 +3819,27 @@ function resetQueueSelection(token) {
   render(token);
 }
 
+// Does this file carry hard data? The server's own gate (shared/hard-data.js), on the
+// same first 80,000 characters it will read. Only for text files: a PDF's text is not
+// known here, so its estimate stays the upper bound. null when it cannot be told.
+const queueFileHardData = new WeakMap();
+async function fileHardData(file) {
+  try {
+    if (!file || typeof file.text !== 'function' || !/\.(md|txt)$/i.test(String(file.name || ''))) return null;
+    if (queueFileHardData.has(file)) return queueFileHardData.get(file);
+    const v = sourceHasHardData((await file.text()).slice(0, 80000));
+    queueFileHardData.set(file, v);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+async function withHardData(entry, file) {
+  const v = await fileHardData(file);
+  return typeof v === 'boolean' ? { ...entry, hardData: v } : entry;
+}
+
 // A file's sha256 as lowercase hex, or null when it cannot be computed here (no Web
 // Crypto, an unreadable file). Cached per File object, so a re-estimate does not re-read
 // it. A null only means the file is priced, the safe direction.
@@ -3850,12 +3872,13 @@ async function startQueueSelection(token) {
     // server can price at $0 a file that will finish without an AI call.
     // One at a time: a large batch is never held in memory at once.
     const hashes = [];
-    for (const f of files) hashes.push(await queueFileSha256(f));
+    const hard = [];
+    for (const f of files) { hashes.push(await queueFileSha256(f)); hard.push(await fileHardData(f)); }
     if (!isCurrentMount(token)) return;
     const body = {
       domain: state.domain,
       overwrite: !!state.queueOverwriteInput,
-      files: files.map((f, i) => (hashes[i] ? { name: f.name, size: f.size, sha256: hashes[i] } : { name: f.name, size: f.size })),
+      files: files.map((f, i) => ({ name: f.name, size: f.size, ...(hashes[i] ? { sha256: hashes[i] } : {}), ...(typeof hard[i] === 'boolean' ? { hardData: hard[i] } : {}) })),
     };
     const res = await fetch(QUEUE_API + '/estimate', {
       method: 'POST',
