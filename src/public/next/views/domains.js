@@ -7899,7 +7899,36 @@ async function loadSemanticQuote(slug, token) {
   if (isCurrentMount(token)) render(token);
 }
 
+/**
+ * While the duplicate row is working out the cost, ask the server once a second how
+ * far its pass over the page names is (GET semantic-dupes/progress: free, starts
+ * nothing). Stops by itself when the row no longer waits.
+ */
+let countProgressTimer = null;
+function watchCountProgress() {
+  const s = activeSemanticScan();
+  const waiting = state.busyKey === 'semanticDupesEstimate' || (!!state.semanticQuoteLoading) || !!(s && s.counting);
+  const slug = state.activeSlug;
+  if (!waiting || !slug) {
+    if (countProgressTimer) { clearInterval(countProgressTimer); countProgressTimer = null; }
+    if (state.countProgress) state.countProgress = null;
+    return;
+  }
+  if (countProgressTimer) return;
+  const token = myMountToken;
+  countProgressTimer = setInterval(() => {
+    if (!isCurrentMount(token) || slug !== state.activeSlug) { clearInterval(countProgressTimer); countProgressTimer = null; return; }
+    fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/progress').then((p) => {
+      if (!p || !p.counting || slug !== state.activeSlug || !countProgressTimer) return;
+      const before = state.countProgress && state.countProgress.percent;
+      state.countProgress = { slug, percent: Number(p.percent) || 0 };
+      if (before !== state.countProgress.percent) render(token);
+    }).catch(() => { /* progress is optional */ });
+  }, 1000);
+}
+
 function afterHealthPaint() {
+  watchCountProgress();
   reviewDesk.afterPaint();
   compareAll.afterPaint(activeSemanticScan() && activeSemanticScan().coverage);
   quoteWhenVisible();
@@ -8688,7 +8717,11 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
   let reading = compareAll.reading(state.activeSlug);
   if (reading) { /* the job says where it is */ }
   else if (running) reading = p ? 'Comparing ' + n0(p.processed) + ' of ' + n0(p.total) + '…' : 'Comparing…';
-  else if (estimating || quoting || counting) reading = 'Working out the cost…';
+  else if (estimating || quoting || counting) {
+    // On a large domain the pass over the page names takes seconds: say how far it is.
+    const cp = state.countProgress && state.countProgress.slug === state.activeSlug ? state.countProgress.percent : 0;
+    reading = cp > 0 ? 'Working out the cost… ' + cp + '%' : 'Working out the cost…';
+  }
   else if (!c) reading = 'No pairs compared yet';
   else if (c.total === 0) reading = 'No two page names look alike';
   else if (c.left === 0) reading = c.total === 1 ? 'The 1 pair was compared' : 'All ' + n0(c.total) + ' pairs compared';
@@ -8711,6 +8744,10 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
     leadHtml: estimating ? buttonRingHtml() : icon('sparkles', 12),
     label, cost: estimating ? '' : cost,
   });
+  // Past the pass's limit the list is the most alike pairs only, and the row says so.
+  const capNote = est && est.capped && Number.isInteger(est.foundPairs) && c
+    ? '<div class="dm-lane-note" data-row-key="compare-capped">This domain has ' + n0(est.foundPairs) + ' look-alike pairs. The Curator works on the ' + n0(c.total) + ' most alike.</div>'
+    : '';
   const failed = s && s.failedPairs > 0 && !s.failedAll
     ? '<div class="dm-lane-note" data-row-key="compare-failed">' + n0(s.failedPairs) + (s.failedPairs === 1 ? ' pair' : ' pairs') + ' could not be compared because the AI call failed. They will be tried again next time.</div>'
     : '';
@@ -8725,7 +8762,7 @@ function renderCompareRow(runsOn, busy, crossMountBusy) {
     bodyHtml: canForget ? '<div class="dm-plan-actions" data-row-key="sem-reset"><button class="btn btn-secondary btn-xs" id="dm-semantic-reset-btn"' + ((busy || (s && s.counting) || compareAll.running(state.activeSlug)) ? ' disabled' : '') + '>Forget all comparisons</button></div>' : '',
   });
   const arrivals = state.compareArrivals && state.compareArrivals.slug === state.activeSlug ? state.compareArrivals.count : 0;
-  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + failed + compareAll.line(state.activeSlug, arrivals);
+  return (canForget ? row : row.replace('<summary class="', '<summary tabindex="-1" class="')) + stack + capNote + failed + compareAll.line(state.activeSlug, arrivals);
 }
 
 function renderSuggestRow(key, action, labelText, busy, crossMountBusy, runsOn) {
@@ -10409,7 +10446,9 @@ async function mergeOneSemanticPair(slug, pair, onSettled) {
         // resolvePairsTouching.
         const alsoResolved = resolvePairsTouching(
           scan, { folder: pair.removeFolder, slug: pair.removeSlug }, pair);
-        settled = { merged: true, alsoResolved };
+        // Links to the deleted page that name a heading or block the kept page does not show.
+        const anchorsUnresolved = result.links && Number.isInteger(result.links.anchorsUnresolved) ? result.links.anchorsUnresolved : 0;
+        settled = { merged: true, alsoResolved, anchorsUnresolved };
       }
     }
   } catch (err) {

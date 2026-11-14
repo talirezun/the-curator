@@ -8248,7 +8248,7 @@ This is what makes health usable on a large or shared brain with **hundreds or t
 
 **The pattern for an AI action is always the same:** press → a question under the row names exactly what is sent and what it costs → confirm → the AI works, counting on the button (*Looking… 12 of 300*) → **you see a plan**, headed *Nothing is written yet.* → **Add these links** or **Apply** → the wiki is checked again so you watch the counts drop.
 
-**Where the cost on Compare comes from.** It needs a pass over every page name, about 18 seconds on 3,500 pages. So a domain nobody compares never pays for it: the pass runs when that row is on screen. While it runs the row says *Working out the cost…* and the button waits. What the question then shows is read again when you press, so it is true at that moment. If a merge changes the figures, the row says *About 500 of 2,108 pairs compared* until the count lands, in place, and the button keeps working. After a merge that count needs no pass over every page name, and a merge does not make the kept page's remembered answers lapse: text moved under `## Merged from` is not part of what the AI reads as its opening.
+**Where the cost on Compare comes from.** It needs a pass over every page name: under a second on 3,500 pages, about 12 seconds on 18,600 (it used to be 16 seconds and 5 minutes), and the rest of the app keeps answering meanwhile. On a large domain the row counts up while it works (*Working out the cost… 45%*). When more than 100,000 pairs of names look alike, the comparison works on the 100,000 most alike, and the row says so (*This domain has 249,351 look-alike pairs. The Curator works on the 100,000 most alike.*). So a domain nobody compares never pays for it: the pass runs when that row is on screen. While it runs the row says *Working out the cost…* and the button waits. What the question then shows is read again when you press, so it is true at that moment. If a merge changes the figures, the row says *About 500 of 2,108 pairs compared* until the count lands, in place, and the button keeps working. After a merge that count needs no pass over every page name, and a merge does not make the kept page's remembered answers lapse: text moved under `## Merged from` is not part of what the AI reads as its opening.
 
 This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
 
@@ -8336,7 +8336,7 @@ All four cases collapse to the same canonical slug after the scanner's normalisa
 3. **Press Merge N on the row**, and answer its question. The Curator:
    - Adds each variant's bullets to the same-named sections of the canonical file, without repeats
    - Adds everything else the canonical file lacks under `## Merged from <variant>` ([what a merged page looks like](#what-a-merged-page-looks-like))
-   - **Repoints every `[[link]]` in the domain that pointed at a variant, onto the canonical slug**
+   - **Repoints every link in the domain that pointed at a variant onto the canonical page** ([which links](#which-links-a-merge-repoints))
    - Deletes the variant files from disk
 4. **The scan re-runs.** The Hyphen variants count drops to zero — and, because the links were repointed, it does not leave a pile of new broken links behind it.
 
@@ -8410,11 +8410,29 @@ flowchart TD
 Good to know:
 
 - **Headings move down a level under `## Merged from`** (`## Enforcement` becomes `### Enforcement`), so a later ingest treats the block as one section and leaves it alone. Nothing inside a code block changes.
+- **Links to a heading or a block of the deleted page still work** in almost every case: the heading is on the kept page now, one level down, and a block id (`^abc`) moves as written. When a link names a heading or block the kept page does not show, the merge's outcome says how many (*2 links name a heading or block the kept page may not have.*).
 - **Merging twice repeats nothing.**
 - **A bullet with its own words stays, even when its link is already listed.** `- [[alice]] left in 2005` goes under `## Merged from` if the section has `- Founded by [[alice]]`.
 - **The removed page's `created` and `updated` dates are not carried.** The kept page keeps its own.
 - **The text is moved, not rewritten.** `## Merged from` can read like two pages side by side, and tidying it is yours to do.
 - **A later ingest of the same page follows the [ingest rules](#when-the-ai-reuses-a-page-by-its-exact-name)**: it adds what is mostly new to the kept page and does not replace its text.
+
+#### Which links a merge repoints
+
+Every link that names the deleted page, in every form an Obsidian vault or a plain markdown folder writes, now names the kept page. The heading, block and display text stay as you wrote them:
+
+| Before (the deleted page is `old`) | After (the kept page is `kept`) |
+|---|---|
+| `[[old]]`, `[[old\|Alias]]`, `[[entities/old]]` | `[[kept]]`, `[[kept\|Alias]]`, `[[kept]]` |
+| `[[old#Heading]]`, `[[old#^block-id]]`, `[[old#Heading\|Alias]]` | `[[kept#Heading]]`, `[[kept#^block-id]]`, `[[kept#Heading\|Alias]]` |
+| `![[old]]`, `![[old#Heading]]` (embeds) | `![[kept]]`, `![[kept#Heading]]` |
+| `[text](old.md)`, `[text](../entities/old.md#anchor)`, `[text](entities/old.md "title")` | the same link to `kept.md`, written the same way (relative stays relative) |
+| `[text](My%20Old.md)`, `[text](<My Old.md>)` | encoded stays encoded, angle brackets stay |
+| `[label]: ../entities/old.md` (a reference definition) | `[label]: ../entities/kept.md` |
+| a property in the page's frontmatter, such as `related: "[[old]]"` | `related: "[[kept]]"`; nothing else in the frontmatter changes |
+| an Obsidian canvas: a card showing `entities/old.md`, and links written in a text card | the card shows `entities/kept.md`; the text card's links follow |
+
+**Never changed:** a link inside a code block or inline code (`` `[[old]]` ``), which is an example rather than a link, web addresses, a different page with a similar name, and anything in `.obsidian`, `.trash` or another dot-folder. A bare `[[old]]` that reaches a different page of the same name in another folder (Health reads `entities/` first, then `concepts/`) stays, because it never named the deleted page. Every file a merge changes, canvases included, is copied first, so **Undo** in Recent changes puts it back.
 
 **Merges done on earlier versions.** Before this fix a merge used the longer page as the base and carried over only the other page's bullets from eleven named sections. The other page's opening paragraph, its prose, tables, code blocks and any other section were not kept. If the page you chose to delete was the longer one, the page you kept lost its own title, frontmatter and prose, and the surviving file held the deleted page's text under the kept name. That text is not in your wiki any more and the app cannot bring it back. It can be recovered only from git history, and only if you use GitHub Sync and a sync committed the pages before the merge: a git client pointed at your knowledge base folder can show the earlier version of each file. Undo in Recent changes covers only changes made after it shipped, not these.
 

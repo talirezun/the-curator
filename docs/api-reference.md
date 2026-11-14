@@ -2331,6 +2331,14 @@ With `?quick=1` it returns `{ok: true, hasChecks, pairs}` with **no candidate pa
 
 ---
 
+## GET /api/health/:domain/semantic-dupes/progress
+
+**New 2026-11-14.** How far the pass over the page names is while one runs (the free, slow part of Find duplicates: about 12 s on 18,600 pages): `{ok: true, counting: true, done, total, percent}`, where `done` and `total` count pairs of names considered and `percent` stops at 99; `{ok: true, counting: false}` when no pass runs for this domain. It starts nothing and reads nothing from disk. The view polls it once a second while the row reads "Working out the cost…".
+
+**Past 100,000 candidate pairs** (a domain where a few words are in thousands of names) the pass keeps the 100,000 most alike, by the same ranking, and `/estimate` and `/status` carry `capped: true` and `foundPairs` (how many it found). Below that the list is exactly what it always was.
+
+---
+
 ## GET /api/health/:domain/semantic-dupes/families
 
 READ-ONLY, no LLM call, no candidate pass. The open pairs (remembered `yes`, still applying, not dismissed) grouped by the pages they share. **A~B and B~C say nothing about A~C**, so each page states what is known about that exact pair with the page that stays.

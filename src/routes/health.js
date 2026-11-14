@@ -20,6 +20,7 @@ import {
   estimateSemanticDuplicateScan,
   scanSemanticDuplicates,
   semanticScanStatus,
+  semanticCountProgress,
   semanticRememberedPairs,
   semanticLastFigures,
   estimateBrokenLinkFix,
@@ -374,6 +375,18 @@ router.get('/:domain/semantic-dupes/status', async (req, res) => {
   } catch (err) {
     if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[semantic-dupes status]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// How far the pass over the page names is (the slow, free part of Find duplicates on
+// a large domain). Starts nothing and reads nothing from disk.
+router.get('/:domain/semantic-dupes/progress', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    res.json({ ok: true, ...semanticCountProgress(domain) });
+  } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 });

@@ -642,6 +642,8 @@ async function liveCandidates(domain, { reconcile = false } = {}) {
         truncated: false,
         totalCandidates: filtered.kept.length,
         dismissed: filtered.dismissed,
+        // A list that was cut at the pass's limit stays a cut list.
+        ...(memo.result.capped ? { capped: true, foundPairs: memo.result.foundPairs } : {}),
       };
       candidateMemo = { domain, sig, result, ranked, pages: change.now, figuresFrom: 'memo-filtered' };
       return result;
@@ -650,20 +652,37 @@ async function liveCandidates(domain, { reconcile = false } = {}) {
   // ONE PASS AT A TIME per list. A press during the first count asked for a second pass
   // of about 18 s over the same names, on the thread that answers everything else.
   if (candidateInFlight && candidateInFlight.domain === domain && candidateInFlight.sig === sig) return candidateInFlight.promise;
+  const flight = { domain, sig, promise: null, progress: null };
   const promise = (async () => {
     candidateFullPasses++;
-    const { ranked, ...result } = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER, { includeRanked: true });
+    // How far the pass over the page names is, for GET semantic-dupes/progress: on
+    // 20,000 pages it is several seconds, and the row says how far.
+    const onProgress = (p) => { flight.progress = { done: p.done, total: p.total, pages: p.pages }; };
+    const { ranked, ...result } = await findSemanticCandidatePairs(domain, Number.MAX_SAFE_INTEGER, { includeRanked: true, onProgress });
     const pages = new Set([...entities.map((f) => `entities/${f.slice(0, -3)}`), ...concepts.map((f) => `concepts/${f.slice(0, -3)}`)]);
     candidateMemo = { domain, sig, result, ranked, pages, figuresFrom: 'full-pass' };
     return result;
   })();
-  const flight = { domain, sig, promise };
+  flight.promise = promise;
   candidateInFlight = flight;
   try {
     return await promise;
   } finally {
     if (candidateInFlight === flight) candidateInFlight = null;
   }
+}
+
+/**
+ * How far a pass over this domain's page names is, while one runs: `{counting: true,
+ * done, total, percent}` (pairs of names considered), else `{counting: false}`. Free:
+ * it reads what the running pass last reported and starts nothing.
+ */
+export function semanticCountProgress(domain) {
+  const f = candidateInFlight;
+  if (!f || f.domain !== domain) return { counting: false };
+  const p = f.progress;
+  if (!p || !(p.total > 0)) return { counting: true, done: 0, total: 0, percent: 0 };
+  return { counting: true, done: p.done, total: p.total, percent: Math.min(99, Math.floor((p.done / p.total) * 100)) };
 }
 
 /** Where the list on hand came from, for the coverage a route reports. */
@@ -782,7 +801,7 @@ export async function newPagesToCompare(domain, pageKeys) {
  * findSemanticCandidatePairs stays free of both. No provider call and no write.
  */
 async function planSemanticScan(domain, maxPairs, readOpening, candidateOpts) {
-  const { pairs: live, pageCount } = await liveCandidates(domain, candidateOpts);
+  const { pairs: live, pageCount, capped, foundPairs } = await liveCandidates(domain, candidateOpts);
   let info = null;
   try { info = getProviderInfo(); } catch { info = null; }
   const checks = await loadDuplicateChecks(domain);
@@ -798,7 +817,8 @@ async function planSemanticScan(domain, maxPairs, readOpening, candidateOpts) {
     if (++work >= 2000) { work = 0; await new Promise((resolve) => setImmediate(resolve)); }
   }
   const { ordered, recentNewPages } = newPagesFirst(toCheck, await loadRecentNewPages(domain));
-  return { live, pageCount, toCheck: ordered, remembered, checked, send: ordered.slice(0, maxPairs), recentNewPages, info };
+  return { live, pageCount, toCheck: ordered, remembered, checked, send: ordered.slice(0, maxPairs), recentNewPages, info,
+    capped: capped ? { capped: true, foundPairs } : {} };
 }
 
 /**
@@ -850,6 +870,7 @@ export async function semanticScanStatus(domain, maxPairs = SEMANTIC_DUPE_DEFAUL
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
     recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
+    ...plan.capped,
   };
 }
 
@@ -877,6 +898,7 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, maxPairs),
     recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
+    ...plan.capped,
     estimatedTokens,
     ...nextRunPrice(provider, model, plan.send.length),
     provider,
@@ -945,6 +967,7 @@ export async function estimateCompareAll(domain) {
     ...coverageFields(plan.live.length, plan.checked, plan.remembered.length, pairs),
     recentNewPages: plan.recentNewPages,
     ...candidateFigures(domain),
+    ...plan.capped,
     ...compareAllCost(provider, model, pairs),
     provider,
     model,

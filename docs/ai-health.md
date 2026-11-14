@@ -240,7 +240,7 @@ The removed page's opening paragraph.
 | Title, opening paragraph, prose, tables, code blocks, numbered lists, quotes, sections with no match | Under `## Merged from <page>`, whole and in order. A table or code block is never split |
 | Anything the kept page already holds, line for line | Left out, so merging twice repeats nothing |
 
-**One thing changes in moved text: heading levels.** Under `## Merged from`, `# Title` and `## Section` become `###`, and deeper headings drop one level. They have to: a later ingest treats a `## X` as a section its own `## X` can replace, and a stray `# Title` would end the block early. Under one heading the moved text outlives later ingests. Lines inside a code block are never changed. Links to the deleted page are repointed everywhere, moved text included.
+**One thing changes in moved text: heading levels.** Under `## Merged from`, `# Title` and `## Section` become `###`, and deeper headings drop one level. They have to: a later ingest treats a `## X` as a section its own `## X` can replace, and a stray `# Title` would end the block early. Under one heading the moved text outlives later ingests. Lines inside a code block are never changed. Links to the deleted page are repointed everywhere, moved text included, in every form: `[[x#Heading]]`, `[[x#^block]]`, embeds, markdown links to the page's file (relative, from the root, encoded) and Obsidian canvas cards, never inside code (see the user guide's *Which links a merge repoints*).
 
 **Which page stays decides the text.** The kept page's title, frontmatter and opening stay at the top, however long the other page is. **Keep this one instead** gives you the other page at the top with this one's text below it.
 
