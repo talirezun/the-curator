@@ -25,6 +25,8 @@ import { renderMcpPage, baseState } from './test-helpers/mcp-page-sandbox.js';
 let passed = 0, failed = 0;
 const ok = (c, l, d) => { if (c) { passed++; console.log(`  ✓ ${l}`); } else { failed++; console.log(`  ✗ ${l}${d !== undefined ? `\n      ${String(d).slice(0, 500)}` : ''}`); } };
 const section = (t) => console.log(`\n${t}`);
+// Local midnight: always "today" on the view's clock, so the sentence reads "since HH:MM" at any hour.
+const startOfToday = () => new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 const page = (over) => renderMcpPage(baseState(over)).html;
 const ov = (html) => html.slice(0, html.indexOf('<div class="cur-section-head"'));
@@ -62,7 +64,7 @@ section('§1 the overview — the deck’s four figures');
 
 section('§2 the stale-connection rule');
 {
-  const withBridge = (b) => withData((d) => { d.tools[0] = { ...d.tools[0], bridges: { count: 1, oldestStartedAt: iso(4 * 3600e3), version: '3.88.0', toolCount: 24, ...b } }; });
+  const withBridge = (b) => withData((d) => { d.tools[0] = { ...d.tools[0], bridges: { count: 1, oldestStartedAt: startOfToday(), version: '3.88.0', toolCount: 24, ...b } }; });
   const same = renderMcpPage(withBridge({ tools: 'same', notice: 'quiet' })).html;
   ok(!/data-mcpi-item="tools-changed"/.test(same) && !/data-mcpi-extra/.test(row(same, 'claude-desktop')),
     'the SAME tools: nothing in Next step, no extra line in its fold');
