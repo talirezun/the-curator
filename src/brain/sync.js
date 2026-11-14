@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { recordKind, mergeRecordFile } from './sync-records.js';
 import { clearStaleLock } from './write-registry.js';
 import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
@@ -376,6 +377,87 @@ async function saveConfig(repoUrl, token, gitDir = null) {
 async function loadConfig() {
   if (!existsSync(currentConfigFile())) return null;
   try { return JSON.parse(await readFile(currentConfigFile(), 'utf8')); } catch { return null; }
+}
+
+// ── Record files keep both computers' records (2026-11-14) ───────────────────
+//
+// `-X theirs` silently dropped this computer's line whenever both computers had
+// appended to the same record file (`.raw-manifest.jsonl`, Health dismissals,
+// log.md, working-state journals). sync-records.js holds the reasons, the merge
+// and why git's `merge=union` was rejected. This runs AFTER git's merge: for each
+// record file BOTH parents changed since the merge base, it recomputes the file
+// from the three committed versions and commits the result as a new commit on
+// top (nothing is amended, nothing pushed is rewritten). A fast-forward has
+// nothing to reconcile. Wiki pages and index.md are never touched here.
+
+/** A committed file's exact bytes, or null when that revision has no such file. */
+async function showBlob(rev, p, opts) {
+  try {
+    const { stdout } = await gitArgv(['show', `${rev}:${p}`], { ...opts, raw: true });
+    return stdout;
+  } catch { return null; }
+}
+
+async function changedSince(base, rev, opts) {
+  const args = base
+    ? ['diff', '--name-only', '-z', '--no-renames', base, rev]
+    : ['ls-tree', '-r', '-z', '--name-only', rev];
+  const { stdout } = await gitArgv(args, opts);
+  return new Set(stdout.split('\0').filter(Boolean));
+}
+
+/**
+ * Re-merges the record files of the merge commit at HEAD. Returns the paths it
+ * rewrote.
+ *
+ * `preMergeHead`: the HEAD this sync's merge started from, so a merge commit
+ * whose first parent is anything else is left alone. `null` is the SELF-HEAL
+ * call at the start of pull(): it reconciles whatever merge commit HEAD is, so a
+ * sync killed between its merge and this step is completed on the next sync
+ * (provided nothing was committed on top since; otherwise the earlier merge is
+ * no longer HEAD and is not revisited). Idempotent: a merge already reconciled
+ * is followed by its own commit, so HEAD is no longer it.
+ *
+ * A file is written only when it still holds exactly what the merge committed.
+ * One the user (or an ingest) has changed since is left alone, so this can never
+ * overwrite work that is not in git yet.
+ */
+async function reconcileRecordFiles(preMergeHead, opts = {}) {
+  let ours; let theirs;
+  try {
+    ours = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^1'], opts)).stdout.trim();
+    theirs = (await gitArgv(['rev-parse', '--verify', '-q', 'HEAD^2'], opts)).stdout.trim();
+  } catch { return []; }
+  if (!ours || !theirs) return [];
+  if (preMergeHead !== null && ours !== preMergeHead) return [];
+  let base = '';
+  try { base = (await gitArgv(['merge-base', ours, theirs], opts)).stdout.trim(); } catch { /* unrelated histories */ }
+
+  const mine = await changedSince(base, ours, opts);
+  const other = await changedSince(base, theirs, opts);
+  const rewritten = [];
+  for (const p of [...mine].filter((x) => other.has(x)).sort()) {
+    const kind = recordKind(p);
+    if (!kind) continue;
+    const o = await showBlob(ours, p, opts);
+    const t = await showBlob(theirs, p, opts);
+    if (o === null || t === null) continue;   // a deletion on one side: git's answer stands
+    const committed = await showBlob('HEAD', p, opts);
+    if (committed === null) continue;
+    const abs = path.join(getDomainsDir(), p);
+    let current = null;
+    try { current = await readFile(abs); } catch { /* removed since */ }
+    if (!current || !current.equals(committed)) continue;   // changed since the merge: not ours to touch
+    const merged = mergeRecordFile(kind, base ? await showBlob(base, p, opts) : null, o, t);
+    if (merged.equals(committed)) continue;
+    await writeFileAtomic(abs, merged);
+    await gitArgv(['--literal-pathspecs', 'add', '--', p], opts);
+    rewritten.push(p);
+  }
+  if (rewritten.length) {
+    await guardedCommit(`Sync: kept both computers' records in ${rewritten.length} file${rewritten.length === 1 ? '' : 's'}`, opts);
+  }
+  return rewritten;
 }
 
 // ── Domains .gitignore ────────────────────────────────────────────────────────
@@ -1099,7 +1181,8 @@ function gitArgv(args, opts = {}) {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0 || (opts.okCodes || []).includes(code)) {
-        resolve({ stdout: Buffer.concat(out).toString('utf8'), code });
+        const buf = Buffer.concat(out);
+        resolve({ stdout: opts.raw ? buf : buf.toString('utf8'), code });
       } else {
         reject(new Error(sanitize(`git ${args[0]} failed: ${Buffer.concat(errOut).toString('utf8')}`)));
       }
@@ -1926,8 +2009,11 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // merge — a page reappearing is visible and fixable, a page vanishing is
     // the thing this whole section exists to prevent — and docs/sync.md says
     // so where the user can read it.
+    const { stdout: localHead } = await git('rev-parse HEAD', { gitDir });
     await git('merge --allow-unrelated-histories --no-edit -X ours FETCH_HEAD',
               { gitDir, timeout: 120000 });
+    // `-X ours` drops the remote side's records the same way; keep both.
+    await reconcileRecordFiles(localHead.trim(), { gitDir });
     await saveConfig(repoUrl, token, adoptedDir);
     invalidateRemoteCache();
     await recordSyncSuccess(gitDir);
@@ -2187,6 +2273,10 @@ export async function pull() {
   await ensureDomainsGitignore();
   const safety = await refreshSyncSafety();
 
+  // Self-heal: a sync killed between its merge and the record step below left
+  // HEAD on an unreconciled merge. Before the auto-save, which would bury it.
+  await reconcileRecordFiles(null);
+
   // Auto-commit local changes so the pull merge succeeds — unchanged,
   // pre-existing behaviour (real content, unrelated to hygiene).
   const { stdout } = await git('status --porcelain');
@@ -2309,6 +2399,10 @@ export async function pull() {
     pullOut = await recoverHygieneMergeConflict(err);
   }
 
+  // Record files both computers appended to: keep both sides' records, which
+  // `-X theirs` just dropped. Before any later commit, while HEAD is the merge.
+  const recordsMerged = await reconcileRecordFiles(preMergeHead);
+
   // NOW it's safe: whatever origin had for these paths has already been
   // merged in (or the recovery above resolved the one conflict shape our
   // own hygiene files can cause), so `git rm --cached` here can no longer
@@ -2357,6 +2451,8 @@ export async function pull() {
     // pre-redesign shell (deleted in v3.41.0; /old now redirects to /) used
     // to read `pruned` only, so this field never affected it while it lived.
     prunedKept: keptLocalContent,
+    // Record files whose records from both computers were kept (sync-records.js).
+    recordsMerged,
     details: pullOut,
   }, safety);
 }
@@ -2749,6 +2845,7 @@ export const __testing = {
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,
+  reconcileRecordFiles,
   isCleanIndexError,
   buildBackupReport,
   recoverHygieneMergeConflict,
