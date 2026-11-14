@@ -1048,6 +1048,15 @@ export function createReviewDesk(d) {
     return moved;
   }
 
+  // A link that named a heading or block of the deleted page now names the kept page;
+  // the outcome says how many find nothing there (health-links.js, anchorsUnresolved).
+  const anchorNote = (out) => {
+    const k = out && Number.isInteger(out.anchorsUnresolved) ? out.anchorsUnresolved : 0;
+    if (k <= 0) return '';
+    return k === 1 ? ' 1 link names a heading or block the kept page may not have.'
+      : ' ' + n0(k) + ' links name a heading or block the kept page may not have.';
+  };
+
   function merge(r) {
     const pair = current(r);
     if (!pair) return undefined;
@@ -1064,7 +1073,7 @@ export function createReviewDesk(d) {
         if (out.gone) { familySettled(r, fam, out.missing, page); return; }
         const links = r.comparison && r.comparison.key === key && r.comparison.data && r.comparison.data.originals
           ? Number(r.comparison.data.originals.remove.linksIn.links) || 0 : 0;
-        const moved = links === 0 ? '' : links === 1 ? ' 1 link moved.' : ' ' + n0(links) + ' links moved.';
+        const moved = (links === 0 ? '' : links === 1 ? ' 1 link moved.' : ' ' + n0(links) + ' links moved.') + anchorNote(out);
         fam.dec[page] = 'merged';
         fam.mergedOrder.push(page);
         r.familyMerged++;
@@ -1076,7 +1085,7 @@ export function createReviewDesk(d) {
       if (out.merged) {
         const links = r.comparison && r.comparison.key === key && r.comparison.data && r.comparison.data.originals
           ? Number(r.comparison.data.originals.remove.linksIn.links) || 0 : 0;
-        const moved = links === 0 ? '' : links === 1 ? ' 1 link moved.' : ' ' + n0(links) + ' links moved.';
+        const moved = (links === 0 ? '' : links === 1 ? ' 1 link moved.' : ' ' + n0(links) + ' links moved.') + anchorNote(out);
         const also = out.alsoResolved ? (out.alsoResolved === 1 ? ' 1 other pair settled.' : ' ' + n0(out.alsoResolved) + ' other pairs settled.') : '';
         r.outcome = { tone: 'success', html: 'Merged ' + name(pair.removeSlug) + ' into ' + name(pair.keepSlug) + '.' + moved + also,
           spoken: 'Merged ' + pair.removeSlug + ' into ' + pair.keepSlug + '.' + moved + also };

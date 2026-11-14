@@ -176,7 +176,7 @@ export const fixWikiIssueDefinition = {
     "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, summaryLinkSections, and brokenLinks that already carry a suggestedTarget. " +
     "summaryLinkSections rewrites ONE summary's two link lists only: a page listed twice keeps one line, a concept page filed under 'Entities Mentioned' moves to 'Concepts Introduced or Referenced' (and an entity page the other way); every link stays on the page and nothing else on it changes — the fix refuses to write otherwise (reason: 'link-guard'). Pass { summary } from the scan row. " +
     "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the AI broken-link fixer in the app's Health panel (Domains view), which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
-    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed; the page kept is the one named keep or suggestedSlug, however long the other is, and the deleted page's text moves onto it): tell the user which page disappears before you call them. " +
+    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed in every form: [[x]], [[x#heading]], ![[x]], [text](x.md), canvas cards; the page kept is the one named keep or suggestedSlug, however long the other is, and the deleted page's text moves onto it): tell the user which page disappears before you call them. " +
     "The server checks the claim: a request whose pages are not spellings of one name by the scan's own rule is refused (reason: 'merge-not-related') and nothing is deleted. A hyphenVariants group where only some pages could merge reports fixed: 0 with partial: true, merged and refused. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
@@ -377,11 +377,28 @@ export async function fixWikiIssueHandler(args, storage) {
     ...(result?.undo ? { undo: { ...result.undo, where: 'The Curator app: Wiki health, Recent changes (this computer only)' } } : {}),
     details: result || null,
     report: result?.fixed
-      ? `Fixed 1 ${type} issue in '${domain.value}'.`
+      ? `Fixed 1 ${type} issue in '${domain.value}'.${repointReport(result?.links)}`
       : result?.partial
         ? `PARTLY DONE — merged and deleted ${result.merged.join(', ')} into '${issue?.suggestedSlug}'; ${result.refused.map((r) => `${r.slug} (${r.reason})`).join(', ')} stayed, untouched. Tell the user which pages stayed; do not retry.`
         : noOpReport(type, result?.reason, domain.value, result?.missing),
   };
+}
+
+/**
+ * What a merge did to the links that named the deleted page: every form (a
+ * [[link]], a heading or block link, an embed, a markdown link, a canvas card).
+ * An anchor the kept page shows no heading or block for is named, so the agent
+ * can tell the user rather than report a clean merge.
+ */
+function repointReport(links) {
+  if (!links || !Number.isInteger(links.links) || links.links === 0) return '';
+  const n = links.links;
+  let out = ` Repointed ${n} ${n === 1 ? 'link' : 'links'} in ${links.files} ${links.files === 1 ? 'file' : 'files'} to the page kept.`;
+  const u = links.anchorsUnresolved;
+  if (Number.isInteger(u) && u > 0) {
+    out += ` ${u} of them ${u === 1 ? 'names a heading or block' : 'name a heading or block'} the kept page does not show, so ${u === 1 ? 'it' : 'they'} may no longer open at that place: tell the user.`;
+  }
+  return out;
 }
 
 /**

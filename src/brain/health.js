@@ -38,6 +38,7 @@ import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
 // The text of a merge that deletes a page. Pure; every read, write and delete stays here.
 import { composeMergedPage, findLostLines } from './page-merge.js';
+import { makeRetiredLinkRewriter, anchorResolves, withoutCode, replaceOutsideCode } from './health-links.js';
 import {
   loadDuplicateChecks, pairKey, openingsHash, pageOpening,
   isSpellingVariant, isMergeableSlug, spellingVariantIndexPairs, acronymIndexPairs, nameRelation,
@@ -246,9 +247,11 @@ function crossFolderKey(file) {
   return file.replace(/-/g, '').toLowerCase();
 }
 
-const withoutFences = (content) => fenceRuns(content).filter((r) => !r.fenced).map((r) => r.text).join('');
-const replaceOutsideFences = (content, re, fn) =>
-  fenceRuns(content).map((r) => (r.fenced ? r.text : r.text.replace(re, fn))).join('');
+// "Inside code" has ONE meaning for the scan, the repairs and a merge (health-links.js
+// `codeSegments`: fences, indented blocks and inline spans): a link there is an
+// example, so it is neither counted nor rewritten.
+const withoutFences = withoutCode;
+const replaceOutsideFences = replaceOutsideCode;
 
 /** A scan row, or a request, naming a file under a dot-folder is not ours to edit. */
 const inDotFolder = (rel) => typeof rel === 'string' && rel.split(/[\\/]/).some((seg) => seg.startsWith('.'));
@@ -262,7 +265,8 @@ function normKey(slug) {
 }
 
 /**
- * Every `.md` file under `rootDir`, recursively — the working set for the
+ * Every `.md` file under `rootDir` (or every file ending in `ext`: a merge also
+ * walks `.canvas`), recursively — the working set for the
  * domain-wide link rewrites (`fixSemanticDuplicate`, `applyBrokenLinkFixes`)
  * and for the read-only counters.
  *
@@ -285,7 +289,7 @@ function normKey(slug) {
  * subdirectory of one), and the escaping shape — the symlinked leaf — is
  * the one explicitly checked.
  */
-export async function walkMdFiles(rootDir) {
+export async function walkMdFiles(rootDir, ext = '.md') {
   const out = [];
   async function walk(dir) {
     let entries;
@@ -296,7 +300,7 @@ export async function walkMdFiles(rootDir) {
       // A dot-folder (.obsidian, .trash, .git) belongs to another tool: not a page,
       // not scanned, and never rewritten by a repair or a merge.
       if (e.isDirectory()) { if (!e.name.startsWith('.')) await walk(full); continue; }
-      if (!e.name.endsWith('.md')) continue;
+      if (!e.name.endsWith(ext)) continue;
       if (e.isSymbolicLink()) {
         const rel = path.relative(rootDir, full);
         if (!wikiFile(rootDir, ...rel.split(path.sep))) continue;
@@ -619,10 +623,13 @@ async function scanWikiUncached(domain) {
     }
 
     for (const m of links) {
-      const raw = m[1].trim();
+      // In a table an alias is written `[[x\|alias]]`: the backslash belongs to the pipe.
+      const raw = (m[2] ? m[1].replace(/\\$/, '') : m[1]).trim();
 
-      // Folder-prefix violations (entities/ or concepts/ — summaries/ is intentional)
-      if (raw.startsWith('entities/') || raw.startsWith('concepts/')) {
+      // Folder-prefix violations (entities/ or concepts/ — summaries/ is intentional).
+      // `concepts/x` beside an `entities/x` is not one: the bare name would reach the entity.
+      if (raw.startsWith('entities/')
+        || (raw.startsWith('concepts/') && !entitySlugs.has(raw.slice(9)))) {
         folderPrefixLinks.push({ sourceFile: relPath, linkText: raw });
       }
 
@@ -686,18 +693,18 @@ async function scanWikiUncached(domain) {
   // so "dr.-tali-rezun", "dr-tali-rezun", "talirezun", and "tali-rezun" all
   // collapse to "talirezun" and surface as one variant group.
   const hyphenVariants = [];
-  const seenGroups = new Set();
-  for (let i = 0; i < entityFiles.length; i++) {
-    const stemA = entityFiles[i].slice(0, -3);
-    if (seenGroups.has(stemA)) continue;
-    const group = [stemA];
-    const normA = normKey(stemA);
-    for (let j = i + 1; j < entityFiles.length; j++) {
-      const stemB = entityFiles[j].slice(0, -3);
-      if (seenGroups.has(stemB)) continue;
-      const normB = normKey(stemB);
-      if (normA === normB) { group.push(stemB); seenGroups.add(stemB); }
-    }
+  // One pass, grouped by key: the old pairwise loop recomputed normKey for every
+  // (i, j), O(n²) — 7.6 s of one uninterrupted block on 9,500 entities. Groups come
+  // out in the order of their first member and members in file order, exactly as the
+  // pairwise loop produced them (pinned by scripts/test-health-large-wiki.js).
+  const variantGroups = new Map(); // normKey → stems, file order
+  for (const f of entityFiles) {
+    const stem = f.slice(0, -3);
+    const key = normKey(stem);
+    const group = variantGroups.get(key);
+    if (group) group.push(stem); else variantGroups.set(key, [stem]);
+  }
+  for (const group of variantGroups.values()) {
     if (group.length > 1) {
       // Canonical selection (v3.0.1-beta.3): prefer slugs without an
       // honorific prefix (dr.-tali-rezun → tali-rezun); among the rest,
@@ -712,7 +719,6 @@ async function scanWikiUncached(domain) {
         return diff !== 0 ? diff : a.length - b.length;
       })[0];
       hyphenVariants.push({ files: group, suggestedSlug: canonical });
-      seenGroups.add(stemA);
     }
   }
 
@@ -721,6 +727,16 @@ async function scanWikiUncached(domain) {
   // pages now live and which injectSummaryBacklinks now reads too), but X's
   // Related section has no [[summaries/summarySlug]]
   const missingBacklinks = [];
+  // The first file in listing order whose name, hyphens and case aside, is the key:
+  // what the old per-bullet walk over every entity and concept found, in one lookup.
+  const dashlessIndex = (files) => {
+    const m = new Map();
+    for (const f of files) { const k = f.replace(/-/g, '').toLowerCase(); if (!m.has(k)) m.set(k, f); }
+    return m;
+  };
+  const entityDashless = dashlessIndex(entityFiles);
+  const conceptDashless = dashlessIndex(conceptFiles);
+  const relatedLinksOf = new Map(); // targetRel → Set of Related link texts, or null
   for (const sf of summaryFiles) {
     const summarySlug = sf.slice(0, -3);
     const summaryAbs = wikiFile(wikiDir, 'summaries', sf);
@@ -742,29 +758,31 @@ async function scanWikiUncached(domain) {
       if (entitySlugs.has(name))      targetRel = `entities/${name}.md`;
       else if (conceptSlugs.has(name)) targetRel = `concepts/${name}.md`;
       else {
-        const norm = name.replace(/-/g, '').toLowerCase();
-        for (const f of entityFiles) {
-          if (f.replace(/-/g, '').toLowerCase() === norm + '.md') { targetRel = `entities/${f}`; break; }
-        }
-        if (!targetRel) {
-          for (const f of conceptFiles) {
-            if (f.replace(/-/g, '').toLowerCase() === norm + '.md') { targetRel = `concepts/${f}`; break; }
-          }
-        }
+        const norm = name.replace(/-/g, '').toLowerCase() + '.md';
+        if (entityDashless.has(norm)) targetRel = `entities/${entityDashless.get(norm)}`;
+        else if (conceptDashless.has(norm)) targetRel = `concepts/${conceptDashless.get(norm)}`;
       }
       if (!targetRel) continue; // broken link — handled separately
       // One row per (summary, page) even when both sections list it.
       if (seenTargets.has(targetRel)) continue;
       seenTargets.add(targetRel);
 
-      const targetAbs = wikiFile(wikiDir, targetRel);
-      if (!targetAbs) continue;
-      const targetContent = await readFile(targetAbs, 'utf8');
-      const related = extractBulletsFromSection(targetContent, 'Related');
-      const hasBacklink = related.some(b => {
-        const lm = b.match(/\[\[([^\]]+)\]\]/);
-        return lm && lm[1].trim() === `summaries/${summarySlug}`;
-      });
+      // Each page's Related links are read once per scan, not once per summary
+      // naming it (a page named by 300 summaries was read 300 times).
+      let relatedLinks = relatedLinksOf.get(targetRel);
+      if (relatedLinks === undefined) {
+        const targetAbs = wikiFile(wikiDir, targetRel);
+        if (!targetAbs) { relatedLinksOf.set(targetRel, null); continue; }
+        const targetContent = await readFile(targetAbs, 'utf8');
+        relatedLinks = new Set();
+        for (const b of extractBulletsFromSection(targetContent, 'Related')) {
+          const lm = b.match(/\[\[([^\]]+)\]\]/);
+          if (lm) relatedLinks.add(lm[1].trim());
+        }
+        relatedLinksOf.set(targetRel, relatedLinks);
+      }
+      if (relatedLinks === null) continue;
+      const hasBacklink = relatedLinks.has(`summaries/${summarySlug}`);
       if (!hasBacklink) {
         missingBacklinks.push({ summary: `summaries/${sf}`, entity: targetRel, summarySlug });
       }
@@ -1116,7 +1134,7 @@ async function fixBrokenLink(wikiDir, issue, validTargets = null) {
   const esc = issue.linkText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Allow whitespace inside [[ ... ]] — the scanner trims linkText but the source
   // file may have `[[ Cline]]` or `[[Cline ]]` with stray spaces from LLM output.
-  const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
+  const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\\\?\\|[^\\]]+)?\\]\\]`, 'g');
   const rewritten = replaceOutsideFences(before, re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
   // The ONE reason that genuinely means "already resolved": the target exists,
   // the source file exists, and the link is simply not in it any more.
@@ -1134,8 +1152,10 @@ async function fixFolderPrefixLink(wikiDir, issue) {
   if (!full || !existsSync(full)) return false;
   let content = await readFile(full, 'utf8');
   const before = content;
+  // `[[concepts/x]]` stays when an entity x exists: the bare `[[x]]` would reach it.
+  const entityNames = new Set((await listMd(wikiDir, 'entities')).map((f) => f.slice(0, -3)));
   content = replaceOutsideFences(content, /\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
-    (_m, _folder, slug, alias) => `[[${slug}${alias || ''}]]`);
+    (m0, folder, slug, alias) => (folder === 'concepts' && entityNames.has(slug.trim()) ? m0 : `[[${slug}${alias || ''}]]`));
   // v3.84.0: `- [[concepts/rag]]` beside `- [[rag]]` becomes a copy — drop it.
   content = dedupRewrittenBullets(before, content);
   if (content !== before) await writeFileAtomic(full, content, 'utf8');
@@ -1228,8 +1248,11 @@ function splitWikiRef(rel) {
  * @returns {Promise<number>} number of files rewritten
  */
 async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
-  const rewriter = retiredLinkRewriter(retired, keepSlug, keepFolder);
-  if (!rewriter) return 0;
+  const none = { files: 0, links: 0, anchors: 0, anchorsUnresolved: 0 };
+  const allFiles = await walkMdFiles(wikiDir);
+  const existing = new Set(allFiles.map((x) => path.relative(wikiDir, x).split(path.sep).join('/')));
+  const rewriter = retiredLinkRewriter(retired, keepSlug, keepFolder, { existing, wikiDir });
+  if (!rewriter) return none;
 
   // Pages that are about to be unlinked are skipped: writing them would be an
   // atomic temp-file + rename immediately before an `rm`.
@@ -1240,20 +1263,44 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
     if (doomedAbs) doomed.push(doomedAbs);
   }
 
-  const allFiles = await walkMdFiles(wikiDir);
-  let changed = 0;
+  const out = { ...none };
+  const anchors = [];
   for (const full of allFiles) {
     const rel = path.relative(wikiDir, full);
     if (rel === 'index.md' || rel === 'log.md') continue;
     if (doomed.some((d) => path.resolve(d) === path.resolve(full))) continue;
     const content = await readFile(full, 'utf8');
-    const rewritten = rewriter.apply(content);
-    if (rewritten !== content) {
-      await writeFileAtomic(full, rewritten, 'utf8');
-      changed++;
+    const result = rewriter.apply(content, rel.split(path.sep).join('/'));
+    out.links += result.links;
+    anchors.push(...result.anchors);
+    if (result.text !== content) {
+      await writeFileAtomic(full, result.text, 'utf8');
+      out.files++;
     }
   }
-  return changed;
+  // An Obsidian canvas names pages by path ("file": "entities/x.md") and its text
+  // cards hold links: both would point at nothing once the page is gone.
+  const canvasFiles = await walkMdFiles(wikiDir, '.canvas');
+  for (const full of canvasFiles) {
+    const content = await readFile(full, 'utf8');
+    const result = rewriter.applyCanvas(content, path.relative(wikiDir, full).split(path.sep).join('/'));
+    out.links += result.links;
+    anchors.push(...result.anchors);
+    if (result.text !== content) {
+      await writeFileAtomic(full, result.text, 'utf8');
+      out.files++;
+    }
+  }
+  // A heading or block on the deleted page is now under `## Merged from` on the kept
+  // one; an anchor the kept page shows nothing for is counted, not guessed at.
+  out.anchors = anchors.length;
+  if (anchors.length) {
+    const keptAbs = wikiFile(wikiDir, keepFolder, `${keepSlug}.md`);
+    let keptText = '';
+    try { keptText = keptAbs ? await readFile(keptAbs, 'utf8') : ''; } catch { keptText = ''; }
+    out.anchorsUnresolved = anchors.filter((x) => !anchorResolves(keptText, x)).length;
+  }
+  return out;
 }
 
 /**
@@ -1262,66 +1309,33 @@ async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
  * the kept page, because the kept page goes through it too (a page often links
  * to its own duplicate). Null when there is nothing to rewrite.
  */
-function retiredLinkRewriter(retired, keepSlug, keepFolder) {
-  if (!Array.isArray(retired) || typeof keepSlug !== 'string' || !keepSlug) return null;
-
-  // A retired page whose slug already equals the survivor's needs no link
-  // rewriting — every `[[slug]]` pointing at it still resolves to the kept
-  // file. The folder-PREFIXED forms still need repointing, which is why the
-  // entry is kept rather than dropped; see the alternation below.
-  const seen = new Set();
-  const slugs = [];
-  for (const r of retired) {
-    if (!r || typeof r.slug !== 'string' || !r.slug) continue;
-    if (seen.has(r.slug)) continue;
-    seen.add(r.slug);
-    slugs.push(r.slug);
-  }
-  if (slugs.length === 0) return null;
-
-  // Match `[[X]]`, `[[entities/X]]`, `[[concepts/X]]`, `[[summaries/X]]`,
-  // with an optional `|alias` suffix that must be preserved verbatim. The
-  // closing `]]` is required immediately after the slug (modulo the padding
-  // below), so `[[google-cloud]]` is never matched by a retired `google`.
+function retiredLinkRewriter(retired, keepSlug, keepFolder, ctx = {}) {
+  // Which forms, and which links count as naming the deleted page: health-links.js.
+  // A retired page whose slug equals the survivor's (concepts/google → entities/google)
+  // still has its folder-prefixed and path forms repointed; a bare [[google]] already
+  // reaches the kept page.
   //
   // ── WHY THE PADDING ALLOWANCE IS LOAD-BEARING, NOT TIDINESS ───────────
   // scanWiki's own link scan does `m[1].trim()` (see the brokenLinks loop),
   // so `[[ dr-tali-rezun ]]` is a LIVE inbound link as far as the user's
-  // Health report is concerned. Without the padding here the repoint simply
-  // did not see it, and the page was deleted anyway: measured on the
-  // single-type `hyphenVariants` path, broken links went 1 -> 2 with a new
-  // `entities/hub.md::dr-tali-rezun` entry. It self-heals under fixAllSafe
-  // ONLY because that runs `brokenLinks` last and the suggestion resolver
-  // happens to recover the slug — an accident of ordering, not coverage,
-  // and the exact masking already labelled at assertion 6.3.
+  // Health report is concerned. Without the padding the repoint simply did not
+  // see it, and the page was deleted anyway: measured on the single-type
+  // `hyphenVariants` path, broken links went 1 -> 2. health-links.js allows
+  // whitespace EXCEPT a newline, precisely what the scanner can see.
   //
-  // `[^\S\n]*` (whitespace EXCEPT newline), not `\s*`, and that is the whole
-  // point: it matches precisely what the scanner can see. The scanner's slug
-  // class is `[^\]|#\n]`, which admits spaces, tabs and \r but never \n — so
-  // `[[foo\n]]` is NOT a link to it, and a `\s*` here would rewrite a
-  // construct the scanner never counted, making the two disagree in the
-  // opposite direction.
-  const WS = '[^\\S\\n]*';
-  const alternation = slugs
-    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|');
-  const linkRe = new RegExp(
-    `\\[\\[${WS}(?:entities/|concepts/|summaries/)?(?:${alternation})${WS}(\\|[^\\]]+)?\\]\\]`,
-    'g'
-  );
   // Wiki convention (CLAUDE.md): links carry no folder prefix EXCEPT
   // summaries, which live in a subfolder Obsidian needs for routing. Rewriting
   // `[[concepts/google]]` to bare `[[google]]` therefore also clears the
   // folder-prefix violation the old link carried.
-  const replacement = keepFolder === 'summaries' ? `summaries/${keepSlug}` : keepSlug;
-
-  return {
-    re: linkRe,
+  return makeRetiredLinkRewriter({
+    retired, keepSlug, keepFolder,
+    existing: ctx.existing || null,
+    wikiDir: ctx.wikiDir,
+    fenceRuns,
     // v3.84.0: after a merge, `- [[old]]` and `- [[keep]]` on one page become
     // two copies of `- [[keep]]` — the rewritten copy goes.
-    apply: (content) => dedupRewrittenBullets(content,
-      replaceOutsideFences(content, linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`)),
-  };
+    dedup: dedupRewrittenBullets,
+  });
 }
 
 /**
@@ -1407,9 +1421,9 @@ async function fixCrossFolderDupe(wikiDir, issue) {
   // crossFolderDupes matches on the hyphen-NORMALISED key, the slug CAN
   // change (concepts/e-mail → entities/email), which breaks the bare form
   // too — measured, 3 broken links. Both cases are repointed here.
-  await repointInboundLinks(wikiDir, [removeRef], keepRef.slug, keepRef.folder);
+  const links = await repointInboundLinks(wikiDir, [removeRef], keepRef.slug, keepRef.folder);
   await rm(removePath);
-  return true;
+  return { ok: true, links };
 }
 
 async function fixHyphenVariant(wikiDir, issue) {
@@ -1463,7 +1477,7 @@ async function fixHyphenVariant(wikiDir, issue) {
   // `tali-rezun` changes the slug, so every `[[dr-tali-rezun]]` in the domain
   // dangled — Health went from 5 issues to 50 on the user's wiki.
   const retired = retiredSlugs.map((s) => ({ folder: 'entities', slug: s }));
-  await repointInboundLinks(wikiDir, retired, canonical, 'entities');
+  const links = await repointInboundLinks(wikiDir, retired, canonical, 'entities');
 
   // Deleted only after the repoint, and re-derived through wikiFile() so the
   // path handed to `rm` has the same provenance as every other path in this
@@ -1475,8 +1489,8 @@ async function fixHyphenVariant(wikiDir, issue) {
   }
   // Part of a group is not a fixed group. It stays on the next scan's list, so the
   // caller hears exactly what moved and what did not, rather than `fixed: 1`.
-  if (refused.length) return { ok: false, partial: true, reason: refused[0].reason, merged: retiredSlugs, refused };
-  return true;
+  if (refused.length) return { ok: false, partial: true, reason: refused[0].reason, merged: retiredSlugs, refused, links };
+  return { ok: true, links };
 }
 
 /**
@@ -1668,13 +1682,15 @@ function describeFixChange(type, issue, s) {
 }
 
 function normaliseFixOutcome(r) {
-  if (typeof r === 'boolean') return { ok: r, reason: null, missing: null, partial: false, merged: null, refused: null };
+  if (typeof r === 'boolean') return { ok: r, reason: null, missing: null, partial: false, merged: null, refused: null, links: null };
   // `missing` rides the same channel as `reason` and for the same purpose: a
   // refusal a caller can act on. It names the `folder/slug` that is gone on
   // the two semanticDupe staleness reasons, and is null everywhere else.
   return {
     ok: !!r?.ok, reason: r?.reason ?? null, missing: r?.missing ?? null,
     partial: !!r?.partial, merged: r?.merged ?? null, refused: r?.refused ?? null,
+    // A merge's repoint: {files, links, anchors, anchorsUnresolved}. Null elsewhere.
+    links: r?.links ?? null,
   };
 }
 
@@ -1716,10 +1732,13 @@ async function fixIssueNow(domain, type, issue) {
     if (type === 'orphanLink')        raw = await fixOrphanLink(wikiDir, issue);
     if (type === 'semanticDupe')      raw = await fixSemanticDuplicate(wikiDir, issue);
     if (type === 'summaryLinkSections') raw = await fixSummaryLinkSections(wikiDir, issue);
-    const { ok, reason, missing, partial, merged, refused } = normaliseFixOutcome(raw);
+    const { ok, reason, missing, partial, merged, refused, links } = normaliseFixOutcome(raw);
     return {
       fixed: ok ? 1 : 0,
       total: 1,
+      // What the merge did to links in other pages: the outcome names anchors that
+      // may no longer resolve (a heading or block the kept page does not show).
+      ...(links ? { links } : {}),
       ...(ok || !reason ? {} : { reason }),
       ...(ok || !missing ? {} : { missing }),
       // Pages were merged and deleted, and `fixed` is 0: `partial` says so.
@@ -1821,6 +1840,15 @@ export const SEMANTIC_DUPE_MAX_DOMAIN_PAGES = 20000;
 export const SEMANTIC_DUPE_DEFAULT_CAP = 500;
 
 /**
+ * The most candidate pairs one pass keeps (2026-11-14). The maintainer's 3,500-page
+ * domain has about 36,000; a generated 18,600-page domain where one word is in a third
+ * of the names had millions, and the pass ran out of memory (1.6 GB) before it could
+ * rank them. Past this the pass keeps the most alike, by the same ranking, and says
+ * so (`capped`, `foundPairs`); under it, the list is exactly what it always was.
+ */
+const SEMANTIC_MAX_CANDIDATE_PAIRS = 100000;
+
+/**
  * How many inner comparisons the candidate pre-filter may perform between
  * yields back to the event loop.
  *
@@ -1892,21 +1920,33 @@ function tokenizeSlug(slug) {
 /**
  * Jaro-Winkler similarity (0-1). Used by the pre-filter to rank candidates.
  * Inlined rather than adding a dep — the algorithm is small and stable.
+ *
+ * The match flags live in two buffers reused across calls (2026-11-14): the old
+ * `new Array(n).fill(false)` pair per call was most of its cost, millions of times
+ * per pass. Characters are compared as UTF-16 code units, as `a[i] !== b[j]` did,
+ * and the arithmetic is the same expressions in the same order, so every value is
+ * bit-identical (golden fingerprint, scripts/test-semantic-scan-yield.js).
  */
+let jwFlagsA = new Uint8Array(256);
+let jwFlagsB = new Uint8Array(256);
 function jaroWinkler(a, b) {
   if (a === b) return 1;
   const la = a.length, lb = b.length;
   if (la === 0 || lb === 0) return 0;
+  if (jwFlagsA.length < la) jwFlagsA = new Uint8Array(la * 2);
+  if (jwFlagsB.length < lb) jwFlagsB = new Uint8Array(lb * 2);
+  const aMatch = jwFlagsA, bMatch = jwFlagsB;
+  aMatch.fill(0, 0, la);
+  bMatch.fill(0, 0, lb);
   const matchDist = Math.max(0, Math.floor(Math.max(la, lb) / 2) - 1);
-  const aMatch = new Array(la).fill(false);
-  const bMatch = new Array(lb).fill(false);
   let matches = 0;
   for (let i = 0; i < la; i++) {
     const start = Math.max(0, i - matchDist);
     const end = Math.min(lb, i + matchDist + 1);
+    const ca = a.charCodeAt(i);
     for (let j = start; j < end; j++) {
-      if (bMatch[j] || a[i] !== b[j]) continue;
-      aMatch[i] = bMatch[j] = true;
+      if (bMatch[j] || ca !== b.charCodeAt(j)) continue;
+      aMatch[i] = 1; bMatch[j] = 1;
       matches++;
       break;
     }
@@ -1916,7 +1956,7 @@ function jaroWinkler(a, b) {
   for (let i = 0; i < la; i++) {
     if (!aMatch[i]) continue;
     while (!bMatch[k]) k++;
-    if (a[i] !== b[k]) t++;
+    if (a.charCodeAt(i) !== b.charCodeAt(k)) t++;
     k++;
   }
   const m = matches;
@@ -1924,22 +1964,102 @@ function jaroWinkler(a, b) {
   // Winkler prefix bonus (up to 4 chars)
   let p = 0;
   const maxP = Math.min(4, la, lb);
-  while (p < maxP && a[p] === b[p]) p++;
+  while (p < maxP && a.charCodeAt(p) === b.charCodeAt(p)) p++;
   return jaro + p * 0.1 * (1 - jaro);
 }
 
-function candidatePairScore(slugA, slugB, sharedTokens) {
+function candidatePairScore(slugA, slugB, sharedTokens, tokenCountA, tokenCountB) {
   // Multi-signal score (0-1).
   //   token overlap   — proportional to shared tokens
   //   JW similarity   — character-level
   //   length ratio    — penalises wildly different lengths
-  const tokensA = tokenizeSlug(slugA);
-  const tokensB = tokenizeSlug(slugB);
-  const maxTokens = Math.max(tokensA.length, tokensB.length);
+  // A caller holding tokenizeSlug's counts already passes them, the same numbers.
+  const countA = tokenCountA === undefined ? tokenizeSlug(slugA).length : tokenCountA;
+  const countB = tokenCountB === undefined ? tokenizeSlug(slugB).length : tokenCountB;
+  const maxTokens = Math.max(countA, countB);
   const tokenOverlap = maxTokens > 0 ? sharedTokens / maxTokens : 0;
   const jw = jaroWinkler(slugA, slugB);
   const lenRatio = Math.min(slugA.length, slugB.length) / Math.max(slugA.length, slugB.length);
   return 0.5 * tokenOverlap + 0.35 * jw + 0.15 * lenRatio;
+}
+
+/**
+ * An upper bound on jaroWinkler(a, b), cheap enough to run on every pair of names.
+ *
+ * jaroWinkler is jaro + p·0.1·(1 − jaro), with p the common prefix (at most 4), and
+ * jaro = (m/|a| + m/|b| + (m − t/2)/m) / 3, where m, the matched characters, can never
+ * exceed c, the characters the two names have in common counted with repeats. So
+ * jaro ≤ (c/|a| + c/|b| + 1) / 3, and jaroWinkler ≥ T needs that bound to reach
+ * Jn(p) = (T − 0.1p) / (1 − 0.1p) for a threshold T. c is counted over 64 buckets of UTF-16 code
+ * units (the unit jaroWinkler compares); a bucket holding two different characters
+ * can only make c larger, never smaller, so the bound stays above the true value.
+ * A 1e-6 slack absorbs floating-point rounding: a pair is ruled out only when it
+ * falls short by more than that, so a pair at exactly T is always scored.
+ */
+const JW_BUCKETS = 64;
+function jwBucket(code) {
+  if (code >= 97 && code <= 122) return code - 97;            // a-z
+  if (code >= 48 && code <= 57) return 26 + (code - 48);      // 0-9
+  if (code === 45) return 36;                                 // -
+  return 37 + (code % (JW_BUCKETS - 37));                     // everything else, shared
+}
+function jwBoundTables(slugs) {
+  const n = slugs.length;
+  const counts = new Uint16Array(n * JW_BUCKETS);
+  const lens = new Int32Array(n);
+  const distinctStart = new Int32Array(n + 1);
+  const distinct = [];
+  for (let i = 0; i < n; i++) {
+    const s = slugs[i];
+    lens[i] = s.length;
+    const base = i * JW_BUCKETS;
+    for (let k = 0; k < s.length; k++) counts[base + jwBucket(s.charCodeAt(k))]++;
+    distinctStart[i] = distinct.length;
+    for (let b = 0; b < JW_BUCKETS; b++) if (counts[base + b]) distinct.push(b);
+  }
+  distinctStart[n] = distinct.length;
+  return { counts, lens, distinctStart, distinct: Int32Array.from(distinct) };
+}
+function jwCannotReach(t, i, j, a, b, threshold) {
+  const la = t.lens[i], lb = t.lens[j];
+  if (la === 0 || lb === 0) return false;                     // jaroWinkler's own early answers
+  const maxP = Math.min(4, la, lb);
+  let p = 0;
+  while (p < maxP && a.charCodeAt(p) === b.charCodeAt(p)) p++;
+  // c must reach `need`; the characters of a that b cannot match are the deficit.
+  const jaroNeeded = (threshold - 0.1 * p) / (1 - 0.1 * p);
+  const need = (3 * jaroNeeded - 1) * la * lb / (la + lb) - 1e-6;
+  const allowed = la - need;
+  if (allowed < 0) return true;
+  if (allowed >= la) return false;
+  const { counts, distinct } = t;
+  const bi = i * JW_BUCKETS, bj = j * JW_BUCKETS;
+  let deficit = 0;
+  for (let k = t.distinctStart[i], end = t.distinctStart[i + 1]; k < end; k++) {
+    const bucket = distinct[k];
+    const d = counts[bi + bucket] - counts[bj + bucket];
+    if (d > 0) { deficit += d; if (deficit > allowed) return true; }
+  }
+  return false;
+}
+
+/** The k-th largest value of `values` (1-based), by quickselect; reorders `values`. */
+function kthLargest(values, k) {
+  let lo = 0, hi = values.length - 1;
+  const target = k - 1;
+  while (lo < hi) {
+    const pivot = values[(lo + hi) >> 1];
+    let l = lo, r = hi;
+    while (l <= r) {
+      while (values[l] > pivot) l++;
+      while (values[r] < pivot) r--;
+      if (l <= r) { const x = values[l]; values[l] = values[r]; values[r] = x; l++; r--; }
+    }
+    if (target <= r) hi = r;
+    else if (target >= l) lo = l;
+    else break;
+  }
+  return values[target];
 }
 
 /**
@@ -2007,15 +2127,101 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   // Only keep pairs whose score > 0.5 — below that, false-positive rate is
   // too high to burn LLM tokens on.
   const MIN_SCORE = 0.5;
-  const pairMap = new Map(); // key "i|j" (i<j) → {a, b, score, shared}
+  const n = allSlugs.length;
+  const names = allSlugs.map((s) => s.slug);
+  const tokenCount = slugTokens.map((t) => t.length);
+  const progress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  const totalPairs = n > 1 ? (n * (n - 1)) / 2 : 0;
+  let lastNote = 0;
+  const note = (done) => {
+    if (!progress) return;
+    const now = Date.now();
+    if (now - lastNote < 250 && done < totalPairs) return;
+    lastNote = now;
+    try { progress({ phase: 'names', done: Math.min(done, totalPairs), total: totalPairs, pages: n }); } catch { /* best-effort */ }
+  };
+
+  // ── What is kept, and in what order ────────────────────────────────────────
+  // The ranking is: spelling variants (tier 0), then acronyms (tier 1), then every
+  // other pair (tier 2) by score, highest first; equal scores in the order the
+  // passes found them. Spelling and acronym pairs are found first here, by their
+  // shape in linear time, so a pass that meets one of them only notes when (its
+  // `seq`), which is where the old single Map put it. Every other pair goes to
+  // `kept`, which holds at most SEMANTIC_MAX_CANDIDATE_PAIRS of them: past twice
+  // that it keeps the best by (score, seq) and refuses anything not above the
+  // worst score it kept, which can only rank below all of them. Under the limit
+  // nothing is ever dropped and the list is exactly the old one.
+  const special = new Map(); // i*n+j → { tier, order, seq }
+  let order = 0;
+  for (const [i, j] of acronymIndexPairs(names, STOPWORDS)) {
+    if (names[i] === names[j]) continue;
+    const key = i * n + j;
+    if (!special.has(key)) special.set(key, { i, j, tier: 1, order: order++, seq: -1 });
+  }
+  for (const [i, j] of spellingVariantIndexPairs(names)) {
+    const key = i * n + j;
+    const s = special.get(key);
+    if (s) s.tier = 0;
+    else special.set(key, { i, j, tier: 0, order: order++, seq: -1 });
+  }
+
+  const cap = Math.max(1, Number(opts.maxCandidates) || SEMANTIC_MAX_CANDIDATE_PAIRS);
+  const kept = { i: [], j: [], score: [], seq: [] };
+  let floor = -Infinity;          // after a compaction: a score at or below this cannot rank
+  let seq = 0;                    // the order the passes found pairs in
+  let found = 0;                  // every pair found, kept or not
+  const compact = (size) => {
+    const scores = Float64Array.from(kept.score);
+    const v = kthLargest(scores, size);
+    let above = 0;
+    for (let k = 0; k < kept.score.length; k++) if (kept.score[k] > v) above++;
+    let atV = size - above;
+    const next = { i: [], j: [], score: [], seq: [] };
+    for (let k = 0; k < kept.score.length; k++) {
+      const s = kept.score[k];
+      if (s > v || (s === v && atV-- > 0)) {
+        next.i.push(kept.i[k]); next.j.push(kept.j[k]); next.score.push(s); next.seq.push(kept.seq[k]);
+      }
+    }
+    kept.i = next.i; kept.j = next.j; kept.score = next.score; kept.seq = next.seq;
+    floor = v;
+  };
+  const add = (i, j, score) => {
+    found++;
+    const at = seq++;
+    const s = special.get(i * n + j);
+    if (s) { if (s.seq === -1) { s.seq = at; found--; } return; } // counted once, below
+    if (score <= floor) return;
+    kept.i.push(i); kept.j.push(j); kept.score.push(score); kept.seq.push(at);
+    if (kept.score.length >= 2 * cap) compact(cap);
+  };
 
   // Scheduling budget, shared across both passes so it is one continuous
   // allowance rather than two that can each individually starve the loop.
   const yieldChunk = Math.max(1, Number(opts.yieldChunk) || SEMANTIC_SCAN_YIELD_CHUNK);
   const tokenPassChunk = Math.max(1, Math.floor(yieldChunk / SEMANTIC_SCAN_TOKEN_PASS_DIVISOR));
   let work = 0;
+  const bound = jwBoundTables(names);
 
-  for (let i = 0; i < allSlugs.length; i++) {
+  // The token pass. candidatePairScore's own value decides, as before; a pair whose
+  // score cannot reach MIN_SCORE even at the highest jaroWinkler its characters allow
+  // is not scored (on a domain where one word is in a third of the names, that was
+  // most of 19 M pairs). `tokenPairScore` is the one statement of the test, so the
+  // second pass can ask it about a pair rather than remember 19 M answers.
+  const tokenPairScore = (i, j) => {
+    const shared = slugTokens[i].filter(t => slugTokens[j].includes(t)).length;
+    if (shared === 0) return -1;
+    if (names[i] === names[j]) return -1;
+    // 0.5·overlap + 0.35·jw + 0.15·lengthRatio, with jw at its bound: below 0.5, no pair.
+    const maxTokens = Math.max(tokenCount[i], tokenCount[j]);
+    const overlap = maxTokens > 0 ? shared / maxTokens : 0;
+    const lenRatio = Math.min(names[i].length, names[j].length) / Math.max(names[i].length, names[j].length);
+    const jwNeeded = (MIN_SCORE - 0.5 * overlap - 0.15 * lenRatio) / 0.35;
+    if (jwCannotReach(bound, i, j, names[i], names[j], jwNeeded)) return -1;
+    return candidatePairScore(names[i], names[j], shared, tokenCount[i], tokenCount[j]);
+  };
+
+  for (let i = 0; i < n; i++) {
     const toks = slugTokens[i];
     if (toks.length === 0) continue;
     const candIndices = new Set();
@@ -2025,19 +2231,15 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
       }
     }
     for (const j of candIndices) {
-      const shared = slugTokens[i].filter(t => slugTokens[j].includes(t)).length;
-      if (shared === 0) continue;
-      // Skip exact-match cross-folder (already caught by scanWiki)
-      if (allSlugs[i].slug === allSlugs[j].slug) continue;
-      const score = candidatePairScore(allSlugs[i].slug, allSlugs[j].slug, shared);
+      const score = tokenPairScore(i, j);
       if (score < MIN_SCORE) continue;
-      pairMap.set(`${i}|${j}`, { i, j, score });
+      add(i, j, score);
     }
     // Yield accounting sits OUTSIDE the inner loop, so one slug's whole
     // candidate set is processed atomically — the set is bounded by the
     // token index and is orders of magnitude smaller than the budget.
     work += candIndices.size;
-    if (work >= tokenPassChunk) { work = 0; await yieldToEventLoop(); }
+    if (work >= tokenPassChunk) { work = 0; await yieldToEventLoop(); note(0); }
   }
 
   // Also add character-similar pairs that share no token, via JW only, as a
@@ -2045,35 +2247,46 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   // used to say: rag / retrieval-augmented-generation scores nowhere near the
   // threshold. See acronymIndexPairs below.)
   //
-  // This pass is 97 % of the runtime (14.8 s of 15.2 s measured on a real
-  // 3,288-page domain), so it is where the yielding has to bite. The inner
-  // loop is chunked against the REMAINING budget rather than restarted per
-  // outer iteration: with a per-outer-iteration budget, every outer iteration
-  // on a domain smaller than the chunk size would fit inside one budget and
-  // the loop would never yield at all — the tail of this triangle is
-  // thousands of short iterations that must still be accounted for.
-  const n = allSlugs.length;
+  // Every pair of names is still considered, in the same order, but most are ruled
+  // out before jaroWinkler runs, by a bound that can only be ABOVE the true value
+  // (`jwCannotReach`): 15 s on 3,288 pages and about 5 minutes on 18,600 were
+  // jaroWinkler on pairs that could never reach 0.85. A pair the bound lets through
+  // is scored by the same jaroWinkler as before, so the pairs found and their scores
+  // are exactly the old ones (golden fingerprint, scripts/test-semantic-scan-yield.js;
+  // cross-check over generated names, scripts/test-health-large-wiki.js). A pair the
+  // token pass already took is skipped, as the old `pairMap.has` did.
+  let pruned = 0;
+  let sliceStart = Date.now();
   for (let i = 0; i < n; i++) {
-    const slugI = allSlugs[i].slug;
+    const slugI = names[i];
     let j = i + 1;
     while (j < n) {
       const stop = Math.min(n, j + Math.max(1, yieldChunk - work));
-      const from = j;
+      let scored = 0;
       for (; j < stop; j++) {
-        if (pairMap.has(`${i}|${j}`)) continue;
-        if (slugI === allSlugs[j].slug) continue;
-        const jw = jaroWinkler(slugI, allSlugs[j].slug);
-        if (jw >= 0.85) {
-          pairMap.set(`${i}|${j}`, { i, j, score: 0.5 * jw + 0.5 }); // bias up
+        if (slugI === names[j]) continue;
+        if (jwCannotReach(bound, i, j, slugI, names[j], 0.85)) {
+          // A pair ruled out costs a few array reads, not a jaroWinkler: it is not
+          // counted against the comparison budget, and the slice is cut by time.
+          if (++pruned >= 8192) {
+            pruned = 0;
+            if (Date.now() - sliceStart >= 12) {
+              await yieldToEventLoop();
+              sliceStart = Date.now();
+              note(i * n - (i * (i + 1)) / 2 + (j - i));
+            }
+          }
+          continue;
         }
+        scored++;
+        const jw = jaroWinkler(slugI, names[j]);
+        if (jw >= 0.85 && tokenPairScore(i, j) < MIN_SCORE) add(i, j, 0.5 * jw + 0.5); // bias up
       }
-      work += (j - from);
-      if (work >= yieldChunk) { work = 0; await yieldToEventLoop(); }
+      work += scored;
+      if (work >= yieldChunk) { work = 0; await yieldToEventLoop(); sliceStart = Date.now(); }
     }
-    // Note: outer loop capped by O(N²) only for the high-JW pass; for 20k
-    // pages this is 200M ops — marginal. If it proves slow on real-world
-    // data, we'll add locality-sensitive hashing. Currently acceptable.
   }
+  note(totalPairs);
 
   // Spelling variants and acronyms are found by their shape, in linear time,
   // and outrank everything: neural-network / neural-networks scores 0.735 and
@@ -2081,16 +2294,18 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   // 0.925), while rag / retrieval-augmented-generation was never a candidate at
   // all. Ranked by TIER rather than by a larger number so a score stays a score;
   // the tiers carry 1 so the list still reads in non-increasing score order.
-  const names = allSlugs.map((s) => s.slug);
-  for (const [i, j] of acronymIndexPairs(names, STOPWORDS)) {
-    if (names[i] !== names[j]) pairMap.set(`${i}|${j}`, { i, j, score: 1, tier: 1 });
-  }
-  for (const [i, j] of spellingVariantIndexPairs(names)) {
-    pairMap.set(`${i}|${j}`, { i, j, score: 1, tier: 0 });
-  }
-
-  const tierOf = (p) => (p.tier === undefined ? 2 : p.tier);
-  const ranked = [...pairMap.values()].sort((a, b) => (tierOf(a) - tierOf(b)) || (b.score - a.score));
+  // One the passes never met comes after every pair they did, in the order found.
+  found += special.size;
+  const specials = [...special.values()]
+    .map((s) => ({ ...s, at: s.seq === -1 ? seq + s.order : s.seq }))
+    .sort((a, b) => (a.tier - b.tier) || (a.at - b.at));
+  if (kept.score.length > cap) compact(cap);
+  const regular = Array.from(kept.score.keys())
+    .sort((a, b) => (kept.score[b] - kept.score[a]) || (kept.seq[a] - kept.seq[b]));
+  const capped = found > cap;
+  const ranked = specials.map((s) => ({ i: s.i, j: s.j, score: 1 }))
+    .concat(regular.map((k) => ({ i: kept.i[k], j: kept.j[k], score: kept.score[k] })))
+    .slice(0, cap);
 
   // Lift the ranked pairs into the public shape, then filter out any pairs the
   // user has previously dismissed (v2.5.1+). We filter BEFORE truncating so a
@@ -2116,6 +2331,8 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
     truncated,
     totalCandidates: livePairs.length,
     dismissed: filtered.dismissed,
+    // Only past SEMANTIC_MAX_CANDIDATE_PAIRS: the list is the most alike of `foundPairs`.
+    ...(capped ? { capped: true, foundPairs: found } : {}),
     // Every ranked pair BEFORE dismissals: what liveCandidates keeps so a later
     // dismissal, or one dropped with a page, can be re-applied without a full pass.
     ...(opts.includeRanked ? { ranked: allPairs } : {}),
@@ -2399,33 +2616,39 @@ export async function previewSemanticDuplicateMerge(domain, issue, opts = {}) {
     err.status = 409;
     throw err;
   }
-  const rewriter = retiredLinkRewriter([{ folder: removeFolder, slug: removeSlug }], keepSlug, keepFolder);
-  const merged = rewriter.apply(composed);
+  const allFiles = await walkMdFiles(wikiDir);
+  const existing = new Set(allFiles.map((x) => path.relative(wikiDir, x).split(path.sep).join('/')));
+  const keepRel = path.relative(wikiDir, keepPath).split(path.sep).join('/');
+  const removeRel = path.relative(wikiDir, removePath).split(path.sep).join('/');
+  const rewriter = retiredLinkRewriter([{ folder: removeFolder, slug: removeSlug }], keepSlug, keepFolder, { existing, wikiDir });
+  const merged = rewriter.apply(composed, keepRel).text;
 
   // Count affected files for the "N links will be rewritten" message, with the
-  // pattern the rewrite itself uses.
+  // rewrite itself: every form it repoints, canvases too, and none in code.
   const affectedFiles = [];
-  const allFiles = await walkMdFiles(wikiDir);
-  const re = rewriter.re;
-  // Links in, for the comparison. A page's link to itself is not a link in.
-  const linkInPattern = (slug) => new RegExp(`\\[\\[(entities/|concepts/|summaries/)?${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\|[^\\]]+)?\\]\\]`, 'g');
-  const linksIn = { keep: { pattern: linkInPattern(keepSlug), own: path.relative(wikiDir, keepPath), files: [], links: 0 },
-    remove: { pattern: linkInPattern(removeSlug), own: path.relative(wikiDir, removePath), files: [], links: 0 } };
+  // Links in, for the comparison, by the same rules. A page's link to itself is not a link in.
+  const counter = (slug, folder) => retiredLinkRewriter([{ folder, slug }], slug, folder, { existing, wikiDir });
+  const linksIn = { keep: { counter: counter(keepSlug, keepFolder), own: keepRel, files: [], links: 0 },
+    remove: { counter: counter(removeSlug, removeFolder), own: removeRel, files: [], links: 0 } };
   for (const full of allFiles) {
-    const rel = path.relative(wikiDir, full);
+    const rel = path.relative(wikiDir, full).split(path.sep).join('/');
     if (rel === 'index.md' || rel === 'log.md') continue;
     const content = await readFile(full, 'utf8');
-    const matches = content.match(re);
-    if (matches && matches.length > 0) {
-      affectedFiles.push({ path: rel, linkCount: matches.length });
-    }
+    const linkCount = rel === removeRel ? 0 : rewriter.apply(content, rel).links;
+    if (linkCount > 0) affectedFiles.push({ path: rel, linkCount });
     if (opts.comparison) {
       for (const side of [linksIn.keep, linksIn.remove]) {
         if (rel === side.own) continue;
-        const found = content.match(side.pattern);
-        if (found) { side.files.push(rel); side.links += found.length; }
+        const found = side.counter.apply(content, rel).links;
+        if (found) { side.files.push(rel); side.links += found; }
       }
     }
+  }
+  const canvasFiles = await walkMdFiles(wikiDir, '.canvas');
+  for (const full of canvasFiles) {
+    const rel = path.relative(wikiDir, full).split(path.sep).join('/');
+    const linkCount = rewriter.applyCanvas(await readFile(full, 'utf8'), rel).links;
+    if (linkCount > 0) affectedFiles.push({ path: rel, linkCount });
   }
 
   const comparison = !opts.comparison ? {} : (() => {
@@ -2523,7 +2746,7 @@ async function fixSemanticDuplicate(wikiDir, issue) {
   // inline copy of this logic, unique to this handler — the two sibling
   // handlers that also delete a page had none, which is the defect this
   // shared helper exists to close. See its docblock.
-  await repointInboundLinks(
+  const links = await repointInboundLinks(
     wikiDir,
     [{ folder: removeFolder, slug: removeSlug }],
     keepSlug,
@@ -2532,7 +2755,7 @@ async function fixSemanticDuplicate(wikiDir, issue) {
 
   // Step 5: delete the removed file
   await rm(removePath);
-  return true;
+  return { ok: true, links };
 }
 
 /**
@@ -2742,11 +2965,13 @@ async function applyBrokenLinkFixesNow(domain, plan, onProgress) {
     if (rel === 'index.md' || rel === 'log.md') { processed++; continue; }
     const before = await readFile(full, 'utf8');
     let changedHere = 0;
-    const replaced = replaceOutsideFences(before, linkRe, (m0, inner, alias) => {
+    const replaced = replaceOutsideFences(before, linkRe, (m0, rawInner, alias) => {
+      // A table's `[[x\|alias]]`: the backslash belongs to the pipe, as in the scan.
+      const inner = alias ? rawInner.replace(/\\$/, '') : rawInner;
       const act = actions.get(inner.trim());
       if (!act) return m0;
       changedHere++;
-      if (act.action === 'retarget') { retargeted++; return `[[${act.target}${alias || ''}]]`; }
+      if (act.action === 'retarget') { retargeted++; return `[[${act.target}${alias && inner !== rawInner ? '\\' : ''}${alias || ''}]]`; }
       stripped++;
       // Keep readable text: the alias label if the link had one, else the link text.
       return alias ? alias.slice(1).trim() : inner.trim();

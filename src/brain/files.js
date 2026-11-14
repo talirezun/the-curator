@@ -1511,7 +1511,10 @@ async function linkRewriterFor(domain) {
   // source wrote, and an identifier must stay exactly as written.
   return outsideCode((text) => variants(
     text
-      .replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]')
+      // `[[concepts/x]]` keeps its folder when an entity x exists: the bare name would
+      // reach the entity (scan order), and Health writes it so on purpose (2026-11-15).
+      .replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, (m, folder, rest) =>
+        (folder === 'concepts' && entitySlugs.has(rest.split(/[|#]/)[0].trim()) ? m : `[[${rest}]]`))
       .replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]')
   ));
 }
