@@ -2961,6 +2961,9 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
       function isCurrentMount() { return true; }
       function render() { calls.render++; }
       function ensureAiRunDoors() { calls.wired++; }
+      // 2026-11-14: the browser's run of the hard-data gate (shared/hard-data.js); a stub
+      // here, since these sections test the request, not the gate.
+      async function withHardData(entry) { return entry; }
       ${clrBody}
       ${/^async /.test(rseBody) ? rseBody : 'async ' + rseBody}
       return { refreshSingleEstimate, getState: () => state, setState: (s) => { state = s; } };

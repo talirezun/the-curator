@@ -443,6 +443,11 @@ export async function appendManifestRecord(domain, record) {
       // older records; planRepeatIngest reads them.
       ...(typeof record.model === 'string' && record.model ? { model: record.model } : {}),
       ...(Number.isFinite(record.gaps) && record.gaps > 0 ? { gaps: record.gaps } : {}),
+      // The Key Facts version the ingest ran with (2026-11-14). Absent: it ran before Key
+      // Facts existed, which earns a data source one more reading (planRepeatIngest).
+      ...(Number.isInteger(record.keyFacts) && record.keyFacts > 0 ? { keyFacts: record.keyFacts } : {}),
+      // A record the no-call path wrote to note the gate's answer; not a reading.
+      ...(record.noCall === true ? { noCall: true } : {}),
     });
 
     const target = manifestFilePath(domain);

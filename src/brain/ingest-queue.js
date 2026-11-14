@@ -198,6 +198,7 @@ import {
   capExistingFilesForPrompt,
   makeUsageAccumulator,
   planRepeatIngest,
+  KEY_FACTS_RULE as ingestKeyFactsRule,
   __testing as ingestTesting,
 } from './ingest.js';
 import { hashRawSource } from './raw-store.js';
@@ -205,6 +206,7 @@ import { getProviderInfo, answeringModel, getModelPrice, isFreeModel, isAbortErr
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
+const KEY_FACTS_RULE = ingestKeyFactsRule;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -863,7 +865,44 @@ export function cachingSavingsFraction(totalCalls) {
   return 0.303 + (0.56 - 0.303) * ((totalCalls - 4) / 3);
 }
 
-function estimateOneFile({ f, promptFiles, index, today, price, model = null }) {
+/**
+ * The Key Facts rule's cost in an estimate (2026-11-14). The estimate has no bytes, so it
+ * cannot run the gate: a file that MAY be a data source has the rule's input and a measured
+ * output allowance in `usdHigh` only ('maybe'); a file known to get the rule (a Key Facts
+ * re-reading whose gate was read) has them in both bounds ('on'); a file known not to, in
+ * neither ('off'). The browser runs the same gate on a .md/.txt file it has in hand and
+ * sends `hardData` (true/false); only a file it cannot read (a PDF) stays 'maybe'.
+ *
+ * THE ALLOWANCE COVERS THE LARGEST REPLY MEASURED, so the dear bound is a real upper bound:
+ * single-pass data sources with Key Facts measured up to 3,982 output tokens on Gemini 3.5
+ * Flash Lite (the base figure is 1,667), 11,806 on Haiku 5.5 (base 5,900; +6,400 leaves the
+ * input estimate's own error room: one run billed 1.01x at +6,000) and 5,382 on
+ * solar-pro4 (base 1,667), 2026-11-14, 25 runs; an audit found 12 of 19 such runs billed
+ * above a high built on the medians. Multi-phase: +1,054 / +4,150 / +2,930 (medians of the
+ * Key Facts minus baseline difference; multi-phase quotes were measured well above bills).
+ */
+export const KEY_FACTS_EXTRA_OUTPUT_TOKENS = {
+  gemini: { 'single-pass': 2400, 'multi-phase': 1054 },
+  anthropic: { 'single-pass': 6400, 'multi-phase': 4150 },
+  openrouter: { 'single-pass': 3800, 'multi-phase': 2930 },
+};
+function keyFactsExtraOutput(model, mode) {
+  const fam = /^gemini/.test(String(model || '')) ? 'gemini' : /^claude/.test(String(model || '')) ? 'anthropic' : 'openrouter';
+  const m = mode === 'single-pass' ? 'single-pass' : 'multi-phase';
+  return KEY_FACTS_EXTRA_OUTPUT_TOKENS[fam][m] || Math.max(...Object.values(KEY_FACTS_EXTRA_OUTPUT_TOKENS).map((x) => x[m]));
+}
+
+function estimateOneFile({ f, promptFiles, index, today, price, model = null, keyFacts = 'off' }) {
+  const base = estimateOneFileBase({ f, promptFiles, index, today, price, model, withKeyFacts: false });
+  if (keyFacts === 'off') return base;
+  const kf = estimateOneFileBase({ f, promptFiles, index, today, price, model, withKeyFacts: true });
+  if (keyFacts === 'on') return kf;
+  // 'maybe': the cheap bound assumes prose, the dear one a data source.
+  // Token counts stay the prose figures (what most sources bill); only the dear bound carries the allowance.
+  return { ...base, usdHigh: kf.usdHigh, keyFactsMaybe: true };
+}
+
+function estimateOneFileBase({ f, promptFiles, index, today, price, model = null, withKeyFacts = false }) {
   // Size-based proxy for extracted text length — /estimate takes metadata
   // only (no file bytes, per the HTTP contract), so no real extraction
   // happens here. For .txt/.md this is close (bytes≈chars for ASCII-heavy
@@ -888,8 +927,8 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
   let callChars;
   if (mode === 'single-pass') {
     const prompt = buildPrompt(today, index, promptFiles, f.name, syntheticText, false, false, placeholderSummaryPath);
-    promptChars = prompt.length;
-    callChars = [prompt.length];
+    promptChars = prompt.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
+    callChars = [promptChars];
   } else {
     const outline = buildOutlinePrompt(today, index, promptFiles, f.name, syntheticText, false, placeholderSummaryPath);
     // pageBatch=[] and allOutlinePages=[] slightly UNDER-count the small
@@ -897,7 +936,7 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
     // few hundred chars) — negligible next to the 80k-char source + 100k+
     // char inventory this prefix already carries. Documented, not silent.
     const batchParts = buildBatchPromptParts(today, f.name, syntheticText, [], promptFiles, []);
-    const batchChars = batchParts.prefix.length + batchParts.suffix.length;
+    const batchChars = batchParts.prefix.length + batchParts.suffix.length + (withKeyFacts ? KEY_FACTS_RULE.length + 2 : 0);
     promptChars = outline.length + numBatches * batchChars;
     callChars = [outline.length, ...Array(numBatches).fill(batchChars)];
   }
@@ -908,7 +947,9 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
   const factor = model ? tokenizerFactorOf(model) : 1;
   const inputTokens = Math.round((promptChars / CHARS_PER_TOKEN) * factor);
   const perCallOut = outputTokensPerCall(model, mode);
-  const outputTokens = totalCalls * perCallOut;
+  // The Key Facts allowance is per FILE (measured per source), spread over its calls.
+  const extraOut = withKeyFacts ? keyFactsExtraOutput(model, mode) : 0;
+  const outputTokens = totalCalls * perCallOut + extraOut;
 
   if (!price) {
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: null, usdHigh: null };
@@ -933,6 +974,7 @@ function estimateOneFile({ f, promptFiles, index, today, price, model = null }) 
       rawIn += (inTok / 1e6) * r.input;
       high += (inTok / 1e6) * r.input + (perCallOut / 1e6) * r.output;
     }
+    if (extraOut) high += (extraOut / 1e6) * estimateCallRates(model, callChars[0], CHARS_PER_TOKEN).output;
     const low = Math.max(0, high - rawIn * cachingSavingsFraction(totalCalls));
     return { name: f.name, chars, mode, totalCalls, inputTokens, outputTokens, usdLow: low, usdHigh: high };
   }
@@ -1110,7 +1152,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
  * @param {Array<{name:string, size:number, sha256?:string}>} accepted  in run order
  * @returns {Promise<Map<string, string>>} name -> reason
  */
-async function findNoCallFiles(domain, accepted, { overwrite, model }) {
+async function findNoCallFiles(domain, accepted, { overwrite, model, keyFacts = null }) {
   const out = new Map();
   const seen = new Set();
   const rawDir = rawPath(domain);
@@ -1124,6 +1166,9 @@ async function findNoCallFiles(domain, accepted, { overwrite, model }) {
       try {
         const plan = await planRepeatIngest(domain, f.sha256, model);
         if (plan && plan.kind === 'nothing') out.set(f.name, 'unchanged');
+        // Priced like any reading; the caller lists it with its reason (2026-11-14).
+        else if (plan && plan.kind === 'key-facts' && keyFacts) keyFacts.set(f.name, plan.gateUnknown === true ? 'maybe' : 'on');
+        else if (plan && plan.sameContent && keyFacts) keyFacts.set(f.name, 'off-known');
       } catch { /* cannot tell: priced */ }
     }
   }
@@ -1174,7 +1219,9 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
       continue;
     }
     const sha256 = typeof f?.sha256 === 'string' ? f.sha256.toLowerCase() : null;
-    accepted.push(sha256 ? { name, size, sha256 } : { name, size });
+    // `hardData`: the browser's own run of the gate on this file's text (shared/hard-data.js).
+    const hardData = typeof f?.hardData === 'boolean' ? f.hardData : undefined;
+    accepted.push({ name, size, ...(sha256 ? { sha256 } : {}), ...(hardData === undefined ? {} : { hardData }) });
     totalBytes += size;
   }
   // The preview lists these in the order the run will process them.
@@ -1237,9 +1284,17 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
 
   // A file that will finish without a call costs nothing and plans no calls. It stays in
   // `accepted` (the list the user confirms) and is named in `files.noCall`.
-  const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model });
+  const keyFactsReread = new Map();
+  const noCall = await findNoCallFiles(domain, accepted, { overwrite: opts && opts.overwrite, model, keyFacts: keyFactsReread });
   const priced = accepted.filter(f => !noCall.has(f.name));
-  const perFile = priced.map(f => estimateOneFile({ f, promptFiles, index, today, price, model }));
+  const kfMode = (f) => {
+    const v = keyFactsReread.get(f.name);
+    if (v === 'on') return 'on';
+    if (f.hardData === true) return 'on';
+    if (f.hardData === false) return 'off';
+    return 'maybe';   // no bytes were read (a PDF): the dear bound covers a data source
+  };
+  const perFile = priced.map(f => estimateOneFile({ f, promptFiles, index, today, price, model, keyFacts: kfMode(f) }));
 
   // The SAME files, the SAME code, against an EMPTY domain. This is what makes
   // "how much is my wiki's size costing me" answerable for the batch actually
@@ -1248,7 +1303,7 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
   // Pure string work on much smaller prompts — no I/O, no extra readdir. On
   // the real `articles` domain a 100-file estimate measures 33 ms before this
   // and 46 ms after.
-  const perFileFresh = priced.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price, model }));
+  const perFileFresh = priced.map(f => estimateOneFile({ f, promptFiles: { entities: [], concepts: [] }, index: '', today, price, model, keyFacts: kfMode(f) }));
   const matureInputTokens = perFile.reduce((n, e) => n + (e.inputTokens || 0), 0);
   const freshInputTokens = perFileFresh.reduce((n, e) => n + (e.inputTokens || 0), 0);
   // Deliberately independent of `price`: the ratio is meaningful even when no
@@ -1291,6 +1346,9 @@ export async function estimateIngestQueueCost(domain, files, opts = {}) {
       rejected,
       // The accepted files that will finish without an AI call, priced at $0 above.
       noCall: [...noCall].map(([name, reason]) => ({ name, reason })),
+      // Already read by this model before Key Facts existed, and a data source: one more
+      // reading, PRICED in the estimate above, said per file (planRepeatIngest 'key-facts').
+      keyFactsReread: [...keyFactsReread].filter(([, v]) => v !== 'off-known').map(([n]) => n),
     },
     estimate,
     domainContext: { pageCount: stats?.pageCount ?? null, indexBytes: index.length },

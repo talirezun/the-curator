@@ -37,6 +37,10 @@ import { recordRecentNewPages, createdPageKeys } from './recent-new-pages.js';
 // with a lazy dynamic import inside readRawSourceText, so there is no static
 // import cycle here.
 import { appendManifestRecord, findCompletedIngest, hashRawSource, readManifest } from './raw-store.js';
+import {
+  HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
+  HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
+} from '../public/next/shared/hard-data.js';
 import { createHash } from 'crypto';
 import { listOtherInstances, describeOthers } from './instance-probe.js';
 
@@ -130,6 +134,13 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
  *                  user pays for, and old text is never overwritten.
  *   'unknown'      the current model cannot be told: behaves as gaps, the old behaviour.
  *
+ *   'key-facts'    (owner's decision, 2026-11-14) this model read these bytes, but before
+ *                  Key Facts existed (the latest completed record has no `keyFacts`
+ *                  marker), and the source passes the hard-data gate: ONE fresh reading,
+ *                  under add-only-new (not repeatSource), so the figures earlier versions
+ *                  dropped can reach the wiki. The cost is shown first, as for any priced
+ *                  run. Its record carries the marker, so the next press is 'nothing'.
+ *
  * REPEAT_READ_BY_OTHER_MODEL = false restores "the identical source adds nothing" for every
  * model, should the owner prefer it.
  *
@@ -140,11 +151,38 @@ export function summaryShapeWarning(summaryPath, content, originalName) {
  */
 export const REPEAT_READ_BY_OTHER_MODEL = true;
 
+/**
+ * The Key Facts version a completed ingest ran with, recorded on its manifest line from
+ * 2026-11-14 on. A record without it ran before Key Facts existed.
+ */
+export const KEY_FACTS_VERSION = 1;
+
+
+/**
+ * The text the gate reads from bytes in hand (an upload, a staged queue file), whatever
+ * the file is called on disk: the ORIGINAL name decides PDF or text. null when unreadable.
+ */
+export async function sourceTextForGate(filePath, originalName) {
+  try {
+    const name = String(originalName || filePath);
+    if (/\.pdf$/i.test(name)) {
+      const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
+      return String((await pdfParse(await readFile(filePath))).text || '').slice(0, 80_000);
+    }
+    return (await readFile(filePath, 'utf8')).slice(0, 80_000);
+  } catch { return null; }
+}
+
+/** The source's text as the gate reads it, from the copy kept in raw/. null when unknown. */
+async function rawSourceText(domain, filename) {
+  try { return (await extractText(path.join(rawPath(domain), filename))).slice(0, 80_000); } catch { return null; }
+}
+
 // The warnings that tell the user a reading fell short: a page the model did not write, or
 // a page plan it never returned. Their promise is a new reading, so they count as a gap.
 const FELL_SHORT_RE = /wrote a stub|Stub page created|stub pages were created|did not make it into the wiki|almost certainly incomplete|no content from the AI/i;
 
-export async function planRepeatIngest(domain, sha256, model) {
+export async function planRepeatIngest(domain, sha256, model, opts = {}) {
   const wikiDir = wikiPath(domain);
   const none = { sameContent: false, kind: null, previous: null, model: model || null, gaps: [] };
   let records;
@@ -154,10 +192,53 @@ export async function planRepeatIngest(domain, sha256, model) {
   const readings = records.filter((r) => r.sha256 === sha256 && r.completed !== false
     && typeof r.summaryPath === 'string' && exists(r.summaryPath));
   const latest = readings[readings.length - 1];
-  const previous = { filename: latest.filename, ingestedAt: latest.ingestedAt, model: latest.model || null, summaryPath: latest.summaryPath };
+  // The date and model shown to the user come from the latest record that made a reading;
+  // a no-call press writes a record too (the gate's answer), which is not a reading.
+  const lastRead = readings.filter((r) => !r.noCall).pop() || latest;
+  const previous = { filename: lastRead.filename, ingestedAt: lastRead.ingestedAt, model: lastRead.model || null, summaryPath: lastRead.summaryPath };
   const out = { sameContent: true, kind: 'nothing', previous, model: model || null, gaps: [] };
   if (!model) { out.kind = 'unknown'; return out; }
   if (REPEAT_READ_BY_OTHER_MODEL && !readings.some((r) => r.model === model)) { out.kind = 'other-model'; return out; }
+  // Read before Key Facts existed, and a data source: one fresh reading (owner, 2026-11-14).
+  // A summary that already has a Key Facts section counts as marked: Sync can drop this
+  // computer's manifest lines (a pre-existing defect of the pull's `-X theirs`), while
+  // the page itself arrives, so a lost marker does not buy a second reading.
+  let summaryHasKeyFacts = false;
+  try { summaryHasKeyFacts = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiDir, latest.summaryPath), 'utf8')); } catch { summaryHasKeyFacts = false; }
+  if (!summaryHasKeyFacts && !((Number(latest.keyFacts) || 0) >= KEY_FACTS_VERSION)) {
+    // The gate reads the BYTES IN HAND when the caller has them (`opts.sourceText`: the
+    // upload in the 409 plan, the file in ingestFile), so the plan and the run decide on
+    // the same text. raw/ is not synced, so on a second computer it is often empty, and
+    // the upload is the only copy. Without bytes (the batch estimate gets names, sizes
+    // and hashes), the copy in raw/ is the same bytes when present; when it is missing,
+    // the gate cannot be read, and the plan says so (`gateUnknown`): the estimate prices
+    // the reading, and the run, which has the bytes, may only make it cheaper.
+    let text = null;
+    let known = false;
+    if (opts && typeof opts.sourceText === 'function') {
+      text = await opts.sourceText();
+      known = typeof text === 'string';
+    } else {
+      // Only a raw copy whose bytes ARE the incoming bytes: the name may have been reused
+      // for a newer version (an audit measured "$0.000, no AI call", then a $0.0150 bill).
+      let same = false;
+      try { same = (await hashRawSource(path.join(rawPath(domain), latest.filename))) === sha256; } catch { same = false; }
+      text = same ? await rawSourceText(domain, latest.filename) : null;
+      known = typeof text === 'string';
+    }
+    if (known && sourceHasHardData(text)) {
+      out.kind = 'key-facts';
+      out.reason = 'This source holds figures that earlier versions did not keep; reading it again keeps them.';
+      return out;
+    }
+    if (known) out.gateCheckedFalse = true;   // ingestFile records it: the next estimate is exact
+    if (!known) {
+      out.kind = 'key-facts';
+      out.gateUnknown = true;
+      out.reason = 'This source may hold figures that earlier versions did not keep; if it does, reading it again keeps them.';
+      return out;
+    }
+  }
 
   // Which gaps a reading could still fill. Read off the disk, and off what that run said.
   try {
@@ -175,7 +256,7 @@ export async function planRepeatIngest(domain, sha256, model) {
   if (latest.gaps > 0) out.gaps.push('the last reading warned that it fell short');
   // A gap earns this model ONE more reading. A model that leaves the same gap twice would
   // otherwise bill every press for ever, the very thing this plan exists to stop.
-  const byThisModel = readings.filter((r) => r.model === model).length;
+  const byThisModel = readings.filter((r) => r.model === model && !r.noCall).length;
   if (out.gaps.length && byThisModel < 2) out.kind = 'gaps';
   return out;
 }
@@ -556,7 +637,7 @@ export function indexForPrompt(index, sourceText, budgetChars = INDEX_PROMPT_BUD
  * decoder substitutes U+FFFD rather than failing on binary input.
  */
 export async function extractText(filePath) {
-  if (filePath.endsWith('.pdf')) {
+  if (/\.pdf$/i.test(String(filePath))) {   // `.PDF` too, as sourceTextForGate tests it
     const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
     const buffer = await readFile(filePath);
     const data = await pdfParse(buffer);
@@ -703,6 +784,110 @@ const ANNOUNCED_PRODUCT_RULE =
    tool, app, service or project, that product is ALSO a primary subject: give
    it its own entities/ page (e.g. entities/<product-name>.md — never concepts/),
    even when concept pages cover its features or method. NEVER omit it.`;
+
+/**
+ * KEY FACTS — the rule that keeps a source's hard data (owner request, 2026-11-14).
+ *
+ * WHY. Not every source is an article. A 7 KB pricing document became 3 summary
+ * bullets: most of its prices, its tables and its deadlines were gone, so chat could
+ * not calculate from them. Every page prompt asked for "3 to 8 concise bullet points"
+ * and nothing asked for numbers.
+ * The same holds for a technical document, whose hard data is names, endpoints, ports,
+ * config keys and the reasons behind decisions.
+ *
+ * WHAT. One block of text, identical on every path that writes a page (single pass,
+ * every Phase 2 batch, the page-by-page fallback): the summary gets a `## Key Facts`
+ * section, entity and concept pages keep the figures that belong to them, each fact
+ * carries its period or version, identifiers go in backticks, and a source whose
+ * numbers are incidental (an essay, an opinion piece) gets no section at all.
+ * `## Key Facts` is the name entity pages already use in the tech and business
+ * templates, and an accumulating section everywhere in files.js.
+ *
+ * THE CAP: 40 bullets, a table at most 15 rows. Measured: at that size the section is
+ * at most about 2,500 output tokens, so a Phase 2 batch of four pages stays well under
+ * MULTI_PHASE_BATCH_TOKENS (16,384) and a single page under 8,192. The strict and
+ * concise retries keep the section at 15 bullets, a table at 8 rows.
+ *
+ * ADDITIVE BY CONSTRUCTION. Sent only when `sourceHasHardData` (below); otherwise the
+ * prompt is the shipped one byte for byte. When sent, each prompt is the shipped prompt
+ * plus this block in one place; `scripts/test-ingest-key-facts.js` removes the block and checks the rest is
+ * byte-identical to the pinned digests. It goes in the batch PREFIX (stable, so every
+ * batch of one ingest still shares a byte-identical, cacheable prefix).
+ */
+export const KEY_FACTS_RULE =
+`HARD DATA — apply only when the source's value lies in specific data (a plan, budget, price list, specification, contract, report, results, or a technical or architecture document). An essay, article or opinion piece whose numbers are incidental gets none of this.
+- The summary page gets a "## Key Facts" section, directly after "## Key Takeaways". It lists the specific facts the source states: amounts, prices, percentages, counts, dates and deadlines, thresholds, limits, rates, durations, measurements, versions, named options or tiers and the rules or decisions attached to them; for a technical document also each component or service and what it owns, ports, API endpoints (method and path), data models and field names, configuration keys and their defaults, dependencies, data flows (A calls B over X), invariants ("never", "must") and decisions with their reasons.
+- State each figure EXACTLY as the source does, with its unit or currency, what it is, its condition, and its period or as-of date or version when the source gives one (e.g. "Q3 2025 revenue: €3.8M", "as of v2.1, \`search-api\` listens on port 9310"). Never a bare number.
+- Write identifiers (endpoint paths, configuration keys, file names, field names, version strings) in \`backticks\`, exactly as the source writes them. Never put a [[link]] inside backticks.
+- A source table that carries data may stay a markdown table of at most 15 rows; for a longer table keep the rows the source stresses (totals, decisions, limits) and add "(N more rows in the source)".
+- The bullet limit above does not apply to Key Facts; it has its own limit of 40 bullets, table rows included, and no nested bullets (one fact per line). If there are more, keep decisions, totals and limits first.
+- Entity and concept pages keep the specific figures that belong to them, with the same period or version and source context (e.g. "Minimum order for the 2028 price list: 50 units"), not only a general definition.
+- Never write an empty Key Facts section and never invent a figure.`;
+
+/** The strict single-pass retry: shorter prose, but the hard data stays, at a smaller cap. */
+export const KEY_FACTS_RULE_STRICT =
+`HARD DATA — if the source's value lies in specific data (a plan, budget, price list, specification, contract, report, results, or a technical document), the summary page still gets a "## Key Facts" section after "## Key Takeaways": at most 15 bullets (a table at most 8 rows), each figure or identifier exactly as the source writes it, with its unit, meaning and period or version; identifiers in \`backticks\`. Otherwise no Key Facts section.`;
+
+/** Appended to the page-by-page concise retry (the SUFFIX, never the prefix). */
+export const KEY_FACTS_CONCISE =
+`
+5. If the page has a "## Key Facts" section, keep it, at most 15 bullets (a table at most 8 rows), every figure exactly as the source writes it.`;
+
+/**
+ * WHEN THE RULE IS SENT: only for a source that measurably carries hard data.
+ *
+ * Sent to every source, the block gave ordinary articles a Key Facts section too
+ * (measured 2026-11-14: 3 of 3 runs on a 17 KB prose fixture with every model, the
+ * summary +0.8 to +3.8 KB, and on a 3 KB article Gemini 3.5 Flash Lite wrote 11 pages
+ * instead of 6), although the block told it not to. The owner's rule is that this is
+ * strictly additive, so the decision is made here, deterministically, and a source
+ * below the line gets the shipped prompt byte for byte.
+ *
+ * The measure, re-tuned after an audit on 122 real sources (labelled by hand: 66 data
+ * or technical, 78 prose, with the synthetic and fixture sources). The first version,
+ * numbers only at 8 per 1,000 characters, caught 25 of 66 data sources: technical
+ * documents carry identifiers and tables more than numbers. A source passes with at
+ * least 6 data items and ANY of:
+ *   - 7 or more data items per 1,000 characters (a number that is not a bare year, a
+ *     year range or a single digit; an inline code span; a table data row);
+ *   - 20 or more inline code spans, at least 1 per 1,000 characters;
+ *   - 8 or more table rows, at least 0.5 per 1,000 characters.
+ * Measured: 57 of 66 data sources pass (the misses are syllabi and progress reports
+ * written as prose), 10 of 78 prose sources pass (mostly social-media campaign plans
+ * laid out in tables), and none of the live suite's prose fixtures. Missing a strategy
+ * document's numbers is the larger harm, so the line errs towards passing.
+ * Known: a technical document written as plain prose stays below it and is ingested
+ * exactly as before; a prose article dense with statistics passes it.
+ */
+// The gate itself lives in the SERVED tree, so the browser runs the same function on a
+// .md/.txt file it has in hand (src/public/next/shared/hard-data.js; the same pattern as
+// shared/ai-jobs.js). Re-exported here for every server-side caller.
+export {
+  HARD_DATA_MIN_PER_1000, HARD_DATA_MIN_ITEMS, HARD_DATA_MIN_CODE_SPANS, HARD_DATA_MIN_CODE_PER_1000,
+  HARD_DATA_MIN_TABLE_ROWS, HARD_DATA_MIN_TABLE_ROWS_PER_1000, hardDataDensity, sourceHasHardData,
+};
+
+/**
+ * A table-heavy source cannot be kept whole: Key Facts holds at most 40 bullets and a
+ * table at most 15 rows, so past 40 table data rows the wiki keeps a selection BY
+ * CONSTRUCTION. Measured by an audit: a 22 KB spec with 296 table rows kept 28% of its
+ * figures and no table on Gemini 3.5 Flash Lite, with nothing said. The user is told
+ * once, and where the full tables are (the original file is kept in raw/).
+ */
+export const KEY_FACTS_TABLE_WARN_ROWS = 40;
+export function tableDataWarning(text) {
+  if (!keyFactsGate(text)) return null;
+  const rows = (String(text || '').match(/^\|.*\|[ \t]*$/gm) || []).filter((r) => !/^\|[\s|:-]+\|[ \t]*$/.test(r)).length;
+  if (rows <= KEY_FACTS_TABLE_WARN_ROWS) return null;
+  return `This source has ${rows} table rows. The wiki keeps a selection of the table data (its most important figures, and short tables of at most 15 rows), not every row. The original file, with the full tables, is kept in this domain's raw/ folder.`;
+}
+
+let keyFactsGateOverride = null;
+/** Test seam: force the gate (true/false) or restore it (null). */
+export function __setKeyFactsGateForTest(v) { keyFactsGateOverride = v; }
+function keyFactsGate(text) {
+  return keyFactsGateOverride === null ? sourceHasHardData(text) : keyFactsGateOverride;
+}
 
 function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
   const overwriteNote = isOverwrite
@@ -917,7 +1102,7 @@ Guidelines:
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 - LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 - HUB-PAGE RULE: if your page enumerates many sibling concepts (e.g. a "library", "taxonomy", or "comparison" page), you MUST wikilink to each item using the exact slugs listed below. Plain-text item names without brackets leave the hub disconnected from the items in the graph.
-
+${keyFactsGate(text) ? `\n${KEY_FACTS_RULE}\n` : ''}
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
 Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(', ')}
@@ -1878,7 +2063,7 @@ ${ANNOUNCED_PRODUCT_RULE}
 8. DO NOT touch index.md — the application maintains it after this call.
 
 ${conciseness}
-
+${keyFactsGate(text) ? `\n${strict ? KEY_FACTS_RULE_STRICT : KEY_FACTS_RULE}\n` : ''}
 Page body rules:
 - Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
 - Entity pages: include a "Type: <entity-type>" line and a "Tags: tag1, tag2" line in the body.
@@ -2917,7 +3102,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
           try {
             conciseRaw = (await llm(
               schema,
-              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE,
+              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE + (keyFactsGate(text) ? KEY_FACTS_CONCISE : ''),
               MULTI_PHASE_SINGLE_PAGE_TOKENS,
               'json',
               (msg) => progress(batchPct, `Batch ${batchNum} of ${totalBatches}, page ${singlePage.path} (shorter retry) — ${msg}${tail()}`, 'wait'),
@@ -3083,6 +3268,15 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
 // chars contain enough quoted terms and special characters that even jsonrepair
 // cannot reliably reconstruct them.
 const SINGLE_PASS_RESPONSE_LIMIT = 8_000;
+/**
+ * The same limit for a source that gets the Key Facts rule (2026-11-14). Its replies
+ * are longer by design: measured on 18 single-pass data ingests per model, Haiku 5.5's
+ * median reply rose from 2,050 to 2,795 output tokens (about 10 KB) and its largest to
+ * 5,920 (about 21 KB), so at 8,000 characters a parse failure skipped the strict retry
+ * (and with it KEY_FACTS_RULE_STRICT) and paid for multi-phase instead. 24,000 covers
+ * the largest measured reply; every other source keeps 8,000.
+ */
+const SINGLE_PASS_RESPONSE_LIMIT_KEY_FACTS = 24_000;
 
 // Skip single-pass entirely for medium-to-large input documents.
 // Single-pass for a 20 k+ char source produces 10 000–20 000 chars of JSON —
@@ -3333,9 +3527,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   if (!plannedModel && !(opts && typeof opts.llm === 'function')) {
     try { const i = getProviderInfo(); plannedModel = answeringModel(i.provider, i.model); } catch { plannedModel = null; }
   }
-  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel);
+  const repeatPlan = await planRepeatIngest(domain, sourceHash, plannedModel, { sourceText: () => sourceTextForGate(destPath, originalName) });
   // See planRepeatIngest: only another model's reading may bring in new wording.
-  const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model';
+  const repeatSource = repeatPlan.sameContent && repeatPlan.kind !== 'other-model' && repeatPlan.kind !== 'key-facts';
   if (repeatPlan.kind === 'nothing') {
     // No call, no cost. What is known without a model is still put right.
     const summaryRel = repeatPlan.previous.summaryPath;
@@ -3347,6 +3541,15 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       ? `This source's content has not changed and this model has already read it, so no AI call was made. The summary gained its missing ${fixed.join(' and ')}, at no cost.`
       : `This source's content has not changed and this model has already read it, so no AI call was made and nothing was charged. Pick another model to read it again.`;
     if (fixed.length) await appendLog(domain, `## [${localDateStamp()}] repair | ${originalName}\nThe summary gained its missing ${fixed.join(' and ')}. No AI call.\n`);
+    // The gate was read on these bytes and said no: record it, so a batch estimate without
+    // the bytes stops pricing "one more reading (at most)" for this source (no call made).
+    if (repeatPlan.gateCheckedFalse) {
+      await appendManifestRecord(domain, {
+        filename: repeatPlan.previous.filename, sha256: sourceHash, bytes: buffer.length, summaryPath: summaryRel,
+        ingestedAt: new Date().toISOString(), completed: true, model: repeatPlan.previous.model || plannedModel || undefined,
+        keyFacts: KEY_FACTS_VERSION, noCall: true,
+      });
+    }
     progress(100, 'Nothing to do');
     return {
       title: originalName,
@@ -3410,6 +3613,10 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     console.warn(`[ingest] ⚠ ${msg}`);
     warnings.push(msg);
     progress(8, `⚠ Source truncated to ${TEXT_CAP.toLocaleString()} chars — see warnings.`);
+  }
+  {
+    const tableWarning = tableDataWarning(text);
+    if (tableWarning) { console.warn(`[ingest] ${tableWarning}`); warnings.push(tableWarning); }
   }
 
   // ── PRE-FLIGHT: say it BEFORE the money is spent ──────────────────────────
@@ -3554,8 +3761,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       // If the response is already large, a strict-brevity retry will produce a
       // similarly large (and similarly broken) response — skip it and go straight
       // to multi-phase, which handles content in small, reliable batches.
-      if (raw.length > SINGLE_PASS_RESPONSE_LIMIT) {
-        console.warn(`[ingest] Response ${raw.length} chars > ${SINGLE_PASS_RESPONSE_LIMIT} limit — skipping retry, switching to multi-phase.`);
+      const responseLimit = keyFactsGate(text) ? SINGLE_PASS_RESPONSE_LIMIT_KEY_FACTS : SINGLE_PASS_RESPONSE_LIMIT;
+      if (raw.length > responseLimit) {
+        console.warn(`[ingest] Response ${raw.length} chars > ${responseLimit} limit — skipping retry, switching to multi-phase.`);
         singlePassFailed = true;
       } else {
         // Short response that failed to parse — retry with maximum brevity
@@ -3798,6 +4006,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     const foldedFrom = page[FOLDED_FROM] || plannedFolds.get(withMdExtension(page.path));
     const record = await writePage(domain, page.path, page.content, {
       onWarn: (w) => warnings.push(w),
+      splitHeadings: true,   // fresh model output: a swallowed template heading may be split
       ...(foldedFrom ? { foldedFrom } : {}),
       ...(repeatSource ? { repeatSource: true, onLeftOut: (n) => { repeatLeftOut += n; } } : {}),
     });
@@ -3827,6 +4036,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // resolve. Before the backlink sync below, which reads these lists.
   await tidyWrittenLinks(domain, canonicalPaths);
 
+  if (repeatPlan.kind === 'key-facts') {
+    // Said as it is: the reading is recorded whatever it wrote, so the promise holds.
+    let wroteKeyFacts = false;
+    try { wroteKeyFacts = /^##[ \t]+Key Facts[ \t]*$/m.test(await readFile(path.join(wikiPath(domain), summaryPath), 'utf8')); } catch { wroteKeyFacts = false; }
+    warnings.push(wroteKeyFacts
+      ? `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
+        `This one extra reading added its Key Facts, new pages and what was mostly new to a page; no existing text changed. ` +
+        `The next re-ingest with this model makes no AI call.`
+      : `This source's content has not changed, and this model read it before the wiki kept a source's figures. ` +
+        `This one extra reading found no figures to add to a Key Facts section; it added only what was mostly new to a page, and no existing text changed. ` +
+        `The next re-ingest with this model makes no AI call.`);
+  }
   if (repeatPlan.kind === 'other-model') {
     warnings.push(
       `This source's content has not changed, and ${repeatPlan.previous.model || 'an earlier model'} read it before. ` +
@@ -3966,6 +4187,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     completed: true,
     model: usage.totals.model || plannedModel,
     gaps: warnings.filter((w) => FELL_SHORT_RE.test(w)).length,
+    keyFacts: KEY_FACTS_VERSION,   // one Key Facts reading, whatever it wrote (owner)
   });
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this
@@ -4138,7 +4360,9 @@ async function linkifyHubPages(domain, canonicalPaths) {
         // bounded by the number of slugs in this ingest.
         // A heading is protected too: `## [[slug|Related]]` is no longer the
         // section `## Related` that every reader of the page looks for.
-        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\]|^#{1,6}[ \t][^\n]*$)/gm);
+        // A table row is protected too (2026-11-14): `[[slug|Title]]` puts a pipe in a cell
+        // and splits it, and a Key Facts table is data, not prose to link.
+        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\]|^#{1,6}[ \t][^\n]*$|^[ \t]*\|[^\n]*$)/gm);
         let candidateLinks = 0;
         for (let i = 0; i < segments.length; i++) {
           if (i % 2 === 1) continue;

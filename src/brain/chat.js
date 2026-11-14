@@ -441,6 +441,41 @@ function scorePage(page, queryTokens) {
   const headTokens = tokenize(head);
   for (const t of headTokens) if (queryTokens.has(t)) score += 1;
 
+  if (page.path.startsWith('summaries/')) score += keyFactsScore(page.content, queryTokens);
+  return score;
+}
+
+/**
+ * A page's `## Key Facts` section, past the head, scored at 1x (2026-11-14).
+ *
+ * Ingest now keeps a data source's figures in a Key Facts section on its summary,
+ * and that section sits below the 600-character head, so "what is the cancellation
+ * fee?" matched no scored text and the one page holding the answer was not loaded
+ * (measured: a 7 KB pricing summary whose section began at character 637). Each
+ * query token found in the section counts ONCE, so a long section cannot outweigh a
+ * title. Only the part of the section after HEAD_SCAN_CHARS is read (the head was
+ * already scored) and at most KEY_FACTS_SCAN_CHARS of it. A page without the section
+ * scores exactly as before.
+ *
+ * SUMMARIES ONLY, measured. The business and tech domain templates have long put a
+ * `## Key Facts` section on ENTITY pages: scoring those too changed the loaded pages for
+ * 47 of 60 sampled questions on a real 3,511-page domain (514 entity pages with the
+ * section). Ingest writes the new section on the summary, so scoring summaries only
+ * leaves every existing wiki's retrieval as it was (0 of 60 changed on any domain).
+ */
+const KEY_FACTS_SCAN_CHARS = 6000;
+const KEY_FACTS_HEADING_RE = /^##[ \t]+Key Facts[ \t]*$/m;
+function keyFactsScore(content, queryTokens) {
+  const m = KEY_FACTS_HEADING_RE.exec(content);
+  if (!m) return 0;
+  const start = m.index + m[0].length;
+  const next = content.slice(start).search(/^#{1,2}[ \t]/m);
+  const end = next === -1 ? content.length : start + next;
+  const from = Math.max(start, HEAD_SCAN_CHARS);
+  if (from >= end) return 0;
+  const section = content.slice(from, Math.min(end, from + KEY_FACTS_SCAN_CHARS));
+  let score = 0;
+  for (const t of new Set(tokenize(section))) if (queryTokens.has(t)) score += 1;
   return score;
 }
 
@@ -2210,4 +2245,4 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, normalizePriced, priceServedAnswer, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, WIKI_ONLY_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };
+export const __testing = { buildSlugCatalogue, scorePage, keyFactsScore, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, normalizePriced, priceServedAnswer, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, WIKI_ONLY_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };

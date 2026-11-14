@@ -121,12 +121,14 @@ import {
 // returned) had fallen on the wrong side of it. Do not reintroduce local
 // copies of these two — see the shared module's own header comment.
 import {
+  queueRowNote,
   queueBusyTransition, formatQueueBytes, formatTokenRange,
   duplicateCopy,
   pausedReasonCopy, statusPillMeta, resolveEstimateFileList, dedupeQueueFiles,
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
   computeQueueStatusCounts,
 } from '../shared/ingest-queue-logic.js';
+import { sourceHasHardData } from '../shared/hard-data.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 // Context's one-shot "open this project on your next arrival" request (v3.65.2,
 // I2) — the SAME export views/domains.js already imports, for the same reason
@@ -3476,7 +3478,7 @@ async function refreshSingleEstimate(token) {
     const res = await fetch(QUEUE_API + '/estimate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain, files: [{ name: file.name, size: file.size }] }),
+      body: JSON.stringify({ domain, files: [await withHardData({ name: file.name, size: file.size }, file)] }),
     });
     if (res.ok) body = await res.json();
   } catch { body = null; }
@@ -3817,6 +3819,27 @@ function resetQueueSelection(token) {
   render(token);
 }
 
+// Does this file carry hard data? The server's own gate (shared/hard-data.js), on the
+// same first 80,000 characters it will read. Only for text files: a PDF's text is not
+// known here, so its estimate stays the upper bound. null when it cannot be told.
+const queueFileHardData = new WeakMap();
+async function fileHardData(file) {
+  try {
+    if (!file || typeof file.text !== 'function' || !/\.(md|txt)$/i.test(String(file.name || ''))) return null;
+    if (queueFileHardData.has(file)) return queueFileHardData.get(file);
+    const v = sourceHasHardData((await file.text()).slice(0, 80000));
+    queueFileHardData.set(file, v);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+async function withHardData(entry, file) {
+  const v = await fileHardData(file);
+  return typeof v === 'boolean' ? { ...entry, hardData: v } : entry;
+}
+
 // A file's sha256 as lowercase hex, or null when it cannot be computed here (no Web
 // Crypto, an unreadable file). Cached per File object, so a re-estimate does not re-read
 // it. A null only means the file is priced, the safe direction.
@@ -3849,12 +3872,13 @@ async function startQueueSelection(token) {
     // server can price at $0 a file that will finish without an AI call.
     // One at a time: a large batch is never held in memory at once.
     const hashes = [];
-    for (const f of files) hashes.push(await queueFileSha256(f));
+    const hard = [];
+    for (const f of files) { hashes.push(await queueFileSha256(f)); hard.push(await fileHardData(f)); }
     if (!isCurrentMount(token)) return;
     const body = {
       domain: state.domain,
       overwrite: !!state.queueOverwriteInput,
-      files: files.map((f, i) => (hashes[i] ? { name: f.name, size: f.size, sha256: hashes[i] } : { name: f.name, size: f.size })),
+      files: files.map((f, i) => ({ name: f.name, size: f.size, ...(hashes[i] ? { sha256: hashes[i] } : {}), ...(typeof hard[i] === 'boolean' ? { hardData: hard[i] } : {}) })),
     };
     const res = await fetch(QUEUE_API + '/estimate', {
       method: 'POST',
@@ -4412,6 +4436,7 @@ function estimateCostText(e, runsOn) {
 function renderQueueEstimate(est, opts) {
   const fileList = resolveEstimateFileList(est, state.selectedFiles);
   const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
+  const keyFactsNames = new Set(Array.isArray(est.files && est.files.keyFactsReread) ? est.files.keyFactsReread : []);
   const noCallByName = new Map((Array.isArray(est.files && est.files.noCall) ? est.files.noCall : [])
     .filter((e) => e && typeof e.name === 'string').map((e) => [e.name, String(e.reason || '')]));
   const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
@@ -4443,7 +4468,7 @@ function renderQueueEstimate(est, opts) {
     '<div class="ing-queue-section">' +
       '<div class="ing-queue-section-label">Will be ingested (largest first)</div>' +
       '<ul class="ing-queue-file-list" id="ing-queue-file-list">' +
-        fileList.map((f) => renderQueueFileListItem(f, { removable: true, noCall: noCallByName.get(f && f.name) || null })).join('') +
+        fileList.map((f) => renderQueueFileListItem(f, { removable: true, noCall: noCallByName.get(f && f.name) || null, keyFacts: keyFactsNames.has(f && f.name) })).join('') +
       '</ul>' +
     '</div>';
 
@@ -4575,12 +4600,8 @@ function renderQueueFileListItem(entry, opts) {
     : '';
   // A file the estimate priced at $0 because it will finish without an AI call says so
   // (the server's `files.noCall` reason, passed in by renderQueueEstimate).
-  const reason = opts && opts.noCall;
-  const noCallNote = reason === 'already-ingested' ? 'already ingested, will be skipped · no AI call · $0'
-    : reason === 'same-name-in-batch' ? 'same name as another file, will be skipped · no AI call · $0'
-    : reason === 'unchanged' ? 'already read by this model · no AI call · $0'
-    : '';
-  const noteHtml = noCallNote ? '<span class="ing-queue-file-reason">' + escapeHtml(noCallNote) + '</span>' : '';
+  const note = queueRowNote(opts && opts.noCall, !!(opts && opts.keyFacts));
+  const noteHtml = note ? '<span class="ing-queue-file-reason">' + escapeHtml(note) + '</span>' : '';
   return '<li class="ing-queue-file-item"><span class="ing-queue-file-name">' + name + '</span><span class="ing-queue-file-size">' + size + '</span>' + noteHtml + removeBtn + '</li>';
 }
 
