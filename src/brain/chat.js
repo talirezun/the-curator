@@ -490,28 +490,33 @@ function keyFactsScore(content, queryTokens) {
 //
 // So the candidates and their order stay exactly as they were. Only when the
 // whole-page pass had to leave a candidate out does a second pass run
-// (`withDigests`): every page the first pass loaded STAYS, and each one over
-// DIGEST_THRESHOLD_CHARS is loaded as a query-focused digest of at most
-// DIGEST_CAP_CHARS instead — the page's opening, its `## Key Takeaways` /
-// `## Key Facts`, and the items (paragraphs, list items, table blocks) whose
-// words best match the question, in page order, every omission marked. The room
-// that frees admits the skipped candidates in the same order. A PIVOT ENTITY page
-// (the entity the question names) is never digested: the first withdrawn attempt
-// lost exactly those pages. When everything fits whole, nothing here runs:
-// selection and page text are byte-identical to before. Pages are never written;
-// a digest exists only in the prompt.
+// (`withDigests`), and it shortens a page only where that pays: a loaded page
+// over DIGEST_THRESHOLD_CHARS is replaced by a query-focused digest of at most
+// DIGEST_CAP_CHARS only to admit a skipped candidate scoring at least as high,
+// never the top-scoring page, a pivot entity page or a page the question names,
+// at most DIGEST_MAX_PAGES per question. Every page the first pass loaded STAYS.
+// A digest keeps the opening, the whole `## Key Facts`, short sections, then
+// `## Key Takeaways` and the items whose words best match the question, in page
+// order, gaps marked with a bare "…" (no label: an earlier wording made models
+// talk about "the digest"). When everything fits whole, or nothing new would get
+// in, selection and page text are byte-identical to before. Pages are never
+// written; a digest exists only in the prompt.
 //
-// Measured on copies of six real domains (507 labelled questions, 2026-11-14):
-// the answer text was in the loaded content for 394 → 415 of 494 questions, 0
-// lost, no domain lower; "What is <entity>?" over all 1,417 entities lost no
-// entity page. 12,000 / 12,000 measured best of 10–24 K thresholds and 8–16 K caps.
+// Measured 2026-11-15 on copies of six real domains: an independent audit's 694
+// questions on facts deep in the 42 pages over 12 KB plus 507 labelled questions:
+// the answer text was in the loaded content for 766 → 795 of 1,188, 0 lost; no
+// question right in every run before and wrong in every run after on Gemini 3.5
+// Flash Lite or Solar Pro 4 (6 runs on each candidate). See decisions-knowledge.md.
+// FOLD_PIVOT_NAMES (diacritics folded in pivot detection) was measured separately:
+// +4 / -3 on the same sets, so it stays off; folding is used for the never-shorten
+// name match only.
 export const DIGEST_THRESHOLD_CHARS = 12_000;
 export const DIGEST_CAP_CHARS = 12_000;
+export const DIGEST_MAX_PAGES = 3;
+const FOLD_PIVOT_NAMES = false;
 const DIGEST_LEAD_CHARS = 1_500;       // the opening, kept in every digest
-const DIGEST_KEY_WHOLE_SHARE = 0.4;    // a Key section this share of the cap or less is kept whole
-const DIGEST_KEY_HEAD_CHARS = 1_000;   // else its first items, up to this, are kept
+const DIGEST_SHORT_SECTION_CHARS = 800; // a section this short is kept before Key Takeaways
 const DIGEST_UNIT_MAX_CHARS = 2_400;   // a longer paragraph or table is split by lines
-const DIGEST_MARKER_HEADINGS = 24;
 const DIGEST_KEY_HEADING_RE = /^##[ \t]+Key (Takeaways|Facts)[ \t]*$/i;
 const DIGEST_HEADING_RE = /^#{2,6}[ \t]+\S/;
 const DIGEST_FENCE_RE = /^[ \t]*(```|~~~)/;
@@ -527,7 +532,7 @@ function digestStem(t) {
   return t;
 }
 function digestStems(text) {
-  return new Set(tokenize(text).map(digestStem));
+  return new Set(tokenize(foldName(text)).map(digestStem));
 }
 
 /** Split a section's lines into items: list items (with continuation lines),
@@ -631,73 +636,73 @@ export function digestPage(content, queryText, cap = DIGEST_CAP_CHARS) {
     return s;
   });
 
-  const budget = cap;
+  // What stays. Fixed: the opening (title and lead, up to DIGEST_LEAD_CHARS) and
+  // the whole `## Key Facts`. Then, best first: Key Takeaways items (best-matching
+  // first), then the body items that match the question (best first), then the rest
+  // in page order. Trimming to the cap removes from the end of that order, so the
+  // lowest-matching body items go first and Key Facts never go.
+  const fixed = new Set();
+  let lead = 0;
+  for (const u of sections[0].units) {
+    if (lead + u.text.length > DIGEST_LEAD_CHARS && lead > 0) break;
+    fixed.add(u.id);
+    lead += u.text.length;
+  }
+  const kind = (u) => {
+    const sec = sections[u.si];
+    if (!sec.key) return 'body';
+    return /facts/i.test(sec.heading) ? 'facts' : 'takeaways';
+  };
+  for (const u of units) if (kind(u) === 'facts') fixed.add(u.id);
+  // A short section (not a list of links) is cheap and often carries what only the
+  // page says about itself, such as the source a summary was built from.
+  const linkOnly = (sec) => sec.units.length > 0 && sec.units.every(u => /^\s*[-*+]\s*\[\[[^\]]+\]\]\s*(—.*)?$/.test(u.text));
+  for (const sec of sections) {
+    sec.short = sec.heading !== null && !sec.key && !linkOnly(sec)
+      && sec.units.reduce((a, u) => a + u.text.length + 1, 0) <= DIGEST_SHORT_SECTION_CHARS;
+  }
+  const rank = (u) => sections[u.si].short ? 2e6 + score[u.id]
+    : kind(u) === 'takeaways' ? 1e6 + score[u.id]
+    : score[u.id] > 0 ? score[u.id] : -1 - u.id / 1e9;
+  const rest = units.filter(u => !fixed.has(u.id)).sort((a, b) => rank(b) - rank(a) || a.id - b.id);
+
   const render = () => {
-    const kb = (content.length / 1024).toFixed(1);
-    const out = [`[Long page (${kb} KB) shown as a digest: its opening, key sections and the parts that best match this question, in page order. Omitted parts are marked.]`];
+    const out = [];
+    let gapPending = false;
     const omitted = [];
     for (const sec of sections) {
       const kept = sec.units.filter(u => u.keep);
       if (kept.length === 0) {
-        if (sec.heading !== null && sec.units.length > 0) omitted.push(sec.heading.replace(/^#+[ \t]+/, '').trim().slice(0, 80));
-        if (sec.heading !== null && sec.units.length === 0) out.push('', sec.heading);
+        if (sec.units.length > 0 || sec.heading !== null) gapPending = true;
+        if (sec.heading !== null) omitted.push(sec.heading.replace(/^#+[ \t]+/, '').trim().slice(0, 80));
         continue;
       }
+      if (gapPending && out.length) out.push('', '…');
+      gapPending = false;
       if (sec.heading !== null) out.push('', sec.heading);
       let prev = -1;
       for (const u of kept) {
-        if (prev !== -1 && u.k !== prev + 1) out.push('[…]');
-        else if (u.gap && out.length > 1 && out[out.length - 1] !== '' && out[out.length - 1] !== sec.heading) out.push('');
+        if (u.k !== prev + 1) out.push('…');
+        else if (u.gap && prev !== -1) out.push('');
         out.push(u.text);
         prev = u.k;
       }
-      const left = sec.units.length - kept.length;
-      if (left > 0) out.push(`[… ${left} more item${left === 1 ? '' : 's'} in this section omitted]`);
+      if (prev < sec.units.length - 1) gapPending = true;
     }
-    if (omitted.length) {
-      const shown = omitted.slice(0, DIGEST_MARKER_HEADINGS);
-      const more = omitted.length - shown.length;
-      out.push('', `[sections omitted: ${shown.join(' · ')}${more > 0 ? ` · +${more} more` : ''}]`);
-    }
+    if (gapPending) out.push('…');
+    while (out.length && out[0] === '') out.shift();
     return { text: out.join('\n'), omitted };
   };
-  // Cheap running estimate; the exact length is checked on the rendered text.
-  let est = 400;
+
   const order = [];
-  const take = (u) => {
-    if (u.keep) return true;
-    const add = u.text.length + 8 + (sections[u.si].units.some(x => x.keep) ? 0 : (sections[u.si].heading || '').length + 2);
-    if (est + add > budget - 600) return false;
+  for (const u of units) if (fixed.has(u.id)) u.keep = true;
+  let est = units.filter(u => u.keep).reduce((a, u) => a + u.text.length + 4, 0)
+    + sections.filter(s => s.units.some(u => u.keep)).reduce((a, s) => a + (s.heading || '').length + 2, 0);
+  for (const u of rest) {
+    const add = u.text.length + 6 + (sections[u.si].units.some(x => x.keep) ? 0 : (sections[u.si].heading || '').length + 4);
+    if (est + add > cap) continue;
     u.keep = true; est += add; order.push(u);
-    return true;
-  };
-
-  // 1. The opening (title line and lead), in order, up to DIGEST_LEAD_CHARS.
-  let lead = 0;
-  for (const u of sections[0].units) {
-    if (lead + u.text.length > DIGEST_LEAD_CHARS && lead > 0) break;
-    if (!take(u)) break;
-    lead += u.text.length;
   }
-  // 2. Key Takeaways / Key Facts: whole when small, else their first items.
-  for (const sec of sections.filter(s => s.key)) {
-    const size = sec.units.reduce((a, u) => a + u.text.length + 1, 0);
-    if (size <= cap * DIGEST_KEY_WHOLE_SHARE) { for (const u of sec.units) take(u); continue; }
-    let k = 0;
-    for (const u of sec.units) {
-      if (k + u.text.length > DIGEST_KEY_HEAD_CHARS && k > 0) break;
-      if (!take(u)) break;
-      k += u.text.length;
-    }
-  }
-  // 3. The items that match the question best (ties: key sections, then page order).
-  const ranked = units.filter(u => !u.keep && score[u.id] > 0)
-    .sort((a, b) => score[b.id] - score[a.id]
-      || (sections[b.si].key - sections[a.si].key) || a.id - b.id);
-  for (const u of ranked) take(u);
-  // 4. Room left: the rest in page order, so a digest is never emptier than it must be.
-  for (const u of units) if (!u.keep) take(u);
-
   let r = render();
   while (r.text.length > cap && order.length > 0) {
     order.pop().keep = false;
@@ -724,13 +729,15 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
     maxPages = MAX_PAGES_LOADED,
     digestThreshold = DIGEST_THRESHOLD_CHARS,
     digestCap = DIGEST_CAP_CHARS,
+    maxDigests = DIGEST_MAX_PAGES,
+    foldNames = FOLD_PIVOT_NAMES,
   } = opts;
 
   const queryTokens = new Set(tokenize(queryText));
   const contentPages = pages.filter(p => p.path !== 'index.md' && p.path !== 'log.md');
 
   // ── Stage 1: entity-pivot retrieval ────────────────────────────────────
-  const pivots = detectEntityPivots(queryText, contentPages);
+  const pivots = detectEntityPivots(foldNames ? foldName(queryText) : queryText, contentPages);
   const priorityPaths = new Set();
   for (const pivot of pivots) {
     priorityPaths.add(pivot.page.path);
@@ -793,53 +800,136 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   // byte for byte. (A shortcut: withDigests also returns `result` itself whenever
   // no new page gets in, which is what guarantees the identity.)
   if (!skipped || selected.length >= maxPages || !(digestThreshold < Infinity)) return result;
-  return withDigests(result, candidates, taken, queryText, { contentBudget, maxPages, digestThreshold, digestCap, pivotPaths: new Set(pivots.map(p => p.page.path)) });
+  return withDigests(result, candidates, taken, queryText, { contentBudget, maxPages, digestThreshold, digestCap, maxDigests, pivotPaths: new Set(pivots.map(p => p.page.path)) });
 }
 
 /**
  * The second pass (2026-11-14). Runs only when the whole-page pass left a
- * candidate out for want of room. It never drops a page the first pass loaded:
- * every one of them stays, in place, and each over `digestThreshold` is loaded
- * as a digest instead. The room that frees then admits the candidates the first
- * pass skipped, in the SAME order (a page over the threshold as a digest too).
- * If nothing new gets in, the first pass's result is returned unchanged.
+ * candidate out for want of room, and only spends a page's text where it pays:
+ *   - a loaded long page is shortened ONLY to admit a skipped candidate whose
+ *     score is at least that page's own score (never to let in low-relevance tail
+ *     pages), and once any page is shortened, only candidates scoring at least as
+ *     high as every shortened page are admitted;
+ *   - never shortened: a pivot entity page, a page the question names (slug or
+ *     title, diacritics folded: "Režun" names `tali-rezun`), and the single
+ *     highest-scoring loaded page;
+ *   - at most DIGEST_MAX_PAGES pages are shortened per question, and at most
+ *     3x that many digests are computed, so the work stays bounded.
+ * Every page the first pass loaded stays, in place. If no new page gets in, the
+ * first pass's result object is returned unchanged.
  */
 function withDigests(result, candidates, taken, queryText, o) {
   const cost = (path, content) => content.length + path.length + 30;
-  const entryFor = (i) => {
-    const { page, score, priority } = candidates[i];
-    const entry = { page, score, priority: priority === true };
-    if (page.content.length > o.digestThreshold && !o.pivotPaths.has(page.path)) {
-      const d = digestPage(page.content, queryText, o.digestCap);
-      if (d) {
-        entry.page = { ...page, content: d.content };
-        entry.digest = { fullChars: page.content.length, omittedSections: d.omittedSections };
-      }
-    }
-    return entry;
+  const named = namedPagePaths(queryText, candidates.map(c => c.page));
+  let top = -1;
+  for (const i of taken) if (top === -1 || candidates[i].score > candidates[top].score) top = i;
+  const shortenable = (i) => {
+    const p = candidates[i].page;
+    return p.content.length > o.digestThreshold && i !== top && !o.pivotPaths.has(p.path) && !named.has(p.path);
   };
+  const memo = new Map();
+  let calls = 0;
+  const digestOf = (i) => {
+    if (memo.has(i)) return memo.get(i);
+    if (calls >= o.maxDigests * 3) return null;
+    calls++;
+    const d = digestPage(candidates[i].page.content, queryText, o.digestCap);
+    memo.set(i, d);
+    return d;
+  };
+  const entryOf = (i, d) => {
+    const { page, score, priority } = candidates[i];
+    const e = { page, score, priority: priority === true };
+    if (d) {
+      e.page = { ...page, content: d.content };
+      e.digest = { fullChars: page.content.length, omittedSections: d.omittedSections };
+    }
+    return e;
+  };
+
   const chosen = new Map();
   let used = 0;
   for (const i of taken) {
-    const e = entryFor(i);
-    chosen.set(i, e);
-    used += cost(e.page.path, e.page.content);
+    chosen.set(i, entryOf(i, null));
+    used += cost(candidates[i].page.path, candidates[i].page.content);
   }
   const takenSet = new Set(taken);
+  let shortened = 0;
+  let floor = -Infinity;   // the highest score of any page shortened so far
   let added = 0;
-  for (let i = 0; i < candidates.length; i++) {
+  for (let j = 0; j < candidates.length; j++) {
     if (chosen.size >= o.maxPages) break;
-    if (takenSet.has(i)) continue;
-    const e = entryFor(i);
-    const c = cost(e.page.path, e.page.content);
-    if (used + c > o.contentBudget) continue;
-    chosen.set(i, e);
-    used += c;
+    if (takenSet.has(j)) continue;
+    const s = candidates[j].score;
+    if (s < floor) continue;
+    const pj = candidates[j].page;
+    let need = cost(pj.path, pj.content);
+    let own = null;
+    if (used + need > o.contentBudget && shortenable(j) && shortened < o.maxDigests) {
+      own = digestOf(j);
+      if (own) need = cost(pj.path, own.content);
+    }
+    const plan = [];
+    let room = o.contentBudget - used;
+    if (need > room) {
+      // Shorten loaded pages that score no higher than this candidate: the lowest
+      // scoring first, the later one first on ties.
+      const eligible = [...chosen.keys()]
+        .filter(i => !chosen.get(i).digest && candidates[i].score <= s && shortenable(i))
+        .sort((a, b) => candidates[a].score - candidates[b].score || b - a);
+      for (const i of eligible) {
+        if (need <= room) break;
+        if (shortened + plan.length + (own ? 1 : 0) >= o.maxDigests) break;
+        const d = digestOf(i);
+        if (!d) continue;
+        const saving = cost(candidates[i].page.path, candidates[i].page.content) - cost(candidates[i].page.path, d.content);
+        if (saving <= 0) continue;
+        plan.push({ i, d });
+        room += saving;
+      }
+      if (need > room) continue;
+    }
+    for (const { i, d } of plan) {
+      chosen.set(i, entryOf(i, d));
+      floor = Math.max(floor, candidates[i].score);
+      shortened++;
+    }
+    if (own) { shortened++; floor = Math.max(floor, s); }
+    chosen.set(j, entryOf(j, own));
+    used = o.contentBudget - room + need;
     added++;
   }
   if (added === 0) return result;
   const selected = [...chosen.keys()].sort((a, b) => a - b).map(i => chosen.get(i));
-  return { ...result, selected, contentBytes: used, digestCount: selected.filter(s => s.digest).length };
+  const contentBytes = selected.reduce((a, e) => a + cost(e.page.path, e.page.content), 0);
+  return { ...result, selected, contentBytes, digestCount: selected.filter(e => e.digest).length };
+}
+
+/** Fold diacritics for name matching: "Režun" → "rezun". */
+function foldName(s) {
+  return String(s || '').normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+}
+
+/**
+ * Pages the question names by slug (every slug word present, diacritics folded;
+ * a one-word slug must not be a common word) or by a title of two or more words.
+ */
+function namedPagePaths(queryText, pages) {
+  const qt = tokenize(foldName(queryText)).map(t => t.replace(/'s?$/, ''));   // "Režun's" → "rezun"
+  const q = new Set(qt);
+  const qText = ` ${qt.join(' ')} `;
+  const out = new Set();
+  for (const p of pages) {
+    const slug = p.path.split('/').pop().replace(/\.md$/, '');
+    const st = tokenize(foldName(slug.replace(/-/g, ' ')));
+    if (st.length > 0 && st.every(t => q.has(t)) && !(st.length === 1 && COMMON_TOKENS_BLOCKLIST.has(st[0]))) { out.add(p.path); continue; }
+    const m = p.content.match(/^#{1,3}\s+(.+)/m);
+    if (m) {
+      const tt = tokenize(foldName(m[1]));
+      if (tt.length >= 2 && qText.includes(` ${tt.join(' ')} `)) out.add(p.path);
+    }
+  }
+  return out;
 }
 
 // ── Response-style control (Tier 2) ────────────────────────────────────────
@@ -1449,7 +1539,7 @@ function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balan
   // none, the note is the same string as before.
   const digestCount = selected.filter(s => s.digest).length;
   const loadedNote = digestCount > 0
-    ? `Loaded ${selected.length} pages: ${selected.length - digestCount} in full and ${digestCount} long page${digestCount === 1 ? '' : 's'} as a section digest (marked inside the page)`
+    ? `Loaded ${selected.length} pages (${digestCount} long page${digestCount === 1 ? '' : 's'} in part, gaps marked …)`
     : `Loaded ${selected.length} pages in full`;
   const selectionNote = `Retrieval: ${selectionParts.join(' + ')}. ${loadedNote} (${(contentBytes/1024).toFixed(1)} KB).`;
 
