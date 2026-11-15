@@ -479,6 +479,239 @@ function keyFactsScore(content, queryTokens) {
   return score;
 }
 
+// ── Section digests of oversized pages (2026-11-14) ───────────────────────
+//
+// The pivot rule force-loads an entity page and every summary it links, in
+// link order, greedily. One oversized page (a 50.5 KB overview) could then take
+// almost the whole 60 KB, and the small pages after it — often the ones holding
+// the answer — were skipped. Three reorderings were withdrawn because, inside
+// one fixed budget, choosing WHOLE pages only trades one set of questions for
+// another (see docs/dev/decisions-knowledge.md, "Chat's pivot crowding").
+//
+// So the candidates and their order stay exactly as they were. Only when the
+// whole-page pass had to leave a candidate out does a second pass run
+// (`withDigests`), and it shortens a page only where that pays: a loaded page
+// over DIGEST_THRESHOLD_CHARS is replaced by a query-focused digest of at most
+// DIGEST_CAP_CHARS only to admit a skipped candidate scoring at least as high,
+// never the top-scoring page, a pivot entity page or a page the question names,
+// at most DIGEST_MAX_PAGES per question. Every page the first pass loaded STAYS.
+// A digest keeps the opening, the whole `## Key Facts`, short sections, then
+// `## Key Takeaways` and the items whose words best match the question, in page
+// order, gaps marked with a bare "…" (no label: an earlier wording made models
+// talk about "the digest"). When everything fits whole, or nothing new would get
+// in, selection and page text are byte-identical to before. Pages are never
+// written; a digest exists only in the prompt.
+//
+// Measured 2026-11-15 on copies of six real domains: an independent audit's 694
+// questions on facts deep in the 42 pages over 12 KB plus 507 labelled questions:
+// the answer text was in the loaded content for 766 → 795 of 1,188, 0 lost; no
+// question right in every run before and wrong in every run after on Gemini 3.5
+// Flash Lite or Solar Pro 4 (6 runs on each candidate). See decisions-knowledge.md.
+// FOLD_PIVOT_NAMES (diacritics folded in pivot detection) was measured separately:
+// +4 / -3 on the same sets, so it stays off; folding is used for the never-shorten
+// name match only.
+export const DIGEST_THRESHOLD_CHARS = 12_000;
+export const DIGEST_CAP_CHARS = 12_000;
+export const DIGEST_MAX_PAGES = 3;
+const FOLD_PIVOT_NAMES = false;
+const DIGEST_LEAD_CHARS = 1_500;       // the opening, kept in every digest
+const DIGEST_SHORT_SECTION_CHARS = 800; // a section this short is kept before Key Takeaways
+const DIGEST_UNIT_MAX_CHARS = 2_400;   // a longer paragraph or table is split by lines
+const DIGEST_KEY_HEADING_RE = /^##[ \t]+Key (Takeaways|Facts)[ \t]*$/i;
+const DIGEST_HEADING_RE = /^#{2,6}[ \t]+\S/;
+const DIGEST_FENCE_RE = /^[ \t]*(```|~~~)/;
+const DIGEST_ITEM_RE = /^[ \t]{0,3}([-*+]|\d{1,3}[.)])[ \t]+/;
+
+/** Light suffix folding for MATCHING ONLY ("released" meets "release"). */
+function digestStem(t) {
+  t = t.replace(/'s?$/, '');
+  if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+  if (t.length > 5 && t.endsWith('ing')) t = t.slice(0, -3);
+  else if (t.length > 4 && t.endsWith('ed')) t = t.slice(0, -2);
+  if (t.length > 3 && t.endsWith('e')) t = t.slice(0, -1);
+  return t;
+}
+function digestStems(text) {
+  return new Set(tokenize(foldName(text)).map(digestStem));
+}
+
+/** Split a section's lines into items: list items (with continuation lines),
+ *  paragraphs, fenced blocks. `gap` records a blank line before the item. */
+function digestUnits(lines) {
+  const units = [];
+  let cur = null;
+  let gap = false;
+  let fence = false;
+  const flush = () => { if (cur) units.push(cur); cur = null; };
+  for (const line of lines) {
+    if (fence) {
+      cur.lines.push(line);
+      if (DIGEST_FENCE_RE.test(line)) { fence = false; flush(); }
+      continue;
+    }
+    if (DIGEST_FENCE_RE.test(line)) {
+      flush();
+      cur = { lines: [line], gap };
+      gap = false;
+      fence = true;
+      continue;
+    }
+    if (line.trim() === '') { flush(); gap = true; continue; }
+    const startsItem = DIGEST_ITEM_RE.test(line);
+    const continues = cur && !startsItem && (/^[ \t]+\S/.test(line) || !DIGEST_ITEM_RE.test(cur.lines[0]));
+    if (!cur || !continues || startsItem) {
+      flush();
+      cur = { lines: [line], gap };
+      gap = false;
+    } else {
+      cur.lines.push(line);
+    }
+  }
+  flush();
+  // Split an oversized unit by lines so one huge table cannot be all-or-nothing.
+  const out = [];
+  for (const u of units) {
+    const text = u.lines.join('\n');
+    if (text.length <= DIGEST_UNIT_MAX_CHARS || u.lines.length === 1) { out.push({ text, gap: u.gap }); continue; }
+    let buf = [];
+    let len = 0;
+    let first = true;
+    for (const l of u.lines) {
+      if (len > 0 && len + l.length + 1 > DIGEST_UNIT_MAX_CHARS) {
+        out.push({ text: buf.join('\n'), gap: first ? u.gap : false });
+        first = false; buf = []; len = 0;
+      }
+      buf.push(l); len += l.length + 1;
+    }
+    if (buf.length) out.push({ text: buf.join('\n'), gap: first ? u.gap : false });
+  }
+  return out;
+}
+
+/**
+ * A query-focused digest of one long page, or null when it would not be
+ * shorter than the page. Pure: reads `content`, returns new text.
+ *
+ * Exported for unit testing.
+ */
+export function digestPage(content, queryText, cap = DIGEST_CAP_CHARS) {
+  if (typeof content !== 'string' || content.length <= cap) return null;
+  let body = content;
+  const fm = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(body);
+  if (fm) body = body.slice(fm[0].length);
+
+  // Sections by heading (## and deeper), never inside a code fence.
+  const sections = [{ heading: null, lines: [] }];
+  let fence = false;
+  for (const line of body.split('\n')) {
+    if (DIGEST_FENCE_RE.test(line)) fence = !fence;
+    if (!fence && DIGEST_HEADING_RE.test(line)) sections.push({ heading: line, lines: [] });
+    else sections[sections.length - 1].lines.push(line);
+  }
+
+  const units = [];
+  sections.forEach((sec, si) => {
+    sec.key = sec.heading !== null && DIGEST_KEY_HEADING_RE.test(sec.heading);
+    sec.units = digestUnits(sec.lines).map((u, k) => {
+      const unit = { ...u, si, k, id: units.length, keep: false };
+      units.push(unit);
+      return unit;
+    });
+  });
+
+  // Score: each query word found in the item (or its heading) once, weighted by
+  // how rare it is on THIS page, so a word on every line (the pivot's own name)
+  // counts for little and a rare one ("v0.1.1", "refund") decides.
+  const query = digestStems(queryText || '');
+  const stemsOf = units.map(u => {
+    const h = sections[u.si].heading || '';
+    return digestStems(`${h}\n${u.text}`);
+  });
+  const df = new Map();
+  for (const st of stemsOf) for (const t of st) if (query.has(t)) df.set(t, (df.get(t) || 0) + 1);
+  const n = Math.max(units.length, 1);
+  const score = stemsOf.map(st => {
+    let s = 0;
+    for (const t of st) if (df.has(t)) s += Math.log(1 + n / df.get(t));
+    return s;
+  });
+
+  // What stays. Fixed: the opening (title and lead, up to DIGEST_LEAD_CHARS) and
+  // the whole `## Key Facts`. Then, best first: Key Takeaways items (best-matching
+  // first), then the body items that match the question (best first), then the rest
+  // in page order. Trimming to the cap removes from the end of that order, so the
+  // lowest-matching body items go first and Key Facts never go.
+  const fixed = new Set();
+  let lead = 0;
+  for (const u of sections[0].units) {
+    if (lead + u.text.length > DIGEST_LEAD_CHARS && lead > 0) break;
+    fixed.add(u.id);
+    lead += u.text.length;
+  }
+  const kind = (u) => {
+    const sec = sections[u.si];
+    if (!sec.key) return 'body';
+    return /facts/i.test(sec.heading) ? 'facts' : 'takeaways';
+  };
+  for (const u of units) if (kind(u) === 'facts') fixed.add(u.id);
+  // A short section (not a list of links) is cheap and often carries what only the
+  // page says about itself, such as the source a summary was built from.
+  const linkOnly = (sec) => sec.units.length > 0 && sec.units.every(u => /^\s*[-*+]\s*\[\[[^\]]+\]\]\s*(—.*)?$/.test(u.text));
+  for (const sec of sections) {
+    sec.short = sec.heading !== null && !sec.key && !linkOnly(sec)
+      && sec.units.reduce((a, u) => a + u.text.length + 1, 0) <= DIGEST_SHORT_SECTION_CHARS;
+  }
+  const rank = (u) => sections[u.si].short ? 2e6 + score[u.id]
+    : kind(u) === 'takeaways' ? 1e6 + score[u.id]
+    : score[u.id] > 0 ? score[u.id] : -1 - u.id / 1e9;
+  const rest = units.filter(u => !fixed.has(u.id)).sort((a, b) => rank(b) - rank(a) || a.id - b.id);
+
+  const render = () => {
+    const out = [];
+    let gapPending = false;
+    const omitted = [];
+    for (const sec of sections) {
+      const kept = sec.units.filter(u => u.keep);
+      if (kept.length === 0) {
+        if (sec.units.length > 0 || sec.heading !== null) gapPending = true;
+        if (sec.heading !== null) omitted.push(sec.heading.replace(/^#+[ \t]+/, '').trim().slice(0, 80));
+        continue;
+      }
+      if (gapPending && out.length) out.push('', '…');
+      gapPending = false;
+      if (sec.heading !== null) out.push('', sec.heading);
+      let prev = -1;
+      for (const u of kept) {
+        if (u.k !== prev + 1) out.push('…');
+        else if (u.gap && prev !== -1) out.push('');
+        out.push(u.text);
+        prev = u.k;
+      }
+      if (prev < sec.units.length - 1) gapPending = true;
+    }
+    if (gapPending) out.push('…');
+    while (out.length && out[0] === '') out.shift();
+    return { text: out.join('\n'), omitted };
+  };
+
+  const order = [];
+  for (const u of units) if (fixed.has(u.id)) u.keep = true;
+  let est = units.filter(u => u.keep).reduce((a, u) => a + u.text.length + 4, 0)
+    + sections.filter(s => s.units.some(u => u.keep)).reduce((a, s) => a + (s.heading || '').length + 2, 0);
+  for (const u of rest) {
+    const add = u.text.length + 6 + (sections[u.si].units.some(x => x.keep) ? 0 : (sections[u.si].heading || '').length + 4);
+    if (est + add > cap) continue;
+    u.keep = true; est += add; order.push(u);
+  }
+  let r = render();
+  while (r.text.length > cap && order.length > 0) {
+    order.pop().keep = false;
+    r = render();
+  }
+  if (r.text.length >= content.length) return null;
+  return { content: r.text, omittedSections: r.omitted };
+}
+
 /**
  * Pick the pages most relevant to the query within a character budget.
  *
@@ -494,13 +727,17 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   const {
     contentBudget = CONTENT_BUDGET_CHARS,
     maxPages = MAX_PAGES_LOADED,
+    digestThreshold = DIGEST_THRESHOLD_CHARS,
+    digestCap = DIGEST_CAP_CHARS,
+    maxDigests = DIGEST_MAX_PAGES,
+    foldNames = FOLD_PIVOT_NAMES,
   } = opts;
 
   const queryTokens = new Set(tokenize(queryText));
   const contentPages = pages.filter(p => p.path !== 'index.md' && p.path !== 'log.md');
 
   // ── Stage 1: entity-pivot retrieval ────────────────────────────────────
-  const pivots = detectEntityPivots(queryText, contentPages);
+  const pivots = detectEntityPivots(foldNames ? foldName(queryText) : queryText, contentPages);
   const priorityPaths = new Set();
   for (const pivot of pivots) {
     priorityPaths.add(pivot.page.path);
@@ -537,23 +774,162 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   }
 
   const selected = [];
+  const taken = [];          // candidate index of each selected page
   let used = 0;
-  for (const { page, score, priority } of candidates) {
+  let skipped = false;
+  for (let i = 0; i < candidates.length; i++) {
+    const { page, score, priority } = candidates[i];
     if (selected.length >= maxPages) break;
     const cost = page.content.length + page.path.length + 30;
     if (used + cost > contentBudget) {
+      skipped = true;
       continue;
     }
     selected.push({ page, score, priority: priority === true });
+    taken.push(i);
     used += cost;
   }
-  return {
+  const result = {
     selected,
     contentBytes: used,
     scoredCount: scored.length,
     pivotCount: pivots.length,
     pivotSlugs: pivots.map(p => p.slug),
   };
+  // Everything fit whole (or the page cap is already reached): today's result,
+  // byte for byte. (A shortcut: withDigests also returns `result` itself whenever
+  // no new page gets in, which is what guarantees the identity.)
+  if (!skipped || selected.length >= maxPages || !(digestThreshold < Infinity)) return result;
+  return withDigests(result, candidates, taken, queryText, { contentBudget, maxPages, digestThreshold, digestCap, maxDigests, pivotPaths: new Set(pivots.map(p => p.page.path)) });
+}
+
+/**
+ * The second pass (2026-11-14). Runs only when the whole-page pass left a
+ * candidate out for want of room, and only spends a page's text where it pays:
+ *   - a loaded long page is shortened ONLY to admit a skipped candidate whose
+ *     score is at least that page's own score (never to let in low-relevance tail
+ *     pages), and once any page is shortened, only candidates scoring at least as
+ *     high as every shortened page are admitted;
+ *   - never shortened: a pivot entity page, a page the question names (slug or
+ *     title, diacritics folded: "Režun" names `tali-rezun`), and the single
+ *     highest-scoring loaded page;
+ *   - at most DIGEST_MAX_PAGES pages are shortened per question, and at most
+ *     3x that many digests are computed, so the work stays bounded.
+ * Every page the first pass loaded stays, in place. If no new page gets in, the
+ * first pass's result object is returned unchanged.
+ */
+function withDigests(result, candidates, taken, queryText, o) {
+  const cost = (path, content) => content.length + path.length + 30;
+  const named = namedPagePaths(queryText, candidates.map(c => c.page));
+  let top = -1;
+  for (const i of taken) if (top === -1 || candidates[i].score > candidates[top].score) top = i;
+  const shortenable = (i) => {
+    const p = candidates[i].page;
+    return p.content.length > o.digestThreshold && i !== top && !o.pivotPaths.has(p.path) && !named.has(p.path);
+  };
+  const memo = new Map();
+  let calls = 0;
+  const digestOf = (i) => {
+    if (memo.has(i)) return memo.get(i);
+    if (calls >= o.maxDigests * 3) return null;
+    calls++;
+    const d = digestPage(candidates[i].page.content, queryText, o.digestCap);
+    memo.set(i, d);
+    return d;
+  };
+  const entryOf = (i, d) => {
+    const { page, score, priority } = candidates[i];
+    const e = { page, score, priority: priority === true };
+    if (d) {
+      e.page = { ...page, content: d.content };
+      e.digest = { fullChars: page.content.length, omittedSections: d.omittedSections };
+    }
+    return e;
+  };
+
+  const chosen = new Map();
+  let used = 0;
+  for (const i of taken) {
+    chosen.set(i, entryOf(i, null));
+    used += cost(candidates[i].page.path, candidates[i].page.content);
+  }
+  const takenSet = new Set(taken);
+  let shortened = 0;
+  let floor = -Infinity;   // the highest score of any page shortened so far
+  let added = 0;
+  for (let j = 0; j < candidates.length; j++) {
+    if (chosen.size >= o.maxPages) break;
+    if (takenSet.has(j)) continue;
+    const s = candidates[j].score;
+    if (s < floor) continue;
+    const pj = candidates[j].page;
+    let need = cost(pj.path, pj.content);
+    let own = null;
+    if (used + need > o.contentBudget && shortenable(j) && shortened < o.maxDigests) {
+      own = digestOf(j);
+      if (own) need = cost(pj.path, own.content);
+    }
+    const plan = [];
+    let room = o.contentBudget - used;
+    if (need > room) {
+      // Shorten loaded pages that score no higher than this candidate: the lowest
+      // scoring first, the later one first on ties.
+      const eligible = [...chosen.keys()]
+        .filter(i => !chosen.get(i).digest && candidates[i].score <= s && shortenable(i))
+        .sort((a, b) => candidates[a].score - candidates[b].score || b - a);
+      for (const i of eligible) {
+        if (need <= room) break;
+        if (shortened + plan.length + (own ? 1 : 0) >= o.maxDigests) break;
+        const d = digestOf(i);
+        if (!d) continue;
+        const saving = cost(candidates[i].page.path, candidates[i].page.content) - cost(candidates[i].page.path, d.content);
+        if (saving <= 0) continue;
+        plan.push({ i, d });
+        room += saving;
+      }
+      if (need > room) continue;
+    }
+    for (const { i, d } of plan) {
+      chosen.set(i, entryOf(i, d));
+      floor = Math.max(floor, candidates[i].score);
+      shortened++;
+    }
+    if (own) { shortened++; floor = Math.max(floor, s); }
+    chosen.set(j, entryOf(j, own));
+    used = o.contentBudget - room + need;
+    added++;
+  }
+  if (added === 0) return result;
+  const selected = [...chosen.keys()].sort((a, b) => a - b).map(i => chosen.get(i));
+  const contentBytes = selected.reduce((a, e) => a + cost(e.page.path, e.page.content), 0);
+  return { ...result, selected, contentBytes, digestCount: selected.filter(e => e.digest).length };
+}
+
+/** Fold diacritics for name matching: "Režun" → "rezun". */
+function foldName(s) {
+  return String(s || '').normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+}
+
+/**
+ * Pages the question names by slug (every slug word present, diacritics folded;
+ * a one-word slug must not be a common word) or by a title of two or more words.
+ */
+function namedPagePaths(queryText, pages) {
+  const qt = tokenize(foldName(queryText)).map(t => t.replace(/'s?$/, ''));   // "Režun's" → "rezun"
+  const q = new Set(qt);
+  const qText = ` ${qt.join(' ')} `;
+  const out = new Set();
+  for (const p of pages) {
+    const slug = p.path.split('/').pop().replace(/\.md$/, '');
+    const st = tokenize(foldName(slug.replace(/-/g, ' ')));
+    if (st.length > 0 && st.every(t => q.has(t)) && !(st.length === 1 && COMMON_TOKENS_BLOCKLIST.has(st[0]))) { out.add(p.path); continue; }
+    const m = p.content.match(/^#{1,3}\s+(.+)/m);
+    if (m) {
+      const tt = tokenize(foldName(m[1]));
+      if (tt.length >= 2 && qText.includes(` ${tt.join(' ')} `)) out.add(p.path);
+    }
+  }
+  return out;
 }
 
 // ── Response-style control (Tier 2) ────────────────────────────────────────
@@ -1159,7 +1535,13 @@ function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balan
   if (pivotCount > 0) selectionParts.push(`${pivotCount} entity pivot${pivotCount === 1 ? '' : 's'} (${pivotSlugs.slice(0, 3).join(', ')}${pivotSlugs.length > 3 ? '…' : ''})`);
   if (scoredCount > 0) selectionParts.push(`${scoredCount} keyword-scored pages`);
   if (selectionParts.length === 0) selectionParts.push('no direct match — fell back to most-linked hubs');
-  const selectionNote = `Retrieval: ${selectionParts.join(' + ')}. Loaded ${selected.length} pages in full (${(contentBytes/1024).toFixed(1)} KB).`;
+  // A digest is named here so the model knows those pages are not whole; with
+  // none, the note is the same string as before.
+  const digestCount = selected.filter(s => s.digest).length;
+  const loadedNote = digestCount > 0
+    ? `Loaded ${selected.length} pages (${digestCount} long page${digestCount === 1 ? '' : 's'} in part, gaps marked …)`
+    : `Loaded ${selected.length} pages in full`;
+  const selectionNote = `Retrieval: ${selectionParts.join(' + ')}. ${loadedNote} (${(contentBytes/1024).toFixed(1)} KB).`;
 
   // Intent-aware instructions block (v3.0.1-beta.13+; v3.0.7 Tier 1 reshaped
   // enumerate, added decision, and hardened all three against catalogue dumps).
