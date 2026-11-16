@@ -10,7 +10,7 @@ Serial Entrepreneur · AI Researcher · Builder of Second Brains
 >
 > *From Lab to Life Series · The Curator: Article 13*
 
-> **About this repository copy.** The article was written against The Curator **v3.99.1**, and this copy was prepared on 16 November 2026 against the same release. Every product mention links to the part of the documentation that describes it. The tables are reproduced as text rather than as the images in the original, and the social-media graphics made for the launch are left out. The pricing document in the story is my own; its figures are deliberately not reproduced here.
+> **About this repository copy.** The article was published on [Substack](https://talirezun.substack.com/p/my-second-brain-learned-to-remember) and written against The Curator **v3.99.1**, and this copy was prepared on 16 November 2026 against the same release. Every product mention links to the part of the documentation that describes it. The tables are reproduced as text rather than as the images in the original, and the social-media graphics made for the launch are left out. The pricing document in the story is my own; its figures are deliberately not reproduced here.
 
 ![A cubist painting: a face assembled from geometric planes, half of it traced with a network of nodes and lines, in front of a desk with an open book and a collage of ledgers, grids and newspaper scraps.](../images/remember-the-numbers-cover.jpg)
 
