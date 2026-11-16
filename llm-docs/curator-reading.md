@@ -4,6 +4,7 @@ Writing about The Curator by Dr. Tali Režun, newest first; the numbered pieces 
 
 ## What has been written about The Curator?
 
+- 13. My Second Brain Learned to Remember the Numbers — essay, Nov 2026 (describes v3.99.1). Ingest now keeps exact facts, figures and technical details with their dates and versions; use cases for company, product and open-source brains; how six releases were tested and what it cost. https://github.com/talirezun/the-curator/blob/main/research/articles/my-second-brain-learned-to-remember-the-numbers.md
 - 12. Knowledge Accumulates, State Supersedes — research paper, October 2026 (describes v3.81.0). Design study: three kinds of context told apart by their write rules, the architecture, session-start budgeting, small dated measurements. https://www.researchgate.net/publication/415028893_Knowledge_Accumulates_State_Supersedes_Structuring_and_Carrying_Context_for_Multi-Session_Multi-Harness_AI_Agent_Work_-A_Design_Study_of_The_Curator_an_Open-Source_Context_Engine | https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-accumulates-state-supersedes.md
 - 11. The Right Context, Not All of It — essay, 30 Sep 2026. A lesson in context engineering: what an agent needs at session start, where each piece lives, how much to load, and how it moves between tools and computers. https://talirezun.substack.com/p/the-right-context-not-all-of-it | https://github.com/talirezun/the-curator/blob/main/research/articles/the-right-context-not-all-of-it.md
 - 10. The Context Engine — essay, 20 Sep 2026. Three kinds of context, three write rules, and the first live tests of two agent tools and two computers on one project. https://talirezun.substack.com/p/the-context-engine | https://github.com/talirezun/the-curator/blob/main/research/articles/the-context-engine.md
@@ -26,6 +27,7 @@ Older essays predate later changes: the MCP had 17 tools (3, 4, 6) or 20 (8) and
 - Second brain: 1, 2, 3.
 - Shared Brain and teams: 5, 6.
 - Agents across sessions, tools and computers: 11, 10, 7.
+- Numbers and technical documentation in a second brain: 13.
 - Design rationale: 12, then 2.
 
 ## Is there a research paper, and can I read without Substack?

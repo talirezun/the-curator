@@ -82,6 +82,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *Structuring and carrying context for multi-session, multi-harness AI agent work — a design study of The Curator: three kinds of context told apart by their write rules (knowledge accumulates, state supersedes, canonical documents are replaced whole), the architecture that implements them, a budgeting principle for session start, and small, dated measurements of whether agents actually read and save. Also published on ResearchGate.*
 
+- **[My Second Brain Learned to Remember the Numbers](./articles/my-second-brain-learned-to-remember-the-numbers.md)**  
+  By Dr. Tali Režun  
+  *How The Curator grew from a tool that understands ideas into one that also keeps the exact details — prices, dates, versions, thresholds and the reasons behind decisions — with the new use cases for company, product and open-source brains, and an open account of how six releases were tested and what that cost.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -182,6 +186,14 @@ If you're referencing articles from this research series, please cite them as fo
   month = {October},
   note = {Research article. Also published on ResearchGate: https://www.researchgate.net/publication/415028893},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-accumulates-state-supersedes.md}
+}
+
+@article{rezun2026remember-the-numbers,
+  author = {Režun, Tali},
+  title = {My Second Brain Learned to Remember the Numbers},
+  year = {2026},
+  month = {November},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/my-second-brain-learned-to-remember-the-numbers.md}
 }
 ```
 
