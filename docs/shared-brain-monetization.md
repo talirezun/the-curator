@@ -173,7 +173,7 @@ flowchart TB
 How to implement (no code, just admin instructions):
 
 1. When someone joins the read-only tier, you instruct them: *"When creating your PAT, set Contents permission to Read-only (NOT Read and write)."* The Curator wizard shows the yellow notice *"Token works but is read-only. You can continue as a read-only member"* — for the read-only tier, that's the desired outcome. They continue through the wizard (contributing-domain selection is optional for them), save, and can Pull but not Push.
-2. When someone upgrades to contributor, instruct them: *"Re-create your PAT with Contents: Read AND write, then re-run the Join wizard with the same invite token."* The green ✓ appears, the new connection can Push.
+2. When someone upgrades to contributor, instruct them: *"Create a new PAT with Contents: Read AND write, then on your connection's card use Leave this Shared Brain and join again with the same invite token."* (Re-running the Join wizard without leaving is refused: one brain, one membership per computer; Replace token keeps the read-only setting.) The green ✓ appears and the new connection can Push. They join as a new member with a new contributor id; nothing is lost, because a read-only connection never pushed anything. See [`shared-brain-admin.md`](shared-brain-admin.md#a-members-card-says-read-only-member-and-they-cant-push).
 
 ---
 

@@ -351,6 +351,77 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  section('§4b A read-only member who wants to contribute: what the refusal says is what works');
+  // ═══════════════════════════════════════════════════════════════════════
+  // The push refusal used to say "re-run the Join wizard", which is refused
+  // while connected. Walk the person's real path over the real routes: the
+  // refusal, Replace token (does not help), joining again while connected
+  // (refused), Leave, join again with a write token (a new member), Push and
+  // Pull work, and the mirror left behind is reused.
+  {
+    const ro = stored().find((c) => c.id === RO_ID);
+    const OLD_FELLOW = ro.fellow_id;
+    // A Pull first, so a mirror domain exists to be left behind.
+    const p0 = await request('POST', `/api/sharedbrain/${RO_ID}/pull`, {});
+    ok(/"type":"done"/.test(p0.text) && fs.existsSync(path.join(TMP_DOMAINS, 'shared-readers', 'CLAUDE.md')),
+      'control: a read-only member can Pull, and the mirror shared-readers exists', p0.text.slice(-300));
+
+    const pushRefused = async (label) => {
+      const before = sha(SB_FILE);
+      const n0 = fake.log.length;
+      const r = await post(`/api/sharedbrain/${RO_ID}/push`, { local_domain: 'research' });
+      ok(r.status === 400 && fake.log.length === n0 && sha(SB_FILE) === before,
+        `${label}: Push is refused before GitHub is asked, and the config is unchanged`, { status: r.status, body: r.json });
+      return (r.json && r.json.error) || '';
+    };
+    const said = await pushRefused('read-only (stored token can write)');
+    ok(/is read-only/.test(said) && /nothing was sent/.test(said), 'the refusal says what happened and that nothing was sent', said);
+    ok(/Leave this Shared Brain/.test(said) && /join again with the same invite/.test(said) && /Contents: Read and write/.test(said),
+      'the refusal names the step that works: a write token, Leave this Shared Brain, join again', said);
+    ok(/Replace token can’t change that/.test(said), 'the refusal says Replace token is not the way', said);
+    ok(/new member/.test(said) && /never pushed anything/.test(said), 'the refusal says what it costs: a new member identity, nothing left behind', said);
+    ok(!/re-run|Join wizard/i.test(said), 'the refusal no longer advises re-running the Join wizard', said);
+
+    // Replace token with a write token (done in §4) did not promote the
+    // connection: Push is still refused. That is why the sentence says so.
+    ok(ro.github_pat === NEW2 && ro.read_only === true, 'control: this connection already holds a write token (§4)');
+
+    // A read-only connection can never have contributed: synthesis is
+    // refused too, so no write ever reached the brain under OLD_FELLOW.
+    const syn = await post(`/api/sharedbrain/${RO_ID}/synthesize`, {});
+    ok(syn.status === 400 && /read-only/.test((syn.json && syn.json.error) || ''), 'synthesis is refused for the read-only connection too', syn.json);
+
+    // Joining again while connected: refused, early and at the write.
+    const brain = { storage_type: 'github', github_repo_owner: 'acme', github_repo_name: 'readers', shared_domain: 'notes', shared_brain_slug: 'readers' };
+    const clash = await post('/api/sharedbrain/check-clash', brain);
+    ok(clash.status === 200 && clash.json && clash.json.ok === false && clash.json.kind === 'identity',
+      'the wizard’s early check refuses joining again while connected', clash.json);
+    const fresh = { ...brain, label: 'Readers', github_pat: NEW2, github_branch: 'main', fellow_display_name: 'B',
+      local_domains: ['research'], read_only: false, enabled: true, data_handling_terms: 'contributor_retains' };
+    const beforeDup = sha(SB_FILE);
+    const dup = await post('/api/sharedbrain/save', { connection: { ...fresh } });
+    ok(dup.status === 400 && /already connected to that shared brain/.test((dup.json && dup.json.error) || '') && sha(SB_FILE) === beforeDup,
+      'saving a second connection to the same brain is refused and changes nothing', dup.json);
+
+    // Leave, then join again with a write token.
+    const left = await request('DELETE', `/api/sharedbrain/${RO_ID}`);
+    ok(left.status === 200 && !stored().some((c) => c.id === RO_ID), 'Leave this Shared Brain removes the connection');
+    ok(fs.existsSync(path.join(TMP_DOMAINS, 'shared-readers', 'CLAUDE.md')), 'the mirror domain stays on this computer');
+    const clash2 = await post('/api/sharedbrain/check-clash', brain);
+    ok(clash2.json && clash2.json.ok === true, 'after leaving, the wizard’s check lets the person join again', clash2.json);
+    const joined = await post('/api/sharedbrain/save', { connection: { ...fresh } });
+    const NEW_ID = joined.json && joined.json.connection && joined.json.connection.id;
+    const nc = stored().find((c) => c.id === NEW_ID);
+    ok(joined.status === 200 && nc && nc.read_only === false, 'joining again with a write token saves a contributor connection', joined.json);
+    ok(nc && nc.fellow_id && nc.fellow_id !== OLD_FELLOW, 'it is a NEW member identity (a new fellow_id), as the refusal says', { old: OLD_FELLOW, now: nc && nc.fellow_id });
+
+    const pu = await request('POST', `/api/sharedbrain/${NEW_ID}/push`, { local_domain: 'research' });
+    ok(pu.status === 200 && !/is read-only/.test(pu.text), 'Push is no longer refused as read-only', { status: pu.status, text: pu.text.slice(0, 300) });
+    const p1 = await request('POST', `/api/sharedbrain/${NEW_ID}/pull`, {});
+    ok(/"type":"done"/.test(p1.text) && !/Refusing to pull/.test(p1.text), 'a Pull reuses the mirror the old membership left behind', p1.text.slice(-300));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   section('§5  The token is never echoed, printed or logged');
   // ═══════════════════════════════════════════════════════════════════════
   {

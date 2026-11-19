@@ -459,11 +459,23 @@ router.post('/:id/push', gate, async (req, res) => {
   // v3.0.4 (H10): read-only members (PAT without write access) can Pull
   // but never Push — refuse before any work so the error is crisp instead
   // of a confusing GitHub 403 mid-stream.
+  //
+  // v3.99.2: the advice used to be "re-run the Join wizard", which the app
+  // REFUSES while this computer is connected to the brain (connectionClash).
+  // read_only is fixed at join: Replace token keeps it, and nothing else
+  // changes it. So the only way today is Leave, then join again with a write
+  // token — a NEW connection with a new fellow_id. Nothing is lost by that:
+  // a read-only connection can neither push nor synthesise (both refused
+  // here), so no contribution was ever stored under the old fellow_id.
+  // Proved end to end in scripts/test-sharedbrain-replace-token.js §4b.
   if (conn.read_only === true) {
     return res.status(400).json({
-      error: 'This connection is read-only — your access token can read the shared repo but not write to it. ' +
-             'You can Pull updates, but not push contributions. To contribute, create a token with ' +
-             'Contents: Read and write, then re-run the Join wizard.',
+      error: 'This Shared Brain connection is read-only: it can Pull updates but not push contributions, ' +
+             'so nothing was sent. Replace token can’t change that. To contribute, create a GitHub token with ' +
+             'Contents: Read and write (if GitHub won’t give it write access, ask the admin for write access ' +
+             'to the repository), then use Leave this Shared Brain on this card and join again with the same ' +
+             'invite. You join as a new member; this read-only connection never pushed anything, so nothing ' +
+             'is left behind.',
     });
   }
 
