@@ -242,6 +242,52 @@ export function errorFromResponse(res, data, fallback) {
   return e;
 }
 
+// ── For views that keep an error as a STRING in state ──────────────────────
+//
+// Many views store `state.xError = err.message` and render it with
+// escapeHtml(state.xError), and suites read those fields as strings. For those,
+// `plainError(x)` returns the plain sentence (a string) and remembers its detail
+// BESIDE it, keyed by the exact sentence; `errorDetailHtml(state.xError)` then
+// renders that detail under the sentence. A detail can only ever render under
+// the message it came with, and a later, different message never inherits it.
+// Bounded (the oldest of 50 goes first).
+const ERROR_DETAILS = new Map();
+
+/** Remember `detail` as belonging to the sentence `message` (a no-op for an empty detail). */
+export function rememberErrorDetail(message, detail) {
+  if (typeof message !== 'string' || !message || typeof detail !== 'string' || !detail) return;
+  ERROR_DETAILS.delete(message);
+  ERROR_DETAILS.set(message, detail);
+  if (ERROR_DETAILS.size > 50) ERROR_DETAILS.delete(ERROR_DETAILS.keys().next().value);
+}
+
+/** userMessageFrom(x, opts).error, with its detail remembered for errorDetailHtml. */
+export function plainError(x, opts) {
+  const u = userMessageFrom(x, opts);
+  rememberErrorDetail(u.error, u.detail);
+  return u.error;
+}
+
+/** The remembered detail for exactly this sentence, or ''. */
+export function errorDetailOf(message) {
+  return typeof message === 'string' ? (ERROR_DETAILS.get(message) || '') : '';
+}
+
+/** renderErrorDetail(errorDetailOf(message)): the line, or ''. */
+export function errorDetailHtml(message) {
+  return renderErrorDetail(errorDetailOf(message));
+}
+
+/**
+ * For a monitor (shared/monitor.js renders its `loud` text itself): the entry,
+ * then, when its text has a remembered detail, a quiet entry right below it
+ * carrying "Technical detail (for support): …". `loud.push(...loudWithDetail(e))`.
+ */
+export function loudWithDetail(entry) {
+  const d = entry ? errorDetailOf(entry.text) : '';
+  return d ? [entry, { tone: 'quiet', text: DETAIL_PREFIX + d }] : [entry];
+}
+
 // ── Rendering ──────────────────────────────────────────────────────────────
 
 /**

@@ -186,6 +186,9 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
 // under every other description in the app.
 import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
+// Plain-language errors (v3.99.2): the shared sentence + visible support detail.
+import { userMessageFrom, renderErrorDetail, errorFromResponse, DETAIL_PREFIX, plainError, errorDetailOf, errorDetailHtml, rememberErrorDetail, loudWithDetail } from '../shared/net.js';
+
 // SB (v3.71.0, COPY.md §3): the header's own hand-typed prose is REWRITTEN
 // as this view's framing top ⓘ (second brain → Shared Brain → agent memory,
 // "you are here" on shared-brain) — the same shape as Domains' D1/D2 and
@@ -773,7 +776,7 @@ async function loadFlag(token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.enabled = false;
-    state.flagError = err.message;
+    state.flagError = plainError(err);
   }
 }
 
@@ -792,7 +795,7 @@ async function loadConnections(token) {
       return;
     }
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load Shared Brain connections.');
+    if (!res.ok) throw errorFromResponse(res, data, 'Could not load Shared Brain connections.');
     if (!isCurrentMount(token)) return;
     const list = Array.isArray(data.connections) ? data.connections : [];
     const ids = new Set(list.map((c) => c.id));
@@ -802,7 +805,7 @@ async function loadConnections(token) {
     state.listError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.listError = err.message;
+    state.listError = plainError(err);
   }
 }
 
@@ -893,7 +896,7 @@ function renderMain(token) {
   if (state.loading) {
     body = gatedLoader(loadGate, 'Loading Shared Brain status…');
   } else if (state.flagError) {
-    body = '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>';
+    body = '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>' + errorDetailHtml(state.flagError);
   } else if (!state.enabled) {
     body = renderDisabled();
   } else {
@@ -938,7 +941,7 @@ function renderDisabled() {
       '<p class="settings-hint-text">Unlocks this view, so you can join a cohort or set one up. ' +
       why.btn + '</p>' +
       why.panel +
-      (state.enableError ? '<div class="settings-inline-error">' + escapeHtml(state.enableError) + '</div>' : '') +
+      (state.enableError ? '<div class="settings-inline-error">' + escapeHtml(state.enableError) + '</div>' + errorDetailHtml(state.enableError) : '') +
       '<button type="button" class="btn btn-primary" id="btn-sb-enable"' + (state.enabling ? ' disabled' : '') + '>' +
         (state.enabling ? 'Enabling…' : 'Enable Shared Brain (beta)') +
       '</button>' +
@@ -949,7 +952,7 @@ function renderDisabled() {
 function renderEnabled() {
   if (state.listError) {
     return (
-      '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' +
+      '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' + errorDetailHtml(state.listError) +
       '<button type="button" class="btn btn-secondary" id="btn-sb-retry-list" style="margin-top:10px">Try again</button>'
     );
   }
@@ -1030,7 +1033,7 @@ function renderSection() {
   }
   if (state.flagError) {
     return '<div class="sb-sec">' +
-      '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>' +
+      '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>' + errorDetailHtml(state.flagError) +
       '<div class="sb-sec-door">' + renderSectionDoor('secondary') + '</div>' +
     '</div>';
   }
@@ -1045,7 +1048,7 @@ function renderSection() {
   }
   if (state.listError) {
     return '<div class="sb-sec">' +
-      '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' +
+      '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' + errorDetailHtml(state.listError) +
       '<div class="sb-sec-door">' +
         '<button type="button" class="btn btn-secondary" id="btn-sb-retry-list">Try again</button>' +
         renderSectionDoor('ghost') +
@@ -1147,7 +1150,7 @@ function renderMirrorStrip(conn, last) {
     loud.push({ tone: 'warn', text: 'Another write (' + (getDomainWriteLabel(here) || 'write') + ') is already running for ' +
       here + '. Pull comes back on its own when it finishes.' });
   }
-  if (card.message) loud.push({ tone: card.error ? 'danger' : 'quiet', text: card.message });
+  if (card.message) loud.push(...loudWithDetail({ tone: card.error ? 'danger' : 'quiet', text: card.message }));
   return (
     '<div class="sb-card sb-sec-conn sb-sec-mirror" data-conn-id="' + escapeHtml(conn.id) + '" data-sb-mirror="' + escapeHtml(conn.id) + '">' +
       '<div class="sb-sec-id">' +
@@ -1368,8 +1371,9 @@ function renderSectionConnection(conn, last) {
   const verdict = card.tokenCheck;
   if (verdict && (verdict.kind === 'rejected' || verdict.kind === 'unreachable')) {
     loud.push({ tone: verdict.kind === 'rejected' ? 'danger' : 'warn', text: verdict.message });
+    if (verdict.detail) loud.push({ tone: 'quiet', text: DETAIL_PREFIX + verdict.detail });
   }
-  if (card.message) loud.push({ tone: card.error ? 'danger' : 'quiet', text: card.message });
+  if (card.message) loud.push(...loudWithDetail({ tone: card.error ? 'danger' : 'quiet', text: card.message }));
 
   // ── ONE ACTION ROW ────────────────────────────────────────────────────
   let actions = '';
@@ -1471,9 +1475,20 @@ function renderSectionConnection(conn, last) {
 // an EMPTY one — so "reached, zero contributions" cannot be told apart from
 // "cannot see the repo at all". That is one honest verdict, not a green
 // tick. It resolves itself the moment anyone in the cohort has pushed.
-function classifyTokenCheck({ ok, error, memberCount, repoLabel }) {
+//
+// HOW "REJECTED" IS DECIDED (v3.99.2). Since plain-language errors, the server
+// answers a dead token with a plain `error`, `code: 'github-token-rejected'`
+// and the raw GitHub text in `detail`. So `code` is read FIRST: that code is a
+// rejection, and any OTHER code is the server's own diagnosis (a rate limit's
+// 403 is `github-busy`, not a dead token) and is trusted. Only a body with NO
+// code (an older server) falls back to the raw patterns, over error AND detail.
+// Without this a dead token fell through to "a failure of the CHECK", a
+// confidently wrong verdict.
+function classifyTokenCheck({ ok, error, detail, code, memberCount, repoLabel }) {
   const where = repoLabel ? String(repoLabel) : 'the repository';
   const text = typeof error === 'string' ? error : '';
+  const raw = typeof detail === 'string' ? detail : '';
+  const c = typeof code === 'string' ? code : '';
   if (ok === true) {
     const n = Number(memberCount);
     if (Number.isFinite(n) && n > 0) {
@@ -1492,19 +1507,27 @@ function classifyTokenCheck({ ok, error, memberCount, repoLabel }) {
   }
   // The adapter's own codes first, then the raw statuses they are built from,
   // so a message that carries only one of the two still classifies.
-  if (/SHARED_BRAIN_AUTH|SHARED_BRAIN_FORBIDDEN|bad credentials|\b401\b|\b403\b/i.test(text)) {
+  const rejected = c
+    ? c === 'github-token-rejected'
+    : /SHARED_BRAIN_AUTH|SHARED_BRAIN_FORBIDDEN|bad credentials|\b401\b|\b403\b/i.test(text + '\n' + raw);
+  // The plain sentence and the support detail, whichever server answered.
+  const u = userMessageFrom({ error: text, detail: raw, code: c });
+  if (rejected) {
     return {
       kind: 'rejected',
       message: 'GitHub rejected the stored token. That is what an EXPIRED fine-grained token looks like; ' +
         'a revoked one, or one whose access to ' + where + ' was withdrawn, looks the same. Create a new ' +
         'token on GitHub, then use Leave this Shared Brain below and re-join with your invite — the setup ' +
         'wizard is the only place that accepts a token.',
+      detail: u.detail || (raw || (text && text !== u.error ? text : '')),
     };
   }
+  const said = text ? u.error.replace(/\s*$/, '') : 'The request did not finish.';
   return {
     kind: 'unreachable',
-    message: 'Could not run the check: ' + (text || 'the request failed') +
-      '. That is a failure of the CHECK, not a verdict on the token — try again in a moment.',
+    message: 'Could not run the check. ' + (/[.!?]$/.test(said) ? said : said + '.') +
+      ' That is a failure of the CHECK, not a verdict on the token — try again in a moment.',
+    detail: u.detail,
   };
 }
 
@@ -1536,7 +1559,7 @@ function renderTokenCheck(conn, card) {
       (verdict
         ? '<p class="sb-token-check-verdict sb-token-check-' + escapeHtml(verdict.kind) + '" aria-live="polite">' +
             escapeHtml(verdict.message) +
-          '</p>'
+          '</p>' + renderErrorDetail(verdict.detail)
         : '') +
     '</div>'
   );
@@ -1630,7 +1653,7 @@ function renderCard(conn) {
 
       renderAdmin(conn, card, busy, mirrorBusy) +
 
-      (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' : '') +
+      (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' + (card.error ? errorDetailHtml(card.message) : '') : '') +
 
       // D11: there has been no "Domains tab" since v3.64.0.
       (mirrorDomain ? '<p class="sb-card-note">Pulled pages land in the read-only domain <span class="sb-name">' + escapeHtml(mirrorDomain) + '</span>.</p>' : '') +
@@ -1794,7 +1817,7 @@ function renderCohortBody(conn, card) {
   } else if (c === 'loading') {
     networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Loading…</div>';
   } else if (c.error) {
-    networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Could not load: ' + escapeHtml(c.error) + '</div>';
+    networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Could not load: ' + escapeHtml(c.error) + '</div>' + errorDetailHtml(c.error);
   } else {
     const members = c.members || [];
     const total = members.reduce((n, m) => n + (m.pages || 0), 0);
@@ -2539,7 +2562,7 @@ function renderInvite(conn, card, busy) {
     if (card.inviteError) {
       html +=
         '<div class="sb-admin-note sb-admin-note-danger" style="margin-top:10px">' + icon('alertCircle', 13) +
-        '<span>' + escapeHtml(card.inviteError) + '</span></div>';
+        '<span>' + escapeHtml(card.inviteError) + '</span></div>' + errorDetailHtml(card.inviteError);
     } else if (card.inviteLoading || !card.inviteToken) {
       html += '<p class="sb-admin-hint" style="margin-top:10px">Re-deriving the invite token…</p>';
     } else {
@@ -2615,7 +2638,7 @@ function renderRevokePanel(conn, card, busy, mirrorBusy) {
   }
   if (m.error) {
     return '<div class="sb-admin-note sb-admin-note-danger">' + icon('alertTriangle', 13) +
-      '<span>Could not load the contributor list: ' + escapeHtml(m.error) + '</span></div>';
+      '<span>Could not load the contributor list: ' + escapeHtml(m.error) + '</span></div>' + errorDetailHtml(m.error);
   }
   const members = Array.isArray(m.members) ? m.members : [];
   if (members.length === 0) {
@@ -2772,7 +2795,7 @@ async function onRotateAdminToken(token, connId) {
       // route's own consumers, and a card that pattern-matched it would drift
       // the moment either side was reworded.
       const plain = data && ROTATE_403_COPY[data.code];
-      throw new Error(plain || data.error || 'The admin token could not be rotated (HTTP ' + res.status + ').');
+      throw plain ? new Error(plain) : errorFromResponse(res, data, 'The admin token could not be rotated.');
     }
     // Deliberately NOT gated on isCurrentMount: `card` is this mount's own
     // object and `state` is replaced wholesale on re-entry, so writing here
@@ -2783,7 +2806,7 @@ async function onRotateAdminToken(token, connId) {
     card.message = 'Admin token rotated. The previous token no longer works.';
     card.error = false;
   } catch (err) {
-    card.message = err.message;
+    card.message = plainError(err);
     card.error = true;
   } finally {
     card.acting = null;
@@ -2861,9 +2884,9 @@ async function onCheckStoredToken(token, connId) {
     const data = await res.json().catch(() => ({}));
     outcome = res.ok
       ? classifyTokenCheck({ ok: true, memberCount: Array.isArray(data.members) ? data.members.length : 0, repoLabel })
-      : classifyTokenCheck({ ok: false, error: data && data.error, repoLabel });
+      : classifyTokenCheck({ ok: false, error: data && data.error, detail: data && data.detail, code: data && data.code, repoLabel });
   } catch (err) {
-    outcome = classifyTokenCheck({ ok: false, error: err.message, repoLabel });
+    outcome = classifyTokenCheck({ ok: false, error: err.message, code: err.code, repoLabel });
   }
   card.tokenChecking = false;
   card.tokenCheck = outcome;
@@ -2908,13 +2931,13 @@ async function onShowInvite(token, connId) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || typeof data.token !== 'string' || !data.token) {
-      throw new Error(data.error || 'The invite token could not be re-generated (HTTP ' + res.status + ').');
+      throw errorFromResponse(res, data, 'The invite token could not be re-generated.');
     }
     card.inviteToken = data.token;
     card.inviteError = null;
   } catch (err) {
     card.inviteToken = null;
-    card.inviteError = err.message;
+    card.inviteError = plainError(err);
   } finally {
     card.inviteLoading = false;
     if (isCurrentMount(token)) {
@@ -2954,13 +2977,13 @@ async function loadRevokeMembers(token, connId) {
   try {
     const res = await fetch('/api/sharedbrain/' + connId + '/members');
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'members returned HTTP ' + res.status);
+    if (!res.ok) throw errorFromResponse(res, data, 'The request did not finish.');
     card.revokeMembers = {
       members: Array.isArray(data.members) ? data.members : [],
       selfFellowId: data.self_fellow_id || null,
     };
   } catch (err) {
-    card.revokeMembers = { error: err.message };
+    card.revokeMembers = { error: plainError(err) };
   } finally {
     if (isCurrentMount(token)) render(token);
   }
@@ -3046,7 +3069,7 @@ async function runRevoke(token, connId) {
       // 403 / 400 / 409 land here. Never `(await res.json())` inside a throw —
       // a non-JSON body would surface as "Unexpected token '<'".
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'Revocation refused (HTTP ' + res.status + ').');
+      throw errorFromResponse(res, data, 'Revocation refused.');
     }
 
     const reader = res.body.getReader();
@@ -3087,7 +3110,7 @@ async function runRevoke(token, connId) {
       acc.errorMessage = 'The revocation stream ended without a result — treat this contributor’s data as NOT erased and re-run the revocation.';
     }
   } catch (err) {
-    acc.errorMessage = err.message;
+    acc.errorMessage = plainError(err);
   } finally {
     releases.forEach((r) => r());
     const outcome = classifyRevokeOutcome(acc);
@@ -3396,7 +3419,7 @@ async function runSseAction(token, connId, action) {
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('text/event-stream')) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || (action + ' failed (HTTP ' + res.status + ')'));
+      throw errorFromResponse(res, data, action + ' failed.');
     }
 
     const reader = res.body.getReader();
@@ -3418,7 +3441,9 @@ async function runSseAction(token, connId, action) {
           try { payload = JSON.parse(ev.slice(5).trim()); } catch { continue; }
           if (payload.type === 'error') {
             hadError = true;
-            card.message = 'Error: ' + payload.message;
+            const said = plainError(payload);
+            card.message = 'Error: ' + said;
+            rememberErrorDetail(card.message, errorDetailOf(said));
             card.error = true;
             if (isCurrentMount(token)) render(token);
           } else if (payload.type === 'done') {
@@ -3448,7 +3473,7 @@ async function runSseAction(token, connId, action) {
     }
   } catch (err) {
     hadError = true;
-    card.message = err.message;
+    card.message = plainError(err);
     card.error = true;
   } finally {
     // Released unconditionally, every handle this call took — a
@@ -3533,11 +3558,11 @@ async function onUnskip(token, connId) {
       body: JSON.stringify({}),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.ok !== true) throw new Error(data.error || 'Could not re-queue skipped pages.');
+    if (!res.ok || data.ok !== true) throw errorFromResponse(res, data, 'Could not re-queue skipped pages.');
     card.message = data.unskipped + ' page' + (data.unskipped === 1 ? '' : 's') + ' re-queued — they will be retried on the next push.';
     card.error = false;
   } catch (err) {
-    card.message = err.message;
+    card.message = plainError(err);
     card.error = true;
   } finally {
     card.acting = null;
@@ -3556,14 +3581,14 @@ async function onLeave(token, connId) {
   try {
     const res = await fetch('/api/sharedbrain/' + connId, { method: 'DELETE' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Could not leave this Shared Brain.');
+    if (!res.ok) throw errorFromResponse(res, data, 'Could not leave this Shared Brain.');
     delete state.cards[connId];
     state.connections = state.connections.filter((c) => c.id !== connId);
     if (isCurrentMount(token)) render(token);
   } catch (err) {
     card.acting = null;
     card.leaveConfirmOpen = false;
-    card.message = err.message;
+    card.message = plainError(err);
     card.error = true;
     if (isCurrentMount(token)) render(token);
   }
@@ -3600,7 +3625,7 @@ async function loadCohortDetails(token, connId) {
     };
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    card.cohort = { error: err.message };
+    card.cohort = { error: plainError(err) };
   } finally {
     if (isCurrentMount(token)) render(token);
   }
@@ -3614,12 +3639,12 @@ async function onEnableFlag(token) {
   try {
     const res = await fetch('/api/sharedbrain/enable-flag', { method: 'POST' });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not enable Shared Brain.');
+    if (!res.ok) throw errorFromResponse(res, data, 'Could not enable Shared Brain.');
     if (!isCurrentMount(token)) return;
     state.enabled = !!data.enabled;
     if (state.enabled) await loadConnections(token);
   } catch (err) {
-    if (isCurrentMount(token)) state.enableError = err.message;
+    if (isCurrentMount(token)) state.enableError = plainError(err);
   } finally {
     if (isCurrentMount(token)) { state.enabling = false; render(token); }
   }

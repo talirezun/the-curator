@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import {
   installFetchTranslation, translateFetchRejection, userMessageFrom, userErrorText,
   errorFromResponse, renderUserError, renderErrorDetail, DETAIL_PREFIX, cleanDetail,
+  plainError, errorDetailOf, errorDetailHtml, rememberErrorDetail, loudWithDetail,
 } from '../src/public/next/shared/net.js';
 import { USER_MESSAGES } from '../src/public/next/shared/user-errors.js';
 import { renderStatus } from '../src/public/next/shared/text.js';
@@ -294,6 +295,25 @@ section('§3 rendering');
   const css = readFileSync(join(ROOT, 'src/public/next/shared/text.css'), 'utf8');
   const rule = /\.tx-error-detail \{([\s\S]*?)\}/.exec(css);
   ok(rule && /user-select: text/.test(rule[1]) && /--text-2/.test(rule[1]), '.tx-error-detail is muted and selectable in shared/text.css');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§3b string-state helpers (plainError / errorDetailHtml / loudWithDetail)');
+{
+  const s = plainError({ error: "EPERM: operation not permitted, open '/Users/x/vault/wiki/a.md'" });
+  ok(typeof s === 'string' && /didn't let The Curator use a file/.test(s), 'plainError returns the plain sentence as a string');
+  ok(/EPERM/.test(errorDetailOf(s)) && /tx-error-detail/.test(errorDetailHtml(s)), '…and remembers its detail beside it');
+  ok(errorDetailHtml('A different sentence.') === '', 'a different message never inherits a detail');
+  ok(errorDetailHtml(null) === '' && errorDetailHtml(undefined) === '', 'nothing → nothing');
+  const plainOnly = plainError({ error: 'Domain not found' });
+  ok(plainOnly === 'Domain not found' && errorDetailHtml(plainOnly) === '', 'deliberate prose: unchanged, no detail');
+  rememberErrorDetail('Error: ' + s, errorDetailOf(s));
+  ok(errorDetailOf('Error: ' + s) === errorDetailOf(s), 'rememberErrorDetail binds a detail to a composed message');
+  for (let i = 0; i < 60; i++) rememberErrorDetail('m' + i, 'd' + i);
+  ok(errorDetailOf('m0') === '' && errorDetailOf('m59') === 'd59', 'bounded: the oldest entries go first');
+  const loud = loudWithDetail({ tone: 'danger', text: plainError(new Error('Request failed (500)')) });
+  ok(loud.length === 2 && loud[1].tone === 'quiet' && loud[1].text === DETAIL_PREFIX + 'Request failed (500)', 'loudWithDetail adds a quiet support entry below');
+  ok(loudWithDetail({ tone: 'quiet', text: 'Pushed 3 pages.' }).length === 1, '…and nothing for a message without a detail');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
