@@ -1284,6 +1284,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'tokenCheckApplies', 'adminAffordances',
     // v3.72.1
     'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
+    'tokenVerdictLoud', // v3.99.2
   ];
   const cBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'explainerMark', 'formatAge', ...SB_KIT,
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +

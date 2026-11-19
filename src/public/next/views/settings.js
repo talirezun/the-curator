@@ -217,7 +217,7 @@ import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
 // Plain-language errors (v3.99.2): a failure reads as a sentence, with its
 // technical detail on a visible, muted line below it (shared/net.js).
-import { plainError, errorDetailOf, errorDetailHtml, errorFromResponse, renderUserError, rememberErrorDetail } from '../shared/net.js';
+import { plainError, errorDetailOf, errorCodeOf, errorDetailHtml, errorFromResponse, renderUserError, rememberErrorDetail } from '../shared/net.js';
 // v3.87.1: "Waiting for Finder…" is a Mac word; other platforms say "folder picker".
 import { browserPlatform } from '../shared/platform.js';
 // G5 (v3.71.0, COPY.md §3): `general` was the one section with no entry in
@@ -1824,7 +1824,10 @@ async function applyInstall(token) {
     mi.ticks = {};
     loadInstallStatus(token);
   } else {
-    mi.error = failureWords(r) + ' Preview again to continue.';
+    const words = failureWords(r);
+    mi.error = words + ' Preview again to continue.';
+    // The composed sentence keeps the detail (and code) failureWords remembered.
+    rememberErrorDetail(mi.error, errorDetailOf(words), errorCodeOf(words));
     mi.plan = null;
   }
   render(token);
@@ -1880,18 +1883,23 @@ async function loadAiHealth(token) {
   if (isCurrentMount(token)) render(token);
 }
 
+// The sentence for a reply with no message and no list. It is read AFTER
+// trash-list's own "Could not read the trash: " prefix, so it says why, never
+// "Could not read the trash" a second time.
+const TRASH_EMPTY_REPLY = 'The Curator sent back an empty reply. Open this page again to retry.';
+
 /** GET /api/trash → state.trash. Never throws. */
 async function loadTrash(token) {
   try {
     const res = await fetch('/api/trash');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    if (!res.ok || !data || !Array.isArray(data.entries)) throw errorFromResponse(res, data);
+    if (!res.ok || !data || !Array.isArray(data.entries)) throw errorFromResponse(res, data, TRASH_EMPTY_REPLY);
     state.trash = data;
     state.trashError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.trashError = plainError(err, { fallback: 'Could not read the trash.' });
+    state.trashError = plainError(err, { fallback: TRASH_EMPTY_REPLY });
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -11999,7 +12007,7 @@ async function onQualifyGo(modelId, token) {
           } else if (type === 'error') {
             state.qualifyAbort = null;
             stopQualifyClock();
-            state.qualify = { modelId, phase: 'error', runs: [], error: ev.error || 'The test failed.' };
+            state.qualify = { modelId, phase: 'error', runs: [], error: plainError(ev, { fallback: 'The test failed.' }) };
             render(token);
             return;
           }

@@ -200,7 +200,7 @@ import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from
 // text below it as "Technical detail (for support):", always visible.
 import {
   userMessageFrom, errorFromResponse, renderUserError, renderErrorDetail,
-  plainError, errorDetailOf,
+  plainError, errorDetailOf, supportLineText,
 } from '../shared/net.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
@@ -4831,14 +4831,21 @@ function queuePausedCopy(job) {
   return copy;
 }
 
+// v3.99.2: the server translates `pausedMessage` / `failReason` at the wire
+// (ingest-queue.js toWire) and sends the raw text beside it as the wire-only
+// `pausedDetail` / `failDetail`, with `pausedCode` / `failCode`. The texts are
+// shown as sent; the support line appears only when there is one.
 function renderQueuePausedBanner(job) {
   const copy = queuePausedCopy(job);
   const extra = (job && typeof job.pausedMessage === 'string' && job.pausedMessage.trim())
     ? ' ' + job.pausedMessage.trim() : '';
+  const support = (job && (job.pausedDetail || job.pausedCode))
+    ? supportLineText(job.pausedDetail || '', job.pausedCode || '') : '';
   return renderStatus({
     state: 'attention',
     title: copy.title,
     detail: copy.body + extra,
+    ...(support ? { support } : {}),
   });
 }
 
@@ -4932,7 +4939,8 @@ function renderQueueDoneSummary(job) {
   // read-only Shared Brain mirror while the batch sat paused) sets
   // job.failReason server-side and the whole batch stops.
   const failReasonLine = (job && job.status === 'failed' && typeof job.failReason === 'string' && job.failReason)
-    ? '<div class="ing-queue-done-fail-reason"><strong>Batch failed:</strong> ' + escapeHtml(job.failReason) + '</div>'
+    ? '<div class="ing-queue-done-fail-reason"><strong>Batch failed:</strong> ' + escapeHtml(job.failReason) + '</div>' +
+      ((job.failDetail || job.failCode) ? renderErrorDetail(job.failDetail || '', job.failCode || '') : '')
     : '';
 
   // Every count/dollar figure here is a number, so — per the design's
@@ -5076,7 +5084,7 @@ function renderQueueItemRow(item, opts) {
         '<div class="ing-model-gone-head">' + icon('alertTriangle', 13) +
           '<b>The build model is gone</b></div>' +
         '<p class="ing-model-gone-body">' + escapeHtml(itemErr.error) + '</p>' +
-        renderErrorDetail(itemErr.detail) +
+        renderErrorDetail(itemErr.detail, item.errorCode) +
         '<div class="ing-model-gone-actions">' +
           '<button type="button" class="btn btn-secondary btn-xs" id="ing-queue-model-gone-settings">' +
             'Open Settings → Providers &amp; keys</button>' +
@@ -5084,7 +5092,7 @@ function renderQueueItemRow(item, opts) {
       '</div>'
     : ((isFailedItem || isCancelledItem) && item.error)
     ? '<div class="ing-queue-item-error' + (isCancelledItem ? ' ing-queue-item-stopped-msg' : '') + '">' + escapeHtml(itemErr.error) +
-        renderErrorDetail(itemErr.detail) + '</div>'
+        renderErrorDetail(itemErr.detail, item.errorCode || itemErr.code) + '</div>'
     : '';
   // Per row, the SAME change counts as the summary (F13): new / updated /
   // unchanged, never one raw path count that includes untouched pages.

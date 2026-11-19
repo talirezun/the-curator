@@ -288,7 +288,7 @@ import { showToast } from './shared/toast.js';
 // Plain-language errors (v3.99.2): boot() wraps window.fetch once so "Failed to
 // fetch" (the app's own server not answering) reads as a sentence in every
 // view. Aborts and Responses pass untouched. net.js imports no app.js: no cycle.
-import { installFetchTranslation } from './shared/net.js';
+import { installFetchTranslation, errorDetailHtml } from './shared/net.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -1284,6 +1284,15 @@ const READER_CLOSE_SLACK_MS = 60;
 // path and the body keeps the running transition alive, and this function
 // stays the single source of truth for reader markup either way — no view
 // reaches into `.reader-body`.
+// The reader's error: the sentence, then (v3.99.2) its support line when the
+// view that opened the reader remembered one for it (net.js plainError /
+// rememberErrorDetail): a foundation document or a replaced handoff that
+// could not be read says what support needs, not only the sentence.
+function readerErrorHtml(message) {
+  return '<div class="reader-error">' + icon('alertCircle', 15) + ' ' + escapeHtml(message) + '</div>' +
+    errorDetailHtml(message);
+}
+
 function renderReader() {
   const root = document.getElementById('reader-root');
   if (!state.reader) {
@@ -1297,7 +1306,7 @@ function renderReader() {
   if (p.loading) {
     bodyInner = '<div class="reader-loading">Loading…</div>';
   } else if (p.error) {
-    bodyInner = '<div class="reader-error">' + icon('alertCircle', 15) + ' ' + escapeHtml(p.error) + '</div>';
+    bodyInner = readerErrorHtml(p.error);
   } else {
     const typeClass = READER_TYPE_CLASS[p.type] || 'reader-chip-plain';
     const typeDot = READER_TYPE_DOT[p.type] || 'background:var(--border-strong)';

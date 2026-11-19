@@ -121,6 +121,13 @@ import {
 import { renderMonitor } from '../shared/monitor.js';
 import { backupReportHtml, connectNeedsReview, connectReviewHtml, reviewFolders } from './sync-backup.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
+// v3.99.2: only a code a person can look up in the published catalogue is
+// shown on the support line (the same test net.js's support line uses).
+import { isCatalogueCode } from '../shared/user-errors.js';
+// A caught error (a thrown sentence with .detail/.code, the fetch wrapper's
+// server-unreachable, or a JSON parse failure on an HTML page) as {error,
+// detail, code}: raw parser text never becomes the sentence.
+import { userMessageFrom } from '../shared/net.js';
 
 function freshState() {
   return {
@@ -135,10 +142,11 @@ function freshState() {
     actionErrorDetail: null, // the route's `detail`: shown, smaller, under the error
     actionErrorCode: null,   // the route's `code`: a token code opens Replace token
     statusErrorDetail: null,
+    statusErrorCode: null,
     // Replace token (2026-11-19). `token` holds keystrokes only until the
     // submit reads them: it is cleared at that moment, on cancel, and in the
     // teardown, and never written into markup (see renderTokenPanel).
-    tokenForm: { open: false, dismissed: false, token: '', submitting: false, error: null, detail: null, focusPending: false },
+    tokenForm: { open: false, dismissed: false, token: '', submitting: false, error: null, detail: null, code: null, focusPending: false },
     disconnectConfirmOpen: false,
     // `decision` is the connect flow's second screen, and it exists because
     // of the v3.32.0 incident: a refusal that leaves only a destructive door
@@ -147,7 +155,7 @@ function freshState() {
     // {kind:'foreign', originUrl}, {kind:'remote-empty'|'remote-not-empty'}.
     // Every one of them offers at least one NON-destructive way forward.
     setupForm: {
-      repoUrl: '', token: '', mode: 'push', submitting: false, error: null, errorDetail: null,
+      repoUrl: '', token: '', mode: 'push', submitting: false, error: null, errorDetail: null, errorCode: null,
       checking: false, decision: null,
     },
   };
@@ -387,11 +395,14 @@ async function loadStatus(token) {
     state.status = data;
     state.statusError = data.error || null;
     state.statusErrorDetail = (data && typeof data.detail === 'string' && data.detail) || null;
+    state.statusErrorCode = (data && typeof data.code === 'string' && data.code) || null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.status = { configured: false };
-    state.statusError = err.message;
-    state.statusErrorDetail = null;
+    const u = userMessageFrom(err);
+    state.statusError = u.error;
+    state.statusErrorDetail = u.detail || null;
+    state.statusErrorCode = u.code || null;
   }
 }
 
@@ -616,7 +627,7 @@ function renderUnconfigured() {
         '</div>' +
         '<p class="settings-hint-text sync-mode-hint">' + escapeHtml(MODE_HINTS[f.mode] || '') + '</p>' +
       '</div>' +
-      (f.error ? syncErrorHtml(f.error, f.errorDetail) : '') +
+      (f.error ? syncErrorHtml(f.error, f.errorDetail, '', f.errorCode) : '') +
       renderSetupDecision(f) +
       (f.decision ? '' :
         '<button type="button" class="btn btn-primary" id="btn-sync-connect"' + (f.submitting || f.checking ? ' disabled' : '') + '>' +
@@ -785,7 +796,7 @@ function renderConfigured(s) {
           { key: 'last synced', value: lastSyncLabel },
         ],
       }) +
-      (state.statusError ? syncErrorHtml(state.statusError, state.statusErrorDetail) : '') +
+      (state.statusError ? syncErrorHtml(state.statusError, state.statusErrorDetail, '', state.statusErrorCode) : '') +
       // THE ALREADY-SPLIT INSTALL. setup()'s adoption closes the split for a
       // connect made from now on and does nothing for an install that is
       // already in it — and one exists, because the incident that produced
@@ -832,7 +843,7 @@ function renderConfigured(s) {
       // unfolded, not only in the header's ⓘ (v3.16.1).
       '<div class="sync-undo-note">' + escapeHtml(SYNC_UNDO_NOTE) + '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
-      (state.actionError ? syncErrorHtml(state.actionError, state.actionErrorDetail, 'margin-top:8px') : '') +
+      (state.actionError ? syncErrorHtml(state.actionError, state.actionErrorDetail, 'margin-top:8px', state.actionErrorCode) : '') +
       // Replace token: OPEN right under the error when the error says GitHub
       // refused the token (never behind a chevron, v3.16.1); otherwise one
       // quiet button, so a token can be changed without Disconnect.
@@ -850,11 +861,16 @@ function renderConfigured(s) {
 // The error sentence, and under it the technical detail for support: visible,
 // smaller, muted, selectable (the error contract). Both escaped; the detail is
 // in a <code> so it reads as quoted text, not as the app's own words.
-function syncErrorHtml(message, detail, style) {
+// v3.99.2: the catalogue code goes on the same line, as net.js's support line
+// writes it ("<detail> (code: sync-offline)", or "code: sync-offline" alone),
+// so support can look the code up. A code outside the catalogue is not shown.
+function syncErrorHtml(message, detail, style, code) {
+  const c = code && isCatalogueCode(code) ? code : '';
+  const body = detail
+    ? '<code>' + escapeHtml(detail) + '</code>' + (c ? ' (code: ' + escapeHtml(c) + ')' : '')
+    : (c ? 'code: ' + escapeHtml(c) : '');
   return '<div class="settings-inline-error"' + (style ? ' style="' + style + '"' : '') + '>' + escapeHtml(message) + '</div>' +
-    (detail
-      ? '<div class="sync-error-detail">Technical detail (for support): <code>' + escapeHtml(detail) + '</code></div>'
-      : '');
+    (body ? '<div class="sync-error-detail">Technical detail (for support): ' + body + '</div>' : '');
 }
 
 // The codes that mean "GitHub refused the token Sync has": the panel opens.
@@ -889,7 +905,7 @@ function renderTokenPanel(s, disabled) {
         '<label class="sync-setup-label" for="sync-token-input">New personal access token</label>' +
         '<input type="password" class="sync-setup-input" id="sync-token-input" autocomplete="off" spellcheck="false" placeholder="ghp_… or a fine-grained token"' + (busy ? ' disabled' : '') + '>' +
       '</div>' +
-      (f.error ? syncErrorHtml(f.error, f.detail) : '') +
+      (f.error ? syncErrorHtml(f.error, f.detail, '', f.code) : '') +
       '<div class="sync-decision-actions">' +
         '<button type="button" class="btn btn-primary" id="btn-token-save"' + (busy || disabled ? ' disabled' : '') + '>' +
           (busy ? 'Checking with GitHub…' : 'Check and save') + '</button>' +
@@ -1047,6 +1063,7 @@ function wireListeners() {
       state.setupForm.decision = null;
       state.setupForm.error = null;
       state.setupForm.errorDetail = null;
+      state.setupForm.errorCode = null;
       render(myMountToken);
     });
     return;
@@ -1069,7 +1086,7 @@ function wireListeners() {
 
   const tokOpen = document.getElementById('btn-token-open');
   if (tokOpen) tokOpen.addEventListener('click', () => {
-    state.tokenForm = { ...state.tokenForm, open: true, dismissed: false, error: null, detail: null, focusPending: true };
+    state.tokenForm = { ...state.tokenForm, open: true, dismissed: false, error: null, detail: null, code: null, focusPending: true };
     render(myMountToken);
   });
   const tokInput = document.getElementById('sync-token-input');
@@ -1104,6 +1121,7 @@ async function onReplaceToken(token) {
   if (!pat) {
     state.tokenForm.error = 'Paste the new token from GitHub first. Nothing was changed.';
     state.tokenForm.detail = null;
+    state.tokenForm.code = null;
     state.tokenForm.focusPending = true;
     render(token);
     return;
@@ -1111,6 +1129,7 @@ async function onReplaceToken(token) {
   state.tokenForm.submitting = true;
   state.tokenForm.error = null;
   state.tokenForm.detail = null;
+  state.tokenForm.code = null;
   state.acting = 'token';
   render(token);
   let res = null;
@@ -1150,6 +1169,7 @@ async function onReplaceToken(token) {
     ? ((data && data.error) || 'The new token could not be saved. Nothing was changed.')
     : 'The Curator could not be reached, so the token was not changed. Try again.';
   state.tokenForm.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+  state.tokenForm.code = (data && typeof data.code === 'string' && data.code) || null;
   render(token);
 }
 
@@ -1173,6 +1193,8 @@ async function onConnect(token) {
   state.setupForm.token = pat;
   if (!repoUrl.trim() || !pat.trim()) {
     state.setupForm.error = 'Both the repository URL and a token are required.';
+    state.setupForm.errorDetail = null;  // not an earlier failure's support line
+    state.setupForm.errorCode = null;
     render(token);
     return;
   }
@@ -1190,6 +1212,7 @@ async function onConnect(token) {
   state.setupForm.checking = true;
   state.setupForm.error = null;
   state.setupForm.errorDetail = null;
+  state.setupForm.errorCode = null;
   state.setupForm.decision = null;
   render(token);
   let pre = null;
@@ -1206,6 +1229,7 @@ async function onConnect(token) {
       state.setupForm.checking = false;
       state.setupForm.error = data && data.error ? data.error : 'Could not reach that repository.';
       state.setupForm.errorDetail = (data && typeof data.detail === 'string' && data.detail) || null;
+      state.setupForm.errorCode = (data && typeof data.code === 'string' && data.code) || null;
       render(token);
       return;
     }
@@ -1259,6 +1283,7 @@ async function runSetup(mode, confirmOverwrite, token) {
   state.setupForm.submitting = true;
   state.setupForm.error = null;
   state.setupForm.errorDetail = null;
+  state.setupForm.errorCode = null;
   render(token);
   try {
     const res = await fetch('/api/sync/setup', {
@@ -1290,6 +1315,7 @@ async function runSetup(mode, confirmOverwrite, token) {
       } else {
         const e = new Error(data.error || 'Could not connect.');
         e.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+        e.code = (data && typeof data.code === 'string' && data.code) || null;
         throw e;
       }
       state.setupForm.submitting = false;
@@ -1305,8 +1331,10 @@ async function runSetup(mode, confirmOverwrite, token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.setupForm.decision = null;
-    state.setupForm.error = err.message;
-    state.setupForm.errorDetail = err.detail || null;
+    const u = userMessageFrom(err);
+    state.setupForm.error = u.error;
+    state.setupForm.errorDetail = u.detail || null;
+    state.setupForm.errorCode = u.code || null;
   } finally {
     // Unlike domains.js's busyKey (a SINGLE persistent `state` object that
     // survives across mounts, where an ungated reset is required — see H2),
@@ -1486,6 +1514,7 @@ async function onDisconnect(token) {
     if (!res.ok) {
       const e = new Error(data.error || 'Could not disconnect.');
       e.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+      e.code = (data && typeof data.code === 'string' && data.code) || null;
       throw e;
     }
     if (!isCurrentMount(token)) return;
@@ -1499,9 +1528,11 @@ async function onDisconnect(token) {
     loadAll(token).catch(reportAsyncActionFailure);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.actionError = err.message;
-    state.actionErrorDetail = err.detail || null;
-    state.actionErrorCode = null;
+    const u = userMessageFrom(err);
+    state.actionError = u.error;
+    state.actionErrorDetail = u.detail || null;
+    // v3.99.2: kept for the support line (it was dropped before).
+    state.actionErrorCode = u.code || null;
     state.acting = null;
     state.disconnectConfirmOpen = false;
     render(token);

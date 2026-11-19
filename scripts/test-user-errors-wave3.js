@@ -326,6 +326,68 @@ try {
       /errorDetailHtml\(state\.updateError\)\);/.test(failedBranch) && !/'Unknown error\.'\) \+ errorDetailHtml/.test(failedBranch),
       'cross-check: the Update failed branch passes the detail as supportHtml, not inside the body');
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§7 Settings leftovers (agent F): the trash read, the install apply');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    await import('./test-helpers/net-globals.js');
+    const { stripComments, functionSource } = await import('./test-helpers/source-scan.js');
+    const settings = stripComments(readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8'));
+    const TR = await import('../src/public/next/views/trash-list.js');
+    const MI = await import('../src/public/next/views/mcp-install.js');
+    const fn = (name) => { const f = functionSource(settings, name); if (!f) throw new Error(name + ' not found'); return f; };
+
+    // 5a: an empty reply to GET /api/trash: the fallback is read after the
+    // section's own "Could not read the trash: " prefix.
+    const emptyConst = /\nconst TRASH_EMPTY_REPLY = [^\n]+;/.exec(settings);
+    ok(!!emptyConst, 'trash: the empty-reply sentence is a named constant beside loadTrash');
+    const loadTrash = new Function('fetch', 'state', 'isCurrentMount', 'render',
+      (emptyConst ? emptyConst[0] : '') + '\n' + fn('loadTrash') + '\nreturn loadTrash;');
+    for (const [label, res] of [
+      ['an empty 500 reply', { ok: false, status: 500, json: async () => ({}) }],
+      ['a 200 reply with no entries', { ok: true, status: 200, json: async () => ({}) }],
+    ]) {
+      const st = { trash: null, trashError: null };
+      await loadTrash(async () => res, st, () => true, () => {})(1);
+      const html = TR.trashSectionHtml({ data: null, error: st.trashError });
+      ok(typeof st.trashError === 'string' && st.trashError.length > 10, `trash (${label}): a sentence is stored`, st.trashError);
+      ok(!/Could not read the trash[^]*Could not read the trash/.test(html), `trash (${label}): never "Could not read the trash" twice`, html);
+      ok(!/HTTP \d{3}/.test(st.trashError), `trash (${label}): no status number in the sentence`, st.trashError);
+    }
+    const st500 = { trash: null, trashError: null };
+    await loadTrash(async () => ({ ok: false, status: 500, json: async () => ({}) }), st500, () => true, () => {})(1);
+    ok(net.errorDetailOf(st500.trashError) === 'HTTP 500', 'trash: the status is the support detail, not the sentence', net.errorDetailOf(st500.trashError));
+    const stRaw = { trash: null, trashError: null };
+    await loadTrash(async () => ({ ok: false, status: 500, json: async () => ({ error: "EACCES: permission denied, open '/Users/x/.curator-trash/a'" }) }), stRaw, () => true, () => {})(1);
+    ok(/^This computer didn't let The Curator use a file/.test(stRaw.trashError), 'trash: CONTROL a server message still wins over the fallback', stRaw.trashError);
+
+    // 5b: a failed apply keeps the detail failureWords remembered.
+    const mi = { busy: null, plan: { action: 'install', token: 't', items: [] }, error: null };
+    const applyInstall = new Function('state', 'isCurrentMount', 'render', 'requestApply', 'failureWords', 'loadInstallStatus',
+      fn('applyInstall') + '\nreturn applyInstall;')(
+      { mcpInstall: mi }, () => true, () => {},
+      async () => ({ ok: false, code: 'write-failed', message: 'The setup file could not be written.', detail: "EACCES: permission denied, open '~/x.json'" }),
+      MI.failureWords, () => {});
+    await applyInstall(1);
+    ok(/Nothing was changed\. Preview again to continue\.$/.test(mi.error || ''), 'install apply: CONTROL the composed sentence', mi.error);
+    ok(net.errorDetailHtml(mi.error).includes("EACCES: permission denied, open '~/x.json'".replace(/'/g, '&#39;')),
+      'install apply: the composed sentence keeps its technical detail', net.errorDetailHtml(mi.error));
+
+    // item 7: the OpenRouter qualify stream's error frame goes through net.js.
+    const qState = { qualify: null, qualifyAbort: null, qualifyTickId: null };
+    const RAW_OR = 'OpenRouter /chat/completions → HTTP 401: {"error":{"message":"No auth credentials found","code":401}}';
+    const onQualifyGo = new Function('state', 'fetch', 'isCurrentMount', 'render', 'stopQualifyClock', 'setInterval',
+      fn('onQualifyGo') + '\nreturn onQualifyGo;')(qState,
+      async () => new Response(new ReadableStream({ start(c) {
+        c.enqueue(new TextEncoder().encode('event: error\ndata: ' + JSON.stringify({ error: RAW_OR }) + '\n\n')); c.close(); } }), { status: 200 }),
+      () => true, () => {}, () => {}, () => 0);
+    await onQualifyGo('m/x', 1);
+    const qe = qState.qualify && qState.qualify.error;
+    ok(qState.qualify && qState.qualify.phase === 'error' && typeof qe === 'string', 'qualify: CONTROL the error frame ends the run', qState.qualify);
+    ok(!/HTTP 401|\{"error"/.test(qe) && net.errorDetailOf(qe).includes('No auth credentials found'),
+      'qualify: a raw provider error frame becomes the sentence, the raw text its detail', qe);
+  }
 } finally {
   rmSync(TMP, { recursive: true, force: true });
 }

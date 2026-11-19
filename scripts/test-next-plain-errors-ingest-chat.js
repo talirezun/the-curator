@@ -166,21 +166,24 @@ section('§6 batch rows: the wire\'s errorDetail is shown, an older server\'s ra
 {
   const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
   const { formatUsdHonest } = await import('../src/public/next/shared/format-usd.js');
-  const names = ['queueItemPageCounts', 'queueRanOnLine', 'queueSpendReading', 'queueSpendHtml', 'queueBudgetFacts', 'renderQueueItemRow'];
+  const names = ['queueItemPageCounts', 'queueRanOnLine', 'queueSpendReading', 'queueSpendHtml', 'queueBudgetFacts', 'renderQueueItemRow',
+    // v3.99.2 (agent F): the job-level pause and failure texts
+    'renderQueuePausedBanner', 'queuePausedCopy', 'renderQueueDoneSummary', 'renderNewPagesLine'];
   const bodies = names.map((n) => lift(ingestSrc, n, 'ingest.js'));
   const V = new Function('escapeHtml', 'formatUsdHonest', 'computeQueueStatusCounts', 'formatHealthCounts', 'statusPillMeta',
-    'sanitizeDisplayName', 'formatQueueBytes', 'queueRowNote', `
+    'sanitizeDisplayName', 'formatQueueBytes', 'queueRowNote', 'renderStatus', 'pausedReasonCopy', `
     const icon = () => '<svg></svg>';
     const progressRingHtml = () => '';
     const INGEST_STAGES = [];
     ${bodies.join('\n')}
-    return { renderQueueItemRow };
+    return { renderQueueItemRow, renderQueuePausedBanner, renderQueueDoneSummary };
   `)(esc, formatUsdHonest, logic.computeQueueStatusCounts, logic.formatHealthCounts, logic.statusPillMeta,
-    logic.sanitizeDisplayName, logic.formatQueueBytes, logic.queueRowNote);
+    logic.sanitizeDisplayName, logic.formatQueueBytes, logic.queueRowNote, renderStatus, logic.pausedReasonCopy);
 
   const newWire = { status: 'failed', idx: 0, name: 'a.pdf', error: KEY_SENTENCE, errorDetail: RAW_ANTHROPIC_401, errorCode: 'ai-key-rejected' };
   const row = V.renderQueueItemRow(newWire, { jobTerminal: true });
-  ok(text(row).includes(KEY_SENTENCE) && row.includes(net.renderErrorDetail(RAW_ANTHROPIC_401)), '★ the row shows the sentence and the detail line', row);
+  // v3.99.2 (agent F): the row's support line now ends with the item's catalogue code.
+  ok(text(row).includes(KEY_SENTENCE) && row.includes(net.renderErrorDetail(RAW_ANTHROPIC_401, 'ai-key-rejected')), '★ the row shows the sentence and the detail line, with its code', row);
 
   const oldWire = { status: 'failed', idx: 1, name: 'b.pdf', error: RAW_ANTHROPIC_401 };
   const rowOld = V.renderQueueItemRow(oldWire, { jobTerminal: true });
@@ -194,6 +197,49 @@ section('§6 batch rows: the wire\'s errorDetail is shown, an older server\'s ra
   const gone = { status: 'failed', idx: 3, name: 'd.md', error: 'The model is gone.', errorCode: 'MODEL_GONE', errorDetail: 'raw 404' };
   const rowGone = V.renderQueueItemRow(gone, { jobTerminal: true });
   ok(/data-ingest-error-code="MODEL_GONE"/.test(rowGone) && rowGone.includes(net.renderErrorDetail('raw 404')), 'a MODEL_GONE row keeps its block and shows the detail');
+
+  // v3.99.2 (agent F): the job-level texts, through the REAL wire (toWire)
+  // and the REAL renderers. The manifest keeps its raw text; only the wire
+  // copy gains pausedDetail / failDetail.
+  // The brain module is imported against an isolated, empty user-data and
+  // domains folder (nothing here writes; toWire only reads the job it is given).
+  const os = await import('node:os');
+  const ISO = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-plain-errors-ingest-'));
+  fs.mkdirSync(path.join(ISO, 'domains'), { recursive: true });
+  process.env.CURATOR_TEST_USER_DATA_DIR = ISO;
+  process.env.CURATOR_TEST_DOMAINS_DIR = path.join(ISO, 'domains');
+  process.env.CURATOR_NO_OPEN = '1';
+  const Q = await import('../src/brain/ingest-queue.js');
+  const RAW_429 = '429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}';
+  const paused = {
+    jobId: 'j1', status: 'paused', pausedReason: 'rate_limit', items: [],
+    pausedMessage: 'Paused — the AI provider rate-limited this request. "a.md" will be retried first on resume. (' + RAW_429 + ')',
+  };
+  const before = JSON.stringify(paused);
+  const w = Q.toWire(paused);
+  ok(JSON.stringify(paused) === before, 'batch: toWire never changes the job it reads (the manifest copy stays byte-identical)');
+  ok(w.pausedMessage === 'Paused — the AI provider rate-limited this request. "a.md" will be retried first on resume.',
+    'batch: the wire sentence ends before the provider\'s raw text', w.pausedMessage);
+  ok(w.pausedDetail === RAW_429 && w.pausedCode === 'ai-rate-limited', 'batch: the raw text and its code travel as pausedDetail / pausedCode', JSON.stringify(w));
+  const banner = V.renderQueuePausedBanner(w);
+  ok(banner.includes('<div class="tx-error-detail">' + esc(net.supportLineText(RAW_429, 'ai-rate-limited')) + '</div>') && !/\{"type"/.test(text(banner.replace(/<div class="tx-error-detail">[\s\S]*?<\/div>/, ''))),
+    '★ the paused banner shows the sentence, and the raw text only on its support line', banner);
+  const userPause = Q.toWire({ jobId: 'j2', status: 'paused', pausedReason: 'user', items: [], pausedMessage: 'Paused by user request.' });
+  ok(userPause.pausedMessage === 'Paused by user request.' && userPause.pausedDetail === null && !/tx-error-detail/.test(V.renderQueuePausedBanner(userPause)),
+    'batch: CONTROL a deliberate pause sentence passes unchanged, with no support line');
+  const rawFail = "EACCES: permission denied, open '/Users/somebody/vault/domains/d/wiki/index.md'";
+  const failedJob = { jobId: 'j3', status: 'failed', items: [], failReason: rawFail };
+  const fw = Q.toWire(failedJob);
+  ok(failedJob.failReason === rawFail, 'batch: the manifest keeps the raw failReason');
+  ok(fw.failCode === 'files-not-allowed' && /EACCES/.test(fw.failDetail || '') && !/\/Users\/somebody/.test(fw.failDetail || ''),
+    'batch: failDetail is the sanitised raw text, failCode its catalogue code', JSON.stringify(fw));
+  const sum = V.renderQueueDoneSummary(fw);
+  ok(sum.includes(net.renderErrorDetail(fw.failDetail, 'files-not-allowed')) && !/EACCES/.test(text(sum.replace(/<div class="tx-error-detail">[\s\S]*?<\/div>/, ''))),
+    '★ "Batch failed" shows the sentence and, below it, the support line with the code', sum.slice(0, 600));
+  const plainFail = V.renderQueueDoneSummary({ status: 'failed', items: [], failReason: 'The domain was deleted.' });
+  ok(/Batch failed:<\/strong> The domain was deleted\./.test(plainFail) && !/tx-error-detail/.test(plainFail),
+    'batch: CONTROL a deliberate failReason with no detail has no support line', plainFail.slice(0, 400));
+  try { fs.rmSync(ISO, { recursive: true, force: true }); } catch { /* best-effort */ }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
