@@ -147,7 +147,7 @@ import { explainerMark } from '../shared/explainer.js';
 import { domainIdentityClass } from '../shared/sidebar.js';
 // Plain-language errors (v3.99.2): a failed request reads as a sentence, and
 // its technical detail rides on a muted line inside the same status element.
-import { plainError, userMessageFrom, errorFromResponse, DETAIL_PREFIX } from '../shared/net.js';
+import { plainError, userMessageFrom, errorFromResponse, supportLineText } from '../shared/net.js';
 
 /** Put `lead` + the plain sentence for `err` in a status element, with its
  *  technical detail (if any) as a visible, muted, selectable line inside it.
@@ -156,13 +156,17 @@ function setErrorText(el, lead, err) {
   if (!el) return;
   const u = userMessageFrom(err);
   el.textContent = lead + u.error;
-  const detail = u.detail;
-  if (detail && el.ownerDocument) {
-    const d = el.ownerDocument.createElement('div');
-    d.className = 'tx-error-detail';
-    d.textContent = DETAIL_PREFIX + detail;
-    el.appendChild(d);
-  }
+  appendSupportLine(el, supportLineText(u.detail, u.code));
+}
+
+/** The support line ("Technical detail (for support): … (code: …)") as a
+ *  muted tx-error-detail child of `el`, by textContent. Nothing when empty. */
+function appendSupportLine(el, line) {
+  if (!el || !line || !el.ownerDocument) return;
+  const d = el.ownerDocument.createElement('div');
+  d.className = 'tx-error-detail';
+  d.textContent = line;
+  el.appendChild(d);
 }
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -482,7 +486,13 @@ function patVerdict(j, meta) {
     return { kind: 'error', message: 'GitHub’s answer could not be read. Press Check token to try again.' };
   }
   if (!j.valid) {
-    return { kind: 'error', message: j.error || 'Token rejected by GitHub.' };
+    // The sentence is the server's (or this fallback), unchanged; a body that
+    // carries a detail or a catalogue code (a thrown error the server
+    // translated) keeps it as the support line under the sentence.
+    const support = supportLineText(j.detail, j.code);
+    return support
+      ? { kind: 'error', message: j.error || 'Token rejected by GitHub.', support }
+      : { kind: 'error', message: j.error || 'Token rejected by GitHub.' };
   }
   if (!j.hasWriteAccess) {
     return {
@@ -1538,9 +1548,13 @@ function bindStep3() {
   const checkBtn = byId('sbw-pat-check');
   if (!input) return;
 
-  function setValidation(kind, message) {
+  // `support` (optional): the "Technical detail (for support): …" line, shown
+  // inside the status, visible and muted, as tx-error-detail (wave 3: the
+  // sentence used to be shown alone and the detail was dropped).
+  function setValidation(kind, message, support) {
     validation.className = 'sbw-status sbw-status-' + kind;
     validation.textContent = message;
+    appendSupportLine(validation, support);
     validation.classList.remove('sbw-hidden');
   }
 
@@ -1583,7 +1597,7 @@ function bindStep3() {
       if (mySeq !== state.patSeq || !isFresh(myGen)) return;
 
       const verdict = patVerdict(j, state.inviteMetadata);
-      setValidation(verdict.kind, verdict.message);
+      setValidation(verdict.kind, verdict.message, verdict.support);
       if (!patVerdictAccepts(verdict)) { clearVerdict(); return; }
 
       // Accepted (valid, or valid-but-read-only) → store it, and record
@@ -1596,7 +1610,8 @@ function bindStep3() {
     } catch (err) {
       if (mySeq !== state.patSeq || !isFresh(myGen)) return;
       clearVerdict();
-      setValidation('error', 'Could not check your token. ' + plainError(err));
+      const u = userMessageFrom(err);
+      setValidation('error', 'Could not check your token. ' + u.error, supportLineText(u.detail, u.code));
     }
   }
 

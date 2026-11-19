@@ -157,6 +157,62 @@ export const USER_MESSAGES = Object.freeze({
 /** klass → the stable `code` a body carries. Today every code IS its klass. */
 export const KLASS_CODES = Object.freeze(Object.fromEntries(Object.keys(USER_MESSAGES).map((k) => [k, k])));
 
+// ── Per-surface wording (wave 3) ─────────────────────────────────────────────
+// The same failure can need a different next step on a different screen (the
+// Sync amendment: "a step must exist on THAT screen"). An override is looked
+// up by ctx.area, then ctx.surface, then klass; with no override the global
+// sentence above is used. The code never changes: only the words do.
+//   toUserError(err, { area: 'sharedbrain', surface: 'admin' })
+export const SURFACE_MESSAGES = Object.freeze({
+  sharedbrain: Object.freeze({
+    // An admin's action (revoke): "Leave and re-join with your invite" is a
+    // member's step. The admin's token is replaced the way every admin's is
+    // provisioned: by running the setup wizard again for the same repository
+    // and shared domain (docs/shared-brain-admin.md; shared.js says the same
+    // for a missing admin token). "+ Set up another" is on the Shared Brain
+    // page whenever a connection exists, which an admin's always does.
+    admin: Object.freeze({
+      'github-token-rejected': () =>
+        `GitHub didn't accept the access token this computer uses for this Shared Brain, so this didn't finish. ` +
+        `Create a new token on GitHub, then use + Set up another and run the setup again for the same repository ` +
+        `and shared domain: the setup wizard is the only place that accepts a new token.`,
+      'github-not-found': () =>
+        `GitHub couldn't find this Shared Brain's repository, or the access token can't see it. Check on GitHub ` +
+        `that the repository still exists and that your token has access to it, then try again.`,
+    }),
+  }),
+});
+
+/** The override for (area, surface, klass), or null. */
+export function surfaceMessage(klass, ctx) {
+  const area = ctx && ctx.area;
+  const surface = ctx && ctx.surface;
+  if (!area || !surface) return null;
+  const byArea = Object.prototype.hasOwnProperty.call(SURFACE_MESSAGES, area) ? SURFACE_MESSAGES[area] : null;
+  const bySurface = byArea && Object.prototype.hasOwnProperty.call(byArea, surface) ? byArea[surface] : null;
+  const fn = bySurface && Object.prototype.hasOwnProperty.call(bySurface, klass) ? bySurface[klass] : null;
+  return typeof fn === 'function' ? fn : null;
+}
+
+// ── The published catalogue's codes ──────────────────────────────────────────
+// Every code a person may see under an error, as "code: …" in the support line
+// (shared/net.js). This list is what a published error catalogue documents, so
+// a code outside it is NEVER shown as if it were one: an fs errno a route
+// passes through as `code` ('EACCES'), an adapter's internal code
+// ('SHARED_BRAIN_AUTH'), a view-branching code ('manifest-newer', 'shape').
+// The sync codes are sync.js's (error-contract.md, the Sync amendment).
+export const SYNC_CODES = Object.freeze([
+  'sync-token-rejected', 'sync-token-no-access', 'sync-repo-not-found', 'sync-offline', 'sync-remote-ahead',
+  'sync-merge-conflict', 'sync-busy-retry', 'sync-held-back-collision', 'sync-nested-repo', 'sync-git-missing',
+  'sync-failed', 'sync-token-missing', 'sync-token-invalid', 'sync-new-token-rejected', 'sync-new-token-no-access',
+  'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
+  'sync-not-configured',
+]);
+export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES])]);
+const CATALOGUE_SET = new Set(CATALOGUE_CODES);
+/** True only for a code in the published catalogue. */
+export function isCatalogueCode(code) { return typeof code === 'string' && CATALOGUE_SET.has(code); }
+
 // ── Sub-classifiers: run only INSIDE a recognised provider shape ────────────
 const TOO_LONG_RE = /prompt is too long|too many tokens|request_too_large|exceeds the maximum number of tokens|input token count|maximum context length|context_length_exceeded|context window/i;
 const NO_CREDIT_RE = /credit balance is too low|insufficient credits|insufficient_quota|billing_error/i;
@@ -325,6 +381,6 @@ export function composeUserMessage(hit, ctx = {}) {
   if (!hit || !USER_MESSAGES[hit.klass]) return null;
   // What the text itself says (provider, file name) outranks the caller's guess.
   const c = { ...ctx, ...(hit.provider ? { provider: hit.provider } : {}), ...(hit.name ? { name: hit.name } : {}) };
-  const sentence = USER_MESSAGES[hit.klass](c);
+  const sentence = (surfaceMessage(hit.klass, c) || USER_MESSAGES[hit.klass])(c);
   return hit.lead ? `${hit.lead} ${sentence}` : sentence;
 }

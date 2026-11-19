@@ -8,6 +8,7 @@ import { ingestFile, planRepeatIngest, sourceTextForGate } from '../brain/ingest
 import { hashRawSource } from '../brain/raw-store.js';
 import { estimateIngestQueueCost } from '../brain/ingest-queue.js';
 import { toUserError } from '../brain/user-errors.js';
+import { scrubPaths } from '../brain/scrub-paths.js';
 // v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
 // run reports. Static import is safe: this route is a leaf, and brain/ingest.js
 // (imported just above) is fully evaluated before ai-run.js's graph starts.
@@ -35,10 +36,12 @@ import { MAX_FILE_BYTES, MAX_FILE_MB } from '../brain/ingest-queue.js';
 // v3.99.2 plain-language errors: an SSE `error` frame never passes through the
 // res.json wrapper, so it is translated here, at the exit. On a hit the frame
 // carries the plain sentence as `message` plus `detail`/`code`; on a miss it
-// is exactly today's text. `err.message` itself is never changed.
+// is today's text with absolute paths scrubbed (wave 3: a raw fs error the
+// catalogue does not recognise carried the user's home folder to the screen).
+// `err.message` itself is never changed.
 function errorFrame(err, fallbackMessage) {
   const u = toUserError(err, { area: 'ai' });
-  if (!u) return { type: 'error', message: fallbackMessage };
+  if (!u) return { type: 'error', message: scrubPaths(String(fallbackMessage ?? '')) };
   return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
 }
 

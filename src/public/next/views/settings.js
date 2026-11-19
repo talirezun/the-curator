@@ -2765,8 +2765,9 @@ function renderUpdateStatus() {
         : null);
   }
   if (state.updatePhase === 'failed') {
-    return box('upd-bad', 'Update failed', escapeHtml(state.updateError || 'Unknown error.') + errorDetailHtml(state.updateError),
-      null, 'Nothing was restarted. You can try again, or update by hand from your checkout.');
+    return box('upd-bad', 'Update failed', escapeHtml(state.updateError || 'Unknown error.'),
+      null, 'Nothing was restarted. You can try again, or update by hand from your checkout.', null,
+      errorDetailHtml(state.updateError));
   }
 
   const v = classifyUpdate(state.updateCheck, state.version);
@@ -3054,11 +3055,20 @@ function renderInstallerUpdateStatus(v, ui) {
 
 // Small local builder — everything interpolated is either escaped at the
 // call site or a server-authored string that is escaped here.
-function box(cls, headline, bodyHtml, warningText, detailText, actionsHtml) {
+//
+// `supportHtml` (wave 3): an error's support line (errorDetailHtml, a block
+// <div>). It used to be concatenated into bodyHtml, which put a <div> inside
+// the body's <span> (invalid HTML). With it, the body's wrapper is a <div>
+// holding the text and then the line: the same boxes as before (an
+// unstyled inline span holding a block already rendered as a block), and no
+// element precedes the line inside it, so its spacing is unchanged too.
+function box(cls, headline, bodyHtml, warningText, detailText, actionsHtml, supportHtml) {
   return (
     '<div class="upd-status' + (cls ? ' ' + cls : '') + '" role="status">' +
       '<span class="upd-headline">' + escapeHtml(headline) + '</span>' +
-      '<span>' + (bodyHtml || '') + '</span>' +
+      (supportHtml
+        ? '<div>' + (bodyHtml || '') + supportHtml + '</div>'
+        : '<span>' + (bodyHtml || '') + '</span>') +
       (detailText ? '<span class="upd-detail">' + escapeHtml(detailText) + '</span>' : '') +
       (warningText ? '<span class="upd-warning">' + escapeHtml(warningText) + '</span>' : '') +
       (actionsHtml ? '<div class="upd-actions">' + actionsHtml + '</div>' : '') +

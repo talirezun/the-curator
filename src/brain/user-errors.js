@@ -42,6 +42,11 @@ export {
   KLASS_CODES,
   USER_MESSAGES,
   CLIENT_KLASSES,
+  SURFACE_MESSAGES,
+  surfaceMessage,
+  CATALOGUE_CODES,
+  SYNC_CODES,
+  isCatalogueCode,
 } from '../public/next/shared/user-errors.js';
 
 /** `detail` is capped AFTER scrubbing, so a cut can never leave half a token. */
@@ -200,8 +205,11 @@ function detailOf(err, text) {
 /**
  * Translate an error for a person. Returns a NEW object and never touches err.
  * @param {unknown} err  an Error, or a string
- * @param {{area?: string, service?: string, provider?: string}} [ctx]
+ * @param {{area?: string, service?: string, provider?: string, surface?: string}} [ctx]
  *   area: 'ai' | 'sync' | 'sharedbrain' | 'update' | … (names a service, picks wording)
+ *   surface: a per-screen override of the wording (SURFACE_MESSAGES), e.g.
+ *     { area: 'sharedbrain', surface: 'admin' } for an admin's revoke. The
+ *     code is the same; only the next step changes.
  * @returns {{error: string, detail: string, code: string} | null}
  *   null = not recognised: the caller keeps its own message.
  */

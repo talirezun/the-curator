@@ -66,6 +66,7 @@ import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
 import { toUserError } from '../brain/user-errors.js';
+import { scrubPaths } from '../brain/scrub-paths.js';
 import { recordDomainIdentities } from '../brain/domain-identity.js';
 import {
   registerWrite,
@@ -78,10 +79,26 @@ import {
 // res.json wrapper, so it is translated here, at the exit (area 'sharedbrain'
 // names GitHub as the service). On a miss the frame is exactly today's text;
 // `err.message` itself is never changed (isTransientLlmError reads it).
-function errorFrame(err) {
-  const u = toUserError(err, { area: 'sharedbrain' });
-  if (!u) return { type: 'error', message: err.message };
+//
+// Wave 3: `surface` picks per-screen wording (SURFACE_MESSAGES in
+// shared/user-errors.js). An admin's revoke passes 'admin', so a dead GitHub
+// token says how an ADMIN replaces it, not a member's "Leave and re-join with
+// your invite". A miss is today's text with absolute paths scrubbed.
+function errorFrame(err, surface) {
+  const u = toUserError(err, { area: 'sharedbrain', ...(surface ? { surface } : {}) });
+  if (!u) return { type: 'error', message: scrubPaths(String((err && err.message) ?? '')) };
   return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
+}
+
+// A JSON error body for `text`, in the wording of `surface` when the text is
+// raw machine text the catalogue recognises; otherwise `{error: text}`
+// exactly as before (the res.json wrapper then applies the default wording).
+function surfaced(text, surface) {
+  if (surface) {
+    const u = toUserError(text, { area: 'sharedbrain', surface });
+    if (u) return u;
+  }
+  return { error: text };
 }
 
 const router = Router();
@@ -783,7 +800,7 @@ router.post('/:id/revoke', gate, async (req, res) => {
     }
   } catch (err) {
     console.error('[sharedbrain revoke]', err.message);
-    emit(errorFrame(err));
+    emit(errorFrame(err, 'admin'));
   } finally {
     releaseRegistry();
     res.end();
@@ -879,10 +896,16 @@ router.get('/:id/members', gate, async (req, res) => {
   if (!conn) return;
   try {
     const result = await listMembers(conn);
-    if (!result.ok) return res.status(502).json({ error: result.error });
+    // Wave 3: the revoke picker (an ADMIN's screen) reads this route too, and
+    // a dead token there needs the admin's next step. `?surface=admin` picks
+    // that wording; anything else is the default (the res.json wrapper's
+    // member wording). Allow-listed, so a query value can only ever select a
+    // sentence that exists.
+    const surface = req.query && req.query.surface === 'admin' ? 'admin' : null;
+    if (!result.ok) return res.status(502).json(surfaced(result.error, surface));
     res.json({ members: result.members, self_fellow_id: conn.fellow_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json(surfaced(err.message, req.query && req.query.surface === 'admin' ? 'admin' : null));
   }
 });
 
@@ -1040,4 +1063,5 @@ export const __testing = {
   computeUnskipPatch,
   generateAdminToken,
   adminTokenGate,
+  errorFrame, // wave 3: the revoke catch's surface (a throw there is rare; the suite drives it directly)
 };

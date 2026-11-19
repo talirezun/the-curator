@@ -313,7 +313,7 @@ section('§3b string-state helpers (plainError / errorDetailHtml / loudWithDetai
   for (let i = 0; i < 60; i++) rememberErrorDetail('m' + i, 'd' + i);
   ok(errorDetailOf('m0') === '' && errorDetailOf('m59') === 'd59', 'bounded: the oldest entries go first');
   const loud = loudWithDetail({ tone: 'danger', text: plainError(new Error('Request failed (500)')) });
-  ok(loud.length === 2 && loud[1].tone === 'quiet' && loud[1].text === DETAIL_PREFIX + 'Request failed (500)', 'loudWithDetail adds a quiet support entry below');
+  ok(loud.length === 2 && loud[1].tone === 'quiet' && loud[1].text === DETAIL_PREFIX + 'Request failed (500) (code: request-failed)', 'loudWithDetail adds a quiet support entry below (wave 3: with its catalogue code)', JSON.stringify(loud));
   ok(loudWithDetail({ tone: 'quiet', text: 'Pushed 3 pages.' }).length === 1, '…and nothing for a message without a detail');
 }
 

@@ -578,6 +578,12 @@ try {
   {
     const front = walk(path.join(ROOT, 'src/public/next')).filter((f) => !f.endsWith('user-errors.js')).map((f) => readFileSync(f, 'utf8')).join('\n');
     const all = Object.entries(USER_MESSAGES).map(([k, fn]) => [k, fn({ area: k === 'git-other' ? 'sync' : undefined })]);
+    // Wave 3: the per-surface overrides are sentences a person reads too.
+    for (const [area, bySurface] of Object.entries(SHARED.SURFACE_MESSAGES || {})) {
+      for (const [surface, byKlass] of Object.entries(bySurface)) {
+        for (const [k, fn] of Object.entries(byKlass)) all.push([`${area}/${surface}/${k}`, fn({ area, surface })]);
+      }
+    }
     const CONTROLS = [
       [/Settings › Providers & keys/, "'Providers & keys'"],
       [/Replace key/, "'Replace key'"],
@@ -586,6 +592,7 @@ try {
       [/Settings › General/, "'General'"],
       [/Try Sync now again/, 'Sync now'],
       [/Leave this Shared Brain/, 'Leave this Shared Brain'],
+      [/\+ Set up another/, '+ Set up another'],
     ];
     for (const [re, needle] of CONTROLS) {
       const users = all.filter(([, s]) => re.test(s)).map(([k]) => k);

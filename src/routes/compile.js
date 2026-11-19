@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
 import { toUserError } from '../brain/user-errors.js';
+import { scrubPaths } from '../brain/scrub-paths.js';
 import { estimateCompileCost } from '../brain/compile-estimate.js';
 import { describeRun } from '../brain/ai-run.js';
 import { listDomains, domainPath, isDomainReadonly } from '../brain/files.js';
@@ -35,7 +36,8 @@ import {
 // is exactly today's text. `err.message` itself is never changed.
 function errorFrame(err, fallbackMessage) {
   const u = toUserError(err, { area: 'ai' });
-  if (!u) return { type: 'error', message: fallbackMessage };
+  // A miss keeps today's text, with absolute paths scrubbed (wave 3).
+  if (!u) return { type: 'error', message: scrubPaths(String(fallbackMessage ?? '')) };
   return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
 }
 
@@ -86,7 +88,7 @@ export function compileOutcomeEvent(result) {
     // translated here as well as in the catch below. A miss is today's frame.
     const u = typeof r.error === 'string' && r.error ? toUserError(r.error, { area: 'ai' }) : null;
     if (u) return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code, ...spent };
-    return { type: 'error', message: r.error || 'Compilation failed', ...spent };
+    return { type: 'error', message: r.error ? scrubPaths(String(r.error)) : 'Compilation failed', ...spent };
   }
   return {
     type: 'done',
@@ -253,3 +255,7 @@ router.post('/conversation', async (req, res) => {
 });
 
 export default router;
+
+// Wave 3: the catch path's frame builder, for the offline suite (a provider
+// failure reaches compileOutcomeEvent as a RESULT; a throw here is rarer).
+export const __errorFrameForTest = errorFrame;

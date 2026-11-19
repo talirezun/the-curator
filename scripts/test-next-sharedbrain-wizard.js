@@ -236,6 +236,7 @@ const DOM_FNS = [
   'isSaveBlocking', 'requestDismiss', 'dirtySignals', 'showDiscardConfirm', 'hideDiscardConfirm',
   'goToStep', 'refreshStep2Links', 'refreshPatCreateLink', 'refreshPatStepCopy',
   'hasPatToClear', 'onInviteTokenEdited', 'bindStep1', 'bindStep3',
+  'appendSupportLine', // wave 3: setValidation / setErrorText put the support line under the sentence
   // v3.65.3: the early clash check and the create-mode invite mint are
   // REAL here, so a driven step 1 exercises them rather than a stub.
   'checkClash', 'mintInvite', 'isReadOnlyVerdict',
@@ -774,7 +775,7 @@ section('§9  The server’s prose, translated where a person meets it');
 {
   // v3.99.2: setErrorText — the lead, the plain sentence, and the detail as a
   // muted line INSIDE the same status element, all by textContent.
-  const setErrorText = new Function(extractFunction(wizard, 'setErrorText', 'wizard') + '\nreturn setErrorText;')();
+  const setErrorText = new Function(extractFunction(wizard, 'setErrorText', 'wizard') + '\n' + extractFunction(wizard, 'appendSupportLine', 'wizard') + '\nreturn setErrorText;')();
   const mk = (tag) => ({ tag, className: '', textContent: '', children: [], ownerDocument: null,
     appendChild(c) { this.children.push(c); } });
   const doc = { createElement: (t) => mk(t) };
@@ -786,8 +787,9 @@ section('§9  The server’s prose, translated where a person meets it');
     '…and the detail is a tx-error-detail line inside it, as TEXT (never parsed as HTML)');
   const el2 = mk('p'); el2.ownerDocument = doc;
   setErrorText(el2, 'Could not load domains. ', new TypeError('Failed to fetch'));
-  ok(/^Could not load domains\. The Curator isn't responding\./.test(el2.textContent) && el2.children.length === 0,
-    'a raw "Failed to fetch" reads as the server-unreachable sentence, with no detail line', el2.textContent);
+  ok(/^Could not load domains\. The Curator isn't responding\./.test(el2.textContent) && el2.children.length === 1 &&
+    el2.children[0].textContent === 'Technical detail (for support): code: server-unreachable',
+    'a raw "Failed to fetch" reads as the server-unreachable sentence; the support line is its catalogue code alone (wave 3)', el2.textContent);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

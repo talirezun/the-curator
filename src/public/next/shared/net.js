@@ -35,7 +35,7 @@
 // The catalogue (USER_MESSAGES, classifyErrorText) is shared/user-errors.js,
 // the SAME file the server imports, so the two can never disagree.
 
-import { USER_MESSAGES, KLASS_CODES, classifyErrorText, composeUserMessage } from './user-errors.js';
+import { USER_MESSAGES, KLASS_CODES, classifyErrorText, composeUserMessage, isCatalogueCode } from './user-errors.js';
 import { renderStatus } from './text.js';
 
 // The same five replacements as text.js / app.js escapeHtml (text.js keeps its
@@ -252,53 +252,91 @@ export function errorFromResponse(res, data, fallback) {
 // renders that detail under the sentence. A detail can only ever render under
 // the message it came with, and a later, different message never inherits it.
 // Bounded (the oldest of 50 goes first).
+// Each entry is {detail, code}; `code` is kept only when it is a catalogue code.
 const ERROR_DETAILS = new Map();
 
-/** Remember `detail` as belonging to the sentence `message` (a no-op for an empty detail). */
-export function rememberErrorDetail(message, detail) {
-  if (typeof message !== 'string' || !message || typeof detail !== 'string' || !detail) return;
+/**
+ * Remember `detail` (and, optionally, the catalogue `code`) as belonging to the
+ * sentence `message`. A no-op when there is neither a detail nor a catalogue code.
+ */
+export function rememberErrorDetail(message, detail, code) {
+  if (typeof message !== 'string' || !message) return;
+  const d = typeof detail === 'string' ? detail : '';
+  const c = isCatalogueCode(code) ? code : '';
+  if (!d && !c) return;
   ERROR_DETAILS.delete(message);
-  ERROR_DETAILS.set(message, detail);
+  ERROR_DETAILS.set(message, { detail: d, code: c });
   if (ERROR_DETAILS.size > 50) ERROR_DETAILS.delete(ERROR_DETAILS.keys().next().value);
 }
 
-/** userMessageFrom(x, opts).error, with its detail remembered for errorDetailHtml. */
+/** userMessageFrom(x, opts).error, with its detail and code remembered for errorDetailHtml. */
 export function plainError(x, opts) {
   const u = userMessageFrom(x, opts);
-  rememberErrorDetail(u.error, u.detail);
+  rememberErrorDetail(u.error, u.detail, u.code);
   return u.error;
 }
 
 /** The remembered detail for exactly this sentence, or ''. */
 export function errorDetailOf(message) {
-  return typeof message === 'string' ? (ERROR_DETAILS.get(message) || '') : '';
+  const e = typeof message === 'string' ? ERROR_DETAILS.get(message) : null;
+  return (e && e.detail) || '';
 }
 
-/** renderErrorDetail(errorDetailOf(message)): the line, or ''. */
+/** The remembered catalogue code for exactly this sentence, or ''. */
+export function errorCodeOf(message) {
+  const e = typeof message === 'string' ? ERROR_DETAILS.get(message) : null;
+  return (e && e.code) || '';
+}
+
+/** renderErrorDetail(errorDetailOf(message), errorCodeOf(message)): the line, or ''. */
 export function errorDetailHtml(message) {
-  return renderErrorDetail(errorDetailOf(message));
+  return renderErrorDetail(errorDetailOf(message), errorCodeOf(message));
 }
 
 /**
  * For a monitor (shared/monitor.js renders its `loud` text itself): the entry,
- * then, when its text has a remembered detail, a quiet entry right below it
- * carrying "Technical detail (for support): …". `loud.push(...loudWithDetail(e))`.
+ * then, when its text has a remembered detail or code, a quiet entry right
+ * below it carrying the support line. `loud.push(...loudWithDetail(e))`.
  */
 export function loudWithDetail(entry) {
-  const d = entry ? errorDetailOf(entry.text) : '';
-  return d ? [entry, { tone: 'quiet', text: DETAIL_PREFIX + d }] : [entry];
+  const line = entry ? supportLineText(errorDetailOf(entry.text), errorCodeOf(entry.text)) : '';
+  return line ? [entry, { tone: 'quiet', text: line }] : [entry];
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────
 
 /**
+ * The support line's TEXT, or '' when there is nothing to show:
+ *
+ *   detail + code  →  "Technical detail (for support): <detail> (code: ai-key-rejected)"
+ *   code only      →  "Technical detail (for support): code: ai-key-rejected"
+ *   detail only    →  "Technical detail (for support): <detail>"
+ *
+ * The code is the one a person can look up in the published error catalogue,
+ * so ONLY a catalogue code is shown (isCatalogueCode). A raw errno a route
+ * passes as `code` ('EACCES'), an adapter's internal code
+ * ('SHARED_BRAIN_AUTH') or a view-branching code ('manifest-newer') is not
+ * one, and showing it as "code: EACCES" would send a person looking for an
+ * entry that does not exist; that text already reaches support in the detail.
+ * Not escaped: for a DOM site that sets textContent.
+ */
+export function supportLineText(detail, code) {
+  const d = typeof detail === 'string' ? cleanDetail(detail) : '';
+  const c = isCatalogueCode(code) ? code : '';
+  if (!d && !c) return '';
+  if (!c) return DETAIL_PREFIX + d;
+  return DETAIL_PREFIX + (d ? d + ' (code: ' + c + ')' : 'code: ' + c);
+}
+
+/**
  * The detail line alone (escaped HTML), or '' when there is none. For a site
  * that keeps its own styling for the sentence and puts this right below it.
+ * `code` is optional: a catalogue code is shown at the end of the line.
  */
-export function renderErrorDetail(detail) {
-  const d = typeof detail === 'string' ? cleanDetail(detail) : '';
-  if (!d) return '';
-  return '<div class="tx-error-detail">' + escapeHtml(DETAIL_PREFIX + d) + '</div>';
+export function renderErrorDetail(detail, code) {
+  const line = supportLineText(detail, code);
+  if (!line) return '';
+  return '<div class="tx-error-detail">' + escapeHtml(line) + '</div>';
 }
 
 /**
@@ -318,10 +356,14 @@ export function renderErrorDetail(detail) {
 export function renderUserError(x, opts = {}) {
   const u = userMessageFrom(x, opts);
   const title = nonEmpty(opts.title);
+  // A site that rebuilt the body from a remembered sentence
+  // ({error, detail: errorDetailOf(msg)}) has dropped the code; the sentence
+  // still finds it.
+  const code = u.code || errorCodeOf(u.error);
   return renderStatus({
     state: opts.state || 'danger',
     title: title || u.error,
     detail: title ? u.error : '',
-    support: u.detail ? DETAIL_PREFIX + u.detail : '',
+    support: supportLineText(u.detail, code),
   });
 }

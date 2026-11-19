@@ -12,6 +12,7 @@
  */
 import { Router } from 'express';
 import { toUserError } from '../brain/user-errors.js';
+import { scrubPaths } from '../brain/scrub-paths.js';
 import { readFileSync } from 'fs';
 import { isDomainReadonly, assertKnownDomain, readSchema, extractDomainDisplayName } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild, collapseRepeatedLinks, MERGE_NOT_RELATED, MERGE_NOT_RELATED_MESSAGE } from '../brain/health.js';
@@ -67,7 +68,9 @@ import {
 function errorFrame(err, withCode) {
   const u = toUserError(err, { area: 'ai' });
   const own = err && err.code !== undefined ? err.code : undefined;
-  if (!u) return withCode ? { type: 'error', error: err.message, code: own } : { type: 'error', error: err.message };
+  // A miss keeps today's text, with absolute paths scrubbed (wave 3).
+  const text = scrubPaths(String((err && err.message) ?? ''));
+  if (!u) return withCode ? { type: 'error', error: text, code: own } : { type: 'error', error: text };
   return { type: 'error', error: u.error, ...(u.detail ? { detail: u.detail } : {}), code: own !== undefined ? own : u.code };
 }
 
@@ -1185,3 +1188,8 @@ router.post('/:domain/undismiss', async (req, res) => {
 });
 
 export default router;
+
+// Wave 3: the SSE error frame's builder, for the offline suite (its miss path
+// scrubs absolute paths; driving every SSE route to a non-catalogue throw
+// would need a fault in each brain function).
+export const __errorFrameForTest = errorFrame;
