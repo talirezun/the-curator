@@ -36,6 +36,7 @@ import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.
 import { logInfo, logWarn, logError, getLogFilePath } from './brain/logger.js';
 import { ensureMcpLauncherShim } from './brain/mcp-launcher.js';
 import { recordDomainIdentities } from './brain/domain-identity.js';
+import { userErrorBodies, apiNotFound, apiErrorHandler } from './brain/user-errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
@@ -197,6 +198,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Plain-language errors at the exit (src/brain/user-errors.js): rewrites ONLY a
+// body whose `error` is raw machine text; every deliberate message passes
+// through byte-identical. After the Host/Origin guards, before every router.
+app.use('/api', userErrorBodies);
 app.use('/api/domains', domainsRouter);
 app.use('/api/ingest', ingestRouter);
 app.use('/api/query', queryRouter);
@@ -396,6 +401,13 @@ app.get(['/old', '/old/'], (req, res) => {
 app.get(['/next', '/next/'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'next', 'index.html'));
 });
+
+// An unknown /api path (any method) is a JSON 404, never the SPA's HTML at
+// 200; then the /api error handler (malformed or oversized JSON, a thrown
+// route) answers JSON. app.use, not a '/api/' + '*' route: this file is
+// comment-stripped by suites whose stripper does not see inside strings.
+app.use('/api', apiNotFound);
+app.use('/api', apiErrorHandler);
 
 // Catch-all: serve the SPA shell. Post-cutover this is the NEXT shell — and
 // because the static mount above now runs with `index: false`, "/" reaches
