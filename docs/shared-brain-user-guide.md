@@ -361,6 +361,13 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 **"Token is read-only" warning**
 - You created the PAT with **Contents: Read-only**. If you intend to contribute, regenerate with **Contents: Read AND write** and paste again. If you're joining a Pull-only (read-only) tier, this is expected — since v3.0.4 you can click **Continue** and save; your card shows a **read-only member** pill and only the Pull button.
+- **Decide before you save.** Read-only is fixed when you join. **Replace token** changes only the token and keeps you read-only, and the Join wizard refuses a brain this computer is already connected to.
+
+**I joined as a read-only member and now want to contribute**
+- There is no in-place upgrade (v3.99.2). If you try to push, The Curator refuses with *"This Shared Brain connection is read-only: it can Pull updates but not push contributions, so nothing was sent…"* and the steps below.
+- Create a new GitHub token with **Contents: Read and write** on the brain's repository. If GitHub won't give it write access, ask the admin for write access to the repository.
+- On the connection's card use **Leave this Shared Brain**, then join again with the **same invite token** and the new token, and tick the domains you want to contribute.
+- What it costs: you join as a **new member** with a new contributor id. Nothing is lost: a read-only connection never pushed anything, so nothing was stored under the old id. Your own wiki and the read-only mirror stay on this computer, and the next Pull reuses the mirror.
 
 **"Repository not found"**
 - Check the repo URL the admin gave you (typo in owner/name).

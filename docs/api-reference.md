@@ -2916,36 +2916,50 @@ single-flight sync gate (`409 sync_running` while a sync runs).
 **What it does.**
 1. Checks the token's shape (`[A-Za-z0-9_-]{20,255}`), refusing anything else before it
    can reach a git argument.
-2. **Checks the token with GitHub, writing nothing:** `git ls-remote --heads` against the
-   configured repository with the new address (`GIT_TERMINAL_PROMPT=0`, 30-second
-   timeout).
-3. Only when GitHub answers, rewrites both places the token lives, together: the sync git
+2. **Checks the token, writing nothing.** On **github.com** (an `https://github.com/owner/repo`
+   or `git@github.com:owner/repo` address): one `GET /repos/{owner}/{repo}` on the GitHub
+   API (token in the `Authorization` header only, redirects refused, 30-second timeout),
+   and the token must have `permissions.push === true`: Sync pushes, so a token that can
+   only read is refused (`sync-new-token-read-only`). For **any other host** (and
+   `file://`): `git ls-remote --heads` against the configured repository with the new
+   address (`GIT_TERMINAL_PROMPT=0`, 30-second timeout), which proves only that the token
+   can **read**; a token that cannot write passes it there, and the next push fails with
+   `sync-token-no-access`.
+3. Only when the check passes, rewrites both places the token lives, together: the sync git
    dir's `origin` address (`config` chmod `0600`) and `.sync-config.json`'s `token`
    (every other key kept, atomic, `0600`). If the second write fails, the first is put
-   back. An adopted git dir keeps its `gitDir`.
+   back (the old address, or no `origin` if there was none). An adopted git dir keeps its
+   `gitDir`.
 
-The check proves the token can **read** the repository. A token that cannot write
-passes it; the next push fails with `sync-token-no-access`.
+**Known limit (unmeasured).** For a fine-grained token, GitHub's `permissions` field may
+reflect the **user's** role on the repository rather than the token's own Contents scope,
+so a Contents: Read token held by a user with Write could pass the github.com check.
 
 **Response** `200 OK` — `{ success: true, replaced: true, repoUrl, …status }`, where
 `repoUrl` has no token and the rest is `GET /status`'s payload. The token is in no
 response, no error and no log line.
 
-**Refusals** — `{error, code[, detail]}`, and on every one of them both places are
-byte-identical to before:
+**Refusals** — `{error, code[, detail]}` (sentences: `REPLACE_TOKEN_MESSAGES` in
+`src/brain/sync.js`, published in the [error catalogue](errors.md)). On every one of them
+**except `sync-token-save-partial`** both places are byte-identical to before:
 
 | Status | `code` | When |
 |---|---|---|
 | 400 | `sync-token-missing` | No `token`, or only whitespace |
 | 400 | `sync-token-invalid` | Not token-shaped |
 | 400 | `sync-config-unreadable` | `.sync-config.json` unreadable or has no `repoUrl` |
-| 400 | `sync-new-token-rejected` | GitHub refused the token (401) |
+| 400 | `sync-new-token-rejected` | GitHub refused the token (API 401, or git's authentication failure) |
 | 400 | `sync-new-token-no-access` | Token valid, repository not visible to it (403 / 404) |
+| 400 | `sync-new-token-read-only` | github.com only: GitHub accepted it but `permissions.push` is not `true` |
+| 400 | `sync-token-check-rate-limited` | github.com only: 429, or a 403 with `x-ratelimit-remaining: 0` or "rate limit" |
 | 400 | `sync-token-check-offline` | GitHub unreachable |
-| 400 | `sync-token-check-failed` | Any other check failure; git's text is in `detail` |
-| 400 | `sync-token-save-failed` | GitHub accepted it, the write failed; `detail` says why |
+| 400 | `sync-token-check-failed` | Any other check failure; GitHub's answer or git's text is in `detail` |
+| 400 | `sync-token-save-failed` | The check passed, a write failed; any partial write was undone (the git address put back), so nothing changed; `detail` says why |
+| 400 | `sync-token-save-partial` | The check passed, the git address was rewritten, the settings file could not be, **and** putting the old address back failed too. The one refusal after which the two places may differ; `detail` carries both errors. Use Replace token again with the same token |
 | 409 | `sync-not-configured` | Sync is not connected on this install |
 | 409 | `sync_running` / write conflict | A sync or a wiki write is running |
+
+Anything unexpected is **500** with `describeSyncError`'s body.
 
 ### GET /api/sync/job
 
@@ -2982,11 +2996,73 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 | `GET /api/sharedbrain/:id/members` | v3.0.5+. Member directory: everyone who has ever contributed to this brain. Returns `{members: [{fellow_id, short_id, submissions, pages, page_updates, first_contributed_at, last_contributed_at, display_name}], self_fellow_id}`. Identity is storage-path-derived (same trust rule as synthesis); display names are informational. Reads every contribution payload — fine at cohort scale. Powers the revoke UI's fellow picker. `pages` (**meaning fixed in v3.72.1**) is the count of **distinct** page paths this fellow has ever sent a delta for — it used to sum every delta, over-counting a page touched by several submissions; that raw sum is now the separate `page_updates` field. `last_contributed_at` is the contributor's own app's clock, not a server- or GitHub-observed time — shown as "as reported". |
 | `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. **v3.43.0 — PROOF OF POSSESSION IS NOW REQUIRED.** Body: `{admin_token}` — the connection's CURRENT `sbat_…` token, compared constant-time through the same gate the revoke route uses. On success it generates a fresh token, stores it (single audited credential write path) and returns it **once**: `{ok, admin_token, rotated}`. Three **403** shapes, each carrying a machine-readable `code` beside the prose `error`: `no_admin_token` (this connection stores none — it is a plain contributor's, and this route will never mint one), `admin_token_required` (no usable token in the body), `admin_token_mismatch` (a token was supplied and it is the wrong one). **Until v3.43.0 this route took NO body and authenticated nothing**, so any connection on the machine could mint an admin token — and with it read every `fellow_id` from `/:id/members` and pass `/:id/revoke`, letting a plain contributor GDPR-erase the cohort admin. The provisioning use this row used to describe ("used to provision pre-v3.0.5 connections") is therefore **gone and cannot come back**: nothing on this machine can tell a legacy admin from a contributor. Such an admin re-runs the brain-setup wizard, whose `/generate-invite` returns a fresh `admin_token` that `/save` persists. |
 
+### POST /api/sharedbrain/:id/token
+
+**v3.99.2.** Replace the GitHub token (PAT) of one existing **GitHub-backed** connection,
+in place (`replaceSharedBrainToken()` in `src/brain/sharedbrain-token.js`, the write
+`replaceSharedBrainPat()` in `sharedbrain-config.js`). Before this there was no way:
+joining the same brain again is refused while connected (`connectionClash`), and leaving
+first mints a new `fellow_id`.
+
+**Request** — `{ "token": "<new token>" }`. A `POST` behind the feature-flag gate and the
+cross-origin guard (a foreign `Origin` is **403** before GitHub is asked); the token is in
+the body, never a URL. `:id` must be a UUID (**400** `{error: "id must be a UUID"}`); an
+unknown id is **404** `{error: "connection not found"}`. Refused with **409**
+(`conflict: "write_in_progress"`, the write-registry body) while an app update or any wiki
+write (ingest, push, pull, synthesis, revoke…) is running, so the credential never changes
+under a running push.
+
+**What it does.**
+1. Refuses a connection that is not `storage_type: "github"`, an empty token and anything
+   not token-shaped (`[A-Za-z0-9_-]{20,400}` after trimming, so a masked display value is
+   refused).
+2. **Checks the token, writing nothing:** one `GET /repos/{owner}/{repo}` against the
+   connection's OWN repository (the same call `/validate-pat` makes), 30-second timeout.
+3. **The role rule.** A read-only member's connection (`read_only: true`) only Pulls, so a
+   token GitHub accepts for reading is enough. Every other connection — a contributor,
+   and an admin (synthesis and revoke write to the repository) — needs
+   `permissions.push === true`; a read-only token is refused rather than saved.
+4. Only then writes the token alone: the file is re-read at write time, and a connection
+   that is gone, no longer GitHub-backed, or now names a different brain is refused.
+   Atomic, `0600`. Unchanged: `id`, `fellow_id`, `admin_token` (the `sbat_…` credential),
+   `read_only`, contributing domains, queues, every other connection. **It does not
+   promote a read-only member**: a write token saved here keeps `read_only: true` (see
+   `POST /:id/push` below for what such a member does instead).
+
+**Response** `200 OK` — `{ ok: true, replaced: true, repo: "owner/name" }`. The token is in
+no response, no error, no detail (an echo of it is replaced with `***`) and no log line.
+
+**Refusals** — `{error, code[, detail]}`; `detail` is GitHub's own answer
+(`GitHub GET repos/owner/name → 401: Bad credentials`), sanitised and capped at 600
+characters. On every one of them `.sharedbrain-config.json` is byte-identical to before.
+The sentences are `SHAREDBRAIN_TOKEN_MESSAGES` (published in the
+[error catalogue](errors.md#shared-brain-replacing-the-token)).
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `sharedbrain-token-missing` | No `token`, or only whitespace (an unknown id is 404 first) |
+| 400 | `sharedbrain-token-invalid` | Not token-shaped |
+| 409 | `sharedbrain-token-not-github` | The brain is kept in a folder (`storage_type: "local"`) |
+| 400 | `sharedbrain-new-token-rejected` | GitHub answered 401 |
+| 400 | `sharedbrain-new-token-no-access` | GitHub answered 403 (not a rate limit) or 404; the sentence names the repository |
+| 400 | `sharedbrain-new-token-read-only` | GitHub accepted it, `permissions.push` is not `true`, and the connection is not read-only |
+| 503 | `sharedbrain-token-check-rate-limited` | 429, `x-ratelimit-remaining: 0`, or a 403 saying "rate limit" |
+| 502 | `sharedbrain-token-check-offline` | GitHub could not be reached (network error, timeout) |
+| 502 | `sharedbrain-token-check-failed` | Any other GitHub answer (e.g. 5xx) |
+| 500 | `sharedbrain-token-check-failed` | An unexpected error in the handler (its message is never sent: it could carry the token) |
+| 500 | `sharedbrain-token-save-failed` | GitHub accepted it, the write failed (atomic: the old file is still the file); `detail` says why |
+
+**Known limit (unmeasured).** For a fine-grained token, GitHub's `permissions` field on
+`GET /repos/{owner}/{repo}` may reflect the **user's** role on the repository rather than
+the token's own Contents scope. If so, a Contents: Read token held by a user with Write
+would pass the role rule, and the next Push would be refused by GitHub. This has not
+been measured against GitHub.
+
 ### Push, pull, synthesize, revoke (SSE)
 
 | Path | Description |
 |---|---|
-| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}`. With `local_domain` set, pushes just that domain; without it, pushes **every** domain in `connection.local_domains` sequentially (v3.0.2+ — previously only `local_domains[0]`). For each domain: finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. Per-domain `ok:false` results are emitted as `error` events; a final `done` event carries an aggregate `message` + `results[]`. v3.0.4+: returns **400** for `read_only: true` connections; GitHub rate-limit pressure is emitted as a `warn` event in the stream. SSE. |
+| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}`. With `local_domain` set, pushes just that domain; without it, pushes **every** domain in `connection.local_domains` sequentially (v3.0.2+ — previously only `local_domains[0]`). For each domain: finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. Per-domain `ok:false` results are emitted as `error` events; a final `done` event carries an aggregate `message` + `results[]`. v3.0.4+: returns **400** for `read_only: true` connections, before GitHub is asked (no `code`). Since v3.99.2 its sentence gives the step that works: a token with Contents: Read and write, **Leave this Shared Brain**, then join again with the same invite, as a new member (new `fellow_id`). It used to say "re-run the Join wizard", which `/save` refuses while connected (`connectionClash`); `read_only` is fixed at join and `/:id/token` keeps it. GitHub rate-limit pressure is emitted as a `warn` event in the stream. SSE. |
 | `POST /api/sharedbrain/:id/pull` | Pulls the synthesised collective wiki into the local `domains/shared-<slug>/` mirror via the existing `writePage` pipeline. Registers in the write-registry and takes the mirror domain's `.write-lock` (v3.0.2+), so update/restart/sync/ingest return 409 while it runs. v3.0.3+: replace semantics — the union merge is bypassed for mirrors and pages deleted from the collective are pruned locally (result gains a `pruned` count; pruning is skipped when any page failed to process, to be safe). v3.0.4+: also reads `state.last-synthesis` and returns/persists `last_synthesis_at` (shown on the connection card), and surfaces rate-limit `warn` events. SSE. |
 | `POST /api/sharedbrain/:id/synthesize` | Runs the synthesis pipeline locally (admin operation). Aggregates contributions since the last synthesis, applies merge rules 1-5 from the design doc, writes synthesised pages back to shared storage. A malformed contribution now degrades to a per-page warning (`pages_failed` in the result) instead of aborting the run (v3.0.2+). v3.0.4+: returns **400** for `read_only: true` connections; the result gains an additive `conflict_pages: string[]` naming pages with unresolved-contradiction markers this run. Registers in the write-registry. SSE. |
 | `POST /api/sharedbrain/:id/revoke` | Admin-only — GDPR Article 17. Body: `{admin_token, fellow_id, confirmation: "REVOKE-<fellow_id>"}`. Deletes the fellow's contributions + digest, scrubs Provenance-tainted collective pages (exact-token matching, v3.0.3), re-runs synthesis from scratch, appends to `state/revocations.jsonl`. v3.0.3+: writes a `state/revocation-in-progress` marker (ordinary synthesis refuses while it's active) and returns `ok:false, partial:true` with recovery guidance if the rebuild synthesis fails — re-running the revoke is idempotent and completes it. Admin-token comparison is constant-time. v3.0.5+: driven by the connection card's **Revoke a contributor…** panel (member picker + typed confirmation); the API contract is unchanged. SSE. |

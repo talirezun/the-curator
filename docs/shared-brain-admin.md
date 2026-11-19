@@ -470,7 +470,15 @@ Verify:
 Fine-grained PATs get 5000 REST API requests/hour. Synthesis on a 500-page brain with 50 contributions uses around 600 requests (tree listing + per-file reads + writes). You can run it 8x/hour at that scale before hitting the limit. The adapter warns at <50 remaining — since v3.0.4 the warning appears in the operation's own progress stream/UI (once per operation), not just stderr — and throws a typed error at 0.
 
 ### A member's card says "read-only member" and they can't Push
-Expected (v3.0.4): their PAT was created with **Contents: Read** only, and they saved the connection as a read-only member — they can Pull but the backend refuses Push/synthesis for that connection. To upgrade them to contributor: have them re-create the PAT with **Contents: Read and write** and re-run the Join wizard with the same invite token.
+Expected (v3.0.4): their PAT was created with **Contents: Read** only, and they saved the connection as a read-only member — they can Pull but the backend refuses Push/synthesis for that connection. The read-only setting is fixed when they join: **Replace token** changes only the token and keeps it, and re-running the Join wizard is **refused** while their computer is connected to this brain (one brain, one membership per computer).
+
+To upgrade them to contributor today (v3.99.2):
+
+1. Make sure they can write to the repository on GitHub. On a personal-account repository every collaborator can; on an organisation repository give them (or their team) the **Write** role.
+2. They create a new PAT with **Contents: Read and write** on the repository.
+3. On their connection's card they use **Leave this Shared Brain**, then join again with the **same invite token** (it carries no credential and does not expire) and the new PAT, ticking the domains they want to contribute.
+
+What it costs: they come back as a **new member** — a new contributor identity (`fellow_id`), so your member directory and revoke panel will know them by a new short id. Nothing is lost: a read-only connection can neither Push nor run synthesis, so nothing was ever stored under the old identity and there is nothing to revoke for it. Their local wiki and the read-only mirror domain stay on their computer, and the next Pull reuses the mirror. The push refusal they see says exactly this. There is no in-place upgrade.
 
 ### A contributor reports "N pages skipped after repeated failures" on their card
 That's the `permanent_skip` list (3 genuine LLM pre-processing failures on the same page). They can expand the block and click **Retry these pages on next push** (v3.0.4, `POST /api/sharedbrain/:id/unskip`) — no page editing needed. If the same pages keep striking out, inspect them for unusual content (enormous size, binary-ish text) and consider splitting them.
