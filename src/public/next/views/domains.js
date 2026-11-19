@@ -39,6 +39,13 @@ import {
 // lands on Settings › Providers & keys (it used to land on General).
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 import { patchInPlace } from '../shared/morph.js';
+// v3.99.2 — plain-language errors. Every failure this view shows is the plain
+// sentence (deliberate server prose passes through unchanged), with the
+// technical text, when there is any, on a visible "Technical detail (for
+// support):" line under it.
+import {
+  userMessageFrom, errorFromResponse, plainError, errorDetailOf, errorDetailHtml, renderErrorDetail, DETAIL_PREFIX,
+} from '../shared/net.js';
 import { createReviewDesk } from './health-review.js';
 import { restoreWalks } from './health-family.js';
 import { createCompareAll } from './health-compare.js';
@@ -1530,8 +1537,10 @@ async function fetchJSON(url, opts) {
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON error page etc. */ }
   if (!res.ok) {
-    const msg = (body && body.error) || ('Request failed (' + res.status + ')');
-    const err = new Error(msg);
+    // The plain sentence (deliberate server prose unchanged, so the 409 and
+    // ` no longer exists` readers below still see the server's own words),
+    // with the technical text kept on err.detail for the line under it.
+    const err = errorFromResponse(res, body);
     err.status = res.status;
     err.body = body;
     throw err;
@@ -1549,9 +1558,8 @@ async function streamSSE(url, body, onEvent) {
     body: JSON.stringify(body || {}),
   });
   if (!res.ok || !res.body) {
-    let msg = 'Request failed (' + res.status + ')';
     let parsedBody = null;
-    try { const j = await res.json(); parsedBody = j; if (j && j.error) msg = j.error; } catch { /* ignore */ }
+    try { parsedBody = await res.json(); } catch { /* ignore */ }
     // L1 fix (this session): mirror fetchJSON's shape (err.status / err.body)
     // on this pre-stream failure path. Without it, classifyDomainError's
     // 409-detection (`err.status === 409 || err.body.conflict`) could never
@@ -1568,7 +1576,7 @@ async function streamSSE(url, body, onEvent) {
     // no conflict shape, because the backend's write-registry/file-lock
     // refusals all happen before it ever calls res.flushHeaders() — so
     // those throws are deliberately left as bare Errors.
-    const err = new Error(msg);
+    const err = errorFromResponse(res, parsedBody);
     err.status = res.status;
     err.body = parsedBody;
     throw err;
@@ -1887,7 +1895,7 @@ async function loadDomainsList(token) {
     };
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    commit = () => { state.loadError = err.message; state.loaded = true; };
+    commit = () => { state.loadError = plainError(err); state.loaded = true; };
   }
 
   // Measured at ~6 ms, so in practice this resolves in the same task and
@@ -2049,7 +2057,11 @@ function classifyPickResponse(status, body) {
   // See the docblock: FIRST, unconditionally.
   if (b.cancelled === true) return { kind: 'cancelled' };
 
-  const serverMsg = (typeof b.error === 'string' && b.error.trim()) ? b.error.trim() : '';
+  // The server's sentence, through the plain-language layer: deliberate prose
+  // is unchanged; raw machine text becomes a sentence, its text the `support` line.
+  const plain = (typeof b.error === 'string' && b.error.trim()) ? userMessageFrom(b) : null;
+  const serverMsg = plain ? plain.error.trim() : '';
+  const support = plain ? plain.detail : '';
   const hint = (typeof b.hint === 'string' && b.hint.trim()) ? b.hint.trim() : '';
 
   if (status === 409) {
@@ -2059,6 +2071,7 @@ function classifyPickResponse(status, body) {
       // The server's OWN sentence, never a paraphrase — it names the domain
       // and the operation, which our copy cannot.
       detail: serverMsg || 'A write is in progress. Wait for it to finish, then try again.',
+      support,
     };
   }
   if (status === 501) {
@@ -2067,13 +2080,15 @@ function classifyPickResponse(status, body) {
       title: 'This build cannot open a folder picker',
       detail: [serverMsg, hint].filter(Boolean).join(' ') ||
         'Set the folder from Settings → Knowledge base instead.',
+      support,
     };
   }
   if (status >= 400 || serverMsg) {
     return {
       kind: 'error',
       title: 'The folder picker did not finish',
-      detail: [serverMsg, hint].filter(Boolean).join(' ') || 'Request failed (' + status + ')',
+      detail: [serverMsg, hint].filter(Boolean).join(' ') || 'The picker stopped without saying why. Try again, or paste the folder\'s path below.',
+      support: support || (status >= 400 ? 'HTTP ' + status : ''),
     };
   }
   if (typeof b.path === 'string' && b.path.trim()) {
@@ -2192,6 +2207,7 @@ async function onChooseKnowledgeFolder(token) {
         state: verdict.kind === 'refused' ? 'attention' : 'danger',
         title: verdict.title,
         detail: verdict.detail,
+        support: verdict.support || '',
         undoPath: null,
         // v3.87.1: when the picker itself could not run, the person can still
         // paste the path. Not for `refused` (a write is in progress — the
@@ -2206,7 +2222,8 @@ async function onChooseKnowledgeFolder(token) {
     await applySwitchedFolder(verdict.path, previousPath, token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.kbNotice = { state: 'danger', title: 'The folder picker did not finish', detail: err.message, undoPath: null, typedPath: true };
+    const u = userMessageFrom(err);
+    state.kbNotice = { state: 'danger', title: 'The folder picker did not finish', detail: u.error, support: u.detail, undoPath: null, typedPath: true };
     state.kbTypedError = null;
   } finally {
     if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
@@ -2244,14 +2261,14 @@ async function onTypedKnowledgeFolder(typed, token) {
     try { body = await res.json(); } catch { /* non-JSON error page */ }
     if (!isCurrentMount(token)) return;
     if (!res.ok) {
-      state.kbTypedError = (body && body.error) || ('Request failed (' + res.status + ')');
+      state.kbTypedError = plainError(body, { status: res.status, fallback: 'That folder could not be set. Try again.' });
       return;
     }
     state.kbTypedValue = '';
     await applySwitchedFolder((body && body.domainsPath) || value.trim(), previousPath, token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.kbTypedError = err.message;
+    state.kbTypedError = plainError(err);
   } finally {
     if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
   }
@@ -2284,7 +2301,7 @@ async function applySwitchedFolder(newPath, previousPath, token) {
   if (!isCurrentMount(token)) return;
   const found = state.loadError ? 0 : state.domains.length;
   state.kbNotice = state.loadError
-    ? { state: 'danger', title: 'That folder could not be read', detail: state.loadError, undoPath: previousPath || null }
+    ? { state: 'danger', title: 'That folder could not be read', detail: state.loadError, support: errorDetailOf(state.loadError), undoPath: previousPath || null }
     : describeSwitchOutcome(newPath, found, previousPath);
 }
 
@@ -2311,14 +2328,15 @@ async function onUndoKnowledgeFolder(targetPath, token) {
     try { body = await res.json(); } catch { /* non-JSON error page */ }
     if (!isCurrentMount(token)) return;
     if (!res.ok) {
-      const msg = (body && body.error) || ('Request failed (' + res.status + ')');
-      state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: msg, undoPath: null };
+      const u = userMessageFrom(body, { status: res.status, fallback: 'The previous folder could not be set again. Try again.' });
+      state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: u.error, support: u.detail, undoPath: null };
       return;
     }
     await applySwitchedFolder((body && body.domainsPath) || targetPath, cameFrom, token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: err.message, undoPath: null };
+    const u = userMessageFrom(err);
+    state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: u.error, support: u.detail, undoPath: null };
   } finally {
     if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
   }
@@ -2548,7 +2566,7 @@ async function loadHealth(slug, token, opts) {
     };
   } catch (err) {
     if (slug !== state.activeSlug || !isCurrentMount(token)) return;
-    state.healthError = err.message;
+    state.healthError = plainError(err);
     // A stale report must never sit under a failed rescan implying it is
     // current — renderHealthPanel shows the error card instead.
     state.healthStale = false;
@@ -2599,7 +2617,7 @@ async function loadEstimates(slug, token) {
       if (slug === state.activeSlug && isCurrentMount(token)) state.estimates[key] = est;
       if (state.cache && !est.error) { const c = state.cache[slug] || (state.cache[slug] = {}); (c.estimates || (c.estimates = {}))[key] = est; }
     } catch (err) {
-      if (slug === state.activeSlug && isCurrentMount(token)) state.estimates[key] = { error: err.message };
+      if (slug === state.activeSlug && isCurrentMount(token)) state.estimates[key] = { error: plainError(err) };
     }
   }));
   if (slug === state.activeSlug && isCurrentMount(token)) render(token);
@@ -2746,8 +2764,8 @@ function applyDeleteResult(slug) {
 // "my click didn't register" and clicked the destructive action again.
 function classifyDomainError(err) {
   const conflict = err && (err.status === 409 || (err.body && err.body.conflict));
-  if (conflict) return { refusal: err.message, error: null };
-  return { refusal: null, error: err ? err.message : 'Unknown error' };
+  if (conflict) return { refusal: plainError(err), error: null };
+  return { refusal: null, error: err ? plainError(err) : 'Something went wrong inside The Curator. Try again.' };
 }
 
 // Scrolls a just-rendered refusal/error into view if it landed off-screen.
@@ -3604,7 +3622,7 @@ function renderKnowledgeNotice() {
       '</div>'
     : '';
   return '<div class="dm-kb-notice">' +
-    renderStatus({ state: n.state, title: n.title, detail: n.detail }) + undo +
+    renderStatus({ state: n.state, title: n.title, detail: n.detail, support: n.support ? DETAIL_PREFIX + n.support : '' }) + undo +
     (n.typedPath ? renderTypedKnowledgePath() : '') +
   '</div>';
 }
@@ -3627,7 +3645,7 @@ function renderTypedKnowledgePath() {
     renderDescription('File Explorer\u2019s address bar (or Finder\u2019s Get Info) shows a folder\u2019s full path \u2014 ' +
       'use the folder that contains your domains.') +
     (state.kbTypedError
-      ? renderStatus({ state: 'danger', title: 'That folder cannot be used', detail: state.kbTypedError })
+      ? renderStatus({ state: 'danger', title: 'That folder cannot be used', detail: state.kbTypedError, support: errorDetailOf(state.kbTypedError) ? DETAIL_PREFIX + errorDetailOf(state.kbTypedError) : '' })
       : '') +
   '</div>';
 }
@@ -3744,7 +3762,7 @@ function renderSidebar(token) {
       // domains.css owns where it sits.
       newBtn +
       '<div class="dm-sidebar-status">' +
-        renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.loadError }) +
+        renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.loadError, support: errorDetailOf(state.loadError) ? DETAIL_PREFIX + errorDetailOf(state.loadError) : '' }) +
       '</div>',
       token
     );
@@ -4126,7 +4144,7 @@ async function loadProjects(slug, token) {
     if (painted) return;
     state.projects = {
       slug, loading: false, rows: [], truncated: false, canWrite: false, readonly: false,
-      error: err.message,
+      error: plainError(err),
     };
   }
   render(token);
@@ -4164,7 +4182,7 @@ function renderMain(token) {
         // The path is part of the diagnosis, not decoration: this branch is
         // reached by EACCES, ENOTDIR and an unmounted volume, and every one
         // of those is a statement about a specific folder.
-        body: escapeHtml(state.loadError) + renderLookedInLine(),
+        body: escapeHtml(state.loadError) + errorDetailHtml(state.loadError) + renderLookedInLine(),
         actionHtml: knowledgeFolderBtn(),
       }),
       token
@@ -4690,7 +4708,7 @@ function renderProjectsPanel(readonly) {
         '<span class="cur-skeleton dm-proj-skeleton-name"></span></div>';
   } else if (p.error) {
     body = '<div class="cur-group-row"><div class="cur-group-label">' +
-      '<b>Could not read this domain’s projects</b><span>' + escapeHtml(p.error) + '</span></div></div>';
+      '<b>Could not read this domain’s projects</b><span>' + escapeHtml(p.error) + '</span>' + errorDetailHtml(p.error) + '</div></div>';
   } else if (!p.rows.length) {
     body = '<div class="cur-group-row"><div class="cur-group-label">' +
       '<b>No projects yet</b><span>A project is a thing you build inside this domain. Agents keep their ' +
@@ -4822,9 +4840,9 @@ function renderProjectLifecycleCard() {
   const messages =
     (f.refusal
       ? '<div class="dm-lc-refusal">' + icon('alertCircle', 14) +
-        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + '</span></div>'
+        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + errorDetailHtml(f.refusal) + '</span></div>'
       : '') +
-    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + '</span></div>' : '');
+    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + errorDetailHtml(f.error) + '</span></div>' : '');
 
   if (f.mode === 'delete') {
     return (
@@ -5621,7 +5639,7 @@ async function loadBrowse(slug, token) {
     // worse than saying nothing, and the user did not ask for the re-ask.
     if (painted) return;
     b.loading = false;
-    b.error = err.message;
+    b.error = plainError(err);
     repaint = true;
   } finally {
     // MUST be a finally: the two `b.slug !== slug` early returns above
@@ -5771,7 +5789,7 @@ function renderBrowsePanel() {
         // leaving this one is how a class gets fixed at its reported site
         // and stays broken as a class.
         '<div class="dm-browse-lead">' +
-          renderStatus({ state: 'danger', title: 'Could not list pages', detail: b.error }) +
+          renderStatus({ state: 'danger', title: 'Could not list pages', detail: b.error, support: errorDetailOf(b.error) ? DETAIL_PREFIX + errorDetailOf(b.error) : '' }) +
         '</div>' +
         '<button class="btn btn-secondary" id="dm-browse-load-btn">Try again</button>' +
       '</div>'
@@ -6030,7 +6048,7 @@ async function openWikiPageFromBrowse(path, titleHint) {
   } catch (err) {
     if (!isCurrentMount(mount)) return;
     if (!isCurrentReader(epoch)) return;
-    openReader({ slug: path, title: titleHint || path, error: err.message }, mount);
+    openReader({ slug: path, title: titleHint || path, error: plainError(err) }, mount);
   }
 }
 
@@ -6171,7 +6189,7 @@ async function openMemoryPageFromBrowse(row) {
   } catch (err) {
     if (!isCurrentMount(mount)) return;
     if (!isCurrentReader(epoch)) return;
-    openReader({ slug: row.path, title, error: err.message }, mount);
+    openReader({ slug: row.path, title, error: plainError(err) }, mount);
   }
 }
 
@@ -6192,9 +6210,9 @@ function renderLifecycleCard() {
   const messages =
     (f.refusal
       ? '<div class="dm-lc-refusal">' + icon('alertCircle', 14) +
-        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + '</span></div>'
+        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + errorDetailHtml(f.refusal) + '</span></div>'
       : '') +
-    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + '</span></div>' : '');
+    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + errorDetailHtml(f.error) + '</span></div>' : '');
 
   if (f.mode === 'delete') {
     // pageCount is the RECURSIVE total (files.js's stated invariant:
@@ -6400,7 +6418,7 @@ function closeProjectLifecycle() {
  */
 function classifyProjectError(err) {
   const status = err && typeof err.status === 'number' ? err.status : 0;
-  const msg = (err && err.message) || 'Something went wrong.';
+  const msg = err ? plainError(err) : 'Something went wrong inside The Curator. Try again.';
   if (status >= 400 && status < 500) return { error: null, refusal: msg };
   return { error: msg, refusal: null };
 }
@@ -6510,7 +6528,7 @@ async function runProjectAction() {
           imported.push(file.slug);
           if (seeded && SKELETON_SLUGS.includes(file.slug)) replaced.push(file.slug);
         } catch (err) {
-          failed.push(file.slug + ' — ' + ((err && err.message) || 'refused'));
+          failed.push(file.slug + ' — ' + (err ? plainError(err) : 'refused'));
         }
       }
     }
@@ -7892,7 +7910,7 @@ async function loadSemanticQuote(slug, token) {
     if (slug === state.activeSlug) state.semanticQuote = { slug, est, forNext: asked === null ? est.nextPairs : asked };
     if (state.cache) (state.cache[slug] || (state.cache[slug] = {})).quote = { slug, est, forNext: asked === null ? est.nextPairs : asked };
   } catch (err) {
-    if (slug === state.activeSlug) state.semanticQuote = { slug, est: { error: err.message } };
+    if (slug === state.activeSlug) state.semanticQuote = { slug, est: { error: plainError(err) } };
   } finally {
     state.semanticQuoteLoading = false;
   }
@@ -8007,7 +8025,7 @@ function renderOutcomeLine(o) {
   const cls = failed ? 'dm-outcome-failed' : (o.tone === 'info' ? 'dm-outcome-info' : 'dm-outcome-done');
   return '<div class="dm-outcome ' + cls + '" data-row-key="outcome:' + escapeHtml(o.key) + '">' +
       icon(failed ? 'alertCircle' : 'check', 14) +
-      '<span class="dm-outcome-text">' + escapeHtml(o.text) + '</span>' +
+      '<span class="dm-outcome-text">' + escapeHtml(o.text) + (failed ? renderErrorDetail(o.detail) : '') + '</span>' +
       (o.retry ? '<button class="btn btn-secondary btn-xs dm-outcome-retry" data-outcome-key="' + escapeHtml(o.key) + '">Try again</button>' : '') +
     '</div>';
 }
@@ -8090,7 +8108,7 @@ function renderHealthPanel(domain, readonly) {
         // above and the readout below: a runtime error. It is a STATE, so it
         // is renderStatus, and the server's message is the DETAIL rather than
         // being glued onto the end of our sentence with an em dash.
-        renderStatus({ state: 'danger', title: 'Could not check this wiki', detail: state.healthError }),
+        renderStatus({ state: 'danger', title: 'Could not check this wiki', detail: state.healthError, support: errorDetailOf(state.healthError) ? DETAIL_PREFIX + errorDetailOf(state.healthError) : '' }),
       { alias: 'dm' }), 'Not checked yet');
   }
   const report = usable ? state.health : null;
@@ -8198,7 +8216,7 @@ const compareAll = createCompareAll({
   render: () => render(myMountToken),
   live: (text) => { state.healthLive = text; },
   ask: (confirm) => { state.confirm = confirm; render(myMountToken); },
-  note: (slug, text, retry) => { state.rowNoteFrom = { slug, token: myMountToken }; state.rowNote = { tone: 'error', text, retry }; render(myMountToken); },
+  note: (slug, text, retry, detail) => { state.rowNoteFrom = { slug, token: myMountToken }; state.rowNote = { tone: 'error', text, detail: detail || '', retry }; render(myMountToken); },
   setBusy: (on) => { state.busyKey = on ? 'compareAllEstimate' : null; render(myMountToken); },
   busy: () => state.busyKey === 'compareAllEstimate',
   focusAfterStart: () => { state.pressOpener = '#dm-compare-job-btn'; },
@@ -9127,7 +9145,7 @@ async function askUndoChange(slug, id) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not check this change: ' + err.message, retry: () => askUndoChange(slug, id) };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not check this change: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => askUndoChange(slug, id) };
     render(token);
     return;
   }
@@ -9164,8 +9182,8 @@ async function runUndoChange(slug, id) {
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
     state.rowNote = err.status === 409
-      ? { key: rowKey, tone: 'error', text: err.message }
-      : { key: rowKey, tone: 'error', text: 'Could not undo: ' + err.message, retry: () => askUndoChange(slug, id) };
+      ? { key: rowKey, tone: 'error', text: plainError(err), detail: userMessageFrom(err).detail }
+      : { key: rowKey, tone: 'error', text: 'Could not undo: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => askUndoChange(slug, id) };
   }
   if (state.expandedGroups.has('changes')) await loadChangeRecords(slug);
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
@@ -9592,7 +9610,7 @@ async function repairAllFree(slug) {
     if (repaired < n) {
       state.rowNoteFrom = { slug, token };
       state.rowNote = repaired === 0 && firstError
-        ? { key: 'lane:free', tone: 'error', text: 'Could not repair: ' + firstError.message, retry: () => repairAllFree(slug) }
+        ? { key: 'lane:free', tone: 'error', text: 'Could not repair: ' + plainError(firstError), detail: userMessageFrom(firstError).detail, retry: () => repairAllFree(slug) }
         : { key: 'lane:free', tone: 'error', text: 'Repaired ' + repaired + ' of ' + n + '. ' + (n - repaired) + ' could not be repaired.', retry: () => repairAllFree(slug) };
     }
   } finally {
@@ -9745,7 +9763,8 @@ async function fixAllOfType(slug, type) {
     {
       state.rowNoteFrom = { slug, token };
       state.rowNote = { key: 'group:' + type, tone: 'error',
-        text: (DESTRUCTIVE_FIX_TYPES.has(type) ? 'Could not merge: ' : 'Could not repair: ') + err.message,
+        text: (DESTRUCTIVE_FIX_TYPES.has(type) ? 'Could not merge: ' : 'Could not repair: ') + plainError(err),
+        detail: userMessageFrom(err).detail,
         retry: () => confirmFixAllOfType(slug, type) };
     }
   } finally {
@@ -9844,7 +9863,7 @@ async function runBrokenLinksPlan(slug) {
       if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('brokenLinksPlan', ev); render(token); }
       if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
-      if (type === 'error') throw new Error(ev.error || 'Plan failed');
+      if (type === 'error') throw errorFromResponse(null, ev, 'The plan stopped before it finished.');
     });
     if (!result) throw new Error('No plan returned');
     // What the plan actually ran on and cost (v3.67.0) — recorded BEFORE the
@@ -9868,7 +9887,7 @@ async function runBrokenLinksPlan(slug) {
       state.pendingPlan = { kind: 'brokenLinks', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'brokenLinks') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => onQuickAction(slug, 'brokenLinks') }; }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
@@ -9907,7 +9926,7 @@ async function runOrphansPlan(slug) {
       if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('orphansPlan', ev); render(token); }
       if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
-      if (type === 'error') throw new Error(ev.error || 'Plan failed');
+      if (type === 'error') throw errorFromResponse(null, ev, 'The plan stopped before it finished.');
     });
     if (!result) throw new Error('No plan returned');
     if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
@@ -9925,7 +9944,7 @@ async function runOrphansPlan(slug) {
       state.pendingPlan = { kind: 'orphans', plan, summary: result.summary };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + err.message, retry: () => onQuickAction(slug, 'orphans') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not build a plan: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => onQuickAction(slug, 'orphans') }; }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
@@ -9950,7 +9969,7 @@ async function runIndexRebuildPlan(slug) {
       state.pendingPlan = { kind: 'indexRebuild', basis: result.basis, summary: result.summary, samples: result.samples };
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not rebuild the list: ' + err.message, retry: () => runIndexRebuildPlan(slug) }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not rebuild the list: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => runIndexRebuildPlan(slug) }; }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
   }
@@ -9985,7 +10004,7 @@ async function applyIndexRebuildPlan(slug) {
       state.rowNoteFrom = { slug, token };
       state.rowNote = err && err.status === 409 && err.body && err.body.code === 'INDEX_PLAN_STALE'
         ? { tone: 'info', text: 'The wiki changed since this was worked out. Press Preview the rebuild again.' }
-        : { tone: 'error', text: 'Could not rebuild the list: ' + err.message, retry: () => runIndexRebuildPlan(slug) };
+        : { tone: 'error', text: 'Could not rebuild the list: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => runIndexRebuildPlan(slug) };
     }
   } finally {
     if (isCurrentMount(token)) state.pendingPlan = null;
@@ -10040,7 +10059,7 @@ async function applyPendingPlan(slug) {
     await streamSSE(url, { plan: p.plan }, (type, ev) => {
       if (type === 'progress' && slug === state.activeSlug) { noteAiProgress(kind + 'Apply', ev); render(token); }
       if (type === 'done') result = ev;
-      if (type === 'error') throw new Error(ev.error || 'Apply failed');
+      if (type === 'error') throw errorFromResponse(null, ev, 'The repair stopped before it finished.');
     });
     {
       if (kind === 'brokenLinks') {
@@ -10079,7 +10098,7 @@ async function applyPendingPlan(slug) {
       }
     }
   } catch (err) {
-    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: (kind === 'orphans' ? 'Could not add the links: ' : 'Could not repair: ') + err.message, retry: () => onQuickAction(slug, kind) };
+    state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: (kind === 'orphans' ? 'Could not add the links: ' : 'Could not repair: ') + plainError(err), detail: userMessageFrom(err).detail, retry: () => onQuickAction(slug, kind) };
   } finally {
     // MEDIUM-4 fix (re-audit): unlike busyKey (which must ALWAYS reset —
     // see the H2 fix note above — or a button stays disabled forever),
@@ -10122,7 +10141,7 @@ async function confirmSemanticScan(slug) {
       const est = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/estimate');
       if (slug === state.activeSlug && isCurrentMount(token)) state.estimates.semanticDupes = est;
     } catch (err) {
-      if (slug === state.activeSlug && isCurrentMount(token)) state.estimates.semanticDupes = { error: err.message };
+      if (slug === state.activeSlug && isCurrentMount(token)) state.estimates.semanticDupes = { error: plainError(err) };
     } finally {
       // H2 fix (re-audit finding): previously this reset lived AFTER the
       // try/catch, as a plain sequential statement — but BOTH early
@@ -10149,7 +10168,7 @@ async function confirmSemanticScan(slug) {
   if (est.error) {
     delete state.estimates.semanticDupes;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + est.error, retry: () => onQuickAction(slug, 'semanticDupes') };
+    state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + est.error, detail: errorDetailOf(est.error), retry: () => onQuickAction(slug, 'semanticDupes') };
     render(token);
     return;
   }
@@ -10243,9 +10262,9 @@ async function runSemanticScan(slug) {
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/scan', {}, (type, ev) => {
       if (type === 'start' && ev && Number.isInteger(ev.candidatePairs)) sent = ev.candidatePairs;
       if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('semanticDupesScan', ev); render(token); }
-      if (type === 'batch-error' && ev && !firstBatchError) firstBatchError = ev.error || 'the AI call failed';
+      if (type === 'batch-error' && ev && !firstBatchError) firstBatchError = ev.error ? userMessageFrom(ev) : { error: 'the AI call failed', detail: '' };
       if (type === 'done') result = ev;
-      if (type === 'error') throw new Error(ev.error || 'Scan failed');
+      if (type === 'error') throw errorFromResponse(null, ev, 'The comparison stopped before it finished.');
     });
     if (!result) throw new Error('No scan result returned');
     if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
@@ -10263,10 +10282,10 @@ async function runSemanticScan(slug) {
       // A failed batch remembers nothing, so its pairs stay in the "still to
       // check" count. Part of a run failing is a notice in the card, which says
       // so; all of it failing is this banner.
-      if (firstBatchError && state.semanticScan.failedAll) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + firstBatchError, retry: () => onQuickAction(slug, 'semanticDupes') }; }
+      if (firstBatchError && state.semanticScan.failedAll) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + firstBatchError.error, detail: firstBatchError.detail, retry: () => onQuickAction(slug, 'semanticDupes') }; }
     }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + err.message, retry: () => onQuickAction(slug, 'semanticDupes') }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not compare pages: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => onQuickAction(slug, 'semanticDupes') }; }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
     state.aiProgress = null;
@@ -10297,7 +10316,7 @@ async function runSemanticReset(slug) {
     state.semanticQuote = null;
     if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'success', text: 'Comparisons forgotten.' }; }
   } catch (err) {
-    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not forget: ' + err.message, retry: () => confirmSemanticReset(slug) }; }
+    if (isCurrentMount(token)) { state.rowNoteFrom = { slug, token }; state.rowNote = { tone: 'error', text: 'Could not forget: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => confirmSemanticReset(slug) }; }
   }
   render(token);
 }
@@ -10376,8 +10395,9 @@ async function previewSemanticPair(slug, pair) {
       }
       return { settled: true, missing: stale.missing };
     }
-    if (scan) scan.preview = { key, error: err.message };
-    return { error: err.message };
+    const plain = plainError(err);
+    if (scan) scan.preview = { key, error: plain };
+    return { error: plain };
   }
 }
 
@@ -10462,7 +10482,7 @@ async function mergeOneSemanticPair(slug, pair, onSettled) {
       if (code === 'MERGE_BASIS_STALE' || code === 'MERGE_BASIS_MISSING') settled = { stale: true };
       else {
         const c = classifyDomainError(err);
-        setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'merge' } : { error: 'Could not merge: ' + c.error, errorAction: 'merge' }, scan, pair);
+        setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, detail: errorDetailOf(c.refusal), errorAction: 'merge' } : { error: 'Could not merge: ' + c.error, detail: errorDetailOf(c.error), errorAction: 'merge' }, scan, pair);
       }
     }
   } finally {
@@ -10517,7 +10537,7 @@ async function skipSemanticPair(slug, pair, onSettled) {
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
-      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, errorAction: 'skip' } : { error: 'Could not save: ' + c.error, errorAction: 'skip' }, scan, pair);
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal, detail: errorDetailOf(c.refusal), errorAction: 'skip' } : { error: 'Could not save: ' + c.error, detail: errorDetailOf(c.error), errorAction: 'skip' }, scan, pair);
     }
   } finally {
     if (state.busyAway && state.busyAway[slug]) delete state.busyAway[slug]; else state.busyKey = null;
@@ -10565,6 +10585,8 @@ function setSemanticPairMessage(key, msg, onScan, pair) {
   list[idx] = Object.assign({}, list[idx], {
     refusal: msg.refusal || null,
     error: msg.error || null,
+    // The technical detail of that refusal or error, shown under it on the desk.
+    errorDetail: msg.detail || null,
     errorAction: msg.errorAction || null,
   });
 }
@@ -10633,7 +10655,7 @@ async function runMergeSemanticDuplicates(slug) {
       // has its own audit history and its own reasons.
       if (type === 'progress' && slug === state.activeSlug) { noteAiProgress('semanticMerge', ev); render(token); }
       if (type === 'done') result = ev;
-      if (type === 'error') throw new Error(ev.error || 'Merge failed');
+      if (type === 'error') throw errorFromResponse(null, ev, 'The merge stopped before it finished.');
     });
     {
       const merged = result.merged || 0;
@@ -10654,8 +10676,8 @@ async function runMergeSemanticDuplicates(slug) {
       const c = classifyDomainError(err);
       state.rowNoteFrom = { slug, token };
       state.rowNote = c.refusal
-        ? { tone: 'error', text: c.refusal, retry: () => mergeSemanticDuplicates(slug) }
-        : { tone: 'error', text: 'Could not merge: ' + c.error, retry: () => mergeSemanticDuplicates(slug) };
+        ? { tone: 'error', text: c.refusal, detail: errorDetailOf(c.refusal), retry: () => mergeSemanticDuplicates(slug) }
+        : { tone: 'error', text: 'Could not merge: ' + c.error, detail: errorDetailOf(c.error), retry: () => mergeSemanticDuplicates(slug) };
     }
   } finally {
     // The scan is NO LONGER discarded here. It used to be, and that made
@@ -10710,7 +10732,7 @@ async function dismissIssue(slug, type, issue) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => dismissIssue(slug, type, issue) };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => dismissIssue(slug, type, issue) };
     render(token);
   }
 }
@@ -10737,7 +10759,7 @@ async function undoLeftRow(slug, rowKey) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => undoLeftRow(slug, rowKey) };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => undoLeftRow(slug, rowKey) };
     render(token);
   }
 }
@@ -10764,7 +10786,7 @@ async function undismissIssue(slug, record) {
     state.rowBusy.delete(rowKey);
     if (!isCurrentMount(token)) return;
     state.rowNoteFrom = { slug, token };
-    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + err.message, retry: () => undismissIssue(slug, record) };
+    state.rowNote = { key: rowKey, tone: 'error', text: 'Could not save: ' + plainError(err), detail: userMessageFrom(err).detail, retry: () => undismissIssue(slug, record) };
     render(token);
   }
 }

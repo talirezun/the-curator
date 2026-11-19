@@ -19,6 +19,8 @@
  * Factory rather than module state so a suite can drive it with no browser. What it needs
  * from domains.js is in `deps`; the wiring is one block there.
  */
+import { userMessageFrom } from '../shared/net.js';
+
 const POLL_MS = 2000;
 const ACTIVE = new Set(['running', 'pausing']);
 
@@ -255,7 +257,8 @@ export function createCompareAll(deps) {
       est = await deps.fetchJSON(api(slug, 'estimate'));
     } catch (err) {
       deps.setBusy(false);
-      deps.note(slug, 'Could not compare pages: ' + err.message, () => press(slug));
+      const u = userMessageFrom(err);
+      deps.note(slug, 'Could not compare pages: ' + u.error, () => press(slug), u.detail);
       return;
     }
     deps.setBusy(false);
@@ -289,7 +292,7 @@ export function createCompareAll(deps) {
       schedule(slug);
       deps.render();
     } catch (err) {
-      deps.note(slug, err.message, () => press(slug));
+      deps.note(slug, userMessageFrom(err).error, () => press(slug), userMessageFrom(err).detail);
     }
   }
 
@@ -313,7 +316,7 @@ export function createCompareAll(deps) {
     } catch (err) {
       pressing = null;
       await sync(slug);
-      deps.note(slug, err.message, () => act(slug, what));
+      deps.note(slug, userMessageFrom(err).error, () => act(slug, what), userMessageFrom(err).detail);
     }
   }
 

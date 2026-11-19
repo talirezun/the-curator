@@ -63,6 +63,7 @@
  *    permits the write.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

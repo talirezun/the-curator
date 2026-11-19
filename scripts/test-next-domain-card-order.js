@@ -50,6 +50,7 @@
  *    as a network round trip.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'node:fs';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
