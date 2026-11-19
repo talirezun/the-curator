@@ -64,6 +64,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 // REAL, not a stub (v3.58.0). panelAdminStep1 now puts its glossary behind the
@@ -765,6 +766,28 @@ section('§9  The server’s prose, translated where a person meets it');
   // Pinned against the route: this is the string being translated.
   ok(/could not decode payload/.test(routes),
     'control: the route really does emit "could not decode payload" — the translation is not aimed at a ghost');
+  // v3.99.2: an older server's RAW machine text is no longer passed through.
+  const rawOld = pure.plainInviteError("EACCES: permission denied, open '/Users/a/.curator/sharedbrain.json'");
+  ok(!/EACCES|\/Users\//.test(rawOld) && /didn't let The Curator use a file/.test(rawOld),
+    'raw machine text from an older server becomes the plain sentence (v3.99.2)', rawOld);
+}
+{
+  // v3.99.2: setErrorText — the lead, the plain sentence, and the detail as a
+  // muted line INSIDE the same status element, all by textContent.
+  const setErrorText = new Function(extractFunction(wizard, 'setErrorText', 'wizard') + '\nreturn setErrorText;')();
+  const mk = (tag) => ({ tag, className: '', textContent: '', children: [], ownerDocument: null,
+    appendChild(c) { this.children.push(c); } });
+  const doc = { createElement: (t) => mk(t) };
+  const el = mk('p'); el.ownerDocument = doc;
+  setErrorText(el, 'Could not save. ', { error: 'Plain words.', detail: '<b>raw</b> 500', code: 'x' });
+  eq(el.textContent, 'Could not save. Plain words.', 'the lead and the plain sentence are the status text');
+  ok(el.children.length === 1 && el.children[0].className === 'tx-error-detail' &&
+    el.children[0].textContent === 'Technical detail (for support): <b>raw</b> 500',
+    '…and the detail is a tx-error-detail line inside it, as TEXT (never parsed as HTML)');
+  const el2 = mk('p'); el2.ownerDocument = doc;
+  setErrorText(el2, 'Could not load domains. ', new TypeError('Failed to fetch'));
+  ok(/^Could not load domains\. The Curator isn't responding\./.test(el2.textContent) && el2.children.length === 0,
+    'a raw "Failed to fetch" reads as the server-unreachable sentence, with no detail line', el2.textContent);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

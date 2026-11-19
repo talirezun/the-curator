@@ -145,6 +145,25 @@ import { explainerMark } from '../shared/explainer.js';
 // everywhere it is named — step 4's domain list names domains, so it carries
 // them. Imported, never re-implemented; shared/sidebar.js is the kit's.
 import { domainIdentityClass } from '../shared/sidebar.js';
+// Plain-language errors (v3.99.2): a failed request reads as a sentence, and
+// its technical detail rides on a muted line inside the same status element.
+import { plainError, userMessageFrom, errorFromResponse, DETAIL_PREFIX } from '../shared/net.js';
+
+/** Put `lead` + the plain sentence for `err` in a status element, with its
+ *  technical detail (if any) as a visible, muted, selectable line inside it.
+ *  DOM only, textContent throughout: nothing here is parsed as HTML. */
+function setErrorText(el, lead, err) {
+  if (!el) return;
+  const u = userMessageFrom(err);
+  el.textContent = lead + u.error;
+  const detail = u.detail;
+  if (detail && el.ownerDocument) {
+    const d = el.ownerDocument.createElement('div');
+    d.className = 'tx-error-detail';
+    d.textContent = DETAIL_PREFIX + detail;
+    el.appendChild(d);
+  }
+}
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -516,7 +535,7 @@ function plainInviteError(serverError) {
   if (/supports up to v/i.test(raw)) {
     return raw + ' Update The Curator (Settings → Updates), then paste the token again.';
   }
-  return raw;
+  return plainError(raw);
 }
 
 /** What counts as "the user has typed something they would lose".
@@ -1424,7 +1443,7 @@ function bindStep1() {
         nextBtn.disabled = false;
       } catch (err) {
         if (mySeq !== state.step1Seq || !isFresh(myGen)) return;
-        statusEl.textContent = 'Could not reach the Curator server to read that token: ' + err.message;
+        setErrorText(statusEl, 'Could not read that token. ', err);
         statusEl.className = 'sbw-status sbw-status-error';
         statusEl.classList.remove('sbw-hidden');
       }
@@ -1577,7 +1596,7 @@ function bindStep3() {
     } catch (err) {
       if (mySeq !== state.patSeq || !isFresh(myGen)) return;
       clearVerdict();
-      setValidation('error', 'Could not reach the Curator server: ' + err.message);
+      setValidation('error', 'Could not check your token. ' + plainError(err));
     }
   }
 
@@ -1709,7 +1728,7 @@ async function populateDomains() {
     container.textContent = '';
     const p = document.createElement('p');
     p.className = 'sbw-status sbw-status-error';
-    p.textContent = 'Could not load domains: ' + err.message;
+    setErrorText(p, 'Could not load domains. ', err);
     container.appendChild(p);
   } finally {
     // Timer hygiene (load-bearing): covers every early return in the try
@@ -1864,7 +1883,7 @@ function bindStep5() {
       });
       const j = await r.json().catch(() => ({}));
       if (!isFresh(myGen)) return;
-      if (!r.ok) throw new Error(j.error || 'Save failed');
+      if (!r.ok) throw errorFromResponse(r, j, 'The server did not say why.');
 
       const onSaved = state.onSaved;
       closeWizard(); // rule 5: wipes state, incl. the PAT, and tears down the DOM
@@ -1872,7 +1891,7 @@ function bindStep5() {
     } catch (err) {
       if (!isFresh(myGen)) return;
       if (status) {
-        status.textContent = 'Could not save: ' + err.message;
+        setErrorText(status, 'Could not save. ', err);
         status.className = 'sbw-status sbw-status-error';
         status.classList.remove('sbw-hidden');
       }
@@ -2020,7 +2039,7 @@ async function mintInvite(myGen, btn) {
     });
     const j = await r.json();
     if (!isFresh(myGen)) return;
-    if (!r.ok) throw new Error(j.error || 'generate-invite failed');
+    if (!r.ok) throw errorFromResponse(r, j, 'The server did not say why.');
 
     state.generatedInviteToken = j.token;
     // Rule 7: keep the FIRST generated admin token across a Back+regenerate.
@@ -2037,7 +2056,7 @@ async function mintInvite(myGen, btn) {
   } catch (err) {
     if (!isFresh(myGen)) return;
     if (status) {
-      status.textContent = 'Could not generate the invite: ' + err.message;
+      setErrorText(status, 'Could not generate the invite. ', err);
       status.className = 'sbw-status sbw-status-error';
       status.classList.remove('sbw-hidden');
     }
