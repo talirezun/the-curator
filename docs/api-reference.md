@@ -3009,8 +3009,11 @@ cross-origin guard (a foreign `Origin` is **403** before GitHub is asked); the t
 the body, never a URL. `:id` must be a UUID (**400** `{error: "id must be a UUID"}`); an
 unknown id is **404** `{error: "connection not found"}`. Refused with **409**
 (`conflict: "write_in_progress"`, the write-registry body) while an app update or any wiki
-write (ingest, push, pull, synthesis, revoke…) is running, so the credential never changes
-under a running push.
+write (ingest, push, pull, synthesis, revoke…) is running. From that check until it answers,
+the replace is itself a registered write (`sharedbrain-token-replace` on `shared-<slug>`), so
+an update, a restart, Sync or another token replace answers **409**; and `push`, `pull`,
+`synthesize` and `revoke` on **this** connection answer **409** (the same body) until it ends,
+so no action starts on the old token while the new one is being checked and saved.
 
 **What it does.**
 1. Refuses a connection that is not `storage_type: "github"`, an empty token and anything
@@ -3018,8 +3021,11 @@ under a running push.
    refused).
 2. **Checks the token, writing nothing:** one `GET /repos/{owner}/{repo}` against the
    connection's OWN repository (the same call `/validate-pat` makes), 30-second timeout.
-3. **The role rule.** A read-only member's connection (`read_only: true`) only Pulls, so a
-   token GitHub accepts for reading is enough. Every other connection — a contributor,
+3. **The answer must be a repository**: a `200` whose body is not a JSON object with a
+   numeric `id` and an `owner/name` `full_name` (an HTML page, an empty object) is
+   `sharedbrain-token-check-failed`, and nothing is saved. **The role rule.** A read-only
+   member's connection (`read_only: true`) only Pulls, so a token GitHub accepts for
+   reading is enough. Every other connection — a contributor,
    and an admin (synthesis and revoke write to the repository) — needs
    `permissions.push === true`; a read-only token is refused rather than saved.
 4. Only then writes the token alone: the file is re-read at write time, and a connection
@@ -3048,7 +3054,7 @@ The sentences are `SHAREDBRAIN_TOKEN_MESSAGES` (published in the
 | 400 | `sharedbrain-new-token-read-only` | GitHub accepted it, `permissions.push` is not `true`, and the connection is not read-only |
 | 503 | `sharedbrain-token-check-rate-limited` | 429, `x-ratelimit-remaining: 0`, or a 403 saying "rate limit" |
 | 502 | `sharedbrain-token-check-offline` | GitHub could not be reached (network error, timeout) |
-| 502 | `sharedbrain-token-check-failed` | Any other GitHub answer (e.g. 5xx) |
+| 502 | `sharedbrain-token-check-failed` | Any other GitHub answer (e.g. 5xx), or a 200 that is not a repository (no numeric `id` and `owner/name` `full_name`) |
 | 500 | `sharedbrain-token-check-failed` | An unexpected error in the handler (its message is never sent: it could carry the token) |
 | 500 | `sharedbrain-token-save-failed` | GitHub accepted it, the write failed (atomic: the old file is still the file); `detail` says why |
 
@@ -3062,9 +3068,9 @@ been measured against GitHub.
 
 | Path | Description |
 |---|---|
-| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}`. With `local_domain` set, pushes just that domain; without it, pushes **every** domain in `connection.local_domains` sequentially (v3.0.2+ — previously only `local_domains[0]`). For each domain: finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. Per-domain `ok:false` results are emitted as `error` events; a final `done` event carries an aggregate `message` + `results[]`. v3.0.4+: returns **400** for `read_only: true` connections, before GitHub is asked (no `code`). Since v3.99.2 its sentence gives the step that works: a token with Contents: Read and write, **Leave this Shared Brain**, then join again with the same invite, as a new member (new `fellow_id`). It used to say "re-run the Join wizard", which `/save` refuses while connected (`connectionClash`); `read_only` is fixed at join and `/:id/token` keeps it. GitHub rate-limit pressure is emitted as a `warn` event in the stream. SSE. |
+| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}`. With `local_domain` set, pushes just that domain; without it, pushes **every** domain in `connection.local_domains` sequentially (v3.0.2+ — previously only `local_domains[0]`). For each domain: finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. Per-domain `ok:false` results are emitted as `error` events; a final `done` event carries an aggregate `message` + `results[]`. v3.0.4+: returns **400** for `read_only: true` connections, before GitHub is asked (no `code`). Since v3.99.2 its sentence gives the step that works: a token with Contents: Read and write, then **Open Shared Brain** and **Leave this Shared Brain** on the brain's card (the domain page's mirror strip has no Leave), then join again with the same invite, as a new member (new `fellow_id`); and it says Replace token can't change read-only. It used to say "re-run the Join wizard", which `/save` refuses while connected (`connectionClash`); `read_only` is fixed at join and `/:id/token` keeps it. GitHub rate-limit pressure is emitted as a `warn` event in the stream. SSE. |
 | `POST /api/sharedbrain/:id/pull` | Pulls the synthesised collective wiki into the local `domains/shared-<slug>/` mirror via the existing `writePage` pipeline. Registers in the write-registry and takes the mirror domain's `.write-lock` (v3.0.2+), so update/restart/sync/ingest return 409 while it runs. v3.0.3+: replace semantics — the union merge is bypassed for mirrors and pages deleted from the collective are pruned locally (result gains a `pruned` count; pruning is skipped when any page failed to process, to be safe). v3.0.4+: also reads `state.last-synthesis` and returns/persists `last_synthesis_at` (shown on the connection card), and surfaces rate-limit `warn` events. SSE. |
-| `POST /api/sharedbrain/:id/synthesize` | Runs the synthesis pipeline locally (admin operation). Aggregates contributions since the last synthesis, applies merge rules 1-5 from the design doc, writes synthesised pages back to shared storage. A malformed contribution now degrades to a per-page warning (`pages_failed` in the result) instead of aborting the run (v3.0.2+). v3.0.4+: returns **400** for `read_only: true` connections; the result gains an additive `conflict_pages: string[]` naming pages with unresolved-contradiction markers this run. Registers in the write-registry. SSE. |
+| `POST /api/sharedbrain/:id/synthesize` | Runs the synthesis pipeline locally (admin operation). Aggregates contributions since the last synthesis, applies merge rules 1-5 from the design doc, writes synthesised pages back to shared storage. A malformed contribution now degrades to a per-page warning (`pages_failed` in the result) instead of aborting the run (v3.0.2+). v3.0.4+: returns **400** for `read_only: true` connections (since v3.99.2 with the same way to contribute as the push refusal, Replace token included); the result gains an additive `conflict_pages: string[]` naming pages with unresolved-contradiction markers this run. Registers in the write-registry. SSE. |
 | `POST /api/sharedbrain/:id/revoke` | Admin-only — GDPR Article 17. Body: `{admin_token, fellow_id, confirmation: "REVOKE-<fellow_id>"}`. Deletes the fellow's contributions + digest, scrubs Provenance-tainted collective pages (exact-token matching, v3.0.3), re-runs synthesis from scratch, appends to `state/revocations.jsonl`. v3.0.3+: writes a `state/revocation-in-progress` marker (ordinary synthesis refuses while it's active) and returns `ok:false, partial:true` with recovery guidance if the rebuild synthesis fails — re-running the revoke is idempotent and completes it. Admin-token comparison is constant-time. v3.0.5+: driven by the connection card's **Revoke a contributor…** panel (member picker + typed confirmation); the API contract is unchanged. SSE. |
 
 ### Invite-token utilities (no credentials)

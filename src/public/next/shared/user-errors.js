@@ -120,10 +120,13 @@ export const USER_MESSAGES = Object.freeze({
   // ── GitHub (Shared Brain's storage) ──
   // v3.99.2: Replace token exists on the connection's card, so a dead token
   // is replaced there; re-joining was never possible (connectionClash refuses
-  // a second membership of the same brain).
+  // a second membership of the same brain). Where the card is: the mirror
+  // domain's Shared Brain section (Pull updates, Replace token beside it) for
+  // everyone who has pulled, a read-only member with no domain of their own
+  // included, or a contributing domain's section (the Access token row).
   'github-token-rejected': () =>
     `GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use ` +
-    `Replace token on this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain).`,
+    `Replace token on this Shared Brain's card (Domains › its shared-… mirror, or a domain you contribute from › Shared Brain).`,
   'github-not-found': () =>
     `GitHub couldn't find this Shared Brain's repository, or the token can't see it. Ask the person who invited you ` +
     `to check that the repository still exists and that you still have access.`,
@@ -188,7 +191,7 @@ export const SURFACE_MESSAGES = Object.freeze({
       'github-token-rejected': () =>
         `GitHub didn't accept the access token this computer uses for this Shared Brain, so this didn't finish. ` +
         `Create a new token on GitHub with Contents: Read and write on the repository, then use Replace token on ` +
-        `this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain). Your admin token stays as it is.`,
+        `this Shared Brain's card (Domains › its shared-… mirror, or a domain you contribute from › Shared Brain). Your admin token stays as it is.`,
       'github-not-found': () =>
         `GitHub couldn't find this Shared Brain's repository, or the access token can't see it. Check on GitHub ` +
         `that the repository still exists and that your token has access to it, then try again.`,

@@ -1177,6 +1177,11 @@ function renderMirrorStrip(conn, last) {
       '<div class="sb-sec-actions">' +
         '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + ((busy || mirrorBusy) ? ' disabled' : '') + '>' +
           icon('refresh', 14) + ' ' + (card.acting === 'pull' ? 'Pulling…' : 'Pull updates') + '</button>' +
+        // The opener, beside Pull. A mirror strip has no Access token row, and
+        // for a read-only member with no contributing domain this strip is the
+        // only Shared Brain card on any domain page: without it a Cancel left
+        // the "use Replace token" sentence pointing at nothing (second audit).
+        (sbTokenPanelOpen(conn, card) ? '' : renderReplaceToken(conn, card, true)) +
         (last ? renderSectionDoor('ghost') : '') +
       '</div>' +
     '</div>'
@@ -1607,8 +1612,11 @@ function renderTokenCheck(conn, card) {
 // NEVER BEHIND A CHEVRON (v3.16.1): when this card shows a rejected token —
 // the stored-token check's 'rejected' verdict, or an action's error with code
 // github-token-rejected — the panel is OPEN right under the monitor and takes
-// the focus once. Otherwise one quiet "Replace token" button sits beside
-// Check now. Built from the rotate-confirm block's own parts (the inline
+// the focus once, and a NEW refusal (a later failed push, pull or revoke)
+// opens it again even after a Cancel. Otherwise one quiet "Replace token"
+// button sits beside Check now (a contributing card's Access token row),
+// beside Pull updates (a mirror strip, which has no such row), or under the
+// token check (the full view's card). Built from the rotate-confirm block's own parts (the inline
 // confirm block, the password input, the hint, the confirm actions), so no
 // class is new.
 
@@ -3482,6 +3490,12 @@ function onCardButton(token, connId, action) {
     case 'token-replace-cancel':
       card.tokenForm = { ...freshTokenForm(), dismissedKey: tokenRejectionKey(card), focusedKey: tokenRejectionKey(card) };
       render(token);
+      // The focus goes back to the opener that now stands where the panel
+      // was, never to the page body.
+      try {
+        const opener = document.querySelector('.sb-card[data-conn-id="' + String(connId).replace(/["\\]/g, '') + '"] [data-sb-action="token-replace-open"]');
+        if (opener && typeof opener.focus === 'function') opener.focus();
+      } catch { /* not focusable right now */ }
       return;
     case 'token-replace-save': onReplaceSharedBrainToken(token, connId).catch(reportAsyncActionFailure); return;
     case 'leave-open': card.leaveConfirmOpen = true; render(token); return;
@@ -3617,6 +3631,10 @@ async function runSseAction(token, connId, action) {
   const releases = domains.map((d) => beginDomainWrite(d, 'sharedbrain-' + action));
 
   let hadError = false;
+  // Set by THIS run's own rejection, so a second failed Pull after a Cancel
+  // opens Replace token again: the message is word-for-word the same, so a
+  // dismissal keyed on the text alone kept the panel shut (second audit).
+  let tokenRejected = false;
   try {
     const res = await fetch('/api/sharedbrain/' + connId + '/' + action, {
       method: 'POST',
@@ -3652,6 +3670,7 @@ async function runSseAction(token, connId, action) {
             const said = plainError(payload);
             card.message = 'Error: ' + said;
             rememberErrorDetail(card.message, errorDetailOf(said), errorCodeOf(said));
+            if (errorCodeOf(said) === 'github-token-rejected') tokenRejected = true;
             card.error = true;
             if (isCurrentMount(token)) render(token);
           } else if (payload.type === 'done') {
@@ -3683,7 +3702,13 @@ async function runSseAction(token, connId, action) {
     hadError = true;
     card.message = plainError(err);
     card.error = true;
+    if (errorCodeOf(card.message) === 'github-token-rejected') tokenRejected = true;
   } finally {
+    // GitHub refused this connection's token on THIS run: Replace token opens
+    // (and takes the focus) whatever was dismissed before, as revoke does.
+    if (tokenRejected) {
+      card.tokenForm = { ...(card.tokenForm || freshTokenForm()), open: true, focusPending: true };
+    }
     // Released unconditionally, every handle this call took — a
     // write-gate handle must not outlive the request just because this
     // mount was abandoned, or a domain would stay marked busy forever;

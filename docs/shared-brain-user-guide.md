@@ -330,11 +330,17 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
   GitHub rejects the stored token, the card says so.
 - The fix is a new token, put in place with **Replace token** (v3.99.2). Create one on GitHub (same
   steps as wizard step 3: **Contents: Read and write** on the brain's repository; a read-only
-  member's token only needs **Contents: Read**). Then, on the connection's card (**Domains** → a
-  domain that takes part in the brain → its **Shared Brain** section, or **Open Shared Brain**), use
-  **Replace token**: when GitHub has rejected the stored token the **Replace the GitHub token**
-  panel is already open under the message; otherwise press the small **Replace token** button
-  beside **Check now** in the **Access token** row. Paste the token and press **Check and save**.
+  member's token only needs **Contents: Read**). Then use **Replace token** on the connection's
+  card. When GitHub has rejected the stored token, the **Replace the GitHub token** panel is already
+  open under the message (a new refusal opens it again, even after **Cancel**). To open it yourself,
+  the small **Replace token** button is in a different place on each kind of card:
+  - **Domains** → a domain you contribute from → its **Shared Brain** section: beside **Check now**
+    in the **Access token** row.
+  - **Domains** → the brain's `shared-…` mirror → its **Shared Brain** section: beside **Pull
+    updates**. This is the card a read-only member with no domain of their own uses.
+  - **Open Shared Brain** (the full view): under **Your access token** and its **Check now**.
+
+  Paste the token and press **Check and save**.
 - The Curator checks the new token with GitHub against this brain's own repository and changes
   nothing unless GitHub accepts it and it can do what your connection does (a contributor's or an
   admin's token must be able to write). Then it saves it and the card says *"Token replaced. This
@@ -347,7 +353,8 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - Next time, pick a longer expiry and put the date in your calendar.
 - Since v3.99.2 a push, pull or check that GitHub refuses says so in plain words: *"GitHub didn't
   accept the access token for this Shared Brain. Create a new token on GitHub, then use Replace token
-  on this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain)."* Under it,
+  on this Shared Brain's card (Domains › its shared-… mirror, or a domain you contribute from › Shared
+  Brain)."* Under it,
   the **Technical detail (for support)** line keeps GitHub's own answer and ends with
   `(code: github-token-rejected)`, and Replace token opens right there. An **admin** sees their own
   wording for the same code (see the admin guide, *Your own GitHub token stopped working*). Every
@@ -364,9 +371,9 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - **Decide before you save.** Read-only is fixed when you join. **Replace token** changes only the token and keeps you read-only, and the Join wizard refuses a brain this computer is already connected to.
 
 **I joined as a read-only member and now want to contribute**
-- There is no in-place upgrade (v3.99.2). If you try to push, The Curator refuses with *"This Shared Brain connection is read-only: it can Pull updates but not push contributions, so nothing was sent…"* and the steps below.
+- There is no in-place upgrade (v3.99.2). If you try to push, The Curator refuses with *"This Shared Brain connection is read-only: it can Pull updates but not push contributions, so nothing was sent…"* and the steps below; a synthesis is refused the same way. **Replace token** cannot change it, even with a write token: read-only is fixed when you join.
 - Create a new GitHub token with **Contents: Read and write** on the brain's repository. If GitHub won't give it write access, ask the admin for write access to the repository.
-- On the connection's card use **Leave this Shared Brain**, then join again with the **same invite token** and the new token, and tick the domains you want to contribute.
+- Press **Open Shared Brain** (Domains → any domain → its **Shared Brain** section) and use **Leave this Shared Brain** on the brain's card (a domain you contribute from also has a **Leave this Shared Brain** row in its section; the mirror's section does not). Then join again with the **same invite token** and the new token, and tick the domains you want to contribute.
 - What it costs: you join as a **new member** with a new contributor id. Nothing is lost: a read-only connection never pushed anything, so nothing was stored under the old id. Your own wiki and the read-only mirror stay on this computer, and the next Pull reuses the mirror.
 
 **"Repository not found"**
@@ -439,6 +446,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | See cohort size / your share | **Shared Brain** → connection card → **"Cohort & sharing details"** |
 | Revoke a contributor (admin) | **Shared Brain** → connection card → **"Admin controls — admin token & contributor revocation"** (shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
 | Check whether your access token still works | **Shared Brain** → connection card → **"Your access token"** → **Check now** |
+| Replace the access token | **Shared Brain** → connection card → **Replace token** (under **Check now**); or on a domain page's **Shared Brain** section: beside **Check now** in the **Access token** row (a domain you contribute from), beside **Pull updates** (the `shared-…` mirror) |
 | Leave the brain on this machine | **Shared Brain** → connection card footer → **"Leave this Shared Brain"** (removes the connection only; your local files, including the read-only mirror, stay) |
 
 > Through v3.40.0 the same actions lived in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else), in the pre-redesign shell at `/old`. That shell was deleted in v3.41.0.

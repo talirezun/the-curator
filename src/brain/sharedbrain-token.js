@@ -176,7 +176,19 @@ export async function replaceSharedBrainToken(id, newToken, opts = {}) {
   if (!r.ok) {
     return refusal('sharedbrain-token-check-failed', M['sharedbrain-token-check-failed'], detail, token);
   }
-  if (needsWrite && !(body && body.permissions && body.permissions.push === true)) {
+  // A 200 must BE a repository (second audit: a read-only member's check
+  // accepted any 200, an HTML login page or an empty object included). GitHub's
+  // repository object always carries a numeric `id` and a "owner/name"
+  // `full_name`; anything else is not GitHub's answer about this repository,
+  // so nothing is saved. `full_name` is not compared with owner/name: GitHub
+  // follows a renamed repository to its new name.
+  const isRepo = !!body && typeof body === 'object' && !Array.isArray(body) &&
+    Number.isFinite(body.id) && typeof body.full_name === 'string' && body.full_name.includes('/');
+  if (!isRepo) {
+    return refusal('sharedbrain-token-check-failed', M['sharedbrain-token-check-failed'],
+      `GitHub GET repos/${repo} → ${r.status}: the answer is not a repository (no id and owner/name)`, token);
+  }
+  if (needsWrite && !(body.permissions && body.permissions.push === true)) {
     return refusal('sharedbrain-new-token-read-only', M['sharedbrain-new-token-read-only'](repo),
       `GitHub GET repos/${repo} → ${r.status}: permissions.push is not true`, token);
   }

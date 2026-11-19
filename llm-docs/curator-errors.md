@@ -72,7 +72,7 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 
 | Code | What it means | What to do |
 |---|---|---|
-| github-token-rejected | GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted. | Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › a domain that takes part in it › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token. |
+| github-token-rejected | GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted. | Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › its shared-… mirror, or a domain you contribute from › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token. |
 | github-not-found | GitHub cannot find the Shared Brain’s repository, or the token cannot see it. | A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. If the token needs changing, use Replace token on that Shared Brain’s card. |
 | github-busy | GitHub is limiting requests from this token for now. | Wait a few minutes, then try again. |
 | github-unavailable | GitHub is having problems on its side. | Wait a few minutes, then try again. |

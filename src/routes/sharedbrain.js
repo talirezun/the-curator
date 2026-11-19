@@ -129,6 +129,38 @@ const REPO_RE = /^([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
 
 function isUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
 function isSlug(s) { return typeof s === 'string' && SLUG_RE.test(s); }
+
+// What a read-only member does to contribute, said by the push AND the
+// synthesis refusal (second audit: they disagreed, and the push one named
+// "Leave this Shared Brain on this card", a control the domain page's mirror
+// strip, the read-only member's only card there, does not have). Leave is
+// on the connection's card in the Shared Brain view (Open Shared Brain), and
+// on a contributing domain's Shared Brain section; Open Shared Brain is on
+// every domain page's Shared Brain section, mirror included.
+const READ_ONLY_WAY_TO_CONTRIBUTE =
+  'Replace token can’t change that: read-only is fixed when you join. To contribute, create a GitHub token ' +
+  'with Contents: Read and write (if GitHub won’t give it write access, ask the admin for write access to ' +
+  'the repository). Then press Open Shared Brain (Domains › any domain › Shared Brain), use Leave this ' +
+  'Shared Brain on this brain’s card, and join again with the same invite. You join as a new member; this ' +
+  'read-only connection never pushed anything, so nothing is left behind.';
+
+// Connections whose GitHub token POST /:id/token is replacing right now
+// (v3.99.2, second audit). The replace is ALSO registered as a write for its
+// whole duration (the GitHub check can take up to 30 s), so update, restart,
+// Sync and another token replace 409 as they do for any write; and the four
+// routes that use this connection's token (push, pull, synthesize, revoke)
+// check this set, because push and synthesize do not consult the global
+// registry. Without it a Push started during the check ran on the old token
+// and the new one was saved under it.
+const tokenReplacing = new Set();
+
+/** 409 and true when this connection's token is being replaced. */
+function refuseWhileTokenReplacing(conn, res, attemptedOp) {
+  if (!conn || !tokenReplacing.has(conn.id)) return false;
+  const { status, body } = conflictResponse(attemptedOp);
+  res.status(status).json(body);
+  return true;
+}
 // REPO_RE's name part admits "." / ".." — no SSRF (the GitHub host is
 // hardcoded and URL normalisation stays on api.github.com), but reject them
 // explicitly for cleanliness (v3.0.2).
@@ -471,11 +503,7 @@ router.post('/:id/push', gate, async (req, res) => {
   if (conn.read_only === true) {
     return res.status(400).json({
       error: 'This Shared Brain connection is read-only: it can Pull updates but not push contributions, ' +
-             'so nothing was sent. Replace token can’t change that. To contribute, create a GitHub token with ' +
-             'Contents: Read and write (if GitHub won’t give it write access, ask the admin for write access ' +
-             'to the repository), then use Leave this Shared Brain on this card and join again with the same ' +
-             'invite. You join as a new member; this read-only connection never pushed anything, so nothing ' +
-             'is left behind.',
+             'so nothing was sent. ' + READ_ONLY_WAY_TO_CONTRIBUTE,
     });
   }
 
@@ -500,6 +528,7 @@ router.post('/:id/push', gate, async (req, res) => {
     const { status, body } = conflictResponse('push Shared Brain contributions');
     return res.status(status).json(body);
   }
+  if (refuseWhileTokenReplacing(conn, res, 'push Shared Brain contributions')) return;
 
   const emit = openSseStream(res);
   const releases = domainsToPush.map(d => registerWrite(d, 'sharedbrain-push'));
@@ -577,6 +606,7 @@ router.post('/:id/pull', gate, async (req, res) => {
     const { status, body } = conflictResponse('pull Shared Brain updates');
     return res.status(status).json(body);
   }
+  if (refuseWhileTokenReplacing(conn, res, 'pull Shared Brain updates')) return;
 
   // Guard before any mkdir/lock — a malformed connection must not create a
   // ghost "shared-undefined" domain directory.
@@ -631,8 +661,8 @@ router.post('/:id/synthesize', gate, async (req, res) => {
   // read-only token cannot do that.
   if (conn.read_only === true) {
     return res.status(400).json({
-      error: 'This connection is read-only — synthesis writes to the shared repo and needs a token with ' +
-             'Contents: Read and write.',
+      error: 'This Shared Brain connection is read-only: synthesis writes to the shared repository, so it ' +
+             'can’t run here, and nothing was sent. ' + READ_ONLY_WAY_TO_CONTRIBUTE,
     });
   }
 
@@ -640,6 +670,7 @@ router.post('/:id/synthesize', gate, async (req, res) => {
     const { status, body } = conflictResponse('run Shared Brain synthesis');
     return res.status(status).json(body);
   }
+  if (refuseWhileTokenReplacing(conn, res, 'run Shared Brain synthesis')) return;
 
   const emit = openSseStream(res);
   // Synthesis writes only to REMOTE collective storage (+ a config patch),
@@ -773,6 +804,7 @@ router.post('/:id/revoke', gate, async (req, res) => {
     const { status, body } = conflictResponse('revoke a Shared Brain contributor');
     return res.status(status).json(body);
   }
+  if (refuseWhileTokenReplacing(conn, res, 'revoke a Shared Brain contributor')) return;
 
   // Phase 4F (v3.0.0-beta+) — full Article 17 revocation orchestration.
   // SSE-streamed because pages-rebuild on a moderate brain can take 30s+.
@@ -990,9 +1022,13 @@ router.post('/:id/admin-token/rotate', gate, (req, res) => {
 // the body, never in a URL. Refused while any wiki write, Shared Brain push,
 // pull, synthesis or revoke is running, or an update is in progress (a token
 // swapped in the middle of a push would change the credential that push is
-// using). The admin token is a different credential and is not touched; the
-// route needs no admin proof because it grants nothing GitHub has not
-// already granted to the token being saved.
+// using). From that check to the answer the replace is itself a registered
+// write, and push, pull, synthesis and revoke on THIS connection answer 409
+// until it ends (tokenReplacing above): the entry check alone left the up to
+// 30 s GitHub check open to a Push started meanwhile. The admin token is a
+// different credential and is not touched; the route needs no admin proof
+// because it grants nothing GitHub has not already granted to the token being
+// saved.
 //
 // The token is never echoed: not in a success, not in an error (every detail
 // is scrubbed of it), and this handler logs nothing.
@@ -1011,6 +1047,13 @@ router.post('/:id/token', gate, async (req, res) => {
       code: 'sharedbrain-token-missing',
     });
   }
+  const conn = getSharedBrainWithToken(id);
+  if (!conn) return res.status(404).json({ error: 'connection not found' });
+  // Registered in the SAME synchronous turn as the entry check above, so
+  // nothing can start between the two.
+  const releaseRegistry = registerWrite(
+    isSlug(conn.shared_brain_slug) ? `shared-${conn.shared_brain_slug}` : 'shared-brain', 'sharedbrain-token-replace');
+  tokenReplacing.add(id);
   try {
     const out = await replaceSharedBrainToken(id, token);
     if (out === null) return res.status(404).json({ error: 'connection not found' });
@@ -1023,6 +1066,9 @@ router.post('/:id/token', gate, async (req, res) => {
       error: SHAREDBRAIN_TOKEN_MESSAGES['sharedbrain-token-check-failed'],
       code: 'sharedbrain-token-check-failed',
     });
+  } finally {
+    tokenReplacing.delete(id);
+    releaseRegistry();
   }
 });
 

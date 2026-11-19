@@ -275,7 +275,7 @@ export const ENTRIES = {
   // ── Shared Brain ──
   'github-token-rejected': { section: 'sharedbrain',
     means: 'GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted.',
-    todo: 'Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › a domain that takes part in it › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token.' },
+    todo: 'Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › its shared-… mirror, or a domain you contribute from › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token.' },
   'github-not-found': { section: 'sharedbrain',
     means: 'GitHub cannot find the Shared Brain’s repository, or the token cannot see it.',
     todo: 'A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. If the token needs changing, use Replace token on that Shared Brain’s card.' },

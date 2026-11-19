@@ -955,6 +955,38 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass
   ok(!/data-sb-action="push|data-sb-action="synthesize/.test(rendered.mirror),
     '…but NO push and NO synthesize — those act on the contributing side');
 
+  // v3.99.2 (second audit): a GitHub mirror strip carries a VISIBLE Replace
+  // token opener beside Pull. A read-only member with no contributing domain
+  // has only this card on any domain page; without the opener, Cancel on the
+  // panel a rejected Pull opened left the sentence "use Replace token on this
+  // Shared Brain's card" pointing at nothing.
+  {
+    const ghMirror = (cardState) => {
+      const c = conn({ id: 'm1', shared_brain_slug: 'readers', local_domains: [], read_only: true,
+        storage_type: 'github', github_repo_owner: 'acme', github_repo_name: 'readers' });
+      secBox.__setState(Object.assign({}, base, { connections: [c], cards: cardState ? { m1: cardState } : {} }));
+      secBox.__setDomain('shared-readers');
+      return secBox.renderSection();
+    };
+    const quiet = ghMirror();
+    ok((quiet.match(/data-sb-action="token-replace-open"/g) || []).length === 1 && !/data-sb-token-input/.test(quiet),
+      'mirror strip (GitHub, read-only, no local domains): ONE visible Replace token opener, no open panel');
+    ok(/data-sb-action="pull"[\s\S]*data-sb-action="token-replace-open"[\s\S]*id="btn-sb-open-view"/.test(quiet),
+      '…in the action row, after Pull and before the door');
+    ok(!/data-sb-action="token-replace-open"/.test(rendered.mirror),
+      '(control) a mirror strip whose brain is not on GitHub has no opener (nothing to replace)');
+    const msg = 'Error: GitHub didn’t accept the access token for this Shared Brain (mirror strip test).';
+    rememberErrorDetail(msg, 'pullCollective: GitHub GET tree:main → 401', 'github-token-rejected');
+    const rejected = { acting: null, message: msg, error: true, tokenForm: secBox.freshTokenForm() };
+    const open = ghMirror(rejected);
+    ok(/data-sb-token-input="m1"/.test(open) && !/data-sb-action="token-replace-open"/.test(open),
+      'a rejected Pull: the panel is open on the strip, and the opener steps aside');
+    rejected.tokenForm = { ...secBox.freshTokenForm(), dismissedKey: secBox.tokenRejectionKey(rejected) };
+    const dismissed = ghMirror(rejected);
+    ok(!/data-sb-token-input/.test(dismissed) && /data-sb-action="token-replace-open"/.test(dismissed),
+      'after Cancel: the panel closes and the opener is back, so Replace token is still reachable');
+  }
+
   ok(!/STUB-card/.test(rendered.none) && !/sb-sec-mirror/.test(rendered.none) &&
      /isn’t part of a Shared Brain/.test(rendered.none),
     'section none: a domain in neither list says so, rather than rendering an install-wide list');

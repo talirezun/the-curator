@@ -117,11 +117,15 @@ const BOOM = T('bom', 'H');         // 500
 const DROP = T('drp', 'J');         // the connection is dropped (unreachable)
 const HEX = 'abcdef0123456789abcdef0123456789abcd' + 'ef01';   // a classic 40-hex token, which GitHub echoes back (401)
 const NEW2 = T('nw2', 'K');         // accepted, can write (the read-only member)
-const ALL = [OLD, NEW, BAD, NOACC, FORB, RO, LIMIT, BOOM, DROP, HEX, NEW2];
+const HTMLT = T('htm', 'L');        // 200, but an HTML page (a login wall), not a repository
+const NOID = T('nid', 'M');         // 200 JSON with full_name but no id
+const EMPTY = T('emp', 'N');        // 200 JSON {}
+const SLOW = T('slo', 'P');         // accepted, can write; the answer is HELD until released
+const ALL = [OLD, NEW, BAD, NOACC, FORB, RO, LIMIT, BOOM, DROP, HEX, NEW2, HTMLT, NOID, EMPTY, SLOW];
 const leaks = (text) => ALL.filter((t) => String(text).includes(t));
 
 // ── The fake GitHub API ───────────────────────────────────────────────────
-const fake = { log: [], hold: null };
+const fake = { log: [], hold: null, repoHold: null };
 const ghServer = http.createServer((req, res) => {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -134,12 +138,18 @@ const ghServer = http.createServer((req, res) => {
   if (token === FORB) return json(403, { message: 'Resource not accessible by personal access token' });
   if (token === LIMIT) return json(403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1' });
   if (token === BOOM) return json(500, { message: 'Server Error' });
-  const okToken = token === NEW || token === RO || token === NEW2;
-  if (!okToken) return json(401, { message: 'Bad credentials' });
   const u = new URL(req.url, 'http://x');
-  if (/^\/repos\/[^/]+\/[^/]+$/.test(u.pathname)) {
+  const repoPath = /^\/repos\/[^/]+\/[^/]+$/.test(u.pathname);
+  if (repoPath && token === HTMLT) { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<html>Sign in</html>'); }
+  if (repoPath && token === NOID) return json(200, { full_name: 'acme/readers', permissions: { pull: true, push: true } });
+  if (repoPath && token === EMPTY) return json(200, {});
+  const okToken = token === NEW || token === RO || token === NEW2 || token === SLOW;
+  if (!okToken) return json(401, { message: 'Bad credentials' });
+  if (repoPath) {
     const [, , owner, name] = u.pathname.split('/');
-    return json(200, { full_name: owner + '/' + name, private: true, default_branch: 'main', permissions: { pull: true, push: token !== RO, admin: false } });
+    const answer = () => json(200, { id: 4242, full_name: owner + '/' + name, private: true, default_branch: 'main', permissions: { pull: true, push: token !== RO, admin: false } });
+    if (token === SLOW) { fake.repoHold = answer; return; }
+    return answer();
   }
   if (/\/git\/trees\//.test(u.pathname)) {
     const answer = () => json(200, { sha: 'f'.repeat(40), tree: [], truncated: false });
@@ -300,6 +310,51 @@ try {
     await request('DELETE', `/api/sharedbrain/${BUSY_ID}`);
   }
 
+  // A 200 that is not a repository is not GitHub's answer about this
+  // repository (second audit: a read-only member's check accepted ANY 200).
+  for (const [label, tok, id] of [
+    ['a 200 HTML page (read-only member)', HTMLT, RO_ID],
+    ['a 200 with full_name but no id (read-only member)', NOID, RO_ID],
+    ['a 200 empty object (read-only member)', EMPTY, RO_ID],
+    ['a 200 with full_name but no id (admin, push: true)', NOID, ADMIN_ID],
+  ]) {
+    const r = await refuse(label, id, { token: tok }, 502, 'sharedbrain-token-check-failed');
+    ok(r.json && /not a repository/.test(r.json.detail || ''), `${label}: the detail says the answer was not a repository`, r.json);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§2b While a token is being checked, nothing else uses this connection');
+  // ═══════════════════════════════════════════════════════════════════════
+  // Second audit: "no write running" was checked only at entry, and the GitHub
+  // check (up to 30 s) ran unregistered, so a Push started during it ran on
+  // the old token and the new one was saved under it.
+  {
+    fake.repoHold = null;
+    const replacing = request('POST', `/api/sharedbrain/${ADMIN_ID}/token`, { token: SLOW });
+    for (let i = 0; i < 100 && !fake.repoHold; i++) await new Promise((r) => setTimeout(r, 20));
+    ok(!!fake.repoHold, 'control: the token check is in flight, held at GitHub');
+    const n0 = fake.log.length;
+    const FID = '11111111-1111-4111-8111-111111111111';
+    for (const [label, p, body] of [
+      ['Push', 'push', { local_domain: 'research' }],
+      ['Pull', 'pull', {}],
+      ['Synthesis', 'synthesize', {}],
+      ['Revoke', 'revoke', { admin_token: ADMIN_TOKEN, fellow_id: FID, confirmation: `REVOKE-${FID}` }],
+    ]) {
+      const r = await post(`/api/sharedbrain/${ADMIN_ID}/${p}`, body);
+      ok(r.status === 409 && r.json && r.json.conflict === 'write_in_progress', `${label} on this connection during the check: 409`, { status: r.status, text: r.text.slice(0, 200) });
+    }
+    ok(fake.log.length === n0, '…and none of them asked GitHub anything', fake.log.slice(n0).map((e) => e.url));
+    const other = await post(`/api/sharedbrain/${RO_ID}/token`, { token: NEW2 });
+    ok(other.status === 409, 'another token replace meanwhile: 409 (the replace is a registered write)', other.json);
+    const rel = fake.repoHold; fake.repoHold = null; rel();
+    const done = await replacing;
+    responses.push(done.text);
+    ok(done.status === 200 && stored().find((c) => c.id === ADMIN_ID).github_pat === SLOW, 'the replace then finishes and saves its token', done.json);
+    const after = await post(`/api/sharedbrain/${ADMIN_ID}/pull`, {});
+    ok(after.status === 200 && /"type":"done"/.test(after.text), 'once it has answered, a Pull runs again (on the new token)', after.text.slice(-200));
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   section('§3  Success (admin): only the token changes');
   // ═══════════════════════════════════════════════════════════════════════
@@ -378,6 +433,10 @@ try {
     ok(/is read-only/.test(said) && /nothing was sent/.test(said), 'the refusal says what happened and that nothing was sent', said);
     ok(/Leave this Shared Brain/.test(said) && /join again with the same invite/.test(said) && /Contents: Read and write/.test(said),
       'the refusal names the step that works: a write token, Leave this Shared Brain, join again', said);
+    // Second audit: "on this card" named a control the mirror strip (the
+    // read-only member's only card on a domain page) does not have.
+    ok(/Open Shared Brain/.test(said) && /Leave this Shared Brain on this brain’s card/.test(said) && !/on this card/.test(said),
+      'the refusal says where Leave is: Open Shared Brain, then the brain’s card', said);
     ok(/Replace token can’t change that/.test(said), 'the refusal says Replace token is not the way', said);
     ok(/new member/.test(said) && /never pushed anything/.test(said), 'the refusal says what it costs: a new member identity, nothing left behind', said);
     ok(!/re-run|Join wizard/i.test(said), 'the refusal no longer advises re-running the Join wizard', said);
@@ -390,6 +449,10 @@ try {
     // refused too, so no write ever reached the brain under OLD_FELLOW.
     const syn = await post(`/api/sharedbrain/${RO_ID}/synthesize`, {});
     ok(syn.status === 400 && /read-only/.test((syn.json && syn.json.error) || ''), 'synthesis is refused for the read-only connection too', syn.json);
+    const synSaid = (syn.json && syn.json.error) || '';
+    ok(/nothing was sent/.test(synSaid) && /Replace token can’t change that/.test(synSaid) && /Open Shared Brain/.test(synSaid)
+      && /Leave this Shared Brain/.test(synSaid) && /join again with the same invite/.test(synSaid),
+      'the synthesis refusal says the same as the push refusal: Replace token can’t change it, and the way that works', synSaid);
 
     // Joining again while connected: refused, early and at the write.
     const brain = { storage_type: 'github', github_repo_owner: 'acme', github_repo_name: 'readers', shared_domain: 'notes', shared_brain_slug: 'readers' };
@@ -519,6 +582,58 @@ section('§6  The view');
   env.fetchCalls.length = 0;
   await box.onReplaceSharedBrainToken(1, 'c1');
   ok(env.fetchCalls.length === 0 && /Paste the new token/.test(card.tokenForm.error || ''), 'an empty field asks first and sends nothing');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§6b The view: a NEW refused Pull opens Replace token again, even after Cancel');
+// ═══════════════════════════════════════════════════════════════════════════
+// Second audit, measured in a real browser: a read-only member's Pull was
+// refused, the panel opened, Cancel closed it, and a second refused Pull left
+// it closed, because the dismissal was keyed on the message text, which is
+// word-for-word the same. runSseAction is the REAL function, fed a real SSE
+// Response in the frame shape routes/sharedbrain.js's errorFrame() sends.
+{
+  const viewSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/views/shared.js'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
+  const FNS = ['tokenCheckApplies', 'freshTokenForm', 'tokenRejectionKey', 'sbTokenPanelOpen', 'composeDoneMessage', 'runSseAction'];
+  const env = { frame: null };
+  const box = new Function('env',
+    extractFunction(appSrc, 'escapeHtml', 'app.js') + '\n' +
+    'let cards = {};\n' +
+    'const conns = [{ id: "m1", storage_type: "github", read_only: true, local_domains: [], shared_brain_slug: "readers", github_repo_owner: "acme", github_repo_name: "readers" }];\n' +
+    'function ensureCard(id) { return cards[id] || (cards[id] = { acting: null, message: null, error: false, tokenCheck: null, tokenForm: freshTokenForm() }); }\n' +
+    'function findConnection(id) { return conns.find((c) => c.id === id) || null; }\n' +
+    'function domainsForAction() { return ["shared-readers"]; }\n' +
+    'function isDomainWriteBusy() { return false; }\n' +
+    'function getDomainWriteLabel() { return ""; }\n' +
+    'function beginDomainWrite() { return () => {}; }\n' +
+    'function render() {}\n' +
+    'function isCurrentMount() { return false; }\n' +
+    'function reportAsyncActionFailure() {}\n' +
+    'async function fetch() { return new Response("data: " + JSON.stringify(env.frame) + "\\n\\n", { headers: { "content-type": "text/event-stream" } }); }\n' +
+    FNS.map((n) => extractFunction(viewSrc, n, 'views/shared.js')).join('\n') + '\n' +
+    'return { ' + FNS.join(', ') + ', ensureCard, conn: conns[0] };')(env);
+  const rejectedFrame = {
+    type: 'error',
+    message: 'GitHub didn\'t accept the access token for this Shared Brain. Create a new token on GitHub, then use Replace token on this Shared Brain\'s card.',
+    detail: 'pullCollective: listPages failed: GitHub GET tree:main → 401: Bad credentials',
+    code: 'github-token-rejected',
+  };
+  const card = box.ensureCard('m1');
+  const cancel = () => { card.tokenForm = { ...box.freshTokenForm(), dismissedKey: box.tokenRejectionKey(card), focusedKey: box.tokenRejectionKey(card) }; };
+
+  env.frame = rejectedFrame;
+  await box.runSseAction(1, 'm1', 'pull');
+  ok(card.error === true && box.sbTokenPanelOpen(box.conn, card) === true, 'the first refused Pull opens the panel', { msg: card.message, form: card.tokenForm });
+  cancel();
+  ok(box.sbTokenPanelOpen(box.conn, card) === false, 'Cancel closes it');
+  await box.runSseAction(1, 'm1', 'pull');
+  ok(box.sbTokenPanelOpen(box.conn, card) === true && card.tokenForm.focusPending === true,
+    'a SECOND refused Pull, word-for-word the same, opens it again and asks for the focus', card.tokenForm);
+  cancel();
+  env.frame = { type: 'error', message: 'GitHub is having problems right now. Wait a few minutes, then try again.', detail: 'GitHub GET tree:main → 503', code: 'github-unavailable' };
+  await box.runSseAction(1, 'm1', 'pull');
+  ok(card.error === true && box.sbTokenPanelOpen(box.conn, card) === false, 'CONTROL: a Pull that fails for another reason leaves it closed', card.tokenForm);
 }
 
 section('§7  The real credential files were never touched');
