@@ -45,6 +45,7 @@ import { renderStatus } from '../src/public/next/shared/text.js';
 // there is `explainerMark(id, key)` from shared/explainer.js — injected here as
 // the REAL kit (import-free of app.js, so it runs headless), never a stub.
 import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');

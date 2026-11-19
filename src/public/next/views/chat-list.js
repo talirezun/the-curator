@@ -48,6 +48,8 @@
 
 import { renderSidebarRow, renderSidebarGroup, identitySlotClass } from '../shared/sidebar.js';
 import { ageWordsFor } from '../shared/age-ticker.js';
+// v3.99.2: the technical detail remembered beside a plain error sentence.
+import { errorDetailHtml } from '../shared/net.js';
 
 // A byte-for-byte copy of app.js's escapeHtml, for the reason shared/sidebar.js
 // carries one: this module must import in plain Node.
@@ -237,7 +239,9 @@ export function conversationRowHtml(c, ctx) {
  */
 export function conversationListHtml(ctx) {
   const x = ctx || {};
-  if (x.loadError) return '<div class="chat-sidebar-error">' + escapeHtml(x.loadError) + '</div>';
+  if (x.loadError) {
+    return '<div class="chat-sidebar-error">' + escapeHtml(x.loadError) + errorDetailHtml(x.loadError) + '</div>';
+  }
   const list = Array.isArray(x.conversations) ? x.conversations : [];
   const query = typeof x.searchQuery === 'string' ? x.searchQuery.trim() : '';
   if (list.length === 0) {

@@ -196,6 +196,12 @@ import { renderDepthCell } from '../shared/depth-bar.js';
 // single-file outcome. See shared/ai-run.js for its rules (human model label,
 // `formatUsdHonest` only, no tone colour, disabled-never-hidden with no key).
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
+// v3.99.2 plain-language errors: one sentence a person can act on, and the raw
+// text below it as "Technical detail (for support):", always visible.
+import {
+  userMessageFrom, errorFromResponse, renderUserError, renderErrorDetail,
+  plainError, errorDetailOf,
+} from '../shared/net.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -219,6 +225,10 @@ function freshState() {
     // decides which block renders it, and collapsing the two is what made
     // every ingest failure land on one generic red wall with no action.
     errorCode: null,
+    // v3.99.2: the technical detail behind `errorMessage` (the SSE frame's
+    // `detail`, or the raw text an older server sent), shown below the plain
+    // sentence. '' when there is none.
+    errorDetail: '',
 
     // ── The single-file run line (v3.67.0) ────────────────────────────
     // POST /api/ingest-queue/estimate with ONE file answers `runsOn` for the
@@ -1341,7 +1351,8 @@ async function fetchDomainStats() {
         })),
     };
   } catch (err) {
-    return { error: err.message };
+    // v3.99.2: the plain sentence (its detail is remembered beside it).
+    return { error: plainError(err) };
   }
 }
 
@@ -1480,7 +1491,7 @@ async function loadDomains(token) {
     if (!isCurrentMount(token)) return;
     state.domains = [];
     state.domain = null;
-    state.domainsError = err.message;
+    state.domainsError = plainError(err);
   } finally {
     if (isCurrentMount(token)) {
       // Delay-gated: paints straight through when the load beat the 200 ms
@@ -1873,7 +1884,8 @@ function renderMain(token) {
   if (state.loadingDomains) {
     body = gatedLoader(loadGate, 'Loading domains…');
   } else if (state.domainsError) {
-    body = renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.domainsError });
+    body = renderUserError({ error: state.domainsError, detail: errorDetailOf(state.domainsError) },
+      { title: 'Could not load domains' });
   } else if (!state.domains.length) {
     body = emptyCard({
       title: 'No domains to ingest into yet',
@@ -2079,7 +2091,7 @@ function renderIngestForm() {
     renderRemoteProgress() +
     renderRemoteOutcome() +
     renderDuplicate() +
-    renderIngestFailure(state.errorMessage, state.errorCode) +
+    renderIngestFailure(state.errorMessage, state.errorCode, state.errorDetail) +
     renderResult()
   );
 }
@@ -2102,7 +2114,7 @@ function renderIngestForm() {
  * PURE and exported-by-position for the suite: takes the message and the code
  * rather than reading `state`, so both arms can be driven offline.
  */
-function renderIngestFailure(message, code) {
+function renderIngestFailure(message, code, detail) {
   if (!message) return '';
   if (code === 'MODEL_GONE') {
     return (
@@ -2112,6 +2124,7 @@ function renderIngestFailure(message, code) {
           '<b>The build model is gone</b>' +
         '</div>' +
         '<p class="ing-model-gone-body">' + escapeHtml(message) + '</p>' +
+        renderErrorDetail(detail) +
         '<p class="ing-model-gone-body">Nothing was written, and retrying will fail the same way ' +
           'until a different model is chosen. Ingest, Wiki Health and Compile all run on that one ' +
           'model, so this is the same fix for all three.</p>' +
@@ -2124,7 +2137,7 @@ function renderIngestFailure(message, code) {
   }
   return (
     '<div class="ing-status-block">' +
-      renderStatus({ state: 'danger', title: 'Ingest failed', detail: message }) +
+      renderUserError({ error: message, detail: detail || '' }, { title: 'Ingest failed' }) +
     '</div>'
   );
 }
@@ -2633,11 +2646,9 @@ function renderRemoteOutcome() {
     return (
       '<div class="ing-remote-outcome">' + header +
         '<div class="ing-status-block">' +
-          renderStatus({
-            state: 'danger',
-            title: 'Ingest failed',
-            detail: r.error || 'The ingest did not complete.',
-          }) +
+          // v3.99.2: the activity record carries the raw text; it becomes the
+          // plain sentence, with the raw text below it for support.
+          renderUserError(r.error || 'The ingest did not complete.', { title: 'Ingest failed' }) +
         '</div>' +
       '</div>'
     );
@@ -3387,6 +3398,7 @@ function pickSingleFile(token, fileList) {
   state.result = null;
   state.errorMessage = null;
   state.errorCode = null;
+  state.errorDetail = '';
 
   if (!ALLOWED_EXT.includes(ext)) {
     state.file = null;
@@ -3514,6 +3526,7 @@ async function runIngest(token, overwrite) {
   state.submitting = true;
   state.errorMessage = null;
   state.errorCode = null;
+  state.errorDetail = '';
   state.duplicate = null;
   phaseStartedAt = Date.now();
   // The whole run's clock (v3.72.1, truth audit F11), separate from the
@@ -3585,7 +3598,7 @@ async function runIngest(token, overwrite) {
         }
         return;
       }
-      throw new Error(data.error || ('Ingest failed (' + res.status + ')'));
+      throw errorFromResponse(res, data, 'The ingest could not start.');
     }
 
     const reader = res.body.getReader();
@@ -3615,8 +3628,10 @@ async function runIngest(token, overwrite) {
             // the same "Ingest failed" heading and no action. The code is
             // carried on the Error and read in the catch, because that is the
             // one place both are still in scope.
-            const e = new Error(ev.message);
+            const e = new Error(ev.message || 'The ingest did not complete.');
             if (typeof ev.code === 'string' && ev.code) e.curatorCode = ev.code;
+            // v3.99.2: the frame's technical detail travels the same way.
+            if (typeof ev.detail === 'string' && ev.detail) e.detail = ev.detail;
             throw e;
           }
         }
@@ -3682,7 +3697,12 @@ async function runIngest(token, overwrite) {
   } catch (err) {
     if (isCurrentMount(token)) {
       state.progress = null;
-      state.errorMessage = err.message;
+      // v3.99.2: the plain sentence and its detail. A frame the server already
+      // translated keeps its own words; an older server's raw text becomes a
+      // sentence here, with the raw text as the detail.
+      const u = userMessageFrom(err);
+      state.errorMessage = u.error;
+      state.errorDetail = u.detail;
       state.errorCode = (err && typeof err.curatorCode === 'string') ? err.curatorCode : null;
       render(token);
     }
@@ -3887,7 +3907,7 @@ async function startQueueSelection(token) {
     });
     const data = await res.json().catch(() => ({}));
     if (!isCurrentMount(token)) return;
-    if (!res.ok || !data.ok) throw new Error(data.error || ('Could not estimate cost (HTTP ' + res.status + ')'));
+    if (!res.ok || !data.ok) throw errorFromResponse(res, data, 'The Curator could not estimate the cost of this batch.');
     state.queueEstimate = data;
     state.queueEstimateLoading = false;
     // The estimate's run line carries a door; wire it before it paints.
@@ -3897,7 +3917,7 @@ async function startQueueSelection(token) {
     if (!isCurrentMount(token)) return;
     state.queueEstimate = null;
     state.queueEstimateLoading = false;
-    state.queueEstimateError = err.message;
+    state.queueEstimateError = plainError(err);
     render(token);
   }
 }
@@ -3927,11 +3947,11 @@ async function beginQueueJob(token) {
         ? ('A batch is already running (job ' + activeId + '). Wait for it to finish, or check the panel below.')
         : (data.error || 'A batch is already running on this domain.'));
     }
-    if (!res.ok || !data.ok || !data.jobId) throw new Error(data.error || ('Could not start the batch (HTTP ' + res.status + ')'));
+    if (!res.ok || !data.ok || !data.jobId) throw errorFromResponse(res, data, 'The batch could not start.');
 
     const startRes = await fetch(QUEUE_API + '/' + encodeURIComponent(data.jobId) + '/start', { method: 'POST' });
     const startData = await startRes.json().catch(() => ({}));
-    if (!startRes.ok || !startData.ok) throw new Error(startData.error || ('Could not start the batch (HTTP ' + startRes.status + ')'));
+    if (!startRes.ok || !startData.ok) throw errorFromResponse(startRes, startData, 'The batch could not start.');
 
     if (!isCurrentMount(token)) return;
     // Uploaded + started — the confirm gate's job is done; everything
@@ -3948,7 +3968,7 @@ async function beginQueueJob(token) {
     attachQueueStream(data.jobId, token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.queueSubmitError = err.message;
+    state.queueSubmitError = plainError(err);
     state.queueSubmitting = false;
     render(token);
   }
@@ -4074,7 +4094,7 @@ async function attachQueueStream(jobId, token) {
   } catch (err) {
     if (err && err.name === 'AbortError') return; // detached on purpose (nav-away / re-attach)
     if (isCurrentMount(token)) {
-      state.queueStreamError = (err && err.message) ? err.message : 'Lost connection to the batch.';
+      state.queueStreamError = (err && err.message) ? plainError(err) : 'Lost connection to the batch.';
       render(token);
     }
   } finally {
@@ -4183,13 +4203,13 @@ async function pauseQueueJob(token, jobId) {
   try {
     const res = await fetch(QUEUE_API + '/' + encodeURIComponent(jobId) + '/pause', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || ('Could not pause (HTTP ' + res.status + ')'));
+    if (!res.ok || !data.ok) throw errorFromResponse(res, data, 'The batch could not be paused.');
     if (isCurrentMount(token)) state.queueActionBusy = null;
     if (data.job) applyQueueJobSnapshot(data.job, token);
     else if (isCurrentMount(token)) render(token);
   } catch (err) {
     if (isCurrentMount(token)) {
-      state.queueStreamError = err.message;
+      state.queueStreamError = plainError(err);
       state.queueActionBusy = null;
       render(token);
     }
@@ -4203,7 +4223,7 @@ async function resumeQueueJob(token, jobId) {
   try {
     const res = await fetch(QUEUE_API + '/' + encodeURIComponent(jobId) + '/start', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || ('Could not resume (HTTP ' + res.status + ')'));
+    if (!res.ok || !data.ok) throw errorFromResponse(res, data, 'The batch could not be resumed.');
     if (isCurrentMount(token)) state.queueActionBusy = null;
     if (data.job) applyQueueJobSnapshot(data.job, token);
     // Guard against double-attaching, ported from app.js's own resumeQueueJob
@@ -4213,7 +4233,7 @@ async function resumeQueueJob(token, jobId) {
     if (!queueStreamAbort) attachQueueStream(jobId, token);
   } catch (err) {
     if (isCurrentMount(token)) {
-      state.queueStreamError = err.message;
+      state.queueStreamError = plainError(err);
       state.queueActionBusy = null;
       render(token);
     }
@@ -4232,7 +4252,7 @@ async function confirmCancelQueueJob(token, jobId) {
   try {
     const res = await fetch(QUEUE_API + '/' + encodeURIComponent(jobId) + '/cancel', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || ('Could not cancel (HTTP ' + res.status + ')'));
+    if (!res.ok || !data.ok) throw errorFromResponse(res, data, 'The batch could not be cancelled.');
     if (isCurrentMount(token)) {
       state.queueCancelConfirmOpen = false;
       state.queueActionBusy = null;
@@ -4241,7 +4261,7 @@ async function confirmCancelQueueJob(token, jobId) {
     else if (isCurrentMount(token)) render(token);
   } catch (err) {
     if (isCurrentMount(token)) {
-      state.queueStreamError = err.message;
+      state.queueStreamError = plainError(err);
       state.queueActionBusy = null;
       render(token);
     }
@@ -4353,7 +4373,8 @@ function renderQueueConfirmGate() {
   const inputFields = renderQueueInputFields();
   const submitError = state.queueSubmitError
     ? '<div class="ing-status-block">' +
-        renderStatus({ state: 'danger', title: 'Could not start this batch', detail: state.queueSubmitError }) +
+        renderUserError({ error: state.queueSubmitError, detail: errorDetailOf(state.queueSubmitError) },
+          { title: 'Could not start this batch' }) +
       '</div>'
     : '';
 
@@ -4384,9 +4405,9 @@ function renderQueueConfirmGate() {
         '</div>' +
       '</div>';
   } else if (state.queueEstimateError) {
-    estimateBody = renderStatus({
-      state: 'danger', title: 'Could not estimate this batch', detail: state.queueEstimateError,
-    });
+    estimateBody = renderUserError(
+      { error: state.queueEstimateError, detail: errorDetailOf(state.queueEstimateError) },
+      { title: 'Could not estimate this batch' });
   } else if (state.queueEstimate) {
     // The estimate owns the whole gate once it exists: it has file lists for
     // the left column and a cost card for the right, so it builds the grid
@@ -5045,18 +5066,25 @@ function renderQueueItemRow(item, opts) {
   // classifier is a structured tag rather than a `/\b429\b/`. A build whose
   // backend does not send the field simply renders the ordinary error line,
   // which is the degrade-quietly direction.
+  // v3.99.2: the wire's `error` is the plain sentence and `errorDetail` the
+  // raw text behind it; an older server's raw `error` is translated here.
+  const itemErr = (item && item.error)
+    ? userMessageFrom({ error: item.error, detail: typeof item.errorDetail === 'string' ? item.errorDetail : '' })
+    : { error: '', detail: '' };
   const errorLine = (isFailedItem && item.errorCode === 'MODEL_GONE' && item.error)
     ? '<div class="ing-queue-item-error ing-model-gone" data-ingest-error-code="MODEL_GONE">' +
         '<div class="ing-model-gone-head">' + icon('alertTriangle', 13) +
           '<b>The build model is gone</b></div>' +
-        '<p class="ing-model-gone-body">' + escapeHtml(item.error) + '</p>' +
+        '<p class="ing-model-gone-body">' + escapeHtml(itemErr.error) + '</p>' +
+        renderErrorDetail(itemErr.detail) +
         '<div class="ing-model-gone-actions">' +
           '<button type="button" class="btn btn-secondary btn-xs" id="ing-queue-model-gone-settings">' +
             'Open Settings → Providers &amp; keys</button>' +
         '</div>' +
       '</div>'
     : ((isFailedItem || isCancelledItem) && item.error)
-    ? '<div class="ing-queue-item-error' + (isCancelledItem ? ' ing-queue-item-stopped-msg' : '') + '">' + escapeHtml(item.error) + '</div>'
+    ? '<div class="ing-queue-item-error' + (isCancelledItem ? ' ing-queue-item-stopped-msg' : '') + '">' + escapeHtml(itemErr.error) +
+        renderErrorDetail(itemErr.detail) + '</div>'
     : '';
   // Per row, the SAME change counts as the summary (F13): new / updated /
   // unchanged, never one raw path count that includes untouched pages.
@@ -5167,7 +5195,8 @@ function renderQueuePanel(job) {
 
   const streamErrorHtml = state.queueStreamError
     ? '<div class="ing-status-block">' +
-        renderStatus({ state: 'danger', title: 'Lost the live connection to this batch', detail: state.queueStreamError }) +
+        renderUserError({ error: state.queueStreamError, detail: errorDetailOf(state.queueStreamError) },
+          { title: 'Lost the live connection to this batch' }) +
       '</div>'
     : '';
   // Files were dropped onto this panel, which has no drop zone. Say what

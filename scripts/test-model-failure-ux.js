@@ -70,6 +70,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -529,10 +530,11 @@ section('§8  THE FREE-MODEL FACT: ONE SENTENCE, ONE OWNER, NO INVENTED FIGURE')
   }));
   ok(!/chat-error-context/.test(unknown), 'a model absent from the live catalogue gets no note either');
 
-  // The send path must RECORD the model, or every assertion above is unreachable
+  // The send path must RECORD the model (v3.99.2: the plain sentence from
+  // userMessageFrom(err) is what the turn records, so the pin follows it), or every assertion above is unreachable
   // in production while staying green here.
   const sendSrc = extractFunction(chatSrc, 'sendCurrentMessage', 'chat.js');
-  const errPush = /state\.thread\.push\(\{[\s\S]{0,400}?error: err\.message,[\s\S]{0,200}?\}\)/.exec(sendSrc);
+  const errPush = /state\.thread\.push\(\{[\s\S]{0,400}?error: failure\.error,[\s\S]{0,300}?requestedModel[\s\S]{0,80}?\}\);/.exec(sendSrc);
   ok(errPush !== null && /requestedModel: requestedModelAtSend/.test(errPush[0]),
     'the error path records requestedModel, captured at SEND time');
 }
