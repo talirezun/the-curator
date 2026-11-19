@@ -42,6 +42,7 @@ import {
   renderMarks, renderRunning, afterLineWalk, renderWalkFold, renderChoose, renderFinish, chooseRows, undecidedCount, familyWaiting,
   slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST, walkPagesWithNoPair, walksToStore, worstSlots,
 } from './health-family.js';
+import { userMessageFrom, errorDetailOf, renderErrorDetail } from '../shared/net.js';
 
 /** How long the comparison must be on screen before Merge opens. */
 export const ARM_MS = 500;
@@ -58,6 +59,11 @@ export const RELATION_LABELS = Object.freeze({
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// A failed outcome (v3.99.2): the desk's own lead and the plain sentence, its button, then the
+// technical detail, when there is one, on its own visible line. The outcome box has a fixed
+// height and scrolls, so a longer detail moves nothing on the desk.
+const failedHtml = (sentence, button, detail) => esc(sentence) + (button || '') + renderErrorDetail(detail);
 const n0 = (v) => (Number(v) || 0).toLocaleString('en-US');
 const name = (s) => '<span class="mono">' + esc(s) + '</span>';
 
@@ -379,6 +385,7 @@ export function createReviewDesk(d) {
     if (!pair) return;
     pair.refusal = null;
     pair.error = null;
+    pair.errorDetail = null;
     pair.errorAction = null;
   }
 
@@ -678,9 +685,10 @@ export function createReviewDesk(d) {
       if (fam.pendingStays) resumeWalk(r, fam);
     } catch (err) {
       if (review() !== r) return;
-      fam.factsError = err.message;
+      const u = userMessageFrom(err);
+      fam.factsError = u.error;
       if (r.family === fam) {
-        r.outcome = { tone: 'error', retry: 'facts', html: 'Could not load the comparison: ' + esc(err.message) + retryButton(), spoken: 'Could not load the comparison: ' + err.message };
+        r.outcome = { tone: 'error', retry: 'facts', html: failedHtml('Could not load the comparison: ' + u.error, retryButton(), u.detail), spoken: 'Could not load the comparison: ' + u.error };
         live(r.outcome.spoken);
       }
     } finally {
@@ -722,7 +730,7 @@ export function createReviewDesk(d) {
       fam.kept = { links: p.links || 0, length: p.length || 0, html: d.markdown(pageBody(text)) };
     } catch (err) {
       if (review() !== r) return;
-      fam.kept = { failed: err.message };
+      fam.kept = { failed: userMessageFrom(err).error };
     } finally {
       fam.keptAt = at;
       fam.loadingKept = -1;
@@ -854,7 +862,7 @@ export function createReviewDesk(d) {
       for (const p of done) { try { await d.bringBack(r.slug, p); } catch { /* the failure below stands */ } }
       fam.savingApart = false;
       if (review() !== r) return;
-      r.outcome = { tone: 'error', retry: 'apart', html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      r.outcome = { tone: 'error', retry: 'apart', html: failedHtml('Could not save: ' + userMessageFrom(err).error, retryButton(), userMessageFrom(err).detail), spoken: 'Could not save: ' + userMessageFrom(err).error };
       live(r.outcome.spoken);
       d.render();
       return;
@@ -882,7 +890,7 @@ export function createReviewDesk(d) {
       for (const p of pairs) await d.bringBack(r.slug, p);
     } catch (err) {
       if (review() !== r) return;
-      r.outcome = { tone: 'error', undoAllRetry: fam, html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      r.outcome = { tone: 'error', undoAllRetry: fam, html: failedHtml('Could not save: ' + userMessageFrom(err).error, retryButton(), userMessageFrom(err).detail), spoken: 'Could not save: ' + userMessageFrom(err).error };
       live(r.outcome.spoken);
       d.render();
       return;
@@ -996,7 +1004,7 @@ export function createReviewDesk(d) {
       // The text already on screen stays, and it cannot be merged on: the gate is shut.
       if (!r.comparison || r.comparison.key !== key) r.comparison = { key, error: res.error };
       r.outcome = { tone: 'error', retry: 'compare',
-        html: 'Could not load the comparison: ' + esc(res.error) + retryButton(),
+        html: failedHtml('Could not load the comparison: ' + res.error, retryButton(), res.detail || errorDetailOf(res.error)),
         spoken: 'Could not load the comparison: ' + res.error };
       r.refreshing = false;
       live(r.outcome.spoken);
@@ -1104,7 +1112,7 @@ export function createReviewDesk(d) {
       } else {
         const held = current(r) || pair;
         const failed = held.refusal || held.error;
-        r.outcome = { tone: 'error', retry: 'merge', html: esc(failed) + (held.errorAction ? retryButton() : ''), spoken: failed };
+        r.outcome = { tone: 'error', retry: 'merge', html: failedHtml(failed, held.errorAction ? retryButton() : '', held.errorDetail), spoken: failed };
         live(failed);
         d.render();
       }
@@ -1124,7 +1132,7 @@ export function createReviewDesk(d) {
       await d.bringBack(r.slug, pair);
     } catch (err) {
       if (review() !== r) return;
-      r.outcome = { tone: 'error', undoPageRetry: page, family: fam, html: 'Could not save: ' + esc(err.message) + retryButton(), spoken: 'Could not save: ' + err.message };
+      r.outcome = { tone: 'error', undoPageRetry: page, family: fam, html: failedHtml('Could not save: ' + userMessageFrom(err).error, retryButton(), userMessageFrom(err).detail), spoken: 'Could not save: ' + userMessageFrom(err).error };
       live(r.outcome.spoken);
       d.render();
       return;
@@ -1180,7 +1188,7 @@ export function createReviewDesk(d) {
       } else {
         const held = current(r) || pair;
         const failed = held.refusal || held.error;
-        r.outcome = { tone: 'error', retry: 'keep', html: esc(failed) + retryButton(), spoken: failed };
+        r.outcome = { tone: 'error', retry: 'keep', html: failedHtml(failed, retryButton(), held.errorDetail), spoken: failed };
         live(failed);
         d.render();
       }
@@ -1208,7 +1216,7 @@ export function createReviewDesk(d) {
       live('Brought back.');
     } catch (err) {
       if (review() !== r) return;
-      r.outcome = { tone: 'error', html: 'Could not save: ' + esc(err.message) + retryButton(), undoRetry: pair, spoken: 'Could not save: ' + err.message };
+      r.outcome = { tone: 'error', html: failedHtml('Could not save: ' + userMessageFrom(err).error, retryButton(), userMessageFrom(err).detail), undoRetry: pair, spoken: 'Could not save: ' + userMessageFrom(err).error };
       live(r.outcome.spoken);
     }
     d.render();

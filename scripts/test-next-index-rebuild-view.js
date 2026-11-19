@@ -19,6 +19,7 @@
  *   §6 The plan runner: nothingToDo → info banner, no card.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -246,7 +247,7 @@ section('§5 apply');
   const { api, state } = build(okFetch(500, { error: 'disk full' }));
   state.pendingPlan = { kind: 'indexRebuild', basis: 'f', summary: SUMMARY, samples: {} };
   await api.applyPendingPlan('d');
-  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: disk full' }, 'other errors: a failure on the row');
+  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: disk full', detail: '' }, 'other errors: a failure on the row (v3.99.2: with its technical detail, none for plain prose)');
   eq(state.busyKey, null, 'busy key reset after an error');
 }
 {
@@ -280,7 +281,7 @@ section('§6 plan runner');
 {
   const { api, state } = build(okFetch(409, { error: 'index.md is a symlink', code: 'INDEX_UNREADABLE' }));
   await api.onQuickAction('d', 'indexPlan');
-  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: index.md is a symlink' }, 'INDEX_UNREADABLE surfaces as a failure on the row');
+  eq(state.rowNote, { tone: 'error', text: 'Could not rebuild the list: index.md is a symlink', detail: '' }, 'INDEX_UNREADABLE surfaces as a failure on the row');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

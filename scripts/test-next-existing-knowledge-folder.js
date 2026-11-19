@@ -53,6 +53,7 @@
  *     property that keeps that inheritance true.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 // renderSidebar's KNOWLEDGE rows carry the shared status-row anatomy, so the
 // REAL shared/age.js helpers are injected into the sandbox rather than stubbed.

@@ -85,6 +85,7 @@
  *    proven equivalent to app.js's in test-next-text-system.js §1.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

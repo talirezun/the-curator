@@ -46,6 +46,7 @@
  *   • Nothing here checks Agent-owned files other than domains.js.
  */
 
+import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'fs';
 import path from 'path';
 
