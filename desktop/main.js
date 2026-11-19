@@ -57,6 +57,7 @@ import { decideQuit } from './lib/quit-decision.js';
 import { applyAboutPanel } from './lib/app-version.js';
 import { buildMenuTemplate, SETTINGS_NAV_SELECTOR } from './lib/menu.js';
 import { fetchUpdateCheck } from './lib/update-check.js';
+import { dialogText, loadSanitizer, minimalScrub, FATAL_MAIN, UPDATE_CHECK_MAIN, UPDATE_INSTALL_MAIN, QUIT_CHECK_MAIN, LOG_FOLDER_MAIN } from './lib/error-dialog.js';
 import { describeUpdate, describeInstallOutcome, ACTION_ID } from './lib/update-verdict.js';
 import { fetchUpdaterProbe, runInstall, applyOnlyForAction, UPDATE_LABEL_PENDING } from './lib/update-client.js';
 import { createUpdateWindow } from './lib/update-window.js';
@@ -230,7 +231,15 @@ if (!app.requestSingleInstanceLock()) {
 
 // ── 2. Boot ──────────────────────────────────────────────────────────────────
 
+// The shared scrub for native dialog text (src/brain/user-errors.js sanitizeDetail).
+// Starts as the local minimal scrub so a dialog raised BEFORE the import below
+// finishes, or after it failed, is still scrubbed; loadSanitizer never throws.
+let dialogSanitizer = minimalScrub;
+
 async function boot() {
+  loadSanitizer(() => import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'user-errors.js')).href))
+    .then((fn) => { dialogSanitizer = fn; })
+    .catch(() => { /* keep the local scrub */ });
   // ── The title bar is native, so its COLOUR is a native setting ────────────
   //
   // A real title bar follows the Mac's appearance, and on a light-mode Mac
@@ -627,7 +636,9 @@ async function showLogs() {
   let err = '';
   try { err = await shell.openPath(logsDir); } catch (e) { err = (e && e.message) || String(e); }
   if (err) {
-    dialog.showErrorBox('Could not open the log folder', `${logsDir}\n\n${err}`);
+    const openFailure = new Error(`${logsDir}: ${err}`);
+    dialog.showErrorBox('Could not open the log folder',
+      dialogText(LOG_FOLDER_MAIN, openFailure, dialogSanitizer));
   }
 }
 
@@ -730,9 +741,10 @@ async function checkForUpdates() {
     // fetchUpdateCheck and fetchUpdaterProbe never reject and describeUpdate is
     // pure, so reaching here means Electron's own dialog call failed. Say so
     // rather than leaving a menu item that appears to do nothing.
+    console.error('[The Curator] update check dialog:', (err && err.stack) || err);
     dialog.showErrorBox(
       'Could not check for updates',
-      (err && err.message) ? err.message : String(err)
+      dialogText(UPDATE_CHECK_MAIN, err, dialogSanitizer)
     );
   } finally {
     updateCheckInFlight = false;
@@ -745,9 +757,10 @@ async function checkForUpdates() {
     else if (next.type === 'open-settings') await openSettingsView();
     else if (next.type === 'install' || next.type === 'install-staged') await runMenuInstall(next);
   } catch (err) {
+    console.error('[The Curator] update dialog:', (err && err.stack) || err);
     dialog.showErrorBox(
       'Could not update The Curator',
-      (err && err.message) ? err.message : String(err)
+      dialogText(UPDATE_INSTALL_MAIN, err, dialogSanitizer)
     );
   }
 }
@@ -1192,7 +1205,7 @@ async function refreshTraySummary() {
     // indistinguishable from one that was never installed.
     traySnapshot = {
       ok: false, scopes: [],
-      warnings: ['Could not read project context: ' + ((err && err.message) || String(err))],
+      warnings: ['Could not read project context. ' + dialogText('', err, dialogSanitizer).trim()],
     };
   }
   renderTrayFromSnapshot();
@@ -1845,8 +1858,9 @@ app.on('before-quit', (event) => {
     .catch((err) => {
       // A failure to ASK is not a licence to quit. Leave the app running and
       // say why — the user can try again, or quit from the Dock.
+      console.error('[The Curator] quit check failed:', (err && err.stack) || err);
       dialog.showErrorBox('Could not check for writes in progress',
-        `The Curator did not quit, because it could not confirm that no work was in flight.\n\n${err && err.message ? err.message : String(err)}`);
+        dialogText(QUIT_CHECK_MAIN, err, dialogSanitizer));
     })
     .finally(() => { quitCheckInFlight = false; });
 });
@@ -1887,9 +1901,11 @@ function revealWindow() {
 }
 
 function fatal(err) {
+  // The full stack goes to the log (stderr), never into the dialog.
+  console.error('[The Curator] fatal:', (err && err.stack) || err);
   dialog.showErrorBox(
     'The Curator could not start',
-    (err && err.stack) ? err.stack : String(err)
+    dialogText(FATAL_MAIN, err, dialogSanitizer)
   );
   app.exit(1);
 }
