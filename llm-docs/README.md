@@ -60,7 +60,7 @@ Estimated tokens = **characters ÷ 4**.
 | `curator-links.md` | 8,000 |
 | `curator-site-map.md` | 1,200 |
 | `curator-reading.md` | 1,600 |
-| `curator-errors.md` | 3,500 |
+| `curator-errors.md` | 4,500 |
 | **Hard ceiling over the set** | **200,000** |
 
 The target for the whole set is roughly **95,000** tokens. The 200,000 ceiling
