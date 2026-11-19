@@ -248,6 +248,14 @@ section('§2 userMessageFrom');
     ok(e2.message === GENERIC && e2.detail === 'HTTP 500', 'errorFromResponse with no body → request-failed + HTTP status');
   }
   ok(userErrorText({ error: 'HTTP 500' }) === GENERIC, 'userErrorText returns the sentence only');
+  // A view's own fallback sentence, for a response with no message.
+  {
+    const e = errorFromResponse({ status: 502 }, {}, 'The invite token could not be re-generated.');
+    ok(e.message === 'The invite token could not be re-generated.' && e.detail === 'HTTP 502', 'fallback: the view\'s sentence, the status as detail (never in the sentence)');
+    const e2 = errorFromResponse({ status: 400 }, { error: 'Label is required.' }, 'unused');
+    ok(e2.message === 'Label is required.' && !e2.detail, 'fallback: unused when the server sent a message');
+    ok(userMessageFrom(null, { fallback: 'X failed.' }).error === 'X failed.', 'fallback with null');
+  }
   // Detail cleaning.
   const cd = cleanDetail('git push https://x-access-token:ghp_FAKEFAKEFAKEFAKE@github.com/o/r and https://abcdef0123456789abcdef0123456789abcdef01@github.com /home/bob/a C:\\Users\\Bob\\b');
   ok(!/ghp_|abcdef0123456789|\/home\/bob|Users\\Bob/.test(cd), 'cleanDetail strips URL credentials and home folders', cd);

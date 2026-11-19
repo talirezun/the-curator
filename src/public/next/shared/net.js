@@ -175,18 +175,22 @@ function generic(raw, code) {
  *     body (its `.detail`/`.code` are read), a JSON SyntaxError on an HTML page
  *     (→ server-outdated), anything else by its message.
  *   - a string: classified the same way.
- *   - null, an empty body, a body with no message: the generic request-failed
- *     sentence, with `HTTP <status>` as the detail when `opts.status` is given.
+ *   - null, an empty body, a body with no message: the view's own
+ *     `opts.fallback` sentence when given (e.g. 'The invite token could not be
+ *     re-generated.'), else the generic request-failed sentence; `HTTP <status>`
+ *     is the detail when `opts.status` is given.
  *
  * @param {unknown} x
- * @param {{status?: number}} [opts]
+ * @param {{status?: number, fallback?: string}} [opts]
  * @returns {{error: string, detail: string, code: string}}
  */
 export function userMessageFrom(x, opts = {}) {
   const status = opts && Number.isInteger(opts.status) ? opts.status : null;
   const statusDetail = status ? 'HTTP ' + status : '';
+  const fb = opts ? nonEmpty(opts.fallback) : '';
+  const none = (code) => fb ? { error: fb, detail: statusDetail, code: code || '' } : generic(statusDetail, code || undefined);
   try {
-    if (x == null) return generic(statusDetail);
+    if (x == null) return none();
     if (typeof x === 'string') return withStatus(fromText(x), statusDetail);
     if (x instanceof Error || (typeof x === 'object' && typeof x.message === 'string' && typeof x.name === 'string' && !('error' in x))) {
       if (x.curatorNetwork) return { error: x.message, detail: '', code: 'server-unreachable' };
@@ -200,16 +204,16 @@ export function userMessageFrom(x, opts = {}) {
     if (typeof x === 'object' && !Array.isArray(x)) {
       const msg = nonEmpty(x.error) || nonEmpty(x.message);
       const code = nonEmpty(x.code);
-      if (!msg) return generic(statusDetail, code || undefined);
+      if (!msg) return none(code);
       const detail = nonEmpty(x.detail);
       if (detail) return { error: msg, detail: cleanDetail(detail), code };
       const r = fromText(msg, code);
       if (code) r.code = code; // never replace an existing code
       return withStatus(r, statusDetail);
     }
-    return generic(statusDetail);
+    return none();
   } catch {
-    return generic(statusDetail);
+    return none();
   }
 }
 
@@ -226,9 +230,11 @@ export function userErrorText(x, opts) {
 /**
  * An Error to THROW from a failed response, keeping the server's detail and
  * code so the catch site can render them: `throw errorFromResponse(res, data)`.
+ * `fallback` is the view's own sentence for a response with no message (the
+ * status then goes in the detail, never in the sentence).
  */
-export function errorFromResponse(res, data) {
-  const u = userMessageFrom(data, { status: res && res.status });
+export function errorFromResponse(res, data, fallback) {
+  const u = userMessageFrom(data, { status: res && res.status, fallback });
   const e = new Error(u.error);
   if (u.detail) e.detail = u.detail;
   if (u.code) e.code = u.code;
