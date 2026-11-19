@@ -68,10 +68,12 @@ import { domainPath } from '../brain/files.js';
 import { toUserError } from '../brain/user-errors.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { recordDomainIdentities } from '../brain/domain-identity.js';
+import { replaceSharedBrainToken, SHAREDBRAIN_TOKEN_MESSAGES } from '../brain/sharedbrain-token.js';
 import {
   registerWrite,
   acquireFileLock,
   isUpdateInProgress,
+  hasActiveWrites,
   conflictResponse,
 } from '../brain/write-registry.js';
 
@@ -960,6 +962,55 @@ router.post('/:id/admin-token/rotate', gate, (req, res) => {
     res.json({ ok: true, admin_token: token, rotated: !!conn.admin_token });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Replace token (v3.99.2) ──────────────────────────────────────────────
+//
+// Give an EXISTING GitHub connection a new GitHub token (personal access
+// token) without leaving the brain: before this there was no way to replace a
+// token GitHub had rejected (re-running the wizard for the same brain is
+// refused by connectionClash). replaceSharedBrainToken() checks the token
+// against the connection's own repository first and writes nothing unless it
+// can do what this connection does; see its header for the role rules.
+//
+// POST, so server.js's cross-origin guard applies, and the token travels in
+// the body, never in a URL. Refused while any wiki write, Shared Brain push,
+// pull, synthesis or revoke is running, or an update is in progress (a token
+// swapped in the middle of a push would change the credential that push is
+// using). The admin token is a different credential and is not touched; the
+// route needs no admin proof because it grants nothing GitHub has not
+// already granted to the token being saved.
+//
+// The token is never echoed: not in a success, not in an error (every detail
+// is scrubbed of it), and this handler logs nothing.
+router.post('/:id/token', gate, async (req, res) => {
+  const id = req.params.id;
+  if (!isUuid(id)) return res.status(400).json({ error: 'id must be a UUID' });
+  if (isUpdateInProgress() || hasActiveWrites()) {
+    const { status, body } = conflictResponse('replace a Shared Brain token');
+    return res.status(status).json(body);
+  }
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token : '';
+  if (!token.trim()) {
+    if (!getSharedBrainWithToken(id)) return res.status(404).json({ error: 'connection not found' });
+    return res.status(400).json({
+      error: SHAREDBRAIN_TOKEN_MESSAGES['sharedbrain-token-missing'],
+      code: 'sharedbrain-token-missing',
+    });
+  }
+  try {
+    const out = await replaceSharedBrainToken(id, token);
+    if (out === null) return res.status(404).json({ error: 'connection not found' });
+    if (!out.ok) return res.status(out.status).json(out.body);
+    res.json({ ok: true, replaced: true, repo: out.repo });
+  } catch {
+    // replaceSharedBrainToken answers every expected outcome itself; this is
+    // a bug. Its message is not sent: it could in principle carry the token.
+    res.status(500).json({
+      error: SHAREDBRAIN_TOKEN_MESSAGES['sharedbrain-token-check-failed'],
+      code: 'sharedbrain-token-check-failed',
+    });
   }
 });
 

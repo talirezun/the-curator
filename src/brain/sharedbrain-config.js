@@ -423,6 +423,41 @@ export function saveSharedBrain(conn) {
   return maskTokens(conn);
 }
 
+/**
+ * Replace token (v3.99.2): put a new GitHub token on ONE existing GitHub
+ * connection and change nothing else — not its id, fellow_id, admin token,
+ * read_only flag, domains, queues, or any other connection in the file.
+ *
+ * The caller (sharedbrain-token.js) has already checked the token with GitHub.
+ * This is the write alone, and it refuses rather than guesses:
+ *   · the file is re-read now, so a push that patched its queues during the
+ *     check is kept; a connection that is gone, is not GitHub-backed, or now
+ *     names a different brain (`expectedIdentity`) is refused;
+ *   · an unreadable file reads as no connections, so it is refused, never
+ *     overwritten;
+ *   · the token's own floor is validateConnection's (20-400 chars, not the
+ *     masked display form).
+ * The record is rebuilt with the same key order, so the file is byte-identical
+ * apart from the token. Written atomically and 0600 by writeRaw. Throws a
+ * plain Error that never contains the token. Returns nothing.
+ */
+export function replaceSharedBrainPat(id, pat, expectedIdentity) {
+  if (!isUuid(id)) throw new Error('SharedBrain connection: id must be a UUID');
+  if (typeof pat !== 'string' || pat.length < 20 || pat.length > 400 || /…$/.test(pat) || /\s/.test(pat)) {
+    throw new Error('SharedBrain connection: the new github_pat is not a token (20-400 characters, no spaces)');
+  }
+  const raw = readRaw();
+  const idx = raw.connections.findIndex(c => c && c.id === id);
+  if (idx === -1) throw new Error('SharedBrain connection: not found (it may have been removed while the token was checked)');
+  const cur = raw.connections[idx];
+  if (cur.storage_type !== 'github') throw new Error('SharedBrain connection: not stored on GitHub, so it has no token to replace');
+  if (expectedIdentity !== undefined && connectionIdentity(cur) !== expectedIdentity) {
+    throw new Error('SharedBrain connection: it changed while the token was checked');
+  }
+  raw.connections[idx] = { ...cur, github_pat: pat };
+  writeRaw(raw);
+}
+
 /** Remove a connection by id. Returns true if removed, false if not found. */
 export function removeSharedBrain(id) {
   if (!isUuid(id)) return false;

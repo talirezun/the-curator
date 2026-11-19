@@ -593,11 +593,11 @@ try {
       [/Run system check/, "'Run system check'"],
       [/Settings › General/, "'General'"],
       [/Try Sync now again/, 'Sync now'],
-      [/Leave this Shared Brain/, 'Leave this Shared Brain'],
-      [/\+ Set up another/, '+ Set up another'],
       [/Add key/, "'Add key'"],
       [/New chat/, ' New chat</button>'],
       [/Compile to Wiki/, "'Compile to Wiki'"],
+      // v3.99.2: Shared Brain's Replace token, on the connection's card.
+      [/Replace token/, 'data-sb-action="token-replace-open">Replace token'],
     ];
     for (const [re, needle] of CONTROLS) {
       const users = all.filter(([, s]) => re.test(s)).map(([k]) => k);
@@ -605,7 +605,9 @@ try {
     }
     const named = all.map(([, s]) => s).join(' ');
     ok('no sentence names "Restart now" (it only shows when an update is waiting)', !/Restart now/.test(named));
-    ok('no sentence names a control that does not exist ("Replace token")', !/Replace token/.test(named));
+    // v3.99.2: "Replace token" is named only by the Shared Brain token sentences,
+    // whose control is the card's (Sync's has its own sentences, in sync.js).
+    ok('only github-token-rejected names Replace token', all.filter(([, s]) => /Replace token/.test(s)).every(([k]) => /github-token-rejected$/.test(k)));
     for (const [k, s] of all) {
       ok(`${k}: plain words (no errno, HTTP code, or stack)`, !RAW_IN_ERROR.test(s) && !/\bstderr\b|\bHEAD\b|\bENOENT\b|\bref\b/.test(s), s);
     }

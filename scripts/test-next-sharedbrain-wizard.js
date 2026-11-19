@@ -963,8 +963,8 @@ const cardBox = new Function('userMessageFrom', 'renderErrorDetail',
   }
   const rejected = c({ ok: false, error: '… → 401: Bad credentials', repoLabel: 'org/cohort' });
   ok(/EXPIRED/.test(rejected.message), 'the rejection names expiry, which is the likeliest cause and the one nobody is told about');
-  ok(/Leave this Shared Brain/.test(rejected.message),
-    '…and names a control that exists in this view, since the wizard is the only thing that takes a token');
+  ok(/Replace token below/.test(rejected.message) && !/Leave this Shared Brain|re-join/.test(rejected.message),
+    '…and names Replace token, which opens under the verdict (v3.99.2), never Leave and re-join (refused for the same brain)');
 
   const off = c({ ok: false, error: 'fetch failed', repoLabel: 'org/cohort' });
   eq(off.kind, 'unreachable', 'a network failure is not a verdict on the token');
@@ -976,7 +976,7 @@ const cardBox = new Function('userMessageFrom', 'renderErrorDetail',
   // and the raw text in `detail`. The code decides, not the wording.
   const plainBody = {
     ok: false,
-    error: "GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use Leave this Shared Brain and re-join with your invite.",
+    error: "GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use Replace token on this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain).",
     detail: 'listMembers: could not list contributions: GitHub GET tree:main → 401: Bad credentials',
     code: 'github-token-rejected',
     repoLabel: 'org/cohort',

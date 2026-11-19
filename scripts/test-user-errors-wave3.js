@@ -143,10 +143,13 @@ try {
     ok(e401 && e401.name === 'GitHubAdapterError' && e401.code === 'SHARED_BRAIN_AUTH', 'control: the adapter really threw SHARED_BRAIN_AUTH', e401 && e401.code);
     const member = UE.toUserError(e401, { area: 'sharedbrain' });
     const admin = UE.toUserError(e401, { area: 'sharedbrain', surface: 'admin' });
-    ok(member && /re-join with your invite/.test(member.error), 'the default (member) wording is unchanged', member && member.error);
+    // v3.99.2 (Replace token): both wordings now name Replace token on the card;
+    // re-joining was never possible (connectionClash refuses a second membership).
+    ok(member && /Replace token/.test(member.error) && !/re-join|Set up another/.test(member.error), 'the default (member) wording names Replace token, never re-join', member && member.error);
     ok(admin && admin.code === 'github-token-rejected' && admin.code === member.code, 'admin: the code is unchanged', admin && admin.code);
-    ok(admin && !/re-join|your invite/.test(admin.error) && /\+ Set up another/.test(admin.error) && /new token on GitHub/.test(admin.error),
-      'admin: the admin\'s step (a new token, the setup wizard via + Set up another), never "re-join with your invite"', admin && admin.error);
+    ok(admin && !/re-join|your invite|Set up another/.test(admin.error) && /Replace token/.test(admin.error) && /new token on GitHub/.test(admin.error)
+      && /admin token stays/.test(admin.error) && admin.error !== member.error,
+      'admin: the admin\'s own words (a new token that can write, Replace token, the admin token untouched), never re-join or the refused setup', admin && admin.error);
     ok(admin && admin.detail === member.detail && !admin.detail.includes('github_pat_'), 'admin: the same sanitised detail');
     const byText = UE.toUserError(e401.message, { area: 'sharedbrain', surface: 'admin' });
     ok(byText && byText.error === admin.error, 'admin: the same sentence from the text alone (a route\'s err.message)');
@@ -209,17 +212,17 @@ try {
     const asAdmin = await realFetch(`${BASE}/api/sharedbrain/${id}/members?surface=admin`);
     const a = await asAdmin.json();
     ok(asAdmin.status === 502 || asAdmin.status === 500, 'members (admin): the failure status is unchanged', asAdmin.status);
-    ok(a.code === 'github-token-rejected' && /\+ Set up another/.test(a.error) && !/re-join/.test(a.error), 'members?surface=admin: the admin\'s words, the same code', a);
+    ok(a.code === 'github-token-rejected' && /admin token stays/.test(a.error) && !/re-join/.test(a.error), 'members?surface=admin: the admin\'s words, the same code', a);
     ok(typeof a.detail === 'string' && !a.detail.includes('github_pat_') && !HOME_RE.test(a.detail), 'members (admin): detail carries no token or path', a.detail);
     const asMember = await (await realFetch(`${BASE}/api/sharedbrain/${id}/members`)).json();
-    ok(asMember.code === 'github-token-rejected' && /re-join with your invite/.test(asMember.error), 'members without ?surface: the default wording (token check, others)', asMember);
+    ok(asMember.code === 'github-token-rejected' && /Replace token/.test(asMember.error) && !/admin token stays/.test(asMember.error), 'members without ?surface: the default wording (token check, others)', asMember);
     const bogus = await (await realFetch(`${BASE}/api/sharedbrain/${id}/members?surface=__proto__`)).json();
     ok(bogus.error === asMember.error, 'an unknown ?surface value selects nothing (allow-list)', bogus);
 
     const fr = sbRoutes.__testing.errorFrame(e401, 'admin');
-    ok(fr.type === 'error' && fr.code === 'github-token-rejected' && /\+ Set up another/.test(fr.message), 'the revoke catch frame (surface admin): admin words', fr);
+    ok(fr.type === 'error' && fr.code === 'github-token-rejected' && /admin token stays/.test(fr.message), 'the revoke catch frame (surface admin): admin words', fr);
     const frDefault = sbRoutes.__testing.errorFrame(e401);
-    ok(/re-join with your invite/.test(frDefault.message), 'push/pull/synthesize frames: the default wording, unchanged');
+    ok(/Replace token/.test(frDefault.message) && !/admin token stays/.test(frDefault.message), 'push/pull/synthesize frames: the default (member) wording');
     const revokeSrc = readFileSync(path.join(ROOT, 'src/routes/sharedbrain.js'), 'utf8');
     const revokeBlock = revokeSrc.slice(revokeSrc.indexOf("router.post('/:id/revoke'"), revokeSrc.indexOf('// ── Invite-token utilities'));
     ok(/errorFrame\(err, 'admin'\)/.test(revokeBlock), 'cross-check: the revoke route\'s catch passes the admin surface');
