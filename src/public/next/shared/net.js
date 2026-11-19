@@ -35,7 +35,7 @@
 // The catalogue (USER_MESSAGES, classifyErrorText) is shared/user-errors.js,
 // the SAME file the server imports, so the two can never disagree.
 
-import { USER_MESSAGES, KLASS_CODES, classifyErrorText, composeUserMessage, isCatalogueCode } from './user-errors.js';
+import { USER_MESSAGES, KLASS_CODES, classifyErrorText, composeUserMessage, isCatalogueCode, scrubCredentials, scrubHomes } from './user-errors.js';
 import { renderStatus } from './text.js';
 
 // The same five replacements as text.js / app.js escapeHtml (text.js keeps its
@@ -58,6 +58,7 @@ const NETWORK_TEXT = /^(?:Failed to fetch|Load failed|NetworkError when attempti
 // classifier holds V8's and Firefox's HTML shapes. These are the parse failures
 // of an HTML or empty body that only a browser produces.
 const SAFARI_HTML_JSON = /^(?:SyntaxError: )?JSON Parse error: Unrecognized token '<'/;
+const STREAM_DIED = /^(?:TypeError: )?(?:network error|Error in input stream)$/;
 const SAFARI_EMPTY_JSON = /^(?:SyntaxError: )?(?:JSON Parse error: Unexpected EOF|The string did not match the expected pattern\.)$/;
 
 function isAbort(err, input, init) {
@@ -125,16 +126,18 @@ export function installFetchTranslation(target = globalThis) {
 
 // ── Shaping ────────────────────────────────────────────────────────────────
 
-/** Home folders and URL credentials out of a detail line, then a length cap. */
+/**
+ * Credentials and home folders out of a detail line, then a length cap. The
+ * shapes are the shared catalogue's (scrubCredentials, scrubHomes: the same
+ * ones the server's sanitizeDetail removes), so a raw error from an older
+ * server, or an Error's own text, never shows a key or a user name.
+ */
 export function cleanDetail(text) {
   if (typeof text !== 'string') return '';
   let t = text
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1')
-    .replace(/(https?:\/\/)[^\s/@:]{16,}@/gi, '$1')
-    .replace(/\/Users\/[^/\s'"`]+/g, '~')
-    .replace(/\/home\/[^/\s'"`]+/g, '~')
-    .replace(/[A-Za-z]:\\Users\\[^\\\s'"`]+/g, '~')
-    .trim();
+    .replace(/(https?:\/\/)[^\s/@:]{16,}@/gi, '$1');
+  t = scrubHomes(scrubCredentials(t)).trim();
   if (t.length > DETAIL_MAX) t = t.slice(0, DETAIL_MAX - 1) + '…';
   return t;
 }
@@ -149,13 +152,18 @@ function fromText(text, fallbackCode) {
   if (!t) return generic('', fallbackCode);
   if (SAFARI_HTML_JSON.test(t)) return { error: USER_MESSAGES['server-outdated'](), detail: '', code: 'server-outdated' };
   if (SAFARI_EMPTY_JSON.test(t)) return generic(t);
+  // A stream the server stopped mid-way: reader.read() rejects with exactly
+  // this text (Chromium: 'network error'; Firefox: 'Error in input stream').
+  if (STREAM_DIED.test(t)) return { error: USER_MESSAGES['server-unreachable'](), detail: '', code: 'server-unreachable' };
   const hit = classifyErrorText(t);
   if (!hit) return { error: t, detail: '', code: fallbackCode || '' };
   const error = composeUserMessage(hit) || t;
   const code = KLASS_CODES[hit.klass] || hit.klass;
   // The browser's own "Failed to fetch" and an HTML parse failure tell support
   // nothing the sentence doesn't; any other raw text is kept as the detail.
-  const detail = (code === 'server-unreachable' || code === 'server-outdated') ? '' : cleanDetail(t);
+  // When the message is The Curator's own sentence kept whole (an fs error
+  // inside it), the detail is the raw fragment, not the sentence again.
+  const detail = (code === 'server-unreachable' || code === 'server-outdated') ? '' : cleanDetail(hit.whole && hit.raw ? hit.raw : t);
   return { error, detail, code };
 }
 
@@ -263,8 +271,10 @@ export function rememberErrorDetail(message, detail, code) {
   if (typeof message !== 'string' || !message) return;
   const d = typeof detail === 'string' ? detail : '';
   const c = isCatalogueCode(code) ? code : '';
-  if (!d && !c) return;
+  // A later error with the same sentence and nothing to add must not inherit
+  // an earlier one's detail: forget it.
   ERROR_DETAILS.delete(message);
+  if (!d && !c) return;
   ERROR_DETAILS.set(message, { detail: d, code: c });
   if (ERROR_DETAILS.size > 50) ERROR_DETAILS.delete(ERROR_DETAILS.keys().next().value);
 }

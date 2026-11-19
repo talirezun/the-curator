@@ -526,7 +526,7 @@ function wireCounts(counts) {
 // unchanged. Returns null text for a non-string, exactly as wireStr would.
 function wireErrorText(text) {
   if (typeof text !== 'string' || !text) return { text, detail: null, code: null };
-  const u = toUserError(text, { area: 'ai' });
+  const u = toUserError(text, { area: 'ai', surface: 'ingest' });
   if (!u) return { text, detail: null, code: null };
   return { text: u.error, detail: u.detail || null, code: u.code || null };
 }
@@ -544,7 +544,7 @@ function wireJobText(text, reason) {
   if (u.detail || typeof text !== 'string' || (reason !== 'rate_limit' && reason !== 'service_unavailable')) return u;
   const m = TRANSIENT_TAIL.exec(text);
   if (!m) return u;
-  const r = toUserError(m[2], { area: 'ai' });
+  const r = toUserError(m[2], { area: 'ai', surface: 'ingest' });
   return {
     text: m[1],
     detail: sanitizeDetail(m[2]) || null,

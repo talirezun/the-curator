@@ -88,6 +88,11 @@ export function sentencesFor(code) {
   if (Object.prototype.hasOwnProperty.call(USER_MESSAGES, code)) {
     const out = [{ label: '', text: USER_MESSAGES[code](ctx) }];
     if (code === 'git-other') out.push({ label: 'On the Sync page', text: USER_MESSAGES[code]({ ...ctx, area: 'sync' }) });
+    if (code === 'ai-too-long') {
+      for (const [surface, label] of [['ingest', 'When ingesting'], ['chat', 'In chat'], ['compile', 'In Compile to Wiki']]) {
+        out.push({ label, text: USER_MESSAGES[code]({ ...ctx, surface }) });
+      }
+    }
     const admin = SURFACE_MESSAGES.sharedbrain && SURFACE_MESSAGES.sharedbrain.admin;
     if (admin && admin[code]) out.push({ label: 'On an admin’s screen', text: admin[code](ctx) });
     return out;
@@ -204,7 +209,7 @@ export const ENTRIES = {
   // ── AI providers and keys ──
   'ai-key-rejected': { section: 'ai',
     means: 'The provider refused the API key: it is wrong, deleted or expired. The request was not charged.',
-    todo: 'Settings › Providers & keys › Replace key. Verify AI connection in Settings › General checks it.' },
+    todo: 'Settings › Providers & keys › Replace key (the button reads Add key when no key is saved in Settings). Verify AI connection in Settings › General checks it.' },
   'ai-no-credit': { section: 'ai',
     means: 'The provider account has no credit left. The request was not charged.',
     todo: 'Add credit on the provider’s website, or switch provider in Settings › Providers & keys.' },
@@ -225,7 +230,7 @@ export const ENTRIES = {
     todo: 'Pick another model in Settings › Providers & keys.' },
   'ai-too-long': { section: 'ai',
     means: 'The text is more than the model can read at once. The request was not charged.',
-    todo: 'Pick a model that reads more, or split the source into smaller files.' },
+    todo: 'Pick a model that reads more. When ingesting, split the source into smaller files; in chat, start a New chat; in Compile to Wiki, compile with a model that reads more.' },
   'ai-bad-answer': { section: 'ai',
     means: 'The model answered, but not in a form The Curator could read. That answer is charged.',
     todo: 'Try again; if it repeats, pick a different model.' },

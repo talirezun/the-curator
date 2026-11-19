@@ -35,6 +35,7 @@ import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { getDesktopHook } from '../brain/desktop-host.js';
 import { buildSubprocessEnv } from '../brain/subprocess-env.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
+import { toUserError } from '../brain/user-errors.js';
 import { pickFolderWin32 } from '../brain/win-folder-dialog.js';
 import { pickFolderLinux, LINUX_NO_DIALOG_MESSAGE } from '../brain/linux-folder-dialog.js';
 import { validateKnowledgeFolderPath } from '../brain/knowledge-folder-path.js';
@@ -3279,6 +3280,23 @@ router.get('/openrouter/qualify/estimate', async (req, res) => {
  * aborts the in-flight call and settles the run as CANCELLED — which is stored
  * as its own outcome and NEVER as a model defect.
  */
+/**
+ * The qualify stream's `error` frame. Translated at the exit like every other
+ * SSE frame: a raw provider or fs text becomes the plain sentence, the raw
+ * text the (sanitised) detail. An existing code is never replaced; a miss
+ * keeps the old text, home paths scrubbed.
+ */
+function qualifyErrorFrame(err) {
+  const u = toUserError(err, { area: 'ai' });
+  return {
+    type: 'error',
+    error: u ? u.error : scrubPaths((err && err.message) || 'Unknown error'),
+    ...(u && u.detail ? { detail: u.detail } : {}),
+    code: (err && err.code) || (u && u.code) || null,
+  };
+}
+export const __qualifyErrorFrameForTest = qualifyErrorFrame;
+
 router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'), async (req, res) => {
   const pre = await preflightQualify(req.body || {});
   // `code` is forwarded when the preflight set one (today: MODEL_GONE). It was
@@ -3372,7 +3390,7 @@ router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'),
     }
   } catch (err) {
     if (!clientGone && !isCancelledError(err)) {
-      send({ type: 'error', error: (err && err.message) || 'Unknown error', code: (err && err.code) || null });
+      send(qualifyErrorFrame(err));
     }
   } finally {
     res.end();

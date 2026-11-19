@@ -8,7 +8,8 @@
  * source scan of every `showErrorBox(...)` call is WEAK BY NATURE and is only a
  * cross-check on the executed part.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -48,7 +49,18 @@ for (const [label, sanitize] of [
   ok(t.includes(DETAIL_LABEL), `${label}: detail line present`);
   ok(t.split('\n').length === 3, `${label}: exactly sentence + blank + one detail line`);
 }
-ok(FATAL_MAIN.includes('Help › Show Logs'), 'main sentence names the menu item');
+// v3.99.2 audit: Help › Show Logs does not exist once the app has exited, so
+// the fatal sentence names the log FOLDER, home shortened to ~.
+ok(!FATAL_MAIN.includes('Help › Show Logs'), 'the fatal sentence no longer points at a menu that is gone after exit');
+{
+  const fm = mod.fatalMain('/Users/jane/Library/Logs/The Curator', '/Users/jane');
+  ok(fm.includes('curator.log') && fm.includes('~/Library/Logs/The Curator') && !fm.includes('/Users/jane'),
+    'fatalMain names curator.log and the folder, home shortened to ~');
+  ok(mod.defaultLogsDir({ platform: 'darwin', env: {}, homedir: '/Users/jane' }) === '/Users/jane/Library/Logs/The Curator',
+    'defaultLogsDir: the Mac log folder logger.js writes to');
+  ok(/TheCurator\\logs$/.test(mod.defaultLogsDir({ platform: 'win32', env: { LOCALAPPDATA: 'C:\\U\\AppData\\Local' }, homedir: 'C:\\U' })),
+    'defaultLogsDir: the Windows log folder');
+}
 ok(dialogText('X.', new Error(''), undefined) !== 'X.' || true, 'empty message tolerated');
 ok(dialogText('X.', null, undefined) === 'X.', 'no error: no detail line');
 ok(firstLine('line one\n    at foo (bar.js:1:1)') === 'line one', 'string error: first line');
@@ -68,23 +80,44 @@ clean(dialogText(FATAL_MAIN, stacky(), s4), 'import succeeded');
 const main = readFileSync(path.join(ROOT, 'desktop/main.js'), 'utf8');
 const m = main.match(/\nfunction fatal\(err\) \{[\s\S]*?\n\}\n/);
 ok(!!m, 'fatal() found in main.js');
-function runFatal(err, sanitizer) {
-  const shown = []; const logged = []; let exited = null;
-  const f = new Function('dialog', 'app', 'console', 'dialogText', 'dialogSanitizer', 'FATAL_MAIN',
+const LOG_DIR = mkdtempSync(path.join(os.tmpdir(), 'curator-fatal-log-'));
+function runFatal(err, sanitizer, { logsDir = LOG_DIR, writeFatalLog = mod.writeFatalLog } = {}) {
+  const shown = []; const logged = []; let exited = null; const order = [];
+  const spyAppend = (...a) => { order.push('log'); return appendFileSync(...a); };
+  const f = new Function('dialog', 'app', 'console', 'dialogText', 'dialogSanitizer', 'logsDir', 'defaultLogsDir',
+    'fatalMain', 'writeFatalLog', 'appendFileSync', 'mkdirSync',
     `${m[0]}\nreturn fatal;`)(
-    { showErrorBox: (t, b) => shown.push([t, b]) },
+    { showErrorBox: (t, b) => { order.push('dialog'); shown.push([t, b]); } },
     { exit: (c) => { exited = c; } },
     { error: (...a) => logged.push(a.join(' ')) },
-    dialogText, sanitizer, FATAL_MAIN);
+    dialogText, sanitizer, logsDir, () => LOG_DIR, mod.fatalMain, writeFatalLog, spyAppend, mkdirSync);
   f(err);
-  return { shown, logged, exited };
+  return { shown, logged, exited, order };
 }
 for (const [label, san] of [['minimal', minimalScrub], ['shared', composeSanitizer(shared.sanitizeDetail)]]) {
   const r = runFatal(stacky(), san);
   ok(r.shown.length === 1 && r.exited === 1, `fatal ${label}: one dialog, exit 1`);
   clean(r.shown[0][1], `fatal ${label}`);
-  ok(r.shown[0][1].startsWith(FATAL_MAIN), `fatal ${label}: plain text`);
-  ok(r.logged.join('\n').includes('at boot ('), `fatal ${label}: full stack still goes to the log`);
+  ok(r.shown[0][1].startsWith(mod.fatalMain(LOG_DIR)), `fatal ${label}: plain text`);
+  ok(r.logged.join('\n').includes('at boot ('), `fatal ${label}: full stack still goes to stderr`);
+  // v3.99.2 audit: the stack reaches curator.log, BEFORE the dialog, scrubbed.
+  ok(r.order[0] === 'log' && r.order.indexOf('dialog') > 0, `fatal ${label}: curator.log is written before the dialog`);
+  const logText = readFileSync(path.join(LOG_DIR, 'curator.log'), 'utf8').trim().split('\n').pop();
+  ok(logText.includes('at boot (') && logText.includes('[error] [desktop]'), `fatal ${label}: the log line carries the stack frames`);
+  ok(!logText.includes(HOME) && !logText.includes(SK) && !logText.includes(TOKEN40), `fatal ${label}: the log line has no home path or token`);
+  ok(r.shown[0][1].includes('curator.log') && r.shown[0][1].includes(mod.displayFolder(LOG_DIR)),
+    `fatal ${label}: the dialog names the log folder`);
+}
+{
+  // Never throws: an unwritable log folder still shows the dialog and exits.
+  const r = runFatal(stacky(), minimalScrub, { logsDir: path.join(LOG_DIR, 'curator.log', 'not-a-dir') });
+  ok(r.shown.length === 1 && r.exited === 1, 'fatal: a log write that fails still shows the dialog and exits');
+}
+{
+  // Mutation control: a fatal() whose log write does nothing leaves curator.log unchanged.
+  const before = readFileSync(path.join(LOG_DIR, 'curator.log'), 'utf8');
+  runFatal(stacky(), minimalScrub, { writeFatalLog: () => '' });
+  ok(readFileSync(path.join(LOG_DIR, 'curator.log'), 'utf8') === before, 'mutation control: without writeFatalLog nothing reaches the log');
 }
 
 // ── cross-check: no showErrorBox call in main.js passes a stack or a raw message ──

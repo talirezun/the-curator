@@ -40,7 +40,7 @@ import { MAX_FILE_BYTES, MAX_FILE_MB } from '../brain/ingest-queue.js';
 // catalogue does not recognise carried the user's home folder to the screen).
 // `err.message` itself is never changed.
 function errorFrame(err, fallbackMessage) {
-  const u = toUserError(err, { area: 'ai' });
+  const u = toUserError(err, { area: 'ai', surface: 'ingest' });
   if (!u) return { type: 'error', message: scrubPaths(String(fallbackMessage ?? '')) };
   return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
 }

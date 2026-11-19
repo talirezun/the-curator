@@ -15,8 +15,11 @@
  * install is exactly when `fatal()` runs), so every path here falls back to
  * `minimalScrub`, a small local copy of the same idea, and the result is ALWAYS
  * passed through `minimalScrub` as well. The full stack never reaches a dialog;
- * main.js writes it to the log.
+ * fatal() writes it, scrubbed, to curator.log first (writeFatalLog).
  */
+
+import os from 'node:os';
+import path from 'node:path';
 
 export const DETAIL_LABEL = 'Technical detail (for support):';
 const MAX_CHARS = 300;
@@ -107,9 +110,79 @@ export function dialogText(main, err, sanitize) {
   return detail ? `${main}\n\n${DETAIL_LABEL} ${detail}` : main;
 }
 
+// ── The fatal dialog: the app is about to exit ───────────────────────────────
+// Help › Show Logs does not exist once the app has exited, and before v3.99.2
+// nothing wrote the main process's failure to curator.log (its console.error
+// goes to a stderr nobody sees in a packaged app). So fatal() first APPENDS
+// the full, scrubbed stack to curator.log (writeFatalLog), then the dialog
+// names that folder in plain words, home shortened to ~.
+
+export const LOG_FILE_NAME = 'curator.log';
+
+/**
+ * The log folder logger.js writes to, for when main.js has not resolved it
+ * through paths.js yet (or that import is what failed). Same answer as
+ * src/brain/paths.js getLogsDir() for a real install.
+ */
+export function defaultLogsDir({ platform = process.platform, env = process.env, homedir = os.homedir() } = {}) {
+  if (env && env.CURATOR_TEST_LOG_DIR) return path.resolve(env.CURATOR_TEST_LOG_DIR);
+  if (platform === 'win32') {
+    const base = (env && env.LOCALAPPDATA) || path.win32.join(homedir, 'AppData', 'Local');
+    return path.win32.join(base, 'TheCurator', 'logs');
+  }
+  return path.join(homedir, 'Library', 'Logs', 'The Curator');
+}
+
+/** A folder for a person to read: their home folder shortened to ~. */
+export function displayFolder(dir, homedir = os.homedir()) {
+  const d = String(dir || '');
+  if (homedir && (d === homedir || d.startsWith(homedir + path.sep) || d.startsWith(homedir + '/'))) {
+    return '~' + d.slice(homedir.length);
+  }
+  return d;
+}
+
+/** The fatal dialog's sentence, naming where the log is. */
+export function fatalMain(logsDir, homedir = os.homedir()) {
+  const where = logsDir ? displayFolder(logsDir, homedir) : '';
+  if (!where) return FATAL_MAIN;
+  return 'The Curator could not start. Quit it and open it again. If it keeps happening, send the file ' +
+    `${LOG_FILE_NAME} from the folder ${where} to support.`;
+}
+
+/**
+ * The full error for the log: the stack (or the message), every line
+ * scrubbed by `sanitize`, joined the way logger.js joins a multi-line record.
+ */
+export function fatalLogText(err, sanitize) {
+  const clean = typeof sanitize === 'function' ? composeSanitizer(sanitize) : minimalScrub;
+  let raw = '';
+  try {
+    raw = (err && typeof err === 'object' && (err.stack || err.message)) || String(err == null ? '' : err);
+  } catch { raw = ''; }
+  return String(raw).split(/\r?\n/).map((l) => clean(l).trimEnd()).filter(Boolean).join(' ⏎ ');
+}
+
+/**
+ * Append one `[error] [desktop]` line to curator.log in `logsDir`, in
+ * logger.js's format, mode 0600. Never throws; returns the file written, or ''.
+ * @param {{err: unknown, logsDir: string, sanitize?: Function, fs: {appendFileSync: Function, mkdirSync: Function}, now?: () => Date}} o
+ */
+export function writeFatalLog({ err, logsDir, sanitize, fs, now = () => new Date() }) {
+  try {
+    if (!logsDir || !fs) return '';
+    fs.mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+    const file = path.join(logsDir, LOG_FILE_NAME);
+    fs.appendFileSync(file, `${now().toISOString()} [error] [desktop] fatal: could not start: ${fatalLogText(err, sanitize)}\n`, { mode: 0o600 });
+    return file;
+  } catch {
+    return '';
+  }
+}
+
 export const FATAL_MAIN =
   'The Curator could not start. Quit it and open it again. If it keeps happening, ' +
-  'choose Help › Show Logs and send the log to support.';
+  'send the file curator.log from The Curator\'s log folder to support.';
 export const UPDATE_CHECK_MAIN =
   'The Curator could not check for updates. Try again in a moment. If it keeps happening, ' +
   'choose Help › Show Logs and send the log to support.';

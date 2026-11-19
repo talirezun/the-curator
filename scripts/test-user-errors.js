@@ -50,7 +50,7 @@ import { readFile, mkdir, readdir } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { exec, spawnSync } from 'node:child_process';
+import { exec, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -584,6 +584,8 @@ try {
         for (const [k, fn] of Object.entries(byKlass)) all.push([`${area}/${surface}/${k}`, fn({ area, surface })]);
       }
     }
+    // v3.99.2 audit: ai-too-long's next step follows the surface.
+    for (const surface of ['ingest', 'chat', 'compile', 'health']) all.push([`ai-too-long/${surface}`, USER_MESSAGES['ai-too-long']({ area: 'ai', surface })]);
     const CONTROLS = [
       [/Settings › Providers & keys/, "'Providers & keys'"],
       [/Replace key/, "'Replace key'"],
@@ -593,6 +595,9 @@ try {
       [/Try Sync now again/, 'Sync now'],
       [/Leave this Shared Brain/, 'Leave this Shared Brain'],
       [/\+ Set up another/, '+ Set up another'],
+      [/Add key/, "'Add key'"],
+      [/New chat/, ' New chat</button>'],
+      [/Compile to Wiki/, "'Compile to Wiki'"],
     ];
     for (const [re, needle] of CONTROLS) {
       const users = all.filter(([, s]) => re.test(s)).map(([k]) => k);
@@ -644,6 +649,219 @@ try {
     eq('the child exited cleanly', r.status, 0);
     eq('stdout is empty', r.stdout, '');
     ok('...and the error was logged to the file instead', (() => { try { return readFileSync(path.join(tmp, 'logs', 'curator.log'), 'utf8').includes('files-missing'); } catch { return false; } })(), r.stderr);
+  }
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§11 — v3.99.2 audit: an fs error inside a deliberate sentence');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    // The measured case: the generic files sentence ("…Then try again.")
+    // replaced a sentence that said the reply was CHARGED, so a person paid twice.
+    const FS = "EACCES: permission denied, open '/Users/alice/brain/domains/work/wiki/entities/acme.md'";
+    const charged = `The AI's reply was received (and charged), but not one of its 3 page(s) could be saved: ${FS}. Nothing else was changed.`;
+    const u = toUserError(new Error(charged), { area: 'ai' });
+    eq('the charged sentence is kept word for word, the raw text swapped for a plain clause', u && u.error,
+      "The AI's reply was received (and charged), but not one of its 3 page(s) could be saved: this computer didn't allow access to acme.md. Nothing else was changed.");
+    eq('...its detail is the raw fragment alone, scrubbed', u && u.detail, "EACCES: permission denied, open '.../acme.md'");
+    eq('...with the files code', u && u.code, 'files-not-allowed');
+    const body = userErrorBody({ error: charged });
+    ok('...and the same through userErrorBody', body.error === u.error);
+    // Two fragments in one sentence: both become clauses.
+    const two = toUserError(`Could not write a.md: ${FS}. Then ENOSPC: no space left on device, write. Nothing was changed.`);
+    ok('two raw fragments in one sentence both become clauses', two && !/E[A-Z]{3,}:/.test(two.error) && two.error.includes('Nothing was changed.') && /the disk is full/.test(two.error), two && two.error);
+    // A bare fs text is still the class's own sentence.
+    eq('the fs text alone is still the class sentence', toUserError(FS).error, USER_MESSAGES['files-not-allowed']({ name: 'acme.md' }));
+    // A capitalised lead with nothing after: kept, ':' becomes '.'.
+    eq('a prose lead with nothing after is kept before the class sentence', toUserError(`Could not read your saved API keys: ${FS}`).error,
+      `Could not read your saved API keys. ${USER_MESSAGES['files-not-allowed']({ name: 'acme.md' })}`);
+    // A programmer's label is still dropped.
+    eq('a lower-case label is dropped, as before', toUserError(`pushDomain: ${FS}`).error, USER_MESSAGES['files-not-allowed']({ name: 'acme.md' }));
+    // An fs error OBJECT whose message is a deliberate sentence: the sentence wins over the structural hit.
+    const obj = Object.assign(new Error(`The document was written but the manifest was not: ${FS}. It is an orphan file until the next save.`), { code: 'EACCES', syscall: 'open', path: '/x/acme.md' });
+    ok('an fs error object with a deliberate message keeps "was written but" and "orphan"', /was written but/.test(toUserError(obj).error) && /orphan/.test(toUserError(obj).error), toUserError(obj).error);
+
+    // The census variant: a REAL fs error substituted into EVERY template in
+    // src/brain and src/routes; the visible sentence keeps every money/state word.
+    const FS_VALUES = [
+      FS,
+      'ENOSPC: no space left on device, write',
+      "ENOENT: no such file or directory, open '/Users/alice/brain/wiki/log.md'",
+      "EPERM: operation not permitted, unlink '/Users/alice/brain/wiki/x.md'",
+    ];
+    const WORDS = ['charged', 'Nothing was', 'nothing was', 'orphan', 'was written but', 'not charged', 'was received'];
+    const tpls = literals.filter((l) => l.text.includes('X') && /\s/.test(l.text) && /^src\/(?:brain|routes)\//.test(l.file.split(path.sep).join('/')));
+    const census = () => {
+      const bad = [];
+      let checked = 0;
+      for (const t of tpls) {
+        const words = WORDS.filter((w) => t.text.includes(w));
+        if (!words.length) continue;
+        // An X that is only ever a quoted NAME ("rescue orphans in \"X\"") is a
+        // domain or page name, never where an error's text goes.
+        if (!t.text.replace(/["'`]X["'`]/g, '').includes('X')) continue;
+        for (const v of FS_VALUES) {
+          const text = t.text.split('X').join(v);
+          const r = toUserError(new Error(text));
+          const visible = r ? r.error : text;
+          if (r) checked++;
+          const lost = words.filter((w) => !visible.includes(w));
+          if (lost.length || (r && /\bE[A-Z]{3,}: /.test(visible))) bad.push(`${t.file}:${t.line} lost ${lost.join('|') || 'nothing (raw left)'}: ${JSON.stringify(visible.slice(0, 110))}`);
+        }
+      }
+      return { bad, checked };
+    };
+    const c0 = census();
+    ok(`fs census: the census translates money/state templates (${c0.checked} renders)`, c0.checked >= 20, String(c0.checked));
+    ok(`fs census: 0 renders lose a money/state word or leave raw fs text (${tpls.length} templates × ${FS_VALUES.length} values)`, c0.bad.length === 0, c0.bad.slice(0, 8).join('\n      '));
+    // MUTATION: the pre-audit fs builder (no whole/lead) must turn the census red.
+    const SIG = SHARED.__SIGNATURES;
+    const i = SIG.findIndex(([re]) => re.source.includes('(E[A-Z]{2,}): '));
+    ok('mutation: found the fs signature', i >= 0);
+    const saved = SIG[i];
+    SIG[i] = [new RegExp(saved[0].source.replace('[a-z ,-]', '[a-z ,]')), (m) => {
+      const klass = SHARED.FS_ERRNO_KLASS[m[1]];
+      return klass ? { klass, name: SHARED.basenameOf(m[4]) || undefined } : null;
+    }];
+    const cm = census();
+    SIG[i] = saved;
+    ok(`mutation: the pre-audit fs builder turns the fs census red (${cm.bad.length} renders lose a word)`, cm.bad.length > 0);
+    eq('restored: the fs census is green again', census().bad.length, 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§12 — v3.99.2 audit: every fs code from its REAL Node text');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const map = (await import('node:util')).getSystemErrorMap();
+    const desc = (code) => { for (const [, [n, d]] of map) if (n === code) return d; return null; };
+    let n = 0;
+    for (const [code, klass] of Object.entries(SHARED.FS_ERRNO_KLASS)) {
+      const d = desc(code);
+      if (!d) continue; // EDQUOT/EDEADLK: libuv has no text on this platform
+      const text = `${code}: ${d}, open '/Volumes/x/a.md'`;
+      n++;
+      eq(`${code} ("${d}") → ${klass}`, classifyErrorText(text)?.klass, klass);
+    }
+    ok(`checked the real texts (${n})`, n >= 12);
+    eq('EROFS: read-only file system (the hyphen) is reachable', toUserError(new Error("EROFS: read-only file system, open '/Volumes/x/a.md'"))?.code, 'files-read-only-disk');
+    // Real errors, produced by Node itself.
+    const realCases = [
+      [() => readFile(path.join(tmp, 'absent', 'x.md')), 'files-missing'],
+      [() => mkdir(tmp), 'files-exists'],
+      [() => readFile(tmp), 'files-wrong-kind'],
+      [() => readFile(path.join(tmp, 'x'.repeat(300))), 'files-name-too-long'],
+    ];
+    for (const [fn, klass] of realCases) {
+      const e = await caught(fn);
+      eq(`a real ${e && e.code} error → ${klass}`, toUserError(e)?.code, klass);
+      eq(`...and by its text alone`, classifyErrorText(e && e.message)?.klass, klass);
+    }
+    // A missing PROGRAM is not a missing file of the person's.
+    const sp = Object.assign(new Error('spawn osascript ENOENT'), { code: 'ENOENT', syscall: 'spawn osascript', path: 'osascript', errno: -2 });
+    const su = toUserError(sp);
+    eq('spawn ENOENT is internal-error, not files-missing', su && su.code, 'internal-error');
+    ok('...and never names iCloud or Knowledge base', su && !/iCloud|Knowledge base/.test(su.error));
+    const real = await caught(() => new Promise((res, rej) => { const c = spawn('curator-no-such-program-xyz'); c.on('error', rej); c.on('exit', res); }));
+    eq('a REAL spawn failure is internal-error', toUserError(real)?.code, 'internal-error');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§13 — v3.99.2 audit: user text after a label is never classified');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const RAW = ['fetch failed', 'Request timed out.', 'Connection error.', 'x is not a function', "ENOENT: no such file or directory, open 'notes.md'", 'Command failed: git push'];
+    const LABELS = ['Unknown domain: X', 'Page not found: X', 'Source page not found: X', 'Orphan page not found: X'];
+    for (const l of LABELS) ok(`census sees the label "${l}"`, literals.some((t) => t.text === l || t.text.startsWith(l.replace('X', ''))), l);
+    const echo = () => LABELS.flatMap((l) => RAW.map((r) => l.replace('X', r))).filter((t) => classifyErrorText(t));
+    eq('a person\'s text after "Unknown domain: " / "Page not found: " is never classified', echo().length, 0);
+    const b = { error: 'Unknown domain: fetch failed' };
+    ok('GET /api/wiki/fetch%20failed: the 404 body comes back unchanged', userErrorBody(b, { area: 'wiki' }) === b);
+    ok('...a real "Could not reach GitHub: fetch failed" is still classified', classifyErrorText('Could not reach GitHub: fetch failed')?.klass === 'network-unreachable');
+    // MUTATION: without the echo guard the census is red.
+    const re = SHARED.__USER_ECHO_RE;
+    const src = re.source;
+    re.compile('^(?!)');
+    const m = echo().length;
+    re.compile(src);
+    ok(`mutation: without the echo guard ${m} user texts are classified`, m > 0);
+    eq('restored', echo().length, 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§14 — v3.99.2 audit: wording true on the screen it lands on');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const long = '400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}';
+    const by = (surface) => toUserError(long, { area: 'ai', ...(surface ? { surface } : {}) }).error;
+    ok('ai-too-long in ingest: split the source', /split the source into smaller files/.test(by('ingest')));
+    ok('ai-too-long in chat: New chat, never "split the source"', /New chat/.test(by('chat')) && !/split the source/.test(by('chat')));
+    ok('ai-too-long in compile: Compile to Wiki, never "split the source"', /Compile to Wiki/.test(by('compile')) && !/split the source/.test(by('compile')));
+    ok('ai-too-long with no surface (Health): only the model step', !/split the source|New chat|Compile/.test(by()) && /Providers & keys/.test(by()));
+    ok('every ai-too-long wording still says not charged', ['ingest', 'chat', 'compile', undefined].every((s) => /not charged/.test(by(s))));
+    // The middleware reads the surface from the path.
+    eq('surfaceFromPath /api/chat/x', UE.surfaceFromPath('/api/chat/x'), 'chat');
+    eq('surfaceFromPath /api/ingest-queue/x', UE.surfaceFromPath('/api/ingest-queue/x'), 'ingest');
+    eq('surfaceFromPath /api/compile/x', UE.surfaceFromPath('/api/compile/x'), 'compile');
+    eq('surfaceFromPath /api/health/x', UE.surfaceFromPath('/api/health/x'), undefined);
+    {
+      let sent = null;
+      const res = { json(b) { sent = b; return b; } };
+      UE.userErrorBodies({ method: 'POST', originalUrl: '/api/chat/work' }, res, () => {});
+      res.json({ error: long });
+      ok('the middleware on /api/chat words ai-too-long for chat', sent && /New chat/.test(sent.error), sent && sent.error);
+    }
+    // Replace key / Add key: both labels of the one button.
+    ok('ai-key-rejected names both labels of the key button', /Replace key \(or Add key\)/.test(USER_MESSAGES['ai-key-rejected']()));
+    // Not the provider's health: no "Try again in a few minutes".
+    const NOT = [
+      'LLM call failed: [GoogleGenerativeAI Error]: Candidate was blocked due to SAFETY',
+      '[GoogleGenerativeAI Error]: Text not available. Response was blocked due to RECITATION',
+      'LLM call failed: 400 {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: 64000 > 8192, which is the maximum allowed"}}',
+      'OpenRouter chat → HTTP 400: {"error":{"message":"max_tokens is too large"}}',
+    ];
+    for (const t of NOT) eq(`not classified: ${t.slice(0, 70)}`, toUserError(t), null);
+    // …while a real overload is still classified.
+    eq('a real Gemini 503 is still classified', toUserError('[GoogleGenerativeAI Error]: Error fetching from https://x/y: [503 Service Unavailable] overloaded')?.code, 'ai-overloaded');
+    eq('an Anthropic 400 without an output limit is still classified', toUserError('400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: bad"}}')?.code, 'ai-provider-error');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§15 — v3.99.2 audit: sanitizeDetail closes the remaining shapes');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    const HEX40 = '0123456789abcdef0123456789abcdef01234567';
+    const GHP = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const CASES = [
+      ['ESM stack frame', 'TypeError: x\n    at foo (file:///Users/alice/second-brain/src/brain/x.js:10:5)', ['alice', 'file://']],
+      ['file:// URL', 'file:///Users/alice/brain/x.md failed', ['alice']],
+      ['path after a colon', 'path:/Users/alice/brain/x.md', ['alice']],
+      ['non-home path after a colon', 'path:/Volumes/Alice Backup/brain/x.md', ['Volumes', 'Alice']],
+      ['UNC share', '\\\\server\\share\\Alice\\x.md', ['server', 'Alice']],
+      ['ssh:// userinfo', `ssh://${HEX40}@github.com/u/r`, [HEX40]],
+      ['git+https userinfo', `git+https://${GHP}@github.com/u/r`, [GHP]],
+      ['percent-encoded @', `https://${HEX40}%40github.com/u/r`, [HEX40]],
+      ['token@host with no scheme', `could not read Password for '${HEX40}@github.com'`, [HEX40]],
+      ['bare 40-hex', `token ${HEX40} rejected`, [HEX40]],
+      ['Authorization: token', `Authorization: token ${HEX40}`, [HEX40]],
+      ['Authorization: Basic', 'Authorization: Basic dXNlcjpwYXNzd29yZDEyMzQ1Njc4OQ==', ['dXNlcjpw']],
+      ['x-api-key header', 'x-api-key: sk-ant-api03-short', ['sk-ant']],
+      ['a long Gemini key', `key ${['AI', 'za'].join('')}SyA1234567890abcdefghijklmnopqrstuvw bad`, ['AIza', 'uvw']],
+      ['home with spaces, quoted', "ENOENT: no such file or directory, open '/Users/alice smith/My Brain/wiki/log.md'", ['alice', 'smith']],
+      ['home with spaces, unquoted', 'open /Users/alice smith/Google Drive/x.md now', ['alice', 'smith']],
+      ['a home folder alone', 'HOME=/Users/alice', ['alice']],
+      ['a Windows home with spaces', 'C:\\Users\\Alice Smith\\brain\\x.md', ['Alice', 'Smith']],
+    ];
+    const run = () => CASES.filter(([, t, f]) => { const d = sanitizeDetail(t); return f.some((x) => d.includes(x)); }).map(([l, t]) => `${l}: ${JSON.stringify(sanitizeDetail(t))}`);
+    const leaks = run();
+    ok(`sanitizeDetail: 0 of ${CASES.length} shapes leak`, leaks.length === 0, leaks.join('\n      '));
+    // Cap after scrubbing, still.
+    const long = 'x'.repeat(UE.DETAIL_MAX_CHARS - 5) + ` Authorization: token ${HEX40}`;
+    const capped = sanitizeDetail(long);
+    ok('cap after scrub: no partial token at the boundary', capped.length <= UE.DETAIL_MAX_CHARS && !/0123456789abcdef/.test(capped), capped.slice(-30));
+    // A readable detail stays readable.
+    eq('a plain detail is unchanged', sanitizeDetail('Unexpected end of JSON input'), 'Unexpected end of JSON input');
+    // MUTATION: without the shared scrubs, the census leaks.
+
+    ok('the shared scrub is what the server uses (dumb cross-check: credentials alone)', !SHARED.scrubCredentials(`ssh://${HEX40}@x.com`).includes(HEX40));
   }
 } finally {
   for (const r of hang.splice(0)) { try { r.destroy(); } catch { /* gone */ } }
