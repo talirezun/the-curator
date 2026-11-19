@@ -98,6 +98,9 @@ import { progressRingHtml } from '../shared/progress-ring.js';
 // adopter; see that module's header for why a sixth hand-rolled `reader.read()`
 // loop was not written here.
 import { readSseFrames } from '../shared/sse.js';
+// v3.99.2 plain-language errors: the sentence a person can act on, and the raw
+// text below it as "Technical detail (for support):", always visible.
+import { userMessageFrom, errorFromResponse, renderErrorDetail, plainError } from '../shared/net.js';
 // The app-wide freshness scale, dot AND word, so the project pill's mark
 // means the same thing here as it does in Context and Domains. One ladder,
 // one stylesheet (shared/freshness.css owns the `fresh-` prefix outright).
@@ -892,7 +895,9 @@ async function boot(token, scopeReq) {
     ]);
   } catch (err) {
     if (!isCurrentMount(token)) return; // H1 fix — the mount that started this boot() may already be gone
-    state.loadError = 'Could not reach the app server (' + err.message + ').';
+    // v3.99.2: the plain sentence (server not running, or an old one still
+    // running after an update), its detail remembered beside it.
+    state.loadError = plainError(err, { fallback: 'Chat could not load.' });
     // Set BEFORE the paint, not after: renderShell reads it, and an error
     // frame rendered while `booted` is still false would show a loader
     // instead of the error.
@@ -1161,7 +1166,7 @@ async function loadConversationList(mountToken, opts = {}) {
     const data = await res.json();
     if (convToken !== state.convToken) return; // a newer list load superseded this
     if (!isCurrentMount(mountToken)) return; // H1 fix — this mount may already be gone
-    if (!res.ok) throw new Error(data.error || 'Could not load conversations.');
+    if (!res.ok) throw errorFromResponse(res, data, 'Could not load conversations.');
     state.conversations = Array.isArray(data.conversations) ? data.conversations : [];
     state.listTotal = Number.isInteger(data.total) ? data.total : state.conversations.length;
     state.listUnreadable = Array.isArray(data.unreadable) ? data.unreadable : [];
@@ -1172,7 +1177,7 @@ async function loadConversationList(mountToken, opts = {}) {
     state.conversations = [];
     state.listTotal = 0;
     state.listUnreadable = [];
-    state.loadError = 'Could not load conversations (' + err.message + ').';
+    state.loadError = plainError(err, { fallback: 'Could not load conversations.' });
   }
 
   pruneSelection();
@@ -1340,13 +1345,19 @@ async function selectConversation(id, mountToken, opts = {}) {
     const data = await res.json();
     if (selectToken !== state.selectToken) return;
     if (!isCurrentMount(mountToken)) return;
-    if (!res.ok) throw new Error(data.error || 'Could not load this conversation.');
+    if (!res.ok) throw errorFromResponse(res, data, 'Could not load this conversation.');
     state.thread = Array.isArray(data.messages) ? data.messages : [];
     applyConversationProject(domain, state.thread, mountToken);
   } catch (err) {
     if (selectToken !== state.selectToken) return;
     if (!isCurrentMount(mountToken)) return;
-    state.thread = [{ role: 'assistant', content: '', error: 'Could not load this conversation (' + err.message + ').' }];
+    const lead = 'Could not load this conversation.';
+    const failure = userMessageFrom(err, { fallback: lead });
+    state.thread = [{
+      role: 'assistant', content: '',
+      error: failure.error === lead ? lead : lead + ' ' + failure.error,
+      ...(failure.detail ? { errorDetail: failure.detail } : {}),
+    }];
   }
   // ── THE RE-ATTACH POINT (v3.64.1) ───────────────────────────────────────
   // THE one place a conversation becomes the conversation on screen — every
@@ -1728,9 +1739,11 @@ async function sendCurrentMessage() {
     const data = isEventStream
       ? await consumeChatStream(res.body, streamRec, here)
       : await res.json();
-    // Left byte-identical, including the unguarded `data.error`: on the JSON
-    // path a null body must still fail exactly the way it did before.
-    if (!res.ok) throw new Error(data.error || 'The request failed.');
+    // v3.99.2: the JSON error body is {error, detail, code}; all three travel
+    // on the Error so the failed turn can show the detail under the sentence.
+    // A body with no message says 'The request failed.' with the status as the
+    // detail (it used to throw on a null body).
+    if (!res.ok) throw errorFromResponse(res, data, 'The request failed.');
 
     // Must flip BEFORE the relevance check below, regardless of outcome —
     // state.sending is this function's own send-lock and must never be
@@ -1929,8 +1942,12 @@ async function sendCurrentMessage() {
     // actually chose — captured at SEND time (see requestedModelAtSend), never
     // read from the composer at render time, because the dropdown is live during
     // a turn and re-deriving it there is the v3.13.2 relabelling bug.
+    // v3.99.2: the plain sentence, with the technical detail kept beside it
+    // (rendered below the sentence, never stored in the conversation file).
+    const failure = userMessageFrom(err);
     state.thread.push({
-      role: 'assistant', content: '', error: err.message,
+      role: 'assistant', content: '', error: failure.error,
+      ...(failure.detail ? { errorDetail: failure.detail } : {}),
       requestedModel: requestedModelAtSend || null,
     });
     renderThreadOnly(here());
@@ -2335,12 +2352,26 @@ function buildCompileConfirmCopy(est, domain, convTitle, estimateError, opts) {
   const where = `Pages are written into the "${domain}" wiki, merging into pages that already exist.`;
 
   if (!est || !est.estimate) {
+    const reason = estimateError || 'no estimate was returned';
+    // v3.99.2: a reason that is a whole sentence (the server's plain error, or
+    // "The Curator isn't responding. …") follows the copy instead of sitting
+    // inside its parentheses; a short reason keeps the old shape byte for byte.
+    if (/[.!?]$/.test(reason)) {
+      return {
+        title,
+        message,
+        confirmLabel: 'Compile',
+        detail:
+          `The cost could not be estimated, so this compile will spend an unknown amount at your ` +
+          `provider's rate. ${where} ${reason}`,
+      };
+    }
     return {
       title,
       message,
       confirmLabel: 'Compile',
       detail:
-        `The cost could not be estimated (${estimateError || 'no estimate was returned'}), so this compile will ` +
+        `The cost could not be estimated (${reason}), so this compile will ` +
         `spend an unknown amount at your provider's rate. ${where}`,
     };
   }
@@ -2602,11 +2633,12 @@ async function startCompile() {
       '&conversationId=' + encodeURIComponent(convId));
     let body = null;
     try { body = await res.json(); } catch { /* non-JSON body */ }
-    if (!res.ok) estimateError = (body && body.error) || ('HTTP ' + res.status);
+    // v3.99.2: the server's plain sentence, never a bare status code.
+    if (!res.ok) estimateError = userMessageFrom(body, { fallback: 'the server could not estimate it' }).error;
     else if (!body) estimateError = 'the server sent an unreadable response';
     else est = body;
   } catch (err) {
-    estimateError = err && err.message ? err.message : 'the request failed';
+    estimateError = err && err.message ? userMessageFrom(err).error : 'the request failed';
   } finally {
     // Released BEFORE the dialog opens: the dialog is its own modal gate, and
     // leaving the button disabled behind a dismissed dialog would strand it.
@@ -2746,9 +2778,11 @@ async function runCompile() {
     if (!res.ok && res.status !== 200) {
       // Pre-flight validation errors (missing field, unknown domain, a
       // read-only mirror, an in-progress update) are plain JSON, not SSE.
-      let errMsg = 'HTTP ' + res.status;
-      try { const j = await res.json(); errMsg = j.error || errMsg; } catch { /* non-JSON body — keep the generic message */ }
-      throw new Error(errMsg);
+      // v3.99.2: the body's plain sentence with its detail; a body with no
+      // message says so in words, with the status as the detail.
+      let j = null;
+      try { j = await res.json(); } catch { /* non-JSON body — keep the generic message */ }
+      throw errorFromResponse(res, j, 'The compile could not start.');
     }
     if (!res.body) throw new Error('Streaming is not supported by this browser.');
 
@@ -2774,13 +2808,19 @@ async function runCompile() {
         } else if (event.type === 'refused') {
           refused = event.reason;
         } else if (event.type === 'error') {
-          errored = event.message;
+          errored = event;
           if (event.spent && typeof event.spent === 'object') spentOnError = event.spent;
         }
       }
     }
 
-    if (errored) throw new Error(errored);
+    if (errored) {
+      // v3.99.2: the frame's technical detail and code travel with the sentence.
+      const e = new Error(typeof errored.message === 'string' && errored.message ? errored.message : 'The compile did not finish.');
+      if (typeof errored.detail === 'string' && errored.detail) e.detail = errored.detail;
+      if (typeof errored.code === 'string' && errored.code) e.code = errored.code;
+      throw e;
+    }
     if (refused) {
       // Normal outcome, not an error — see this section's header comment.
       renderCompileOutcome('<div class="chat-compile-refused">' + icon('alertCircle', 14) + ' ' + escapeHtml(refused) + '</div>');
@@ -2827,7 +2867,9 @@ async function runCompile() {
       }
     } catch { /* best-effort, see above */ }
   } catch (err) {
-    renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(err.message) + '</div>' +
+    const failure = userMessageFrom(err);
+    renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(failure.error) + '</div>' +
+      renderErrorDetail(failure.detail) +
       renderSpent(spentOnError));
   } finally {
     // Releases the lock. Runs unconditionally — not isCurrentMount-gated,
@@ -2881,13 +2923,13 @@ async function openWikiReader(path, titleHint) {
     if (token !== state.readerToken) return; // superseded by a newer open/backlink click
     if (!isCurrentMount(mount)) return; // the VIEW moved on (navigate() already closed the reader)
     if (!isCurrentReader(epoch)) return; // the READER was explicitly closed (or reopened) since we started
-    if (!res.ok) throw new Error(page.error || 'Could not load this page.');
+    if (!res.ok) throw errorFromResponse(res, page, 'Could not load this page.');
     paintReaderPage(path, page, mount);
   } catch (err) {
     if (token !== state.readerToken) return;
     if (!isCurrentMount(mount)) return;
     if (!isCurrentReader(epoch)) return;
-    openReader({ slug: path, title: fallbackTitle, error: err.message }, mount);
+    openReader({ slug: path, title: fallbackTitle, error: plainError(err) }, mount);
   }
 }
 
@@ -5492,9 +5534,13 @@ async function consumeChatStream(body, rec, mountTokenNow) {
   }
 
   if (errored) {
-    throw new Error(
+    const e = new Error(
       typeof errored.message === 'string' && errored.message ? errored.message : 'The request failed.'
     );
+    // v3.99.2: the frame's technical detail and code travel with the sentence.
+    if (typeof errored.detail === 'string' && errored.detail) e.detail = errored.detail;
+    if (typeof errored.code === 'string' && errored.code) e.code = errored.code;
+    throw e;
   }
   if (!final) {
     throw new Error('The connection closed before the answer was finished. Nothing was saved — ask again.');
@@ -7816,6 +7862,7 @@ function renderThreadOnly(token, opts) {
           '<div class="chat-msg-eyebrow mono">THE CURATOR</div>' +
           '<div class="chat-error-note" role="status">' +
             '<div class="chat-error-detail">' + escapeHtml(m.error) + '</div>' +
+            renderErrorDetail(m.errorDetail) +
             failedModelNoteHtml(m, eyebrowCtx) +
           '</div>' +
           reaskButtonHtml(i) +

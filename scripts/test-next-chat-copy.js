@@ -40,6 +40,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');

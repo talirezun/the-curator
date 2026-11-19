@@ -80,6 +80,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1171,13 +1172,16 @@ section('7. Source-level guards — runCompile() event handling (refused vs erro
     'pre-flight HTTP failures are checked before the stream is ever read');
   ok(!/throw new Error\(\s*\(?\s*await/.test(runCompileSrc),
     'no `(await ...)` sits directly inside a `throw new Error(...)` call');
-  ok(/try \{ const j = await res\.json\(\); errMsg = j\.error \|\| errMsg; \} catch/.test(runCompileSrc),
+  // v3.99.2: the body (or null) goes to errorFromResponse, whose own fallback
+  // is the view's sentence, so a non-JSON body still gets a safe message.
+  ok(/try \{ j = await res\.json\(\); \} catch/.test(runCompileSrc) &&
+     /throw errorFromResponse\(res, j, '[^']+'\)/.test(runCompileSrc),
     'the pre-flight JSON parse is wrapped in its own try/catch, with a safe fallback message');
 
   // `errored` (the in-stream `error` event) is checked and thrown BEFORE
   // `refused`/`final` are inspected — an error must win over a stale
   // leftover refusal/done from the same stream.
-  const erroredIdx = runCompileSrc.indexOf('if (errored) throw');
+  const erroredIdx = runCompileSrc.indexOf('if (errored) {'); // v3.99.2: a block that throws, keeping the frame's detail
   const refusedIdx = runCompileSrc.indexOf('if (refused)');
   ok(erroredIdx > -1 && refusedIdx > -1 && erroredIdx < refusedIdx, '`errored` is checked before `refused`');
 

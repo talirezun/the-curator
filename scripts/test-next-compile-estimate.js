@@ -69,6 +69,7 @@ import { fileURLToPath } from 'url';
 import http from 'http';
 import https from 'https';
 import { stripComments, functionSource, checkLiteral } from './test-helpers/source-scan.js';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');

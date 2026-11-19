@@ -45,6 +45,9 @@
 import { ageWordsFor } from '../shared/age-ticker.js';
 import { machineWord as platformMachineWord } from '../shared/platform.js';
 import { renderStatus, renderDescription } from '../shared/text.js';
+// v3.99.2 plain-language errors: the sentence, and its technical detail kept
+// beside it so the status box can show it below.
+import { userMessageFrom, rememberErrorDetail, errorDetailOf, renderUserError } from '../shared/net.js';
 import { renderFoldRows, renderFoldRow, renderFoldItem, renderActionCard, renderStatusLine, renderFoldLine } from '../shared/section.js';
 
 function escapeHtml(s) {
@@ -1198,7 +1201,7 @@ export function renderAgentApps(st) {
   const status = s.status || null;
   const data = status && status.data;
   if (!data) {
-    if (status && status.error) return renderStatus({ state: 'danger', title: 'Could not check your AI apps', detail: status.error });
+    if (status && status.error) return renderUserError({ error: status.error, detail: errorDetailOf(status.error) }, { title: 'Could not check your AI apps' });
     return renderStatus({ state: 'neutral', title: 'Checking your AI apps…' });
   }
   const tools = Array.isArray(data.tools) ? data.tools : [];
@@ -1207,8 +1210,8 @@ export function renderAgentApps(st) {
     checkBusy: s.checkBusy || null, checks: s.checks || {} };
   const models = appRowModels(status, ctx);
   const out = [];
-  if (isStr(s.error)) out.push(withAttrs(renderStatus({ state: 'danger', title: s.error }), ' data-mcpi-error'));
-  if (status.error) out.push(renderStatus({ state: 'danger', title: 'Could not check again', detail: status.error }));
+  if (isStr(s.error)) out.push(withAttrs(renderUserError({ error: s.error, detail: errorDetailOf(s.error) }), ' data-mcpi-error'));
+  if (status.error) out.push(renderUserError({ error: status.error, detail: errorDetailOf(status.error) }, { title: 'Could not check again' }));
   if (isStr(s.copied)) out.push(withAttrs(renderStatus({ state: 'success', title: s.copied }), ' data-mcpi-copied'));
   const notes = out.splice(0, out.length);
   if (notes.length) out.push('<div class="cur-card-notes">' + notes.join('') + '</div>');
@@ -1284,8 +1287,13 @@ async function readJson(res) {
   try { j = await res.json(); } catch { /* not JSON */ }
   if (res.ok && j) return { ok: true, data: j };
   const code = j && (j.code || (j.error && j.error.code) || j.reason) || 'http_' + res.status;
-  const message = (j && (typeof j.error === 'string' ? j.error : j.error && j.error.message || j.message)) || 'HTTP ' + res.status;
-  return { ok: false, code: String(code), message: String(message) };
+  // v3.99.2: a plain sentence, never a bare status code; the server's detail
+  // (or an older server's raw text) rides along as `detail`.
+  const raw = (j && (typeof j.error === 'string' ? j.error : j.error && j.error.message || j.message)) || '';
+  const u = (j && typeof j.error === 'string')
+    ? userMessageFrom(j, { status: res.status, fallback: 'The Curator could not finish that request.' })
+    : userMessageFrom(raw || null, { status: res.status, fallback: 'The Curator could not finish that request.' });
+  return { ok: false, code: String(code), message: String(u.error), ...(u.detail ? { detail: u.detail } : {}) };
 }
 
 async function call(url, body) {
@@ -1327,5 +1335,9 @@ export function failureWords(r) {
   if (code === 'busy') return 'Another install is still running. Wait a moment, then try again.';
   if (code === 'stale') return r.message;
   if (code === 'network') return 'Could not reach The Curator. Nothing was changed.';
-  return (r && r.message ? r.message : 'The request failed.') + ' Nothing was changed.';
+  const words = (r && r.message ? r.message : 'The request failed.') + ' Nothing was changed.';
+  // v3.99.2: the technical detail, remembered beside the exact sentence so the
+  // status box that shows it can render "Technical detail (for support): …".
+  if (r && typeof r.detail === 'string') rememberErrorDetail(words, r.detail);
+  return words;
 }

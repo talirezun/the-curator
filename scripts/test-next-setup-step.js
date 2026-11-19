@@ -645,7 +645,11 @@ section('§17 a Repository file, in the reader (contract §C)');
   // Loading and an old server.
   ok(/aria-busy="true">Reading AGENTS\.md…/.test(S.fileReaderContent(d, 'AGENTS.md', undefined, { md }).bodyHtml), 'while the file is read: "Reading AGENTS.md…"');
   const oldSrv = S.fileReaderContent(d, 'AGENTS.md', { error: 'HTTP 404' }, { md });
-  ok(/The file could not be shown here: HTTP 404\./.test(oldSrv.bodyHtml) && /cur-setup-st-ok">block current/.test(oldSrv.bodyHtml) && /Reveal AGENTS\.md</.test(oldSrv.bodyHtml),
+  // v3.99.2: "HTTP 404" is no longer the reason a person reads; it is the plain
+  // request-failed sentence, with the status kept as the visible technical detail.
+  ok(/The file could not be shown here\. The Curator couldn/.test(oldSrv.bodyHtml) && !/shown here: HTTP 404/.test(oldSrv.bodyHtml)
+    && /tx-error-detail/.test(oldSrv.bodyHtml) && /HTTP 404/.test(oldSrv.bodyHtml)
+    && /cur-setup-st-ok">block current/.test(oldSrv.bodyHtml) && /Reveal AGENTS\.md</.test(oldSrv.bodyHtml),
     'an older server (no file route): the row\'s state, Reveal and Copy still there, and the reason said');
   ok(S.fileReaderContent(d, 'secrets.txt', fileResp(), { md }) === null, 'a name that is not a row of this folder: nothing opens');
   ok(S.fileReaderContent({ ...d, repo: null }, 'AGENTS.md', fileResp(), { md }) === null, 'no repository set: no file reader');

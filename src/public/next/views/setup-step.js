@@ -55,6 +55,8 @@ import { freshnessTier } from '../shared/age.js';
 // (import-free, DOM-free — the suite still imports this module in Node).
 import { listRowBodyHtml } from '../shared/model-row.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
+// v3.99.2 plain-language errors.
+import { userMessageFrom, renderErrorDetail } from '../shared/net.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1461,8 +1463,15 @@ export function fileReaderContent(data, name, resp, opts = {}) {
   if (resp === undefined || resp === null) {
     body = '<p class="mem-setup-empty" aria-busy="true">Reading ' + escapeHtml(name) + '…</p>';
   } else if (resp.error || resp.ok === false) {
-    body = '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here: ' + (resp.error || 'no answer') + '.')
-      + ' Reveal it to open it in Finder.</p>';
+    // v3.99.2: raw text (an older server's "HTTP 404", a raw file error)
+    // becomes the plain sentence, with the raw text below it for support. A
+    // short refusal word from the route (repo_not_set) keeps the old shape.
+    const why = resp.error ? userMessageFrom(resp) : null;
+    body = (why && /[.!?]$/.test(why.error))
+      ? '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here. ' + why.error)
+        + ' Reveal it to open it in Finder.</p>' + renderErrorDetail(why.detail)
+      : '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here: ' + ((why && why.error) || 'no answer') + '.')
+        + ' Reveal it to open it in Finder.</p>';
   } else if (resp.exists === false) {
     body = '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Not in this folder</h3><p class="mem-setup-ev-p">'
       + (isMarker
