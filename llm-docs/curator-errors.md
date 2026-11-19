@@ -1,0 +1,96 @@
+# The Curator — error messages and what to do
+
+## How do I read an error message in The Curator?
+
+Since version 3.99.2 every error is a plain sentence: what happened, whether anything was lost or charged (said only when the app knows), and the one next step, naming a button on that screen. Under many messages a smaller grey line reads "Technical detail (for support): …", sometimes ending "(code: …)". The technical text is the original message from the AI provider, GitHub, git or the computer, with recognised tokens, keys and the home folder's name removed; a person does not need to read it, and should copy the whole line when asking for help. The code names the message: look it up in the tables below. A message with no code was written for one exact situation and explains itself. Words in square brackets on the full list, such as [AI provider] or [file name], are filled in on screen. Agents using the MCP get the original technical text, not these sentences. The full list with each exact sentence: https://github.com/talirezun/the-curator/blob/main/docs/errors.md
+
+<!-- error-catalogue:begin -->
+
+## What do the Sync error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| sync-token-rejected | GitHub refused the token Sync has saved. It has usually expired or been deleted. Your files stay on this computer. | Create a new token on GitHub, then use Replace token on the Sync page (it opens under this message). On the Connect form, check the token and press Connect again. |
+| sync-token-no-access | GitHub knows the token, but it is not allowed to write to this repository. | Give the token Contents: Read and write on the repository (fine-grained) or the repo scope (classic), then use Replace token, which opens under this message. |
+| sync-repo-not-found | GitHub has no repository at that address, or the token cannot see it. | Open the address in your browser to check it exists, and that the token has access to it. |
+| sync-offline | The Curator could not reach GitHub. | Check the internet connection. Some networks block git; try another one. |
+| sync-remote-ahead | GitHub has changes this computer does not have yet, so a push was refused. | Press Pull only (or Sync now, which pulls first), then push again. |
+| sync-merge-conflict | What GitHub sent would overwrite files on this computer, or the same lines changed in both places. Sync stopped rather than choose for you. | Copy your domains folder somewhere safe before syncing again, then follow the merge-conflict steps in the Sync guide, or ask for help. |
+| sync-busy-retry | Another sync check (for example the MCP server or a second copy of the app) ran at the same moment. Nothing was changed. | Wait a moment, then try again. |
+| sync-held-back-collision | A file Sync does not send (one that looks like a secret) was changed here and on GitHub. Nothing was replaced. | See What Sync does not back up on the Sync page, move that file out of your knowledge folder, then sync again. |
+| sync-nested-repo | A folder inside your knowledge folder has its own git history, so Sync cannot back it up. | Sync again. The Curator leaves that folder out and names it on the Sync page. |
+| sync-git-missing | Git, which Sync uses, is not installed or not found. | On a Mac, run `xcode-select --install` in Terminal, then try again. |
+| sync-failed | Sync stopped for a reason The Curator does not recognise. Nothing was lost. | Try again in a minute. If it repeats, send the Technical detail line to support. |
+| git-other | A git step The Curator runs failed in a way it does not recognise. | Try again. If it fails the same way, send the Technical detail line to support. |
+
+## What do the Replace token error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| sync-token-missing | Check and save was pressed with the token field empty. | Paste the new token, then press Check and save. |
+| sync-not-configured | Sync is not connected on this computer, so there is no token to replace. | Connect a repository on the Sync page first. |
+| sync-token-invalid | What was pasted does not look like a GitHub token. Nothing was changed. | Copy the whole token from GitHub again (ghp_… or github_pat_…). |
+| sync-config-unreadable | The Curator could not read which repository Sync uses, so it could not check the token. Nothing was changed. | Disconnect this repository and connect it again with the new token. Your wiki files stay as they are. |
+| sync-new-token-rejected | GitHub refused the new token. Sync keeps the token it had. | Check that you copied all of it and that it has not expired, then try again. |
+| sync-new-token-no-access | The new token is valid but cannot open Sync’s repository. Nothing was changed. | Give the token that repository with Contents: Read and write (fine-grained) or the repo scope (classic). |
+| sync-token-check-offline | The Curator could not reach GitHub to check the new token. Nothing was changed. | Check the internet connection, then try again. |
+| sync-token-check-failed | The new token could not be checked, for another reason. Nothing was changed. | Try again in a minute. If it repeats, send the Technical detail line to support. |
+| sync-token-save-failed | GitHub accepted the new token, but The Curator could not save it. Sync keeps the token it had. | Try again. If it repeats, send the Technical detail line to support. |
+
+## What do the AI provider error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| ai-key-rejected | The provider refused the API key: it is wrong, deleted or expired. The request was not charged. | Settings › Providers & keys › Replace key. Verify AI connection in Settings › General checks it. |
+| ai-no-credit | The provider account has no credit left. The request was not charged. | Add credit on the provider’s website, or switch provider in Settings › Providers & keys. |
+| ai-rate-limited | The provider is limiting how many requests the account may make (a free tier’s quota, for example). | Wait a minute and try again, or switch provider in Settings › Providers & keys. |
+| ai-overloaded | The provider is having problems on its side. | Wait a few minutes, then try again. |
+| ai-unreachable | The Curator could not connect to the provider. | Check the internet connection (and any VPN or firewall), then try again. |
+| ai-timeout | The provider took too long to answer. It may still bill the request. | Try again in a few minutes. |
+| ai-model-unavailable | The provider says the chosen model is not available. | Pick another model in Settings › Providers & keys. |
+| ai-too-long | The text is more than the model can read at once. The request was not charged. | Pick a model that reads more, or split the source into smaller files. |
+| ai-bad-answer | The model answered, but not in a form The Curator could read. That answer is charged. | Try again; if it repeats, pick a different model. |
+| ai-provider-error | The provider could not complete the request, for another reason. | Try again in a few minutes, or pick a different model or provider. |
+
+## What do the file and folder error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| files-not-allowed | This computer refused access to a file: the folder is read-only, or macOS privacy settings block The Curator. | Allow The Curator in System Settings › Privacy & Security › Files and Folders, or make the folder writable. |
+| files-disk-full | The disk is full. | Free some space, then try again. |
+| files-missing | A file or folder is not where The Curator expects it: moved, renamed, deleted, or not yet downloaded from iCloud or Dropbox. | Check it is there. If you moved the knowledge folder, choose its new place in Settings › Knowledge base. |
+| files-exists | Something with that name is already there. | Choose another name, or move the existing one first. |
+| files-busy | A file is in use or still downloading from cloud storage. | Wait a moment, then try again. |
+| files-name-too-long | A file name is longer than this computer allows. | Use a shorter name. |
+| files-read-only-disk | The disk is read-only. | Choose a knowledge folder on a writable disk in Settings › Knowledge base. |
+| files-wrong-kind | A folder was expected and a file found, or the other way round, usually after a rename outside The Curator. | Check the name in the message, then try again. |
+
+## What do the Shared Brain error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| github-token-rejected | GitHub refused the access token this computer uses for the Shared Brain. | Create a new token on GitHub. A member uses Leave this Shared Brain and re-joins with the invite; an admin uses + Set up another and runs the setup again for the same repository and shared domain. |
+| github-not-found | GitHub cannot find the Shared Brain’s repository, or the token cannot see it. | A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. |
+| github-busy | GitHub is limiting requests from this token for now. | Wait a few minutes, then try again. |
+| github-unavailable | GitHub is having problems on its side. | Wait a few minutes, then try again. |
+
+## What do the internet connection error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| network-unreachable | The Curator could not reach a service it needed (for example GitHub or the update check). | Check the internet connection, then try again. |
+| network-certificate | The service’s security certificate could not be checked, often because of a company network, VPN or security software. | Try another network. |
+
+## What do the error codes about The Curator itself mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| server-unreachable | The page could not reach The Curator: it is restarting, was closed, or the computer slept. | Wait a few seconds and try again. If it does not come back, quit The Curator and open it again. |
+| server-outdated | The Curator was updated, but the old version is still running. | Quit The Curator and open it again. |
+| api-route-missing | The page asked for something the running version does not have, usually because an older version is still running. | Quit The Curator and open it again. |
+| request-failed | A request came back with no usable answer. | Try again. If it keeps failing, use Run system check in Settings › General. |
+| request-too-large | More was sent in one go than The Curator accepts (50 MB). | Try a smaller selection. |
+| request-malformed | The Curator received a request it could not read. | Reload the page, then try again. |
+| internal-error | Something went wrong inside The Curator (a bug). | Try again. If it keeps happening, send the Technical detail line to support. |
+
+<!-- error-catalogue:end -->

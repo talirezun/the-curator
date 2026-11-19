@@ -2,6 +2,30 @@
 
 The server exposes a REST API at `http://localhost:3333/api`. All endpoints return JSON.
 
+## Errors (v3.99.2)
+
+Every error body has one shape, at any status (a `200 {ok: false, error}` included):
+
+```json
+{ "error": "<plain sentence: what happened, whether anything was lost or charged, the next step>",
+  "detail": "<optional: the sanitised technical text, for support>",
+  "code": "<optional: a stable kebab-case id>" }
+```
+
+- **`error`** is always present and is the field every client already reads. It is a sentence written for a person.
+- **`detail`** is optional and never carries a credential: it is the original technical text (an fs errno, a provider SDK message, git's output) passed through the URL-credential strip, `scrubSecrets` and `scrubPaths`, then capped at 600 characters (Sync's own `detail` is cleaned by `sanitizeErrorDetail` and capped at 2,000). Never a stack.
+- **`code`** names the message. The codes a person is shown are listed, with each exact sentence, in the [error catalogue](errors.md) (`CATALOGUE_CODES` in `src/public/next/shared/user-errors.js`). Some routes also carry older codes a client branches on (`MODEL_GONE`, `confirm_required`, `remote-not-empty`, `sync_running`, …); those are never replaced, and the app's support line shows only catalogue codes.
+
+**How a body gets there.** `src/server.js` installs three pieces from `src/brain/user-errors.js` on `/api`:
+
+| Piece | What it does |
+|---|---|
+| `userErrorBodies` | Wraps `res.json` for that request only. A body whose `error` is **raw machine text** matching an anchored signature (an fs errno in Node's exact shape, an Anthropic / Gemini / OpenRouter SDK message, `Command failed: git …`, a GitHub adapter status line, a V8 bug message) gets the catalogue sentence as `error`, the original (sanitised) as `detail`, and a `code` when it had none. **Everything else passes through as the same object**: a route's own sentence, a body that already has `detail`, an existing `code`, arrays |
+| `apiNotFound` | An unknown `/api/…` path, any method: **`404 {error, detail: "<METHOD> <path>", code: "api-route-missing"}`**. Before v3.99.2 an unknown `GET` returned the app's HTML page with `200`, which a client's `res.json()` then failed to parse |
+| `apiErrorHandler` | A body over the 50 MB JSON limit: **`413 {error, code: "request-too-large"}`**. Malformed JSON (and body-parser's other refusals): **`400 {error, code: "request-malformed"}`**. A thrown, recognised error: its sentence at its own status (else 500). A thrown 4xx with a message: that message, unchanged. Anything else: **`500 {error, detail, code: "internal-error"}`**. Never Express's HTML error page |
+
+Server-sent event streams (`{type: "error", message}`) and job records polled over the wire (the batch ingest queue, Sync's `/job`, Health's compare-all) carry the same plain sentence, with `detail` and `code` beside it where the frame has room. The text stored on disk and the thrown `err.message` inside the server never change: code branches on them.
+
 ---
 
 ## GET /api/domains
@@ -2676,7 +2700,7 @@ Before a Health action writes, `src/brain/health-undo.js` copies every file it w
 
 ## Personal Sync endpoints (`/api/sync`)
 
-Mounted at `/api/sync/` (`src/routes/sync.js`). Nine routes, and **that is the whole
+Mounted at `/api/sync/` (`src/routes/sync.js`). Eleven routes, and **that is the whole
 surface** — there is deliberately no revert, discard or history endpoint. Every mutating
 route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
 `conflictResponse` rather than letting a git command race it.
@@ -2691,7 +2715,20 @@ route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
 | `POST /push` | yes | commits + pushes |
 | `POST /pull` | yes | merges (`-X theirs`) |
 | `POST /sync` | yes | pull then push |
-| `DELETE /disconnect` | yes | no — removes this install's credential file only |
+| `DELETE /disconnect` | yes | no — removes this install's credential file (and, unless the git dir was adopted, its sync history folder) |
+| `POST /token` (v3.99.2) | yes | no — replaces the token only, after GitHub accepts it |
+| `GET /job` | no | no |
+
+**Every failure answers `{error, detail?, code?}`** (v3.99.2, `describeSyncError()` in
+`src/brain/sync.js`): `error` a plain sentence, `detail` git's text with credentials
+stripped and the home folder shown as `~`, `code` one of the `sync-*` codes in the
+[error catalogue](errors.md#sync) (`sync-token-rejected`, `sync-token-no-access`,
+`sync-repo-not-found`, `sync-offline`, `sync-remote-ahead`, `sync-merge-conflict`,
+`sync-busy-retry`, `sync-held-back-collision`, `sync-nested-repo`, `sync-git-missing`,
+or `sync-failed` for a failure it does not recognise). Before, an unrecognised failure
+answered with git's own text, home path and all. `GET /remote-status` is polled in the
+background, so it carries `remoteError` (the sentence) and `remoteErrorCode`, and never
+a `detail`.
 
 ### GET /api/sync/status
 
@@ -2865,6 +2902,50 @@ is refused with **409** `{error, code: "sync_running", running: {id, kind, start
 never queued and never run beside the first (two concurrent syncs race each other's refs,
 and the loser used to report "Another sync check was running at the same time"). A
 request whose client goes away mid-sync is not cancelled: the server finishes it.
+
+### POST /api/sync/token
+
+**v3.99.2.** Replace the GitHub token of a **connected** Sync without disconnecting
+(`replaceToken()` in `src/brain/sync.js`). Before this the only route was Disconnect,
+which deletes this install's sync history folder.
+
+**Request** — `{ "token": "<new token>" }`. A `POST`, so the cross-origin guard applies,
+and the token travels in the body, never in a URL. Behind `guardConcurrent` and the
+single-flight sync gate (`409 sync_running` while a sync runs).
+
+**What it does.**
+1. Checks the token's shape (`[A-Za-z0-9_-]{20,255}`), refusing anything else before it
+   can reach a git argument.
+2. **Checks the token with GitHub, writing nothing:** `git ls-remote --heads` against the
+   configured repository with the new address (`GIT_TERMINAL_PROMPT=0`, 30-second
+   timeout).
+3. Only when GitHub answers, rewrites both places the token lives, together: the sync git
+   dir's `origin` address (`config` chmod `0600`) and `.sync-config.json`'s `token`
+   (every other key kept, atomic, `0600`). If the second write fails, the first is put
+   back. An adopted git dir keeps its `gitDir`.
+
+The check proves the token can **read** the repository. A token that cannot write
+passes it; the next push fails with `sync-token-no-access`.
+
+**Response** `200 OK` — `{ success: true, replaced: true, repoUrl, …status }`, where
+`repoUrl` has no token and the rest is `GET /status`'s payload. The token is in no
+response, no error and no log line.
+
+**Refusals** — `{error, code[, detail]}`, and on every one of them both places are
+byte-identical to before:
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `sync-token-missing` | No `token`, or only whitespace |
+| 400 | `sync-token-invalid` | Not token-shaped |
+| 400 | `sync-config-unreadable` | `.sync-config.json` unreadable or has no `repoUrl` |
+| 400 | `sync-new-token-rejected` | GitHub refused the token (401) |
+| 400 | `sync-new-token-no-access` | Token valid, repository not visible to it (403 / 404) |
+| 400 | `sync-token-check-offline` | GitHub unreachable |
+| 400 | `sync-token-check-failed` | Any other check failure; git's text is in `detail` |
+| 400 | `sync-token-save-failed` | GitHub accepted it, the write failed; `detail` says why |
+| 409 | `sync-not-configured` | Sync is not connected on this install |
+| 409 | `sync_running` / write conflict | A sync or a wiki write is running |
 
 ### GET /api/sync/job
 

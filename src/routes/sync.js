@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   isConfigured, getStatus, getBackupReport, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
-  SETUP_MODES, push, pull, sync, disconnect, describeSyncError, remoteErrorCode, replaceToken,
+  SETUP_MODES, push, pull, sync, disconnect, describeSyncError, remoteErrorCode, replaceToken, REPLACE_TOKEN_MESSAGES,
 } from '../brain/sync.js';
 import { noteRemoteStatus } from '../brain/tray-summary.js';
 import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
@@ -286,7 +286,7 @@ router.post('/token', guardConcurrent('replace the sync token'), async (req, res
     const token = req.body && typeof req.body.token === 'string' ? req.body.token : '';
     if (!token.trim()) {
       return res.status(400).json({
-        error: 'Paste the new token from GitHub first. Nothing was changed.',
+        error: REPLACE_TOKEN_MESSAGES['sync-token-missing'],
         code: 'sync-token-missing',
       });
     }

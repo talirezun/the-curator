@@ -41,6 +41,7 @@ on every answer, so a fact repeated in two files is a fact paid for twice.
 | `curator-agent-memory.md` | Project context — foundations and the reading plan, working state, projects, standing briefs, the MCP memory tools, the skills, activation, Copy agent instructions, the menu bar icon. **The FILENAME deliberately did not follow v3.62.0's rename**: the set is uploaded by filename, its budget is keyed on that name below, and renaming would break the upload identity for nothing |
 | `curator-links.md` | Navigation only. No facts: it says which page in the GitHub docs answers a question, and gives the URL |
 | `curator-site-map.md` | Maps a visitor's question to the mycurator.xyz page section that answers it, as a `https://mycurator.xyz/#section` link the assistant can send. Owns no product facts — only the section table. **Must be kept in sync by hand**: update it whenever a section id is renamed, added or removed in the website repository's `SECTIONS` / `SECTION_MAP` (`site/index.html`) — a stale id here sends a visitor to a page that scrolls nowhere |
+| `curator-errors.md` | Every error message's **code**: what it means and what to do, and how to read the "Technical detail (for support)" line. Its tables are **generated** between the `error-catalogue` markers by `scripts/build-error-catalogue.mjs` (the same script writes `docs/errors.md`), so edit the hand-written "means / what to do" text in that script, never the table here; `scripts/test-error-catalogue.js` fails when they drift. `curator-user-guide.md` keeps the screens and the troubleshooting flows (Replace token included) and does not restate a code's meaning |
 | `curator-reading.md` | The list of writing about The Curator (essays, the research paper) with dates, one-line summaries and links, and the reading paths. Owns no product facts |
 
 When a fact straddles two files, the owning file states it and the other file
@@ -59,6 +60,7 @@ Estimated tokens = **characters ÷ 4**.
 | `curator-links.md` | 8,000 |
 | `curator-site-map.md` | 1,200 |
 | `curator-reading.md` | 1,600 |
+| `curator-errors.md` | 3,500 |
 | **Hard ceiling over the set** | **200,000** |
 
 The target for the whole set is roughly **95,000** tokens. The 200,000 ceiling
@@ -99,6 +101,11 @@ release checklist:
 > Update `llm-docs/` when a user-visible behaviour, price, default
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
+
+**Outstanding for v3.99.2**: every error is a plain sentence with a published code. `curator-errors.md` is
+NEW (upload it as a new document); `curator-user-guide.md` (Replace token, the three starting directions)
+and `curator-links.md` (the error catalogue, Replace token) changed. Re-upload the whole set to Lumina,
+then remove this note.
 
 **Outstanding for v3.98.0**: ingest keeps a source's hard data (Key Facts, the one-time
 re-reading, the table warning, model choice, the limits, domain versus Documents).

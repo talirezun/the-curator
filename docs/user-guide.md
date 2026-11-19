@@ -6588,7 +6588,7 @@ This is how The Curator gets permission to read and write your private repositor
 2. You'll see a **Connect a GitHub repository** card with three fields, all on one screen:
    - **Repository URL** — paste the URL from Step 1
    - **Personal access token** — paste the token from Step 2
-   - **Starting direction** — **Push my wiki** (this machine has the knowledge; send it up) or **Pull an existing wiki** (you've already synced elsewhere; bring it down)
+   - **Starting direction** — **Push my wiki** (this machine has the knowledge; send it up), **Merge — keep both** (both sides already have content; nothing here is deleted) or **Pull an existing wiki** (you've already synced elsewhere; bring it down). [docs/sync.md](sync.md#step-5--choose-your-starting-direction) explains the three.
 3. Click **Connect**
 
 The Curator connects to GitHub, creates the initial snapshot, and confirms when done. It takes about 30 seconds once your details are entered.
@@ -6650,6 +6650,18 @@ If you worked on Computer A without syncing, then worked on Computer B without s
 - In most cases this resolves itself cleanly, because the two machines touched different parts of the wiki
 - ⚠️ **If the same part of the same page was edited on both machines**, the merge does **not** stop to ask you: it silently keeps the **GitHub (remote)** version for the conflicting section and drops the local one from the file, while still reporting success. Your pre-merge local version is committed to local git history first, so it is recoverable — see [sync.md → What if you forget to sync?](sync.md#what-if-you-forget-to-sync) for the exact recovery commands and the full explanation. The reliable habit is to **Sync now at the start *and* end of every session.**
 
+### Replacing the token *(v3.99.2)*
+
+GitHub tokens expire, and a fine-grained one always does. When Sync's token stops working, Sync says so in plain words, *"GitHub rejected the token saved for Sync. It has most likely expired or been deleted. Nothing was lost…"*, and opens a **Replace the GitHub token** panel right under the message. To renew a token before that happens, press the small **Replace token** button under the Sync buttons.
+
+| Step | What you do | What The Curator does |
+|---|---|---|
+| 1 | Create a new token on GitHub ([Step 2](#step-2--create-a-personal-access-token) above) | |
+| 2 | Paste it into **New personal access token** and press **Check and save** | Checks the token with GitHub first, against the repository Sync already uses. If GitHub refuses it, nothing is changed and Sync keeps the old one |
+| 3 | | Saves it and says *"Token replaced. Sync uses the new token from now on."* Your sync history, repository and files stay as they are |
+
+You do **not** need to disconnect to change a token. One thing the check cannot see: a token with **Contents: Read-only** passes it (the check only reads), and the next push then asks again for a token with **Read and write**. [docs/sync.md → Replacing the token](sync.md#replacing-the-token) lists every refusal and what it means.
+
 ### Disconnecting
 
 If you want to remove the sync connection from one computer (without affecting GitHub or other computers):
@@ -6658,7 +6670,9 @@ If you want to remove the sync connection from one computer (without affecting G
 2. Scroll to the bottom and click **Disconnect this repository**
 3. Confirm — the panel spells it out: *"Your local wiki files stay exactly as they are — only the sync connection is removed. You can reconnect any time."*
 
-Your GitHub repository is not changed. You can reconnect at any time.
+Your GitHub repository is not changed. You can reconnect at any time. Disconnecting is not how to change the token: use [Replace token](#replacing-the-token-v3992).
+
+If Sync stops with a message, the [error catalogue](errors.md#sync) lists every Sync message with what it means and what to do.
 
 > **There is no commit-history or revert screen, and no card promising one.** The view used to carry a **History** area saying both were coming soon; v3.24.0 removed it, because a roadmap note on an operational panel only raises a question it cannot answer. The fact worth keeping moved behind the **ⓘ** beside the Sync title: every sync already *is* a real git commit, so nothing is missing from your data — a git client pointed at your knowledge base folder can browse and revert today. The exact commands are in [docs/sync.md](sync.md).
 
@@ -8629,6 +8643,31 @@ A **Leave as is** button appears on every row only you can judge (pages nothing 
 ---
 
 ## 18. Troubleshooting
+
+### Reading an error message *(v3.99.2)*
+
+Every error The Curator shows is a plain sentence: **what happened**, **whether anything was lost or charged** (only when it knows for sure), and **the one thing to do next**, naming a button on that screen. Under many messages there is a second, smaller grey line:
+
+```
+Technical detail (for support): 401 {"type":"error","error":{"type":"authentication_error",…}} (code: ai-key-rejected)
+```
+
+| Part | What to do with it |
+|---|---|
+| The technical text | Nothing, unless you ask for help: then copy the whole line into your message. The Curator removes the tokens and keys it recognises, and your home folder's name, before showing it |
+| `(code: …)` | Search the **[error catalogue](errors.md)** for it: every code has a row saying what it means and what to do |
+
+The messages people meet most often:
+
+| You see | What it means | What to do | In the catalogue |
+|---|---|---|---|
+| *"GitHub rejected the token saved for Sync…"* | Sync's GitHub token expired or was deleted. Nothing was lost | Create a new token on GitHub, then **Replace token** on the Sync page (the panel opens under the message) | [`sync-token-rejected`](errors.md#sync) |
+| *"[Provider] didn't accept the API key saved in The Curator…"* | The AI provider refused your key. That request was not charged | **Settings › Providers & keys › Replace key** | [`ai-key-rejected`](errors.md#ai-providers-and-keys) |
+| *"Your [provider] account has run out of credit…"* | The account has no credit left. That request was not charged | Add credit on the provider's website, or switch provider in **Settings › Providers & keys** | [`ai-no-credit`](errors.md#ai-providers-and-keys) |
+| *"The Curator isn't responding…"* | The page cannot reach the app: it is restarting, was closed, or the computer slept | Wait a few seconds and try again; if it does not come back, quit The Curator and open it again | [`server-unreachable`](errors.md#the-curator-itself) |
+| *"The Curator was updated, but the previous version is still running…"* | The update is on disk, but the old version is still the one running | Quit The Curator and open it again | [`server-outdated`](errors.md#the-curator-itself) |
+
+A message with **no code** was written for that one situation and explains itself (for example an ingest refused with *"Nothing was sent to the AI and nothing was charged"*, below). If a message keeps coming back, **Settings › General › Run system check**, then send the technical detail line to support.
 
 ### Mac app
 

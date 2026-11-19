@@ -611,7 +611,7 @@ A middle option exists for things you do not want to act on: **Leave as is** on 
 
 **Step 2 — create a Personal Access Token.** Either token type works. A fine-grained token is more secure and is the recommendation: under GitHub's developer settings, create one, name it, pick an expiration, set **Repository access** to **Only select repositories** and pick the repo, then under **Repository permissions** set **Contents** to **Read and write** — that is the critical one; Metadata read-only is added automatically. Generate it and copy it immediately; it starts with `github_pat_`. A classic token with the top-level `repo` scope also works and can be set never to expire; it starts with `ghp_`.
 
-**Step 3 — connect in the app.** Click **Sync** in the rail footer. The **Connect a GitHub repository** card has three fields on one screen: **Repository URL**, **Personal access token**, and **Starting direction** — either **Push my wiki**, for the machine that has the knowledge, or **Pull an existing wiki**, if you have already synced elsewhere. Click **Connect**. It takes about 30 seconds.
+**Step 3 — connect in the app.** Click **Sync** in the rail footer. The **Connect a GitHub repository** card has three fields on one screen: **Repository URL**, **Personal access token**, and **Starting direction** — **Push my wiki**, for the machine that has the knowledge; **Merge — keep both**, when both this folder and the repository already have content (nothing here is deleted); or **Pull an existing wiki**, if you have already synced elsewhere and this computer is empty. Click **Connect**. It takes about 30 seconds.
 
 Daily, the golden rule is to click **Sync now** at the start and end of each work session. It pulls anything new from GitHub, then pushes anything new from this machine, so you never have to remember which computer is ahead. Next to it sit **Push only** and **Pull only**, for when you know exactly what you need.
 
@@ -687,7 +687,11 @@ Because those files live in your project folder, and they travel by the project'
 
 ## How do I disconnect sync?
 
-Open **Sync** in the rail footer, scroll to the bottom and click **Disconnect this repository**, then confirm. Your local wiki files stay exactly as they are; only the connection is removed, and your GitHub repository is not changed. You can reconnect any time.
+Open **Sync** in the rail footer, scroll to the bottom and click **Disconnect this repository**, then confirm. Your local wiki files stay exactly as they are; only the connection is removed, and your GitHub repository is not changed. You can reconnect any time. Disconnecting is not how to change the token: use Replace token.
+
+## How do I replace the GitHub token Sync uses, or fix "GitHub rejected the token saved for Sync"?
+
+Since version 3.99.2, without disconnecting. When the token has expired or been deleted, Sync says "GitHub rejected the token saved for Sync… Nothing was lost" and opens a **Replace the GitHub token** panel under the message; to renew early, press the small **Replace token** button under the Sync buttons. Create a new token on GitHub (Contents: Read and write on the repository, or a classic token with `repo`), paste it into **New personal access token** and press **Check and save**. The Curator checks it with GitHub against the repository Sync already uses and changes nothing unless GitHub accepts it; then it saves it and answers "Token replaced. Sync uses the new token from now on." Sync history, repository and files stay as they are. A Read-only token passes the check, and the next push asks again for one with Read and write. Each refusal and its code is in the error catalogue (curator-errors).
 
 ## What is Shared Brain, and how do I join one?
 

@@ -475,6 +475,16 @@ Expected (v3.0.4): their PAT was created with **Contents: Read** only, and they 
 ### A contributor reports "N pages skipped after repeated failures" on their card
 That's the `permanent_skip` list (3 genuine LLM pre-processing failures on the same page). They can expand the block and click **Retry these pages on next push** (v3.0.4, `POST /api/sharedbrain/:id/unskip`) — no page editing needed. If the same pages keep striking out, inspect them for unusual content (enormous size, binary-ish text) and consider splitting them.
 
+### Your own GitHub token stopped working
+Your GitHub token (the PAT this computer uses for the brain, not the `sbat_…` admin token) has expired or been revoked. Since v3.99.2 the message depends on whose screen it is, because the next step differs:
+
+| Who | What they see (code `github-token-rejected`) | What to do |
+|---|---|---|
+| A **member** | *"GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use Leave this Shared Brain and re-join with your invite."* | Exactly that: a new PAT, **Leave this Shared Brain**, re-join with the invite token |
+| **You, the admin**, in the revoke panel | *"GitHub didn't accept the access token this computer uses for this Shared Brain, so this didn't finish. Create a new token on GitHub, then use + Set up another and run the setup again for the same repository and shared domain: the setup wizard is the only place that accepts a new token."* | A new PAT, then **+ Set up another** on the Shared Brain page and run the brain-setup wizard again for the **same** repository and shared domain. It also issues a fresh admin token (§9) |
+
+Under either message the **Technical detail (for support)** line keeps GitHub's own answer. Every code is in the [error catalogue](errors.md#shared-brain).
+
 ### Invite token says "uses version 2; this Curator install supports up to v1"
 Your contributor's Curator is older than the one that generated the token. The wizard's error includes the version mismatch. Have them update to a Curator new enough to understand the token version named in the error — any release from v3.0.0-beta.1 onward supports v1 tokens — then retry.
 

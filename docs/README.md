@@ -136,8 +136,9 @@ first group applies to all three.
 | [user-guide.md](user-guide.md) | The master guide — setup, ingest, chat, Obsidian, sync, daily workflow, troubleshooting |
 | [use-cases.md](use-cases.md) | Detailed workflows for every user profile, including coding continuity across sessions and tools |
 | [domains.md](domains.md) | Domains end-to-end — managing them, the CLAUDE.md schema, siloing model, custom templates. A domain is the container all three layers live in |
-| [sync.md](sync.md) | Personal Sync — GitHub backup of your wiki, chat history and working state across your own computers (wizard, token permissions, troubleshooting) |
+| [sync.md](sync.md) | Personal Sync — GitHub backup of your wiki, chat history and working state across your own computers (wizard, token permissions, Replace token, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
+| [errors.md](errors.md) | Every error message's code, its exact sentence, what it means and what to do; how to read the "Technical detail (for support)" line. Generated from the app's own sentences (v3.99.2) |
 | [system-check.md](system-check.md) | Settings → General → System check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
 | [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, how it downloads and installs its own updates, and the optional menu bar icon) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
 

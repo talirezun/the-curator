@@ -122,6 +122,8 @@ Go here first for step-by-step setup as a contributor or an admin: https://githu
 
 Go here for the GitHub sync setup and its troubleshooting: https://github.com/talirezun/the-curator/blob/main/docs/sync.md
 
+To give Sync a new GitHub token without disconnecting: https://github.com/talirezun/the-curator/blob/main/docs/sync.md#replacing-the-token
+
 To have a coding agent do the setup instead: https://github.com/talirezun/the-curator/blob/main/docs/sync-via-coding-agent.md
 
 For which things Sync carries and which travel by your project's own git or not at all: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how
@@ -182,6 +184,7 @@ Everything below is in the repository and is public.
 | Use cases | Workflows for each kind of user | https://github.com/talirezun/the-curator/blob/main/docs/use-cases.md |
 | Domains | Domains, schema, siloing, custom templates | https://github.com/talirezun/the-curator/blob/main/docs/domains.md |
 | Sync | Personal Sync setup and troubleshooting | https://github.com/talirezun/the-curator/blob/main/docs/sync.md |
+| Error messages | Every error code: its exact sentence, what it means, what to do | https://github.com/talirezun/the-curator/blob/main/docs/errors.md |
 | Sync with a coding agent | One prompt that configures sync | https://github.com/talirezun/the-curator/blob/main/docs/sync-via-coding-agent.md |
 | System check | Confirming the app is set up | https://github.com/talirezun/the-curator/blob/main/docs/system-check.md |
 | Mac app | Both Mac shapes and their updates | https://github.com/talirezun/the-curator/blob/main/docs/mac-app.md |

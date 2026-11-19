@@ -333,6 +333,12 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
   only place that accepts a token — nothing else in the app asks for one. Leaving removes the
   connection only; your local files, including the read-only mirror, stay exactly as they are.
 - Next time, pick a longer expiry and put the date in your calendar.
+- Since v3.99.2 a push, pull or check that GitHub refuses says so in plain words: *"GitHub didn't
+  accept the access token for this Shared Brain. Create a new token on GitHub, then use Leave this
+  Shared Brain and re-join with your invite."* Under it, the **Technical detail (for support)** line
+  keeps GitHub's own answer and ends with `(code: github-token-rejected)`. An **admin** sees a
+  different next step for the same code (see the admin guide, *Your own GitHub token stopped
+  working*). Every Shared Brain message is in the [error catalogue](errors.md#shared-brain).
 
 **Check now says "Reached GitHub, but this brain holds no contribution records yet"**
 - That is an honest "cannot tell", not a failure. The check reads the cohort's contribution records

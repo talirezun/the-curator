@@ -236,7 +236,7 @@ If you're unsure, use a **fine-grained token** — it's safer because it can onl
 
 Paste whichever token you created into the **Personal access token** field.
 
-> Your token is stored in a file called `.sync-config.json` in your project folder. This file is gitignored — it never leaves your computer.
+> Your token is stored in a file called `.sync-config.json` in your project folder, and in the sync history's own settings. Both are gitignored — the token never leaves your computer. To change it later, use [Replace token](#replacing-the-token); you do not need to disconnect.
 
 ### Step 5 — Choose your starting direction
 
@@ -353,6 +353,54 @@ For everyday use, prefer **Sync now**.
 
 ---
 
+## Replacing the token
+
+Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Your sync history, your repository and your wiki files all stay as they are; only the token changes.
+
+**When to use it**
+
+| Situation | What you see |
+|---|---|
+| The token expired, or you deleted or revoked it on GitHub | Sync stops with *"GitHub rejected the token saved for Sync…"*, and the **Replace the GitHub token** panel opens right under the message |
+| The token is valid but cannot write to the repository | Sync stops with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens under it |
+| You want to renew a token before it expires, or switch between a classic and a fine-grained token | Nothing is wrong yet: press the small **Replace token** button under the Sync buttons |
+
+**How**
+
+1. Create the new token on GitHub exactly as in [Step 4](#step-4--create-and-enter-a-personal-access-token): **Contents: Read and write** on this repository (fine-grained), or the **`repo`** scope (classic).
+2. On the **Sync** page, paste it into **New personal access token** (the panel is already open if Sync just refused the old token; otherwise press **Replace token**).
+3. Press **Check and save**. While it checks, the button reads *Checking with GitHub…*.
+
+**What Check and save does**
+
+- **It checks the new token with GitHub first.** The Curator asks GitHub for the repository Sync already uses, with the new token. Only when GitHub answers does it save anything. If the check fails for any reason, nothing is changed and Sync keeps the token it had.
+- **It saves the token in both places Sync keeps it**, together: the sync history's own settings (what Push and Pull use) and `.sync-config.json`. They never disagree: if the second write fails, the first is put back.
+- **It keeps your sync history.** Nothing is deleted, nothing is pulled or pushed. The next **Sync now** simply uses the new token.
+- It answers *"Token replaced. Sync uses the new token from now on."* The new token is never shown again, never logged, and never sent back to the page.
+- It does not run while a sync or another change to your wiki is running. Wait for that to finish, then press it again.
+
+**When it refuses**
+
+Every refusal says what to do, and none of them changes anything. The codes are in the [error catalogue](errors.md#sync-replacing-the-token).
+
+| What you see starts with | What it means |
+|---|---|
+| *"Paste the new token from GitHub first."* | The field was empty |
+| *"That doesn't look like a GitHub token."* | What was pasted is not shaped like a token (for example only part of it was copied) |
+| *"GitHub didn't accept the new token."* | GitHub refused it: wrong, incomplete or already expired |
+| *"GitHub accepted the token, but it cannot open the repository Sync uses…"* | The token is valid but has no access to this repository. Give it the repository with Contents: Read and write, or tick `repo` |
+| *"The Curator couldn't reach GitHub to check the new token…"* | No connection to GitHub. Check the internet and try again |
+| *"The new token couldn't be checked…"* | The check failed for another reason. The Technical detail line under it is for support |
+| *"The new token works, but The Curator couldn't save it…"* | GitHub accepted it, but writing it to this computer failed. Try again |
+| *"The Curator couldn't read which repository Sync uses…"* | Sync's own settings file is unreadable. This is the one case where you need **Disconnect this repository** and **Connect** again with the new token (your wiki files stay as they are) |
+| *"Sync is not connected on this computer…"* | There is no Sync connection yet. Connect one first |
+
+> **A token that can only READ passes the check.** The check asks GitHub to *read* the repository, so a fine-grained token with **Contents: Read-only** is accepted and saved. The next push is then refused with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens again: create a token with **Read and write** and replace it once more. Nothing is lost in between; your changes wait on this computer.
+
+> **Before v3.99.2** the only way to change Sync's token was to edit `.sync-config.json` by hand, or to **Disconnect** and connect again. Disconnecting deletes this computer's sync history folder (unless it joined another install's), so it is no longer the way to change a token.
+
+---
+
 ## What if you forget to sync?
 
 If you forget to **Sync now** on one machine and then do new work on another machine, you'll have changes in two places. The app handles this gracefully:
@@ -384,14 +432,20 @@ This behaviour is deliberate — an unattended local app cannot leave a half-mer
 
 ## Troubleshooting
 
-### "403 Forbidden" or "authentication failed"
+Every Sync message is a plain sentence, and under it a smaller **Technical detail (for support)** line keeps git's own text for support. The full list of messages, with what each means and what to do, is the [error catalogue](errors.md#sync). The sections below are the common ones in more depth.
 
-Your Personal Access Token is wrong, expired, or doesn't have the right permissions. This is almost always a **missing write permission** — the most common setup mistake.
+### "GitHub rejected the token saved for Sync" (or, on older versions, "403 Forbidden" / "authentication failed")
+
+GitHub no longer accepts the token: it has expired, or it was deleted or revoked. Nothing is lost; your changes stay on this computer. Create a new token on GitHub and use [**Replace token**](#replacing-the-token) on the Sync page; the panel opens right under the message.
+
+If the message is *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, the token is valid but may not write here. This is the most common setup mistake:
 
 - **Fine-grained token**: make sure **Contents** is set to **Read and write** (not Read-only), and that the token's **Repository access** actually includes this repository. Re-create the token if either is wrong.
 - **Classic token**: make sure you ticked the top-level **`repo`** scope when creating the token.
-- If the token has expired, create a new one and update it in `.sync-config.json` (open the file in any text editor and replace the `token` value). Fine-grained tokens are managed at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens); classic tokens at [github.com/settings/tokens](https://github.com/settings/tokens).
+- Then put the new token in with [**Replace token**](#replacing-the-token). Fine-grained tokens are managed at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens); classic tokens at [github.com/settings/tokens](https://github.com/settings/tokens).
 - A **classic token set to "No expiration"** will never expire — use this option if you want to avoid re-doing this step.
+
+On the **Connect** form the same refusal reads *"GitHub rejected this token. Check that you copied all of it and that it has not expired, then press Connect again."*: there is nothing to replace yet, so fix the token and press **Connect** again.
 
 ### "Git is not available to The Curator, so syncing cannot run"
 
@@ -413,15 +467,15 @@ other is expected, not a second fault.
 > you have been chasing a repository URL that you are sure is correct, update
 > the app and try again — you will get the message above instead.
 
-### "404 Not Found" or "repository not found"
+### "Repository not found" (or "404 Not Found")
 
-The repository URL is wrong, or the repository doesn't exist yet.
+The repository URL is wrong, the repository doesn't exist yet, or the token cannot see it.
 
 - Check the URL in `.sync-config.json` — it should end in `.git`
 - Make sure the repository exists on GitHub (visit the URL in your browser)
 - Make sure the repository is not owned by an organisation that blocks PAT access
 
-### "Network error" or "could not resolve host"
+### "Cannot reach GitHub" (or "Network error" / "could not resolve host")
 
 The app can't reach GitHub. Check your internet connection. If you're on a university network, try a different connection or hotspot — some networks block git operations.
 
@@ -538,7 +592,7 @@ If this feels complicated, the easiest recovery is to decide which machine has t
 
 Your repository is **private**. GitHub employees do not read private repository contents. Only you (and anyone you explicitly invite as a collaborator) can see your knowledge.
 
-Your Personal Access Token is stored only in `.sync-config.json` on your local machine — it is gitignored and never uploaded anywhere.
+Your Personal Access Token is stored only on this computer, in `.sync-config.json` and in the sync history's own settings (`.knowledge-git/config`), both readable by your user account only. Neither is ever uploaded. When Sync shows a Technical detail line, the token is removed from it first.
 
 Files that look like secrets inside your knowledge folder are refused as well (see "Secrets" above). Your AI provider API keys are also never synced — whichever providers you use. They live in `.curator-config.json` when you save them in Settings (or in `.env` if you use the developer fallback), both of which are gitignored and stay on the machine you entered them on.
 
@@ -551,4 +605,4 @@ Expiry options depend on which token type you chose:
 - **Classic tokens** offer 30 days, 60 days, 90 days, 1 year, or **No expiration**. For this set-and-forget use case, **No expiration** is the lowest-maintenance choice — sync is meant to be a quiet background habit, and since the token only has access to your repositories, the risk is low.
 - **Fine-grained tokens** must have an expiry date (custom, up to **1 year**). They cannot be truly permanent. The upside is they're scoped to a single repository, so the security tradeoff favours fine-grained even though you'll renew it occasionally.
 
-Whichever you choose, if the token has an expiry date, **make a calendar reminder to renew it** before it expires — otherwise sync will start failing with a `403` and you'll need to generate a fresh token and paste it into `.sync-config.json`. If you'd rather never deal with renewals, use a classic token set to "No expiration".
+Whichever you choose, if the token has an expiry date, **make a calendar reminder to renew it** before it expires. Renewing is two minutes: create the new token on GitHub, then [**Replace token**](#replacing-the-token) on the Sync page. If you forget, Sync stops with *"GitHub rejected the token saved for Sync…"* and opens the same panel for you; nothing is lost in the meantime. If you'd rather never deal with renewals, use a classic token set to "No expiration".

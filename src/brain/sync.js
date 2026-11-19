@@ -2988,27 +2988,51 @@ function scrubToken(text, token) {
   return token ? s.split(token).join('***') : s;
 }
 
+// The Replace-token refusals' sentences, as DATA: the code below uses these
+// exact strings, and scripts/build-error-catalogue.mjs reads them to write the
+// published error catalogue (docs/errors.md, llm-docs/curator-errors.md), so
+// the page can never drift from what a person sees. Pure data; no behaviour.
+export const REPLACE_TOKEN_MESSAGES = Object.freeze({
+  'sync-token-missing': 'Paste the new token from GitHub first. Nothing was changed.',
+  'sync-not-configured':
+    'Sync is not connected on this computer, so there is no token to replace. Connect a repository first.',
+  'sync-token-invalid':
+    'That doesn’t look like a GitHub token. Copy the whole token from GitHub (it starts with ' +
+    'ghp_ or github_pat_) and paste it again. Nothing was changed.',
+  'sync-config-unreadable':
+    'The Curator couldn’t read which repository Sync uses, so the token was not changed. ' +
+    'Disconnect this repository and connect it again with the new token.',
+  'sync-new-token-rejected':
+    'GitHub didn’t accept the new token. Check that you copied all of it and that it has not ' +
+    'expired, then try again. Nothing was changed: Sync still has the token it had.',
+  'sync-new-token-no-access': (repoLabel) =>
+    'GitHub accepted the token, but it cannot open the repository Sync uses' +
+    (repoLabel ? ' (' + repoLabel + ')' : '') + '. For a fine-grained token, give it that repository ' +
+    'with Contents: Read and write; for a classic token, tick the repo scope. Nothing was changed.',
+  'sync-token-check-offline':
+    'The Curator couldn’t reach GitHub to check the new token, so nothing was changed. ' +
+    'Check your internet connection and try again.',
+  'sync-token-check-failed':
+    'The new token couldn’t be checked, so nothing was changed. Try again in a minute; if it ' +
+    'keeps happening, copy the technical detail below and send it to support.',
+  'sync-token-save-failed':
+    'The new token works, but The Curator couldn’t save it, so nothing was changed. ' +
+    'Try again; if it keeps happening, copy the technical detail below and send it to support.',
+});
+const RTM = REPLACE_TOKEN_MESSAGES;
+
 function tokenCheckRefusal(err, token, repoLabel) {
   const scrubbed = new Error(scrubToken(errorText(err), token));
   const d = describeSyncError(scrubbed);
   let out;
   if (d.code === 'sync-token-rejected') {
-    out = refusal('sync-new-token-rejected',
-      'GitHub didn’t accept the new token. Check that you copied all of it and that it has not ' +
-      'expired, then try again. Nothing was changed: Sync still has the token it had.');
+    out = refusal('sync-new-token-rejected', RTM['sync-new-token-rejected']);
   } else if (d.code === 'sync-token-no-access' || d.code === 'sync-repo-not-found') {
-    out = refusal('sync-new-token-no-access',
-      'GitHub accepted the token, but it cannot open the repository Sync uses' +
-      (repoLabel ? ' (' + repoLabel + ')' : '') + '. For a fine-grained token, give it that repository ' +
-      'with Contents: Read and write; for a classic token, tick the repo scope. Nothing was changed.');
+    out = refusal('sync-new-token-no-access', RTM['sync-new-token-no-access'](repoLabel));
   } else if (d.code === 'sync-offline') {
-    out = refusal('sync-token-check-offline',
-      'The Curator couldn’t reach GitHub to check the new token, so nothing was changed. ' +
-      'Check your internet connection and try again.');
+    out = refusal('sync-token-check-offline', RTM['sync-token-check-offline']);
   } else {
-    out = refusal('sync-token-check-failed',
-      'The new token couldn’t be checked, so nothing was changed. Try again in a minute; if it ' +
-      'keeps happening, copy the technical detail below and send it to support.');
+    out = refusal('sync-token-check-failed', RTM['sync-token-check-failed']);
   }
   if (d.detail) out.curatorSyncDetail = scrubToken(d.detail, token);
   return out;
@@ -3016,14 +3040,11 @@ function tokenCheckRefusal(err, token, repoLabel) {
 
 export async function replaceToken(newToken) {
   if (!isConfigured()) {
-    throw refusal('sync-not-configured',
-      'Sync is not connected on this computer, so there is no token to replace. Connect a repository first.');
+    throw refusal('sync-not-configured', RTM['sync-not-configured']);
   }
   const token = typeof newToken === 'string' ? newToken.trim() : '';
   if (!TOKEN_SHAPE.test(token)) {
-    throw refusal('sync-token-invalid',
-      'That doesn’t look like a GitHub token. Copy the whole token from GitHub (it starts with ' +
-      'ghp_ or github_pat_) and paste it again. Nothing was changed.');
+    throw refusal('sync-token-invalid', RTM['sync-token-invalid']);
   }
   const configFile = currentConfigFile();
   let raw;
@@ -3033,9 +3054,7 @@ export async function replaceToken(newToken) {
     config = JSON.parse(raw);
   } catch { config = null; }
   if (!config || typeof config !== 'object' || typeof config.repoUrl !== 'string' || !config.repoUrl.trim()) {
-    throw refusal('sync-config-unreadable',
-      'The Curator couldn’t read which repository Sync uses, so the token was not changed. ' +
-      'Disconnect this repository and connect it again with the new token.');
+    throw refusal('sync-config-unreadable', RTM['sync-config-unreadable']);
   }
   const repoLabel = displayUrl(config.repoUrl);
   const remoteUrl = buildRemoteUrl(config.repoUrl, token);
@@ -3057,9 +3076,7 @@ export async function replaceToken(newToken) {
   try {
     await gitArgv(previousUrl ? ['remote', 'set-url', 'origin', remoteUrl] : ['remote', 'add', 'origin', remoteUrl], { gitDir });
   } catch (err) {
-    const out = refusal('sync-token-save-failed',
-      'The new token works, but The Curator couldn’t save it, so nothing was changed. ' +
-      'Try again; if it keeps happening, copy the technical detail below and send it to support.');
+    const out = refusal('sync-token-save-failed', RTM['sync-token-save-failed']);
     out.curatorSyncDetail = scrubToken(sanitizeErrorDetail(errorText(err)), token);
     throw out;
   }
@@ -3070,9 +3087,7 @@ export async function replaceToken(newToken) {
     await writeFileAtomic(configFile, JSON.stringify({ ...config, token }, null, 2), { mode: 0o600 });
   } catch (err) {
     if (previousUrl) await gitArgv(['remote', 'set-url', 'origin', previousUrl], { gitDir }).catch(() => {});
-    const out = refusal('sync-token-save-failed',
-      'The new token works, but The Curator couldn’t save it, so nothing was changed. ' +
-      'Try again; if it keeps happening, copy the technical detail below and send it to support.');
+    const out = refusal('sync-token-save-failed', RTM['sync-token-save-failed']);
     out.curatorSyncDetail = scrubToken(sanitizeErrorDetail(errorText(err)), token);
     throw out;
   }
