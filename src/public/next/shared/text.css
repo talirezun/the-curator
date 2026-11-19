@@ -294,6 +294,22 @@
   overflow-wrap: anywhere;
 }
 
+/* An error's technical detail (v3.99.2, shared/net.js): the line below a
+   plain-language error, "Technical detail (for support): …". Visible, never
+   behind a chevron; smaller and muted so the sentence above stays the
+   message; selectable so it can be copied into a support request. Used
+   inside .tx-status (renderStatus `support`) and on its own
+   (renderErrorDetail), where it sits right under the view's own sentence. */
+.tx-error-detail {
+  font: var(--type-caption);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+* + .tx-error-detail { margin-top: 4px; }
+
 /* ── 4. Badge — one flag on a row ────────────────────────────────────────
    The tone lives in the tint and the border (non-text, 3:1). The label is
    --text, measured 13.81-16.39 across all four tints in both themes; the
