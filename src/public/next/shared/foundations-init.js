@@ -49,6 +49,58 @@ import { formatAge, freshnessTier } from './age.js';
 // hand-built bar here is the shape rule 6 exists to prevent.
 import { renderMonitor } from './monitor.js';
 import { machineWord as thisMachine } from './platform.js';
+// ── AND net.js, FOR PLAIN-LANGUAGE ERRORS (v3.99.2) ─────────────────────
+// DOM-free too: it imports only shared/user-errors.js and shared/text.js,
+// neither of which imports anything. A failed request becomes the plain
+// sentence (a string, as these fields always were) with its technical detail
+// remembered beside it; errorDetailHtml prints that detail under the sentence.
+import { plainError, errorDetailOf, errorDetailHtml, rememberErrorDetail, DETAIL_PREFIX } from './net.js';
+
+// ═════════════════════════════════════════════════════════════════════════
+// PLAIN-LANGUAGE ERRORS FOR THE CONTEXT PAGE (v3.99.2)
+// ═════════════════════════════════════════════════════════════════════════
+// Exported because views/memory.js, shared/foundations-add.js and this module
+// share them: one rule for reading a memory route's failure, not three.
+
+/**
+ * The plain sentence for a failed Context-page request, its detail remembered.
+ *
+ * The memory routes answer `{message, error, detail?, code?}`, and some store
+ * refusals put a machine word in `error` (`invalid-scope`) with the sentence in
+ * `message`, which is why these views always read `message` first. So a bare
+ * code word in `error` gives way to `message`; otherwise net.js reads the body
+ * as usual (a raw machine text becomes the catalogue's sentence, deliberate
+ * prose passes unchanged). `fallback` is the site's own sentence for a reply
+ * with no message at all; the HTTP status then goes in the detail, never the
+ * sentence.
+ */
+export function failText(data, status, fallback) {
+  let body = data;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const m = typeof data.message === 'string' ? data.message.trim() : '';
+    const e = typeof data.error === 'string' ? data.error.trim() : '';
+    if (m && (!e || /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(e))) body = { ...data, error: m };
+  }
+  return plainError(body, { status, fallback });
+}
+
+/** A composed sentence that carries an inner error's detail: remembered for it too. */
+export function withDetailOf(composed, inner) {
+  rememberErrorDetail(composed, errorDetailOf(inner));
+  return composed;
+}
+
+/** renderStatus's `support` line for a sentence plainError produced, or ''. */
+export function supportOf(message) {
+  const d = errorDetailOf(message);
+  return d ? DETAIL_PREFIX + d : '';
+}
+
+/** A toast's lines for an error sentence: the sentence, then its detail when there is one. */
+export function errorLines(message) {
+  const s = supportOf(message);
+  return s ? [message, s] : [message];
+}
 //
 // ── NO NATIVE <select>, AND NO LISTBOX EITHER ────────────────────────────
 // /next purged the native `<select>` in v3.18.0 (shell.css records why: the
@@ -1177,7 +1229,7 @@ function remoteArm(id, choice, busy, hostOpts) {
 
   const err = choice.scanError
     ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
-      escapeHtml('Nothing was read: ' + choice.scanError) + '</span></div>'
+      escapeHtml('Nothing was read: ' + choice.scanError) + errorDetailHtml(choice.scanError) + '</span></div>'
     : '';
 
   let list = '';
@@ -1296,7 +1348,7 @@ function repoArm(id, choice, busy, hostOpts) {
       : '') +
     (choice.pickError
       ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
-        escapeHtml(String(choice.pickError)) + '</span></div>'
+        escapeHtml(String(choice.pickError)) + errorDetailHtml(String(choice.pickError)) + '</span></div>'
       : '');
 
   // NEVER FOLDED, AND NEVER AN ALERT. The two refusals this can legitimately
@@ -1304,7 +1356,7 @@ function repoArm(id, choice, busy, hostOpts) {
   // are both facts about what the person just typed, and they belong under it.
   const err = choice.scanError
     ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
-      escapeHtml('Nothing was read: ' + choice.scanError) + '</span></div>'
+      escapeHtml('Nothing was read: ' + choice.scanError) + errorDetailHtml(choice.scanError) + '</span></div>'
     : '';
 
   const addMode = choice.addMode === true;
@@ -1822,7 +1874,7 @@ export async function scanRepo(root, fetchImpl) {
     let data = null;
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     if (!res.ok || !data || !data.ok) {
-      return { ok: false, error: (data && (data.message || data.error)) || ('HTTP ' + res.status) };
+      return { ok: false, error: failText(data, res.status, 'The folder could not be listed.') };
     }
     return {
       ok: true,
@@ -1831,7 +1883,7 @@ export async function scanRepo(root, fetchImpl) {
       truncated: data.truncated === true,
     };
   } catch (err) {
-    return { ok: false, error: (err && err.message) || 'the request failed' };
+    return { ok: false, error: plainError(err) };
   }
 }
 
@@ -1873,7 +1925,7 @@ export async function scanRemote(opts, fetchImpl) {
       const code = data && typeof data.reason === 'string' ? data.reason : null;
       const prose = data && typeof data.error === 'string' ? data.error : null;
       return { ok: false, error: remoteRefusalText(code, o) || remoteRefusalText(prose, o)
-        || (data && data.message) || prose || ('HTTP ' + res.status) };
+        || failText(data, res.status, 'The repository could not be listed.') };
     }
     return {
       ok: true,
@@ -1883,7 +1935,7 @@ export async function scanRemote(opts, fetchImpl) {
       truncated: data.truncated === true,
     };
   } catch (err) {
-    return { ok: false, error: (err && err.message) || 'the request failed' };
+    return { ok: false, error: plainError(err) };
   }
 }
 
@@ -1967,8 +2019,8 @@ export async function pickFolder(fetchImpl) {
     }
     const reason = data && typeof data.reason === 'string' ? data.reason : null;
     if (reason === 'cancelled') return { ok: false, reason: 'cancelled' };
-    const message = [data && data.message, data && data.hint].filter(Boolean).join(' ')
-      || ('The folder picker did not answer (HTTP ' + res.status + ').');
+    const said = [data && data.message, data && data.hint].filter(Boolean).join(' ');
+    const message = said ? plainError(said) : failText(data, res.status, 'The folder picker did not answer.');
     // A 501 IS THE ONLY ANSWER THAT WITHHOLDS THE BUTTON. Anything else — a
     // 500, an unparseable body, a route that is not there on an older server —
     // is a failure of this attempt, not a statement about the build, and a
@@ -1976,7 +2028,7 @@ export async function pickFolder(fetchImpl) {
     if (reason === 'no-dialog' || res.status === 501) return { ok: false, reason: 'no-dialog', message };
     return { ok: false, reason: 'failed', message };
   } catch (err) {
-    return { ok: false, reason: 'failed', message: (err && err.message) || 'the request failed' };
+    return { ok: false, reason: 'failed', message: plainError(err) };
   }
 }
 

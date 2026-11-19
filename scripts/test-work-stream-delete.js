@@ -30,6 +30,8 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync,
 } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';

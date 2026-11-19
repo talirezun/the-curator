@@ -54,6 +54,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { renderReadout, renderStatus, renderInfoMark } from '../src/public/next/shared/text.js';
@@ -817,7 +819,9 @@ section('§8 — loadCapture: the request, the cache, and the reply that came la
     const st = { activeDomain: 'acme', activeProject: 'lumina', capture: null };
     const r = mk(async () => ({ ok: false, status: 404, json: async () => ({ ok: false }) }), st);
     await r.loadCapture('acme', 'lumina', 1);
-    eq('a 404 is recorded as an error the step can say out loud', st.capture.error, 'HTTP 404');
+    // v3.99.2: in words, never a bare status; the status is the technical detail beside it.
+    eq('a 404 is recorded as an error the step can say out loud', st.capture.error, 'The capture reading could not be loaded.');
+    eq('...with the status as its technical detail', globalThis.errorDetailOf(st.capture.error), 'HTTP 404');
     ok(st.capture.data === null, '...with no data beside it');
     await r.loadCapture('acme', 'lumina', 1);
     eq('...and a FAILURE IS NOT CACHED, so a server that comes back is asked again',

@@ -71,6 +71,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -162,7 +164,10 @@ function extractFunction(source, name) {
   // v3.65.2: `./monitor.js` joins the allow-list. It has NO imports and
   // touches no DOM (asserted just below, off its own source), and the add
   // panel needs its depth cell and monitor line rather than a hand-built copy.
-  const bad = lines.filter((line) => !/from '\.\/(age|monitor|platform)\.js'/.test(line));
+  // v3.99.2: `./net.js` joins — the plain-language error helpers. It imports
+  // only ./user-errors.js and ./text.js, and neither imports anything
+  // (asserted just below, off their own source), so it runs in plain Node.
+  const bad = lines.filter((line) => !/from '\.\/(age|monitor|platform|net)\.js'/.test(line));
   if (bad.length) {
     console.log('  ✗ shared/foundations-init.js imports something outside the DOM-free kit — '
       + JSON.stringify(bad));
@@ -179,6 +184,16 @@ function extractFunction(source, name) {
   const monSrc = readFileSync(join(NEXT, 'shared/monitor.js'), 'utf8');
   if ((monSrc.match(/^import\s/gm) || []).length) {
     console.log('  ✗ shared/monitor.js grew an import, so foundations-init.js may no longer take it');
+    process.exit(1);
+  }
+  // net.js may import only user-errors.js and text.js, and those two nothing.
+  const netImports = (readFileSync(join(NEXT, 'shared/net.js'), 'utf8').match(/^import\s[^\n]*/gm) || [])
+    .filter((line) => !/from '\.\/(user-errors|text)\.js'/.test(line));
+  const leafImports = ['user-errors', 'text']
+    .filter((n) => (readFileSync(join(NEXT, 'shared/' + n + '.js'), 'utf8').match(/^import\s/gm) || []).length);
+  if (netImports.length || leafImports.length) {
+    console.log('  ✗ shared/net.js (or what it imports) grew an import, so foundations-init.js may no longer take it — '
+      + JSON.stringify(netImports.concat(leafImports)));
     process.exit(1);
   }
 }
@@ -264,9 +279,9 @@ section('§1 — THE FOUR STORE MIRRORS ARE THE STORE\'S');
   // Asserted as an ALLOW-LIST rather than as an absence, so the property that
   // matters is the one measured: every import line, if there is one, names
   // `./age.js`. An import of a view, the shell or the listbox reddens this.
-  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js, ./monitor.js, ./platform.js)',
+  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js, ./monitor.js, ./platform.js, ./net.js)',
     initSrc.match(/^import\s[^\n]*/gm) === null
-      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/(age|monitor|platform)\.js'/.test(line)),
+      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/(age|monitor|platform|net)\.js'/.test(line)),
     JSON.stringify(initSrc.match(/^import\s[^\n]*/gm)));
   // Its local escapeHtml is byte-compared against the shell's, so the two
   // cannot drift into escaping different characters.

@@ -27,6 +27,9 @@
 //
 // It imports only DOM-free modules, like shared/foundations-add.js.
 import { formatAge } from './age.js';
+// v3.99.2: a group's failure message, in plain words with its detail kept.
+// net.js is DOM-free (it imports only shared/user-errors.js and shared/text.js).
+import { plainError, errorDetailOf, rememberErrorDetail } from './net.js';
 
 /** The store's `MAX_SOURCES_PER_PROJECT` — a refusal at commit, never a disabled door. */
 export const MAX_SOURCES_PER_PROJECT = 8;
@@ -470,8 +473,14 @@ export function refreshOutcome(data, sources) {
   const failed = arr(d.groups).filter((g) => g && g.ok === false).map((g) => {
     const known = (Array.isArray(sources) ? sources : []).find((s) => s && s.id === g.id);
     const label = str(g.label) || (known ? (known.kind === 'github' ? repoLabel(known) : known.label) : null) || g.id;
-    return label + ' was not refreshed and is unchanged'
-      + (str(g.message) ? ': ' + str(g.message) : (str(g.reason) ? ' (' + str(g.reason) + ')' : '.'));
+    // The store's message may be a raw read failure (a file system error);
+    // the line carries its plain sentence, and the raw text stays as the
+    // line's technical detail (net.js errorDetailHtml prints it under it).
+    const why = str(g.message) ? plainError(str(g.message)) : null;
+    const line = label + ' was not refreshed and is unchanged'
+      + (why ? ': ' + why : (str(g.reason) ? ' (' + str(g.reason) + ')' : '.'));
+    if (why) rememberErrorDetail(line, errorDetailOf(why));
+    return line;
   });
   return { said, failed };
 }

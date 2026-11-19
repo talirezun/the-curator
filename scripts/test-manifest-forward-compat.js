@@ -34,6 +34,8 @@
  */
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { createHash } from 'crypto';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
