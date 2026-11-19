@@ -31,6 +31,8 @@ import {
   FS_ERRNO_KLASS,
   anthropicKlass,
   basenameOf,
+  scrubCredentials,
+  scrubHomes,
 } from '../public/next/shared/user-errors.js';
 import { scrubPaths } from './scrub-paths.js';
 import { scrubSecrets, logWarn, logError } from './logger.js';
@@ -72,8 +74,25 @@ export function sanitizeDetail(text) {
   let s = String(text);
   s = s.replace(URL_USER_PASS_RE, 'https://***@').replace(URL_TOKEN_RE, 'https://***@');
   s = s.replace(QUERY_SECRET_RE, '$1[redacted]');
+  // The shared shapes (any URL scheme, %40, a token before @host with no
+  // scheme, Authorization/API-key headers, bare 40-hex), then logger.js's.
+  s = scrubCredentials(s);
   s = scrubSecrets(s);
+  // ESM stack frames: file:///Users/… → /Users/… so the path passes see it.
+  s = s.replace(/\bfile:\/\/(?=\/|[A-Za-z]:)/gi, '');
+  // A home folder with nothing after it ("HOME=/Users/alice"): scrubPaths
+  // would keep its basename, which IS the user name.
+  // (A space ends it only when no separator follows later on the line, since
+  // a name can contain spaces: "/Users/alice smith/…".)
+  s = s.replace(/\/(?:Users|home)\/[^\s/'"`)]+(?=$|['"`),;\n]|\s(?![^'"`\n]*[\\/]))/g, '~')
+    .replace(/[A-Za-z]:[\\/]Users[\\/][^\s\\/'"`)]+(?=$|['"`),;\n]|\s(?![^'"`\n]*[\\/]))/gi, '~');
+  // scrubPaths does not start a path right after ':' ("path:/Volumes/x/y"),
+  // so a separator it accepts is put there for its pass and taken out after.
+  s = s.replace(/([:])(?=\/(?!\/))/g, '$1\u0000');
   s = scrubPaths(s);
+  s = s.replace(/\u0000/g, '');
+  // What scrubPaths cannot see: a name with spaces in a long path, UNC shares.
+  s = scrubHomes(s);
   if (s.length > DETAIL_MAX_CHARS) s = s.slice(0, DETAIL_MAX_CHARS - 1) + '…';
   return s;
 }
@@ -117,7 +136,8 @@ function structuralHit(err, ctx) {
   if (ANTHROPIC_NAMES.has(name) && typeof err.status === 'number' && 'headers' in err) {
     const body = err.error && typeof err.error === 'object' ? err.error : {};
     const inner = body.error && typeof body.error === 'object' ? body.error : {};
-    return { klass: anthropicKlass(err.status, inner.type, inner.message || err.message), provider: 'Anthropic' };
+    const klass = anthropicKlass(err.status, inner.type, inner.message || err.message);
+    return klass ? { klass, provider: 'Anthropic' } : { klass: null };
   }
   if (name === 'APIConnectionTimeoutError') return { klass: 'ai-timeout', provider: 'Anthropic' };
   if (name === 'APIConnectionError') return { klass: 'ai-unreachable', provider: 'Anthropic' };
@@ -159,6 +179,11 @@ function structuralHit(err, ctx) {
   // Node fs: an errno code AND a syscall (a network error has a syscall too,
   // but its codes are not in the fs table except ETIMEDOUT, so require a path
   // or a file syscall for that one).
+  // A child process that could not start (`spawn osascript ENOENT`): a missing
+  // PROGRAM, not a missing file of the person's — the files advice ("not yet
+  // downloaded from iCloud… Settings › Knowledge base") would be wrong.
+  if (typeof err.syscall === 'string' && /^spawn\b/.test(err.syscall)) return { klass: 'internal-error' };
+
   if (typeof err.code === 'string' && typeof err.syscall === 'string' && FS_ERRNO_KLASS[err.code]) {
     const fileish = typeof err.path === 'string' || !/^(?:connect|getaddrinfo|read|write|queryA+|querySrv)$/.test(err.syscall);
     if (fileish) return { klass: FS_ERRNO_KLASS[err.code], name: basenameOf(err.path) || undefined };
@@ -220,10 +245,13 @@ export function toUserError(err, ctx = {}) {
     if (isAbort(err) || isDeliberate(err)) return null;
   }
   let hit = typeof err === 'object' ? structuralHit(err, ctx) : null;
-  if (!hit) {
-    const t = classifyErrorText(text);
-    if (t && !isClientKlass(t.klass)) hit = t;
-  }
+  // A recognised shape that must not be translated (structuralHit → klass null).
+  if (hit && !hit.klass) return null;
+  const t = classifyErrorText(text);
+  // An fs error object whose MESSAGE is one of The Curator's own sentences
+  // around the raw text: the sentence (kept whole, or as the lead) wins.
+  if (hit && t && t.klass === hit.klass && (t.whole || t.lead)) hit = t;
+  if (!hit && t && !isClientKlass(t.klass)) hit = t;
   if (!hit && typeof err === 'object' && isBug(err)) hit = { klass: 'internal-error' };
   if (!hit) return null;
   if (hit.klass === 'network-unreachable' && !hit.service) {
@@ -232,11 +260,17 @@ export function toUserError(err, ctx = {}) {
   }
   if (hit.klass === 'network-unreachable' && ctx && ctx.area === 'ai') hit = { ...hit, klass: 'ai-unreachable' };
   const error = composeUserMessage(
-    hit.lead ? { ...hit, lead: scrubPaths(hit.lead) } : hit,
+    {
+      ...hit,
+      ...(hit.lead ? { lead: scrubPaths(hit.lead) } : {}),
+      ...(hit.whole ? { whole: scrubPaths(hit.whole) } : {}),
+    },
     { ...ctx, ...(hit.service ? { service: hit.service } : {}) },
   );
   if (!error) return null;
-  return { error, detail: detailOf(err, text), code: KLASS_CODES[hit.klass] };
+  // When The Curator's own words are on screen, the detail is the raw fs
+  // fragment alone (the sentence is not repeated under itself).
+  return { error, detail: detailOf(err, hit.whole && hit.raw ? hit.raw : text), code: KLASS_CODES[hit.klass] };
 }
 
 /**
@@ -288,6 +322,15 @@ export function areaFromPath(p) {
   }
 }
 
+/** /api/<x>/… → the AI surface whose next step differs (ai-too-long), or undefined. */
+export function surfaceFromPath(p) {
+  const seg = String(p || '').split('?')[0].replace(/^\/api\//, '').split('/')[0];
+  if (seg === 'chat' || seg === 'query') return 'chat';
+  if (seg === 'compile') return 'compile';
+  if (seg === 'ingest' || seg === 'ingest-queue') return 'ingest';
+  return undefined;
+}
+
 function pathOnly(req) {
   return String((req && (req.originalUrl || req.url)) || '').split('?')[0];
 }
@@ -303,7 +346,9 @@ export function userErrorBodies(req, res, next) {
     try {
       const i = args.length >= 2 && typeof args[0] === 'number' ? 1 : 0;
       const body = args[i];
-      const out = userErrorBody(body, { area: areaFromPath(pathOnly(req)) });
+      const p = pathOnly(req);
+      const surface = surfaceFromPath(p);
+      const out = userErrorBody(body, { area: areaFromPath(p), ...(surface ? { surface } : {}) });
       if (out !== body) {
         args[i] = out;
         logWarn('api-error', `${req.method} ${pathOnly(req)} → ${out.code}: ${out.detail}`);
@@ -350,7 +395,8 @@ export function apiErrorHandler(err, req, res, next) {
     body = { error: USER_MESSAGES['request-malformed'](), code: KLASS_CODES['request-malformed'] };
   } else {
     const declared = Number(err && (err.statusCode || err.status));
-    const u = toUserError(err, { area: areaFromPath(pathOnly(req)) });
+    const surface = surfaceFromPath(pathOnly(req));
+    const u = toUserError(err, { area: areaFromPath(pathOnly(req)), ...(surface ? { surface } : {}) });
     if (u) {
       status = declared >= 400 && declared < 600 ? declared : 500;
       body = u;

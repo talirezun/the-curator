@@ -45,7 +45,7 @@
 
 import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, watch as fsWatch } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -57,7 +57,7 @@ import { decideQuit } from './lib/quit-decision.js';
 import { applyAboutPanel } from './lib/app-version.js';
 import { buildMenuTemplate, SETTINGS_NAV_SELECTOR } from './lib/menu.js';
 import { fetchUpdateCheck } from './lib/update-check.js';
-import { dialogText, loadSanitizer, minimalScrub, FATAL_MAIN, UPDATE_CHECK_MAIN, UPDATE_INSTALL_MAIN, QUIT_CHECK_MAIN, LOG_FOLDER_MAIN } from './lib/error-dialog.js';
+import { dialogText, loadSanitizer, minimalScrub, defaultLogsDir, fatalMain, writeFatalLog, UPDATE_CHECK_MAIN, UPDATE_INSTALL_MAIN, QUIT_CHECK_MAIN, LOG_FOLDER_MAIN } from './lib/error-dialog.js';
 import { describeUpdate, describeInstallOutcome, ACTION_ID } from './lib/update-verdict.js';
 import { fetchUpdaterProbe, runInstall, applyOnlyForAction, UPDATE_LABEL_PENDING } from './lib/update-client.js';
 import { createUpdateWindow } from './lib/update-window.js';
@@ -1901,11 +1901,16 @@ function revealWindow() {
 }
 
 function fatal(err) {
-  // The full stack goes to the log (stderr), never into the dialog.
+  // The full stack never goes into the dialog. It goes to curator.log FIRST
+  // (scrubbed, the same file logger.js writes), because stderr is invisible in
+  // a packaged app and Help › Show Logs is gone once the app exits; the dialog
+  // then names that folder.
   console.error('[The Curator] fatal:', (err && err.stack) || err);
+  const fatalLogsDir = logsDir || defaultLogsDir();
+  writeFatalLog({ err, logsDir: fatalLogsDir, sanitize: dialogSanitizer, fs: { appendFileSync, mkdirSync } });
   dialog.showErrorBox(
     'The Curator could not start',
-    dialogText(FATAL_MAIN, err, dialogSanitizer)
+    dialogText(fatalMain(fatalLogsDir), err, dialogSanitizer)
   );
   app.exit(1);
 }

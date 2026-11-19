@@ -41,14 +41,14 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 
 | Code | What it means | What to do |
 |---|---|---|
-| ai-key-rejected | The provider refused the API key: it is wrong, deleted or expired. The request was not charged. | Settings › Providers & keys › Replace key. Verify AI connection in Settings › General checks it. |
+| ai-key-rejected | The provider refused the API key: it is wrong, deleted or expired. The request was not charged. | Settings › Providers & keys › Replace key (the button reads Add key when no key is saved in Settings). Verify AI connection in Settings › General checks it. |
 | ai-no-credit | The provider account has no credit left. The request was not charged. | Add credit on the provider’s website, or switch provider in Settings › Providers & keys. |
 | ai-rate-limited | The provider is limiting how many requests the account may make (a free tier’s quota, for example). | Wait a minute and try again, or switch provider in Settings › Providers & keys. |
 | ai-overloaded | The provider is having problems on its side. | Wait a few minutes, then try again. |
 | ai-unreachable | The Curator could not connect to the provider. | Check the internet connection (and any VPN or firewall), then try again. |
 | ai-timeout | The provider took too long to answer. It may still bill the request. | Try again in a few minutes. |
 | ai-model-unavailable | The provider says the chosen model is not available. | Pick another model in Settings › Providers & keys. |
-| ai-too-long | The text is more than the model can read at once. The request was not charged. | Pick a model that reads more, or split the source into smaller files. |
+| ai-too-long | The text is more than the model can read at once. The request was not charged. | Pick a model that reads more. When ingesting, split the source into smaller files; in chat, start a New chat; in Compile to Wiki, compile with a model that reads more. |
 | ai-bad-answer | The model answered, but not in a form The Curator could read. That answer is charged. | Try again; if it repeats, pick a different model. |
 | ai-provider-error | The provider could not complete the request, for another reason. | Try again in a few minutes, or pick a different model or provider. |
 

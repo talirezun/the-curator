@@ -35,7 +35,7 @@ import {
 // carries the plain sentence as `message` plus `detail`/`code`; on a miss it
 // is exactly today's text. `err.message` itself is never changed.
 function errorFrame(err, fallbackMessage) {
-  const u = toUserError(err, { area: 'ai' });
+  const u = toUserError(err, { area: 'ai', surface: 'compile' });
   // A miss keeps today's text, with absolute paths scrubbed (wave 3).
   if (!u) return { type: 'error', message: scrubPaths(String(fallbackMessage ?? '')) };
   return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
@@ -86,7 +86,7 @@ export function compileOutcomeEvent(result) {
     // v3.99.2: compile reports a failed LLM call as a RESULT
     // ("LLM call failed: <raw provider text>"), not a throw, so it is
     // translated here as well as in the catch below. A miss is today's frame.
-    const u = typeof r.error === 'string' && r.error ? toUserError(r.error, { area: 'ai' }) : null;
+    const u = typeof r.error === 'string' && r.error ? toUserError(r.error, { area: 'ai', surface: 'compile' }) : null;
     if (u) return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code, ...spent };
     return { type: 'error', message: r.error ? scrubPaths(String(r.error)) : 'Compilation failed', ...spent };
   }

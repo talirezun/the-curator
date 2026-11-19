@@ -303,12 +303,15 @@ eq(viaSessionLines.length, 1, 'and ONE session line, for the one bridge process 
 eq(viaSessionLines[0].via, 'self-test', '…marked self-test like every other line of the run');
 eq(viaSessionLines[0].sid, JSON.parse(viaLines[0]).sid, '…sharing the sid every tool line carries');
 const viaRecs = viaLines.map((l) => JSON.parse(l));
-eq(JSON.stringify(viaRecs.map((r) => r.tool)),
-  JSON.stringify(exercise.EXERCISE_PLAN.map((s) => s.tool)),
-  'the log names the tools in the order they were called');
+// The usage appends are fire-and-forget (mcp/tools/index.js appendUsage), so
+// two calls close together may land in either order: compare the multiset.
+const sortedTools = (list) => JSON.stringify([...list].sort());
+eq(sortedTools(viaRecs.map((r) => r.tool)),
+  sortedTools(exercise.EXERCISE_PLAN.map((s) => s.tool)),
+  'the log names every tool that was called, each as many times as it was called');
 ok(viaRecs.every((r) => r.via === 'self-test'),
   'every line carries via: "self-test"');
-eq(JSON.stringify(Object.keys(viaRecs[0])),
+eq(JSON.stringify(Object.keys(viaRecs.find((r) => r.tool === 'list_domains') || {})),
   JSON.stringify(usage.LINE_KEYS.filter((k) => k !== 'project')),
   'a via line carries EXACTLY ts,tool,domain,ok,refused,ms,sid,via — in that order (list_domains names no project)');
 // …and a tool that DOES resolve a project carries the ninth key, in place.

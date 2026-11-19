@@ -270,6 +270,17 @@ try {
     const plainMsg = 'Domain "alpha" not found';
     ok(healthFrame(new Error(plainMsg), false).error === plainMsg && sbRoutes.__testing.errorFrame(new Error(plainMsg)).message === plainMsg,
       'a deliberate sentence with no path is byte-identical on a miss');
+
+    // v3.99.2 audit: the OpenRouter qualify stream was the last raw SSE frame.
+    const { __qualifyErrorFrameForTest: qualifyFrame } = await import('../src/routes/config.js');
+    const SK = ['sk', 'or', 'v1', 'f'.repeat(40)].join('-');
+    const q1 = qualifyFrame(new Error(`OpenRouter chat → HTTP 401: {"error":{"message":"bad key ${SK}"}}`));
+    ok(q1.type === 'error' && /didn't accept the API key/.test(q1.error) && q1.code === 'ai-key-rejected', 'qualify frame: a raw OpenRouter 401 is the plain key sentence', q1);
+    ok(/HTTP 401/.test(q1.detail) && !q1.detail.includes(SK), '…its raw text is the detail, without the key', q1.detail);
+    const q2 = qualifyFrame(Object.assign(new Error(RAW_PATH_MSG), { code: 'MODEL_GONE' }));
+    ok(q2.code === 'MODEL_GONE' && !HOME_RE.test(q2.error) && !('detail' in q2), 'qualify frame miss: its own code kept, home path scrubbed, no detail', q2);
+    const q3 = qualifyFrame(Object.assign(new Error("EACCES: permission denied, open '/Users/alice/x/q.json'"), { code: 'EACCES', syscall: 'open', path: '/Users/alice/x/q.json' }));
+    ok(q3.code === 'EACCES' && /didn't let The Curator use a file/.test(q3.error), 'qualify frame: a raw errno code is never replaced', q3);
   } finally {
     globalThis.fetch = realFetch;
     await new Promise((r) => server.close(r));

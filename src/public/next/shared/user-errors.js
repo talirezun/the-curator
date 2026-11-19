@@ -57,7 +57,9 @@ export const USER_MESSAGES = Object.freeze({
   // ── AI provider ──
   'ai-key-rejected': (c) =>
     `${cap(providerOf(c))} didn't accept the API key saved in The Curator, so the request was refused and not charged. ` +
-    `Open ${SETTINGS_KEYS} and use Replace key to paste a working key.`,
+    // The button reads "Add key" when no key is saved in Settings (a key
+    // from .env only), "Replace key" otherwise (views/settings.js).
+    `Open ${SETTINGS_KEYS} and use Replace key (or Add key) to paste a working key.`,
   'ai-no-credit': (c) =>
     `Your ${c && c.provider ? c.provider : 'AI provider'} account has run out of credit, so the request was refused and not charged. ` +
     `Add credit on ${c && c.provider ? `${c.provider}'s` : "your provider's"} website, or switch to another provider in ${SETTINGS_KEYS}.`,
@@ -73,9 +75,18 @@ export const USER_MESSAGES = Object.freeze({
     `Try again in a few minutes.`,
   'ai-model-unavailable': (c) =>
     `${cap(providerOf(c))} says the chosen model isn't available. Pick another model in ${SETTINGS_KEYS}.`,
-  'ai-too-long': () =>
-    `This was more text than the chosen AI model can read at once, so the request was refused and not charged. ` +
-    `Pick a model that can read more in ${SETTINGS_KEYS}, or split the source into smaller files.`,
+  // The next step depends on what was too long, so it follows ctx.surface
+  // (the caller names it: 'ingest' | 'chat' | 'compile' | 'health'). With no
+  // surface it names only the model, the one step true everywhere.
+  'ai-too-long': (c) => {
+    const head = `This was more text than the chosen AI model can read at once, so the request was refused and not charged. `;
+    switch (c && c.surface) {
+      case 'ingest': return head + `Pick a model that can read more in ${SETTINGS_KEYS}, or split the source into smaller files.`;
+      case 'chat': return head + `Start a New chat (the recent conversation is sent with every question), or pick a model that can read more in ${SETTINGS_KEYS}.`;
+      case 'compile': return head + `This conversation is too long to compile with this model. Pick a model that can read more in ${SETTINGS_KEYS}, then press Compile to Wiki again.`;
+      default: return head + `Pick a model that can read more in ${SETTINGS_KEYS}, then try again.`;
+    }
+  },
   'ai-bad-answer': () =>
     `The AI's answer came back in a form The Curator couldn't read. Your AI provider charges for answers like this one. ` +
     `Try again; if it keeps happening, pick a different model in ${SETTINGS_KEYS}.`,
@@ -216,10 +227,15 @@ export function isCatalogueCode(code) { return typeof code === 'string' && CATAL
 // ── Sub-classifiers: run only INSIDE a recognised provider shape ────────────
 const TOO_LONG_RE = /prompt is too long|too many tokens|request_too_large|exceeds the maximum number of tokens|input token count|maximum context length|context_length_exceeded|context window/i;
 const NO_CREDIT_RE = /credit balance is too low|insufficient credits|insufficient_quota|billing_error/i;
+// The request asked for more OUTPUT than the model allows (a setting, not the
+// provider's health): "Try again in a few minutes" would be wrong, so these
+// are not classified (null: the caller keeps its own text).
+const OUTPUT_LIMIT_RE = /\bmax_tokens\b|max_output_tokens|max_completion_tokens|maximum (?:number of )?output tokens|output token limit/i;
 
 function byStatus(status, inner, provider) {
   const text = inner || '';
   if (TOO_LONG_RE.test(text)) return 'ai-too-long';
+  if (OUTPUT_LIMIT_RE.test(text)) return null;
   if (NO_CREDIT_RE.test(text) || status === 402) return 'ai-no-credit';
   if (status === 401) return 'ai-key-rejected';
   if (status === 403) return /api key|api_key|permission/i.test(text) || provider === ANTHROPIC ? 'ai-key-rejected' : 'ai-provider-error';
@@ -235,6 +251,7 @@ export function anthropicKlass(status, type, message) {
   const text = String(message || '');
   if (TOO_LONG_RE.test(text) || type === 'request_too_large') return 'ai-too-long';
   if (NO_CREDIT_RE.test(text) || type === 'billing_error') return 'ai-no-credit';
+  if (OUTPUT_LIMIT_RE.test(text) && (type === 'invalid_request_error' || !type)) return null;
   switch (type) {
     case 'authentication_error':
     case 'permission_error': return 'ai-key-rejected';
@@ -265,6 +282,70 @@ export const FS_ERRNO_KLASS = FS_KLASS;
 
 const NET_CODES = 'ECONNREFUSED|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|ENETDOWN';
 const CERT_RE = /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(?:_LOCALLY)?|SELF_SIGNED_CERT_IN_CHAIN|DEPTH_ZERO_SELF_SIGNED_CERT|CERT_HAS_EXPIRED|ERR_TLS_CERT_ALTNAME_INVALID)\b|unable to verify the first certificate|self[- ]signed certificate in certificate chain/;
+
+// ── An fs error INSIDE one of The Curator's own sentences ────────────────────
+// Node's fs text is only ever `CODE: description, syscall 'path'`, so any words
+// around it are The Curator's, and they often carry the facts a person needs
+// most: "The AI's reply was received (and charged), but … could be saved:
+// EACCES: …. Nothing else was changed." Replacing that whole message with the
+// generic files sentence (which ends "Then try again.") made a person pay
+// twice. So:
+//   - the fs text is the WHOLE message → the class's sentence (as before);
+//   - words FOLLOW it → the message is kept whole, word for word, with only the
+//     raw fs fragment swapped for a short plain clause (FS_CLAUSES); the raw
+//     fragment becomes the detail;
+//   - words only BEFORE it → they are kept as the lead (a closing ':' becomes
+//     '.'), then the class's sentence; a bare programmer's label (one word, or
+//     starting lower-case: "pushDomain: …") is dropped as before.
+const FS_CLAUSES = Object.freeze({
+  'files-not-allowed': (n) => `this computer didn't allow access to ${n || 'a file it needs'}`,
+  'files-disk-full': () => `the disk is full`,
+  'files-missing': (n) => `${n || 'a file it needs'} couldn't be found`,
+  'files-exists': (n) => `${n || 'something with that name'} already exists`,
+  'files-busy': (n) => `${n || 'a file it needs'} was busy or still downloading`,
+  'files-name-too-long': () => `a file name was too long for this computer`,
+  'files-read-only-disk': (n) => `the disk holding ${n || 'it'} is read-only`,
+  'files-wrong-kind': (n) => `${n || 'a name'} was a file where a folder was expected, or the other way round`,
+});
+export const __FS_CLAUSES = FS_CLAUSES;
+// The fragment alone (global), for replacing every one inside a sentence.
+const FS_FRAGMENT_RE = /\b(E[A-Z]{2,}): ([a-z][a-z ,-]*?), ([a-z_]+)(?: '([^'\n]*)'(?: -> '[^'\n]*')?)?/g;
+
+function fsHit(klass, name, m) {
+  const text = m.input;
+  const start = m.index + m[0].indexOf(m[1]);
+  const end = m.index + m[0].length;
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  const hit = { klass, name, raw: text.slice(start, end) };
+  if (!before.trim() && !after.trim()) return hit;
+  // Prose after it: closing punctuation, then a space and words — never a
+  // stack trace or more machine text glued on.
+  const prose = /[A-Za-z]{2}/.test(after) && /^\s/.test(after.replace(/^['")\].,;:!?]+/, '')) && !/\n\s*at\s/.test(after);
+  if (prose) {
+    // The Curator's own sentence continues after the raw text: keep all of it.
+    // A leading programmer's label ("pushDomain: ") is not a word for a person.
+    // Every raw fs fragment in it becomes a clause (a message can carry two).
+    const head = before.replace(/^[a-z][A-Za-z0-9_.]*:\s+/, '');
+    hit.whole = (head + text.slice(start)).replace(FS_FRAGMENT_RE, (frag, code, _d, _s, p, off, all) => {
+      const k = FS_KLASS[code];
+      if (!k) return frag;
+      const clause = FS_CLAUSES[k](basenameOf(p) || undefined);
+      const prev = all.slice(0, off);
+      return !prev.trim() || /[.!?]\s*$/.test(prev) ? clause.charAt(0).toUpperCase() + clause.slice(1) : clause;
+    });
+    return hit;
+  }
+  // Words only before it: a sentence (three words or more, after any leading
+  // programmer's label such as "mirror: ") is kept as the lead; a short label
+  // ("Error: ", "listPages failed: ") is dropped.
+  let lead = before.replace(/^[a-z][A-Za-z0-9_.]*:\s+/, '').trimEnd();
+  if (/^["'(]?[A-Za-z]/.test(lead) && (lead.match(/[A-Za-z][A-Za-z'’]*/g) || []).length >= 3) {
+    lead = /[.!?]$/.test(lead) ? lead : lead.replace(/[\s:;,(\-–—]+$/, '') + '.';
+    hit.lead = lead.replace(/^(["'(]?)([a-z])/, (_m, q, c) => q + c.toUpperCase());
+  }
+  return hit;
+}
 
 export function basenameOf(p) {
   const parts = String(p || '').split(/[\\/]/).filter((s) => s && s !== '...');
@@ -298,6 +379,9 @@ const SIGNATURES = [
     }
     if (/^Error fetching from \S+: fetch failed/.test(rest)) return { klass: 'ai-unreachable', provider: GEMINI };
     if (/^Request aborted/.test(rest)) return null;
+    // A safety/recitation block is about the CONTENT, not the provider's health:
+    // "Try again in a few minutes" would be wrong. Not classified.
+    if (/\bblocked\b|\bSAFETY\b|\bRECITATION\b|\bPROHIBITED_CONTENT\b|\bBLOCKLIST\b|\bSPII\b/.test(rest)) return { klass: null };
     return { klass: 'ai-provider-error', provider: GEMINI };
   }],
 
@@ -320,10 +404,12 @@ const SIGNATURES = [
   // The model's answer could not be parsed (health-ai.js and the same shape elsewhere).
   [new RegExp(B + 'AI response was not valid JSON\\b'), () => ({ klass: 'ai-bad-answer' })],
 
-  // Node fs errno, Node's exact shape: `CODE: description, syscall 'path'`.
-  [/(?:^|[^A-Za-z0-9_])(E[A-Z]{2,}): ([a-z][a-z ,]*?), ([a-z_]+)(?: '([^'\n]*)')?/, (m) => {
+  // Node fs errno, Node's exact shape: `CODE: description, syscall 'path'`
+  // (`-> 'dest'` for rename/copyfile/link). The description is libuv's text,
+  // which has hyphens ("read-only file system") as well as commas.
+  [/(?:^|[^A-Za-z0-9_])(E[A-Z]{2,}): ([a-z][a-z ,-]*?), ([a-z_]+)(?: '([^'\n]*)'(?: -> '[^'\n]*')?)?/, (m) => {
     const klass = FS_KLASS[m[1]];
-    return klass ? { klass, name: basenameOf(m[4]) || undefined } : null;
+    return klass ? fsHit(klass, basenameOf(m[4]) || undefined, m) : null;
   }],
 
   // Network, outside an AI SDK's own shape.
@@ -341,6 +427,56 @@ const SIGNATURES = [
   [new RegExp(B + '(?:Request failed \\(\\d{3}\\)|\\(?HTTP \\d{3}\\)?|Unexpected end of JSON input)$'), () => ({ klass: 'request-failed' })],
 ];
 
+const USER_ECHO_RE = /^(?:Unknown (?:domain|project|page|slug|model|provider|tool|connection|conversation)|(?:Source |Orphan )?[Pp]age not found|No page titled): /;
+export const __USER_ECHO_RE = USER_ECHO_RE;
+
+// ── Scrubbing a technical detail (shared by the server and the browser) ──────
+// Pure and dependency-free so the browser's cleanDetail (shared/net.js) and the
+// server's sanitizeDetail (src/brain/user-errors.js) remove the SAME shapes.
+// Fails toward removing: a commit id looks like a classic 40-hex token and is
+// removed too.
+
+/** Credential shapes → '[redacted]' / '***@'. */
+export function scrubCredentials(text) {
+  if (typeof text !== 'string' || !text) return typeof text === 'string' ? text : '';
+  let s = text;
+  // URL userinfo under any scheme (https, http, git+https, ssh, …).
+  s = s.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, '$1***@');
+  // Percent-encoded userinfo ("https://<token>%40github.com").
+  s = s.replace(/(:\/\/)[^\s/'"@]+?%40/gi, '$1***@');
+  s = s.replace(/(^|[\s'"(=:])[A-Za-z0-9_.~-]{16,}%40/g, '$1***@');
+  // A token in front of @host with no scheme ("'<token>@github.com'").
+  s = s.replace(/(^|[\s'"(=:/])[A-Za-z0-9_-]{20,}@(?=[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/g, '$1***@');
+  // Headers: Authorization (any scheme word), API-key headers.
+  s = s.replace(/\b(authorization\s*[:=]\s*)(?:(?:bearer|basic|token|digest)\s+)?[^\s'",;]+/gi, '$1[redacted]');
+  s = s.replace(/\b((?:x-api-key|x-goog-api-key|api[-_]?key|access[-_]?token)\s*[:=]\s*)[^\s'",;&]+/gi, '$1[redacted]');
+  s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [redacted]');
+  // Query-string secrets.
+  s = s.replace(/([?&](?:key|api_key|apikey|access_token|token|auth)=)[^&\s'"]+/gi, '$1[redacted]');
+  // Key shapes.
+  s = s.replace(/AIza[0-9A-Za-z_-]{30,}/g, '[redacted]');
+  s = s.replace(/\bsk-[A-Za-z0-9._~+/=-]{8,}/g, '[redacted]');
+  s = s.replace(/\b(?:github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[0-9A-Za-z_]{16,}/g, '[redacted]');
+  s = s.replace(/\bsbat_[0-9a-f]{20,}/g, '[redacted]');
+  s = s.replace(/\b[0-9a-f]{40}\b/gi, '[redacted]');
+  s = s.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted]');
+  return s;
+}
+
+/**
+ * Home folders → '~' (a user name may contain spaces: "/Users/alice smith/…"
+ * loses the whole name), file:// URLs → their path, UNC shares → their last
+ * segment.
+ */
+export function scrubHomes(text) {
+  if (typeof text !== 'string' || !text) return typeof text === 'string' ? text : '';
+  let s = text.replace(/\bfile:\/\/(?=\/|[A-Za-z]:)/gi, '');
+  s = s.replace(/\/(?:Users|home)\/(?:[^/\n'"`]{1,64}?(?=\/)|[^\s/'"`)]+)/g, '~');
+  s = s.replace(/[A-Za-z]:[\\/]Users[\\/](?:[^\\/\n'"`]{1,64}?(?=[\\/])|[^\s\\/'"`)]+)/gi, '~');
+  s = s.replace(/(^|[^\\\w])\\\\[^\\\s'"]+\\[^\s'"]*/g, (m, p) => `${p}…\\${basenameOf(m.slice(p.length))}`);
+  return s;
+}
+
 /** Exposed for the census suite's mutation proofs; not for callers. */
 export const __SIGNATURES = SIGNATURES;
 
@@ -354,13 +490,22 @@ export function classifyErrorText(text) {
   // The ⚠ messages (llm.js rate-limit/overload, OpenRouter's own sentences) are
   // deliberate and pinned; they pass through whole.
   if (text.trimStart().startsWith('⚠')) return null;
+  // A refusal that ECHOES what a person typed or named ("Unknown domain: X",
+  // "Page not found: X"): X is their text, never raw machine text, even when it
+  // reads "fetch failed" (GET /api/wiki/fetch%20failed).
+  if (USER_ECHO_RE.test(text)) return null;
   for (const [re, build] of SIGNATURES) {
     const m = re.exec(text);
     if (!m) continue;
     const hit = build(m);
     if (!hit) continue;
-    const lead = leadBefore(text, m.index);
-    if (lead) hit.lead = lead;
+    // A recognised shape that must NOT be translated (an output-limit or a
+    // safety refusal): stop here and leave the message as it is.
+    if (!hit.klass) return null;
+    if (hit.lead === undefined && hit.whole === undefined) {
+      const lead = leadBefore(text, m.index);
+      if (lead) hit.lead = lead;
+    }
     return hit;
   }
   return null;
@@ -379,6 +524,8 @@ function leadBefore(text, index) {
 /** lead (if any) + the class's sentence. */
 export function composeUserMessage(hit, ctx = {}) {
   if (!hit || !USER_MESSAGES[hit.klass]) return null;
+  // The Curator's own sentence, kept whole (an fs error inside it: fsHit).
+  if (typeof hit.whole === 'string' && hit.whole) return hit.whole;
   // What the text itself says (provider, file name) outranks the caller's guess.
   const c = { ...ctx, ...(hit.provider ? { provider: hit.provider } : {}), ...(hit.name ? { name: hit.name } : {}) };
   const sentence = (surfaceMessage(hit.klass, c) || USER_MESSAGES[hit.klass])(c);

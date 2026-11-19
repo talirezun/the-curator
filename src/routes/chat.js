@@ -77,7 +77,7 @@ const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 // text with no detail, so every deliberate refusal is byte-identical.
 function errorBody(err) {
   if (!isAbortError(err)) {
-    const u = toUserError(err, { area: 'ai' });
+    const u = toUserError(err, { area: 'ai', surface: 'chat' });
     if (u) return u.detail ? u : { error: u.error, code: u.code };
   }
   return { error: scrubPaths(String((err && err.message) || 'Unexpected error')) };

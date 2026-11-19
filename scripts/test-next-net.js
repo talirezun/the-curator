@@ -403,5 +403,54 @@ section('§5 the converted views, executed (Settings › Verify AI connection, P
   ok(state.keysActionError === 'That does not look like an Anthropic key.', 'Save key: a written refusal passes through unchanged', state.keysActionError);
 }
 
+section('§ v3.99.2 audit: the browser half');
+{
+  // #3: cleanDetail removes credential shapes too, dependency-free (the
+  // shared catalogue's scrubs, no server import).
+  const HEX40 = '0123456789abcdef0123456789abcdef01234567';
+  const SK = ['sk', 'ant', 'api03', 'c'.repeat(30)].join('-');
+  const AIZA = 'AIza' + 'b'.repeat(35);
+  const raw = `https://ghp_${'a'.repeat(36)}@github.com/x /Users/alice smith/x ?key=${AIZA} ${SK} Authorization: token ${HEX40} ssh://${HEX40}@github.com/r`;
+  const shapes = () => {
+    const c = cleanDetail(raw);
+    return ['ghp_', 'AIza', 'sk-ant', HEX40, 'alice', 'smith'].filter((x) => c.includes(x));
+  };
+  ok(shapes().length === 0, 'cleanDetail: no key, token or user name survives', shapes().join(', '));
+  const viaBody = userMessageFrom({ error: 'S', detail: raw });
+  ok(!/sk-ant|AIza|ghp_|smith/.test(viaBody.detail), 'a server detail is cleaned the same way', viaBody.detail);
+  const viaRaw = userMessageFrom({ error: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key ' + SK + '"}}' });
+  ok(!viaRaw.detail.includes(SK), 'a raw old-server error kept as detail loses its key', viaRaw.detail);
+  ok(!/^\s*import\s/m.test(readFileSync(join(ROOT, 'src/public/next/shared/user-errors.js'), 'utf8')), 'the scrubs live in the import-free shared module');
+  // Mutation control: the pre-audit cleanDetail (home folders and URL userinfo only) leaks.
+  const old = (t) => t.replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1').replace(/(https?:\/\/)[^\s/@:]{16,}@/gi, '$1')
+    .replace(/\/Users\/[^/\s'"`]+/g, '~');
+  ok(/sk-ant|AIza|smith/.test(old(raw)), 'mutation control: the pre-audit scrub leaves a key and "smith" (so the check can fail)');
+
+  // #4: a later error with the same sentence and no detail does not inherit one.
+  const a = plainError({ error: 'Same sentence for the audit.', detail: 'detail A' });
+  ok(errorDetailOf(a) === 'detail A', 'a detail is remembered for its sentence');
+  const c = plainError({ error: 'Same sentence for the audit.' });
+  ok(errorDetailOf(c) === '', 'a later error with the same sentence and no detail shows none (not the stale one)', errorDetailOf(c));
+  ok(errorDetailHtml(c) === '', '…and renders no detail line');
+
+  // #8: the server dying mid-stream.
+  for (const [label, err] of [
+    ['Chromium reader.read()', new TypeError('network error')],
+    ['Firefox reader.read()', new TypeError('Error in input stream')],
+  ]) {
+    const u = userMessageFrom(err);
+    ok(u.code === 'server-unreachable' && u.error === USER_MESSAGES['server-unreachable'](), `${label} → server-unreachable`, JSON.stringify(u));
+  }
+  for (const s of ['Could not reach GitHub: network error', 'The network error page', 'network errors']) {
+    ok(userMessageFrom({ error: s }).error === s, `only the exact shape: "${s}" passes through`);
+  }
+
+  // #1 in the browser: an fs error inside a deliberate sentence keeps the sentence.
+  const charged = "The AI's reply was received (and charged), but not one of its 3 page(s) could be saved: EACCES: permission denied, open '/Users/a/w/acme.md'. Nothing else was changed.";
+  const uc = userMessageFrom({ error: charged });
+  ok(/\(and charged\)/.test(uc.error) && /Nothing else was changed\./.test(uc.error) && !/EACCES/.test(uc.error), 'an older server\'s charged sentence keeps its words in the browser', uc.error);
+  ok(/^EACCES: permission denied, open '/.test(uc.detail) && !uc.detail.includes('/Users/a'), '…with the raw fragment alone as detail', uc.detail);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
