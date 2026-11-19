@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.98.3` | MCP agents keep hard data like ingest: compile_to_wiki and the my-curator skill put figures and technical specifics in a Key Facts section, and read it first for an exact figure. |
 | `v3.98.2` | MCP search finds the right page far more often: search_wiki and search_cross_domain rank by relevance instead of page size; chat unchanged. |
 | `v3.98.1` | Chat citations render as numbered sources when a model lists several in one bracket; docs and llm-docs describe brains that hold numbers and technical documentation. |
 | `v3.98.0` | Ingest keeps a source's hard data: a Key Facts section with exact figures, technical identifiers and their period, and chat finds it. |

@@ -2949,10 +2949,12 @@ response, no error and no log line.
 | 400 | `sync-token-invalid` | Not token-shaped |
 | 400 | `sync-config-unreadable` | `.sync-config.json` unreadable or has no `repoUrl` |
 | 400 | `sync-new-token-rejected` | GitHub refused the token (API 401, or git's authentication failure) |
-| 400 | `sync-new-token-no-access` | Token valid, repository not visible to it (403 / 404) |
+| 400 | `sync-new-token-no-access` | Token valid, repository not visible to it (404) |
+| 400 | `sync-new-token-org-blocked` | github.com only: a 403 that is not a rate limit, e.g. the organisation requires single sign-on authorisation or an owner must approve a fine-grained token |
 | 400 | `sync-new-token-read-only` | github.com only: GitHub accepted it but `permissions.push` is not `true` |
 | 400 | `sync-token-check-rate-limited` | github.com only: 429, or a 403 with `x-ratelimit-remaining: 0` or "rate limit" |
 | 400 | `sync-token-check-offline` | GitHub unreachable |
+| 400 | `sync-token-check-redirected` | github.com only: GitHub redirected the check to another host, gave no usable address, or redirected more than 3 times; the token is never sent to another host (a redirect within api.github.com, as for a renamed repository, is followed) |
 | 400 | `sync-token-check-failed` | Any other check failure; GitHub's answer or git's text is in `detail` |
 | 400 | `sync-token-save-failed` | The check passed, a write failed; any partial write was undone (the git address put back), so nothing changed; `detail` says why |
 | 400 | `sync-token-save-partial` | The check passed, the git address was rewritten, the settings file could not be, **and** putting the old address back failed too. The one refusal after which the two places may differ; `detail` carries both errors. Use Replace token again with the same token |
