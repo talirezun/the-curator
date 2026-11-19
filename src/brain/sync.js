@@ -3065,7 +3065,7 @@ export async function replaceToken(newToken) {
   }
   await chmod(path.join(gitDir, 'config'), 0o600).catch(() => {});
 
-  // 3. .sync-config.json: every key it had, only `token` changed, atomic, 0600.
+  // 3. The sync config file: every key it had, only `token` changed, atomic, 0600.
   try {
     await writeFileAtomic(configFile, JSON.stringify({ ...config, token }, null, 2), { mode: 0o600 });
   } catch (err) {

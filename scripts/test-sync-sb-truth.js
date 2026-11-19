@@ -351,6 +351,9 @@ section('§5  Render helpers — the Sync view and the Shared Brain labels');
     'function lastSyncOutcome() { return { kind: "pull", ok: true, message: "done", error: null, seen: false }; }\n' +
     'async function startSyncRun(k) { run = { kind: k }; onSyncRunChanged(1); await Promise.resolve(); run = null; onSyncRunChanged(1); }\n' +
     extractFunction(syncSrc, 'seedFromSyncRun', 'sync.js') + '\n' +
+    // 2026-11-19: onSyncRunChanged opens Replace token on a token error.
+    extractFunction(syncSrc, 'tokenErrorCodes', 'sync.js') + '\n' +
+    extractFunction(syncSrc, 'tokenPanelOpen', 'sync.js') + '\n' +
     extractFunction(syncSrc, 'onSyncRunChanged', 'sync.js') + '\n' +
     extractFunction(syncSrc, 'onGateChange', 'sync.js') + '\n' +
     extractFunction(syncSrc, 'onAction', 'sync.js') + '\n' +

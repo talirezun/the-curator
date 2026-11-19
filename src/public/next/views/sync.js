@@ -456,6 +456,11 @@ async function loadSharedBrainSummary(token) {
 // ── Render ───────────────────────────────────────────────────────────────
 
 function render(token) {
+  // A repaint rebuilds the Replace token field; whoever was typing in it keeps
+  // the focus (a write finishing elsewhere repaints this page).
+  let refocus = false;
+  try { refocus = !!document.activeElement && document.activeElement.id === 'sync-token-input'; } catch { refocus = false; }
+  if (refocus && state.tokenForm) state.tokenForm.focusPending = true;
   renderSidebar(token);
   renderMain(token);
   wireListeners();
@@ -1135,7 +1140,7 @@ async function onReplaceToken(token) {
     await loadStatus(token);
     if (!isCurrentMount(token)) return;
     render(token);
-    refreshSyncRemoteBadge();
+    await refreshSyncRemoteBadge();
     return;
   }
   state.tokenForm.submitting = false;

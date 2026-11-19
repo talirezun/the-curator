@@ -1192,7 +1192,12 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // It is a POST rather than a GET — so it lands in the mutating set at
     // all — because it carries a GitHub PAT in its body. A GET would put the
     // token in a URL.
-    expectedMutatingCount: 6,
+    //
+    // 7th (POST /token, 2026-11-19): Replace token. Rewrites the origin
+    // address in the sync git dir and .sync-config.json, so it carries
+    // guardConcurrent like its siblings: a token swapped under a running push
+    // would change the address that push is using.
+    expectedMutatingCount: 7,
     guardClasses: [{
       name: 'concurrency',
       guardTokens: ['guardConcurrent'],
