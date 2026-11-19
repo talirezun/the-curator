@@ -56,7 +56,7 @@ import { freshnessTier } from '../shared/age.js';
 import { listRowBodyHtml } from '../shared/model-row.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
 // v3.99.2 plain-language errors.
-import { userMessageFrom, renderErrorDetail } from '../shared/net.js';
+import { userMessageFrom, renderErrorDetail, errorDetailHtml } from '../shared/net.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -455,7 +455,7 @@ function customField(ui) {
     + '<button type="button" class="btn btn-secondary btn-xs" data-setup-act="add-custom">Add</button>'
     + '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="custom-cancel">Cancel</button>'
     + '</div>'
-    + (ui.customError ? '<p class="mem-setup-err" role="alert">' + escapeHtml(ui.customError) + '</p>' : '');
+    + (ui.customError ? '<p class="mem-setup-err" role="alert">' + escapeHtml(ui.customError) + '</p>' + errorDetailHtml(ui.customError) : '');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -714,7 +714,7 @@ function pathRow(data, ui, draft) {
     + (ui.pickUnavailable ? '' : btnG('pick-repo', 'Choose…'))
     + (ui.editRepo && data.repo ? btnG('cancel-repo', 'Cancel') : '')
     + '</div>'
-    + (ui.repoError ? '<p class="mem-setup-err" role="alert">' + escapeHtml(ui.repoError) + '</p>' : '');
+    + (ui.repoError ? '<p class="mem-setup-err" role="alert">' + escapeHtml(ui.repoError) + '</p>' + errorDetailHtml(ui.repoError) : '');
 }
 
 function repoNotSetBody(data, ui) {
@@ -927,12 +927,13 @@ function fold(key, title, meta, body, open) {
 export function renderSetupBody(s, ui = {}) {
   const data = s && s.data;
   if (!data) {
-    if (s && s.error) return '<div class="mem-ss-stack mem-setup-stack"><p class="mem-setup-err" role="alert">Could not check this computer: ' + escapeHtml(s.error) + '</p></div>';
+    if (s && s.error) return '<div class="mem-ss-stack mem-setup-stack"><p class="mem-setup-err" role="alert">Could not check this computer: ' + escapeHtml(s.error) + '</p>' + errorDetailHtml(s.error) + '</div>';
     return '<div class="mem-ss-stack mem-setup-stack"><p class="mem-setup-empty" aria-busy="true">Checking this computer…</p></div>';
   }
   const folds = ui.openFolds || {};
   const recheckErr = s.error
-    ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + '.'), 'What is shown is the reading before it.', btnG('check', 'Re-check'))
+    ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + (/[.!?]$/.test(String(s.error)) ? '' : '.')),
+      'What is shown is the reading before it.', btnG('check', 'Re-check')) + errorDetailHtml(s.error)
     : '';
   const repoNote = data.repo ? '' : repoNotSetNote(data);
   const picker = '<div class="mem-k-pick mem-setup-pick">' + (ui.pickerHtml || '') + '</div>' + customField(ui);
@@ -1469,9 +1470,9 @@ export function fileReaderContent(data, name, resp, opts = {}) {
     const why = resp.error ? userMessageFrom(resp) : null;
     body = (why && /[.!?]$/.test(why.error))
       ? '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here. ' + why.error)
-        + ' Reveal it to open it in Finder.</p>' + renderErrorDetail(why.detail)
+        + ' Reveal it to open it in Finder.</p>' + renderErrorDetail(why.detail, why.code)
       : '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here: ' + ((why && why.error) || 'no answer') + '.')
-        + ' Reveal it to open it in Finder.</p>';
+        + ' Reveal it to open it in Finder.</p>' + (why ? renderErrorDetail(why.detail, why.code) : '');
   } else if (resp.exists === false) {
     body = '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Not in this folder</h3><p class="mem-setup-ev-p">'
       + (isMarker

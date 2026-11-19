@@ -519,13 +519,14 @@ section('§9  The view and the runner');
 
   const viewSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/views/sync.js'), 'utf8');
   const appSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
-  const box = new Function(
+  const { isCatalogueCode } = await import('../src/public/next/shared/user-errors.js');
+  const box = new Function('isCatalogueCode',
     `const SYNC_RUN_KINDS = ['sync', 'push', 'pull'];\n` +
     extractFunction(appSrc, 'escapeHtml', 'app.js') + '\n' +
     ['freshState', 'seedFromSyncRun', 'syncErrorHtml', 'tokenErrorCodes', 'tokenPanelOpen', 'renderTokenPanel']
       .map((n) => extractFunction(viewSrc, n, 'views/sync.js')).join('\n') + '\n' +
     'let state = freshState();\n' +
-    'return { freshState, seedFromSyncRun, syncErrorHtml, tokenPanelOpen, renderTokenPanel, setState: (s) => { state = s; } };')();
+    'return { freshState, seedFromSyncRun, syncErrorHtml, tokenPanelOpen, renderTokenPanel, setState: (s) => { state = s; } };')(isCatalogueCode);
   const st = box.seedFromSyncRun(box.freshState(), null, o);
   ok(st.actionErrorCode === 'sync-token-rejected' && st.actionErrorDetail === 'fatal: x', 'a mount seeds the code and the detail');
   ok(box.tokenPanelOpen(st) === true, 'a token code opens Replace token beside the error');
@@ -541,6 +542,28 @@ section('§9  The view and the runner');
   const eh = box.syncErrorHtml('Sentence.', '<b>git</b> said & "this"');
   ok(eh.includes('Technical detail (for support):') && eh.includes('&lt;b&gt;git&lt;/b&gt;') && !eh.includes('<b>git'), 'the detail line: prefixed, escaped', eh);
   ok(!box.syncErrorHtml('Sentence.', null).includes('Technical detail'), 'no detail, no detail line');
+  // v3.99.2 (agent F): the sync catalogue code goes on the support line, the
+  // way net.js writes it everywhere else; a code outside the catalogue does not.
+  const withCode = box.syncErrorHtml('Sentence.', 'fatal: x', '', 'sync-offline');
+  ok(/Technical detail \(for support\): <code>fatal: x<\/code> \(code: sync-offline\)<\/div>$/.test(withCode), 'detail + sync code on one support line', withCode);
+  const codeOnly = box.syncErrorHtml('Sentence.', null, '', 'sync-token-rejected').split('</div>')[1];
+  ok(codeOnly === '<div class="sync-error-detail">Technical detail (for support): code: sync-token-rejected', 'a code with no detail still reaches support', codeOnly);
+  ok(!/code:/.test(box.syncErrorHtml('Sentence.', 'fatal: x', '', 'pull-would-overwrite')), 'a view-branching code that is not in the catalogue is not shown');
+  // item 7: loadStatus's catch reads the error through net.js, so a JSON
+  // parse failure on an HTML page is never the sentence.
+  const { userMessageFrom } = await import('../src/public/next/shared/net.js');
+  const ls = new Function('userMessageFrom', 'fetch', 'isCurrentMount',
+    'let state = {};\n' + extractFunction(viewSrc, 'loadStatus', 'views/sync.js') + '\nreturn { loadStatus, get: () => state };')(
+    userMessageFrom, async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON'); } }), () => true);
+  await ls.loadStatus(1);
+  const sst = ls.get();
+  ok(sst.status && sst.status.configured === false && typeof sst.statusError === 'string', 'loadStatus: CONTROL a failed read is an error state', sst);
+  ok(!/Unexpected token|DOCTYPE|JSON/.test(sst.statusError), 'loadStatus: an HTML reply is a sentence, never the parser\'s words', sst.statusError);
+  ok(sst.statusErrorCode === 'server-outdated', 'loadStatus: …with its catalogue code kept for the support line', sst.statusErrorCode);
+  const panelSt = box.freshState();
+  panelSt.tokenForm = { ...panelSt.tokenForm, open: true, error: 'GitHub rejected the new token.', detail: 'remote: denied', code: 'sync-new-token-rejected' };
+  box.setState(panelSt);
+  ok(/remote: denied<\/code> \(code: sync-new-token-rejected\)/.test(box.renderTokenPanel({ repoUrl: 'x' }, false)), 'the Replace token panel shows its code too');
 }
 
 } finally {

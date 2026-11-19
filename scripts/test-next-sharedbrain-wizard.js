@@ -933,9 +933,9 @@ section('§12  The card: is the STORED token still good?');
 // ═════════════════════════════════════════════════════════════════════════
 const cardBox = new Function('userMessageFrom', 'renderErrorDetail',
   'let state = { expandedAdmin: new Set() };\n' + ESCAPE + '\n' + ICON_STUB +
-  ['classifyTokenCheck', 'tokenCheckApplies', 'renderTokenCheck']
+  ['classifyTokenCheck', 'tokenCheckApplies', 'renderTokenCheck', 'tokenVerdictLoud']
     .map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
-  'return { classifyTokenCheck, tokenCheckApplies, renderTokenCheck };'
+  'return { classifyTokenCheck, tokenCheckApplies, renderTokenCheck, tokenVerdictLoud };'
 )(userMessageFrom, renderErrorDetail);
 {
   const c = cardBox.classifyTokenCheck;
@@ -996,6 +996,81 @@ const cardBox = new Function('userMessageFrom', 'renderErrorDetail',
   const vhtml = cardBox.renderTokenCheck({ storage_type: 'github' }, { tokenChecking: false, tokenCheck: viaCode });
   ok(/class="tx-error-detail">Technical detail \(for support\): listMembers/.test(vhtml),
     'the verdict shows its support detail visibly below it');
+}
+// v3.99.2 (agent F): the verdict carries its catalogue code, and both places
+// that show it (the Admin section's line and the monitor) put it on the
+// support line, the way every other error does.
+{
+  const c = cardBox.classifyTokenCheck;
+  const viaCode = c({ ok: false, error: 'x', detail: 'GitHub GET tree:main → 401: Bad credentials', code: 'github-token-rejected', repoLabel: 'o/r' });
+  eq(viaCode.code, 'github-token-rejected', 'F1: a rejection verdict carries the catalogue code');
+  eq(c({ ok: false, error: 'GitHub GET tree:main → 401: Bad credentials', repoLabel: 'o/r' }).code, 'github-token-rejected',
+    'F1: …also from an older server that sent no code');
+  const busy = c({ ok: false, error: 'GitHub is limiting requests from this token right now. Wait a few minutes, then try again.',
+    detail: 'GitHub GET tree:main → 403: API rate limit exceeded', code: 'github-busy', repoLabel: 'x' });
+  eq(busy.code, 'github-busy', "F1: an unreachable verdict keeps the server's code");
+  const html = cardBox.renderTokenCheck({ storage_type: 'github' }, { tokenChecking: false, tokenCheck: viaCode });
+  ok(/Technical detail \(for support\): GitHub GET tree:main → 401: Bad credentials \(code: github-token-rejected\)<\/div>/.test(html),
+    'F1: the Admin section line shows the detail AND the code');
+  const loud = cardBox.tokenVerdictLoud(viaCode);
+  eq(loud.length, 2, 'F1: the monitor gets the verdict and one support line');
+  eq(loud[1] && loud[1].text, 'Technical detail (for support): GitHub GET tree:main → 401: Bad credentials (code: github-token-rejected)',
+    'F1: …and the monitor support line carries the code too');
+  const codeOnly = cardBox.tokenVerdictLoud({ kind: 'rejected', message: 'm', detail: '', code: 'github-token-rejected' });
+  eq(codeOnly[1] && codeOnly[1].text, 'Technical detail (for support): code: github-token-rejected', 'F1: a code with no detail still reaches support');
+  eq(cardBox.tokenVerdictLoud({ kind: 'ok', message: 'fine' }).length, 0, 'F1: a passing verdict is not loud');
+}
+// v3.99.2 (agent F): the revoke picker is an ADMIN screen, so its members
+// read asks for the admin wording (the route allow-lists ?surface=admin).
+{
+  const urls = [];
+  const box = new Function('fetch',
+    'const cards = {}; function ensureCard(id) { return cards[id] || (cards[id] = {}); }\n' +
+    'function render() {} function isCurrentMount() { return true; }\n' +
+    extractFunction(shared, 'loadRevokeMembers', 'shared.js') + '\nreturn { loadRevokeMembers, cards };'
+  )(async (u) => { urls.push(String(u)); return new Response(JSON.stringify({ members: [] }), { status: 200 }); });
+  await box.loadRevokeMembers(1, 'c9');
+  eq(urls[0], '/api/sharedbrain/c9/members?surface=admin', 'F1: the revoke picker asks for the admin wording');
+  ok(Array.isArray(box.cards.c9.revokeMembers.members), 'F1: …and still reads the members list');
+}
+// v3.99.2 (agent F): the cohort panel's members read keeps the route's
+// detail and code (it threw `new Error(data.error || …)` and dropped both).
+{
+  const box = new Function('fetch',
+    'const cards = {}; function ensureCard(id) { return cards[id] || (cards[id] = {}); }\n' +
+    'function render() {} function isCurrentMount() { return true; }\n' +
+    'function findConnection() { return { id: "c1" }; } function mirrorDomainFor() { return null; }\n' +
+    extractFunction(shared, 'loadCohortDetails', 'shared.js') + '\nreturn { loadCohortDetails, cards };'
+  )(async () => new Response(JSON.stringify({ error: 'Plain cohort sentence.', detail: 'GH GET tree:main → 502', code: 'github-unavailable' }), { status: 502 }));
+  await box.loadCohortDetails(1, 'c1');
+  const ce = box.cards.c1.cohort && box.cards.c1.cohort.error;
+  eq(ce, 'Plain cohort sentence.', 'F7: CONTROL the cohort panel shows the route sentence');
+  ok(globalThis.errorDetailHtml(ce).includes('GH GET tree:main → 502 (code: github-unavailable)'),
+    'F7: …with its detail and code on the support line');
+}
+// v3.99.2 (agent F): an SSE error frame's code survives the "Error: " prefix.
+{
+  const frames = [{ type: 'error', error: 'Plain sentence from the server.', detail: 'raw: GitHub PUT x → 500', code: 'github-unavailable' },
+  ];
+  const box = new Function('fetch',
+    'let state = { cards: {}, connections: [], expandedCohort: new Set(), expandedSecRows: new Set(), freshPages: {} };\n' +
+    'let hostCtx = { mode: "view" };\n' +
+    'function ensureCard(id) { return state.cards[id] || (state.cards[id] = { acting: null, message: null, error: false, cohort: null }); }\n' +
+    'function findConnection() { return { id: "c1", local_domains: ["a"], shared_brain_slug: "cohort" }; }\n' +
+    'function domainsForAction() { return ["a"]; } function mirrorDomainFor() { return "shared-cohort"; }\n' +
+    'function isDomainWriteBusy() { return false; } function getDomainWriteLabel() { return null; }\n' +
+    'function beginDomainWrite() { return () => {}; } function render() {} function isCurrentMount() { return true; }\n' +
+    'function reportAsyncActionFailure() {} async function refreshConnections() {} async function loadCohortDetails() {}\n' +
+    ['composeDoneMessage', 'invalidateCohort', 'refreshMirrorPages', 'runSseAction']
+      .map((n) => extractFunction(shared, n, 'shared.js')).join('\n') + '\nreturn { runSseAction, state };'
+  )(async () => new Response(new ReadableStream({ start(c) {
+    c.enqueue(new TextEncoder().encode(frames.map((f) => 'data: ' + JSON.stringify(f) + '\n\n').join(''))); c.close(); } }),
+    { headers: { 'content-type': 'text/event-stream' } }));
+  await box.runSseAction(1, 'c1', 'push');
+  const msg = box.state.cards.c1.message || '';
+  ok(/^Error: Plain sentence from the server\./.test(msg), 'F1: CONTROL the error frame is shown: ' + msg);
+  eq(globalThis.errorDetailHtml(msg), '<div class="tx-error-detail">Technical detail (for support): raw: GitHub PUT x → 500 (code: github-unavailable)</div>',
+    "F1: the card message keeps the frame's detail AND its code");
 }
 {
   ok(cardBox.tokenCheckApplies({ storage_type: 'github' }), 'the check is offered for a GitHub-backed brain');

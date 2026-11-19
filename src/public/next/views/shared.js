@@ -187,7 +187,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // under every other description in the app.
 import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
 // Plain-language errors (v3.99.2): the shared sentence + visible support detail.
-import { userMessageFrom, renderErrorDetail, errorFromResponse, DETAIL_PREFIX, plainError, errorDetailOf, errorDetailHtml, rememberErrorDetail, loudWithDetail } from '../shared/net.js';
+import { userMessageFrom, renderErrorDetail, errorFromResponse, plainError, errorDetailOf, errorCodeOf, errorDetailHtml, rememberErrorDetail, loudWithDetail, supportLineText } from '../shared/net.js';
 
 // SB (v3.71.0, COPY.md §3): the header's own hand-typed prose is REWRITTEN
 // as this view's framing top ⓘ (second brain → Shared Brain → agent memory,
@@ -1316,6 +1316,17 @@ const TOKEN_CHECK_READING = Object.freeze({
  * about who USUALLY runs it, not a permission — the full view keeps the
  * button for every write member and says so in its confirm.
  */
+// The stored-token verdict's monitor lines: the verdict, then its support
+// line (detail and catalogue code, through net.js) as a quiet line below it.
+// Only a failed check is loud; a passing one lives in the Admin section.
+function tokenVerdictLoud(verdict) {
+  if (!verdict || (verdict.kind !== 'rejected' && verdict.kind !== 'unreachable')) return [];
+  const out = [{ tone: verdict.kind === 'rejected' ? 'danger' : 'warn', text: verdict.message }];
+  const support = supportLineText(verdict.detail, verdict.code);
+  if (support) out.push({ tone: 'quiet', text: support });
+  return out;
+}
+
 function renderSectionConnection(conn, last) {
   const card = ensureCard(conn.id);
   const busy = !!card.acting;
@@ -1369,10 +1380,7 @@ function renderSectionConnection(conn, last) {
       '. The buttons below come back on their own when it finishes.' });
   }
   const verdict = card.tokenCheck;
-  if (verdict && (verdict.kind === 'rejected' || verdict.kind === 'unreachable')) {
-    loud.push({ tone: verdict.kind === 'rejected' ? 'danger' : 'warn', text: verdict.message });
-    if (verdict.detail) loud.push({ tone: 'quiet', text: DETAIL_PREFIX + verdict.detail });
-  }
+  loud.push(...tokenVerdictLoud(verdict));
   if (card.message) loud.push(...loudWithDetail({ tone: card.error ? 'danger' : 'quiet', text: card.message }));
 
   // ── ONE ACTION ROW ────────────────────────────────────────────────────
@@ -1520,6 +1528,7 @@ function classifyTokenCheck({ ok, error, detail, code, memberCount, repoLabel })
         'token on GitHub, then use Leave this Shared Brain below and re-join with your invite — the setup ' +
         'wizard is the only place that accepts a token.',
       detail: u.detail || (raw || (text && text !== u.error ? text : '')),
+      code: 'github-token-rejected',
     };
   }
   const said = text ? u.error.replace(/\s*$/, '') : 'The request did not finish.';
@@ -1528,6 +1537,7 @@ function classifyTokenCheck({ ok, error, detail, code, memberCount, repoLabel })
     message: 'Could not run the check. ' + (/[.!?]$/.test(said) ? said : said + '.') +
       ' That is a failure of the CHECK, not a verdict on the token — try again in a moment.',
     detail: u.detail,
+    code: u.code,
   };
 }
 
@@ -1559,7 +1569,7 @@ function renderTokenCheck(conn, card) {
       (verdict
         ? '<p class="sb-token-check-verdict sb-token-check-' + escapeHtml(verdict.kind) + '" aria-live="polite">' +
             escapeHtml(verdict.message) +
-          '</p>' + renderErrorDetail(verdict.detail)
+          '</p>' + renderErrorDetail(verdict.detail, verdict.code)
         : '') +
     '</div>'
   );
@@ -2975,7 +2985,9 @@ async function loadRevokeMembers(token, connId) {
   card.revokeMembers = 'loading';
   render(token);
   try {
-    const res = await fetch('/api/sharedbrain/' + connId + '/members');
+    // ?surface=admin: only an admin revokes, so a dead token is worded for the
+    // admin (the route allow-lists it), not as "leave and re-join".
+    const res = await fetch('/api/sharedbrain/' + connId + '/members?surface=admin');
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw errorFromResponse(res, data, 'The request did not finish.');
     card.revokeMembers = {
@@ -3443,7 +3455,7 @@ async function runSseAction(token, connId, action) {
             hadError = true;
             const said = plainError(payload);
             card.message = 'Error: ' + said;
-            rememberErrorDetail(card.message, errorDetailOf(said));
+            rememberErrorDetail(card.message, errorDetailOf(said), errorCodeOf(said));
             card.error = true;
             if (isCurrentMount(token)) render(token);
           } else if (payload.type === 'done') {
@@ -3609,7 +3621,7 @@ async function loadCohortDetails(token, connId) {
       mirrorDomain ? fetch('/api/domains/' + encodeURIComponent(mirrorDomain) + '/stats') : Promise.resolve(null),
     ]);
     const membersData = await membersRes.json().catch(() => ({}));
-    if (!membersRes.ok) throw new Error(membersData.error || 'Could not load the contributor list.');
+    if (!membersRes.ok) throw errorFromResponse(membersRes, membersData, 'Could not load the contributor list.');
 
     let mirrorStats = 'not-pulled';
     if (statsRes) {

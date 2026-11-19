@@ -245,6 +245,54 @@ section('7. The Context page\'s own requests (views/memory.js, lifted and run)')
     ix && ix.error && !/JSON|Unexpected/.test(ix.error), ix && ix.error);
 }
 
+section('8. Leftovers (agent F): the reader overlay and the Setup step show the detail');
+{
+  const { readFileSync } = await import('node:fs');
+  const { stripComments, functionSource } = await import('./test-helpers/source-scan.js');
+  const appSrc = stripComments(readFileSync(new URL('../src/public/next/app.js', import.meta.url), 'utf8'));
+  const readerErrorHtml = new Function('icon', 'escapeHtml', 'errorDetailHtml',
+    functionSource(appSrc, 'readerErrorHtml') + '\nreturn readerErrorHtml;')(() => '<svg></svg>', esc, globalThis.errorDetailHtml);
+
+  // The handoff reader's failure, through the REAL request code: memory.js's
+  // openPreviousHandoff, lifted, against a fake fetch, with the payload the
+  // reader would be handed recorded.
+  const memSrc = stripComments(readFileSync(new URL('../src/public/next/views/memory.js', import.meta.url), 'utf8'));
+  const opened = [];
+  const openPrev = new Function('fetch', 'openReader', 'isCurrentMount', 'isCurrentReader', 'state', 'previousReaderContent',
+    functionSource(memSrc, 'openPreviousHandoff') + '\nreturn openPreviousHandoff;')(
+    async () => ({ ok: false, status: 500, json: async () => ({ ok: false, message: RAW }) }),
+    (c) => { opened.push(c); return opened.length; }, () => true, () => true,
+    { detail: { previous: { path: 'previous.md' }, scope: 's', machine: 'm' }, activeDomain: 'd', activeProject: 'p' }, () => null);
+  await openPrev(1);
+  const last = opened[opened.length - 1] || {};
+  ok('reader: CONTROL the replaced-handoff reader is opened with an error sentence',
+    typeof last.error === 'string' && !last.error.includes('EACCES'), last.error);
+  const rh = readerErrorHtml(last.error);
+  ok('reader: the error shows its technical detail under the sentence',
+    rh.includes(renderErrorDetail(errorDetailOf(last.error), errorCodeOf(last.error))) && rh.includes('(code: files-not-allowed)'), rh);
+  ok('reader: CONTROL an error with nothing remembered has no detail line', !readerErrorHtml('Plain.').includes('tx-error-detail'));
+
+  const SS = await import('../src/public/next/views/setup-step.js');
+  const checkErr = FI.failText({ ok: false, message: RAW + ' (setup)' }, 500, 'The setup check could not be read.');
+  const line = renderErrorDetail(errorDetailOf(checkErr), errorCodeOf(checkErr));
+  ok('setup: a failed first check shows its detail', SS.renderSetupBody({ error: checkErr }, {}).includes(line));
+  const data = { ok: true, domain: 'd', project: 'p', checkedAt: new Date().toISOString(), repo: null, repoCandidates: [], repoSuggestions: [],
+    tools: [], computers: [], physical: [], toFix: [], addable: [], sync: { configured: false }, machine: { ids: [], split: false } };
+  const re = SS.renderSetupBody({ data, error: checkErr }, {});
+  ok('setup: a failed RE-check shows its detail too', re.includes(line), re.slice(0, 400));
+  ok('setup: …and its sentence is not doubled-dotted', !/\.\.<|\.\.'|\.\.\s/.test(re) && /did not finish: /.test(re));
+  const repoErr = FI.failText({ ok: false, message: RAW + ' (repo)' }, 500, 'The repository folder was not saved.');
+  const rr = SS.renderSetupBody({ data }, { repoError: repoErr, forceRepoOpen: true, openFolds: { 'setup-repo': true } });
+  ok('setup: the repository folder error shows its detail', rr.includes(esc(repoErr)) && rr.includes(renderErrorDetail(errorDetailOf(repoErr), errorCodeOf(repoErr))), rr.slice(0, 300));
+  const custErr = plainError({ error: RAW + ' (custom)' });
+  const cr = SS.renderSetupBody({ data }, { customOpen: true, customError: custErr });
+  ok('setup: the custom tool error shows its detail', cr.includes(renderErrorDetail(errorDetailOf(custErr), errorCodeOf(custErr))));
+  ok('setup: CONTROL a plain refusal with no detail has none', !SS.renderSetupBody({ data }, { customOpen: true, customError: 'Use letters only.' }).includes('tx-error-detail'));
+  const fdata = { ...data, repo: { path: '/x/p', display: '~/p', source: 'set', exists: true, marker: { present: true, namesThis: true, line: 'd/p' } } };
+  const fr = SS.fileReaderContent(fdata, '.curator-project', { error: RAW }, { md: (t) => t });
+  ok('setup file reader: the detail line carries the catalogue code', fr && /\(code: files-not-allowed\)<\/div>/.test(fr.bodyHtml), fr && fr.bodyHtml);
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log('Passed: ' + passed + '   Failed: ' + failed);
 if (failed) { console.log('❌ Context plain-error assertions FAILED'); process.exit(1); }

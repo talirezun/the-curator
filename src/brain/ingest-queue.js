@@ -191,7 +191,7 @@ import {
 } from './files.js';
 import { scrubPaths } from './scrub-paths.js';
 import { wireStr, wireNum, wireBool } from './wire-safe.js';
-import { toUserError } from './user-errors.js';
+import { toUserError, sanitizeDetail } from './user-errors.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { registerWrite, acquireFileLock, isUpdateInProgress } from './write-registry.js';
 import {
@@ -531,6 +531,27 @@ function wireErrorText(text) {
   return { text: u.error, detail: u.detail || null, code: u.code || null };
 }
 
+// The job-level texts (`pausedMessage`, `failReason`) on the wire: as
+// wireErrorText, plus one shape this module writes itself. A transient pause
+// (rate limit / provider unavailable) ends with the provider's raw text in
+// parentheses; on the wire that tail moves to `detail` (sanitised) and the
+// sentence ends at "…retried first on resume.". The reason proves the class,
+// so the code falls back to it when the raw text is not recognised. The
+// manifest keeps the full text unchanged.
+const TRANSIENT_TAIL = /^([\s\S]*?\bwill be retried first on resume\.) \(([\s\S]+)\)$/;
+function wireJobText(text, reason) {
+  const u = wireErrorText(text);
+  if (u.detail || typeof text !== 'string' || (reason !== 'rate_limit' && reason !== 'service_unavailable')) return u;
+  const m = TRANSIENT_TAIL.exec(text);
+  if (!m) return u;
+  const r = toUserError(m[2], { area: 'ai' });
+  return {
+    text: m[1],
+    detail: sanitizeDetail(m[2]) || null,
+    code: (r && r.code) || (reason === 'rate_limit' ? 'ai-rate-limited' : 'ai-overloaded'),
+  };
+}
+
 function wireItem(item) {
   if (!item || typeof item !== 'object') return null;
   const r = item.result;
@@ -614,6 +635,8 @@ export function toWire(job) {
   const est = job.estimate && typeof job.estimate === 'object' ? job.estimate : null;
   const health = job.health && typeof job.health === 'object' ? job.health : null;
 
+  const paused = wireJobText(job.pausedMessage, job.pausedReason);
+  const fail = wireJobText(job.failReason, null);
   return {
     jobId: wireStr(job.jobId, 64),
     version: wireNum(job.version),
@@ -622,8 +645,16 @@ export function toWire(job) {
     updatedAt: wireStr(job.updatedAt, 64),
     status: wireStr(job.status, 32),
     pausedReason: wireStr(job.pausedReason, 64),
-    pausedMessage: wireStr(wireErrorText(job.pausedMessage).text),
-    failReason: wireStr(wireErrorText(job.failReason).text),
+    pausedMessage: wireStr(paused.text),
+    failReason: wireStr(fail.text),
+    // v3.99.2, WIRE ONLY (never written to the manifest): the sanitised raw
+    // text behind a translated or split `pausedMessage` / `failReason`, and
+    // its catalogue code, for the batch panel's support line. Null when the
+    // text was not translated.
+    pausedDetail: wireStr(paused.detail),
+    pausedCode: wireStr(paused.code, 64),
+    failDetail: wireStr(fail.detail),
+    failCode: wireStr(fail.code, 64),
     overwrite: wireBool(job.overwrite),
     budgetUsd: wireNum(job.budgetUsd),
     spentUsd: wireNum(job.spentUsd),
