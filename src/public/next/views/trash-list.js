@@ -31,6 +31,10 @@
 //   typed exactly. Red appears only on that card's button.
 
 import { formatAge } from '../shared/age.js';
+// v3.99.2: an error sentence the host made with net.js's plainError carries its
+// technical detail; errorDetailHtml prints it under the sentence (visible,
+// muted, selectable). net.js is DOM-free, so this module still imports in Node.
+import { errorDetailHtml } from '../shared/net.js';
 
 // A byte-for-byte copy of app.js's escapeHtml, for the reason
 // views/chat-list.js carries one: this module must import in plain Node.
@@ -152,7 +156,7 @@ function deleteCardHtml(e, action) {
         '</span> to confirm</label>' +
       '<input class="trash-del-input" id="trash-del-input" type="text" autocomplete="off" spellcheck="false" value="' +
         escapeHtml(action.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
-      (action.error ? '<div class="trash-error" role="alert"><strong>Not deleted.</strong> ' + escapeHtml(action.error) + '</div>' : '') +
+      (action.error ? '<div class="trash-error" role="alert"><strong>Not deleted.</strong> ' + escapeHtml(action.error) + errorDetailHtml(action.error) + '</div>' : '') +
       '<div class="trash-del-actions">' +
         '<button type="button" class="btn btn-danger-solid btn-xs" id="trash-del-go"' + (can ? '' : ' disabled') + '>' +
           (busy ? 'Deleting…' : 'Delete forever') + '</button>' +
@@ -189,7 +193,7 @@ export function trashRowHtml(e, opts = {}) {
     ? '<div class="trash-status" role="note">' + escapeHtml(busyDomain) + ' is running on ' + escapeHtml(e.domain) +
       '. Restore when it finishes.</div>' : '';
   const restoreErr = action && action.mode === 'restore' && action.error
-    ? '<div class="trash-error" role="alert"><strong>Not restored.</strong> ' + escapeHtml(action.error) + '</div>' : '';
+    ? '<div class="trash-error" role="alert"><strong>Not restored.</strong> ' + escapeHtml(action.error) + errorDetailHtml(action.error) + '</div>' : '';
 
   return (
     '<li class="trash-row" data-trash-kind="' + escapeHtml(e.kind) + '" data-trash-id="' + escapeHtml(e.id) + '">' +
@@ -228,7 +232,7 @@ export function trashSectionHtml(ts, opts = {}) {
       ' <button type="button" class="btn btn-ghost btn-xs" id="trash-outcome-ok">OK</button></div>'
     : '';
   if (t.error && !t.data) {
-    return outcome + '<div class="settings-inline-error">Could not read the trash: ' + escapeHtml(t.error) + '</div>';
+    return outcome + '<div class="settings-inline-error">Could not read the trash: ' + escapeHtml(t.error) + errorDetailHtml(t.error) + '</div>';
   }
   if (!t.data) return outcome + (opts.loadingHtml || '');
   const entries = Array.isArray(t.data.entries) ? t.data.entries : [];

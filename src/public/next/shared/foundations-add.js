@@ -36,7 +36,10 @@
 // DOM-free kit.
 import {
   formatBytes, remoteRefusalText, selectedTokenSource, FOUNDATIONS_BUDGET_BYTES, MAX_FOUNDATION_BYTES,
+  // v3.99.2: plain-language errors (net.js, through the kit's one reading rule).
+  failText,
 } from './foundations-init.js';
+import { errorDetailHtml } from './net.js';
 
 /** The store's `FOUNDATIONS_BUDGET_BYTES` — a DISCLOSURE, never a wall.
  *  v3.72.1 (truth audit tray-copy F9): ONE client copy, foundations-init.js's,
@@ -373,7 +376,7 @@ export function readCommitResponse(status, data, rec) {
   if (!okStatus) {
     const code = typeof d.reason === 'string' ? d.reason : null;
     error = (rec && rec.door === 'github' ? remoteRefusalText(code, { tokenSource: selectedTokenSource(rec) }) : null)
-      || d.error || d.message || ('The request failed (HTTP ' + status + ').');
+      || failText(data, status, 'The documents could not be added.');
   } else if (refresh && refresh.ok === false) {
     error = 'The repository could not be read, so nothing was copied.';
   }
@@ -591,12 +594,14 @@ export function renderAddPanel(rec, facts, door, host) {
     + (rec.scanning ? 'Looking…' : (Array.isArray(rec.candidates) ? 'List again' : 'List documents')) + '</button>'
     + '</div>';
 
-  const loud = (id, text) => '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" role="alert"' + (id ? ' id="' + id + '"' : '') + '>'
-    + '<span>' + escapeHtml(text) + '</span></div>';
+  // `text` is the sentence shown; its technical detail (when the sentence came
+  // from a failed request) prints under it, visible and muted (v3.99.2).
+  const loud = (id, text, from) => '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" role="alert"' + (id ? ' id="' + id + '"' : '') + '>'
+    + '<span>' + escapeHtml(text) + errorDetailHtml(from === undefined ? text : from) + '</span></div>';
   const notes = []
     .concat(rec.pickUnavailable ? ['<div class="tx-note"><span>' + escapeHtml(String(rec.pickUnavailable)) + '</span></div>'] : [])
     .concat(rec.pickError ? [loud('fadd-pick-error', String(rec.pickError))] : [])
-    .concat(rec.scanError ? [loud('fadd-scan-error', 'Nothing was listed: ' + rec.scanError)] : [])
+    .concat(rec.scanError ? [loud('fadd-scan-error', 'Nothing was listed: ' + rec.scanError, rec.scanError)] : [])
     .join('');
 
   let list = '';

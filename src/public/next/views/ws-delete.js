@@ -40,6 +40,10 @@
 //   the route re-checks it, so a client that skipped the box deletes nothing.
 
 import { formatAge } from '../shared/age.js';
+// v3.99.2: the host (views/memory.js) makes its error sentences with net.js's
+// plainError; errorDetailHtml prints the technical detail under the sentence
+// (visible, muted, selectable). net.js is DOM-free, so this still imports in Node.
+import { errorDetailHtml } from '../shared/net.js';
 
 // A byte-for-byte copy of app.js's escapeHtml, for the reason
 // views/chat-list.js carries one: this module must import in plain Node.
@@ -132,7 +136,7 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
     what = '<div class="mem-wsdel-body">Reading every machine’s saved copy of this handoff…</div>';
   } else if (del.loadError) {
     what = '<div class="mem-wsdel-body">Could not read what this would delete: ' + escapeHtml(del.loadError) +
-      ' Nothing was deleted.</div>';
+      ' Nothing was deleted.' + errorDetailHtml(del.loadError) + '</div>';
   } else if (pv) {
     what =
       '<div class="mem-wsdel-body">' + (total === 1
@@ -182,7 +186,7 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
       '<input class="mem-wsdel-input" id="mem-ws-del-input" type="text" autocomplete="off" spellcheck="false" value="' +
         escapeHtml(del.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
       (del.error
-        ? '<div class="mem-wsdel-error" role="alert"><strong>Not deleted.</strong> ' + escapeHtml(del.error) + '</div>'
+        ? '<div class="mem-wsdel-error" role="alert"><strong>Not deleted.</strong> ' + escapeHtml(del.error) + errorDetailHtml(del.error) + '</div>'
         : '') +
       '<div class="mem-wsdel-actions">' +
         '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-ws-del-go"' + (can ? '' : ' disabled') + '>' +

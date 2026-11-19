@@ -72,6 +72,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';

@@ -383,6 +383,15 @@ import {
   fileReaderContent, computerReaderContent,
 } from './setup-step.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
+// v3.99.2: plain-language errors. A failed request on this page becomes the
+// plain sentence (a string in state, as before) with its technical detail
+// remembered beside it, and every place that shows the sentence shows the
+// "Technical detail (for support):" line under it (never behind a chevron).
+// The Context page's reading rule for a failed request (`failText`: `message`
+// before a bare code word in `error`) and its three small helpers live in
+// shared/foundations-init.js, shared with the documents panels.
+import { plainError, errorDetailHtml, userMessageFrom, renderErrorDetail } from '../shared/net.js';
+import { failText, withDetailOf, supportOf, errorLines } from '../shared/foundations-init.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -1742,7 +1751,7 @@ async function fetchIndex(token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return null;
     if (!res.ok || !data.ok) {
-      return { projects: [], domainsScanned: null, error: data.error || ('HTTP ' + res.status) };
+      return { projects: [], domainsScanned: null, error: failText(data, res.status, 'The list of projects could not be read.') };
     }
     return {
       projects: data.projects || [],
@@ -1754,7 +1763,7 @@ async function fetchIndex(token) {
     };
   } catch (err) {
     if (!isCurrentMount(token)) return null;
-    return { projects: [], domainsScanned: null, error: err.message };
+    return { projects: [], domainsScanned: null, error: plainError(err) };
   }
 }
 
@@ -2402,9 +2411,9 @@ async function saveBrief(token) {
     let data = null;
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    if (!ok) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    if (!ok) error = failText(data, res.status, 'The brief could not be saved.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
 
   if (!isCurrentMount(token)) return;
@@ -3189,12 +3198,12 @@ async function fetchState(domain, project, query, token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return { data: null, error: null };
     if (!res.ok || !data.ok) {
-      return { data: null, error: data.message || data.error || ('HTTP ' + res.status) };
+      return { data: null, error: failText(data, res.status, 'This project’s context could not be read.') };
     }
     return { data, error: null };
   } catch (err) {
     if (!isCurrentMount(token)) return { data: null, error: null };
-    return { data: null, error: err.message };
+    return { data: null, error: plainError(err) };
   }
 }
 
@@ -3730,6 +3739,7 @@ function renderSidebar(token) {
       state: 'danger',
       title: 'Could not load this project’s context',
       detail: state.indexError,
+      support: supportOf(state.indexError),
     }), token);
     return;
   }
@@ -3763,6 +3773,7 @@ function renderMain(token) {
   } else if (state.indexError) {
     body = renderStatus({
       state: 'danger', title: 'Could not load this project’s context', detail: state.indexError,
+      support: supportOf(state.indexError),
     });
   } else if (!state.activeProject) {
     body = renderNoProjects();
@@ -4848,6 +4859,7 @@ function renderKnowledgeRow(domain, defaulted, count) {
         ? 'This project still lists it. It may have been deleted, or it may live on another '
           + 'computer that has not synced here yet — remove it below if it is gone for good.'
         : k.error,
+      support: k.gone ? '' : supportOf(k.error),
     }) + doors;
   }
 
@@ -4961,7 +4973,8 @@ function renderKnowledgePicker(chosen, defaulted) {
   const all = Array.isArray(state.domainList) ? state.domainList : null;
   const busy = state.knowledgeSaving === true;
   const err = state.knowledgeSaveError
-    ? renderStatus({ state: 'danger', title: 'That domain was not added', detail: state.knowledgeSaveError })
+    ? renderStatus({ state: 'danger', title: 'That domain was not added', detail: state.knowledgeSaveError,
+      support: supportOf(state.knowledgeSaveError) })
     : '';
   if (!all) {
     return err + renderDescription(
@@ -5160,9 +5173,9 @@ async function loadKnowledge(domains, token, opts) {
           // slug whose domain this install does not have, and the row says so
           // rather than reporting a read failure.
           : { data: null, gone: res.status === 404,
-            error: data && data.error ? data.error : 'HTTP ' + res.status };
+            error: failText(data, res.status, 'This domain’s figures could not be read.') };
       } catch (err) {
-        next = { data: null, error: err.message, gone: false };
+        next = { data: null, error: plainError(err), gone: false };
       }
       knowledgeInFlight.delete(domain);
       if (!isCurrentMount(token)) return;
@@ -5232,8 +5245,7 @@ async function saveKnowledgeDomains(next, token) {
       // for the remote refusals, one step up. An unmapped code still falls
       // back to the route's prose, never to a bare code word.
       const code = data && typeof data.reason === 'string' ? data.reason : '';
-      const prose = data && typeof data.error === 'string' && data.error
-        ? data.error : 'HTTP ' + res.status;
+      const prose = failText(data, res.status, 'The domain choice could not be saved.');
       error = code === 'too_many_domains'
         ? 'A project can draw on at most ' + (data.cap || 12) + ' domains.'
         : code === 'unknown_domain'
@@ -5248,7 +5260,7 @@ async function saveKnowledgeDomains(next, token) {
                   : prose;
     }
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token)) return;
   state.knowledgeSaving = false;
@@ -5413,6 +5425,7 @@ function renderCaptureMeter() {
       state: 'neutral',
       title: 'No agent-connections reading for this project',
       detail: c.error,
+      support: supportOf(c.error),
     })) + '</div>';
   }
 
@@ -5785,9 +5798,9 @@ async function loadCapture(domain, project, token, opts) {
       : { domain,
         project,
         data: null,
-        error: (data && data.error) ? data.error : 'HTTP ' + res.status };
+        error: failText(data, res.status, 'The capture reading could not be loaded.') };
   } catch (err) {
-    next = { domain, project, data: null, error: err.message };
+    next = { domain, project, data: null, error: plainError(err) };
   }
   if (captureInFlight === key) captureInFlight = null;
   if (!isCurrentMount(token)) return;
@@ -5869,6 +5882,7 @@ function renderProject() {
   if (state.detailError) {
     return header + '<div class="mem-section">' + renderStatus({
       state: 'danger', title: 'Could not read this project’s context', detail: state.detailError,
+      support: supportOf(state.detailError),
     }) + '</div>';
   }
   if (state.detailLoading && !read) {
@@ -7375,9 +7389,9 @@ async function openPreviousHandoff(token) {
       + '&previous=1');
     const data = await res.json();
     content = res.ok && data && data.previous ? previousReaderContent(data.previous, scope, machine) : null;
-    if (!content) error = (data && data.error) || 'The replaced handoff could not be read — it may have been replaced again.';
+    if (!content) error = failText(data, res.status, 'The replaced handoff could not be read — it may have been replaced again.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token) || !isCurrentReader(epoch)) return;
   openReader(content || { slug: 'previous.md', title: 'Replaced handoff', error }, token);
@@ -7519,7 +7533,7 @@ function renderBriefEditor(read, readonly) {
 
   return (
     '<div class="mem-brief-editor">' +
-      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error }) : '') +
+      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error, support: supportOf(e.error) }) : '') +
       '<label class="mem-brief-label cur-eyebrow" for="mem-brief-text">Standing brief (Markdown)</label>' +
       field +
       statusLine +
@@ -8345,7 +8359,8 @@ function renderFoundationStop(facts) {
       '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-stop-no"' +
         (st.busy ? ' disabled' : '') + '>Keep it</button>' +
       (st.error
-        ? '<span class="mem-fnd-stop-error" role="alert">' + escapeHtml(String(st.error)) + '</span>'
+        ? '<span class="mem-fnd-stop-error" role="alert">' + escapeHtml(String(st.error))
+          + errorDetailHtml(String(st.error)) + '</span>'
         : '') +
     '</div>'
   );
@@ -8649,9 +8664,13 @@ function foundationsNotices(read) {
   const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
   let notes = '';
   if (facts.manifestError) {
+    // v3.99.2: the reason is the store's (or the route's) text. A raw read
+    // failure that reached here becomes its plain sentence, the raw text its
+    // visible technical detail; a written sentence passes unchanged.
+    const manifestWhy = userMessageFrom(String(facts.manifestError));
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
       '<span>' + (facts.manifestNewer ? '' : 'This project’s documents manifest could not be read, so nothing below it can be ' +
-      'trusted: ') + escapeHtml(String(facts.manifestError)) + '</span></div>';
+      'trusted: ') + escapeHtml(manifestWhy.error) + renderErrorDetail(manifestWhy.detail) + '</span></div>';
   }
   if (facts.orphanFiles.length && !facts.manifestNewer) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
@@ -8670,7 +8689,7 @@ function foundationsNotices(read) {
     && state.fnd.project === state.activeProject ? state.fnd : null;
   if (fnd && fnd.error) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
-      '<span>' + escapeHtml('Nothing was copied: ' + fnd.error) + '</span></div>';
+      '<span>' + escapeHtml('Nothing was copied: ' + fnd.error) + errorDetailHtml(fnd.error) + '</span></div>';
   } else if (fnd && fnd.result) {
     const r = fnd.result;
     const said = [];
@@ -8686,7 +8705,7 @@ function foundationsNotices(read) {
     // stays until the next refresh rather than fading as a toast would.
     for (const line of (Array.isArray(r.failed) ? r.failed : [])) {
       notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
-        '<span>' + escapeHtml(line) + '</span></div>';
+        '<span>' + escapeHtml(line) + errorDetailHtml(line) + '</span></div>';
     }
     // WHAT THE STORE WOULD NOT COPY, KEPT SEPARATE FROM WHAT IT DID.
     if (Array.isArray(r.refused) && r.refused.length) notes += renderRefusedList(r.refused);
@@ -8701,7 +8720,7 @@ function foundationsNotices(read) {
     && state.startError.project === state.activeProject ? state.startError : null;
   if (se) {
     notes += '<div class="mem-note" id="mem-fnd-start-error">' + icon('alertTriangle', 13) +
-      '<span>' + escapeHtml('“' + se.slug + '” was not changed: ' + se.error) + '</span></div>';
+      '<span>' + escapeHtml('“' + se.slug + '” was not changed: ' + se.error) + errorDetailHtml(se.error) + '</span></div>';
   }
 
   return notes;
@@ -9096,7 +9115,7 @@ function renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editi
       '</div>' +
       (tpl && tpl.error
         ? '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" role="alert">' + icon('alertTriangle', 13) +
-          '<span>' + escapeHtml('The templates were not written: ' + tpl.error) + '</span></div>'
+          '<span>' + escapeHtml('The templates were not written: ' + tpl.error) + errorDetailHtml(tpl.error) + '</span></div>'
         : '')
     : '';
   return '<div class="mem-fnd-row">' +
@@ -9310,7 +9329,7 @@ function renderFoundationEditor(facts) {
 
   return (
     '<div class="mem-fnd-editor">' +
-      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error }) : '') +
+      (e.error ? renderStatus({ state: 'danger', title: 'Not saved', detail: e.error, support: supportOf(e.error) }) : '') +
       head +
       fields +
       picker +
@@ -9388,9 +9407,9 @@ async function writeStartState(domain, project, slug, atStart) {
     });
     const data = await res.json();
     if (res.ok && data && data.ok) return { ok: true, data };
-    return { ok: false, error: (data && (data.message || data.error)) || ('HTTP ' + res.status) };
+    return { ok: false, error: failText(data, res.status, 'The read-first choice could not be saved.') };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: plainError(err) };
   }
 }
 
@@ -9633,10 +9652,10 @@ async function openFoundation(slug, token) {
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
       encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug));
     const body = await res.json();
-    if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
+    if (!res.ok || !body.ok) error = failText(body, res.status, 'That document could not be read.');
     else data = body;
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token)) return;
   if (!isCurrentReader(epoch)) return;
@@ -9720,10 +9739,10 @@ async function refreshFoundations(token, group) {
       body: JSON.stringify(rootPart),
     });
     const body = await res.json();
-    if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
+    if (!res.ok || !body.ok) error = failText(body, res.status, 'The mirrored documents could not be copied again.');
     else data = body;
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token) || activeKey() !== key) return;
 
@@ -9847,7 +9866,7 @@ async function pickAddFolder(token) {
     return;
   }
   if (got.reason === 'no-dialog') rec.pickUnavailable = got.message || 'There is no folder picker here — type the folder’s full path instead.';
-  else if (got.reason !== 'cancelled') rec.pickError = 'The folder picker failed: ' + (got.message || 'no answer');
+  else if (got.reason !== 'cancelled') rec.pickError = withDetailOf('The folder picker failed: ' + (got.message || 'no answer'), got.message);
   render(token);
 }
 
@@ -9865,7 +9884,7 @@ async function listAddDocuments(token) {
     status = res.status;
     try { data = await res.json(); } catch { data = null; }
   } catch (err) {
-    data = { ok: false, error: (err && err.message) || 'the request failed' };
+    data = { ok: false, error: plainError(err) };
   }
   if (!isCurrentMount(token) || state.fndAdd !== rec) return;
   rec.scanning = false;
@@ -9874,7 +9893,7 @@ async function listAddDocuments(token) {
     rec.scanError = (rec.door === 'github' ? remoteRefusalText(code, { tokenSource: rec.tokenSource }) : null)
       || (code === 'repo-unreachable' || code === 'repo_unreachable'
         ? 'That folder is not on this computer, or it cannot be read.' : null)
-      || (data && (data.error || data.message)) || ('HTTP ' + status);
+      || failText(data, status, 'The files could not be listed.');
     rec.candidates = null;
   } else {
     const before = rec.picks || {};
@@ -9926,7 +9945,7 @@ async function commitAdd(token) {
     status = res.status;
     try { data = await res.json(); } catch { data = null; }
   } catch (err) {
-    data = { ok: false, error: (err && err.message) || 'the request failed' };
+    data = { ok: false, error: plainError(err) };
   }
   if (!isCurrentMount(token) || activeKey() !== key || state.fndAdd !== rec) return;
   const out = readCommitResponse(status, data, rec);
@@ -9975,8 +9994,8 @@ async function seedTemplates(token) {
     });
     let body = null;
     try { body = await res.json(); } catch { body = null; }
-    if (!res.ok || !body || !body.ok) error = (body && (body.error || body.message)) || ('HTTP ' + res.status);
-  } catch (err) { error = err.message; }
+    if (!res.ok || !body || !body.ok) error = failText(body, res.status, 'The templates could not be written.');
+  } catch (err) { error = plainError(err); }
   if (!isCurrentMount(token) || activeKey() !== key) return;
   state.fndTpl = error ? { domain, project, busy: false, error } : null;
   if (!error) {
@@ -10170,10 +10189,10 @@ async function loadFoundationDraft(slug, token) {
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
       encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug) + '?raw=1');
     const got = await res.json();
-    if (!res.ok || !got.ok) error = got.message || got.error || ('HTTP ' + res.status);
+    if (!res.ok || !got.ok) error = failText(got, res.status, 'That document could not be read.');
     else data = got;
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token)) return;
   // The reply belongs to the document it was asked for. A second Edit press
@@ -10241,9 +10260,9 @@ async function saveFoundation(token) {
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+    if (!ok) error = failText(data, res.status, 'The document could not be saved.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
 
   if (!isCurrentMount(token)) return;
@@ -10323,9 +10342,9 @@ async function stopMirroringFoundation(token) {
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+    if (!ok) error = failText(data, res.status, 'Mirroring could not be stopped.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
 
   if (!isCurrentMount(token)) return;
@@ -10396,9 +10415,9 @@ async function deleteFoundation(token) {
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+    if (!ok) error = failText(data, res.status, 'The document could not be deleted.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
 
   if (!isCurrentMount(token)) return;
@@ -11593,7 +11612,7 @@ function sessionMeterHtml(data, error) {
   } else {
     inner = renderDescription(error
       ? 'What an agent receives could not be measured: ' + error
-      : 'Measuring what an agent receives…');
+      : 'Measuring what an agent receives…') + (error ? errorDetailHtml(error) : '');
   }
   return '<div class="mem-ss-meter" id="mem-ss-meter" aria-live="polite">' + inner + '</div>';
 }
@@ -11926,11 +11945,12 @@ function renderSessionStart(read) {
   const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
     && state.budgetError.project === state.activeProject
     ? '<div class="mem-note" id="mem-ss-budget-error">' + icon('alertTriangle', 13) + '<span>'
-      + escapeHtml('The reading budget was not changed: ' + state.budgetError.error) + '</span></div>'
+      + escapeHtml('The reading budget was not changed: ' + state.budgetError.error)
+      + errorDetailHtml(state.budgetError.error) + '</span></div>'
     : '';
   const ctxErr = state.ctxError
     ? '<div class="mem-note" id="mem-ss-ctx-error">' + icon('alertTriangle', 13) + '<span>'
-      + escapeHtml(state.ctxError) + '</span></div>'
+      + escapeHtml(state.ctxError) + errorDetailHtml(state.ctxError) + '</span></div>'
     : '';
 
   let rows = '';
@@ -12068,9 +12088,9 @@ async function loadSetup(domain, project, token) {
     const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project));
     const data = await res.json();
     next = res.ok && data && data.ok ? { data, error: null }
-      : { data: null, error: (data && (data.error || data.message)) || 'HTTP ' + res.status };
+      : { data: null, error: failText(data, res.status, 'The setup check could not be read.') };
   } catch (err) {
-    next = { data: null, error: err.message };
+    next = { data: null, error: plainError(err) };
   }
   if (seq !== setupSeq) return;          // a newer check owns the state now
   setupInFlight = null;
@@ -12195,9 +12215,10 @@ async function openSetupFileReader(name, token, refetch = false) {
     // Only a real answer is a file: an older app has no such route, and its
     // page fallback is not JSON — that is said, never read as an empty file.
     resp = res.ok && j && j.ok === true && typeof j.name === 'string' ? j
-      : { error: (j && (j.message || j.error)) || (res.ok ? 'this version of the app does not show files here' : 'HTTP ' + res.status) };
+      : { error: res.ok && !(j && (j.message || j.error)) ? 'this version of the app does not show files here'
+        : failText(j, res.status, 'That file could not be read.') };
   } catch (err) {
-    resp = { error: err.message };
+    resp = { error: plainError(err) };
   }
   if (!isCurrentMount(token) || !isCurrentReader(epoch)) return;
   const now = setupFor();
@@ -12245,7 +12266,7 @@ async function putSetupToolIds(ids, token) {
   } catch (err) { reportAsyncActionFailure(err); return false; }
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
-    if (isCurrentMount(token)) showToast({ key: 'setup-tools', tone: 'danger', title: 'Could not change the list', lines: [j.error || 'HTTP ' + res.status] });
+    if (isCurrentMount(token)) showToast({ key: 'setup-tools', tone: 'danger', title: 'Could not change the list', lines: errorLines(failText(j, res.status, 'The list of agent apps was not changed.')) });
     return false;
   }
   return true;
@@ -12303,9 +12324,9 @@ async function saveCustomTool(change, token, { reload = true } = {}) {
   } catch (err) { reportAsyncActionFailure(err); return false; }
   if (!isCurrentMount(token)) return false;
   if (!res.ok) {
-    const why = j.error || 'HTTP ' + res.status;
+    const why = failText(j, res.status, change.custom ? 'That agent app was not added.' : 'That agent app was not removed.');
     if (change.custom) { state.setupCustomError = why; patchSetup(token); }
-    else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: [why] });
+    else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: errorLines(why) });
     return false;
   }
   // v3.80.0: an ADDED tool opens its setup guide once the new reading lands
@@ -12328,7 +12349,7 @@ async function saveSetupRepo(p, token) {
     });
     const j = await res.json().catch(() => ({}));
     if (!isCurrentMount(token)) return;
-    if (!res.ok) { state.setupRepoError = j.error || 'HTTP ' + res.status; patchSetup(token); return; }
+    if (!res.ok) { state.setupRepoError = failText(j, res.status, 'The repository folder was not saved.'); patchSetup(token); return; }
     state.setupRepoError = null;
     state.setupEditRepo = false;
     state.setupRepoDraft = null;
@@ -12409,7 +12430,7 @@ function bindSetup(root, token) {
           });
           if (!res.ok) {
             const j = await res.json().catch(() => ({}));
-            showToast({ key: 'setup-reveal', tone: 'danger', title: 'Could not reveal it', lines: [j.error || 'HTTP ' + res.status] });
+            showToast({ key: 'setup-reveal', tone: 'danger', title: 'Could not reveal it', lines: errorLines(failText(j, res.status, 'The file could not be shown.')) });
           }
         } catch (err) { reportAsyncActionFailure(err); }
         return;
@@ -12432,7 +12453,8 @@ function bindSetup(root, token) {
           if (act === 'sync') {
             showToast({ key: 'setup-sync', tone: res.ok ? 'success' : 'danger',
               title: res.ok ? 'Synced' : 'Sync did not complete',
-              lines: [res.ok ? 'Your whole knowledge folder — every domain — now matches GitHub.' : (j.error || 'HTTP ' + res.status)] });
+              lines: res.ok ? ['Your whole knowledge folder — every domain — now matches GitHub.']
+                : errorLines(failText(j, res.status, 'Sync did not finish. Try again, or open Sync for details.')) });
             try { refreshSyncBadge(); } catch { /* the badge re-reads on its own timer */ }
           }
         } catch (err) { reportAsyncActionFailure(err); }
@@ -12494,7 +12516,7 @@ function bindSetup(root, token) {
         if (!isCurrentMount(token)) return;
         if (got.ok) { await saveSetupRepo(got.path, token); return; }
         if (got.reason === 'no-dialog') state.setupPickUnavailable = got.message || 'There is no folder picker here — type the folder’s full path instead.';
-        else if (got.reason !== 'cancelled') state.setupRepoError = 'The folder picker failed: ' + (got.message || 'no answer');
+        else if (got.reason !== 'cancelled') state.setupRepoError = withDetailOf('The folder picker failed: ' + (got.message || 'no answer'), got.message);
         patchSetup(token);
         return;
       }
@@ -12547,9 +12569,9 @@ async function loadSessionStart(domain, project, sig, token) {
     const data = await res.json();
     next = res.ok && data && data.ok
       ? { data, error: null }
-      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status };
+      : { data: null, error: failText(data, res.status, 'The session-start reading could not be loaded.') };
   } catch (err) {
-    next = { data: null, error: err.message };
+    next = { data: null, error: plainError(err) };
   }
   if (sessionStartInFlight === key) sessionStartInFlight = null;
   if (!isCurrentMount(token)) return;
@@ -12629,9 +12651,9 @@ async function loadPlanEstimate(token) {
       + encodeURIComponent(project) + '/estimate');
     const data = await res.json();
     next = res.ok && data && data.ok ? { data, error: null }
-      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status };
+      : { data: null, error: failText(data, res.status, 'The cost estimate could not be loaded.') };
   } catch (err) {
-    next = { data: null, error: err.message };
+    next = { data: null, error: plainError(err) };
   }
   p.estimateLoading = false;
   if (!isCurrentMount(token)) return;
@@ -12682,13 +12704,13 @@ async function runPlan(arm, token) {
     });
     const data = await res.json();
     out = res.ok && data && data.ok ? { data, error: null }
-      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status,
+      : { data: null, error: failText(data, res.status, 'No suggestion came back.'),
         runsOn: data && data.runsOn,
         // A failed AI run that BILLED still says what it cost (H's 502s carry
         // `spent`; v3.16.1: a cost is never dropped because the outcome was bad).
         spent: data && data.spent && typeof data.spent === 'object' ? data.spent : null };
   } catch (err) {
-    out = { data: null, error: err.message };
+    out = { data: null, error: plainError(err) };
   }
   if (!isCurrentMount(token) || planFor() !== p) return;
   p.running = null;
@@ -12784,9 +12806,9 @@ async function writeReadingBudget(domain, project, bytes) {
     });
     const data = await res.json();
     if (res.ok && data && data.ok) return { ok: true, data };
-    return { ok: false, error: (data && (data.message || data.error)) || ('HTTP ' + res.status) };
+    return { ok: false, error: failText(data, res.status, 'The reading budget could not be saved.') };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: plainError(err) };
   }
 }
 
@@ -12846,14 +12868,14 @@ async function applyPlan(token) {
   let done = 0;
   if (p.result.setBudgetSuggested === true && p.budgetTick && Number.isInteger(p.result.budgetBytes)) {
     const out = await writeReadingBudget(domain, project, p.result.budgetBytes);
-    if (!out.ok) error = 'the reading budget was not set: ' + out.error;
+    if (!out.ok) error = withDetailOf('the reading budget was not set: ' + out.error, out.error);
     else { done++; if (state.activeDomain === domain && state.activeProject === project) applyBudgetAnswer(out.data); }
   }
   if (!error) {
     for (const x of (Array.isArray(p.result.proposals) ? p.result.proposals : [])) {
       if (!x || x.differs !== true || !p.ticks || !p.ticks[x.slug]) continue;
       const out = await writeStartState(domain, project, x.slug, x.proposed);
-      if (!out.ok) { error = '“' + x.slug + '” was not changed: ' + out.error; break; }
+      if (!out.ok) { error = withDetailOf('“' + x.slug + '” was not changed: ' + out.error, out.error); break; }
       done++;
     }
   }
@@ -12861,7 +12883,7 @@ async function applyPlan(token) {
   if (state.activeDomain !== domain || state.activeProject !== project) return;
   if (error) {
     p.applying = false;
-    p.applyError = (done ? done + ' of the changes were applied, then ' : '') + error;
+    p.applyError = withDetailOf((done ? done + ' of the changes were applied, then ' : '') + error, error);
   } else {
     state.plan = null;
     state.sessionPreview = null;
@@ -13073,8 +13095,8 @@ function previewPlanner(token) {
       });
       const got = await res.json();
       if (res.ok && got && got.ok) data = got;
-      else error = (got && (got.error || got.message)) || ('HTTP ' + res.status);
-    } catch (err) { error = err.message; }
+      else error = failText(got, res.status, 'The preview could not be loaded.');
+    } catch (err) { error = plainError(err); }
     if (plannerInFlight !== key) return;
     plannerInFlight = null;
     if (!isCurrentMount(token) || state.activeDomain !== domain || state.activeProject !== project) return;
@@ -13243,7 +13265,8 @@ function plannerFoldHtml(read, data, readonly) {
       : failed ? 'the preview could not be measured: ' + failed : 'measuring…';
     body += '<div class="mem-pl-pending" id="mem-pl-pending" role="status">'
       + '<span class="mem-pl-pending-words"><b>Preview, not saved.</b> ' + escapeHtml(changes.length + ' change'
-        + (changes.length === 1 ? '' : 's') + ': ' + figures) + '</span>'
+        + (changes.length === 1 ? '' : 's') + ': ' + figures)
+        + (t === null && failed ? errorDetailHtml(failed) : '') + '</span>'
       + '<span class="mem-pl-actions">'
         + '<button type="button" class="btn btn-ghost btn-xs" id="mem-pl-discard"' + (busy ? ' disabled' : '') + '>Discard</button>'
         + '<button type="button" class="btn btn-primary btn-xs" id="mem-pl-apply"' + (busy ? ' disabled' : '') + '>'
@@ -13258,6 +13281,7 @@ function plannerFoldHtml(read, data, readonly) {
       + escapeHtml((pl.errors.length === 1 ? 'One document was' : pl.errors.length + ' documents were')
         + ' not changed: ' + pl.errors.map((e) => '“' + e.title + '” — ' + e.error).join('; ')
         + '. ' + (pl.errors.length === 1 ? 'It is' : 'They are') + ' still in the plan; apply again or discard.')
+      + pl.errors.map((e) => errorDetailHtml(e.error)).join('')
       + '</span></div>';
   }
 
@@ -13316,10 +13340,10 @@ async function writeContextSettings(body) {
     });
     const data = await res.json();
     if (res.ok && data && data.ok && data.settings) return { ok: true, settings: data.settings };
-    return { ok: false, error: (data && (data.error || data.message || data.reason)) || ('HTTP ' + res.status),
+    return { ok: false, error: failText(data, res.status, 'The setting was not saved.'),
       settings: data && data.settings && typeof data.settings === 'object' ? data.settings : null };
   } catch (err) {
-    return { ok: false, error: err.message, settings: null };
+    return { ok: false, error: plainError(err), settings: null };
   }
 }
 
@@ -13339,7 +13363,7 @@ async function setContextSetting(body, token) {
   if (!isCurrentMount(token)) return;
   if (out.settings) state.ctxSettings = out.settings;
   if (!out.ok) {
-    state.ctxError = 'Not changed: ' + out.error;
+    state.ctxError = withDetailOf('Not changed: ' + out.error, out.error);
   } else {
     state.ctxEdit = null;
     const s = out.settings;
@@ -13644,6 +13668,7 @@ function renderPlanPanel(facts, p) {
     ? renderRunsOn(runsOn, { id: 'mem-plan-runs' })
     : (p.estimateError
       ? renderDescription('The cost of an AI suggestion could not be read: ' + p.estimateError)
+        + errorDetailHtml(p.estimateError)
       : renderDescription('Reading what an AI suggestion would cost…'));
   const r = p.result;
   const outdated = !!r && typeof p.resultSig === 'string' && p.resultSig !== planInputSig(read);
@@ -13681,7 +13706,8 @@ function renderPlanPanel(facts, p) {
       + notes.map((x) => '<p class="mem-plan-dropped">' + escapeHtml(x) + '</p>').join('')
       + (p.applyError
         ? '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>'
-          + escapeHtml('The suggestion was not fully applied: ' + p.applyError) + '</span></div>'
+          + escapeHtml('The suggestion was not fully applied: ' + p.applyError)
+          + errorDetailHtml(p.applyError) + '</span></div>'
         : '')
       + '</div>';
   }
@@ -13705,7 +13731,7 @@ function renderPlanPanel(facts, p) {
     + '</div>'
     + runLine
     + (r && r.spent ? renderSpent(r.spent) : (!r && p.failedSpent ? renderSpent(p.failedSpent) : ''))
-    + (p.error ? renderStatus({ state: 'danger', title: 'No suggestion was made', detail: p.error }) : '')
+    + (p.error ? renderStatus({ state: 'danger', title: 'No suggestion was made', detail: p.error, support: supportOf(p.error) }) : '')
     + result
   + '</div>';
 }
@@ -13895,9 +13921,9 @@ async function openWorkStreamDelete(scope, token) {
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
       encodeURIComponent(project) + '/scopes/' + encodeURIComponent(scope) + '/delete-preview');
     try { data = await res.json(); } catch { /* non-JSON error page */ }
-    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    if (!res.ok || !data || data.ok !== true) error = failText(data, res.status, 'What would be deleted could not be read.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token) || state.wsDelete !== del) return;
   del.loading = false;
@@ -13938,9 +13964,9 @@ async function runWorkStreamDelete(token) {
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    if (!ok) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    if (!ok) error = failText(data, res.status, 'The work-stream was not deleted.');
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
 
   if (!isCurrentMount(token) || state.wsDelete !== del) return;

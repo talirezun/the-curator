@@ -123,6 +123,8 @@
  */
 
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, utimesSync } from 'node:fs';
+// v3.99.2: lifted Context-page functions call the real plain-language error helpers.
+import './test-helpers/context-error-globals.js';
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -10025,8 +10027,14 @@ const fndRead = (payload) => ({
   ok('an unrecognised code falls back to the route\'s own PROSE rather than '
     + 'being swallowed — silence about a refusal is the worst of the three options',
   (await refusal(400, { reason: 'something_new', error: P })) === P);
-  ok('...and a refusal with no body at all still says something',
-    (await refusal(500, {})) === 'HTTP 500');
+  // v3.99.2: in words, never a bare status. The view's own sentence is the
+  // message, and the status is the visible technical detail beside it.
+  ok('...and a refusal with no body at all still says something, in words',
+    (await refusal(500, {})) === 'The domain choice could not be saved.',
+    await refusal(500, {}));
+  ok('...with the status as its technical detail, never in the sentence',
+    globalThis.errorDetailOf('The domain choice could not be saved.') === 'HTTP 500',
+    globalThis.errorDetailOf('The domain choice could not be saved.'));
   ok('the CODE is read from `reason`: a code in `error` alone is prose, not a code '
     + '(the shape through v3.65.1, which no real refusal ever had)',
   (await refusal(400, { error: 'too_many_domains' })) === 'too_many_domains');
