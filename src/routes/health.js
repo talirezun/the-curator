@@ -11,6 +11,7 @@
  *   POST /api/health/:domain/index/apply — apply it              body: { basis }
  */
 import { Router } from 'express';
+import { toUserError } from '../brain/user-errors.js';
 import { readFileSync } from 'fs';
 import { isDomainReadonly, assertKnownDomain, readSchema, extractDomainDisplayName } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE, planIndexRebuild, applyIndexRebuild, collapseRepeatedLinks, MERGE_NOT_RELATED, MERGE_NOT_RELATED_MESSAGE } from '../brain/health.js';
@@ -56,6 +57,29 @@ import {
   isUpdateInProgress,
   conflictResponse,
 } from '../brain/write-registry.js';
+
+// v3.99.2 plain-language errors: an SSE `error` frame never passes through the
+// res.json wrapper, so it is translated here, at the exit (area 'ai': the AI
+// scans call the provider). On a hit the frame's `error` is the plain sentence,
+// with `detail`; an existing `err.code` is never replaced (the catalogue code
+// is added only when the error has none). On a miss the frame is exactly
+// today's. `err.message` itself is never changed.
+function errorFrame(err, withCode) {
+  const u = toUserError(err, { area: 'ai' });
+  const own = err && err.code !== undefined ? err.code : undefined;
+  if (!u) return withCode ? { type: 'error', error: err.message, code: own } : { type: 'error', error: err.message };
+  return { type: 'error', error: u.error, ...(u.detail ? { detail: u.detail } : {}), code: own !== undefined ? own : u.code };
+}
+
+// A `batch-error` frame (the AI scans: one failed batch, the scan goes on)
+// carries the provider's raw text in `error`. It is translated on the wire
+// only: the in-process listener (duplicate-job.js's isOutOfCredits) reads the
+// raw event before any of this, from health-ai directly.
+function wireEvent(event) {
+  if (!event || event.type !== 'batch-error' || typeof event.error !== 'string') return event;
+  const u = toUserError(event.error, { area: 'ai' });
+  return u ? { ...event, error: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code } : event;
+}
 
 const router = Router();
 
@@ -431,7 +455,7 @@ router.post('/:domain/semantic-dupes/scan', async (req, res) => {
 
   const send = (event) => {
     res.write(`event: ${event.type}\n`);
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`);
   };
 
   try {
@@ -445,7 +469,7 @@ router.post('/:domain/semantic-dupes/scan', async (req, res) => {
       send,
     );
   } catch (err) {
-    send({ type: 'error', error: err.message, code: err.code });
+    send(errorFrame(err, true));
   } finally {
     releaseScan();
     res.end();
@@ -623,12 +647,12 @@ router.post('/:domain/broken-links/plan', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`); };
 
   try {
     await planBrokenLinkFixes(req.params.domain, {}, send);
   } catch (err) {
-    send({ type: 'error', error: err.message, code: err.code });
+    send(errorFrame(err, true));
   } finally {
     res.end();
   }
@@ -676,7 +700,7 @@ router.post('/:domain/broken-links/apply', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`); };
 
   try {
     send({ type: 'start', actions: plan.length });
@@ -684,7 +708,7 @@ router.post('/:domain/broken-links/apply', async (req, res) => {
     send({ type: 'done', ...result });
   } catch (err) {
     console.error('[broken-links apply]', err);
-    send({ type: 'error', error: err.message });
+    send(errorFrame(err, false));
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();
@@ -719,11 +743,11 @@ router.post('/:domain/orphans/plan', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`); };
   try {
     await planOrphanRescue(req.params.domain, {}, send);
   } catch (err) {
-    send({ type: 'error', error: err.message, code: err.code });
+    send(errorFrame(err, true));
   } finally {
     res.end();
   }
@@ -761,14 +785,14 @@ router.post('/:domain/orphans/apply', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`); };
   try {
     send({ type: 'start', actions: plan.length });
     const result = await applyOrphanRescue(domain, plan, (p) => send({ type: 'progress', ...p }));
     send({ type: 'done', ...result });
   } catch (err) {
     console.error('[orphans apply]', err);
-    send({ type: 'error', error: err.message });
+    send(errorFrame(err, false));
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();
@@ -866,6 +890,15 @@ router.post('/:domain/fix-all-safe', async (req, res) => {
   }
   try {
     const result = await fixAllSafe(domain);
+    // byType[type].error is a nested raw message the res.json wrapper never
+    // reaches (it reads a top-level `error` only); translated here, at the exit.
+    if (result && result.byType && typeof result.byType === 'object') {
+      for (const r of Object.values(result.byType)) {
+        if (!r || typeof r.error !== 'string') continue;
+        const u = toUserError(r.error);
+        if (u) { r.error = u.error; if (u.detail) r.detail = u.detail; if (r.code === undefined) r.code = u.code; }
+      }
+    }
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health fix-all-safe]', err);
@@ -946,7 +979,7 @@ router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
   res.flushHeaders?.();
   const send = (event) => {
     res.write(`event: ${event.type}\n`);
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    res.write(`data: ${JSON.stringify(wireEvent(event))}\n\n`);
   };
 
   try {
@@ -957,7 +990,7 @@ router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
     send({ type: 'done', ...result });
   } catch (err) {
     console.error('[semantic-dupes merge-batch]', err);
-    send({ type: 'error', error: err.message });
+    send(errorFrame(err, false));
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();

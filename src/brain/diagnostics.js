@@ -30,6 +30,7 @@ import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { getLogFilePath, getLogFileStats, logWarn } from './logger.js';
+import { toUserError } from './user-errors.js';
 // v3.67.0: the live check's estimate in the one shape every AI job uses. A
 // static import is safe here: nothing on ai-run.js's own import graph reaches
 // back to this module (test-next-compile-estimate §11 loads it first).
@@ -356,12 +357,23 @@ export async function runLiveApiCheck() {
     // here is exactly the low-frequency/high-signal case the log exists for
     // — see the "what is logged" note in src/brain/logger.js.
     logWarn('diagnostics', `Live API check failed (${provider} · ${model}): ${err.message}`);
+    // v3.99.2: this is the button people press TO DIAGNOSE a bad key, so a
+    // recognised provider failure (key rejected, no credit, offline, timeout)
+    // answers in plain words, with the raw text as a sanitised `detail` and a
+    // catalogue `code`. Anything unrecognised keeps today's text. The log line
+    // above keeps the raw message.
+    const u = toUserError(err, {
+      area: 'ai',
+      provider: { anthropic: 'Anthropic', gemini: 'Gemini', openrouter: 'OpenRouter' }[provider],
+    });
     return {
       ok: false,
       provider,
       model,
       latencyMs: Date.now() - started,
-      error: err.message,
+      error: u ? u.error : err.message,
+      ...(u && u.detail ? { detail: u.detail } : {}),
+      ...(u ? { code: u.code } : {}),
     };
   }
 }

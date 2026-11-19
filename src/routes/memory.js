@@ -207,6 +207,7 @@
  */
 
 import { Router } from 'express';
+import { toUserError, userErrorText } from '../brain/user-errors.js';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { sessionStartReport } from '../brain/session-start.js';
@@ -1079,7 +1080,8 @@ async function foundationsIndexFor(domain, project) {
     }
     return foundationsWire(out);
   } catch (err) {
-    return { ...foundationsWire({}), manifestError: err.message };
+    // Nested, so the res.json wrapper never reaches it: translated here.
+    return { ...foundationsWire({}), manifestError: userErrorText(err, err.message) };
   }
 }
 
@@ -4479,6 +4481,20 @@ function withErrorProse(out) {
   if (!out || typeof out !== 'object') return out;
   if (typeof out.error === 'string' && out.error) return out;
   if (typeof out.message !== 'string' || !out.message) return out;
+  // v3.99.2: the views read `message` FIRST (`data.message || data.error`), so
+  // the res.json wrapper translating `error` alone would leave the raw text on
+  // screen. A recognised raw shape (an fs error the store passed through)
+  // becomes the plain sentence in BOTH fields, with the raw text as a
+  // sanitised `detail`; an existing `code` is never replaced. Every sentence
+  // the store writes itself matches no signature and is copied as before.
+  const u = out.detail === undefined ? toUserError(out.message) : null;
+  if (u) {
+    return {
+      ...out, message: u.error, error: u.error,
+      ...(u.detail ? { detail: u.detail } : {}),
+      code: out.code !== undefined ? out.code : u.code,
+    };
+  }
   return { ...out, error: out.message };
 }
 

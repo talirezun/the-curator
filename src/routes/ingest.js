@@ -7,6 +7,7 @@ import { tmpdir } from 'os';
 import { ingestFile, planRepeatIngest, sourceTextForGate } from '../brain/ingest.js';
 import { hashRawSource } from '../brain/raw-store.js';
 import { estimateIngestQueueCost } from '../brain/ingest-queue.js';
+import { toUserError } from '../brain/user-errors.js';
 // v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
 // run reports. Static import is safe: this route is a leaf, and brain/ingest.js
 // (imported just above) is fully evaluated before ai-run.js's graph starts.
@@ -30,6 +31,16 @@ import {
 } from '../brain/ingest-activity.js';
 // ONE per-file cap for single-file and batch ingest, and the words that state it.
 import { MAX_FILE_BYTES, MAX_FILE_MB } from '../brain/ingest-queue.js';
+
+// v3.99.2 plain-language errors: an SSE `error` frame never passes through the
+// res.json wrapper, so it is translated here, at the exit. On a hit the frame
+// carries the plain sentence as `message` plus `detail`/`code`; on a miss it
+// is exactly today's text. `err.message` itself is never changed.
+function errorFrame(err, fallbackMessage) {
+  const u = toUserError(err, { area: 'ai' });
+  if (!u) return { type: 'error', message: fallbackMessage };
+  return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
+}
 
 const router = Router();
 
@@ -362,7 +373,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       emit(ingestDoneEvent(result, overwrite));
     } catch (err) {
       console.error('Ingest error:', err);
-      emit({ type: 'error', message: err.message });
+      emit(errorFrame(err, err.message));
     } finally {
       // A record structurally cannot outlive its request. The catch above
       // already emits an `error` event on the normal failure path, so this is

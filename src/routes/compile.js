@@ -18,6 +18,7 @@
 
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
+import { toUserError } from '../brain/user-errors.js';
 import { estimateCompileCost } from '../brain/compile-estimate.js';
 import { describeRun } from '../brain/ai-run.js';
 import { listDomains, domainPath, isDomainReadonly } from '../brain/files.js';
@@ -27,6 +28,16 @@ import {
   isUpdateInProgress,
   conflictResponse,
 } from '../brain/write-registry.js';
+
+// v3.99.2 plain-language errors: an SSE `error` frame never passes through the
+// res.json wrapper, so it is translated here, at the exit. On a hit the frame
+// carries the plain sentence as `message` plus `detail`/`code`; on a miss it
+// is exactly today's text. `err.message` itself is never changed.
+function errorFrame(err, fallbackMessage) {
+  const u = toUserError(err, { area: 'ai' });
+  if (!u) return { type: 'error', message: fallbackMessage };
+  return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
+}
 
 const router = Router();
 
@@ -70,6 +81,11 @@ export function compileOutcomeEvent(result) {
   const spent = (r.spent && typeof r.spent === 'object') ? { spent: r.spent } : {};
   if (!r.ok) {
     if (r.reason) return { type: 'refused', reason: r.reason };
+    // v3.99.2: compile reports a failed LLM call as a RESULT
+    // ("LLM call failed: <raw provider text>"), not a throw, so it is
+    // translated here as well as in the catch below. A miss is today's frame.
+    const u = typeof r.error === 'string' && r.error ? toUserError(r.error, { area: 'ai' }) : null;
+    if (u) return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code, ...spent };
     return { type: 'error', message: r.error || 'Compilation failed', ...spent };
   }
   return {
@@ -228,7 +244,7 @@ router.post('/conversation', async (req, res) => {
     emit(compileOutcomeEvent(result));
   } catch (err) {
     console.error('Compile error:', err);
-    emit({ type: 'error', message: err.message });
+    emit(errorFrame(err, err.message));
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();

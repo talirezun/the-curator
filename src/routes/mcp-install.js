@@ -45,6 +45,7 @@ import { adapterFor, mcpEntryFor } from '../brain/harness-adapters.js';
 import { tildeUnder, machineWord, collectMachineSetup, machineRowVerdicts, STATES } from '../brain/setup-check.js';
 import { detectBridgeProcesses, bridgesByApp } from '../brain/mcp-bridge-status.js';
 import { appPath } from '../brain/paths.js';
+import { userErrorText } from '../brain/user-errors.js';
 import { readUsageLinesUnion, summariseSessions } from '../brain/mcp-usage.js';
 import {
   detectRunning, detectTools, detectWinAppx, detectWinClaudeRunning,
@@ -89,7 +90,9 @@ async function bridgeReading() {
     return { checked: false, reason: 'not read under test', running: 0, stale: [], bridges: [], current: null };
   }
   try { return await detectBridgeProcesses(); } catch (err) {
-    return { checked: false, reason: err && err.message, running: 0, stale: [], bridges: [], current: null };
+    // Nested, so the res.json wrapper never reaches it (v3.99.2): a raw shape
+    // becomes the plain sentence; anything else is today's text.
+    return { checked: false, reason: err ? userErrorText(err, err.message) : err, running: 0, stale: [], bridges: [], current: null };
   }
 }
 
