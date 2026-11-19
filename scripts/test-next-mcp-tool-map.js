@@ -25,6 +25,7 @@
  * OFFLINE. No network, no browser.
  */
 import { formatAge } from '../src/public/next/shared/age.js';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { renderMcpPage, baseState, SETTINGS_SRC, extractFunction, stripComments } from './test-helpers/mcp-page-sandbox.js';
 
 let passed = 0;

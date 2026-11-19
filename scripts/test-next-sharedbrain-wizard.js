@@ -64,6 +64,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 // REAL, not a stub (v3.58.0). panelAdminStep1 now puts its glossary behind the
@@ -77,6 +78,7 @@ import path from 'node:path';
 // the same reason: lift the thing that paints. Import-free and headless.
 import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
+import { userMessageFrom, renderErrorDetail } from '../src/public/next/shared/net.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -764,6 +766,28 @@ section('§9  The server’s prose, translated where a person meets it');
   // Pinned against the route: this is the string being translated.
   ok(/could not decode payload/.test(routes),
     'control: the route really does emit "could not decode payload" — the translation is not aimed at a ghost');
+  // v3.99.2: an older server's RAW machine text is no longer passed through.
+  const rawOld = pure.plainInviteError("EACCES: permission denied, open '/Users/a/.curator/sharedbrain.json'");
+  ok(!/EACCES|\/Users\//.test(rawOld) && /didn't let The Curator use a file/.test(rawOld),
+    'raw machine text from an older server becomes the plain sentence (v3.99.2)', rawOld);
+}
+{
+  // v3.99.2: setErrorText — the lead, the plain sentence, and the detail as a
+  // muted line INSIDE the same status element, all by textContent.
+  const setErrorText = new Function(extractFunction(wizard, 'setErrorText', 'wizard') + '\nreturn setErrorText;')();
+  const mk = (tag) => ({ tag, className: '', textContent: '', children: [], ownerDocument: null,
+    appendChild(c) { this.children.push(c); } });
+  const doc = { createElement: (t) => mk(t) };
+  const el = mk('p'); el.ownerDocument = doc;
+  setErrorText(el, 'Could not save. ', { error: 'Plain words.', detail: '<b>raw</b> 500', code: 'x' });
+  eq(el.textContent, 'Could not save. Plain words.', 'the lead and the plain sentence are the status text');
+  ok(el.children.length === 1 && el.children[0].className === 'tx-error-detail' &&
+    el.children[0].textContent === 'Technical detail (for support): <b>raw</b> 500',
+    '…and the detail is a tx-error-detail line inside it, as TEXT (never parsed as HTML)');
+  const el2 = mk('p'); el2.ownerDocument = doc;
+  setErrorText(el2, 'Could not load domains. ', new TypeError('Failed to fetch'));
+  ok(/^Could not load domains\. The Curator isn't responding\./.test(el2.textContent) && el2.children.length === 0,
+    'a raw "Failed to fetch" reads as the server-unreachable sentence, with no detail line', el2.textContent);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -905,12 +929,12 @@ section('§11  The CSS: the ring that was photographed, and the clip budget');
 // ═════════════════════════════════════════════════════════════════════════
 section('§12  The card: is the STORED token still good?');
 // ═════════════════════════════════════════════════════════════════════════
-const cardBox = new Function(
+const cardBox = new Function('userMessageFrom', 'renderErrorDetail',
   'let state = { expandedAdmin: new Set() };\n' + ESCAPE + '\n' + ICON_STUB +
   ['classifyTokenCheck', 'tokenCheckApplies', 'renderTokenCheck']
     .map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   'return { classifyTokenCheck, tokenCheckApplies, renderTokenCheck };'
-)();
+)(userMessageFrom, renderErrorDetail);
 {
   const c = cardBox.classifyTokenCheck;
   const good = c({ ok: true, memberCount: 3, repoLabel: 'org/cohort' });
@@ -943,6 +967,33 @@ const cardBox = new Function(
   const off = c({ ok: false, error: 'fetch failed', repoLabel: 'org/cohort' });
   eq(off.kind, 'unreachable', 'a network failure is not a verdict on the token');
   ok(/failure of the CHECK/.test(off.message), '…and says so, rather than implying the token is bad');
+  ok(!/fetch failed/.test(off.message) && /fetch failed/.test(off.detail || ''),
+    '…in plain words, with the raw text kept as the support detail (v3.99.2)');
+
+  // v3.99.2: the server now answers a dead token with a PLAIN error, the code
+  // and the raw text in `detail`. The code decides, not the wording.
+  const plainBody = {
+    ok: false,
+    error: "GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use Leave this Shared Brain and re-join with your invite.",
+    detail: 'listMembers: could not list contributions: GitHub GET tree:main → 401: Bad credentials',
+    code: 'github-token-rejected',
+    repoLabel: 'org/cohort',
+  };
+  const viaCode = c(plainBody);
+  eq(viaCode.kind, 'rejected', 'a plain body with code github-token-rejected is a REJECTION (not "a failure of the CHECK")');
+  eq(viaCode.detail, plainBody.detail, '…and keeps the raw GitHub text as the support detail');
+  eq(c({ ...plainBody, detail: '' }).kind, 'rejected', '…decided by the code alone, with no raw text at all');
+  eq(c({ ok: false, error: 'Some plain sentence.', detail: 'GitHub GET tree:main → 401: Bad credentials', repoLabel: 'x' }).kind,
+    'rejected', 'an older body with no code: the raw patterns are read over the DETAIL too');
+  const busy = c({ ok: false, error: 'GitHub is limiting requests from this token right now. Wait a few minutes, then try again.',
+    detail: 'GitHub GET tree:main → 403: API rate limit exceeded', code: 'github-busy', repoLabel: 'x' });
+  eq(busy.kind, 'unreachable', "another code is the server's own diagnosis: a rate limit's 403 is NOT a dead token");
+  ok(/limiting requests/.test(busy.message) && !/\.\./.test(busy.message), '…and its plain sentence reads cleanly inside the verdict');
+  const down = c({ ok: false, error: "The Curator isn't responding. It may be restarting, or it may have been closed. Wait a few seconds, then try again. If it doesn't come back, quit The Curator and open it again.", code: 'server-unreachable', repoLabel: 'x' });
+  eq(down.kind, 'unreachable', "the fetch wrapper's server-unreachable error is not a verdict on the token");
+  const vhtml = cardBox.renderTokenCheck({ storage_type: 'github' }, { tokenChecking: false, tokenCheck: viaCode });
+  ok(/class="tx-error-detail">Technical detail \(for support\): listMembers/.test(vhtml),
+    'the verdict shows its support detail visibly below it');
 }
 {
   ok(cardBox.tokenCheckApplies({ storage_type: 'github' }), 'the check is offered for a GitHub-backed brain');

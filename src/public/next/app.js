@@ -285,6 +285,10 @@ import { checkModelRetirement } from './shared/model-retirement.js';
 // imports app.js, so this creates no cycle.
 import { currentSyncRun, lastSyncOutcome, onSyncRunChange } from './shared/sync-run.js';
 import { showToast } from './shared/toast.js';
+// Plain-language errors (v3.99.2): boot() wraps window.fetch once so "Failed to
+// fetch" (the app's own server not answering) reads as a sentence in every
+// view. Aborts and Responses pass untouched. net.js imports no app.js: no cycle.
+import { installFetchTranslation } from './shared/net.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -3419,6 +3423,7 @@ function pickStartView(stored) {
 }
 
 function boot() {
+  installFetchTranslation();
   let savedTheme = 'dark';
   // ── FIRST LAUNCH LANDS ON DOMAINS, NOT CHAT (v3.49.0) ────────────────
   // This was 'chat'. A first launch therefore opened a composer against a

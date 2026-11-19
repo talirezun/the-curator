@@ -335,7 +335,13 @@ export function renderDescription(text, opts) {
  * near-invisible rail under-states nothing. It is called out in the suite's
  * NOT ENFORCED block rather than quietly propagated as if it passed.
  *
- * @param {{state?:string, title:string, detail?:string}} o
+ * `support` (v3.99.2) is an optional third line for an error's technical
+ * detail (shared/net.js renderUserError writes it, already prefixed
+ * "Technical detail (for support):"). It is smaller than `detail`, muted and
+ * selectable, and always visible: an outcome never sits behind a chevron.
+ * Without it the markup is byte-identical to before.
+ *
+ * @param {{state?:string, title:string, detail?:string, support?:string}} o
  * @returns {string}
  */
 export function renderStatus(o) {
@@ -344,10 +350,12 @@ export function renderStatus(o) {
   if (title === null) return '';
   const t = tone(o.state);
   const detail = str(o.detail);
+  const support = str(o.support);
   return (
     '<div class="tx-status tx-status-' + t + '" role="group">' +
       '<div class="tx-status-title">' + escapeHtml(title) + '</div>' +
       (detail ? '<div class="tx-status-detail">' + escapeHtml(detail) + '</div>' : '') +
+      (support ? '<div class="tx-error-detail">' + escapeHtml(support) + '</div>' : '') +
     '</div>'
   );
 }

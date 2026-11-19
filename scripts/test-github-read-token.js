@@ -29,6 +29,7 @@
  */
 
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';

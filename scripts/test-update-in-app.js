@@ -40,6 +40,7 @@
  */
 
 import fs from 'fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';

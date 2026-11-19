@@ -215,6 +215,9 @@ import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 // because `.tx-readout` is a COLUMN (label above value) and no stylesheet but
 // shared/text.css may declare a `.tx-` rule to turn it into a row.
 import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
+// Plain-language errors (v3.99.2): a failure reads as a sentence, with its
+// technical detail on a visible, muted line below it (shared/net.js).
+import { plainError, errorDetailOf, errorDetailHtml, errorFromResponse, renderUserError, rememberErrorDetail } from '../shared/net.js';
 // v3.87.1: "Waiting for Finder…" is a Mac word; other platforms say "folder picker".
 import { browserPlatform } from '../shared/platform.js';
 // G5 (v3.71.0, COPY.md §3): `general` was the one section with no entry in
@@ -1657,7 +1660,7 @@ async function loadKeys(token) {
     state.keysError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.keysError = err.message || 'Could not load provider status.';
+    state.keysError = plainError(err, { fallback: 'Could not load provider status.' });
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -1688,7 +1691,7 @@ async function loadMcp(token) {
     applyUsageVerdict(usage);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.mcpError = err.message || 'Could not load MCP status.';
+    state.mcpError = plainError(err, { fallback: 'Could not load MCP status.' });
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -1716,7 +1719,7 @@ async function fetchMcpUsage() {
     }
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: err.message || 'The bridge could not read its own call log.' };
+    return { ok: false, error: plainError(err, { fallback: 'The bridge could not read its own call log.' }) };
   }
 }
 
@@ -1748,9 +1751,9 @@ async function loadSetupMachine(token) {
     const res = await fetch('/api/setup/machine');
     const j = await res.json();
     if (res.ok && j && j.ok && Array.isArray(j.harnesses)) data = j;
-    else err = (j && j.error) || 'HTTP ' + res.status;
+    else err = plainError(j, { status: res.status });
   } catch (e) {
-    err = (e && e.message) || 'Could not check this computer.';
+    err = plainError(e, { fallback: 'Could not check this computer.' });
   }
   if (!isCurrentMount(token)) return;
   state.setupMachine = { data: data || (prev && prev.data) || null, error: err, loading: false };
@@ -1853,7 +1856,7 @@ function renderAgentAppsCard() {
   const ctx = mcpInstallCtx();
   return renderControlRow('<button type="button" class="btn btn-secondary" data-setup-act="machine-check"' + (busy ? ' disabled' : '') + '>'
       + icon('refresh', 14) + '<span>' + (busy ? 'Checking…' : 'Check again') + '</span></button>')
-    + (m && m.error && !m.data ? renderStatus({ state: 'danger', title: 'Could not check this computer', detail: m.error }) : '')
+    + (m && m.error && !m.data ? renderUserError({ error: m.error, detail: errorDetailOf(m.error) }, { title: 'Could not check this computer' }) : '')
     + renderAgentApps({
       status: mi.status, ticks: mi.ticks, plan: mi.plan, results: mi.results, busy: mi.busy, error: mi.error,
       copied: mi.copied, checks: state.mcpChecks, checkBusy: state.mcpCheckBusy, ...ctx,
@@ -1872,7 +1875,7 @@ async function loadAiHealth(token) {
     state.aiHealthError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.aiHealthError = err.message || 'Could not load scan limits.';
+    state.aiHealthError = plainError(err, { fallback: 'Could not load scan limits.' });
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -1883,12 +1886,12 @@ async function loadTrash(token) {
     const res = await fetch('/api/trash');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    if (!res.ok || !data || !Array.isArray(data.entries)) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    if (!res.ok || !data || !Array.isArray(data.entries)) throw errorFromResponse(res, data);
     state.trash = data;
     state.trashError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.trashError = err.message || 'Could not read the trash.';
+    state.trashError = plainError(err, { fallback: 'Could not read the trash.' });
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -1911,7 +1914,7 @@ async function loadConfig(token) {
     state.configError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.configError = err.message || 'Could not load the knowledge base path.';
+    state.configError = plainError(err, { fallback: 'Could not load the knowledge base path.' });
   }
   await tokenLoad;
   await domainsLoad;
@@ -1944,7 +1947,7 @@ async function loadVaultDomains(token) {
       err = 'Could not read the domains in this folder.';
     }
   } catch (e) {
-    err = (e && e.message) || 'Could not read the domains in this folder.';
+    err = plainError(e, { fallback: 'Could not read the domains in this folder.' });
   }
   if (!isCurrentMount(token)) return;
   state.vaultDomains = rows;
@@ -2505,7 +2508,7 @@ function renderGeneral() {
       (state.live ? renderLiveResult() : '') +
 
       (summary ? renderQuickSummary(quick) : '') +
-      (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
+      (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' + errorDetailHtml(quick.error) : '') +
     '</div>';
 
   // ── SETUP GUIDE (D-C) ──────────────────────────────────────────────────
@@ -2718,7 +2721,7 @@ function renderBackgroundMode() {
         ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="Menu bar">' + buttons + '</div>'
         : '') +
       (state.backgroundModeError
-        ? '<div class="settings-inline-error">' + escapeHtml(state.backgroundModeError) + '</div>'
+        ? '<div class="settings-inline-error">' + escapeHtml(state.backgroundModeError) + '</div>' + errorDetailHtml(state.backgroundModeError)
         : '') +
       (chosen ? '<p class="settings-hint-text">' + escapeHtml(chosen) + '</p>' : '') +
       // A NOTE, not a hint, and never a fold. It names three ways the feature
@@ -2762,7 +2765,7 @@ function renderUpdateStatus() {
         : null);
   }
   if (state.updatePhase === 'failed') {
-    return box('upd-bad', 'Update failed', escapeHtml(state.updateError || 'Unknown error.'),
+    return box('upd-bad', 'Update failed', escapeHtml(state.updateError || 'Unknown error.') + errorDetailHtml(state.updateError),
       null, 'Nothing was restarted. You can try again, or update by hand from your checkout.');
   }
 
@@ -3141,6 +3144,9 @@ function renderLiveConfirm() {
 
 function renderLiveResult() {
   const r = state.live;
+  // v3.99.2: the route's {error, detail, code} (or an older server's raw text)
+  // as one plain sentence; its detail is remembered beside it for the line below.
+  const liveFail = r.ok ? null : { error: plainError(r.error || r.detail ? r : null, { fallback: 'The check did not finish.' }) };
   if (r.ok) {
     return (
       '<div class="settings-check-results">' +
@@ -3159,8 +3165,9 @@ function renderLiveResult() {
       '<div class="check-row check-fail">' +
         '<span class="check-glyph">' + icon('x', 13) + '</span>' +
         '<span class="check-label">Failed</span>' +
-        '<span class="check-detail">' + escapeHtml(r.error || 'Unknown error') + '</span>' +
+        '<span class="check-detail">' + escapeHtml(liveFail.error) + '</span>' +
       '</div>' +
+      errorDetailHtml(liveFail.error) +
     '</div>'
   );
 }
@@ -4909,7 +4916,7 @@ function renderCatalogueSyncDetail(p, k, last) {
     ? state.catalogueSyncError[p.id]
     : '';
   const errHtml = errText
-    ? '<div class="settings-inline-error catalogue-sync-error" role="alert">' + escapeHtml(errText) + '</div>'
+    ? '<div class="settings-inline-error catalogue-sync-error" role="alert">' + escapeHtml(errText) + '</div>' + errorDetailHtml(errText)
     : '';
 
   const laneInfo = explainerMark('settings-fetched-lane-info-' + p.id, 'settings.fetched-models');
@@ -5006,7 +5013,7 @@ function renderProviders() {
     // only on the error path — and on that path the useful thing is the error,
     // not a restatement of the section's premise. The premise is one click away
     // on the header's info mark, on this branch as on every other.
-    return '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
+    return '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>' + errorDetailHtml(state.keysError);
   }
   if (!state.keys) {
     return gatedLoader(loadGate, 'Loading provider status…');
@@ -5019,7 +5026,7 @@ function renderProviders() {
 
   return (
     renderCrossWriteBanner('wait for it to finish before changing keys or the model that builds your wiki — it may be mid-call.') +
-    (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
+    (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' + errorDetailHtml(state.keysActionError) : '') +
     // Deliberately ABOVE everything and never behind a disclosure: a fallback
     // is a silent change to what the user is billed.
     renderFallbackBanner(k.fallback) +
@@ -5103,7 +5110,7 @@ function renderBuildBlock(k, crossBusy) {
     cands.some(({ p, m }) => p && m && (p.id + '::' + m.id) === errAt));
   const errHtml = (errText && !ownedByRow)
     ? '<div id="' + BUILD_PICK_ERROR_ID + '" class="settings-inline-error model-pick-error" role="alert">' +
-      escapeHtml(errText) + '</div>'
+      escapeHtml(errText) + '</div>' + errorDetailHtml(errText)
     : '';
 
   const b = buildLaneFacts(k);
@@ -6737,7 +6744,7 @@ function renderCatalogueSync(p, k, crossBusy) {
   // v3.6.0: a refusal painted somewhere the user was not looking read as "my
   // click didn't register", and the observed next action was a retry.
   const errHtml = errText
-    ? '<div class="settings-inline-error catalogue-sync-error" role="alert">' + escapeHtml(errText) + '</div>'
+    ? '<div class="settings-inline-error catalogue-sync-error" role="alert">' + escapeHtml(errText) + '</div>' + errorDetailHtml(errText)
     : '';
 
   return (
@@ -7070,7 +7077,7 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
     ? state.modelPickError[p.id]
     : '';
   const errHtml = errText
-    ? '<div class="settings-inline-error model-pick-error" role="alert">' + escapeHtml(errText) + '</div>'
+    ? '<div class="settings-inline-error model-pick-error" role="alert">' + escapeHtml(errText) + '</div>' + errorDetailHtml(errText)
     : '';
 
   // THE COLLAPSED HEADER ANSWERS THE COMMON QUESTION WITHOUT AN EXPAND.
@@ -7921,7 +7928,7 @@ function renderQualifyPanel(q, minRuns, buildNow) {
   if (!q) return '';
   if (q.error) {
     return '<div class="model-qual model-qual-defect"><p class="model-qual-head">' +
-      escapeHtml(q.error) + '</p></div>';
+      escapeHtml(q.error) + '</p>' + errorDetailHtml(q.error) + '</div>';
   }
   if (q.phase === 'estimating') {
     return '<div class="model-qual"><p class="model-qual-head">Working out what this would cost…</p></div>';
@@ -8979,7 +8986,7 @@ function lastAppStartAt() {
 /** ② Skills' card. */
 function renderSkillsCard() {
   const m = state.setupMachine;
-  if (m && m.error && !m.data) return renderStatus({ state: 'danger', title: 'Could not check this computer', detail: m.error });
+  if (m && m.error && !m.data) return renderUserError({ error: m.error, detail: errorDetailOf(m.error) }, { title: 'Could not check this computer' });
   return renderSkills(adaptMachine(m), { platform: installPlatform(), folds: state.setupMachineFolds });
 }
 
@@ -8998,7 +9005,7 @@ function renderMcp() {
     return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', gatedLoader(loadGate, 'Checking your AI apps…', 'tx-note'));
   }
   if (state.mcpError) {
-    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', renderStatus({ state: 'danger', title: 'Could not check your AI apps', detail: state.mcpError }));
+    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', renderUserError({ error: state.mcpError, detail: errorDetailOf(state.mcpError) }, { title: 'Could not check your AI apps' }));
   }
   const n = mcpToolCount();
   // The page's one-line lede is the column's first block under the view
@@ -9174,7 +9181,7 @@ function renderBridgeCard() {
       actionHtml: renderListboxHtml(defaultDomainCfg) })
     + (state.defaultDomainSaving ? renderStatus({ state: 'neutral', title: 'Saving…' }) : '')
     // v3.72.1 (truth audit F11): a refused save says so, here, beside the control.
-    + (state.defaultDomainError ? renderStatus({ state: 'danger', title: 'Not saved', detail: state.defaultDomainError }) : '')
+    + (state.defaultDomainError ? renderUserError({ error: state.defaultDomainError, detail: errorDetailOf(state.defaultDomainError) }, { title: 'Not saved' }) : '')
     + renderDescription(MCP_DOMAIN_CONSEQUENCE);
 
   const folds = renderFoldRows(
@@ -9417,7 +9424,7 @@ function renderToolMapBody(now) {
   // of what it does (the catalogue's `purpose`).
   const at = typeof now === 'number' ? now : Date.now();
   if (state.mcpUsageError && !state.mcpUsage) {
-    return renderStatus({ state: 'danger', title: 'Could not read which tools were used', detail: state.mcpUsageError });
+    return renderUserError({ error: state.mcpUsageError, detail: errorDetailOf(state.mcpUsageError) }, { title: 'Could not read which tools were used' });
   }
   const u = state.mcpUsage;
   if (!u) return gatedLoader(loadGate, 'Reading which tools were used…', 'tx-note');
@@ -9478,7 +9485,7 @@ function renderVaultDomains() {
   const rows = state.vaultDomains;
   if (!Array.isArray(rows)) {
     return state.vaultDomainsError
-      ? '<p class="settings-vault-note">' + escapeHtml(state.vaultDomainsError) + '</p>' : '';
+      ? '<p class="settings-vault-note">' + escapeHtml(state.vaultDomainsError) + '</p>' + errorDetailHtml(state.vaultDomainsError) : '';
   }
   if (!rows.length) return '';
   const largest = rows.reduce((m, d) => Math.max(m, Number.isInteger(d.pageCount) ? d.pageCount : 0), 0);
@@ -9746,7 +9753,7 @@ function scanCeilingHint(ai) {
 
 function renderHealthLimits() {
   if (state.aiHealthError) {
-    return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>';
+    return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>' + errorDetailHtml(state.aiHealthError);
   }
   if (!state.aiHealth) {
     return gatedLoader(loadGate, 'Loading scan limits…');
@@ -9859,9 +9866,9 @@ async function runTrashRestore(kind, id, token) {
       body: trashRestoreBody(plan),
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
-    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    if (!res.ok || !data || data.ok !== true) error = plainError(data, { status: res.status });
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token) || state.trashAction !== action) return;
   action.busy = false;
@@ -9896,9 +9903,9 @@ async function runTrashDelete(token) {
       body: trashDeleteBody(action),
     });
     try { data = await res.json(); } catch { /* non-JSON error page */ }
-    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    if (!res.ok || !data || data.ok !== true) error = plainError(data, { status: res.status });
   } catch (err) {
-    error = err.message;
+    error = plainError(err);
   }
   if (!isCurrentMount(token) || state.trashAction !== action) return;
   action.busy = false;
@@ -9972,7 +9979,7 @@ function wireTrashListeners() {
  */
 function renderStorage(domainsMonitorHtml) {
   if (state.configError) {
-    return '<div class="settings-inline-error">' + escapeHtml(state.configError) + '</div>';
+    return '<div class="settings-inline-error">' + escapeHtml(state.configError) + '</div>' + errorDetailHtml(state.configError);
   }
   if (!state.config) {
     return gatedLoader(loadGate, 'Loading…');
@@ -10022,7 +10029,7 @@ function renderStorage(domainsMonitorHtml) {
 function renderTypedFolderFallback() {
   if (!state.folderPickError) return '';
   const busy = state.typedFolderBusy || state.pickingFolder || crossWriteBusy();
-  return '<div class="settings-inline-error">' + escapeHtml(state.folderPickError) + '</div>' +
+  return '<div class="settings-inline-error">' + escapeHtml(state.folderPickError) + '</div>' + errorDetailHtml(state.folderPickError) +
     '<div class="provider-replace-row">' +
       '<input type="text" class="provider-replace-input mono" id="typed-folder-input"' +
         ' placeholder="Paste the folder\u2019s full path" autocomplete="off" spellcheck="false"' +
@@ -10032,7 +10039,7 @@ function renderTypedFolderFallback() {
         (state.typedFolderBusy ? 'Checking\u2026' : 'Use this folder') + '</button>' +
     '</div>' +
     '<p class="settings-hint-text">File Explorer\u2019s address bar (or Finder\u2019s Get Info) shows a folder\u2019s full path.</p>' +
-    (state.typedFolderError ? '<div class="settings-inline-error">' + escapeHtml(state.typedFolderError) + '</div>' : '');
+    (state.typedFolderError ? '<div class="settings-inline-error">' + escapeHtml(state.typedFolderError) + '</div>' + errorDetailHtml(state.typedFolderError) : '');
 }
 
 /**
@@ -10062,7 +10069,7 @@ function renderGithubReadToken() {
 
   let bodyHtml;
   if (state.ghTokenLoadError && !st) {
-    bodyHtml = '<div class="settings-inline-error">' + escapeHtml(state.ghTokenLoadError) + '</div>';
+    bodyHtml = '<div class="settings-inline-error">' + escapeHtml(state.ghTokenLoadError) + '</div>' + errorDetailHtml(state.ghTokenLoadError);
   } else {
     const statusText = present
       ? 'Saved \u00b7 ends in \u2026' + (st.last4 || '????') + (kindWord ? ' \u00b7 ' + kindWord : '')
@@ -10143,7 +10150,7 @@ function renderGithubReadToken() {
       : '';
 
     const actionError = state.ghTokenActionError
-      ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.ghTokenActionError) + '</div>'
+      ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.ghTokenActionError) + '</div>' + errorDetailHtml(state.ghTokenActionError)
       : '';
 
     bodyHtml = row + caution + actionError;
@@ -10810,7 +10817,7 @@ async function onSaveGhToken(token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.ghTokenBusy = null;
-    state.ghTokenActionError = err.message || 'The token could not be saved.';
+    state.ghTokenActionError = plainError(err, { fallback: 'The token could not be saved.' });
     render(token);
   }
 }
@@ -10836,7 +10843,7 @@ async function onDisconnectGhToken(token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.ghTokenBusy = null;
-    state.ghTokenActionError = err.message || 'The token could not be removed.';
+    state.ghTokenActionError = plainError(err, { fallback: 'The token could not be removed.' });
     render(token);
   }
 }
@@ -10866,7 +10873,7 @@ async function onTestGhToken(token) {
     const data = await readJsonSafely(res);
     result = data && typeof data === 'object'
       ? data
-      : { ok: false, message: 'The server returned a response this screen could not read (HTTP ' + res.status + ').' };
+      : { ok: false, message: plainError(null, { status: res.status, fallback: 'The server returned a response this screen could not read.' }) };
   } catch {
     result = { ok: false, message: 'Could not reach The Curator\u2019s own server to run the test.' };
   }
@@ -10900,7 +10907,7 @@ async function onCheckForUpdates(token) {
     const res = await fetch('/api/config/update-check');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    state.updateCheck = data.error ? { error: data.error } : data;
+    state.updateCheck = data.error ? { error: plainError(data) } : data;
 
     // Re-read the running-vs-on-disk version, exactly as the shipping flow
     // does: it takes precedence over any remote comparison (see
@@ -10915,7 +10922,7 @@ async function onCheckForUpdates(token) {
     } catch { /* non-critical */ }
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.updateCheck = { error: err.message };
+    state.updateCheck = { error: plainError(err) };
   } finally {
     if (isCurrentMount(token)) { state.updateChecking = false; render(token); }
   }
@@ -10965,11 +10972,11 @@ async function runUpdate(token) {
     data = await res.json();
     // A 409 from the write-registry guard arrives here as { error, conflict }
     // — the same shape every other refusal in this app uses.
-    if (!res.ok) throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+    if (!res.ok) throw errorFromResponse(res, data);
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.updatePhase = 'failed';
-    state.updateError = err.message || 'Unknown error';
+    state.updateError = plainError(err, { fallback: 'Unknown error' });
     render(token);
     return;
   }
@@ -11175,7 +11182,7 @@ async function runInAppUpdate() {
     try { data = await res.json(); } catch { data = null; }
     return failInApp({
       reason: (data && data.reason) || 'unknown',
-      error: (data && data.error) || ('The update could not start (HTTP ' + res.status + ').'),
+      error: plainError(data, { status: res.status, fallback: 'The update could not start.' }),
       hint: data && data.hint,
       releasesPageUrl: data && data.releasesPageUrl,
     });
@@ -11276,7 +11283,7 @@ async function finishInAppUpdate() {
       phase: 'staged', job: null, version, warning,
       failure: {
         reason: (data && data.reason) || 'install-failed',
-        error: (data && data.error) || ('The update could not be installed (HTTP ' + res.status + ').'),
+        error: plainError(data, { status: res.status, fallback: 'The update could not be installed.' }),
         hint: data && data.hint,
         releasesPageUrl: data && data.releasesPageUrl,
       },
@@ -11407,11 +11414,11 @@ async function onRunQuickCheck(token) {
     const res = await fetch('/api/diagnostics/quick');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    state.quick = data.error ? { error: data.error } : Object.assign({}, data, { checkedAtMs: Date.now(), stale: false });
+    state.quick = data.error ? { error: plainError(data) } : Object.assign({}, data, { checkedAtMs: Date.now(), stale: false });
     if (!data.error) setLiveRunsOn(data);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.quick = { error: err.message };
+    state.quick = { error: plainError(err) };
   } finally {
     if (isCurrentMount(token)) { state.quickLoading = false; render(token); }
   }
@@ -11428,7 +11435,7 @@ async function onVerifyAiConfirm(token) {
     state.liveConfirmOpen = false;
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.live = { ok: false, error: err.message };
+    state.live = { ok: false, error: plainError(err) };
     state.liveConfirmOpen = false;
   } finally {
     if (isCurrentMount(token)) { state.liveLoading = false; render(token); }
@@ -11517,7 +11524,7 @@ async function onSaveKey(provider, token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+    if (!res.ok) throw errorFromResponse(res, await res.json().catch(() => null), 'Save failed.');
     // The SAVE HAS SUCCEEDED by this point. Everything below is about
     // explaining the outcome, so an unreadable body must never be re-thrown as
     // a failed save — that would report a lost key the server actually stored,
@@ -11541,7 +11548,7 @@ async function onSaveKey(provider, token) {
   } catch (err) {
     if (isCurrentMount(token)) {
       state.keysBusy = null;
-      state.keysActionError = err.message;
+      state.keysActionError = plainError(err);
       render(token);
     }
   }
@@ -11562,7 +11569,7 @@ async function onDisconnect(provider, token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Disconnect failed');
+    if (!res.ok) throw errorFromResponse(res, await res.json().catch(() => null), 'Disconnect failed.');
     markSystemCheckStale();
     if (!isCurrentMount(token)) return;
     state.keysBusy = null;
@@ -11570,7 +11577,7 @@ async function onDisconnect(provider, token) {
   } catch (err) {
     if (isCurrentMount(token)) {
       state.keysBusy = null;
-      state.keysActionError = err.message;
+      state.keysActionError = plainError(err);
       render(token);
     }
   }
@@ -11591,7 +11598,7 @@ async function onSetActive(provider, token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Could not switch provider');
+    if (!res.ok) throw errorFromResponse(res, await res.json().catch(() => null), 'Could not switch provider.');
     markSystemCheckStale();
     if (!isCurrentMount(token)) return;
     state.keysBusy = null;
@@ -11599,7 +11606,7 @@ async function onSetActive(provider, token) {
   } catch (err) {
     if (isCurrentMount(token)) {
       state.keysBusy = null;
-      state.keysActionError = err.message;
+      state.keysActionError = plainError(err);
       render(token);
     }
   }
@@ -11659,8 +11666,8 @@ async function onTestKey(provider, token) {
         valid: null,
         reason: 'bad_response',
         error: (data && typeof data.error === 'string' && data.error.trim())
-          ? data.error.trim()
-          : 'The server returned a response we could not read (HTTP ' + res.status + ').',
+          ? plainError(data)
+          : plainError(null, { status: res.status, fallback: 'The server returned a response we could not read.' }),
       };
     }
   } catch {
@@ -11692,7 +11699,7 @@ async function onTestKey(provider, token) {
  */
 function modelPickErrorMessage(status, data) {
   const fromServer = (data && typeof data.error === 'string' && data.error.trim())
-    ? data.error.trim()
+    ? plainError(data).trim()
     : '';
   const isConflict = status === 409 || (data && data.conflict === 'write_in_progress');
   if (isConflict) {
@@ -11741,7 +11748,7 @@ async function onQualifyEstimate(modelId, token) {
     try { data = await res.json(); } catch { data = null; }
     if (!isCurrentMount(token)) return;
     if (!res.ok) {
-      state.qualify = { modelId, phase: 'error', runs: [], error: (data && data.error) || ('Could not work out the cost (HTTP ' + res.status + ').') };
+      state.qualify = { modelId, phase: 'error', runs: [], error: plainError(data, { status: res.status, fallback: 'Could not work out the cost.' }) };
     } else {
       state.qualify = { modelId, phase: 'confirm', runs: [], estimate: data };
     }
@@ -11755,7 +11762,7 @@ async function onQualifyEstimate(modelId, token) {
     revealInMain(QUALIFY_CONFIRM_ID);
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.qualify = { modelId, phase: 'error', runs: [], error: (err && err.message) || 'Could not work out the cost.' };
+    state.qualify = { modelId, phase: 'error', runs: [], error: plainError(err, { fallback: 'Could not work out the cost.' }) };
     render(token);
   }
 }
@@ -11875,7 +11882,7 @@ async function onQualifyGo(modelId, token) {
       try { data = await res.json(); } catch { data = null; }
       if (!isCurrentMount(token)) return;
       state.qualifyAbort = null;
-      state.qualify = { modelId, phase: 'error', runs: [], error: (data && data.error) || ('The test could not start (HTTP ' + res.status + ').') };
+      state.qualify = { modelId, phase: 'error', runs: [], error: plainError(data, { status: res.status, fallback: 'The test could not start.' }) };
       render(token);
       return;
     }
@@ -12011,7 +12018,7 @@ async function onQualifyGo(modelId, token) {
     // already cleared the panel, so saying anything here would be reporting an
     // error for something that worked.
     if (err && (err.name === 'AbortError')) return;
-    state.qualify = { modelId, phase: 'error', runs: [], error: (err && err.message) || 'The test failed.' };
+    state.qualify = { modelId, phase: 'error', runs: [], error: plainError(err, { fallback: 'The test failed.' }) };
     render(token);
   }
 }
@@ -12244,7 +12251,7 @@ function revealPickRefusal(provider, model) {
  */
 function catalogueSyncErrorMessage(status, data) {
   const fromServer = (data && typeof data.error === 'string' && data.error.trim())
-    ? data.error.trim()
+    ? plainError(data).trim()
     : '';
   const isConflict = status === 409 || (data && data.conflict === 'write_in_progress');
   if (isConflict) {
@@ -12413,8 +12420,8 @@ async function onCheckModels(provider, token) {
     if (!res.ok) {
       state.modelCheckError = Object.assign({}, state.modelCheckError, {
         [provider]: (data && typeof data.error === 'string' && data.error)
-          ? data.error
-          : ('the request was refused (HTTP ' + res.status + ').'),
+          ? plainError(data)
+          : plainError(null, { status: res.status, fallback: 'the request was refused.' }),
       });
       render(token);
       return;
@@ -12440,7 +12447,7 @@ async function onCheckModels(provider, token) {
     if (!isCurrentMount(token)) return;
     state.modelCheckBusy = null;
     state.modelCheckError = Object.assign({}, state.modelCheckError, {
-      [provider]: (err && err.message) ? err.message : 'the request did not complete.',
+      [provider]: (err && err.message) ? plainError(err) : 'the request did not complete.',
     });
     render(token);
   }
@@ -12457,7 +12464,7 @@ async function onMcpSelfTest(token) {
     state.selfTestAt = new Date().toISOString();
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.selfTest = { ok: false, error: err.message };
+    state.selfTest = { ok: false, error: plainError(err) };
     state.selfTestAt = new Date().toISOString();
   } finally {
     if (isCurrentMount(token)) { state.selfTestLoading = false; render(token); }
@@ -12495,9 +12502,10 @@ async function onMcpExercise(token) {
     if (!isCurrentMount(token)) return;
     if (!res.ok || !data) {
       state.mcpExerciseError = (data && data.error)
-        || 'The self-test run did not complete. The bridge may not be reachable from here.';
+        ? plainError(data)
+        : 'The self-test run did not complete. The bridge may not be reachable from here.';
     } else if (!Array.isArray(data.results)) {
-      state.mcpExerciseError = data.error || 'The self-test run returned nothing to show.';
+      state.mcpExerciseError = data.error ? plainError(data) : 'The self-test run returned nothing to show.';
     } else {
       state.mcpExercise = data;
       // `missing` is the driver's own honesty field: a tool in the catalogue
@@ -12510,7 +12518,7 @@ async function onMcpExercise(token) {
     }
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.mcpExerciseError = err.message || 'The self-test run did not complete.';
+    state.mcpExerciseError = plainError(err, { fallback: 'The self-test run did not complete.' });
   } finally {
     if (isCurrentMount(token)) {
       state.mcpExerciseBusy = false;
@@ -12552,10 +12560,10 @@ async function onSetBackgroundMode(mode, token) {
       state.config.backgroundMode = data.backgroundMode;
       if (Array.isArray(data.backgroundModes)) state.config.backgroundModes = data.backgroundModes;
     }
-    if (!res.ok) state.backgroundModeError = data.error || 'Could not change the menu bar setting.';
+    if (!res.ok) state.backgroundModeError = plainError(data, { status: res.status, fallback: 'Could not change the menu bar setting.' });
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.backgroundModeError = err.message || 'Could not change the menu bar setting.';
+    state.backgroundModeError = plainError(err, { fallback: 'Could not change the menu bar setting.' });
   }
   if (!isCurrentMount(token)) return;
   state.backgroundModeSaving = false;
@@ -12583,8 +12591,7 @@ async function onSaveDefaultDomain(value, token) {
       // kept the previous value. Now the old value stays, the refusal is shown,
       // and the domain list is re-read (the likely cause is a domain renamed or
       // deleted since the list loaded).
-      state.defaultDomainError = (data && typeof data.error === 'string' && data.error)
-        ? data.error : 'The default domain was not saved.';
+      state.defaultDomainError = plainError(data, { status: res.status, fallback: 'The default domain was not saved.' });
       try {
         const again = await fetch('/api/config/default-domain');
         const dd = again.ok ? await again.json() : null;
@@ -12592,7 +12599,7 @@ async function onSaveDefaultDomain(value, token) {
       } catch { /* keep what is on screen */ }
     }
   } catch (err) {
-    if (isCurrentMount(token)) state.defaultDomainError = err.message || 'The default domain was not saved.';
+    if (isCurrentMount(token)) state.defaultDomainError = plainError(err, { fallback: 'The default domain was not saved.' });
   } finally {
     if (isCurrentMount(token)) { state.defaultDomainSaving = false; render(token); }
   }
@@ -12629,7 +12636,7 @@ async function onSaveScanLimits(token) {
     state.maxPairsInput = String(data.semanticDupeMaxPairs);
     state.aiHealthSaved = true;
   } catch (err) {
-    if (isCurrentMount(token)) state.aiHealthError = err.message;
+    if (isCurrentMount(token)) state.aiHealthError = plainError(err);
   } finally {
     if (isCurrentMount(token)) { state.aiHealthSaving = false; render(token); }
   }
@@ -12651,12 +12658,13 @@ async function onChooseFolder(token) {
     // (renderTypedFolderFallback), never by replacing the block — the old
     // `configError` route hid the path row and every control with it.
     else if (data.error) {
-      state.folderPickError = [data.error, data.hint].filter((x) => typeof x === 'string' && x.trim()).join(' ');
+      state.folderPickError = [plainError(data), data.hint].filter((x) => typeof x === 'string' && x.trim()).join(' ');
+      rememberErrorDetail(state.folderPickError, errorDetailOf(plainError(data)));
       state.typedFolderError = null;
     }
     else { state.folderPickError = null; await loadConfig(token); }
   } catch (err) {
-    if (isCurrentMount(token)) { state.folderPickError = err.message; state.typedFolderError = null; }
+    if (isCurrentMount(token)) { state.folderPickError = plainError(err); state.typedFolderError = null; }
   } finally {
     if (isCurrentMount(token)) { state.pickingFolder = false; render(token); }
   }
@@ -12685,14 +12693,14 @@ async function onUseTypedFolder(typed, token) {
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     if (!isCurrentMount(token)) return;
     if (!res.ok) {
-      state.typedFolderError = (data && data.error) || ('Request failed (' + res.status + ')');
+      state.typedFolderError = plainError(data, { status: res.status });
       return;
     }
     state.folderPickError = null;
     state.typedFolderValue = '';
     await loadConfig(token);
   } catch (err) {
-    if (isCurrentMount(token)) state.typedFolderError = err.message;
+    if (isCurrentMount(token)) state.typedFolderError = plainError(err);
   } finally {
     if (isCurrentMount(token)) { state.typedFolderBusy = false; render(token); }
   }

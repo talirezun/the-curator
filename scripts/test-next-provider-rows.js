@@ -192,6 +192,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { plainError, errorDetailHtml, errorDetailOf, errorFromResponse, renderUserError, userMessageFrom } from '../src/public/next/shared/net.js'; // v3.99.2
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -316,7 +317,7 @@ const ROW_INJECTED_NAMES = Object.keys(ROW_INJECTED);
 // see both. `makeSaveKeyHarness` builds from these exact names.
 // v3.72.1 (truth audit F8): a successful save marks the System check stale.
 const SAVE_FN_NAMES = ['readSkippedActivation', 'classifyActivationOutcome', 'markSystemCheckStale', 'onSaveKey'];
-const SAVE_INJECTED_NAMES = ['document', 'fetch', 'state', 'render', 'isCurrentMount', 'loadKeys'];
+const SAVE_INJECTED_NAMES = ['document', 'fetch', 'state', 'render', 'isCurrentMount', 'loadKeys', 'plainError', 'errorFromResponse'];
 /** Set by makeSaveKeyHarness to whatever it ACTUALLY injected; checked in §0b. */
 let saveInjectedNamesActual = null;
 
@@ -909,6 +910,9 @@ function makeSaveKeyHarness() {
     render: fakeRender,
     isCurrentMount: fakeIsCurrentMount,
     loadKeys: fakeLoadKeys,
+    // v3.99.2: the REAL shared/net.js helpers onSaveKey now uses.
+    plainError,
+    errorFromResponse,
   };
   // ── EXTRACTED, NOT STUBBED, AND THE REASON IS A MEASUREMENT ───────────
   // v3.15.0 made `onSaveKey` call `classifyActivationOutcome` after a
