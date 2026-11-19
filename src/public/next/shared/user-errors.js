@@ -107,9 +107,12 @@ export const USER_MESSAGES = Object.freeze({
     `outside The Curator. Check that name, then try again.`,
 
   // ── GitHub (Shared Brain's storage) ──
+  // v3.99.2: Replace token exists on the connection's card, so a dead token
+  // is replaced there; re-joining was never possible (connectionClash refuses
+  // a second membership of the same brain).
   'github-token-rejected': () =>
     `GitHub didn't accept the access token for this Shared Brain. Create a new token on GitHub, then use ` +
-    `Leave this Shared Brain and re-join with your invite.`,
+    `Replace token on this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain).`,
   'github-not-found': () =>
     `GitHub couldn't find this Shared Brain's repository, or the token can't see it. Ask the person who invited you ` +
     `to check that the repository still exists and that you still have access.`,
@@ -165,17 +168,16 @@ export const KLASS_CODES = Object.freeze(Object.fromEntries(Object.keys(USER_MES
 //   toUserError(err, { area: 'sharedbrain', surface: 'admin' })
 export const SURFACE_MESSAGES = Object.freeze({
   sharedbrain: Object.freeze({
-    // An admin's action (revoke): "Leave and re-join with your invite" is a
-    // member's step. The admin's token is replaced the way every admin's is
-    // provisioned: by running the setup wizard again for the same repository
-    // and shared domain (docs/shared-brain-admin.md; shared.js says the same
-    // for a missing admin token). "+ Set up another" is on the Shared Brain
-    // page whenever a connection exists, which an admin's always does.
+    // An admin's action (revoke). v3.99.2: the admin replaces the GitHub
+    // token with the same Replace token a member uses (running the setup
+    // again for the same brain is refused by connectionClash). The admin
+    // token (sbat_…) is a different credential and is not affected; the
+    // admin's token must be able to write, which the check enforces.
     admin: Object.freeze({
       'github-token-rejected': () =>
         `GitHub didn't accept the access token this computer uses for this Shared Brain, so this didn't finish. ` +
-        `Create a new token on GitHub, then use + Set up another and run the setup again for the same repository ` +
-        `and shared domain: the setup wizard is the only place that accepts a new token.`,
+        `Create a new token on GitHub with Contents: Read and write on the repository, then use Replace token on ` +
+        `this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain). Your admin token stays as it is.`,
       'github-not-found': () =>
         `GitHub couldn't find this Shared Brain's repository, or the access token can't see it. Check on GitHub ` +
         `that the repository still exists and that your token has access to it, then try again.`,
@@ -208,7 +210,15 @@ export const SYNC_CODES = Object.freeze([
   'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
   'sync-not-configured',
 ]);
-export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES])]);
+// Shared Brain's Replace token refusals (src/brain/sharedbrain-token.js, whose
+// SHAREDBRAIN_TOKEN_MESSAGES holds their sentences as data).
+export const SHAREDBRAIN_CODES = Object.freeze([
+  'sharedbrain-token-missing', 'sharedbrain-token-invalid', 'sharedbrain-token-not-github',
+  'sharedbrain-new-token-rejected', 'sharedbrain-new-token-no-access', 'sharedbrain-new-token-read-only',
+  'sharedbrain-token-check-rate-limited', 'sharedbrain-token-check-offline', 'sharedbrain-token-check-failed',
+  'sharedbrain-token-save-failed',
+]);
+export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES, ...SHAREDBRAIN_CODES])]);
 const CATALOGUE_SET = new Set(CATALOGUE_CODES);
 /** True only for a code in the published catalogue. */
 export function isCatalogueCode(code) { return typeof code === 'string' && CATALOGUE_SET.has(code); }

@@ -69,10 +69,25 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 
 | Code | What it means | What to do |
 |---|---|---|
-| github-token-rejected | GitHub refused the access token this computer uses for the Shared Brain. | Create a new token on GitHub. A member uses Leave this Shared Brain and re-joins with the invite; an admin uses + Set up another and runs the setup again for the same repository and shared domain. |
-| github-not-found | GitHub cannot find the Shared Brain’s repository, or the token cannot see it. | A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. |
+| github-token-rejected | GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted. | Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › a domain that takes part in it › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token. |
+| github-not-found | GitHub cannot find the Shared Brain’s repository, or the token cannot see it. | A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. If the token needs changing, use Replace token on that Shared Brain’s card. |
 | github-busy | GitHub is limiting requests from this token for now. | Wait a few minutes, then try again. |
 | github-unavailable | GitHub is having problems on its side. | Wait a few minutes, then try again. |
+
+## What do the Shared Brain Replace token error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| sharedbrain-token-missing | Check and save was pressed with an empty field. | Paste the new token, then press Check and save. |
+| sharedbrain-token-invalid | What was pasted is not shaped like a GitHub token (often only part of it, or extra text). | Copy the whole token from GitHub and paste it again. |
+| sharedbrain-token-not-github | This Shared Brain is kept in a folder, not on GitHub, so it has no GitHub token. | Nothing to do. |
+| sharedbrain-new-token-rejected | GitHub refused the new token: it is incomplete, expired or deleted. | Copy the token again, check its expiry date on GitHub, and try again. |
+| sharedbrain-new-token-no-access | GitHub knows the token, but it cannot open this Shared Brain’s repository. | Give the token the repository with Contents: Read and write (fine-grained) or the repo scope (classic). A member also checks they accepted the GitHub invitation. |
+| sharedbrain-new-token-read-only | The new token can read the repository but not write to it, and this connection pushes contributions (a contributor’s or an admin’s). | Give the token Contents: Read and write on the repository, then try again. |
+| sharedbrain-token-check-rate-limited | GitHub is limiting requests from this token, so it could not be checked. | Wait a few minutes, then try again. |
+| sharedbrain-token-check-offline | The Curator could not reach GitHub to check the new token. | Check the internet connection, then try again. |
+| sharedbrain-token-check-failed | GitHub answered in a way The Curator did not expect, so the token was not checked. | Try again in a minute. If it keeps happening, send the Technical detail line to support. |
+| sharedbrain-token-save-failed | The new token works, but saving it on this computer failed. | Try again. If it keeps happening, send the Technical detail line to support. |
 
 ## What do the internet connection error codes mean?
 

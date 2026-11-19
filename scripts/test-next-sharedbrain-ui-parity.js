@@ -808,6 +808,8 @@ const SEC_FNS = [
   'renderSectionEmpty', 'sectionDomainFacts', 'sectionDotHtml', 'sectionAgeLine', 'sectionRepoCell',
   // v3.72.1
   'ageTickAttrs',
+  // v3.99.2 — Replace token, REAL (the mirror strip renders it under a rejection).
+  'tokenCheckApplies', 'freshTokenForm', 'tokenRejectionKey', 'sbTokenPanelOpen', 'renderReplaceToken',
 ];
 const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'formatAge', ...SB_KIT,
   'let state = {};\n' +
@@ -1285,6 +1287,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     // v3.72.1
     'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
     'tokenVerdictLoud', // v3.99.2
+    'freshTokenForm', 'tokenRejectionKey', 'sbTokenPanelOpen', 'renderReplaceToken', // v3.99.2 Replace token
   ];
   const cBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'explainerMark', 'formatAge', ...SB_KIT,
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
@@ -1390,8 +1393,21 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'C: a rejected token is a loud (danger) entry above the rows');
   ok(/Another write is already running for shared-cohort/.test(hurt), 'C: a held write is loud too');
   ok(/data-sb-action="pull" disabled/.test(hurt), '…and Pull is disabled while it holds the mirror');
+  // v3.99.2: Replace token is OPEN above the rows, under the monitor — never
+  // inside a fold row — when the token was rejected.
+  ok(/id="sb-token-replace-c1"/.test(hurt) && /id="sb-token-input-c1"/.test(hurt),
+    'C: a rejected token opens Replace token above the fold rows, never behind a chevron');
+  ok(hurt.indexOf('id="sb-token-replace-c1"') > hurt.indexOf('GitHub rejected the stored token.'),
+    '…right under the monitor that says so');
   cBox.__setBusy([]);
   cBox.__card('c1').tokenCheck = null;
+  {
+    const quiet = cBox.renderSectionConnection(c, true);
+    const [above, rows] = quiet.split('<div class="cur-folds sb-sec-rows">');
+    ok(!/sb-token-replace-c1/.test(quiet), 'C (control): no rejection, no open panel');
+    ok(!/token-replace-open/.test(above) && /data-sb-action="token-replace-open">Replace token/.test(rows),
+      'C (control): the quiet Replace token button sits in the Access token row, beside Check now');
+  }
 }
 {
   // States A, B, E and D, through the REAL renderSection (secBox above).

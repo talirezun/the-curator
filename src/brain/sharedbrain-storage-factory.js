@@ -25,6 +25,42 @@
 
 import { LocalFolderStorageAdapter } from './sharedbrain-local-adapter.js';
 import { GitHubStorageAdapter } from './sharedbrain-github-adapter.js';
+import { GITHUB_API } from './github-read-client.js';
+
+// ── TEST SEAM: a fake GitHub on this computer (v3.99.2, Replace token) ──────
+//
+// `CURATOR_TEST_GITHUB_API` names a fake GitHub API that the offline suites
+// run on 127.0.0.1, so Replace token and the push/pull after it can be proved
+// over real HTTP without the network. Production never sets it, and it is
+// honoured ONLY for a plain-http loopback origin: anything else (a typo, a
+// real host, https, a path) is ignored and api.github.com is used, so this
+// variable can never send a Shared Brain token to another computer.
+// Returns null when unset or not loopback, which is the production answer.
+export function testGithubApiBase() {
+  const v = process.env.CURATOR_TEST_GITHUB_API;
+  if (!v) return null;
+  let u;
+  try { u = new URL(v); } catch { return null; }
+  if (u.protocol !== 'http:') return null;
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) return null;
+  if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) return null;
+  return u.origin;
+}
+
+/**
+ * The fetch every Shared Brain GitHub call uses: `globalThis.fetch` itself in
+ * production (no seam set), or one that rewrites the api.github.com origin to
+ * the test fake. Resolved per call, so a suite can set the variable after
+ * import.
+ */
+export function sharedBrainGithubFetch() {
+  const base = testGithubApiBase();
+  if (!base) return globalThis.fetch;
+  return (url, init) => {
+    const s = typeof url === 'string' ? url : String(url);
+    return globalThis.fetch(s.startsWith(GITHUB_API + '/') ? base + s.slice(GITHUB_API.length) : s, init);
+  };
+}
 
 /**
  * @param {object} connection
@@ -52,6 +88,9 @@ export function createStorageAdapter(connection, opts = {}) {
         pat: connection.github_pat,
         branch: connection.github_branch || 'main',
         onWarn: opts.onWarn,
+        // Undefined in production (the adapter then uses globalThis.fetch,
+        // exactly as before); the loopback test fake only under the seam.
+        fetchImpl: testGithubApiBase() ? sharedBrainGithubFetch() : undefined,
       });
 
     case 'cloudflare-r2':

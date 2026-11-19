@@ -20,6 +20,8 @@
  *   · describeSyncError (src/brain/sync.js), driven with a git text that the
  *     classifier maps to each code (the run throws if a text maps elsewhere)
  *   · REPLACE_TOKEN_MESSAGES (src/brain/sync.js), the Replace token refusals.
+ *   · SHAREDBRAIN_TOKEN_MESSAGES (src/brain/sharedbrain-token.js), Shared
+ *     Brain's Replace token refusals.
  * Only "what it means" and "what to do" are written by hand, below, keyed by
  * code. The run THROWS when a catalogue code (CATALOGUE_CODES) has no entry
  * here or an entry names a code the app does not have, so the page lists
@@ -36,6 +38,7 @@ import {
   USER_MESSAGES, SURFACE_MESSAGES, CATALOGUE_CODES,
 } from '../src/public/next/shared/user-errors.js';
 import { describeSyncError, REPLACE_TOKEN_MESSAGES } from '../src/brain/sync.js';
+import { SHAREDBRAIN_TOKEN_MESSAGES } from '../src/brain/sharedbrain-token.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DOCS_PAGE = path.join(ROOT, 'docs', 'errors.md');
@@ -96,6 +99,10 @@ export function sentencesFor(code) {
     const v = REPLACE_TOKEN_MESSAGES[code];
     return [{ label: '', text: typeof v === 'function' ? v(P.repo) : v }];
   }
+  if (Object.prototype.hasOwnProperty.call(SHAREDBRAIN_TOKEN_MESSAGES, code)) {
+    const v = SHAREDBRAIN_TOKEN_MESSAGES[code];
+    return [{ label: '', text: typeof v === 'function' ? v(P.repo) : v }];
+  }
   if (code === 'sync-merge-conflict') {
     return MERGE_CONFLICT_TRIGGERS.map((t, i) => ({ label: i ? 'Or, for a conflict inside a page' : '', text: syncSentence(code, t) }));
   }
@@ -121,6 +128,7 @@ export const SECTIONS = [
   ['ai', 'AI providers and keys', 'Messages from ingest, chat, compile, Wiki health’s AI help and Verify AI connection, when the AI provider (Anthropic, Gemini or OpenRouter) refuses or fails.'],
   ['files', 'Files and folders', 'Messages when this computer will not let The Curator read or save a file in your knowledge folder.'],
   ['sharedbrain', 'Shared Brain', 'Messages when GitHub refuses or fails a Shared Brain request.'],
+  ['sbtoken', 'Shared Brain: replacing the token', 'Messages in the Replace token panel on a Shared Brain’s card. In each case the Shared Brain keeps the token it had.'],
   ['network', 'Internet connection', 'Messages when The Curator cannot reach a service other than your AI provider.'],
   ['app', 'The Curator itself', 'Messages about the app, not about your knowledge: it is not running, an old version is still running, or something went wrong inside it.'],
 ];
@@ -251,17 +259,49 @@ export const ENTRIES = {
 
   // ── Shared Brain ──
   'github-token-rejected': { section: 'sharedbrain',
-    means: 'GitHub refused the access token this computer uses for the Shared Brain.',
-    todo: 'Create a new token on GitHub. A member uses Leave this Shared Brain and re-joins with the invite; an admin uses + Set up another and runs the setup again for the same repository and shared domain.' },
+    means: 'GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted.',
+    todo: 'Create a new token on GitHub (an admin’s, and a contributor’s, needs Contents: Read and write), then use Replace token on that Shared Brain’s card (Domains › a domain that takes part in it › Shared Brain). It opens under the message. You stay a member, and an admin keeps their admin token.' },
   'github-not-found': { section: 'sharedbrain',
     means: 'GitHub cannot find the Shared Brain’s repository, or the token cannot see it.',
-    todo: 'A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub.' },
+    todo: 'A member asks whoever invited them to check access; an admin checks the repository and the token on GitHub. If the token needs changing, use Replace token on that Shared Brain’s card.' },
   'github-busy': { section: 'sharedbrain',
     means: 'GitHub is limiting requests from this token for now.',
     todo: 'Wait a few minutes, then try again.' },
   'github-unavailable': { section: 'sharedbrain',
     means: 'GitHub is having problems on its side.',
     todo: 'Wait a few minutes, then try again.' },
+
+  // ── Shared Brain: replacing the token ──
+  'sharedbrain-token-missing': { section: 'sbtoken',
+    means: 'Check and save was pressed with an empty field.',
+    todo: 'Paste the new token, then press Check and save.' },
+  'sharedbrain-token-invalid': { section: 'sbtoken',
+    means: 'What was pasted is not shaped like a GitHub token (often only part of it, or extra text).',
+    todo: 'Copy the whole token from GitHub and paste it again.' },
+  'sharedbrain-token-not-github': { section: 'sbtoken',
+    means: 'This Shared Brain is kept in a folder, not on GitHub, so it has no GitHub token.',
+    todo: 'Nothing to do.' },
+  'sharedbrain-new-token-rejected': { section: 'sbtoken',
+    means: 'GitHub refused the new token: it is incomplete, expired or deleted.',
+    todo: 'Copy the token again, check its expiry date on GitHub, and try again.' },
+  'sharedbrain-new-token-no-access': { section: 'sbtoken',
+    means: 'GitHub knows the token, but it cannot open this Shared Brain’s repository.',
+    todo: 'Give the token the repository with Contents: Read and write (fine-grained) or the repo scope (classic). A member also checks they accepted the GitHub invitation.' },
+  'sharedbrain-new-token-read-only': { section: 'sbtoken',
+    means: 'The new token can read the repository but not write to it, and this connection pushes contributions (a contributor’s or an admin’s).',
+    todo: 'Give the token Contents: Read and write on the repository, then try again.' },
+  'sharedbrain-token-check-rate-limited': { section: 'sbtoken',
+    means: 'GitHub is limiting requests from this token, so it could not be checked.',
+    todo: 'Wait a few minutes, then try again.' },
+  'sharedbrain-token-check-offline': { section: 'sbtoken',
+    means: 'The Curator could not reach GitHub to check the new token.',
+    todo: 'Check the internet connection, then try again.' },
+  'sharedbrain-token-check-failed': { section: 'sbtoken',
+    means: 'GitHub answered in a way The Curator did not expect, so the token was not checked.',
+    todo: 'Try again in a minute. If it keeps happening, send the Technical detail line to support.' },
+  'sharedbrain-token-save-failed': { section: 'sbtoken',
+    means: 'The new token works, but saving it on this computer failed.',
+    todo: 'Try again. If it keeps happening, send the Technical detail line to support.' },
 
   // ── Internet ──
   'network-unreachable': { section: 'network',
@@ -348,6 +388,7 @@ const LLM_HEADINGS = {
   ai: 'What do the AI provider error codes mean?',
   files: 'What do the file and folder error codes mean?',
   sharedbrain: 'What do the Shared Brain error codes mean?',
+  sbtoken: 'What do the Shared Brain Replace token error codes mean?',
   network: 'What do the internet connection error codes mean?',
   app: 'What do the error codes about The Curator itself mean?',
 };

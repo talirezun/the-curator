@@ -328,17 +328,30 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
   you beforehand.
 - Check it: **Shared Brain** → your connection card → **Your access token** → **Check now**. If
   GitHub rejects the stored token, the card says so.
-- The fix is a new token: create one on GitHub (same steps as wizard step 3), then use **Leave this
-  Shared Brain** at the bottom of the card and re-join with your invite. The setup wizard is the
-  only place that accepts a token — nothing else in the app asks for one. Leaving removes the
-  connection only; your local files, including the read-only mirror, stay exactly as they are.
+- The fix is a new token, put in place with **Replace token** (v3.99.2). Create one on GitHub (same
+  steps as wizard step 3: **Contents: Read and write** on the brain's repository; a read-only
+  member's token only needs **Contents: Read**). Then, on the connection's card (**Domains** → a
+  domain that takes part in the brain → its **Shared Brain** section, or **Open Shared Brain**), use
+  **Replace token**: when GitHub has rejected the stored token the **Replace the GitHub token**
+  panel is already open under the message; otherwise press the small **Replace token** button
+  beside **Check now** in the **Access token** row. Paste the token and press **Check and save**.
+- The Curator checks the new token with GitHub against this brain's own repository and changes
+  nothing unless GitHub accepts it and it can do what your connection does (a contributor's or an
+  admin's token must be able to write). Then it saves it and the card says *"Token replaced. This
+  Shared Brain uses the new token from now on; nothing else changed."* You stay the same member:
+  the same contributor identity, the same contributing domains, and an admin keeps their admin
+  token. Each refusal (for example *"GitHub didn't accept the new token…"*) says nothing was
+  changed and has its own code in the [error catalogue](errors.md#shared-brain-replacing-the-token).
+- Do **not** leave and re-join to change a token: joining the same brain again is refused while you
+  are connected, and leaving first would make you a second, new contributor identity.
 - Next time, pick a longer expiry and put the date in your calendar.
 - Since v3.99.2 a push, pull or check that GitHub refuses says so in plain words: *"GitHub didn't
-  accept the access token for this Shared Brain. Create a new token on GitHub, then use Leave this
-  Shared Brain and re-join with your invite."* Under it, the **Technical detail (for support)** line
-  keeps GitHub's own answer and ends with `(code: github-token-rejected)`. An **admin** sees a
-  different next step for the same code (see the admin guide, *Your own GitHub token stopped
-  working*). Every Shared Brain message is in the [error catalogue](errors.md#shared-brain).
+  accept the access token for this Shared Brain. Create a new token on GitHub, then use Replace token
+  on this Shared Brain's card (Domains › a domain that takes part in it › Shared Brain)."* Under it,
+  the **Technical detail (for support)** line keeps GitHub's own answer and ends with
+  `(code: github-token-rejected)`, and Replace token opens right there. An **admin** sees their own
+  wording for the same code (see the admin guide, *Your own GitHub token stopped working*). Every
+  Shared Brain message is in the [error catalogue](errors.md#shared-brain).
 
 **Check now says "Reached GitHub, but this brain holds no contribution records yet"**
 - That is an honest "cannot tell", not a failure. The check reads the cohort's contribution records

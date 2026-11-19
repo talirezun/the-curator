@@ -633,6 +633,14 @@ function stopShared() {
   // Never leave a credential-holding overlay mounted behind the next
   // view — see the file-header comment above.
   closeSharedBrainWizardIfOpen();
+  // Replace token (v3.99.2): a typed-but-unsent GitHub token must not sit in
+  // memory after this mount. The unconditional backstop, as Sync has.
+  if (state && state.cards) {
+    for (const id of Object.keys(state.cards)) {
+      const c = state.cards[id];
+      if (c && c.tokenForm) c.tokenForm.token = '';
+    }
+  }
 }
 
 function ensureCard(id) {
@@ -650,6 +658,11 @@ function ensureCard(id) {
       // Never holds a token: only a verdict object {kind, message}.
       tokenChecking: false,
       tokenCheck: null,
+
+      // Replace token (v3.99.2) — see renderReplaceToken(). `token` holds
+      // keystrokes only until the submit reads them: cleared at that moment,
+      // on Cancel, and in stopShared(); never written into markup.
+      tokenForm: freshTokenForm(),
 
       // ── Admin controls (see the "Admin controls" section below) ────────
       // adminTokenProvisioned: a successful rotate makes the revoke
@@ -1159,6 +1172,8 @@ function renderMirrorStrip(conn, last) {
         sectionRepoCell(conn) +
       '</div>' +
       renderMonitor({ label: 'Shared Brain mirror', lines, loud }) +
+      // A Pull refused for the token opens Replace token here too (v3.99.2).
+      renderReplaceToken(conn, card, false) +
       '<div class="sb-sec-actions">' +
         '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + ((busy || mirrorBusy) ? ' disabled' : '') + '>' +
           icon('refresh', 14) + ' ' + (card.acting === 'pull' ? 'Pulling…' : 'Pull updates') + '</button>' +
@@ -1413,7 +1428,8 @@ function renderSectionConnection(conn, last) {
       card.tokenChecking ? 'checking…' : (verdict ? (TOKEN_CHECK_READING[verdict.kind] || 'checked') : 'not checked · expires without notice'),
       '<div class="sb-sec-row-line">' +
         '<button type="button" class="btn btn-secondary" data-sb-action="token-check"' + (card.tokenChecking ? ' disabled' : '') + '>' +
-          (card.tokenChecking ? 'Checking…' : 'Check now') + '</button>' + why.btn +
+          (card.tokenChecking ? 'Checking…' : 'Check now') + '</button>' +
+        (sbTokenPanelOpen(conn, card) ? '' : renderReplaceToken(conn, card, true)) + why.btn +
       '</div>' + why.panel +
       '<p class="sb-sec-line sb-token-expiry-note">' + escapeHtml(TOKEN_EXPIRY_NOTE) + '</p>' +
       (verdict
@@ -1454,6 +1470,8 @@ function renderSectionConnection(conn, last) {
         sectionRepoCell(conn) +
       '</div>' +
       renderMonitor({ label: 'Shared Brain connection', lines, loud }) +
+      // Replace token, OPEN right under a rejection — never behind a chevron.
+      renderReplaceToken(conn, card, false) +
       '<div class="sb-sec-actions">' + actions + '</div>' +
       renderFoldRows(rows, { alias: 'sb' }) +
     '</div>'
@@ -1525,8 +1543,7 @@ function classifyTokenCheck({ ok, error, detail, code, memberCount, repoLabel })
       kind: 'rejected',
       message: 'GitHub rejected the stored token. That is what an EXPIRED fine-grained token looks like; ' +
         'a revoked one, or one whose access to ' + where + ' was withdrawn, looks the same. Create a new ' +
-        'token on GitHub, then use Leave this Shared Brain below and re-join with your invite — the setup ' +
-        'wizard is the only place that accepts a token.',
+        'token on GitHub, then paste it into Replace token below. You stay a member; nothing else changes.',
       detail: u.detail || (raw || (text && text !== u.error ? text : '')),
       code: 'github-token-rejected',
     };
@@ -1571,6 +1588,90 @@ function renderTokenCheck(conn, card) {
             escapeHtml(verdict.message) +
           '</p>' + renderErrorDetail(verdict.detail, verdict.code)
         : '') +
+    '</div>'
+  );
+}
+
+// ── Replace token (v3.99.2) ──────────────────────────────────────────────
+//
+// WHY. When GitHub rejects a connection's GitHub token (expired, revoked), the
+// only advice used to be "Leave and re-join" for a member and "run the setup
+// again" for an admin — and the app REFUSES a second membership of the same
+// brain (connectionClash), so neither worked. POST /api/sharedbrain/:id/token
+// checks a new token against this connection's own repository and saves it
+// only if GitHub accepts it and it can do what this connection does (a
+// contributor's or an admin's must be able to write); any refusal changes
+// nothing. Admin and member get the same control. The admin token (sbat_…) is
+// a different credential and is not touched.
+//
+// NEVER BEHIND A CHEVRON (v3.16.1): when this card shows a rejected token —
+// the stored-token check's 'rejected' verdict, or an action's error with code
+// github-token-rejected — the panel is OPEN right under the monitor and takes
+// the focus once. Otherwise one quiet "Replace token" button sits beside
+// Check now. Built from the rotate-confirm block's own parts (the inline
+// confirm block, the password input, the hint, the confirm actions), so no
+// class is new.
+
+function freshTokenForm() {
+  return { open: false, dismissedKey: '', focusedKey: '', focusPending: false, token: '', submitting: false, error: null, detail: null, code: null };
+}
+
+// A key naming the rejection this card shows now, or '' for none. Cancel
+// remembers it, so the panel stays closed for THAT rejection and opens again
+// for the next one.
+function tokenRejectionKey(card) {
+  if (!card) return '';
+  if (card.tokenCheck && card.tokenCheck.kind === 'rejected') return 'check:' + (card.tokenCheck.message || '');
+  if (card.error && typeof card.message === 'string' && card.message &&
+      errorCodeOf(card.message) === 'github-token-rejected') return 'action:' + card.message;
+  return '';
+}
+
+function sbTokenPanelOpen(conn, card) {
+  if (!tokenCheckApplies(conn) || !card) return false;
+  const f = card.tokenForm || freshTokenForm();
+  if (f.open || f.submitting) return true;
+  const key = tokenRejectionKey(card);
+  return !!key && key !== f.dismissedKey;
+}
+
+// `withOpener`: where the panel is closed, render the quiet button instead
+// (the token row). Elsewhere a closed panel renders nothing.
+function renderReplaceToken(conn, card, withOpener) {
+  if (!tokenCheckApplies(conn)) return '';
+  const f = (card && card.tokenForm) || freshTokenForm();
+  if (!sbTokenPanelOpen(conn, card)) {
+    return withOpener
+      ? '<button type="button" class="btn btn-secondary" data-sb-action="token-replace-open">Replace token</button>'
+      : '';
+  }
+  const id = String(conn.id || '');
+  const repo = String(conn.github_repo_owner || '') + '/' + String(conn.github_repo_name || '');
+  const readOnly = conn.read_only === true;
+  const isAdmin = conn.has_admin_token === true;
+  const busy = !!f.submitting;
+  return (
+    '<div class="sb-confirm-inline sb-confirm-block" id="sb-token-replace-' + escapeHtml(id) + '">' +
+      '<span><strong>Replace the GitHub token</strong> for ' + escapeHtml(repo) + '. ' +
+        escapeHtml(readOnly
+          ? 'This is a read-only membership, so a token that can read the repository (Contents: Read) is enough. '
+          : 'The token needs Contents: Read and write on that repository. ') +
+        escapeHtml('The Curator checks it with GitHub first and changes nothing unless GitHub accepts it. ' +
+          'You stay a member under the same identity' + (isAdmin ? ', and your admin token stays as it is.' : '.')) +
+      '</span>' +
+      '<input type="password" class="sb-revoke-input" id="sb-token-input-' + escapeHtml(id) + '" ' +
+        'data-sb-token-input="' + escapeHtml(id) + '" aria-label="New GitHub token" ' +
+        'placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false"' + (busy ? ' disabled' : '') + '>' +
+      '<p class="sb-admin-hint">Create it on GitHub under Settings › Developer settings › Personal access tokens, then paste the whole token here.</p>' +
+      (f.error
+        ? '<p class="sb-token-check-verdict sb-token-check-rejected" role="alert">' + escapeHtml(f.error) + '</p>' +
+          renderErrorDetail(f.detail, f.code)
+        : '') +
+      '<div class="sb-confirm-actions">' +
+        '<button type="button" class="btn btn-primary btn-xs" data-sb-action="token-replace-save"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? 'Checking with GitHub…' : 'Check and save') + '</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="token-replace-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -1628,6 +1729,9 @@ function renderCard(conn) {
       '</div>' +
 
       renderTokenCheck(conn, card) +
+      // Replace token: open under the verdict when the token was rejected,
+      // otherwise one quiet button (v3.99.2).
+      renderReplaceToken(conn, card, true) +
 
       (!readOnly && pendingOrNull === null
         ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
@@ -2085,6 +2189,9 @@ function absorbRevokeFrame(acc, payload) {
     sawError: acc.sawError,
     sawTerminal: acc.sawTerminal,
   };
+  // v3.99.2: the error frame's catalogue code, so a revoke refused for a dead
+  // GitHub token opens Replace token. Only present once an error carried one.
+  if (acc.errorCode) next.errorCode = acc.errorCode;
   if (!payload || typeof payload !== 'object') return next;
   const hasResult = !!payload.result && typeof payload.result === 'object';
   const msg = typeof payload.message === 'string' && payload.message ? payload.message : null;
@@ -2093,6 +2200,7 @@ function absorbRevokeFrame(acc, payload) {
     next.sawError = true;
     next.sawTerminal = true;
     if (msg) next.errorMessage = msg;
+    if (typeof payload.code === 'string' && payload.code) next.errorCode = payload.code;
     if (hasResult) next.result = payload.result;
     return next;
   }
@@ -2903,6 +3011,61 @@ async function onCheckStoredToken(token, connId) {
   if (isCurrentMount(token)) render(token);
 }
 
+// POST /api/sharedbrain/:id/token (v3.99.2). The token is read from the
+// field and cleared from state and the field BEFORE the request, so only this
+// call's own variable holds it while GitHub is asked; a refusal asks for it
+// again rather than keeping it. Nothing in the answer carries it. Does not
+// take card.acting (Push/Pull stay as they are); the server refuses while a
+// push, pull, synthesis or revoke is running.
+async function onReplaceSharedBrainToken(token, connId) {
+  const card = ensureCard(connId);
+  if (!card.tokenForm) card.tokenForm = freshTokenForm();
+  if (card.tokenForm.submitting) return;
+  const conn = findConnection(connId);
+  if (!tokenCheckApplies(conn)) return;
+  const input = document.getElementById('sb-token-input-' + connId);
+  let pat = ((input ? input.value : card.tokenForm.token) || '').trim();
+  card.tokenForm.token = '';
+  if (input) input.value = '';
+  if (!pat) {
+    card.tokenForm = { ...card.tokenForm, open: true, focusPending: true,
+      error: 'Paste the new token from GitHub first. Nothing was changed.', detail: null, code: null };
+    render(token);
+    return;
+  }
+  card.tokenForm = { ...card.tokenForm, open: true, submitting: true, error: null, detail: null, code: null };
+  render(token);
+  let res = null;
+  let data = null;
+  try {
+    res = await fetch('/api/sharedbrain/' + encodeURIComponent(connId) + '/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: pat }),
+    });
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    res = null;
+    data = userMessageFrom(err);
+  } finally {
+    pat = '';
+  }
+  if (res && res.ok && data && data.replaced === true) {
+    card.tokenForm = freshTokenForm();
+    card.tokenCheck = null;
+    card.message = 'Token replaced. This Shared Brain uses the new token from now on; nothing else changed.';
+    card.error = false;
+    if (isCurrentMount(token)) render(token);
+    return;
+  }
+  const u = res
+    ? userMessageFrom(data, { status: res.status, fallback: 'The new token could not be saved. Nothing was changed.' })
+    : data;
+  card.tokenForm = { ...card.tokenForm, open: true, submitting: false, focusPending: true,
+    error: u.error || 'The new token could not be saved. Nothing was changed.', detail: u.detail || null, code: u.code || null };
+  if (isCurrentMount(token)) render(token);
+}
+
 // Re-derive and show the invite token.
 //
 // Deliberately does NOT set card.acting: this is a pure read that mutates
@@ -3130,6 +3293,10 @@ async function runRevoke(token, connId) {
     card.revokeProgress = null;
     card.message = outcome.headline;
     card.error = outcome.tone !== 'success';
+    // GitHub refused this computer's token: Replace token opens on this card.
+    if (acc.errorCode === 'github-token-rejected') {
+      card.tokenForm = { ...(card.tokenForm || freshTokenForm()), open: true, focusPending: true };
+    }
     // Terminal beats pending: cleared in the SAME synchronous block that
     // set the final outcome, before the single render below.
     card.acting = null;
@@ -3200,6 +3367,26 @@ function wireListeners(token) {
     cardEl.querySelectorAll('button[data-sb-action]').forEach((btn) => {
       btn.addEventListener('click', () => onCardButton(token, connId, btn.dataset.sbAction));
     });
+  });
+
+  // Replace token's field (v3.99.2). What was typed is restored as a DOM
+  // PROPERTY (never a value attribute) so a repaint does not lose it; the
+  // panel takes the focus once per rejection it opened for, or when opened.
+  document.querySelectorAll('input[data-sb-token-input]').forEach((input) => {
+    const connId = input.dataset.sbTokenInput;
+    const card = ensureCard(connId);
+    input.value = (card.tokenForm && card.tokenForm.token) || '';
+    input.addEventListener('input', () => { card.tokenForm.token = input.value; });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onReplaceSharedBrainToken(token, connId).catch(reportAsyncActionFailure); }
+    });
+    const f = card.tokenForm;
+    const key = tokenRejectionKey(card);
+    if (!input.disabled && (f.focusPending || (key && f.focusedKey !== key))) {
+      f.focusPending = false;
+      if (key) f.focusedKey = key;
+      try { input.focus(); } catch { /* not focusable right now */ }
+    }
   });
 
   document.querySelectorAll('.sb-card-skips[data-sb-skips]').forEach((el) => {
@@ -3288,6 +3475,15 @@ function onCardButton(token, connId, action) {
     case 'synthesize-confirm': card.synthesizeConfirmOpen = false; startAction(token, connId, 'synthesize'); return;
     case 'unskip': onUnskip(token, connId); return;
     case 'token-check': onCheckStoredToken(token, connId).catch(reportAsyncActionFailure); return;
+    case 'token-replace-open':
+      card.tokenForm = { ...freshTokenForm(), open: true, focusPending: true, dismissedKey: card.tokenForm ? card.tokenForm.dismissedKey : '' };
+      render(token);
+      return;
+    case 'token-replace-cancel':
+      card.tokenForm = { ...freshTokenForm(), dismissedKey: tokenRejectionKey(card), focusedKey: tokenRejectionKey(card) };
+      render(token);
+      return;
+    case 'token-replace-save': onReplaceSharedBrainToken(token, connId).catch(reportAsyncActionFailure); return;
     case 'leave-open': card.leaveConfirmOpen = true; render(token); return;
     case 'leave-cancel': card.leaveConfirmOpen = false; render(token); return;
     case 'leave-confirm': onLeave(token, connId); return;
