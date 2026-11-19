@@ -865,6 +865,79 @@ try {
 
     ok('the shared scrub is what the server uses (dumb cross-check: credentials alone)', !SHARED.scrubCredentials(`ssh://${HEX40}@x.com`).includes(HEX40));
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('§16 — v3.99.2 second audit: a kept sentence reads right on BOTH paths');
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    // Both the server (toUserError) and the browser (classify + compose, which
+    // has no scrubPaths) must give a sentence a person can read.
+    const both = (text) => {
+      const srv = toUserError(new Error(text));
+      const hit = classifyErrorText(text);
+      return { srv: srv && srv.error, det: srv && srv.detail, brw: hit ? SHARED.composeUserMessage(hit) : null };
+    };
+    // 1. A file name is never capitalised at the start of a sentence.
+    for (const [label, text, want] of [
+      ['ENOENT first', "ENOENT: no such file or directory, open '/Users/a/wiki/acme.md' while reading the wiki", /^The file acme\.md couldn't be found while reading the wiki/],
+      ['EMFILE first', "EMFILE: too many open files, open '/Users/a/b.md'. Try again.", /^The file b\.md was busy or still downloading\. Try again\./],
+      ['EEXIST after a full stop', "Could not create it. EEXIST: file already exists, mkdir '/Users/a/wiki/acme'. Choose another name.", /Could not create it\. Something called acme already exists\./],
+      ['ENOTDIR first', "ENOTDIR: not a directory, scandir '/Users/a/wiki/entities'. The domain folder is damaged.", /^The name entities was a file where/],
+    ]) {
+      const r = both(text);
+      ok(`${label}: server sentence keeps the name lower-case`, want.test(r.srv || ''), r.srv);
+      ok(`${label}: browser sentence is the same`, r.brw === r.srv, r.brw);
+      ok(`${label}: no capitalised file name anywhere`, !/\b(?:Acme|B)\.md\b|\bAcme\b|\bEntities\b/.test(`${r.srv} ${r.brw}`), `${r.srv} | ${r.brw}`);
+    }
+    // 2. Machine text glued on after the fragment goes to the detail; a bare
+    //    "Error:" label is dropped; no home path in the visible sentence.
+    {
+      const r = both("Saving failed: EACCES: permission denied, open '/x/a.md'. Nothing was changed. Caused by: TypeError: x is not a function at foo (/Users/alice/app/src/x.js:10:5)");
+      for (const [side, s] of [['server', r.srv], ['browser', r.brw]]) {
+        ok(`Caused by tail, ${side}: the sentence stops before it`, s === "Saving failed: this computer didn't allow access to a.md. Nothing was changed.", s);
+      }
+      ok('Caused by tail: the detail keeps it, scrubbed', /Caused by: TypeError/.test(r.det || '') && !/alice/.test(r.det || ''), r.det);
+      const only = both("Saving failed: EACCES: permission denied, open '/x/a.md'. Caused by: TypeError: x is not a function at foo (/Users/alice/app/src/x.js:10:5)");
+      ok('tail and no other words: the class sentence on both sides', only.srv === USER_MESSAGES['files-not-allowed']({ name: 'a.md' }) && only.brw === only.srv, only);
+      const lbl = both("Error: EACCES: permission denied, open '/Users/a/b.md' (retry 3 of 3 failed)");
+      ok('a leading "Error:" label is dropped on both sides', !/^Error:/.test(lbl.srv || '') && !/^Error:/.test(lbl.brw || '') && /^This computer didn't allow access to b\.md/.test(lbl.brw || ''), lbl);
+      const frame = both("Could not save it: EACCES: permission denied, open '/x/a.md' at Object.openSync (node:fs:581:18) and more");
+      ok('a stack frame on the same line is cut on both sides', !/openSync|node:fs/.test(`${frame.srv} ${frame.brw}`), frame);
+      // CONTROL: "at" in prose is not a stack frame.
+      const prose = both("Health could not undo (EPERM: operation not permitted, unlink '/Users/a/.Trash/x.md'); the copy is at /Users/alice/Library/Application Support/the-curator/health-undo/123.");
+      ok('CONTROL: "the copy is at <path>" stays (prose), path shortened', /the copy is at \.\.\.\/123\.$/.test(prose.brw || '') && prose.brw === prose.srv, prose);
+      // CONTROL: "at <Word> (" in prose is not a stack frame either.
+      const look = both("Error: ENOENT: no such file or directory, open '/Users/a/wiki/acme.md'. Look at Settings (General) for the folder.");
+      ok('CONTROL: "Look at Settings (General)" stays', look.brw === "The file acme.md couldn't be found. Look at Settings (General) for the folder." && look.srv === look.brw, look);
+      // A lead before a non-fs raw tail: no home path on the browser either.
+      const netLead = both('Could not reach the service for /Users/alice/brain/keys.json. fetch failed');
+      ok('a lead before "fetch failed": the browser shows no home path', netLead.brw && /^Could not reach the service for \.\.\.\/keys\.json\./.test(netLead.brw) && !/alice/.test(netLead.brw), netLead);
+      // The browser never shows a home path, in a lead or a kept sentence.
+      const H = '/Users/alice smith/Library/Application Support/Claude';
+      for (const text of [
+        `Could not read ${H}/claude_desktop_config.json: ENOENT: no such file or directory, open '${H}/claude_desktop_config.json'`,
+        "The file /Users/alice/brain/x.md could not be saved: ENOSPC: no space left on device, write",
+        "Could not write to the folder /Users/alice/brain/domains/work (EACCES: permission denied, mkdir '/Users/alice/brain/domains/work/wiki'). Pick another folder.",
+        prose && "Health could not undo (EPERM: operation not permitted, unlink '/Users/a/.Trash/x.md'); the copy is at /Users/alice/Library/x/123.",
+      ]) {
+        const r2 = both(text);
+        ok(`browser: no home path in "${text.slice(0, 40)}…"`, r2.brw && !/\/Users\/|alice/.test(r2.brw), r2.brw);
+        ok(`server: same sentence for "${text.slice(0, 40)}…"`, r2.srv === r2.brw, `${r2.srv} | ${r2.brw}`);
+      }
+    }
+    // 3. The next step inside a kept sentence matches the fs class.
+    {
+      const ING = (fs) => `The AI's reply was received (and charged), but not one of its 3 page(s) could be saved: ${fs}. Check that the domain's wiki folder is writable, then ingest the source again.`;
+      const full = both(ING('ENOSPC: no space left on device, write'));
+      ok('disk full inside the charged sentence: "free space", never "writable"', /\(and charged\)/.test(full.srv || '') && /Free some space/.test(full.srv || '') && !/writable/.test(full.srv || '') && full.brw === full.srv, full);
+      const missing = both(ING("ENOENT: no such file or directory, open '/Users/a/w/acme.md'"));
+      ok('missing inside the charged sentence: "still there", never "writable"', /still there/.test(missing.srv || '') && !/writable/.test(missing.srv || ''), missing.srv);
+      const denied = both(ING("EACCES: permission denied, open '/Users/a/w/acme.md'"));
+      ok('CONTROL: permission denied keeps "writable" (it fits)', /wiki folder is writable/.test(denied.srv || '') && denied.brw === denied.srv, denied.srv);
+      const ro = both(ING("EROFS: read-only file system, open '/Volumes/x/acme.md'"));
+      ok('CONTROL: a read-only disk keeps "writable" (it fits)', /wiki folder is writable/.test(ro.srv || ''), ro.srv);
+    }
+  }
 } finally {
   for (const r of hang.splice(0)) { try { r.destroy(); } catch { /* gone */ } }
   stub.close();

@@ -132,6 +132,16 @@ for (const c of ['sync-new-token-read-only', 'sync-token-check-rate-limited', 's
   ok(CODES.includes(c) && docsCodes.includes(c) && llmCodes.includes(c), `${c}: a catalogue code, on both pages`);
 }
 ok(!/nothing was changed/i.test(SYNC.REPLACE_TOKEN_MESSAGES['sync-token-save-partial']), 'the failed-undo sentence does not claim nothing was changed');
+// v3.99.2 second audit: the organisation (SSO) refusal and the redirect refusal.
+for (const c of ['sync-new-token-org-blocked', 'sync-token-check-redirected']) {
+  ok(CODES.includes(c) && docsCodes.includes(c) && llmCodes.includes(c), `${c}: a catalogue code, on both pages`);
+}
+{
+  const org = SYNC.REPLACE_TOKEN_MESSAGES['sync-new-token-org-blocked']('github.com/o/r');
+  ok(region(docsText).includes('Configure SSO') && region(llmText).includes('Configure SSO'), 'the SSO sentence is on both pages');
+  ok(/single sign-on/.test(org) && /Configure SSO/.test(org) && !/repo scope/.test(org), 'the SSO sentence says to authorise for single sign-on, with no scope advice', org);
+  ok(!/internet/i.test(SYNC.REPLACE_TOKEN_MESSAGES['sync-token-check-redirected']), 'the redirect sentence never blames the internet');
+}
 const generic = SYNC.describeSyncError(new Error('an error text The Curator does not recognise'));
 ok(generic.code === 'sync-failed' && !/Nothing was lost/.test(generic.error) && docsText.includes(esc(generic.error)), 'the generic Sync sentence claims nothing it cannot know, and is the one on the page', generic.error);
 const admin = UE.SURFACE_MESSAGES.sharedbrain.admin['github-token-rejected']();

@@ -1907,10 +1907,12 @@ function fatal(err) {
   // then names that folder.
   console.error('[The Curator] fatal:', (err && err.stack) || err);
   const fatalLogsDir = logsDir || defaultLogsDir();
-  writeFatalLog({ err, logsDir: fatalLogsDir, sanitize: dialogSanitizer, fs: { appendFileSync, mkdirSync } });
+  // Name the log only when it was written: '' means the folder or the file
+  // could not be written, and a person would look for a file that isn't there.
+  const logFile = writeFatalLog({ err, logsDir: fatalLogsDir, sanitize: dialogSanitizer, fs: { appendFileSync, mkdirSync } });
   dialog.showErrorBox(
     'The Curator could not start',
-    dialogText(fatalMain(fatalLogsDir), err, dialogSanitizer)
+    dialogText(fatalMain(fatalLogsDir, undefined, { logWritten: !!logFile }), err, dialogSanitizer)
   );
   app.exit(1);
 }

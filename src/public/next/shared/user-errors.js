@@ -223,6 +223,7 @@ export const SYNC_CODES = Object.freeze([
   'sync-failed', 'sync-token-missing', 'sync-token-invalid', 'sync-new-token-rejected', 'sync-new-token-no-access',
   'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
   'sync-not-configured', 'sync-new-token-read-only', 'sync-token-check-rate-limited', 'sync-token-save-partial',
+  'sync-new-token-org-blocked', 'sync-token-check-redirected',
 ]);
 // Shared Brain's Replace token refusals (src/brain/sharedbrain-token.js, whose
 // SHAREDBRAIN_TOKEN_MESSAGES holds their sentences as data).
@@ -310,16 +311,47 @@ const CERT_RE = /\b(?:UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(
 //   - words only BEFORE it → they are kept as the lead (a closing ':' becomes
 //     '.'), then the class's sentence; a bare programmer's label (one word, or
 //     starting lower-case: "pushDomain: …") is dropped as before.
+// A clause never STARTS with the file's name: it may open a sentence, and a
+// file name must never be capitalised ("Acme.md couldn't be found" names a
+// file that does not exist; the real one is acme.md).
+function fileOrFolder(n) { return /\.[A-Za-z0-9]{1,8}$/.test(n) ? `the file ${n}` : `the folder or file ${n}`; }
 const FS_CLAUSES = Object.freeze({
   'files-not-allowed': (n) => `this computer didn't allow access to ${n || 'a file it needs'}`,
   'files-disk-full': () => `the disk is full`,
-  'files-missing': (n) => `${n || 'a file it needs'} couldn't be found`,
-  'files-exists': (n) => `${n || 'something with that name'} already exists`,
-  'files-busy': (n) => `${n || 'a file it needs'} was busy or still downloading`,
+  'files-missing': (n) => `${n ? fileOrFolder(n) : 'a file it needs'} couldn't be found`,
+  'files-exists': (n) => `${n ? `something called ${n}` : 'something with that name'} already exists`,
+  'files-busy': (n) => `${n ? `the file ${n}` : 'a file it needs'} was busy or still downloading`,
   'files-name-too-long': () => `a file name was too long for this computer`,
   'files-read-only-disk': (n) => `the disk holding ${n || 'it'} is read-only`,
-  'files-wrong-kind': (n) => `${n || 'a name'} was a file where a folder was expected, or the other way round`,
+  'files-wrong-kind': (n) => `${n ? `the name ${n}` : 'a name'} was a file where a folder was expected, or the other way round`,
 });
+// The Curator's own sentences that name a next step fitting one fs class
+// only. Kept whole, "...could be saved: ENOSPC: .... Check that the domain's
+// wiki folder is writable, ..." told a person with a full disk to check
+// permissions. Per class, the step that fits; a class not listed keeps the
+// sentence's own (it fits files-not-allowed and files-read-only-disk).
+const FS_STEP_REWRITES = Object.freeze([
+  [/Check that the domain's wiki folder is writable/g, Object.freeze({
+    'files-disk-full': 'Free some space on this computer\'s disk',
+    'files-missing': 'Check that the domain\'s wiki folder is still there',
+    'files-busy': 'Wait a moment',
+    'files-name-too-long': 'Use a shorter file name',
+    'files-exists': 'Check the domain\'s wiki folder for a page with that name',
+    'files-wrong-kind': 'Check that the domain\'s wiki folder holds its usual page folders',
+  })],
+]);
+// Machine text glued on AFTER the fs fragment on the same line: a cause
+// chain, a stack frame, another error's own label. Never a word for a
+// person, so it moves to the detail.
+const MACHINE_TAIL_RE = /(?:^|\s)(?:Caused by:|(?:[A-Z][A-Za-z]*)?Error(?: \[[A-Z_]+\])?: |at (?:async )?[\w$.<>\[\]]+ \([^()\n]*:\d+:\d+\)|at (?:file:|node:|\/|[A-Za-z]:\\)\S*:\d+:\d+)/;
+// Home folders inside The Curator's own words become ".../<last name>" (as
+// the server's scrubPaths shows a path), so no user name reaches the screen.
+const HOME_PATH_RE = /(?:\/(?:Users|home)\/|[A-Za-z]:[\\/]Users[\\/])(?:(?![:,;]\s|\.\s|\s->\s|\s\()[^\n'"`])*[\\/]([^\\/\s'"`]+?)(?=[.,;:!?)\]]*(?:\s|$)|['"`])/g;
+function shortenHomePaths(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return scrubHomes(text.replace(HOME_PATH_RE, (_m, last) => `.../${last}`));
+}
+export const __shortenHomePaths = shortenHomePaths;
 export const __FS_CLAUSES = FS_CLAUSES;
 // The fragment alone (global), for replacing every one inside a sentence.
 const FS_FRAGMENT_RE = /\b(E[A-Z]{2,}): ([a-z][a-z ,-]*?), ([a-z_]+)(?: '([^'\n]*)'(?: -> '[^'\n]*')?)?/g;
@@ -329,8 +361,16 @@ function fsHit(klass, name, m) {
   const start = m.index + m[0].indexOf(m[1]);
   const end = m.index + m[0].length;
   const before = text.slice(0, start);
-  const after = text.slice(end);
+  let after = text.slice(end);
   const hit = { klass, name, raw: text.slice(start, end) };
+  // Machine text after the fragment (a cause, a stack frame): cut here, and
+  // kept with the fragment as the detail.
+  const tail = MACHINE_TAIL_RE.exec(after);
+  if (tail) {
+    hit.raw = `${hit.raw} ${after.slice(tail.index).trim()}`;
+    after = after.slice(0, tail.index).replace(/[\s:;,(\-–—]+$/, '');
+    if (after && /[A-Za-z]{2}/.test(after) && !/[.!?)]$/.test(after)) after += '.';
+  }
   if (!before.trim() && !after.trim()) return hit;
   // Prose after it: closing punctuation, then a space and words — never a
   // stack trace or more machine text glued on.
@@ -339,14 +379,19 @@ function fsHit(klass, name, m) {
     // The Curator's own sentence continues after the raw text: keep all of it.
     // A leading programmer's label ("pushDomain: ") is not a word for a person.
     // Every raw fs fragment in it becomes a clause (a message can carry two).
-    const head = before.replace(/^[a-z][A-Za-z0-9_.]*:\s+/, '');
-    hit.whole = (head + text.slice(start)).replace(FS_FRAGMENT_RE, (frag, code, _d, _s, p, off, all) => {
+    // So is a bare error label ("Error: ", "TypeError: ").
+    const head = before.replace(/^[a-z][A-Za-z0-9_.]*:\s+/, '').replace(/^(?:[A-Z][A-Za-z]*)?Error:\s+/, '');
+    let whole = (head + text.slice(start, end) + after).replace(FS_FRAGMENT_RE, (frag, code, _d, _s, p, off, all) => {
       const k = FS_KLASS[code];
       if (!k) return frag;
       const clause = FS_CLAUSES[k](basenameOf(p) || undefined);
       const prev = all.slice(0, off);
       return !prev.trim() || /[.!?]\s*$/.test(prev) ? clause.charAt(0).toUpperCase() + clause.slice(1) : clause;
     });
+    for (const [re, byKlass] of FS_STEP_REWRITES) {
+      if (byKlass[klass]) whole = whole.replace(re, byKlass[klass]);
+    }
+    hit.whole = shortenHomePaths(whole);
     return hit;
   }
   // Words only before it: a sentence (three words or more, after any leading
@@ -355,7 +400,7 @@ function fsHit(klass, name, m) {
   let lead = before.replace(/^[a-z][A-Za-z0-9_.]*:\s+/, '').trimEnd();
   if (/^["'(]?[A-Za-z]/.test(lead) && (lead.match(/[A-Za-z][A-Za-z'’]*/g) || []).length >= 3) {
     lead = /[.!?]$/.test(lead) ? lead : lead.replace(/[\s:;,(\-–—]+$/, '') + '.';
-    hit.lead = lead.replace(/^(["'(]?)([a-z])/, (_m, q, c) => q + c.toUpperCase());
+    hit.lead = shortenHomePaths(lead.replace(/^(["'(]?)([a-z])/, (_m, q, c) => q + c.toUpperCase()));
   }
   return hit;
 }
@@ -517,7 +562,7 @@ export function classifyErrorText(text) {
     if (!hit.klass) return null;
     if (hit.lead === undefined && hit.whole === undefined) {
       const lead = leadBefore(text, m.index);
-      if (lead) hit.lead = lead;
+      if (lead) hit.lead = shortenHomePaths(lead);
     }
     return hit;
   }
