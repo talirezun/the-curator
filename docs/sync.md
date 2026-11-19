@@ -373,7 +373,7 @@ Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Yo
 
 **What Check and save does**
 
-- **It checks the new token with GitHub first.** For a repository on github.com, The Curator asks GitHub what the new token may do on the repository Sync already uses, and goes on only if the token can **read and write** it. (Asking git alone would not be enough: GitHub lets anyone read a public repository, so even a mistyped token would pass.) For a repository on another host, it asks git to list the repository with the new token, which proves the token can read it; a token that cannot write is then caught by the next push. If the check fails for any reason, nothing is changed and Sync keeps the token it had.
+- **It checks the new token with GitHub first.** For a repository on github.com, The Curator asks GitHub what the new token may do on the repository Sync already uses, and goes on only if the token can **read and write** it. (Asking git alone would not be enough: GitHub lets anyone read a public repository, so even a mistyped token would pass.) If the repository was renamed or moved to another owner, GitHub points the check to the repository's new address on its own API, and The Curator follows that; it never sends the token to any other address. For a repository on another host, it asks git to list the repository with the new token, which proves the token can read it; a token that cannot write is then caught by the next push. If the check fails for any reason, nothing is changed and Sync keeps the token it had.
 - **It saves the token in both places Sync keeps it**, together: the sync history's own settings (what Push and Pull use) and `.sync-config.json`. If the second write fails, the first is put back, and the message says nothing was changed. In the rare case that putting it back fails too, the message says so instead (*"…could save it in only one of the two places…"*): use Replace token again with the same new token.
 - **It keeps your sync history.** Nothing is deleted, nothing is pulled or pushed. The next **Sync now** simply uses the new token.
 - It answers *"Token replaced. Sync uses the new token from now on."* The new token is never shown again, never logged, and never sent back to the page.
@@ -381,7 +381,7 @@ Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Yo
 
 **When it refuses**
 
-Every refusal says what to do, and all but the last one in the table change nothing. The codes are in the [error catalogue](errors.md#sync-replacing-the-token).
+Every refusal says what to do, and all but one (*"…could save it in only one of the two places…"*) change nothing. The codes are in the [error catalogue](errors.md#sync-replacing-the-token).
 
 | What you see starts with | What it means |
 |---|---|
@@ -389,16 +389,18 @@ Every refusal says what to do, and all but the last one in the table change noth
 | *"That doesn't look like a GitHub token."* | What was pasted is not shaped like a token (for example only part of it was copied) |
 | *"GitHub didn't accept the new token."* | GitHub refused it: wrong, incomplete or already expired |
 | *"GitHub accepted the token, but it cannot open the repository Sync uses…"* | The token is valid but has no access to this repository. Give it the repository with Contents: Read and write, or tick `repo` |
+| *"GitHub accepted the token, but the organisation that owns the repository Sync uses… doesn't let it in yet"* | github.com only: the repository belongs to an organisation whose rules keep the token out. If the organisation uses single sign-on (SAML), open your token settings on GitHub, press **Configure SSO** next to the token and authorise it for that organisation. A fine-grained token may first need an organisation owner's approval |
+| *"GitHub didn't answer the check of the new token itself…"* | github.com only: GitHub answered with a redirect to an address outside its own API (or one redirect after another), which The Curator does not follow, so the token was not sent there. Check that the repository still exists on GitHub; if it keeps happening, the Technical detail line is for support |
 | *"GitHub accepted this token, but it can only read this repository…"* | github.com only: the token can read the repository but not write to it, so Sync could not push with it. Create one with Contents: Read and write (or the `repo` scope) |
 | *"GitHub is limiting requests right now…"* | GitHub did not answer the check because of its request limit. Wait a few minutes and try again |
-| *"The Curator couldn't reach GitHub to check the new token…"* | No connection to GitHub. Check the internet and try again |
+| *"The Curator couldn't reach GitHub to check the new token…"* | No connection to GitHub (no network, the name could not be looked up, the connection was refused or timed out). Check the internet and try again |
 | *"The new token couldn't be checked…"* | The check failed for another reason. The Technical detail line under it is for support |
 | *"The new token works, but The Curator couldn't save it…"* | GitHub accepted it, but writing it to this computer failed. Try again |
 | *"The Curator couldn't read which repository Sync uses…"* | Sync's own settings file is unreadable. This is the one case where you need **Disconnect this repository** and **Connect** again with the new token (your wiki files stay as they are) |
 | *"The new token works, but The Curator could save it in only one of the two places…"* | The settings file could not be written AND putting the sync history's address back failed, so the two places may disagree and Sync may fail until they match. Use Replace token again with the same new token; if that fails too, send the Technical detail line to support |
 | *"Sync is not connected on this computer…"* | There is no Sync connection yet. Connect one first |
 
-> **A token that can only READ passes the check.** The check asks GitHub to *read* the repository, so a fine-grained token with **Contents: Read-only** is accepted and saved. The next push is then refused with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens again: create a token with **Read and write** and replace it once more. Nothing is lost in between; your changes wait on this computer.
+> **For a repository on another host, a token that can only READ passes the check.** There the check asks git to *read* the repository, so a token that can only read it is accepted and saved. (On github.com it is refused with *"…it can only read this repository…"*, above.) The next push is then refused with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens again: create a token with **Read and write** and replace it once more. Nothing is lost in between; your changes wait on this computer.
 
 > **Before v3.99.2** the only way to change Sync's token was to edit `.sync-config.json` by hand, or to **Disconnect** and connect again. Disconnecting deletes this computer's sync history folder (unless it joined another install's), so it is no longer the way to change a token.
 
@@ -445,6 +447,7 @@ If the message is *"GitHub rejected the token. For a fine-grained token, make su
 
 - **Fine-grained token**: make sure **Contents** is set to **Read and write** (not Read-only), and that the token's **Repository access** actually includes this repository. Re-create the token if either is wrong.
 - **Classic token**: make sure you ticked the top-level **`repo`** scope when creating the token.
+- **A repository owned by an organisation that uses single sign-on (SAML)**: the scopes can be right and GitHub still refuses until the token is authorised for that organisation. On your token settings page on GitHub, press **Configure SSO** next to the token and authorise it. A fine-grained token for an organisation may also need an owner's approval.
 - Then put the new token in with [**Replace token**](#replacing-the-token). Fine-grained tokens are managed at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens); classic tokens at [github.com/settings/tokens](https://github.com/settings/tokens).
 - A **classic token set to "No expiration"** will never expire — use this option if you want to avoid re-doing this step.
 

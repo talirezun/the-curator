@@ -3100,6 +3100,22 @@ export const REPLACE_TOKEN_MESSAGES = Object.freeze({
     'GitHub accepted the token, but it cannot open the repository Sync uses' +
     (repoLabel ? ' (' + repoLabel + ')' : '') + '. For a fine-grained token, give it that repository ' +
     'with Contents: Read and write; for a classic token, tick the repo scope. Nothing was changed.',
+  // GitHub's 403 on GET /repos/:owner/:repo: the token is valid, and an
+  // organisation's rule (single sign-on, fine-grained token approval, an IP
+  // allow list) keeps it out. Scope advice would be wrong here.
+  'sync-new-token-org-blocked': (repoLabel) =>
+    'GitHub accepted the token, but the organisation that owns the repository Sync uses' +
+    (repoLabel ? ' (' + repoLabel + ')' : '') + ' doesn’t let it in yet. If your organisation ' +
+    'uses single sign-on, authorise the token for it on GitHub (Configure SSO, next to the token in ' +
+    'your GitHub token settings). If it is a fine-grained token, an owner of the organisation may ' +
+    'need to approve it first. Nothing was changed.',
+  // GitHub answered with a redirect The Curator will not follow: to another
+  // address than GitHub's own API, or one redirect after another.
+  'sync-token-check-redirected':
+    'GitHub didn’t answer the check of the new token itself: it pointed The Curator to another ' +
+    'address, which The Curator doesn’t follow. Nothing was changed. Check that the repository Sync uses ' +
+    'still exists on GitHub, then try again; if it keeps happening, copy the technical detail ' +
+    'below and send it to support.',
   'sync-token-check-offline':
     'The Curator couldn’t reach GitHub to check the new token, so nothing was changed. ' +
     'Check your internet connection and try again.',
@@ -3151,31 +3167,76 @@ function githubRepoOf(repoUrl) {
   return { owner: parts[0], repo: parts[1] };
 }
 
+// Redirects GitHub's API may send the check on: a renamed or transferred
+// repository answers 301 to /repositories/<id> on the same API. At most this
+// many hops, and only while the address stays on that API's origin; fetch's
+// own redirect handling is off, so the token header is re-sent only there and
+// can never be carried to another host.
+const TOKEN_CHECK_MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// The cause codes of a fetch that got no answer because the network, DNS or
+// the connection failed: only these (and a timeout) are "check your internet".
+// A certificate failure, a malformed request or anything else is a failure of
+// the CHECK, not of the connection.
+const NETWORK_CAUSE_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT',
+  'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CLOSED',
+]);
+function isNetworkFailure(err) {
+  if (!err) return false;
+  if (err.name === 'TimeoutError') return true;
+  const cause = err.cause;
+  if (cause && NETWORK_CAUSE_CODES.has(cause.code)) return true;
+  // Every address of a host failed: an AggregateError whose errors carry the codes.
+  if (cause && Array.isArray(cause.errors)) return cause.errors.some((e) => e && NETWORK_CAUSE_CODES.has(e.code));
+  return false;
+}
+
 /**
  * Ask GitHub what the token may do on the repository. Throws a refusal; returns
  * nothing when the token can write. The token goes in one header and nowhere
- * else: never the URL, never an error text, never a log.
+ * else: never the URL, never an error text, never a log, never another host.
  */
 async function checkTokenWithGithubApi({ owner, repo }, token, repoLabel) {
   const base = _githubApiBaseForTest || GITHUB_API_BASE;
-  const url = `${base}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const apiOrigin = new URL(base).origin;
+  let url = `${base}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const signal = AbortSignal.timeout(TOKEN_CHECK_TIMEOUT_MS);
+  const redirected = (why) => {
+    const out = refusal('sync-token-check-redirected', RTM['sync-token-check-redirected']);
+    out.curatorSyncDetail = scrubToken(why, token);
+    return out;
+  };
   let res;
-  try {
-    res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': 'the-curator-sync',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      redirect: 'error',
-      signal: AbortSignal.timeout(TOKEN_CHECK_TIMEOUT_MS),
-    });
-  } catch (err) {
-    const cause = err && err.cause && err.cause.code ? ` (${err.cause.code})` : '';
-    const out = refusal('sync-token-check-offline', RTM['sync-token-check-offline']);
-    out.curatorSyncDetail = scrubToken(`GitHub API request failed: ${err && err.name === 'TimeoutError' ? 'timed out' : errorText(err)}${cause}`, token);
-    throw out;
+  for (let hop = 0; ; hop++) {
+    try {
+      res = await fetch(url, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'the-curator-sync',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        redirect: 'manual',
+        signal,
+      });
+    } catch (err) {
+      const cause = err && err.cause && err.cause.code ? ` (${err.cause.code})` : '';
+      const code = isNetworkFailure(err) ? 'sync-token-check-offline' : 'sync-token-check-failed';
+      const out = refusal(code, RTM[code]);
+      out.curatorSyncDetail = scrubToken(`GitHub API request failed: ${err && err.name === 'TimeoutError' ? 'timed out' : errorText(err)}${cause}`, token);
+      throw out;
+    }
+    if (!REDIRECT_STATUSES.has(res.status)) break;
+    const location = res.headers.get('location');
+    let next = null;
+    try { next = location ? new URL(location, url) : null; } catch { next = null; }
+    if (!next) throw redirected(`GitHub API answered HTTP ${res.status} with no usable address to go on to`);
+    // Name the host only: the rest of the address could carry anything.
+    if (next.origin !== apiOrigin) throw redirected(`GitHub API answered HTTP ${res.status}, pointing to another host (${next.host}); not followed`);
+    if (hop >= TOKEN_CHECK_MAX_REDIRECTS) throw redirected(`GitHub API redirected more than ${TOKEN_CHECK_MAX_REDIRECTS} times; stopped`);
+    url = next.href;
   }
   let body = null;
   try { body = await res.json(); } catch { body = null; }
@@ -3190,11 +3251,13 @@ async function checkTokenWithGithubApi({ owner, repo }, token, repoLabel) {
     (res.status === 403 && (res.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(ghMessage)));
   if (rateLimited) throw fail('sync-token-check-rate-limited', RTM['sync-token-check-rate-limited']);
   if (res.status === 401) throw fail('sync-new-token-rejected', RTM['sync-new-token-rejected']);
-  // 404 is what GitHub answers a token that cannot see a private repository;
-  // 403 a token an organisation's policy (SSO, fine-grained approval) blocks.
-  if (res.status === 404 || res.status === 403) {
-    throw fail('sync-new-token-no-access', RTM['sync-new-token-no-access'](repoLabel));
-  }
+  // 404 is what GitHub answers a token that cannot see a private repository.
+  if (res.status === 404) throw fail('sync-new-token-no-access', RTM['sync-new-token-no-access'](repoLabel));
+  // 403 (not a rate limit) on this endpoint is an organisation's rule keeping
+  // a valid token out: SAML single sign-on, fine-grained token approval, an IP
+  // allow list. A token merely lacking scope gets 404 (private) or 200 with
+  // push false (public), never 403, so scope advice would be wrong here.
+  if (res.status === 403) throw fail('sync-new-token-org-blocked', RTM['sync-new-token-org-blocked'](repoLabel));
   throw fail('sync-token-check-failed', RTM['sync-token-check-failed']);
 }
 

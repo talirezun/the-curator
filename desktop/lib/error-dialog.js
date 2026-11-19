@@ -142,8 +142,14 @@ export function displayFolder(dir, homedir = os.homedir()) {
   return d;
 }
 
-/** The fatal dialog's sentence, naming where the log is. */
-export function fatalMain(logsDir, homedir = os.homedir()) {
+/**
+ * The fatal dialog's sentence, naming where the log is. `logWritten: false`
+ * (writeFatalLog returned '') names no log file: there is none to send, so
+ * the dialog itself (with its technical line, when it has one) is what goes
+ * to support.
+ */
+export function fatalMain(logsDir, homedir = os.homedir(), { logWritten = true } = {}) {
+  if (!logWritten) return FATAL_NO_LOG_MAIN;
   const where = logsDir ? displayFolder(logsDir, homedir) : '';
   if (!where) return FATAL_MAIN;
   return 'The Curator could not start. Quit it and open it again. If it keeps happening, send the file ' +
@@ -183,6 +189,9 @@ export function writeFatalLog({ err, logsDir, sanitize, fs, now = () => new Date
 export const FATAL_MAIN =
   'The Curator could not start. Quit it and open it again. If it keeps happening, ' +
   'send the file curator.log from The Curator\'s log folder to support.';
+export const FATAL_NO_LOG_MAIN =
+  'The Curator could not start, and it could not write what went wrong to its log file either. ' +
+  'Quit it and open it again. If it keeps happening, take a screenshot of this message and send it to support.';
 export const UPDATE_CHECK_MAIN =
   'The Curator could not check for updates. Try again in a moment. If it keeps happening, ' +
   'choose Help › Show Logs and send the log to support.';

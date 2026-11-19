@@ -444,16 +444,32 @@ section('§4b  A github.com repository: the GitHub API decides, and the token mu
     const auth = req.headers.authorization || '';
     api.seen.push({ url: req.url, auth, accept: req.headers.accept || '' });
     const tok = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-    const a = api.answers.get(tok) || { status: 401, body: { message: 'Bad credentials' } };
-    res.writeHead(a.status, { 'Content-Type': 'application/json', ...(a.headers || {}) });
+    let a = api.answers.get(tok) || { status: 401, body: { message: 'Bad credentials' } };
+    // A renamed repository: the first answer is a redirect, the address it
+    // points to (on this same stub) answers `after`.
+    if (a.after && req.url !== '/repos/owner/wiki') a = a.after;
+    const headers = { 'Content-Type': 'application/json', ...(a.headers || {}) };
+    if (a.location) headers.Location = typeof a.location === 'function' ? a.location(req) : a.location;
+    res.writeHead(a.status, headers);
     res.end(JSON.stringify(a.body || {}));
   });
   await new Promise((r) => apiServer.listen(0, '127.0.0.1', r));
   const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
   sync.__setGithubApiBaseForTest(apiBase);
+  // Another host, to prove the token never leaves GitHub's API on a redirect.
+  const away = { seen: [] };
+  const awayServer = http.createServer((req, res) => {
+    away.seen.push({ url: req.url, auth: req.headers.authorization || '' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ permissions: { push: true } }));
+  });
+  await new Promise((r) => awayServer.listen(0, '127.0.0.1', r));
+  const awayBase = `http://localhost:${awayServer.address().port}`;
   const T = (tag) => P + tag + 'E'.repeat(36 - tag.length);
   const WRITER = T('writer'), READER = T('reader'), NOPERM = T('noperm'), HIDDEN = T('hidden'), SSO = T('sso'),
-    LIMITED = T('limited'), TOOMANY = T('toomany'), BROKEN = T('broken'), MADEUP = T('madeup');
+    LIMITED = T('limited'), TOOMANY = T('toomany'), BROKEN = T('broken'), MADEUP = T('madeup'),
+    APPROVAL = T('approval'), RENAMED = T('renamed'), RELATIVE = T('relative'), RENAMEDRO = T('renamedro'),
+    AWAY = T('away'), LOOP = T('loop'), NOWHERE = T('nowhere');
   api.answers.set(WRITER, { status: 200, body: { full_name: 'owner/wiki', permissions: { admin: false, push: true, pull: true } } });
   api.answers.set(READER, { status: 200, body: { full_name: 'owner/wiki', permissions: { admin: false, push: false, pull: true } } });
   api.answers.set(NOPERM, { status: 200, body: { full_name: 'owner/wiki' } });
@@ -462,7 +478,22 @@ section('§4b  A github.com repository: the GitHub API decides, and the token mu
   api.answers.set(LIMITED, { status: 403, headers: { 'x-ratelimit-remaining': '0' }, body: { message: 'API rate limit exceeded' } });
   api.answers.set(TOOMANY, { status: 429, body: { message: 'Too many requests' } });
   api.answers.set(BROKEN, { status: 502, body: { message: 'Server Error' } });
-  const API_TOKENS = [WRITER, READER, NOPERM, HIDDEN, SSO, LIMITED, TOOMANY, BROKEN, MADEUP];
+  api.answers.set(APPROVAL, { status: 403, body: { message: 'The \'owner\' organization forbids access via a fine-grained personal access tokens if the token\'s lifetime is greater than 366 days.' } });
+  // GitHub's real answer for a renamed repository (measured on api.github.com,
+  // 2026-11-19): 301, Location https://api.github.com/repositories/<id>.
+  const moved = { status: 301, body: { message: 'Moved Permanently', url: 'x' } };
+  api.answers.set(RENAMED, { ...moved, location: `${apiBase}/repositories/42`,
+    after: { status: 200, body: { full_name: 'owner/wiki-renamed', permissions: { push: true } } } });
+  api.answers.set(RELATIVE, { ...moved, location: '/repositories/43',
+    after: { status: 200, body: { permissions: { push: true } } } });
+  api.answers.set(RENAMEDRO, { ...moved, location: `${apiBase}/repositories/44`,
+    after: { status: 200, body: { permissions: { push: false, pull: true } } } });
+  api.answers.set(AWAY, { ...moved, location: `${awayBase}/repos/owner/wiki` });
+  api.answers.set(LOOP, { status: 302, body: {}, location: (req) => `${apiBase}/repositories/${req.url.length}` ,
+    after: { status: 307, body: {}, location: (req) => `${apiBase}${req.url}x` } });
+  api.answers.set(NOWHERE, { status: 301, body: {} });
+  const API_TOKENS = [WRITER, READER, NOPERM, HIDDEN, SSO, LIMITED, TOOMANY, BROKEN, MADEUP,
+    APPROVAL, RENAMED, RELATIVE, RENAMEDRO, AWAY, LOOP, NOWHERE];
   const apiLeaks = (t) => API_TOKENS.filter((x) => String(t).includes(x)).concat(leaks(t));
 
   const rig = path.join(TMP, 'rig-github-com');
@@ -478,7 +509,8 @@ section('§4b  A github.com repository: the GitHub API decides, and the token mu
       ['a token that can only READ', READER, 'sync-new-token-read-only'],
       ['an answer with no permissions at all', NOPERM, 'sync-new-token-read-only'],
       ['a private repository the token cannot see (404)', HIDDEN, 'sync-new-token-no-access'],
-      ['an organisation policy (403)', SSO, 'sync-new-token-no-access'],
+      ['SAML single sign-on not authorised (403)', SSO, 'sync-new-token-org-blocked'],
+      ['an organisation policy on fine-grained tokens (403)', APPROVAL, 'sync-new-token-org-blocked'],
       ['a rate limit (403, remaining 0)', LIMITED, 'sync-token-check-rate-limited'],
       ['a rate limit (429)', TOOMANY, 'sync-token-check-rate-limited'],
       ['GitHub failing (502)', BROKEN, 'sync-token-check-failed'],
@@ -496,6 +528,58 @@ section('§4b  A github.com repository: the GitHub API decides, and the token mu
       ok(apiLeaks(said).length === 0, `${label}: no token in what is said`, apiLeaks(said));
       ok(ref && /Nothing was changed|nothing was changed|still has the token/.test(ref.message), `${label}: says nothing was changed`, ref && ref.message);
       ok(ref && typeof ref.detail === 'string' && /HTTP \d{3}/.test(ref.detail), `${label}: the API status is the detail, for support`, ref && ref.detail);
+    }
+    {
+      const sso = sync.syncRefusalOf(await replaceToken(SSO).catch((e) => e));
+      ok(/single sign-on/.test(sso.message) && /Configure SSO/.test(sso.message) && !/repo scope/.test(sso.message),
+        'SSO 403: says to authorise the token for single sign-on, and no scope advice', sso.message);
+    }
+    // Redirects (v3.99.2 second audit): a renamed or transferred repository
+    // answers 301 on the same API. Followed by hand, on GitHub's API only.
+    for (const [label, tok, code, hops] of [
+      ['a renamed repository (301, absolute address on the API)', RENAMED, null, 2],
+      ['a renamed repository (301, relative address)', RELATIVE, null, 2],
+      ['a renamed repository the token can only read', RENAMEDRO, 'sync-new-token-read-only', 2],
+      ['a redirect to another host', AWAY, 'sync-token-check-redirected', 1],
+      ['redirect after redirect', LOOP, 'sync-token-check-redirected', 4],
+      ['a redirect with no address', NOWHERE, 'sync-token-check-redirected', 1],
+    ]) {
+      fs.writeFileSync(cf, JSON.stringify({ repoUrl: 'https://github.com/owner/wiki', token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+      sh(`git --git-dir="${gd}" remote set-url origin "https://${OLD_TOKEN}@github.com/owner/wiki.git"`);
+      const before = snapshot(gd, cf);
+      const n = api.seen.length; const m = away.seen.length;
+      let out = null; let err = null;
+      try { out = await replaceToken(tok); } catch (e) { err = e; }
+      const ref = sync.syncRefusalOf(err);
+      if (code === null) {
+        ok(out && out.replaced === true, `${label}: followed, and the token is saved`, ref || (err && err.message));
+        ok(remoteUrlOf(gd) === `https://${tok}@github.com/owner/wiki.git`, `${label}: the origin carries the new token`);
+      } else {
+        ok(ref && ref.code === code, `${label}: ${code}`, ref || (err && err.message));
+        ok(sameSnap(before, snapshot(gd, cf)), `${label}: both places sha256-identical`);
+        ok(ref && /Nothing was changed/.test(ref.message) && !/internet/.test(ref.message), `${label}: says nothing was changed, never "internet"`, ref && ref.message);
+        ok(apiLeaks(JSON.stringify(ref || {})).length === 0, `${label}: no token in what is said`);
+      }
+      ok(api.seen.length === n + hops && api.seen.slice(n).every((x) => x.auth === `Bearer ${tok}`),
+        `${label}: ${hops} request(s) to GitHub's API, each with the token`, api.seen.slice(n));
+      ok(away.seen.length === m, `${label}: nothing was ever sent to another host`, away.seen.slice(m));
+    }
+    {
+      const awayRef = sync.syncRefusalOf(await replaceToken(AWAY).catch((e) => e));
+      ok(/another host \(localhost:\d+\)/.test(awayRef.detail) && !/repos\/owner/.test(awayRef.detail), 'redirect elsewhere: the detail names the host only', awayRef.detail);
+    }
+    fs.writeFileSync(cf, JSON.stringify({ repoUrl: 'https://github.com/owner/wiki', token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+    sh(`git --git-dir="${gd}" remote set-url origin "https://${OLD_TOKEN}@github.com/owner/wiki.git"`);
+    // A fetch that fails for a reason other than the network (here: the API's
+    // certificate is not trusted) is a failed CHECK, not "check your internet".
+    {
+      sync.__setGithubApiBaseForTest(`https://127.0.0.1:${GH_PORT}`);
+      const before = snapshot(gd, cf);
+      const ref = sync.syncRefusalOf(await replaceToken(WRITER).catch((e) => e));
+      ok(ref && ref.code === 'sync-token-check-failed' && !/internet/.test(ref.message), 'an untrusted certificate: sync-token-check-failed, not "internet"', ref);
+      ok(ref && /GitHub API request failed/.test(ref.detail || ''), 'untrusted certificate: the fetch error is the detail', ref && ref.detail);
+      ok(sameSnap(before, snapshot(gd, cf)), 'untrusted certificate: both places sha256-identical');
+      sync.__setGithubApiBaseForTest(apiBase);
     }
     {
       const ro = sync.syncRefusalOf(await replaceToken(READER).catch((e) => e));
@@ -534,6 +618,7 @@ section('§4b  A github.com repository: the GitHub API decides, and the token mu
     sync.__setSyncTestOverrides({});
     sync.__setGithubApiBaseForTest(null);
     await new Promise((r) => apiServer.close(r));
+    await new Promise((r) => awayServer.close(r));
   }
 }
 

@@ -112,6 +112,21 @@ for (const [label, san] of [['minimal', minimalScrub], ['shared', composeSanitiz
   // Never throws: an unwritable log folder still shows the dialog and exits.
   const r = runFatal(stacky(), minimalScrub, { logsDir: path.join(LOG_DIR, 'curator.log', 'not-a-dir') });
   ok(r.shown.length === 1 && r.exited === 1, 'fatal: a log write that fails still shows the dialog and exits');
+  // v3.99.2 second audit: the dialog named curator.log even when it was never written.
+  const body = r.shown[0] ? r.shown[0][1] : '';
+  ok(!body.includes('curator.log') && !body.includes('not-a-dir'), 'fatal, log not written: the dialog names no log file and no folder', body);
+  ok(body.startsWith(mod.FATAL_NO_LOG_MAIN) && /could not write/.test(body) && /screenshot of this message/.test(body),
+    'fatal, log not written: says so, and to send the message itself', body);
+  ok(body.includes(DETAIL_LABEL), 'fatal, log not written: the technical line is in the dialog', body);
+  clean(body, 'fatal, log not written');
+}
+{
+  // The same with writeFatalLog itself failing (returns ''), the folder fine.
+  const r = runFatal(stacky(), minimalScrub, { writeFatalLog: () => '' });
+  ok(r.shown[0] && r.shown[0][1].startsWith(mod.FATAL_NO_LOG_MAIN), 'fatal, writeFatalLog returned nothing: the no-log sentence', r.shown[0]);
+  // CONTROL: a written log is still named.
+  const w = runFatal(stacky(), minimalScrub);
+  ok(w.shown[0] && w.shown[0][1].includes('curator.log') && !w.shown[0][1].startsWith(mod.FATAL_NO_LOG_MAIN), 'CONTROL: a written log is named in the dialog');
 }
 {
   // Mutation control: a fatal() whose log write does nothing leaves curator.log unchanged.
