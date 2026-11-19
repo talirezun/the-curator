@@ -38,6 +38,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { wikiPath } from './files.js';
 import { getProviderInfo, getModelPrice, isFreeModel, priceUsageUsd, providerDisplayName } from './llm.js';
 import { scanSemanticDuplicates } from './health-ai.js';
+import { toUserError, userErrorText } from './user-errors.js';
 
 const FORMAT = 1;
 export const COMPARE_ALL_SPEND_MARGIN = 1.2;
@@ -55,8 +56,15 @@ export function isOutOfCredits(ev) {
   return /\bHTTP 402\b|"code":\s*402\b|\b402\b.*(payment|credit)|payment required|insufficient[_ ]credits?|credit balance|prepaid credits?|credits? (are|is|have|has) (been )?(depleted|exhausted)|out of credits/i.test(m);
 }
 
-/** A provider's error is often its whole JSON body. The row gets the sentence inside it. */
+/**
+ * A provider's error is often its whole JSON body. The row gets the sentence inside it.
+ * v3.99.2: a shape the plain-language catalogue recognises (a rejected key, no credit,
+ * offline, an unreadable answer) gets the catalogue's sentence instead, which says what
+ * to do. `record.lastError` keeps the raw text; only the sentence shown changes.
+ */
 export function plainProviderError(message) {
+  const u = toUserError(String(message || ''), { area: 'ai' });
+  if (u) return u.error;
   const raw = String(message || '').trim();
   const at = raw.indexOf('{');
   if (at !== -1) {
@@ -334,7 +342,7 @@ async function runLoop(run) {
       },
     }, (ev) => noteEvent(run, ev));
   } catch (err) {
-    ended = { kind: 'stop', stopReason: 'failed', reason: `The comparison stopped: ${err && err.message ? err.message : String(err)}` };
+    ended = { kind: 'stop', stopReason: 'failed', reason: `The comparison stopped: ${userErrorText(err && err.message ? err : String(err), undefined, { area: 'ai' })}` };
     record.lastError = err && err.message ? err.message : String(err);
   }
   // The run's last batch failed the way that pauses, so no later check saw it. A list

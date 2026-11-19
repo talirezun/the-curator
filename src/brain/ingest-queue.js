@@ -191,6 +191,7 @@ import {
 } from './files.js';
 import { scrubPaths } from './scrub-paths.js';
 import { wireStr, wireNum, wireBool } from './wire-safe.js';
+import { toUserError } from './user-errors.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { registerWrite, acquireFileLock, isUpdateInProgress } from './write-registry.js';
 import {
@@ -515,10 +516,26 @@ function wireCounts(counts) {
   return out;
 }
 
+// v3.99.2 plain-language errors, AT THE WIRE ONLY. The manifest on disk keeps
+// the raw text (`item.error`, `pausedMessage`, `failReason`): resume, the
+// breaker and every in-process reader see exactly what they always saw. Only
+// the copy that leaves this process is translated. A recognised raw shape (a
+// provider's `401 {"type":"error",…}`, a Gemini fetch failure, a raw fs error)
+// becomes the catalogue sentence, with the raw text as a sanitised `detail`;
+// anything else — every sentence this module writes itself — passes through
+// unchanged. Returns null text for a non-string, exactly as wireStr would.
+function wireErrorText(text) {
+  if (typeof text !== 'string' || !text) return { text, detail: null, code: null };
+  const u = toUserError(text, { area: 'ai' });
+  if (!u) return { text, detail: null, code: null };
+  return { text: u.error, detail: u.detail || null, code: u.code || null };
+}
+
 function wireItem(item) {
   if (!item || typeof item !== 'object') return null;
   const r = item.result;
   const u = item.tokenUsage;
+  const itemErr = wireErrorText(item.error);
   return {
     idx: wireNum(item.idx),
     name: wireStr(item.name, 512),
@@ -527,10 +544,15 @@ function wireItem(item) {
     startedAt: wireStr(item.startedAt, 64),
     finishedAt: wireStr(item.finishedAt, 64),
     attempts: wireNum(item.attempts),
-    error: wireStr(item.error),
+    error: wireStr(itemErr.text),
+    // v3.99.2: the raw text behind a translated `error`, sanitised (for
+    // support). Null when the error was not translated.
+    errorDetail: wireStr(itemErr.detail),
     // Additive, allow-listed and capped like every other field here. Null when
-    // the failure has no code — see where it is set.
-    errorCode: wireStr(item.errorCode, 64),
+    // the failure has no code — see where it is set. An existing code (today
+    // only MODEL_GONE) is never replaced; the catalogue's is added only when
+    // the item has none.
+    errorCode: wireStr(item.errorCode || itemErr.code, 64),
     // True only on a DONE item whose measured call count was zero (see processItemInner).
     noCall: item.status === 'done' && item.noCall === true,
     result: r && typeof r === 'object' ? {
@@ -600,8 +622,8 @@ export function toWire(job) {
     updatedAt: wireStr(job.updatedAt, 64),
     status: wireStr(job.status, 32),
     pausedReason: wireStr(job.pausedReason, 64),
-    pausedMessage: wireStr(job.pausedMessage),
-    failReason: wireStr(job.failReason),
+    pausedMessage: wireStr(wireErrorText(job.pausedMessage).text),
+    failReason: wireStr(wireErrorText(job.failReason).text),
     overwrite: wireBool(job.overwrite),
     budgetUsd: wireNum(job.budgetUsd),
     spentUsd: wireNum(job.spentUsd),

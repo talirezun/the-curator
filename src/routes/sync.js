@@ -11,6 +11,7 @@ import { recordDomainIdentities } from '../brain/domain-identity.js';
 // v3.89.2: one sync at a time, and a record of it that outlives the request
 // that started it — see src/brain/sync-job.js for the measured report.
 import { runSyncJob, getSyncJob, SyncBusyError } from '../brain/sync-job.js';
+import { toUserError } from '../brain/user-errors.js';
 
 const router = Router();
 
@@ -42,7 +43,7 @@ function busyResponse(res, err) {
 // `error` a plain sentence, `detail` the sanitised git text for support (no
 // credential, the home folder as ~), `code` a stable id the page can attach a
 // control to. Before, an unrecognised failure answered with git's own text.
-const JOB_OPTS = { describeError: (err) => describeSyncError(err) };
+const JOB_OPTS = { describeError: (err) => { const d = describeSyncError(err); const u = d.code === 'sync-failed' ? toUserError(err, { area: 'sync' }) : null; return u && u.code !== 'git-other' ? { error: u.error, code: u.code, ...((d.detail || u.detail) ? { detail: d.detail || u.detail } : {}) } : d; } };
 const CONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'connect' }) };
 const DISCONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'disconnect' }) };
 

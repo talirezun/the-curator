@@ -13,6 +13,7 @@ import { assertKnownDomain, isDomainReadonly, listAllConversations } from '../br
 // classifier is the shape that produced the v3.2.0 CRITICAL.
 import { isAbortError } from '../brain/llm.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
+import { toUserError } from '../brain/user-errors.js';
 // THE STORE'S OWN VALIDATOR AND THE STORE'S OWN LISTING, imported rather
 // than restated. `isSafeSegment` is the predicate the memory store uses to
 // decide what it will address, so a project name this route accepts and the
@@ -62,14 +63,24 @@ const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 // It runs FIRST in every handler, before the id regex, so nothing derived from
 // an unvalidated domain is ever built — not even a path we then throw away.
 //
-// `errorText` exists so the JSON body and the SSE `error` frame cannot drift
+// `errorBody` exists so the JSON body and the SSE `error` frame cannot drift
 // into two different disclosure policies. Two hand-maintained copies of a
 // scrubber is the shape that produced the v3.2.0 CRITICAL, and the SSE siblings
 // this route otherwise copies (ingest, compile) both emit RAW `err.message` —
 // which is exactly what must NOT be copied here, because a chat turn's errors
 // reach the same fs layer the JSON path was scrubbed for.
-function errorText(err) {
-  return scrubPaths(String((err && err.message) || 'Unexpected error'));
+//
+// v3.99.2: both now go through `errorBody`, which tries the plain-language
+// catalogue first (`toUserError`, area 'ai': a bad key, no credit, offline, a
+// raw fs error) and returns `{error, detail, code}`. On a miss — a deliberate
+// sentence, an abort, anything unrecognised — it is exactly the old scrubbed
+// text with no detail, so every deliberate refusal is byte-identical.
+function errorBody(err) {
+  if (!isAbortError(err)) {
+    const u = toUserError(err, { area: 'ai' });
+    if (u) return u.detail ? u : { error: u.error, code: u.code };
+  }
+  return { error: scrubPaths(String((err && err.message) || 'Unexpected error')) };
 }
 
 function sendError(res, err) {
@@ -78,7 +89,7 @@ function sendError(res, err) {
   // scrubber, imported from its single home; it keeps the basename, which is
   // the half that helps.
   res.status(err && Number.isInteger(err.status) ? err.status : 500)
-     .json({ error: errorText(err) });
+     .json(errorBody(err));
 }
 
 // List conversations for a domain.
@@ -523,7 +534,7 @@ router.post('/:domain', async (req, res) => {
     // from the ingest/compile idiom it otherwise copies: both of those emit a
     // raw `err.message`. A chat turn reaches the same conversation-file fs
     // layer whose absolute paths the JSON branch has always scrubbed, so the
-    // frame goes through the same `errorText` the JSON branch uses.
+    // frame goes through the same `errorBody` the JSON branch uses.
     //
     // A refusal we produced ourselves cannot reach here — every one of them is
     // above flushHeaders — so a streaming error is always genuinely
@@ -531,7 +542,12 @@ router.post('/:domain', async (req, res) => {
     // stack-traced (logging every Stop is how a log stops being read).
     if (streaming) {
       if (!isAbortError(err)) console.error('Chat stream error:', err);
-      return emit({ type: 'error', message: errorText(err) });
+      const b = errorBody(err);
+      return emit({
+        type: 'error', message: b.error,
+        ...(b.detail ? { detail: b.detail } : {}),
+        ...(b.code ? { code: b.code } : {}),
+      });
     }
     // An abort with the connection still OPEN is not something this route can
     // cause — `controller` is per-request and only the close handler above ever

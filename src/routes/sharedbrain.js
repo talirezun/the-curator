@@ -65,6 +65,7 @@ import { pushDomain, pullCollective, computePendingBreakdown, listMembers } from
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
+import { toUserError } from '../brain/user-errors.js';
 import { recordDomainIdentities } from '../brain/domain-identity.js';
 import {
   registerWrite,
@@ -72,6 +73,16 @@ import {
   isUpdateInProgress,
   conflictResponse,
 } from '../brain/write-registry.js';
+
+// v3.99.2 plain-language errors: an SSE `error` frame never passes through the
+// res.json wrapper, so it is translated here, at the exit (area 'sharedbrain'
+// names GitHub as the service). On a miss the frame is exactly today's text;
+// `err.message` itself is never changed (isTransientLlmError reads it).
+function errorFrame(err) {
+  const u = toUserError(err, { area: 'sharedbrain' });
+  if (!u) return { type: 'error', message: err.message };
+  return { type: 'error', message: u.error, ...(u.detail ? { detail: u.detail } : {}), code: u.code };
+}
 
 const router = Router();
 
@@ -520,7 +531,7 @@ router.post('/:id/push', gate, async (req, res) => {
     // no 'done' is emitted, so the UI keeps the error styling.
   } catch (err) {
     console.error('[sharedbrain push]', err.message);
-    emit({ type: 'error', message: err.message });
+    emit(errorFrame(err));
   } finally {
     releases.forEach(r => r());
     res.end();
@@ -573,7 +584,7 @@ router.post('/:id/pull', gate, async (req, res) => {
     }
   } catch (err) {
     console.error('[sharedbrain pull]', err.message);
-    emit({ type: 'error', message: err.message });
+    emit(errorFrame(err));
   } finally {
     try { await releaseFileLock(); } catch { /* best-effort */ }
     releaseRegistry();
@@ -615,7 +626,7 @@ router.post('/:id/synthesize', gate, async (req, res) => {
     }
   } catch (err) {
     console.error('[sharedbrain synthesize]', err.message);
-    emit({ type: 'error', message: err.message });
+    emit(errorFrame(err));
   } finally {
     releaseRegistry();
     res.end();
@@ -772,7 +783,7 @@ router.post('/:id/revoke', gate, async (req, res) => {
     }
   } catch (err) {
     console.error('[sharedbrain revoke]', err.message);
-    emit({ type: 'error', message: err.message });
+    emit(errorFrame(err));
   } finally {
     releaseRegistry();
     res.end();

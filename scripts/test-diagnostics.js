@@ -130,7 +130,10 @@ const HARNESS_MANIFESTS = Object.freeze({
     // logWarn joined this call's catch block when the log file landed
     // (src/brain/logger.js) — injected as a no-op stub here, same as any
     // other collaborator this harness does not want to exercise for real.
-    injected: ['getApiKeys', 'getEffectiveKey', 'getProviderInfo', 'getFallbackStatus', 'generateText', 'logWarn'],
+    // toUserError (v3.99.2) translates a failed live call at its exit; this
+    // harness drives only the never-calls-the-provider branches, so it is a
+    // positional parameter left undefined, like any collaborator not exercised.
+    injected: ['getApiKeys', 'getEffectiveKey', 'getProviderInfo', 'getFallbackStatus', 'generateText', 'logWarn', 'toUserError'],
   },
 });
 
