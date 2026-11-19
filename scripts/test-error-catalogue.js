@@ -124,6 +124,16 @@ const inc = SYNC.describeSyncError(new Error(INCIDENT));
 ok(inc.code === 'sync-token-rejected' && docsText.includes(esc(inc.error)), 'the incident\'s git text → sync-token-rejected, and its sentence is on the page', inc);
 const conn = SYNC.describeSyncError(new Error(INCIDENT), { context: 'connect' });
 ok(docsText.includes(esc(conn.error)), 'the Connect form\'s wording of the same code is on the page too');
+// v3.99.2 audit: the off-page wording, the read-only and rate-limit refusals,
+// the failed-undo refusal, and a generic sentence that claims nothing.
+const elsewhere = SYNC.describeSyncError(new Error(INCIDENT), { context: 'elsewhere' });
+ok(docsText.includes(esc(elsewhere.error)) && /open Sync and use Replace token/.test(elsewhere.error), 'the off-page wording of sync-token-rejected is on the page', elsewhere.error);
+for (const c of ['sync-new-token-read-only', 'sync-token-check-rate-limited', 'sync-token-save-partial']) {
+  ok(CODES.includes(c) && docsCodes.includes(c) && llmCodes.includes(c), `${c}: a catalogue code, on both pages`);
+}
+ok(!/nothing was changed/i.test(SYNC.REPLACE_TOKEN_MESSAGES['sync-token-save-partial']), 'the failed-undo sentence does not claim nothing was changed');
+const generic = SYNC.describeSyncError(new Error('an error text The Curator does not recognise'));
+ok(generic.code === 'sync-failed' && !/Nothing was lost/.test(generic.error) && docsText.includes(esc(generic.error)), 'the generic Sync sentence claims nothing it cannot know, and is the one on the page', generic.error);
 const admin = UE.SURFACE_MESSAGES.sharedbrain.admin['github-token-rejected']();
 ok(docsText.includes(esc(admin)), 'the admin wording of github-token-rejected is on the page');
 ok(!/\/Users\/|\/home\/|C:\\Users/.test(region(docsText) + region(llmText)), 'no home path in either generated region');

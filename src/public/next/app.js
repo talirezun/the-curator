@@ -2051,6 +2051,8 @@ const SYNC_REMOTE_REFRESH_MS = 10 * 60_000;
 // check completes — NOT 0, which would assert "nothing waiting" before we
 // have asked anyone.
 let _syncBehindCount;
+// remote-status's remoteErrorCode from the last check (null when it worked).
+let _syncRemoteErrorCode = null;
 
 // PURE. Given whatever GET /api/sync/status produced (or null, meaning the
 // request did not usably complete), return the number to render. 0 = hide.
@@ -2089,13 +2091,20 @@ function syncBadgeMarkup(count) {
 // local sentences) true. It is also deliberately self-contained — that
 // suite extracts this function's source and runs it in a sandbox holding
 // only VIEW_META, so calling any helper from here would break it.
-function syncBadgeTitle(count, behind) {
+//
+// `remoteCode` (v3.99.2 audit) is remote-status's `remoteErrorCode`. When the
+// failed check was GitHub refusing the saved token, the tooltip says so and
+// where to fix it (the rail button itself opens Sync), instead of the vague
+// "could not check". Absent, the function is byte-identical to before.
+function syncBadgeTitle(count, behind, remoteCode) {
   const parts = [];
   if (count > 0) {
     parts.push(count + ' local change' + (count === 1 ? '' : 's') + ' not yet pushed to GitHub');
   }
   if (typeof behind === 'number' && behind > 0) {
     parts.push(behind + ' file' + (behind === 1 ? '' : 's') + ' waiting to pull from GitHub');
+  } else if (behind === null && (remoteCode === 'sync-token-rejected' || remoteCode === 'sync-token-no-access')) {
+    parts.push('GitHub did not accept the saved token: open Sync and use Replace token');
   } else if (behind === null) {
     parts.push('could not check GitHub for incoming changes');
   }
@@ -2150,7 +2159,7 @@ function applySyncBadge() {
   // title, on every view — leaving the Sync page never hides that it runs.
   const run = currentSyncRun();
   btn.classList.toggle('is-syncing', !!run);
-  btn.title = run ? syncRunTitle(run.kind) : syncBadgeTitle(_syncPendingCount, _syncBehindCount);
+  btn.title = run ? syncRunTitle(run.kind) : syncBadgeTitle(_syncPendingCount, _syncBehindCount, _syncRemoteErrorCode);
   const label = syncBadgeLabel(_syncPendingCount, _syncBehindCount);
   if (label) {
     if (existing) {
@@ -2183,6 +2192,21 @@ function syncRunTitle(kind) {
   return 'Sync — syncing with GitHub now';
 }
 
+// The toast is shown OFF the Sync page, so a sentence that says "use Replace
+// token on this page" would name a control that is not there (v3.99.2 audit).
+// Per code, the off-page wording; it is sync.js describeSyncError's
+// `context: 'elsewhere'` sentence, and test-sync-token-and-errors.js proves
+// the two are the same text.
+const SYNC_ERRORS_OFF_PAGE = {
+  'sync-token-rejected': 'GitHub rejected the token saved for Sync. It has most likely expired or been deleted. ' +
+    'Nothing was lost: your changes are still on this computer. Create a new token on GitHub, ' +
+    'then open Sync and use Replace token.',
+};
+function syncToastErrorLine(o) {
+  if (o && o.code && Object.prototype.hasOwnProperty.call(SYNC_ERRORS_OFF_PAGE, o.code)) return SYNC_ERRORS_OFF_PAGE[o.code];
+  return (o && o.error) || 'Open Sync for details.';
+}
+
 let _syncRunActive = false;
 function onShellSyncRunChange() {
   const run = currentSyncRun();
@@ -2193,7 +2217,7 @@ function onShellSyncRunChange() {
       try {
         showToast(o.ok
           ? { key: 'sync-run', tone: 'success', title: 'Sync finished', lines: [o.message || 'Sync complete.'] }
-          : { key: 'sync-run', tone: 'attention', title: 'Sync did not complete', lines: [o.error || 'Open Sync for details.'] });
+          : { key: 'sync-run', tone: 'attention', title: 'Sync did not complete', lines: [syncToastErrorLine(o)] });
       } catch { /* no toast region — the Sync page still shows it */ }
     }
   }
@@ -2226,13 +2250,19 @@ export async function refreshSyncBadge() {
 // tooltip reports honestly — and not "we have not looked yet".
 export async function refreshSyncRemoteBadge() {
   let next = null;
+  let code = null;
   try {
     const res = await fetch('/api/sync/remote-status');
-    if (res.ok) next = syncBehindFromRemote(await res.json());
+    if (res.ok) {
+      const payload = await res.json();
+      next = syncBehindFromRemote(payload);
+      if (payload && typeof payload.remoteErrorCode === 'string') code = payload.remoteErrorCode;
+    }
   } catch {
     next = null;
   }
   _syncBehindCount = next;
+  _syncRemoteErrorCode = code;
   try { applySyncBadge(); } catch { /* rail missing/detached — nothing to show */ }
 }
 

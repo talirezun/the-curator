@@ -30,7 +30,15 @@
  *       every other byte of the config is unchanged, 0600, and a push works.
  *   §6  an ADOPTED git dir: the adopted repository's address is the one
  *       rewritten, `gitDir` is kept, the install's default dir is not created.
- *   §7  a config write that fails puts the git address back.
+ *   §4b (v3.99.2 audit) a github.com repository is checked through the GitHub
+ *       API (a local stub, __setGithubApiBaseForTest): the token must be able
+ *       to WRITE; every answer (401, 404, 403, rate limit, 500, read-only,
+ *       unreachable) refuses with its own code and changes nothing.
+ *   §7  a config write that fails puts the git address back; with no origin
+ *       before, the added one is removed; an undo that fails says so.
+ *   §1b (v3.99.2 audit) a 401/403 counts only where git or HTTP prints a
+ *       status; the detail scrub covers names with spaces and bare tokens;
+ *       the generic sentence claims nothing it cannot know.
  *   §8  the routes (in-process router): {error, detail, code}, the token
  *       never in any response, the job records detail and code, remote-status
  *       carries a code and no detail; the REAL server's cross-origin guard
@@ -272,8 +280,10 @@ for (const [label, text] of Object.entries(MEASURED)) {
     `push origin main\nerror: something odd happened at https://${OLD_TOKEN}@github.com/o/r.git and /Users/someone/x`;
   const d = describeSyncError(new Error(UNKNOWN));
   ok(d.code === 'sync-failed', 'an unrecognised failure: code sync-failed', d.code);
-  ok(/Sync couldn’t finish\. Nothing was lost/.test(d.error) && /technical detail below/.test(d.error),
-    'an unrecognised failure: a plain sentence, what was lost, what to do', d.error);
+  // v3.99.2 audit: the generic sentence no longer says "Nothing was lost": it
+  // is the answer after a pull had already applied changes, too.
+  ok(/^Sync couldn’t finish\./.test(d.error) && /technical detail below/.test(d.error) && !/Nothing was lost|nothing was/i.test(d.error),
+    'an unrecognised failure: a plain sentence and what to do, with no claim about what was lost', d.error);
   ok(!/git --git-dir|Command failed|--work-tree/.test(d.error) && leaks(d.error).length === 0,
     'the fallback message carries no git command, token or home folder', d.error);
   ok(d.detail && d.detail.includes('something odd happened'), 'the raw text survives as detail, for support');
@@ -282,6 +292,78 @@ for (const [label, text] of Object.entries(MEASURED)) {
   ok(sync.remoteErrorMessage(new Error(UNKNOWN)) === 'Could not reach GitHub to check for incoming changes.',
     'the background check keeps its own sentence for an unrecognised failure');
   ok(sync.remoteErrorCode(new Error(INCIDENT)) === 'sync-token-rejected', 'the background check reports the token code');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§1b  A status number counts only where git prints one; the detail scrub');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const FP = {
+    'sideband object count 401': 'Command failed: git --git-dir="/x/.knowledge-git" --work-tree="/x/domains" pull --no-rebase -X theirs origin main\n' +
+      'remote: Enumerating objects: 401, done.\nremote: Total 401 (delta 12), reused 0\nfatal: refusing to merge unrelated histories',
+    'resolving deltas 403/403': 'Command failed: git push origin main\nremote: Resolving deltas: 100% (403/403), done.\n' +
+      'error: RPC failed; HTTP 500 curl 22 The requested URL returned error: 500',
+    'a repository named notes-401': "Command failed: git push origin main\nerror: failed to push some refs to 'https://***@github.com/u/notes-401.git'",
+    'a folder named "Course 401"': 'Command failed: git --git-dir="/Users/x/Course 401/.knowledge-git" --work-tree="/Users/x/Course 401/domains" ' +
+      'pull --no-rebase -X theirs origin main\nerror: unable to write file x: No space left',
+    'a folder named "HTTP-403 notes"': 'Command failed: git --git-dir="/srv/HTTP-403 notes/.knowledge-git" status\nfatal: bad object HEAD',
+  };
+  for (const [label, text] of Object.entries(FP)) {
+    const d = describeSyncError(new Error(text));
+    ok(d.code !== 'sync-token-rejected' && d.code !== 'sync-token-no-access', `${label}: not a token failure`, d.code);
+  }
+  const TP = {
+    'curl 401': ["fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 401", 'sync-token-rejected'],
+    'HTTP 401': ['error: RPC failed; HTTP 401 curl 22', 'sync-token-rejected'],
+    'HTTP/2 401': ['< HTTP/2 401', 'sync-token-rejected'],
+    '401 Unauthorized': ['fatal: remote said 401 Unauthorized', 'sync-token-rejected'],
+    'curl 403': ["fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403", 'sync-token-no-access'],
+    '403 Forbidden': ['error: 403 Forbidden while accessing https://github.com/o/r.git', 'sync-token-no-access'],
+    'push denied': ['remote: Permission to u/r.git denied to alice.', 'sync-token-no-access'],
+  };
+  for (const [label, [text, code]] of Object.entries(TP)) {
+    ok(describeSyncError(new Error(text)).code === code, `CONTROL ${label}: still ${code}`, describeSyncError(new Error(text)).code);
+  }
+
+  const hex40 = '0123456789abcdef'.repeat(2) + '01234567';
+  const ghp = P + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  const SCRUB = {
+    'no scheme': [`fatal: could not read Password for '${hex40}@github.com': terminal prompts disabled`, [hex40]],
+    'bare ghp_': [`remote: token ${ghp} is bad`, [ghp]],
+    'Bearer': ['Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789ABCD', ['abcdefghijklmnopqrstuvwxyz0123456789ABCD']],
+    'Basic': ['> Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2hwX0ExYjJDM2Q0RTVmNkc3aDhJOWow', ['eC1hY2Nlc3MtdG9rZW46Z2hwX0ExYjJDM2Q0RTVmNkc3aDhJOWow']],
+    '%40': [`https://${hex40}%40github.com/u/r`, [hex40]],
+    'ssh://': [`ssh://${hex40}@github.com/u/r`, [hex40]],
+    'mac name with a space': ['git --git-dir="/Users/alice smith/Library/My Brain/.knowledge-git" pull', ['alice', 'smith']],
+    'linux name with a space': ["fatal: cannot open '/home/bob jones/brain/.git/FETCH_HEAD'", ['bob', 'jones']],
+    'windows name with a space': ["fatal: cannot open 'C:\\Users\\Alice Smith\\brain\\x'", ['Alice', 'Smith']],
+    'windows forward slashes': ["fatal: cannot open 'C:/Users/Alice Smith/brain/x'", ['Alice', 'Smith']],
+    'another disk': ["fatal: '/Volumes/Alice Backup/brain/x' gone", ['Alice', 'Backup']],
+  };
+  for (const [label, [text, secrets]] of Object.entries(SCRUB)) {
+    const out = sync.sanitizeErrorDetail(text);
+    const left = secrets.filter((x) => out.includes(x));
+    ok(left.length === 0 && out.length > 0, `detail scrub, ${label}: nothing personal or secret is left`, { out, left });
+  }
+  ok(sync.sanitizeErrorDetail('git --git-dir="/Users/x/the-curator/.knowledge-git"').includes('~/the-curator/.knowledge-git'),
+    'CONTROL: the part of a path below the home folder stays readable for support');
+  const long = 'x'.repeat(1990) + ` https://${hex40}@github.com/u/r and /Users/alice smith/brain/y`;
+  const capped = sync.sanitizeErrorDetail(long);
+  ok(!capped.includes(hex40.slice(0, 12)) && !capped.includes('alice') && capped.length <= 2001, 'the 2,000 cap comes AFTER the scrub: no half-token at the cut', capped.slice(1980));
+
+  // One failure, one answer: an fs failure sync.js does not know is named by
+  // the app-wide translator, and the generic git-other is not taken.
+  const fsErr = Object.assign(new Error("EACCES: permission denied, open '/Users/x/brain/domains/.gitignore.tmp'"),
+    { code: 'EACCES', syscall: 'open', path: '/Users/x/brain/domains/.gitignore.tmp' });
+  const fd = describeSyncError(fsErr);
+  ok(fd.code === 'files-not-allowed' && !/Command failed|EACCES/.test(fd.error), 'an fs refusal: files-not-allowed, in words', fd);
+  ok(describeSyncError(new Error('Command failed: git frobnicate')).code === 'sync-failed', 'an unknown git failure stays sync-failed (git-other is not taken)');
+  ok(sync.remoteErrorCode(fsErr) === null, 'the background poll does not take the upgrade (its own fixed sentence)');
+
+  // Off the Sync page the token sentence names where Replace token is.
+  const el = describeSyncError(new Error(INCIDENT), { context: 'elsewhere' });
+  ok(el.code === 'sync-token-rejected' && /open Sync and use Replace token/.test(el.error) && !/on this page/.test(el.error),
+    'context elsewhere: "open Sync and use Replace token", never "on this page"', el.error);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -347,6 +429,111 @@ await refusedCase('a token without access to this repository', NOACCESS_TOKEN, '
       const ref = await refusedCase(label, NEW_TOKEN, code, gd, cf);
       if (code === 'sync-token-check-failed') ok(ref && typeof ref.detail === 'string' && ref.detail.length > 0, `${label}: the git text is kept as detail`, ref);
     } finally { sync.__setSyncTestOverrides({}); }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§4b  A github.com repository: the GitHub API decides, and the token must WRITE');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // The audit's repro, measured: `git ls-remote https://<made-up>@github.com/
+  // octocat/Hello-World.git` exits 0, because GitHub never checks a credential
+  // for a public repository. A stub of api.github.com answers here instead.
+  const api = { answers: new Map(), seen: [] };
+  const apiServer = http.createServer((req, res) => {
+    const auth = req.headers.authorization || '';
+    api.seen.push({ url: req.url, auth, accept: req.headers.accept || '' });
+    const tok = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const a = api.answers.get(tok) || { status: 401, body: { message: 'Bad credentials' } };
+    res.writeHead(a.status, { 'Content-Type': 'application/json', ...(a.headers || {}) });
+    res.end(JSON.stringify(a.body || {}));
+  });
+  await new Promise((r) => apiServer.listen(0, '127.0.0.1', r));
+  const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
+  sync.__setGithubApiBaseForTest(apiBase);
+  const T = (tag) => P + tag + 'E'.repeat(36 - tag.length);
+  const WRITER = T('writer'), READER = T('reader'), NOPERM = T('noperm'), HIDDEN = T('hidden'), SSO = T('sso'),
+    LIMITED = T('limited'), TOOMANY = T('toomany'), BROKEN = T('broken'), MADEUP = T('madeup');
+  api.answers.set(WRITER, { status: 200, body: { full_name: 'owner/wiki', permissions: { admin: false, push: true, pull: true } } });
+  api.answers.set(READER, { status: 200, body: { full_name: 'owner/wiki', permissions: { admin: false, push: false, pull: true } } });
+  api.answers.set(NOPERM, { status: 200, body: { full_name: 'owner/wiki' } });
+  api.answers.set(HIDDEN, { status: 404, body: { message: 'Not Found' } });
+  api.answers.set(SSO, { status: 403, body: { message: 'Resource protected by organization SAML enforcement.' } });
+  api.answers.set(LIMITED, { status: 403, headers: { 'x-ratelimit-remaining': '0' }, body: { message: 'API rate limit exceeded' } });
+  api.answers.set(TOOMANY, { status: 429, body: { message: 'Too many requests' } });
+  api.answers.set(BROKEN, { status: 502, body: { message: 'Server Error' } });
+  const API_TOKENS = [WRITER, READER, NOPERM, HIDDEN, SSO, LIMITED, TOOMANY, BROKEN, MADEUP];
+  const apiLeaks = (t) => API_TOKENS.filter((x) => String(t).includes(x)).concat(leaks(t));
+
+  const rig = path.join(TMP, 'rig-github-com');
+  const gd = path.join(rig, 'git'); const cf = path.join(rig, 'sync.json');
+  fs.mkdirSync(rig, { recursive: true });
+  sh(`git init -q --bare "${gd}"`);
+  sh(`git --git-dir="${gd}" remote add origin "https://${OLD_TOKEN}@github.com/owner/wiki.git"`);
+  fs.writeFileSync(cf, JSON.stringify({ repoUrl: 'https://github.com/owner/wiki', token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+  sync.__setSyncTestOverrides({ gitDir: gd, configFile: cf });
+  try {
+    for (const [label, tok, code] of [
+      ['a made-up token (the public-repository repro)', MADEUP, 'sync-new-token-rejected'],
+      ['a token that can only READ', READER, 'sync-new-token-read-only'],
+      ['an answer with no permissions at all', NOPERM, 'sync-new-token-read-only'],
+      ['a private repository the token cannot see (404)', HIDDEN, 'sync-new-token-no-access'],
+      ['an organisation policy (403)', SSO, 'sync-new-token-no-access'],
+      ['a rate limit (403, remaining 0)', LIMITED, 'sync-token-check-rate-limited'],
+      ['a rate limit (429)', TOOMANY, 'sync-token-check-rate-limited'],
+      ['GitHub failing (502)', BROKEN, 'sync-token-check-failed'],
+    ]) {
+      const before = snapshot(gd, cf);
+      const n = api.seen.length;
+      let err = null;
+      try { await replaceToken(tok); } catch (e) { err = e; }
+      const ref = sync.syncRefusalOf(err);
+      ok(ref && ref.code === code, `${label}: ${code}`, ref || (err && err.message));
+      ok(sameSnap(before, snapshot(gd, cf)), `${label}: both places sha256-identical`);
+      ok(api.seen.length === n + 1 && api.seen[n].url === '/repos/owner/wiki' && api.seen[n].auth === `Bearer ${tok}`,
+        `${label}: asked the API once, for /repos/owner/wiki, with the token as a Bearer header`, api.seen.slice(n));
+      const said = JSON.stringify(ref || {}) + (err ? err.message : '');
+      ok(apiLeaks(said).length === 0, `${label}: no token in what is said`, apiLeaks(said));
+      ok(ref && /Nothing was changed|nothing was changed|still has the token/.test(ref.message), `${label}: says nothing was changed`, ref && ref.message);
+      ok(ref && typeof ref.detail === 'string' && /HTTP \d{3}/.test(ref.detail), `${label}: the API status is the detail, for support`, ref && ref.detail);
+    }
+    {
+      const ro = sync.syncRefusalOf(await replaceToken(READER).catch((e) => e));
+      ok(/can only read this repository/.test(ro.message) && /Contents: Read and write/.test(ro.message), 'read-only: its own sentence names the permission to give', ro.message);
+    }
+    // Unreachable: the API port closed.
+    {
+      const deadPort = await freePort();
+      sync.__setGithubApiBaseForTest(`http://127.0.0.1:${deadPort}`);
+      const before = snapshot(gd, cf);
+      let err = null;
+      try { await replaceToken(WRITER); } catch (e) { err = e; }
+      const ref = sync.syncRefusalOf(err);
+      ok(ref && ref.code === 'sync-token-check-offline', 'GitHub API unreachable: sync-token-check-offline', ref || (err && err.message));
+      ok(sameSnap(before, snapshot(gd, cf)), 'unreachable: both places sha256-identical');
+      ok(apiLeaks(JSON.stringify(ref || {})).length === 0, 'unreachable: no token in what is said');
+      sync.__setGithubApiBaseForTest(apiBase);
+    }
+    // Other spellings of a github.com address take the same path.
+    for (const repoUrl of ['git@github.com:owner/wiki.git', 'github.com/owner/wiki', 'https://www.github.com/owner/wiki.git']) {
+      fs.writeFileSync(cf, JSON.stringify({ repoUrl, token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+      const n = api.seen.length;
+      const ref = sync.syncRefusalOf(await replaceToken(MADEUP).catch((e) => e));
+      ok(ref && ref.code === 'sync-new-token-rejected' && api.seen.length === n + 1 && api.seen[n].url === '/repos/owner/wiki',
+        `"${repoUrl}": checked through the API`, { ref, seen: api.seen.slice(n) });
+    }
+    fs.writeFileSync(cf, JSON.stringify({ repoUrl: 'https://github.com/owner/wiki', token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+    // The writer succeeds: both places, agreeing.
+    const beforeText = fs.readFileSync(cf, 'utf8');
+    const res = await replaceToken(WRITER);
+    ok(res && res.replaced === true, 'a token that can write: replaced', res);
+    ok(fs.readFileSync(cf, 'utf8') === beforeText.split(OLD_TOKEN).join(WRITER), 'github.com: only the token changed in the config');
+    ok(remoteUrlOf(gd) === `https://${WRITER}@github.com/owner/wiki.git`, 'github.com: the origin address carries the new token, the two places agree', remoteUrlOf(gd));
+    ok(api.seen.every((x) => /application\/vnd\.github\+json/.test(x.accept) && !x.url.includes(P)), 'every API request asks for GitHub JSON and has no token in its URL');
+  } finally {
+    sync.__setSyncTestOverrides({});
+    sync.__setGithubApiBaseForTest(null);
+    await new Promise((r) => apiServer.close(r));
   }
 }
 
@@ -424,6 +611,48 @@ if (process.getuid && process.getuid() === 0) {
   ok(leaks(JSON.stringify(ref || {})).length === 0, 'no token or home folder in the refusal');
 }
 
+if (!(process.getuid && process.getuid() === 0)) {
+  // §7b: no origin before. The added one must go again.
+  const rig = path.join(TMP, 'rollback-no-origin');
+  const gd = path.join(rig, 'git'); const cfDir = path.join(rig, 'cfg'); const cf = path.join(cfDir, 'sync.json');
+  fs.mkdirSync(cfDir, { recursive: true });
+  sh(`git init -q --bare "${gd}"`);
+  fs.writeFileSync(cf, JSON.stringify({ repoUrl: REPO_URL, token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+  ok(remoteUrlOf(gd) === null, 'CONTROL: this rig has no origin');
+  sync.__setSyncTestOverrides({ gitDir: gd, configFile: cf });
+  fs.chmodSync(cfDir, 0o500);
+  let err = null;
+  try { await replaceToken(NEW_TOKEN); } catch (e) { err = e; }
+  fs.chmodSync(cfDir, 0o700);
+  sync.__setSyncTestOverrides({});
+  const ref = sync.syncRefusalOf(err);
+  ok(ref && ref.code === 'sync-token-save-failed', 'no origin before: refused with sync-token-save-failed', ref || (err && err.message));
+  ok(remoteUrlOf(gd) === null, 'no origin before: the origin it added is removed again', remoteUrlOf(gd));
+  ok(!sh(`git --git-dir="${gd}" config --list`).includes(NEW_TOKEN), 'no origin before: the new token is nowhere in the git config');
+
+  // §7c: the write AND its undo fail. The message must not say nothing changed.
+  const rig2 = path.join(TMP, 'rollback-fails');
+  const gd2 = path.join(rig2, 'git'); const cfDir2 = path.join(rig2, 'cfg'); const cf2 = path.join(cfDir2, 'sync.json');
+  fs.mkdirSync(cfDir2, { recursive: true });
+  sh(`git init -q --bare "${gd2}"`);
+  sh(`git --git-dir="${gd2}" remote add origin "https://${OLD_TOKEN}@127.0.0.1:${GH_PORT}/owner/wiki.git"`);
+  fs.writeFileSync(cf2, JSON.stringify({ repoUrl: REPO_URL, token: OLD_TOKEN }, null, 2), { mode: 0o600 });
+  sync.__setSyncTestOverrides({ gitDir: gd2, configFile: cf2 });
+  sync.__setReplaceTokenHookForTest(() => { fs.chmodSync(cfDir2, 0o500); fs.chmodSync(gd2, 0o500); });
+  let err2 = null;
+  try { await replaceToken(NEW_TOKEN); } catch (e) { err2 = e; }
+  sync.__setReplaceTokenHookForTest(null);
+  fs.chmodSync(cfDir2, 0o700); fs.chmodSync(gd2, 0o700);
+  sync.__setSyncTestOverrides({});
+  const ref2 = sync.syncRefusalOf(err2);
+  ok(ref2 && ref2.code === 'sync-token-save-partial', 'the undo failed too: sync-token-save-partial', ref2 || (err2 && err2.message));
+  ok(ref2 && !/nothing was changed/i.test(ref2.message) && /only one of the two places/.test(ref2.message) && /Replace token again/.test(ref2.message),
+    'its sentence does not claim nothing changed, says the two places may disagree, and what to do', ref2 && ref2.message);
+  ok(remoteUrlOf(gd2).includes(NEW_TOKEN) && JSON.parse(fs.readFileSync(cf2, 'utf8')).token === OLD_TOKEN,
+    'CONTROL: the rig really is in the disagreeing state the sentence describes');
+  ok(ref2 && /Undo failed/.test(ref2.detail || '') && leaks(JSON.stringify(ref2)).length === 0, 'the detail names the failed undo, with no token', ref2 && ref2.detail);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  The routes');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -468,6 +697,22 @@ section('§8  The routes');
   const rs = await (await fetch(base + '/remote-status')).json();
   ok(rs.remoteChecked === false && rs.remoteErrorCode === 'sync-token-rejected' && !('detail' in rs), 'remote-status: the code, and no detail on the background poll', rs);
   ok(leaks(JSON.stringify(rs)).length === 0, 'remote-status carries no token');
+
+  // One failure, one code, on the route and on the job (v3.99.2 audit). The
+  // domains folder made read-only with its .gitignore gone: push's first
+  // step (writing .gitignore) fails with an fs EACCES.
+  if (!(process.getuid && process.getuid() === 0)) {
+    const gi = path.join(TMP_DOMAINS, '.gitignore');
+    const giSaved = fs.existsSync(gi) ? fs.readFileSync(gi) : null;
+    if (giSaved) fs.rmSync(gi);
+    fs.chmodSync(TMP_DOMAINS, 0o500);
+    let fsPush;
+    try { fsPush = await post('/push'); } finally { fs.chmodSync(TMP_DOMAINS, 0o700); if (giSaved) fs.writeFileSync(gi, giSaved); }
+    const job2 = await (await fetch(base + '/job')).json();
+    ok(fsPush.status === 500 && fsPush.json.code === 'files-not-allowed', 'an fs refusal on push: the route answers files-not-allowed', fsPush.json);
+    ok(job2.last && job2.last.code === fsPush.json.code && job2.last.error === fsPush.json.error,
+      'the job record has the SAME code and sentence as the route', { route: fsPush.json, job: job2.last });
+  }
 }
 {
   // The REAL server: the cross-origin guard covers POST /api/sync/token.
@@ -560,6 +805,22 @@ section('§9  The view and the runner');
   ok(sst.status && sst.status.configured === false && typeof sst.statusError === 'string', 'loadStatus: CONTROL a failed read is an error state', sst);
   ok(!/Unexpected token|DOCTYPE|JSON/.test(sst.statusError), 'loadStatus: an HTML reply is a sentence, never the parser\'s words', sst.statusError);
   ok(sst.statusErrorCode === 'server-outdated', 'loadStatus: …with its catalogue code kept for the support line', sst.statusErrorCode);
+  // The toast off the Sync page: its token sentence is sync.js's 'elsewhere'
+  // one, word for word, and never "on this page".
+  const offPage = /const SYNC_ERRORS_OFF_PAGE = \{[\s\S]*?\n\};/.exec(appSrc);
+  ok(!!offPage, 'CONTROL: app.js holds the off-page sentences');
+  const toast = new Function(offPage[0] + '\n' + extractFunction(appSrc, 'syncToastErrorLine', 'app.js') + '\nreturn syncToastErrorLine;')();
+  const elsewhere = describeSyncError(new Error(INCIDENT), { context: 'elsewhere' }).error;
+  const onPage = describeSyncError(new Error(INCIDENT)).error;
+  ok(toast({ ok: false, code: 'sync-token-rejected', error: onPage }) === elsewhere, 'the toast for a refused token says the elsewhere sentence', toast({ code: 'sync-token-rejected', error: onPage }));
+  ok(!/on this page/.test(toast({ code: 'sync-token-rejected', error: onPage })), 'the toast never says "on this page"');
+  ok(toast({ code: 'sync-offline', error: 'Cannot reach GitHub.' }) === 'Cannot reach GitHub.' && toast({}) === 'Open Sync for details.', 'CONTROL: other codes keep the route’s sentence');
+  // The rail's tooltip reads remote-status's remoteErrorCode.
+  const VIEW_META = { sync: { title: 'Sync' } };
+  const badgeTitle = new Function('VIEW_META', extractFunction(appSrc, 'syncBadgeTitle', 'app.js') + '\nreturn syncBadgeTitle;')(VIEW_META);
+  ok(/open Sync and use Replace token/.test(badgeTitle(0, null, 'sync-token-rejected')) && !/"/.test(badgeTitle(0, null, 'sync-token-rejected')), 'the rail tooltip: a refused token says to open Sync and use Replace token', badgeTitle(0, null, 'sync-token-rejected'));
+  ok(badgeTitle(0, null, null) === 'Sync — could not check GitHub for incoming changes' && badgeTitle(0, null) === badgeTitle(0, null, 'sync-offline'), 'CONTROL: any other failed check keeps the old tooltip');
+
   const panelSt = box.freshState();
   panelSt.tokenForm = { ...panelSt.tokenForm, open: true, error: 'GitHub rejected the new token.', detail: 'remote: denied', code: 'sync-new-token-rejected' };
   box.setState(panelSt);

@@ -206,7 +206,7 @@ export const SYNC_CODES = Object.freeze([
   'sync-merge-conflict', 'sync-busy-retry', 'sync-held-back-collision', 'sync-nested-repo', 'sync-git-missing',
   'sync-failed', 'sync-token-missing', 'sync-token-invalid', 'sync-new-token-rejected', 'sync-new-token-no-access',
   'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
-  'sync-not-configured',
+  'sync-not-configured', 'sync-new-token-read-only', 'sync-token-check-rate-limited', 'sync-token-save-partial',
 ]);
 export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES])]);
 const CATALOGUE_SET = new Set(CATALOGUE_CODES);

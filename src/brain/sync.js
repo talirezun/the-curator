@@ -10,6 +10,9 @@ import { recordKind, mergeRecordFile } from './sync-records.js';
 import { clearStaleLock } from './write-registry.js';
 import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
+import { scrubSecrets } from './logger.js';
+import { scrubPaths } from './scrub-paths.js';
+import { toUserError } from './user-errors.js';
 import {
   CREDENTIAL_GITIGNORE_RULES, isCredentialPath, scanWorkTree, anchoredIgnoreLine,
   writeExcludeBlock, classifyLeftOut,
@@ -278,8 +281,14 @@ function displayUrl(repoUrl) {
 
 const NOT_AN_ERROR = Symbol('not-an-error');
 
+// v3.99.2 audit: this sentence used to say "Nothing was lost: your files are
+// still on this computer." It is the answer to ANY unrecognised failure,
+// including one after a pull had already applied changes, or a connect after
+// a confirmed overwrite, so the claim was not something the code knew. It now
+// says only what is known. A branch that can prove nothing changed says so in
+// its own sentence (sync-busy-retry, sync-held-back-collision).
 const SYNC_FAILED_MESSAGE =
-  'Sync couldn\u2019t finish. Nothing was lost: your files are still on this computer. ' +
+  'Sync couldn\u2019t finish. ' +
   'Try again in a minute; if it keeps happening, copy the technical detail below and send it to support.';
 
 function errorText(err) {
@@ -290,20 +299,39 @@ function errorText(err) {
 const DETAIL_MAX_CHARS = 2000;
 
 /**
- * The technical text for support: sanitize()'s credential strip, then the
- * home folder as `~` (this computer's own, then any /Users/<name>,
- * /home/<name> or C:\Users\<name> left in it), capped in length.
+ * The technical text for support. The same chain as user-errors.js
+ * sanitizeDetail() (URL credentials, scrubSecrets, scrubPaths), with two
+ * differences kept on purpose: the home folder becomes `~` FIRST, so the
+ * part of a path below it stays readable for support ("~/the-curator/
+ * .knowledge-git") while scrubPaths reduces every other absolute path to its
+ * last segment; and the cap is 2,000 characters, applied AFTER scrubbing.
+ *
+ * v3.99.2 audit: the first version stopped a `/Users/<name>` match at a space
+ * ("/Users/alice smith/…" became "~ smith/…") and ran no scrubSecrets (a bare
+ * `ghp_…` or `Bearer …` passed). A name now runs to the next separator, and a
+ * credential is removed with or without a URL scheme around it.
  */
 export function sanitizeErrorDetail(str) {
-  let out = sanitize(str);
+  let out = sanitize(String(str == null ? '' : str))
+    // any scheme (ssh://, git+https://), and a token with no scheme at all
+    .replace(/\b([a-z][a-z0-9+.-]*):\/\/[^\s/@'"`]+@/gi, '$1://***@')
+    .replace(/(^|[^A-Za-z0-9_.%+-])[A-Za-z0-9_-]{20,}(@|%40)/g, '$1***$2')
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{8,}/g, 'Basic [redacted]');
+  out = scrubSecrets(out);
   let home = '';
   try { home = homedir(); } catch { home = ''; }
   if (home && home.length > 1) out = out.split(home).join('~');
   out = out
-    .replace(/\/Users\/[^/\s"'`:]+/g, '~')
-    .replace(/\/home\/[^/\s"'`:]+/g, '~')
-    .replace(/[A-Za-z]:\\Users\\[^\\\s"'`:]+/g, '~');
-  if (out.length > DETAIL_MAX_CHARS) out = out.slice(0, DETAIL_MAX_CHARS) + '\u2026';
+    .replace(/[A-Za-z]:[\\/]Users[\\/][^\\/\n"'`:]{1,64}(?=[\\/])/g, '~')
+    .replace(/[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`:]+/g, '~')
+    .replace(/\/(?:Users|home)\/[^/\n"'`:]{1,64}(?=\/)/g, '~')
+    .replace(/\/(?:Users|home)\/[^/\s"'`:]+/g, '~');
+  // scrubPaths would read "~/the-curator/…" as an absolute path after the
+  // tilde and cut it to its last segment; below the home folder nothing names
+  // the person, so it is held aside (a sentinel with no slash) and put back.
+  out = out.replace(/[\u0001\u0002]/g, '').replace(/~\//g, '\u0001').replace(/~\\/g, '\u0002');
+  out = scrubPaths(out).replace(/\u0001/g, '~/').replace(/\u0002/g, '~\\');
+  if (out.length > DETAIL_MAX_CHARS) out = out.slice(0, DETAIL_MAX_CHARS) + '…';
   return out.trim();
 }
 
@@ -313,13 +341,33 @@ const CONNECT_TOKEN_REJECTED_MESSAGE =
   'GitHub rejected this token. Check that you copied all of it and that it has not expired, ' +
   'then press Connect again. Nothing was changed on this computer.';
 
+// Off the Sync page (the rail's notice after a run that settled while the
+// person was elsewhere) "on this page" would name a control that is not there.
+// app.js holds this sentence for its toast; test-sync-token-and-errors.js
+// proves the two are the same text.
+const TOKEN_REJECTED_ELSEWHERE_MESSAGE =
+  'GitHub rejected the token saved for Sync. It has most likely expired or been deleted. ' +
+  'Nothing was lost: your changes are still on this computer. Create a new token on GitHub, ' +
+  'then open Sync and use Replace token.';
+
 const DISCONNECT_FAILED_MESSAGE =
   'The Curator couldn\u2019t disconnect this repository. Your wiki files are untouched. Try again; ' +
   'if it keeps happening, copy the technical detail below and send it to support.';
 
 /**
  * `{error, detail?, code?}` for any failure this module raises. Never null.
- * `opts.context: 'connect'` words the token case for the connect form.
+ * `opts.context`: 'connect' words the token case for the connect form,
+ * 'disconnect' the generic case for Disconnect, 'elsewhere' the token case
+ * for a notice shown off the Sync page.
+ *
+ * ONE ANSWER FOR ONE FAILURE (v3.99.2 audit). A failure sync.js does not
+ * recognise is offered to the app-wide translator (user-errors.js toUserError,
+ * area 'sync'): a full disk or a folder this computer will not let The Curator
+ * write is named as such. Its generic `git-other` is NOT taken (this module's
+ * own sentence is the sync one). The routes' answers and the job record both
+ * come from here, so the page that started a run and the page that only
+ * follows it show the same code. `opts.background: true` (the remote-status
+ * poll) skips that step: the poll keeps its own fixed sentence.
  */
 export function describeSyncError(err, opts = {}) {
   // A refusal is already a written sentence with its own code.
@@ -330,10 +378,18 @@ export function describeSyncError(err, opts = {}) {
   }
   const raw = errorText(err);
   const mapped = classifySyncError(err);
-  const out = mapped && mapped !== NOT_AN_ERROR
+  let out = mapped && mapped !== NOT_AN_ERROR
     ? { error: mapped.error, code: mapped.code }
     : { error: SYNC_FAILED_MESSAGE, code: 'sync-failed' };
+  if (out.code === 'sync-failed' && !opts.background && err) {
+    let u = null;
+    try { u = toUserError(err, { area: 'sync' }); } catch { u = null; }
+    if (u && u.code && u.code !== 'git-other' && typeof u.error === 'string' && u.error) {
+      out = { error: u.error, code: u.code };
+    }
+  }
   if (opts.context === 'connect' && out.code === 'sync-token-rejected') out.error = CONNECT_TOKEN_REJECTED_MESSAGE;
+  if (opts.context === 'elsewhere' && out.code === 'sync-token-rejected') out.error = TOKEN_REJECTED_ELSEWHERE_MESSAGE;
   if (opts.context === 'disconnect' && out.code === 'sync-failed') out.error = DISCONNECT_FAILED_MESSAGE;
   const detail = raw ? sanitizeErrorDetail(raw) : '';
   if (detail) out.detail = detail;
@@ -345,6 +401,14 @@ function friendlyError(err) {
   if (err && err.curatorSyncCode) return err.message;
   if (classifySyncError(err) === NOT_AN_ERROR) return null;
   return describeSyncError(err).error;
+}
+
+// The HTTP status an auth refusal was printed with, or null. Lower-case input.
+const AUTH_STATUS_RE = /(?:returned error: |\bhttp(?:\/[0-9.]+)? )(401|403)\b|\b(401) unauthorized\b|\b(403) forbidden\b/;
+function authStatus(msg) {
+  const m = AUTH_STATUS_RE.exec(msg);
+  if (!m) return null;
+  return Number(m[1] || m[2] || m[3]);
 }
 
 function classifySyncError(err) {
@@ -436,11 +500,22 @@ function classifySyncError(err) {
   // and "could not read Username" when the address carries no token at all.
   // A credential helper that answers instead gives "Authentication failed" or
   // GitHub's "Invalid username or token". Every phrase is long and specific,
-  // so none can shadow the branches above. The bare 401 stays a WORD match
-  // (\b), never a substring, for the v3.0.16 SHA reason above.
+  // so none can shadow the branches above.
+  //
+  // A STATUS NUMBER IS READ ONLY WHERE GIT OR HTTP PRINTS ONE (v3.99.2 audit).
+  // The v3.0.16 rule above made the bare 401/403 a word match (\b), but a word
+  // match still fires on git's own counts and on names: "remote: Enumerating
+  // objects: 401, done.", "Resolving deltas: 100% (403/403)", a repository
+  // called notes-401, a folder called "Course 401" in the --git-dir path. Each
+  // of those turned an unrelated failure into "replace your token", and that
+  // sentence opens the Replace token panel. Measured with git 2.48.1: curl's
+  // refusal is "The requested URL returned error: 401" (or 403); HTTP/2 and
+  // proxies print "HTTP 401" / "401 Unauthorized" / "403 Forbidden". Only
+  // those shapes count (AUTH_STATUS below), and the ordering note above still
+  // holds: every phrase is long enough that a SHA or a path cannot form it.
   if (msg.includes('could not read password') || msg.includes('could not read username') ||
       msg.includes('terminal prompts disabled') || msg.includes('authentication failed') ||
-      msg.includes('invalid username or token') || /\b401\b/.test(msg)) {
+      msg.includes('invalid username or token') || authStatus(msg) === 401) {
     return {
       error: 'GitHub rejected the token saved for Sync. It has most likely expired or been deleted. ' +
              'Nothing was lost: your changes are still on this computer. Create a new token on GitHub ' +
@@ -450,7 +525,7 @@ function classifySyncError(err) {
   }
   // A 403 is a token GitHub knows but that may not write here: the scope
   // advice is the useful part, so the sentence is the one this branch always had.
-  if (/\b403\b/.test(msg)) {
+  if (authStatus(msg) === 403 || msg.includes('permission to ') && msg.includes(' denied to ')) {
     return {
       error: 'GitHub rejected the token. For a fine-grained token, make sure it has ' +
              '"Contents: Read and write" on the repo; for a classic token, make sure ' +
@@ -1809,14 +1884,14 @@ function remoteCacheTtl(payload, maxAgeMs) {
 // Only a WRITTEN sentence is returned here, never git's text, and never the
 // generic "Sync couldn't finish" (this is a background check, not a sync).
 export function remoteErrorMessage(err) {
-  const d = describeSyncError(err);
+  const d = describeSyncError(err, { background: true });
   if (d.code && d.code !== 'sync-failed' && !(err && err.curatorSyncCode)) return d.error;
   return 'Could not reach GitHub to check for incoming changes.';
 }
 
-/** The code behind remoteErrorMessage(): lets the rail and the Sync page offer Replace token. */
+/** The code behind remoteErrorMessage(): the rail's Sync tooltip (app.js syncBadgeTitle) names Replace token for a token code. */
 export function remoteErrorCode(err) {
-  const d = describeSyncError(err);
+  const d = describeSyncError(err, { background: true });
   return d.code && d.code !== 'sync-failed' && !(err && err.curatorSyncCode) ? d.code : null;
 }
 
@@ -2961,12 +3036,22 @@ export async function disconnect() {
 //     (`https://<token>@github.com/…`), which is what push and pull use;
 //   · `.sync-config.json`'s `token`, which the GitHub read client and the next
 //     connect read.
-// THE NEW TOKEN IS CHECKED FIRST. `git ls-remote` against the configured
-// repository with the new address (GIT_TERMINAL_PROMPT=0, a timeout): only
-// when GitHub answers is anything written. A refusal at any point before the
-// writes leaves both places byte-identical. The check proves the token can READ
-// the repository; one that cannot write is caught by the next push, whose 403
-// message names the missing permission.
+// THE NEW TOKEN IS CHECKED FIRST, and only when the check passes is anything
+// written. A refusal at any point before the writes leaves both places
+// byte-identical.
+//   · github.com (v3.99.2 audit): an authenticated GitHub API call,
+//     GET /repos/{owner}/{repo} with `Authorization: Bearer <token>`, and the
+//     answer must say `permissions.push === true`. `git ls-remote` is NOT
+//     enough there: GitHub never checks the credential for a PUBLIC
+//     repository (measured: a made-up token against octocat/Hello-World exits
+//     0), so a mistyped token replaced a working one and the page said
+//     "Token replaced". The API also tells read from write, so a token that
+//     can only read is refused with its own sentence instead of being caught
+//     by the next push.
+//   · any other host, and file:// (the offline suites' fake GitHub): `git
+//     ls-remote` with the new address (GIT_TERMINAL_PROMPT=0, a timeout). That
+//     proves READ only; a token that cannot write is caught by the next push,
+//     whose 403 message names the missing permission.
 //
 // AN ADOPTED GIT DIR (setup()'s adoption) is the other install's repository:
 // its origin address is rewritten exactly as setup()'s adopt branch rewrites
@@ -2982,6 +3067,12 @@ export async function disconnect() {
 // reach a git argument.
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,255}$/;
 const TOKEN_CHECK_TIMEOUT_MS = 30000;
+
+// Test seam: runs between the git config write and the settings-file write,
+// so the suite can make BOTH the write and its undo fail. Never set in
+// production (only __setReplaceTokenHookForTest sets it).
+let _afterRemoteWriteForTest = null;
+export function __setReplaceTokenHookForTest(fn) { _afterRemoteWriteForTest = typeof fn === 'function' ? fn : null; }
 
 function scrubToken(text, token) {
   const s = String(text == null ? '' : text);
@@ -3015,11 +3106,97 @@ export const REPLACE_TOKEN_MESSAGES = Object.freeze({
   'sync-token-check-failed':
     'The new token couldn’t be checked, so nothing was changed. Try again in a minute; if it ' +
     'keeps happening, copy the technical detail below and send it to support.',
+  'sync-new-token-read-only':
+    'GitHub accepted this token, but it can only read this repository, so Sync couldn’t send ' +
+    'changes with it. Nothing was changed. Create a token with Contents: Read and write on this ' +
+    'repository (or, for a classic token, the repo scope), then try again.',
+  'sync-token-check-rate-limited':
+    'GitHub is limiting requests right now, so the new token couldn’t be checked. Nothing was ' +
+    'changed. Wait a few minutes, then try again.',
   'sync-token-save-failed':
     'The new token works, but The Curator couldn’t save it, so nothing was changed. ' +
     'Try again; if it keeps happening, copy the technical detail below and send it to support.',
+  // The one refusal that cannot say "nothing was changed": the address in the
+  // sync history folder was rewritten, the settings file could not be, and
+  // putting the old address back failed too.
+  'sync-token-save-partial':
+    'The new token works, but The Curator could save it in only one of the two places Sync keeps ' +
+    'it, and couldn’t undo that. Sync may now fail until both match. Use Replace token again with ' +
+    'the same new token; if that fails too, copy the technical detail below and send it to support.',
 });
 const RTM = REPLACE_TOKEN_MESSAGES;
+
+// ── The github.com check ──
+// The API base is fixed in production. The offline suite points it at a local
+// stub through __setGithubApiBaseForTest(); nothing else can change it (no
+// environment variable, no config key), so a production check can only ever
+// go to api.github.com.
+const GITHUB_API_BASE = 'https://api.github.com';
+let _githubApiBaseForTest = null;
+export function __setGithubApiBaseForTest(base) { _githubApiBaseForTest = base || null; }
+
+/** {owner, repo} when `repoUrl` is a github.com repository, else null. */
+function githubRepoOf(repoUrl) {
+  let u = String(repoUrl || '').trim();
+  if (/^git@github\.com:/i.test(u)) u = 'https://github.com/' + u.slice('git@github.com:'.length);
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  let parsed;
+  try { parsed = new URL(u); } catch { return null; }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== 'github.com' && host !== 'www.github.com') return null;
+  const parts = parsed.pathname.replace(/\.git$/i, '').split('/').filter(Boolean);
+  if (parts.length !== 2) return null;
+  const ok = (x) => /^[A-Za-z0-9_.-]{1,100}$/.test(x) && x !== '.' && x !== '..';
+  if (!ok(parts[0]) || !ok(parts[1])) return null;
+  return { owner: parts[0], repo: parts[1] };
+}
+
+/**
+ * Ask GitHub what the token may do on the repository. Throws a refusal; returns
+ * nothing when the token can write. The token goes in one header and nowhere
+ * else: never the URL, never an error text, never a log.
+ */
+async function checkTokenWithGithubApi({ owner, repo }, token, repoLabel) {
+  const base = _githubApiBaseForTest || GITHUB_API_BASE;
+  const url = `${base}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'the-curator-sync',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(TOKEN_CHECK_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const cause = err && err.cause && err.cause.code ? ` (${err.cause.code})` : '';
+    const out = refusal('sync-token-check-offline', RTM['sync-token-check-offline']);
+    out.curatorSyncDetail = scrubToken(`GitHub API request failed: ${err && err.name === 'TimeoutError' ? 'timed out' : errorText(err)}${cause}`, token);
+    throw out;
+  }
+  let body = null;
+  try { body = await res.json(); } catch { body = null; }
+  const ghMessage = body && typeof body.message === 'string' ? body.message.slice(0, 200) : '';
+  const detail = scrubToken(`GitHub API answered HTTP ${res.status}${ghMessage ? `: ${ghMessage}` : ''}`, token);
+  const fail = (code, message) => { const out = refusal(code, message); out.curatorSyncDetail = detail; return out; };
+  if (res.status === 200) {
+    if (body && body.permissions && body.permissions.push === true) return;
+    throw fail('sync-new-token-read-only', RTM['sync-new-token-read-only']);
+  }
+  const rateLimited = res.status === 429 ||
+    (res.status === 403 && (res.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(ghMessage)));
+  if (rateLimited) throw fail('sync-token-check-rate-limited', RTM['sync-token-check-rate-limited']);
+  if (res.status === 401) throw fail('sync-new-token-rejected', RTM['sync-new-token-rejected']);
+  // 404 is what GitHub answers a token that cannot see a private repository;
+  // 403 a token an organisation's policy (SSO, fine-grained approval) blocks.
+  if (res.status === 404 || res.status === 403) {
+    throw fail('sync-new-token-no-access', RTM['sync-new-token-no-access'](repoLabel));
+  }
+  throw fail('sync-token-check-failed', RTM['sync-token-check-failed']);
+}
 
 function tokenCheckRefusal(err, token, repoLabel) {
   const scrubbed = new Error(scrubToken(errorText(err), token));
@@ -3061,10 +3238,15 @@ export async function replaceToken(newToken) {
   const gitDir = currentGitDir();
 
   // 1. Check, writing nothing. The only network call in this function.
-  try {
-    await gitArgv(['ls-remote', '--heads', remoteUrl], { gitDir, timeout: TOKEN_CHECK_TIMEOUT_MS });
-  } catch (err) {
-    throw tokenCheckRefusal(err, token, repoLabel);
+  const gh = githubRepoOf(config.repoUrl);
+  if (gh) {
+    await checkTokenWithGithubApi(gh, token, repoLabel);
+  } else {
+    try {
+      await gitArgv(['ls-remote', '--heads', remoteUrl], { gitDir, timeout: TOKEN_CHECK_TIMEOUT_MS });
+    } catch (err) {
+      throw tokenCheckRefusal(err, token, repoLabel);
+    }
   }
 
   // 2. The git config, remembering what was there so a failed config write
@@ -3083,12 +3265,21 @@ export async function replaceToken(newToken) {
   await chmod(path.join(gitDir, 'config'), 0o600).catch(() => {});
 
   // 3. The sync config file: every key it had, only `token` changed, atomic, 0600.
+  if (_afterRemoteWriteForTest) await _afterRemoteWriteForTest();
   try {
     await writeFileAtomic(configFile, JSON.stringify({ ...config, token }, null, 2), { mode: 0o600 });
   } catch (err) {
-    if (previousUrl) await gitArgv(['remote', 'set-url', 'origin', previousUrl], { gitDir }).catch(() => {});
-    const out = refusal('sync-token-save-failed', RTM['sync-token-save-failed']);
-    out.curatorSyncDetail = scrubToken(sanitizeErrorDetail(errorText(err)), token);
+    // Put the git config back the way it was: the old address, or no origin
+    // at all if there was none (v3.99.2 audit: an added origin used to stay).
+    // Only a rollback that worked may say "nothing was changed".
+    let rollbackErr = null;
+    try {
+      await gitArgv(previousUrl ? ['remote', 'set-url', 'origin', previousUrl] : ['remote', 'remove', 'origin'], { gitDir });
+    } catch (e) { rollbackErr = e; }
+    const code = rollbackErr ? 'sync-token-save-partial' : 'sync-token-save-failed';
+    const out = refusal(code, RTM[code]);
+    out.curatorSyncDetail = scrubToken(sanitizeErrorDetail(errorText(err) +
+      (rollbackErr ? `\nUndo failed: ${errorText(rollbackErr)}` : '')), token);
     throw out;
   }
   // The badge may be holding a "token rejected" answer for up to a minute.

@@ -10,7 +10,7 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 
 | Code | What it means | What to do |
 |---|---|---|
-| sync-token-rejected | GitHub refused the token Sync has saved. It has usually expired or been deleted. Your files stay on this computer. | Create a new token on GitHub, then use Replace token on the Sync page (it opens under this message). On the Connect form, check the token and press Connect again. |
+| sync-token-rejected | GitHub refused the token Sync has saved. It has usually expired or been deleted. Your files stay on this computer. | Create a new token on GitHub, then use Replace token on the Sync page (it opens under this message). On the Connect form, check the token and press Connect again. The Sync icon’s tooltip says so too when the background check finds it. |
 | sync-token-no-access | GitHub knows the token, but it is not allowed to write to this repository. | Give the token Contents: Read and write on the repository (fine-grained) or the repo scope (classic), then use Replace token, which opens under this message. |
 | sync-repo-not-found | GitHub has no repository at that address, or the token cannot see it. | Open the address in your browser to check it exists, and that the token has access to it. |
 | sync-offline | The Curator could not reach GitHub. | Check the internet connection. Some networks block git; try another one. |
@@ -20,7 +20,7 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | sync-held-back-collision | A file Sync does not send (one that looks like a secret) was changed here and on GitHub. Nothing was replaced. | See What Sync does not back up on the Sync page, move that file out of your knowledge folder, then sync again. |
 | sync-nested-repo | A folder inside your knowledge folder has its own git history, so Sync cannot back it up. | Sync again. The Curator leaves that folder out and names it on the Sync page. |
 | sync-git-missing | Git, which Sync uses, is not installed or not found. | On a Mac, run `xcode-select --install` in Terminal, then try again. |
-| sync-failed | Sync stopped for a reason The Curator does not recognise. Nothing was lost. | Try again in a minute. If it repeats, send the Technical detail line to support. |
+| sync-failed | Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished. | Try again in a minute. If it repeats, send the Technical detail line to support. |
 | git-other | A git step The Curator runs failed in a way it does not recognise. | Try again. If it fails the same way, send the Technical detail line to support. |
 
 ## What do the Replace token error codes mean?
@@ -32,10 +32,13 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | sync-token-invalid | What was pasted does not look like a GitHub token. Nothing was changed. | Copy the whole token from GitHub again (ghp_… or github_pat_…). |
 | sync-config-unreadable | The Curator could not read which repository Sync uses, so it could not check the token. Nothing was changed. | Disconnect this repository and connect it again with the new token. Your wiki files stay as they are. |
 | sync-new-token-rejected | GitHub refused the new token. Sync keeps the token it had. | Check that you copied all of it and that it has not expired, then try again. |
-| sync-new-token-no-access | The new token is valid but cannot open Sync’s repository. Nothing was changed. | Give the token that repository with Contents: Read and write (fine-grained) or the repo scope (classic). |
+| sync-new-token-no-access | The new token is valid but cannot open Sync’s repository (GitHub answers a private repository it cannot see as not found). Nothing was changed. | Give the token that repository with Contents: Read and write (fine-grained) or the repo scope (classic). |
+| sync-new-token-read-only | For a github.com repository, The Curator asks GitHub what the new token may do. This one can read the repository but not write to it, so Sync could not send changes. Nothing was changed. | Create a token with Contents: Read and write on that repository (fine-grained) or the repo scope (classic), then try again. |
+| sync-token-check-rate-limited | GitHub is limiting requests, so it did not answer the check of the new token. Nothing was changed. | Wait a few minutes, then try again. |
 | sync-token-check-offline | The Curator could not reach GitHub to check the new token. Nothing was changed. | Check the internet connection, then try again. |
 | sync-token-check-failed | The new token could not be checked, for another reason. Nothing was changed. | Try again in a minute. If it repeats, send the Technical detail line to support. |
-| sync-token-save-failed | GitHub accepted the new token, but The Curator could not save it. Sync keeps the token it had. | Try again. If it repeats, send the Technical detail line to support. |
+| sync-token-save-failed | GitHub accepted the new token, but The Curator could not save it, and put back what it had started to change. Sync keeps the token it had. | Try again. If it repeats, send the Technical detail line to support. |
+| sync-token-save-partial | The token is kept in two places (the sync history folder and Sync’s settings file). The new one was saved in the first, the second could not be written, and putting the first back failed too. Until both match, Sync may fail. | Use Replace token again with the same new token. If that fails too, send the Technical detail line to support. |
 
 ## What do the AI provider error codes mean?
 

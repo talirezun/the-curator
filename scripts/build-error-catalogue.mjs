@@ -103,6 +103,7 @@ export function sentencesFor(code) {
     const out = [{ label: '', text: syncSentence(code, SYNC_TRIGGERS[code]) }];
     if (code === 'sync-token-rejected') {
       out.push({ label: 'On the Connect form', text: syncSentence(code, SYNC_TRIGGERS[code], { context: 'connect' }) });
+      out.push({ label: 'In the notice shown on another page', text: syncSentence(code, SYNC_TRIGGERS[code], { context: 'elsewhere' }) });
     }
     if (code === 'sync-failed') {
       out.push({ label: 'When disconnecting', text: syncSentence(code, SYNC_TRIGGERS[code], { context: 'disconnect' }) });
@@ -117,7 +118,7 @@ export function sentencesFor(code) {
 // copy carries them on every answer it gives.
 export const SECTIONS = [
   ['sync', 'Sync', 'Messages on the Sync page and on its Connect form.'],
-  ['token', 'Sync: replacing the token', 'Messages in the Replace token panel on the Sync page. In each case Sync keeps the token it had.'],
+  ['token', 'Sync: replacing the token', 'Messages in the Replace token panel on the Sync page. In every case but one (sync-token-save-partial), Sync keeps the token it had.'],
   ['ai', 'AI providers and keys', 'Messages from ingest, chat, compile, Wiki health’s AI help and Verify AI connection, when the AI provider (Anthropic, Gemini or OpenRouter) refuses or fails.'],
   ['files', 'Files and folders', 'Messages when this computer will not let The Curator read or save a file in your knowledge folder.'],
   ['sharedbrain', 'Shared Brain', 'Messages when GitHub refuses or fails a Shared Brain request.'],
@@ -129,7 +130,7 @@ export const ENTRIES = {
   // ── Sync ──
   'sync-token-rejected': { section: 'sync',
     means: 'GitHub refused the token Sync has saved. It has usually expired or been deleted. Your files stay on this computer.',
-    todo: 'Create a new token on GitHub, then use Replace token on the Sync page (it opens under this message). On the Connect form, check the token and press Connect again.' },
+    todo: 'Create a new token on GitHub, then use Replace token on the Sync page (it opens under this message). On the Connect form, check the token and press Connect again. The Sync icon’s tooltip says so too when the background check finds it.' },
   'sync-token-no-access': { section: 'sync',
     means: 'GitHub knows the token, but it is not allowed to write to this repository.',
     todo: 'Give the token Contents: Read and write on the repository (fine-grained) or the repo scope (classic), then use Replace token, which opens under this message.' },
@@ -158,7 +159,7 @@ export const ENTRIES = {
     means: 'Git, which Sync uses, is not installed or not found.',
     todo: 'On a Mac, run `xcode-select --install` in Terminal, then try again.' },
   'sync-failed': { section: 'sync',
-    means: 'Sync stopped for a reason The Curator does not recognise. Nothing was lost.',
+    means: 'Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished.',
     todo: 'Try again in a minute. If it repeats, send the Technical detail line to support.' },
   'git-other': { section: 'sync',
     means: 'A git step The Curator runs failed in a way it does not recognise.',
@@ -179,8 +180,14 @@ export const ENTRIES = {
     means: 'GitHub refused the new token. Sync keeps the token it had.',
     todo: 'Check that you copied all of it and that it has not expired, then try again.' },
   'sync-new-token-no-access': { section: 'token',
-    means: 'The new token is valid but cannot open Sync’s repository. Nothing was changed.',
+    means: 'The new token is valid but cannot open Sync’s repository (GitHub answers a private repository it cannot see as not found). Nothing was changed.',
     todo: 'Give the token that repository with Contents: Read and write (fine-grained) or the repo scope (classic).' },
+  'sync-new-token-read-only': { section: 'token',
+    means: 'For a github.com repository, The Curator asks GitHub what the new token may do. This one can read the repository but not write to it, so Sync could not send changes. Nothing was changed.',
+    todo: 'Create a token with Contents: Read and write on that repository (fine-grained) or the repo scope (classic), then try again.' },
+  'sync-token-check-rate-limited': { section: 'token',
+    means: 'GitHub is limiting requests, so it did not answer the check of the new token. Nothing was changed.',
+    todo: 'Wait a few minutes, then try again.' },
   'sync-token-check-offline': { section: 'token',
     means: 'The Curator could not reach GitHub to check the new token. Nothing was changed.',
     todo: 'Check the internet connection, then try again.' },
@@ -188,8 +195,11 @@ export const ENTRIES = {
     means: 'The new token could not be checked, for another reason. Nothing was changed.',
     todo: 'Try again in a minute. If it repeats, send the Technical detail line to support.' },
   'sync-token-save-failed': { section: 'token',
-    means: 'GitHub accepted the new token, but The Curator could not save it. Sync keeps the token it had.',
+    means: 'GitHub accepted the new token, but The Curator could not save it, and put back what it had started to change. Sync keeps the token it had.',
     todo: 'Try again. If it repeats, send the Technical detail line to support.' },
+  'sync-token-save-partial': { section: 'token',
+    means: 'The token is kept in two places (the sync history folder and Sync’s settings file). The new one was saved in the first, the second could not be written, and putting the first back failed too. Until both match, Sync may fail.',
+    todo: 'Use Replace token again with the same new token. If that fails too, send the Technical detail line to support.' },
 
   // ── AI providers and keys ──
   'ai-key-rejected': { section: 'ai',

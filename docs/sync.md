@@ -361,7 +361,7 @@ Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Yo
 
 | Situation | What you see |
 |---|---|
-| The token expired, or you deleted or revoked it on GitHub | Sync stops with *"GitHub rejected the token saved for Sync…"*, and the **Replace the GitHub token** panel opens right under the message |
+| The token expired, or you deleted or revoked it on GitHub | Sync stops with *"GitHub rejected the token saved for Sync…"*, and the **Replace the GitHub token** panel opens right under the message. If the run finished while you were on another page, the notice says *"…then open Sync and use Replace token."*, and when the background check finds it, the Sync icon's tooltip says the same |
 | The token is valid but cannot write to the repository | Sync stops with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens under it |
 | You want to renew a token before it expires, or switch between a classic and a fine-grained token | Nothing is wrong yet: press the small **Replace token** button under the Sync buttons |
 
@@ -373,15 +373,15 @@ Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Yo
 
 **What Check and save does**
 
-- **It checks the new token with GitHub first.** The Curator asks GitHub for the repository Sync already uses, with the new token. Only when GitHub answers does it save anything. If the check fails for any reason, nothing is changed and Sync keeps the token it had.
-- **It saves the token in both places Sync keeps it**, together: the sync history's own settings (what Push and Pull use) and `.sync-config.json`. They never disagree: if the second write fails, the first is put back.
+- **It checks the new token with GitHub first.** For a repository on github.com, The Curator asks GitHub what the new token may do on the repository Sync already uses, and goes on only if the token can **read and write** it. (Asking git alone would not be enough: GitHub lets anyone read a public repository, so even a mistyped token would pass.) For a repository on another host, it asks git to list the repository with the new token, which proves the token can read it; a token that cannot write is then caught by the next push. If the check fails for any reason, nothing is changed and Sync keeps the token it had.
+- **It saves the token in both places Sync keeps it**, together: the sync history's own settings (what Push and Pull use) and `.sync-config.json`. If the second write fails, the first is put back, and the message says nothing was changed. In the rare case that putting it back fails too, the message says so instead (*"…could save it in only one of the two places…"*): use Replace token again with the same new token.
 - **It keeps your sync history.** Nothing is deleted, nothing is pulled or pushed. The next **Sync now** simply uses the new token.
 - It answers *"Token replaced. Sync uses the new token from now on."* The new token is never shown again, never logged, and never sent back to the page.
 - It does not run while a sync or another change to your wiki is running. Wait for that to finish, then press it again.
 
 **When it refuses**
 
-Every refusal says what to do, and none of them changes anything. The codes are in the [error catalogue](errors.md#sync-replacing-the-token).
+Every refusal says what to do, and all but the last one in the table change nothing. The codes are in the [error catalogue](errors.md#sync-replacing-the-token).
 
 | What you see starts with | What it means |
 |---|---|
@@ -389,10 +389,13 @@ Every refusal says what to do, and none of them changes anything. The codes are 
 | *"That doesn't look like a GitHub token."* | What was pasted is not shaped like a token (for example only part of it was copied) |
 | *"GitHub didn't accept the new token."* | GitHub refused it: wrong, incomplete or already expired |
 | *"GitHub accepted the token, but it cannot open the repository Sync uses…"* | The token is valid but has no access to this repository. Give it the repository with Contents: Read and write, or tick `repo` |
+| *"GitHub accepted this token, but it can only read this repository…"* | github.com only: the token can read the repository but not write to it, so Sync could not push with it. Create one with Contents: Read and write (or the `repo` scope) |
+| *"GitHub is limiting requests right now…"* | GitHub did not answer the check because of its request limit. Wait a few minutes and try again |
 | *"The Curator couldn't reach GitHub to check the new token…"* | No connection to GitHub. Check the internet and try again |
 | *"The new token couldn't be checked…"* | The check failed for another reason. The Technical detail line under it is for support |
 | *"The new token works, but The Curator couldn't save it…"* | GitHub accepted it, but writing it to this computer failed. Try again |
 | *"The Curator couldn't read which repository Sync uses…"* | Sync's own settings file is unreadable. This is the one case where you need **Disconnect this repository** and **Connect** again with the new token (your wiki files stay as they are) |
+| *"The new token works, but The Curator could save it in only one of the two places…"* | The settings file could not be written AND putting the sync history's address back failed, so the two places may disagree and Sync may fail until they match. Use Replace token again with the same new token; if that fails too, send the Technical detail line to support |
 | *"Sync is not connected on this computer…"* | There is no Sync connection yet. Connect one first |
 
 > **A token that can only READ passes the check.** The check asks GitHub to *read* the repository, so a fine-grained token with **Contents: Read-only** is accepted and saved. The next push is then refused with *"GitHub rejected the token. For a fine-grained token, make sure it has "Contents: Read and write"…"*, and the panel opens again: create a token with **Read and write** and replace it once more. Nothing is lost in between; your changes wait on this computer.
