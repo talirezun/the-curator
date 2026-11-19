@@ -84,7 +84,8 @@ if (process.platform !== 'win32') {
   const syncEnv = syncMod.__subprocessEnvForTest();
   eq(syncEnv.PATH, legacyPath(process.execPath, process.env.PATH),
     'LIVE: sync.js runs git with the v3.86.0 PATH on this machine');
-  eq(syncEnv, liveEnv, 'LIVE: ...and its whole env is the helper\'s (sync.js uses buildSubprocessEnv)');
+  // 2026-11-19: plus GIT_TERMINAL_PROMPT=0, so git never waits for a password nobody can type.
+  eq(syncEnv, { ...liveEnv, GIT_TERMINAL_PROMPT: '0' }, 'LIVE: ...and its whole env is the helper\'s (sync.js uses buildSubprocessEnv) plus GIT_TERMINAL_PROMPT=0');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

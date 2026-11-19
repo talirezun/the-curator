@@ -43,7 +43,7 @@ export const SYNC_JOB_POLL_MAX = 900;
 export function createSyncRunner(env) {
   const listeners = new Set();
   let run = null;       // { kind, startedAt, here: boolean }
-  let outcome = null;   // { kind, ok, message, error, at, seen }
+  let outcome = null;   // { kind, ok, message, error, detail, code, at, seen }
   let pollTimer = null;
   let polls = 0;
   let hooks = { beforeSettle: null, describe: null };
@@ -91,7 +91,8 @@ export function createSyncRunner(env) {
     if (last && SYNC_RUN_KINDS.includes(last.kind)) {
       await settle(last.state === 'done'
         ? { kind: last.kind, ok: true, message: describe(last.kind, last.result), error: null, at: last.finishedAt, seen: false }
-        : { kind: last.kind, ok: false, message: null, error: last.error || 'The sync did not complete.', at: last.finishedAt, seen: false });
+        : { kind: last.kind, ok: false, message: null, error: last.error || 'The sync did not complete.',
+            detail: last.detail || null, code: last.code || null, at: last.finishedAt, seen: false });
     } else {
       await settle(outcome);
     }
@@ -129,7 +130,12 @@ export function createSyncRunner(env) {
         }
         next = res.ok
           ? { kind, ok: true, message: describe(kind, data), error: null, at: new Date().toISOString(), seen: false }
-          : { kind, ok: false, message: null, error: (data && data.error) || 'That didn’t work.', at: new Date().toISOString(), seen: false };
+          // 2026-11-19: the route's {error, detail, code} travel together, so
+          // the page can show the technical detail and offer Replace token.
+          : { kind, ok: false, message: null, error: (data && data.error) || 'That didn’t work.',
+              detail: (data && typeof data.detail === 'string' && data.detail) || null,
+              code: (data && typeof data.code === 'string' && data.code) || null,
+              at: new Date().toISOString(), seen: false };
       } catch (err) {
         next = { kind, ok: false, message: null, error: (err && err.message) || 'That didn’t work.', at: new Date().toISOString(), seen: false };
       }

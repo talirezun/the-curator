@@ -137,6 +137,8 @@ const SYNC_FNS = [
   'formatSyncTime', 'crossWriteBusy', 'activeWriteInfo', 'crossWriteTitle',
   // v3.72.1
   'pendingNoteText', 'sharedBrainRowLines',
+  // 2026-11-19: the error detail line and Replace token
+  'syncErrorHtml', 'tokenErrorCodes', 'tokenPanelOpen', 'renderTokenPanel',
 ];
 const APP_FNS = ['icon', 'escapeHtml'];
 

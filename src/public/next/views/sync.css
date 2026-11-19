@@ -317,3 +317,18 @@
   flex-wrap: wrap;
 }
 .sync-disconnect-actions { display: flex; gap: 7px; margin-left: auto; }
+
+/* The technical detail under an error (2026-11-19, the error contract): the
+   plain sentence above is the message; this is git's own text for support,
+   credentials stripped and the home folder shown as ~. Visible, never folded
+   (v3.16.1), but secondary: smaller, muted, and selectable so it can be copied. */
+.sync-error-detail {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+  user-select: text;
+  -webkit-user-select: text;
+  overflow-wrap: anywhere;
+}
+.sync-error-detail code { font-size: var(--text-xs); color: var(--text-2); white-space: pre-wrap; }

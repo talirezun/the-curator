@@ -9,6 +9,10 @@
 //   POST   /api/sync/push | /pull | /sync      (through shared/sync-run.js, v3.89.2)
 //   GET    /api/sync/job                       → {running, last} — a run this page did not start
 //   DELETE /api/sync/disconnect
+//   POST   /api/sync/token {token}             → Replace token (2026-11-19)
+// Every error answers {error, detail?, code?}: `error` is the sentence shown,
+// `detail` is shown under it as "Technical detail (for support):", and the
+// codes in tokenErrorCodes() open the Replace token panel beside the error.
 // Plus two read-only calls used ONLY to render honest context, not owned
 // by this view's write surface:
 //   GET /api/domains                 → real domain names for the sidebar list
@@ -125,9 +129,16 @@ function freshState() {
     statusError: null,
     domains: [],        // GET /api/domains → domains[]
     sb: null,           // { enabled, connections: [] | null(unreadable) } | null while loading
-    acting: null,       // 'sync' | 'push' | 'pull' | 'disconnect' | null
+    acting: null,       // 'sync' | 'push' | 'pull' | 'disconnect' | 'token' | null
     actionMessage: null,
     actionError: null,
+    actionErrorDetail: null, // the route's `detail`: shown, smaller, under the error
+    actionErrorCode: null,   // the route's `code`: a token code opens Replace token
+    statusErrorDetail: null,
+    // Replace token (2026-11-19). `token` holds keystrokes only until the
+    // submit reads them: it is cleared at that moment, on cancel, and in the
+    // teardown, and never written into markup (see renderTokenPanel).
+    tokenForm: { open: false, dismissed: false, token: '', submitting: false, error: null, detail: null, focusPending: false },
     disconnectConfirmOpen: false,
     // `decision` is the connect flow's second screen, and it exists because
     // of the v3.32.0 incident: a refusal that leaves only a destructive door
@@ -136,7 +147,7 @@ function freshState() {
     // {kind:'foreign', originUrl}, {kind:'remote-empty'|'remote-not-empty'}.
     // Every one of them offers at least one NON-destructive way forward.
     setupForm: {
-      repoUrl: '', token: '', mode: 'push', submitting: false, error: null,
+      repoUrl: '', token: '', mode: 'push', submitting: false, error: null, errorDetail: null,
       checking: false, decision: null,
     },
   };
@@ -199,12 +210,16 @@ export function seedFromSyncRun(st, run, outcome) {
     st.acting = run.kind;
     st.actionMessage = null;
     st.actionError = null;
+    st.actionErrorDetail = null;
+    st.actionErrorCode = null;
     return st;
   }
   if (st.acting && SYNC_RUN_KINDS.indexOf(st.acting) !== -1) st.acting = null;
   if (outcome && !outcome.seen) {
     st.actionMessage = outcome.ok ? outcome.message : null;
     st.actionError = outcome.ok ? null : outcome.error;
+    st.actionErrorDetail = outcome.ok ? null : (outcome.detail || null);
+    st.actionErrorCode = outcome.ok ? null : (outcome.code || null);
   }
   return st;
 }
@@ -239,6 +254,8 @@ registerView('sync', {
       // the user has already navigated away — this is the unconditional
       // backstop.
       state.setupForm.token = '';
+      // The same backstop for Replace token's field.
+      if (state.tokenForm) state.tokenForm.token = '';
 
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
@@ -264,6 +281,8 @@ function onSyncRunChanged(mountToken) {
   const wasActing = state.acting;
   const run = currentSyncRun();
   seedFromSyncRun(state, run, lastSyncOutcome());
+  // A refused token: the panel opens beside the error and takes the focus once.
+  if (!run && tokenPanelOpen(state)) state.tokenForm.focusPending = true;
   render(mountToken);
   if (!run && wasActing && SYNC_RUN_KINDS.indexOf(wasActing) !== -1) {
     Promise.all([loadStatus(mountToken), loadDomains(mountToken), loadBackup(mountToken)])
@@ -367,10 +386,12 @@ async function loadStatus(token) {
     if (!isCurrentMount(token)) return;
     state.status = data;
     state.statusError = data.error || null;
+    state.statusErrorDetail = (data && typeof data.detail === 'string' && data.detail) || null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.status = { configured: false };
     state.statusError = err.message;
+    state.statusErrorDetail = null;
   }
 }
 
@@ -590,7 +611,7 @@ function renderUnconfigured() {
         '</div>' +
         '<p class="settings-hint-text sync-mode-hint">' + escapeHtml(MODE_HINTS[f.mode] || '') + '</p>' +
       '</div>' +
-      (f.error ? '<div class="settings-inline-error">' + escapeHtml(f.error) + '</div>' : '') +
+      (f.error ? syncErrorHtml(f.error, f.errorDetail) : '') +
       renderSetupDecision(f) +
       (f.decision ? '' :
         '<button type="button" class="btn btn-primary" id="btn-sync-connect"' + (f.submitting || f.checking ? ' disabled' : '') + '>' +
@@ -759,7 +780,7 @@ function renderConfigured(s) {
           { key: 'last synced', value: lastSyncLabel },
         ],
       }) +
-      (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
+      (state.statusError ? syncErrorHtml(state.statusError, state.statusErrorDetail) : '') +
       // THE ALREADY-SPLIT INSTALL. setup()'s adoption closes the split for a
       // connect made from now on and does nothing for an install that is
       // already in it — and one exists, because the incident that produced
@@ -806,7 +827,11 @@ function renderConfigured(s) {
       // unfolded, not only in the header's ⓘ (v3.16.1).
       '<div class="sync-undo-note">' + escapeHtml(SYNC_UNDO_NOTE) + '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
-      (state.actionError ? '<div class="settings-inline-error" style="margin-top:8px">' + escapeHtml(state.actionError) + '</div>' : '') +
+      (state.actionError ? syncErrorHtml(state.actionError, state.actionErrorDetail, 'margin-top:8px') : '') +
+      // Replace token: OPEN right under the error when the error says GitHub
+      // refused the token (never behind a chevron, v3.16.1); otherwise one
+      // quiet button, so a token can be changed without Disconnect.
+      renderTokenPanel(s, disabled) +
     '</div>' +
 
     backupReportHtml(state.backup) +
@@ -814,6 +839,58 @@ function renderConfigured(s) {
     renderSharedBrainRow() +
 
     renderDisconnect()
+  );
+}
+
+// The error sentence, and under it the technical detail for support: visible,
+// smaller, muted, selectable (the error contract). Both escaped; the detail is
+// in a <code> so it reads as quoted text, not as the app's own words.
+function syncErrorHtml(message, detail, style) {
+  return '<div class="settings-inline-error"' + (style ? ' style="' + style + '"' : '') + '>' + escapeHtml(message) + '</div>' +
+    (detail
+      ? '<div class="sync-error-detail">Technical detail (for support): <code>' + escapeHtml(detail) + '</code></div>'
+      : '');
+}
+
+// The codes that mean "GitHub refused the token Sync has": the panel opens.
+function tokenErrorCodes() {
+  return ['sync-token-rejected', 'sync-token-no-access'];
+}
+
+export function tokenPanelOpen(st) {
+  const f = st.tokenForm || {};
+  if (f.open) return true;
+  return !f.dismissed && !!st.actionError && tokenErrorCodes().indexOf(st.actionErrorCode) !== -1;
+}
+
+// Replace token (2026-11-19), built from the connect form's own parts: the
+// decision panel, the setup field, label and input, and the app's buttons.
+// The input carries NO value attribute (the L2 rule on the connect form): what
+// was typed is restored as a DOM property in wireListeners and cleared on submit.
+function renderTokenPanel(s, disabled) {
+  const f = state.tokenForm;
+  if (!tokenPanelOpen(state)) {
+    return '<button type="button" class="btn btn-ghost btn-xs" id="btn-token-open"' + (disabled ? ' disabled' : '') +
+      ' style="margin-top:10px">Replace token</button>';
+  }
+  const busy = f.submitting || state.acting === 'token';
+  return (
+    '<div class="sync-decision sync-decision-info" id="sync-token-panel" style="margin-top:12px">' +
+      '<div class="sync-decision-title">Replace the GitHub token</div>' +
+      '<p class="sync-decision-body">Paste a new token for ' + escapeHtml(s.repoUrl || 'this repository') +
+      ' with Contents: Read and write. The Curator checks it with GitHub first and changes nothing unless ' +
+      'GitHub accepts it. Your sync history stays as it is.</p>' +
+      '<div class="sync-setup-field">' +
+        '<label class="sync-setup-label" for="sync-token-input">New personal access token</label>' +
+        '<input type="password" class="sync-setup-input" id="sync-token-input" autocomplete="off" spellcheck="false" placeholder="ghp_… or a fine-grained token"' + (busy ? ' disabled' : '') + '>' +
+      '</div>' +
+      (f.error ? syncErrorHtml(f.error, f.detail) : '') +
+      '<div class="sync-decision-actions">' +
+        '<button type="button" class="btn btn-primary" id="btn-token-save"' + (busy || disabled ? ' disabled' : '') + '>' +
+          (busy ? 'Checking with GitHub…' : 'Check and save') + '</button>' +
+        '<button type="button" class="btn btn-ghost" id="btn-token-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+      '</div>' +
+    '</div>'
   );
 }
 
@@ -964,6 +1041,7 @@ function wireListeners() {
     if (dCancel) dCancel.addEventListener('click', () => {
       state.setupForm.decision = null;
       state.setupForm.error = null;
+      state.setupForm.errorDetail = null;
       render(myMountToken);
     });
     return;
@@ -983,6 +1061,91 @@ function wireListeners() {
   if (discCancel) discCancel.addEventListener('click', () => { state.disconnectConfirmOpen = false; render(myMountToken); });
   const discConfirm = document.getElementById('btn-disconnect-confirm');
   if (discConfirm) discConfirm.addEventListener('click', () => onDisconnect(myMountToken));
+
+  const tokOpen = document.getElementById('btn-token-open');
+  if (tokOpen) tokOpen.addEventListener('click', () => {
+    state.tokenForm = { ...state.tokenForm, open: true, dismissed: false, error: null, detail: null, focusPending: true };
+    render(myMountToken);
+  });
+  const tokInput = document.getElementById('sync-token-input');
+  if (tokInput) {
+    tokInput.value = state.tokenForm.token || '';
+    tokInput.addEventListener('input', (e) => { state.tokenForm.token = e.target.value; });
+    tokInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onReplaceToken(myMountToken); } });
+    if (state.tokenForm.focusPending) {
+      state.tokenForm.focusPending = false;
+      try { tokInput.focus(); } catch { /* not focusable right now */ }
+    }
+  }
+  const tokCancel = document.getElementById('btn-token-cancel');
+  if (tokCancel) tokCancel.addEventListener('click', () => {
+    state.tokenForm = { ...freshState().tokenForm, dismissed: true };
+    render(myMountToken);
+  });
+  const tokSave = document.getElementById('btn-token-save');
+  if (tokSave) tokSave.addEventListener('click', () => onReplaceToken(myMountToken));
+}
+
+// POST /api/sync/token. The token is read from the field and cleared from
+// state and the field BEFORE the request, so it is held only by this call's
+// own variable while the check runs; a failure asks for it again rather than
+// keeping it. Nothing in the answer carries it.
+async function onReplaceToken(token) {
+  if (state.tokenForm.submitting || state.acting) return;
+  const input = document.getElementById('sync-token-input');
+  let pat = ((input ? input.value : state.tokenForm.token) || '').trim();
+  state.tokenForm.token = '';
+  if (input) input.value = '';
+  if (!pat) {
+    state.tokenForm.error = 'Paste the new token from GitHub first. Nothing was changed.';
+    state.tokenForm.detail = null;
+    state.tokenForm.focusPending = true;
+    render(token);
+    return;
+  }
+  state.tokenForm.submitting = true;
+  state.tokenForm.error = null;
+  state.tokenForm.detail = null;
+  state.acting = 'token';
+  render(token);
+  let res = null;
+  let data = {};
+  try {
+    res = await fetch('/api/sync/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: pat }),
+    });
+    try { data = await res.json(); } catch { data = {}; }
+  } catch {
+    res = null;
+  } finally {
+    pat = '';
+  }
+  if (!isCurrentMount(token)) return;
+  state.acting = null;
+  if (res && res.ok) {
+    state.tokenForm = freshState().tokenForm;
+    // The earlier "token rejected" is answered: it must not come back on a re-seed.
+    markOutcomeSeen(lastSyncOutcome());
+    state.actionError = null;
+    state.actionErrorDetail = null;
+    state.actionErrorCode = null;
+    state.actionMessage = 'Token replaced. Sync uses the new token from now on.';
+    await loadStatus(token);
+    if (!isCurrentMount(token)) return;
+    render(token);
+    refreshSyncRemoteBadge();
+    return;
+  }
+  state.tokenForm.submitting = false;
+  state.tokenForm.open = true;
+  state.tokenForm.focusPending = true;
+  state.tokenForm.error = res
+    ? ((data && data.error) || 'The new token could not be saved. Nothing was changed.')
+    : 'The Curator could not be reached, so the token was not changed. Try again.';
+  state.tokenForm.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+  render(token);
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────
@@ -1021,6 +1184,7 @@ async function onConnect(token) {
   // skipped — this is the half that turns that refusal into a choice.
   state.setupForm.checking = true;
   state.setupForm.error = null;
+  state.setupForm.errorDetail = null;
   state.setupForm.decision = null;
   render(token);
   let pre = null;
@@ -1036,6 +1200,7 @@ async function onConnect(token) {
       if (!isCurrentMount(token)) return;
       state.setupForm.checking = false;
       state.setupForm.error = data && data.error ? data.error : 'Could not reach that repository.';
+      state.setupForm.errorDetail = (data && typeof data.detail === 'string' && data.detail) || null;
       render(token);
       return;
     }
@@ -1088,6 +1253,7 @@ async function runSetup(mode, confirmOverwrite, token) {
   state.setupForm.mode = mode;
   state.setupForm.submitting = true;
   state.setupForm.error = null;
+  state.setupForm.errorDetail = null;
   render(token);
   try {
     const res = await fetch('/api/sync/setup', {
@@ -1117,7 +1283,9 @@ async function runSetup(mode, confirmOverwrite, token) {
       } else if (res.status === 409 && data && data.code) {
         state.setupForm.decision = { kind: data.code, message: data.error };
       } else {
-        throw new Error(data.error || 'Could not connect.');
+        const e = new Error(data.error || 'Could not connect.');
+        e.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+        throw e;
       }
       state.setupForm.submitting = false;
       render(token);
@@ -1133,6 +1301,7 @@ async function runSetup(mode, confirmOverwrite, token) {
     if (!isCurrentMount(token)) return;
     state.setupForm.decision = null;
     state.setupForm.error = err.message;
+    state.setupForm.errorDetail = err.detail || null;
   } finally {
     // Unlike domains.js's busyKey (a SINGLE persistent `state` object that
     // survives across mounts, where an ungated reset is required — see H2),
@@ -1309,7 +1478,11 @@ async function onDisconnect(token) {
   try {
     const res = await fetch('/api/sync/disconnect', { method: 'DELETE' });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not disconnect.');
+    if (!res.ok) {
+      const e = new Error(data.error || 'Could not disconnect.');
+      e.detail = (data && typeof data.detail === 'string' && data.detail) || null;
+      throw e;
+    }
     if (!isCurrentMount(token)) return;
     state = freshState();
     render(token);
@@ -1322,6 +1495,8 @@ async function onDisconnect(token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.actionError = err.message;
+    state.actionErrorDetail = err.detail || null;
+    state.actionErrorCode = null;
     state.acting = null;
     state.disconnectConfirmOpen = false;
     render(token);

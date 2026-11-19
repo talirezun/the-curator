@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   isConfigured, getStatus, getBackupReport, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
-  SETUP_MODES, push, pull, sync, disconnect, friendlyError,
+  SETUP_MODES, push, pull, sync, disconnect, describeSyncError, remoteErrorCode, replaceToken,
 } from '../brain/sync.js';
 import { noteRemoteStatus } from '../brain/tray-summary.js';
 import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
@@ -38,7 +38,13 @@ function guardConcurrent(action) {
 function busyResponse(res, err) {
   return res.status(409).json({ error: err.message, code: err.code, running: err.running });
 }
-const JOB_OPTS = { describeError: (err) => friendlyError(err) || err.message };
+// Every failure answers in ONE shape, {error, detail?, code?} (2026-11-19):
+// `error` a plain sentence, `detail` the sanitised git text for support (no
+// credential, the home folder as ~), `code` a stable id the page can attach a
+// control to. Before, an unrecognised failure answered with git's own text.
+const JOB_OPTS = { describeError: (err) => describeSyncError(err) };
+const CONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'connect' }) };
+const DISCONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'disconnect' }) };
 
 // The running job and the last finished one. Read by the Sync view when it
 // mounts and while it waits on a run it did not start (a reload, another
@@ -51,7 +57,7 @@ router.get('/status', async (req, res) => {
   try {
     res.json(await getStatus());
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json(describeSyncError(err));
   }
 });
 
@@ -62,7 +68,7 @@ router.get('/backup-report', async (req, res) => {
   try {
     res.json(await getBackupReport());
   } catch (err) {
-    res.status(500).json({ error: friendlyError(err) || err.message });
+    res.status(500).json(describeSyncError(err));
   }
 });
 
@@ -126,9 +132,11 @@ router.get('/remote-status', async (req, res) => {
       // helper: map what is mappable, and never echo a raw git error on an
       // endpoint that is polled in the background — it embeds absolute paths
       // and, with a real remote, a credential-bearing URL. The sibling routes
-      // below can afford `|| err.message` because their errors reach a user
-      // who just clicked a button.
+      // below answer {error, detail, code} (describeSyncError) because their
+      // errors reach a user who just clicked a button; no `detail` is sent
+      // from this poll.
       remoteError: remoteErrorMessage(err),
+      remoteErrorCode: remoteErrorCode(err),
     });
   }
 });
@@ -158,7 +166,7 @@ router.post('/preflight', guardConcurrent('check sync'), async (req, res) => {
     if (!token)   return res.status(400).json({ error: 'token is required' });
     res.json(await preflightSetup(repoUrl, token));
   } catch (err) {
-    res.status(500).json({ ok: false, error: friendlyError(err) || err.message });
+    res.status(500).json({ ok: false, ...describeSyncError(err, { context: 'connect' }) });
   }
 });
 
@@ -190,7 +198,7 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
       const r = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true, leaveOut });
       await recordDomainIdentities();
       return r;
-    }, JOB_OPTS);
+    }, CONNECT_JOB_OPTS);
     // `success` is about the backup, not the connection: a folder that was left
     // out because it has its own git history was NOT backed up. Connected, and
     // said so, but never a plain success.
@@ -204,7 +212,7 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     // "here is what to do instead". 500 stays for everything unrecognised.
     const refusal = syncRefusalOf(err);
     if (refusal) return res.status(409).json({ error: refusal.message, ...refusal });
-    res.status(500).json({ error: friendlyError(err) || err.message });
+    res.status(500).json(describeSyncError(err, { context: 'connect' }));
   }
 });
 
@@ -214,7 +222,7 @@ router.post('/push', guardConcurrent('push to sync'), async (req, res) => {
     res.json(await runSyncJob('push', () => push(), JOB_OPTS));
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json({ error: friendlyError(err) || err.message });
+    res.status(500).json(describeSyncError(err));
   }
 });
 
@@ -229,7 +237,7 @@ router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
     res.json(pulled);
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json({ error: friendlyError(err) || err.message });
+    res.status(500).json(describeSyncError(err));
   }
 });
 
@@ -244,17 +252,54 @@ router.post('/sync', guardConcurrent('sync'), async (req, res) => {
     res.json(synced);
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json({ error: friendlyError(err) || err.message });
+    res.status(500).json(describeSyncError(err));
   }
 });
 
 router.delete('/disconnect', guardConcurrent('disconnect sync'), async (req, res) => {
   try {
-    await runSyncJob('disconnect', () => disconnect(), JOB_OPTS);
+    await runSyncJob('disconnect', () => disconnect(), DISCONNECT_JOB_OPTS);
     res.json({ success: true });
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json(describeSyncError(err, { context: 'disconnect' }));
+  }
+});
+
+/**
+ * Replace token (2026-11-19): give a CONNECTED Sync a new GitHub token
+ * without disconnecting (Disconnect deletes this install's sync history
+ * folder). replaceToken() checks the new token against the configured
+ * repository first and writes nothing unless GitHub answers; see its docblock.
+ *
+ * POST, so the cross-origin guard in server.js applies, and the token travels
+ * in the body, never in a URL. guardConcurrent and the sync job, like every
+ * route here that changes the sync repository: a token swapped in the middle
+ * of a push would change the address that push is using.
+ *
+ * The token is never echoed: not in a success, not in an error (replaceToken
+ * scrubs it from every text), and this handler logs nothing.
+ */
+router.post('/token', guardConcurrent('replace the sync token'), async (req, res) => {
+  try {
+    const token = req.body && typeof req.body.token === 'string' ? req.body.token : '';
+    if (!token.trim()) {
+      return res.status(400).json({
+        error: 'Paste the new token from GitHub first. Nothing was changed.',
+        code: 'sync-token-missing',
+      });
+    }
+    const result = await runSyncJob('token', () => replaceToken(token), JOB_OPTS);
+    res.json({ success: true, ...result, ...(await getStatus()) });
+  } catch (err) {
+    if (err instanceof SyncBusyError) return busyResponse(res, err);
+    const refusal = syncRefusalOf(err);
+    if (refusal) {
+      const body = { error: refusal.message, code: refusal.code };
+      if (refusal.detail) body.detail = refusal.detail;
+      return res.status(refusal.code === 'sync-not-configured' ? 409 : 400).json(body);
+    }
+    res.status(500).json(describeSyncError(err));
   }
 });
 

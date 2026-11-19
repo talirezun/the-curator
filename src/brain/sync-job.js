@@ -33,7 +33,7 @@
  */
 
 let _running = null; // { id, kind, startedAt }
-let _last = null;    // { id, kind, startedAt, finishedAt, state: 'done'|'failed', result?, error? }
+let _last = null;    // { id, kind, startedAt, finishedAt, state: 'done'|'failed', result?, error?, detail?, code? }
 let _seq = 0;
 
 export class SyncBusyError extends Error {
@@ -56,8 +56,11 @@ export function getSyncJob() {
 /**
  * Run `fn` as THE sync job of kind `kind`. Throws SyncBusyError, without
  * calling `fn`, when another job is running. `describeError(err)` turns a
- * failure into the sentence recorded on the job (the routes pass
- * friendlyError); the original error is re-thrown unchanged.
+ * failure into what is recorded on the job: a sentence, or (2026-11-19) the
+ * route shape `{error, detail?, code?}` (the routes pass describeSyncError),
+ * whose `detail` and `code` are recorded beside `error` so a page that only
+ * follows the job shows the same thing as the page that started it. The
+ * original error is re-thrown unchanged.
  */
 export async function runSyncJob(kind, fn, { describeError } = {}) {
   if (_running) throw new SyncBusyError(_running);
@@ -69,8 +72,17 @@ export async function runSyncJob(kind, fn, { describeError } = {}) {
     return result;
   } catch (err) {
     let error = err && err.message ? err.message : String(err);
-    try { if (describeError) error = describeError(err) || error; } catch { /* keep the raw message */ }
-    _last = { ...job, finishedAt: new Date().toISOString(), state: 'failed', error };
+    let extra = {};
+    try {
+      const d = describeError ? describeError(err) : null;
+      if (typeof d === 'string' && d) error = d;
+      else if (d && typeof d === 'object' && typeof d.error === 'string' && d.error) {
+        error = d.error;
+        if (typeof d.detail === 'string' && d.detail) extra.detail = d.detail;
+        if (typeof d.code === 'string' && d.code) extra.code = d.code;
+      }
+    } catch { extra = {}; /* keep the raw message */ }
+    _last = { ...job, finishedAt: new Date().toISOString(), state: 'failed', error, ...extra };
     throw err;
   } finally {
     _running = null;
