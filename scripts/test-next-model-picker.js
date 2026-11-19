@@ -272,6 +272,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { plainError, errorDetailHtml, errorDetailOf, errorFromResponse, renderUserError, userMessageFrom } from '../src/public/next/shared/net.js'; // v3.99.2
 // §39 forces a TIMEZONE on a child process. v3.14.0's lesson: a date helper
 // exercised through the ambient locale passes every same-process assertion on
 // a machine east of Greenwich and fails elsewhere, so the zone must be forced
@@ -688,6 +689,10 @@ const RENDER_FN_NAMES = [
  * control shows the OLD two-list shape would have accepted a swap silently.
  */
 const RENDER_INJECTED_VALUES = {
+  // v3.99.2: the REAL shared/net.js helpers the renderers and the two message
+  // composers call (an error's sentence, and its detail line below it).
+  errorDetailHtml,
+  plainError,
   explainerMark,
   explainerHtml,
   formatUsdHonest,
@@ -828,6 +833,8 @@ const fakeDocument = {
   },
 };
 const ACTION_INJECTED_VALUES = {
+  // v3.99.2: the REAL shared/net.js helper the two message composers call.
+  plainError,
   state: stubState,
   document: fakeDocument,
   fetch: (...args) => { fetchCalls.push(args); return fetchImpl(...args); },

@@ -186,7 +186,7 @@ function generic(raw, code) {
  */
 export function userMessageFrom(x, opts = {}) {
   const status = opts && Number.isInteger(opts.status) ? opts.status : null;
-  const statusDetail = status ? 'HTTP ' + status : '';
+  const statusDetail = status && status >= 400 ? 'HTTP ' + status : ''; // a 2xx with a bad body says nothing useful
   const fb = opts ? nonEmpty(opts.fallback) : '';
   const none = (code) => fb ? { error: fb, detail: statusDetail, code: code || '' } : generic(statusDetail, code || undefined);
   try {
@@ -197,6 +197,7 @@ export function userMessageFrom(x, opts = {}) {
       const ownDetail = nonEmpty(x.detail);
       const ownCode = nonEmpty(x.code);
       if (ownDetail) return { error: nonEmpty(x.message) || USER_MESSAGES['request-failed'](), detail: cleanDetail(ownDetail), code: ownCode };
+      if (!nonEmpty(x.message)) return none(ownCode);
       const r = fromText(x.message, ownCode);
       if (ownCode) r.code = ownCode; // never replace an existing code
       return withStatus(r, statusDetail);

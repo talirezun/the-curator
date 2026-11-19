@@ -36,6 +36,7 @@ import {
 } from '../src/public/next/shared/net.js';
 import { USER_MESSAGES } from '../src/public/next/shared/user-errors.js';
 import { renderStatus } from '../src/public/next/shared/text.js';
+import { stripComments, functionSource } from './test-helpers/source-scan.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 let passed = 0, failed = 0;
@@ -335,6 +336,71 @@ section('§4 app.js installs the hook at boot');
   ok(e && e.curatorNetwork === true, 'run against a stub window, it installs the translation');
   const html = readFileSync(join(ROOT, 'src/public/next/index.html'), 'utf8');
   ok(!/installFetchTranslation|shared\/net\.js/.test(html), 'index.html (the boot guard) is untouched');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§5 the converted views, executed (Settings › Verify AI connection, Providers & keys)');
+{
+  const SETTINGS = stripComments(readFileSync(join(ROOT, 'src/public/next/views/settings.js'), 'utf8'));
+  const lift = (names, injected) => new Function(...Object.keys(injected),
+    names.map((n) => { const f = functionSource(SETTINGS, n); if (!f) throw new Error('not found: ' + n); return f; }).join('\n') +
+    '\nreturn {' + names.join(',') + '};')(...Object.values(injected));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const state = {};
+  const env = {
+    state, escapeHtml: esc, icon: (n) => '<i data-icon="' + n + '"></i>',
+    plainError, errorDetailHtml, errorFromResponse, isCurrentMount: () => true, render: () => {},
+    fetch: null, document: { getElementById: () => null }, loadKeys: async () => {},
+    markSystemCheckStale: () => {}, setLiveRunsOn: () => {},
+  };
+  const v = lift(['renderLiveResult', 'onVerifyAiConfirm'], env);
+
+  // The route as the server now answers a dead key: plain error + detail + code.
+  state.live = { ok: false, error: "Anthropic didn't accept the API key saved in The Curator, so the request was refused and not charged. Open Settings › Providers & keys and use Replace key to paste a working key.",
+    detail: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}', code: 'ai-key-rejected' };
+  let html = v.renderLiveResult();
+  ok(/didn&#39;t accept the API key/.test(html) && /Technical detail \(for support\): 401 \{&quot;type&quot;/.test(html),
+    'Verify AI connection: the plain sentence, with the raw provider text on the detail line', html);
+  // An OLDER server: the raw SDK text in `error`.
+  state.live = { ok: false, error: 'Connection error.' };
+  html = v.renderLiveResult();
+  ok(!/>Connection error\.</.test(html) && /class="check-detail">[^<]+<\/span>/.test(html), 'an older server\'s raw text is not the visible sentence', html);
+  state.live = { ok: false, error: '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low"}}' };
+  html = v.renderLiveResult();
+  ok(/run out of credit/.test(html) && /Technical detail \(for support\): 400/.test(html), 'an older server\'s raw no-credit text → the plain sentence + detail', html);
+  state.live = { ok: false };
+  ok(/The check did not finish\./.test(v.renderLiveResult()), 'no error at all → a sentence, never "Unknown error"');
+
+  // The press itself, with the app's server gone (the wrapper's error).
+  const w = stubWindow(() => Promise.reject(new TypeError('Failed to fetch')));
+  installFetchTranslation(w);
+  const v2 = lift(['renderLiveResult', 'onVerifyAiConfirm'], { ...env, fetch: w.fetch });
+  await v2.onVerifyAiConfirm(1);
+  ok(state.live && state.live.ok === false && state.live.error === UNREACHABLE, 'server gone mid-press → the server-unreachable sentence', state.live && state.live.error);
+
+  // Providers & keys › Save, refused by a server with a raw fs error (older server).
+  const save = lift(['readSkippedActivation', 'classifyActivationOutcome', 'markSystemCheckStale', 'onSaveKey'].filter((n) => functionSource(SETTINGS, n)), {
+    ...env,
+    document: { getElementById: () => ({ value: 'sk-ant-FAKE-NOT-REAL-KEY-00000' }) },
+    fetch: async () => new Response(JSON.stringify({ error: "EACCES: permission denied, open '/Users/a/.curator-config.json'" }), { status: 500 }),
+  });
+  state.keysActionError = null;
+  await save.onSaveKey('anthropic', 1);
+  ok(typeof state.keysActionError === 'string' && /didn't let The Curator use a file it needs \(\.curator-config\.json\)/.test(state.keysActionError),
+    'Save key: a raw EACCES becomes the plain sentence, naming only the file', state.keysActionError);
+  ok(/EACCES/.test(errorDetailOf(state.keysActionError)) && !/\/Users\/a/.test(errorDetailOf(state.keysActionError)),
+    '…with the raw text as its detail, home folder removed', errorDetailOf(state.keysActionError));
+  // (renderProviders needs the whole model picker in its sandbox; that suite,
+  // test-next-model-picker.js, runs it with errorDetailHtml injected.)
+  ok(/tx-error-detail/.test(errorDetailHtml(state.keysActionError)), '…which renders as the visible detail line under it');
+  // A deliberate refusal from the route passes through unchanged.
+  const save2 = lift(['readSkippedActivation', 'classifyActivationOutcome', 'markSystemCheckStale', 'onSaveKey'].filter((n) => functionSource(SETTINGS, n)), {
+    ...env,
+    document: { getElementById: () => ({ value: 'x' }) },
+    fetch: async () => new Response(JSON.stringify({ error: 'That does not look like an Anthropic key.' }), { status: 400 }),
+  });
+  await save2.onSaveKey('anthropic', 1);
+  ok(state.keysActionError === 'That does not look like an Anthropic key.', 'Save key: a written refusal passes through unchanged', state.keysActionError);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

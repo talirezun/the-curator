@@ -47,6 +47,7 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -889,7 +890,12 @@ function makeRunHarness(responses) {
   const h = makeRunHarness({ '/api/config/update': { throws: 'Failed to fetch' } });
   await h.fn(1);
   eq(h.state.updatePhase, 'failed', 'a transport failure is reported, not swallowed');
-  eq(h.state.updateError, 'Failed to fetch', 'with the transport’s own message');
+  // v3.99.2 (deliberate screen change): the browser's raw "Failed to fetch"
+  // is now said in plain words (shared/net.js), never shown as is.
+  ok(/^The Curator isn't responding\./.test(h.state.updateError) && !/Failed to fetch/.test(h.state.updateError),
+    'in plain words, not the transport’s raw "Failed to fetch"', h.state.updateError);
+  // A refusal the route WROTE passes through unchanged (asserted above:
+  // /articles \(ingest\)/), so only machine text is rewritten.
 }
 
 // ═════════════════════════════════════════════════════════════════════════

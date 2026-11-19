@@ -24,6 +24,7 @@
  *       the MCP pill says "Configured", and no "local" provider is advertised.
  */
 import { readFileSync } from 'node:fs';
+import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
