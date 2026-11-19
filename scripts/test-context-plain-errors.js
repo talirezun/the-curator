@@ -20,7 +20,7 @@
  * network, no writes.
  */
 
-import { renderErrorDetail, errorDetailOf, plainError, DETAIL_PREFIX } from '../src/public/next/shared/net.js';
+import { renderErrorDetail, errorDetailOf, errorCodeOf, plainError, DETAIL_PREFIX } from '../src/public/next/shared/net.js';
 
 const FI = await import('../src/public/next/shared/foundations-init.js');
 const FA = await import('../src/public/next/shared/foundations-add.js');
@@ -113,7 +113,7 @@ section('2. The chooser\'s reads (scanRepo, scanRemote, pickFolder)');
     ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r', scanError: scanErr } });
   ok('the chooser\'s scan refusal shows the sentence', html.includes(esc('Nothing was read: ' + scanErr)), html.slice(0, 400));
   ok('...and the technical detail under it, visible (not in a <details>)',
-    html.includes(renderErrorDetail(errorDetailOf(scanErr))) && !html.includes('<details'));
+    html.includes(renderErrorDetail(errorDetailOf(scanErr), errorCodeOf(scanErr))) && !html.includes('<details'));
   const plain = FI.renderFoundationsChooser({ id: 'x', choice: {
     ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r', scanError: 'that folder is not here' } });
   ok('CONTROL: a refusal with no detail has no detail line', !plain.includes('tx-error-detail'));
@@ -135,9 +135,9 @@ section('3. Adding documents (foundations-add)');
     scanError: plainError("ENOENT: no such file or directory, scandir '/Users/somebody/repo/docs'") });
   const html = FA.renderAddPanel(rec, facts, 'local', {});
   ok('the panel\'s commit refusal shows its technical detail',
-    html.includes(renderErrorDetail(errorDetailOf(raw.error))), html.slice(0, 600));
+    html.includes(renderErrorDetail(errorDetailOf(raw.error), errorCodeOf(raw.error))), html.slice(0, 600));
   ok('the panel\'s list refusal ("Nothing was listed: …") shows ITS detail, not the commit\'s',
-    rec.scanError !== raw.error && html.includes(renderErrorDetail(errorDetailOf(rec.scanError))));
+    rec.scanError !== raw.error && html.includes(renderErrorDetail(errorDetailOf(rec.scanError), errorCodeOf(rec.scanError))));
   const quiet = FA.renderAddPanel(Object.assign({}, rec, { error: 'Pick at least one file.', scanError: null }), facts, 'local', {});
   ok('CONTROL: a refusal with no detail gets no detail line', !quiet.includes('tx-error-detail'));
 }
@@ -164,11 +164,11 @@ section('5. Deleting a handoff (ws-delete)');
   const err = plainError({ error: RAW });
   const h1 = WS.wsDeleteCardHtml(del({ error: err }), NOW);
   ok('a refused delete shows the sentence and its detail', h1.includes('Not deleted.</strong> ')
-    && h1.includes(renderErrorDetail(errorDetailOf(err))), h1.slice(-900));
+    && h1.includes(renderErrorDetail(errorDetailOf(err), errorCodeOf(err))), h1.slice(-900));
   const loadErr = plainError(RAW + ' (preview)');
   const h2 = WS.wsDeleteCardHtml(del({ preview: null, loadError: loadErr }), NOW);
   ok('a failed preview says nothing was deleted, with its detail',
-    h2.includes('Nothing was deleted.') && h2.includes(renderErrorDetail(errorDetailOf(loadErr))), h2.slice(0, 900));
+    h2.includes('Nothing was deleted.') && h2.includes(renderErrorDetail(errorDetailOf(loadErr), errorCodeOf(loadErr))), h2.slice(0, 900));
   ok('CONTROL: a refusal with no detail has no detail line',
     !WS.wsDeleteCardHtml(del({ error: 'Type the exact name.' }), NOW).includes('tx-error-detail'));
 }
@@ -182,14 +182,14 @@ section('6. The trash (trash-list)');
   const restoreErr = plainError({ error: RAW + ' (restore)' });
   const r = TR.trashRowHtml(ready, { nowMs: now, action: { kind: ready.kind, id: ready.id, mode: 'restore', error: restoreErr } });
   ok('a refused restore shows the sentence on its row', r.includes('Not restored.</strong> '), r.slice(0, 600));
-  ok('...AND its technical detail (the row renderer used to drop it)', r.includes(renderErrorDetail(errorDetailOf(restoreErr))));
+  ok('...AND its technical detail (the row renderer used to drop it)', r.includes(renderErrorDetail(errorDetailOf(restoreErr), errorCodeOf(restoreErr))));
   const delErr = plainError({ error: RAW + ' (delete)' });
   const d = TR.trashRowHtml(ready, { nowMs: now, action: { kind: ready.kind, id: ready.id, mode: 'delete', confirmText: '', error: delErr } });
-  ok('a refused delete-forever shows its technical detail', d.includes(renderErrorDetail(errorDetailOf(delErr))));
+  ok('a refused delete-forever shows its technical detail', d.includes(renderErrorDetail(errorDetailOf(delErr), errorCodeOf(delErr))));
   const readErr = plainError(RAW + ' (read)');
   const s = TR.trashSectionHtml({ data: null, error: readErr });
   ok('a failed read of the trash shows its technical detail', s.includes('Could not read the trash: ')
-    && s.includes(renderErrorDetail(errorDetailOf(readErr))), s);
+    && s.includes(renderErrorDetail(errorDetailOf(readErr), errorCodeOf(readErr))), s);
   ok('CONTROL: a failure with no detail has no detail line',
     !TR.trashSectionHtml({ data: null, error: 'boom' }).includes('tx-error-detail'));
 }
