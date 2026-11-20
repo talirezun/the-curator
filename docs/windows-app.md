@@ -116,7 +116,7 @@ The app updates itself. There are two ways in, and they run the same update:
 | **Update available** | Both version numbers. Click **Download and install** and confirm. |
 | **Downloading and checking** | The installer goes to `%LOCALAPPDATA%\TheCurator\updates`. Its size and SHA-256 must equal what GitHub publishes for the file, and its version must be the one offered; a download that fails a check is never run. |
 | **Update ready to install** | Nothing has changed yet. Click **Restart and finish**. |
-| **Installing** | The app closes, the installer runs without any pages, and The Curator opens again on the new version. |
+| **Installing** | The app starts a small helper and closes only once the helper is running. The helper checks the installer's size and SHA-256 once more, runs it without any pages, and The Curator opens again on the new version. |
 
 Your notes, keys and settings are not in the program folder, so an update never touches them.
 
@@ -129,8 +129,15 @@ that is running. The update then stops before changing anything and offers:
 | **Close the connection and update** | The Curator ends that connection itself, then installs. Quit Claude Desktop and open it again afterwards to reconnect. |
 | Quit Claude Desktop (tray icon → Quit), then **Restart and finish** again | The same result, done by you |
 
+If the helper cannot start, the app stays open, keeps the downloaded installer and says so; nothing
+has changed. If the helper itself fails before the installer runs, the old version opens again and a
+message box says the update did not finish. Every step is written to `%LOCALAPPDATA%\TheCurator\logs\update-install.log`,
+which is the file to send us if an update fails.
+
 **If an update does not finish**, The Curator says so in a message box and again when it next
-opens, in words, with what to do ([all the messages](errors.md#updating-the-windows-app)). An
+opens, in words, with what to do ([all the messages](errors.md#updating-the-windows-app)). The
+verified installer stays in `%LOCALAPPDATA%\TheCurator\updates`; running it again from there
+repairs the app. An
 update replaces the program's files in one step and cannot be rolled back halfway, so a power cut
 in the middle can leave the program incomplete. Your data is untouched in that case too: download
 the installer from the Releases page and run it, and the app is back with everything in it. Before
@@ -144,9 +151,11 @@ it runs a downloaded installer again, the app checks its SHA-256 again.
 | **Close the connection and update** while your AI app is saving to your wiki | Ending the connection stops that save part-way | Wait until the AI app has finished saving, then update |
 | Your Windows user folder has an apostrophe in its name (`C:\Users\O'Brien`) and you run the installer **by hand** | The installer may not notice that The Curator is still open | Quit The Curator (tray icon → Quit, or **File → Exit**) before running the installer. Updates from inside the app are not affected: the app closes itself first. |
 
-> **Not measured yet:** an update the app downloads itself should not show the blue SmartScreen
-> screen again (the warning comes from files a browser downloaded), but this has not yet been
-> watched on a real PC. If you see it, choose **More info → Run anyway** and please
+> **Not measured yet:** a real update from one version to the next is rehearsed on every release
+> in CI (install, check, close, silent install, reopen; your data byte-identical), but on a real PC
+> nobody has yet watched whether the blue SmartScreen screen is avoided (the warning comes from
+> files a browser downloaded, and an update the app downloads itself should not show it) or
+> whether any console window flashes during the update. If you see the SmartScreen screen, choose **More info → Run anyway** and please
 > [tell us](https://github.com/talirezun/the-curator/issues).
 
 ---
