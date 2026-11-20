@@ -124,7 +124,7 @@ export function planBrowserOpen({
 // Windows PC has none by default and the app inherits Explorer's PATH. The
 // build places it BESIDE the app's code, in Electron's resources folder:
 //
-//   <install>\resources\app\              APP_ROOT (the code, `.curator-bundle`)
+//   <install>\resources\app\              APP_ROOT (the code and the bundle marker, see paths.js)
 //   <install>\resources\git\cmd\git.exe   the bundled git (MinGit's launcher)
 //
 // i.e. `<dirname(APP_ROOT)>\git\cmd\git.exe`. MinGit's `cmd\git.exe` is the
