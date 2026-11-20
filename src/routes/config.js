@@ -4773,7 +4773,7 @@ async function installerUpdateApply(res, deps) {
  * already treats as normal. On rejection there IS a response, naming what went
  * wrong, and the old app is still running and still works.
  */
-export async function updateApplyHandler(_req, res, deps = null) {
+export async function updateApplyHandler(req, res, deps = null) {
   const caps = (deps && deps.caps) || getCapabilities();
   const busy = (deps && deps.hasActiveWrites) || hasActiveWrites;
   const hook = (deps && Object.hasOwn(deps, 'installUpdateHook'))
@@ -4821,7 +4821,14 @@ export async function updateApplyHandler(_req, res, deps = null) {
     // The token, straight back, unread and unmodified. This route does not
     // know what is in it and must not: a path here would be a
     // replace-any-directory primitive reachable from a page.
-    const result = await hook({ token, onProgress: () => {} });
+    // `stopConnections` (the Windows app): the person agreed, on the screen
+    // that offered "Close the connection and update", to let the updater
+    // stop an AI app's connection to this app (Claude Desktop keeps a copy of
+    // the app running as the MCP bridge). Strictly `=== true`, and passed only
+    // then, so every other request — and the Mac, which never offers it —
+    // calls the hook with exactly the arguments it always had.
+    const stopConnections = !!(req && req.body && req.body.stopConnections === true);
+    const result = await hook({ token, onProgress: () => {}, ...(stopConnections ? { stopConnections: true } : {}) });
     // BOTH FAILURE SHAPES. The contract specifies a resolved `{ok:false,
     // reason, message}` for `prepareUpdate`; `installUpdate` is documented only
     // as "swap and relaunch", so it may reject instead. A resolved failure is
@@ -4829,7 +4836,7 @@ export async function updateApplyHandler(_req, res, deps = null) {
     // knows what happened — is relayed. A REJECTION's `.message` is NOT mined,
     // because a rejection can also be an ordinary TypeError whose message
     // carries a path.
-    if (result && result.ok === false) return applyFailed(res, result.reason, result.message);
+    if (result && result.ok === false) return applyFailed(res, result.reason, result.message, connectionFacts(result));
     // Reached only if the shell chose not to end the process. Harmless, and an
     // honest thing to be able to say, so it is said rather than assumed away.
     return res.json({ ok: true, relaunching: true, version: updateJob.version });
@@ -4848,14 +4855,27 @@ export async function updateApplyHandler(_req, res, deps = null) {
  * still installable, so the honest state is "downloaded, not yet in place",
  * and the button that finishes it is still the right offer.
  */
-function applyFailed(res, reason, message) {
+function applyFailed(res, reason, message, extra = null) {
   const copy = updateFailureCopy(reason, message);
   updateJob.state = 'staged';
   updateJob.phase = 'staging';
   updateJob.reason = copy.reason;
   updateJob.error = copy.error;
   updateJob.hint = copy.hint;
-  return res.status(500).json({ ...copy, releasesPageUrl: RELEASES_PAGE_URL });
+  return res.status(500).json({ ...copy, ...(extra || {}), releasesPageUrl: RELEASES_PAGE_URL });
+}
+
+/**
+ * Pure. What a failed install says about the AI app connections holding the
+ * app (the Windows engine's `in-use-by-ai-app`): `{connections, canStopConnections}`
+ * when, and only when, the engine offered to stop them; else null. ALLOW-LIST:
+ * a count and a flag, never a PID, a path or anything else the engine carried.
+ */
+export function connectionFacts(result) {
+  if (!result || typeof result !== 'object' || result.canStopConnections !== true) return null;
+  const n = result.connections;
+  if (!Number.isInteger(n) || n < 1 || n > 1000) return null;
+  return { connections: n, canStopConnections: true };
 }
 
 // `guardConcurrent` on the REGISTRATION *and* a re-check inside the handler —

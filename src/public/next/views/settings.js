@@ -2937,14 +2937,28 @@ function renderInAppUpdate() {
     // flight, or the page was reloaded mid-download — and in both cases the
     // honest sentence is the same one.
     const f = u.failure;
+    // THE WINDOWS APP'S CHOICE (in-use-by-ai-app). An AI app such as Claude
+    // Desktop keeps a copy of The Curator running as its connection, so the
+    // installer cannot replace the app. The failure sentence already says to
+    // quit that app; when the updater also offered to close the connection
+    // itself, that is a second button in the same card, with what it does in
+    // plain words beside it. Nothing behind a chevron.
+    const canStop = !!(f && f.canStopConnections === true && Number.isInteger(f.connections) && f.connections > 0);
+    const stopHint = canStop
+      ? 'Or choose Close the connection and update: The Curator ends ' +
+        (f.connections === 1 ? 'the AI app’s connection to it' : 'the ' + f.connections + ' AI app connections to it') +
+        ', then installs. To use The Curator from that app again afterwards, quit the app and open it again. ' +
+        'Your knowledge base, API keys and sync settings are untouched.'
+      : 'Your knowledge base, API keys and sync settings are untouched.';
     return box('upd-attention',
       'Update ready to install',
       (u.version ? 'v' + escapeHtml(String(u.version)) + ' has been' : 'The update has been') +
         ' downloaded and checked. The Curator hasn’t changed yet — finishing takes a few seconds and restarts the app.' +
         (u.warning ? '<span class="upd-detail">' + escapeHtml(String(u.warning)) + '</span>' : ''),
       f ? f.error : null,
-      'Your knowledge base, API keys and sync settings are untouched.',
-      '<button type="button" class="btn btn-primary btn-xs" id="btn-inapp-finish">Restart and finish</button>');
+      stopHint,
+      '<button type="button" class="btn btn-primary btn-xs" id="btn-inapp-finish">Restart and finish</button>' +
+      (canStop ? '<button type="button" class="btn btn-secondary btn-xs" id="btn-inapp-finish-stop">Close the connection and update</button>' : ''));
   }
 
   if (u.phase === 'relaunching') {
@@ -10362,6 +10376,8 @@ function wireGeneralListeners() {
   if (inappBtn) inappBtn.addEventListener('click', () => onInstallInApp().catch(reportAsyncActionFailure));
   const finishBtn = document.getElementById('btn-inapp-finish');
   if (finishBtn) finishBtn.addEventListener('click', () => finishInAppUpdate().catch(reportAsyncActionFailure));
+  const finishStopBtn = document.getElementById('btn-inapp-finish-stop');
+  if (finishStopBtn) finishStopBtn.addEventListener('click', () => finishInAppUpdate({ stopConnections: true }).catch(reportAsyncActionFailure));
   const retryBtn = document.getElementById('btn-inapp-retry');
   if (retryBtn) retryBtn.addEventListener('click', () => onRetryInApp().catch(reportAsyncActionFailure));
 }
@@ -11307,8 +11323,11 @@ async function runInAppUpdate() {
  * Swap the staged bundle in and restart. Also the `#btn-inapp-finish` button's
  * handler, so the manual and the automatic paths are literally the same code.
  */
-async function finishInAppUpdate() {
+async function finishInAppUpdate(opts) {
   if (!inAppUpdate || inAppUpdate.phase !== 'staged') return;
+  // Only the "Close the connection and update" button sends a body; every
+  // other finish is the bare POST it has always been.
+  const stopConnections = !!(opts && opts.stopConnections === true);
   const version = inAppUpdate.version;
   const warning = inAppUpdate.warning || null;
   inAppUpdate = { phase: 'relaunching', job: null, version, warning, failure: null, restartHint: false };
@@ -11316,7 +11335,9 @@ async function finishInAppUpdate() {
 
   let res = null;
   try {
-    res = await fetch('/api/config/update/apply', { method: 'POST' });
+    res = await fetch('/api/config/update/apply', stopConnections
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stopConnections: true }) }
+      : { method: 'POST' });
   } catch {
     // The process going away mid-request is the SUCCESS case here — the swap
     // happened and the server relaunched under us. `/api/restart` is treated
@@ -11346,6 +11367,10 @@ async function finishInAppUpdate() {
         error: plainError(data, { status: res.status, fallback: 'The update could not be installed.' }),
         hint: data && data.hint,
         releasesPageUrl: data && data.releasesPageUrl,
+        // The Windows app: the server's offer to close the AI app connections
+        // that hold the app (config.js connectionFacts — a count and a flag).
+        ...(data && data.canStopConnections === true && Number.isInteger(data.connections)
+          ? { connections: data.connections, canStopConnections: true } : {}),
       },
       restartHint: false,
     };

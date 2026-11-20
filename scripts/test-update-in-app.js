@@ -689,6 +689,60 @@ async function driveApply(deps) {
     'and the job goes back to STAGED, not failed — the verified bundle is still on disk, so "downloaded, not yet installed" is the true state and the finish button is still the right offer');
 }
 
+// ── The Windows app: "Close the connection and update" (2026-11-20) ───────
+// Claude Desktop keeps a copy of the app running as its MCP bridge, so the
+// Windows engine refuses with `in-use-by-ai-app` and offers to stop it. The
+// route relays the offer (a count and a flag, nothing else) and forwards the
+// person's agreement — strictly `=== true` — and NOTHING otherwise, so the
+// Mac's hook keeps being called with exactly the arguments it always had.
+const deq = (a, b, label) => eq(JSON.stringify(a), JSON.stringify(b), label);
+async function driveApplyReq(req, deps) {
+  const res = sseCapableRes();
+  await configRoute.updateApplyHandler(req, res, { caps: BUNDLE_CAPS, ...deps });
+  if (res.body === null) res.body = {};
+  return res;
+}
+{
+  const IN_USE = 'An AI app connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
+  const seen = [];
+  const hook = async (args) => {
+    seen.push(Object.keys(args).sort().join(','));
+    if (args.stopConnections === true) return { ok: true, installing: true, version: '3.33.0', stoppedConnections: 1 };
+    return { ok: false, reason: 'in-use-by-ai-app', message: IN_USE, connections: 1, canStopConnections: true, pids: [4242], exe: 'C:\\Users\\Ana\\AppData\\Local\\Programs\\The Curator\\The Curator.exe' };
+  };
+  const stage = () => drive({ hasActiveWrites: () => false, prepareUpdateHook: async () => ({ ok: true, version: '3.33.0', token: 'T-1' }) });
+
+  await stage();
+  const plain = await driveApplyReq({}, { hasActiveWrites: () => false, installUpdateHook: hook });
+  eq(seen[0], 'onProgress,token', 'a request with no body calls the hook with exactly {token, onProgress}, as always');
+  deq([plain.statusCode, plain.body.reason, plain.body.connections, plain.body.canStopConnections], [500, 'in-use-by-ai-app', 1, true],
+    'the refusal relays the offer: one connection, and that it can be closed');
+  ok(plain.body.error === IN_USE, '…with the engine\u2019s own sentence');
+  ok(!('pids' in plain.body) && !('exe' in plain.body) && !/4242|AppData/.test(JSON.stringify(plain.body)),
+    '…and ONLY the count and the flag: no PID, no path from the engine reaches the page');
+
+  await stage();
+  await driveApplyReq({ body: { stopConnections: 'true' } }, { hasActiveWrites: () => false, installUpdateHook: hook });
+  await stage();
+  await driveApplyReq({ body: { stopConnections: 1 } }, { hasActiveWrites: () => false, installUpdateHook: hook });
+  deq([seen[1], seen[2]], ['onProgress,token', 'onProgress,token'], 'a "true" string or a 1 is NOT agreement: never forwarded');
+
+  await stage();
+  const go = await driveApplyReq({ body: { stopConnections: true } }, { hasActiveWrites: () => false, installUpdateHook: hook });
+  eq(seen[3], 'onProgress,stopConnections,token', 'stopConnections: true is forwarded to the hook');
+  deq([go.statusCode, go.body.relaunching], [200, true], '…and the update goes ahead');
+
+  await stage();
+  const other = await driveApplyReq({}, { hasActiveWrites: () => false,
+    installUpdateHook: async () => ({ ok: false, reason: 'in-use-other', message: 'Another copy…', others: 1 }) });
+  ok(!('canStopConnections' in other.body) && !('connections' in other.body),
+    'another copy of the app is never offered as a connection to close');
+  eq(configRoute.connectionFacts({ canStopConnections: true, connections: 0 }), null, 'connectionFacts: zero connections → no offer');
+  eq(configRoute.connectionFacts({ canStopConnections: 'yes', connections: 2 }), null, '…a flag that is not true → no offer');
+  eq(configRoute.connectionFacts({ canStopConnections: true, connections: 2.5 }), null, '…a count that is not an integer → no offer');
+  deq(configRoute.connectionFacts({ canStopConnections: true, connections: 2, pid: 9 }), { connections: 2, canStopConnections: true }, '…else exactly the count and the flag');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  normaliseUpdateProgress — a fact and its absence are not the same');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1021,6 +1075,42 @@ const IDLE = { updatePhase: 'idle', updateCheck: AVAILABLE, version: VER };
     '§13 …and says why it did not finish on its own');
 }
 
+// ── The Windows app's choice on the staged card (in-use-by-ai-app) ────────
+{
+  const IN_USE = 'An AI app connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
+  const offered = mkStatus(IDLE, {
+    phase: 'staged', job: null, version: '3.32.0',
+    failure: { reason: 'in-use-by-ai-app', error: IN_USE, connections: 1, canStopConnections: true },
+    restartHint: false,
+  }, true)();
+  ok(offered.includes('btn-inapp-finish') && offered.includes('id="btn-inapp-finish-stop"'),
+    '§13 WINDOWS: held by an AI app, the card offers BOTH ways: quit it and finish, or Close the connection and update');
+  ok(offered.includes('>Close the connection and update</button>'), '§13 …the second button says what it does');
+  ok(offered.includes('Quit that app'), '§13 …beside the engine\u2019s own sentence');
+  ok(/ends the AI app’s connection to it/.test(offered) && /quit the app and open it again/.test(offered),
+    '§13 …and the card says, in plain words and on screen, what closing the connection does and how to get it back');
+  ok(!/<details|chevron/.test(offered), '§13 …nothing behind a chevron');
+  const two = mkStatus(IDLE, {
+    phase: 'staged', job: null, version: '3.32.0',
+    failure: { reason: 'in-use-by-ai-app', error: IN_USE, connections: 2, canStopConnections: true }, restartHint: false,
+  }, true)();
+  ok(/the 2 AI app connections to it/.test(two), '§13 …and counts them when there are two');
+  const notOffered = mkStatus(IDLE, {
+    phase: 'staged', job: null, version: '3.32.0',
+    failure: { reason: 'in-use-by-ai-app', error: IN_USE }, restartHint: false,
+  }, true)();
+  ok(!notOffered.includes('btn-inapp-finish-stop'), '§13 no offer from the server → no second button');
+  const macStaged = mkStatus(IDLE, { phase: 'staged', job: null, version: '3.32.0', failure: null, restartHint: false }, true)();
+  ok(!macStaged.includes('btn-inapp-finish-stop') && macStaged.includes('Your knowledge base, API keys and sync settings are untouched.'),
+    '§13 the Mac\u2019s staged card is unchanged: one button, the same reassurance');
+  // The click handler sends the agreement as JSON, and only from that button.
+  const fin = extractLocalFn(workSettingsSrc, 'finishInAppUpdate');
+  ok(/stopConnections\s*\?\s*\{ method: 'POST', headers: \{ 'Content-Type': 'application\/json' \}, body: JSON\.stringify\(\{ stopConnections: true \}\) \}\s*:\s*\{ method: 'POST' \}/.test(fin),
+    '§13 finishing with stopConnections POSTs {stopConnections: true} as JSON; every other finish is the bare POST it was');
+  ok(/getElementById\('btn-inapp-finish-stop'\)[\s\S]{0,200}finishInAppUpdate\(\{ stopConnections: true \}\)/.test(workSettingsSrc),
+    '§13 …and only the Close the connection button asks for it');
+}
+
 // ── M23/M24: the ring's own arguments, asserted where they are PASSED ─────
 // §9 proves updateRingPosition is honest. That is satisfied by a call site
 // that ignores it — `stageProgress: pos.stageProgress || 0.5` is a one-token
@@ -1265,6 +1355,33 @@ const HAPPY_FRAMES = [
     '§15 a swap refused because an ingest is running parks at STAGED — the download is not thrown away and the ingest is not truncated');
   eq(u.version, '3.32.0', '§15 keeping the version it staged');
   ok(/write operation is running/.test(u.failure.error), '\u00a715 and carrying the reason the server gave, so the user knows why it stopped');
+}
+{
+  // THE WINDOWS APP: held by an AI app's connection. The server's offer is
+  // kept on the staged card, and only the second button sends the agreement.
+  const sent = [];
+  let applyCalls = 0;
+  const f = mkFlow(async (u, opts) => {
+    if (String(u) === '/api/config/update') return { ok: true, body: sseStream(HAPPY_FRAMES) };
+    applyCalls++;
+    sent.push(opts);
+    if (applyCalls === 1) {
+      return { ok: false, status: 500, json: async () => ({
+        reason: 'in-use-by-ai-app', error: 'An AI app connected to The Curator, such as Claude Desktop, is using it right now…',
+        connections: 1, canStopConnections: true, releasesPageUrl: 'https://example.invalid/releases',
+      }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, relaunching: true }) };
+  });
+  await f.runInAppUpdate();
+  const u = f.read().inAppUpdate;
+  eq(JSON.stringify([u.phase, u.failure.reason, u.failure.connections, u.failure.canStopConnections]),
+    JSON.stringify(['staged', 'in-use-by-ai-app', 1, true]), '§15 WINDOWS: held by an AI app → STAGED, keeping the offer (1 connection, can close)');
+  eq(JSON.stringify(sent[0]), JSON.stringify({ method: 'POST' }), '§15 …the automatic finish was the bare POST, with no agreement in it');
+  await f.finishInAppUpdate({ stopConnections: true });
+  eq(JSON.stringify(sent[1]), JSON.stringify({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stopConnections: true }) }),
+    '§15 Close the connection and update POSTs {stopConnections: true} as JSON');
+  eq(f.read().inAppUpdate.phase, 'relaunching', '§15 …and the flow goes on to the restart');
 }
 {
   // A named engine failure mid-download.
