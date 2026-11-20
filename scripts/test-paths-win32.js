@@ -388,7 +388,16 @@ ok(nsisLike && nsisLike.isBundle === false,
 const mac = winProbe({ platform: 'darwin', appRoot: '/Applications/The Curator.app/Contents/Resources/app',
   env: {}, homedir: '/Users/ana', marker: false });
 ok(mac && mac.isBundle === true, 'CROSS-CHECK: the simulated darwin host still infers a bundle from `.app/Contents`');
-eq(mac && mac.userData, '/Users/ana/Library/Application Support/The Curator', '  └─ with user data in Application Support, unchanged');
+// The darwin arm joins with the HOST's path module (path.join, in v3.99.3 too:
+// `git show f6d89e4:src/brain/paths.js`). A simulated darwin on a win32 host
+// therefore gets backslashes — a situation that cannot occur for real. On a
+// win32 host the expectation is built with that same host module; elsewhere it
+// stays the exact literal.
+const MAC_DATA = process.platform === 'win32'
+  ? path.join('/Users/ana', 'Library', 'Application Support', 'The Curator')
+  : '/Users/ana/Library/Application Support/The Curator';
+if (process.platform === 'win32') console.log(`  · win32 HOST: expecting the simulated-darwin data dir joined by the host path module (${MAC_DATA}), not the POSIX literal`);
+eq(mac && mac.userData, MAC_DATA, '  └─ with user data in Application Support, unchanged');
 eq(mac && mac.caps.mcpLaunchStyle, 'launcher-script', '  └─ and the macOS launcher-script MCP style, unchanged');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -464,10 +473,14 @@ eq(im.getCapabilities('bundle', 'darwin').mcpLaunchStyle, 'launcher-script', 'bu
 eq(im.getCapabilities('bundle', 'linux').mcpLaunchStyle, 'launcher-script', 'bundle on linux keeps launcher-script');
 ok(im.getCapabilities('repo', 'win32') === im.getCapabilities('repo', 'darwin'),
   'repo on win32 is the SAME record as on darwin (the browser install keeps node-script)');
-for (const odd of ['freebsd', '__proto__', 'constructor', 'hasOwnProperty', '', undefined]) {
+for (const odd of ['freebsd', '__proto__', 'constructor', 'hasOwnProperty', '']) {
   ok(im.getCapabilities('bundle', odd) === im.getCapabilities('bundle', 'darwin'),
     `an unknown platform ${JSON.stringify(odd)} gets the base bundle record (no prototype lookup)`);
 }
+// `undefined` is not "unknown": it selects the HOST's platform (getPlatform()),
+// so the truthful expectation depends on the host. Asserted explicitly.
+ok(im.getCapabilities('bundle', undefined) === im.getCapabilities('bundle', process.platform),
+  `platform undefined resolves to the host platform's record (${process.platform}: ${im.getCapabilities('bundle', undefined).mcpLaunchStyle})`);
 for (const proto of ['constructor', '__proto__', 'toString']) {
   let threw = null;
   try { im.getCapabilities(proto, 'win32'); } catch (e) { threw = e; }
