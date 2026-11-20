@@ -479,6 +479,59 @@ ok(/explainerMark\('settings-/.test(settingsSrc) && !/explainerMark\('tx-vh-info
   'every info panel id stays in the settings-* namespace');
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§6b  The installer arm keeps the channel rule on BOTH platforms');
+// ═══════════════════════════════════════════════════════════════════════════
+// The picker is channel-independent today (one channel, `stable`; the
+// tripwire in §3 and in test-update-installer.js §9 fires the day that
+// changes). What the platform argument must not do is change that: on darwin
+// and on win32 the installer arm reports the channel it RESOLVED, an unknown
+// channel in the config still resolves to stable, and the release chosen does
+// not depend on the channel — only on the platform.
+{
+  const BUNDLE = { canSelfUpdateViaGit: false, canRunNpmInstall: false, updateStyle: 'download-installer' };
+  const rel = (v, names) => ({ tag_name: `v${v}`, draft: false, prerelease: false, name: `v${v}`,
+    html_url: `https://github.com/talirezun/the-curator/releases/tag/v${v}`,
+    published_at: '2026-11-21T09:00:00Z',
+    assets: names.map((n, i) => ({ id: i + 1, name: n, state: 'uploaded', size: 1000 + i,
+      digest: 'sha256:' + createHash('sha256').update(n).digest('hex'),
+      browser_download_url: `https://github.com/talirezun/the-curator/releases/download/v${v}/${n}` })) });
+  const LIST = [
+    rel('4.2.0', ['TheCurator-4.2.0-x64-Windows-Setup.exe', 'TheCurator-4.2.0-x64-Windows-Setup.exe.sha256']),
+    rel('4.1.0', ['TheCurator-4.1.0-arm64-AppleSilicon.dmg', 'TheCurator-4.1.0-x64-Intel.dmg',
+      'TheCurator-4.1.0-x64-Windows-Setup.exe']),
+  ];
+  async function installerCheck(platform, releaseRef) {
+    const res = fakeRes();
+    const realFetch = globalThis.fetch;
+    let escaped = 0;
+    globalThis.fetch = async () => { escaped++; throw new Error('ESCAPED TO THE REAL NETWORK'); };
+    try {
+      await cfgRoute.updateCheckHandler({}, res, {
+        caps: BUNDLE, platform, ...(releaseRef ? { releaseRef } : {}),
+        execAsync: async () => { throw new Error('no subprocess on the installer arm'); },
+        fetch: async () => ({ ok: true, status: 200, headers: new Map(), json: async () => LIST }),
+      });
+    } finally { globalThis.fetch = realFetch; }
+    ok(escaped === 0, `§6b (${platform}) the check never escapes the injected fetch`);
+    return res._out.body || {};
+  }
+  for (const [platform, want] of [['darwin', '4.1.0'], ['win32', '4.2.0']]) {
+    writeConfig(null);
+    const dflt = await installerCheck(platform);
+    eq(dflt.channel, 'stable', `§6b ${platform}: with no releaseChannel key the arm reports stable`);
+    eq(dflt.latest, want, `§6b ${platform}: and offers ${want}, the newest release with ITS installer`);
+    writeConfig({ releaseChannel: 'canary-from-a-newer-build' });
+    const unknown = await installerCheck(platform);
+    eq(unknown.channel, 'stable', `§6b ${platform}: an unknown channel in the config still resolves to stable`);
+    eq(unknown.latest, want, `§6b ${platform}: and the same release is offered`);
+    writeConfig(null);
+    const injected = await installerCheck(platform, { channel: 'zzchannel', branch: 'zzbranch' });
+    eq(injected.channel, 'zzchannel', `§6b ${platform}: the arm echoes the channel it resolved, not a literal`);
+    eq(injected.latest, want, `§6b ${platform}: and the channel does not move which release is chosen (channel-independent today)`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§7  Isolation held');
 // ═══════════════════════════════════════════════════════════════════════════
 

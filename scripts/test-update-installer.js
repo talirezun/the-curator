@@ -41,10 +41,13 @@
  *   §2  `parseVersionCore` was LIFTED out of `compareSemver`, not copied —
  *       proven by running HEAD's comparator and this one over the same matrix
  *   §3  `pickInstallableRelease` — including the REAL measured release payload
+ *   §3b the picker takes the PLATFORM: mixed DMG/EXE releases, the raw asset
+ *       and its digest, and darwin byte-identical to the v3.99.3 picker
  *   §4  `decideInstallerUpdate` — three outcomes, and why it is not the git one
  *   §5  `classifyReleaseFailure` — offline / rate-limited / HTTP / bad shape
  *   §6  THE EQUIVALENCE PROOF for repo mode, plus its disagreement control
  *   §7  the installer arm end to end, through the real exported handler
+ *   §7b the handler hands the picker the platform it runs on
  *   §8  the frontend: the old failure reproduced, the new verdicts, the git
  *       path proven additive-only, and the wording-distinctness rule
  *   §9  the release-channel tripwire
@@ -79,6 +82,8 @@ function eq(actual, expected, label) {
   ok(same, `${label}${same ? '' : `\n        expected: ${JSON.stringify(expected)}\n        actual:   ${JSON.stringify(actual)}`}`);
 }
 function section(t) { console.log(`\n${t}`); }
+// Structural equality for arrays and plain objects (JSON is enough for fixture data).
+function deq(actual, expected, label) { eq(JSON.stringify(actual), JSON.stringify(expected), label); }
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -385,6 +390,179 @@ eq(configRoute.versionFromTag('version-3'), 'version-3', '§3 and does NOT strip
 eq(configRoute.versionFromTag(''), null, '§3 and refuses an empty tag');
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§3b  The picker takes the PLATFORM — a Mac is never offered a release with no DMG, Windows never one with no .exe');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Real-shaped GitHub release entries: every field the REST API returns for a
+// release asset that anything downstream reads (id, name, label, state,
+// content_type, size, digest, browser_download_url), with the digests computed
+// here rather than typed. Asset names follow what CI publishes today for the
+// Mac (`TheCurator-X.Y.Z-<arch>-<Label>.dmg`) and the design report's Windows
+// name (`TheCurator-X.Y.Z-x64-Windows-Setup.exe`, plus a `.sha256` sidecar
+// and electron-builder's `.blockmap`, which must never count as installers).
+
+const REL_BASE = 'https://github.com/talirezun/the-curator/releases';
+let assetId = 9000;
+function asset(name, size) {
+  const digest = 'sha256:' + createHash('sha256').update(`fixture:${name}:${size}`).digest('hex');
+  const tag = (name.match(/-(\d+\.\d+\.\d+)-/) || [])[1];
+  return {
+    url: `https://api.github.com/repos/talirezun/the-curator/releases/assets/${++assetId}`,
+    id: assetId, node_id: `RA_fixture${assetId}`, name, label: '', state: 'uploaded',
+    content_type: name.endsWith('.dmg') ? 'application/x-apple-diskimage'
+      : name.endsWith('.exe') ? 'application/x-msdownload' : 'application/octet-stream',
+    size, digest, download_count: 0,
+    created_at: '2026-11-21T10:00:00Z', updated_at: '2026-11-21T10:00:00Z',
+    browser_download_url: `${REL_BASE}/download/v${tag}/${name}`,
+  };
+}
+const macAssets = (v) => [asset(`TheCurator-${v}-arm64-AppleSilicon.dmg`, 120_000_000),
+  asset(`TheCurator-${v}-x64-Intel.dmg`, 125_000_000)];
+const winAssets = (v) => [asset(`TheCurator-${v}-x64-Windows-Setup.exe`, 98_000_000),
+  asset(`TheCurator-${v}-x64-Windows-Setup.exe.sha256`, 64),
+  asset(`TheCurator-${v}-x64-Windows-Setup.exe.blockmap`, 104_000)];
+function release(v, assets, extra = {}) {
+  return { url: `https://api.github.com/repos/talirezun/the-curator/releases/${v.replace(/\D/g, '')}`,
+    html_url: `${REL_BASE}/tag/v${v}`, id: Number(v.replace(/\D/g, '')), tag_name: `v${v}`,
+    target_commitish: 'main', name: `v${v}`, draft: false, prerelease: false,
+    created_at: '2026-11-21T09:00:00Z', published_at: `2026-11-21T09:${String(v.length).padStart(2, '0')}:00Z`,
+    assets, tarball_url: null, zipball_url: null, body: '', ...extra };
+}
+const R_BOTH_410 = release('4.1.0', [...macAssets('4.1.0'), ...winAssets('4.1.0')]);
+const R_DMG_420 = release('4.2.0', macAssets('4.2.0'));          // the Windows job failed
+const R_EXE_420 = release('4.2.0', winAssets('4.2.0'));          // the Mac job failed
+const R_SIDECARS_430 = release('4.3.0', winAssets('4.3.0').slice(1)); // exe upload failed, sidecars made it
+const MIXED = {
+  'newest is DMG-only': [R_DMG_420, R_BOTH_410],
+  'newest is EXE-only': [R_EXE_420, R_BOTH_410],
+  'only an EXE-only release': [R_EXE_420],
+  'only a DMG-only release': [R_DMG_420],
+  'both platforms on one release': [R_BOTH_410],
+  'newest has only the .sha256 and .blockmap': [R_SIDECARS_430, R_BOTH_410],
+  'a newer EXE-only DRAFT': [release('4.9.0', winAssets('4.9.0'), { draft: true }), R_BOTH_410],
+  'a newer EXE-only PRE-RELEASE': [release('4.5.0', winAssets('4.5.0'), { prerelease: true }), R_BOTH_410],
+  'listing order reversed': [R_BOTH_410, R_EXE_420],
+};
+const EXPECT = {
+  // [darwin, win32]
+  'newest is DMG-only': ['4.2.0', '4.1.0'],
+  'newest is EXE-only': ['4.1.0', '4.2.0'],
+  'only an EXE-only release': [null, '4.2.0'],
+  'only a DMG-only release': ['4.2.0', null],
+  'both platforms on one release': ['4.1.0', '4.1.0'],
+  'newest has only the .sha256 and .blockmap': ['4.1.0', '4.1.0'],
+  'a newer EXE-only DRAFT': ['4.1.0', '4.1.0'],
+  'a newer EXE-only PRE-RELEASE': ['4.1.0', '4.5.0'],
+  'listing order reversed': ['4.1.0', '4.2.0'],
+};
+for (const [label, payload] of Object.entries(MIXED)) {
+  const [mac, win] = EXPECT[label];
+  eq(P(payload, { platform: 'darwin' })?.version ?? null, mac, `§3b ${label}: a Mac is offered ${mac ?? 'nothing'}`);
+  eq(P(payload, { platform: 'win32' })?.version ?? null, win, `§3b ${label}: Windows is offered ${win ?? 'nothing'}`);
+}
+eq(P(MIXED['a newer EXE-only PRE-RELEASE'], { platform: 'win32' })?.prerelease, true,
+  '§3b a Windows pre-release is DISCLOSED, not filtered (the same rule as the Mac)');
+eq(P(REAL_RELEASES, { platform: 'win32' }), null,
+  '§3b the REAL measured payload (DMGs only) offers Windows NOTHING — never a Mac download');
+eq(P([release('4.2.0', [asset('TheCurator-4.2.0-x64-Windows-Setup.EXE', 1)])], { platform: 'win32' })?.version, '4.2.0',
+  '§3b the .exe match is case-insensitive, like the .dmg one');
+eq(P([release('4.2.0', [asset('TheCurator-4.2.0-x64-Windows-Setup.exe.zip', 1)])], { platform: 'win32' }), null,
+  '§3b a zipped .exe is not an installer');
+// The brief's alternative name: the picker matches by extension, so either
+// naming scheme is offered. Which file is DOWNLOADED is the asset picker's job.
+eq(P([release('4.2.0', [asset('The-Curator-Setup-4.2.0-x64.exe', 1)])], { platform: 'win32' })?.version, '4.2.0',
+  '§3b the picker matches by extension, so the alternative "The-Curator-Setup-<v>-x64.exe" name is also picked');
+
+// The raw asset the downloader needs, with its digest — one definition shared
+// with the picker, so the release chosen and the file inside it cannot disagree.
+{
+  const A = configRoute.installerAssetsFor;
+  const winPick = A(R_BOTH_410, 'win32');
+  eq(winPick.length, 1, '§3b installerAssetsFor(win32) on a both-platform release finds exactly ONE file');
+  eq(winPick[0] && winPick[0].name, 'TheCurator-4.1.0-x64-Windows-Setup.exe', '§3b and it is the setup .exe, not its .sha256 or .blockmap');
+  ok(winPick[0] === R_BOTH_410.assets[2], '§3b and it is the RAW asset object GitHub sent (not a copy that could drift)');
+  ok(/^sha256:[0-9a-f]{64}$/.test((winPick[0] || {}).digest || ''), '§3b carrying its sha256 digest');
+  eq((winPick[0] || {}).size, 98_000_000, '§3b and its byte length');
+  ok(/^https:\/\/github\.com\/talirezun\/the-curator\/releases\/download\/v4\.1\.0\//.test((winPick[0] || {}).browser_download_url || ''),
+    '§3b and its download URL under that release');
+  const macPick = A(R_BOTH_410, 'darwin');
+  deq(macPick.map((a) => a.name), ['TheCurator-4.1.0-arm64-AppleSilicon.dmg', 'TheCurator-4.1.0-x64-Intel.dmg'],
+    '§3b installerAssetsFor(darwin) finds the two DMGs, in listing order, and no .exe');
+  deq(A(R_BOTH_410, undefined).map((a) => a.name), macPick.map((a) => a.name), '§3b with NO platform it is the Mac answer');
+  deq(A(R_DMG_420, 'win32'), [], '§3b a DMG-only release has no Windows installer');
+  deq(A(R_EXE_420, 'darwin'), [], '§3b an EXE-only release has no Mac installer');
+  for (const bad of [null, undefined, 7, {}, { assets: 'x' }, { assets: [null, 5, {}, { name: 9 }] }]) {
+    deq(A(bad, 'win32'), [], `§3b installerAssetsFor degrades on ${JSON.stringify(bad)} rather than throwing`);
+  }
+  // Re-association by tag, the way desktop/lib/update-release.js does it: the
+  // release the WINDOWS picker chose carries a Windows file.
+  const payload = MIXED['newest is EXE-only'];
+  const chosen = P(payload, { platform: 'win32' }) || {};
+  const raw = payload.find((r) => r.tag_name === chosen.tagName);
+  deq(A(raw, 'win32').map((a) => a.name), ['TheCurator-4.2.0-x64-Windows-Setup.exe'],
+    '§3b the release Windows is offered, looked up by its tag, holds the setup .exe');
+}
+deq(configRoute.installerExtensionsFor('win32'), ['.exe'], '§3b win32 uses .exe');
+for (const p of ['darwin', 'linux', undefined, null, '', 'WIN32', 'win64', 'freebsd']) {
+  ok(configRoute.installerExtensionsFor(p) === configRoute.INSTALLER_ASSET_EXTENSIONS,
+    `§3b ${JSON.stringify(p)} keeps the Mac list (the SAME frozen array) — only the exact string 'win32' changes the answer`);
+}
+ok(Object.isFrozen(configRoute.WIN32_INSTALLER_ASSET_EXTENSIONS), '§3b the Windows extension list is frozen');
+
+// ── DARWIN IS BYTE-IDENTICAL: the pre-change picker, run beside this one ──
+// Pinned to v3.99.3 (f6d89e4), the last commit before the picker took a
+// platform. Its `pickInstallableRelease` and `hasInstallerAsset` are compiled
+// with this module's own helpers, and run over every fixture in this file.
+const PICKER_BASELINE_REF = 'f6d89e4';
+let pickerBaselineSrc = null;
+try {
+  pickerBaselineSrc = execFileSync('git', ['-C', ROOT, 'show', `${PICKER_BASELINE_REF}:src/routes/config.js`],
+    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+} catch { /* reported below */ }
+ok(!!pickerBaselineSrc, `§3b the pinned picker baseline ${PICKER_BASELINE_REF} is reachable (CI uses fetch-depth: 0)`);
+{
+  const src = pickerBaselineSrc || '';
+  const at = src.indexOf('function hasInstallerAsset(');
+  const hasSrc = at === -1 ? '' : braceSlice(src, at) || '';
+  const pickSrc = extractExportedFn(src, 'pickInstallableRelease') || '';
+  ok(hasSrc.length > 100 && pickSrc.length > 500, '§3b CONTROL: both baseline functions were extracted');
+  ok(!/platform/.test(hasSrc + pickSrc), '§3b CONTROL: the baseline really predates the platform argument');
+  let basePick = () => { throw new Error('baseline did not compile'); };
+  try {
+    // eslint-disable-next-line no-new-func
+    basePick = new Function('INSTALLER_ASSET_EXTENSIONS', 'versionFromTag', 'isComparableVersion', 'compareSemver',
+      'RELEASES_PAGE_URL', `${hasSrc}\n${pickSrc}\nreturn pickInstallableRelease;`)(
+      ['.dmg'], configRoute.versionFromTag, configRoute.isComparableVersion, configRoute.compareSemver,
+      configRoute.RELEASES_PAGE_URL);
+  } catch (e) { ok(false, `§3b the baseline picker compiles: ${e.message}`); }
+  const corpus = [
+    REAL_RELEASES, REAL_RELEASES.filter((r) => !r.prerelease), ...Object.values(MIXED),
+    [R_SIDECARS_430], [release('4.2.0', [asset('TheCurator-4.2.0-x64-Windows-Setup.EXE', 1)])],
+    [{ tag_name: 'nightly', draft: false, html_url: 'https://github.com/a/b', assets: [{ name: 'a.dmg' }] }],
+    [{ tag_name: 'v1.0.0', draft: false, html_url: 'javascript:alert(1)', assets: [{ name: 'a.DMG' }] }],
+    [null, undefined, 7, 'x', { assets: null }, { tag_name: 'v1.0.0', assets: 'nope' }],
+    [{ tag_name: 'v1.0.0', draft: false, assets: [null, 7, {}, { name: 5 }, { name: 'a.dmg' }] }],
+    null, undefined, 42, {}, [],
+  ];
+  let same = 0, diffs = [];
+  for (const [i, x] of corpus.entries()) {
+    const want = JSON.stringify(basePick(x));
+    const got = [P(x), P(x, { platform: 'darwin' }), P(x, { platform: 'linux' }), P(x, {}), P(x, null), P(x, 'win32')]
+      .map((v) => JSON.stringify(v));
+    if (got.every((g) => g === want)) same++; else diffs.push(i);
+  }
+  eq(same, corpus.length,
+    `§3b on all ${corpus.length} payloads the pre-change picker and this one agree BYTE-FOR-BYTE with no platform, ` +
+    `darwin, linux, {} , null and a non-object opts` + (diffs.length ? ` — differed at ${diffs.join(',')}` : ''));
+  // THE CONTROL: agreement must not be satisfied by a platform argument that
+  // does nothing. Windows must disagree with the baseline where it should.
+  const winDiffers = ['newest is DMG-only', 'newest is EXE-only', 'only an EXE-only release', 'only a DMG-only release',
+    'a newer EXE-only PRE-RELEASE', 'listing order reversed']
+    .filter((k) => JSON.stringify(basePick(MIXED[k])) !== JSON.stringify(P(MIXED[k], { platform: 'win32' })));
+  eq(winDiffers.length, 6, '§3b CONTROL: win32 DISAGREES with the Mac baseline on every mixed payload where it must');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§4  decideInstallerUpdate — three outcomes, not two');
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -617,7 +795,7 @@ section('§7  The installer arm, end to end, through the REAL exported handler')
 // §6 proves the fork happens. This drives the real shipped handler — the one
 // registered on the router — with only `fetch` injected.
 
-async function realCheck(fetchImpl, caps = BUNDLE_CAPS, releaseRef = undefined) {
+async function realCheck(fetchImpl, caps = BUNDLE_CAPS, releaseRef = undefined, platform = undefined) {
   const execCalls = [];
   const res = fakeRes();
   // TRIPWIRE (v3.30.0's lesson). An offline suite that silently falls through
@@ -635,6 +813,7 @@ async function realCheck(fetchImpl, caps = BUNDLE_CAPS, releaseRef = undefined) 
       execAsync: async (cmd) => { execCalls.push(cmd); return { stdout: '' }; },
       fetch: fetchImpl,
       ...(releaseRef ? { releaseRef } : {}),
+      ...(platform ? { platform } : {}),
     });
   } finally {
     globalThis.fetch = realFetch;
@@ -735,6 +914,41 @@ const okJson = (payload, extra = {}) => async () => ({
   const r = await realCheck(okJson(ahead));
   eq((r.body || {}).localAhead, true, '§7 a copy newer than anything published reports localAhead');
   eq((r.body || {}).updateAvailable, false, '§7 and is NOT offered a download that would move it backwards');
+}
+
+// ── §7b  THE HANDLER PASSES THE PLATFORM ───────────────────────────────────
+// The Settings check and the shell's updater must name the SAME release, so
+// the handler must hand the picker the platform it runs on. Driven through the
+// real handler with the platform seam; with no seam it uses process.platform.
+{
+  const payload = MIXED['newest is DMG-only'];
+  const mac = await realCheck(okJson(payload), BUNDLE_CAPS, undefined, 'darwin');
+  const win = await realCheck(okJson(payload), BUNDLE_CAPS, undefined, 'win32');
+  const dflt = await realCheck(okJson(payload));
+  eq((mac.body || {}).latest, '4.2.0', '§7b a Mac is offered the newest release with a DMG');
+  eq((win.body || {}).latest, '4.1.0', '§7b Windows skips the DMG-only release and is offered the newest with a setup .exe');
+  eq((win.body || {}).releaseTag, 'v4.1.0', '§7b with that release\'s tag');
+  eq((win.body || {}).releaseUrl, `${REL_BASE}/tag/v4.1.0`, '§7b and its page');
+  eq((win.body || {}).updateAvailable,
+    configRoute.decideInstallerUpdate({ current: (win.body || {}).current, latest: '4.1.0' }).updateAvailable,
+    '§7b and the verdict is the one decideInstallerUpdate gives for that version');
+  deq(Object.keys(win.body || {}), Object.keys(mac.body || {}),
+    '§7b the Windows answer has exactly the Mac answer\'s fields — no new field on the wire');
+  if (process.platform !== 'win32') {
+    eq(JSON.stringify(dflt.body), JSON.stringify(mac.body),
+      `§7b with NO platform injected (process.platform = ${process.platform}) the response is byte-identical to the Mac one`);
+  } else {
+    eq(JSON.stringify(dflt.body), JSON.stringify(win.body),
+      '§7b with NO platform injected on Windows the response is the win32 one');
+  }
+  const winNone = await realCheck(okJson(REAL_RELEASES), BUNDLE_CAPS, undefined, 'win32');
+  eq((winNone.body || {}).noInstallableRelease, true,
+    '§7b the REAL DMG-only payload tells Windows "no installable release", never offers it a Mac build');
+  ok((winNone.body || {}).error === undefined && (winNone.body || {}).latest === null,
+    '§7b and that is not an error and names no version');
+  const macNone = await realCheck(okJson(MIXED['only an EXE-only release']), BUNDLE_CAPS, undefined, 'darwin');
+  eq((macNone.body || {}).noInstallableRelease, true, '§7b and an EXE-only listing tells a Mac the same');
+  eq(win.execCalls.length + mac.execCalls.length, 0, '§7b no subprocess on either platform');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1083,7 +1297,7 @@ section('§10  Anti-vacuity, and what is NOT enforced');
 ok(typeof configRoute.updateCheckHandler === 'function' && configRoute.updateCheckHandler.length === 2,
   '§10 updateCheckHandler is the real exported handler with the (req, res, deps) signature');
 for (const name of ['pickInstallableRelease', 'decideInstallerUpdate', 'classifyReleaseFailure',
-  'parseVersionCore', 'isComparableVersion', 'versionFromTag']) {
+  'parseVersionCore', 'isComparableVersion', 'versionFromTag', 'installerAssetsFor', 'installerExtensionsFor']) {
   ok(typeof configRoute[name] === 'function', `§10 ${name} is exported and executable (not source-scanned)`);
 }
 eq(configRoute.RELEASES_API_URL.startsWith('https://api.github.com/'), true, '§10 the API URL is https and GitHub');
@@ -1123,7 +1337,11 @@ ok(!(baselineConfigSrc || '').includes('pickInstallableRelease'),
 //     bound the DAMAGE (it degrades to "unexpected response"), not the risk.
 //  5. RATE-LIMIT DETECTION IS TESTED AGAINST A SIMULATED HEADER. No real 403
 //     was provoked.
-//  6. `/old` (`src/public/app.js`) IS UNTOUCHED AND STILL BROKEN HERE. It reads
+//  6. THE WIN32 ARM HAS NEVER RUN ON WINDOWS. §3b and §7b drive it with an
+//     injected platform string; that `process.platform` reads 'win32' inside
+//     the packaged Windows app, and that desktop/lib/update-release.js passes
+//     the same platform (it does not yet), are not proven here.
+//  7. `/old` (`src/public/app.js`) IS UNTOUCHED AND STILL BROKEN HERE. It reads
 //     `data.updateAvailable` with no style awareness, so a packaged build
 //     serving `/old` would still show the git flow. It is the frozen bundle and
 //     was out of scope; this is a report, not a fix.

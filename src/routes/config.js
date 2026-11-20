@@ -3851,18 +3851,52 @@ export const RELEASES_USER_AGENT = 'the-curator-update-check';
 /** How long to wait before calling it unreachable. */
 export const RELEASES_TIMEOUT_MS = 8000;
 
-/** What counts as "you can install this". macOS-only today, which is also the
- *  only platform the packaged app ships for; a Windows/Linux installer would
- *  add its own extension here AND need a platform argument, so this is
- *  deliberately a list rather than a single literal. */
+/** What counts as "you can install this" ON A MAC. Unchanged since the Mac
+ *  app shipped; it is also the list every platform other than win32 uses, so
+ *  a caller that passes no platform (or an unknown one) gets exactly the
+ *  answer it got before the Windows app existed. */
 export const INSTALLER_ASSET_EXTENSIONS = Object.freeze(['.dmg']);
 
-function hasInstallerAsset(release) {
+/** What counts as "you can install this" ON WINDOWS: the NSIS setup program
+ *  (`TheCurator-X.Y.Z-x64-Windows-Setup.exe`). Its `.exe.sha256` sidecar and
+ *  any `.exe.blockmap` do not end in `.exe` and so never count. */
+export const WIN32_INSTALLER_ASSET_EXTENSIONS = Object.freeze(['.exe']);
+
+/**
+ * Pure. Which installer extensions a platform can use.
+ *
+ * WHY THE PLATFORM IS AN ARGUMENT, NOT A UNION LIST. Adding `.exe` to one
+ * shared list would have offered a Mac a release whose DMG job failed but
+ * whose Windows build uploaded; the Mac's download then fails with
+ * `no-asset-for-arch`. The reverse (a Windows app offered a DMG-only
+ * release) is the same defect. So a release counts only if it carries an
+ * installer FOR THIS PLATFORM.
+ *
+ * Only `'win32'` changes the answer. Everything else, including `undefined`
+ * and `'linux'` (CI), keeps the Mac list: byte-identical to before.
+ */
+export function installerExtensionsFor(platform) {
+  return platform === 'win32' ? WIN32_INSTALLER_ASSET_EXTENSIONS : INSTALLER_ASSET_EXTENSIONS;
+}
+
+/**
+ * Pure. The release's assets that are installers for `platform`, as the RAW
+ * asset objects GitHub sent (name, size, browser_download_url, digest), in
+ * the listing's order. The one definition of "an installer asset", shared by
+ * the picker below and by whatever downloads the file, so the two can never
+ * disagree about which file a release offers. Junk members are skipped.
+ */
+export function installerAssetsFor(release, platform) {
   const assets = release && Array.isArray(release.assets) ? release.assets : [];
-  return assets.some((a) => {
+  const exts = installerExtensionsFor(platform);
+  return assets.filter((a) => {
     const name = a && typeof a.name === 'string' ? a.name.toLowerCase() : '';
-    return INSTALLER_ASSET_EXTENSIONS.some((ext) => name.endsWith(ext));
+    return exts.some((ext) => name.endsWith(ext));
   });
+}
+
+function hasInstallerAsset(release, platform) {
+  return installerAssetsFor(release, platform).length > 0;
 }
 
 /** `v3.30.0` → `3.30.0`. A leading `v` is the only thing stripped; anything
@@ -3893,13 +3927,15 @@ export function versionFromTag(tagName) {
  * exists — the caller reports that as a distinct "cannot compare" outcome
  * rather than as "up to date".
  */
-export function pickInstallableRelease(releases) {
+export function pickInstallableRelease(releases, opts) {
   if (!Array.isArray(releases)) return null;
+  // `opts.platform`: see installerExtensionsFor. Absent = the Mac answer.
+  const platform = opts && typeof opts === 'object' ? opts.platform : undefined;
   const candidates = [];
   for (const r of releases) {
     if (!r || typeof r !== 'object') continue;
     if (r.draft === true) continue;
-    if (!hasInstallerAsset(r)) continue;
+    if (!hasInstallerAsset(r, platform)) continue;
     const version = versionFromTag(r.tag_name);
     if (!version) continue;
     candidates.push({
@@ -4024,6 +4060,10 @@ export function classifyReleaseFailure(kind, statusCode, headers) {
 async function installerUpdateCheck(res, deps) {
   const fetchImpl = (deps && deps.fetch) || defaultFetch;
   const { channel } = (deps && deps.releaseRef) || getReleaseRef();
+  // The platform this install runs on decides which releases count (see
+  // installerExtensionsFor). `deps.platform` is the test seam, null in
+  // production. Not echoed on the wire: the response stays byte-identical.
+  const platform = (deps && deps.platform) || process.platform;
 
   let current;
   try {
@@ -4059,7 +4099,7 @@ async function installerUpdateCheck(res, deps) {
     return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
   }
 
-  const release = pickInstallableRelease(payload);
+  const release = pickInstallableRelease(payload, { platform });
 
   // NOT an error, and NOT "you are up to date": no installable build has been
   // published at all. Three different facts, three different answers.
