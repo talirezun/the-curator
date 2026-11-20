@@ -1178,6 +1178,18 @@ eq(D({ current: '3.25.0', latest: '3.25.0', localCommit: 'aaa', remoteCommit: 'a
   'same version, same commit is NOT an update');
 eq(D({ current: '3.25.0', latest: '3.25.0', localCommit: null, remoteCommit: null }).updateAvailable, false,
   'no commit information and equal versions is NOT an update');
+// v3.99.3: the user report. `git rev-parse --short` printed 8 characters, the
+// remote id is cut to 7: the SAME commit must not read as an update.
+eq(D({ current: '3.99.2', latest: '3.99.2', localCommit: 'a3360697', remoteCommit: 'a336069' }).updateAvailable, false,
+  'the same commit abbreviated to 8 and 7 characters is NOT an update (the reported endless "Install update")');
+eq(D({ current: '3.99.2', latest: '3.99.2', localCommit: 'A336069', remoteCommit: 'a3360697f' }).updateAvailable, false,
+  'case and either side being the longer one do not matter');
+eq(D({ current: '3.99.2', latest: '3.99.2', localCommit: 'a3360698', remoteCommit: 'a336069' }).updateAvailable, false,
+  'a 7-character prefix shared by an 8-character id is treated as the same commit (git guarantees 7 is unique enough to print)');
+eq(D({ current: '3.99.2', latest: '3.99.2', localCommit: 'b3360697', remoteCommit: 'a336069' }).updateAvailable, true,
+  'a different commit with a different prefix IS still an update');
+eq(D({ current: '3.99.2', latest: '3.99.2', localCommit: 'a336', remoteCommit: 'a336069' }).updateAvailable, true,
+  'a prefix shorter than 7 characters is not trusted as the same commit');
 eq(D({ current: '3.25.0', latest: '3.26.0', localCommit: null, remoteCommit: null }).updateAvailable, true,
   'version comparison alone still drives the verdict when commits are unknown');
 // Fail-safe: unparseable collapses to 0, which leaves commitsDiffer in charge.

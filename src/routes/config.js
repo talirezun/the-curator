@@ -3736,11 +3736,31 @@ export function compareSemver(a, b) {
  * ahead of what is published" — and a client that cannot tell them apart
  * would report the second as the first.
  */
+/**
+ * Do two abbreviated commit ids name the same commit?
+ *
+ * v3.99.3. `git rev-parse --short HEAD` picks its own length, and git lengthens
+ * it as a repository grows (a user's install printed `a3360697`), while the
+ * remote id is always cut to 7 (`a336069`). Comparing the two strings with
+ * `!==` then reported an update forever, and "Install update" could never
+ * clear it. Two ids name the same commit when one is a prefix of the other and
+ * the shorter has at least 7 characters (git never abbreviates below 7 by
+ * default); exact equality still counts at any length.
+ */
+export function sameCommit(a, b) {
+  const x = String(a || '').trim().toLowerCase();
+  const y = String(b || '').trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 7 && long.startsWith(short);
+}
+
 export function decideUpdateAvailable({ current, latest, localCommit, remoteCommit }) {
   const cmp = compareSemver(current, latest);
   const localAhead = cmp > 0;
   const versionDiffers = cmp < 0 || (cmp === 0 && latest !== current);
-  const commitsDiffer = Boolean(localCommit && remoteCommit && localCommit !== remoteCommit);
+  const commitsDiffer = Boolean(localCommit && remoteCommit && !sameCommit(localCommit, remoteCommit));
   return {
     updateAvailable: !localAhead && (versionDiffers || commitsDiffer),
     localAhead,
