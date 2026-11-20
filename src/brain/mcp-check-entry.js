@@ -12,7 +12,7 @@
  * ── THE SECURITY RULE (docs/dev/decisions-app.md § Security) ──────────────
  * This runs a command TAKEN FROM ANOTHER APP'S CONFIG FILE. Anything that can
  * write that file could otherwise make this button run any program, so the
- * command is run only when it is one of exactly two shapes, both of which
+ * command is run only when it is one of exactly three shapes, each of which
  * start THIS app's own bridge and nothing else:
  *
  *   (a) THE LAUNCHER — `command` resolves (realpath) to this app's own
@@ -24,6 +24,47 @@
  *       `--domains-path <absolute path>`. Node is an interpreter: allowing
  *       "node + any args" would allow `node -e <anything>`, so the script and
  *       the flags are pinned as tightly as the binary.
+ *
+ *   (c) THIS WINDOWS APP'S OWN EXE AS NODE — owner-approved 2026-11-20 for
+ *       the Windows app (`mcpLaunchStyle: 'app-binary'`, see the end of
+ *       src/brain/mcp-launcher.js for why Windows has no launcher). Offered
+ *       ONLY when the caller passes `ctx.appExecPath` (the route does so only
+ *       when its own launch line is app-binary, i.e. this process IS the
+ *       Windows app and `appExecPath` is its own `process.execPath`) and
+ *       `ctx.platform` is win32. The entry must be exactly
+ *         {command: <this exe>, args: [<this install's mcp/server.js>],
+ *          env: {ELECTRON_RUN_AS_NODE: "1"}}
+ *       and every one of these must hold, or it is refused:
+ *         - `command` and `args[0]` are each in the ONE canonical spelling
+ *           (`winPathProblem` below): a drive-letter absolute path with
+ *           backslashes only — no UNC / `\\?\` / `\\.\` device path, no
+ *           forward slash, no empty, `.` or `..` component, no component
+ *           ending in a dot or a space (Windows strips those, so they are
+ *           look-alikes), no `~<digit>` (an 8.3 short name), no `:` after the
+ *           drive (an NTFS alternate data stream), no reserved device name;
+ *         - each EQUALS this process's own path (`ctx.appExecPath` /
+ *           `ctx.serverPath`, both canonical) ignoring case only, because
+ *           Windows paths are case-insensitive;
+ *         - and each is the SAME FILE on disk as ours — same volume and file
+ *           id from a bigint stat (non-zero), and the same realpath ignoring
+ *           case. Case-folding alone is not enough: NTFS allows per-folder
+ *           case sensitivity, where `the curator.exe` can be a different
+ *           file, and the identity check catches that (and any Unicode case
+ *           mapping where JS and NTFS disagree);
+ *         - no other argument at all (no --domains-path: the app never writes
+ *           one, and an interpreter must not be handed anything else);
+ *         - the entry's `env` is exactly {ELECTRON_RUN_AS_NODE: "1"}. The
+ *           entry's env is still NEVER passed (rule below); it is READ only so
+ *           a green result is not a lie: without the variable Claude Desktop
+ *           would open a second copy of the app instead of My Curator, and
+ *           with any other variable (NODE_OPTIONS=--require …) it would run
+ *           something this check never ran.
+ *       What then runs is OUR strings, not the entry's: `ctx.appExecPath`
+ *       with `[ctx.serverPath]`, and runEntryCheck adds
+ *       ELECTRON_RUN_AS_NODE=1 to the allow-listed environment ITSELF, as a
+ *       constant, only for this shape. Any other exe — another install's
+ *       `The Curator.exe`, a copy, a renamed one — is refused, never
+ *       "nearly" accepted, and never falls through to another shape.
  *
  * Everything else is REFUSED without running anything: a relative or bare
  * command (`node`, `npx`), any other binary, a node flag, a different copy
@@ -64,6 +105,105 @@ export function checkEnv(src = process.env) {
   return env;
 }
 
+/**
+ * Shape (c)'s one environment variable, set BY THE CHECKER as a constant —
+ * never read from the entry, never from this process's own environment, and
+ * only for a vetted app-binary entry (runEntryCheck).
+ */
+export const APP_BINARY_CHILD_ENV = Object.freeze({ ELECTRON_RUN_AS_NODE: '1' });
+
+/** Windows' reserved device names: `NUL.exe` and `CON` open a device, not a file. */
+const WIN_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?$/i;
+
+/**
+ * Is `p` NOT in the one canonical Windows spelling shape (c) accepts? Returns
+ * null when it is, else a short clause saying why (it reads after "which").
+ * Pure, string-only. Exported for mcp-launcher.js (which refuses to WRITE an
+ * entry Check entry would refuse) and for the suites.
+ */
+export function winPathProblem(p) {
+  if (typeof p !== 'string' || !p) return 'is not a path';
+  if (/[\u0000-\u001f]/.test(p)) return 'contains a control character';
+  if (!/^[A-Za-z]:\\/.test(p)) return 'is not a full path on a drive (a network share or device path is not accepted)';
+  if (p.includes('/')) return 'uses forward slashes';
+  const parts = p.slice(3).split('\\');
+  for (const c of parts) {
+    if (!c) return 'has an empty folder name';
+    if (c === '.' || c === '..') return 'has a relative step in it';
+    if (/[. ]$/.test(c)) return 'has a name ending in a dot or a space';
+    if (/[<>:"|?*]/.test(c)) return 'has a character Windows does not allow in a name';
+    if (/~\d/.test(c)) return 'uses a short (8.3) name';
+    if (WIN_RESERVED.test(c)) return 'names a Windows device';
+  }
+  return null;
+}
+
+/** Same volume and same non-zero file id (bigint stat), or false. */
+function sameFile(a, b, deps) {
+  try {
+    const st = deps.stat || statSync;
+    const x = st(a, { bigint: true });
+    const y = st(b, { bigint: true });
+    if (!x || !y || !x.isFile() || !y.isFile()) return false;
+    const big = (v) => (typeof v === 'bigint' ? v : BigInt(v));
+    const xi = big(x.ino), yi = big(y.ino);
+    return xi !== 0n && xi === yi && big(x.dev) === big(y.dev);
+  } catch { return false; }
+}
+
+/**
+ * Shape (c). Called only with `ctx.appExecPath` set on win32 and an entry
+ * whose command equals it ignoring case. Every failure refuses; nothing falls
+ * through to shapes (a) or (b). See the header for the rule and its reasons.
+ */
+function vetAppBinary(entry, args, ctx, deps, refuse) {
+  const ours = ctx.appExecPath;
+  const server = ctx.serverPath;
+  const command = entry.command;
+  // Our own two paths must themselves be canonical, or no entry can match.
+  if (winPathProblem(ours) || winPathProblem(server)) {
+    return refuse('not_allowed', 'The Curator is running from a folder it cannot check entries in (a network share or a short name), so it does not start this one. Reinstall The Curator with its installer.');
+  }
+  const cmdProblem = winPathProblem(command);
+  if (cmdProblem) return refuse('not_allowed', `Its entry names The Curator in a form The Curator does not start (the path ${cmdProblem}). Install for me writes the exact path.`);
+  if (command.toLowerCase() !== ours.toLowerCase()) {
+    return refuse('other_install', `Its entry starts a different copy of The Curator (${command}), not this app, so The Curator does not run it. Install for me points it at this app.`, command);
+  }
+  if (!isFile(command, deps)) return refuse('launch_file_missing', `Its entry points at ${command}, which is no longer on this PC.`, command);
+  const realCmd = realOrNull(command, deps);
+  const realOurs = realOrNull(ours, deps);
+  if (!sameFile(command, ours, deps) || !samePath(realCmd, realOurs, true)) {
+    return refuse('other_install', `Its entry starts ${command}, which is not this app's own program file, so The Curator does not run it. Install for me points it at this app.`, command);
+  }
+  if (args.length !== 1) {
+    return refuse('not_allowed', 'Its entry passes arguments to The Curator that it never writes, so The Curator does not run it. Install for me rewrites it.');
+  }
+  const script = args[0];
+  const scriptProblem = winPathProblem(script);
+  if (scriptProblem) return refuse('not_allowed', `Its entry names My Curator's server in a form The Curator does not start (the path ${scriptProblem}). Install for me writes the exact path.`);
+  if (script.toLowerCase() !== server.toLowerCase()) {
+    return refuse('other_install', `Its entry starts a different copy of My Curator (${script}), not this app's own, so The Curator does not run it. Install for me points it at this app.`, script);
+  }
+  if (!isFile(script, deps)) return refuse('launch_file_missing', `Its entry points at ${script}, which is no longer on this PC.`, script);
+  if (!sameFile(script, server, deps) || !samePath(realOrNull(script, deps), realOrNull(server, deps), true)) {
+    return refuse('other_install', `Its entry starts ${script}, which is not this app's own My Curator server, so The Curator does not run it.`, script);
+  }
+  // The entry's env: READ to keep the answer honest, never passed (header).
+  const env = entry.env;
+  const envOk = env && typeof env === 'object' && !Array.isArray(env)
+    && Object.keys(env).length === 1 && env.ELECTRON_RUN_AS_NODE === '1';
+  if (!envOk) {
+    const names = env && typeof env === 'object' && !Array.isArray(env)
+      ? Object.keys(env).filter((k) => k !== 'ELECTRON_RUN_AS_NODE').slice(0, 5) : [];
+    if (names.length) {
+      return refuse('not_allowed', `Its entry sets environment variables The Curator never writes (${names.join(', ')}), so The Curator does not run it: Claude Desktop would start something this check cannot vouch for. Install for me rewrites it.`);
+    }
+    return refuse('not_allowed', 'Its entry starts The Curator without ELECTRON_RUN_AS_NODE=1, so Claude Desktop would open a second copy of the app instead of My Curator. Install for me fixes it.');
+  }
+  // OUR strings, never the entry's.
+  return { ok: true, command: ours, args: [server], shape: 'app-binary' };
+}
+
 function realOrNull(p, deps) {
   try { return (deps.realpath || realpathSync)(p); } catch { return null; }
 }
@@ -75,9 +215,11 @@ const samePath = (a, b, win) => !!a && !!b && (win ? a.toLowerCase() === b.toLow
 /**
  * Decide whether an entry may be started. Pure apart from the file probes in
  * `deps` ({realpath, stat}). Returns
- *   {ok: true, command, args, shape: 'launcher'|'node'}  or
+ *   {ok: true, command, args, shape: 'launcher'|'node'|'app-binary'}  or
  *   {ok: false, code, message, path?}
- * `ctx`: {platform, launcherPath, serverPath}.
+ * `ctx`: {platform, launcherPath, serverPath, appExecPath?}. `appExecPath`
+ * (this process's own exe, Windows app only) turns shape (c) on and shape
+ * (a) off.
  */
 export function vetEntry(entry, ctx, deps = {}) {
   const win = ctx.platform === 'win32';
@@ -90,14 +232,27 @@ export function vetEntry(entry, ctx, deps = {}) {
   if (!Array.isArray(args) || !args.every((a) => typeof a === 'string' && !a.includes('\0'))) {
     return refuse('not_allowed', 'Its entry’s arguments are not a plain list of words, so The Curator does not start it.');
   }
+  // (c) — only in the Windows app, and for any entry whose program is named
+  // like this exe (any case, any folder): from here on it is shape (c) or a
+  // refusal, never another shape, so a near-miss is told apart in words.
+  // "Named like": the file name as Windows would open it — case folded, an
+  // `:stream` suffix and trailing dots/spaces dropped — so `The Curator.exe.`
+  // and `The Curator.exe:x` get shape (c)'s refusal in words too.
+  const appExe = win && typeof ctx.appExecPath === 'string' && ctx.appExecPath ? ctx.appExecPath : null;
+  const openedName = (p) => P.basename(p).split(':')[0].replace(/[. ]+$/, '').toLowerCase();
+  if (appExe && (command.toLowerCase() === appExe.toLowerCase() || openedName(command) === openedName(appExe))) {
+    return vetAppBinary(entry, args, ctx, deps, refuse);
+  }
   if (!P.isAbsolute(command)) {
     return refuse('not_allowed', `Its entry starts “${command}” by name rather than by full path, so The Curator does not start it — Install for me writes a full path.`);
   }
   const realCmd = realOrNull(command, deps);
   if (!realCmd || !isFile(realCmd, deps)) return refuse('launch_file_missing', `Its entry points at ${command}, which is no longer on this ${win ? 'PC' : 'Mac'}.`, command);
 
-  // (a) the launcher
-  const realLauncher = ctx.launcherPath ? realOrNull(ctx.launcherPath, deps) : null;
+  // (a) the launcher — never in the Windows app, which has none: a file that
+  // happened to sit at the launcher path there would otherwise run with no
+  // check of what it is.
+  const realLauncher = ctx.launcherPath && !appExe ? realOrNull(ctx.launcherPath, deps) : null;
   if (realLauncher && samePath(realCmd, realLauncher, win)) {
     if (args.length) return refuse('not_allowed', 'Its entry passes arguments to the launcher, which The Curator never writes, so it does not start it.');
     return { ok: true, command, args: [], shape: 'launcher' };
@@ -153,6 +308,10 @@ export function runEntryCheck(vetted, deps = {}) {
   const now = deps.now || Date.now;
   const timeoutMs = deps.timeoutMs || CHECK_TIMEOUT_MS;
   const t0 = now();
+  // The checker's own environment; for a vetted app-binary entry, plus the one
+  // constant that makes the exe behave as Node. Never the entry's env.
+  const baseEnv = deps.env || checkEnv();
+  const childEnv = vetted && vetted.shape === 'app-binary' ? { ...baseEnv, ...APP_BINARY_CHILD_ENV } : baseEnv;
   return new Promise((resolve) => {
     let out = '';
     let err = '';
@@ -177,7 +336,7 @@ export function runEntryCheck(vetted, deps = {}) {
     try {
       child = run(vetted.command, vetted.args, {
         shell: false, windowsHide: true, timeout: timeoutMs, maxBuffer: STDOUT_CAP, killSignal: 'SIGTERM',
-        env: deps.env || checkEnv(), cwd: deps.cwd || undefined,
+        env: childEnv, cwd: deps.cwd || undefined,
       }, (e) => {
         if (e && e.code && typeof e.code === 'string' && !st.exited && !st.initialized) st.spawnError = e.code;
         st.exited = true;

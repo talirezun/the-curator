@@ -41,11 +41,73 @@
  * are fingerprinted before and after.
  */
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync,
+  chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawn, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { fingerprintReal, changedSince } from './test-helpers/real-mcp-configs.js';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** desktop/node_modules' Electron binary (or CURATOR_TEST_ELECTRON_BIN), or null. */
+function electronBinary() {
+  if (process.env.CURATOR_TEST_ELECTRON_BIN) return process.env.CURATOR_TEST_ELECTRON_BIN;
+  try {
+    const dir = path.join(ROOT, 'desktop', 'node_modules', 'electron');
+    const rel = readFileSync(path.join(dir, 'path.txt'), 'utf8').trim();
+    const bin = path.join(dir, 'dist', rel);
+    return existsSync(bin) ? bin : null;
+  } catch { return null; }
+}
+
+/** Windows: the 8.3 short spelling of `p` (cmd's %~s), or null. */
+function shortName(p) {
+  try {
+    const out = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', `for %I in ("${p}") do @echo %~sI`], { encoding: 'utf8', windowsHide: true });
+    const s = out.trim().split(/\r?\n/).pop();
+    return s && path.win32.isAbsolute(s) ? s : null;
+  } catch { return null; }
+}
+
+/**
+ * Start `command args` with `env` EXACTLY as Claude Desktop starts an MCP
+ * server (stdio pipes, no shell) and speak MCP: initialize, then tools/list.
+ * Resolves {serverName, toolCount, stderr, exitCode}; kills the child after.
+ */
+function handshake(command, args, env, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const st = { serverName: null, toolCount: null, stderr: '', exitCode: null, error: null };
+    let child;
+    let done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(t); try { child.kill(); } catch { /* gone */ } resolve(st); };
+    const t = setTimeout(() => { st.error = 'timeout'; finish(); }, timeoutMs);
+    try { child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }); } catch (e) { st.error = e.code || String(e); finish(); return; }
+    child.on('error', (e) => { st.error = e.code || String(e); finish(); });
+    child.on('exit', (code) => { st.exitCode = code; setTimeout(finish, 50); });
+    child.stderr.on('data', (d) => { if (st.stderr.length < 4000) st.stderr += d.toString('utf8'); });
+    const send = (o) => { try { child.stdin.write(JSON.stringify(o) + '\n'); } catch { /* closed */ } };
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += d.toString('utf8');
+      let i;
+      while ((i = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        let msg; try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.id === 1 && msg.result) {
+          st.serverName = msg.result.serverInfo && msg.result.serverInfo.name;
+          send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+          send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+        } else if (msg.id === 2 && msg.result) {
+          st.toolCount = Array.isArray(msg.result.tools) ? msg.result.tools.length : 0;
+          finish();
+        }
+      }
+    });
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claude-ai', version: '0' } } });
+  });
+}
 
 let passed = 0;
 let failed = 0;
@@ -54,6 +116,7 @@ function ok(label, cond, detail) {
   else { failed++; console.log('  ✗ ' + label + (detail ? ' — ' + detail : '')); }
 }
 const eq = (label, a, b) => ok(label, Object.is(a, b), `got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`);
+const deepEq = (label, a, b) => ok(label, JSON.stringify(a) === JSON.stringify(b), `got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`);
 const section = (t) => console.log('\n' + t);
 
 const IS_WIN = process.platform === 'win32';
@@ -81,6 +144,7 @@ const M = await import('../src/brain/mcp-install.js');
 const A = await import('../src/brain/harness-adapters.js');
 const D = await import('../src/brain/harness-detect.js');
 const R = await import('../src/routes/mcp-install.js');
+const MR = await import('../src/routes/mcp.js');
 
 // v3.88.1: these fixtures name made-up launch paths (/app/mcp/server.js, …);
 // treat them as present. The launch-file rule is proved in test-mcp-install-windows.js §4 and test-setup-check.js.
@@ -750,6 +814,234 @@ try {
       R.__setInstallIO(null);
       R.__setDetectDeps(null);
     }
+  }
+
+  // ── §6 THE WINDOWS APP (mcpLaunchStyle 'app-binary'): one-click install ──
+  // The owner's requirement (2026-11-20): from the Windows app, Install for me
+  // writes the app-binary entry — this exe, ELECTRON_RUN_AS_NODE, this
+  // install's server.js — and Check entry accepts exactly that. The style is
+  // injected through routes/mcp.js's one seam (package A's install-mode makes
+  // it real on a win32 bundle). In memory, on every host.
+  section('§6 — the Windows APP: Install for me writes the app-binary entry, Check entry accepts exactly it');
+  {
+    const w = memWorld(); worlds.push(w);
+    const L = layout(w);
+    const P = path.win32;
+    const PROG = P.join(w.home, 'AppData', 'Local', 'Programs', 'The Curator');
+    const WEXE = P.join(PROG, 'The Curator.exe');
+    const WSRV = P.join(PROG, 'resources', 'app', 'mcp', 'server.js');
+    const OTHER_EXE = 'D:\\Portable\\The Curator\\The Curator.exe';
+    const APP_ENTRY = { command: WEXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1' } };
+    const stateDeps = { exists: () => true, homeDir: w.home, tempDirs: [P.join(w.home, 'AppData', 'Local', 'Temp')] };
+    MR.__setMcpLaunchOverride({ style: 'app-binary', execPath: WEXE, serverPath: WSRV, realpath: (p) => p, launchStateDeps: stateDeps });
+    M.__setHomeOverride(w.home);
+    M.__setPlatformOverride('win32');
+    R.__setInstallIO(w.io);
+    R.__setDetectDeps({ appsDirs: [], runShell: async () => { throw new Error('none'); }, runPs: async () => { throw new Error('none'); },
+      runAppx: async () => '', runWinProcs: async () => '' });
+    // Check entry's file probes on the in-memory disk: our exe and server.js,
+    // plus another install's exe (a different file id).
+    const ids = new Map([[WEXE.toLowerCase(), 11n], [WSRV.toLowerCase(), 12n], [OTHER_EXE.toLowerCase(), 21n]]);
+    R.__setVetDeps({
+      realpath: (p) => { if (!ids.has(String(p).toLowerCase())) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); return [WEXE, WSRV, OTHER_EXE].find((x) => x.toLowerCase() === String(p).toLowerCase()); },
+      stat: (p) => { const i = ids.get(String(p).toLowerCase()); if (!i) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); return { isFile: () => true, ino: i, dev: 3n }; },
+    });
+    let ranWith = null;
+    R.__setCheckRunner(async (vet) => { ranWith = vet; return { starts: true, toolCount: 27, durationMs: 1 }; });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/mcp/install', R.default);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const PORT = server.address().port;
+    const call = async (method, url, body) => {
+      const res = await fetch(`http://127.0.0.1:${PORT}${url}`, { method, headers: { 'content-type': 'application/json', Origin: `http://127.0.0.1:${PORT}` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      let json = null; try { json = await res.json(); } catch { /* none */ }
+      return { status: res.status, body: json || {} };
+    };
+    const cdOf = (s) => s.body.tools.find((t) => t.id === 'claude-desktop');
+    const ourEntry = () => JSON.parse(w.read(L.c[1]).toString('utf8').replace(/^\uFEFF/, '')).mcpServers['my-curator'];
+    const install = async () => {
+      const p = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });
+      return { plan: p, apply: await call('POST', '/api/mcp/install/apply', { token: p.body.token }) };
+    };
+    try {
+      deepEq('the app-binary launch line is the one the routes use', MR.buildCuratorEntry('C:\\ignored'), APP_ENTRY);
+      w.put(L.c[1], doc({ mcpServers: { other: OTHER } }, '\r\n', true));
+      let s = await call('GET', '/api/mcp/install/status');
+      let cd = cdOf(s);
+      eq('status: the launch style is app-binary', s.body.launch && s.body.launch.style, 'app-binary');
+      ok('Claude Desktop: not-installed, Install for me offered', cd && cd.status === 'not-installed' && cd.files.length === 1 && cd.files[0].action === 'add', JSON.stringify(cd && { st: cd.status, f: cd.files }));
+      ok('the copy-and-paste snippet carries ELECTRON_RUN_AS_NODE too', /"ELECTRON_RUN_AS_NODE": "1"/.test(s.body.manualSnippets['claude-desktop']));
+      let { plan: p, apply: a } = await install();
+      ok('plan: the preview shows the env', p.body.items[0].action === 'add' && /ELECTRON_RUN_AS_NODE/.test(p.body.items[0].entryText), JSON.stringify(p.body.items[0]));
+      eq('apply → written', a.body.results[0].outcome, 'written');
+      deepEq('the written entry is EXACTLY {exe, [server.js], env {ELECTRON_RUN_AS_NODE: "1"}}', ourEntry(), APP_ENTRY);
+      deepEq('…and the other server is untouched, its API key included', JSON.parse(w.read(L.c[1]).toString('utf8').replace(/^\uFEFF/, '')).mcpServers.other, OTHER);
+      ok('…BOM and CRLF kept', M.hasUtf8Bom(w.read(L.c[1])) && !/[^\r]\n/.test(w.read(L.c[1]).toString('utf8')));
+      cd = cdOf(await call('GET', '/api/mcp/install/status'));
+      eq('Check again → connected', cd.status, 'connected');
+      ({ apply: a } = await install());
+      eq('installing again is idempotent (nothing written)', a.body.results[0].outcome, 'unchanged');
+
+      // Check entry: exactly this entry runs, as OUR strings.
+      ranWith = null;
+      let c = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+      ok('Check entry: the app-binary entry starts (shape app-binary)', c.status === 200 && c.body.results[0].ran === true && c.body.results[0].shape === 'app-binary', JSON.stringify(c.body));
+      ok('…the runner was handed THIS exe and THIS server.js', ranWith && ranWith.command === WEXE && ranWith.args.length === 1 && ranWith.args[0] === WSRV);
+
+      // A hand-edited entry without the env: never "connected", fixed by Install.
+      const put = (entry) => w.put(L.c[1], doc({ mcpServers: { 'my-curator': entry, other: OTHER } }, '\r\n', true));
+      put({ command: WEXE, args: [WSRV] });
+      cd = cdOf(await call('GET', '/api/mcp/install/status'));
+      ok('an entry WITHOUT ELECTRON_RUN_AS_NODE → needs-update, never connected', cd.status === 'needs-update' && cd.files[0].action === 'update', JSON.stringify({ st: cd.status }));
+      ranWith = null;
+      c = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+      ok('…Check entry refuses it in words and starts NOTHING', c.body.results[0].ran === false && c.body.results[0].code === 'not_allowed' && /ELECTRON_RUN_AS_NODE/.test(c.body.results[0].message) && ranWith === null, JSON.stringify(c.body));
+      ({ apply: a } = await install());
+      deepEq('…Install for me puts the env back', ourEntry(), APP_ENTRY);
+
+      // An env with something else in it: replaced, not merged.
+      put({ command: WEXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--require C:\\evil.js' } });
+      cd = cdOf(await call('GET', '/api/mcp/install/status'));
+      eq('an entry with an extra NODE_OPTIONS → needs-update', cd.status, 'needs-update');
+      ranWith = null;
+      c = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+      ok('…Check entry refuses it (naming NODE_OPTIONS, not its value) and starts nothing', c.body.results[0].ran === false && /NODE_OPTIONS/.test(c.body.results[0].message) && !/evil/.test(c.body.results[0].message) && ranWith === null);
+      ({ apply: a } = await install());
+      deepEq('…Install for me REPLACES the env (NODE_OPTIONS gone), never merges it', ourEntry(), APP_ENTRY);
+
+      // Another install's exe; the browser install's node entry.
+      put({ command: OTHER_EXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1' } });
+      ranWith = null;
+      c = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+      ok('another install’s The Curator.exe → other_install, nothing started', c.body.results[0].code === 'other_install' && ranWith === null, JSON.stringify(c.body.results[0]));
+      put({ command: REPO_WIN.command, args: REPO_WIN.args });
+      cd = cdOf(await call('GET', '/api/mcp/install/status'));
+      eq('a browser-install entry (node.exe + its server.js) → needs-update', cd.status, 'needs-update');
+      ({ apply: a } = await install());
+      deepEq('…Install for me rewrites it to the app-binary entry', ourEntry(), APP_ENTRY);
+
+      // Running from Downloads: refused, nothing written.
+      const before = w.read(L.c[1]);
+      const DL = P.join(w.home, 'Downloads', 'The Curator', 'The Curator.exe');
+      MR.__setMcpLaunchOverride({ style: 'app-binary', execPath: DL, serverPath: WSRV, realpath: (x) => x, launchStateDeps: stateDeps });
+      put({ command: WEXE, args: [WSRV] });
+      const b2 = w.read(L.c[1]);
+      ({ plan: p, apply: a } = await install());
+      ok('the app running from Downloads → plan refuses launcher_missing in words', p.body.items[0].refused && p.body.items[0].refused.reason === 'launcher_missing' && /Downloads/.test(p.body.items[0].refused.message), JSON.stringify(p.body.items[0]));
+      ok('…and apply writes nothing', a.body.results[0].outcome === 'refused' && Buffer.compare(w.read(L.c[1]), b2) === 0);
+      ok('(the file before this block was the app-binary entry)', before.length > 0);
+    } finally {
+      server.close();
+      MR.__setMcpLaunchOverride(null);
+      R.__setVetDeps(null);
+      R.__setCheckRunner(null);
+      R.__setInstallIO(null);
+      R.__setDetectDeps(null);
+      M.__setPlatformOverride(null);
+      M.__setHomeOverride(null);
+    }
+  }
+
+  // ── §7 END TO END ON A REAL WINDOWS PC (the CI `windows` job) ───────────
+  // The real Electron exe (desktop/node_modules, installed by that job) is
+  // "this app": the route writes Claude Desktop's config on the real disk,
+  // the written entry is started EXACTLY as Claude Desktop starts it (its
+  // command, its args, its env over the parent's), and a real MCP handshake
+  // (initialize → tools/list) must answer — a GUI-subsystem exe over pipes.
+  // Then Check entry runs it for real, and refuses a hard link to the same exe.
+  const ELECTRON = electronBinary();
+  if (IS_WIN && ELECTRON) {
+    section('§7 — END TO END on Windows: write the app-binary entry, start it like Claude Desktop, MCP handshake, Check entry');
+    const w = diskWorld(); worlds.push(w);
+    const L = layout(w);
+    const realExe = realpath(ELECTRON);
+    let cleanupLink = () => {};
+    MR.__setMcpLaunchOverride({ style: 'app-binary', execPath: realExe, launchStateDeps: { homeDir: w.home, tempDirs: [] } });
+    M.__setHomeOverride(w.home);
+    M.__setPlatformOverride('win32');
+    M.__setLaunchExists(null);
+    R.__setInstallIO(w.io);
+    R.__setDetectDeps({ appsDirs: [], runShell: async () => { throw new Error('none'); }, runPs: async () => { throw new Error('none'); },
+      runAppx: async () => '', runWinProcs: async () => '' });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/mcp/install', R.default);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    const PORT = server.address().port;
+    const call = async (method, url, body) => {
+      const res = await fetch(`http://127.0.0.1:${PORT}${url}`, { method, headers: { 'content-type': 'application/json', Origin: `http://127.0.0.1:${PORT}` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      let json = null; try { json = await res.json(); } catch { /* none */ }
+      return { status: res.status, body: json || {} };
+    };
+    try {
+      w.put(L.c[1], doc({ mcpServers: { other: OTHER } }));
+      const p = await call('POST', '/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });
+      const a = await call('POST', '/api/mcp/install/apply', { token: p.body.token });
+      eq('[real] Install for me → written into the real file', a.body.results[0] && a.body.results[0].outcome, 'written');
+      const entry = JSON.parse(readFileSync(L.c[1], 'utf8').replace(/^\uFEFF/, '')).mcpServers['my-curator'];
+      ok('[real] the entry names the real exe, the real server.js and ELECTRON_RUN_AS_NODE=1',
+        entry && entry.command === realExe && entry.args.length === 1 && /mcp\\server\.js$/i.test(entry.args[0]) && entry.env && entry.env.ELECTRON_RUN_AS_NODE === '1', JSON.stringify(entry));
+      const hs = await handshake(entry.command, entry.args, { ...process.env, ...entry.env });
+      ok('[real] started as Claude Desktop starts it: initialize answers as my-curator', hs.serverName === 'my-curator', JSON.stringify(hs));
+      ok('[real] …and tools/list answers with the tools', Number.isInteger(hs.toolCount) && hs.toolCount >= 20, JSON.stringify(hs));
+      const s = await call('GET', '/api/mcp/install/status');
+      eq('[real] status → connected (real launch files probed)', s.body.tools.find((t) => t.id === 'claude-desktop').status, 'connected');
+      const c = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+      const r0 = c.body.results && c.body.results[0];
+      ok('[real] Check entry runs it for real: starts, app-binary, with its tools', r0 && r0.ran && r0.starts && r0.shape === 'app-binary' && r0.toolCount >= 20, JSON.stringify(c.body));
+      // A hard link to the same exe (same bytes, same file id) at another path.
+      // Beside the exe, so it is on the same volume (a hard link cannot cross one).
+      const linkDir = path.join(path.dirname(realExe), 'curator-test-other-install');
+      let linked = false;
+      try { mkdirSync(linkDir, { recursive: true }); linkSync(realExe, path.join(linkDir, path.basename(realExe))); linked = true; } catch { /* no hard links here */ }
+      const link = path.join(linkDir, path.basename(realExe));
+      cleanupLink = () => { try { rmSync(linkDir, { recursive: true, force: true }); } catch { /* best effort */ } };
+      ok('[real] a hard link to the exe could be made for the next check', linked);
+      if (linked) {
+        const doc1 = JSON.parse(readFileSync(L.c[1], 'utf8'));
+        doc1.mcpServers['my-curator'] = { ...entry, command: link };
+        writeFileSync(L.c[1], JSON.stringify(doc1, null, 2));
+        const c2 = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+        ok('[real] a hard link to this exe at another path → other_install, not started', c2.body.results[0].code === 'other_install' && c2.body.results[0].ran === false, JSON.stringify(c2.body.results[0]));
+      }
+      // An 8.3 short spelling, when this volume generates them.
+      const short = shortName(realExe);
+      if (short && short.toLowerCase() !== realExe.toLowerCase()) {
+        const doc2 = JSON.parse(readFileSync(L.c[1], 'utf8'));
+        doc2.mcpServers['my-curator'] = { ...entry, command: short };
+        writeFileSync(L.c[1], JSON.stringify(doc2, null, 2));
+        const c3 = await call('POST', '/api/mcp/install/check-entry', { id: 'claude-desktop' });
+        ok(`[real] the 8.3 short name ${short} → refused, not started`, c3.body.results[0].ran === false, JSON.stringify(c3.body.results[0]));
+      } else {
+        console.log('  · this volume has no 8.3 short names: the short-name refusal is proved in test-mcp-check-entry.js §6');
+      }
+    } finally {
+      cleanupLink();
+      server.close();
+      MR.__setMcpLaunchOverride(null);
+      M.__setLaunchExists(() => true);
+      R.__setInstallIO(null);
+      R.__setDetectDeps(null);
+      M.__setPlatformOverride(null);
+      M.__setHomeOverride(null);
+    }
+  } else if (IS_WIN && process.env.CURATOR_REQUIRE_ELECTRON) {
+    ok('§7 needs the Electron binary (desktop/node_modules) on the windows CI job', false, 'desktop/node_modules/electron is not installed');
+  } else if (ELECTRON) {
+    // Not Windows: the route cannot write a Windows path here, but the same
+    // launch — this host's Electron binary, the app-binary line's args and
+    // env over the parent's — must answer MCP, so §7's helper is exercised.
+    section('§7 — (not Windows) the app-binary launch line on this host’s Electron answers MCP');
+    const entry = { command: ELECTRON, args: [path.join(ROOT, 'mcp', 'server.js')], env: { ELECTRON_RUN_AS_NODE: '1' } };
+    const hs = await handshake(entry.command, entry.args, { ...process.env, ...entry.env });
+    ok('Electron as Node: initialize answers as my-curator and tools/list lists the tools', hs.serverName === 'my-curator' && hs.toolCount >= 20, JSON.stringify(hs));
+  } else {
+    console.log('\n§7 — skipped: no Electron binary here (desktop/node_modules); the windows CI job installs it and runs §7 for real');
   }
 
   if (!IS_WIN) {

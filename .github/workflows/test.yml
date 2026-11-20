@@ -90,7 +90,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The Windows app (2026-11-20): §7 of the suite uses the REAL Electron
+      # binary as "this app's exe" — writes Claude Desktop's config with the
+      # app-binary entry, starts it exactly as Claude Desktop does
+      # (ELECTRON_RUN_AS_NODE=1) and completes an MCP handshake, then Check
+      # entry runs it. desktop/'s own lock pins the Electron version the app
+      # ships. CURATOR_REQUIRE_ELECTRON makes a missing binary RED, not a skip.
+      - run: npm ci
+        working-directory: desktop
       - run: node scripts/test-mcp-install-windows.js
+        env:
+          CURATOR_REQUIRE_ELECTRON: '1'
 
   # ── Windows: the one-line installer, end to end, on a real Windows PC ───────
   # v3.87.0. `install.ps1` is what non-technical Windows users paste into

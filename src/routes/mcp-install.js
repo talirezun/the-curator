@@ -11,9 +11,11 @@
  *   POST /api/mcp/install/check-entry → {id} → starts the my-curator command
  *                                   that app's own file names — ONLY if it is
  *                                   this app's launcher or node + this
- *                                   install's mcp/server.js (v3.89.0; the rule
- *                                   is src/brain/mcp-check-entry.js). WRITES
- *                                   NOTHING.
+ *                                   install's mcp/server.js (v3.89.0), or, in
+ *                                   the Windows app only, this app's own exe
+ *                                   as Node + its server.js (shape (c); the
+ *                                   rule is src/brain/mcp-check-entry.js).
+ *                                   WRITES NOTHING.
  *
  * The write rules live in `src/brain/mcp-install.js` (read its header first).
  * This file adds the HTTP gate:
@@ -54,8 +56,9 @@ import {
   ACTIONS, INSTALL_IDS, TOKEN_RE, TOKEN_TTL_MS, executeItem, inspectTool, installActionFor, installAppsDirs,
   installHome, installPlatform, isInstallCapableOn, mcpHarnessIds, newToken, planTool, publicItem, readManifest,
   reasonText, restoreCandidate, statusFor, targetsFor, defaultIO, displayFor, resolveWinClaude, winRoots, ourEntryIn,
+  withLaunchEnv,
 } from '../brain/mcp-install.js';
-import { buildCuratorEntry } from './mcp.js';
+import { buildCuratorEntry, launchWritableState } from './mcp.js';
 import { MAX_ENTRIES_PER_CHECK, runEntryCheck, vetEntry } from '../brain/mcp-check-entry.js';
 
 const router = express.Router();
@@ -193,6 +196,13 @@ const WIN_RESTART = 'Quit Claude Desktop fully (system tray → Quit), reopen it
  */
 function launchNow() {
   const launch = buildCuratorEntry(getDomainsDir());
+  // The Windows app's line is the only one carrying ELECTRON_RUN_AS_NODE (its
+  // command is this process's own exe, not a launcher): 'app-binary'. Its
+  // writability (not from Downloads/temp, both files present) is decided once,
+  // in routes/mcp.js, and refuses the plan exactly as a missing launcher does.
+  if (launch.env && launch.env.ELECTRON_RUN_AS_NODE === '1') {
+    return { launch, style: 'app-binary', launcherState: launchWritableState() };
+  }
   const launcherPath = getMcpLauncherPath();
   const usesLauncher = launch.command === launcherPath;
   const style = usesLauncher ? 'launcher-script' : 'node-script';
@@ -318,7 +328,9 @@ export async function buildStatus() {
   for (const id of mcpHarnessIds()) {
     const a = adapterFor(id);
     const label = a.label;
-    const entry = mcpEntryFor(id, launch);
+    // withLaunchEnv: the Windows app's ELECTRON_RUN_AS_NODE rides in every
+    // JSON snippet; with no env in the line this IS mcpEntryFor's result.
+    const entry = withLaunchEnv(mcpEntryFor(id, launch), launch, id);
     if (entry.ok) manualSnippets[id] = entry.text;
     let det = detected[id]?.detected || null;
     const capable = isInstallCapableOn(id, platform);
@@ -683,6 +695,9 @@ let _checkRunner = null;
 export function __setCheckRunner(fn) { _checkRunner = fn || null; }
 /** TEST-ONLY. */
 export function __setCheckInFlight(v) { checkInFlight = !!v; }
+let _vetDeps = null;
+/** TEST-ONLY: the file probes vetEntry uses ({realpath, stat}), for a suite's in-memory Windows disk. */
+export function __setVetDeps(d) { _vetDeps = d || null; }
 
 export function validateCheckBody(body) {
   if (!isPlainObject(body)) return 'The request body must be a JSON object.';
@@ -720,14 +735,22 @@ export async function checkEntryHandler(req, res) {
     const id = req.body.id;
     const label = adapterFor(id)?.label || id;
     const r = await entriesFor(id);
-    const ctx = { platform: r.platform, launcherPath: getMcpLauncherPath(), serverPath: getMcpServerPath() };
+    // Shape (c) is offered ONLY when this process's own launch line is
+    // app-binary (the Windows app): then `appExecPath` is THIS exe and
+    // `serverPath` THIS install's server.js, both taken from that line (the
+    // canonical spellings buildAppBinaryEntry writes), and there is no
+    // launcher. Everywhere else the context is exactly what it was.
+    const { launch: own, style: ownStyle } = launchNow();
+    const ctx = ownStyle === 'app-binary'
+      ? { platform: r.platform, launcherPath: null, serverPath: own.args[0], appExecPath: own.command }
+      : { platform: r.platform, launcherPath: getMcpLauncherPath(), serverPath: getMcpServerPath() };
     const results = [];
     const seen = new Map();
     for (const f of r.files) {
       if (!f.read || f.read.state !== 'ok') continue;
       const ours = ourEntryIn(f.read.doc, r.key);
       if (ours === undefined) continue;
-      const vet = vetEntry(ours, ctx);
+      const vet = vetEntry(ours, ctx, _vetDeps || undefined);
       const sig = JSON.stringify([ours && ours.command, ours && ours.args]);
       if (vet.ok && seen.has(sig)) { results.push({ ...seen.get(sig), file: f.display }); continue; }
       if (vet.ok && seen.size >= MAX_ENTRIES_PER_CHECK) {
