@@ -368,12 +368,12 @@ const GOOD = {
   ok(s.includes("$InstallerArgs = @('/S', '--updated', '--force-run')"), 'the setup gets exactly /S --updated --force-run');
   eq(planWin.INSTALLER_ARGS, ['/S', '--updated', '--force-run'], 'INSTALLER_ARGS is exactly the three');
   ok(s.includes(`$Sha256 = '${'a'.repeat(64)}'`) && s.includes('$Size = 123456'), 'the verified size and SHA-256 travel to the helper');
-  ok(s.includes('Get-FileHash -LiteralPath $Installer -Algorithm SHA256'), 'the helper re-hashes the setup right before running it');
+  ok(s.includes('[Security.Cryptography.SHA256]::Create()') && !/Get-FileHash|Get-Item\b/.test(s), 'the helper re-hashes the setup right before running it, with .NET (no Get-FileHash: a 5.1 script-module function)');
   ok(s.includes("[IO.File]::Open($Exe, 'Open', 'ReadWrite', 'None')"), 'the exe-in-use probe is an exclusive open (Windows refuses it while a process runs the exe)');
   ok(s.includes('.WaitForExit($InstallTimeoutSeconds * 1000)') && !/Start-Process[^\n]*-Wait\b/.test(s),
     'it waits for the setup PROCESS only (Start-Process -Wait would also wait for the app the setup reopens)');
   ok(s.includes('$null = $proc.Handle'), 'the process handle is taken at once, so ExitCode is readable afterwards');
-  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'if (-not (Test-InstallerUnchanged))', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "Write-Result 'installed' 0", 'Test-AppRunning) { $running'];
+  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'for ($try = 1; $try -le 5; $try++) { $InstallerCheck = Get-InstallerDifference;', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "Write-Result 'installed' 0", 'Test-AppRunning) { $running'];
   const idx = order.map((k) => s.indexOf(k));
   ok(idx.every((i) => i > 0) && idx.every((v, i) => i === 0 || v > idx[i - 1]),
     `the steps are in order: wait → stop agreed connections → exe free → hash → record → run → record → reopen (${idx.join(',')})`);
@@ -399,22 +399,24 @@ const GOOD = {
   }
   // ── audit minor 8: the "Run the installer now?" answer hashes the kept setup AGAIN ──
   {
-    const fn = s.slice(s.indexOf('function Test-InstallerUnchanged'), s.indexOf('function Show-Message'));
-    ok(/Get-FileHash -LiteralPath \$Installer -Algorithm SHA256/.test(fn) && /\$len -eq \$Size -and \$h -eq \$Sha256/.test(fn),
-      'Test-InstallerUnchanged reads the length and the SHA-256 from the disk and compares both with the checked ones');
+    const fn = s.slice(s.indexOf('function Get-InstallerDifference'), s.indexOf('function Show-Message'));
+    ok(/\[IO\.File\]::Open\(\$Installer/.test(fn) && /ComputeHash\(\$fs\)/.test(fn) && /if \(\$len -ne \$Size\) \{ return \('size ' \+ \$len \+ ', expected ' \+ \$Size\) \}/.test(fn)
+      && /if \(\$h -ne \$Sha256\) \{ return \('sha256 '/.test(fn) && /return ''\r?\n\}/.test(fn),
+      'Get-InstallerDifference reads the length and the SHA-256 from the disk, compares both, and says WHICH differed');
+    ok(!/\$script:|\$global:/.test(s), 'no scope modifier anywhere (a script block run with & has no script scope of its own)');
     const sm = s.slice(s.indexOf('function Show-Message'), s.indexOf('function Start-App'));
     const yes = sm.slice(sm.indexOf("if ([string]$r -eq 'Yes')"));
-    const iTest = yes.indexOf('Test-InstallerUnchanged');
+    const iTest = yes.indexOf('Get-InstallerDifference');
     const iRun = yes.indexOf('Start-Process -FilePath $Installer');
-    ok(iTest > 0 && iRun > iTest && /if \(Test-InstallerUnchanged\) \{ try \{ Start-Process -FilePath \$Installer/.test(yes),
-      'after "Yes" the kept setup program is run ONLY inside `if (Test-InstallerUnchanged)` (re-hashed at the moment of running)');
-    ok(/else \{ Log 'REFUSED: the kept setup program changed; it was not run'; \[void\]\[System\.Windows\.Forms\.MessageBox\]::Show\(\$MsgChanged/.test(yes),
+    ok(iTest > 0 && iRun > iTest && /\$d = Get-InstallerDifference; if \(-not \$d\) \{ try \{ Start-Process -FilePath \$Installer/.test(yes),
+      'after "Yes" the kept setup program is run ONLY when Get-InstallerDifference finds nothing (re-hashed at the moment of running)');
+    ok(/else \{ Log \('REFUSED: the kept setup program changed \(' \+ \$d \+ '\); it was not run'\); \[void\]\[System\.Windows\.Forms\.MessageBox\]::Show\(\$MsgChanged/.test(yes),
       '…and a changed one is not run: logged, and the "installer-changed" sentence is shown');
     eq((s.match(/Start-Process -FilePath \$Installer(?! -ArgumentList)/g) || []).length, 1,
       'the kept setup is started in exactly one place (the re-hashed one)');
     // DUMB CROSS-CHECK: the main run uses the same test (one hashing rule, not two).
-    ok(/\nif \(-not \(Test-InstallerUnchanged\)\) \{\r?\n  Log 'REFUSED: the setup program is not the one that was checked/.test(s),
-      'the step-4 check before the silent run is the same Test-InstallerUnchanged');
+    ok(/\nfor \(\$try = 1; \$try -le 5; \$try\+\+\) \{ \$InstallerCheck = Get-InstallerDifference; if \(-not \$InstallerCheck\.StartsWith\('could not read'\)\) \{ break \}[^\n]*\r?\nif \(\$InstallerCheck\) \{\r?\n  Log \('REFUSED: the setup program is not the one that was checked \(' \+ \$InstallerCheck \+ '\); nothing was changed'\)/.test(s),
+      'the step-4 check before the silent run is the same Get-InstallerDifference, and its log says what differed');
   }
   // ── audit minor 2: psQuote doubles EVERY quote PowerShell ends a '…' string at ──
   {
@@ -480,7 +482,7 @@ const GOOD = {
       '…and tells the person: "still on the previous version" before the setup ran, the repair offer after');
     ok(st.indexOf('$SetupStarted = $true') > st.indexOf("Write-Result 'installing' -1") && st.indexOf('$SetupStarted = $true') < st.indexOf('Start-Process -FilePath $Installer -ArgumentList'),
       '$SetupStarted turns true just before the setup is started');
-    const fnLog = st.slice(st.indexOf('function Log('), st.indexOf('function Test-InstallerUnchanged'));
+    const fnLog = st.slice(st.indexOf('function Log('), st.indexOf('function Get-InstallerDifference'));
     ok(!cmdlet.test(fnLog.replace(/function Write-Result/g, '')), 'Log and Write-Result use .NET only (a record never depends on a module loading)');
     ok(st.includes("Remove-Quietly 'C:\\U\\updates\\install-update.started'") && st.indexOf("Log 'done'") > st.indexOf("Write-Result 'installed' 0"), 'after success the marker is removed and "done" logged');
     eq(planWin.describeInstallOutcome({ result: 'helper-error', version: '4.0.0', exitCode: 9 }, '3.0.0').message, planWin.WIN32_INSTALL_OUTCOMES['not-updated'],
@@ -1101,6 +1103,35 @@ section('§9b the launcher, the first trace, the boot catch and the trap, EXECUT
       ok(await waitFile(d.result, 30000), '…the helper runs on after the launcher returned, and records its outcome');
       let rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
       eq(rec && [rec.result, rec.version, rec.exitCode], ['installer-changed', '4.0.0', 5], 'the record is written by .NET (no ConvertTo-Json) and parses (the fake setup is not the checked one: installer-changed)');
+    }
+    {
+      // v3.99.3-wintest.5: a setup nobody touched was refused as "changed". The
+      // re-check, EXECUTED: unchanged passes; each kind of difference is named.
+      const bytes = Buffer.concat([Buffer.from('MZ setup '), Buffer.alloc(3 * 1024 * 1024 + 17, 0x5a)]);
+      const runCheck = (label, mutateFile, over = {}) => {
+        const d = setup();
+        const installer = path.join(d.dir, 'v4.0.0-TheCurator-4.0.0-x64-Windows-Setup.exe');
+        writeFileSync(installer, bytes);
+        if (mutateFile) mutateFile(installer);
+        writeFileSync(d.script, `\uFEFF${realScript(d, { installerPath: installer, sha256: sha256(bytes), size: bytes.length, ...over })}`, 'utf8');
+        const r = runPs(forHere(planWin.helperArgs(d.script, { errorLogPath: d.log })));
+        const log = existsSync(d.log) ? readFileSync(d.log, 'utf8') : '';
+        let rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
+        return { r, log, rec, label };
+      };
+      const same = runCheck('unchanged');
+      ok(!/REFUSED/.test(same.log) && /running the setup for 4\.0\.0/.test(same.log),
+        `an UNCHANGED setup passes the re-check and is run (log: ${JSON.stringify(same.log.split(/\r?\n/).filter((l) => /REFUSED|running|ERROR/.test(l)))})`);
+      const flipped = runCheck('one byte changed', (f) => { const b = readFileSync(f); b[b.length - 1] ^= 1; writeFileSync(f, b); });
+      ok(/REFUSED: the setup program is not the one that was checked \(sha256 [0-9a-f]{16}\.\.\., expected [0-9a-f]{16}\.\.\.\); nothing was changed/.test(flipped.log), 'one byte changed: refused, and the log names both hashes (truncated)');
+      ok(flipped.log.includes(`expected ${sha256(bytes).slice(0, 16)}...`), '…the expected hash is the verified one');
+      eq(flipped.rec && [flipped.rec.result, flipped.rec.exitCode], ['installer-changed', 5], '…and the refusal is recorded for the reopened app');
+      const longer = runCheck('one byte added', (f) => writeFileSync(f, Buffer.concat([readFileSync(f), Buffer.from([0])])));
+      ok(new RegExp(`\\(size ${bytes.length + 1}, expected ${bytes.length}\\)`).test(longer.log), 'a different size: the log names both sizes');
+      const gone = runCheck('deleted', (f) => rmSync(f));
+      ok(/REFUSED: the setup program is not the one that was checked \(could not read it: /.test(gone.log), 'a missing setup: the log says it could not be read, and why');
+      eq((gone.log.match(/could not be read \(try \d\)/g) || []).length, 5, '…after asking 5 times (a passing antivirus lock is waited out)');
+      ok(!/could not be read \(try/.test(flipped.log), '…while a hash that differs is final at once');
     }
     {
       // A helper PowerShell cannot parse: the boot's catch logs it, the launcher says so, no marker.
