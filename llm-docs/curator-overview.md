@@ -106,21 +106,25 @@ These are not two products, and you do not have to pick. A book, a thesis or a r
 |---|---|---|
 | Mac | A downloadable application, a `.dmg` from the Releases page, in two builds: `arm64` for Apple Silicon and `x64` for Intel. About 140 MB, because the app carries its own runtime | Supported |
 | Mac | A one-command shell installer that fetches Node.js if needed, clones the repo, installs dependencies and builds the Dock application | Supported |
-| Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts, each on the Desktop and in the Start menu (The Curator, Stop The Curator). No administrator rights | Supported |
+| Windows | The Windows app: a setup `.exe` from the Releases page (`TheCurator-<version>-x64-Windows-Setup.exe`, 64-bit Windows 10 or 11), installed per user with no administrator rights. It carries its own runtime and its own git, updates itself, and has an optional tray icon. Recommended | Supported, new |
+| Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts, each on the Desktop and in the Start menu (The Curator, Stop The Curator). No administrator rights. It runs The Curator in a browser tab | Supported |
 | Linux and Mac | Manual setup: git, Node.js, current LTS recommended (18 minimum), `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
 
-On Windows there is a one-line installer but no `.exe` app yet, and there is no Linux application. On those platforms the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health all work identically. What is Mac-only is the packaging, not the features.
+There is no Linux application; on Linux the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health work identically everywhere. What differs between platforms is the packaging, not the features.
+
+The Windows app is **not code-signed yet**, so on the first install Windows shows a blue "Windows protected your PC" screen; **More info**, then **Run anyway**, lets it run. That is a signing status, not a verdict on the app.
 
 The Mac application is **not yet notarised by Apple.** Developer enrolment is in progress. Until it completes, macOS cannot verify who built it, so the very first launch needs an explicit one-time approval through System Settings, Privacy and Security, using the **Open Anyway** button. That is a signing status, not a verdict on the app. The exception is remembered afterwards, and updates the app installs for itself never ask again. Builds from version 3.30.0 and earlier had a different and worse problem — a broken signature that made macOS call the app damaged — and the fix for those is to download version 3.31.0 or later.
 
-## What is Mac-only?
+## What do the Mac app and the Windows app add?
 
-Four things, all of them packaging rather than capability:
+Packaging rather than capability:
 
-- The downloadable application bundle and the Dock launcher.
-- Self-update: the app downloads a new version, verifies it against the sha256 that GitHub publishes on the asset, and swaps it in. On other platforms you update the checkout yourself.
-- The native folder picker for choosing where your knowledge lives.
-- The menu bar icon, which shows what your agents have just saved without opening the app. It is off by default, because a fresh install has no saved working state and would have nothing to show.
+- A downloadable application in its own window: a `.dmg` on a Mac, a setup `.exe` on Windows (the Dock launcher of the Mac shell installer is Mac-only).
+- Self-update: the app downloads a new version, verifies it against the size and sha256 that GitHub publishes for the file, and installs it. A browser install updates its checkout in place instead.
+- An icon showing what your agents have just saved without opening the app: in the menu bar on a Mac, in the notification area (tray) on Windows. It is off by default, because a fresh install has no saved working state and would have nothing to show.
+
+The folder picker for choosing where your knowledge lives opens on macOS, Windows and Linux.
 
 ## Which AI providers does it work with?
 

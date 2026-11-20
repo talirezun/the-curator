@@ -97,3 +97,42 @@ bash scripts/build-app.sh
 | `CURATOR_WIN_NONINTERACTIVE=1` | Suppresses the message boxes (CI). |
 
 **CI.** The job "Windows one-line install" (windows-latest, in `.github/workflows/test.yml`) runs `install.ps1` from the checked-out branch with `-Branch <branch> -NoStart -InstallDir <temp>`, starts the app, asserts `/api/version` answers, runs the stop script and asserts the process is gone and the port free, asserts both shortcuts exist with the right icon, and re-runs the installer to prove a planted `domains\x\wiki\a.md` stays byte-identical. It gates the release like the existing "Windows installer tests" job.
+
+### Building the Windows app (2026-11-20)
+
+The Windows app is built **on Windows** (a PC, or the `windows-latest` runner): NSIS, the exe's
+version resource and the fuse check all run there. From a checkout:
+
+```powershell
+npm ci                       # the root runtime dependencies (no native modules)
+cd desktop
+npm install                  # Electron + electron-builder, devDependencies only
+npm run dist                 # lib/dist.js: --win on Windows, --mac on macOS
+```
+
+`npm run dist` on Windows first runs `lib/fetch-mingit.mjs` (downloads MinGit 2.56.1, refuses it
+unless its size and SHA-256 equal the pin, unpacks it to `desktop/vendor/mingit/`, gitignored, and
+writes `THIRD-PARTY-NOTICES.txt`; `node lib/fetch-mingit.mjs --zip <file>` uses a file you already
+have, held to the same pin), then runs electron-builder's own `cli.js` under the same node (the
+`.bin` shim is a `.cmd`, which Node will not spawn without a shell). The equivalent by hand:
+
+```powershell
+node lib/fetch-mingit.mjs
+npx electron-builder --win --config electron-builder.yml --config.extraMetadata.version=<X.Y.Z> --publish never
+```
+
+Output: `desktop\dist\TheCurator-<X.Y.Z>-x64-Windows-Setup.exe` and `desktop\dist\win-unpacked\`.
+The build fails (afterPack / afterSign, `desktop/lib/win-pack.mjs`) on a 0.0.0 or mismatched
+version, a missing `node_modules`, a MinGit tree that is not the verified one, missing notices or
+tray icons, or the RunAsNode fuse off; it writes `resources\app\.curator-bundle`, without which the
+installed app would keep the user's data inside the program folder. `win-unpacked` is for
+inspection: it has no uninstaller, so it refuses to update itself (`not-installed-copy`). The tray
+and app icons are regenerated with `node desktop/build/make-win-icons.mjs` (committed outputs; the
+offline suite re-generates them and compares every pixel).
+
+To run a built app in isolation (never against your real data), set `CURATOR_TEST_USER_DATA_DIR`,
+`CURATOR_TEST_DOMAINS_DIR`, `CURATOR_TEST_MCP_LAUNCHER_DIR` and `CURATOR_NO_OPEN=1` first. The
+offline suites for the Windows app run on any OS with injected platform and paths:
+`test-paths-win32.js`, `test-desktop-win-build.js`, `test-desktop-update-win32.js`,
+`test-desktop-shell-win32.js`, `test-win-folder-access.js`, `test-windows-words.js` (all in
+`scripts/run-tests.js`).

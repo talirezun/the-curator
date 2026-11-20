@@ -751,10 +751,12 @@ is why swapping shells costs nothing.
 - **Updating is in-app; going back is not.** There is no in-app rollback, and only releases
   that carry a download can be reinstalled by hand.
 
-**There is no Windows or Linux application.** On those platforms the browser install is the
-way in, and it is a first-class one — ingest, chat, wiki, Health, MCP and sync all work
-identically. What is Mac-only is the packaging: the app bundle, the Dock launcher, the folder
-picker and the menu bar icon.
+**There is a Windows application too (2026-11-20)**: a per-user setup `.exe`, not code-signed yet,
+that updates itself, carries its own git for Sync and has an optional tray icon
+([windows-app.md](windows-app.md)). **There is no Linux application.** On Linux the browser install
+is the way in, and it is a first-class one — ingest, chat, wiki, Health, MCP and sync all work
+identically. What the apps add is packaging: an application bundle, self-update and the menu bar
+(or tray) icon; the Dock launcher is Mac-only, and the folder picker opens on all three systems.
 
 ---
 
@@ -1468,10 +1470,9 @@ Three providers ship. A local-model row and one other provider row exist in Sett
 marked unavailable. The OpenRouter connection speaks an OpenAI-compatible wire format, which is
 not the same thing as OpenAI support.
 
-**There is no Windows or Linux application.**
-The browser install is the way in on those platforms and is fully supported. What is Mac-only
-is the packaging: the app bundle, the Dock launcher, the native folder picker, and the menu bar
-icon.
+**There is no Linux application.**
+The browser install is the way in on Linux and is fully supported. The Mac app and the Windows
+app add packaging only: an application bundle, self-update, and the menu bar (or tray) icon.
 
 **A browser-only assistant cannot use the MCP bridge.**
 It is a local child process; the client must be able to spawn a local program.

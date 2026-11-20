@@ -21,7 +21,8 @@ When a section of mycurator.xyz answers the question, include its link in markdo
 | Source & licence | GitHub repository, MIT licence | https://mycurator.xyz/#star |
 
 External links the assistant may also use:
-- Releases (Mac app download): https://github.com/talirezun/the-curator/releases
+- Releases (Mac and Windows app downloads): https://github.com/talirezun/the-curator/releases
+- Windows app (install, updates, tray, uninstall): https://github.com/talirezun/the-curator/blob/main/docs/windows-app.md
 - Windows install (one-line installer, Start and Stop icons, troubleshooting): https://github.com/talirezun/the-curator/blob/main/docs/install-windows.md
 - Linux manual setup (also works on Mac): https://github.com/talirezun/the-curator#option-c--manual-setup-windows--linux--mac
 - Install with a coding agent: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#20-install-with-a-coding-agent

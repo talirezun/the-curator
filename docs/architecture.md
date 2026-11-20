@@ -614,6 +614,8 @@ There is a sharper reason too. `isRepoInstall()` is literally `!isBundleInstall(
 | `restartStyle` | What "restart" means here | `respawn-node` | `app-relaunch` |
 | `folderPickerStyle` | How `POST /api/config/pick-folder` asks the user for a directory | `osascript` | `native-dialog` |
 
+**Per platform (2026-11-20).** `getCapabilities(mode, platform)` first looks in `PLATFORM_CAPABILITIES`; today the only entry is the **Windows bundle**, `bundle (win32)`, identical to `bundle` except `mcpLaunchStyle: 'app-binary'` (the Windows app's own exe as Node, with `ELECTRON_RUN_AS_NODE=1`; there is no launcher shim on Windows). Every other platform/mode pair gets the table above unchanged. `listCapabilityRecords()` enumerates every record so `scripts/test-install-mode.js` §4 stays exhaustive. A module that needs to know "is this the Windows app" reads `mcpLaunchStyle === 'app-binary'`, never the install form (System Check's git row does exactly this).
+
 **Stated honestly:** today all four booleans are perfectly correlated with `mode === 'repo'`. They are not four independent measurements — they are four distinct *questions* that happen to share an answer in the only two modes that exist. The value is the naming and the single table. `scripts/test-install-mode.js` enforces the half that is not aspirational: **no route may branch on the mode**, only on a capability.
 
 `mcpLaunchStyle` and `restartStyle` shipped with **no branch behind them**, as declared-only fields — the same posture `getUserDataDirState()` took in v3.1.0. Both now have one. Two keys remain deliberately declared-only, and the reason is that a check would be *unreachable*, not that one was forgotten:
@@ -1136,6 +1138,44 @@ The shell notices the flip by watching the config file's **directory**, not the 
 #### The click, and its honest limit
 
 There is deliberately **no second reader in the widget**. A row click reveals the window on the Project-context view and on that **project** — it does *not* select the scope. `data-view` and `data-mem-project` are the app's own dispatch attributes; the scope picker inside the memory view has no routing attribute to address. The coupling is the same one `lib/menu.js` already accepts for Settings, with the same property that makes it acceptable: `executeJavaScript` resolves with a value, so the shell learns when the coupling has rotted and shows an error naming the rail button, instead of offering a menu item that silently does nothing. The project name is passed as a JSON string and compared against `dataset.memProject` — never interpolated into a selector, because a project name is user-supplied text and building a CSS selector from it would be an injection into the app's own origin.
+
+### The Windows app (2026-11-20)
+
+The same shell, packaged for Windows by the same `desktop/electron-builder.yml` (`win` + `nsis`) as
+a per-user NSIS installer, `TheCurator-<X.Y.Z>-x64-Windows-Setup.exe`. Nothing in `src/` knows how
+it is installed or updated; it knows a capability record and two desktop hooks, exactly as on the
+Mac. The user guide is [windows-app.md](windows-app.md); the rules and their reasons are in
+[dev/decisions-app.md](dev/decisions-app.md#app-lifecycle-install-and-update).
+
+```mermaid
+flowchart LR
+    subgraph prog["%LOCALAPPDATA%\Programs\The Curator  (replaced by updates)"]
+      exe["The Curator.exe"] --> app["resources\app<br/>APP_ROOT + .curator-bundle"]
+      git["resources\git<br/>MinGit 2.56.1"]
+    end
+    subgraph data["%LOCALAPPDATA%\TheCurator"]
+      ud["App\<br/>domains, keys, .knowledge-git"]
+      shared["instances\ · logs\ · updates\<br/>(shared with the browser install)"]
+    end
+    app -->|paths.js getBundleUserDataDir| ud
+    app -->|Sync: planGit, bundled git first| git
+    cd["Claude Desktop"] -->|"The Curator.exe + mcp\server.js<br/>ELECTRON_RUN_AS_NODE=1"| exe
+```
+
+| Concern | Where it is decided | What happens on win32 |
+|---|---|---|
+| Bundle identity | `src/brain/paths.js` `isBundleInstall()` | The marker `resources\app\.curator-bundle` (written by `desktop/lib/win-pack.mjs`) is the ONLY signal; no path shape. Without it the app would run in repo mode and write user data into the program folder |
+| User data | `paths.js` `getBundleUserDataDir()` | `%LOCALAPPDATA%\TheCurator\App`; `instances\`, `logs\`, `updates\` at the shared root |
+| Capabilities | `src/brain/install-mode.js` | `bundle (win32)`: as `bundle`, with `mcpLaunchStyle: 'app-binary'` |
+| MCP entry | `src/brain/mcp-launcher.js` `buildAppBinaryEntry`, `src/routes/mcp.js` | `{command: <exe>, args: [<server.js>], env: {ELECTRON_RUN_AS_NODE: "1"}}`; Check entry's shape (c) in `mcp-check-entry.js` accepts exactly that |
+| Sync's git | `src/brain/subprocess-env.js` `planGit`, `src/brain/sync.js` | `resources\git\cmd` first on PATH; `-c credential.helper= -c core.askPass=`, schannel, `GCM_INTERACTIVE=never` |
+| Folders | `src/brain/folder-access.js`, `knowledge-folder-path.js` | Windows' rules (reserved names, MAX_PATH, drive roots, Controlled folder access, OneDrive, shares, the program folder), each a catalogue code |
+| Which release | `src/routes/config.js` `pickInstallableRelease(…, {platform})`, `installerAssetsFor` | `.exe` assets only; the Mac keeps `.dmg` |
+| Updating | `desktop/lib/update-engine.js` `createUpdateInstaller('win32')` | Download → size + SHA-256 + ProductVersion → PowerShell helper → `/S --updated --force-run` → reopen; not atomic |
+| Shell forks | `desktop/lib/shell-platform.js` | AUMID, close-to-tray only with a live tray, left-click window / right-click menu, Help menu |
+
+The Mac shell is the fixed point: every darwin answer above is byte-identical to v3.99.3 and
+pinned by the offline suites.
 
 ### Known gaps in the shell itself
 

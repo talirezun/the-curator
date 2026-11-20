@@ -516,6 +516,15 @@ Then create a **fresh, empty** private repo (no README/.gitignore/license) and c
 
 ### Windows: a GitHub sign-in window pops up, or sync hangs forever
 
+**Since the Windows app release (2026-11-20) this should not happen in a current version.** On Windows
+The Curator now runs every one of its own git commands with the credential helper switched off
+(`-c credential.helper= -c core.askPass=`, `GCM_INTERACTIVE=never`), in the Windows app and in the
+browser install alike, because its token already travels with the request. A rejected token is then
+the plain *"GitHub rejected the token saved for Sync"* message with **Replace token**, not a window.
+The Windows app also brings its own git (MinGit), so it needs no Git for Windows at all
+([windows-app.md § Sync works out of the box](windows-app.md#sync-works-out-of-the-box)). If you still
+see a sign-in window (an older version, or a git started outside The Curator), the advice below applies.
+
 Git for Windows ships with **Git Credential Manager**, which can intercept the push and pop up a GitHub login window — if you don't notice it, the whole operation stalls until it times out (which then shows as "Failed to fetch").
 
 - Watch for a **GitHub sign-in popup** during sync and complete or close it.

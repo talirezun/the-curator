@@ -74,7 +74,7 @@ Each row links straight to that section.
 
 ## Where do I read about installing on Windows or Linux?
 
-Go here: section 3 of the user guide carries the Windows one-line installer (with troubleshooting and uninstalling), the manual setup for Linux, and the platform table that says which parts are macOS only. https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#3-installation . The one-page Windows install handout (three steps, for non-technical people) is https://github.com/talirezun/the-curator/blob/main/docs/install-windows.md
+Go here: section 3 of the user guide carries the Windows one-line installer (with troubleshooting and uninstalling), the manual setup for Linux, and the platform table that says which parts are macOS only. https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#3-installation . The Windows app (download, the "Windows protected your PC" screen, updates, tray icon, Claude Desktop, uninstalling, switching from the browser install) is https://github.com/talirezun/the-curator/blob/main/docs/windows-app.md . The one-page Windows install handout (the choice between the app and the one-line installer, then the installer's three steps) is https://github.com/talirezun/the-curator/blob/main/docs/install-windows.md
 
 ## Where is the guide to project context, agent memory and working state?
 
