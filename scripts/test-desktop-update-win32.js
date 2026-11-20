@@ -373,7 +373,7 @@ const GOOD = {
   ok(s.includes('.WaitForExit($InstallTimeoutSeconds * 1000)') && !/Start-Process[^\n]*-Wait\b/.test(s),
     'it waits for the setup PROCESS only (Start-Process -Wait would also wait for the app the setup reopens)');
   ok(s.includes('$null = $proc.Handle'), 'the process handle is taken at once, so ExitCode is readable afterwards');
-  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'for ($try = 1; $try -le 5; $try++) { $InstallerCheck = Get-InstallerDifference;', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "Write-Result 'installed' 0", 'Test-AppRunning) { $running'];
+  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'for ($try = 1; $try -le 5; $try++) { $InstallerCheck = Get-InstallerDifference;', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "$null = Update-Result 'installed' 0", 'Test-AppRunning) { $running'];
   const idx = order.map((k) => s.indexOf(k));
   ok(idx.every((i) => i > 0) && idx.every((v, i) => i === 0 || v > idx[i - 1]),
     `the steps are in order: wait → stop agreed connections → exe free → hash → record → run → record → reopen (${idx.join(',')})`);
@@ -484,7 +484,7 @@ const GOOD = {
       '$SetupStarted turns true just before the setup is started');
     const fnLog = st.slice(st.indexOf('function Log('), st.indexOf('function Get-InstallerDifference'));
     ok(!cmdlet.test(fnLog.replace(/function Write-Result/g, '')), 'Log and Write-Result use .NET only (a record never depends on a module loading)');
-    ok(st.includes("Remove-Quietly 'C:\\U\\updates\\install-update.started'") && st.indexOf("Log 'done'") > st.indexOf("Write-Result 'installed' 0"), 'after success the marker is removed and "done" logged');
+    ok(st.includes("Remove-Quietly 'C:\\U\\updates\\install-update.started'") && st.indexOf("Log 'done'") > st.indexOf("$null = Update-Result 'installed' 0"), 'after success the marker is removed and "done" logged');
     eq(planWin.describeInstallOutcome({ result: 'helper-error', version: '4.0.0', exitCode: 9 }, '3.0.0').message, planWin.WIN32_INSTALL_OUTCOMES['not-updated'],
       'a helper-error record read by the old version says "still on the previous version"');
   }
@@ -1132,6 +1132,37 @@ section('§9b the launcher, the first trace, the boot catch and the trap, EXECUT
       ok(/REFUSED: the setup program is not the one that was checked \(could not read it: /.test(gone.log), 'a missing setup: the log says it could not be read, and why');
       eq((gone.log.match(/could not be read \(try \d\)/g) || []).length, 5, '…after asking 5 times (a passing antivirus lock is waited out)');
       ok(!/could not be read \(try/.test(flipped.log), '…while a hash that differs is final at once');
+    }
+    {
+      // v3.99.3-wintest.6: the setup starts the new version BEFORE it exits; that
+      // app's afterStart reads "installing" (= updated) and removes the record.
+      // The helper's "installed" must then NOT re-create it (a stale record could
+      // later say "not updated" about a version long replaced). EXECUTED: the
+      // helper's own functions, as generated, then the two orders of events.
+      const d = setup();
+      const full = realScript(d);
+      const defs = full.slice(0, full.indexOf('# ── 1. Wait for The Curator to exit ──'));
+      const run = (tail) => {
+        writeFileSync(d.script, `\uFEFF${defs}\r\n${tail}\r\n`, 'utf8');
+        return runPs(forHere(planWin.helperArgs(d.script, { errorLogPath: d.log })));
+      };
+      // (a) the app has NOT read it yet: "installing" becomes "installed".
+      let r = run("Write-Result 'installing' -1\r\n[Console]::Out.WriteLine([string](Update-Result 'installed' 0))");
+      eq((r.stdout || '').trim(), 'True', `the record still there: Update-Result writes it (stderr ${JSON.stringify((r.stderr || '').slice(0, 160))})`);
+      let rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
+      eq(rec && [rec.result, rec.version, rec.exitCode], ['installed', '4.0.0', 0], '…and the reopened app will read "installed"');
+      // (b) the reopened app already read and removed it: nothing is re-created.
+      rmSync(d.result, { force: true });
+      r = run("[Console]::Out.WriteLine([string](Update-Result 'installed' 0))");
+      eq([(r.stdout || '').trim(), existsSync(d.result)], ['False', false], 'the record already consumed by the reopened app: "installed" is NOT written again (no stale record)');
+      ok(/the reopened app already read the outcome; installed not recorded again/.test(readFileSync(d.log, 'utf8')), '…and the log says why');
+      // (c) failures are never dropped this way: they are created whether or not a record exists.
+      r = run("Write-Result 'installer-failed' 7");
+      rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
+      eq(rec && rec.result, 'installer-failed', 'a failure is recorded even when no record exists (it must reach the next start)');
+      const step6 = full.slice(full.indexOf('# ── 6.'));
+      ok(/\$null = Update-Result 'installed' 0/.test(step6) && !/Write-Result 'installed'/.test(full), 'step 6 records "installed" ONLY through Update-Result');
+      ok(!/Update-Result '(?!installed)/.test(full), '…and nothing else goes through it (every failure is created by Write-Result)');
     }
     {
       // A helper PowerShell cannot parse: the boot's catch logs it, the launcher says so, no marker.
