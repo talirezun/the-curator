@@ -25,7 +25,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { describeInstall, getCapabilities } from './install-mode.js';
 import { getDomainsDir, getApiKeys, getEffectiveKey } from './config.js';
-import { appPath, getCredentialFiles, isBundleInstall, APP_ROOT } from './paths.js';
+import { appPath, getCredentialFiles, APP_ROOT } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus, gitMissingMessage } from './sync.js';
 // The plan Sync itself starts git with (the Windows app's bundled MinGit first).
@@ -234,10 +234,6 @@ function capabilitiesOrNull() {
     return null;
   }
 }
-function bundleOrFalse() {
-  try { return isBundleInstall(); } catch { return false; }
-}
-
 // WINDOWS (2026-11-20). Sync starts git through planGit() (subprocess-env.js):
 // on the Windows APP that is the copy of MinGit the app ships, first on PATH,
 // and a git on the user's PATH only as the fallback. So on Windows this row
@@ -246,7 +242,7 @@ function bundleOrFalse() {
 // install Git for Windows), never `xcode-select`. The Windows app is never
 // skipped: it cannot update via git, but Personal Sync needs git all the same.
 // Off Windows every byte below the `win32` test is the code that was here.
-// `deps` is a test seam ({platform, isBundle, plan, execFile}); production
+// `deps` is a test seam ({platform, isBundle?, plan, execFile}); production
 // passes nothing. Read-only: `git --version` writes nothing anywhere.
 export async function checkGit(caps = capabilitiesOrNull(), deps = {}) {
   const platform = deps.platform || process.platform;
@@ -268,8 +264,14 @@ export async function checkGit(caps = capabilitiesOrNull(), deps = {}) {
 
 // Every Windows build probes: Personal Sync needs git whatever the update
 // capabilities say, and the app's own copy is exactly what this row checks.
-async function checkGitWindows(_caps, deps) {
-  const isBundle = deps.isBundle !== undefined ? !!deps.isBundle : bundleOrFalse();
+//
+// "Is this the Windows APP (which ships its own git)?" is read from a
+// CAPABILITY, never the install form (scripts/test-install-mode.js §4):
+// `mcpLaunchStyle: 'app-binary'` is the Windows bundle's value and nothing
+// else's. An unreadable table (null) reads as NOT the app, so no bundled path
+// is assumed and the PATH git is probed.
+async function checkGitWindows(caps, deps) {
+  const isBundle = deps.isBundle !== undefined ? !!deps.isBundle : !!caps && caps.mcpLaunchStyle === 'app-binary';
   const plan = deps.plan || planGit({ platform: 'win32', appRoot: APP_ROOT, isBundle, exists: existsSync });
   const run = deps.execFile || execFileAsync;
   // The bundled exe by its absolute path when it is there (that is the git

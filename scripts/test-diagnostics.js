@@ -855,6 +855,18 @@ try {
       && !/xcode/i.test(browserMissing.detail),
       `Windows browser install, no git: FAIL with the Git for Windows sentence, no xcode-select (got "${browserMissing.detail}")`);
 
+    // With no isBundle in deps, the Windows-app question is the CAPABILITY
+    // mcpLaunchStyle (never the install form): 'app-binary' = the Windows app.
+    const capApp = await checkGit({ ...BUNDLE_CAPS, mcpLaunchStyle: 'app-binary' },
+      { platform: 'win32', plan: planFor(true, false), execFile: recorder('enoent').fn });
+    const capRepo = await checkGit({ canSelfUpdateViaGit: true, canRunNpmInstall: true, mcpLaunchStyle: 'node-script' },
+      { platform: 'win32', plan: planFor(false, false), execFile: recorder('enoent').fn });
+    const capNull = await checkGit(null, { platform: 'win32', plan: planFor(false, false), execFile: recorder('enoent').fn });
+    assert(capApp.detail === gitMissingMessage({ platform: 'win32', isBundle: true })
+      && capRepo.detail === gitMissingMessage({ platform: 'win32', isBundle: false })
+      && capNull.detail === capRepo.detail,
+      "mcpLaunchStyle 'app-binary' words it as the Windows app; 'node-script', or an unreadable table, as the browser install");
+
     // CONTROL: macOS is untouched — the same injected deps are ignored there,
     // the bundle still skips and the repo arm still names xcode-select.
     const macBundle = await checkGit(BUNDLE_CAPS, { platform: 'darwin', isBundle: true, execFile: recorder('enoent').fn });
