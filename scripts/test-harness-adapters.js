@@ -392,6 +392,46 @@ section('§2  THE MCP ENTRY — the launch line is the caller\'s, in each format
     && JSON.stringify(realEntry.config.mcpServers['my-curator'].args || []) === JSON.stringify(real.args),
   'the Claude Desktop entry equals buildCuratorEntry\'s output, compared by execution');
   ok(path.isAbsolute(real.command), '…and that launch line is absolute (the control on the comparison)');
+
+  // THE WINDOWS APP'S LINE CARRIES AN ENV (2026-11-20): `{ELECTRON_RUN_AS_NODE:
+  // '1'}`, without which the app's exe opens a second copy of the app instead
+  // of the bridge. Every harness's snippet, in every format, must carry it
+  // under that harness's own env key, and the text must still parse.
+  const WL = { command: 'C:\\Users\\Ana Müller\\AppData\\Local\\Programs\\The Curator\\The Curator.exe',
+    args: ['C:\\Users\\Ana Müller\\AppData\\Local\\Programs\\The Curator\\resources\\app\\mcp\\server.js'],
+    env: { ELECTRON_RUN_AS_NODE: '1' } };
+  const envBad = [];
+  for (const id of A.listHarnesses()) {
+    const m = A.adapterFor(id).mcpConfig;
+    if (!m) continue;
+    const e = A.mcpEntryFor(id, WL);
+    const envKey = m.envKey || 'env';
+    if (!e.ok) { envBad.push(`${id}: not built`); continue; }
+    if (e.format === 'json') {
+      const parsed = JSON.parse(e.text)[m.key]['my-curator'];
+      if (!parsed[envKey] || parsed[envKey].ELECTRON_RUN_AS_NODE !== '1') envBad.push(`${id}: no ${envKey} in the JSON`);
+    } else if (e.format === 'toml') {
+      if (!/^env = \{ ELECTRON_RUN_AS_NODE = "1" \}$/m.test(e.text)) envBad.push(`${id}: no TOML env table`);
+      if (!/ --env ELECTRON_RUN_AS_NODE=1 -- /.test(e.addCommand || '')) envBad.push(`${id}: add command lacks --env`);
+    } else if (e.shape === 'cordis') {
+      if (!/\n {8}env:\n {10}ELECTRON_RUN_AS_NODE: "1"\n/.test(e.text) || / env: \{\}/.test(e.text)
+        || e.config[0].insert[0].config.env.ELECTRON_RUN_AS_NODE !== '1') envBad.push(`${id}: no Cordis env`);
+    } else if (e.format === 'yaml') {
+      if (!new RegExp(`\\n {4}${envKey}:\\n {6}ELECTRON_RUN_AS_NODE: "1"\\n`).test(e.text) || new RegExp(`${envKey}: \\{\\}`).test(e.text)) envBad.push(`${id}: no YAML ${envKey} mapping`);
+    }
+    // Nothing else moved: the entry without its env key is the env-less entry.
+    const plain = A.mcpEntryFor(id, { command: WL.command, args: WL.args });
+    const { [envKey]: _drop, ...rest } = e.entry;
+    if (e.format !== 'yaml' || e.shape !== 'cordis') {
+      if (JSON.stringify(rest) !== JSON.stringify(plain.entry)) envBad.push(`${id}: other keys changed`);
+    }
+  }
+  ok(envBad.length === 0, `every harness snippet carries the launch line's env in its own format${envBad.length ? ` — ${envBad.join('; ')}` : ''}`);
+  // Byte-identical without one: the same entry text whether `env` is absent or empty.
+  const sameWithout = A.listHarnesses().filter((id) => A.adapterFor(id).mcpConfig)
+    .every((id) => A.mcpEntryFor(id, LAUNCH).text === A.mcpEntryFor(id, { ...LAUNCH, env: {} }).text
+      && !/ELECTRON_RUN_AS_NODE/.test(A.mcpEntryFor(id, LAUNCH).text));
+  ok(sameWithout, 'a launch line with no env (macOS, a checkout) produces exactly the text it always did');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

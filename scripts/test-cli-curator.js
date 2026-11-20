@@ -1117,6 +1117,38 @@ section('§10  Two installs, one machine — the usage log and the machine id');
   });
   ok(inBundle.length === 1, 'a BUNDLE install offers one — the candidate IS its primary');
 
+  // WINDOWS (2026-11-20). The Windows app keeps its data in
+  // %LOCALAPPDATA%\TheCurator\App, one level below the shared root, so the
+  // DEFAULT bundle dir (no `bundleDir` in deps) must be getBundleUserDataDir(),
+  // never getAppSupportDir(). Driven with paths.js's simulated host; the join
+  // below is this POSIX host's, so `primary` is spelled the same way.
+  {
+    const P = await import('../src/brain/paths.js');
+    const WL = 'C:\\Users\\Ana Müller\\AppData\\Local';
+    const APPDATA_DIR = WL + '\\TheCurator\\App';
+    P.__setHostForTest({ platform: 'win32', env: { LOCALAPPDATA: WL }, homedir: 'C:\\Users\\Ana Müller',
+      appRoot: 'C:\\Users\\Ana Müller\\the-curator', exists: () => false, mkdir: () => {} });
+    let browserCands, appCands;
+    try {
+      browserCands = usage.candidateUsageLogPaths({
+        primary: 'C:\\Users\\Ana Müller\\the-curator/.mcp-usage.jsonl',
+        userDataDir: 'C:\\Users\\Ana Müller\\the-curator', appRoot: 'C:\\Users\\Ana Müller\\the-curator',
+        isBundle: false, env: {}, exists: () => true,
+      });
+      appCands = usage.candidateUsageLogPaths({
+        primary: path.join(APPDATA_DIR, '.mcp-usage.jsonl'),
+        userDataDir: APPDATA_DIR, appRoot: WL + '\\Programs\\The Curator\\resources\\app',
+        isBundle: true, env: {}, exists: () => true,
+      });
+    } finally {
+      P.__setHostForTest(null);
+    }
+    ok(browserCands.length === 2 && browserCands[1] === path.join(APPDATA_DIR, '.mcp-usage.jsonl'),
+      `Windows browser install: the second candidate is the Windows APP's log in TheCurator\\App (got ${JSON.stringify(browserCands)})`);
+    ok(appCands.length === 1,
+      `Windows app: one candidate, its own log — the shared TheCurator root holds no usage log (got ${JSON.stringify(appCands)})`);
+  }
+
   // AND THE HOOK ACTUALLY READS THE UNION. A save recorded in the SECOND log
   // and nowhere else must silence the ask (rung 3). Driven with a real second
   // log injected through the seam-free path: a bundle-shaped directory the

@@ -725,12 +725,62 @@ section("§11  The Windows app: mcpLaunchStyle 'app-binary' (no shim; the exe it
     });
     ok(body && body.ok === true && body.spawn_command === process.execPath && Array.isArray(body.spawn_args) && body.spawn_args[0] === fs.realpathSync(gate),
       'the self-test spawns the app-binary line WITH ELECTRON_RUN_AS_NODE (a server that exits without it answered)', JSON.stringify(body).slice(0, 300));
+
+    // "Run every tool" (POST /api/mcp/exercise) spawns the SAME line, so it
+    // must carry the same env: without it the Windows app's exe opens a second
+    // copy of the app. The gate server exits 9 unless the variable arrived.
+    const { exerciseAllTools } = await import('../src/brain/mcp-exercise.js');
+    const exUser = path.join(TMP, 'appbinary-exercise-userdata');
+    fs.mkdirSync(exUser, { recursive: true });
+    const ex = await exerciseAllTools({ userDataDir: exUser, via: 'self-test' });
+    ok(!ex.error && ex.spawn_command === process.execPath && ex.spawn_args[0] === fs.realpathSync(gate)
+        && ex.results.length > 0 && ex.results.every((r) => r.ok || r.refused),
+      'Run every tool spawns the app-binary line WITH ELECTRON_RUN_AS_NODE and every tool answers',
+      JSON.stringify({ error: ex.error, n: ex.results.length, bad: ex.results.filter((r) => !r.ok && !r.refused).map((r) => r.tool) }).slice(0, 300));
   } finally {
     routes.__setMcpLaunchOverride(null);
   }
   deepEq(routes.buildCuratorEntry('/tmp/some/domains').args.slice(1), ['--domains-path', '/tmp/some/domains'],
     'CONTROL: with the seam cleared the repo arm is back (the override does not leak)');
   eq(routes.launchWritableState(), null, '…and launchWritableState() is null outside app-binary');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§11b  The old wizard on Windows: the right Claude config path, and no write');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  eq(routes.claudeConfigPathFor({ platform: 'win32', env: { APPDATA: 'C:\\Users\\Ana Müller\\AppData\\Roaming' }, homedir: 'C:\\Users\\Ana Müller' }),
+    'C:\\Users\\Ana Müller\\AppData\\Roaming\\Claude\\claude_desktop_config.json',
+    'Windows: %APPDATA%\\Claude\\claude_desktop_config.json');
+  eq(routes.claudeConfigPathFor({ platform: 'win32', env: { APPDATA: 'relative\\x' }, homedir: 'C:\\Users\\Ana' }),
+    'C:\\Users\\Ana\\AppData\\Roaming\\Claude\\claude_desktop_config.json',
+    'Windows with APPDATA unset or relative: <home>\\AppData\\Roaming (a relative value would follow the cwd)');
+  eq(routes.claudeConfigPathFor({ platform: 'darwin', env: {}, homedir: '/Users/ana' }),
+    '/Users/ana/Library/Application Support/Claude/claude_desktop_config.json',
+    'macOS: the path this wizard always used');
+  if (process.platform === 'darwin') {
+    eq(routes.buildFullConfigPayload(null, '/d').claude_config_path, path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+      'CONTROL: on this Mac the live path is the macOS one, unchanged');
+  }
+  // POST /write-config on Windows refuses BEFORE reading or writing anything.
+  const wdir = fs.mkdtempSync(path.join(TMP, 'claudecfg-win-'));
+  const wcfg = path.join(wdir, 'claude_desktop_config.json');
+  fs.writeFileSync(wcfg, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+  const before = fs.readFileSync(wcfg);
+  const touched = [];
+  const wr = await new Promise((resolve) => {
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
+    routes.writeConfigHandler({}, res, { platform: 'win32', configPath: wcfg,
+      exists: (p) => { touched.push(['exists', p]); return true; }, read: (p) => { touched.push(['read', p]); return '{}'; },
+      write: (p) => { touched.push(['write', p]); }, mkdir: (p) => { touched.push(['mkdir', p]); } });
+  });
+  ok(wr.status === 409 && wr.body.refused === 'use_install_for_me' && wr.body.written === false
+      && /Install for me/.test(wr.body.error) && /Nothing was written/.test(wr.body.error),
+    'Windows: POST /write-config refuses (409), points to Install for me, and says nothing was written');
+  ok(touched.length === 0 && Buffer.compare(fs.readFileSync(wcfg), before) === 0,
+    '…without even reading the file (no fs call at all), which stays byte-identical');
+  const mr = await runWrite(null, { platform: 'darwin' });
+  eq(mr.res.statusCode, 200, 'CONTROL: the same handler on macOS still writes (200)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -161,7 +161,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { realpathSync, unlinkSync } from 'fs';
 import { mkdir, writeFile, readFile, readdir, unlink, link } from 'fs/promises';
-import { getAppSupportDir, getUserDataDir, APP_ROOT } from './paths.js';
+import { getAppSupportDir, getBundleUserDataDir, getUserDataDir, appPath } from './paths.js';
 import { getDomainsDir } from './config.js';
 import { describeInstall } from './install-mode.js';
 
@@ -190,12 +190,22 @@ export function __setInstanceRegistryRootOverride(p) {
  * An ISOLATED user-data dir, or null when this is a real install.
  *
  * `getUserDataDir()` returns exactly one of two values in production —
- * APP_ROOT (repo) or getAppSupportDir() (bundle) — so anything ELSE is a test
- * seam that somebody set, and the registry follows it rather than writing into
- * the maintainer's real Application Support tree. This reads the resolved
- * value rather than the override variable because that variable is private to
- * paths.js; the comparison is exact, so it cannot mistake a real install for
- * an isolated one.
+ * the app root (repo) or getBundleUserDataDir() (bundle) — so anything ELSE is
+ * a test seam that somebody set, and the registry follows it rather than
+ * writing into the maintainer's real Application Support tree. This reads the
+ * resolved value rather than the override variable because that variable is
+ * private to paths.js; the comparison is exact, so it cannot mistake a real
+ * install for an isolated one.
+ *
+ * WINDOWS (2026-11-20). A win32 bundle keeps its data in
+ * %LOCALAPPDATA%\TheCurator\App, one level BELOW getAppSupportDir(). The
+ * comparison is therefore against getBundleUserDataDir(), never against
+ * getAppSupportDir(): compared with the shared root, the app's own data dir
+ * read as "isolated", its registry landed in App\instances, and the app and a
+ * browser install on the same PC (whose registry is %LOCALAPPDATA%\TheCurator\
+ * instances) never saw each other. On macOS the two functions return the same
+ * folder, so nothing changes there. appPath() is APP_ROOT in production and
+ * follows paths.js's simulated host in a suite.
  */
 function isolatedUserDataDir() {
   if (process.env.CURATOR_TEST_USER_DATA_DIR) {
@@ -203,7 +213,7 @@ function isolatedUserDataDir() {
   }
   try {
     const dir = getUserDataDir();
-    if (dir !== APP_ROOT && dir !== getAppSupportDir()) return dir;
+    if (dir !== appPath() && dir !== getBundleUserDataDir()) return dir;
   } catch { /* fall through to the shared root */ }
   return null;
 }

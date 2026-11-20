@@ -1331,7 +1331,7 @@ export function writableHarnesses() {
  * The MCP server entry for one harness.
  *
  * @param {string} id
- * @param {{command: string, args?: string[]}} launch  from `buildCuratorEntry`
+ * @param {{command: string, args?: string[], env?: object}} launch  from `buildCuratorEntry`
  * @returns {{ok: true, id, format, shape, key, name, entry, config, text, paths, addCommand}}
  *          | {ok: false, reason, message}
  */
@@ -1357,6 +1357,13 @@ export function mcpEntryFor(id, launch, opts = {}) {
     });
   }
   const args = Array.isArray(launch.args) ? launch.args.map(String) : [];
+  // THE LAUNCH LINE'S ENV (2026-11-20). Only the Windows app's line has one:
+  // `{ELECTRON_RUN_AS_NODE: '1'}`, without which the app's exe opens a second
+  // copy of the app instead of running the bridge. It is part of the launch
+  // line, so it goes into EVERY harness's entry, under that harness's own env
+  // key (`env`, `environment`, goose's `envs`), in every format. A line with no
+  // env (macOS, repo) adds nothing: every entry and text is byte-identical.
+  const launchEnv = launchEnvOf(launch);
   const m = a.mcpConfig;
   const name = typeof opts.name === 'string' && opts.name ? opts.name : MCP_SERVER_NAME;
 
@@ -1377,6 +1384,7 @@ export function mcpEntryFor(id, launch, opts = {}) {
     if (m.shape === 'mcp') entry.enabled = true;
   }
   for (const [k, v] of Object.entries(m.entryExtra || {})) entry[k] = Array.isArray(v) ? [...v] : v;
+  if (launchEnv) entry[m.envKey || 'env'] = { ...launchEnv };
 
   // The document a caller would merge into, and its serialisation.
   let config;
@@ -1389,7 +1397,7 @@ export function mcpEntryFor(id, launch, opts = {}) {
     text = renderTomlServer(m.key, name, entry);
   } else if (m.format === 'yaml' && m.shape === 'cordis') {
     // A Cordis PATCH item (see the dsh row): one `insert` of one plugin entry.
-    const cfg = { serverName: name, transport: 'stdio', command, args, env: {} };
+    const cfg = { serverName: name, transport: 'stdio', command, args, env: launchEnv ? { ...launchEnv } : {} };
     config = [{ insert: [{ id: `mcp-${name}`, name: m.plugin, config: cfg }] }];
     text = renderCordisInsert(`mcp-${name}`, m.plugin, cfg);
   } else if (m.format === 'yaml') {
@@ -1417,10 +1425,28 @@ export function mcpEntryFor(id, launch, opts = {}) {
     // Codex ships `codex mcp add`, and it is PREFERRED over merging TOML by
     // hand: this package has no TOML parser, and Decision L forbids merging
     // into a document it cannot read.
-    addCommand: m.addCommand ? `${m.addCommand} ${name} -- ${[command, ...args].map(shellQuote).join(' ')}` : null,
+    // `--env KEY=VALUE` is `codex mcp add`'s own flag for the server's env.
+    addCommand: m.addCommand
+      ? `${m.addCommand} ${name}${launchEnv ? Object.entries(launchEnv).map(([k, v]) => ` --env ${shellQuote(`${k}=${v}`)}`).join('') : ''} -- ${[command, ...args].map(shellQuote).join(' ')}`
+      : null,
     verified: m.verified,
     source: m.source,
   });
+}
+
+/**
+ * The launch line's env as a plain `{name: string}` map, or null when it has
+ * none (every line but the Windows app's). Keys that are not plain variable
+ * names are dropped rather than quoted into a config file.
+ */
+function launchEnvOf(launch) {
+  const e = launch && launch.env;
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(e)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) out[k] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** A TOML table for ONE server. Narrow by construction — no TOML library. */
@@ -1429,6 +1455,8 @@ function renderTomlServer(key, name, entry) {
   for (const [k, v] of Object.entries(entry)) {
     if (Array.isArray(v)) lines.push(`${k} = [${v.map(tomlString).join(', ')}]`);
     else if (typeof v === 'boolean') lines.push(`${k} = ${v ? 'true' : 'false'}`);
+    // An env map: a TOML inline table, `env = { NAME = "value" }`.
+    else if (v && typeof v === 'object') lines.push(`${k} = { ${Object.entries(v).map(([ek, ev]) => `${quoteTomlKey(ek)} = ${tomlString(String(ev))}`).join(', ')} }`);
     else lines.push(`${k} = ${tomlString(String(v))}`);
   }
   return `${lines.join('\n')}\n`;
@@ -1444,9 +1472,13 @@ function renderYamlServer(key, name, entry, envKey) {
       for (const item of v) lines.push(`      - ${yamlString(String(item))}`);
     } else if (typeof v === 'boolean') lines.push(`    ${k}: ${v ? 'true' : 'false'}`);
     else if (typeof v === 'number') lines.push(`    ${k}: ${v}`);
-    else lines.push(`    ${k}: ${yamlString(String(v))}`);
+    else if (v && typeof v === 'object') {
+      // The launch line's env (see mcpEntryFor): a nested mapping.
+      lines.push(`    ${k}:`);
+      for (const [ek, ev] of Object.entries(v)) lines.push(`      ${yamlKey(ek)}: ${yamlString(String(ev))}`);
+    } else lines.push(`    ${k}: ${yamlString(String(v))}`);
   }
-  if (envKey) lines.push(`    ${envKey}: {}`);
+  if (envKey && !Object.hasOwn(entry, envKey)) lines.push(`    ${envKey}: {}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1469,7 +1501,11 @@ function renderCordisInsert(id, plugin, cfg) {
     lines.push('        args:');
     for (const a of cfg.args) lines.push(`          - ${yamlString(a)}`);
   } else lines.push('        args: []');
-  lines.push('        env: {}');
+  const envPairs = Object.entries(cfg.env || {});
+  if (envPairs.length) {
+    lines.push('        env:');
+    for (const [ek, ev] of envPairs) lines.push(`          ${yamlKey(ek)}: ${yamlString(String(ev))}`);
+  } else lines.push('        env: {}');
   return `${lines.join('\n')}\n`;
 }
 

@@ -25,9 +25,11 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { describeInstall, getCapabilities } from './install-mode.js';
 import { getDomainsDir, getApiKeys, getEffectiveKey } from './config.js';
-import { appPath, getCredentialFiles } from './paths.js';
+import { appPath, getCredentialFiles, isBundleInstall, APP_ROOT } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
-import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
+import { isConfigured as syncConfigured, getStatus as syncGetStatus, gitMissingMessage } from './sync.js';
+// The plan Sync itself starts git with (the Windows app's bundled MinGit first).
+import { planGit } from './subprocess-env.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { getLogFilePath, getLogFileStats, logWarn } from './logger.js';
 import { toUserError } from './user-errors.js';
@@ -232,7 +234,23 @@ function capabilitiesOrNull() {
     return null;
   }
 }
-export async function checkGit(caps = capabilitiesOrNull()) {
+function bundleOrFalse() {
+  try { return isBundleInstall(); } catch { return false; }
+}
+
+// WINDOWS (2026-11-20). Sync starts git through planGit() (subprocess-env.js):
+// on the Windows APP that is the copy of MinGit the app ships, first on PATH,
+// and a git on the user's PATH only as the fallback. So on Windows this row
+// probes the SAME git Sync would run, with the same environment, and a missing
+// one is worded by sync.js's own gitMissingMessage() (repair the app, or
+// install Git for Windows), never `xcode-select`. The Windows app is never
+// skipped: it cannot update via git, but Personal Sync needs git all the same.
+// Off Windows every byte below the `win32` test is the code that was here.
+// `deps` is a test seam ({platform, isBundle, plan, execFile}); production
+// passes nothing. Read-only: `git --version` writes nothing anywhere.
+export async function checkGit(caps = capabilitiesOrNull(), deps = {}) {
+  const platform = deps.platform || process.platform;
+  if (platform === 'win32') return checkGitWindows(caps, deps);
   if (caps && !caps.canSelfUpdateViaGit && !caps.canRunNpmInstall) {
     return check('git', 'Git', 'info', 'Not required by this build.');
   }
@@ -244,6 +262,33 @@ export async function checkGit(caps = capabilitiesOrNull()) {
     return check('git', 'Git', missing ? 'fail' : 'warn',
       missing
         ? 'Not found. Personal Sync and app updates both need it — on macOS, open Terminal and run `xcode-select --install`.'
+        : `Could not run \`git --version\`: ${err.message}`);
+  }
+}
+
+// Every Windows build probes: Personal Sync needs git whatever the update
+// capabilities say, and the app's own copy is exactly what this row checks.
+async function checkGitWindows(_caps, deps) {
+  const isBundle = deps.isBundle !== undefined ? !!deps.isBundle : bundleOrFalse();
+  const plan = deps.plan || planGit({ platform: 'win32', appRoot: APP_ROOT, isBundle, exists: existsSync });
+  const run = deps.execFile || execFileAsync;
+  // The bundled exe by its absolute path when it is there (that is the git
+  // Sync runs); otherwise whatever `git` the plan's PATH finds.
+  const program = plan.bundledPresent && plan.bundledExe ? plan.bundledExe : 'git';
+  try {
+    const { stdout } = await run(program, ['--version'], { timeout: 5000, env: plan.env, windowsHide: true });
+    const version = (stdout || '').trim() || 'Available.';
+    if (isBundle && !plan.bundledPresent) {
+      return check('git', 'Git', 'warn',
+        `${version}, found on this PC's PATH. The copy of git that comes with The Curator is missing, ` +
+        'so Sync uses this one. Running the latest Windows installer again puts it back; your notes and settings are kept.');
+    }
+    return check('git', 'Git', 'ok', version);
+  } catch (err) {
+    const missing = /enoent|not found|not recognized/i.test(err && err.message ? err.message : '');
+    return check('git', 'Git', missing ? 'fail' : 'warn',
+      missing
+        ? gitMissingMessage({ platform: 'win32', isBundle })
         : `Could not run \`git --version\`: ${err.message}`);
   }
 }

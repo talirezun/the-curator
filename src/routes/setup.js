@@ -248,6 +248,10 @@ function genericSnippet(launch) {
   if (!launch) return null;
   const entry = { command: launch.command };
   if (Array.isArray(launch.args) && launch.args.length) entry.args = launch.args;
+  // The Windows app's line carries ELECTRON_RUN_AS_NODE (without it the exe
+  // opens a second copy of the app); no other line has an env, so the snippet
+  // is otherwise byte-identical.
+  if (launch.env && typeof launch.env === 'object' && Object.keys(launch.env).length) entry.env = { ...launch.env };
   return { format: 'json', text: `${JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: entry } }, null, 2)}\n` };
 }
 

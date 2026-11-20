@@ -312,6 +312,21 @@ try {
     ok(fancy && fancy.custom && fancy.mcpSnippet?.format === 'json' && /"mcpServers"/.test(fancy.mcpSnippet.text) && /"my-curator"/.test(fancy.mcpSnippet.text), 'the custom row carries a generic mcpServers entry', fancy);
     ok(fancy.instructionFile === 'AGENTS.md' && (process.platform !== 'darwin' || fancy.skillZips?.length === 2), '…AGENTS.md and the two skill .zip links');
     ok(fancy.status === 'no-save' && typeof fancy.parts?.mcp?.state === 'string', '…status no-save until it saves under its own name');
+    ok(!/"env"/.test(fancy.mcpSnippet.text), '…with no env on this (macOS / checkout) launch line, as before');
+    // The Windows app's launch line carries ELECTRON_RUN_AS_NODE; the generic
+    // entry and every known row's snippet must carry it too (without it the
+    // app's exe opens a second copy of the app instead of the bridge).
+    const MR = await import('../src/routes/mcp.js');
+    MR.__setMcpLaunchOverride({ style: 'app-binary', execPath: 'C:\\P\\The Curator.exe', serverPath: 'C:\\P\\resources\\app\\mcp\\server.js', realpath: (x) => x });
+    let gw;
+    try { gw = await call('GET', `/api/setup/projects/${D}/fleet`); } finally { MR.__setMcpLaunchOverride(null); }
+    const fancyW = gw.body.tools.find((t) => t.id === 'fancy bot');
+    const genericW = fancyW && JSON.parse(fancyW.mcpSnippet.text).mcpServers['my-curator'];
+    ok(genericW && genericW.command === 'C:\\P\\The Curator.exe' && genericW.env?.ELECTRON_RUN_AS_NODE === '1',
+      'Windows app: the custom row\'s generic entry carries env ELECTRON_RUN_AS_NODE=1', genericW);
+    const knownW = gw.body.tools.filter((t) => !t.custom && t.mcpSnippet);
+    ok(knownW.length > 0 && knownW.every((t) => /ELECTRON_RUN_AS_NODE/.test(t.mcpSnippet.text)),
+      '…and so does every known tool\'s snippet', knownW.map((t) => t.id));
     await call('PUT', '/api/setup/tools', { ids: ['claude-code', 'dsh', 'cursor'] });
     const d2 = await call('GET', `/api/setup/projects/${D}/fleet`);
     const dshRow = d2.body.tools.find((t) => t.id === 'dsh');

@@ -167,6 +167,40 @@ const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'build-error-c
 });
 ok(r.status === 0, 'node scripts/build-error-catalogue.mjs --check exits 0', (r.stdout || '') + (r.stderr || ''));
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§6 platform wordings (Windows app): every one on the page, and the page the same on any machine');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // sync-git-missing has a macOS, a Windows-app and a Windows-browser sentence,
+  // all three from sync.js's own gitMissingMessage().
+  const row = region(docsText).split('\n').find((l) => l.startsWith('| `sync-git-missing` |')) || '';
+  const want3 = [
+    SYNC.gitMissingMessage({ platform: 'darwin' }),
+    SYNC.gitMissingMessage({ platform: 'win32', isBundle: true }),
+    SYNC.gitMissingMessage({ platform: 'win32', isBundle: false }),
+  ];
+  ok(new Set(want3).size === 3 && want3.every((t) => row.includes(esc(t))),
+    'sync-git-missing: the macOS, Windows-app and Windows browser-install sentences are all on the page, verbatim', row.slice(0, 300));
+  ok(row.indexOf(esc(want3[0])) < row.indexOf('*In the Windows app:*'),
+    '…the macOS sentence first and unlabelled, the Windows ones labelled');
+  // Built as Windows (process.platform forced before anything is imported):
+  // the same pages. Before the platform table the first sentence followed the
+  // build machine, so a Windows run would have rewritten both pages.
+  const asWin = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const B = await import(${JSON.stringify(path.join(ROOT, 'scripts', 'build-error-catalogue.mjs'))});
+    process.stdout.write(JSON.stringify({ docs: B.renderDocsRegion(), llm: B.renderLlmRegion() }));
+  `], { cwd: TMP, encoding: 'utf8', env: process.env });
+  let winPages = null;
+  try { winPages = JSON.parse(asWin.stdout); } catch { /* reported below */ }
+  ok(winPages && winPages.docs === B.renderDocsRegion() && winPages.llm === B.renderLlmRegion(),
+    'the catalogue built on Windows is byte-identical to the one built here', (asWin.stderr || '').slice(0, 300));
+  // The hook the other Windows packages add to: every entry calls the app.
+  ok(Object.values(B.PLATFORM_SENTENCES).every((list) => list.length > 1 && list[0].label === ''
+      && list.every((v) => typeof v.text === 'function' && typeof v.text() === 'string' && v.text().length > 20)),
+    'PLATFORM_SENTENCES: each code lists an unlabelled first sentence and labelled variants, each produced by a function');
+}
+
 console.log(`\n${'─'.repeat(60)}\nPassed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ The error catalogue is out of date'); process.exit(1); }
 console.log('✅ The published error catalogue matches the app');

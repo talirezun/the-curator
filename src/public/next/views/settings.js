@@ -2449,7 +2449,9 @@ function renderGeneral() {
   // card, the padding and the separators around them. What the rows LOST is
   // their paragraphs: 55 words under Text size and 58 under Menu bar, now one
   // measured line each, with the reasoning under this block's own ⓘ.
-  const appearanceLede = 'Theme, text size and the menu bar icon. Saved in this browser.';
+  const appearanceLede = (typeof browserPlatform === 'function' && browserPlatform() === 'win32')
+    ? 'Theme, text size and the tray icon. Saved in this browser.'
+    : 'Theme, text size and the menu bar icon. Saved in this browser.';
 
   const appearanceBody =
     '<div class="cur-group cur-group-fields">' +
@@ -2633,7 +2635,30 @@ const BACKGROUND_MODE_LABELS = {
   'tray-only': ['On, hide the Dock icon', 'Menu bar only. The Curator leaves the Dock — reopen the window from the menu bar icon.'],
 };
 
-function renderBackgroundMode() {
+// WINDOWS (2026-11-20): the same three modes in Windows' own words — the
+// notification-area (tray) icon and the taskbar button, never the menu bar or
+// the Dock. The config key and its values are unchanged; only the words differ.
+// Whether 'tray-only' exists on Windows is the server's mode list's call (the
+// desktop shell's); a list without it renders as the segmented fallback.
+const BACKGROUND_MODE_LABELS_WIN32 = {
+  window:      ['Off',                         'No tray icon. The taskbar button and the window behave exactly as they do now.'],
+  tray:        ['On',                          'A tray icon showing what your agents have just saved, alongside the taskbar button.'],
+  'tray-only': ['On, hide the taskbar button', 'Tray only. The Curator leaves the taskbar — reopen the window from the tray icon.'],
+};
+const BACKGROUND_MODE_WORDS_WIN32 = {
+  label: 'Tray icon',
+  switchLabel: 'Show the tray icon',
+  hideLabel: 'Hide the taskbar button while it is showing',
+  hint: 'Shows what your agents just saved. Windows app only.',
+  failNote: 'If the icon does not appear: Windows may have put it with the hidden icons. Click the ^ arrow beside ' +
+    'the clock, and drag the icon onto the taskbar to keep it in view.',
+};
+
+function renderBackgroundMode(platform = (typeof browserPlatform === 'function' ? browserPlatform() : 'darwin')) {
+  // Windows words when the app runs on Windows; every other platform keeps
+  // the macOS strings below byte for byte.
+  const W = platform === 'win32' ? BACKGROUND_MODE_WORDS_WIN32 : null;
+  const LABELS = W ? BACKGROUND_MODE_LABELS_WIN32 : BACKGROUND_MODE_LABELS;
   const cfg = state.config;
   const modes = (cfg && Array.isArray(cfg.backgroundModes) && cfg.backgroundModes.length)
     ? cfg.backgroundModes
@@ -2669,7 +2694,7 @@ function renderBackgroundMode() {
     && PAIR_MODES.every((m) => modes.indexOf(m) !== -1);
 
   const buttons = (!usePair && modes) ? modes.map((id) => {
-    const [label] = BACKGROUND_MODE_LABELS[id] || [id];
+    const [label] = LABELS[id] || [id];
     const on = id === active;
     return (
       '<button type="button" class="theme-seg-btn bgmode-seg-btn' + (on ? ' active' : '') + '"' +
@@ -2687,7 +2712,7 @@ function renderBackgroundMode() {
   const hideDock = active === 'tray-only';
   const pair = usePair && active !== null
     ? '<div class="cur-switch-row">' +
-        '<span class="settings-field-label" id="bgmode-switch-label">Show the menu bar icon</span>' +
+        '<span class="settings-field-label" id="bgmode-switch-label">' + (W ? W.switchLabel : 'Show the menu bar icon') + '</span>' +
         '<button type="button" role="switch" class="cur-switch"' +
           ' aria-checked="' + (on ? 'true' : 'false') + '"' +
           ' aria-labelledby="bgmode-switch-label"' +
@@ -2706,27 +2731,27 @@ function renderBackgroundMode() {
           ' data-background-mode="' + (hideDock ? 'tray' : 'tray-only') + '"' +
           (hideDock ? ' checked' : '') +
           (!on || state.backgroundModeSaving ? ' disabled' : '') + '>' +
-        '<span>Hide the Dock icon while it is showing</span>' +
+        '<span>' + (W ? W.hideLabel : 'Hide the Dock icon while it is showing') + '</span>' +
       '</label>'
     : '';
 
   // What the CHOSEN option actually does, in visible text. A mode this build
   // has no copy for contributes nothing rather than an empty paragraph.
-  const chosen = active && BACKGROUND_MODE_LABELS[active] ? BACKGROUND_MODE_LABELS[active][1] : null;
+  const chosen = active && LABELS[active] ? LABELS[active][1] : null;
 
   return (
     '<div class="settings-field-block" id="block-background-mode">' +
-      '<span class="settings-field-label">Menu bar</span>' +
+      '<span class="settings-field-label">' + (W ? W.label : 'Menu bar') + '</span>' +
       // ONE LINE, and the rest under the Appearance block's ⓘ, which is where
       // the 58-word version went: what the icon shows, why it is off by
       // default, and that a browser install has no menu bar presence. The row
       // keeps what a user needs to decide with — what it is for, and where it
       // works. THE FAILURE-MODE PARAGRAPH BELOW IS NOT PART OF THAT MOVE and
       // stays visible; see the docblock above.
-      '<p class="settings-hint-text">Shows what your agents just saved. Mac app only.</p>' +
+      '<p class="settings-hint-text">' + (W ? W.hint : 'Shows what your agents just saved. Mac app only.') + '</p>' +
       pair +
       (buttons
-        ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="Menu bar">' + buttons + '</div>'
+        ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="' + (W ? W.label : 'Menu bar') + '">' + buttons + '</div>'
         : '') +
       (state.backgroundModeError
         ? '<div class="settings-inline-error">' + escapeHtml(state.backgroundModeError) + '</div>' + errorDetailHtml(state.backgroundModeError)
@@ -2737,7 +2762,10 @@ function renderBackgroundMode() {
       // class v3.16.1 forbids putting behind a click. `.settings-fail-note`
       // gives it a left rule so it reads as an aside about the thing that was
       // just turned on rather than as more of the same grey prose.
-      (active && active !== 'window'
+      (active && active !== 'window' && W
+        ? '<p class="settings-hint-text settings-fail-note">' + escapeHtml(W.failNote) + '</p>'
+        : '') +
+      (active && active !== 'window' && !W
         ? '<p class="settings-hint-text settings-fail-note">If the icon does not appear: it can be pushed off the edge ' +
           'behind the notch on a narrow screen, filed into a hidden section by a menu bar organiser ' +
           'such as Bartender or Ice, or withheld by the menu bar items permission in System Settings ' +
@@ -2769,7 +2797,10 @@ function renderUpdateStatus() {
         (r.from && r.to ? '<span class="upd-detail upd-sha">' + escapeHtml(r.from) + ' → ' + escapeHtml(r.to) + '</span>' : ''),
       r.partial && r.warning ? r.warning : null,
       state.updateRestartHint
-        ? 'The app hasn’t answered yet. If it doesn’t come back on its own, right-click the Dock icon → Quit, then re-open The Curator.'
+        ? ((typeof browserPlatform === 'function' && browserPlatform() === 'win32')
+          // The Windows browser install has no Dock: its own shortcuts start and stop it.
+          ? 'The app hasn’t answered yet. If it doesn’t come back on its own, use Stop The Curator on your desktop or in the Start menu, then open The Curator again.'
+          : 'The app hasn’t answered yet. If it doesn’t come back on its own, right-click the Dock icon → Quit, then re-open The Curator.')
         : null);
   }
   if (state.updatePhase === 'failed') {
@@ -2921,12 +2952,21 @@ function renderInAppUpdate() {
     // Gatekeeper prompt and no Privacy & Security detour. Saying it is worth a
     // line, because that detour is most of the difference from the manual
     // flow this release replaces.
+    // WINDOWS: "no security warning" is measured on the Mac only (an in-app
+    // download carries no Mark-of-the-Web, so SmartScreen SHOULD stay quiet,
+    // but nobody has seen it on a PC yet), so the Windows sentence does not
+    // claim it; and the app is reopened from the Start menu, not Applications.
+    const winUpdate = (typeof browserPlatform === 'function' && browserPlatform() === 'win32');
     return box('', 'Restarting',
-      'The new version is in place. Waiting for The Curator to come back, then this page reloads itself — ' +
-        'with no security warning to click through.',
+      winUpdate
+        ? 'The new version is in place. Waiting for The Curator to come back, then this page reloads itself.'
+        : 'The new version is in place. Waiting for The Curator to come back, then this page reloads itself — ' +
+          'with no security warning to click through.',
       null,
       u.restartHint
-        ? 'The app hasn’t answered yet. If it doesn’t come back on its own, open The Curator again from your Applications folder.'
+        ? (winUpdate
+          ? 'The app hasn’t answered yet. If it doesn’t come back on its own, open The Curator again from the Start menu.'
+          : 'The app hasn’t answered yet. If it doesn’t come back on its own, open The Curator again from your Applications folder.')
         : null);
   }
 
@@ -12578,10 +12618,10 @@ async function onSetBackgroundMode(mode, token) {
       state.config.backgroundMode = data.backgroundMode;
       if (Array.isArray(data.backgroundModes)) state.config.backgroundModes = data.backgroundModes;
     }
-    if (!res.ok) state.backgroundModeError = plainError(data, { status: res.status, fallback: 'Could not change the menu bar setting.' });
+    if (!res.ok) state.backgroundModeError = plainError(data, { status: res.status, fallback: (typeof browserPlatform === 'function' && browserPlatform() === 'win32') ? 'Could not change the tray icon setting.' : 'Could not change the menu bar setting.' });
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.backgroundModeError = plainError(err, { fallback: 'Could not change the menu bar setting.' });
+    state.backgroundModeError = plainError(err, { fallback: (typeof browserPlatform === 'function' && browserPlatform() === 'win32') ? 'Could not change the tray icon setting.' : 'Could not change the menu bar setting.' });
   }
   if (!isCurrentMount(token)) return;
   state.backgroundModeSaving = false;
