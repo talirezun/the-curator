@@ -372,15 +372,18 @@ export function parsePackageVersions(text) {
 
 /**
  * One pinned licence text, read from LICENCE_DIR and checked against its
- * SHA-256 (a text that drifted from what was reviewed throws). LF endings.
+ * SHA-256 (a text that drifted from what was reviewed throws). The hash is of
+ * the text with LF line endings, because a Windows checkout (git's
+ * core.autocrlf, on by default on the windows-latest runner) writes CRLF.
+ * Returns the LF text.
  */
 export function readLicenceText(key, { dir = LICENCE_DIR, texts = LICENCE_TEXTS } = {}) {
   const t = texts[key];
   if (!t) throw new Error(`no licence text named "${key}"`);
-  const buf = readFileSync(path.join(dir, t.file));
-  const got = createHash('sha256').update(buf).digest('hex');
+  const text = readFileSync(path.join(dir, t.file), 'utf8').replace(/\r\n/g, '\n');
+  const got = createHash('sha256').update(text, 'utf8').digest('hex');
   if (got !== t.sha256) throw new Error(`licence text ${t.file} has SHA-256 ${got}, the pin says ${t.sha256}`);
-  return buf.toString('utf8').replace(/\r\n/g, '\n');
+  return text;
 }
 
 /**

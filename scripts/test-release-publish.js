@@ -722,6 +722,10 @@ section('§6  The source of EVERY copyleft MinGit component: classified, named b
   for (const t of Object.values(LICENCE_TEXTS)) writeFileSync(path.join(td, t.file), readFileSync(path.join(fm.LICENCE_DIR, t.file)));
   writeFileSync(path.join(td, LICENCE_TEXTS.curl.file), readFileSync(path.join(fm.LICENCE_DIR, LICENCE_TEXTS.curl.file), 'utf8').replace('Daniel', 'Someone'));
   ok(/curl\.txt has SHA-256/.test(throwsMsg(() => fm.readLicenceText('curl', { dir: td })) || ''), 'CONTROL: one changed word in a licence text is refused (the notices are never written from an unreviewed text)');
+  const crlf = tmp();
+  for (const t of Object.values(LICENCE_TEXTS)) writeFileSync(path.join(crlf, t.file), readFileSync(path.join(fm.LICENCE_DIR, t.file), 'utf8').replace(/\n/g, '\r\n'));
+  eq(Object.keys(LICENCE_TEXTS).filter((k) => throwsMsg(() => fm.readLicenceText(k, { dir: crlf }))), [],
+    'the same texts checked out with CRLF (git on the windows-latest runner) still match their pins');
 
   // ── 6b. The attachments: names, hosts, pins ───────────────────────────────
   eq(RELEASE_SOURCE_ASSETS.length, COPYLEFT_SOURCES.length + 1, `${RELEASE_SOURCE_ASSETS.length} files: GitHub's archive of the git tag plus one source package per copyleft package base`);
