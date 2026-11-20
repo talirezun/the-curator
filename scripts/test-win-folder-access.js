@@ -511,7 +511,18 @@ function runValidate(fn, platform) {
     eq(out[9].ok, true, `${platform}: "/" is accepted as it always was (no drive-root rule)`);
     eq(out[10].reason, 'not-absolute', `${platform}: relative refused`);
   }
-  eq(runValidate(kfp.validateKnowledgeFolderPath, 'darwin')[3].path, path.join(tmp, 'mixed case'), 'darwin: a folder typed in another case is applied AS TYPED (unchanged)');
+  // What "another case" means depends on the HOST's disk, not the platform
+  // argument: APFS (a Mac) folds case, so "mixed case" finds "Mixed Case";
+  // ext4 (the Linux CI runner) does not, so the same input is a missing folder.
+  // Either way the answer is the existing one, never a Windows-style re-casing.
+  const typedOtherCase = path.join(tmp, 'mixed case');
+  const darwinOther = runValidate(kfp.validateKnowledgeFolderPath, 'darwin')[3];
+  if (fs.existsSync(typedOtherCase)) {
+    eq(darwinOther.path, typedOtherCase, 'darwin: a folder typed in another case is applied AS TYPED (unchanged)');
+  } else {
+    eq([darwinOther.ok, darwinOther.reason, darwinOther.path], [false, 'missing', undefined],
+      'darwin (on a case-sensitive host disk): a folder typed in another case is a missing folder, never re-cased (unchanged)');
+  }
   ok(!fs.readdirSync(KB).some((n) => n.startsWith('.curator-write-check')), 'darwin/linux: no write check ran in the folder');
 
   // Against the BASE revision's own code, on the same inputs (local proof;

@@ -1159,6 +1159,16 @@ section('§8  The Windows jobs — PARSED, and the gate\'s release test EXECUTED
   eq(helper && helper.env && helper.env.CURATOR_REQUIRE_WIN_HELPER, '1', '…the update suite with CURATOR_REQUIRE_WIN_HELPER=1');
   const mcp = twSteps.find((s) => /test-mcp-install-windows/.test(s.run || ''));
   eq(mcp && mcp.env && mcp.env.CURATOR_REQUIRE_ELECTRON, '1', '…the MCP suite still with CURATOR_REQUIRE_ELECTRON=1 (its §7 real handshake)');
+  // Electron 43 has no postinstall (run 44756919186: `npm ci` in desktop/ left no
+  // binary, §7 went red). The binary is fetched by its own install.js, in desktop/,
+  // after desktop's npm ci and before the MCP suite.
+  const iDeskCi = at(twSteps, (s) => s['working-directory'] === 'desktop' && /^npm ci\b/.test((s.run || '').trim()));
+  const iElectron = at(twSteps, (s) => s['working-directory'] === 'desktop' && /node node_modules\/electron\/install\.js/.test(s.run || ''));
+  const iMcp = at(twSteps, (s) => /test-mcp-install-windows/.test(s.run || ''));
+  ok(iDeskCi >= 0 && iElectron > iDeskCi && iElectron < iMcp,
+    '…the pinned Electron binary is fetched (desktop/, install.js) after desktop\'s npm ci and before the MCP suite');
+  ok(iElectron >= 0 && !twSteps.some((s) => s.env && 'ELECTRON_SKIP_BINARY_DOWNLOAD' in s.env) && !(tw.env && 'ELECTRON_SKIP_BINARY_DOWNLOAD' in tw.env),
+    '…and nothing in the windows job skips that download');
   const iGitFetch = at(twSteps, (s) => /fetch-mingit\.mjs/.test(s.run || ''));
   const iGit = at(twSteps, (s) => /ci-win-app\.mjs git-checks --mingit desktop\/vendor\/mingit\/git/.test(s.run || ''));
   ok(iGitFetch >= 0 && iGitFetch < iGit, '…the bundled-git checks, after the pinned MinGit is fetched and verified');

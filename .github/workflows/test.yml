@@ -108,6 +108,13 @@ jobs:
       # ships. CURATOR_REQUIRE_ELECTRON makes a missing binary RED, not a skip.
       - run: npm ci
         working-directory: desktop
+      # Electron 43 has NO postinstall: `npm ci` leaves node_modules/electron
+      # without dist/ or path.txt, and the binary is fetched only on the first
+      # require('electron') or by its own `install-electron` script. §7 reads
+      # path.txt directly, so fetch the pinned binary here, explicitly.
+      - name: Fetch the pinned Electron binary (Electron 43 has no postinstall)
+        working-directory: desktop
+        run: node node_modules/electron/install.js
       - run: node scripts/test-mcp-install-windows.js
         env:
           CURATOR_REQUIRE_ELECTRON: '1'
