@@ -36,6 +36,7 @@ import {
   MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates, skillRootsFor,
 } from './harness-adapters.js';
 import { normaliseHarness } from './harness-names.js';
+import { gitInvocation } from './subprocess-env.js';
 import { installIdOf } from './tray-summary.js';
 
 // v3.87.0: the machine word in user-visible text — "this Mac" on macOS (every
@@ -647,10 +648,13 @@ export function analyseInstructionText(text, { domain, project, template, cap = 
 export function gitRead(cwd, args, { timeoutMs = 3000 } = {}) {
   return new Promise((resolve) => {
     try {
-      execFile('git', args, {
+      // Never take index.lock while the user is committing. The SAME git Sync
+      // runs (gitInvocation, audit M4): in the Windows app the bundled one;
+      // elsewhere bare `git` with exactly the environment that was built here.
+      const g = gitInvocation(args, { extraEnv: { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } });
+      execFile(g.file, g.args, {
         cwd, timeout: timeoutMs, maxBuffer: 256 * 1024,
-        // Never take index.lock while the user is committing.
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+        env: g.env,
       }, (err, stdout) => resolve(err ? { ok: false, out: '', code: err.code ?? null } : { ok: true, out: String(stdout) }));
     } catch { resolve({ ok: false, out: '' }); }
   });

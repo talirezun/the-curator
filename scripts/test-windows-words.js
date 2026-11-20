@@ -79,12 +79,22 @@ section('1. The tray row (Settings › General): Windows words on win32, the mac
   ok(mac === noImport(), 'a lifted copy with no browserPlatform in scope renders the macOS row BYTE-IDENTICALLY (the DOM-free suites\' guard)');
   ok(withPlatform('linux') === mac, 'Linux (and any other platform) keeps the macOS strings, unchanged');
 
-  // A Windows mode list without 'tray-only' (the shell's call): the segmented
-  // fallback, still in Windows words.
+  // The Windows mode list (the server leaves 'tray-only' out there, audit
+  // minor 7): the SAME switch, "Show the tray icon", with no taskbar checkbox.
   CFG = { backgroundModes: ['window', 'tray'], backgroundMode: 'window' };
   const twoWin = withPlatform('win32');
-  ok(/aria-label="Tray icon"/.test(twoWin) && /No tray icon\. The taskbar button/.test(twoWin) && !MAC_WORDS.test(twoWin),
-    'Windows with a two-mode list: the segmented control, labelled Tray icon, Windows words throughout', twoWin);
+  ok(/>Show the tray icon</.test(twoWin) && /role="switch"/.test(twoWin) && /data-background-mode="tray"/.test(twoWin)
+    && !/Hide the taskbar button/.test(twoWin) && !/data-background-mode="tray-only"/.test(twoWin) && !/type="checkbox"/.test(twoWin)
+    && /No tray icon\. The taskbar button/.test(twoWin) && !MAC_WORDS.test(twoWin),
+    'Windows with its two-mode list: the "Show the tray icon" switch, NO "Hide the taskbar button" checkbox, Windows words throughout', twoWin);
+  CFG = { backgroundModes: ['window', 'tray'], backgroundMode: 'tray' };
+  const twoWinOn = withPlatform('win32');
+  ok(/aria-checked="true"/.test(twoWinOn) && /data-background-mode="window"/.test(twoWinOn) && !/type="checkbox"/.test(twoWinOn),
+    '…switched on, it sends "window" to turn it off, still with no checkbox');
+  // macOS with the same two-mode list keeps its pre-existing rule (segmented).
+  CFG = { backgroundModes: ['window', 'tray'], backgroundMode: 'window' };
+  const twoMac = withPlatform('darwin');
+  ok(/bgmode-segmented/.test(twoMac) && !/role="switch"/.test(twoMac), 'CONTROL: on macOS a two-mode list still renders the segmented fallback (unchanged rule)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

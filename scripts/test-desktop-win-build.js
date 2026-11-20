@@ -894,6 +894,22 @@ section('§10 build/installer.nsh (SOURCE SCAN — weak by nature) and the templ
   ok(/\$LOCALAPPDATA\\TheCurator"/.test(macro('curatorCheckInstDir') || ''), 'the data guard compares $INSTDIR with %LOCALAPPDATA%\\TheCurator');
   for (const m of ['customInit', 'customUnInit']) ok(/curatorCheckInstDir[\s\S]*Quit/.test(macro(m) || ''), `${m} runs the guard and quits on a bad folder`);
   ok(/curatorCheckInstDir[\s\S]*Abort/.test(macro('customUnInstall') || ''), 'customUnInstall runs the guard again and aborts before $INSTDIR is removed');
+  // audit minor 1: the guard judges the FULL, LONG spelling and what is IN the folder.
+  const full = macro('curatorFullPath') || '';
+  ok(/kernel32::GetFullPathNameW\(w R5, i \$\{NSIS_MAX_STRLEN\}, w \.R4, p 0\) i \.R3/.test(full)
+    && /kernel32::GetLongPathNameW\(w R5, w \.R4, i \$\{NSIS_MAX_STRLEN\}\) i \.R3/.test(full),
+    'curatorFullPath: GetFullPathNameW (`..`, `.`, forward slashes) then GetLongPathNameW (8.3 names)');
+  ok(/\$\{andIf\} \$R3 < \$\{NSIS_MAX_STRLEN\}\s*StrCpy \$R5 \$R4/.test(full), '…each result taken only when the call succeeded and fitted (else the spelling is kept)');
+  const guard = macro('curatorCheckInstDir') || '';
+  ok(/StrCpy \$R5 "\$INSTDIR"\s*!insertmacro curatorFullPath\s*StrCpy \$R1 \$R5/.test(guard)
+    && /StrCpy \$R5 "\$LOCALAPPDATA\\TheCurator"\s*!insertmacro curatorFullPath\s*StrCpy \$R8 \$R5/.test(guard),
+    'the guard normalises BOTH $INSTDIR and the data folder before comparing');
+  ok(/StrCpy \$R6 \$R1 \$R7\s*\$\{if\} \$R6 == \$R8/.test(guard), '…and compares the normalised prefix');
+  for (const f of ['$INSTDIR\\domains\\*.*', '$INSTDIR\\.curator-config.json', '$INSTDIR\\App\\*.*', '$INSTDIR\\App\\domains\\*.*']) {
+    ok(guard.includes(`\${FileExists} "${f}"`), `the guard refuses a folder that already holds ${f.replace(/\\\*\.\*$/, '')}`);
+  }
+  ok(/\$\{orIf\} \$R1 == "\$LOCALAPPDATA\\Programs"/.test(guard) && /\$\{orIf\} "\$INSTDIR" == "\$LOCALAPPDATA\\Programs"/.test(guard),
+    'the shared-folder list is checked on both spellings');
   const tpl = path.join(DESKTOP_NM, 'app-builder-lib', 'templates', 'nsis');
   if (existsSync(tpl)) {
     const all = ['assistedInstaller.nsh', 'multiUserUi.nsh', 'installer.nsi', 'uninstaller.nsh'].map((f) => readFileSync(path.join(tpl, f), 'utf8')).join('\n');

@@ -51,6 +51,23 @@ function safeName(s) {
   return String(s).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_').slice(0, 160);
 }
 
+/**
+ * True only for a name THIS engine writes in `workDir` (audit M3,
+ * 2026-11-20): the helper script, the outcome record (and the helper's
+ * `.tmp` of it), a helper probe `probe-<id>.ps1|.txt`, and a setup program
+ * it staged, `<tag>-<asset>.exe` with a version-shaped tag (safeName of
+ * both). Everything else in the folder — above all a folder a person put
+ * there, such as a knowledge folder — is not the engine's and is never
+ * touched. The sweeps also remove only plain FILES, never a folder or a link,
+ * and never recursively.
+ */
+export function isEngineFileName(name) {
+  if (typeof name !== 'string' || !name || name.length > 200) return false;
+  if (name === HELPER_SCRIPT || name === RESULT_FILE || name === `${RESULT_FILE}.tmp`) return true;
+  if (/^probe-[A-Za-z0-9]{1,32}\.(?:ps1|txt)$/.test(name)) return true;
+  return /^v?\d+\.\d+\.\d+[A-Za-z0-9._-]*\.exe$/i.test(name);
+}
+
 export function createWin32UpdateEngine(deps = {}) {
   const {
     resolveRelease,
@@ -100,9 +117,26 @@ export function createWin32UpdateEngine(deps = {}) {
    *  read-only file cannot be deleted (EPERM), and this engine makes the setup
    *  program read-only on purpose. Retried, because antivirus and the search
    *  indexer hold a fresh file open for a moment (AgentLink 0.5.8). */
+  //
+  // FILES ONLY, never recursive (audit M3): everything this engine creates is
+  // a file, so a folder or a link at one of its paths is not its own and is
+  // left alone. (On Windows `chmod` only clears the read-only bit; before this
+  // a folder at a swept name was deleted with everything in it.)
   const remove = async (p) => {
-    try { await fs.chmod(p, 0o666); } catch { /* a folder, or gone */ }
-    try { await fs.rm(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); return true; } catch { return false; }
+    let st;
+    try { st = await fs.lstat(p); } catch { return false; }
+    if (!st.isFile()) return false;
+    try { await fs.chmod(p, 0o666); } catch { /* gone */ }
+    try { await fs.rm(p, { force: true, maxRetries: 5, retryDelay: 200 }); return true; } catch { return false; }
+  };
+  /** The sweep of `workDir`: only the engine's own file names (isEngineFileName). */
+  const sweepWorkDir = async (skip = () => false) => {
+    let removed = 0;
+    for (const name of await fs.readdir(workDir).catch(() => [])) {
+      if (!isEngineFileName(name) || skip(name)) continue;
+      if (await remove(P.join(workDir, name))) removed += 1;
+    }
+    return removed;
   };
 
   async function readRecord() {
@@ -235,9 +269,7 @@ export function createWin32UpdateEngine(deps = {}) {
     } catch (err) {
       return win32Failure('download-write-failed', err && err.code);
     }
-    for (const name of await fs.readdir(workDir).catch(() => [])) {
-      await remove(P.join(workDir, name));
-    }
+    await sweepWorkDir();
     await sweepInstallDir(target.installDir);
     const writable = await probeWritable(target.installDir);
     if (!writable.ok) return writable;
@@ -473,12 +505,8 @@ export function createWin32UpdateEngine(deps = {}) {
           if (/\.exe$/i.test(name) && name.includes(`-${safeName(outcome.version)}-`)) keep.add(name);
         }
       }
-      let removed = 0;
-      for (const name of await fs.readdir(workDir).catch(() => [])) {
-        if (keep.has(name)) continue;
-        if (prepared && P.join(workDir, name) === prepared.installerPath) continue;
-        if (await remove(P.join(workDir, name))) removed += 1;
-      }
+      const removed = await sweepWorkDir((name) => keep.has(name)
+        || (!!prepared && P.join(workDir, name) === prepared.installerPath));
       return { ok: true, outcome, removed, kept: keep.size };
     } catch {
       return { ok: true, outcome: null, removed: 0, kept: 0 };

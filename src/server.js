@@ -85,6 +85,13 @@ if (domainsProvision.status === 'created') {
               `${domainsProvision.error && domainsProvision.error.message}`;
   console.error(`[The Curator] ${msg}`);
   logError('server', msg);
+} else if (domainsProvision.status === 'refused') {
+  // The Windows app only (config.js windowsDomainsDir): the knowledge folder
+  // set is unsafe, so nothing reads or writes it; the app still starts, so
+  // the Domains page can say so and offer another folder.
+  const msg = domainsProvision.error && domainsProvision.error.message;
+  console.error(`[The Curator] ${msg}`);
+  logError('server', msg);
 }
 
 // ── Batch-ingest queue boot recovery (Track 3) ─────────────────────────────────
@@ -499,8 +506,14 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
     // force.
     //
     // Fire-and-forget and cannot throw — instance-probe.js absorbs every
-    // error and degrades to "nobody else is here".
-    registerInstance({ domainsDir: getDomainsDir(), port: PORT, version })
+    // error and degrades to "nobody else is here". The wrapper turns a
+    // getDomainsDir() refusal (the Windows app's unsafe-folder check, never
+    // thrown elsewhere) into a rejection the .catch below absorbs, rather than
+    // an exception out of the listen callback; the call itself is unchanged.
+    (() => {
+      try { return registerInstance({ domainsDir: getDomainsDir(), port: PORT, version }); }
+      catch (err) { return Promise.reject(err); }
+    })()
       .then(() => listOtherInstances(getDomainsDir()))
       .then((others) => {
         const who = describeOthers(others);

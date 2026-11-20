@@ -268,6 +268,8 @@ export function getPlatform() {
   return (_hostOverride && _hostOverride.platform) || process.platform;
 }
 function hostEnv() { return (_hostOverride && _hostOverride.env) || process.env; }
+/** The environment paths are resolved from (process.env in production; a simulated host's in a suite). */
+export function getHostEnv() { return hostEnv(); }
 function hostHomedir() { return (_hostOverride && _hostOverride.homedir) || os.homedir(); }
 function hostAppRoot() { return (_hostOverride && _hostOverride.appRoot) || APP_ROOT; }
 function hostExists(p) { return _hostOverride ? !!(_hostOverride.exists && _hostOverride.exists(p)) : existsSync(p); }
@@ -317,10 +319,55 @@ export function isBundleInstall() {
   const root = hostAppRoot();
   if (hostExists(hostPath().join(root, BUNDLE_MARKER_FILE))) return true;
   // Windows: the marker is the ONLY signal (see "WINDOWS" in the docblock).
-  // A path shape is never inferred there.
-  if (getPlatform() === 'win32') return false;
+  // A path shape is never inferred there — it is used only to REFUSE: the
+  // packaged app (Electron, or its exe started as Node for the MCP bridge) in
+  // an NSIS-shaped folder without the marker stops here, rather than quietly
+  // keeping user data inside the program folder (win32AppFilesIncomplete).
+  if (getPlatform() === 'win32') {
+    if (win32AppFilesIncomplete()) throw win32AppFilesIncompleteError();
+    return false;
+  }
   if (looksLikeMacOSBundle(root)) return true;
   return false;
+}
+
+/**
+ * WINDOWS ONLY (audit M1, 2026-11-20). True when THIS process is the packaged
+ * Windows app — Electron, including its exe started as Node with
+ * ELECTRON_RUN_AS_NODE for the MCP bridge (`process.versions.electron` is set
+ * in both) — running from `…\resources\app` WITHOUT the packager's marker.
+ *
+ * That is a damaged or hand-assembled install. Read as "repo" it would put the
+ * wiki, the keys and the sync repo INSIDE the program folder, which the next
+ * update or an uninstall deletes, and nothing would say so (the per-user
+ * program folder is writable). So the shape is used here ONLY to refuse; it
+ * never chooses bundle mode. A plain Node process (the browser install, any
+ * checkout, any test) is never refused, whatever its path, and off Windows
+ * this is always false. Test seam: __setHostForTest({ electron: true, … }).
+ */
+export function win32AppFilesIncomplete() {
+  if (getPlatform() !== 'win32') return false;
+  const electron = _hostOverride
+    ? !!_hostOverride.electron
+    : !!(process.versions && process.versions.electron);
+  if (!electron) return false;
+  const root = String(hostAppRoot() || '').replace(/\//g, '\\').replace(/\\+$/, '');
+  if (!/\\resources\\app$/i.test(root)) return false;
+  return !hostExists(path.win32.join(root, BUNDLE_MARKER_FILE));
+}
+
+/** The code on the refusal below (desktop/main.js shows the same words in its dialog). */
+export const WIN32_APP_FILES_INCOMPLETE_CODE = 'app-files-incomplete';
+
+/** The plain sentence for win32AppFilesIncomplete(). */
+export const WIN32_APP_FILES_INCOMPLETE_MESSAGE =
+  'The Curator did not start because its program files are incomplete: a file its installer always writes is ' +
+  'missing. Starting anyway could put your notes inside the program folder, which an update or an uninstall ' +
+  'deletes, so nothing was read or changed. Download The Curator again and run its installer; your notes and ' +
+  'settings are safe, and the new copy finds them.';
+
+function win32AppFilesIncompleteError() {
+  return Object.assign(new Error(WIN32_APP_FILES_INCOMPLETE_MESSAGE), { code: WIN32_APP_FILES_INCOMPLETE_CODE });
 }
 
 /**
@@ -566,9 +613,16 @@ export function getUserDataDir() {
   return _cachedUserDataDir;
 }
 
-/** Join segments onto the user-data dir. */
+/**
+ * Join segments onto the user-data dir. With a test seam's user-data dir
+ * (a REAL folder on this host) the host's own `path` joins it, even while a
+ * simulated host is set, so a suite simulating Windows on macOS reads and
+ * writes its isolated settings file rather than a backslash-named file in the
+ * cwd. Production sets no seam: there `hostPath()` is `path`, as before.
+ */
 export function userDataPath(...segments) {
-  return hostPath().join(getUserDataDir(), ...segments);
+  const seamed = !!(_userDataDirOverride || process.env.CURATOR_TEST_USER_DATA_DIR);
+  return (seamed ? path : hostPath()).join(getUserDataDir(), ...segments);
 }
 
 /** Join segments onto the app (code) root. Never write to the result. */

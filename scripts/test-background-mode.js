@@ -207,6 +207,32 @@ ok(!Object.values(['window', 'tray', 'tray-only'].map(m => {
 })).some(c => !c.tray && !c.dock),
   'no mode yields "no tray AND no Dock" — the unreachable-app combination cannot be expressed');
 
+// ── WINDOWS (audit minor 7): `tray-only` is not OFFERED there ──────────────
+{
+  const pathsMod = await import('../src/brain/paths.js');
+  eq(backgroundModeNames({ platform: 'win32' }).join(','), 'window,tray', 'win32: the offered modes are window and tray (hiding the taskbar button is not done)');
+  eq(backgroundModeNames({ platform: 'darwin' }).join(','), 'window,tray,tray-only', 'darwin: all three, unchanged');
+  eq(backgroundModeNames().join(','), 'window,tray,tray-only', `this host (${process.platform}): all three, unchanged`);
+  // A simulated win32 host (the config file stays the isolated one: the test seam wins).
+  pathsMod.__setHostForTest({ platform: 'win32', appRoot: 'C:\\P\\resources\\app', env: {}, homedir: 'C:\\Users\\A', exists: () => false });
+  try {
+    eq(backgroundModeNames().join(','), 'window,tray', 'simulated win32: the default argument follows the platform');
+    writeConfig({ backgroundMode: 'window' });
+    const r = setBackgroundMode('tray-only');
+    eq(JSON.stringify([r.ok, r.reason, r.mode]), JSON.stringify([false, 'invalid_value', 'window']), 'simulated win32: storing tray-only is REFUSED (the screen never offers it)');
+    eq(readConfig().backgroundMode, 'window', '…and the file is unchanged');
+    eq(setBackgroundMode('tray').ok, true, 'simulated win32: tray is stored');
+    eq(readConfig().backgroundMode, 'tray', '…in the ISOLATED settings file (not a backslash-named file in the cwd)');
+    eq(fs.readdirSync(process.cwd()).filter((n) => n.includes('\\')).length, 0, '…and nothing with a Windows-shaped name appeared in the cwd');
+    writeConfig({ backgroundMode: 'tray-only' });
+    eq(getBackgroundMode(), 'tray', 'simulated win32: a stored tray-only (from before) reads as tray — what the shell does with it');
+    eq(getBackgroundModeCaps().mode, 'tray', '…and the caps agree');
+  } finally { pathsMod.__setHostForTest(null); }
+  writeConfig({ backgroundMode: 'tray-only' });
+  eq(getBackgroundMode(), 'tray-only', 'CONTROL: off the simulation the same file reads tray-only (macOS unchanged)');
+  writeConfig(null);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§4  WHY IT IS NOT A `ui.*` FIELD — measured, not asserted');
 // ═══════════════════════════════════════════════════════════════════════════

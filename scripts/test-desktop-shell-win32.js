@@ -123,6 +123,66 @@ section('§3 closing the window: hide to the tray ONLY on win32 with a live tray
   }
   eq(c({ platform: 'win32', trayActive: 'yes' }), false, 'a truthy non-boolean is not a live tray');
   eq(c(), false, 'no argument → never hides');
+
+  // audit minor 5: win32 with NO tray asks the quit question while the window is still there.
+  const q = (o) => sp.closeAsksQuitFirst(o);
+  eq(q({ platform: 'win32', trayActive: false }), true,
+    'win32 + NO tray → the X is turned into app.quit(), so "Quit now?" is asked BEFORE the window goes ("Keep working" keeps it)');
+  eq(q({ platform: 'win32', trayActive: true }), false, 'win32 + tray → no (the tray hide applies instead)');
+  eq(q({ platform: 'win32', quitAuthorised: true }), false, 'win32 during an authorised quit → the close goes through (no loop)');
+  eq(q({ platform: 'win32', sessionEnding: true }), false, 'win32 while Windows logs off → the close goes through');
+  for (const p of ['darwin', 'linux']) for (const trayActive of [true, false]) {
+    eq(q({ platform: p, trayActive }), false, `${p}, tray ${trayActive ? 'on' : 'off'} → never (macOS keeps its own handler)`);
+  }
+  eq(q(), false, 'no argument → never');
+  // Exactly one of the two Windows close listeners acts on any close that is not a quit/log-off.
+  for (const trayActive of [true, false]) {
+    const o = { platform: 'win32', trayActive };
+    eq([c(o), q(o)].filter(Boolean).length, 1, `win32, tray ${trayActive ? 'on' : 'off'}: exactly one close listener acts`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§3b refusing to start on incomplete Windows program files (audit M1)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const paths = await import(path.join(ROOT, 'src', 'brain', 'paths.js'));
+  const INST = 'C:\\Users\\Ana\\AppData\\Local\\Programs\\The Curator';
+  const ROOTW = INST + '\\resources\\app';
+  const MARK = ROOTW + '\\.curator-bundle';
+  const host = (o) => paths.__setHostForTest({ platform: 'win32', appRoot: ROOTW, env: { LOCALAPPDATA: 'C:\\Users\\Ana\\AppData\\Local' },
+    homedir: 'C:\\Users\\Ana', exists: (p) => !!o.marker && p === MARK, electron: o.electron, ...(o.appRoot ? { appRoot: o.appRoot } : {}) });
+  const box = () => sp.appFilesIncompleteBox(paths);
+  try {
+    host({ electron: true, marker: false });
+    const b = box();
+    ok(!!b && b.title === 'The Curator could not start' && b.body === paths.WIN32_APP_FILES_INCOMPLETE_MESSAGE,
+      'the packaged app (Electron) in …\\resources\\app WITHOUT the marker → the refusal box, in paths.js\'s own words');
+    ok(/your notes and settings are safe/.test(b ? b.body : '') && /run its installer/.test(b ? b.body : '') && !/\bstack\b|Error:/.test(b ? b.body : ''),
+      '…which says the notes are safe and what to do, in plain words');
+    let thrown = null;
+    try { paths.isBundleInstall(); } catch (e) { thrown = e; }
+    eq(thrown && thrown.code, 'app-files-incomplete', 'paths.js itself THROWS in that shape (covers the MCP bridge: the exe run as Node)');
+    let thrownUD = null;
+    try { paths.getUserDataDir(); } catch (e) { thrownUD = e; }
+    ok(!!thrownUD, '…so no user-data path is ever resolved (the program folder is never chosen)');
+    host({ electron: true, marker: true });
+    eq(box(), null, 'the marker present → start normally');
+    eq(paths.isBundleInstall(), true, '…as a bundle');
+    host({ electron: false, marker: false });
+    eq(box(), null, 'plain Node (the browser install, a checkout) in the same path → never refused');
+    eq(paths.isBundleInstall(), false, '…and still repo mode, exactly as before');
+    host({ electron: true, marker: false, appRoot: 'C:\\Users\\Ana\\the-curator' });
+    eq(box(), null, 'Electron from a checkout (dev run) → not the program-folder shape, never refused');
+    host({ electron: true, marker: false, appRoot: INST.toUpperCase() + '\\RESOURCES\\APP\\' });
+    ok(box() !== null, 'the shape is matched in any case and with a trailing separator');
+    host({ electron: true, marker: false, appRoot: 'C:/x/resources/app' });
+    ok(box() !== null, '…and with forward slashes');
+  } finally { paths.__setHostForTest(null); }
+  eq(box(), null, `this host (${process.platform}): never refused`);
+  eq(sp.appFilesIncompleteBox(null), null, 'no module → null (start; never invent a refusal)');
+  eq(sp.appFilesIncompleteBox({ win32AppFilesIncomplete: () => { throw new Error('x'); } }), null, 'a module that throws → null');
+  eq(sp.appFilesIncompleteBox({ win32AppFilesIncomplete: () => 'yes' }), null, 'only a literal true refuses');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -547,6 +607,17 @@ section('§14 wave-2 wiring: the updater, the folder dialog, runCommand, afterSt
   // argv at all, so the argument is ignored.
   ok(!/process\.argv/.test(src) && !/commandLine\.(hasSwitch|getSwitchValue)/.test(src),
     'main.js reads no command-line arguments, so NSIS\'s `--updated` after a silent update changes nothing');
+  // audit M1 / minor 5 wiring (WEAK: written, not run).
+  const iRefuse = src.indexOf("if (process.platform === 'win32' && await refusedIncompleteWindowsInstall()) return;");
+  const iServer = src.indexOf('await import(pathToFileURL(SERVER_ENTRY).href)');
+  ok(iRefuse > 0 && iServer > iRefuse && iRefuse < src.indexOf('applyMenu();'),
+    'boot() refuses an incomplete Windows install FIRST: before the menu, the port and the server import');
+  ok(/const refusal = appFilesIncompleteBox\(pathsModule\);\s*if \(!refusal\) return false;\s*dialog\.showErrorBox\(refusal\.title, refusal\.body\);\s*quitAuthorised = true;\s*app\.exit\(1\);/.test(src),
+    '…with the box appFilesIncompleteBox decided (executed in §3b), then exit; nothing else runs');
+  ok(/if \(!closeAsksQuitFirst\(\{\s*platform: process\.platform,\s*quitAuthorised,\s*trayActive: !!\(tray && !tray\.isDestroyed\(\)\),\s*sessionEnding,\s*\}\)\) return;\s*event\.preventDefault\(\);\s*app\.quit\(\);/.test(src),
+    'the third close listener turns a no-tray Windows close into app.quit() (decision executed in §3)');
+  ok((src.match(/keepReachableAfterKeepWorking\(\);/g) || []).length === 2,
+    '"Keep working" and a failed quit check both bring a lost window back on Windows');
 }
 
 console.log(`\n  ────────────────────────────────────────`);

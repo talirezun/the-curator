@@ -313,6 +313,176 @@ function winDisk({ dirs = [], fail = {}, statFail = {}, readFail = {}, bundle = 
     'the browser install: its code folder is still refused');
 }
 
+// ── audit M2: every OTHER spelling of the program folder (Windows app) ───────
+{
+  const LOCAL = 'C:\\Users\\Ana Žagar\\AppData\\Local';
+  const prog = LOCAL + '\\Programs\\The Curator';
+  const appRoot = prog + '\\resources\\app';
+  const env = { ...WENV, COMPUTERNAME: 'ANA-PC', LOCALAPPDATA: LOCAL, APPDATA: 'C:\\Users\\Ana Žagar\\AppData\\Roaming' };
+  // A model of realpath.native (GetFinalPathNameByHandle): 8.3 names expanded,
+  // a junction and a subst drive followed, the case on disk returned. Only
+  // folders that exist answer; anything else throws ENOENT.
+  const real = (p) => p.replace(/^C:\\Users\\ANAAGA~1/i, 'C:\\Users\\Ana Žagar').replace(/\\APPDAT~1\\/i, '\\AppData\\')
+    .replace(/\\THECUR~1(?=\\|$)/i, '\\The Curator').replace(/^D:\\link(?=\\|$)/i, prog).replace(/^X:\\(?=.)/i, prog + '\\');
+  const exists = new Set();
+  const native = (p) => {
+    const r = real(p);
+    const known = [prog, appRoot, prog + '\\wiki', 'D:\\KB', 'D:\\KB\\x', LOCAL + '\\TheCurator\\App\\domains', LOCAL + '\\TheCurator\\App\\My Notes'];
+    if (known.some((k) => k.toLowerCase() === r.toLowerCase()) || exists.has(r.toLowerCase())) return r;
+    throw errno('ENOENT');
+  };
+  const V = (p, over = {}) => kfp.validateKnowledgeFolderPath(p, winDisk({ dirs: [p], bundle: true, appRoot, env, native, ...over }).deps);
+  const refused = (p, label, over) => {
+    const r = V(p, over);
+    eq([r.ok, r.reason, r.code], [false, 'inside-app', 'folder-inside-app'], label);
+    return r;
+  };
+  refused('C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\THECUR~1\\wiki', 'the program folder by its 8.3 short name is refused (realpath.native expands it)');
+  refused('C:\\Users\\ANAAGA~1\\APPDAT~1\\Local\\Programs\\The Curator\\wiki', '…by an 8.3 name of a PARENT folder too');
+  refused('D:\\link\\wiki', '…through a junction');
+  refused(prog + '\\wiki', 'the app started through a subst drive or junction (APP_ROOT X:\\…): the program folder is derived from the REAL APP_ROOT', { appRoot: 'X:\\resources\\app' });
+  for (const share of ['\\\\localhost\\C$', '\\\\127.0.0.1\\c$', '\\\\ANA-PC\\C$', '\\\\ana-pc.contoso.local\\C$', '\\\\[::1]\\C$']) {
+    refused(share + prog.slice(2) + '\\wiki', `…through this computer's own admin share ${share}`);
+  }
+  // CONTROLS: what makes each of those refusals happen.
+  const identity = (p) => p;
+  ok(V('C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\THECUR~1\\wiki', { native: identity }).ok,
+    'CONTROL: with a realpath that does NOT expand 8.3 names the short name gets through (so realpath.native is what refuses it — on a real PC it does)');
+  ok(V('\\\\nas\\C$' + prog.slice(2) + '\\wiki').ok, 'CONTROL: another computer\'s C$ share is a different folder, and is accepted');
+  ok(V('D:\\KB').ok, 'CONTROL: a folder on another drive is still accepted');
+  // The audit's own repro (p2.mjs): every row it accepted is now refused.
+  const p2Rows = [LOCAL + '\\TheCurator', LOCAL + '\\TheCurator\\updates', LOCAL + '\\TheCurator\\logs',
+    'C:\\Users\\Ana Žagar\\AppData\\Roaming\\The Curator', LOCAL + '\\TheCurator\\runtime\\git'];
+  for (const p of p2Rows) refused(p, `audit M3: the app's own working folder is refused: ${p.slice(LOCAL.length - 5)}`);
+}
+
+// ── audit M3: the app's own working folders (Windows app) ───────────────────
+{
+  const LOCAL = 'C:\\Users\\Ana Žagar\\AppData\\Local';
+  const appRoot = LOCAL + '\\Programs\\The Curator\\resources\\app';
+  const env = { ...WENV, LOCALAPPDATA: LOCAL, APPDATA: 'C:\\Users\\Ana Žagar\\AppData\\Roaming' };
+  const V = (p, over = {}) => kfp.validateKnowledgeFolderPath(p, winDisk({ dirs: [p], bundle: true, appRoot, env, ...over }).deps);
+  const TC = LOCAL + '\\TheCurator';
+  for (const p of [TC, TC + '\\updates', TC + '\\updates\\my-domain', TC + '\\logs', TC + '\\instances', TC + '\\runtime',
+    TC + '\\App', TC + '\\App\\.knowledge-git', TC + '\\App\\.ingest-queue\\x', 'c:\\users\\ana žagar\\appdata\\local\\THECURATOR\\Updates',
+    'C:\\Users\\Ana Žagar\\AppData\\Roaming\\The Curator', 'C:\\Users\\Ana Žagar\\AppData\\Roaming\\The Curator\\Cache']) {
+    const r = V(p);
+    eq([r.ok, r.reason, r.code], [false, 'inside-app', 'folder-inside-app'], `refused: ${p.slice(LOCAL.length - 13)}`);
+  }
+  const r = V(TC + '\\updates');
+  ok(/working folder/.test(r.error) && /update downloads, logs and settings/.test(r.error) && /nothing was changed/.test(r.error) && !/program files/.test(r.error),
+    '…in words that say it is the app\'s own working folder (not "program files")');
+  for (const p of [TC + '\\App\\domains', TC + '\\App\\My Notes', TC + '\\App\\domains\\work']) {
+    eq(V(p), { ok: true, path: p }, `accepted: inside App\\ (the app's own data folder, untouched by updates and uninstall): ${p.slice(TC.length)}`);
+  }
+  for (const p of [TC + '2', LOCAL + '\\TheCuratorNotes', 'C:\\Users\\Ana Žagar\\AppData\\Roaming\\The Curator 2', LOCAL + '\\Other']) {
+    eq(V(p).ok, true, `CONTROL: a folder that only STARTS like one is accepted: ${p.slice(LOCAL.length - 13)}`);
+  }
+  // No LOCALAPPDATA/APPDATA in the environment: the profile's defaults are used.
+  eq(V(TC + '\\updates', { env: WENV }).code, 'folder-inside-app', 'with no LOCALAPPDATA set, %USERPROFILE%\\AppData\\Local\\TheCurator is still recognised');
+  eq(V('C:\\Users\\Ana Žagar\\AppData\\Roaming\\The Curator', { env: WENV }).code, 'folder-inside-app', '…and %USERPROFILE%\\AppData\\Roaming\\The Curator');
+  // The browser install (repo mode) is unchanged: these rules are the Windows APP's.
+  eq(V(TC + '\\updates', { bundle: false, appRoot: 'C:\\Users\\Ana Žagar\\the-curator' }), { ok: true, path: TC + '\\updates' },
+    'CONTROL: the browser install (not the Windows app) is unchanged — the same folder is accepted there');
+}
+
+// ── audit M2: the knowledge folder ALREADY SET is checked too ────────────────
+{
+  const LOCAL = 'C:\\Users\\Ana Žagar\\AppData\\Local';
+  const prog = LOCAL + '\\Programs\\The Curator';
+  const appRoot = prog + '\\resources\\app';
+  const env = { ...WENV, LOCALAPPDATA: LOCAL };
+  const A = (raw, resolved, over = {}) => {
+    try { kfp.assertWindowsAppKnowledgeFolder(raw, resolved, { platform: 'win32', bundle: true, env, appRoot, realpathNative: null, ...over }); return null; }
+    catch (e) { return e; }
+  };
+  let e = A(prog + '\\kb', prog + '\\kb');
+  eq(e && e.code, 'folder-inside-app', 'a configured folder inside the program folder THROWS (it is never served)');
+  ok(e && /^Your knowledge folder is part of The Curator's own program files/.test(e.message) && /Nothing was moved or deleted/.test(e.message)
+    && /Domains page/.test(e.message), '…in plain words: not read or written, nothing moved or deleted, where to choose another');
+  e = A(LOCAL + '\\TheCurator\\updates', LOCAL + '\\TheCurator\\updates');
+  ok(e && e.code === 'folder-inside-app' && /working folder/.test(e.message), 'a configured folder in the app\'s working folder throws too, in its own words');
+  e = A('kb', 'C:\\whatever\\kb');
+  eq(e && e.code, 'knowledge-folder-not-absolute', 'a RELATIVE setting throws (it would resolve against the program folder on a shortcut launch)');
+  ok(e && /not a full path/.test(e.message) && /Nothing was read or changed/.test(e.message), '…in plain words');
+  eq(A('\\kb', 'C:\\kb') && A('\\kb', 'C:\\kb').code, 'knowledge-folder-not-absolute', '…and so does "\\kb" (the current drive, not a full path)');
+  eq(A('D:\\KB', 'D:\\KB'), null, 'a folder elsewhere passes');
+  eq(A(null, LOCAL + '\\TheCurator\\App\\domains'), null, 'the default (App\\domains) passes');
+  eq(A(prog + '\\kb', prog + '\\kb', { bundle: false }), null, 'the browser install: a no-op (unchanged)');
+  eq(A(prog + '\\kb', prog + '\\kb', { platform: 'darwin' }), null, 'macOS / Linux: a no-op (unchanged)');
+
+  // getDomainsDir() itself, on a simulated Windows APP (the config file is the isolated one).
+  const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
+  const cfgMod = await import(path.join(ROOT, 'src/brain/config.js'));
+  const cfgFile = path.join(process.env.CURATOR_TEST_USER_DATA_DIR, '.curator-config.json');
+  const savedDomains = process.env.CURATOR_TEST_DOMAINS_DIR;
+  const savedEnvPath = process.env.DOMAINS_PATH;
+  const writeCfg = (o) => fs.writeFileSync(cfgFile, JSON.stringify(o));
+  const gd = () => { cfgMod.__resetWindowsDomainsCheckForTest(); try { return { dir: cfgMod.getDomainsDir() }; } catch (err) { return { code: err.code, message: err.message }; } };
+  delete process.env.CURATOR_TEST_DOMAINS_DIR;
+  delete process.env.DOMAINS_PATH;
+  try {
+    paths.__setHostForTest({ platform: 'win32', appRoot, env, homedir: 'C:\\Users\\Ana Žagar', exists: (p) => p === appRoot + '\\.curator-bundle' });
+    writeCfg({ domainsPath: prog + '\\kb' });
+    eq(gd().code, 'folder-inside-app', 'getDomainsDir(): a hand-edited domainsPath inside the program folder is refused, not served');
+    cfgMod.__resetWindowsDomainsCheckForTest();
+    const shown = cfgMod.getConfig();
+    eq([shown.domainsPath, shown.domainsPathSource, shown.domainsPathRefused && shown.domainsPathRefused.code], [prog + '\\kb', 'ui', 'folder-inside-app'],
+      'getConfig() (Settings) still answers: the folder as set, and the refusal beside it — Settings is not taken down');
+    writeCfg({ domainsPath: 'kb' });
+    eq(gd().code, 'knowledge-folder-not-absolute', 'getDomainsDir(): a relative domainsPath is refused');
+    writeCfg({ domainsPath: 'D:\\KB' });
+    eq(gd().dir, 'D:\\KB', 'getDomainsDir(): a safe folder is served as before');
+    writeCfg({});
+    process.env.DOMAINS_PATH = prog + '\\env-kb';
+    eq(gd().code, 'folder-inside-app', 'getDomainsDir(): DOMAINS_PATH inside the program folder is refused');
+    delete process.env.DOMAINS_PATH;
+    cfgMod.setCliDomainsDir(prog + '\\cli-kb');
+    eq(gd().code, 'folder-inside-app', 'getDomainsDir(): the MCP\'s --domains-path inside the program folder is refused');
+    cfgMod.setCliDomainsDir(null);
+    writeCfg({ domainsPath: prog + '\\kb' });
+    cfgMod.__resetWindowsDomainsCheckForTest();
+    const boot = cfgMod.ensureDefaultDomainsDir();
+    eq([boot.status, boot.error && boot.error.code], ['refused', 'folder-inside-app'], 'at boot the refusal is REPORTED (status "refused"), never fatal, and nothing is created');
+    // The route that sets another folder does not depend on getDomainsDir(), so a person can get out.
+    const res = fakeRes();
+    const applied = [];
+    configRoute.domainsPathHandler({ body: { path: 'D:\\New KB' } }, res, {
+      validate: winDisk({ dirs: ['D:\\New KB'], bundle: true, appRoot, env }).deps, setDomainsDir: (p) => applied.push(p),
+    });
+    eq([res.statusCode, applied], [200, ['D:\\New KB']], 'while the old folder is refused, choosing another one still works');
+    // The MCP's read adapter is held to the same rule.
+    const local = await import(path.join(ROOT, 'mcp/storage/local.js'));
+    let mcpErr = null;
+    try { local.createStorageAdapter({ domainsPath: prog + '\\kb' }); } catch (err) { mcpErr = err; }
+    eq(mcpErr && mcpErr.code, 'folder-inside-app', 'the MCP read adapter refuses --domains-path inside the program folder');
+    mcpErr = null;
+    try { local.createStorageAdapter({ domainsPath: 'relative\\kb' }); } catch (err) { mcpErr = err; }
+    eq(mcpErr && mcpErr.code, 'knowledge-folder-not-absolute', '…and a relative --domains-path');
+    writeCfg({ domainsPath: LOCAL + '\\TheCurator\\updates' });
+    mcpErr = null;
+    try { local.createStorageAdapter({}); } catch (err) { mcpErr = err; }
+    eq(mcpErr && mcpErr.code, 'folder-inside-app', '…and a stored domainsPath in the app\'s working folder');
+  } finally {
+    paths.__setHostForTest(null);
+    cfgMod.setCliDomainsDir(null);
+    cfgMod.__resetWindowsDomainsCheckForTest();
+    process.env.CURATOR_TEST_DOMAINS_DIR = savedDomains;
+    if (savedEnvPath === undefined) delete process.env.DOMAINS_PATH; else process.env.DOMAINS_PATH = savedEnvPath;
+  }
+  // CONTROL on this host (not simulated): the same settings file is served as before, no check.
+  delete process.env.CURATOR_TEST_DOMAINS_DIR;
+  try {
+    writeCfg({ domainsPath: '/tmp/curator-not-checked/kb' });
+    eq(gd().dir, '/tmp/curator-not-checked/kb', `CONTROL: on ${process.platform} a configured folder is served exactly as before`);
+    writeCfg({ domainsPath: 'relative-kb' });
+    eq(gd().dir, path.resolve('relative-kb'), `CONTROL: on ${process.platform} a relative setting still resolves as before (unchanged)`);
+  } finally {
+    process.env.CURATOR_TEST_DOMAINS_DIR = savedDomains;
+    fs.rmSync(cfgFile, { force: true });
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§3  macOS and Linux: byte-identical');
 // ═══════════════════════════════════════════════════════════════════════════
