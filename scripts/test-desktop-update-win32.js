@@ -43,7 +43,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -79,15 +79,15 @@ function tmpdir(name) { const p = path.join(TMP, `${name}-${seq++}`); mkdirSync(
 
 let plan, planWin, release, engine, darwin, win, download, cfg, installMode;
 try {
-  plan = await import(path.join(DESKTOP, 'lib', 'update-plan.js'));
-  planWin = await import(path.join(DESKTOP, 'lib', 'update-plan-win32.js'));
-  release = await import(path.join(DESKTOP, 'lib', 'update-release.js'));
-  engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
-  darwin = await import(path.join(DESKTOP, 'lib', 'update-install-darwin.js'));
-  win = await import(path.join(DESKTOP, 'lib', 'update-install-win32.js'));
-  download = await import(path.join(DESKTOP, 'lib', 'update-download.js'));
-  cfg = await import(path.join(ROOT, 'src', 'routes', 'config.js'));
-  installMode = await import(path.join(ROOT, 'src', 'brain', 'install-mode.js'));
+  plan = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-plan.js')).href);
+  planWin = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-plan-win32.js')).href);
+  release = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-release.js')).href);
+  engine = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-engine.js')).href);
+  darwin = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-install-darwin.js')).href);
+  win = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-install-win32.js')).href);
+  download = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-download.js')).href);
+  cfg = await import(pathToFileURL(path.join(ROOT, 'src', 'routes', 'config.js')).href);
+  installMode = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'install-mode.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the update modules: ${err.stack}`);
   process.exit(1);
@@ -320,6 +320,37 @@ section('§5 who holds the exe: classifyInstallProcesses + parseProcessList');
   ok(/Where-Object \{ \$_\.ExecutablePath/.test(cmd) && /OrdinalIgnoreCase/.test(cmd), 'filtered to THIS exe, case-insensitively, inside PowerShell');
 }
 
+/** A PowerShell '…' literal read back (every doubled quote of the five). */
+function psUnquote(lit) { return lit.slice(1, -1).replace(/(['\u2018\u2019\u201A\u201B])\1/g, '$1'); }
+/** The script FILE a `helperArgs` boot runs. */
+function bootFile(boot) { return psUnquote(boot.match(/ReadAllText\(('(?:[^'\u2018\u2019\u201A\u201B]|''|\u2018\u2018|\u2019\u2019|\u201A\u201A|\u201B\u201B)+')/)[1]); }
+/**
+ * An INDEPENDENT model of how a Windows program (CommandLineToArgvW, the
+ * Microsoft C runtime since 2008) splits a command line. Written from the
+ * documented rules, not from winQuoteArg: 2n backslashes + quote → n
+ * backslashes and the quote toggles; 2n+1 → n backslashes and a literal
+ * quote; other backslashes are literal; "" inside quotes is a literal quote.
+ */
+function parseWinCommandLine(line) {
+  const out = [];
+  let i = 0;
+  while (i < line.length) {
+    while (line[i] === ' ' || line[i] === '\t') i += 1;
+    if (i >= line.length) break;
+    let arg = ''; let inQ = false;
+    while (i < line.length && (inQ || (line[i] !== ' ' && line[i] !== '\t'))) {
+      if (line[i] === '\\') {
+        let k = 0; while (line[i] === '\\') { k += 1; i += 1; }
+        if (line[i] === '"') { arg += '\\'.repeat(k >> 1); if (k & 1) { arg += '"'; i += 1; } } else arg += '\\'.repeat(k);
+        continue;
+      }
+      if (line[i] === '"') { if (inQ && line[i + 1] === '"') { arg += '"'; i += 2; continue; } inQ = !inQ; i += 1; continue; }
+      arg += line[i]; i += 1;
+    }
+    out.push(arg);
+  }
+  return out;
+}
 // ═══════════════════════════════════════════════════════════════════════════
 section('§6 the helper TEXT: validation, quoting, arguments, step order');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -417,6 +448,83 @@ const GOOD = {
   eq(args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command'], 'powershell flags: no profile, non-interactive, hidden');
   eq(args[5], "& ([ScriptBlock]::Create([IO.File]::ReadAllText('C:\\U\\O''B\\updates\\install-update.ps1', [Text.Encoding]::UTF8)))",
     'the script FILE is run as a script block (not subject to the execution policy), read as UTF-8');
+  // ── v3.99.3-wintest.4: observable from the first line, and a boot that catches what the script cannot ──
+  {
+    const LOG = 'C:\\U\\O\u2019B\\logs\\update-install.log';
+    const boot = planWin.helperArgs('C:\\U\\updates\\install-update.ps1', { errorLogPath: LOG });
+    eq(boot.slice(0, 5), args.slice(0, 5), 'the helper boot keeps the same flags');
+    ok(boot[5].startsWith(`try { ${args[5].replace("O''B\\updates", 'updates')} } catch {`) || boot[5].startsWith('try { & ([ScriptBlock]::Create([IO.File]::ReadAllText('),
+      'the helper\'s script block is built and run INSIDE a try');
+    ok(boot[5].includes(`[IO.File]::AppendAllText(${planWin.psQuote(LOG)}, `) && boot[5].endsWith(`exit ${planWin.HELPER_EXIT_CODES['helper-error']} }`),
+      '…whose catch writes the error to the log (.NET only) and exits helper-error (9)');
+    eq(planWin.helperArgs('C:\\p.ps1'), planWin.helperArgs('C:\\p.ps1', {}), 'without errorLogPath the probe\'s boot is unchanged');
+    ok(!/"/.test(boot[5]), 'the boot holds no double quote (nothing for a command line to escape)');
+    let threw = false; try { planWin.helperArgs('C:\\p.ps1', { errorLogPath: 'C:\\a\nb' }); } catch { threw = true; }
+    ok(threw, 'a log path with a newline is refused');
+
+    const st = planWin.buildWin32InstallScript({ ...GOOD, startedPath: 'C:\\U\\updates\\install-update.started', scriptPath: 'C:\\U\\updates\\install-update.ps1' });
+    const code = st.split('\r\n').filter((l) => l.trim() && !l.trim().startsWith('#'));
+    eq(code[0], "try { [IO.File]::WriteAllText('C:\\U\\updates\\install-update.started', [string]$PID) } catch {}",
+      'the helper\'s FIRST statement writes its PID to the start marker the launcher waits for');
+    ok(/^try \{ \[IO\.File\]::AppendAllText\('C:\\U\\AppData\\Local\\TheCurator\\logs\\update-install\.log', .*' update-install: started, pid ' \+ \$PID/.test(code[1]),
+      '…its SECOND appends a "started" line to the log');
+    const head = st.slice(0, st.indexOf('Set-StrictMode'));
+    ok(head.includes('trap {') && head.indexOf('trap {') > head.indexOf("update-install: started"), 'a trap is set before Set-StrictMode and after the first trace');
+    const cmdlet = /\b(?:Add|Get|Set|Move|New|Remove|Out|Write|ConvertTo|Start|Test)-(?!Message\b|App\b)[A-Z]\w*/;
+    ok(!cmdlet.test(head.slice(0, head.indexOf('trap {'))), 'nothing before the trap uses a cmdlet (no module has to load for the first trace)');
+    const trapBody = head.slice(head.indexOf('trap {'));
+    ok(/ERROR at line ' \+ \$err\.InvocationInfo\.ScriptLineNumber/.test(trapBody) && trapBody.includes('"result":"helper-error"') && /exit 9\r\n\}/.test(trapBody),
+      'the trap logs the error with its line, records helper-error and exits 9');
+    ok(/if \(-not \(Get-Process -Id 4242 [^\n]*\{ Start-App \}/.test(trapBody), '…reopens the old app only when it is no longer running');
+    ok(/if \(\$SetupStarted\) \{ Show-Message \$MsgFailed \$true \} else \{ Show-Message \$MsgNotUpdated \$false \}/.test(trapBody) && st.includes(`$MsgNotUpdated = ${planWin.psQuote(planWin.WIN32_INSTALL_OUTCOMES['not-updated'])}`),
+      '…and tells the person: "still on the previous version" before the setup ran, the repair offer after');
+    ok(st.indexOf('$SetupStarted = $true') > st.indexOf("Write-Result 'installing' -1") && st.indexOf('$SetupStarted = $true') < st.indexOf('Start-Process -FilePath $Installer -ArgumentList'),
+      '$SetupStarted turns true just before the setup is started');
+    const fnLog = st.slice(st.indexOf('function Log('), st.indexOf('function Test-InstallerUnchanged'));
+    ok(!cmdlet.test(fnLog.replace(/function Write-Result/g, '')), 'Log and Write-Result use .NET only (a record never depends on a module loading)');
+    ok(st.includes("Remove-Quietly 'C:\\U\\updates\\install-update.started'") && st.indexOf("Log 'done'") > st.indexOf("Write-Result 'installed' 0"), 'after success the marker is removed and "done" logged');
+    eq(planWin.describeInstallOutcome({ result: 'helper-error', version: '4.0.0', exitCode: 9 }, '3.0.0').message, planWin.WIN32_INSTALL_OUTCOMES['not-updated'],
+      'a helper-error record read by the old version says "still on the previous version"');
+  }
+  // ── the Windows command line: winQuoteArg against an INDEPENDENT CommandLineToArgvW model ──
+  {
+    const cases = [
+      '-NoProfile', '', 'a b', 'C:\\Program Files\\x\\', 'trail\\\\', 'say "hi"', 'a\\"b', 'a\\\\"b', '\\\\server\\share\\', 'tab\there',
+      "& ([ScriptBlock]::Create([IO.File]::ReadAllText('C:\\Users\\Žiga O''Brien\\AppData\\Local\\TheCurator\\updates\\install-update.ps1', [Text.Encoding]::UTF8)))",
+      planWin.helperArgs('C:\\Users\\Ana Ž\\updates\\install-update.ps1', { errorLogPath: 'C:\\Users\\Ana Ž\\logs\\update-install.log' })[5],
+    ];
+    for (const c of cases) eq(parseWinCommandLine(planWin.winCommandLine([c])), [c], `round-trips ${JSON.stringify(c).slice(0, 60)}`);
+    const full = planWin.helperArgs("C:\\U\\O'B\\updates\\install-update.ps1", { errorLogPath: 'C:\\U\\logs\\update-install.log' });
+    eq(parseWinCommandLine(planWin.winCommandLine(full)), full, 'the helper\'s whole argument list round-trips');
+    eq(planWin.winCommandLine(['a', 'b c', '']), 'a "b c" ""', 'known answer: plain, spaced, empty');
+    eq(planWin.winQuoteArg('C:\\dir with space\\'), '"C:\\dir with space\\\\"', 'known answer: a trailing backslash before the closing quote is doubled');
+    eq(planWin.winQuoteArg('a"b'), '"a\\"b"', 'known answer: a quote is escaped');
+    // CONTROL: naive joining (what Start-Process -ArgumentList @(...) does in Windows PowerShell 5.1) does not round-trip.
+    ok(JSON.stringify(parseWinCommandLine(full.join(' '))) !== JSON.stringify(full), 'CONTROL: joining the arguments with spaces would split the -Command');
+  }
+  // ── the launcher TEXT ──
+  {
+    const L = {
+      powershell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', args: planWin.helperArgs('C:\\U\\updates\\install-update.ps1'),
+      startedPath: 'C:\\U\\updates\\install-update.started', logPath: 'C:\\U\\logs\\update-install.log', workDir: 'C:\\U\\updates',
+    };
+    const l = planWin.buildWin32LaunchScript(L);
+    eq(parseWinCommandLine(psUnquote(l.match(/\$Arguments = ('(?:[^']|'')*')/)[1])), L.args, 'the launcher carries the helper\'s arguments as one command line that reads back exactly');
+    ok(l.includes(`$EnvDrop = ${planWin.psQuote(planWin.HELPER_ENV_DROP_SOURCE)}`), 'the launcher drops the same variables as helperEnv');
+    const dropRe = new RegExp(planWin.HELPER_ENV_DROP_SOURCE, 'i');
+    eq(['PORT', 'port', 'CURATOR_NO_OPEN', 'NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE', 'electron_x', 'PATH', 'SystemRoot', 'LOCALAPPDATA', 'PORTABLE', 'XPORT'].filter((k) => dropRe.test(k)),
+      ['PORT', 'port', 'CURATOR_NO_OPEN', 'NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE', 'electron_x'], 'the drop rule: exactly those names, any case, and nothing that merely contains them');
+    const iMarker = l.indexOf('if ([IO.File]::Exists($Started)) { Say (\'started \'');
+    const iKill = l.indexOf('$p.Kill()');
+    ok(iMarker > 0 && iKill > iMarker && l.indexOf("Say 'timeout' 23") > iKill && /\$p\.Kill\(\)[\s\S]*\[IO\.File\]::Delete\(\$Started\)[\s\S]*Say 'timeout'/.test(l),
+      'only the marker means started; on time-out the helper is stopped and the marker removed before "timeout"');
+    ok(/if \(\$p\.HasExited\) \{ if \(\[IO\.File\]::Exists\(\$Started\)\)/.test(l), 'a helper that ended is "started" only if it wrote the marker');
+    ok(!/EncodedCommand|ExecutionPolicy|Invoke-Expression|\biex\b|Start-Process/i.test(l), 'no encoded command, no policy override, no eval, no Start-Process (it joins arguments unquoted in 5.1)');
+    for (const [label, over] of [['no powershell', { powershell: '' }], ['a newline in an argument', { args: ['a\nb'] }], ['no arguments', { args: [] }], ['wait 0', { waitSeconds: 0 }], ['no workDir', { workDir: '' }]]) {
+      let threw = false; try { planWin.buildWin32LaunchScript({ ...L, ...over }); } catch { threw = true; }
+      ok(threw, `the launcher refuses ${label}`);
+    }
+  }
   eq(planWin.powershellPath({ SYSTEMROOT: 'C:\\Windows' }), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'PowerShell by absolute path from SystemRoot (any key case), never PATH');
   eq(planWin.powershellPath({ SystemRoot: '\\\\evil\\share' }), null, 'a UNC SystemRoot is refused');
   eq(planWin.powershellPath({}), null, 'no SystemRoot: no PowerShell');
@@ -443,15 +551,32 @@ function fixture({ uninstaller = true } = {}) {
   const workDir = path.join(root, 'TheCurator', 'updates');
   return { root, installDir, exePath, uninstallerPath, workDir };
 }
-/** A fake PowerShell. It understands the three things the engine asks:
- *  the probe (runs the script FILE it is pointed at and writes the language
- *  mode the scenario says), the version read, and the process list. */
-function fakePowerShell(sc = {}) {
+/** A fake PowerShell. It understands the four things the engine asks: the
+ *  probe (runs the script FILE it is pointed at and writes the language mode
+ *  the scenario says), the version read, the process list, and the LAUNCHER
+ *  (reads the launcher file, records the helper it would start, and plays
+ *  the scenario's `launch` outcome: by default the helper writes its start
+ *  marker and the launcher says "started"). */
+function fakePowerShell(sc = {}, launched = []) {
   const calls = [];
-  const runCommand = async (cmd, args) => {
-    calls.push({ cmd, args });
+  const runCommand = async (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, opts });
     const c = args[args.length - 1] || '';
     const fileMatch = c.match(/ReadAllText\('((?:[^']|'')+)'/);
+    if (fileMatch && readFileSync(fileMatch[1].replace(/''/g, "'"), 'utf8').includes('# The Curator: starts the update helper')) {
+      const body = readFileSync(fileMatch[1].replace(/''/g, "'"), 'utf8');
+      const lit = (name) => psUnquote(body.match(new RegExp(`\\$${name} = ('(?:[^']|'')*')`))[1]);
+      const helper = { cmd: lit('Ps'), args: parseWinCommandLine(lit('Arguments')), started: lit('Started'), body, opts };
+      launched.push(helper);
+      const mode = sc.launch || 'started';
+      if (mode === 'started' || mode === 'started-but-timed-out') writeFileSync(helper.started, '5555');
+      if (mode === 'started') return { status: 0, stdout: 'started 5555\r\n', stderr: '' };
+      if (mode === 'started-but-timed-out') return { status: 124, stdout: '', stderr: '', timedOut: true };
+      if (mode === 'said-started-no-marker') return { status: 0, stdout: 'started 5555\r\n', stderr: '' };
+      if (mode === 'exited') return { status: 22, stdout: 'exited 9\r\n', stderr: '' };
+      if (mode === 'timeout') return { status: 23, stdout: 'timeout\r\n', stderr: '' };
+      return { status: 21, stdout: 'not-started\r\n', stderr: 'C:\\Users\\someone\\secret path' };
+    }
     if (fileMatch) {
       if (sc.probeStatus && sc.probeStatus !== 0) return { status: sc.probeStatus, stdout: '', stderr: 'blocked' };
       const scriptFile = fileMatch[1].replace(/''/g, "'");
@@ -473,10 +598,13 @@ function fakePowerShell(sc = {}) {
   return { runCommand, calls };
 }
 function makeEngine(fx, over = {}) {
-  const ps = fakePowerShell(over.ps || {});
+  // `spawned`: the helpers the LAUNCHER started (what used to be a detached
+  // spawn). `detached`: calls to spawnDetached, which Windows must never make.
+  const spawned = [];
+  const detached = [];
+  const ps = fakePowerShell(over.ps || {}, spawned);
   const payload = over.payload || [rel(V_NEXT)];
   const net = releaseFetch(payload, over.assetResponder);
-  const spawned = [];
   const quits = [];
   const reg = { begins: 0, ends: 0, active: !!over.activeWrites };
   const eng = win.createWin32UpdateEngine({
@@ -491,7 +619,7 @@ function makeEngine(fx, over = {}) {
     workDir: fx.workDir,
     logPath: path.join(fx.root, 'update-install.log'),
     runCommand: ps.runCommand,
-    spawnDetached: over.spawnDetached || ((cmd, args, opts) => { spawned.push({ cmd, args, opts }); return {}; }),
+    spawnDetached: (cmd, args, opts) => { detached.push({ cmd, args, opts }); return {}; },
     quitApp: 'quitApp' in over ? over.quitApp : () => { quits.push(1); },
     writeRegistry: {
       hasActiveWrites: () => reg.active, listActiveWrites: () => [{ domain: 'd', op: 'ingest' }],
@@ -503,7 +631,7 @@ function makeEngine(fx, over = {}) {
     classifyTarget: () => ({ ok: true, exePath: fx.exePath, exeName: 'The Curator.exe', installDir: fx.installDir, uninstallerPath: fx.uninstallerPath, warning: null }),
     showMessages: false,
   });
-  return { eng, ps, net, spawned, quits, reg };
+  return { eng, ps, net, spawned, detached, quits, reg };
 }
 const seenReasons = new Set();
 const note = (r) => { if (r && r.ok === false) seenReasons.add(r.reason); return r; };
@@ -535,13 +663,25 @@ const listWork = (fx) => (existsSync(fx.workDir) ? readdirSync(fx.workDir).sort(
 
   const inst = await t.eng.installUpdate({ token: r.token });
   ok(inst.ok && inst.installing, `installUpdate hands off and quits (${inst.reason || 'ok'})`);
-  eq(t.spawned.length, 1, 'one helper is started');
-  eq(t.spawned[0].cmd, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '…by PowerShell\'s absolute path');
+  eq(t.spawned.length, 1, 'one helper is started (by the launcher)');
+  eq(t.detached.length, 0, '…and NOTHING is started detached (v3.99.3-wintest.4: a detached helper left no trace)');
+  const PS_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const launchPath = path.join(fx.workDir, win.LAUNCH_SCRIPT);
+  const launchCalls = t.ps.calls.filter((c) => c.args[c.args.length - 1].includes(planWin.psQuote(launchPath)));
+  eq(launchCalls.map((c) => [c.cmd, c.args]), [[PS_EXE, planWin.helperArgs(launchPath)]], 'the launcher runs ONCE, through runCommand (waited for), by PowerShell\'s absolute path, in the probe\'s proven form');
+  ok(launchCalls[0].opts.timeoutMs >= (planWin.LAUNCH_WAIT_SECONDS + 10) * 1000, '…with a timeout longer than its own wait for the helper');
+  eq(t.spawned[0].cmd, PS_EXE, 'the launcher starts the helper by PowerShell\'s absolute path');
   const scriptPath = path.join(fx.workDir, win.HELPER_SCRIPT);
-  eq(t.spawned[0].args, planWin.helperArgs(scriptPath), '…pointed at the script it wrote');
-  eq(t.spawned[0].opts.windowsHide, true, '…with no console window');
-  ok(!('PORT' in t.spawned[0].opts.env) && !('ELECTRON_RUN_AS_NODE' in t.spawned[0].opts.env) && t.spawned[0].opts.env.LOCALAPPDATA === 'C:\\L',
-    '…and a clean environment (the reopened app is not told this app\'s port, and is never run as Node)');
+  const logPath = path.join(fx.root, 'update-install.log');
+  eq(t.spawned[0].args, planWin.helperArgs(scriptPath, { errorLogPath: logPath }),
+    '…pointed at the script it wrote, with the boot that logs an error the script cannot catch (read back through an independent command-line model)');
+  eq(t.spawned[0].started, path.join(fx.workDir, win.HELPER_STARTED), '…and waits for the helper\'s start marker in updates\\');
+  ok(t.spawned[0].body.includes('$psi.UseShellExecute = $true') && t.spawned[0].body.includes('[System.Diagnostics.ProcessWindowStyle]::Hidden'),
+    '…started through the shell, hidden (no inherited handles: runCommand is not held open by the helper)');
+  ok(t.spawned[0].body.includes(`$EnvDrop = ${planWin.psQuote(planWin.HELPER_ENV_DROP_SOURCE)}`) && /SetEnvironmentVariable\(\[string\]\$k, \$null\)/.test(t.spawned[0].body),
+    '…with a clean environment: the same drop rule as helperEnv (the reopened app is not told this app\'s port, and is never run as Node)');
+  ok(!existsSync(launchPath), 'the launcher file is removed after it ran');
+  ok(existsSync(path.join(fx.workDir, win.HELPER_STARTED)), 'the start marker the helper wrote is what let the app quit');
   const scriptBytes = readFileSync(scriptPath);
   eq([...scriptBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'the script has a UTF-8 BOM (Windows PowerShell 5.1 would read it as ANSI otherwise)');
   const script = scriptBytes.toString('utf8');
@@ -662,7 +802,7 @@ const listWork = (fx) => (existsSync(fx.workDir) ? readdirSync(fx.workDir).sort(
     eq([t.spawned.length, t.quits.length, t.reg.begins], [0, 0, 0], '…nothing ran, the app did not quit, no update marker');
     const go = await t.eng.installUpdate({ token: r.token, stopConnections: true });
     ok(go.ok && go.stoppedConnections === 1, 'with the person\'s agreement (stopConnections) it goes ahead');
-    ok(readFileSync(path.join(path.dirname(t.spawned[0].args[5].match(/'(.+)'/)[1].replace(/''/g, "'")), win.HELPER_SCRIPT), 'utf8').includes('$StopPids = @(4242)'),
+    ok(readFileSync(bootFile(t.spawned[0].args[5]), 'utf8').includes('$StopPids = @(4242)'),
       '…and the helper is told exactly which connection it may stop');
   }
   {
@@ -702,11 +842,36 @@ const listWork = (fx) => (existsSync(fx.workDir) ? readdirSync(fx.workDir).sort(
     eq(note(await t.eng.installUpdate({ token: r.token })).reason, 'relaunch-unavailable', 'no way to quit: relaunch-unavailable, checked before the helper starts');
     eq(t.spawned.length, 0, '…nothing ran');
   }
-  {
-    const { t, r } = await prepared({ spawnDetached: () => { throw new Error('ENOENT powershell'); } });
+  // ── the helper never started: the app does NOT quit, and says so ──
+  for (const [mode, label, said] of [
+    ['not-started', 'Windows refused to start the helper', 'launcher exited 21: not-started'],
+    ['exited', 'the helper ended before its first line (a parse error)', 'launcher exited 22: exited 9'],
+    ['timeout', 'the helper did not start in time', 'launcher exited 23: timeout'],
+    ['said-started-no-marker', 'the launcher said "started" but no marker exists (stdout is not proof)', 'launcher exited 0: started 5555'],
+  ]) {
+    const { fx, t, r } = await prepared({ ps: { launch: mode } });
     const x = note(await t.eng.installUpdate({ token: r.token }));
-    eq(x.reason, 'helper-spawn-failed', 'PowerShell would not start: helper-spawn-failed');
-    eq([t.reg.begins, t.reg.ends, t.quits.length], [1, 1, 0], '…the update marker is released and the app stays open');
+    eq(x.reason, 'helper-spawn-failed', `${label}: helper-spawn-failed`);
+    eq([t.reg.begins, t.reg.ends, t.quits.length], [1, 1, 0], '…the update marker is released and the app STAYS OPEN');
+    ok(/nothing was changed/.test(x.message), `…in plain words: "${x.message}"`);
+    eq(x.detail, said, '…with the launcher\'s own word as the support detail (never its stderr, which can hold paths)');
+    ok(!existsSync(path.join(fx.workDir, win.LAUNCH_SCRIPT)), '…the launcher file is removed');
+    ok(existsSync(path.join(fx.workDir, readdirSync(fx.workDir).find((n) => n.endsWith('.exe')))), '…and the verified setup is kept, so Install can be pressed again');
+  }
+  {
+    // runCommand's own timeout fired, but the helper HAD written its marker:
+    // it is running and waiting for this app to quit, so the app quits.
+    const { t, r } = await prepared({ ps: { launch: 'started-but-timed-out' } });
+    const x = await t.eng.installUpdate({ token: r.token });
+    ok(x.ok && x.installing, 'the marker decides, not the launcher\'s status: a marker after a runCommand timeout = started');
+    eq(t.quits.length, 1, '…and the app quits so the helper can go on');
+  }
+  {
+    // A stale marker from an earlier run must not pass for this one.
+    const { fx, t, r } = await prepared({ ps: { launch: 'timeout' } });
+    writeFileSync(path.join(fx.workDir, win.HELPER_STARTED), '1');
+    const x = note(await t.eng.installUpdate({ token: r.token }));
+    eq([x.reason, t.quits.length], ['helper-spawn-failed', 0], 'a start marker left from an earlier run is removed before the launcher runs: it never lets the app quit');
   }
   {
     const { t, r } = await prepared({ quitApp: () => { throw new Error('no'); } });
@@ -817,7 +982,7 @@ section('§8 afterStart: the outcome record and update cleanup');
       'prepareUpdate\'s clean slate keeps a knowledge folder and a person\'s file');
     ok(!existsSync(path.join(fx2.workDir, setup('0.0.1'))), '…and still removes the old staged setup program');
     // The name test, directly.
-    for (const n of [win.HELPER_SCRIPT, win.RESULT_FILE, 'probe-id0.ps1', 'probe-id0.txt', 'v4.0.0-TheCurator-4.0.0-x64-Windows-Setup.exe', '4.0.0-x.exe']) {
+    for (const n of [win.HELPER_SCRIPT, win.LAUNCH_SCRIPT, win.HELPER_STARTED, win.RESULT_FILE, 'probe-id0.ps1', 'probe-id0.txt', 'v4.0.0-TheCurator-4.0.0-x64-Windows-Setup.exe', '4.0.0-x.exe']) {
       ok(win.isEngineFileName(n), `engine file: ${n}`);
     }
     for (const n of ['domains', 'notes.md', 'Setup.exe', 'probe-a/b.ps1', 'v4-x.exe', '.curator-config.json', '', 'probe-x.ps1.bak']) {
@@ -893,6 +1058,114 @@ if (!IS_WIN) {
   }
 }
 if (!IS_WIN && process.env.CURATOR_REQUIRE_WIN_HELPER === '1') ok(false, '§9 was required (CURATOR_REQUIRE_WIN_HELPER=1) but this is not Windows');
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9b the launcher, the first trace, the boot catch and the trap, EXECUTED by a real PowerShell');
+// ═══════════════════════════════════════════════════════════════════════════
+// Windows: Windows PowerShell 5.1 by absolute path. Elsewhere: `pwsh` when it
+// is installed (PowerShell 7 runs the same .NET calls), else skipped — a
+// developer with pwsh proves it locally; windows-latest proves it on 5.1.
+{
+  const which = (cmd) => { const r = spawnSync(IS_WIN ? 'where' : 'which', [cmd], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null; };
+  const PSX = IS_WIN ? planWin.powershellPath(process.env) : (process.env.CURATOR_PWSH || which('pwsh'));
+  if (!PSX || !existsSync(PSX)) {
+    console.log('    skipped: no PowerShell here (install pwsh, or set CURATOR_PWSH, to run it off Windows)');
+  } else {
+    // -WindowStyle exists only on Windows; everything else is the production form.
+    const forHere = (args) => (IS_WIN ? args : args.filter((a, i, all) => a !== '-WindowStyle' && all[i - 1] !== '-WindowStyle'));
+    const waitFile = async (f, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (existsSync(f)) return true; await new Promise((r) => setTimeout(r, 100)); } return existsSync(f); };
+    const runPs = (args, env = process.env) => spawnSync(PSX, args, { encoding: 'utf8', timeout: 90000, windowsHide: true, env });
+    const setup = () => {
+      const dir = tmpdir('ps');
+      return { dir, log: path.join(dir, 'update-install.log'), started: path.join(dir, win.HELPER_STARTED), script: path.join(dir, win.HELPER_SCRIPT), launch: path.join(dir, win.LAUNCH_SCRIPT), result: path.join(dir, win.RESULT_FILE) };
+    };
+    const launch = (d, { waitSeconds } = {}, env) => {
+      writeFileSync(d.launch, `\uFEFF${planWin.buildWin32LaunchScript({ powershell: PSX, args: forHere(planWin.helperArgs(d.script, { errorLogPath: d.log })), startedPath: d.started, logPath: d.log, workDir: d.dir, ...(waitSeconds ? { waitSeconds } : {}) })}`, 'utf8');
+      return runPs(forHere(planWin.helperArgs(d.launch)), env);
+    };
+    const realScript = (d, extra = {}) => planWin.buildWin32InstallScript({
+      pid: 999999, exePath: path.join(d.dir, 'The Curator.exe'), installerPath: path.join(d.dir, 'setup.exe'), sha256: 'a'.repeat(64), size: 10, version: '4.0.0',
+      resultPath: d.result, logPath: d.log, explorer: IS_WIN ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'whoami.exe') : '/usr/bin/true',
+      scriptPath: d.script, startedPath: d.started, lockWaitSeconds: 1, reopenWaitSeconds: 1, showMessages: false, ...extra,
+    });
+    {
+      // The real helper, started by the real launcher.
+      const d = setup();
+      writeFileSync(d.script, `\uFEFF${realScript(d)}`, 'utf8');
+      const r = launch(d);
+      const m = /^started (\d+)/.exec((r.stdout || '').trim());
+      eq([r.status, !!m], [planWin.LAUNCH_EXIT_CODES.started, true], `the launcher starts the real helper and returns "started <pid>" (stdout ${JSON.stringify((r.stdout || '').trim())}, stderr ${JSON.stringify((r.stderr || '').slice(0, 200))})`);
+      ok(m && readFileSync(d.started, 'utf8').trim() === m[1], '…the marker holds the helper\'s own PID');
+      const lines = readFileSync(d.log, 'utf8').split(/\r?\n/).filter(Boolean);
+      ok(/ update-install: started, pid \d+$/.test(lines[0] || ''), `…and the log's FIRST line is the helper's start trace ("${lines[0]}")`);
+      ok(await waitFile(d.result, 30000), '…the helper runs on after the launcher returned, and records its outcome');
+      let rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
+      eq(rec && [rec.result, rec.version, rec.exitCode], ['installer-changed', '4.0.0', 5], 'the record is written by .NET (no ConvertTo-Json) and parses (the fake setup is not the checked one: installer-changed)');
+    }
+    {
+      // A helper PowerShell cannot parse: the boot's catch logs it, the launcher says so, no marker.
+      const d = setup();
+      writeFileSync(d.script, '\uFEFFif ( {\r\n', 'utf8');
+      const r = launch(d);
+      eq([r.status, (r.stdout || '').trim()], [planWin.LAUNCH_EXIT_CODES.exited, `exited ${planWin.HELPER_EXIT_CODES['helper-error']}`], 'an unparseable helper: the launcher reports "exited 9"');
+      ok(/update-install: ERROR, the helper could not run: /.test(readFileSync(d.log, 'utf8')), '…and the parse error is in the log (it used to vanish)');
+      ok(!existsSync(d.started), '…no start marker, so the app would not quit');
+    }
+    {
+      // A terminating error inside the real helper: the trap.
+      const d = setup();
+      const text = realScript(d).replace('Set-StrictMode -Version 2\r\n', "Set-StrictMode -Version 2\r\nthrow 'injected failure'\r\n");
+      writeFileSync(d.script, `\uFEFF${text}`, 'utf8');
+      const r = runPs(forHere(planWin.helperArgs(d.script, { errorLogPath: d.log })));
+      eq(r.status, planWin.HELPER_EXIT_CODES['helper-error'], 'a terminating error in the helper: exit 9');
+      const log = readFileSync(d.log, 'utf8');
+      ok(/update-install: started, pid/.test(log) && /update-install: ERROR at line \d+: injected failure/.test(log), '…logged after the start trace, with its line');
+      let rec = null; try { rec = JSON.parse(readFileSync(d.result, 'utf8')); } catch { /* */ }
+      eq(rec && [rec.result, rec.version, rec.exitCode], ['helper-error', '4.0.0', 9], '…and recorded as helper-error for the reopened app');
+    }
+    {
+      // A helper that never writes its marker: stopped at the deadline, nothing left running.
+      const d = setup();
+      const late = path.join(d.dir, 'late.txt');
+      writeFileSync(d.script, `\uFEFF[Threading.Thread]::Sleep(4000)\r\n[IO.File]::WriteAllText(${planWin.psQuote(late)}, 'still ran')\r\n`, 'utf8');
+      const r = launch(d, { waitSeconds: 1 });
+      eq([r.status, (r.stdout || '').trim()], [planWin.LAUNCH_EXIT_CODES.timeout, 'timeout'], 'no marker in time: the launcher says "timeout"');
+      await new Promise((res) => setTimeout(res, 5000));
+      ok(!existsSync(late), '…and the helper was stopped: it never did anything later');
+    }
+    {
+      // The environment the helper gets.
+      const d = setup();
+      const out = path.join(d.dir, 'env.txt');
+      writeFileSync(d.script, `\uFEFF[IO.File]::WriteAllText(${planWin.psQuote(out)}, (@([Environment]::GetEnvironmentVariables().GetEnumerator() | Where-Object { [string]$_.Value -ne '' } | ForEach-Object { [string]$_.Key }) -join ','))\r\n[IO.File]::WriteAllText(${planWin.psQuote(d.started)}, [string]$PID)\r\n`, 'utf8');
+      const r = launch(d, {}, { ...process.env, PORT: '5555', CURATOR_NO_OPEN: '1', ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--x', CURATOR_KEEP_ME: '1' });
+      eq(r.status, 0, 'a helper that writes its marker: started');
+      const names = readFileSync(out, 'utf8').split(',').map((k) => k.toUpperCase());
+      eq(['PORT', 'CURATOR_NO_OPEN', 'ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS'].filter((k) => names.includes(k)), [], 'the helper does not inherit PORT, CURATOR_NO_OPEN, ELECTRON_*, NODE_OPTIONS (Windows removes them; .NET on Unix leaves them empty)');
+      ok(names.includes('CURATOR_KEEP_ME') && names.some((k) => k === 'PATH'), '…and keeps everything else');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9c the CI rehearsal prints the helper when the update did not complete');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const ci = await import(pathToFileURL(path.join(ROOT, 'scripts', 'ci-win-app.mjs')).href);
+  const L = planWin.helperArgs('C:\\U\\updates\\launch-update.ps1');
+  eq([ci.powershellCallKind(L), ci.powershellCallKind(planWin.helperArgs('C:\\U\\updates\\probe-ab12.ps1')),
+    ci.powershellCallKind(['-Command', planWin.buildVersionCommand('C:\\s.exe')]), ci.powershellCallKind(['-Command', planWin.buildProcessListCommand('C:\\x.exe')])],
+  ['launcher', 'probe', 'version', 'process-list'], 'each PowerShell call the engine makes is named');
+  const script = planWin.buildWin32InstallScript({ ...GOOD, startedPath: 'C:\\U\\updates\\install-update.started' });
+  const out = ci.helperDiagnostics({
+    calls: [{ kind: 'launcher', status: 22, stdout: 'exited 9\r\n', stderr: 'At line:1 char:6\r\n+ if ( {' }],
+    logText: 'a\r\nb\r\nc', resultText: null, startedText: null, scriptText: script,
+  }).join('\n');
+  ok(out.includes('[launcher] exit 22') && out.includes('out: exited 9') && out.includes('err: At line:1 char:6'), 'the launcher\'s exit code, stdout and stderr are printed');
+  ok(/update-install\.log:\n      a\n      b\n      c/.test(out) && out.includes('last-update.json: (none)') && out.includes('install-update.started (the helper PID): (none)'), 'the whole log, and "(none)" for what does not exist');
+  ok(out.includes(script.replace(/^\uFEFF/, '').split('\r\n')[0]) && out.includes('trap {') && /… \(\d+ more lines\)/.test(out),
+    'the HEAD of the generated script is printed (wintest.4 printed only its tail, where nothing had gone wrong)');
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§10 words and source discipline');
