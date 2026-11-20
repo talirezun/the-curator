@@ -111,7 +111,7 @@ const PROBE = (file) => `
   process.stdout.write(JSON.stringify(out));
 `;
 function runProbe(appRoot, home) {
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', PROBE(path.join(appRoot, 'src/brain/paths.js'))],
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', PROBE(pathToFileURL(path.join(appRoot, 'src/brain/paths.js')).href)],
     { env: { ...CLEAN_ENV, HOME: home }, encoding: 'utf8' });
   return { stdout: r.stdout, stderr: r.stderr.replace(/\n.*ExperimentalWarning.*\n?/g, '\n'), status: r.status };
 }
