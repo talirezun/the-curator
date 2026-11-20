@@ -474,7 +474,8 @@ function winDisk({ dirs = [], fail = {}, statFail = {}, readFail = {}, bundle = 
   delete process.env.CURATOR_TEST_DOMAINS_DIR;
   try {
     writeCfg({ domainsPath: '/tmp/curator-not-checked/kb' });
-    eq(gd().dir, '/tmp/curator-not-checked/kb', `CONTROL: on ${process.platform} a configured folder is served exactly as before`);
+    // What the unchanged code (`path.resolve(cfg.domainsPath)`) returns on THIS host: on Windows a rooted POSIX-looking path gains the current drive.
+    eq(gd().dir, path.resolve('/tmp/curator-not-checked/kb'), `CONTROL: on ${process.platform} a configured folder is served exactly as before`);
     writeCfg({ domainsPath: 'relative-kb' });
     eq(gd().dir, path.resolve('relative-kb'), `CONTROL: on ${process.platform} a relative setting still resolves as before (unchanged)`);
   } finally {
@@ -493,6 +494,7 @@ fs.mkdirSync(path.join(tmp, 'Mixed Case'), { recursive: true });
 fs.writeFileSync(path.join(tmp, 'file.txt'), 'x');
 const FAKE_APP = path.join(tmp, 'the-curator');
 for (const dd of ['src', 'domains']) fs.mkdirSync(path.join(FAKE_APP, dd), { recursive: true });
+const POSIX_HOST = process.platform !== 'win32';
 const POSIX_INPUTS = [
   KB, '"' + KB + '"', path.join(tmp, 'con'), path.join(tmp, 'mixed case'), path.join(tmp, 'nope'), path.join(tmp, 'file.txt'),
   FAKE_APP, path.join(FAKE_APP, 'src'), path.join(FAKE_APP, 'domains'), '/', 'relative/x', '', 'C:\\Users\\x', '\\\\nas\\share',
@@ -506,8 +508,12 @@ function runValidate(fn, platform) {
   for (const platform of ['darwin', 'linux']) {
     const out = runValidate(kfp.validateKnowledgeFolderPath, platform);
     ok(out.every((o) => !('code' in o) && !('warnings' in o)), `${platform}: no answer carries the Windows-only fields`);
-    eq(out[0], { ok: true, path: KB }, `${platform}: a non-ASCII folder is applied as typed`);
-    eq(out[2], { ok: true, path: path.join(tmp, 'con') }, `${platform}: a folder named "con" is fine here`);
+    if (POSIX_HOST) {
+      eq(out[0], { ok: true, path: KB }, `${platform}: a non-ASCII folder is applied as typed`);
+      eq(out[2], { ok: true, path: path.join(tmp, 'con') }, `${platform}: a folder named "con" is fine here`);
+    } else {
+      console.log(`  · skipped on ${process.platform}: ${platform}: real-folder cases need a POSIX-shaped folder, which this host cannot have (a ${platform} run covers them)`);
+    }
     eq(out[9].ok, true, `${platform}: "/" is accepted as it always was (no drive-root rule)`);
     eq(out[10].reason, 'not-absolute', `${platform}: relative refused`);
   }
@@ -517,7 +523,9 @@ function runValidate(fn, platform) {
   // Either way the answer is the existing one, never a Windows-style re-casing.
   const typedOtherCase = path.join(tmp, 'mixed case');
   const darwinOther = runValidate(kfp.validateKnowledgeFolderPath, 'darwin')[3];
-  if (fs.existsSync(typedOtherCase)) {
+  if (!POSIX_HOST) {
+    console.log(`  · skipped on ${process.platform}: darwin another-case case needs a POSIX-shaped folder, which this host cannot have`);
+  } else if (fs.existsSync(typedOtherCase)) {
     eq(darwinOther.path, typedOtherCase, 'darwin: a folder typed in another case is applied AS TYPED (unchanged)');
   } else {
     eq([darwinOther.ok, darwinOther.reason, darwinOther.path], [false, 'missing', undefined],
@@ -607,8 +615,12 @@ async function pickWith({ platform, caps, hook, win, disk }) {
   eq([r.res.body.ok, r.res.body.domainsPath, r.res.body.warnings[0].code], [true, longP, 'folder-path-long'], 'domains-path win32: the warning rides the success');
   r = post(path.join(tmp, 'nope'), { platform: 'darwin', appRoot: FAKE_APP });
   eq(Object.keys(r.res.body), ['ok', 'reason', 'error'], 'domains-path darwin: the refusal keeps its three fields');
-  r = post(KB, { platform: 'darwin', appRoot: FAKE_APP });
-  eq(r.res.body, { ok: true, domainsPath: KB }, 'domains-path darwin: the success keeps its two fields');
+  if (POSIX_HOST) {
+    r = post(KB, { platform: 'darwin', appRoot: FAKE_APP });
+    eq(r.res.body, { ok: true, domainsPath: KB }, 'domains-path darwin: the success keeps its two fields');
+  } else {
+    console.log(`  · skipped on ${process.platform}: domains-path darwin success needs a POSIX-shaped folder, which this host cannot have`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
