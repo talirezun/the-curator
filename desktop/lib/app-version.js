@@ -118,8 +118,11 @@ export function repoRootFrom(desktopDir) {
  * `--config.extraMetadata.version` wins here — and then loses at the hook,
  * loudly, which is the right order. Silently ignoring their flag would be
  * worse than refusing it.
+ *
+ * `platform` picks the target: '--win' on win32, '--mac' on every other host
+ * (the Mac argv is unchanged; the third argument defaults to this process).
  */
-export function distArgv(version, passthrough = []) {
+export function distArgv(version, passthrough = [], platform = process.platform) {
   if (typeof version !== 'string' || version.trim().length === 0) {
     throw new Error('distArgv: version must be a non-empty string');
   }
@@ -130,7 +133,9 @@ export function distArgv(version, passthrough = []) {
     );
   }
   return [
-    '--mac',
+    // Windows builds the NSIS installer (electron-builder.yml `win`/`nsis`);
+    // every other host builds the Mac DMGs, exactly as before.
+    platform === 'win32' ? '--win' : '--mac',
     '--config', 'electron-builder.yml',
     `${VERSION_FLAG}=${version}`,
     ...passthrough,

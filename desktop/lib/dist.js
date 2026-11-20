@@ -68,13 +68,33 @@ if (printOnly) {
   process.exit(0);
 }
 
-const bin = path.join(DESKTOP_DIR, 'node_modules', '.bin', 'electron-builder');
+// On Windows the `.bin` shim is a `.cmd`, which Node refuses to spawn without a
+// shell (CVE-2024-27980: EINVAL). So there the CLI's own JavaScript entry runs
+// under this same node, and no shell is involved. Every other host is unchanged.
+const isWin = process.platform === 'win32';
+const bin = isWin
+  ? path.join(DESKTOP_DIR, 'node_modules', 'electron-builder', 'cli.js')
+  : path.join(DESKTOP_DIR, 'node_modules', '.bin', 'electron-builder');
 if (!existsSync(bin)) {
   die('electron-builder is not installed. Run `npm install` inside desktop/ first — ' +
       'the Electron toolchain deliberately lives only in this folder, never in the ' +
       'root manifest that every user\'s auto-updater runs `npm install` against.');
 }
 
+if (isWin) {
+  // The Windows app carries git (MinGit). Fetched and verified against its pin
+  // BEFORE the build, which copies it (electron-builder.yml `win.extraResources`)
+  // and the win32 afterPack re-checks it file by file.
+  const { fetchMinGit } = await import('./fetch-mingit.mjs');
+  try {
+    await fetchMinGit();
+  } catch (err) {
+    die(err.message);
+  }
+}
+
 console.log(`  building The Curator ${version} (from ${path.join(REPO_ROOT, 'package.json')})`);
-const r = spawnSync(bin, args, { cwd: DESKTOP_DIR, stdio: 'inherit' });
+const r = isWin
+  ? spawnSync(process.execPath, [bin, ...args], { cwd: DESKTOP_DIR, stdio: 'inherit' })
+  : spawnSync(bin, args, { cwd: DESKTOP_DIR, stdio: 'inherit' });
 process.exit(r.status === null ? 1 : r.status);
