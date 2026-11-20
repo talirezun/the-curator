@@ -7,8 +7,26 @@ import { getTrashDir } from '../brain/paths.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 import { identityMap, recordDomainIdentities } from '../brain/domain-identity.js';
 import { readHealthSummaries, forgetHealthSummary, renameHealthSummary } from '../brain/health-summary.js';
+import { getDomainsDir } from '../brain/config.js';
+import { classifyFolderError } from '../brain/folder-access.js';
 
 const router = Router();
+
+// The Windows app (2026-11-20). Creating or renaming a domain's folder in the
+// knowledge folder can fail on Windows for reasons a person can act on:
+// Controlled folder access, OneDrive syncing or not running, a read-only
+// folder, an offline share, a path over 260 characters. Those get a plain
+// sentence and a code (src/brain/folder-access.js) instead of a raw errno.
+// Windows only: everywhere else `classifyFolderError` answers null and the
+// existing response is sent unchanged. `_folderHost` is the test seam.
+let _folderHost = null;
+export function __setFolderHostForTest(h) { _folderHost = h ? { ...h } : null; }
+function windowsFolderRefusal(err) {
+  const platform = (_folderHost && _folderHost.platform) || process.platform;
+  const env = (_folderHost && _folderHost.env) || process.env;
+  const c = classifyFolderError(err, { platform, folder: getDomainsDir(), env });
+  return c ? { error: c.message, code: c.code } : null;
+}
 
 // GET /api/domains — list all domains
 router.get('/', async (req, res) => {
@@ -147,6 +165,8 @@ router.post('/', async (req, res) => {
     await recordDomainIdentities();
     res.status(201).json({ slug, displayName: displayName.trim() });
   } catch (err) {
+    const win = windowsFolderRefusal(err);
+    if (win) return res.status(500).json(win);
     // 'reserved' — the shared-* namespace guard in files.js. A user-fixable
     // input problem, so a 400 like the other two, not a 500.
     const status = err.message.includes('already exists') || err.message.includes('Invalid')
@@ -201,6 +221,8 @@ router.put('/:domain', async (req, res) => {
     await renameHealthSummary(oldSlug, newSlug);
     res.json({ oldSlug, newSlug, displayName: displayName.trim(), syncWarning: isConfigured() });
   } catch (err) {
+    const win = windowsFolderRefusal(err);
+    if (win) return res.status(500).json(win);
     const status = err.message.includes('not found') ? 404
                  : err.message.includes('already exists') || err.message.includes('Invalid')
                    || err.message.includes('reserved') ? 400 : 500;

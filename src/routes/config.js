@@ -773,11 +773,12 @@ export function domainsPathHandler(req, res, deps = null) {
   }
   const checked = validateKnowledgeFolderPath(newPath, (deps && deps.validate) || {});
   if (!checked.ok) {
-    return res.status(400).json({ ok: false, reason: checked.reason, error: checked.error });
+    // `code` exists only on Windows' own refusals (src/brain/folder-access.js).
+    return res.status(400).json({ ok: false, reason: checked.reason, error: checked.error, ...(checked.code ? { code: checked.code } : {}) });
   }
   try {
     ((deps && deps.setDomainsDir) || setDomainsDir)(checked.path);
-    res.json({ ok: true, domainsPath: checked.path });
+    res.json({ ok: true, domainsPath: checked.path, ...(checked.warnings ? { warnings: checked.warnings } : {}) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -835,7 +836,27 @@ export async function pickFolderHandler(_req, res, deps = null) {
     : getDesktopHook('pickFolder');
 
   // The ONE set of post-pick rules. Shared by both arms — see the docblock.
+  // On Windows (the browser install's PowerShell dialog AND the Windows app's
+  // Electron dialog) a picked folder also goes through the typed path's
+  // validation, whose Windows rules (src/brain/folder-access.js) a dialog can
+  // reach as easily as a keyboard: the program folder, a whole drive, a
+  // reserved name, a folder Windows will not let the app write to.
+  const onWindows = ((deps && deps.platform) || process.platform) === 'win32';
   const accept = (picked) => {
+    let warnings = null;
+    if (picked && onWindows) {
+      const checked = validateKnowledgeFolderPath(picked, {
+        ...((deps && deps.validate) || {}),
+        platform: 'win32',
+        ...(deps && deps.existsSync ? { existsSync: deps.existsSync } : {}),
+      });
+      if (!checked.ok) {
+        // Never `cancelled` (the frontend reads that first).
+        return res.status(400).json({ ok: false, reason: checked.reason, error: checked.error, ...(checked.code ? { code: checked.code } : {}) });
+      }
+      picked = checked.path;
+      warnings = checked.warnings || null;
+    }
     if (picked) {
       if (!pathExists(picked)) {
         return res.status(400).json({ error: `Folder does not exist: ${picked}` });
@@ -852,7 +873,7 @@ export async function pickFolderHandler(_req, res, deps = null) {
         return res.status(status).json(body);
       }
       applyDomainsDir(picked);
-      res.json({ ok: true, path: picked });
+      res.json(warnings ? { ok: true, path: picked, warnings } : { ok: true, path: picked });
     } else {
       res.json({ cancelled: true });
     }
