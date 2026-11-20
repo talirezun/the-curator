@@ -1028,14 +1028,27 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
     return r;
   };
   const readOrNull = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } };
+  // The helper deletes its script after success and the reopened app's
+  // afterStart sweeps updates\ (v3.99.3-wintest.5 printed "(none)" for files
+  // that had existed): keep the LAST content seen of each, polled while the
+  // update runs, and print that.
+  const seen = {};
+  const keepSeen = () => {
+    for (const n of ['last-update.json', 'install-update.started', 'install-update.ps1', 'launch-update.ps1']) {
+      const t = readOrNull(path.join(updatesDir, n));
+      if (t !== null) seen[n] = t;
+    }
+  };
+  let seenTimer = null;
   const printHelperDiagnostics = () => {
+    keepSeen();
     for (const l of helperDiagnostics({
       calls: psCalls,
       logText: readOrNull(path.join(appSupport(), 'logs', 'update-install.log')),
-      resultText: readOrNull(path.join(updatesDir, 'last-update.json')),
-      startedText: readOrNull(path.join(updatesDir, 'install-update.started')),
-      scriptText: readOrNull(path.join(updatesDir, 'install-update.ps1')),
-      launchText: readOrNull(path.join(updatesDir, 'launch-update.ps1')),
+      resultText: seen['last-update.json'] ?? null,
+      startedText: seen['install-update.started'] ?? null,
+      scriptText: seen['install-update.ps1'] ?? null,
+      launchText: seen['launch-update.ps1'] ?? null,
     })) console.log(l);
   };
   const engine = createUpdateInstaller('win32', {
@@ -1116,7 +1129,23 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
     console.log(`  · the same script through runCommand (how the launcher runs): exit ${r2.status}, marker ${existsSync(marker) ? 'present' : 'absent'}`);
   }
 
+  section('information: can Windows PowerShell hash the setup with Get-FileHash, in the environment the helper gets?');
+  // v3.99.3-wintest.5: the helper (then using Get-FileHash, a function of the
+  // Microsoft.PowerShell.Utility SCRIPT module in 5.1) refused a setup nobody
+  // had touched as "changed". The helper now hashes with .NET; this line says
+  // whether the cmdlet would have worked here. Information only.
+  {
+    const setupFile = path.join(updatesDir, readdirSync(updatesDir).find((n) => /\.exe$/i.test(n)) || 'none.exe');
+    const r = await runCommandWith((c, a, o) => spawn(c, a, { ...o, env }), PS, ['-NoProfile', '-NonInteractive', '-Command',
+      `$ErrorActionPreference = 'Continue'; $c = Get-Command Get-FileHash -ErrorAction SilentlyContinue; 'command: ' + $(if ($c) { $c.CommandType.ToString() + ' from ' + [string]$c.Module.Path } else { 'NOT FOUND' }); try { 'hash: ' + (Get-FileHash -LiteralPath ${psq(setupFile)} -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() } catch { 'hash failed: ' + $_.Exception.Message }; 'PSModulePath: ' + $env:PSModulePath`],
+    { timeoutMs: 120000 });
+    for (const l of String(r.stdout || '').split(/\r?\n/).filter((x) => x.trim())) console.log(`  · ${l.replace(digest, `${digest.slice(0, 16)}… (= the verified SHA-256)`)}`);
+    for (const l of String(r.stderr || '').split(/\r?\n/).filter((x) => x.trim()).slice(0, 6)) console.log(`  · stderr: ${l}`);
+    console.log(`  · exit ${r.status}`);
+  }
+
   section('install, with consent to stop the connection');
+  seenTimer = setInterval(keepSeen, 200);
   const res = await engine.installUpdate({ token: prep.token, stopConnections: true });
   eq([res.ok, res.installing, res.version, res.stoppedConnections], [true, true, toVersion, 1], 'installUpdate: the helper is running and the app quits', JSON.stringify(res));
   const launches = psCalls.filter((c) => c.kind === 'launcher');
@@ -1132,9 +1161,13 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   ok(!!appN1, `${toVersion} is running and answers /api/version`);
   if (appN1) eq([appN1.body.version, appN1.body.installMode], [toVersion, 'bundle'], '/api/version after the update');
   const logFile = path.join(appSupport(), 'logs', 'update-install.log');
-  console.log(existsSync(logFile)
-    ? `  · update-install.log:\n${readFileSync(logFile, 'utf8').split(/\r?\n/).slice(-30).map((l) => `      ${l}`).join('\n')}`
-    : '  · update-install.log: (none: the helper never wrote a line)');
+  // Printed here only when every check so far passed; on a failure the
+  // diagnosis block below prints it whole (once, not twice).
+  if (failures === failuresBeforeHelper) {
+    console.log(existsSync(logFile)
+      ? `  · update-install.log:\n${readFileSync(logFile, 'utf8').split(/\r?\n/).slice(-30).map((l) => `      ${l}`).join('\n')}`
+      : '  · update-install.log: (none: the helper never wrote a line)');
+  }
   const emptied = await waitFor(() => (!existsSync(updatesDir) || readdirSync(updatesDir).length === 0 ? true : null),
     { timeoutMs: 120000, everyMs: 2000 });
   ok(!!emptied, 'updates\\ was emptied by the reopened app (afterStart read the outcome once and tidied)',
@@ -1147,6 +1180,7 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   if (!key) printCuratorUninstallEntries();
   eq([shortcutTarget(sc.desktop), shortcutTarget(sc.startMenu)], targetsBefore, 'both shortcuts are kept, pointing where they did');
 
+  if (seenTimer) clearInterval(seenTimer);
   if (failures > failuresBeforeHelper) printHelperDiagnostics();
 
   section('the data');
