@@ -351,11 +351,18 @@ export function parseAssetDigest(digest) {
  * is how a universal or mislabelled asset gets silently installed on the wrong
  * chip; `null` sends it to `no-asset-for-arch`, which the user can act on.
  */
-export function archFromAssetName(name) {
+export function archFromAssetName(name, opts = {}) {
   if (typeof name !== 'string') return null;
+  // `opts.ext` (v3.100, the Windows app): the installer extension to require.
+  // Absent = '.dmg', so every existing one-argument caller (the Mac resolver,
+  // scripts/publish-dmg-assets.js) gets exactly the answer it got before. The
+  // Windows setup is `TheCurator-X.Y.Z-x64-Windows-Setup.exe`; the same whole
+  // hyphen-token rule applies to it, for the same two reasons recorded above.
+  const ext = opts && typeof opts.ext === 'string' && /^\.[a-z0-9]+$/i.test(opts.ext)
+    ? opts.ext.toLowerCase() : '.dmg';
   const base = name.toLowerCase();
-  if (!base.endsWith('.dmg')) return null;
-  const tokens = base.slice(0, -4).split('-');
+  if (!base.endsWith(ext)) return null;
+  const tokens = base.slice(0, -ext.length).split('-');
   const isArm = tokens.includes('arm64');
   const isX64 = tokens.includes('x64');
   if (isArm && isX64) return null;
@@ -384,12 +391,14 @@ export function archFromAssetName(name) {
 export function pickInstallerAsset(assets, opts = {}) {
   const arch = typeof opts.arch === 'string' ? opts.arch : null;
   const list = Array.isArray(assets) ? assets : [];
+  // Absent = '.dmg' (see archFromAssetName). The Windows resolver passes '.exe'.
+  const ext = typeof opts.ext === 'string' && opts.ext ? opts.ext.toLowerCase() : '.dmg';
 
   const usable = [];
   for (const a of list) {
     if (!a || typeof a !== 'object') continue;
     const name = typeof a.name === 'string' ? a.name : '';
-    if (archFromAssetName(name) !== arch) continue;
+    if (archFromAssetName(name, { ext }) !== arch) continue;
     usable.push({
       name,
       url: typeof a.browser_download_url === 'string' ? a.browser_download_url : null,
@@ -398,7 +407,7 @@ export function pickInstallerAsset(assets, opts = {}) {
     });
   }
 
-  if (!usable.length) return updateFailure('no-asset-for-arch', `no .dmg matched arch=${arch}`);
+  if (!usable.length) return updateFailure('no-asset-for-arch', `no ${ext} matched arch=${arch}`);
 
   const asset = usable[0];
   // HTTPS ONLY, and matched against the host GitHub actually serves release

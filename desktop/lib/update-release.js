@@ -41,6 +41,7 @@
  */
 
 import { pickInstallerAsset, updateFailure } from './update-plan.js';
+import { localizeFailure } from './update-plan-win32.js';
 
 /**
  * @param {object} deps
@@ -48,6 +49,14 @@ import { pickInstallerAsset, updateFailure } from './update-plan.js';
  * @param {Function} deps.fetchImpl
  * @param {string} deps.currentVersion  this build's version
  * @param {string} deps.arch            'arm64' | 'x64'
+ * @param {string} [deps.platform]      the platform this app runs on; absent =
+ *   `process.platform`. It is handed to `pickInstallableRelease` exactly as
+ *   `installerUpdateCheck()` hands it, so Settings' check and this resolver
+ *   name the SAME release on every platform (a Mac never gets an EXE-only
+ *   release, Windows never a DMG-only one). On win32 the asset comes from the
+ *   route's own `installerAssetsFor(raw, 'win32')`, the one definition of "a
+ *   Windows installer"; on every other platform the Mac path below is
+ *   unchanged.
  * @returns {Promise<object>} `{ok:true, …}` or a named `updateFailure`
  */
 export async function resolveInstallerRelease(deps = {}) {
@@ -94,7 +103,12 @@ export async function resolveInstallerRelease(deps = {}) {
   if (!Array.isArray(payload)) return updateFailure('unexpected-response', 'release list is not an array');
 
   // ── DELEGATED: which release. ──
-  const release = cfg.pickInstallableRelease(payload);
+  // The platform travels with the question, as it does in the route's own
+  // `installerUpdateCheck()`. For darwin (and anything not win32) the picker's
+  // answer is byte-identical to the no-argument call this line used to make —
+  // pinned by scripts/test-update-installer.js §3b.
+  const platform = typeof deps.platform === 'string' && deps.platform ? deps.platform : process.platform;
+  const release = cfg.pickInstallableRelease(payload, { platform });
   if (!release) return updateFailure('no-installable-release');
 
   // ── DELEGATED: is it newer than us. ──
@@ -110,7 +124,19 @@ export async function resolveInstallerRelease(deps = {}) {
   const raw = payload.find((r) => r && typeof r === 'object' && String(r.tag_name) === release.tagName);
   if (!raw) return updateFailure('unexpected-response', 'the chosen release vanished from its own payload');
 
-  const picked = pickInstallerAsset(raw.assets, { arch: deps.arch });
+  let picked;
+  if (platform === 'win32') {
+    // The route's own definition of "a Windows installer", never a second
+    // extension list here. Then the same whole-token arch rule, https-only
+    // host check, size and digest parsing the Mac path uses.
+    if (typeof cfg.installerAssetsFor !== 'function') {
+      return updateFailure('unexpected-response', 'the update-check module did not expose installerAssetsFor');
+    }
+    picked = localizeFailure(
+      pickInstallerAsset(cfg.installerAssetsFor(raw, 'win32'), { arch: deps.arch, ext: '.exe' }), 'win32');
+  } else {
+    picked = pickInstallerAsset(raw.assets, { arch: deps.arch });
+  }
   if (!picked.ok) return picked;
 
   return {
