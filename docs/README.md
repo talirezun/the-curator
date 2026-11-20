@@ -119,6 +119,8 @@ every test run, so it cannot quietly drift from the code.
 
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 
+**On Windows?** Use [the Windows app](windows-app.md) (recommended: one `.exe`, its own window, it updates itself and carries its own git) or [the one-line browser installer](install-windows.md).
+
 **On a Mac?** There are two shapes and [Mac App Setup](mac-app.md) covers both: a **downloadable `.dmg` application** (Apple Silicon or Intel — it carries its own runtime, needs no Terminal, and **installs its own updates**), and the **Dock launcher** the one-line installer builds around a checkout. Neither is deprecated. The app is not notarised yet, so a first launch needs a one-time *Open Anyway*; updates it installs for itself do not. Every packaging decision — and, for each, whether code exists yet — is in [the decision record](desktop-app-decisions.md), including [what moving an existing wiki costs you](desktop-app-decisions.md#4-migration-for-existing-users) (short answer: nothing is copied or converted; you re-paste your API key, and you point the app at the folder that *contains* your domains).
 
 ---
@@ -141,6 +143,8 @@ first group applies to all three.
 | [errors.md](errors.md) | Every error message's code, its exact sentence, what it means and what to do; how to read the "Technical detail (for support)" line. Generated from the app's own sentences (v3.99.2) |
 | [system-check.md](system-check.md) | Settings → General → System check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
 | [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, how it downloads and installs its own updates, and the optional menu bar icon) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
+| [windows-app.md](windows-app.md) | The Windows app: installing it (the blue SmartScreen screen), where your notes, keys and settings live, how it updates itself, the tray icon, one-click Claude Desktop, Sync's bundled git, folders on Windows, uninstalling, coexisting with the browser install, and third-party notices |
+| [install-windows.md](install-windows.md) | A one-page handout: the choice between the Windows app and the one-line browser installer, then the browser installer's three steps |
 
 **Layer 1 — your brain** (the personal wiki; knowledge accumulates)
 

@@ -155,7 +155,9 @@ The folder slug is derived automatically from `displayName` (lowercased, special
 | Status | Condition |
 |--------|-----------|
 | `400` | Missing `displayName`; invalid template; domain already exists |
-| `500` | Filesystem write error |
+| `500` | Filesystem write error. **On Windows** (2026-11-20) an error Windows explains (Controlled folder access, OneDrive busy or not running, a read-only folder, an unreachable share, a path too long) is `{error, code}` with a plain sentence and a [catalogue code](errors.md#choosing-a-folder-on-windows); the same applies to `PUT /api/domains/:domain` |
+
+On Windows a name Windows reserves (`CON`, `NUL`, `COM1` …) is treated as taken, so it becomes `con-2`; a name whose folder exists in another case gets the next suffix too.
 
 ---
 
@@ -3130,7 +3132,7 @@ that setter, so its own resolution is unchanged. See
 | `GET /api/mcp/claude-config` | *(Legacy — no longer called by the app; kept for compatibility.)* The entry-only snippet, nothing else. Always valid, in every state. |
 | `GET /api/mcp/claude-full-config` | *(Legacy — no longer called by the app; kept for compatibility.)* Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
 | `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
-| `POST /api/mcp/write-config` | *(Legacy — no longer called by the app; kept for compatibility.)* **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
+| `POST /api/mcp/write-config` | *(Legacy — no longer called by the app; kept for compatibility.)* **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. **On Windows** (2026-11-20) it writes nothing and reads nothing: **409** `{ok: false, refused: 'use_install_for_me', error, written: false}`, the sentence pointing at Install for me (Settings → MCP bridge), which finds the right file (the Microsoft Store build keeps it elsewhere) and checks Claude Desktop is closed. The old wizard's reads of Claude Desktop's file use `%APPDATA%\Claude\claude_desktop_config.json` there (`<home>\AppData\Roaming` when `APPDATA` is unset). ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
 | `GET /api/mcp/config` *(`bridge_processes`, v3.64.0; reshaped v3.88.0)* | `bridge_processes: {checked, reason, running, stale, codeChangedAt, serverPath, current, bridges}` and `bridge_stale_remedy` (unchanged). A **read-only** reading from `ps` over a fixed argv with no shell (Windows: PowerShell `Get-CimInstance`; both unmeasured on real machines). **`checked: false` means the reading was not taken** and carries `reason`; it must never be rendered as "no stale bridge". **v3.88.0: `stale` keeps its shape (`[{pid, startedAt, ageMs}]`) but now lists ONLY bridges whose tool list is proven different** (`tools: "different"`); it used to list every bridge started before the files' mtime. `current` is `{version, toolsHash, toolCount}`. Each `bridges[]` entry: `{pid, startedAt, ageMs, app:{id, label, via, checked, bundle?}, client, version, toolsHash, tools, olderThanCode, notice, remedy}`. `app.id` is a harness id or `null`; `via` is `"app"`, `"cli"` or `"self-test"`; `checked:false` gives label "an app". `tools` is `"same"`, `"different"` or `"unknown"` (a bridge started before v3.88.0 has no hash), decided from the tool-list hash, never mtimes. `notice` is decided by the backend: `"warn"` (different), `"soft"` (unknown and started before the code changed), `"quiet"` (same tools, other version), `"none"`. `remedy` (from `staleRemedyFor`) names the quit step — macOS "Quit {App} (⌘Q — closing the window is not enough) and reopen it." (Claude Desktop adds that this ends Claude Code sessions in its Code tab); a CLI parent gets "End that Claude Code session…"; it is `null` for `quiet` and `none`. Each bridge writes `pid`, `version` and `toolsHash` on its content-free session line. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
@@ -3296,9 +3298,16 @@ only), one check at a time (**409** `busy`). The server resolves the app's own c
 `mcpServers["my-curator"]` from each (no other server in the file is touched), and starts it with
 `initialize` + `tools/list` — but only when the command is The Curator's own launcher with no arguments,
 or an absolute `node` / `node.exe` whose arguments are exactly THIS install's `mcp/server.js` and,
-optionally, `--domains-path <absolute path>`. Anything else is refused in words without starting
+optionally, `--domains-path <absolute path>`. **In the Windows app only** (2026-11-20, its own launch
+line is `app-binary`) a third shape is accepted: `{command: <this app's own The Curator.exe>, args:
+[<this install's mcp\server.js>], env: {"ELECTRON_RUN_AS_NODE": "1"}}`, both paths in their canonical
+drive-letter spelling, the same files as this process's own (case ignored, file identity checked), no
+other argument and exactly that `env`. Another install's exe, a copy, a renamed one or any other `env`
+is refused (`other_install` / `not_allowed`). Anything else is refused in words without starting
 anything. The entry's own `env` is never used; the child runs with an allow-listed environment and
-`CURATOR_MCP_VIA=self-test`, a timeout of 8 s, capped output, and is killed as soon as it answers.
+`CURATOR_MCP_VIA=self-test` (plus `ELECTRON_RUN_AS_NODE=1`, set by the checker itself, for shape (c)
+only), a timeout of 8 s, capped output, and is killed as soon as it answers. `shape` in a result is
+`"launcher"`, `"node"` or `"app-binary"`.
 
 ```json
 { "ok": true, "id": "claude-desktop", "label": "Claude Desktop", "checkedAt": "2026-11-01T16:44:20.000Z",
@@ -3320,7 +3329,11 @@ resolve, and the `claude-desktop` row gains the fields below. Every other tool i
 reason `platform_unsupported` and `files: []`, and has no `candidates`. Paths are shown as
 `%LOCALAPPDATA%\…`, `%APPDATA%\…` or `%USERPROFILE%\…` (not `~`); `files[].file` stays absolute. The
 entry is `{command: <absolute node>, args: [mcp/server.js, --domains-path, <folder>]}` with no `env`
-(a user's own extra keys are ignored when deciding `connected`).
+(a user's own extra keys are ignored when deciding `connected`). **In the Windows app** (2026-11-20)
+the entry is `{command: <…\The Curator.exe>, args: [<…\resources\app\mcp\server.js>], env:
+{ELECTRON_RUN_AS_NODE: "1"}}`, and an entry without that `env` is not `connected` (it would open a
+second copy of the app). The plan is refused like a missing launcher (`launcherState`) when the exe
+runs from Downloads or a temporary folder, or a launch file is missing.
 
 ```jsonc
 // on the claude-desktop row, win32 only
@@ -6298,6 +6311,19 @@ typed-path fallback beside the folder picker), `{"ok": false, "reason", "error"}
 `inside-app` (the app's own checkout or anything in it, judged on the real path, except the checkout's
 own `domains` folder). The folder must already exist; this route does not create one.
 
+**On Windows** (2026-11-20, the browser install and the Windows app alike) more refusals, each
+carrying a `code` from the published catalogue ([errors.md → Choosing a folder on Windows](errors.md#choosing-a-folder-on-windows)):
+`invalid` + `folder-device-path` (`\\?\…`, `\\.\…`) · `drive-root` + `folder-drive-root` ·
+`reserved-name` + `folder-reserved-name` (CON … LPT9, or a name ending in a dot or space, anywhere in
+the path) · `too-long` + `folder-path-too-long` (over 247 characters) · `missing` +
+`folder-network-unreachable` (an unreachable share) · `inside-app` + `folder-inside-app` (in the
+Windows app: its whole program folder, no `domains` exception) · `not-writable` +
+`folder-protected-by-windows` | `folder-not-writable` | `folder-cloud-busy` | `folder-busy` |
+`folder-cloud-unavailable` (a test file could not be written) · `unreadable` with one of those codes.
+A path over 120 characters is accepted with `"warnings": [{"code": "folder-path-long", "message": "…"}]`
+beside `ok` and `domainsPath`. A folder typed in another case is applied (and returned) under its real
+name. macOS and Linux bodies are unchanged and never carry `code` or `warnings`.
+
 **Refusal response** `409` — behind `guardConcurrent('change the knowledge folder')`, so it refuses
 while an ingest, sync or update is in flight. Moving the knowledge folder out from under a running
 write is exactly the case that guard exists for.
@@ -6332,6 +6358,12 @@ field beside every picker refusal. No body.
 
 **Error response** `400` — `{"error": "Folder does not exist: ..."}` ·
 **Refusal response** `409` — an in-flight write.
+
+**On Windows** (2026-11-20; the PowerShell dialog of the browser install and the Electron dialog of
+the Windows app) a picked folder goes through the same Windows rules as a typed one (see
+[`domains-path`](#post-apiconfigdomains-path)): a refusal is `400 {ok: false, reason, error, code}`
+(never `cancelled`), and a long path is accepted as `{ok: true, path, warnings: [{code: "folder-path-long", message}]}`.
+Elsewhere the bodies are unchanged.
 
 ⚠️ **This route is a mutation, not a path-returning helper.** It calls `setDomainsDir()` itself; it
 does not hand a path back for the client to submit to `/domains-path`.
@@ -7756,7 +7788,11 @@ a claim this route cannot verify.
 
 ## POST /api/config/update/apply
 
-Swap the staged bundle in and relaunch. No body.
+Swap the staged bundle in and relaunch. No body, except in the Windows app: `{"stopConnections": true}`
+(strictly the boolean `true`) means the person agreed, on the screen that offered **Close the
+connection and update**, to let the updater stop Claude Desktop's MCP bridge, which keeps a copy of
+`The Curator.exe` running and so stops the installer replacing it. Any other body, or none, calls the
+hook exactly as before.
 
 **Why this is a second request.** The download takes minutes; an ingest started *during* it would be
 truncated by a relaunch authorised before it began. `hasActiveWrites()` is therefore re-checked
@@ -7783,7 +7819,7 @@ app is still running.
 | `409` | `conflictResponse('restart to finish the update')` | a wiki write is in flight — `guardConcurrent` on the registration *and* a re-check inside the handler |
 | `412` | `{error, reason: "nothing-staged"}` | there is no staged update. **`412` and not `409`**: every `409` in this app means *somebody else is using this, try later*, and waiting will never make this one true. It carries no `conflict` field, so it cannot be mistaken for a queue to wait in. |
 | `501` | `{error, hint, reason: "no-updater", refused: "updater_unavailable"}` | no `installUpdate` hook is attached |
-| `500` | `{error, hint, reason, releasesPageUrl}` | the swap failed. The job goes back to **`staged`**, not `failed` — the verified bundle is still on disk, so *downloaded, not yet installed* is the true state and the finish button is still the right offer. |
+| `500` | `{error, hint, reason, releasesPageUrl}` | the swap failed. The job goes back to **`staged`**, not `failed` — the verified bundle is still on disk, so *downloaded, not yet installed* is the true state and the finish button is still the right offer. In the Windows app, `reason: "in-use-by-ai-app"` also carries `connections` (an integer, 1–1000) and `canStopConnections: true` when the updater can stop those connections itself; that is what makes the screen offer **Close the connection and update**. Only that count and flag are relayed, never a process id or a path. The Windows sentences are in [errors.md → Updating the Windows app](errors.md#updating-the-windows-app). |
 
 ---
 

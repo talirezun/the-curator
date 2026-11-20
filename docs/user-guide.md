@@ -270,19 +270,19 @@ flowchart TD
 
 ### Two ways to run it — and they are the same program
 
-There is now a **Mac app** as well as the original **browser install**. They are not two products and not a fork: one codebase, one release, two shells. The Mac app is a window wrapped around the identical server the browser install runs, so **every screen in this guide looks the same in both**.
+There is a **Mac app**, a **Windows app** and the original **browser install**. They are not separate products and not a fork: one codebase, one release, several shells. Each app is a window wrapped around the identical server the browser install runs, so **every screen in this guide looks the same in all of them**. The Windows app follows the Mac app's column below; where it differs, [windows-app.md](windows-app.md) says so.
 
 Exactly four things genuinely differ — how it launches, how it updates, where its data lives, and how it starts the MCP bridge. Each is called out where it comes up, and there is a summary in [§3b](#3b-the-mac-app-and-the-browser-install).
 
-| | **The Mac app** | **The browser install** |
-|---|---|---|
-| What you get | A `.dmg` you drag to Applications | A folder on your disk running a local server |
-| Platforms | macOS only | macOS, Windows, Linux |
-| Node.js | Bundled — nothing to install | Installed for you on Mac and Windows by the one-line installers; on Linux you install it |
-| Where the UI appears | Its own window, with its own title bar | A tab at `http://localhost:3333` |
-| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu — which since v3.41.0 opens its own small progress window | Applied in place from **Settings**, or `git pull` (on Windows: also the one-line installer again) |
-| Your data lives in | `~/Library/Application Support/The Curator/` | Your install folder (default `~/the-curator/`) |
-| Status today | **Preview.** No Apple identity yet, so macOS asks you to allow it once — on the **first** install only | Mature, fully supported, and **not** being retired |
+| | **The Mac app** | **The Windows app** | **The browser install** |
+|---|---|---|---|
+| What you get | A `.dmg` you drag to Applications | A setup `.exe` you double-click | A folder on your disk running a local server |
+| Platforms | macOS only | Windows 10 and 11, 64-bit (x64) | macOS, Windows, Linux |
+| Node.js and git | Bundled Node.js; git from macOS | Both bundled — nothing to install | Installed for you on Mac and Windows by the one-line installers; on Linux you install them |
+| Where the UI appears | Its own window, with its own title bar | Its own window | A tab at `http://localhost:3333` |
+| Updating | **The app installs its own updates** from **Settings**, or the **The Curator → Check for Updates…** menu — which since v3.41.0 opens its own small progress window | **The app installs its own updates** from **Settings**, or **Help → Check for Updates…** | Applied in place from **Settings**, or `git pull` (on Windows: also the one-line installer again) |
+| Your data lives in | `~/Library/Application Support/The Curator/` | `%LOCALAPPDATA%\TheCurator\App` | Your install folder (default `~/the-curator/`) |
+| Status today | **Preview.** No Apple identity yet, so macOS asks you to allow it once — on the **first** install only | **New.** Not code-signed yet, so Windows shows "Windows protected your PC" once — **More info → Run anyway** | Mature, fully supported, and **not** being retired |
 
 ### Platform support
 
@@ -290,9 +290,17 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 |---|---|---|---|
 | **macOS** | ✅ Preview — see [§3](#the-mac-app-macos-only) | ✅ Recommended (`install.sh`, in Terminal) | ✅ Works |
 | **Linux** | ❌ | ❌ — the Mac script checks for Darwin | ✅ Works (`CURATOR_NO_OPEN=1 npm start`) |
-| **Windows** | ❌ (no `.exe` app yet) | ✅ **Recommended** (`install.ps1`, in PowerShell) — see [Windows: one-line installer](#windows-one-line-installer) | ✅ Works for technical users (you install Node and git yourself) |
+| **Windows** | ✅ **The Windows app** (`.exe`, recommended) — see [Windows: the Windows app](#windows-the-windows-app-recommended) | ✅ Also supported (`install.ps1`, in PowerShell) — see [Windows: one-line installer](#windows-one-line-installer) | ✅ Works for technical users (you install Node and git yourself) |
 
-> There is no Windows or Linux *app*: on those systems The Curator is a local server you open in your browser. The Mac installer builds a `.app` Dock launcher; the Windows installer instead makes two shortcuts, **The Curator** and **Stop The Curator**. The Curator's *core* (Express + Node) is fully cross-platform. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. **Install for me** (MCP bridge) works on macOS and, for Claude Desktop only, on Windows. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
+**Which one to pick, in one line per computer:**
+
+| Your computer | Install | Guide |
+|---|---|---|
+| **Mac** | The Mac app | [§3 → The Mac app](#the-mac-app-macos-only) · [mac-app.md](mac-app.md) |
+| **Windows** | The Windows app (recommended), or the one-line browser installer | [windows-app.md](windows-app.md) · [install-windows.md](install-windows.md) |
+| **Linux** | Manual install, or let your coding agent do it | [Manual setup](#manual-setup-alternative--linux-or-technical-users-on-mac-and-windows) · [§20](#20-install-with-a-coding-agent) |
+
+> There is no Linux *app*: on Linux The Curator is a local server you open in your browser. The Mac installer builds a `.app` Dock launcher; the Windows one-line installer makes two shortcuts, **The Curator** and **Stop The Curator**. The Curator's *core* (Express + Node) is fully cross-platform. The **Choose folder** picker in Settings → Knowledge base opens on macOS, on Windows (Windows' own folder dialog, in the app and in the browser install) and on Linux (with `zenity`, `kdialog` or `yad`); wherever it cannot open, paste the folder's path instead, or set `DOMAINS_PATH`. **Install for me** (MCP bridge) works on macOS and, for Claude Desktop only, on Windows. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
 
 > **Prefer a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
 
@@ -369,6 +377,28 @@ When it finishes, the app opens automatically in your browser. A **Getting start
 > ⚠️ **Pin The Curator to your Dock manually.** The installer puts **The Curator.app** inside `~/the-curator/` but does **not** add it to your Dock automatically. Open Finder → `~/the-curator/` → drag **The Curator** icon down into your Dock. From now on, one click launches everything.
 
 > You only need to run the install command **once**. After that, click The Curator in your Dock to launch the app.
+
+### Windows: the Windows app (recommended)
+
+A normal Windows program in its own window. It carries its own runtime **and its own git**, so Sync works with nothing else installed. The full guide is **[windows-app.md](windows-app.md)**; this is the short version.
+
+| Step | What you do |
+|---|---|
+| 1. Download | From the newest release on the [Releases page](https://github.com/talirezun/the-curator/releases): **`TheCurator-<version>-x64-Windows-Setup.exe`** (64-bit Windows 10 or 11) |
+| 2. Allow it | Double-click it. The blue **"Windows protected your PC"** screen appears because the app is not code-signed yet: click **More info → Run anyway** |
+| 3. Install | **Welcome → Next**, wait, then **Finish** with **Run The Curator** ticked. No administrator prompt, no folder to choose |
+| 4. Use it | The app opens and its [Getting started panel](#5-first-run--the-getting-started-panel) takes over |
+
+| | Where |
+|---|---|
+| The program | `%LOCALAPPDATA%\Programs\The Curator` (replaced by updates) |
+| Your notes, keys and settings | `%LOCALAPPDATA%\TheCurator\App` (never touched by an update or an uninstall) |
+| Updates | **Settings → General → Software update → Check for updates**, or **Help → Check for Updates…**: it downloads, checks, installs and reopens ([details](windows-app.md#updating)) |
+| Tray icon | Optional, in **Settings → General → Tray icon** ([details](windows-app.md#the-tray-icon)) |
+| Claude Desktop | One click: **Settings → MCP bridge → Install for me** ([details](windows-app.md#connecting-claude-desktop-one-click)) |
+| Uninstall | **Settings → Apps → Installed apps → The Curator → Uninstall**; your data stays ([details](windows-app.md#uninstalling)) |
+
+Already using the one-line installer? Both can be installed at once; [windows-app.md § Switching from the browser install](windows-app.md#switching-from-the-browser-install) shows how to open your existing notes in the app.
 
 ### Windows: one-line installer
 
@@ -481,7 +511,7 @@ The installer is a PowerShell command, not a downloaded `.exe` file, so you shou
 1. Double-click **Stop The Curator**.
 2. **Back up `%USERPROFILE%\the-curator\domains` first** — that folder is your knowledge, and deleting `the-curator` deletes it. Copy it somewhere safe (or into Obsidian's vault location) before you continue.
 3. Delete the **The Curator** and **Stop The Curator** icons from the Desktop, and the **The Curator** folder from the Start menu (it holds the same two icons).
-4. Delete the folder `%LOCALAPPDATA%\TheCurator`.
+4. Delete the folder `%LOCALAPPDATA%\TheCurator\runtime` (the browser install's private Node.js and git) and `%LOCALAPPDATA%\TheCurator\logs`. **If the [Windows app](#windows-the-windows-app-recommended) is not installed**, you can delete the whole `%LOCALAPPDATA%\TheCurator` folder instead; if it is, never do that, because the app keeps its notes, keys and settings in `%LOCALAPPDATA%\TheCurator\App`.
 5. Delete the folder `%USERPROFILE%\the-curator`.
 
 ### Manual setup (alternative — Linux, or technical users on Mac and Windows)
@@ -601,6 +631,12 @@ same job.
 | Chat history and conversations | Press **Install for me** in Settings → MCP bridge, if you use it | No file is deleted or rewritten |
 | Working state (agent handoffs) | | Your browser install is not modified or removed |
 | Your Obsidian vault and graph colours | | |
+
+> **On Windows it is the same three steps in the Windows app.** The browser install's folder is
+> `%USERPROFILE%\the-curator\domains`; double-click **Stop The Curator** first, so only one of them
+> writes to it. Reconnecting Sync to the same repository carries on with the browser install's sync
+> history rather than starting a second one. The whole walk-through:
+> [windows-app.md § Switching from the browser install](windows-app.md#switching-from-the-browser-install).
 
 **There is no automatic first-launch import, deliberately.** The app does not go looking
 for an existing install; it starts empty and waits for you to point it somewhere. So on
@@ -777,6 +813,20 @@ during a paid, multi-minute write just because a check came back unclear.
 > not change any of the quit behaviour above: **Quit** in the menu bar runs the same
 > work-in-progress check that ⌘Q does.
 
+### The Windows app
+
+Open **The Curator** from the Start menu or the Desktop. Like the Mac app it opens in its own window on a free address of its own, and only one copy runs at a time.
+
+| You do… | Tray icon **off** (the default) | Tray icon **on** |
+|---|---|---|
+| Close the window (**X**) | The app **quits**, and asks first (**Quit now?**) if a write is in progress | The window **hides**; the app keeps running in the tray |
+| Click the tray icon (left button) | — | The window comes back |
+| Right-click the tray icon | — | The tray menu, with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)) |
+| **File → Exit**, or **Quit** in the tray menu | The app quits, with the same work-in-progress check | The same |
+| Open The Curator a second time | The existing window comes forward | The same |
+
+The menu is **File** (Settings, Exit) · Edit · View · Window · **Help** (Check for Updates…, About The Curator). The tray icon is switched on in **Settings → General → Tray icon**. More in [windows-app.md](windows-app.md#the-tray-icon).
+
 ### The browser install — macOS Dock launcher
 
 Click **The Curator** icon in your Dock. It starts the local server and opens in your browser automatically.
@@ -785,7 +835,7 @@ Click **The Curator** icon in your Dock. It starts the local server and opens in
 
 ### The browser install — Windows
 
-Double-click **The Curator** (Desktop or Start menu). To stop it, double-click **Stop The Curator**. Full detail in [§3 → Windows: one-line installer](#windows-one-line-installer).
+Double-click **The Curator** (Desktop or Start menu; it is named **The Curator (browser)** when the Windows app is installed too). To stop it, double-click **Stop The Curator**. Full detail in [§3 → Windows: one-line installer](#windows-one-line-installer).
 
 ### The browser install — manual / Linux
 
@@ -818,7 +868,9 @@ It is a **local web app** — a small Express server runs on your machine and re
 
 ## 6b. The menu bar icon (Mac app)
 
-*Mac app only. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
+*Mac app, and the Windows app as a **tray icon**. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
+
+> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left-click** opens the window and a **right-click** opens the menu; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. **Hide the Dock icon** reads **Hide the taskbar button** there, and the taskbar button stays for now. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
 
 ### The one question it answers
 
@@ -7042,6 +7094,19 @@ updates reach that install.
 >
 > If the version badge shows **restart** next to it, files were updated but the running process hasn't been relaunched yet. Quit The Curator (right-click the Dock icon → **Quit**) and start it again.
 
+#### The Windows app — it updates itself
+
+The same screens as the Mac app below, from **Settings → General → Software update → Check for updates** or **Help → Check for Updates…**. What happens underneath is Windows' own:
+
+| Step | What happens |
+|---|---|
+| **Download and install** | The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 against what GitHub publishes for it, and its version against the one offered |
+| **Restart and finish** | The app closes, the setup program runs silently, and The Curator opens again on the new version |
+| If Claude Desktop is connected | The update stops before changing anything. **Close the connection and update** ends that connection and installs; or quit Claude Desktop and press **Restart and finish** again |
+| If it does not finish | A message box says so, and the app says it again when it next opens. Your data is never in the program folder; running the installer from the Releases page repairs the app |
+
+Every message is listed in [errors.md → Updating the Windows app](errors.md#updating-the-windows-app). The details, including what has not yet been measured on a real PC, are in [windows-app.md § Updating](windows-app.md#updating).
+
 #### The Mac app — it updates itself
 
 **You do not go back to the Releases page.** That is a first install only.
@@ -7312,10 +7377,17 @@ and that choosing a new folder **points** The Curator at it rather than copying 
 moving anything — the move itself is yours to make in Finder.
 
 The block itself is one row: the path in monospace, a filled **Choose folder**
-(macOS only) and a plain **Copy** to paste the path into Obsidian. Under it, one
+(it opens the system's folder dialog on macOS, Windows and Linux; where none can open, a
+field to paste the path appears) and a plain **Copy** to paste the path into Obsidian. Under it, one
 visible line — *"Moving this folder loses nothing; the graph is picked up as-is."*
 That one stays in the open on purpose: it is the reassurance that makes the button
 safe to press, not an explanation.
+
+> **On Windows** a chosen or pasted folder is also checked against Windows' own rules: OneDrive,
+> Controlled folder access, long paths, reserved names (CON, NUL…), a whole drive, a network share,
+> and, in the Windows app, its own program folder. A refusal says what is wrong and that nothing
+> was changed; the list is in [errors.md → Choosing a folder on Windows](errors.md#choosing-a-folder-on-windows)
+> and what to do about each in [windows-app.md § Choosing a folder](windows-app.md#choosing-a-folder).
 
 Since v3.66.0 the block also shows **Domains in this folder** — one line per
 domain, its page count, largest first, each bar in that domain's own [identity

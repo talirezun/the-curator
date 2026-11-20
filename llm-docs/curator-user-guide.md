@@ -4,13 +4,21 @@
 
 | Requirement | Detail |
 |---|---|
-| Computer | macOS, Windows or Linux. The packaged Mac app is macOS only. |
+| Computer | macOS, Windows or Linux. There is a Mac app and a Windows app; Linux uses the browser install. |
 | AI provider key | One key from Google Gemini, Anthropic Claude or OpenRouter. Nothing works without one. |
-| Node.js 18 or later | Not needed for the Mac app, which bundles its own. Needed for the browser install; the one-command installer puts it in for you on a Mac. |
+| Node.js 18 or later | Not needed for the Mac app or the Windows app, which bundle their own. Needed for the browser install; the one-line installers put it in for you on a Mac and on Windows. |
 | Obsidian | Optional, free, for the visual graph: https://obsidian.md |
-| git | Needed for Personal Sync and for updating a browser install. |
+| git | Needed for Personal Sync and for updating a browser install. The Windows app carries its own; the Mac app uses the Mac's. |
 
-There are two ways to run The Curator and they are the same program, one codebase and one release. The **Mac app** is a window around the same local server the **browser install** runs, so every screen looks the same in both. Four things differ: how it launches, how it updates, where its data lives by default, and how it starts the MCP bridge.
+Which install to use, by computer:
+
+| Computer | Use | Where |
+|---|---|---|
+| Mac | The Mac app | The Releases page, next question |
+| Windows | The Windows app (recommended), or the one-line browser installer | See "How do I install the Windows app?" and "How do I install it on Windows?" |
+| Linux | The manual install, or let your coding agent do it | See "How do I install it on Linux?" |
+
+There are several ways to run The Curator and they are the same program, one codebase and one release. The **Mac app** and the **Windows app** are each a window around the same local server the **browser install** runs, so every screen looks the same in all of them. Four things differ: how it launches, how it updates, where its data lives by default, and how it starts the MCP bridge.
 
 ## How do I install the Mac app?
 
@@ -55,9 +63,27 @@ The installer detects and installs Node.js and git if they are missing, download
 
 It does not add the app to your Dock for you. Open Finder, go to `~/the-curator/`, and drag **The Curator** into your Dock. From then on one click launches everything. You run the install command once.
 
+## How do I install the Windows app?
+
+1. Open the Releases page, https://github.com/talirezun/the-curator/releases , and download `TheCurator-<version>-x64-Windows-Setup.exe` from the newest release. It needs 64-bit (x64) Windows 10 or 11; there is no ARM build yet.
+2. Double-click it. Windows shows a blue screen, **"Windows protected your PC"**, because the installer is not code-signed yet. Click **More info**, then **Run anyway**. This happens once, on the first install.
+3. The installer has three pages: **Welcome** (click **Next**), installing (wait), and **Finish** with **Run The Curator** ticked (click **Finish**). The app opens in its own window and its Getting started panel takes over.
+
+There is no administrator prompt, no folder to choose, nothing else to download and no terminal: the app carries its own Node.js and its own git. It installs for your Windows account only, in `%LOCALAPPDATA%\Programs\The Curator`, with a **The Curator** shortcut on the Desktop and in the Start menu.
+
+| What | Where |
+|---|---|
+| Your knowledge, API keys, settings and Sync history | `%LOCALAPPDATA%\TheCurator\App` (the knowledge in `App\domains`, unless you choose another folder). Never touched by an update or an uninstall. |
+| Logs | `%LOCALAPPDATA%\TheCurator\logs\curator.log` |
+| The bundled git (for Sync) | MinGit 2.56.1 from Git for Windows, inside the program folder. You do not need Git for Windows. It never opens a sign-in window. |
+
+**Uninstall:** Settings, Apps, Installed apps (Windows 10: Apps & features), **The Curator**, Uninstall. That removes the program and its shortcuts only; your data stays in `%LOCALAPPDATA%\TheCurator\App`, so installing again brings everything back. To remove your data too, delete that `App` folder. Do not delete the whole `%LOCALAPPDATA%\TheCurator` folder if you also have the browser install: its private Node.js and git are there.
+
+**Folders on Windows.** When you choose a knowledge folder, the app checks it against Windows' rules and says in plain words what is wrong and that nothing was changed: OneDrive busy or not running, Windows Security's Controlled folder access blocking Documents, Desktop, Pictures, Music or Videos (choose another folder, or allow The Curator in Windows Security, Virus and threat protection, Manage ransomware protection, Allow an app through Controlled folder access), a path over 247 characters (a warning over 120), a reserved name such as CON or NUL, a whole drive such as `D:\`, an unreachable network folder, a read-only folder, or the app's own program folder.
+
 ## How do I install it on Windows?
 
-Use the one-line installer. It needs no administrator rights, and you do not install Node.js or git first. Press Start, type `PowerShell`, and open **Windows PowerShell** (not Command Prompt). Paste this and press Enter:
+There are two ways, and both need no administrator rights: **the Windows app** (recommended; see the previous question) or the **one-line browser installer**, which runs The Curator in a browser tab. For the browser installer you do not install Node.js or git first. Press Start, type `PowerShell`, and open **Windows PowerShell** (not Command Prompt). Paste this and press Enter:
 
 ```
 irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex
@@ -65,7 +91,11 @@ irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | i
 
 The command is the single line `irm https://raw.githubusercontent.com/talirezun/the-curator/main/install.ps1 | iex`.
 
-It takes about 2 to 5 minutes and needs 64-bit Windows 10 (1809 or newer) or Windows 11 and about 500 MB of free disk space. It downloads its own private Node.js (version 24 LTS) and git (checked against fixed checksums), puts the app in `%USERPROFILE%\the-curator`, and opens The Curator in your browser, where the first-run panel takes over. It leaves two icons, each on the Desktop and in the Start menu folder **The Curator**: **The Curator** starts the app and opens it, and **Stop The Curator** stops it. Your knowledge lives in `%USERPROFILE%\the-curator\domains`. To update, press Update in Settings or run the same command again; that repairs and updates the install, restarts the app if it was running, and never touches your notes, keys or settings (it leaves edited program files alone and says so). If the app uses a port other than 3333, put `PORT=3334` in the `.env` file in `%USERPROFILE%\the-curator`. Logs are in `%LOCALAPPDATA%\TheCurator\logs` (`server.log`, `install.log`). The installer stops with a plain message for: PowerShell locked down by an organisation (Constrained Language Mode or a script policy), 32-bit or too-old Windows, under 500 MB free, a different signed-in account, or a program such as Claude Desktop still using its Node.js (quit it and re-run); the icons report a busy or Windows-reserved port, and an antivirus block of `node.exe`. If `irm` is "not recognized", you are in Command Prompt instead of PowerShell. There is no Windows `.exe` app yet.
+It takes about 2 to 5 minutes and needs 64-bit Windows 10 (1809 or newer) or Windows 11 and about 500 MB of free disk space. It downloads its own private Node.js (version 24 LTS) and git (checked against fixed checksums), puts the app in `%USERPROFILE%\the-curator`, and opens The Curator in your browser, where the first-run panel takes over. It leaves two icons, each on the Desktop and in the Start menu folder **The Curator**: **The Curator** starts the app and opens it, and **Stop The Curator** stops it. Your knowledge lives in `%USERPROFILE%\the-curator\domains`. To update, press Update in Settings or run the same command again; that repairs and updates the install, restarts the app if it was running, and never touches your notes, keys or settings (it leaves edited program files alone and says so). If the app uses a port other than 3333, put `PORT=3334` in the `.env` file in `%USERPROFILE%\the-curator`. Logs are in `%LOCALAPPDATA%\TheCurator\logs` (`server.log`, `install.log`). The installer stops with a plain message for: PowerShell locked down by an organisation (Constrained Language Mode or a script policy), 32-bit or too-old Windows, under 500 MB free, a different signed-in account, or a program such as Claude Desktop still using its Node.js (quit it and re-run); the icons report a busy or Windows-reserved port, and an antivirus block of `node.exe`. If `irm` is "not recognized", you are in Command Prompt instead of PowerShell. When the Windows app is also installed, the browser install's shortcut is named **The Curator (browser)**.
+
+## Can I have the Windows app and the browser install on the same PC?
+
+Yes. They keep separate settings and copy nothing from each other: the app's data is in `%LOCALAPPDATA%\TheCurator\App`, the browser install's in `%USERPROFILE%\the-curator`. To open your existing notes in the app: double-click **Stop The Curator**; in the app, **Settings → Knowledge base → Choose folder** and pick `%USERPROFILE%\the-curator\domains` (nothing is copied or moved); paste your API key again in Settings; if you used Personal Sync, connect Sync in the app to the same repository with a GitHub token, and the app carries on with the browser install's sync history instead of starting a second one; then press **Install for me** in **Settings → MCP bridge** so Claude Desktop uses the app. Run only one of them at a time: two installs writing into one folder can get in each other's way, and the app warns "Another Curator is running over this same knowledge folder".
 
 ## How do I install it on Linux?
 
@@ -106,9 +136,9 @@ An API key is like a password. Never share it or post it.
 
 ## Where are my API keys stored?
 
-In `.curator-config.json` on your own machine, written with file permissions `0600`, which means only your user account can read it. Keys are never committed to git, never synced, and never sent anywhere except the provider you are calling. The app calls the provider directly with your key; nothing passes through any server belonging to the project.
+In `.curator-config.json` on your own machine, written with file permissions `0600`, which means only your user account can read it. On Windows those permissions do not apply; the file is in your own user folder (`%LOCALAPPDATA%\TheCurator\App` for the Windows app), which Windows lets only your account and administrators read. Keys are never committed to git, never synced, and never sent anywhere except the provider you are calling. The app calls the provider directly with your key; nothing passes through any server belonging to the project.
 
-Developers running the browser install can also put `GEMINI_API_KEY=...` in a `.env` file. Keys saved in Settings take priority over `.env`. A `.env`-only key does not tick off the setup checklist, because the checklist reads keys saved through the app. The Mac app's program files are read-only, so `.env` is not an option there — use Settings.
+Developers running the browser install can also put `GEMINI_API_KEY=...` in a `.env` file. Keys saved in Settings take priority over `.env`. A `.env`-only key does not tick off the setup checklist, because the checklist reads keys saved through the app. In the Mac app and the Windows app, `.env` is not an option — use Settings.
 
 ## What happens the first time I open it?
 
@@ -186,6 +216,8 @@ Claude Haiku 5.5, added on 8 October 2026, costs $0.10 in and $0.50 out per mill
 | Open The Curator a second time | It refuses with "The Curator is already running" and brings the existing window forward. |
 | Quit, Command-Q or Dock icon → **Quit** | If an ingest, compile or update is in flight, a dialog headed **"Quit now?"** offers **Keep working** and **Quit anyway**, naming what is running. **Keep working** is the default. |
 
+**The Windows app.** Open it from the Start menu or the Desktop; it opens in its own window and only one copy runs at a time. With the tray icon off (the default), closing the window quits the app, and it asks first if an ingest or another write is running. With the tray icon on, closing the window hides it to the tray; quit from the tray menu or **File → Exit**. Its menus are File, Edit, View, Window and Help; **Help** holds **Check for Updates…** and **About The Curator**.
+
 **The browser install.** Click **The Curator** in your Dock, or run `node src/server.js`, then open http://localhost:3333.
 
 | You do | What happens |
@@ -200,6 +232,8 @@ There is no **Stop server** button in the interface, deliberately. Quitting the 
 ## How do I update to a new version?
 
 **The Mac app updates itself.** Use **The Curator → Check for Updates…** in the menu bar, or **Settings → General → Software update → Check for updates**. It downloads the new version, checks it, swaps it in and restarts, with no Gatekeeper prompt to click through. Your knowledge base, keys and sync settings are untouched. If a check fails it says why and the copy you are running keeps working, because the new version is never put in place until every check on it has passed. You do not go back to the Releases page.
+
+**The Windows app updates itself.** Use **Help → Check for Updates…** or **Settings → General → Software update → Check for updates**, then **Download and install**. The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 must match what GitHub publishes, and its version must be the one offered; a file that fails a check is never run. At **Update ready to install** nothing has changed yet; **Restart and finish** closes the app, runs the installer silently and reopens The Curator on the new version. Your knowledge base, keys and settings are outside the program folder and are never touched. If Claude Desktop is connected to The Curator, it keeps a copy of the app running as its connection and Windows cannot replace a running program, so the update stops before changing anything and offers **Close the connection and update** (afterwards quit and reopen Claude Desktop), or you quit Claude Desktop and press **Restart and finish** again. If an update does not finish, a message box says so and the app says it again when it next opens; running the installer from the Releases page repairs the app with your data intact. Whether an update the app downloads itself avoids the blue SmartScreen screen has not yet been checked on a real PC.
 
 **The browser install updates in place.** **Settings → General → Check for updates**; if one is available an install button appears and the confirmation names the versions. It replaces its own program files with the published version, reinstalls dependencies and restarts, and the browser reloads itself. From the terminal, the equivalent is `cd ~/the-curator && git pull && npm install` and then restarting the server.
 
@@ -735,7 +769,9 @@ The page has four sections: ① *Your AI apps*, ② *Skills*, ③ *Connection te
 
 **Skills (since version 3.90.0).** Section ② lists the two skills, `my-curator` and `curator-continuity`, with **Download** for each and every AI app's copy. Skills don't update on their own: after an update, download them again. For Claude, upload the .zip in Claude under **Customize → Skills**; The Curator cannot see your Claude account, so it cannot tell whether that copy is current. For Antigravity the row says "up to date", "out of date" or "not installed" and offers **Show the folder**.
 
-Which AI apps can be installed this way depends on the computer. Every other app says "can't be set up automatically yet" with **Copy the setup text**.
+Which AI apps can be installed this way depends on the computer: on a Mac, Claude Desktop, Cursor and Antigravity; on Windows, Claude Desktop only, and Claude Desktop must be fully quit first (right-click its icon by the clock, Quit). Every other app says "can't be set up automatically yet" with **Copy the setup text**.
+
+**In the Windows app** the entry Install for me writes starts The Curator's own `The Curator.exe` as the bridge, with the setting `ELECTRON_RUN_AS_NODE=1` so it runs as a background helper instead of opening a second window; the copied setup text for other tools includes that setting too. Install for me refuses, with the reason, when the app runs from Downloads or a temporary folder: install it with the installer and open it from the Start menu. The entry is started and checked by an automated test on Windows, but Claude Desktop itself starting it has not yet been watched on a real PC.
 
 **Tool activity (section ④).** "Which of My Curator's 24 tools your AI apps used in the last 7 days. Tests are not counted." It shows the last time an AI app started My Curator, the five busiest tools as depth bars, "N tools not used this week", and a folded "All 24 tools" list with one plain line per tool. Handoffs per project are not on this page: they are project memory, shown on the Context page.
 
@@ -872,6 +908,10 @@ Put The Curator's entry in `~/.dsh/cordis.patch.yml` (every profile) or `~/.dsh/
 
 It was called "Harness" until version 3.79.0; only the label changed. It is your own estimate of what your agent tool loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It is set per computer, beside **Window**.
 
+## How do I turn on the tray icon in the Windows app?
+
+**Settings → General → Tray icon → Show the tray icon**. It is off by default. The icon sits in the notification area by the clock and carries the same facts as the Mac menu bar icon (the next question). A **left-click** opens the window and a **right-click** opens the menu; a Mac menu's second lines and hover text appear after the label or in a submenu, because Windows menus draw neither. If you cannot see it, Windows has probably put it with the hidden icons: click the **^** arrow beside the clock and drag it onto the taskbar. While it is on, closing the window hides the app to the tray. **Hide the taskbar button** is remembered, but the taskbar button stays for now.
+
 ## How do I turn on the Mac menu bar icon?
 
 **Settings → General → Menu bar**, with three choices: **Off**, which is the default; **On**, which puts a small icon in the macOS menu bar alongside your Dock icon; and **On, and hide the Dock icon**. It takes effect immediately with nothing to restart. It applies to the Mac app only, and the control says so in a browser install rather than hiding itself.
@@ -899,6 +939,10 @@ Because it is still talking to a bridge it started before you updated. An MCP cl
 ## Why can't Claude Desktop see the MCP tools after I set it up from the Mac app?
 
 The most likely cause is App Translocation: macOS runs an unsigned app that is still sitting where it was downloaded from a randomised read-only location, and from there the app cannot write the small launcher Claude Desktop needs. Drag The Curator into `/Applications` — the disk image includes a shortcut for exactly this — then quit and reopen it, then re-run **Settings → MCP bridge**. Running the app straight out of `~/Downloads` has the same problem for the same reason.
+
+## Why does Personal Sync say git is missing in the Windows app?
+
+The Windows app carries its own git, so this means that copy is damaged or was removed (an antivirus can do that). Download the latest installer from the Releases page and run it: it repairs the app and keeps your notes and settings. **Settings → General → Run system check** shows the same on its Git row.
 
 ## Why does Personal Sync fail in the Mac app with a git error?
 

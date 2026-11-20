@@ -105,6 +105,17 @@ names out of both files rather than from a hardcoded list.
 | `lib/tray-remote.js` | WHEN the menubar may ask GitHub whether another machine has pushed: menu open only, never hover, never a timer. Pure decision. |
 | `lib/background-mode.js` | Resolves `backgroundMode` and the 3x3 live transition between modes. Pure. |
 | `lib/state-watch.js` | The refresh strategy: `/state/` path filter, 150 ms debounce, 5-minute fallback, one-shot glyph expiry. Every timer injected. |
+| `lib/shell-platform.js` | Every decision `main.js` makes differently on Windows, as pure functions of a platform string: AUMID, close-to-tray, dialog parenting, tray clicks, tooltip clamp, the About dialog, the after-update notice. darwin answers pinned unchanged. |
+| `lib/tray-menu-win.js` / `lib/tray-icon-win.js` | The SAME tray menu re-expressed for a Windows menu (sublabel/toolTip/header moved into the label or a submenu, `&` escaped); the coloured 16/24/32 px tray icon. |
+| `lib/folder-dialog.js` | The Electron folder dialog behind the `pickFolder` desktop hook (macOS = the old inline hook; Windows: one dialog at a time). |
+| `lib/run-command.js` | `runCommand` for the updater (`windowsHide`, a timeout). |
+| `lib/update-download.js` | The platform-neutral downloader + size/SHA-256 check both engines use. |
+| `lib/update-install-darwin.js` / `lib/update-install-win32.js` | The two update adapters behind `createUpdateInstaller(platform)` in `lib/update-engine.js`. The darwin file is the v3.99.3 engine moved byte-for-byte. |
+| `lib/update-plan-win32.js` | Every decision the Windows updater makes, no I/O: the install-target check, the PowerShell helper's text, the Windows failure sentences. |
+| `lib/win-pack.mjs` | The Windows afterPack + afterSign: version, `node_modules`, MinGit tree, notices, tray icons, RunAsNode fuse; writes `resources\app\.curator-bundle`. |
+| `lib/fetch-mingit.mjs` | Downloads MinGit, verifies size + SHA-256 against the pin BEFORE unpacking, writes `vendor/mingit/` (gitignored) and `THIRD-PARTY-NOTICES.txt`. |
+| `build/installer.nsh` | The NSIS additions: a Welcome page, current-user-only install mode, and the guard that refuses to install into or uninstall from the data folder. |
+| `build/icon.ico`, `build/tray.*` | Generated from `images/applet.icns` by `build/make-win-icons.mjs` (committed; the suite re-generates and compares every pixel). |
 
 The `lib/` modules import **nothing** from Electron and nothing from
 `src/`, which is what lets `scripts/test-desktop-packaging.js` and
@@ -490,7 +501,7 @@ It builds and it runs. It is still not a shippable product.
   inspected, not driven, and nothing proves the window drags — a native title
   bar is dragged by the OS rather than by app code, which is the argument for
   choosing it, but it is an argument and not a measurement.
-- **No Windows, no Linux.**
+- **No Linux.** Windows is built since 2026-11-20 (see *Windows* below); a Linux shell is not planned.
 
 ### The existing-user first run, and the one thing that fails silently
 
@@ -1001,6 +1012,79 @@ in `src/` knows how an update is performed — only that a hook exists.
   an explicit, one-time offer in the UI.
 
 ---
+
+## Windows (2026-11-20)
+
+The same shell, built as a per-user NSIS installer: `TheCurator-<X.Y.Z>-x64-Windows-Setup.exe`,
+x64 only, **not code-signed** (SmartScreen on the first install: More info → Run anyway). The
+user's guide is [docs/windows-app.md](../docs/windows-app.md); the standing rules and their
+reasons are in [docs/dev/decisions-app.md](../docs/dev/decisions-app.md#app-lifecycle-install-and-update).
+
+### Building it locally
+
+On a Windows PC (or the `windows-latest` runner); a Mac cannot produce it:
+
+```powershell
+npm ci                 # at the repo root
+cd desktop
+npm install
+npm run dist           # --win on Windows: fetches + verifies MinGit, then electron-builder
+```
+
+`npm run dist` refuses a 0.0.0 root version, runs `lib/fetch-mingit.mjs` (MinGit 2.56.1, refused
+unless size and SHA-256 equal the pin; `--zip <file>` to use a file you have, same pin), then
+electron-builder's own `cli.js` under the same node (the `.bin` shim is a `.cmd`, which Node will
+not spawn without a shell, CVE-2024-27980). Output: `dist\TheCurator-<X.Y.Z>-x64-Windows-Setup.exe`
+and `dist\win-unpacked\`. Never ship `win-unpacked`: it has no uninstaller, so it refuses to update
+itself. Run anything you build with `CURATOR_TEST_USER_DATA_DIR`, `CURATOR_TEST_DOMAINS_DIR`,
+`CURATOR_TEST_MCP_LAUNCHER_DIR` and `CURATOR_NO_OPEN=1` set, or it uses your real
+`%LOCALAPPDATA%\TheCurator\App`.
+
+### What the build guarantees, and why
+
+| Check (`lib/win-pack.mjs`) | Why |
+|---|---|
+| Writes `resources\app\.curator-bundle`, then reads it back | On win32 the marker is the ONLY bundle signal. Without it the app runs in repo mode and keeps the wiki inside the program folder, which the next update or uninstall deletes |
+| `resources\app\package.json` version = root version, never 0.0.0; the exe's FileVersion/ProductVersion too (afterSign) | The updater compares versions; a wrong one offers an update forever or never |
+| `resources\app\node_modules` holds the runtime dependencies | The Windows twin of "launches only inside the checkout" ([the `files` bug](#the-files-bug-and-why-building-it-was-not-enough-to-catch-it)) |
+| `resources\git` is file-for-file the MinGit that was verified | Sync runs it; nothing may have changed it after the hash check |
+| RunAsNode fuse ON in the built exe | Claude Desktop starts `The Curator.exe` with `ELECTRON_RUN_AS_NODE=1` as the MCP bridge; with the fuse off it opens a second window instead |
+| Notices and tray icons present | GPLv2 notice for MinGit; the tray has no template image on Windows |
+
+### Where things live on a PC
+
+| | |
+|---|---|
+| Program | `%LOCALAPPDATA%\Programs\The Curator` (`resources\app` = APP_ROOT, `resources\git` = MinGit) |
+| User data | `%LOCALAPPDATA%\TheCurator\App` (`paths.js` `getBundleUserDataDir()`) |
+| Shared with the browser install | `%LOCALAPPDATA%\TheCurator\{instances,logs,updates}` (the browser install also keeps `runtime\` there) |
+| Electron's own profile and window state | `%APPDATA%\The Curator` (NSIS `deleteAppDataOnUninstall: false`) |
+
+### In-app updating on Windows
+
+`createUpdateInstaller('win32')` (`lib/update-engine.js` → `lib/update-install-win32.js`): resolve
+the release with `src/routes/config.js`'s own `pickInstallableRelease(…, {platform: 'win32'})`
+(`.exe` assets only), download into `%LOCALAPPDATA%\TheCurator\updates`, check the byte length and
+GitHub's SHA-256 `digest` (no digest: refused), read the setup's `ProductVersion`, make it
+read-only; on **Restart and finish** write a PowerShell helper (validated values, single-quoted,
+no interpolation), start it detached and quit. The helper waits for the PID, stops only the MCP
+bridges the person agreed to stop (`stopConnections`), proves the exe is free, re-hashes the
+setup, runs it with `/S --updated --force-run`, makes sure the app runs, and records
+`last-update.json` for `afterStart()` to read once. **It is not atomic and has no rollback**: an
+NSIS update runs the old uninstaller and then extracts. User data is outside the program folder,
+so it is untouched either way, and the verified setup stays in `updates\` for a re-run.
+electron-updater is not used, for the reasons in *In-app updating* above plus one more: it would be
+a second release resolver beside `config.js`'s.
+
+### Not proven on a real PC yet
+
+The offline suites run every decision above with injected platform and effects, and the CI jobs on
+GitHub's `windows-latest` runner build, launch and exercise it. A person on a real PC has not yet
+seen: the SmartScreen wording on first install, whether an in-app update shows any SmartScreen
+or Defender prompt, the real shortcuts and install folder, the tray icon on HiDPI and whether
+`mouse-enter` fires on a Windows tray (nothing relies on it), Claude Desktop (classic and Store)
+starting the exe over stdio, a full in-app update with a real download and relaunch, and the x64
+build on Windows on ARM.
 
 ## Credentials
 

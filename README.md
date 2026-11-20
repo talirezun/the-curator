@@ -11,6 +11,7 @@
   <a href="#licensing"><img src="https://img.shields.io/badge/License-MIT%20%2B%20source--available-yellow.svg" alt="License: MIT + source-available"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
   <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/badge/Mac%20app-.dmg%20(not%20notarised)-blue" alt="Mac app: .dmg (not notarised)"></a>
+  <a href="docs/windows-app.md"><img src="https://img.shields.io/badge/Windows%20app-.exe%20(not%20signed)-0078D4" alt="Windows app: .exe (not signed)"></a>
   <a href="#windows--one-line-install"><img src="https://img.shields.io/badge/Windows-one--line%20install-0078D4" alt="Windows: one-line install"></a>
   <a href="#option-c--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Linux-lightgrey" alt="Manual setup: Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
@@ -21,7 +22,7 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
-<p align="center"><b>On Windows?</b> Open PowerShell, paste one line, press Enter → <a href="docs/install-windows.md">Install on Windows</a></p>
+<p align="center"><b>Mac:</b> <a href="docs/mac-app.md">the Mac app</a> · <b>Windows:</b> <a href="docs/windows-app.md">the Windows app</a> (recommended) or <a href="docs/install-windows.md">the one-line browser installer</a> · <b>Linux:</b> <a href="#option-c--manual-setup-windows--linux--mac">manual install</a> or <a href="docs/user-guide.md#20-install-with-a-coding-agent">with your coding agent</a></p>
 
 <p align="center"><strong>Build a second brain from what you read, share it with a team, and give it to your agents.</strong></p>
 
@@ -101,7 +102,8 @@ These are not two products. A book, a thesis or a research programme outlives an
 which is the day the second becomes the first's future.
 
 **On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
-couple of minutes. On Windows, [paste one command into PowerShell](#windows--one-line-install).**
+couple of minutes. On Windows, [install the Windows app](#windows--the-windows-app-recommended)
+(or [paste one command into PowerShell](#windows--one-line-install)).**
 On Linux it runs as a local server you open in your browser — same code, same release, same
 features.
 
@@ -351,14 +353,37 @@ flowchart TD
 
 ## Quick start
 
-On a **Mac** you can download the app. On **Windows** you paste one command. On **Linux** — and
-on a Mac too, if you prefer it — The Curator runs as a **local server you open in your browser**:
-one shell around `src/`, not a fork, so the browser install is **not** a legacy path and is fully
-supported everywhere.
+| Your computer | Install | Guide |
+|---|---|---|
+| **macOS** | The Mac app (`.dmg`) | [Option A](#option-a--download-the-mac-app-dmg) · [docs/mac-app.md](docs/mac-app.md) |
+| **Windows** | The Windows app (`.exe`, recommended), or the one-line browser installer | [The Windows app](#windows--the-windows-app-recommended) · [one-line install](#windows--one-line-install) |
+| **Linux** | Manual install, or let your coding agent do it | [Option C](#option-c--manual-setup-windows--linux--mac) · [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent) |
+
+On **Linux** — and on a Mac or a PC too, if you prefer it — The Curator runs as a **local server
+you open in your browser**: one shell around `src/`, not a fork, so the browser install is **not**
+a legacy path and is fully supported everywhere.
+
+### Windows — the Windows app (recommended)
+
+A normal Windows program in its own window, carrying its own runtime and its own git, so nothing
+else needs installing (64-bit Windows 10 or 11).
+
+1. From the newest release on the **[Releases page](https://github.com/talirezun/the-curator/releases)**,
+   download **`TheCurator-<version>-x64-Windows-Setup.exe`** and double-click it.
+2. The installer is **not code-signed yet**, so Windows shows a blue **"Windows protected your PC"**
+   screen the first time: click **More info → Run anyway**.
+3. **Welcome → Next**, wait, then **Finish** with **Run The Curator** ticked. The app opens.
+
+No administrator rights and no folder to choose. Your notes, keys and settings live in
+`%LOCALAPPDATA%\TheCurator\App`, outside the program folder, so updates and uninstalling never
+touch them. **It updates itself** (Settings → General, or **Help → Check for Updates…**), can show
+an optional **tray icon** with what your agents just saved, connects **Claude Desktop in one click**
+(Settings → MCP bridge → Install for me), and **Sync works out of the box** with the git it carries.
+Everything, including switching from the browser install: **[docs/windows-app.md](docs/windows-app.md)**.
 
 ### Windows — one-line install
 
-**On Windows?** Open PowerShell, paste one line, press Enter → [Install on Windows](docs/install-windows.md) (a one-page handout).
+Prefer the browser? Open PowerShell, paste one line, press Enter → [Install on Windows](docs/install-windows.md) (a one-page handout).
 
 1. Press **Start**, type **PowerShell**, and open **Windows PowerShell** (not "Command Prompt").
 2. Paste this, then press **Enter**:
@@ -376,7 +401,7 @@ Afterwards you have two icons, each in two places (four shortcuts in all): on yo
 
 | Icon | What it does |
 |---|---|
-| **The Curator** | Starts the app if it is not running, and opens it in your browser |
+| **The Curator** (**The Curator (browser)** when the Windows app is installed too) | Starts the app if it is not running, and opens it in your browser |
 | **Stop The Curator** | Stops the app |
 
 Your knowledge lives in `%USERPROFILE%\the-curator\domains` (open that folder in Obsidian).
@@ -492,9 +517,10 @@ points you to API key setup.
 
 **There is no Linux app**, so this is the way in on Linux — and it is a first-class one: ingest,
 chat, wiki, MCP, sync and Health are all here. (On Windows use the
-[one-line install](#windows--one-line-install) above; the steps below also work there if you
-prefer to manage Node and git yourself.) The Node server runs anywhere Node 18+ runs; only the
-`.dmg`, the Mac one-command installer and the auto-built `.app` Dock launcher are macOS-specific.
+[Windows app](#windows--the-windows-app-recommended) or the [one-line install](#windows--one-line-install)
+above; the steps below also work there if you prefer to manage Node and git yourself.) The Node
+server runs anywhere Node 18+ runs; only the `.dmg`, the Mac one-command installer and the
+auto-built `.app` Dock launcher are macOS-specific, and only the `.exe` is Windows-specific.
 
 **Prerequisites:** [git](https://git-scm.com) · [Node.js](https://nodejs.org) — **the current LTS
 recommended**, 18 is the minimum · an API key from
@@ -513,8 +539,8 @@ CURATOR_NO_OPEN=1 npm start
 Then open **http://localhost:3333**. Stop it with **Ctrl+C**. To update, stop it, run
 `git pull && npm install` in the `the-curator` folder, and start it again.
 
-> **Linux notes:** the Dock-app and folder-picker buttons are macOS-only; ingest, chat, wiki, MCP,
-> sync and Health work identically. Set `DOMAINS_PATH=…` to point at your knowledge folder.
+> **Linux notes:** the Dock-app button is macOS-only, and the folder picker needs `zenity`, `kdialog`
+> or `yad` (otherwise paste the path); ingest, chat, wiki, MCP, sync and Health work identically. Set `DOMAINS_PATH=…` to point at your knowledge folder.
 > `CURATOR_NO_OPEN=1` keeps the server from trying to open a browser for you.
 >
 > **Connecting your AI tools:** in Settings → MCP bridge, the **Install for me** button writes The
@@ -686,6 +712,7 @@ company, team or product brain can hold what was charged, agreed and built, year
 | [Use Cases](docs/use-cases.md) | Detailed workflows for every profile, including cohort, team and monetization scenarios |
 | [System Check](docs/system-check.md) | Confirm the app itself is set up correctly (key, folder, credentials, sync), plus an optional AI connection test |
 | [Mac App Setup](docs/mac-app.md) | Both Mac shapes — the downloadable `.dmg` app (first install, Gatekeeper, how it updates itself, the optional menu bar icon) and the Dock launcher the shell installer builds |
+| [The Windows app](docs/windows-app.md) | The Windows `.exe` app — installing it (the SmartScreen screen), where your data lives, how it updates itself, the tray icon, one-click Claude Desktop, Sync's bundled git, folders on Windows, uninstalling, and switching from the browser install |
 | [Skills](skills/README.md) | The two agent skills, what they enforce, and how portable they actually are |
 
 **For developers**
