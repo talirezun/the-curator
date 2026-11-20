@@ -62,6 +62,7 @@
 // the real functions rather than extracting them with a regex.
 
 import { progressRingHtml } from '../shared/progress-ring.js';
+import { browserPlatform } from '../shared/platform.js';
 import {
   UPDATE_RING_STAGES, phaseCopy, updateRingPosition, updateProgressSublabel,
 } from '../shared/update-phases.js';
@@ -200,7 +201,7 @@ export function updateWindowModel(view) {
     };
   }
 
-  const copy = phaseCopy(job.phase, 'window');
+  const copy = phaseCopy(job.phase, 'window', browserPlatform());
   const pos = updateRingPosition(job);
   return {
     kind: 'running',

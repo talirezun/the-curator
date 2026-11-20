@@ -201,6 +201,69 @@ section('§6 platform wordings (Windows app): every one on the page, and the pag
     'PLATFORM_SENTENCES: each code lists an unlabelled first sentence and labelled variants, each produced by a function');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§7 the Windows app (wave 2): folder codes, files-not-allowed on Windows, the update messages');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const FA = await import('../src/brain/folder-access.js');
+  const UEB = await import('../src/brain/user-errors.js');
+  const W32 = await import('../desktop/lib/update-plan-win32.js');
+  const cfgRoute = await import('../src/routes/config.js');
+
+  // Folder codes: the app's list and the catalogue's are the same list.
+  ok(JSON.stringify([...UE.FOLDER_CODES].sort()) === JSON.stringify([...FA.FOLDER_ACCESS_CODES].sort()),
+    `FOLDER_CODES (the client's list) equals folder-access.js's FOLDER_ACCESS_CODES (${FA.FOLDER_ACCESS_CODES.length} codes)`);
+  ok(FA.FOLDER_ACCESS_CODES.every((c) => UE.isCatalogueCode(c) && docsCodes.includes(c) && llmCodes.includes(c)),
+    'every folder code is a catalogue code, on both pages (so "(code: folder-…)" under an error finds its row)');
+  const device = FA.folderAccessMessage('folder-device-path', {});
+  ok(docsText.includes(esc(device)), 'the placeholder-free folder sentence is on the page verbatim');
+  const drive = FA.folderAccessMessage('folder-drive-root', { name: 'D:\\', drive: 'D:\\' });
+  ok(docsText.includes(esc(drive)), 'the drive-root sentence, as the app says it for D:\\, is on the page');
+
+  // files-not-allowed: the Mac sentence unchanged, a Windows one beside it.
+  const MAC_SENTENCE = "This computer didn't let The Curator use a file it needs (x). Check that the folder isn't read-only and, " +
+    'on a Mac, that The Curator is allowed to use it in System Settings › Privacy & Security › Files and Folders. Then try again.';
+  ok(UE.USER_MESSAGES['files-not-allowed']({ name: 'x' }) === MAC_SENTENCE
+      && UE.USER_MESSAGES['files-not-allowed']({ name: 'x', platform: 'darwin' }) === MAC_SENTENCE
+      && UE.USER_MESSAGES['files-not-allowed']({ name: 'x', platform: 'linux' }) === MAC_SENTENCE,
+    'files-not-allowed: with no platform, on macOS and on Linux, the v3.99.2 sentence byte for byte');
+  const win = UE.USER_MESSAGES['files-not-allowed']({ name: 'x', platform: 'win32' });
+  ok(/Controlled folder access/.test(win) && !/Mac|System Settings/.test(win) && win.includes(UE.WIN_ALLOW_CFA),
+    'files-not-allowed on Windows names Controlled folder access and where to allow the app, and never a Mac or System Settings');
+  ok(FA.folderAccessMessage('folder-protected-by-windows', {}).includes(UE.WIN_ALLOW_CFA),
+    '…in the same words folder-access.js uses for the same place');
+  ok(!/nothing was changed/i.test(win), '…and claims nothing it cannot know (a write elsewhere may have finished)');
+  const row = region(docsText).split('\n').find((l) => l.startsWith('| `files-not-allowed` |')) || '';
+  ok(row.includes(esc(UE.USER_MESSAGES['files-not-allowed']({ name: '[file name]', platform: 'darwin' })))
+      && row.includes('*On Windows:* ' + esc(UE.USER_MESSAGES['files-not-allowed']({ name: '[file name]', platform: 'win32' }))),
+    'the page lists the Mac sentence first and the Windows one labelled');
+  // Through toUserError, the server's translator: the platform decides.
+  const eacces = Object.assign(new Error("EACCES: permission denied, open '/k/notes/a.md'"), { code: 'EACCES', path: '/k/notes/a.md' });
+  const onMac = UEB.toUserError(eacces, { platform: 'darwin' });
+  const onWin = UEB.toUserError(eacces, { platform: 'win32' });
+  ok(onMac && onMac.code === 'files-not-allowed' && /System Settings/.test(onMac.error), 'toUserError on macOS: the Mac sentence', onMac);
+  ok(onWin && onWin.code === 'files-not-allowed' && /Controlled folder access/.test(onWin.error) && !/System Settings/.test(onWin.error),
+    'toUserError on Windows: the Windows sentence, same code', onWin);
+  ok(UEB.toUserError(eacces).error === (process.platform === 'win32' ? onWin.error : onMac.error),
+    'toUserError with no platform uses the platform it runs on (the server runs on the person\'s machine)');
+
+  // The Windows update messages: their own table, no code.
+  const allUpd = { ...W32.WIN32_UPDATE_FAILURES, ...W32.WIN32_INSTALL_OUTCOMES };
+  const missingUpd = Object.entries(allUpd).filter(([, v]) => !docsText.includes(esc(v))).map(([k]) => k);
+  ok(Object.keys(allUpd).length >= 15 && missingUpd.length === 0,
+    `every Windows update sentence (${Object.keys(allUpd).length}) is on docs/errors.md verbatim`, missingUpd);
+  ok(region(docsText).includes('## Updating the Windows app') && /\| When \| What you see \|/.test(region(docsText)),
+    '…in their own table, keyed by situation, with no code column');
+  ok(Object.keys(allUpd).filter((k) => !UE.isCatalogueCode(k)).every((k) => !docsCodes.includes(k) && !llmCodes.includes(k)),
+    '…and no update reason is listed as a code row');
+  const copy = cfgRoute.updateFailureCopy('in-use-by-ai-app', W32.WIN32_UPDATE_FAILURES['in-use-by-ai-app']);
+  ok(!('code' in copy) && copy.reason === 'in-use-by-ai-app',
+    'WHY NO CODE: the update route sends a `reason`, never a `code`, so no support line can name an update message');
+  ok(/#updating-the-windows-app/.test(region(llmText)), 'the assistant\'s copy answers in one paragraph and links to the full table');
+  const problems = B.catalogueProblems();
+  ok(problems.length === 0, 'every update sentence has a When and a What to do, and none is invented', problems);
+}
+
 console.log(`\n${'─'.repeat(60)}\nPassed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ The error catalogue is out of date'); process.exit(1); }
 console.log('✅ The published error catalogue matches the app');

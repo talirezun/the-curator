@@ -70,6 +70,23 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | files-read-only-disk | The disk is read-only. | Choose a knowledge folder on a writable disk in Settings › Knowledge base. |
 | files-wrong-kind | A folder was expected and a file found, or the other way round, usually after a rename outside The Curator. | Check the name in the message, then try again. |
 
+## What do the Windows folder error codes mean?
+
+| Code | What it means | What to do |
+|---|---|---|
+| folder-protected-by-windows | Controlled folder access blocked a save in Documents, Desktop, Pictures, Music or Videos. | Choose another folder, or allow The Curator in Windows Security. |
+| folder-not-writable | The folder is read-only or belongs to someone else. | Choose a folder you can change. |
+| folder-cloud-busy | OneDrive is syncing the folder. | Wait until it is up to date. |
+| folder-busy | Another program has the folder open. | Close it or wait, then try again. |
+| folder-cloud-unavailable | OneDrive is not running or not signed in. | Start OneDrive, or keep the folder on this device. |
+| folder-network-unreachable | The network folder cannot be reached. | Check the network and the share. |
+| folder-path-too-long | The path is too long for Windows. | Choose a folder nearer the top of the drive. |
+| folder-drive-root | A whole drive was chosen, not a folder. | Create a folder on it and choose that. |
+| folder-reserved-name | A name Windows reserves (CON, NUL…) or ending in a dot or space. | Rename the folder or choose another. |
+| folder-device-path | A device path was typed, not a folder. | Type a path starting with a drive letter. |
+| folder-inside-app | The folder is inside the program folder, which updates replace. | Choose a folder outside it. |
+| folder-path-long | A warning: accepted, but the long path can break some Windows programs. | Move the folder nearer the top of the drive if a page will not open. |
+
 ## What do the Shared Brain error codes mean?
 
 | Code | What it means | What to do |
@@ -112,5 +129,9 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | request-too-large | More was sent in one go than The Curator accepts (50 MB). | Try a smaller selection. |
 | request-malformed | The Curator received a request it could not read. | Reload the page, then try again. |
 | internal-error | Something went wrong inside The Curator (a bug). | Try again. If it keeps happening, send the Technical detail line to support. |
+
+## What do the Windows app's update messages mean?
+
+They carry no code; each says what happened and the next step. Most often: an AI app such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app
 
 <!-- error-catalogue:end -->

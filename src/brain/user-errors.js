@@ -230,7 +230,9 @@ function detailOf(err, text) {
 /**
  * Translate an error for a person. Returns a NEW object and never touches err.
  * @param {unknown} err  an Error, or a string
- * @param {{area?: string, service?: string, provider?: string, surface?: string}} [ctx]
+ * @param {{area?: string, service?: string, provider?: string, surface?: string, platform?: string}} [ctx]
+ *   platform: defaults to this process's (the server runs on the person's
+ *     own machine); only files-not-allowed has a Windows wording today.
  *   area: 'ai' | 'sync' | 'sharedbrain' | 'update' | … (names a service, picks wording)
  *   surface: a per-screen override of the wording (SURFACE_MESSAGES), e.g.
  *     { area: 'sharedbrain', surface: 'admin' } for an admin's revoke. The
@@ -265,7 +267,9 @@ export function toUserError(err, ctx = {}) {
       ...(hit.lead ? { lead: scrubPaths(hit.lead) } : {}),
       ...(hit.whole ? { whole: scrubPaths(hit.whole) } : {}),
     },
-    { ...ctx, ...(hit.service ? { service: hit.service } : {}) },
+    // `platform` picks a platform's wording where one exists (files-not-allowed
+    // on Windows); the caller's own value wins (the suites' seam).
+    { platform: process.platform, ...ctx, ...(hit.service ? { service: hit.service } : {}) },
   );
   if (!error) return null;
   // When The Curator's own words are on screen, the detail is the raw fs

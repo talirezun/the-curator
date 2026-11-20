@@ -36,6 +36,7 @@
 // the SAME file the server imports, so the two can never disagree.
 
 import { USER_MESSAGES, KLASS_CODES, classifyErrorText, composeUserMessage, isCatalogueCode, scrubCredentials, scrubHomes } from './user-errors.js';
+import { browserPlatform } from './platform.js';
 import { renderStatus } from './text.js';
 
 // The same five replacements as text.js / app.js escapeHtml (text.js keeps its
@@ -157,7 +158,7 @@ function fromText(text, fallbackCode) {
   if (STREAM_DIED.test(t)) return { error: USER_MESSAGES['server-unreachable'](), detail: '', code: 'server-unreachable' };
   const hit = classifyErrorText(t);
   if (!hit) return { error: t, detail: '', code: fallbackCode || '' };
-  const error = composeUserMessage(hit) || t;
+  const error = composeUserMessage(hit, { platform: browserPlatform() }) || t;
   const code = KLASS_CODES[hit.klass] || hit.klass;
   // The browser's own "Failed to fetch" and an HTML parse failure tell support
   // nothing the sentence doesn't; any other raw text is kept as the detail.

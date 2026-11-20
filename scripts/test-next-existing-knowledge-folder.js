@@ -215,6 +215,7 @@ section('§1  MEASURED, not assumed: does a folder switch need a restart?');
 // Sandbox for the client half.
 // ═══════════════════════════════════════════════════════════════════════════
 const FNS = [
+  'folderWarnings',
   'classifyPickResponse',
   'describeSwitchOutcome',
   'renderLookedInLine',
@@ -500,6 +501,21 @@ section('§4  The whole flow, driven — and CANCEL COSTS NOTHING');
      'SWITCH: the PAID semantic scan is dropped — unlike a domain switch this is a different ' +
      'FOLDER, so its previewed set could authorise a merge against a same-named page in another wiki');
   ok(s.browse === null, 'SWITCH: the browse listing is dropped');
+  ok(!('warnings' in s.kbNotice), 'SWITCH: a folder accepted with no warning carries none (the Mac outcome unchanged)');
+
+  // The Windows app (wave 2): a folder accepted WITH a warning keeps the
+  // outcome AND shows the warning's sentence under it, through the real
+  // pick → applySwitchedFolder → renderKnowledgeNotice path.
+  __reset();
+  __setState(baseState({ kb: { domainsPath: 'C:\\old', domainsPathSource: 'ui' } }));
+  __setReload([{ slug: 'articles' }]);
+  __queue({ status: 200, body: { ok: true, path: 'C:\\new', warnings: [{ code: 'folder-path-long', message: 'This folder\u2019s path is 130 characters long.' }] } });
+  await onChooseKnowledgeFolder(1);
+  const w = __state().kbNotice;
+  ok(w && w.title === 'Opened 1 domain' && Array.isArray(w.warnings) && w.warnings[0] === 'This folder\u2019s path is 130 characters long.',
+    'SWITCH WITH A WARNING: the outcome is unchanged and the warning rides with it');
+  ok(/Worth knowing about this folder/.test(renderKnowledgeNotice()) && renderKnowledgeNotice().includes('130 characters long'),
+    'SWITCH WITH A WARNING: and it is on screen');
 
   // REFUSED (409) — the cross-write guard, reached from the server.
   __reset();

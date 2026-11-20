@@ -276,7 +276,7 @@ import { progressRingHtml } from '../shared/progress-ring.js';
 // so the two surfaces cannot word one operation differently. See that module's
 // header for why it exists at all.
 import {
-  UPDATE_RING_STAGES, UPDATE_PHASE_COPY,
+  UPDATE_RING_STAGES, UPDATE_PHASE_COPY, UPDATE_PHASE_COPY_WIN32,
   updateRingPosition, updateProgressSublabel,
 } from '../shared/update-phases.js';
 
@@ -1156,6 +1156,10 @@ function freshState() {
     // INLINE under the path row, with the typed-path fallback, instead of
     // replacing the whole block through `configError`.
     folderPickError: null,
+    // The Windows app: what a folder route said about a folder it ACCEPTED
+    // (`warnings[].message`, e.g. a long path). Shown under the path, never
+    // instead of it; cleared by the next pick or typed path.
+    folderWarning: null,
     typedFolderValue: '',
     typedFolderError: null,
     typedFolderBusy: false,
@@ -2988,7 +2992,13 @@ function renderInAppUpdate() {
 
   // streaming
   const job = u.job || { phase: 'resolving' };
-  const copy = UPDATE_PHASE_COPY[job.phase] || UPDATE_PHASE_COPY.resolving;
+  // WINDOWS: the phases whose Mac sentence is not true on a PC (nothing is
+  // unpacked beside the app there). Guarded with typeof like every platform
+  // read in this file, because suites lift this renderer without them.
+  const winPhases = (typeof browserPlatform === 'function' && browserPlatform() === 'win32'
+    && typeof UPDATE_PHASE_COPY_WIN32 === 'object') ? UPDATE_PHASE_COPY_WIN32 : null;
+  const copy = (winPhases && Object.hasOwn(winPhases, job.phase) && winPhases[job.phase])
+    || UPDATE_PHASE_COPY[job.phase] || UPDATE_PHASE_COPY.resolving;
   const pos = updateRingPosition(job);
   const sub = updateProgressSublabel(job);
   const ring = progressRingHtml({
@@ -10085,6 +10095,7 @@ function renderStorage(domainsMonitorHtml) {
       icon('folder', 15) +
       '<span>Moving this folder loses nothing; the graph is picked up as-is.</span>' +
     '</div>' +
+    (state.folderWarning ? renderStatus({ state: 'attention', title: 'Worth knowing about this folder', detail: state.folderWarning }) : '') +
     renderTypedFolderFallback() +
     // v3.66.0: "Domains in this folder", composed by the caller (see renderMain).
     (typeof domainsMonitorHtml === 'string' ? domainsMonitorHtml : '');
@@ -12727,6 +12738,13 @@ async function onSaveScanLimits(token) {
   }
 }
 
+/** PURE. A folder route's `warnings: [{code, message}]` as one sentence run, or null. */
+function folderWarningText(body) {
+  const list = body && Array.isArray(body.warnings) ? body.warnings : [];
+  const words = list.map((w) => (w && typeof w.message === 'string' ? w.message.trim() : '')).filter(Boolean).slice(0, 5);
+  return words.length ? words.join(' ') : null;
+}
+
 async function onChooseFolder(token) {
   // Opens a native, BLOCKING Finder dialog via osascript on the server's
   // machine. Deliberately not exercised by automated browser verification
@@ -12747,7 +12765,7 @@ async function onChooseFolder(token) {
       rememberErrorDetail(state.folderPickError, errorDetailOf(plainError(data)));
       state.typedFolderError = null;
     }
-    else { state.folderPickError = null; await loadConfig(token); }
+    else { state.folderPickError = null; state.folderWarning = folderWarningText(data); await loadConfig(token); }
   } catch (err) {
     if (isCurrentMount(token)) { state.folderPickError = plainError(err); state.typedFolderError = null; }
   } finally {
@@ -12782,6 +12800,7 @@ async function onUseTypedFolder(typed, token) {
       return;
     }
     state.folderPickError = null;
+    state.folderWarning = folderWarningText(data);
     state.typedFolderValue = '';
     await loadConfig(token);
   } catch (err) {

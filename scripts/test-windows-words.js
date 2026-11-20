@@ -133,5 +133,37 @@ section('3. The Appearance lede names the tray on Windows');
   ok(WIN_WORDS.test(lede('win32')) && !MAC_WORDS.test(lede('win32')), 'CONTROL: the word lists this suite uses tell the two apart');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('4. The update phases: Windows does not "unpack beside" the app (wave 2)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const UP = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+  const MAC_ONLY = /beside the one you are running|Unpacking|the app inside it/;
+  for (const ph of UP.UPDATE_PHASE_ORDER) {
+    const shared = UP.phaseCopy(ph, 'panel');
+    ok(JSON.stringify(UP.phaseCopy(ph, 'panel', 'darwin')) === JSON.stringify(shared)
+        && JSON.stringify(UP.phaseCopy(ph, 'window', 'darwin')) === JSON.stringify(UP.phaseCopy(ph, 'window')),
+      `${ph}: macOS (and no platform) is the shared sentence, byte for byte`);
+    ok(!MAC_ONLY.test(UP.phaseCopy(ph, 'panel', 'win32').body) && !MAC_ONLY.test(UP.phaseCopy(ph, 'window', 'win32').body),
+      `${ph}: on Windows nothing says "unpacking beside the running app" (the Windows engine keeps the checked installer)`);
+  }
+  ok(/installer/.test(UP.phaseCopy('staging', 'panel', 'win32').body) && /Nothing has been replaced yet/.test(UP.phaseCopy('staging', 'panel', 'win32').body),
+    'Windows staging: keeps the checked installer ready, and still says nothing has been replaced');
+  ok(UP.phaseCopy('installing', 'window', 'win32').body === UP.UPDATE_WINDOW_BODY.installing,
+    'the window\'s own installing sentence still applies on Windows (no Windows override for it)');
+  // The Settings panel renders the same words: lift its phase-copy line with
+  // the platform injected, as above.
+  const i = SRC.indexOf('  const winPhases =');
+  const j = SRC.indexOf('UPDATE_PHASE_COPY.resolving;', i) + 'UPDATE_PHASE_COPY.resolving;'.length;
+  const stmt = SRC.slice(i, j);
+  const pick = (p, phase) => new Function('job', 'UPDATE_PHASE_COPY', 'UPDATE_PHASE_COPY_WIN32', ...(p === undefined ? [] : ['browserPlatform']),
+    stmt + '\nreturn copy;')({ phase }, UP.UPDATE_PHASE_COPY, UP.UPDATE_PHASE_COPY_WIN32, ...(p === undefined ? [] : [() => p]));
+  ok(i > 0 && pick('win32', 'staging') === UP.UPDATE_PHASE_COPY_WIN32.staging, 'Settings on Windows: the Windows staging sentence');
+  ok(pick('darwin', 'staging') === UP.UPDATE_PHASE_COPY.staging && pick(undefined, 'staging') === UP.UPDATE_PHASE_COPY.staging,
+    'Settings on macOS (and lifted with no browserPlatform): the shared sentence');
+  ok(pick('win32', 'downloading') === UP.UPDATE_PHASE_COPY.downloading && pick('win32', 'nonsense') === UP.UPDATE_PHASE_COPY.resolving,
+    'Settings on Windows: a phase with no Windows sentence is the shared one, and an unknown phase still falls back');
+}
+
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

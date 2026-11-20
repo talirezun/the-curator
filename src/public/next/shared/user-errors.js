@@ -48,6 +48,8 @@ function providerOf(ctx) { return (ctx && ctx.provider) || 'your AI provider'; }
 function named(ctx) { return ctx && ctx.name ? ` (${ctx.name})` : ''; }
 
 const SETTINGS_KEYS = 'Settings › Providers & keys';
+/** Where Windows lets an app through Controlled folder access (same words as src/brain/folder-access.js). */
+export const WIN_ALLOW_CFA = 'Windows Security › Virus & threat protection › Manage ransomware protection › Allow an app through Controlled folder access';
 
 /**
  * klass → (ctx?) → sentence. ctx: { provider?, service?, name?, area? }.
@@ -95,9 +97,18 @@ export const USER_MESSAGES = Object.freeze({
     `If it keeps failing, pick a different model or provider in ${SETTINGS_KEYS}.`,
 
   // ── Files ──
-  'files-not-allowed': (c) =>
-    `This computer didn't let The Curator use a file it needs${named(c)}. Check that the folder isn't read-only and, ` +
-    `on a Mac, that The Curator is allowed to use it in System Settings › Privacy & Security › Files and Folders. Then try again.`,
+  // ctx.platform (the Windows app, 2026-11-20): on Windows the likely cause is
+  // Windows Defender's Controlled folder access (an unsigned app is unknown
+  // to it), so that is what the sentence names. The path through Windows
+  // Security is the one src/brain/folder-access.js's sentences name
+  // (test-error-catalogue checks they agree). Every other platform — and no
+  // platform — keeps the Mac sentence, byte for byte.
+  'files-not-allowed': (c) => (c && c.platform === 'win32'
+    ? `Windows didn't let The Curator use a file it needs${named(c)}. Check that the folder isn't read-only. ` +
+      `If it is in Documents, Desktop, Pictures, Music or Videos, Controlled folder access may be blocking The Curator: choose a ` +
+      `folder outside those, or allow The Curator in ${WIN_ALLOW_CFA}. Then try again.`
+    : `This computer didn't let The Curator use a file it needs${named(c)}. Check that the folder isn't read-only and, ` +
+      `on a Mac, that The Curator is allowed to use it in System Settings › Privacy & Security › Files and Folders. Then try again.`),
   'files-disk-full': () =>
     `This computer's disk is full, so The Curator couldn't save. Free some space, then try again.`,
   'files-missing': (c) =>
@@ -233,7 +244,16 @@ export const SHAREDBRAIN_CODES = Object.freeze([
   'sharedbrain-token-check-rate-limited', 'sharedbrain-token-check-offline', 'sharedbrain-token-check-failed',
   'sharedbrain-token-save-failed',
 ]);
-export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES, ...SHAREDBRAIN_CODES])]);
+// The Windows folder rules' refusals and their one warning (src/brain/
+// folder-access.js, whose FOLDER_ACCESS_MESSAGES holds the sentences as data;
+// scripts/test-error-catalogue.js checks this list equals its FOLDER_ACCESS_CODES).
+// The routes send them as `code` on Windows only.
+export const FOLDER_CODES = Object.freeze([
+  'folder-protected-by-windows', 'folder-not-writable', 'folder-cloud-busy', 'folder-busy',
+  'folder-cloud-unavailable', 'folder-network-unreachable', 'folder-path-too-long', 'folder-drive-root',
+  'folder-reserved-name', 'folder-device-path', 'folder-inside-app', 'folder-path-long',
+]);
+export const CATALOGUE_CODES = Object.freeze([...new Set([...Object.values(KLASS_CODES), ...SYNC_CODES, ...SHAREDBRAIN_CODES, ...FOLDER_CODES])]);
 const CATALOGUE_SET = new Set(CATALOGUE_CODES);
 /** True only for a code in the published catalogue. */
 export function isCatalogueCode(code) { return typeof code === 'string' && CATALOGUE_SET.has(code); }

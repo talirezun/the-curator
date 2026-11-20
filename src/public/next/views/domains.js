@@ -2083,6 +2083,19 @@ function classifyPickResponse(status, body) {
       support,
     };
   }
+  // The Windows app: the picker DID finish, and the folder was refused by the
+  // same rules a typed path meets (400 with a `reason`: the program folder, a
+  // whole drive, a reserved name, a folder Windows will not let the app write
+  // to). Titled for what happened, the typed-path refusal's own title. Only
+  // the Windows routes send a `reason` here, so the Mac's titles are unchanged.
+  if (status === 400 && typeof b.reason === 'string' && b.reason && serverMsg) {
+    return {
+      kind: 'error',
+      title: 'That folder cannot be used',
+      detail: [serverMsg, hint].filter(Boolean).join(' '),
+      support,
+    };
+  }
   if (status >= 400 || serverMsg) {
     return {
       kind: 'error',
@@ -2092,7 +2105,8 @@ function classifyPickResponse(status, body) {
     };
   }
   if (typeof b.path === 'string' && b.path.trim()) {
-    return { kind: 'switched', path: b.path.trim() };
+    const warnings = folderWarnings(b);
+    return warnings.length ? { kind: 'switched', path: b.path.trim(), warnings } : { kind: 'switched', path: b.path.trim() };
   }
   // A 200 carrying neither a path nor a cancel. Nothing was changed, but we
   // cannot claim success either — saying so is better than a blank screen.
@@ -2101,6 +2115,19 @@ function classifyPickResponse(status, body) {
     title: 'The folder picker did not finish',
     detail: 'The picker returned no folder and no reason.',
   };
+}
+
+/**
+ * PURE. The sentences of a folder route's `warnings: [{code, message}]` (the
+ * Windows app: a folder accepted with something worth knowing, such as a long
+ * path). Strings only, empty ones dropped; [] when there are none.
+ */
+function folderWarnings(body) {
+  const list = body && Array.isArray(body.warnings) ? body.warnings : [];
+  return list
+    .map((w) => (w && typeof w.message === 'string' ? w.message.trim() : ''))
+    .filter(Boolean)
+    .slice(0, 5);
 }
 
 /**
@@ -2219,7 +2246,7 @@ async function onChooseKnowledgeFolder(token) {
     }
     // SWITCHED. The mutation already happened server-side; from here we are
     // only re-reading and reporting.
-    await applySwitchedFolder(verdict.path, previousPath, token);
+    await applySwitchedFolder(verdict.path, previousPath, token, verdict.warnings);
   } catch (err) {
     if (!isCurrentMount(token)) return;
     const u = userMessageFrom(err);
@@ -2265,7 +2292,7 @@ async function onTypedKnowledgeFolder(typed, token) {
       return;
     }
     state.kbTypedValue = '';
-    await applySwitchedFolder((body && body.domainsPath) || value.trim(), previousPath, token);
+    await applySwitchedFolder((body && body.domainsPath) || value.trim(), previousPath, token, folderWarnings(body));
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.kbTypedError = plainError(err);
@@ -2285,7 +2312,7 @@ async function onTypedKnowledgeFolder(typed, token) {
  * the NEW folder (or null), which is what stops the main pane rendering a
  * heading for a domain that is no longer there.
  */
-async function applySwitchedFolder(newPath, previousPath, token) {
+async function applySwitchedFolder(newPath, previousPath, token, warnings) {
   state.kb = { domainsPath: newPath, domainsPathSource: 'ui' };
   // A report, a scan and a browse listing from the OLD folder are all
   // meaningless now, and two of them are stamped with a slug that may exist
@@ -2303,6 +2330,9 @@ async function applySwitchedFolder(newPath, previousPath, token) {
   state.kbNotice = state.loadError
     ? { state: 'danger', title: 'That folder could not be read', detail: state.loadError, support: errorDetailOf(state.loadError), undoPath: previousPath || null }
     : describeSwitchOutcome(newPath, found, previousPath);
+  // The route accepted the folder with something worth knowing (the Windows
+  // app: a long path). Shown under the outcome, never instead of it.
+  if (Array.isArray(warnings) && warnings.length) state.kbNotice.warnings = warnings.slice();
 }
 
 /**
@@ -3622,7 +3652,11 @@ function renderKnowledgeNotice() {
       '</div>'
     : '';
   return '<div class="dm-kb-notice">' +
-    renderStatus({ state: n.state, title: n.title, detail: n.detail, support: n.support ? DETAIL_PREFIX + n.support : '' }) + undo +
+    renderStatus({ state: n.state, title: n.title, detail: n.detail, support: n.support ? DETAIL_PREFIX + n.support : '' }) +
+    (Array.isArray(n.warnings) && n.warnings.length
+      ? renderStatus({ state: 'attention', title: 'Worth knowing about this folder', detail: n.warnings.join(' ') })
+      : '') +
+    undo +
     (n.typedPath ? renderTypedKnowledgePath() : '') +
   '</div>';
 }

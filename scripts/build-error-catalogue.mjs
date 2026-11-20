@@ -39,6 +39,8 @@ import {
 } from '../src/public/next/shared/user-errors.js';
 import { describeSyncError, REPLACE_TOKEN_MESSAGES, gitMissingMessage } from '../src/brain/sync.js';
 import { SHAREDBRAIN_TOKEN_MESSAGES } from '../src/brain/sharedbrain-token.js';
+import { FOLDER_ACCESS_MESSAGES } from '../src/brain/folder-access.js';
+import { WIN32_UPDATE_FAILURES, WIN32_INSTALL_OUTCOMES } from '../desktop/lib/update-plan-win32.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DOCS_PAGE = path.join(ROOT, 'docs', 'errors.md');
@@ -53,6 +55,9 @@ export const PLACEHOLDERS = Object.freeze({
   name: '[file name]',
   service: '[service]',
   repo: '[repository]',
+  folder: '[folder]',
+  segment: '[name]',
+  length: '[number]',
 });
 
 // ── Sync: a git text per code, as git prints it (sync.js's comments record
@@ -87,6 +92,12 @@ const MERGE_CONFLICT_TRIGGERS = [
 // is added HERE, as {label, text: () => <the app's own function>(…)}. Never a
 // sentence typed out in this file: the page must say what the app says.
 export const PLATFORM_SENTENCES = {
+  // files-not-allowed: the Mac sentence, then Windows (Controlled folder
+  // access). `ctx` is the page's placeholder context ([file name]).
+  'files-not-allowed': [
+    { label: '', text: (ctx) => USER_MESSAGES['files-not-allowed']({ ...(ctx || {}), platform: 'darwin' }) },
+    { label: 'On Windows', text: (ctx) => USER_MESSAGES['files-not-allowed']({ ...(ctx || {}), platform: 'win32' }) },
+  ],
   'sync-git-missing': [
     { label: '', text: () => gitMissingMessage({ platform: 'darwin' }) },
     { label: 'In the Windows app', text: () => gitMissingMessage({ platform: 'win32', isBundle: true }) },
@@ -107,6 +118,18 @@ function syncSentence(code, text, opts) {
 export function sentencesFor(code) {
   const P = PLACEHOLDERS;
   const ctx = { provider: P.provider, name: P.name, service: P.service };
+  if (Object.prototype.hasOwnProperty.call(PLATFORM_SENTENCES, code)) {
+    // The sync trigger must still map to this code (the classifier is what
+    // makes the app show these words at all).
+    if (Object.prototype.hasOwnProperty.call(SYNC_TRIGGERS, code)) syncSentence(code, SYNC_TRIGGERS[code]);
+    return PLATFORM_SENTENCES[code].map((v) => ({ label: v.label, text: v.text(ctx) }));
+  }
+  if (Object.prototype.hasOwnProperty.call(FOLDER_ACCESS_MESSAGES, code)) {
+    const fctx = code === 'folder-drive-root' ? { name: 'D:\\', drive: 'D:\\' } : { name: P.folder, segment: P.segment, length: P.length };
+    const out = [{ label: '', text: FOLDER_ACCESS_MESSAGES[code](fctx) }];
+    if (code === 'folder-protected-by-windows') out.push({ label: 'In a OneDrive folder, it adds', text: FOLDER_ACCESS_MESSAGES[code]({ ...fctx, oneDrive: true }).slice(out[0].text.length).trim() });
+    return out;
+  }
   if (Object.prototype.hasOwnProperty.call(USER_MESSAGES, code)) {
     const out = [{ label: '', text: USER_MESSAGES[code](ctx) }];
     if (code === 'git-other') out.push({ label: 'On the Sync page', text: USER_MESSAGES[code]({ ...ctx, area: 'sync' }) });
@@ -126,12 +149,6 @@ export function sentencesFor(code) {
   if (Object.prototype.hasOwnProperty.call(SHAREDBRAIN_TOKEN_MESSAGES, code)) {
     const v = SHAREDBRAIN_TOKEN_MESSAGES[code];
     return [{ label: '', text: typeof v === 'function' ? v(P.repo) : v }];
-  }
-  if (Object.prototype.hasOwnProperty.call(PLATFORM_SENTENCES, code)) {
-    // The sync trigger must still map to this code (the classifier is what
-    // makes the app show these words at all).
-    if (Object.prototype.hasOwnProperty.call(SYNC_TRIGGERS, code)) syncSentence(code, SYNC_TRIGGERS[code]);
-    return PLATFORM_SENTENCES[code].map((v) => ({ label: v.label, text: v.text() }));
   }
   if (code === 'sync-merge-conflict') {
     return MERGE_CONFLICT_TRIGGERS.map((t, i) => ({ label: i ? 'Or, for a conflict inside a page' : '', text: syncSentence(code, t) }));
@@ -158,6 +175,7 @@ export const SECTIONS = [
   ['token', 'Sync: replacing the token', 'Messages in the Replace token panel on the Sync page. In every case but one (sync-token-save-partial), Sync keeps the token it had.'],
   ['ai', 'AI providers and keys', 'Messages from ingest, chat, compile, Wiki health’s AI help and Verify AI connection, when the AI provider (Anthropic, Gemini or OpenRouter) refuses or fails.'],
   ['files', 'Files and folders', 'Messages when this computer will not let The Curator read or save a file in your knowledge folder.'],
+  ['winfolders', 'Choosing a folder on Windows', 'Messages on Windows when you choose, type or create a folder: Settings › Knowledge base, Domains › Use existing folder, and a new domain. In each case nothing was changed, except folder-path-long, which is a warning: the folder was accepted.'],
   ['sharedbrain', 'Shared Brain', 'Messages when GitHub refuses or fails a Shared Brain request.'],
   ['sbtoken', 'Shared Brain: replacing the token', 'Messages in the Replace token panel on a Shared Brain’s card. In each case the Shared Brain keeps the token it had.'],
   ['network', 'Internet connection', 'Messages when The Curator cannot reach a service other than your AI provider.'],
@@ -303,6 +321,44 @@ export const ENTRIES = {
     means: 'A folder was expected and a file found, or the other way round, usually after a rename outside The Curator.',
     todo: 'Check the name in the message, then try again.' },
 
+  // ── Choosing a folder on Windows (src/brain/folder-access.js) ──
+  'folder-protected-by-windows': { section: 'winfolders',
+    means: 'Controlled folder access blocked a save in Documents, Desktop, Pictures, Music or Videos.',
+    todo: 'Choose another folder, or allow The Curator in Windows Security.' },
+  'folder-not-writable': { section: 'winfolders',
+    means: 'The folder is read-only or belongs to someone else.',
+    todo: 'Choose a folder you can change.' },
+  'folder-cloud-busy': { section: 'winfolders',
+    means: 'OneDrive is syncing the folder.',
+    todo: 'Wait until it is up to date.' },
+  'folder-busy': { section: 'winfolders',
+    means: 'Another program has the folder open.',
+    todo: 'Close it or wait, then try again.' },
+  'folder-cloud-unavailable': { section: 'winfolders',
+    means: 'OneDrive is not running or not signed in.',
+    todo: 'Start OneDrive, or keep the folder on this device.' },
+  'folder-network-unreachable': { section: 'winfolders',
+    means: 'The network folder cannot be reached.',
+    todo: 'Check the network and the share.' },
+  'folder-path-too-long': { section: 'winfolders',
+    means: 'The path is too long for Windows.',
+    todo: 'Choose a folder nearer the top of the drive.' },
+  'folder-drive-root': { section: 'winfolders',
+    means: 'A whole drive was chosen, not a folder.',
+    todo: 'Create a folder on it and choose that.' },
+  'folder-reserved-name': { section: 'winfolders',
+    means: 'A name Windows reserves (CON, NUL…) or ending in a dot or space.',
+    todo: 'Rename the folder or choose another.' },
+  'folder-device-path': { section: 'winfolders',
+    means: 'A device path was typed, not a folder.',
+    todo: 'Type a path starting with a drive letter.' },
+  'folder-inside-app': { section: 'winfolders',
+    means: 'The folder is inside the program folder, which updates replace.',
+    todo: 'Choose a folder outside it.' },
+  'folder-path-long': { section: 'winfolders',
+    means: 'A warning: accepted, but the long path can break some Windows programs.',
+    todo: 'Move the folder nearer the top of the drive if a page will not open.' },
+
   // ── Shared Brain ──
   'github-token-rejected': { section: 'sharedbrain',
     means: 'GitHub refused the access token this computer uses for the Shared Brain. It has usually expired or been deleted.',
@@ -381,9 +437,55 @@ export const ENTRIES = {
     todo: 'Try again. If it keeps happening, send the Technical detail line to support.' },
 };
 
+// ── Updating the Windows app: messages with NO code ─────────────────────────
+// The Windows updater's own sentences (desktop/lib/update-plan-win32.js):
+// WIN32_UPDATE_FAILURES, shown in Settings › Check for updates when an update
+// cannot be prepared or installed, and WIN32_INSTALL_OUTCOMES, shown by the
+// update helper (and once more by the app when it next opens) when the
+// installer did not finish. They are NOT catalogue codes: the update route
+// sends them with a `reason` for the screen's branching, never as a `code`,
+// so no "(code: …)" line ever names them and isCatalogueCode stays false for
+// them. So they get their own table, keyed by situation, with no code
+// column; "What you see" comes from the app's own tables, "When" and "What to
+// do" are written here. The run THROWS when a key has no entry or an entry
+// names a key the app does not have.
+export const UPDATE_ENTRIES = {
+  // WIN32_UPDATE_FAILURES
+  'no-asset-for-arch': { when: 'The newest release has no Windows installer for this PC', todo: 'Download it from the releases page.' },
+  'download-cancelled': { when: 'You cancelled the update', todo: 'Nothing to do; check for updates again when you want it.' },
+  'install-dir-not-writable': { when: 'The program folder cannot be written to', todo: 'Run the installer from the releases page, or ask whoever manages the PC.' },
+  'internal-error': { when: 'Preparing the update failed for an unexpected reason', todo: 'Try again, or download the update from the releases page.' },
+  'not-installed-copy': { when: 'This copy was not set up with the installer', todo: 'Install The Curator with the installer from the releases page.' },
+  'install-per-machine': { when: 'The Curator is installed for every user of the PC', todo: 'Run the installer as an administrator, or ask whoever manages the PC.' },
+  'install-path-unsupported': { when: 'The Curator runs from a network folder or an unusual place', todo: 'Install it on this PC with the installer from the releases page.' },
+  'digest-missing': { when: 'GitHub published no checksum for the download', todo: 'Download the installer from the releases page.' },
+  'installer-check-failed': { when: 'The downloaded installer could not be checked', todo: 'Try again, or download the installer from the releases page.' },
+  'helper-unavailable': { when: 'Windows (usually a policy on a managed PC) would not run the update’s last step', todo: 'Download the installer from the releases page and run it.' },
+  'in-use-by-ai-app': { when: 'An AI app such as Claude Desktop is connected to The Curator', todo: 'Quit that app and choose Install update again, or choose Close the connection and update.' },
+  'in-use-other': { when: 'Another copy of The Curator is running', todo: 'Quit the other copy, then choose Install update again.' },
+  // WIN32_INSTALL_OUTCOMES
+  'exe-in-use': { when: 'After an update: an AI app was still using The Curator', todo: 'Quit that app, open The Curator and choose Install update again.' },
+  'app-did-not-quit': { when: 'After an update: The Curator did not close in time', todo: 'Quit The Curator, open it again and choose Install update.' },
+  'installer-changed': { when: 'After an update: the installer changed after it was checked', todo: 'Check for updates again.' },
+  'installer-failed': { when: 'After an update: the installer did not finish', todo: 'Run the installer again (the helper offers to), or download it. Your notes, keys and settings are safe.' },
+  'installer-timeout': { when: 'After an update: the installer took too long', todo: 'If The Curator does not open, run the installer again. Your notes, keys and settings are safe.' },
+  'not-updated': { when: 'After an update: The Curator is still on the previous version', todo: 'Check for updates again, or download the installer.' },
+};
+const UPDATE_SOURCES = { ...WIN32_UPDATE_FAILURES, ...WIN32_INSTALL_OUTCOMES };
+const UPDATES_TITLE = 'Updating the Windows app';
+const LLM_UPDATES_ANSWER = 'They carry no code; each says what happened and the next step. Most often: an AI app such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app';
+const UPDATES_INTRO = 'Messages in the Windows app when an update cannot be prepared or installed (Settings › General › Check for updates, and Help › Check for Updates), and the ones shown after the installer ran. They carry no code: each says what happened and what to do. Your notes, keys and settings are kept outside the program folder, so an update never touches them.';
+
 // ── Checks ──────────────────────────────────────────────────────────────────
 export function catalogueProblems() {
   const problems = [];
+  for (const k of Object.keys(UPDATE_SOURCES)) {
+    if (!UPDATE_ENTRIES[k]) problems.push(`no update entry for ${k}`);
+  }
+  for (const [k, e] of Object.entries(UPDATE_ENTRIES)) {
+    if (!Object.prototype.hasOwnProperty.call(UPDATE_SOURCES, k)) problems.push(`update entry for ${k}, which the Windows updater does not have`);
+    if (!e.when || !e.todo) problems.push(`${k}: when and todo are both required`);
+  }
   const sectionIds = new Set(SECTIONS.map((s) => s[0]));
   for (const code of CATALOGUE_CODES) {
     if (!ENTRIES[code]) problems.push(`no entry for catalogue code ${code}`);
@@ -424,6 +526,10 @@ export function renderDocsRegion() {
     }
     lines.push('');
   }
+  lines.push(`## ${UPDATES_TITLE}`, '', UPDATES_INTRO, '');
+  lines.push('| When | What you see |', '|---|---|');
+  for (const [k, e] of Object.entries(UPDATE_ENTRIES)) lines.push(`| ${cell(e.when)} | ${cell(UPDATE_SOURCES[k])} |`);
+  lines.push('');
   lines.push(END);
   return lines.join('\n');
 }
@@ -433,6 +539,7 @@ const LLM_HEADINGS = {
   token: 'What do the Replace token error codes mean?',
   ai: 'What do the AI provider error codes mean?',
   files: 'What do the file and folder error codes mean?',
+  winfolders: 'What do the Windows folder error codes mean?',
   sharedbrain: 'What do the Shared Brain error codes mean?',
   sbtoken: 'What do the Shared Brain Replace token error codes mean?',
   network: 'What do the internet connection error codes mean?',
@@ -450,6 +557,9 @@ export function renderLlmRegion() {
     }
     lines.push('');
   }
+  // One paragraph, not the table: the assistant's copy is budgeted
+  // (scripts/test-public-knowledge.js), and the full list is one link away.
+  lines.push('## What do the Windows app\'s update messages mean?', '', LLM_UPDATES_ANSWER, '');
   lines.push(END);
   return lines.join('\n');
 }

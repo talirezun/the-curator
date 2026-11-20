@@ -304,14 +304,14 @@ const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => 
 const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${escapeHtml(o.title)}</b>${escapeHtml(o.detail || '')}</div>`;
 {
   const src = fs.readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
-  const names = ['classifyPickResponse', 'renderKnowledgeNotice', 'renderTypedKnowledgePath', 'onChooseKnowledgeFolder', 'onTypedKnowledgeFolder'];
+  const names = ['folderWarnings', 'classifyPickResponse', 'renderKnowledgeNotice', 'renderTypedKnowledgePath', 'onChooseKnowledgeFolder', 'onTypedKnowledgeFolder'];
   const renderDescription = (t) => '<p class="tx-desc">' + escapeHtml(t) + '</p>';
   const make = new Function('escapeHtml', 'renderStatus', 'renderDescription', `
     let state = {}; const calls = { fetch: [], render: 0, applied: [] }; let queue = [];
     const shell = { isAnyWriteBusy: () => false };
     function render() { calls.render++; }
     function isCurrentMount() { return true; }
-    async function applySwitchedFolder(p, prev) { calls.applied.push([p, prev]); }
+    async function applySwitchedFolder(p, prev, _t, warnings) { calls.applied.push(warnings && warnings.length ? [p, prev, warnings] : [p, prev]); }
     async function fetch(url, opts) {
       calls.fetch.push({ url, method: opts && opts.method, body: opts && opts.body });
       const n = queue.shift(); return { ok: n.status < 400, status: n.status, json: async () => n.body };
@@ -354,6 +354,36 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
   await D.onTypedKnowledgeFolder('"C:\\Users\\Žiga\\Znanje"', 1);
   eq(D.calls.applied.at(-1), ['C:\\Users\\Žiga\\Znanje', 'C:\\the-curator\\domains'],
     'Domains: on success the SERVER\'s normalised path is applied through applySwitchedFolder, with the way back');
+  // Wave 2: a folder accepted WITH a warning (a long path) carries the
+  // warning's sentence through to the outcome, from a typed path and a pick.
+  const LONG = 'This folder\'s path is 130 characters long. Windows programs such as File Explorer and Obsidian can fail on paths over 260 characters.';
+  D.q({ status: 200, body: { ok: true, domainsPath: 'C:\\k', warnings: [{ code: 'folder-path-long', message: LONG }, { code: 'x', message: 7 }] } });
+  await D.onTypedKnowledgeFolder('C:\\k', 1);
+  eq(D.calls.applied.at(-1), ['C:\\k', 'C:\\the-curator\\domains', [LONG]],
+    'Domains: a typed path accepted with a warning hands its sentence (strings only) to the outcome');
+  D.setState(base());
+  D.q({ status: 200, body: { ok: true, path: 'C:\\k', warnings: [{ code: 'folder-path-long', message: LONG }] } });
+  await D.onChooseKnowledgeFolder(1);
+  eq(D.calls.applied.at(-1), ['C:\\k', 'C:\\the-curator\\domains', [LONG]], 'Domains: so does a picked folder');
+  D.setState({ ...base(), kbNotice: { state: 'success', title: 'Opened 2 domains', detail: 'd', warnings: [LONG] } });
+  ok(/Worth knowing about this folder/.test(D.renderKnowledgeNotice()) && D.renderKnowledgeNotice().includes('130 characters long'),
+    'Domains: the warning is on screen under the outcome, not behind anything');
+  D.setState({ ...base(), kbNotice: { state: 'success', title: 'Opened 2 domains', detail: 'd' } });
+  ok(!/Worth knowing/.test(D.renderKnowledgeNotice()), 'Domains: no warning, no extra line (the Mac outcome unchanged)');
+  // Wave 2: a pick the folder rules refused is titled for what happened.
+  D.setState(base());
+  D.q({ status: 400, body: { ok: false, reason: 'protected-by-windows', code: 'folder-protected-by-windows', error: 'Windows didn\'t let The Curator save in C:\\Users\\a\\Documents\\kb, so nothing was changed.' } });
+  await D.onChooseKnowledgeFolder(1);
+  ok(D.getState().kbNotice.title === 'That folder cannot be used' && /Documents/.test(D.getState().kbNotice.detail) && D.getState().kbNotice.typedPath === true,
+    'Domains: a picked folder the rules refused reads "That folder cannot be used", with the reason and the typed path');
+  D.setState(base());
+  D.q({ status: 400, body: { error: 'Folder does not exist: /x' } });
+  await D.onChooseKnowledgeFolder(1);
+  ok(D.getState().kbNotice.title === 'The folder picker did not finish', 'Domains: a 400 with no reason (the Mac\'s refusal) keeps its old title');
+  D.setState(base());
+  D.q({ status: 500, body: { error: 'The dialog threw.' } });
+  await D.onChooseKnowledgeFolder(1);
+  ok(D.getState().kbNotice.title === 'The folder picker did not finish', 'Domains: a picker that failed keeps "did not finish"');
   const before = D.calls.fetch.length;
   await D.onTypedKnowledgeFolder('   ', 1);
   ok(D.calls.fetch.length === before && /first/.test(D.getState().kbTypedError), 'Domains: an empty field sends nothing and says so');
@@ -367,7 +397,7 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
     async function loadConfig() { calls.loadConfig++; }
     async function fetch(url, opts) { calls.fetch.push({ url, body: opts && opts.body });
       const n = queue.shift(); return { ok: n.status < 400, status: n.status, json: async () => n.body }; }
-    ${['renderTypedFolderFallback', 'onChooseFolder', 'onUseTypedFolder'].map((n) => extractFunction(ssrc, n)).join('\n')}
+    ${['folderWarningText', 'renderTypedFolderFallback', 'onChooseFolder', 'onUseTypedFolder'].map((n) => extractFunction(ssrc, n)).join('\n')}
     return { renderTypedFolderFallback, onChooseFolder, onUseTypedFolder, setState: (s) => { state = s; }, getState: () => state, calls, q: (r) => queue.push(r) };`)(escapeHtml);
   S.setState({ config: { domainsPath: 'C:\\a' }, pickingFolder: false });
   ok(S.renderTypedFolderFallback() === '', 'Settings: nothing extra before any picker failure');
@@ -382,6 +412,21 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
   await S.onUseTypedFolder('C:\\b', 1);
   eq([S.calls.fetch.at(-1).url, S.calls.loadConfig, S.getState().folderPickError], ['/api/config/domains-path', 1, null],
     'Settings: the typed path goes to domains-path, the config is re-read, the fallback closes');
+  eq(S.getState().folderWarning, null, 'Settings: a folder accepted with no warning leaves none on screen');
+  // Wave 2: the route's warnings for an ACCEPTED folder reach the screen.
+  const LONG_S = 'This folder\'s path is 130 characters long.';
+  S.q({ status: 200, body: { ok: true, domainsPath: 'C:\\c', warnings: [{ code: 'folder-path-long', message: LONG_S }] } });
+  await S.onUseTypedFolder('C:\\c', 1);
+  eq(S.getState().folderWarning, LONG_S, 'Settings: a typed path accepted with a warning keeps its sentence for the block');
+  S.q({ status: 200, body: { ok: true, path: 'C:\\d' } });
+  await S.onChooseFolder(1);
+  eq(S.getState().folderWarning, null, 'Settings: the next accepted folder without one clears it');
+  S.q({ status: 200, body: { ok: true, path: 'C:\\e', warnings: [{ code: 'folder-path-long', message: LONG_S }, { message: '' }, null] } });
+  await S.onChooseFolder(1);
+  eq(S.getState().folderWarning, LONG_S, 'Settings: and a picked folder with one shows it (empty or broken entries dropped)');
+  const block = ssrc.slice(ssrc.indexOf("'<span>Moving this folder loses nothing"), ssrc.indexOf('renderTypedFolderFallback() +', ssrc.indexOf("'<span>Moving this folder loses nothing")));
+  ok(/state\.folderWarning \? renderStatus\(\{ state: 'attention', title: 'Worth knowing about this folder', detail: state\.folderWarning \}\)/.test(block),
+    'Settings: the Vault folder block renders it with the shared status component, under the path, not behind a chevron (source, weak)');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

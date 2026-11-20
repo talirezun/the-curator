@@ -97,6 +97,19 @@ export const UPDATE_PHASE_COPY = {
  * the shared body, so a phase added later is shared by default and has to be
  * opted out of sharing deliberately.
  */
+/**
+ * WINDOWS: the phases whose Mac sentence is not true on a PC (the Windows app,
+ * 2026-11-20). The Windows engine (desktop/lib/update-install-win32.js) does
+ * not unpack anything beside the running app: it checks the downloaded setup
+ * program's size, SHA-256 and version, then keeps it, read-only, until
+ * Install, when the setup program itself replaces the app. Anything ABSENT
+ * here is the shared sentence, so the Mac's wording is untouched.
+ */
+export const UPDATE_PHASE_COPY_WIN32 = {
+  verifying: { headline: 'Checking the download', body: 'Confirming the installer arrived complete and unaltered, and that it is the new version. Nothing has been replaced yet.' },
+  staging:   { headline: 'Preparing to install',  body: 'Keeping the checked installer ready to run. Nothing has been replaced yet.' },
+};
+
 export const UPDATE_WINDOW_BODY = {
   installing: 'Putting the new version in place. The Curator will restart on its own.',
 };
@@ -114,10 +127,13 @@ export const UPDATE_WINDOW_BODY = {
  * (`UPDATE_PHASE_COPY[job.phase] || UPDATE_PHASE_COPY.resolving`), moved here
  * so both surfaces inherit one answer instead of each writing their own.
  */
-export function phaseCopy(phase, surface) {
-  const base = (phase !== null && phase !== undefined && Object.hasOwn(UPDATE_PHASE_COPY, phase))
-    ? UPDATE_PHASE_COPY[phase]
-    : UPDATE_PHASE_COPY.resolving;
+export function phaseCopy(phase, surface, platform) {
+  const known = phase !== null && phase !== undefined && Object.hasOwn(UPDATE_PHASE_COPY, phase);
+  // `platform` 'win32' takes the Windows sentence where one exists; absent or
+  // any other value is the shared table, exactly as before.
+  const base = (known && platform === 'win32' && Object.hasOwn(UPDATE_PHASE_COPY_WIN32, phase))
+    ? UPDATE_PHASE_COPY_WIN32[phase]
+    : known ? UPDATE_PHASE_COPY[phase] : UPDATE_PHASE_COPY.resolving;
   if (surface !== 'window') return { headline: base.headline, body: base.body };
   const over = Object.hasOwn(UPDATE_WINDOW_BODY, phase) ? UPDATE_WINDOW_BODY[phase] : null;
   return { headline: base.headline, body: over === null ? base.body : over };
