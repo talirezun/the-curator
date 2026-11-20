@@ -33,8 +33,8 @@ import { progressOf } from './update-plan.js';
 import {
   win32Failure, localizeFailure, classifyWin32InstallTarget, classifyInstallProcesses,
   buildProcessListCommand, parseProcessList, buildVersionCommand, normaliseProductVersion,
-  buildWin32InstallScript, buildProbeScript, helperArgs, helperEnv, powershellPath, explorerPath,
-  describeInstallOutcome, INSTALL_PROBE_PREFIX,
+  buildWin32InstallScript, buildProbeScript, buildWin32LaunchScript, helperArgs, powershellPath, explorerPath,
+  describeInstallOutcome, INSTALL_PROBE_PREFIX, LAUNCH_WAIT_SECONDS,
 } from './update-plan-win32.js';
 import { createDownloader, hashFile } from './update-download.js';
 
@@ -42,6 +42,11 @@ import { createDownloader, hashFile } from './update-download.js';
 export const RESULT_FILE = 'last-update.json';
 /** The helper script, inside `workDir`. */
 export const HELPER_SCRIPT = 'install-update.ps1';
+/** The launcher that starts the helper and waits for its start marker. */
+export const LAUNCH_SCRIPT = 'launch-update.ps1';
+/** Written by the helper as its FIRST action (its PID). The app quits only
+ *  once this exists: proof the helper is running its script. */
+export const HELPER_STARTED = 'install-update.started';
 
 const noop = () => {};
 
@@ -64,6 +69,7 @@ function safeName(s) {
 export function isEngineFileName(name) {
   if (typeof name !== 'string' || !name || name.length > 200) return false;
   if (name === HELPER_SCRIPT || name === RESULT_FILE || name === `${RESULT_FILE}.tmp`) return true;
+  if (name === LAUNCH_SCRIPT || name === HELPER_STARTED) return true;
   if (/^probe-[A-Za-z0-9]{1,32}\.(?:ps1|txt)$/.test(name)) return true;
   return /^v?\d+\.\d+\.\d+[A-Za-z0-9._-]*\.exe$/i.test(name);
 }
@@ -79,7 +85,11 @@ export function createWin32UpdateEngine(deps = {}) {
     workDir,
     logPath = null,
     runCommand,
-    spawnDetached,
+    // Accepted for the shared F API and NOT used on Windows: a helper started
+    // detached (libuv DETACHED_PROCESS, no console) left no trace in
+    // v3.99.3-wintest.4. The launcher (buildWin32LaunchScript), run through
+    // runCommand, starts it instead and proves it started.
+    spawnDetached: _spawnDetachedUnused, // eslint-disable-line no-unused-vars
     quitApp = null,
     writeRegistry = {},
     pid = process.pid,
@@ -387,7 +397,7 @@ export function createWin32UpdateEngine(deps = {}) {
       return { ...win32Failure('writes-in-progress'), operations: Array.isArray(ops) ? ops.slice(0, 8) : [] };
     }
     if (typeof quitApp !== 'function') return win32Failure('relaunch-unavailable');
-    if (typeof spawnDetached !== 'function') return win32Failure('helper-spawn-failed', 'no spawnDetached');
+    if (typeof runCommand !== 'function') return win32Failure('helper-spawn-failed', 'no runCommand');
 
     // ── Who else holds the exe. Asked BEFORE quitting, so a person whose
     //    Claude Desktop is connected is told so with the app still open. ──
@@ -408,6 +418,8 @@ export function createWin32UpdateEngine(deps = {}) {
     emit('installing', 0, null);
 
     const scriptPath = P.join(workDir, HELPER_SCRIPT);
+    const launchPath = P.join(workDir, LAUNCH_SCRIPT);
+    const startedPath = P.join(workDir, HELPER_STARTED);
     let script;
     try {
       script = buildWin32InstallScript({
@@ -422,12 +434,22 @@ export function createWin32UpdateEngine(deps = {}) {
         explorer,
         stopPids,
         scriptPath,
+        startedPath,
         showMessages,
+      });
+      const launcher = buildWin32LaunchScript({
+        powershell: ps,
+        args: helperArgs(scriptPath, logPath ? { errorLogPath: logPath } : {}),
+        startedPath,
+        logPath,
+        workDir,
       });
       await fs.mkdir(workDir, { recursive: true, mode: 0o700 });
       // A BOM, so Windows PowerShell 5.1 reads the sentences as UTF-8.
       await fs.writeFile(scriptPath, `﻿${script}`, 'utf8');
+      await fs.writeFile(launchPath, `﻿${launcher}`, 'utf8');
       try { await fs.rm(P.join(workDir, RESULT_FILE), { force: true }); } catch { /* none */ }
+      try { await fs.rm(startedPath, { force: true }); } catch { /* none */ }
     } catch (err) {
       return win32Failure('helper-write-failed', err && err.code);
     }
@@ -436,11 +458,18 @@ export function createWin32UpdateEngine(deps = {}) {
       try { writeRegistry.beginUpdate(); } catch { /* never blocks the update */ }
     }
 
-    try {
-      spawnDetached(ps, helperArgs(scriptPath), { env: helperEnv(env), windowsHide: true });
-    } catch (err) {
+    // ── Start the helper and WAIT until it proves it is running (its start
+    //    marker), before this app quits. A helper that never starts used to
+    //    leave the person with the app closed and nothing installed, and no
+    //    trace (v3.99.3-wintest.4); now the app stays open and says so. ──
+    const launched = await run(ps, helperArgs(launchPath), { timeoutMs: (LAUNCH_WAIT_SECONDS + 40) * 1000 });
+    let started = false;
+    try { started = (await fs.stat(startedPath)).isFile(); } catch { started = false; }
+    await remove(launchPath);
+    if (!started) {
       if (typeof writeRegistry.endUpdate === 'function') { try { writeRegistry.endUpdate(); } catch { /* ignore */ } }
-      return win32Failure('helper-spawn-failed', err && err.message);
+      const said = String(launched.stdout || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+      return win32Failure('helper-spawn-failed', `launcher exited ${launched.status}${said ? `: ${said.slice(0, 80)}` : ''}`);
     }
 
     try {

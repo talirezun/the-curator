@@ -13,8 +13,9 @@
  * (`TheCurator-X.Y.Z-x64-Windows-Setup.exe`) into
  * `%LOCALAPPDATA%\TheCurator\updates\`, checks its byte length and the SHA-256
  * GitHub publishes for it, reads its ProductVersion, and makes it read-only.
- * On Install it writes a PowerShell helper (built here, as TEXT) and starts it
- * detached, then quits. The helper waits for the app to exit, proves no other
+ * On Install it writes a PowerShell helper (built here, as TEXT), starts it
+ * through a short launcher it waits for (buildWin32LaunchScript), and quits
+ * only once the helper has written its start marker. The helper waits for the app to exit, proves no other
  * process still holds `The Curator.exe` (Claude Desktop keeps a copy running as
  * the MCP bridge), re-checks the setup's SHA-256, and runs it with
  * `/S --updated --force-run`: silent, keep the shortcuts, reopen the app. It
@@ -364,10 +365,152 @@ export const INSTALLER_ARGS = Object.freeze(['/S', '--updated', '--force-run']);
  * and security software flags it. The probe (`buildProbeScript`) runs through
  * this exact form before the app quits, so a PC where it cannot work is told
  * so with nothing changed.
+ *
+ * `errorLogPath` (the helper only): the script block is built and run inside
+ * a try/catch, so a script PowerShell cannot even parse, or an error before
+ * the script's own `trap` exists, is written to that log and the process
+ * exits HELPER_EXIT_CODES['helper-error'], instead of vanishing with nothing
+ * written (v3.99.3-wintest.4: the helper left no trace at all). `exit`
+ * inside the script is flow control, not an error: the catch never sees it.
  */
-export function helperArgs(scriptPath) {
-  const boot = `& ([ScriptBlock]::Create([IO.File]::ReadAllText(${psQuote(scriptPath)}, [Text.Encoding]::UTF8)))`;
+export function helperArgs(scriptPath, { errorLogPath = null } = {}) {
+  const run = `& ([ScriptBlock]::Create([IO.File]::ReadAllText(${psQuote(scriptPath)}, [Text.Encoding]::UTF8)))`;
+  let boot = run;
+  if (errorLogPath !== null) {
+    if (typeof errorLogPath !== 'string' || !errorLogPath || /[\0\r\n]/.test(errorLogPath)) throw new Error('helperArgs: bad errorLogPath');
+    boot = `try { ${run} } catch { try { [IO.File]::AppendAllText(${psQuote(errorLogPath)}, ([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') + ' update-install: ERROR, the helper could not run: ' + $_.Exception.Message + [Environment]::NewLine)) } catch {}; exit ${HELPER_EXIT_CODES['helper-error']} }`;
+  }
   return ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', boot];
+}
+
+/**
+ * One argument, quoted for a Windows command line the way the Microsoft C
+ * runtime (and CommandLineToArgvW, which powershell.exe uses) reads it back:
+ * wrapped in double quotes when it holds a space, a tab or a quote (or is
+ * empty); a quote is escaped with a backslash; backslashes are doubled only
+ * where they precede a quote, including the closing one. Pure.
+ */
+export function winQuoteArg(arg) {
+  const s = String(arg);
+  if (s && !/[\s"]/.test(s)) return s;
+  let out = '"';
+  let slashes = 0;
+  for (const ch of s) {
+    if (ch === '\\') { slashes += 1; continue; }
+    if (ch === '"') { out += `${'\\'.repeat(slashes * 2 + 1)}"`; slashes = 0; continue; }
+    out += '\\'.repeat(slashes) + ch;
+    slashes = 0;
+  }
+  return `${out}${'\\'.repeat(slashes * 2)}"`;
+}
+
+/** Arguments → one Windows command-line string (ProcessStartInfo.Arguments). */
+export function winCommandLine(args) {
+  return args.map(winQuoteArg).join(' ');
+}
+
+/**
+ * Environment variables the helper (and so the app the setup reopens) must
+ * NOT inherit: what main.js set for itself, and anything that would turn the
+ * reopened exe into Node. Case-insensitive, as Windows is. One rule, used by
+ * helperEnv() in JS and embedded in the launcher's PowerShell (`-match` is
+ * case-insensitive; this pattern means the same in both regex dialects).
+ */
+export const HELPER_ENV_DROP_SOURCE = '^(?:PORT|CURATOR_NO_OPEN|NODE_OPTIONS)$|^ELECTRON_';
+const HELPER_ENV_DROP = new RegExp(HELPER_ENV_DROP_SOURCE, 'i');
+
+/**
+ * How long the launcher waits for the helper's start marker before it stops
+ * the helper and reports that it never started. Windows PowerShell's cold
+ * start under antivirus can take several seconds.
+ */
+export const LAUNCH_WAIT_SECONDS = 20;
+
+/** The launcher's exit codes. Only `started` lets the app quit. */
+export const LAUNCH_EXIT_CODES = Object.freeze({ started: 0, 'not-started': 21, exited: 22, timeout: 23 });
+
+/**
+ * The LAUNCHER: a short PowerShell script the app runs and WAITS for (through
+ * runCommand, the same hidden, piped, non-detached start the probe proves),
+ * which starts the helper and returns only once the helper has left its start
+ * marker. Why not start the helper directly, detached:
+ *
+ *   v3.99.3-wintest.4 measured that a helper started by Node with
+ *   `detached: true, stdio: 'ignore'` (libuv: DETACHED_PROCESS, so NO
+ *   console) wrote nothing at all: not its first log line, not a result,
+ *   while the same `-Command` form started non-detached (the probe) ran. A
+ *   detached start also tells the app nothing: the app quit regardless.
+ *
+ * The launcher starts the helper through the shell (UseShellExecute): a new
+ * hidden console of its own, and NO inherited handles (with UseShellExecute
+ * off, .NET passes bInheritHandles=TRUE, the helper would hold runCommand's
+ * stdout pipe open and the app would wait for it until the timeout). The
+ * environment is this launcher's own, minus HELPER_ENV_DROP, which the
+ * shell-started helper inherits. Outcomes, on stdout and as the exit code:
+ *
+ *   started <pid>   (0)  the marker exists: the helper is running its script;
+ *   not-started     (21) Windows refused to start it;
+ *   exited <code>   (22) it ended before writing the marker (a parse error or
+ *                        an error before its trap: the boot wrote it to the log);
+ *   timeout         (23) no marker in LAUNCH_WAIT_SECONDS: the helper is
+ *                        stopped and the marker removed, so nothing runs later.
+ *
+ * Every outcome is also logged. The app quits only when the marker exists.
+ */
+export function buildWin32LaunchScript(opts = {}) {
+  const { powershell, args, startedPath, logPath = null, workDir, waitSeconds = LAUNCH_WAIT_SECONDS } = opts;
+  for (const [k, v] of Object.entries({ powershell, startedPath, workDir })) {
+    if (typeof v !== 'string' || !v || /[\0\r\n]/.test(v)) throw new Error(`buildWin32LaunchScript: ${k} is required`);
+  }
+  if (logPath !== null && (typeof logPath !== 'string' || /[\0\r\n]/.test(logPath))) throw new Error('buildWin32LaunchScript: bad logPath');
+  if (!Array.isArray(args) || !args.length || !args.every((a) => typeof a === 'string' && !/[\0\r\n]/.test(a))) {
+    throw new Error('buildWin32LaunchScript: args must be strings');
+  }
+  if (!Number.isSafeInteger(waitSeconds) || waitSeconds < 1 || waitSeconds > 300) throw new Error('buildWin32LaunchScript: bad waitSeconds');
+  const X = LAUNCH_EXIT_CODES;
+  return [
+    '# The Curator: starts the update helper (Windows). Generated by',
+    '# desktop/lib/update-plan-win32.js, deleted after use.',
+    `$Ps = ${psQuote(powershell)}`,
+    `$Arguments = ${psQuote(winCommandLine(args))}`,
+    `$Started = ${psQuote(startedPath)}`,
+    `$WorkDir = ${psQuote(workDir)}`,
+    `$LogPath = ${logPath ? psQuote(logPath) : '$null'}`,
+    `$WaitSeconds = ${waitSeconds}`,
+    `$EnvDrop = ${psQuote(HELPER_ENV_DROP_SOURCE)}`,
+    'function Log([string]$m) {',
+    '  if (-not $LogPath) { return }',
+    "  try { [IO.File]::AppendAllText($LogPath, ([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') + ' update-launch: ' + $m + [Environment]::NewLine)) } catch {}",
+    '}',
+    'function Say([string]$m, [int]$code) { Log $m; [Console]::Out.WriteLine($m); exit $code }',
+    '$p = $null',
+    'try {',
+    '  foreach ($k in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$k -match $EnvDrop) { [Environment]::SetEnvironmentVariable([string]$k, $null) } }',
+    '  if ([IO.File]::Exists($Started)) { [IO.File]::Delete($Started) }',
+    '  $psi = [System.Diagnostics.ProcessStartInfo]::new()',
+    '  $psi.FileName = $Ps',
+    '  $psi.Arguments = $Arguments',
+    '  $psi.WorkingDirectory = $WorkDir',
+    '  $psi.UseShellExecute = $true',
+    '  $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden',
+    '  $p = [System.Diagnostics.Process]::Start($psi)',
+    "} catch { Log ('could not start the helper: ' + $_.Exception.Message); $p = $null }",
+    `if ($null -eq $p) { Say 'not-started' ${X['not-started']} }`,
+    '$deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)',
+    'while ([DateTime]::UtcNow -lt $deadline) {',
+    `  if ([IO.File]::Exists($Started)) { Say ('started ' + $p.Id) ${X.started} }`,
+    `  if ($p.HasExited) { if ([IO.File]::Exists($Started)) { Say ('started ' + $p.Id) ${X.started} }; Say ('exited ' + $p.ExitCode) ${X.exited} }`,
+    '  [Threading.Thread]::Sleep(100)',
+    '}',
+    'try { $p.Kill() } catch {}',
+    'try { $null = $p.WaitForExit(5000) } catch {}',
+    '# Stopped: if it wrote the marker at the last moment, it did nothing yet (it waits',
+    '# for the app to quit first), and the app does not quit. Remove the marker so',
+    '# nobody reads it as started.',
+    'try { if ([IO.File]::Exists($Started)) { [IO.File]::Delete($Started) } } catch {}',
+    `Say 'timeout' ${X.timeout}`,
+    '',
+  ].join('\r\n');
 }
 
 /** A tiny script that writes the language mode to `markerPath`. The helper
@@ -388,9 +531,8 @@ export function buildProbeScript(markerPath) {
  */
 export function helperEnv(env) {
   const out = {};
-  const drop = (k) => /^(PORT|CURATOR_NO_OPEN|NODE_OPTIONS)$/i.test(k) || /^ELECTRON_/i.test(k);
   for (const [k, v] of Object.entries(env || {})) {
-    if (typeof v !== 'string' || drop(k)) continue;
+    if (typeof v !== 'string' || HELPER_ENV_DROP.test(k)) continue;
     out[k] = v;
   }
   return out;
@@ -414,7 +556,7 @@ export const HELPER_REOPEN_WAIT_SECONDS = 15;
 /** What the helper records, besides `installed`. Exit code per result. */
 export const HELPER_EXIT_CODES = Object.freeze({
   installed: 0, 'app-did-not-quit': 3, 'exe-in-use': 4, 'installer-changed': 5,
-  'installer-timeout': 6, 'installer-failed': 7,
+  'installer-timeout': 6, 'installer-failed': 7, 'helper-error': 9,
 });
 
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
@@ -441,11 +583,19 @@ const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
  *
  * Every failure is shown in a message box as well as recorded, so it is never
  * silent, even when the program folder no longer holds a runnable app.
+ *
+ * OBSERVABLE FROM ITS FIRST LINE (v3.99.3-wintest.4 left no trace at all):
+ * before anything else, using .NET only (no cmdlet, no module to load), it
+ * writes its PID to `startedPath` (the launcher waits for that file) and a
+ * "started" line to the log. A `trap` then catches every terminating error
+ * for the rest of the script: logged with its line, recorded as
+ * `helper-error`, the old app reopened if it is gone, and the person told.
+ * Log and Write-Result use .NET only, so the record never depends on a module.
  */
 export function buildWin32InstallScript(opts = {}) {
   const {
     pid, exePath, installerPath, sha256, size, version, resultPath, logPath = null,
-    explorer, stopPids = [], scriptPath = null,
+    explorer, stopPids = [], scriptPath = null, startedPath = null,
     waitSeconds = HELPER_WAIT_SECONDS, lockWaitSeconds = HELPER_LOCK_WAIT_SECONDS,
     installTimeoutSeconds = HELPER_INSTALL_TIMEOUT_SECONDS, reopenWaitSeconds = HELPER_REOPEN_WAIT_SECONDS,
     showMessages = true,
@@ -457,6 +607,7 @@ export function buildWin32InstallScript(opts = {}) {
   }
   if (logPath !== null && (typeof logPath !== 'string' || /[\0\r\n]/.test(logPath))) throw new Error('buildWin32InstallScript: bad logPath');
   if (scriptPath !== null && (typeof scriptPath !== 'string' || /[\0\r\n]/.test(scriptPath))) throw new Error('buildWin32InstallScript: bad scriptPath');
+  if (startedPath !== null && (typeof startedPath !== 'string' || !startedPath || /[\0\r\n]/.test(startedPath))) throw new Error('buildWin32InstallScript: bad startedPath');
   if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('buildWin32InstallScript: sha256 must be 64 lowercase hex');
   if (!Number.isSafeInteger(size) || size < 1) throw new Error('buildWin32InstallScript: size is required');
   if (typeof version !== 'string' || !VERSION_RE.test(version)) throw new Error('buildWin32InstallScript: bad version');
@@ -468,11 +619,27 @@ export function buildWin32InstallScript(opts = {}) {
   }
 
   const M = WIN32_INSTALL_OUTCOMES;
+  const STAMP = "[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')";
+  const resultJson = (resultExpr, codeExpr) => `('{"result":"' + ${resultExpr} + '","version":"' + $Version + '","at":"' + ${STAMP} + '","exitCode":' + ${codeExpr} + '}')`;
   const lines = [
     '# The Curator: update installer (Windows).',
     '# Generated at install time by desktop/lib/update-plan-win32.js. Not shipped, not',
     '# edited by hand. It runs the setup program The Curator already downloaded and',
     '# checked against the SHA-256 GitHub publishes, after The Curator has quit.',
+    '',
+    '# ── 0. A trace before anything else: .NET only, nothing that can fail first ──',
+    ...(startedPath ? [`try { [IO.File]::WriteAllText(${psQuote(startedPath)}, [string]$PID) } catch {}`] : []),
+    ...(logPath ? [`try { [IO.File]::AppendAllText(${psQuote(logPath)}, (${STAMP} + ' update-install: started, pid ' + $PID + [Environment]::NewLine)) } catch {}`] : []),
+    '$SetupStarted = $false',
+    '# Any terminating error from here on: logged with its line, recorded, never silent.',
+    'trap {',
+    '  $err = $_',
+    ...(logPath ? [`  try { [IO.File]::AppendAllText(${psQuote(logPath)}, (${STAMP} + ' update-install: ERROR at line ' + $err.InvocationInfo.ScriptLineNumber + ': ' + $err.Exception.Message + [Environment]::NewLine)) } catch {}`] : []),
+    `  try { [IO.File]::WriteAllText(${psQuote(resultPath)}, ('{"result":"helper-error","version":"' + ${psQuote(version)} + '","at":"' + ${STAMP} + '","exitCode":${HELPER_EXIT_CODES['helper-error']}}'), [Text.UTF8Encoding]::new($false)) } catch {}`,
+    `  try { if (-not (Get-Process -Id ${pid} -ErrorAction SilentlyContinue)) { Start-App } } catch {}`,
+    '  try { if ($SetupStarted) { Show-Message $MsgFailed $true } else { Show-Message $MsgNotUpdated $false } } catch {}',
+    `  exit ${HELPER_EXIT_CODES['helper-error']}`,
+    '}',
     'Set-StrictMode -Version 2',
     "$ErrorActionPreference = 'Continue'",
     '',
@@ -497,21 +664,23 @@ export function buildWin32InstallScript(opts = {}) {
     `$MsgChanged = ${psQuote(M['installer-changed'])}`,
     `$MsgFailed = ${psQuote(M['installer-failed'])}`,
     `$MsgTimeout = ${psQuote(M['installer-timeout'])}`,
+    `$MsgNotUpdated = ${psQuote(M['not-updated'])}`,
     `$RunQuestion = ${psQuote(WIN32_RUN_INSTALLER_QUESTION)}`,
     '',
     '# Never fails the script: a log that cannot be written must not stop an update.',
     'function Log([string]$m) {',
     '  if (-not $LogPath) { return }',
-    "  try { Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') + ' update-install: ' + $m) -Encoding UTF8 } catch {}",
+    `  try { [IO.File]::AppendAllText($LogPath, (${STAMP} + ' update-install: ' + $m + [Environment]::NewLine)) } catch {}`,
     '}',
     '',
     '# The outcome, written atomically, read once by the reopened app (afterStart).',
+    '# Every value in it is a fixed word, the validated version, a time or a number.',
     'function Write-Result([string]$result, [int]$code) {',
     '  try {',
-    "    $o = [ordered]@{ result = $result; version = $Version; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); exitCode = $code }",
     "    $tmp = $ResultPath + '.tmp'",
-    '    [IO.File]::WriteAllText($tmp, ($o | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false))',
-    '    Move-Item -LiteralPath $tmp -Destination $ResultPath -Force',
+    `    [IO.File]::WriteAllText($tmp, ${resultJson('$result', '$code')}, [Text.UTF8Encoding]::new($false))`,
+    '    if ([IO.File]::Exists($ResultPath)) { [IO.File]::Delete($ResultPath) }',
+    '    [IO.File]::Move($tmp, $ResultPath)',
     "  } catch { Log ('could not record the outcome: ' + $result) }",
     '}',
     '',
@@ -617,6 +786,7 @@ export function buildWin32InstallScript(opts = {}) {
     '# ── 5. Run it ──',
     "Write-Result 'installing' -1",
     "Log ('running the setup for ' + $Version)",
+    '$SetupStarted = $true',
     '$proc = $null',
     'try { $proc = Start-Process -FilePath $Installer -ArgumentList $InstallerArgs -PassThru -WindowStyle Hidden; $null = $proc.Handle } catch { $proc = $null }',
     'if ($null -eq $proc) {',
@@ -650,6 +820,8 @@ export function buildWin32InstallScript(opts = {}) {
     "if (-not $running) { Log 'the setup did not reopen The Curator; opening it'; Start-App }",
     'Remove-Quietly $Installer',
     'Remove-Quietly $ScriptPath',
+    ...(startedPath ? [`Remove-Quietly ${psQuote(startedPath)}`] : []),
+    "Log 'done'",
     'exit 0',
     '',
   ];

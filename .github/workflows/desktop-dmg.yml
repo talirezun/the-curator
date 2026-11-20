@@ -537,8 +537,12 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          foreach ($d in @("$env:LOCALAPPDATA\TheCurator\logs", "$env:LOCALAPPDATA\TheCurator\updates", "$env:TEMP")) {
-            Get-ChildItem -LiteralPath $d -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.json', '.ps1' } | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 80 }
+          # The helper's own files WHOLE (wintest.4 printed only the last 80
+          # lines of install-update.ps1, hiding its head), then other logs' tails.
+          Get-ChildItem -LiteralPath "$env:LOCALAPPDATA\TheCurator\updates" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "== $($_.FullName) ($($_.Length) bytes)"; if ($_.Extension -in '.ps1', '.json', '.started', '.txt') { Get-Content -LiteralPath $_.FullName } }
+          Get-ChildItem -LiteralPath "$env:LOCALAPPDATA\TheCurator\logs" -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'update-install.log' } | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName }
+          foreach ($d in @("$env:LOCALAPPDATA\TheCurator\logs", "$env:TEMP")) {
+            Get-ChildItem -LiteralPath $d -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.json' -and $_.Name -ne 'update-install.log' } | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 80 }
           }
 
   # Attach the installer and the MinGit sources to the SAME release the Mac job

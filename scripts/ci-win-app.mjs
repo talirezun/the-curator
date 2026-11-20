@@ -364,6 +364,49 @@ export function appUninstallKeys(entries, product = 'The Curator') {
   return entries.filter((e) => e.DisplayName === product).map((e) => e.Key);
 }
 
+/**
+ * Pure. What the rehearsal prints when the update did not complete, so a
+ * helper that fails is never silent again (v3.99.3-wintest.4 printed only the
+ * TAIL of the script and no helper log existed). Every PowerShell call the
+ * engine made (status + first lines of stdout/stderr; the launcher's is the
+ * one that says whether the helper started), the helper log WHOLE, the
+ * result record, the start marker, and the HEAD of the generated script
+ * (where a parse error or an early failure would be). Missing → "(none)".
+ */
+export function helperDiagnostics({ calls = [], logText = null, resultText = null, startedText = null, scriptText = null, launchText = null, headLines = 40 } = {}) {
+  const cut = (t, n) => String(t || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, n);
+  const out = ['  · the helper, for diagnosis:'];
+  out.push(`    PowerShell calls made by the engine (${calls.length}):`);
+  for (const c of calls) {
+    out.push(`      [${c.kind || 'call'}] exit ${c.status}${c.timedOut ? ' (timed out)' : ''}`);
+    for (const l of cut(c.stdout, 4)) out.push(`        out: ${l}`);
+    for (const l of cut(c.stderr, 6)) out.push(`        err: ${l}`);
+  }
+  const block = (title, text, lines = Infinity) => {
+    if (text === null || text === undefined) { out.push(`    ${title}: (none)`); return; }
+    out.push(`    ${title}:`);
+    const all = String(text).replace(/^\uFEFF/, '').split(/\r?\n/);
+    for (const l of all.slice(0, lines)) out.push(`      ${l}`);
+    if (all.length > lines) out.push(`      … (${all.length - lines} more lines)`);
+  };
+  block('update-install.log', logText);
+  block('last-update.json', resultText);
+  block('install-update.started (the helper PID)', startedText);
+  block(`install-update.ps1, first ${headLines} lines`, scriptText, headLines);
+  block('launch-update.ps1', launchText);
+  return out;
+}
+
+/** Pure. Which PowerShell call a `-Command` boot is, by the script it runs. */
+export function powershellCallKind(args) {
+  const c = String((args || [])[args.length - 1] || '');
+  if (/launch-update\.ps1/.test(c)) return 'launcher';
+  if (/probe-[A-Za-z0-9]+\.ps1/.test(c)) return 'probe';
+  if (/VersionInfo\.ProductVersion/.test(c)) return 'version';
+  if (/Win32_Process/.test(c)) return 'process-list';
+  return 'other';
+}
+
 function ok(cond, label, detail = '') {
   if (cond) console.log(`  ✓ ${label}`);
   else { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`); console.log(`::error::${label}${detail ? ` — ${String(detail).replace(/\r?\n/g, ' ')}` : ''}`); }
@@ -975,6 +1018,26 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
 
   let quits = 0;
   const env = personEnv();
+  // Every PowerShell call the engine makes, kept for the diagnosis. The app's
+  // own runCommand inherits the APP's environment; here that is personEnv(),
+  // never this process's (which holds the CURATOR_TEST_* seams set above).
+  const psCalls = [];
+  const runCommand = async (cmd, args, opts) => {
+    const r = await runCommandWith((c, a, o) => spawn(c, a, { ...o, env }), cmd, args, opts);
+    psCalls.push({ kind: powershellCallKind(args), status: r.status, timedOut: !!r.timedOut, stdout: r.stdout, stderr: r.stderr });
+    return r;
+  };
+  const readOrNull = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } };
+  const printHelperDiagnostics = () => {
+    for (const l of helperDiagnostics({
+      calls: psCalls,
+      logText: readOrNull(path.join(appSupport(), 'logs', 'update-install.log')),
+      resultText: readOrNull(path.join(updatesDir, 'last-update.json')),
+      startedText: readOrNull(path.join(updatesDir, 'install-update.started')),
+      scriptText: readOrNull(path.join(updatesDir, 'install-update.ps1')),
+      launchText: readOrNull(path.join(updatesDir, 'launch-update.ps1')),
+    })) console.log(l);
+  };
   const engine = createUpdateInstaller('win32', {
     resolveRelease: ({ signal }) => resolveInstallerRelease({
       configModule: cfg, fetchImpl, currentVersion: fromVersion, arch: 'x64', signal, platform: 'win32',
@@ -985,8 +1048,12 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
     env,
     workDir: updatesDir,
     logPath: path.join(appSupport(), 'logs', 'update-install.log'),
-    runCommand: (cmd, args, opts) => runCommandWith(spawn, cmd, args, opts),
+    runCommand,
+    // main.js's form, kept so the engine is given what the app gives it. The
+    // win32 engine no longer calls it (it starts the helper through the
+    // launcher); a call here is reported as a failure.
     spawnDetached: (cmd, args, opts = {}) => {
+      ok(false, 'the win32 engine started something DETACHED (it must start the helper through the launcher)', `${cmd} ${JSON.stringify(args)}`);
       const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, ...(opts.env ? { env: opts.env } : {}) });
       catchSpawnError(child, (err) => ok(false, `the engine's detached "${cmd}" could not be started`, spawnErrorText(err)));
       child.unref();
@@ -1025,11 +1092,39 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   eq(quits, 0, '…BEFORE quitting: the app was not asked to quit');
   ok(alive(appN.pid) && !bridgeExited, '…the app and the connection are both still running');
 
+  section('information: does a DETACHED PowerShell (no console) run a script on this runner?');
+  // The v3.99.3-wintest.4 failure: the helper, started as main.js's
+  // spawnDetached starts things (detached: DETACHED_PROCESS, stdio ignored),
+  // wrote nothing at all. Measured here with the probe script, so each run
+  // says whether that start form works. Information only; not a check.
+  {
+    const planWin = await importFrom(appRoot, 'lib/update-plan-win32.js');
+    const probeDir = path.join(scratch, 'detached-probe');
+    mkdirSync(probeDir, { recursive: true });
+    const marker = path.join(probeDir, 'probe-detached.txt');
+    const script = path.join(probeDir, 'probe-detached.ps1');
+    writeFileSync(script, `\uFEFF${planWin.buildProbeScript(marker)}`, 'utf8');
+    let exitCode = null;
+    const child = spawn(PS, planWin.helperArgs(script), { detached: true, stdio: 'ignore', windowsHide: true, env: planWin.helperEnv(env) });
+    child.on('exit', (c, sig) => { exitCode = c === null ? `signal ${sig}` : c; });
+    catchSpawnError(child, (err) => { exitCode = `spawn error: ${spawnErrorText(err)}`; });
+    child.unref();
+    const wrote = await waitFor(() => existsSync(marker), { timeoutMs: 30000, everyMs: 250 });
+    await waitFor(() => exitCode !== null, { timeoutMs: 10000, everyMs: 250 });
+    console.log(`  · detached + stdio ignored: marker ${wrote ? `written (${readOrNull(marker)})` : 'NOT written'}, exit code ${exitCode === null ? 'not seen' : exitCode}`);
+    const r2 = await runCommandWith(spawn, PS, planWin.helperArgs(script), { timeoutMs: 30000 });
+    console.log(`  · the same script through runCommand (how the launcher runs): exit ${r2.status}, marker ${existsSync(marker) ? 'present' : 'absent'}`);
+  }
+
   section('install, with consent to stop the connection');
   const res = await engine.installUpdate({ token: prep.token, stopConnections: true });
   eq([res.ok, res.installing, res.version, res.stoppedConnections], [true, true, toVersion, 1], 'installUpdate: the helper is running and the app quits', JSON.stringify(res));
+  const launches = psCalls.filter((c) => c.kind === 'launcher');
+  eq(launches.map((c) => c.status), [0], 'the launcher ran once and the helper wrote its start marker before the app was asked to quit', JSON.stringify(launches));
+  if (!res.ok) { printHelperDiagnostics(); killTree(appN.pid); try { bridge.kill(); } catch { /* */ } server.close(); finish('rehearse-update'); }
   eq(quits, 1, 'quitApp was called once');
   ok(!!(await waitFor(() => !alive(appN.pid), { timeoutMs: 60000 })), `${fromVersion} exited`);
+  const failuresBeforeHelper = failures;
   ok(!!(await waitFor(() => bridgeExited, { timeoutMs: 180000 })), 'the helper stopped the AI app connection');
 
   section(`the app reopens on ${toVersion}`);
@@ -1037,7 +1132,9 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   ok(!!appN1, `${toVersion} is running and answers /api/version`);
   if (appN1) eq([appN1.body.version, appN1.body.installMode], [toVersion, 'bundle'], '/api/version after the update');
   const logFile = path.join(appSupport(), 'logs', 'update-install.log');
-  if (existsSync(logFile)) console.log(`  · update-install.log:\n${readFileSync(logFile, 'utf8').split(/\r?\n/).slice(-15).map((l) => `      ${l}`).join('\n')}`);
+  console.log(existsSync(logFile)
+    ? `  · update-install.log:\n${readFileSync(logFile, 'utf8').split(/\r?\n/).slice(-30).map((l) => `      ${l}`).join('\n')}`
+    : '  · update-install.log: (none: the helper never wrote a line)');
   const emptied = await waitFor(() => (!existsSync(updatesDir) || readdirSync(updatesDir).length === 0 ? true : null),
     { timeoutMs: 120000, everyMs: 2000 });
   ok(!!emptied, 'updates\\ was emptied by the reopened app (afterStart read the outcome once and tidied)',
@@ -1049,6 +1146,8 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   eq(key && key.DisplayVersion, toVersion, 'the HKCU uninstall key now says the new version');
   if (!key) printCuratorUninstallEntries();
   eq([shortcutTarget(sc.desktop), shortcutTarget(sc.startMenu)], targetsBefore, 'both shortcuts are kept, pointing where they did');
+
+  if (failures > failuresBeforeHelper) printHelperDiagnostics();
 
   section('the data');
   const now = snapshot(dataDir);
