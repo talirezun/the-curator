@@ -100,10 +100,11 @@
 
 import path from 'path';
 import os from 'os';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, realpathSync } from 'fs';
 import { getMcpLauncherDir, appPath } from './paths.js';
 import { getCapabilities } from './install-mode.js';
 import { getDomainsDir } from './config.js';
+import { winPathProblem } from './mcp-check-entry.js';
 
 /**
  * The shim's filename. Deliberately matches the MCP server name Claude
@@ -260,6 +261,9 @@ export function ensureMcpLauncherShim(opts = {}) {
   const style = opts.launchStyle || getCapabilities().mcpLaunchStyle;
   const target = opts.launcherPath || getMcpLauncherPath();
 
+  // 'node-script' (repo) and 'app-binary' (the Windows app, which names its
+  // own exe directly — see the section at the end of this file) need no shim,
+  // and neither touches any filesystem path here.
   if (style !== 'launcher-script') {
     return { ok: true, written: false, path: null, reason: 'not-needed', message: null, style };
   }
@@ -316,4 +320,130 @@ export function ensureMcpLauncherShim(opts = {}) {
     console.error(`[The Curator] ${message}`);
     return { ok: false, written: false, path: target, reason: 'write-failed', message, style };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE WINDOWS APP: `mcpLaunchStyle: 'app-binary'` (Windows app v1, 2026-11-20)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Why Windows needs no shim, and why it cannot use the Mac one:
+//
+//   - Claude Desktop on Windows cannot run a `/bin/sh` script, and a `.cmd`
+//     wrapper is a trap: since CVE-2024-27980 Node's spawn/execFile of a
+//     `.cmd` without `shell: true` throws EINVAL, which would break this app's
+//     own Check entry (execFile, shell:false) and very likely Claude Desktop's
+//     spawn as well.
+//   - The reason the Mac shim exists does not apply. The shim sits between a
+//     stable config string and an app binary that MOVES (App Translocation,
+//     a drag to another folder, an update replacing the bundle). A per-user
+//     NSIS install lives at a fixed path (%LOCALAPPDATA%\Programs\The
+//     Curator\…) and an update replaces its files IN PLACE, so
+//     `process.execPath` is itself the stable string.
+//
+// So the entry names the app's own exe directly, runs it as plain Node with
+// ELECTRON_RUN_AS_NODE=1 (this needs Electron's RunAsNode fuse ON — the build
+// never sets `electronFuses`), and passes this install's own mcp/server.js.
+// Like the Mac launcher arm it takes NO --domains-path: the child resolves the
+// knowledge folder through .curator-config.json, the file the app itself
+// reads, so moving the folder in Settings needs no config edit and never makes
+// the entry stale (see buildCuratorEntry in src/routes/mcp.js).
+//
+// Check entry (`vetEntry`, src/brain/mcp-check-entry.js) accepts exactly this
+// shape and nothing near it. Read its shape (c) before changing anything here.
+
+/** The ONLY environment the app-binary entry carries. Frozen; never extended at a call site. */
+export const APP_BINARY_ENV = Object.freeze({ ELECTRON_RUN_AS_NODE: '1' });
+
+/**
+ * The canonical spelling of a path this process trusts (its own exe, its own
+ * server.js): `realpathSync.native`, which on Windows returns the long,
+ * true-case path without a `\\?\` prefix. So an exe started through an 8.3
+ * short name is still written in the one spelling Check entry accepts. Falls
+ * back to the input if the probe fails (the entry then fails its file check
+ * honestly instead of this throwing).
+ */
+function canonicalPath(p, realpath) {
+  try { return (realpath || realpathSync.native || realpathSync)(p); } catch { return p; }
+}
+
+/**
+ * The app-binary launch line:
+ *   {command: <this exe>, args: [<this install's mcp/server.js>], env: {ELECTRON_RUN_AS_NODE: '1'}}
+ * Pure apart from the realpath probe; `opts` ({execPath, serverPath,
+ * realpath}) exists for the suites, production passes nothing.
+ */
+export function buildAppBinaryEntry(opts = {}) {
+  const execPath = Object.hasOwn(opts, 'execPath') ? opts.execPath : process.execPath;
+  const serverPath = opts.serverPath || getMcpServerPath();
+  return {
+    command: canonicalPath(execPath, opts.realpath),
+    args: [canonicalPath(serverPath, opts.realpath)],
+    env: { ...APP_BINARY_ENV },
+  };
+}
+
+const REINSTALL_HINT = 'Install The Curator with its installer and open it from the Start menu, then press Install for me again.';
+
+/**
+ * Where the Windows app is running FROM, for the one-click install. The Mac
+ * refuses a translocated or Downloads-resident app because the path it would
+ * record disappears; the Windows equivalents are an exe in Downloads or in a
+ * temp folder (an unpacked zip, a portable copy), and an exe path Check entry
+ * would refuse anyway (a network share, an 8.3 short name, a trailing dot).
+ * Writing such a path into Claude Desktop's config makes a connection that
+ * breaks later, so Install for me refuses it and says what to do.
+ * Pure: every input is a parameter. Returns `{ephemeral, reason, message}`.
+ */
+export function classifyAppBinaryOrigin(execPath, { homeDir = null, tempDirs = [] } = {}) {
+  const p = typeof execPath === 'string' ? execPath : '';
+  if (!p) {
+    return { ephemeral: true, reason: 'no-exec-path',
+      message: `The Curator could not tell where it is running from, so it did not change Claude Desktop's settings. ${REINSTALL_HINT}` };
+  }
+  const problem = winPathProblem(p);
+  if (problem) {
+    return { ephemeral: true, reason: 'non-canonical-path',
+      message: `The Curator is running from ${p}, which ${problem}, so Claude Desktop cannot be pointed at it reliably. ${REINSTALL_HINT}` };
+  }
+  // Windows semantics on every host (the suites run this on a Mac): win32
+  // resolve, case folded, separator-bounded so `Downloads2` is not inside.
+  const under = (parent) => {
+    if (typeof parent !== 'string' || !path.win32.isAbsolute(parent)) return false;
+    const c = path.win32.resolve(p).toLowerCase();
+    const d = path.win32.resolve(parent).toLowerCase().replace(/\\+$/, '');
+    return c === d || c.startsWith(d + '\\');
+  };
+  if (homeDir && under(path.win32.join(homeDir, 'Downloads'))) {
+    return { ephemeral: true, reason: 'downloads-folder',
+      message: `The Curator is running from your Downloads folder, which is temporary: a connection written now would break the next time Downloads is tidied. ${REINSTALL_HINT}` };
+  }
+  if (tempDirs.some(under)) {
+    return { ephemeral: true, reason: 'temp-folder',
+      message: `The Curator is running from a temporary folder, so a connection written now would break when Windows clears it. ${REINSTALL_HINT}` };
+  }
+  return { ephemeral: false, reason: null, message: null };
+}
+
+/**
+ * Can the app-binary entry be written right now? In the launcherState shape
+ * the planners already understand (`{required, present, message}`, the plan
+ * refuses `launcher_missing` with `message` when `present` is false):
+ * not present when the exe runs from a temporary place or a launch file is
+ * missing. `deps` ({exists, homeDir, tempDirs}) exists for the suites.
+ */
+export function appBinaryLaunchState(entry, deps = {}) {
+  const exists = deps.exists || existsSync;
+  const homeDir = Object.hasOwn(deps, 'homeDir') ? deps.homeDir : os.homedir();
+  const tempDirs = deps.tempDirs
+    || [process.env.TEMP, process.env.TMP, os.tmpdir()].filter((d) => typeof d === 'string' && d);
+  const command = entry && entry.command;
+  const origin = classifyAppBinaryOrigin(command, { homeDir, tempDirs });
+  if (origin.ephemeral) return { required: true, present: false, path: command || null, reason: origin.reason, message: origin.message };
+  const files = [command, ...((entry && entry.args) || [])];
+  const gone = files.find((f) => { try { return !exists(f); } catch { return true; } });
+  if (gone) {
+    return { required: true, present: false, path: gone, reason: 'launch-file-missing',
+      message: `A file The Curator needs to start My Curator is missing (${gone}). Reinstall The Curator, then press Install for me again.` };
+  }
+  return { required: true, present: true, path: command, reason: null, message: null };
 }

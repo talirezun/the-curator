@@ -32,7 +32,7 @@ import { spawn, execFile } from 'child_process';
 import { getDomainsDir } from '../brain/config.js';
 import { appPath } from '../brain/paths.js';
 import { getCapabilities } from '../brain/install-mode.js';
-import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
+import { getMcpLauncherPath, buildAppBinaryEntry, appBinaryLaunchState } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
 import {
   readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST, RECENT_WINDOW_MS,
@@ -56,6 +56,51 @@ const CLAUDE_CONFIG_PATH = path.join(
   'Claude',
   'claude_desktop_config.json',
 );
+
+// ── The launch style, and the one test seam on it ──────────────────────────
+//
+// `mcpLaunchStyle` comes from the install-mode capability table. The seam
+// exists because the 'app-binary' arm (the Windows app) cannot be reached
+// from a repo checkout: a suite sets {style, execPath, serverPath?,
+// realpath?, launchStateDeps?} to drive it, and production never calls it.
+let _launchOverride = null;
+/** TEST-ONLY: drive buildCuratorEntry's arms from a suite; null restores the capability. */
+export function __setMcpLaunchOverride(o) { _launchOverride = o || null; }
+
+function mcpLaunchStyle() {
+  return _launchOverride && _launchOverride.style ? _launchOverride.style : getCapabilities().mcpLaunchStyle;
+}
+
+/** Two env maps with exactly the same keys and string values. */
+function sameEnvMap(a, b) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && kb.every((k) => Object.hasOwn(a, k) && a[k] === b[k]);
+}
+
+/** The app-binary launch line (src/brain/mcp-launcher.js `buildAppBinaryEntry`). */
+function appBinaryLaunch() {
+  const o = _launchOverride || {};
+  return buildAppBinaryEntry({
+    ...(o.execPath ? { execPath: o.execPath } : {}),
+    serverPath: o.serverPath || MCP_SERVER_PATH,
+    ...(o.realpath ? { realpath: o.realpath } : {}),
+  });
+}
+
+/**
+ * Can the launch line be written right now? `{required, present, message}`,
+ * the shape planConfigWrite and the one-click installer refuse on. Repo: no
+ * requirement. Mac bundle: the launcher shim must exist. Windows app: the exe
+ * must not run from a temporary place and both launch files must exist.
+ */
+export function launchWritableState() {
+  const style = mcpLaunchStyle();
+  if (style === 'app-binary') {
+    return appBinaryLaunchState(appBinaryLaunch(), (_launchOverride && _launchOverride.launchStateDeps) || {});
+  }
+  return null;
+}
 
 /**
  * The single source of truth for HOW the MCP server is launched.
@@ -99,6 +144,13 @@ const CLAUDE_CONFIG_PATH = path.join(
  * against a folder the user was not configured for.
  */
 export function buildCuratorEntry(domainsDir) {
+  // APP-BINARY ARM ('app-binary', the Windows app) — this exe run as Node,
+  // with this install's server.js and ELECTRON_RUN_AS_NODE in the entry's env
+  // (src/brain/mcp-launcher.js says why there is no launcher on Windows, and
+  // why --domains-path is dropped here exactly as in the launcher arm).
+  // Check entry accepts this shape and nothing near it (mcp-check-entry.js
+  // shape (c)). The repo and launcher arms below are untouched.
+  if (mcpLaunchStyle() === 'app-binary') return appBinaryLaunch();
   if (getCapabilities().mcpLaunchStyle === 'launcher-script') {
     return {
       command: getMcpLauncherPath(),
@@ -243,7 +295,7 @@ router.get('/config', async (_req, res) => {
   const existingConfig = readClaudeConfig();
   const hasConfigFile = existingConfig !== null;
   const parseError = hasConfigFile && existingConfig.__parseError === true;
-  const launchStyle = getCapabilities().mcpLaunchStyle;
+  const launchStyle = mcpLaunchStyle();
   // Reported so the wizard can explain a launcher that could not be written
   // (a translocated or Downloads-resident app refuses — see mcp-launcher.js).
   // In repo mode there is no launcher, and both fields are null/false rather
@@ -267,7 +319,10 @@ router.get('/config', async (_req, res) => {
     const expected = buildCuratorEntry(domainsDir);
     const sameCommand = entry.command === expected.command;
     const sameArgs = JSON.stringify(entry.args) === JSON.stringify(expected.args);
-    stale = !(sameCommand && sameArgs);
+    // App-binary only (no other arm has `env`): without ELECTRON_RUN_AS_NODE
+    // the entry would start a second copy of the app, so env is part of "same".
+    const sameEnv = !expected.env || sameEnvMap(entry.env, expected.env);
+    stale = !(sameCommand && sameArgs && sameEnv);
   }
 
   res.json({
@@ -460,6 +515,10 @@ export async function writeConfigHandler(_req, res, deps = {}) {
 
 /** What the launcher looks like right now — null-shaped in repo mode. */
 function currentLauncherState() {
+  // The Windows app has no launcher; its own exe and server.js must be
+  // writable into another app's config (not from Downloads/temp, both present).
+  const appBinary = launchWritableState();
+  if (appBinary) return appBinary;
   const required = getCapabilities().mcpLaunchStyle === 'launcher-script';
   if (!required) return { required: false, present: true, path: null, message: null };
   const p = getMcpLauncherPath();
@@ -569,7 +628,12 @@ export async function selfTestHandler(_req, res) {
   const domainsDir = getDomainsDir();
   const domainsDirExists = existsSync(domainsDir);
   const selfTestEntry = buildCuratorEntry(domainsDir);
-  const proc = spawn(selfTestEntry.command, selfTestEntry.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  // The app-binary entry carries env (ELECTRON_RUN_AS_NODE) — the one arm that
+  // does — and it is spawned with it, exactly as Claude Desktop will. Every
+  // other arm's options are byte-for-byte what they were.
+  const proc = selfTestEntry.env
+    ? spawn(selfTestEntry.command, selfTestEntry.args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...selfTestEntry.env } })
+    : spawn(selfTestEntry.command, selfTestEntry.args, { stdio: ['pipe', 'pipe', 'pipe'] });
   let stdoutBuf = '';
   let stderrBuf = '';
   const responses = [];

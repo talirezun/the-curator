@@ -175,11 +175,17 @@ ok(!!headFn && !!workFn, '§2b extracted buildCuratorEntry from BOTH revisions')
 
 const FAKE_SERVER_PATH = '/Apps/The Curator/mcp/server.js';
 const FAKE_EXEC = '/opt/homebrew/bin/node';
+// `mcpLaunchStyle` (the route's capability reader, with its test seam) and
+// `appBinaryLaunch` are passed in too: HEAD's function never names them, so
+// they cannot change what HEAD computes, and the working tree's must reach
+// them only under 'app-binary'.
+const FAKE_APP_BINARY = { command: 'C:\\Users\\x\\AppData\\Local\\Programs\\The Curator\\The Curator.exe', args: ['C:\\x\\mcp\\server.js'], env: { ELECTRON_RUN_AS_NODE: '1' } };
 function compile(fnSrc, launchStyle, launcherPath) {
   // eslint-disable-next-line no-new-func
-  return new Function('MCP_SERVER_PATH', 'process', 'getCapabilities', 'getMcpLauncherPath',
+  return new Function('MCP_SERVER_PATH', 'process', 'getCapabilities', 'getMcpLauncherPath', 'mcpLaunchStyle', 'appBinaryLaunch',
     `${fnSrc}; return buildCuratorEntry;`
-  )(FAKE_SERVER_PATH, { execPath: FAKE_EXEC }, () => ({ mcpLaunchStyle: launchStyle }), () => launcherPath);
+  )(FAKE_SERVER_PATH, { execPath: FAKE_EXEC }, () => ({ mcpLaunchStyle: launchStyle }), () => launcherPath,
+    () => launchStyle, () => ({ ...FAKE_APP_BINARY, env: { ...FAKE_APP_BINARY.env } }));
 }
 const headBuild = compile(headFn, 'node-script', '/unused');
 const workBuildRepo = compile(workFn, 'node-script', '/unused');
@@ -209,6 +215,16 @@ for (const d of INPUT_MATRIX) {
   if (JSON.stringify(headBuild(d)) !== JSON.stringify(workBuildBundle(d))) differs = true;
 }
 ok(differs, '§2b CONTROL: with the capability flipped to launcher-script the two DISAGREE (so the agreement above is not vacuous)');
+
+// The Windows app's arm: reached ONLY under 'app-binary', and the launcher
+// arm is still byte-for-byte HEAD's under 'launcher-script'.
+const headBuildBundle = compile(headFn, 'launcher-script', '/Users/x/Library/Application Support/The Curator/bin/my-curator-mcp');
+let bundleSame = true;
+for (const d of INPUT_MATRIX) if (JSON.stringify(headBuildBundle(d)) !== JSON.stringify(workBuildBundle(d))) bundleSame = false;
+ok(bundleSame, `§2b the launcher arm agrees with HEAD on ALL ${INPUT_MATRIX.length} inputs too (mcpLaunchStyle 'launcher-script')`);
+const workBuildApp = compile(workFn, 'app-binary', '/unused');
+deepEq(workBuildApp('/Users/x/second-brain/domains'), FAKE_APP_BINARY,
+  "§2b mcpLaunchStyle 'app-binary' → the app-binary line {exe, [server.js], env ELECTRON_RUN_AS_NODE} — no --domains-path");
 
 // ── §2c LIVE ────────────────────────────────────────────────────────────────
 const liveEntry = routes.buildCuratorEntry('/tmp/some/domains');
@@ -247,7 +263,7 @@ function materialise(dest) {
     `git -C ${JSON.stringify(ROOT)} archive HEAD | tar -x -C ${JSON.stringify(dest)}`]);
   // Overlay the working-tree versions of everything this change touches — the
   // archive is HEAD, and HEAD does not have the fork yet.
-  for (const rel of ['src/routes/mcp.js', 'src/brain/mcp-launcher.js', 'src/brain/paths.js', 'src/brain/install-mode.js']) {
+  for (const rel of ['src/routes/mcp.js', 'src/brain/mcp-launcher.js', 'src/brain/mcp-check-entry.js', 'src/brain/paths.js', 'src/brain/install-mode.js']) {
     fs.mkdirSync(path.join(dest, path.dirname(rel)), { recursive: true });
     fs.writeFileSync(path.join(dest, rel), read(rel));
   }
@@ -623,6 +639,99 @@ const getterBody = launcherGetter.slice(0, launcherGetter.indexOf('\n}'));
 ok(!/mkdirSync|writeFileSync|chmodSync/.test(getterBody), 'getMcpLauncherDir() creates nothing and writes nothing');
 ok(!/const\s+\w+\s*=\s*getMcpLauncherDir\(\)/.test(read('src/brain/mcp-launcher.js')),
   'no module-level snapshot of getMcpLauncherDir() — that would defeat both test seams');
+
+// ═══════════════════════════════════════════════════════════════════════════
+section("§11  The Windows app: mcpLaunchStyle 'app-binary' (no shim; the exe itself, as Node)");
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const WEXE = 'C:\\Users\\Ziga Novak\\AppData\\Local\\Programs\\The Curator\\The Curator.exe';
+  const WSRV = 'C:\\Users\\Ziga Novak\\AppData\\Local\\Programs\\The Curator\\resources\\app\\mcp\\server.js';
+  const SHORTX = 'C:\\Users\\ZIGANO~1\\AppData\\Local\\Programs\\THECUR~1\\THECUR~1.EXE';
+  const realMap = new Map([[SHORTX, WEXE], [WEXE, WEXE], [WSRV, WSRV]]);
+  const fakeReal = (p) => { if (!realMap.has(p)) throw new Error('ENOENT'); return realMap.get(p); };
+
+  // No shim, and nothing touched, exactly like repo mode.
+  const appShimDir = path.join(TMP, 'appbinary-bin');
+  const r = launcher.ensureMcpLauncherShim({ launchStyle: 'app-binary', launcherPath: path.join(appShimDir, 'x'), execPath: WEXE });
+  ok(r.reason === 'not-needed' && r.ok && !r.written, "ensureMcpLauncherShim('app-binary') → not-needed");
+  ok(!fs.existsSync(appShimDir), '…and creates nothing, not even the directory');
+
+  const e = launcher.buildAppBinaryEntry({ execPath: WEXE, serverPath: WSRV, realpath: fakeReal });
+  deepEq(e, { command: WEXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1' } }, 'buildAppBinaryEntry → {exe, [server.js], env {ELECTRON_RUN_AS_NODE: "1"}}');
+  ok(!JSON.stringify(e).includes('--domains-path'), '…no --domains-path (the child reads .curator-config.json, like the Mac launcher arm)');
+  eq(launcher.buildAppBinaryEntry({ execPath: SHORTX, serverPath: WSRV, realpath: fakeReal }).command, WEXE,
+    'an exe started through an 8.3 short name is written in its LONG canonical spelling (the one Check entry accepts)');
+  eq(launcher.buildAppBinaryEntry({ execPath: 'C:\\gone\\x.exe', serverPath: WSRV, realpath: fakeReal }).command, 'C:\\gone\\x.exe',
+    'a realpath failure falls back to the path as given (never throws)');
+  ok(Object.isFrozen(launcher.APP_BINARY_ENV) && e.env !== launcher.APP_BINARY_ENV, 'the env constant is frozen and every entry gets its own copy');
+
+  // Where it runs from: refusals, in words, and nothing else refused.
+  const HOME = 'C:\\Users\\Ziga Novak';
+  const TEMPS = ['C:\\Users\\Ziga Novak\\AppData\\Local\\Temp'];
+  const cls = (p) => launcher.classifyAppBinaryOrigin(p, { homeDir: HOME, tempDirs: TEMPS });
+  eq(cls(WEXE).ephemeral, false, 'the NSIS per-user install folder is fine');
+  eq(cls('D:\\Apps\\The Curator\\The Curator.exe').ephemeral, false, '…and so is any other ordinary folder');
+  eq(cls('C:\\Users\\Ziga Novak\\Downloads\\The Curator\\The Curator.exe').reason, 'downloads-folder', 'Downloads → refused');
+  eq(cls('c:\\users\\ziga novak\\downloads\\x\\The Curator.exe').reason, 'downloads-folder', '…in any case');
+  eq(cls('C:\\Users\\Ziga Novak\\Downloads2\\The Curator.exe').ephemeral, false, '…but a sibling folder sharing the prefix (Downloads2) is not Downloads');
+  eq(cls('C:\\Users\\Ziga Novak\\AppData\\Local\\Temp\\7zS1\\The Curator.exe').reason, 'temp-folder', 'a temp folder (an unpacked zip) → refused');
+  eq(cls('\\\\server\\apps\\The Curator.exe').reason, 'non-canonical-path', 'a network share → refused');
+  eq(cls(SHORTX).reason, 'non-canonical-path', 'an 8.3 short name → refused');
+  eq(cls('').reason, 'no-exec-path', 'no exec path → refused');
+  ok(/Install for me again/.test(cls(SHORTX).message) && /Downloads/.test(cls('C:\\Users\\Ziga Novak\\Downloads\\a.exe').message),
+    'every refusal says what to do, in words');
+  const st = launcher.appBinaryLaunchState(e, { exists: () => true, homeDir: HOME, tempDirs: TEMPS });
+  ok(st.required && st.present && st.message === null, 'appBinaryLaunchState: an installed exe and its server.js → writable');
+  const stGone = launcher.appBinaryLaunchState(e, { exists: (p) => p !== WSRV, homeDir: HOME, tempDirs: TEMPS });
+  ok(stGone.required && !stGone.present && stGone.path === WSRV && /missing/.test(stGone.message), '…a missing server.js → not writable, naming the file');
+  const stDl = launcher.appBinaryLaunchState({ ...e, command: 'C:\\Users\\Ziga Novak\\Downloads\\The Curator.exe' }, { exists: () => true, homeDir: HOME, tempDirs: TEMPS });
+  ok(!stDl.present && stDl.reason === 'downloads-folder', '…from Downloads → not writable');
+
+  // The route, through its one seam: the exact line, the writer's refusal,
+  // and the self-test spawning WITH the entry's env.
+  routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: WEXE, serverPath: WSRV, realpath: fakeReal,
+    launchStateDeps: { exists: () => true, homeDir: HOME, tempDirs: TEMPS } });
+  try {
+    deepEq(routes.buildCuratorEntry('/ignored/domains'), { command: WEXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1' } },
+      "the REAL buildCuratorEntry under mcpLaunchStyle 'app-binary' → the app-binary line");
+    const okPlan = routes.planConfigWrite(null, '/d', routes.launchWritableState());
+    ok(okPlan.ok && okPlan.entry.env.ELECTRON_RUN_AS_NODE === '1', 'the wizard writer writes the app-binary entry WITH its env');
+    routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: 'C:\\Users\\Ziga Novak\\Downloads\\The Curator.exe', serverPath: WSRV,
+      launchStateDeps: { exists: () => true, homeDir: HOME, tempDirs: TEMPS } });
+    const noPlan = routes.planConfigWrite({ mcpServers: { other: { command: 'x' } } }, '/d', routes.launchWritableState());
+    ok(!noPlan.ok && noPlan.refused === 'launcher_missing' && /Downloads/.test(noPlan.message) && /Nothing was written/.test(noPlan.message),
+      '…and REFUSES from Downloads, saying nothing was written');
+    // The REAL handler with its OWN launcher state (no injected one), into a temp config.
+    const cfg = path.join(TMP, 'appbinary-claude', 'claude_desktop_config.json');
+    fs.mkdirSync(path.dirname(cfg), { recursive: true });
+    fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+    const before = fs.readFileSync(cfg);
+    const hb = await new Promise((resolve) => {
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
+      routes.writeConfigHandler({}, res, { configPath: cfg });
+    });
+    ok(hb.status === 409 && hb.body.refused === 'launcher_missing' && Buffer.compare(fs.readFileSync(cfg), before) === 0,
+      'POST /write-config from Downloads: its own launcher state refuses (409) and the file is byte-identical');
+
+    // Self-test: the "exe" is this node; the "server" refuses to answer unless
+    // ELECTRON_RUN_AS_NODE=1 reached it, then loads the real bridge.
+    const gate = path.join(TMP, 'needs-run-as-node.mjs');
+    fs.writeFileSync(gate, `if (process.env.ELECTRON_RUN_AS_NODE !== '1') { console.error('ELECTRON_RUN_AS_NODE missing'); process.exit(9); }\n`
+      + `await import(${JSON.stringify('file://' + path.join(ROOT, 'mcp', 'server.js'))});\n`);
+    routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: process.execPath, serverPath: gate });
+    const body = await new Promise((resolve) => {
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve(b); } };
+      routes.selfTestHandler({}, res);
+    });
+    ok(body && body.ok === true && body.spawn_command === process.execPath && Array.isArray(body.spawn_args) && body.spawn_args[0] === fs.realpathSync(gate),
+      'the self-test spawns the app-binary line WITH ELECTRON_RUN_AS_NODE (a server that exits without it answered)', JSON.stringify(body).slice(0, 300));
+  } finally {
+    routes.__setMcpLaunchOverride(null);
+  }
+  deepEq(routes.buildCuratorEntry('/tmp/some/domains').args.slice(1), ['--domains-path', '/tmp/some/domains'],
+    'CONTROL: with the seam cleared the repo arm is back (the override does not leak)');
+  eq(routes.launchWritableState(), null, '…and launchWritableState() is null outside app-binary');
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§10  Anti-vacuity + isolation re-check');

@@ -668,7 +668,31 @@ export function entryMatches(existing, planned, requiresType) {
   const pa = planned.args === undefined ? [] : planned.args;
   if (!deepEqual(ea, pa)) return false;
   if (requiresType && existing.type !== requiresType) return false;
+  // The Windows app's entry (`mcpLaunchStyle: 'app-binary'`) is the only
+  // planned entry with an env, and its env is load-bearing: without
+  // ELECTRON_RUN_AS_NODE=1 Claude Desktop would open a second copy of the app.
+  // So there, and only there, env must be exactly the planned one.
+  if (planned.env !== undefined && !deepEqual(existing.env, planned.env)) return false;
   return true;
+}
+
+/**
+ * The launch line's env (only the app-binary line has one) added to a built
+ * entry, under the harness's own env key. JSON formats only: they are the
+ * only ones re-serialised here (`config`/`text` are rebuilt the way
+ * `mcpEntryFor` builds them); any other format is returned unchanged.
+ * With no `launch.env` the result IS `mcp` — macOS and repo installs are
+ * untouched by construction. A planned key the entry carries is managed, so
+ * `entryToWrite` replaces an old env rather than merging it.
+ */
+export function withLaunchEnv(mcp, launch, id) {
+  if (!mcp || !mcp.ok || !launch || !launch.env || typeof launch.env !== 'object') return mcp;
+  const m = adapterFor(id || mcp.id)?.mcpConfig;
+  if (!m || m.format !== 'json') return mcp;
+  const envKey = m.envKey || 'env';
+  const entry = Object.freeze({ ...mcp.entry, [envKey]: { ...launch.env } });
+  const config = { [m.key]: { [mcp.name]: entry } };
+  return Object.freeze({ ...mcp, entry, config, text: `${JSON.stringify(config, null, 2)}\n` });
 }
 
 /** The entry to write: the planned one, plus keys the user added to OUR old entry. */
@@ -762,7 +786,7 @@ function stamp(d) {
  */
 export function inspectTool(id, { home, launch, io = defaultIO(), platform, roots, win, appx }) {
   const plat = platform || installPlatform();
-  const mcp = mcpEntryFor(id, launch);
+  const mcp = withLaunchEnv(mcpEntryFor(id, launch), launch, id);
   const m = adapterFor(id).mcpConfig;
   const files = targetsFor(id, home, io, { platform: plat, roots, win, appx }).map((t) => {
     const read = readTargetOn(plat, t.file, m.key, io, m.jsonc === true);
