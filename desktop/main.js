@@ -51,6 +51,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { pickFreePort, appUrl } from './lib/port.js';
 import { createUpdateEngine } from './lib/update-engine.js';
+// The same module as a namespace, ONLY to ask whether the update-engine
+// package has shipped its platform adapter factory (`createUpdateInstaller`)
+// — see updaterSupported() in lib/shell-platform.js. A named import of an
+// export that does not exist yet would refuse to link and take the whole
+// shell down with it; a namespace property is simply undefined.
+import * as updateEngineModule from './lib/update-engine.js';
+import {
+  appUserModelIdFor, singleInstanceMessage, closeHidesToTray, attachDialogToWindow,
+  trayInteraction, clampTrayToolTip, aboutDialogOptions, updaterSupported,
+} from './lib/shell-platform.js';
+import { winTrayIconPngs } from './lib/tray-icon-win.js';
 import { resolveInstallerRelease } from './lib/update-release.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
@@ -187,6 +198,32 @@ let remoteCheckInFlight = false;
 /** The domains folder, resolved in boot() from the app's own path module. */
 let domainsDirForWatch = null;
 
+// ── Windows-only shell state ─────────────────────────────────────────────────
+/** How the tray is driven on this platform (lib/shell-platform.js). On darwin
+ *  this is the pre-existing behaviour, and every darwin line below that reads
+ *  it takes the branch that was there before. */
+const TRAY_UI = trayInteraction(process.platform);
+/** Windows: the tray menu is POPPED on right-click rather than set on the
+ *  tray, so the freshest build is kept here. Unused on darwin. */
+let trayMenu = null;
+/** Windows: the session is ending (log off / shut down) — a close must not be
+ *  turned into a hide then. */
+let sessionEnding = false;
+/** What applyAboutPanel() returned, for the Windows Help › About dialog. */
+let aboutPanel = null;
+
+// ── 0. Windows AppUserModelID ────────────────────────────────────────────────
+//
+// Before anything else, and before `ready`: Windows attributes notifications
+// and taskbar grouping by the AUMID a process declares, matched against the
+// AUMID NSIS stamps on the Start-menu shortcut (= electron-builder's appId).
+// Without it a Notification from the update window does not show, or shows
+// under "electron.app.The Curator". darwin and Linux: null, no call.
+{
+  const aumid = appUserModelIdFor(process.platform);
+  if (aumid) app.setAppUserModelId(aumid);
+}
+
 // ── 1. Single instance ───────────────────────────────────────────────────────
 //
 // This is now the ONLY thing stopping two copies of The Curator writing into
@@ -201,13 +238,10 @@ let domainsDirForWatch = null;
 if (!app.requestSingleInstanceLock()) {
   // showErrorBox is synchronous and works before `ready`, which is the whole
   // reason it is used here rather than the nicer showMessageBox.
-  dialog.showErrorBox(
-    'The Curator is already running',
-    'Another copy of The Curator is already open on this Mac.\n\n' +
-    'Only one copy may run at a time — two copies would write into the same ' +
-    'knowledge folder at once.\n\n' +
-    'Switch to the window that is already open.'
-  );
+  // The words are lib/shell-platform.js's ("this Mac" / "this PC"); the darwin
+  // text is byte-identical to the literal that stood here, and the suite pins it.
+  const already = singleInstanceMessage(process.platform);
+  dialog.showErrorBox(already.title, already.body);
   // THIS LINE IS NOT DECORATION — without it the second instance CANNOT QUIT.
   // The `before-quit` handler below is registered unconditionally (it has to
   // be: registering event handlers inside a branch is how you end up with a
@@ -268,7 +302,7 @@ async function boot() {
 
   // Before the window, so the App menu's "About The Curator" item is correct
   // the first time it is opened. It reads nothing that depends on the server.
-  applyAboutPanel(app, APP_ROOT);
+  aboutPanel = applyAboutPanel(app, APP_ROOT);
 
   // The menu goes up NOW, before the port scan and before the server import,
   // so the menu bar is never briefly Electron's default one. Its handlers read
@@ -401,6 +435,12 @@ async function boot() {
 // executable code in lib/, and this function is the fifteen lines of wiring
 // that cannot be anywhere else.
 async function buildUpdateEngine() {
+  // WINDOWS: not until the platform adapter exists. Today's engine stages a
+  // .dmg with hdiutil/ditto/codesign; built on a PC it would fail mid-update.
+  // Returning null leaves the hooks unregistered, and the update route then
+  // refuses with its own named reason (the no-fallback rule). darwin: true,
+  // so nothing below changes for the Mac.
+  if (!updaterSupported(process.platform, updateEngineModule)) return null;
   try {
     const paths = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
     const registry = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'write-registry.js')).href);
@@ -475,6 +515,16 @@ async function buildUpdateEngine() {
         beginUpdate: registry.beginUpdate,
         endUpdate: registry.endUpdate,
       },
+
+      // ── the platform's stage + install steps (update-engine package F) ──
+      // WIRED AGAINST AN API THAT HAD NOT LANDED when this was written: the
+      // agreed name is `createUpdateInstaller(platform)`, returning the same
+      // methods the darwin adapter exposes. Passed only when it exists, so
+      // the Mac's engine is called with exactly the options it had before.
+      // If F's engine selects its adapter itself, this line is inert.
+      ...(typeof updateEngineModule.createUpdateInstaller === 'function'
+        ? { installer: updateEngineModule.createUpdateInstaller(process.platform) }
+        : {}),
     });
   } catch (err) {
     // A shell that cannot build the updater still runs the app. The hooks are
@@ -556,7 +606,25 @@ function applyMenu() {
     onRevealWindow: () => { revealWindow(); },
     onOpenUrl: (url) => { void shell.openExternal(url).catch(() => {}); },
     onShowLogs: () => { void showLogs(); },
+    // Windows only (Help › About); the Mac uses the `about` role and never
+    // calls it. Same facts as the Mac panel — see aboutDialogOptions().
+    onShowAbout: () => { void showAbout(); },
   })));
+}
+
+/** Help › About on Windows: a message box carrying the About panel's facts. */
+async function showAbout() {
+  const opts = aboutDialogOptions({ appName: app.name, panel: aboutPanel });
+  const parent = attachDialogToWindow({
+    platform: process.platform,
+    hasWindow: !!(mainWindow && !mainWindow.isDestroyed()),
+    visible: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
+    minimized: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isMinimized()),
+  });
+  try {
+    if (parent) await dialog.showMessageBox(mainWindow, opts);
+    else await dialog.showMessageBox(opts);
+  } catch { /* a menu handler must not take the process with it */ }
 }
 
 /**
@@ -1110,6 +1178,14 @@ async function readBackgroundMode() {
  * Absent or empty means light, which is macOS's own encoding.
  */
 function menuAppearanceIsDark() {
+  // WINDOWS: `getUserDefault` is a macOS API. A Windows tray menu is drawn by
+  // Electron in the APP's theme, which boot() pins dark — so on win32 the app
+  // theme IS the menu's theme, and nativeTheme is the right source there
+  // (the opposite of the Mac case argued above). Not yet seen on a PC; it is
+  // on the human check list. darwin never takes this branch.
+  if (TRAY_UI.menuTheme === 'native-theme') {
+    try { return nativeTheme.shouldUseDarkColors === true; } catch { return false; }
+  }
   try {
     return systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark';
   } catch {
@@ -1157,21 +1233,29 @@ function renderTrayFromSnapshot() {
   const model = buildTrayModel(traySnapshot, {
     dark: menuAppearanceIsDark(),
     identityHex,
+    platform: process.platform,
   });
 
   if (model.glyph !== trayGlyph) {
     trayGlyph = model.glyph;
     tray.setImage(trayImage(model.glyph));
   }
-  tray.setToolTip(trayToolTip(model));
-  tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate(model, {
+  // Clamped on Windows only (127 units, at a word); darwin: unchanged.
+  tray.setToolTip(clampTrayToolTip(trayToolTip(model), process.platform));
+  const menu = Menu.buildFromTemplate(buildTrayMenuTemplate(model, {
     onOpenScope: openScopeInApp,
     onOpenMemory: () => openMemoryView(null),
     onOpenApp: () => revealWindow(),
     onOpenSettings: () => { openSettingsView(); },
     onRowAction: (row, action) => { void runRowAction(row, action); },
     makeIcon: menuImage,
-  })));
+    platform: process.platform,
+  }));
+  // macOS: the menu is SET on the tray, as it always was. Windows: it is kept
+  // and POPPED on right-click (startTray), so it is rebuilt immediately before
+  // it is shown — see trayInteraction() for why it is never set there.
+  if (TRAY_UI.setContextMenu) tray.setContextMenu(menu);
+  else trayMenu = menu;
 
   // THE ONE-SHOT CORRECTOR, NOT A TICK. `liveExpiresInMs` is null unless the
   // glyph is `live`, so in the state the process is in almost all of the time
@@ -1251,6 +1335,16 @@ function menuImage(spec) {
 /** The template image for a glyph state. Generated, not shipped — see
  *  lib/tray-icon.js for why, and for why it is greyscale+alpha. */
 function trayImage(state) {
+  // WINDOWS: a coloured icon carrying the same one bit (lib/tray-icon-win.js),
+  // at 16/24/32 px, and NEVER a template — Windows does not tint, so a black
+  // template glyph would be invisible on the default dark taskbar.
+  if (!TRAY_UI.templateImage) {
+    const win = winTrayIconPngs(state);
+    const [first, ...rest] = win.reps;
+    const wimg = nativeImage.createFromBuffer(first.buffer, { scaleFactor: first.scale });
+    for (const r of rest) wimg.addRepresentation({ scaleFactor: r.scale, buffer: r.buffer });
+    return wimg;
+  }
   const png = trayIconPngs(state);
   const img = nativeImage.createFromBuffer(png.scale1, { scaleFactor: 1 });
   img.addRepresentation({ scaleFactor: 2, buffer: png.scale2 });
@@ -1475,8 +1569,21 @@ function startTray() {
     themeNotificationId = systemPreferences.subscribeNotification(
       'AppleInterfaceThemeChangedNotification', () => renderTrayFromSnapshot());
   } catch { themeNotificationId = null; }
-  tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
-  tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
+  if (TRAY_UI.leftClick === 'menu') {
+    // macOS, unchanged: either click opens the menu that is set on the tray.
+    tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
+    tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
+  } else {
+    // WINDOWS conventions (lib/shell-platform.js trayInteraction): a LEFT click
+    // shows the window — a deliberate act, so the index is re-read, but it is
+    // not a menu open and does not ask GitHub. A RIGHT click rebuilds the menu
+    // from the snapshot in memory and pops it, so every age in it is exact
+    // when it appears without relying on `mouse-enter` firing on a Windows
+    // tray; the read and the remote check then run for the next open, exactly
+    // the latency contract the Mac menu has.
+    tray.on('click', () => { revealWindow(); refreshTraySummary(); });
+    tray.on('right-click', () => { popTrayMenu(); refreshTraySummary(); maybeCheckRemote('right-click'); });
+  }
 
   stateWatcher = createStateWatcher({
     roots: trayWatchRoots(),
@@ -1490,8 +1597,17 @@ function startTray() {
   refreshTraySummary();
 }
 
+/** Windows: rebuild the menu from memory (no I/O) and pop it at the cursor. */
+function popTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  renderTrayFromSnapshot();
+  if (!trayMenu) return;
+  try { tray.popUpContextMenu(trayMenu); } catch { /* a tray handler must not take the process with it */ }
+}
+
 /** Tear the tray down, including everything it was paying for. */
 function stopTray() {
+  trayMenu = null;
   nativeTheme.removeListener('updated', renderTrayFromSnapshot);
   if (themeNotificationId !== null && themeNotificationId !== undefined) {
     try { systemPreferences.unsubscribeNotification(themeNotificationId); } catch { /* best effort */ }
@@ -1728,6 +1844,31 @@ function createWindow() {
     mainWindow.hide();
   });
 
+  // ── WINDOWS: the X hides to the tray ONLY while the tray icon is there ────
+  //
+  // A SECOND listener rather than an edit to the Mac's one above, which stays
+  // character for character as it was. The decision is closeHidesToTray() in
+  // lib/shell-platform.js, executed by the suite; it answers false on every
+  // platform but win32, so this listener does nothing on a Mac.
+  //
+  // Without a tray the close goes through: the last window closes,
+  // `window-all-closed` calls app.quit(), and `before-quit` runs the
+  // write-status guard — the X button never cuts off a paid ingest.
+  // While Windows is logging off or shutting down a hide would hold the
+  // session open, so `session-end` (a Windows-only window event) lets every
+  // later close through.
+  mainWindow.on('session-end', () => { sessionEnding = true; });
+  mainWindow.on('close', (event) => {
+    if (!closeHidesToTray({
+      platform: process.platform,
+      quitAuthorised,
+      trayActive: !!(tray && !tray.isDestroyed()),
+      sessionEnding,
+    })) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
+
   // Anything the page tries to open in a new window goes to the real browser.
   // Without this, an external link opens a chrome-less Electron window with no
   // address bar, which is both a bad experience and a phishing surface.
@@ -1846,7 +1987,17 @@ app.on('before-quit', (event) => {
       message: 'Quit now?',
       detail: lines.join('\n'),
     };
-    const { response } = mainWindow
+    // darwin: attach whenever a window exists, exactly as before. Windows:
+    // only while it is on screen — a box owned by a window hidden to the tray
+    // could not be seen (attachDialogToWindow in lib/shell-platform.js).
+    const live = !!(mainWindow && !mainWindow.isDestroyed());
+    const attach = attachDialogToWindow({
+      platform: process.platform,
+      hasWindow: !!mainWindow,
+      visible: live && mainWindow.isVisible(),
+      minimized: live && mainWindow.isMinimized(),
+    });
+    const { response } = attach
       ? await dialog.showMessageBox(mainWindow, opts)
       : await dialog.showMessageBox(opts);
 

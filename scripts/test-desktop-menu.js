@@ -335,7 +335,9 @@ section('§5 the non-macOS arm still has Quit, Settings and the update check');
 // The packaged app is macOS-only today, but this shell runs from a checkout
 // anywhere, and a menu missing Quit would be worse than the default it replaced.
 {
-  const win = menu.buildMenuTemplate({ platform: 'win32', ...HANDLERS });
+  let aboutCalls = 0;
+  const WIN_HANDLERS = { ...HANDLERS, onShowAbout: () => { aboutCalls++; } };
+  const win = menu.buildMenuTemplate({ platform: 'win32', ...WIN_HANDLERS });
   const flat = menu.flattenMenu(win);
   ok(!win.some((m) => m.label === 'The Curator'), 'no macOS application menu on Windows');
   ok(flat.some((i) => i.role === 'quit'), 'Quit is reachable');
@@ -345,6 +347,38 @@ section('§5 the non-macOS arm still has Quit, Settings and the update check');
   ok(!settings.accelerator, '⌘, is NOT claimed off macOS — it is an Apple convention and means nothing there');
   ok(!flat.some((i) => i.role === 'pasteAndMatchStyle' || i.role === 'startSpeaking'),
      'macOS-only Edit roles are absent, so Electron is never handed a role it rejects on that platform');
+
+  // ── THE WINDOWS APP (2026-11-20): Windows conventions ───────────────────
+  eq(win.map((m) => m.label), ['File', 'Edit', 'View', 'Window', 'Help'],
+     'Windows: File · Edit · View · Window · Help');
+  const checks = flat.filter((i) => i.id === menu.ID_CHECK_FOR_UPDATES);
+  eq(checks.length, 1, 'Check for Updates appears exactly ONCE…');
+  ok(checks[0].path.startsWith('Help ›'), `…and in HELP, the Windows place for it (${checks[0].path})`);
+  const about = flat.find((i) => i.id === menu.ID_ABOUT);
+  ok(about && about.path.startsWith('Help ›') && about.label === 'About The Curator', 'Help › About The Curator exists');
+  ok(about && !about.role, 'About is a handler, not `role: about` (that panel shows next to nothing on Windows)');
+  about.click();
+  eq(aboutCalls, 1, 'and clicking it calls onShowAbout');
+  const file = win.find((m) => m.label === 'File');
+  eq(file.submenu.filter((i) => i.type !== 'separator').map((i) => i.id || i.role), [menu.ID_SETTINGS, 'quit'],
+     'File holds Settings and Exit only');
+  const quit = flat.find((i) => i.role === 'quit');
+  ok(!quit.label && typeof quit.click !== 'function',
+     'Exit is the bare `quit` role — Electron words it for Windows, and the role is what fires before-quit');
+  ok(!flat.some((i) => i.role === 'services' || i.role === 'hide' || i.role === 'about'),
+     'no macOS-only role on Windows');
+  let threw = false;
+  try { menu.buildMenuTemplate({ platform: 'win32', ...HANDLERS }); } catch { threw = true; }
+  ok(threw, 'a Windows menu without onShowAbout is refused at BUILD time');
+  let macThrew = false;
+  try { menu.buildMenuTemplate({ platform: 'darwin', ...HANDLERS }); } catch { macThrew = true; }
+  ok(!macThrew, '…while the Mac menu still needs no About handler (it uses the role)');
+  ok(!menu.flattenMenu(mac).some((i) => i.id === menu.ID_ABOUT), 'and the Mac menu carries no Windows About item');
+
+  // Linux keeps the pre-Windows non-mac arm.
+  const linux = menu.buildMenuTemplate({ platform: 'linux', ...HANDLERS });
+  eq(linux[0].submenu.filter((i) => i.type !== 'separator').map((i) => i.id || i.role),
+     [menu.ID_SETTINGS, menu.ID_CHECK_FOR_UPDATES, 'quit'], 'linux: File is unchanged (Settings · Check for Updates · Quit)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

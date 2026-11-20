@@ -102,10 +102,28 @@ export function resolveBackgroundMode(raw) {
  * @param {string} mode  a raw value; resolved here, so callers cannot forget to.
  * @returns {{mode:string, tray:boolean, hideDock:boolean, hedged:boolean, reason:string|null}}
  */
-export function resolveTrayPlan(mode) {
+export function resolveTrayPlan(mode, { platform } = {}) {
   const m = resolveBackgroundMode(mode);
   if (m === 'window') {
     return { mode: m, tray: false, hideDock: false, hedged: false, reason: null };
+  }
+  // ── WINDOWS: `tray-only` IS OMITTED, AND THAT IS A DECISION ──────────────
+  //
+  // The Windows analogue of hiding the Dock icon is hiding the taskbar button
+  // (`setSkipTaskbar(true)`). It is NOT done, for a Windows-specific reason on
+  // top of the Mac's: Windows 11 files a newly added tray icon into the hidden
+  // overflow flyout (the ^ by the clock) by default, so a person who hides the
+  // taskbar button would be left with an app whose only visible handle is an
+  // icon they have never seen. The value is still RECOGNISED and behaves as
+  // `tray`, with the reason worded for Windows, exactly as the Mac hedges.
+  if (m === 'tray-only' && platform === 'win32') {
+    return {
+      mode: m,
+      tray: true,
+      hideDock: false,
+      hedged: true,
+      reason: 'Hiding the taskbar button is not offered on Windows — the tray icon is on, and the taskbar button stays.',
+    };
   }
   if (m === 'tray-only' && !DOCK_HIDING_IMPLEMENTED) {
     return {
@@ -138,9 +156,9 @@ export function resolveTrayPlan(mode) {
  * to a new position in the menu bar and, with a menu bar manager installed, can
  * file it into a section the user cannot see.
  */
-export function planModeTransition(from, to) {
-  const a = resolveTrayPlan(from);
-  const b = resolveTrayPlan(to);
+export function planModeTransition(from, to, { platform } = {}) {
+  const a = resolveTrayPlan(from, { platform });
+  const b = resolveTrayPlan(to, { platform });
   return {
     from: a.mode,
     to: b.mode,

@@ -115,6 +115,10 @@
  * whether an image module was present.
  */
 import * as pulseStrip from './pulse-strip.js';
+// The ONE word that differs on Windows ("this PC" for "this Mac"). Pure and
+// Electron-free like this module; absent a platform the Mac words stand, so
+// every pre-Windows caller and suite reads exactly what it read before.
+import { hostNoun } from './shell-platform.js';
 
 /** The freshness dot renderer, or null. Resolved once, at import. */
 let _renderRecencyDot = null;
@@ -1695,8 +1699,9 @@ function collisionNotices(rows) {
  * behind, they simply have not started.
  *
  * @param {Array} rows  the built rows, newest first
+ * @param {string} [host]  how this computer is named ("this Mac" / "this PC")
  */
-export function newerElsewhereNotice(rows) {
+export function newerElsewhereNotice(rows, host = 'this Mac') {
   const usable = (Array.isArray(rows) ? rows : [])
     .filter((r) => r && r.ageSource === 'agent' && typeof r.ageSeconds === 'number');
   const local = usable.filter((r) => r.isThisHost === true);
@@ -1709,7 +1714,7 @@ export function newerElsewhereNotice(rows) {
   if (!(best.ageSeconds < newestLocal)) return null;
   const name = best.machineShort || best.machine;
   if (!name) return null;
-  const text = name + ' saved after this Mac';
+  const text = name + ' saved after ' + host;
   return {
     kind: 'newer-elsewhere',
     machine: best.machine,
@@ -1839,12 +1844,12 @@ export function staleDocsText(name, stale, unchecked = 0) {
 }
 
 /** The notice's tooltip — what each clause of `staleDocsText` means. */
-export function staleDocsFull(name, stale, unchecked = 0) {
+export function staleDocsFull(name, stale, unchecked = 0, host = 'this Mac') {
   const s = Number.isInteger(stale) && stale > 0 ? stale : 0;
   const u = Number.isInteger(unchecked) && unchecked > 0 ? unchecked : 0;
   const parts = [];
   if (s) parts.push(s + ' curator-owned document' + (s === 1 ? ' differs from its source' : 's differ from their sources'));
-  if (u) parts.push(u + ' could not be checked from this Mac (its source was not reachable, e.g. a GitHub document with no read token)');
+  if (u) parts.push(u + ' could not be checked from ' + host + ' (its source was not reachable, e.g. a GitHub document with no read token)');
   return parts.length ? name + ': ' + parts.join('; ') : null;
 }
 
@@ -1874,6 +1879,10 @@ export function buildTrayModel(summary, opts = {}) {
   // light-palette image on a dark menu is dim, a dark one on a light menu is
   // invisible.
   const dark = opts.dark === true;
+  // ── THE PLATFORM IS PASSED IN TOO, FOR ONE WORD ────────────────────────
+  // "this Mac" / "this PC". Absent or anything but 'win32' keeps the Mac
+  // wording, so every pre-Windows caller renders byte-identical text.
+  const host = hostNoun(opts.platform);
 
   // ── THE RENDERERS, INJECTABLE AND WRAPPED ──────────────────────────────
   // A renderer that throws must cost a picture, never the menu.
@@ -2163,7 +2172,7 @@ export function buildTrayModel(summary, opts = {}) {
   const toolTipOf = (r) => [
     (r.projectFull || r.project) + ' · ' + r.scope,
     r.machine ? 'machine: ' + r.machine : null,
-    r.isThisHost && !r.isThisMachine && r.machine ? 'other install on this Mac: ' + r.machine : null,
+    r.isThisHost && !r.isThisMachine && r.machine ? 'other install on ' + host + ': ' + r.machine : null,
     r.harness ? 'harness: ' + r.harness
       + (r.harnessRaw && r.harnessRaw !== r.harness ? ' (recorded as “' + r.harnessRaw + '”)' : '')
       : 'harness: not recorded',
@@ -2500,7 +2509,7 @@ export function buildTrayModel(summary, opts = {}) {
     projectLabel: r.proj.name,
     machineShort: machineLabels.get(r.machine) || r.machine,
     ageText: ageText(r.ageSeconds, r.ageSource),
-  })));
+  })), host);
   if (newerElsewhere) notices.push(newerElsewhere);
   // Every scope of the projects on screen is a row somewhere in the menu, so
   // coverage is complete when every project came with `latest`. Then the
@@ -2523,7 +2532,7 @@ export function buildTrayModel(summary, opts = {}) {
       notices.push({
         kind: 'docs-stale', project: p.project, domain: p.domain,
         text: clip(text, PLAIN_LABEL_CHARS),
-        full: staleDocsFull(p.projectFull || p.project, f.staleCount, f.unreachableCount),
+        full: staleDocsFull(p.projectFull || p.project, f.staleCount, f.unreachableCount, host),
       });
     }
   }

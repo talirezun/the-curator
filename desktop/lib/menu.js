@@ -105,6 +105,8 @@ export const ID_CHECK_FOR_UPDATES = 'check-for-updates';
 export const ID_SETTINGS = 'open-settings';
 export const ID_REVEAL_WINDOW = 'reveal-window';
 export const ID_SHOW_LOGS = 'show-logs';
+/** Windows only: Help › About (macOS uses the `about` role in the app menu). */
+export const ID_ABOUT = 'show-about';
 
 /**
  * The two labels the update item can carry.
@@ -156,6 +158,9 @@ const sep = { type: 'separator' };
  * @param {Function} o.onRevealWindow
  * @param {Function} o.onOpenUrl          (url) => void
  * @param {Function} o.onShowLogs
+ * @param {Function} [o.onShowAbout]      Windows only (and REQUIRED there):
+ *                                        Help › About The Curator. macOS uses
+ *                                        the `about` role and never calls it.
  * @returns {Array} a `Menu.buildFromTemplate` template
  */
 export function buildMenuTemplate({
@@ -168,14 +173,18 @@ export function buildMenuTemplate({
   onRevealWindow,
   onOpenUrl,
   onShowLogs,
+  onShowAbout,
 } = {}) {
   const isMac = platform === 'darwin';
+  const isWin = platform === 'win32';
 
   // Every handler is required. A menu item wired to `undefined` throws at
   // CLICK time — i.e. in front of the user, weeks later — so it is refused
-  // here, at build time, where the suite sees it.
+  // here, at build time, where the suite sees it. `onShowAbout` is required
+  // only where an item calls it (Windows), so the Mac's contract is unchanged.
   for (const [name, fn] of Object.entries({
     onCheckForUpdates, onOpenSettings, onRevealWindow, onOpenUrl, onShowLogs,
+    ...(isWin ? { onShowAbout } : {}),
   })) {
     if (typeof fn !== 'function') {
       throw new Error(`buildMenuTemplate: ${name} must be a function, got ${typeof fn}`);
@@ -339,6 +348,42 @@ export function buildMenuTemplate({
   };
 
   if (isMac) return [appMenu, editMenu, viewMenu, windowMenu, helpMenu];
+
+  // ── Windows (the packaged Windows app, 2026-11-20) ────────────────────────
+  // Windows conventions rather than the Mac's: there is no application menu,
+  // so File carries Settings and Exit, and the update check and About live in
+  // HELP, which is where Windows apps put them (the "Help › Check for
+  // Updates…" / "Help › About" pair). Settings claims no accelerator — Ctrl+,
+  // is not a Windows convention the way ⌘, is a Mac one.
+  //
+  // `role: 'quit'` with NO label: Electron labels it per platform ("Exit" on
+  // Windows), and the role is what fires `before-quit`, where main.js runs the
+  // write-status guard — the same reason the Mac item is a role.
+  //
+  // About is a menu item with a handler, not `role: 'about'`: on Windows that
+  // role opens a panel that shows next to nothing, so main.js shows a message
+  // box built by lib/shell-platform.js from the same facts as the Mac panel.
+  if (isWin) {
+    return [
+      {
+        label: 'File',
+        submenu: [settingsItem, sep, { role: 'quit' }],
+      },
+      editMenu,
+      viewMenu,
+      windowMenu,
+      {
+        ...helpMenu,
+        submenu: [
+          ...helpMenu.submenu,
+          sep,
+          checkForUpdatesItem,
+          sep,
+          { id: ID_ABOUT, label: `About ${appName}`, click: onShowAbout },
+        ],
+      },
+    ];
+  }
 
   // Non-macOS. The packaged app ships for macOS only today, but this shell can
   // be run from a checkout anywhere, and a menu missing Quit and Settings on

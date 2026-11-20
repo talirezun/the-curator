@@ -93,6 +93,9 @@
  * away, beside the absolute stamp that says how fresh the reading is.
  */
 
+import { fileBrowserName } from './shell-platform.js';
+import { adaptTrayMenuForWindows } from './tray-menu-win.js';
+
 /** Item ids, so a caller can address an item without matching on its label.
  *  Labels are user-visible copy and will change; ids are a contract. */
 
@@ -131,6 +134,18 @@ export const ROW_ACTIONS = [
   [ID_ROW_HANDOFF, 'Copy handoff as Markdown'],
   [ID_ROW_REVEAL, 'Reveal current.md in Finder'],
 ];
+
+/**
+ * The same four actions as worded on a platform. Only the file browser's name
+ * differs ("Finder" on a Mac, "File Explorer" on Windows); the ids and the
+ * order are ROW_ACTIONS', so a handler never sees a different action.
+ * Anything but 'win32' returns ROW_ACTIONS itself.
+ */
+export function rowActionsFor(platform) {
+  if (platform !== 'win32') return ROW_ACTIONS;
+  return ROW_ACTIONS.map(([id, label]) => [id,
+    id === ID_ROW_REVEAL ? 'Show current.md in ' + fileBrowserName(platform) : label]);
+}
 
 /** A submenu item's id: `<row id>:<action>`. One place, so the shell's parser
  *  and the builder cannot drift. */
@@ -236,9 +251,9 @@ const sep = { type: 'separator' };
  * checkout's own `state/` folder. The shell decides what to do when the path
  * is not there.
  */
-function actionItems(row, onOpenScope, onRowAction) {
+function actionItems(row, onOpenScope, onRowAction, actions = ROW_ACTIONS) {
   const items = [header(rowActionId(row.id, 'header'), row.submenuHeader || row.scopeShort || row.scope || '')];
-  for (const [action, label] of ROW_ACTIONS) {
+  for (const [action, label] of actions) {
     items.push({
       id: rowActionId(row.id, action),
       label,
@@ -280,8 +295,8 @@ function rowItem(row, makeIcon, submenu) {
  * NSMenu nesting and Electron's template takes it as data, but it is listed
  * among the things to photograph before tagging.
  */
-function rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon) {
-  const items = actionItems(row, onOpenScope, onRowAction);
+function rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon, actions = ROW_ACTIONS) {
+  const items = actionItems(row, onOpenScope, onRowAction, actions);
   const streams = Array.isArray(row.streams) ? row.streams : [];
   const more = typeof row.streamsMoreLabel === 'string' && row.streamsMoreLabel ? row.streamsMoreLabel
     : (row.streamsHidden > 0 ? row.streamsHidden + ' more in Project Context…' : null);
@@ -289,7 +304,7 @@ function rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon) {
     items.push(sep);
     items.push(header(rowActionId(row.id, ID_HEADER_STREAMS), HEADER_STREAMS));
     for (const s of streams) {
-      items.push(rowItem(s, makeIcon, actionItems(s, onOpenScope, onRowAction)));
+      items.push(rowItem(s, makeIcon, actionItems(s, onOpenScope, onRowAction, actions)));
     }
     if (more) {
       // ENABLED: it is the only route to the streams the cap hid. The count
@@ -322,7 +337,11 @@ export function buildTrayMenuTemplate(model, o = {}) {
   const {
     appName = 'The Curator',
     onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, onRowAction, makeIcon,
+    // 'win32' rewords one action ("Show current.md in File Explorer"); absent
+    // or anything else keeps the Mac words, so pre-Windows callers are unchanged.
+    platform,
   } = o;
+  const actions = rowActionsFor(platform);
 
   // Every handler is required. A menu item wired to `undefined` throws at
   // CLICK time — in front of the user, weeks later — so it is refused here,
@@ -342,7 +361,7 @@ export function buildTrayMenuTemplate(model, o = {}) {
   const idle = m && m.idle && Array.isArray(m.idle.rows) ? m.idle : null;
   const empty = !m || m.empty === true || (!active && !idle);
   const template = [];
-  const primary = (row) => rowItem(row, makeIcon, rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon));
+  const primary = (row) => rowItem(row, makeIcon, rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon, actions));
 
   // ── 1. The save pulse, on top, with SAVES BY TOOL ───────────────────────
   //
@@ -513,7 +532,10 @@ export function buildTrayMenuTemplate(model, o = {}) {
   template.push(sep);
   template.push({ id: ID_QUIT, role: 'quit', label: 'Quit ' + appName });
 
-  return template;
+  // Windows draws no sublabel, no item tooltip and no section header; the
+  // pass moves each of those facts somewhere Windows does draw it (see
+  // lib/tray-menu-win.js). The Mac template is returned as built.
+  return platform === 'win32' ? adaptTrayMenuForWindows(template) : template;
 }
 
 /**
