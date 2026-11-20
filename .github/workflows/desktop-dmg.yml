@@ -67,6 +67,32 @@ name: Desktop DMG
 #  rather than create the tag it is publishing against. So the set of runs a
 #  release SHA can produce is unchanged, and `watchCi`'s `--workflow` pin
 #  keeps holding regardless.
+#
+#  ── 4. WINDOWS (2026-11-20), AND THE ONLY SAFE WAY TO REHEARSE ────────────
+#  Three more jobs build, prove and publish the Windows installer:
+#
+#    windows          build on windows-latest, check what was built, install,
+#                     launch, uninstall silently, the data-folder guard
+#    windows-update   install THIS build, update it to a rebuilt N+1 served
+#                     from a local fixture, prove the app reopens on N+1
+#    publish-windows  attach the installer AND the GPLv2 source of the MinGit
+#                     inside it to the SAME release, AFTER the Mac job
+#
+#  The Mac job never needs a Windows job, so a Windows failure can never stop
+#  or delay the Mac release. publish-windows needs `dmg` only to run AFTER it
+#  (`always()`, so a failed or skipped Mac job does not block Windows either):
+#  the two `gh release create` calls therefore never race, and whichever runs
+#  second takes the "already exists, upload --clobber" arm.
+#
+#  WHICH TAG IS A RELEASE. The project ships plain X.Y.Z only (release.js,
+#  "Plain semver, no pre-release suffixes"), so the gate below calls a tag a
+#  RELEASE only when it is exactly vX.Y.Z. Any other v* tag is a REHEARSAL:
+#  the Mac job is skipped (no 10x runner, no publish), the Windows build,
+#  install and update checks run with the version in package.json, and NOTHING
+#  is published, so no release exists for any updater to see. That is the way
+#  to exercise this file: push a tag such as `v3.99.3-wintest.1`, watch, then
+#  delete the tag. (Before this gate, a v*-tag of any shape built and
+#  PUBLISHED a Mac release marked latest.)
 # ═══════════════════════════════════════════════════════════════════════════
 on:
   push:
@@ -74,8 +100,8 @@ on:
       - 'v*'
 
 # The DEFAULT token for this workflow is read-only, and the `gate` job below
-# inherits it. Exactly one job widens it — `dmg`, to `contents: write`, at the
-# JOB level, because that is the only scope GitHub offers for "may create a
+# inherits it. Exactly two jobs widen it — `dmg` and `publish-windows`, to
+# `contents: write`, at the JOB level, because that is the only scope GitHub offers for "may create a
 # release" and a job-level block REPLACES this one rather than adding to it.
 # Declaring it here instead would hand a write token to the cheap Linux gate
 # and to every job anyone adds later, none of which has any reason to hold one.
@@ -109,8 +135,35 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       buildable: ${{ steps.check.outputs.buildable }}
+      release: ${{ steps.kind.outputs.release }}
+      version: ${{ steps.kind.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+      # RELEASE or REHEARSAL (header, section 4). `release` is true only for a
+      # tag that is exactly vX.Y.Z; `version` is that X.Y.Z, or, for a
+      # rehearsal, package.json's version (the Windows build refuses a version
+      # that differs from package.json, desktop/lib/win-pack.mjs).
+      # scripts/test-release-publish.js EXECUTES this script with fake tags.
+      - id: kind
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          root_version="$(node -p "require('./package.json').version")"
+          release_re='^v[0-9]+[.][0-9]+[.][0-9]+$'
+          if [[ "$tag" =~ $release_re ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+            echo "Release tag $tag: build and publish." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=${root_version}" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Rehearsal tag \`$tag\`: nothing will be published"
+              echo
+              echo "Not exactly vX.Y.Z, so the Mac job and both publish steps are skipped."
+              echo "The Windows jobs build and check version ${root_version} (package.json)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - id: check
         run: |
           if [ -f desktop/package-lock.json ]; then
@@ -131,7 +184,7 @@ jobs:
   dmg:
     name: Build ad-hoc signed DMG (macOS)
     needs: gate
-    if: needs.gate.outputs.buildable == 'true'
+    if: needs.gate.outputs.buildable == 'true' && needs.gate.outputs.release == 'true'
     runs-on: macos-latest
     # NARROW ON PURPOSE. `contents: write` is what `gh release create` needs and
     # it is the smallest scope that can do it — GitHub has no "releases only"
@@ -318,4 +371,233 @@ jobs:
             echo
             echo "The in-app updater reads these from the Releases API. Until this step ran,"
             echo "every installed copy reported \"up to date\" while running the previous version."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ═════════════════════════════════════════════════════════════════════════
+  #  WINDOWS (header, section 4). Nothing above this line depends on anything
+  #  below it.
+  # ═════════════════════════════════════════════════════════════════════════
+  #
+  # Builds the installer with the commands desktop/electron-builder.yml names,
+  # then proves on a real Windows what no offline suite can (the list is
+  # scripts/test-desktop-win-build.js section 11 and the packages' CI notes):
+  # scripts/ci-win-app.mjs says exactly what each step checks. The default
+  # read-only token: this job publishes nothing.
+  windows:
+    name: Build and check the Windows installer
+    needs: gate
+    if: needs.gate.outputs.buildable == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install app runtime dependencies (repo root)
+        run: npm ci --omit=dev
+
+      - name: Install Electron toolchain (desktop/)
+        working-directory: desktop
+        run: npm ci
+
+      # The cached archive is re-checked against the pin (size, then SHA-256)
+      # by fetch-mingit.mjs exactly as a fresh download is; the cache only
+      # saves the 40 MB. Key and path are the pin's own values
+      # (scripts/test-release-publish.js keeps them equal to MINGIT).
+      - name: Reuse the MinGit download
+        uses: actions/cache@v4
+        with:
+          path: desktop/vendor/MinGit-2.56.1-64-bit.zip
+          key: mingit-4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd
+
+      - name: Fetch MinGit 2.56.1 (size and SHA-256 checked before anything is unpacked)
+        working-directory: desktop
+        run: node lib/fetch-mingit.mjs
+
+      # NOT SIGNED: no Windows certificate exists and none may be written into
+      # this public file. CSC_IDENTITY_AUTO_DISCOVERY=false is belt and braces,
+      # as on the Mac. The version comes from the gate (the tag, or
+      # package.json on a rehearsal); afterPack refuses a version that differs
+      # from package.json, and afterSign reads it back out of the exe.
+      - name: Build the Windows installer (not signed)
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx --no-install electron-builder --win --config electron-builder.yml "--config.extraMetadata.version=$env:VERSION" --publish never
+
+      - name: Check the installer's name against the updater's own matchers
+        id: names
+        run: node scripts/publish-win-assets.js --dir desktop/dist --version $env:VERSION --check-consumers
+
+      - name: Check what was built (versions, marker, git, notices, icons, RunAsNode, a launch)
+        run: node scripts/ci-win-app.mjs check-build --unpacked desktop/dist/win-unpacked --setup "${{ steps.names.outputs.setup }}" --version $env:VERSION
+
+      - name: Install, launch, uninstall silently, and the data-folder guard
+        timeout-minutes: 25
+        run: node scripts/ci-win-app.mjs install-smoke --setup "${{ steps.names.outputs.setup }}" --version $env:VERSION
+
+      # The notices travel with the installer so publish-windows checks the
+      # file this build SHIPPED names the source it attaches.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: the-curator-windows-${{ github.ref_name }}
+          path: |
+            desktop/dist/TheCurator-*-x64-Windows-Setup.exe
+            desktop/dist/win-unpacked/resources/THIRD-PARTY-NOTICES.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: The update and app logs, when something failed
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($d in @("$env:LOCALAPPDATA\TheCurator\logs", "$env:TEMP")) {
+            Get-ChildItem -LiteralPath $d -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 60 }
+          }
+
+  # F's update test, on a clean runner: install THIS build (N, from the job
+  # above), rebuild the same tree stamped N+1 (package.json on this runner
+  # only), serve N+1 from a local fixture through the engine's injected fetch
+  # (no production seam: scripts/ci-win-app.mjs "THE SEAM"), and drive the
+  # installed N's own updater, including the AI-app-connection refusal.
+  windows-update:
+    name: Rehearse the Windows in-app update
+    needs:
+      - gate
+      - windows
+    if: needs.gate.outputs.buildable == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install app runtime dependencies (repo root)
+        run: npm ci --omit=dev
+
+      - name: Install Electron toolchain (desktop/)
+        working-directory: desktop
+        run: npm ci
+
+      - name: Reuse the MinGit download
+        uses: actions/cache@v4
+        with:
+          path: desktop/vendor/MinGit-2.56.1-64-bit.zip
+          key: mingit-4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd
+
+      - name: Fetch MinGit 2.56.1 (size and SHA-256 checked before anything is unpacked)
+        working-directory: desktop
+        run: node lib/fetch-mingit.mjs
+
+      - name: Download this build (version N)
+        uses: actions/download-artifact@v4
+        with:
+          name: the-curator-windows-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release-n
+
+      - name: Stamp this runner's tree as N+1 (never committed)
+        id: next
+        run: |
+          $next = node scripts/ci-win-app.mjs next-version --version $env:VERSION
+          if ($LASTEXITCODE -ne 0 -or -not $next) { throw "no next version for $env:VERSION" }
+          node scripts/ci-win-app.mjs stamp-version --version $next
+          if ($LASTEXITCODE -ne 0) { throw 'stamp-version failed' }
+          "next=$next" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build N+1 (not signed)
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx --no-install electron-builder --win --config electron-builder.yml "--config.extraMetadata.version=${{ steps.next.outputs.next }}" --publish never
+
+      - name: Update N to N+1 through the installed app's own updater
+        timeout-minutes: 30
+        run: node scripts/ci-win-app.mjs rehearse-update --from "${{ runner.temp }}\release-n\TheCurator-$($env:VERSION)-x64-Windows-Setup.exe" --from-version $env:VERSION --to "desktop\dist\TheCurator-${{ steps.next.outputs.next }}-x64-Windows-Setup.exe" --to-version ${{ steps.next.outputs.next }}
+
+      - name: The update and app logs, when something failed
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($d in @("$env:LOCALAPPDATA\TheCurator\logs", "$env:LOCALAPPDATA\TheCurator\updates", "$env:TEMP")) {
+            Get-ChildItem -LiteralPath $d -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.json', '.ps1' } | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 80 }
+          }
+
+  # Attach the installer and the MinGit source to the SAME release the Mac job
+  # published (or create it, when the Mac job failed). On a release tag only,
+  # and only when both Windows jobs passed. `always()` makes it wait for the
+  # Mac job without depending on its result; the Mac job does not wait for
+  # this one.
+  publish-windows:
+    name: Publish the Windows installer
+    needs:
+      - gate
+      - dmg
+      - windows
+      - windows-update
+    if: always() && needs.gate.outputs.release == 'true' && needs.windows.result == 'success' && needs.windows-update.result == 'success'
+    runs-on: ubuntu-latest
+    # The same narrow scope as `dmg`, for the same reason, at the job level.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Download the Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: the-curator-windows-${{ github.ref_name }}
+          path: win-release
+
+      - name: Check the installer's name again, on what is about to be published
+        id: names
+        run: node scripts/publish-win-assets.js --dir win-release --version "${{ needs.gate.outputs.version }}"
+
+      # GPL-2.0 section 3: the source of the MinGit inside the installer, under
+      # the name the app's THIRD-PARTY-NOTICES.txt gives (checked against the
+      # notices file that build shipped), verified to be that tag's tree.
+      - name: Fetch the GPLv2 source of the bundled MinGit
+        id: source
+        run: node scripts/publish-win-assets.js --source --out "$RUNNER_TEMP/gpl-source" --notices win-release/win-unpacked/resources/THIRD-PARTY-NOTICES.txt
+
+      - name: Attach the Windows installer and the MinGit source to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SETUP: ${{ steps.names.outputs.setup }}
+          SOURCE: ${{ steps.source.outputs.source }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists (the Mac job made it): adding the Windows files."
+            gh release upload "$TAG" "$SETUP" "$SOURCE" --clobber
+          else
+            echo "Release $TAG does not exist (the Mac job failed or was skipped): creating it."
+            gh release create "$TAG" "$SETUP" "$SOURCE" \
+              --title "The Curator $TAG" \
+              --generate-notes \
+              --verify-tag \
+              --latest
+          fi
+          {
+            echo "### Windows files on $TAG"
+            echo
+            echo "- \`$(basename "$SETUP")\`"
+            echo "- \`$(basename "$SOURCE")\` (GPL-2.0 source of the bundled MinGit)"
           } >> "$GITHUB_STEP_SUMMARY"

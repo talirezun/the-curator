@@ -65,10 +65,26 @@ import {
   PUBLISHED_PREFIX, ARCH_LABEL, PUBLISHED_ARCHES, LIPO_ARCH,
   publishedNameFor, classifyBuiltName, planPublish, publishNames, parsePublishArgs,
 } from './publish-dmg-assets.js';
+import {
+  planWinPublish, WIN_PUBLISH_REFUSALS, parseWinPublishArgs, verifySourceArchive, noticesNameSource, fetchSourceArchive,
+} from './publish-win-assets.js';
+import * as ci from './ci-win-app.mjs';
+import { installerFileName } from '../desktop/lib/win-pack.mjs';
+import { MINGIT, MINGIT_SOURCE, thirdPartyNotices } from '../desktop/lib/fetch-mingit.mjs';
+import { resolveInstallerRelease } from '../desktop/lib/update-release.js';
+import { gzipSync } from 'node:zlib';
+import { pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(__dirname, 'publish-dmg-assets.js');
+const WIN_CLI = path.join(__dirname, 'publish-win-assets.js');
+const CI_CLI = path.join(__dirname, 'ci-win-app.mjs');
+// The REAL route module (the picker and installerAssetsFor). Isolated first:
+// importing it resolves user-data paths.
+process.env.CURATOR_TEST_USER_DATA_DIR = process.env.CURATOR_TEST_USER_DATA_DIR || mkdtempSync(path.join(tmpdir(), 'curator-publish-ud-'));
+process.env.CURATOR_TEST_DOMAINS_DIR = process.env.CURATOR_TEST_DOMAINS_DIR || path.join(process.env.CURATOR_TEST_USER_DATA_DIR, 'domains');
+const cfgMod = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'routes', 'config.js')).href);
 const DMG_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'desktop-dmg.yml');
 const TEST_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'test.yml');
 
@@ -83,6 +99,37 @@ function eq(actual, expected, label) {
   else { failed++; console.log(`  ✗ ${label} — got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`); }
 }
 function section(t) { console.log(`\n${t}`); }
+function throwsMsg(fn) { try { fn(); return null; } catch (e) { return e.message || 'threw'; } }
+
+/** A gzip'd tar in GitHub's archive shape: a pax global header carrying the
+ *  commit, then every file under `top/`. ustar headers with real checksums. */
+function makeTarGz(top, files, commit) {
+  const header = (name, size, type) => {
+    const h = Buffer.alloc(512, 0);
+    h.write(name.slice(0, 100), 0, 'utf8');
+    h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
+    h.write(size.toString(8).padStart(11, '0') + '\0', 124);
+    h.write('00000000000\0', 136);
+    h.fill(0x20, 148, 156);
+    h.write(type, 156);
+    h.write('ustar\0', 257); h.write('00', 263);
+    let sum = 0; for (const b of h) sum += b;
+    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    return h;
+  };
+  const pad = (b) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512, 0)]);
+  const parts = [];
+  const rec = `comment=${commit}\n`;
+  const paxBody = Buffer.from(`${rec.length + 3 + String(rec.length + 3).length - 1} ${rec}`.replace(/^\d+/, (n) => String(Buffer.byteLength(`${n} ${rec}`))));
+  parts.push(header('pax_global_header', paxBody.length, 'g'), pad(paxBody));
+  parts.push(header(`${top}/`, 0, '5'));
+  for (const [n, data] of files) {
+    const b = Buffer.from(data);
+    parts.push(header(`${top}/${n}`, b.length, '0'), pad(b));
+  }
+  parts.push(Buffer.alloc(1024, 0));
+  return gzipSync(Buffer.concat(parts));
+}
 
 const V = '3.37.0';
 const RAW_ARM64 = `The Curator-${V}-arm64.dmg`;
@@ -518,6 +565,312 @@ section('§4  release.js no longer claims a release needs no publishing');
   ok(!/shipping an unwired parameter/.test(contributing),
      'and the same expired justification is gone from CONTRIBUTING.md');
   ok(/desktop-dmg\.yml/.test(contributing), 'CONTRIBUTING.md names the workflow that publishes the installers');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5  The Windows setup program: publish-win-assets.js against the updater\'s own matchers');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const WV = '3.100.0';
+  const SETUP = installerFileName(WV);
+  eq(SETUP, `TheCurator-${WV}-x64-Windows-Setup.exe`, 'the published name comes from win-pack.mjs installerFileName (the one definition)');
+  eq(archFromAssetName(SETUP, { ext: '.exe' }), 'x64', 'the REAL archFromAssetName(name, {ext:".exe"}) resolves it to x64');
+  eq(archFromAssetName(SETUP), null, 'CONTROL: without ext it is not a Mac asset (null), so a Mac never downloads it');
+
+  // electron-builder also leaves these beside the setup; they are not published.
+  const NORMAL = [SETUP, 'win-unpacked', 'builder-debug.yml', 'builder-effective-config.yaml'];
+  const good = planWinPublish(NORMAL, WV, { installerAssetsFor: cfgMod.installerAssetsFor });
+  eq([good.ok, good.setup, good.arch], [true, SETUP, 'x64'], 'a normal output folder plans cleanly, checked against config.js installerAssetsFor');
+  const refusals = [
+    [[], WV, 'missing-setup', 'an empty folder'],
+    [[installerFileName('3.99.3')], WV, 'unrecognised-exe', 'a setup of ANOTHER version'],
+    [[SETUP, 'The Curator Setup 3.100.0.exe'], WV, 'unrecognised-exe', 'a second .exe (electron-builder\'s default name)'],
+    [[SETUP, `${SETUP}.blockmap`], WV, 'blockmap-present', 'a .blockmap (nothing reads it; the app has no electron-updater)'],
+    [[SETUP, 'latest.yml'], WV, 'update-feed-present', 'a latest.yml update feed'],
+    [[SETUP], `v${WV}`, 'bad-version', 'a version with its v'],
+    [[SETUP], '3.100.0-beta.1', 'bad-version', 'a pre-release version (the project ships plain X.Y.Z)'],
+  ];
+  for (const [names, ver, reason, what] of refusals) {
+    eq(planWinPublish(names, ver).reason, reason, `REFUSED: ${what} → ${reason}`);
+  }
+  eq(planWinPublish([SETUP], WV, { installerAssetsFor: () => [] }).reason, 'not-a-windows-installer',
+    'a picker that would not count the setup as a Windows installer is refused (the check reaches the consumer)');
+  eq(planWinPublish([SETUP], WV, { installerAssetsFor: (r) => r.assets }).reason, 'counted-as-mac-installer',
+    'a picker that would offer the setup to a Mac is refused');
+  ok(WIN_PUBLISH_REFUSALS.includes('blockmap-present') && WIN_PUBLISH_REFUSALS.length >= 8, 'the refusals are named in one list');
+
+  // The CLI, for real, on real files.
+  const dir = tmp();
+  for (const n of NORMAL) {
+    if (n === 'win-unpacked') mkdirSync(path.join(dir, n));
+    else writeFileSync(path.join(dir, n), 'x');
+  }
+  const outFile = path.join(dir, 'gh-output');
+  writeFileSync(outFile, '');
+  const r = spawnSync(process.execPath, [WIN_CLI, '--dir', dir, '--version', WV, '--check-consumers'], {
+    encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: outFile },
+  });
+  eq(r.status, 0, 'the CLI exits 0 on a normal folder, with --check-consumers (it imports the real config.js)');
+  ok(readFileSync(outFile, 'utf8').includes(`setup=${path.join(dir, SETUP)}`), 'GITHUB_OUTPUT carries setup=<path>, so later steps never glob');
+  writeFileSync(path.join(dir, `${SETUP}.blockmap`), 'x');
+  const bad = spawnSync(process.execPath, [WIN_CLI, '--dir', dir, '--version', WV], { encoding: 'utf8' });
+  ok(bad.status === 1 && /blockmap-present/.test(bad.stderr), 'a refusal exits 1 and names itself, so the job fails before publishing');
+  ok(parseWinPublishArgs(['--dir', 'x']).error && parseWinPublishArgs(['--version', WV]).error, 'the setup mode needs --dir and --version');
+  ok(parseWinPublishArgs(['--dir', 'x', '--version', WV, '--wat']).error, 'an unrecognised flag is a hard error');
+  ok(parseWinPublishArgs(['--source']).error && !parseWinPublishArgs(['--source', '--out', 'o']).error, 'the source mode needs --out');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§6  The GPLv2 source of the bundled MinGit: named by the notices, verified before upload');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  eq([MINGIT_SOURCE.asset, MINGIT_SOURCE.topDir], ['git-for-windows-2.56.1.windows.1-source.tar.gz', 'git-2.56.1.windows.1'],
+    'the source file name and its top folder are derived from the pinned tag');
+  eq(MINGIT_SOURCE.url, `https://github.com/git-for-windows/git/archive/refs/tags/${MINGIT.tag}.tar.gz`, 'it is GitHub\'s archive of exactly the pinned tag');
+  const shipped = thirdPartyNotices({ components: ['git 2.56.1.windows.1'] });
+  ok(noticesNameSource(shipped), 'the THIRD-PARTY-NOTICES.txt the build ships names that file (so a person can find it on the release)');
+  ok(!noticesNameSource(shipped.replace(MINGIT_SOURCE.asset, 'source.tar.gz')), 'CONTROL: notices that do not name it are caught');
+
+  // A synthetic GitHub archive: pax global header with the commit, entries under the top folder.
+  const COMMIT = 'a'.repeat(40);
+  const files = [['GIT-VERSION-GEN', 'v'], ['COPYING', 'GPL'], ...Array.from({ length: 120 }, (_, i) => [`builtin/f${i}.c`, `int f${i};`])];
+  const good = makeTarGz(MINGIT_SOURCE.topDir, files, COMMIT);
+  const v = verifySourceArchive(good);
+  eq([v.ok, v.entries, v.commit], [true, files.length + 1, COMMIT], 'the archive check reads the tree and the commit GitHub records');
+  eq(verifySourceArchive(Buffer.from('not gzip')).reason, 'not-gzip', 'REFUSED: not gzip');
+  eq(verifySourceArchive(makeTarGz('git-2.55.0.windows.1', files, COMMIT)).reason, 'wrong-tree', 'REFUSED: another tag\'s tree');
+  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, files.filter(([n]) => n !== 'COPYING'), COMMIT)).reason, 'not-git-source', 'REFUSED: no COPYING');
+  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, files.slice(0, 10), COMMIT)).reason, 'too-few-entries', 'REFUSED: a handful of files');
+
+  const notices = path.join(tmp(), 'THIRD-PARTY-NOTICES.txt');
+  writeFileSync(notices, shipped);
+  let fetched = [];
+  const fakeFetch = (body, status = 200) => async (url) => { fetched.push(url); return new Response(body, { status }); };
+  const out = tmp();
+  const r = await fetchSourceArchive({ out, notices, fetchImpl: fakeFetch(good), log: () => {} });
+  eq([r.ok, r.source, r.commit], [true, path.join(out, MINGIT_SOURCE.asset), COMMIT], 'fetchSourceArchive: downloaded, verified, saved under the notices\' name');
+  eq(fetched, [MINGIT_SOURCE.url], '…from exactly the pinned tag\'s archive URL');
+  const wrongNotices = path.join(tmp(), 'n.txt');
+  writeFileSync(wrongNotices, 'MinGit 2.56.1 without a file name');
+  fetched = [];
+  eq((await fetchSourceArchive({ out: tmp(), notices: wrongNotices, fetchImpl: fakeFetch(good), log: () => {} })).reason,
+    'notices-do-not-name-source', 'notices that do not name the file: refused BEFORE any download');
+  eq(fetched, [], '…nothing was fetched');
+  const out404 = tmp();
+  eq((await fetchSourceArchive({ out: out404, fetchImpl: fakeFetch('nope', 404), log: () => {} })).reason, 'download-failed', 'a 404 is download-failed');
+  const outBad = tmp();
+  eq((await fetchSourceArchive({ out: outBad, fetchImpl: fakeFetch(makeTarGz('elsewhere', files, COMMIT)), log: () => {} })).reason,
+    'wrong-tree', 'a downloaded archive of the wrong tree is refused');
+  eq(readdirSync(outBad), [], '…and nothing (not even a .partial) is left to be uploaded');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§7  The update rehearsal\'s fixture is accepted by the REAL resolver; its fetch reaches nothing else');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  eq([ci.nextPatchVersion('3.99.3'), ci.nextPatchVersion('3.99.10'), ci.nextPatchVersion('v3.99.3'), ci.nextPatchVersion('3.99.3-beta.1')],
+    ['3.99.4', '3.99.11', null, null], 'nextPatchVersion: plain X.Y.Z only');
+  const rootText = readFileSync(path.join(ROOT, 'package.json'), 'utf8');
+  const stamped = ci.stampVersionText(rootText, '9.9.9');
+  eq(JSON.parse(stamped).version, '9.9.9', 'stampVersionText sets the version');
+  const diffLines = rootText.split('\n').filter((l, i) => l !== stamped.split('\n')[i]);
+  eq(diffLines.length, 1, '…and changes exactly one line of the real root package.json');
+  ok(throwsMsg(() => ci.stampVersionText(rootText, '9.9.9-rc1')), 'it refuses a non-plain version');
+
+  const N = '3.100.0', N1 = '3.100.1';
+  const assetName = installerFileName(N1);
+  const sha = 'b'.repeat(64);
+  const payload = ci.fixtureReleases({ version: N1, assetName, size: 123456, sha256: sha });
+  const served = [];
+  const underlying = async (url) => { served.push(url); return new Response(JSON.stringify(payload), { status: 200 }); };
+  const calls = [];
+  const fx = ci.makeFixtureFetch({ releasesApiUrl: cfgMod.RELEASES_API_URL, base: 'http://127.0.0.1:9', fetchImpl: underlying, onCall: (u, t) => calls.push([u, t]) });
+  const rel = await resolveInstallerRelease({ configModule: cfgMod, fetchImpl: fx, currentVersion: N, arch: 'x64', platform: 'win32' });
+  eq([rel.ok, rel.version, rel.asset && rel.asset.name, rel.asset && rel.asset.size, rel.asset && rel.asset.digest && rel.asset.digest.hex],
+    [true, N1, assetName, 123456, sha], 'the REAL resolveInstallerRelease + config.js picker take the fixture: N+1, the setup, its size and SHA-256');
+  ok(rel.asset && /^https:\/\/github\.com\/talirezun\/the-curator\/releases\/download\//.test(rel.asset.url),
+    '…with the real https://github.com download URL, so update-plan.js\'s host rule runs unchanged');
+  eq(served, ['http://127.0.0.1:9/releases'], 'the releases API call went to the local fixture, not GitHub');
+  const mac = await resolveInstallerRelease({ configModule: cfgMod, fetchImpl: fx, currentVersion: N, arch: 'x64', platform: 'darwin' });
+  eq(mac.reason, 'no-installable-release', 'CROSS-CHECK: the same fixture offers a Mac nothing (no .dmg), so the platform really decides');
+  const same = await resolveInstallerRelease({ configModule: cfgMod, fetchImpl: fx, currentVersion: N1, arch: 'x64', platform: 'win32' });
+  eq(same.reason, 'no-update', 'CONTROL: an app already on N+1 is told there is no update');
+  eq(await fx(`${ci.REPO_RELEASES_DOWNLOAD}v${N1}/${assetName}`).then(() => served.at(-1)), `http://127.0.0.1:9/download/v${N1}/${assetName}`,
+    'a download URL of this repository is served by the fixture');
+  for (const u of ['https://api.github.com/repos/someone/else/releases', 'https://github.com/other/repo/releases/download/v1/x.exe', 'https://example.com/']) {
+    let threw = false;
+    try { await fx(u); } catch { threw = true; }
+    ok(threw, `the fixture fetch REFUSES ${u} (nothing in a rehearsal reaches the real network)`);
+  }
+
+  // Instance records and the data snapshot comparison.
+  const inst = tmp();
+  mkdirSync(path.join(inst, 'abcd'), { recursive: true });
+  writeFileSync(path.join(inst, 'abcd', '4242.json'), JSON.stringify({ pid: 4242, port: 51234, version: N1 }));
+  writeFileSync(path.join(inst, 'abcd', '99.json.tmp'), '{');
+  writeFileSync(path.join(inst, 'abcd', '77.json'), '{ half');
+  eq(ci.readInstanceRecords(inst), [{ pid: 4242, port: 51234, version: N1 }], 'readInstanceRecords: whole records only');
+  eq(ci.readInstanceRecords(path.join(inst, 'none')), [], 'a missing registry is no records, not a crash');
+  eq(ci.snapshotDiff({ a: '1', b: '2', c: '3' }, { a: '1', b: 'X', d: '4' }), { changed: ['b'], missing: ['c'], added: ['d'] }, 'snapshotDiff names changed, missing and added files');
+  ok(ci.parseArgs(['rehearse-update', '--from', 'a']).error, 'the CLI refuses a rehearsal without every argument');
+  ok(ci.parseArgs(['git-checks']).error && !ci.parseArgs(['git-checks', '--mingit', 'x']).error, 'git-checks needs exactly one source');
+  if (process.platform !== 'win32') {
+    const r = spawnSync(process.execPath, [CI_CLI, 'install-smoke', '--setup', 'x.exe', '--version', N], { encoding: 'utf8' });
+    ok(r.status === 2 && /Windows only/.test(r.stderr), 'off Windows the Windows subcommands refuse to start (nothing is installed on a Mac)');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8  The Windows jobs — PARSED, and the gate\'s release test EXECUTED');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const doc = (() => { try { return parseYaml(readFileSync(DMG_WORKFLOW, 'utf8')); } catch { return { jobs: {} }; } })();
+  const J = doc.jobs || {};
+  const asList = (v) => (Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []));
+  eq(Object.keys(J), ['gate', 'dmg', 'windows', 'windows-update', 'publish-windows'], 'the jobs are gate, dmg, and the three Windows jobs');
+
+  // THE ORDERING RULE: Windows waits for the Mac; the Mac never waits for Windows.
+  eq(asList(J.dmg && J.dmg.needs), ['gate'], 'the Mac job needs ONLY the gate — never a Windows job, so a Windows failure cannot stop the Mac release');
+  ok(!/windows/.test(JSON.stringify(J.dmg || {}).replace(/windows-latest/g, '')), '…and nothing in the Mac job mentions a Windows job');
+  eq(asList(J.windows && J.windows.needs), ['gate'], 'the Windows build needs only the gate (it runs beside the Mac build)');
+  eq(asList(J['windows-update'] && J['windows-update'].needs), ['gate', 'windows'], 'the update rehearsal needs the Windows build');
+  const pubNeeds = asList(J['publish-windows'] && J['publish-windows'].needs);
+  ok(['dmg', 'windows', 'windows-update', 'gate'].every((n) => pubNeeds.includes(n)), `publish-windows needs dmg, windows, windows-update and gate (${pubNeeds.join(', ')})`);
+  const pubIf = String((J['publish-windows'] || {}).if || '');
+  ok(/^always\(\)/.test(pubIf), 'publish-windows runs after the Mac job WHATEVER its result (always()), so the two never race and a Mac failure does not block Windows');
+  ok(pubIf.includes("needs.gate.outputs.release == 'true'"), 'publish-windows runs on a RELEASE tag only');
+  ok(pubIf.includes("needs.windows.result == 'success'") && pubIf.includes("needs.windows-update.result == 'success'"),
+    'publish-windows needs BOTH Windows jobs green');
+  ok(!/needs\.dmg\.result/.test(pubIf), 'publish-windows never conditions on the Mac job\'s result');
+  ok(String((J.dmg || {}).if || '').includes("needs.gate.outputs.release == 'true'"), 'the Mac job builds and publishes on a RELEASE tag only (a rehearsal tag publishes nothing)');
+
+  // Permissions: write only where a release is created.
+  const writers = Object.entries(J).filter(([, j]) => j && j.permissions && j.permissions.contents === 'write').map(([k]) => k);
+  eq(writers, ['dmg', 'publish-windows'], 'exactly dmg and publish-windows hold contents: write');
+  eq([J.windows && J.windows.permissions, J['windows-update'] && J['windows-update'].permissions], [undefined, undefined],
+    'the Windows build and rehearsal keep the read-only default');
+  eq([J.windows && J.windows['runs-on'], J['windows-update'] && J['windows-update']['runs-on'], J['publish-windows'] && J['publish-windows']['runs-on']],
+    ['windows-latest', 'windows-latest', 'ubuntu-latest'], 'runners: Windows to build and test, Linux to publish');
+
+  // The build job's steps, in order.
+  const steps = (J.windows && J.windows.steps) || [];
+  const at = (list, pred) => list.findIndex(pred);
+  const iFetch = at(steps, (s) => /lib\/fetch-mingit\.mjs/.test(s.run || ''));
+  const iBuild = at(steps, (s) => /electron-builder --win/.test(s.run || ''));
+  const iNames = at(steps, (s) => s.id === 'names');
+  const iCheck = at(steps, (s) => /ci-win-app\.mjs check-build/.test(s.run || ''));
+  const iSmoke = at(steps, (s) => /ci-win-app\.mjs install-smoke/.test(s.run || ''));
+  const iUp = at(steps, (s) => /upload-artifact/.test(s.uses || ''));
+  ok([iFetch, iBuild, iNames, iCheck, iSmoke, iUp].every((i) => i >= 0), 'the build job fetches MinGit, builds, names, checks, smoke-installs and uploads');
+  ok(iFetch < iBuild && iBuild < iNames && iNames < iCheck && iCheck < iSmoke && iSmoke < iUp, '…in that order (nothing is uploaded before every check passed)');
+  const build = steps[iBuild] || {};
+  ok(/--config\.extraMetadata\.version=\$env:VERSION/.test(build.run || '') && /--publish never/.test(build.run || '') && /--config electron-builder\.yml/.test(build.run || ''),
+    'the build is electron-builder --win with the version from the gate, --publish never (E\'s command)');
+  eq(build.env && build.env.CSC_IDENTITY_AUTO_DISCOVERY, 'false', 'no signing identity can be auto-discovered');
+  ok(/publish-win-assets\.js --dir desktop\/dist --version \$env:VERSION --check-consumers/.test((steps[iNames] || {}).run || ''),
+    'the name check runs against the real config.js picker (--check-consumers)');
+  for (const i of [iCheck, iSmoke]) ok(((steps[i] || {}).run || '').includes('steps.names.outputs.setup'), `${(steps[i] || {}).name}: uses the path the name check emitted, never a glob`);
+  eq(J.windows && J.windows.env && J.windows.env.VERSION, '${{ needs.gate.outputs.version }}', 'the version is the gate\'s');
+
+  // The MinGit cache: the pin's own file and hash, everywhere it appears.
+  const testDoc = parseYaml(readFileSync(TEST_WORKFLOW, 'utf8'));
+  const caches = [...Object.values(J), testDoc.jobs.windows].flatMap((j) => ((j && j.steps) || []).filter((s) => /actions\/cache/.test(s.uses || '')));
+  ok(caches.length === 3, `three MinGit cache steps (two desktop jobs, test.yml) — found ${caches.length}`);
+  ok(caches.every((s) => s.with && s.with.path === `desktop/vendor/${MINGIT.asset}` && s.with.key === `mingit-${MINGIT.sha256}`),
+    'every cache step names the pinned archive and its SHA-256 (drift from fetch-mingit.mjs MINGIT goes red here)');
+
+  // The rehearsal job.
+  const us = (J['windows-update'] && J['windows-update'].steps) || [];
+  const iDl = at(us, (s) => /download-artifact/.test(s.uses || ''));
+  const iStamp = at(us, (s) => /stamp-version/.test(s.run || ''));
+  const iBuild1 = at(us, (s) => /electron-builder --win/.test(s.run || ''));
+  const iRe = at(us, (s) => /ci-win-app\.mjs rehearse-update/.test(s.run || ''));
+  ok(iDl >= 0 && iDl < iStamp && iStamp < iBuild1 && iBuild1 < iRe, 'rehearsal: download N, stamp N+1, build N+1, then rehearse');
+  eq((us[iDl] || {}).with && us[iDl].with.name, (steps[iUp] || {}).with && steps[iUp].with.name, 'it downloads exactly the artifact the build job uploaded');
+  ok(/steps\.next\.outputs\.next/.test((us[iBuild1] || {}).run || '') && /--to-version \$\{\{ steps\.next\.outputs\.next \}\}/.test((us[iRe] || {}).run || ''),
+    'the N+1 build and the rehearsal use the stamped version');
+
+  // The publish job.
+  const ps = (J['publish-windows'] && J['publish-windows'].steps) || [];
+  const iPNames = at(ps, (s) => s.id === 'names');
+  const iSrc = at(ps, (s) => s.id === 'source');
+  const iPub = at(ps, (s) => /gh release/.test(s.run || ''));
+  ok(iPNames >= 0 && iPNames < iSrc && iSrc < iPub, 'publish: check the name, fetch and verify the source, then publish');
+  ok(/--notices win-release\/win-unpacked\/resources\/THIRD-PARTY-NOTICES\.txt/.test((ps[iSrc] || {}).run || ''),
+    'the source step checks the notices file the build SHIPPED (it travels in the artifact)');
+  const upPaths = String(((steps[iUp] || {}).with || {}).path || '');
+  ok(upPaths.includes('desktop/dist/win-unpacked/resources/THIRD-PARTY-NOTICES.txt'), '…and the build job does upload that file');
+  const pub = ps[iPub] || {};
+  const pubRun = pub.run || '';
+  ok(/--verify-tag/.test(pubRun) && /gh release upload "\$TAG" "\$SETUP" "\$SOURCE" --clobber/.test(pubRun) && /gh release create "\$TAG" "\$SETUP" "\$SOURCE"/.test(pubRun),
+    'publish: create (--verify-tag) or upload --clobber, BOTH the setup and the source, in both arms');
+  ok(/gh release view "\$TAG"/.test(pubRun), '…deciding by whether the release already exists (the Mac job usually made it)');
+  ok(!/git push|git tag/.test(pubRun), 'it pushes nothing and tags nothing');
+  eq([pub.env && pub.env.SETUP, pub.env && pub.env.SOURCE], ['${{ steps.names.outputs.setup }}', '${{ steps.source.outputs.source }}'], 'it attaches the checked paths, by step output');
+  ok(pub.env && /github\.token/.test(String(pub.env.GH_TOKEN || '')), 'the automatic GITHUB_TOKEN, never a PAT');
+
+  // THE GATE, EXECUTED: which tags are releases.
+  const kind = ((J.gate && J.gate.steps) || []).find((s) => s.id === 'kind');
+  ok(!!kind && typeof kind.run === 'string', 'the gate has its release/rehearsal step');
+  const bash = ['/bin/bash', '/usr/bin/bash'].find((b) => existsSync(b));
+  if (kind && bash) {
+    const runGate = (tag) => {
+      const d = tmp();
+      writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: 'x', version: '3.99.3' }));
+      const out = path.join(d, 'out'), summ = path.join(d, 'summary');
+      writeFileSync(out, ''); writeFileSync(summ, '');
+      const r = spawnSync(bash, ['-c', kind.run], {
+        cwd: d, encoding: 'utf8',
+        env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, GITHUB_REF_NAME: tag, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summ },
+      });
+      const o = Object.fromEntries(readFileSync(out, 'utf8').trim().split('\n').filter(Boolean).map((l) => l.split('=')));
+      return { status: r.status, ...o };
+    };
+    const cases = [
+      ['v3.100.0', 'true', '3.100.0'],
+      ['v10.0.12', 'true', '10.0.12'],
+      ['v3.99.3-wintest.1', 'false', '3.99.3'],
+      ['v3.99.3-rc1', 'false', '3.99.3'],
+      ['vwintest-1', 'false', '3.99.3'],
+      ['v3.99', 'false', '3.99.3'],
+      ['v3.99.3.1', 'false', '3.99.3'],
+      ['v3.99.3\nv1.0.0', 'false', '3.99.3'],
+    ];
+    for (const [tag, release, version] of cases) {
+      const g = runGate(tag);
+      eq([g.status, g.release, g.version], [0, release, version],
+        `gate on ${JSON.stringify(tag)}: ${release === 'true' ? 'RELEASE, version from the tag' : 'REHEARSAL, nothing published, package.json\'s version'}`);
+    }
+  } else {
+    console.log('  ⊘ the gate script was not executed (no bash here)');
+  }
+
+  // test.yml's windows job: the suites whose real-Windows sections only run there.
+  const tw = testDoc.jobs.windows || {};
+  const twSteps = tw.steps || [];
+  const runs = twSteps.map((s) => s.run || '');
+  for (const suite of ['test-mcp-install-windows.js', 'test-win-folder-access.js', 'test-desktop-update-win32.js', 'test-desktop-shell-win32.js', 'test-paths-win32.js', 'test-subprocess-env.js']) {
+    ok(runs.some((r) => r.trim() === `node scripts/${suite}`), `test.yml windows job runs ${suite}`);
+  }
+  const helper = twSteps.find((s) => /test-desktop-update-win32/.test(s.run || ''));
+  eq(helper && helper.env && helper.env.CURATOR_REQUIRE_WIN_HELPER, '1', '…the update suite with CURATOR_REQUIRE_WIN_HELPER=1');
+  const mcp = twSteps.find((s) => /test-mcp-install-windows/.test(s.run || ''));
+  eq(mcp && mcp.env && mcp.env.CURATOR_REQUIRE_ELECTRON, '1', '…the MCP suite still with CURATOR_REQUIRE_ELECTRON=1 (its §7 real handshake)');
+  const iGitFetch = at(twSteps, (s) => /fetch-mingit\.mjs/.test(s.run || ''));
+  const iGit = at(twSteps, (s) => /ci-win-app\.mjs git-checks --mingit desktop\/vendor\/mingit\/git/.test(s.run || ''));
+  ok(iGitFetch >= 0 && iGitFetch < iGit, '…the bundled-git checks, after the pinned MinGit is fetched and verified');
+  const co = twSteps.find((s) => /actions\/checkout/.test(s.uses || ''));
+  eq(co && co.with && co.with['fetch-depth'], 0, '…with full history (the suites compare against fixed baseline commits)');
+  ok(tw.if === undefined && twSteps.every((s) => s['continue-on-error'] === undefined), 'the windows job still GATES a release: no if:, no continue-on-error');
+  eq(tw.name, 'Windows installer tests', 'its name is unchanged (release.js classifies jobs by name)');
+
+  // Package L: install.ps1's (browser) names beside the Windows app, faked by its HKCU key.
+  const wi = (testDoc.jobs['windows-install'] || {}).steps || [];
+  const iL = at(wi, (s) => /80ccaaf9-11be-57fd-99fb-d73402b182f5/.test(s.run || '') && /\(browser\)\.lnk/.test(s.run || ''));
+  const iClean = at(wi, (s) => s.if === 'always()' && /Remove-Item -LiteralPath \$key/.test(s.run || ''));
+  ok(iL >= 0 && /Rerun/.test(wi[iL].run) && /Hash \$appLnk/.test(wi[iL].run), 'windows-install: the (browser) names step re-runs install.ps1 with the app key present and hashes the app\'s shortcut');
+  ok(iL >= 0 && iClean > iL, '…and an always() step removes the fake app key afterwards');
+  eq(wi.length && JSON.stringify(wi).includes('80ccaaf9-11be-57fd-99fb-d73402b182f5'), true, '…using the app\'s real uninstall key (win-pack.mjs NSIS_GUID)');
 }
 
 for (const d of tmps) rmSync(d, { recursive: true, force: true });
