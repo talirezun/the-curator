@@ -444,7 +444,14 @@ jobs:
 
       # The notices travel with the installer so publish-windows checks the
       # file this build SHIPPED names the source it attaches.
+      #
+      # Uploaded even when a check above FAILED (as long as the build made a
+      # setup program the name check accepted), so the installer of a red run
+      # can still be downloaded and tried by hand. That never ships it:
+      # windows-update and publish-windows both need this job to SUCCEED, so a
+      # build that failed a check is neither rehearsed nor published.
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.names.outputs.setup != '' }}
         with:
           name: the-curator-windows-${{ github.ref_name }}
           path: |

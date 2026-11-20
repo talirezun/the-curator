@@ -81,7 +81,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync,
+  copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync,
   readdirSync, renameSync, rmSync, statSync, writeFileSync, realpathSync,
 } from 'node:fs';
 import http from 'node:http';
@@ -190,6 +190,93 @@ export function snapshotDiff(before, after) {
   return { changed, missing, added };
 }
 
+/**
+ * Copy the folder tree `src` to `dest`, file by file, through fs.mkdirSync /
+ * fs.copyFileSync (libuv's wide-character Windows calls). Returns the number
+ * of files copied. A symbolic link is refused, never followed.
+ *
+ * NEVER fs.cpSync here. On Windows, Node 22's cpSync (node_file.cc
+ * CpSyncCopyDir, v22.23.5: `create_directories(*dest)`) hands the destination
+ * to C++ std::filesystem as a NARROW string, which the Microsoft library reads
+ * in the ANSI code page, not UTF-8: under code page 1252 a UTF-8
+ * "Programs Ž é" becomes "Programs Å½ Ã©", and the whole copy lands there
+ * without an error (its path check, CpSyncCheckPaths, converts correctly, so
+ * nothing complains). The launch that followed failed with spawn ENOENT
+ * (Desktop DMG run 44756919210). That is a Node bug in a test tool, not the
+ * product: the product never calls cpSync (trash.js uses the asynchronous
+ * fs.promises.cp, which is plain JavaScript over libuv).
+ */
+export function copyTree(src, dest, fsImpl = { mkdirSync, readdirSync, copyFileSync }) {
+  let files = 0;
+  const walk = (from, to) => {
+    fsImpl.mkdirSync(to, { recursive: true });
+    for (const e of fsImpl.readdirSync(from, { withFileTypes: true })) {
+      const a = path.join(from, e.name);
+      const b = path.join(to, e.name);
+      if (e.isSymbolicLink()) throw new Error(`copyTree: refusing a symbolic link (${a})`);
+      if (e.isDirectory()) walk(a, b);
+      else if (e.isFile()) { fsImpl.copyFileSync(a, b); files++; }
+      else throw new Error(`copyTree: not a file or a folder (${a})`);
+    }
+  };
+  walk(src, dest);
+  return files;
+}
+
+/** Number of files under `dir` (0 when it does not exist). */
+export function countFiles(dir, { readdir = readdirSync } = {}) {
+  let n = 0;
+  const walk = (d) => {
+    let names = [];
+    try { names = readdir(d, { withFileTypes: true }); } catch { return; }
+    for (const e of names) {
+      if (e.isDirectory()) walk(path.join(d, e.name));
+      else if (e.isFile()) n++;
+    }
+  };
+  walk(dir);
+  return n;
+}
+
+/**
+ * What a folder actually holds, `depth` levels down, one line each, for a
+ * failure message: when a copy "succeeded" but the file is not where it was
+ * asked to be, the listing shows where it went (a mangled sibling folder).
+ */
+export function describeTree(dir, depth = 3, { readdir = readdirSync } = {}) {
+  const lines = [];
+  const walk = (d, indent, left) => {
+    let names = [];
+    try { names = readdir(d, { withFileTypes: true }); } catch (err) { lines.push(`${indent}(cannot read: ${err.code || err.message})`); return; }
+    if (!names.length) lines.push(`${indent}(empty)`);
+    for (const e of names.slice(0, 40)) {
+      // Code points for a name that is not plain ASCII, so mojibake is visible as such.
+      const cps = /[^\x20-\x7e]/.test(e.name) ? `  [U+${[...e.name].map((c) => c.codePointAt(0).toString(16).toUpperCase()).join(' U+')}]` : '';
+      lines.push(`${indent}${e.name}${e.isDirectory() ? '\\' : ''}${cps}`);
+      if (e.isDirectory() && left > 1) walk(path.join(d, e.name), `${indent}  `, left - 1);
+    }
+    if (names.length > 40) lines.push(`${indent}… ${names.length - 40} more`);
+  };
+  lines.push(`${dir}:`);
+  walk(dir, '  ', depth);
+  return lines.join('\n');
+}
+
+/**
+ * Watch a child for the 'error' event a failed spawn emits (ENOENT, EACCES…).
+ * Unhandled, that event CRASHES this script with a stack trace and no
+ * verdict; handled, the caller turns it into a failed check. Returns a getter
+ * for the error (null while none).
+ */
+export function catchSpawnError(child, onError = () => {}) {
+  let error = null;
+  child.on('error', (err) => { if (!error) { error = err; onError(err); } });
+  return () => error;
+}
+export function spawnErrorText(err) {
+  return err ? `${err.code || 'error'}: ${err.message || err}` : '';
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 //  Windows effects
 // ═════════════════════════════════════════════════════════════════════════
@@ -294,8 +381,10 @@ async function getJson(port, p) {
  */
 async function launchApp({ exe, env, instancesRoot, version, timeoutMs = 180000, notPid = null }) {
   const child = spawn(exe, [], { env, detached: true, stdio: 'ignore', windowsHide: false });
+  const spawnError = catchSpawnError(child);
   child.unref();
   const hit = await waitFor(async () => {
+    if (spawnError()) return { spawnError: spawnError() };
     for (const r of readInstanceRecords(instancesRoot)) {
       if (r.pid === notPid || !alive(r.pid)) continue;
       if (version && r.version !== version) continue;
@@ -304,6 +393,10 @@ async function launchApp({ exe, env, instancesRoot, version, timeoutMs = 180000,
     }
     return null;
   }, { timeoutMs, everyMs: 1500 });
+  if (hit && hit.spawnError) {
+    ok(false, `"${exe}" could not be started`, `${spawnErrorText(hit.spawnError)}${existsSync(exe) ? ' (the file exists)' : ' (no such file)'}`);
+    return null;
+  }
   if (!hit) killTree(child.pid);
   return hit ? { ...hit, launcherPid: child.pid } : null;
 }
@@ -591,9 +684,13 @@ async function checkBuild({ unpacked, setup, version }) {
   section('the app, launched from a copy OUTSIDE the workspace');
   const outside = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ci-copy-')));
   const copy = path.join(outside, 'Programs Ž é', PRODUCT);
-  cpSync(unpacked, copy, { recursive: true });
+  const copied = copyTree(unpacked, copy);
+  const copiedExe = path.join(copy, EXE_NAME);
+  const landed = ok(existsSync(copiedExe), `the copy is where it was asked to be: …\\Programs Ž é\\${PRODUCT}\\${EXE_NAME}`,
+    `not there; what the temporary folder holds:\n${describeTree(outside, 3)}`);
+  eq(countFiles(copy), countFiles(unpacked), `CROSS-CHECK: the copy holds as many files as win-unpacked (${copied} copied)`);
   const iso = isolatedEnv(path.join(outside, 'data'));
-  const run = await launchApp({ exe: path.join(copy, EXE_NAME), env: iso.env, instancesRoot: iso.instancesRoot, version });
+  const run = landed ? await launchApp({ exe: copiedExe, env: iso.env, instancesRoot: iso.instancesRoot, version }) : null;
   ok(!!run, 'the copied app started and its server answered /api/version');
   if (run) {
     eq([run.body.version, run.body.installMode, run.body.capabilities && run.body.capabilities.mcpLaunchStyle],
@@ -778,6 +875,7 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
     runCommand: (cmd, args, opts) => runCommandWith(spawn, cmd, args, opts),
     spawnDetached: (cmd, args, opts = {}) => {
       const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, ...(opts.env ? { env: opts.env } : {}) });
+      catchSpawnError(child, (err) => ok(false, `the engine's detached "${cmd}" could not be started`, spawnErrorText(err)));
       child.unref();
       return child;
     },
@@ -802,6 +900,8 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
   });
   let bridgeExited = false;
   bridge.on('exit', () => { bridgeExited = true; });
+  catchSpawnError(bridge, (err) => { bridgeExited = true; ok(false, `the MCP bridge "${exe}" could not be started`, spawnErrorText(err)); });
+  bridge.stdin.on('error', () => { /* EPIPE after a failed start: reported above */ });
   const init = await mcpInitialize(bridge);
   ok(!!(init && init.serverInfo), 'the bridge answers an MCP initialize (the installed exe as Node, over stdio)', JSON.stringify(init));
   const inUse = await engine.checkInUse();
@@ -910,8 +1010,10 @@ if (isDirectRun) {
       const top = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ci-layout-')));
       const inst = path.join(top, 'Programs Ž é', PRODUCT);
       mkdirSync(path.join(inst, 'resources', 'app'), { recursive: true });
-      cpSync(path.resolve(a.mingit), path.join(inst, 'resources', 'git'), { recursive: true });
+      copyTree(path.resolve(a.mingit), path.join(inst, 'resources', 'git'));
       copyFileSync(process.execPath, path.join(inst, EXE_NAME));
+      if (!ok(existsSync(path.join(inst, 'resources', 'git', 'cmd', 'git.exe')), 'MinGit is where it was asked to be: …\\Programs Ž é\\The Curator\\resources\\git\\cmd\\git.exe',
+        `not there; what the temporary folder holds:\n${describeTree(top, 4)}`)) finish('git-checks');
       process.env.CURATOR_TEST_USER_DATA_DIR = path.join(top, 'ud');
       process.env.CURATOR_TEST_DOMAINS_DIR = path.join(top, 'ud', 'domains');
       process.env.CURATOR_TEST_LOG_DIR = path.join(top, 'logs');

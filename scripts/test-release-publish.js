@@ -62,8 +62,8 @@
  * Zero dependencies — node: builtins only, no network, no API key.
  */
 
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -961,6 +961,41 @@ section('§7  The update rehearsal\'s fixture is accepted by the REAL resolver; 
   eq(ci.snapshotDiff({ a: '1', b: '2', c: '3' }, { a: '1', b: 'X', d: '4' }), { changed: ['b'], missing: ['c'], added: ['d'] }, 'snapshotDiff names changed, missing and added files');
   ok(ci.parseArgs(['rehearse-update', '--from', 'a']).error, 'the CLI refuses a rehearsal without every argument');
   ok(ci.parseArgs(['git-checks']).error && !ci.parseArgs(['git-checks', '--mingit', 'x']).error, 'git-checks needs exactly one source');
+
+  // The copy the launch check starts the app from (run 44756919210: cpSync put
+  // it under a mangled folder name and the launch crashed with spawn ENOENT).
+  {
+    const top = tmp();
+    const src = path.join(top, 'win-unpacked');
+    mkdirSync(path.join(src, 'resources', 'app', 'izvor é'), { recursive: true });
+    writeFileSync(path.join(src, ci.EXE_NAME), 'MZ');
+    writeFileSync(path.join(src, 'resources', 'app', 'izvor é', 'Žiga.txt'), 'Ž');
+    mkdirSync(path.join(src, 'empty'));
+    const dest = path.join(top, 'out', 'Programs Ž é', ci.PRODUCT);
+    const n = ci.copyTree(src, dest);
+    eq([n, ci.countFiles(dest), ci.countFiles(src)], [2, 2, 2], 'copyTree copies every file (2), and countFiles agrees on both sides');
+    ok(existsSync(path.join(dest, ci.EXE_NAME)) && readFileSync(path.join(dest, 'resources', 'app', 'izvor é', 'Žiga.txt'), 'utf8') === 'Ž' && existsSync(path.join(dest, 'empty')),
+      '…to EXACTLY the asked path, non-ASCII and spaces included, bytes kept, empty folders too');
+    eq(readdirSync(path.join(top, 'out')), ['Programs Ž é'], '…and nowhere else (no second, mangled folder beside it)');
+    const desc = ci.describeTree(path.join(top, 'out'), 2);
+    ok(desc.includes('Programs Ž é\\') && desc.includes('U+17D') && desc.includes('U+E9') && !/The Curator\\\s+\[/.test(desc),
+      'describeTree lists what a folder holds, with code points for a non-ASCII name only (so mojibake shows as such)');
+    ok(/cannot read: ENOENT/.test(ci.describeTree(path.join(top, 'nope'))), '…and says so for a folder that does not exist, never throws');
+    symlinkSync(path.join(src, ci.EXE_NAME), path.join(src, 'link.exe'));
+    ok(/symbolic link/.test(throwsMsg(() => ci.copyTree(src, path.join(top, 'out2'))) || ''), 'copyTree refuses a symbolic link rather than following it');
+    // The guard against the Node bug can only fire on Windows, so this one is
+    // structural, and says why: a cpSync back in the CI script is red here.
+    ok(!/\bcpSync\b/.test(readFileSync(CI_CLI, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')), 'ci-win-app.mjs calls no fs.cpSync (Node 22 on Windows mangles a non-ASCII destination; see copyTree)');
+
+    // A failed spawn is a failed check, never an unhandled 'error' crash.
+    const child = spawn(path.join(top, 'out', 'Programs Ž é', 'missing.exe'), [], { stdio: 'ignore' });
+    const seen = [];
+    const getErr = ci.catchSpawnError(child, (e) => seen.push(e.code));
+    await new Promise((r) => child.on('close', r).on('error', () => setTimeout(r, 50)));
+    eq([getErr() && getErr().code, seen], ['ENOENT', ['ENOENT']], 'catchSpawnError catches the spawn ENOENT (this process did not crash) and reports it once');
+    ok(/^ENOENT: spawn .*missing\.exe ENOENT$/.test(ci.spawnErrorText(getErr())), `spawnErrorText names the code and the path (${ci.spawnErrorText(getErr())})`);
+  }
+
   if (process.platform !== 'win32') {
     const r = spawnSync(process.execPath, [CI_CLI, 'install-smoke', '--setup', 'x.exe', '--version', N], { encoding: 'utf8' });
     ok(r.status === 2 && /Windows only/.test(r.stderr), 'off Windows the Windows subcommands refuse to start (nothing is installed on a Mac)');
@@ -1009,7 +1044,15 @@ section('§8  The Windows jobs — PARSED, and the gate\'s release test EXECUTED
   const iSmoke = at(steps, (s) => /ci-win-app\.mjs install-smoke/.test(s.run || ''));
   const iUp = at(steps, (s) => /upload-artifact/.test(s.uses || ''));
   ok([iFetch, iBuild, iNames, iCheck, iSmoke, iUp].every((i) => i >= 0), 'the build job fetches MinGit, builds, names, checks, smoke-installs and uploads');
-  ok(iFetch < iBuild && iBuild < iNames && iNames < iCheck && iCheck < iSmoke && iSmoke < iUp, '…in that order (nothing is uploaded before every check passed)');
+  ok(iFetch < iBuild && iBuild < iNames && iNames < iCheck && iCheck < iSmoke && iSmoke < iUp, '…in that order');
+  // The owner downloads the installer of a RED run to try it by hand: the
+  // upload must not depend on the checks passing, only on a setup existing.
+  const upIf = String((steps[iUp] || {}).if || '');
+  ok(/!cancelled\(\)/.test(upIf) && /steps\.names\.outputs\.setup != ''/.test(upIf) && !/success\(\)/.test(upIf),
+    `the upload runs even when a check FAILED, whenever the name check found a setup (if: ${upIf || 'none'})`);
+  // …and that never ships an unchecked build: both consumers need this job GREEN.
+  const updIf = String((J['windows-update'] || {}).if || '');
+  ok(!/always\(\)|failure\(\)|cancelled\(\)/.test(updIf), `the update rehearsal keeps the implicit success() on the build job (if: ${updIf})`);
   const build = steps[iBuild] || {};
   ok(/--config\.extraMetadata\.version=\$env:VERSION/.test(build.run || '') && /--publish never/.test(build.run || '') && /--config electron-builder\.yml/.test(build.run || ''),
     'the build is electron-builder --win with the version from the gate, --publish never (E\'s command)');
