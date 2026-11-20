@@ -122,6 +122,44 @@ const LAYOUTS = [
   ['macOS .app',       ['The Curator.app', 'Contents', 'Resources', 'app'], () => {}],
   ['marker, any path', ['marked'],                                t => fs.writeFileSync(path.join(t, '.curator-bundle'), '')],
 ];
+
+// ── win32 HOST: the bundle arm changed ON PURPOSE in this release ───────────
+// (owner decisions) On win32 only the `.curator-bundle` marker makes a bundle
+// (a `<X>.app\Contents` path never does), and a win32 bundle's user data lives
+// in <appSupport>\App rather than <appSupport>. So on a win32 host the two
+// bundle layouts cannot be byte-identical to v3.99.3; they are asserted for the
+// NEW behaviour instead, and every resolver the bundle arm does not touch is
+// still compared byte-for-byte. darwin/linux hosts never reach this code.
+const UNTOUCHED_KEYS = ['APP_ROOT', 'appSupport', 'appSupportWin', 'appSupportWinNoEnv', 'logs', 'logsWin', 'launcher', 'consts'];
+const DATA_KEYS = ['userData', 'joined', 'getCuratorConfigFile', 'getSyncConfigFile', 'getSyncGitDir', 'getSharedBrainConfigFile',
+  'getDefaultDomainsDir', 'getIngestQueueDir', 'getMcpUsageLogPath', 'getMcpInstallManifestPath', 'getHookLogPath',
+  'getHealthSummaryPath', 'getDuplicateChecksDir', 'getHealthUndoDir', 'getRecentNewPagesDir', 'getDuplicateJobsDir', 'getTrashDir'];
+/** baseline/work: parsed probe outputs of a marker bundle on win32. Returns the list of mismatches (empty = intended behaviour). */
+function win32MarkerBundleProblems(b, w) {
+  const bad = [];
+  const j = JSON.stringify;
+  for (const k of UNTOUCHED_KEYS) if (j(b[k]) !== j(w[k])) bad.push(`${k} changed: ${j(b[k])} -> ${j(w[k])}`);
+  if (!(w.isBundle === true && w.isRepo === false)) bad.push('work is not a bundle');
+  if (b.userData !== b.appSupport) bad.push('PRECONDITION: baseline user data should be the app-support root');
+  const want = path.win32.join(w.appSupport, 'App');
+  if (w.userData !== want) bad.push(`userData ${w.userData} !== ${want}`);
+  const re = (v) => (typeof v === 'string' && v.toLowerCase().startsWith(b.userData.toLowerCase() + '\\'))
+    ? want + v.slice(b.userData.length) : (v === b.userData ? want : v);
+  for (const k of DATA_KEYS) if (re(b[k]) !== w[k]) bad.push(`${k}: expected ${re(b[k])} got ${w[k]}`);
+  if (j(b.creds.map(c => [c.rel, re(c.abs)])) !== j(w.creds.map(c => [c.rel, c.abs]))) bad.push('credential list differs beyond the App relocation');
+  return bad;
+}
+/** baseline/work: parsed probe outputs of a `.app\Contents` path with NO marker on win32. */
+function win32AppShapedProblems(b, w, workStderr) {
+  const bad = [];
+  const j = JSON.stringify;
+  for (const k of UNTOUCHED_KEYS) if (j(b[k]) !== j(w[k])) bad.push(`${k} changed: ${j(b[k])} -> ${j(w[k])}`);
+  if (b.isBundle !== true) bad.push('PRECONDITION: v3.99.3 read this layout as a bundle');
+  if (!(w.isBundle === false && w.isRepo === true)) bad.push('work still reads it as a bundle');
+  if (w.userData !== w.APP_ROOT) bad.push(`userData ${w.userData} !== APP_ROOT ${w.APP_ROOT}`);
+  if (/packaged app/.test(workStderr)) bad.push('work announced a bundle relocation on stderr');
+  return bad;
+}
 if (baselineSrc) {
   for (const [label, segs, prep] of LAYOUTS) {
     const outs = [];
@@ -139,15 +177,28 @@ if (baselineSrc) {
       if (which === 'work' && r.status !== 0) console.log(r.stderr);
     }
     ok(outs[0].status === 0 && outs[1].status === 0, `${label}: both revisions ran`);
-    eq(outs[1].stdout, outs[0].stdout, `${label}: every resolver's output is byte-identical to v3.99.3 (${process.platform})`);
-    eq(outs[1].stderr, outs[0].stderr, `${label}: the stderr notice is byte-identical too`);
+    const bundleArmChanged = process.platform === 'win32' && (label === 'macOS .app' || label === 'marker, any path');
     const parsed = JSON.parse(outs[1].stdout || '{}');
-    if (label === 'checkout') ok(parsed.isRepo === true && parsed.userData === parsed.APP_ROOT, '  └─ CONTROL: this layout really is repo mode');
-    if (label === 'macOS .app') ok(parsed.isBundle === true, '  └─ CONTROL: this layout really is a bundle (the comparison covers the bundle arm)');
+    if (!bundleArmChanged) {
+      eq(outs[1].stdout, outs[0].stdout, `${label}: every resolver's output is byte-identical to v3.99.3 (${process.platform})`);
+      eq(outs[1].stderr, outs[0].stderr, `${label}: the stderr notice is byte-identical too`);
+      if (label === 'checkout') ok(parsed.isRepo === true && parsed.userData === parsed.APP_ROOT, '  └─ CONTROL: this layout really is repo mode');
+      if (label === 'macOS .app') ok(parsed.isBundle === true, '  └─ CONTROL: this layout really is a bundle (the comparison covers the bundle arm)');
+    } else {
+      // Intended release change on a real win32 host (see the helpers above).
+      console.log(`  · ${label}: win32 HOST — asserting the NEW bundle arm, not byte-identity to v3.99.3 (resolvers the arm does not touch are still compared exactly)`);
+      const base = JSON.parse(outs[0].stdout || '{}');
+      const problems = label === 'macOS .app'
+        ? win32AppShapedProblems(base, parsed, outs[1].stderr)
+        : win32MarkerBundleProblems(base, parsed);
+      ok(problems.length === 0, `${label}: win32 behaviour is the intended new one${problems.length ? '\n        ' + problems.join('\n        ') : ''}`);
+    }
   }
 }
 // The comparison must be able to fail: a one-character darwin change is seen.
-if (baselineSrc) {
+if (baselineSrc && process.platform === 'win32') {
+  console.log("  · CONTROL (darwin `.app/Contents` mutation) skipped on a win32 HOST: the bundle arm there ignores that heuristic by design, so the mutation would change nothing");
+} else if (baselineSrc) {
   const mutated = workSrc.replace("parts[i + 1] === 'Contents'", "parts[i + 1] === 'contents'");
   ok(mutated !== workSrc, 'CONTROL precondition: the planted mutation applies');
   const base = path.join(TMP, 'l1-control');
@@ -155,6 +206,36 @@ if (baselineSrc) {
   fs.mkdirSync(path.join(base, 'home'), { recursive: true });
   const r = runProbe(tree, path.join(base, 'home'));
   ok(!JSON.parse(r.stdout).isBundle, 'CONTROL: a planted darwin regression changes the probe output (so §1 is not vacuous)');
+}
+
+// CONTROL (every host): the two win32-host comparisons above can fail. Recorded
+// outputs shaped like a real win32 probe, then mutated one fact at a time.
+{
+  const L = 'C:\\Users\\Ana\\AppData\\Local\\TheCurator';
+  const mk = (ud, extra = {}) => ({
+    APP_ROOT: 'D:\\t\\marked', isRepo: false, isBundle: true, userData: ud, appSupport: L, appSupportWin: L, appSupportWinNoEnv: L,
+    logs: L + '\\logs', logsWin: L + '\\logs', launcher: L + '\\bin', consts: ['a'], joined: ud + '\\a\\b',
+    getTrashDir: ud + '\\.trash', creds: [{ rel: '.curator-config.json', abs: ud + '\\.curator-config.json' }, { rel: '.env', abs: 'D:\\t\\marked\\.env' }],
+    ...extra,
+  });
+  const keys = DATA_KEYS.filter(k => !['userData', 'joined', 'getTrashDir'].includes(k));
+  const fill = (o) => { for (const k of keys) o[k] = o.userData + '\\' + k; return o; };
+  const b = fill(mk(L)), good = fill(mk(L + '\\App'));
+  ok(win32MarkerBundleProblems(b, good).length === 0, 'CONTROL: recorded intended win32 marker-bundle output passes the comparison');
+  const bad1 = fill(mk(L)); // not relocated
+  ok(win32MarkerBundleProblems(b, bad1).length > 0, 'CONTROL: a win32 bundle whose data is NOT under \\\\App is flagged');
+  const bad2 = fill(mk(L + '\\App')); bad2.logs = L + '\\App\\logs';
+  ok(win32MarkerBundleProblems(b, bad2).length > 0, 'CONTROL: logs moving off the shared root is flagged');
+  const bad3 = fill(mk(L + '\\App')); bad3.getTrashDir = L + '\\.trash';
+  ok(win32MarkerBundleProblems(b, bad3).length > 0, 'CONTROL: one data getter left outside \\\\App is flagged');
+  const bad4 = fill(mk(L + '\\App')); bad4.isBundle = false;
+  ok(win32MarkerBundleProblems(b, bad4).length > 0, 'CONTROL: the marker no longer making a bundle is flagged');
+  const ab = mk(L, { APP_ROOT: 'D:\\t\\The Curator.app\\Contents\\Resources\\app' });
+  const aw = mk('D:\\t\\The Curator.app\\Contents\\Resources\\app', { APP_ROOT: ab.APP_ROOT, isBundle: false, isRepo: true });
+  ok(win32AppShapedProblems(ab, aw, '').length === 0, 'CONTROL: recorded intended win32 `.app` (repo mode) output passes the comparison');
+  ok(win32AppShapedProblems(ab, { ...aw, isBundle: true, isRepo: false }, '').length > 0, 'CONTROL: `.app` still read as a bundle on win32 is flagged');
+  ok(win32AppShapedProblems(ab, { ...aw, userData: L }, '').length > 0, 'CONTROL: `.app` user data outside APP_ROOT is flagged');
+  ok(win32AppShapedProblems(ab, aw, '[The Curator] Running as a packaged app').length > 0, 'CONTROL: a bundle notice for a `.app` path on win32 is flagged');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,8 +258,8 @@ function winProbe(opts = {}) {
     marker: opts.marker !== undefined ? opts.marker : true,
   };
   const script = `
-    import * as p from ${JSON.stringify(path.join(ROOT, 'src/brain/paths.js'))};
-    import * as im from ${JSON.stringify(path.join(ROOT, 'src/brain/install-mode.js'))};
+    import * as p from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href)};
+    import * as im from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/brain/install-mode.js')).href)};
     const H = ${JSON.stringify(host)};
     const mkdirs = [], existsAsked = [];
     const sep = H.platform === 'win32' ? '\\\\' : '/';
