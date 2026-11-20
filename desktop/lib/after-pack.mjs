@@ -31,12 +31,33 @@
  *
  * `AsyncEventEmitter.emit` awaits user hooks with NO try/catch, so a throw here
  * aborts the build before any .dmg exists.
+ *
+ * ── WINDOWS (2026-11-20) ─────────────────────────────────────────────────────
+ *
+ * A `--win` build arrives here with `context.electronPlatformName === 'win32'`
+ * and goes to lib/win-pack.mjs instead: there is no .app, no Info.plist and no
+ * codesign on Windows, and the two steps above would throw on every Windows
+ * build. That branch checks the packed version, the bundled git and the tray
+ * icons, and writes the bundle marker resources\app\.curator-bundle (without
+ * it the installed app would keep the user's wiki inside the program folder).
+ * ONLY the exact value 'win32' takes it: anything else, including a context
+ * with no platform at all, runs the Mac body below, unchanged.
  */
 
 import { verifyPackedVersion, findAppBundle } from './verify-version.mjs';
 import { adhocSign } from './adhoc-sign.mjs';
+import { winAfterPack } from './win-pack.mjs';
 
 export async function afterPack(context) {
+  if (context && context.electronPlatformName === 'win32') {
+    winAfterPack({
+      appOutDir: context.appOutDir,
+      config: (context.packager && context.packager.config) || {},
+      winOptions: (context.packager && context.packager.platformSpecificBuildOptions) || {},
+    });
+    return;
+  }
+
   const version = verifyPackedVersion({ appOutDir: context.appOutDir });
   console.log(`  • version identity  version=${version} (matches the root package.json)`);
 

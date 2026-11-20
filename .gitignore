@@ -208,3 +208,7 @@ AuthKey_*.p8
 # class above, added in the same change that creates the file.
 .mcp-installs.json
 .mcp-installs.json.unreadable-*
+
+# Windows app build input: MinGit as desktop/lib/fetch-mingit.mjs downloads,
+# verifies and unpacks it (desktop/vendor/mingit/ is copied into the installer).
+desktop/vendor/

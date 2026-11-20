@@ -61,6 +61,22 @@ directories:
 afterPack: ./lib/after-pack.mjs
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  afterSign — WINDOWS ONLY, a no-op everywhere else (2026-11-20).
+#
+#  electron-builder writes the Windows exe's icon and version resource in its
+#  sign step, which runs AFTER afterPack, so "the exe says the right version"
+#  can only be checked here. lib/win-pack.mjs `afterSign` returns at once
+#  unless electronPlatformName is 'win32', so the Mac build is unchanged (the
+#  hook does run on a Mac build, because `asar: false` makes electron-builder
+#  report signing as done; it reads nothing and writes nothing there).
+#  On win32 it refuses an exe whose FileVersion/ProductVersion is not the root
+#  package.json's version (or is 0.0.0), and one whose RunAsNode fuse is off:
+#  Claude Desktop starts the MCP bridge as `The Curator.exe` with
+#  ELECTRON_RUN_AS_NODE=1, which needs that fuse ON.
+# ─────────────────────────────────────────────────────────────────────────────
+afterSign: ./lib/win-pack.mjs
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  asar: FALSE — a deliberate departure from the plan, argued rather than
 #  assumed. The plan frames asar as a thing to CONFIGURE, via
 #  `asarUnpack: mcp/**`. That addresses ONE of three independent hazards, and
@@ -329,6 +345,104 @@ dmg:
 #                   ZIP while releases publish .dmg, and electron-updater reads
 #                   `latest-mac.yml`, which electron-builder emits only when
 #                   `publish` is set — and ours is `null`, below.
-# afterSign:      no notarization hook. Requires paid enrolment.
-# win / linux:    out of scope.
+# afterSign:      no notarization hook (paid enrolment). The afterSign line at
+#                 the top is the Windows exe check, a no-op on a Mac build.
+# electronFuses:  NOT SET, and it must stay that way: the RunAsNode fuse has to
+#                 stay ON for the MCP bridge (ELECTRON_RUN_AS_NODE=1), and on
+#                 the Mac flipping any fuse after afterPack would invalidate the
+#                 ad-hoc signature (lib/adhoc-sign.mjs refuses it). The win32
+#                 afterSign reads the real fuse wire out of the built exe.
+# linux:          out of scope.
 publish: null
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  WINDOWS (2026-11-20) — `npm run dist` on Windows, or CI's windows job:
+#
+#      node lib/fetch-mingit.mjs        # MinGit, verified against its pin
+#      npx electron-builder --win --config electron-builder.yml \
+#          --config.extraMetadata.version=<X.Y.Z> --publish never
+#
+#  Output: dist/TheCurator-<X.Y.Z>-x64-Windows-Setup.exe (and dist/win-unpacked).
+#
+#  Everything below is read ONLY by a --win build. A Mac build never looks at
+#  `win:` or `nsis:`, so the DMGs are unchanged.
+#
+#  NOT SIGNED. There is no Windows certificate: nothing here names one, and no
+#  such value may ever be written into this public file. Windows therefore
+#  shows "Windows protected your PC" on the first install (More info → Run
+#  anyway). `signAndEditExecutable: true` still lets electron-builder write the
+#  icon and the version into the exe (resedit, no certificate involved). When
+#  signing arrives (Azure Trusted Signing), it comes in through GitHub secrets
+#  and electron-builder's own variables, never this file — and see the MinGit
+#  note below first: electron-builder signs every .exe it copies, which would
+#  change MinGit's files and trip the afterPack check.
+# ═════════════════════════════════════════════════════════════════════════════
+win:
+  # Generated from images/applet.icns by build/make-win-icons.mjs (committed;
+  # the offline suite re-generates it and compares every pixel).
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  signAndEditExecutable: true
+  # Merged with the top-level extraResources (node_modules), not replacing it.
+  # `from` is relative to desktop/; `to` is relative to resources\.
+  extraResources:
+    # MinGit, exactly as lib/fetch-mingit.mjs unpacked it after checking its
+    # size and SHA-256 against the pin. src/brain/subprocess-env.js looks for
+    # it at <install>\resources\git\cmd\git.exe. Its LICENSE.txt and
+    # etc\package-versions.txt travel inside, untouched; the win32 afterPack
+    # proves the copied folder is file-for-file what was verified.
+    - from: vendor/mingit/git
+      to: git
+      filter:
+        - '**/*'
+    - from: vendor/mingit/THIRD-PARTY-NOTICES.txt
+      to: THIRD-PARTY-NOTICES.txt
+    # The tray icon, in colour (Windows has no template images). Placed inside
+    # the app folder so main.js finds it at path.join(__dirname, 'build', …)
+    # both packaged and in `electron .`.
+    - from: build/tray.ico
+      to: app/build/tray.ico
+    - from: build/tray.png
+      to: app/build/tray.png
+    - from: build/tray@2x.png
+      to: app/build/tray@2x.png
+
+# The installer the owner asked for: double-click → (SmartScreen: More info →
+# Run anyway) → Welcome → Install → Finish with "Run The Curator" ticked → the
+# app opens. Per user, no administrator prompt, no choice of folder.
+#
+# Measured against app-builder-lib 26.15.3's own templates, not recalled:
+#   · assisted (oneClick: false) installs to %LOCALAPPDATA%\Programs\The Curator
+#     (APP_FILENAME = the product file name, because it matches [-_+0-9a-zA-Z .]);
+#   · per-user writes HKCU only; the Apps & features key is
+#     HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\<guid>, the guid
+#     being UUID v5 of appId (lib/win-pack.mjs NSIS_GUID);
+#   · both shortcuts get the AppUserModelID = appId (WinShell::SetLnkAUMI), which
+#     desktop/main.js must pass to app.setAppUserModelId() on win32;
+#   · the uninstaller removes $INSTDIR and the shortcuts; it deletes
+#     %APPDATA%\The Curator only when deleteAppDataOnUninstall is true or it is
+#     run with --delete-app-data, and it never names %LOCALAPPDATA%\TheCurator,
+#     where the user's knowledge base lives (build/installer.nsh adds a guard);
+#   · a silent update (/S --updated --force-run) keeps the shortcuts and starts
+#     the app again (passing --updated to it).
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: The Curator
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  uninstallDisplayName: The Curator
+  # No blockmap: nothing reads one (the app updates itself without
+  # electron-updater, as on the Mac).
+  differentialPackage: false
+  artifactName: TheCurator-${version}-${arch}-Windows-Setup.${ext}
+  # The welcome page, the per-user-only install mode (no "all users" choice,
+  # so never a UAC prompt) and the uninstall guard.
+  include: build/installer.nsh
