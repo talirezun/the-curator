@@ -158,7 +158,48 @@ for (const f of FILES) {
 check(install.includes("'node_modules\\npm\\bin\\npm-cli.js'"), 'install.ps1: npm runs as <private node> npm-cli.js');
 
 // 6. Names the shortcuts, the docs and the icons agent depend on.
-check(install.includes("'The Curator.lnk'") && install.includes("'Stop The Curator.lnk'"), 'install.ps1: shortcut names');
+// Shortcut naming (D3): the Windows app owns "The Curator"; when its HKCU
+// uninstall key exists, the browser install names its own icons "(browser)".
+// Get-ShortcutNames is evaluated from the script's own text for both states.
+const APP_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\80ccaaf9-11be-57fd-99fb-d73402b182f5';
+check(install.includes(`$AppUninstallKey = '${APP_KEY}'`), "install.ps1: looks for exactly the app's HKCU uninstall key");
+check(/Test-Path -LiteralPath \$AppUninstallKey/.test(install), "install.ps1: the key's presence is what decides the names");
+function shortcutNames(appInstalled) {
+  const fn = install.match(/function Get-ShortcutNames \{([\s\S]*?)\n  \}\n/);
+  if (!fn) return null;
+  const body = fn[1];
+  const suffix = /\$suffix = ''\n\s*if \(\$AppInstalled\) \{ \$suffix = '([^']*)' \}/.exec(body);
+  if (!suffix) return null;
+  const pick = (k) => {
+    const m = new RegExp(`${k}\\s*=\\s*'([^']*)' \\+ \\$suffix(?: \\+ '([^']*)')?`).exec(body);
+    return m ? m[1] + (appInstalled ? suffix[1] : '') + (m[2] || '') : null;
+  };
+  return { start: pick('Start'), stop: pick('Stop'), folder: pick('Folder') };
+}
+const plainNames = shortcutNames(false);
+const appNames = shortcutNames(true);
+check(!!plainNames && plainNames.start === 'The Curator.lnk' && plainNames.stop === 'Stop The Curator.lnk' && plainNames.folder === 'The Curator',
+  'install.ps1: without the app the names are exactly as before');
+check(!!appNames && appNames.start === 'The Curator (browser).lnk' && appNames.stop === 'Stop The Curator (browser).lnk' && appNames.folder === 'The Curator (browser)',
+  'install.ps1: with the app the names are "The Curator (browser)", "Stop The Curator (browser)", folder "The Curator (browser)"');
+check(!!plainNames && !!appNames && appNames.start !== plainNames.start && appNames.stop !== plainNames.stop && appNames.folder !== plainNames.folder,
+  'install.ps1: the two naming sets never share a name');
+{
+  const rm = install.match(/function Remove-StaleShortcuts \{[\s\S]*?\n  \}\n/);
+  const own = install.match(/function Test-OurShortcut \{[\s\S]*?\n  \}\n/);
+  check(!!rm && /Test-OurShortcut \$f/.test(rm[0]) && /Get-ShortcutNames \(-not \$AppInstalled\)/.test(rm[0]),
+    'install.ps1: removes only OUR icons under the OTHER naming');
+  check(!!own && /powershell\.exe/.test(own[0]) && /start-curator\.ps1/.test(own[0]) && /stop-curator\.ps1/.test(own[0]),
+    "install.ps1: an icon is ours only if it runs PowerShell on our start/stop script (the app's .exe shortcut never matches)");
+  check(install.indexOf('Remove-StaleShortcuts -Places') > 0 && install.indexOf('Remove-StaleShortcuts -Places') < install.indexOf('New-Shortcut -Path (Join-Path $place $names.Start)'),
+    'install.ps1: stale icons are removed before the new ones are made');
+  const iconCode = codeOnly(install.slice(install.indexOf('function Remove-StaleShortcuts'), install.indexOf('# ====', install.indexOf('function Remove-StaleShortcuts'))) + install.slice(install.indexOf('Start-Step 6'), install.indexOf('Start-Step 7')));
+  check(!/-Recurse/i.test(iconCode), 'install.ps1: the icon code never deletes recursively');
+  check(/\$oldMenus/.test(install) && /-not @\(Get-ChildItem -LiteralPath \$m -Force[^\n]*\)\.Count/.test(install),
+    'install.ps1: the old Start menu folder is removed only when it is empty');
+}
+check(/\$script:iconStart/.test(install) && !/double-click 'The Curator' on your desktop/.test(install),
+  'install.ps1: the closing messages name the icon that was actually made');
 check(install.includes("'scripts\\windows\\assets\\curator-start.ico'") && install.includes("'scripts\\windows\\assets\\curator-stop.ico'"), 'install.ps1: icon paths');
 check(install.includes("'System32\\WindowsPowerShell\\v1.0\\powershell.exe'"), 'install.ps1: shortcuts target Windows PowerShell by absolute path');
 check(install.includes("'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"'"), 'install.ps1: shortcut arguments');

@@ -13,6 +13,8 @@
 #   3. downloads The Curator into %USERPROFILE%\the-curator
 #   4. installs its components (npm, using the private Node.js)
 #   5. adds "The Curator" and "Stop The Curator" to the Desktop and Start menu
+#      ("The Curator (browser)" and "Stop The Curator (browser)" when the
+#      Windows app is installed too, so the two never collide)
 #   6. starts The Curator and opens it in the web browser
 #
 # Running it again is safe: it repairs a missing or damaged part, updates a
@@ -501,7 +503,56 @@ function Install-TheCurator {
     $lnk.Save()
   }
 
+  # The Windows app (the installer with Next / Finish pages) registers this
+  # per-user uninstall key. It is the only signal used: when it exists the app
+  # owns the plain names "The Curator" on the Desktop and in the Start menu, so
+  # this browser install takes "The Curator (browser)" instead and the two never
+  # overwrite each other. Without the app, the names are exactly "The Curator"
+  # and "Stop The Curator". This script never touches the app's files or shortcuts.
+  $AppUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\80ccaaf9-11be-57fd-99fb-d73402b182f5'
+
+  function Get-ShortcutNames {
+    param([bool]$AppInstalled)
+    $suffix = ''
+    if ($AppInstalled) { $suffix = ' (browser)' }
+    return @{
+      Start  = 'The Curator' + $suffix + '.lnk'
+      Stop   = 'Stop The Curator' + $suffix + '.lnk'
+      Folder = 'The Curator' + $suffix
+    }
+  }
+
+  # True only for a shortcut THIS installer made: it runs Windows PowerShell on
+  # start-curator.ps1 or stop-curator.ps1. The app's own shortcut runs its .exe,
+  # so it never matches and is never removed.
+  function Test-OurShortcut {
+    param([string]$Path)
+    try {
+      $l = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
+      if ($l.TargetPath -notlike '*powershell.exe') { return $false }
+      return ($l.Arguments -like '*start-curator.ps1*' -or $l.Arguments -like '*stop-curator.ps1*')
+    } catch { return $false }
+  }
+
+  # Removes our shortcuts under the OTHER naming (left by an earlier run, before
+  # the app was installed or after it was uninstalled), so no duplicate or stale
+  # icon is left. A file with a name we would use, that is not ours, is skipped.
+  function Remove-StaleShortcuts {
+    param([string[]]$Places, [bool]$AppInstalled)
+    $old = Get-ShortcutNames (-not $AppInstalled)
+    foreach ($place in $Places) {
+      foreach ($n in @($old.Start, $old.Stop)) {
+        $f = Join-Path $place $n
+        if ((Test-Path -LiteralPath $f -PathType Leaf) -and (Test-OurShortcut $f)) {
+          try { Remove-Item -LiteralPath $f -Force; Write-Log "removed old icon $f" } catch { Write-Log ("could not remove old icon ${f}: " + $_.Exception.Message) }
+        }
+      }
+    }
+  }
+
   # =============================================================== main body ==
+  $script:iconStart = 'The Curator'
+  $script:iconStop = 'Stop The Curator'
   $dataRoot = $null
   $targetDir = $null
   $targetDirFwd = $null
@@ -539,6 +590,7 @@ function Install-TheCurator {
     Write-Host '      (nothing else on your PC changes)'
     Write-Host "    - put The Curator in  $targetDir"
     Write-Host "    - add 'The Curator' and 'Stop The Curator' to your desktop and Start menu"
+    Write-Host "      (called 'The Curator (browser)' if the Windows app is installed too)"
     Write-Host '    - open The Curator in your web browser'
     Write-Host ''
     Write-Host '  It takes about 2 to 5 minutes. Please keep this window open until it says Done.'
@@ -829,7 +881,13 @@ function Install-TheCurator {
     }
     $startIco = Join-Path $targetDir 'scripts\windows\assets\curator-start.ico'
     $stopIco = Join-Path $targetDir 'scripts\windows\assets\curator-stop.ico'
+    $appInstalled = Test-Path -LiteralPath $AppUninstallKey
+    $names = Get-ShortcutNames $appInstalled
+    $script:iconStart = $names.Start.Replace('.lnk', '')
+    $script:iconStop = $names.Stop.Replace('.lnk', '')
+    if ($appInstalled) { Say "        The Curator app is installed too, so these icons are called '$($script:iconStart)'." }
     $places = @()
+    $oldMenus = @()
     $desktop = [Environment]::GetFolderPath('Desktop')
     if (-not $desktop) {
       $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop, [Environment+SpecialFolderOption]::DoNotVerify)
@@ -838,14 +896,24 @@ function Install-TheCurator {
     if ($desktop) { $places += $desktop }
     $programs = [Environment]::GetFolderPath('Programs')
     if ($programs) {
-      $menu = Join-Path $programs 'The Curator'
+      $menu = Join-Path $programs $names.Folder
+      $oldMenus += (Join-Path $programs (Get-ShortcutNames (-not $appInstalled)).Folder)
       try { [void][System.IO.Directory]::CreateDirectory($menu); $places += $menu } catch { Write-Log ("Start menu folder failed: " + $_.Exception.Message) }
+    }
+    # Icons from an earlier run under the other naming go first (our own only).
+    $cleanup = @($places) + @($oldMenus | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    Remove-StaleShortcuts -Places $cleanup -AppInstalled $appInstalled
+    foreach ($m in $oldMenus) {
+      # The old Start menu folder goes only when nothing is left in it.
+      if ((Test-Path -LiteralPath $m -PathType Container) -and -not @(Get-ChildItem -LiteralPath $m -Force -ErrorAction SilentlyContinue).Count) {
+        try { Remove-Item -LiteralPath $m -Force } catch { Write-Log ("could not remove empty folder ${m}: " + $_.Exception.Message) }
+      }
     }
     $made = 0
     foreach ($place in $places) {
       try {
-        New-Shortcut -Path (Join-Path $place 'The Curator.lnk') -Script $startPs1 -Icon $startIco -Description 'Start The Curator and open it in your browser'
-        New-Shortcut -Path (Join-Path $place 'Stop The Curator.lnk') -Script $stopPs1 -Icon $stopIco -Description 'Stop The Curator'
+        New-Shortcut -Path (Join-Path $place $names.Start) -Script $startPs1 -Icon $startIco -Description 'Start The Curator and open it in your browser'
+        New-Shortcut -Path (Join-Path $place $names.Stop) -Script $stopPs1 -Icon $stopIco -Description 'Stop The Curator'
         $made++
         Say "        Added to $place"
       } catch {
@@ -860,7 +928,7 @@ function Install-TheCurator {
     # ------------------------------------------------------------- 7. start --
     if ($NoStart) {
       Start-Step 7 'Starting The Curator (skipped: -NoStart)'
-      if ($state.StoppedApp) { Say "        The Curator was stopped for the update. Double-click 'The Curator' to start it again." }
+      if ($state.StoppedApp) { Say "        The Curator was stopped for the update. Double-click '$($script:iconStart)' to start it again." }
     } else {
       Start-Step 7 'Starting The Curator'
       $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -875,7 +943,7 @@ function Install-TheCurator {
       $ErrorActionPreference = $oldEap
       Write-Log "  (exit code $startCode)"
       if ($startCode -ne 0) {
-        Stop-Install 'The Curator was installed, but it did not start.' "The message above (and the log file) says why. After fixing it, double-click 'The Curator' on your desktop."
+        Stop-Install 'The Curator was installed, but it did not start.' "The message above (and the log file) says why. After fixing it, double-click '$($script:iconStart)' on your desktop."
       }
     }
 
@@ -885,8 +953,8 @@ function Install-TheCurator {
     Write-Host '  ===========================================================' -ForegroundColor Green
     Write-Host ''
     if (-not $NoStart) { Write-Host '  The Curator is running and opens in your web browser.' }
-    Write-Host "  Next time, double-click 'The Curator' on your desktop."
-    Write-Host "  To stop it, double-click 'Stop The Curator'."
+    Write-Host "  Next time, double-click '$($script:iconStart)' on your desktop."
+    Write-Host "  To stop it, double-click '$($script:iconStop)'."
     Write-Host ''
     Write-Host "  Your notes are kept in:  $targetDir\domains"
     Write-Host '  Running this installer again is safe: it repairs and updates, and keeps your notes.'
@@ -911,7 +979,7 @@ function Install-TheCurator {
     Write-Host ("  What happened: " + $msg)
     if ($todo) { Write-Host ("  What to do:    " + $todo) } else { Write-Host '  What to do:    Run the installer again. If it stops at the same place, send the text below to whoever helps you with The Curator.' }
     Write-Host '  Nothing you had before was deleted. Running the installer again is safe.'
-    if ($state.StoppedApp) { Write-Host "  The Curator was stopped for the update; double-click 'The Curator' to start it again." }
+    if ($state.StoppedApp) { Write-Host "  The Curator was stopped for the update; double-click '$($script:iconStart)' to start it again." }
     Write-Host ''
     Write-Host '  ----- copy from here -----'
     Write-Host '  The Curator Windows installer'
