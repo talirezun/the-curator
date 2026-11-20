@@ -323,10 +323,18 @@ section('§5b  App folders on Windows: %LOCALAPPDATA%\\TheCurator, never ~\\Libr
       'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator\\logs', 'win32: a non-absolute LOCALAPPDATA is not trusted');
     ok(!/Library/.test(paths.getLogsDir({ platform: 'win32', env, homedir: home })), 'win32: no Library folder anywhere');
     // macOS / Linux: byte-identical to the v3.86.0 expressions, transcribed.
+    // The product joins a simulated darwin/linux path with the HOST's `path`, so on a
+    // Windows host the real result has backslashes (a simulated path cannot be POSIX
+    // there). Off Windows the expectation stays the exact POSIX literal; on Windows
+    // it is the host join of the same segments.
+    const posixOrHost = (lit, ...segs) => (process.platform === 'win32' ? path.join(...segs) : lit);
+    if (process.platform === 'win32') console.log('  (win32 host: simulated darwin/linux folders are expected with the host path module)');
     for (const platform of ['darwin', 'linux']) {
-      eq(paths.getAppSupportDir({ platform, env, homedir: '/Users/a' }), '/Users/a/Library/Application Support/The Curator',
+      eq(paths.getAppSupportDir({ platform, env, homedir: '/Users/a' }),
+        posixOrHost('/Users/a/Library/Application Support/The Curator', '/Users/a', 'Library', 'Application Support', 'The Curator'),
         `${platform}: app folder unchanged`);
-      eq(paths.getLogsDir({ platform, env, homedir: '/Users/a' }), '/Users/a/Library/Logs/The Curator', `${platform}: logs unchanged`);
+      eq(paths.getLogsDir({ platform, env, homedir: '/Users/a' }),
+        posixOrHost('/Users/a/Library/Logs/The Curator', '/Users/a', 'Library', 'Logs', 'The Curator'), `${platform}: logs unchanged`);
     }
     if (process.platform !== 'win32') {
       eq(paths.getLogsDir(), path.join(os.homedir(), 'Library', 'Logs', 'The Curator'), 'LIVE: this Mac\'s logs folder unchanged');
@@ -522,13 +530,21 @@ section('§9  Every other git (audit M4): the SAME git Sync runs in the Windows 
   //    knows where git is. Before the fix each of these silently answered
   //    "nothing" (the audit's p3 repro for Shared Brain). ──
   let realGit = null;
-  try { realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(); } catch { realGit = null; }
+  // Windows has no /bin/sh: ask `where` (the runner's git is on PATH there).
+  try {
+    realGit = process.platform === 'win32'
+      ? execFileSync('where', ['git'], { encoding: 'utf8' }).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || null
+      : execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  } catch { realGit = null; }
   if (!realGit) {
     ok(false, 'this machine has git (the call-site checks below need a real one)');
   } else {
     const gitBinDir = path.join(tmp, 'only-git');
     fs.mkdirSync(gitBinDir, { recursive: true });
-    fs.symlinkSync(realGit, path.join(gitBinDir, 'git'));
+    // POSIX: a folder holding only a symlink to git. Windows: a symlink needs a privilege
+    // and git.exe finds its siblings relative to itself, so use git's own folder.
+    const onlyGitDir = process.platform === 'win32' ? path.dirname(realGit) : gitBinDir;
+    if (process.platform !== 'win32') fs.symlinkSync(realGit, path.join(gitBinDir, 'git'));
     const savedPath = process.env.PATH;
     const userDir = process.env.CURATOR_TEST_USER_DATA_DIR;
     const domains = process.env.CURATOR_TEST_DOMAINS_DIR;
@@ -548,7 +564,10 @@ section('§9  Every other git (audit M4): the SAME git Sync runs in the Windows 
     const sc = await import(pathToFileURL(path.join(ROOT, 'src/brain/setup-check.js')).href);
     const ih = await import(pathToFileURL(path.join(ROOT, 'src/cli/install-hooks.js')).href);
     const since = new Date('2024-01-01T00:00:00Z');
-    const appPlan = { env: { ...process.env, PATH: gitBinDir }, configArgs: ['-c', 'credential.helper=', '-c', 'core.askPass='] };
+    // One path key only (a Windows process.env copy is a plain object: Path and PATH would be two keys).
+    const planEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PATH'));
+    planEnv[process.platform === 'win32' ? 'Path' : 'PATH'] = onlyGitDir;
+    const appPlan = { env: planEnv, configArgs: ['-c', 'credential.helper=', '-c', 'core.askPass='] };
     try {
       eq(await sb.loadPriorContent(domains, 'd', 'concepts/p.md', since), 'PRIOR TEXT\n', 'CONTROL: git on the process PATH → Shared Brain reads the prior version');
       process.env.PATH = '/nonexistent-curator-test';
