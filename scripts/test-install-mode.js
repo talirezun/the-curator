@@ -188,6 +188,24 @@ eq(installMode.getCapabilities('bundle').updateStyle, 'download-installer',
 eq(installMode.getCapabilities('repo').folderPickerStyle, 'osascript', 'repo picks a folder with osascript');
 eq(installMode.getCapabilities('bundle').folderPickerStyle, 'native-dialog', 'bundle picks a folder with the shell’s native dialog');
 
+// Windows (owner's decisions D1/D2, 2026-11-20): the bundle record on win32 is a
+// COMPLETE record of its own, differing only in how Claude Desktop launches the
+// MCP (the app's own exe as Node). Repo mode is one record on every platform.
+// Full proof, including a simulated win32 host, is scripts/test-paths-win32.js.
+for (const r of installMode.listCapabilityRecords()) {
+  const tag = `${r.mode}${r.platform ? '@' + r.platform : ''}`;
+  eq(Object.keys(r.caps).sort().join(','), [...EXPECTED_CAPABILITY_KEYS].sort().join(','),
+    `record ${tag} carries EVERY capability key and no others`);
+  ok(Object.isFrozen(r.caps), `record ${tag} is frozen`);
+}
+eq(installMode.getCapabilities('bundle', 'win32').mcpLaunchStyle, 'app-binary',
+  'bundle on win32 launches the MCP as the app binary (ELECTRON_RUN_AS_NODE), never a /bin/sh launcher');
+eq(installMode.getCapabilities('bundle', 'win32').canSelfUpdateViaGit, false, 'bundle on win32: the git self-update path is OFF');
+eq(installMode.getCapabilities('bundle', 'win32').updateStyle, 'download-installer', 'bundle on win32: the installer update path is ON');
+eq(installMode.getCapabilities('bundle', 'darwin').mcpLaunchStyle, 'launcher-script', 'bundle on darwin is unchanged');
+ok(installMode.getCapabilities('repo', 'win32') === installMode.getCapabilities('repo', 'darwin'),
+  'repo on win32 is the same record as on darwin (the one-line browser install is unchanged)');
+
 // A programming error must be LOUD. This is not the environment-driven unknown
 // case — that one resolves to 'repo' inside getInstallMode(), proven in §3.
 let threw = null;

@@ -115,7 +115,7 @@
  * reachable from the MCP child process's import graph via paths.js's rules).
  */
 
-import { isBundleInstall } from './paths.js';
+import { isBundleInstall, getPlatform } from './paths.js';
 
 /** The install forms this app knows about. Order is not significant. */
 export const INSTALL_MODES = Object.freeze(['repo', 'bundle']);
@@ -144,7 +144,14 @@ export const CAPABILITY_KEYS = Object.freeze([
   //   'node-script'      — `<node> <APP_ROOT>/mcp/server.js` (today)
   //   'launcher-script'  — a shell launcher the app rewrites on each start,
   //                        because a bundle's process.execPath moves under
-  //                        App Translocation.
+  //                        App Translocation. (macOS bundle)
+  //   'app-binary'       — the WINDOWS bundle: `<install>\The Curator.exe`
+  //                        `<install>\resources\app\mcp\server.js` with
+  //                        ELECTRON_RUN_AS_NODE=1. Claude Desktop on Windows
+  //                        cannot run a /bin/sh launcher, a `.cmd` cannot be
+  //                        spawned without a shell (CVE-2024-27980), and an
+  //                        NSIS install path does not move, so the app's own
+  //                        exe is pointed at directly (owner's decision D2).
   'mcpLaunchStyle',
   // What "restart" means here.
   //   'respawn-node' — POST /api/restart spawns process.execPath (today)
@@ -255,6 +262,45 @@ const CAPABILITIES = Object.freeze({
   }),
 });
 
+/**
+ * Per-platform records that REPLACE a mode's record on that platform. Each is a
+ * complete record, built by the same exhaustive check — never a partial patch
+ * spread over the base, because a patch is exactly the shape in which a key
+ * silently goes missing.
+ *
+ * Only the Windows BUNDLE differs, and only in `mcpLaunchStyle`. A Windows REPO
+ * install (the one-line browser install, install.ps1) keeps the repo record
+ * unchanged: it launches the MCP as `node.exe mcp\server.js` today, and that
+ * stays. Every other bundle value already holds on Windows: no git self-update,
+ * the installer download path, an app relaunch, Electron's own folder dialog.
+ */
+const PLATFORM_CAPABILITIES = Object.freeze({
+  win32: Object.freeze({
+    bundle: defineCapabilities('bundle (win32)', {
+      canSelfUpdateViaGit: false,
+      canRunNpmInstall: false,
+      canRebuildAppleScriptApp: false,
+      canWriteBesideCode: false,
+      mcpLaunchStyle: 'app-binary',
+      restartStyle: 'app-relaunch',
+      updateStyle: 'download-installer',
+      folderPickerStyle: 'native-dialog',
+    }),
+  }),
+});
+
+/**
+ * Every record this module can return, as {mode, platform, caps} — `platform`
+ * is null for the base record. For the exhaustiveness tests, never for logic.
+ */
+export function listCapabilityRecords() {
+  const out = INSTALL_MODES.map((mode) => ({ mode, platform: null, caps: CAPABILITIES[mode] }));
+  for (const [platform, byMode] of Object.entries(PLATFORM_CAPABILITIES)) {
+    for (const [mode, caps] of Object.entries(byMode)) out.push({ mode, platform, caps });
+  }
+  return out;
+}
+
 /** Human-readable labels — for System Check and error text, never for logic. */
 export const INSTALL_MODE_LABELS = Object.freeze({
   repo: 'Source install (git checkout)',
@@ -275,7 +321,11 @@ export function getInstallMode() {
 }
 
 /**
- * The frozen capability record for a mode (default: this install's).
+ * The frozen capability record for a mode (default: this install's) on a
+ * platform (default: this process's — `paths.js`'s getPlatform(), which is
+ * process.platform in production). The platform only ever selects a complete
+ * record from PLATFORM_CAPABILITIES; on darwin and linux, and for repo mode on
+ * every platform, the result is the base record, unchanged.
  *
  * Throws on an unknown mode string. That is deliberate and is NOT a violation
  * of the fail-safe-to-'repo' rule above: `getInstallMode()` is total over
@@ -284,22 +334,24 @@ export function getInstallMode() {
  * environment-driven unknown case is handled one level up, in getInstallMode(),
  * where it resolves to 'repo'.
  */
-export function getCapabilities(mode = getInstallMode()) {
-  const caps = CAPABILITIES[mode];
+export function getCapabilities(mode = getInstallMode(), platform = getPlatform()) {
+  // Own keys only: `CAPABILITIES['constructor']` is Object, which is truthy.
+  const caps = Object.hasOwn(CAPABILITIES, mode) ? CAPABILITIES[mode] : null;
   if (!caps) {
     throw new Error(
       `install-mode: unknown install mode "${mode}" — expected one of ${INSTALL_MODES.join(', ')}`
     );
   }
-  return caps;
+  const byPlatform = Object.hasOwn(PLATFORM_CAPABILITIES, platform) ? PLATFORM_CAPABILITIES[platform] : null;
+  return (byPlatform && Object.hasOwn(byPlatform, mode)) ? byPlatform[mode] : caps;
 }
 
 /**
  * Wire-safe description of this install. Explicit allow-list, never a spread
  * of internal state — the v3.3.0 `toWire()` rule.
  */
-export function describeInstall(mode = getInstallMode()) {
-  const caps = getCapabilities(mode);
+export function describeInstall(mode = getInstallMode(), platform = getPlatform()) {
+  const caps = getCapabilities(mode, platform);
   const capabilities = {};
   for (const k of CAPABILITY_KEYS) capabilities[k] = caps[k];
   return {

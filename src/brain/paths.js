@@ -81,6 +81,26 @@
  * user into bundle mode. The marker belongs to a future build that actually
  * copies the code inside the bundle.
  *
+ * WINDOWS (owner's decision D1, 2026-11-20 — read before changing). On win32
+ * ONLY signal (a) counts: the marker, never a path shape. And the asymmetry
+ * above does NOT hold there: a per-user NSIS install
+ * (%LOCALAPPDATA%\Programs\The Curator\resources\app) is WRITABLE by its
+ * user, so a real Windows bundle wrongly read as "repo" does not fail loudly —
+ * its first write SUCCEEDS inside the program folder, and the next update or
+ * uninstall deletes the program folder with the user's wiki, keys and sync
+ * repo in it. That is why the Windows packager MUST write the marker
+ * (desktop/lib/after-pack.mjs, win32 branch) and CI must assert it is in the
+ * installer payload. Nothing in the repo, install.ps1 or scripts/windows/
+ * ever creates it (scripts/test-paths-win32.js pins that).
+ *
+ * A win32 bundle keeps its user data in getBundleUserDataDir() =
+ * %LOCALAPPDATA%\TheCurator\App, a SUBFOLDER of getAppSupportDir(). The root
+ * %LOCALAPPDATA%\TheCurator is shared with the one-line browser install
+ * (install.ps1 keeps runtime\ and logs\ there); instances\, logs\ and
+ * updates\ stay at that shared root so the two installs still see each other,
+ * while the app's domains\, keys and .knowledge-git never sit beside the
+ * browser install's runtime. macOS and repo mode are unchanged by this.
+ *
  * Taking the bundle branch is announced once on stderr — a transition that
  * relocates all user data must never be silent.
  *
@@ -209,12 +229,62 @@ export const APP_LOGS_DIR_NAME = APP_SUPPORT_DIR_NAME;
  */
 export const BUNDLE_MARKER_FILE = '.curator-bundle';
 
+/**
+ * The subfolder of %LOCALAPPDATA%\TheCurator that holds a WINDOWS bundle's user
+ * data (owner's decision D1). Never used on macOS or in repo mode.
+ */
+export const WINDOWS_BUNDLE_DATA_SUBDIR = 'App';
+
 // Test-only override. Production NEVER sets this, so it stays null and the
 // real install-form detection runs untouched.
 let _userDataDirOverride = null;
 let _cachedUserDataDir = null;
 let _mkdirErrorFor = null;      // { dir, err } — keyed by dir, never sticky
 let _bundleNoticeShown = false;
+
+// Test-only simulated host: { platform, appRoot, env, homedir, exists, mkdir }.
+// Production NEVER sets this. It exists because a Windows bundle cannot be
+// stood up on the Mac or Linux runner: APP_ROOT is fixed at module load and a
+// win32 path cannot be created there. While it is set, every resolver below
+// reads the simulated platform/root/env/home, probes the marker with `exists`,
+// and NEVER touches the real filesystem for the data dir (`mkdir` defaults to
+// a no-op), so a simulated C:\ path can never be created in the cwd. It does
+// not reach getUserDataDirState(), which always stats the real filesystem.
+let _hostOverride = null;
+
+/**
+ * Test seam — simulate another host (see _hostOverride). Pass null to clear.
+ * Clears the memoised data dir and the once-per-process notice either way.
+ */
+export function __setHostForTest(h) {
+  _hostOverride = h ? { ...h } : null;
+  _cachedUserDataDir = null;
+  _mkdirErrorFor = null;
+  _bundleNoticeShown = false;
+}
+
+/** The platform this process resolves paths for (process.platform in production). */
+export function getPlatform() {
+  return (_hostOverride && _hostOverride.platform) || process.platform;
+}
+function hostEnv() { return (_hostOverride && _hostOverride.env) || process.env; }
+function hostHomedir() { return (_hostOverride && _hostOverride.homedir) || os.homedir(); }
+function hostAppRoot() { return (_hostOverride && _hostOverride.appRoot) || APP_ROOT; }
+function hostExists(p) { return _hostOverride ? !!(_hostOverride.exists && _hostOverride.exists(p)) : existsSync(p); }
+function hostMkdir(dir, opts) {
+  if (_hostOverride) { if (_hostOverride.mkdir) _hostOverride.mkdir(dir, opts); return; }
+  mkdirSync(dir, opts);
+}
+/**
+ * The path flavour for the resolved platform. In production this IS `path`
+ * (on Windows `path === path.win32`, elsewhere `path === path.posix`), so every
+ * join below is byte-identical to the plain `path.join` it replaced; only a
+ * simulated host gets a different flavour.
+ */
+function hostPath() {
+  if (!_hostOverride) return path;
+  return getPlatform() === 'win32' ? path.win32 : path.posix;
+}
 
 /**
  * Test seam — force the user-data dir (e.g. at a tempdir) without touching the
@@ -231,7 +301,7 @@ export function __setUserDataDirOverride(p) {
  * Deliberately strict: a stray directory merely named "foo.app" is not enough.
  */
 function looksLikeMacOSBundle(dir) {
-  const parts = dir.split(path.sep);
+  const parts = dir.split(hostPath().sep);
   for (let i = 0; i < parts.length - 1; i++) {
     if (parts[i].toLowerCase().endsWith('.app') && parts[i + 1] === 'Contents') return true;
   }
@@ -244,8 +314,12 @@ function looksLikeMacOSBundle(dir) {
  * the direction whose failure mode is safe. See the docblock.
  */
 export function isBundleInstall() {
-  if (existsSync(path.join(APP_ROOT, BUNDLE_MARKER_FILE))) return true;
-  if (looksLikeMacOSBundle(APP_ROOT)) return true;
+  const root = hostAppRoot();
+  if (hostExists(hostPath().join(root, BUNDLE_MARKER_FILE))) return true;
+  // Windows: the marker is the ONLY signal (see "WINDOWS" in the docblock).
+  // A path shape is never inferred there.
+  if (getPlatform() === 'win32') return false;
+  if (looksLikeMacOSBundle(root)) return true;
   return false;
 }
 
@@ -262,9 +336,9 @@ export function isRepoInstall() {
  * tests and for error messages; callers should use getUserDataDir().
  */
 export function getAppSupportDir({
-  platform = process.platform,
-  env = process.env,
-  homedir = os.homedir(),
+  platform = getPlatform(),
+  env = hostEnv(),
+  homedir = hostHomedir(),
 } = {}) {
   // v3.87.0: Windows has no ~/Library. Reachable there in REPO mode (the
   // instance registry writes <this>/instances at boot; mcp-usage reads a
@@ -277,6 +351,27 @@ export function getAppSupportDir({
 
 /** The per-user folder name under %LOCALAPPDATA% on Windows (v3.87.0). */
 export const WINDOWS_APP_DIR_NAME = 'TheCurator';
+
+/**
+ * Where a BUNDLE keeps its user data, whether or not this process is one.
+ *
+ *   macOS (and anything not win32) → getAppSupportDir(), unchanged
+ *   win32                          → %LOCALAPPDATA%\TheCurator\App  (D1)
+ *
+ * Exported so a module that must recognise "the bundle's own data dir"
+ * (instance-probe's isolation test, mcp-usage's second log candidate) can
+ * compare against THIS rather than getAppSupportDir(), which on Windows is the
+ * shared root and not the data dir.
+ */
+export function getBundleUserDataDir({
+  platform = getPlatform(),
+  env = hostEnv(),
+  homedir = hostHomedir(),
+} = {}) {
+  const root = getAppSupportDir({ platform, env, homedir });
+  if (platform === 'win32') return path.win32.join(root, WINDOWS_BUNDLE_DATA_SUBDIR);
+  return root;
+}
 
 /**
  * %LOCALAPPDATA%, or <home>\AppData\Local when it is unset or not an absolute
@@ -344,9 +439,9 @@ export function __setLogDirOverride(p) {
  * only wanted to log an error).
  */
 export function getLogsDir({
-  platform = process.platform,
-  env = process.env,
-  homedir = os.homedir(),
+  platform = getPlatform(),
+  env = hostEnv(),
+  homedir = hostHomedir(),
 } = {}) {
   if (_logDirOverride) return _logDirOverride;
   if (process.env.CURATOR_TEST_LOG_DIR) {
@@ -413,7 +508,7 @@ export function getMcpLauncherDir() {
   if (process.env.CURATOR_TEST_MCP_LAUNCHER_DIR) {
     return path.resolve(process.env.CURATOR_TEST_MCP_LAUNCHER_DIR);
   }
-  return path.join(getAppSupportDir(), 'bin');
+  return hostPath().join(getAppSupportDir(), 'bin');
 }
 
 /**
@@ -422,7 +517,9 @@ export function getMcpLauncherDir() {
  *   __setUserDataDirOverride   → that (test seam)
  *   CURATOR_TEST_USER_DATA_DIR → that (test seam, crosses process boundaries)
  *   repo mode                  → APP_ROOT (unchanged from every prior version)
- *   bundle mode                → ~/Library/Application Support/The Curator
+ *   bundle mode                → getBundleUserDataDir():
+ *                                  macOS  ~/Library/Application Support/The Curator
+ *                                  win32  %LOCALAPPDATA%\TheCurator\App
  *
  * The detected value is memoised — install form cannot change within a process,
  * and this is on the hot path (getDomainsDir runs on nearly every request). The
@@ -438,18 +535,18 @@ export function getUserDataDir() {
 
   if (!isBundleInstall()) {
     // Repo mode: identical to the historical PROJECT_ROOT. No mkdir, no writes.
-    _cachedUserDataDir = APP_ROOT;
+    _cachedUserDataDir = hostAppRoot();
     return _cachedUserDataDir;
   }
 
-  const dir = getAppSupportDir();
+  const dir = getBundleUserDataDir();
 
   // Relocating every user-data path is never allowed to be silent. stderr only
   // — stdout belongs to the MCP's JSON-RPC framing.
   if (!_bundleNoticeShown) {
     _bundleNoticeShown = true;
     console.error(
-      `[The Curator] Running as a packaged app (${APP_ROOT}) — using ${dir} for user data. ` +
+      `[The Curator] Running as a packaged app (${hostAppRoot()}) — using ${dir} for user data. ` +
       `If you expected an existing wiki, it is still in your original install folder; ` +
       `do not re-run onboarding.`
     );
@@ -460,7 +557,7 @@ export function getUserDataDir() {
   // distinguish "empty, offer migration" from "broken, every write will fail".
   // 0700 because this tree holds API keys and a GitHub PAT.
   try {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    hostMkdir(dir, { recursive: true, mode: 0o700 });
     _mkdirErrorFor = null;
   } catch (err) {
     _mkdirErrorFor = { dir, err };
@@ -471,12 +568,12 @@ export function getUserDataDir() {
 
 /** Join segments onto the user-data dir. */
 export function userDataPath(...segments) {
-  return path.join(getUserDataDir(), ...segments);
+  return hostPath().join(getUserDataDir(), ...segments);
 }
 
 /** Join segments onto the app (code) root. Never write to the result. */
 export function appPath(...segments) {
-  return path.join(APP_ROOT, ...segments);
+  return hostPath().join(hostAppRoot(), ...segments);
 }
 
 /**
@@ -761,6 +858,6 @@ export function getCredentialFiles() {
     { rel: '.sync-config.json',        abs: getSyncConfigFile() },
     { rel: '.sharedbrain-config.json', abs: getSharedBrainConfigFile() },
     { rel: '.env',                     abs: appPath('.env') },
-    { rel: '.knowledge-git/config',    abs: path.join(getSyncGitDir(), 'config') },
+    { rel: '.knowledge-git/config',    abs: hostPath().join(getSyncGitDir(), 'config') },
   ];
 }
