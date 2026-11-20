@@ -36,7 +36,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import os from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-large-wiki-'));
@@ -50,10 +50,10 @@ const REAL_CONFIG = path.join(REPO, '.curator-config.json');
 const fp = (f) => (existsSync(f) ? createHash('sha256').update(readFileSync(f)).digest('hex') : 'absent');
 const CONFIG_BEFORE = fp(REAL_CONFIG);
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS);
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const { isMergeableSlug, acronymIndexPairs, spellingVariantIndexPairs } = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const { isMergeableSlug, acronymIndexPairs, spellingVariantIndexPairs } = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {

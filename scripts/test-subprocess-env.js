@@ -23,7 +23,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-subproc-env-'));
@@ -43,7 +43,7 @@ function eq(a, b, label) {
 }
 function section(t) { console.log(`\n${t}`); }
 
-const se = await import(path.join(ROOT, 'src/brain/subprocess-env.js'));
+const se = await import(pathToFileURL(path.join(ROOT, 'src/brain/subprocess-env.js')).href);
 
 // ── The pre-v3.87.0 expression, TRANSCRIBED (sync.js:107-112 and
 //    config.js:258-268 at v3.86.0 built exactly this, with `path` = posix). ──
@@ -80,7 +80,7 @@ if (process.platform !== 'win32') {
   const liveEnv = se.buildSubprocessEnv();
   eq(Object.keys(liveEnv).sort(), Object.keys({ ...process.env, PATH: '' }).sort(),
     'LIVE: the env carries exactly the inherited keys (plus PATH)');
-  const syncMod = await import(path.join(ROOT, 'src/brain/sync.js'));
+  const syncMod = await import(pathToFileURL(path.join(ROOT, 'src/brain/sync.js')).href);
   const syncEnv = syncMod.__subprocessEnvForTest();
   eq(syncEnv.PATH, legacyPath(process.execPath, process.env.PATH),
     'LIVE: sync.js runs git with the v3.86.0 PATH on this machine');
@@ -231,7 +231,7 @@ function runRestart(platform, env, logsDir = restartLogs) {
 // ═══════════════════════════════════════════════════════════════════════════
 section('§5  The updater: build-app.sh off Windows only; exec env is the helper\'s');
 // ═══════════════════════════════════════════════════════════════════════════
-const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
+const configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
 function fakeRes() {
   const r = { statusCode: 200, body: null };
   r.status = (c) => { r.statusCode = c; return r; };
@@ -304,7 +304,7 @@ const EXPECTED_COMMON = [
 section('§5b  App folders on Windows: %LOCALAPPDATA%\\TheCurator, never ~\\Library');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
+  const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
   // The seams this suite set would win; clear them for the resolver arm and restore.
   const saved = { L: process.env.CURATOR_TEST_LOG_DIR, U: process.env.CURATOR_TEST_USER_DATA_DIR };
   delete process.env.CURATOR_TEST_LOG_DIR; delete process.env.CURATOR_TEST_USER_DATA_DIR;
@@ -387,8 +387,8 @@ async function runPick(handler, platform, body = {}, win = { kind: 'picked', pat
 // ═══════════════════════════════════════════════════════════════════════════
 section('§7  Reveal routes are macOS-only');
 // ═══════════════════════════════════════════════════════════════════════════
-const mcpRoute = await import(path.join(ROOT, 'src/routes/mcp.js'));
-const diagRoute = await import(path.join(ROOT, 'src/routes/diagnostics.js'));
+const mcpRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
+const diagRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/diagnostics.js')).href);
 async function runReveal(handler, platform) {
   const spawned = [];
   const res = fakeRes();
@@ -436,7 +436,7 @@ section('§8  Git: the Windows app\'s bundled git first; nothing changes off Win
     eq(se.gitConfigArgs({ platform, bundled: true }), [], `${platform}: gitConfigArgs is empty`);
   }
   if (process.platform !== 'win32') {
-    const syncMod = await import(path.join(ROOT, 'src/brain/sync.js'));
+    const syncMod = await import(pathToFileURL(path.join(ROOT, 'src/brain/sync.js')).href);
     eq(syncMod.__gitConfigArgsForTest(), [], 'LIVE: sync.js puts no argument before a git subcommand on this machine');
     const canon = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
     ok(canon(syncMod.__subprocessEnvForTest()) === canon(se.planGit({ appRoot: ROOT, isBundle: false, exists: () => true }).env),
@@ -542,9 +542,9 @@ section('§9  Every other git (audit M4): the SAME git Sync runs in the Windows 
     fs.mkdirSync(repo, { recursive: true });
     execFileSync(realGit, ['init', '-q', repo], { stdio: 'ignore' });
 
-    const sb = await import(path.join(ROOT, 'src/brain/sharedbrain.js'));
-    const sc = await import(path.join(ROOT, 'src/brain/setup-check.js'));
-    const ih = await import(path.join(ROOT, 'src/cli/install-hooks.js'));
+    const sb = await import(pathToFileURL(path.join(ROOT, 'src/brain/sharedbrain.js')).href);
+    const sc = await import(pathToFileURL(path.join(ROOT, 'src/brain/setup-check.js')).href);
+    const ih = await import(pathToFileURL(path.join(ROOT, 'src/cli/install-hooks.js')).href);
     const since = new Date('2024-01-01T00:00:00Z');
     const appPlan = { env: { ...process.env, PATH: gitBinDir }, configArgs: ['-c', 'credential.helper=', '-c', 'core.askPass='] };
     try {

@@ -48,7 +48,7 @@
  * outside os.tmpdir().
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -116,7 +116,7 @@ ok(typeof fpBefore === 'string' && fpBefore.length > 0, 'real credential files f
 // exited, because nothing below can run without the module.
 let installMode;
 try {
-  installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
+  installMode = await import(pathToFileURL(path.join(ROOT, 'src/brain/install-mode.js')).href);
   ok(true, 'src/brain/install-mode.js loads (its exhaustiveness check passed at module load)');
 } catch (err) {
   ok(false, `src/brain/install-mode.js FAILED to load: ${err && err.message}`);
@@ -124,10 +124,10 @@ try {
   fs.rmSync(TMP, { recursive: true, force: true });
   process.exit(1);
 }
-const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
-const writeStatus = await import(path.join(ROOT, 'src/routes/write-status.js'));
-const writeRegistry = await import(path.join(ROOT, 'src/brain/write-registry.js'));
-const sync = await import(path.join(ROOT, 'src/brain/sync.js'));
+const configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
+const writeStatus = await import(pathToFileURL(path.join(ROOT, 'src/routes/write-status.js')).href);
+const writeRegistry = await import(pathToFileURL(path.join(ROOT, 'src/brain/write-registry.js')).href);
+const sync = await import(pathToFileURL(path.join(ROOT, 'src/brain/sync.js')).href);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§2  The capability record — exhaustive by construction, and frozen');
@@ -940,8 +940,8 @@ section('§5c  POST /api/restart — both arms, and the repo arm proven UNCHANGE
 // extracted from both revisions by brace-matching and executed in a sandbox,
 // which is the only honest way to reach it.
 
-const restartModule = await import(path.join(ROOT, 'src/brain/restart.js'));
-const desktopHost = await import(path.join(ROOT, 'src/brain/desktop-host.js'));
+const restartModule = await import(pathToFileURL(path.join(ROOT, 'src/brain/restart.js')).href);
+const desktopHost = await import(pathToFileURL(path.join(ROOT, 'src/brain/desktop-host.js')).href);
 
 const headServerSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/server.js'], { encoding: 'utf8' });
 const workServerSrc = read('src/server.js');
@@ -1397,7 +1397,7 @@ section('§10  Surfacing, anti-vacuity, and what is NOT enforced');
 // ═══════════════════════════════════════════════════════════════════════════
 
 {
-  const diagnostics = await import(path.join(ROOT, 'src/brain/diagnostics.js'));
+  const diagnostics = await import(pathToFileURL(path.join(ROOT, 'src/brain/diagnostics.js')).href);
   const { checks } = await diagnostics.runQuickDiagnostics();
   const ids = checks.map(c => c.id);
   ok(ids.includes('install-mode'), 'System Check reports the install mode');

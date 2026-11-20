@@ -41,7 +41,7 @@
 
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -106,7 +106,7 @@ const ABS_PATH_RE = /(?:^|[\s'"`(])(?:\/|[A-Za-z]:\\)[^\s'"`)]+[\/\\][^\s'"`)]+/
 
 console.log('test-route-security-hardening.js — five confirmed findings, guarded behaviourally\n');
 
-const files = await import(path.join(ROOT, 'src/brain/files.js'));
+const files = await import(pathToFileURL(path.join(ROOT, 'src/brain/files.js')).href);
 const { listConversations } = files;
 
 /** Make `slug` a REAL domain: listDomains() filters on the CLAUDE.md schema. */
@@ -153,7 +153,7 @@ writeConv(path.join(OUTSIDE, 'conversations'), 9, 'Private notes',
     'CONTROL: …and `?q=` turns the listing into an oracle over MESSAGE BODIES of files it should never have read');
 }
 
-const chatRouter = (await import(path.join(ROOT, 'src/routes/chat.js'))).default;
+const chatRouter = (await import(pathToFileURL(path.join(ROOT, 'src/routes/chat.js')).href)).default;
 
 /** Every (method, path) the chat router actually registers. */
 function registeredRoutes(router) {
@@ -325,9 +325,9 @@ section('§3 — a 500 from a chat route carries no absolute path');
 // ═══════════════════════════════════════════════════════════════════════════
 section('§4 — POST /api-keys/build-model reports whether the pin is actually in force');
 
-const llm = await import(path.join(ROOT, 'src/brain/llm.js'));
-const config = await import(path.join(ROOT, 'src/brain/config.js'));
-const configRouter = (await import(path.join(ROOT, 'src/routes/config.js'))).default;
+const llm = await import(pathToFileURL(path.join(ROOT, 'src/brain/llm.js')).href);
+const config = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+const configRouter = (await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href)).default;
 const CONFIG_ROUTES = registeredRoutes(configRouter);
 const buildModelRoute = CONFIG_ROUTES.find(r => r.method === 'post' && r.path === '/api-keys/build-model');
 const apiKeysRoute = CONFIG_ROUTES.find(r => r.method === 'get' && r.path === '/api-keys');

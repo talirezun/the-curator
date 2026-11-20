@@ -62,7 +62,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -88,10 +88,10 @@ function eq(actual, expected, label) {
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-mcp-dompath-'));
 const cleanups = [() => { try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch {} }];
 
-const paths   = await import(path.join(ROOT, 'src/brain/paths.js'));
-const cfg     = await import(path.join(ROOT, 'src/brain/config.js'));
-const files   = await import(path.join(ROOT, 'src/brain/files.js'));
-const { createStorageAdapter } = await import(path.join(ROOT, 'mcp/storage/local.js'));
+const paths   = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+const cfg     = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+const files   = await import(pathToFileURL(path.join(ROOT, 'src/brain/files.js')).href);
+const { createStorageAdapter } = await import(pathToFileURL(path.join(ROOT, 'mcp/storage/local.js')).href);
 
 // Every rung above the one under test must be OFF for the whole run, or a
 // developer's ambient env would silently short-circuit these assertions and

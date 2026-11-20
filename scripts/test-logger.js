@@ -74,7 +74,7 @@ import { mkdtempSync, rmSync, existsSync, statSync, readdirSync, readFileSync, m
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { stripComments } from './test-helpers/source-scan.js';
 
@@ -119,8 +119,8 @@ function freshDir(name) {
   return d;
 }
 
-const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
-const logger = await import(path.join(ROOT, 'src/brain/logger.js'));
+const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+const logger = await import(pathToFileURL(path.join(ROOT, 'src/brain/logger.js')).href);
 
 try {
 
@@ -410,8 +410,8 @@ section('§8  MCP stdout discipline — this module writes to a FILE only');
 section('§9  diagnostics.js — the "Application log" row');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const config = await import(path.join(ROOT, 'src/brain/config.js'));
-  const diagnostics = await import(path.join(ROOT, 'src/brain/diagnostics.js'));
+  const config = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+  const diagnostics = await import(pathToFileURL(path.join(ROOT, 'src/brain/diagnostics.js')).href);
 
   const domainsDir = freshDir('diag-domains');
   const userDataDir = freshDir('diag-userdata');

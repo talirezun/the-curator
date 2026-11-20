@@ -37,7 +37,7 @@ import { createHash } from 'crypto';
 import { spawn } from 'child_process';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO = path.resolve(path.dirname(SELF), '..');
@@ -52,15 +52,15 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.LLM_MODEL;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
-const job = await import(path.join(REPO, 'src/brain/duplicate-job.js'));
-const ai = await import(path.join(REPO, 'src/brain/health-ai.js'));
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
-const llmMod = await import(path.join(REPO, 'src/brain/llm.js'));
-const { addDismissal, removeDismissal, loadDismissed } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
-const { getDuplicateJobsDir, getDuplicateChecksDir } = await import(path.join(REPO, 'src/brain/paths.js'));
+const job = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-job.js')).href);
+const ai = await import(pathToFileURL(path.join(REPO, 'src/brain/health-ai.js')).href);
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
+const llmMod = await import(pathToFileURL(path.join(REPO, 'src/brain/llm.js')).href);
+const { addDismissal, removeDismissal, loadDismissed } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-dismissed.js')).href);
+const { getDuplicateJobsDir, getDuplicateChecksDir } = await import(pathToFileURL(path.join(REPO, 'src/brain/paths.js')).href);
 
 // 2026-11-07: the Gemini default (gemini-2.5-flash-lite was retired; 404 for new keys).
 const MODEL = 'gemini-3.5-flash-lite';
@@ -122,7 +122,7 @@ if (IS_CRASH_CHILD) {
   await new Promise(() => {}); // the parent kills this process
 }
 
-const routes = await import(path.join(REPO, 'src/routes/health.js'));
+const routes = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
 const { default: express } = await import('express');
 const app = express();
 app.use(express.json());

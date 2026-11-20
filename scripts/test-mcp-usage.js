@@ -59,7 +59,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -86,15 +86,15 @@ mkdirSync(path.join(DOMAINS, DOM, 'wiki', 'entities'), { recursive: true });
 writeFileSync(path.join(DOMAINS, DOM, 'CLAUDE.md'), '# zz-usage\n\nThrowaway fixture.\n');
 writeFileSync(path.join(DOMAINS, DOM, 'wiki', 'entities', 'alpha.md'), '# Alpha\n\nA page.\n');
 
-const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
-const config = await import(path.join(ROOT, 'src/brain/config.js'));
+const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+const config = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
 paths.__setUserDataDirOverride(USER_DATA);
 config.__setDomainsDirOverride(DOMAINS);
 
-const usage = await import(path.join(ROOT, 'src/brain/mcp-usage.js'));
-const { registerTools, tools: registry } = await import(path.join(ROOT, 'mcp/tools/index.js'));
-const { createStorageAdapter } = await import(path.join(ROOT, 'mcp/storage/local.js'));
-const { TOOL_CATALOGUE } = await import(path.join(ROOT, 'mcp/tools/catalogue.js'));
+const usage = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-usage.js')).href);
+const { registerTools, tools: registry } = await import(pathToFileURL(path.join(ROOT, 'mcp/tools/index.js')).href);
+const { createStorageAdapter } = await import(pathToFileURL(path.join(ROOT, 'mcp/storage/local.js')).href);
+const { TOOL_CATALOGUE } = await import(pathToFileURL(path.join(ROOT, 'mcp/tools/catalogue.js')).href);
 
 const LOG = paths.getMcpUsageLogPath();
 const LOG_PREV = `${LOG}.1`;
@@ -482,7 +482,7 @@ ok(!!afterChange.byTool.get_tags,
   'appending a line invalidates the cache (a size change is a key change)');
 
 // The route.
-const routes = await import(path.join(ROOT, 'src/routes/mcp.js'));
+const routes = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
 let body = null;
 await routes.usageHandler({}, { json: (o) => { body = o; } });
 ok(body && Array.isArray(body.tools), 'GET /api/mcp/usage returns a tools array');
@@ -678,8 +678,8 @@ ok(childRecs[0].sid !== usage.getSessionId(),
 eq(childSession[0].client, 'other', 'an unrecognised clientInfo.name is recorded as "other"');
 // v3.88.0 — the REAL bridge wrote its own identity on its session line.
 {
-  const { tools: realTools } = await import(path.join(ROOT, 'mcp/tools/index.js'));
-  const { toolSignature } = await import(path.join(ROOT, 'mcp/tool-signature.js'));
+  const { tools: realTools } = await import(pathToFileURL(path.join(ROOT, 'mcp/tools/index.js')).href);
+  const { toolSignature } = await import(pathToFileURL(path.join(ROOT, 'mcp/tool-signature.js')).href);
   const pkgV = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
   const withId = childSession.find((l) => l.tsig);
   ok(!!withId, 'the child bridge’s session line carries a tool-list signature');
@@ -880,7 +880,7 @@ section('§8  `via` — the one optional key, the literal, and the session gate'
     { ts: new Date(NOW3 - 30_000).toISOString(), tool: 'get_tags', domain: DOM, ok: true, refused: false, ms: 5 },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n', 'utf8');
   usage.__clearUsageCache();
-  const routes2 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes2 = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   let body2 = null;
   await routes2.usageHandler({}, { json: (o) => { body2 = o; } });
   const r = (n) => body2.tools.find((t) => t.name === n) || {};
@@ -1036,7 +1036,7 @@ section('§10  `client` — two protocol eras, an allow-list, and no branch');
 // self-test only ever exercises the OLD one — which is exactly why each arm is
 // driven ALONE here, each with a control proving the other is unreachable.
 {
-  const clients = await import(path.join(ROOT, 'src/brain/mcp-clients.js'));
+  const clients = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-clients.js')).href);
 
   // ── 10a  THE MAP IS MANY-TO-ONE, AND THAT IS THE POINT ──────────────────
   eq(clients.labelForClient('codex-mcp-client'), 'codex', 'a source-verified value maps to its id');
@@ -1265,7 +1265,7 @@ section('§11  NOTHING BRANCHES ON `client` — Decision I, as a source guard');
     JSON.stringify({ ts: '2026-09-18T11:00:01.000Z', tool: 'get_tags', domain: DOM, ok: true, refused: false, ms: 2, sid: 'bbbbbbbbbbbb' }),
   ].join('\n') + '\n', 'utf8');
   usage.__clearUsageCache();
-  const routes11 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes11 = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   let body11 = null;
   await routes11.usageHandler({}, { json: (o) => { body11 = o; } });
   ok(!JSON.stringify(body11).includes('codex'),
@@ -1539,7 +1539,7 @@ section('§13  A bridge that is OPENED and never used is still a session');
   // parser (it must run against a log written by a build older than itself),
   // so the fix is only real if ITS verdict moves too. Driven over the log the
   // REAL bridge just wrote, three lines above — not a hand-built one.
-  const mh = await import(path.join(ROOT, 'scripts/measure-harness.js'));
+  const mh = await import(pathToFileURL(path.join(ROOT, 'scripts/measure-harness.js')).href);
   const bucketed = mh.bucketLines(readFileSync(SOLO_LOG, 'utf8').split('\n'), 0);
   const row = mh.buildHarnessRow(bucketed, 'claude-code', { minSessions: 4 });
   eq(row.sessions, 1, 'measure-harness counts the real bridge-only session as ONE session');
@@ -1592,7 +1592,7 @@ section('§14  v3.66.0 — count7dAgent, summariseSessionsByProject, the union r
     'count7dAgent counts the two agent calls in the window (the refusal included), not the self-test one, not the 10-day-old one');
   eq(a.byTool.get_node.count7d, 1, 'a tool touched ONLY by a self-test run still shows count7d 1…');
   eq(a.byTool.get_node.count7dAgent, 0, '…and count7dAgent 0 — one "Test all tools" press does not make it busy');
-  const r14 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const r14 = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   let b14 = null;
   await r14.usageHandler({ query: {} }, { json: (o) => { b14 = o; } });
   const sw14 = b14.tools.find((t) => t.name === 'search_wiki') ?? {};

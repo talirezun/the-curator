@@ -43,7 +43,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -69,9 +69,9 @@ function section(t) { console.log(`\n${t}`); }
 const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-update-macos-'));
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-const plan = await import(path.join(DESKTOP, 'lib', 'update-plan.js'));
-const engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
-const launcher = await import(path.join(ROOT, 'src', 'brain', 'mcp-launcher.js'));
+const plan = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-plan.js')).href);
+const engine = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-engine.js')).href);
+const launcher = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'mcp-launcher.js')).href);
 
 /**
  * The SAME shape `desktop/main.js` installs as `runCommand`: spawn, collect a

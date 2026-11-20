@@ -71,7 +71,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createHash } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -148,7 +148,7 @@ function readConfig() {
 // below can run without the module.
 let cfg;
 try {
-  cfg = await import(path.join(ROOT, 'src/brain/config.js'));
+  cfg = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
   ok(true, 'src/brain/config.js loads (its release-channel invariant passed at module load)');
 } catch (err) {
   ok(false, `src/brain/config.js FAILED to load: ${err && err.message}`);
@@ -158,7 +158,7 @@ try {
 }
 writeConfig({ __isolationProbe: true });
 ok(readConfig().__isolationProbe === true, 'the isolated config file is the one this suite writes');
-const cfgRoute = await import(path.join(ROOT, 'src/routes/config.js'));
+const cfgRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
 ok(typeof cfgRoute.updateHandler === 'function', 'src/routes/config.js exports updateHandler');
 ok(typeof cfgRoute.updateCheckHandler === 'function', 'src/routes/config.js exports updateCheckHandler');
 

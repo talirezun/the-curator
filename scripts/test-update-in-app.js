@@ -43,7 +43,7 @@ import fs from 'fs';
 import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createHash } from 'crypto';
 import { execFileSync } from 'child_process';
 
@@ -96,12 +96,12 @@ ok(fpBefore.length > 0, 'real credential files fingerprinted before the run');
 // comment cannot be made to fail.
 let configRoute, installMode, desktopHost, writeRegistry, planMod, launcherMod;
 try {
-  configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
-  installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
-  desktopHost = await import(path.join(ROOT, 'src/brain/desktop-host.js'));
-  writeRegistry = await import(path.join(ROOT, 'src/brain/write-registry.js'));
-  planMod = await import(path.join(ROOT, 'desktop/lib/update-plan.js'));
-  launcherMod = await import(path.join(ROOT, 'src/brain/mcp-launcher.js'));
+  configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
+  installMode = await import(pathToFileURL(path.join(ROOT, 'src/brain/install-mode.js')).href);
+  desktopHost = await import(pathToFileURL(path.join(ROOT, 'src/brain/desktop-host.js')).href);
+  writeRegistry = await import(pathToFileURL(path.join(ROOT, 'src/brain/write-registry.js')).href);
+  planMod = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/update-plan.js')).href);
+  launcherMod = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-launcher.js')).href);
   ok(true, 'the modules under test load');
 } catch (err) {
   // A module-load throw would otherwise kill the run with a raw stack, naming
@@ -172,7 +172,7 @@ ok(desktopHost.getDesktopHook(configRoute.UPDATE_STAGE_HOOK) === null,
 // copied rather than imported — the same call `compareSemver` already makes in
 // that file. Copying is only safe if drift is impossible, which is this.
 {
-  const phasesMod = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+  const phasesMod = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/update-phases.js')).href);
   ok(Array.isArray(phasesMod.UPDATE_PHASE_ORDER), 'the client carries its own copy of the phase list');
   eq(phasesMod.UPDATE_PHASE_ORDER.join('|'), configRoute.UPDATE_PHASES.join('|'),
     'and it is IDENTICAL to the server list, in the same order (order is load-bearing — it is the ring\'s segment order)');
@@ -790,7 +790,7 @@ function extractLocalFn(src, name) {
 // the module is strictly better than extracting it: a regex that stops matching
 // splices an EMPTY STRING into the sandbox and fails naming the wrong thing,
 // which is precisely what a rename here used to do.
-const clientPure = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+const clientPure = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/update-phases.js')).href);
 
 // ── THE HONESTY RULE ───────────────────────────────────────────────────────
 // A phase with no sub-progress must produce an EMPTY segment. This is the
@@ -954,7 +954,7 @@ section('§13  THE CALL SITE, not just the renderers');
 // section existed. `renderUpdateStatus` is what the view actually calls, so it
 // is driven here, with the real progress-ring component.
 
-const { progressRingHtml } = await import(path.join(ROOT, 'src/public/next/shared/progress-ring.js'));
+const { progressRingHtml } = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/progress-ring.js')).href);
 // The three phase-vocabulary names and the two number helpers are INJECTED
 // from the real shared module (v3.41.0) rather than spliced out of settings.js
 // as source — the module is what settings.js imports at runtime, so this is the

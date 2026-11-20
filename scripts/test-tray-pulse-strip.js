@@ -69,7 +69,7 @@
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -89,9 +89,9 @@ function section(t) { console.log(`\n${t}`); }
 
 let strip, model, menu;
 try {
-  strip = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js'));
-  model = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
-  menu = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
+  strip = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'pulse-strip.js')).href);
+  model = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
+  menu = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the modules under test: ${err.message}`);
   process.exit(1);
@@ -243,7 +243,7 @@ section('§0 positive control on the imports');
   // The PNG encoder is IMPORTED from rgba-png.js, not reimplemented here.
   // `tray-icon.js`'s greyscale encoder stays where it is and still serves the
   // TRAY GLYPH, which really is a template image; menu artwork is colour.
-  const rgbaMod = await import(path.join(DESKTOP, 'lib', 'rgba-png.js'));
+  const rgbaMod = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'rgba-png.js')).href);
   const viaStrip = strip.renderPulseStrip(pulseFixture({ buckets: [1] }), { dark: false });
   ok(viaStrip !== null, 'a one-bucket pulse still renders');
   const probe = rgbaMod.createCanvas(1, 1);

@@ -36,7 +36,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = mkdtempSync(path.join(os.tmpdir(), 'curator-recent-new-'));
@@ -53,14 +53,14 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.LLM_MODEL;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
-const rec = await import(path.join(REPO, 'src/brain/recent-new-pages.js'));
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const ai = await import(path.join(REPO, 'src/brain/health-ai.js'));
-const { addDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
-const { getRecentNewPagesDir } = await import(path.join(REPO, 'src/brain/paths.js'));
-const { ingestFile } = await import(path.join(REPO, 'src/brain/ingest.js'));
+const rec = await import(pathToFileURL(path.join(REPO, 'src/brain/recent-new-pages.js')).href);
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const ai = await import(pathToFileURL(path.join(REPO, 'src/brain/health-ai.js')).href);
+const { addDismissal } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-dismissed.js')).href);
+const { getRecentNewPagesDir } = await import(pathToFileURL(path.join(REPO, 'src/brain/paths.js')).href);
+const { ingestFile } = await import(pathToFileURL(path.join(REPO, 'src/brain/ingest.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {
@@ -454,12 +454,12 @@ try {
   // ──────────────────────────────────────────────────────────────────────────
   section('8. The figures reach the screen\'s data');
   {
-    const { ingestDoneEvent } = await import(path.join(REPO, 'src/routes/ingest.js'));
+    const { ingestDoneEvent } = await import(pathToFileURL(path.join(REPO, 'src/routes/ingest.js')).href);
     const figure = { newPages: 4, comparable: 2, pairs: 9 };
     eq(ingestDoneEvent({ title: 't', newPagesToCompare: figure }, 'false').newPagesToCompare, figure, 'the done event carries the figure');
     ok(!('newPagesToCompare' in ingestDoneEvent({ title: 't', newPagesToCompare: null }, 'false')), 'nothing to say: the field is absent, the event as it was');
 
-    const activity = await import(path.join(REPO, 'src/brain/ingest-activity.js'));
+    const activity = await import(pathToFileURL(path.join(REPO, 'src/brain/ingest-activity.js')).href);
     activity.__resetActivityForTests();
     const started = activity.startActivity('wire-domain', 'f.md');
     const id = typeof started === 'string' ? started : started.id;
@@ -469,7 +469,7 @@ try {
     const mine = records.find((r) => r.domain === 'wire-domain');
     eq(mine && mine.result && mine.result.newPagesToCompare, figure, 'the restored panel\'s record carries it');
 
-    const queue = await import(path.join(REPO, 'src/brain/ingest-queue.js'));
+    const queue = await import(pathToFileURL(path.join(REPO, 'src/brain/ingest-queue.js')).href);
     const wire = queue.toWire({ jobId: 'j', domain: 'd', items: [{ idx: 0, name: 'a.md', status: 'done', result: { title: 't', pagesWritten: 2, warningCount: 0, newPagesToCompare: figure } }] });
     eq(wire.items[0].result.newPagesToCompare, figure, 'a batch\'s wire record carries it');
   }

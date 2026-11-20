@@ -40,7 +40,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -51,17 +51,17 @@ process.env.CURATOR_TEST_USER_DATA_DIR = USER_DIR;
 process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS_DIR;
 
 const { __setDomainsDirOverride, DEFAULT_AI_HEALTH, getAiHealthSettings } =
-  await import(path.join(REPO, 'src/brain/config.js'));
+  await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
 const { previewSemanticDuplicateMerge, MERGED_PREVIEW_CAP_CHARS, SEMANTIC_DUPE_DEFAULT_CAP } =
-  await import(path.join(REPO, 'src/brain/health.js'));
-const { EST_TOKENS_PER_PAIR, scanSemanticDuplicates } = await import(path.join(REPO, 'src/brain/health-ai.js'));
-const { addDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
-const { formatDayAge, formatAge } = await import(path.join(REPO, 'src/public/next/shared/age.js'));
-const { ageWordsFor } = await import(path.join(REPO, 'src/public/next/shared/age-ticker.js'));
+  await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const { EST_TOKENS_PER_PAIR, scanSemanticDuplicates } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-ai.js')).href);
+const { addDismissal } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-dismissed.js')).href);
+const { formatDayAge, formatAge } = await import(pathToFileURL(path.join(REPO, 'src/public/next/shared/age.js')).href);
+const { ageWordsFor } = await import(pathToFileURL(path.join(REPO, 'src/public/next/shared/age-ticker.js')).href);
 // v3.89.0: the Dismissed group is the section kit's fold row (real functions).
 const { SECTION_KIT } = await import('./test-helpers/section-kit.js');
-const { formatUsdHonest } = await import(path.join(REPO, 'src/public/next/shared/format-usd.js'));
+const { formatUsdHonest } = await import(pathToFileURL(path.join(REPO, 'src/public/next/shared/format-usd.js')).href);
 
 const SRC = readFileSync(path.join(REPO, 'src/public/next/views/domains.js'), 'utf8');
 
@@ -387,7 +387,7 @@ section('7. F5 — the Dismissed group counts records');
     '7.4 the scan monitor names its figure in the words on the row');
 
   // The route sends the record count.
-  const { default: router } = await import(path.join(REPO, 'src/routes/health.js'));
+  const { default: router } = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
   const name = 'zz-dismiss';
   const wiki = path.join(DOMAINS_DIR, name, 'wiki');
   for (const f of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(wiki, f), { recursive: true });

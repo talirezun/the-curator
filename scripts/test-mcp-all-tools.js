@@ -61,7 +61,7 @@ import {
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -82,14 +82,14 @@ const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-all-tools-'));
 const USER_DATA = path.join(TMP, 'userdata');
 mkdirSync(USER_DATA, { recursive: true });
 
-const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
-const config = await import(path.join(ROOT, 'src/brain/config.js'));
+const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+const config = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
 paths.__setUserDataDirOverride(USER_DATA);
 
-const usage = await import(path.join(ROOT, 'src/brain/mcp-usage.js'));
-const exercise = await import(path.join(ROOT, 'src/brain/mcp-exercise.js'));
-const { TOOL_CATALOGUE } = await import(path.join(ROOT, 'mcp/tools/catalogue.js'));
-const { tools: registry } = await import(path.join(ROOT, 'mcp/tools/index.js'));
+const usage = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-usage.js')).href);
+const exercise = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-exercise.js')).href);
+const { TOOL_CATALOGUE } = await import(pathToFileURL(path.join(ROOT, 'mcp/tools/catalogue.js')).href);
+const { tools: registry } = await import(pathToFileURL(path.join(ROOT, 'mcp/tools/index.js')).href);
 
 // The real config file, fingerprinted at both ends. sha256 + size + existence
 // only — never mtime, which the maintainer's own running app moves during any
@@ -272,7 +272,7 @@ eq(run.transport.nonJsonStdout.length, 0,
 // Not a second one. v3.6.1: the self-test route built its own, drifted from
 // the prescribed one, and gave a green pass against the wrong folder.
 {
-  const routes = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   const expected = routes.buildCuratorEntry('/some/domains');
   eq(run.spawn_command, expected.command,
     'the run spawned `buildCuratorEntry`\'s command, not a command of its own');
@@ -368,7 +368,7 @@ eq(agg.sessions.lastSaveAt, null,
 
 // THE REAL ROUTE HANDLER, not a stub.
 {
-  const routes = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   let body = null;
   await routes.usageHandler({}, { json: (o) => { body = o; } });
   ok(body && Array.isArray(body.tools), 'GET /api/mcp/usage answered');
@@ -666,7 +666,7 @@ section('§8  POST /api/mcp/exercise — the real handler, and the busy gate');
   eq(paths.getMcpUsageLogPath(), path.join(ROUTE_UD, '.mcp-usage.jsonl'),
     'precondition: the log path is isolated for this section');
 
-  const routes = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   const capture = () => {
     const res = { status: null, body: null };
     return {

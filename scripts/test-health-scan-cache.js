@@ -54,14 +54,14 @@
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, appendFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
-const { scanWiki } = await import(path.join(REPO, 'src/brain/health.js'));
-const { addDismissal } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
+const { scanWiki } = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const { addDismissal } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-dismissed.js')).href);
 
 let passed = 0;
 let failed = 0;

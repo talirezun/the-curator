@@ -45,7 +45,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -60,7 +60,7 @@ const section = (t) => console.log(`\n${t}`);
 
 const t0 = Date.now();
 
-const B = await import(path.join(ROOT, 'src/brain/mcp-bridge-status.js'));
+const B = await import(pathToFileURL(path.join(ROOT, 'src/brain/mcp-bridge-status.js')).href);
 
 // ── The fake process table ─────────────────────────────────────────────────
 //
@@ -388,7 +388,7 @@ section('§6  The route field — GET /api/mcp/config carries it, and its remedy
 {
   const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-stale-bridge-'));
   process.env.CURATOR_TEST_USER_DATA_DIR = TMP;
-  const routes = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  const routes = await import(pathToFileURL(path.join(ROOT, 'src/routes/mcp.js')).href);
   const router = routes.default;
   const layer = router.stack.find((l) => l.route && l.route.path === '/config');
   ok(!!layer, 'the /config route is registered');

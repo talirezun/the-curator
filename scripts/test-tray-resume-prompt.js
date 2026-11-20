@@ -49,7 +49,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-tray-resume-'));
 const DOMAINS = path.join(TMP, 'domains');
@@ -75,9 +75,9 @@ function eq(actual, expected, label) {
 }
 const section = (t) => console.log(`\n${t}`);
 
-const rp = await import(path.join(ROOT, 'desktop', 'lib', 'resume-prompt.js'));
-const WS = await import(path.join(ROOT, 'src', 'brain', 'working-state.js'));
-const TS = await import(path.join(ROOT, 'src', 'brain', 'tray-summary.js'));
+const rp = await import(pathToFileURL(path.join(ROOT, 'desktop', 'lib', 'resume-prompt.js')).href);
+const WS = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'working-state.js')).href);
+const TS = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'tray-summary.js')).href);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0 positive control on the imports');
@@ -423,7 +423,7 @@ section('§5 `latest` under Layout A — only the project\'s NEWEST save across 
 // scope). A resume prompt claiming `latest` on it would open the OTHER tool's
 // work-stream. Driven through the real model, in both input shapes.
 {
-  const M = await import(path.join(ROOT, 'desktop', 'lib', 'tray-model.js'));
+  const M = await import(pathToFileURL(path.join(ROOT, 'desktop', 'lib', 'tray-model.js')).href);
   const T = new Date('2026-09-25T14:27:00');
   const at = (s) => new Date(T.getTime() - s * 1000).toISOString();
   const row = (scope, harness, age) => ({ domain: 'projects', project: 'ott', scope, machine: 'mbp-9f3c1a', harness,

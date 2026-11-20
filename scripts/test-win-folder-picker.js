@@ -27,7 +27,7 @@ import fs from 'fs';
 import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-winpick-')));
@@ -54,10 +54,10 @@ function fakeRes() {
 }
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 
-const wfd = await import(path.join(ROOT, 'src/brain/win-folder-dialog.js'));
-const kfp = await import(path.join(ROOT, 'src/brain/knowledge-folder-path.js'));
-const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
-const { APP_ROOT } = await import(path.join(ROOT, 'src/brain/paths.js'));
+const wfd = await import(pathToFileURL(path.join(ROOT, 'src/brain/win-folder-dialog.js')).href);
+const kfp = await import(pathToFileURL(path.join(ROOT, 'src/brain/knowledge-folder-path.js')).href);
+const configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
+const { APP_ROOT } = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
 
 // A fake execFile that records the call and answers as told.
 function fakeExecFile(answer) {

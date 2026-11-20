@@ -29,7 +29,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { stripComments, functionSource, callSiteCount } from './test-helpers/source-scan.js';
 
@@ -164,7 +164,7 @@ section('§1  The geometry at each band, evaluated from shell.css');
 section('§2  The JS drawer query is the CSS drawer band');
 // ═════════════════════════════════════════════════════════════════════════
 const drawerSrc = read('shared/sidebar-drawer.js');
-const drawerMod = await import(path.join(NEXT, 'shared/sidebar-drawer.js'));
+const drawerMod = await import(pathToFileURL(path.join(NEXT, 'shared/sidebar-drawer.js')).href);
 {
   const m = /^\(max-width:\s*(\d+)px\)$/.exec(drawerMod.DRAWER_MEDIA);
   ok(!!m, 'DRAWER_MEDIA is a max-width query');

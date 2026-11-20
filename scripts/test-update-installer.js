@@ -62,7 +62,7 @@
  * os.tmpdir().
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -119,9 +119,9 @@ ok(fpBefore.length > 0, 'real credential files fingerprinted before the run');
 // is REPORTED as one, then exited, because nothing below can run without it.
 let configRoute, installMode, brainConfig;
 try {
-  configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
-  installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
-  brainConfig = await import(path.join(ROOT, 'src/brain/config.js'));
+  configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
+  installMode = await import(pathToFileURL(path.join(ROOT, 'src/brain/install-mode.js')).href);
+  brainConfig = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
   ok(true, 'the modules under test load (install-mode.js\'s exhaustiveness check passed at module load)');
 } catch (err) {
   ok(false, `a module under test FAILED to load: ${err && err.message}`);

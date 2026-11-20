@@ -40,7 +40,7 @@
 
 import path from 'node:path';
 import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -60,14 +60,14 @@ function section(t) { console.log(`\n${t}`); }
 
 let BARS, M, MENU, RGBA, DOTS, png, contrast, PALETTE;
 try {
-  BARS = await import(path.join(DESKTOP, 'lib', 'menu-bars.js'));
-  M = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
-  MENU = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
-  RGBA = await import(path.join(DESKTOP, 'lib', 'rgba-png.js'));
-  DOTS = await import(path.join(DESKTOP, 'lib', 'menu-dots.js'));
-  png = await import(path.join(ROOT, 'scripts', 'visual', 'png.js'));
-  contrast = await import(path.join(ROOT, 'scripts', 'visual', 'contrast.js'));
-  PALETTE = await import(path.join(ROOT, 'src', 'brain', 'identity-palette.js'));
+  BARS = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu-bars.js')).href);
+  M = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
+  MENU = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu.js')).href);
+  RGBA = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'rgba-png.js')).href);
+  DOTS = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu-dots.js')).href);
+  png = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'png.js')).href);
+  contrast = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'contrast.js')).href);
+  PALETTE = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'identity-palette.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the modules under test: ${err.message}`);
   process.exit(1);

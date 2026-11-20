@@ -42,7 +42,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -54,8 +54,8 @@ mkdirSync(ROOT, { recursive: true });
 mkdirSync(USER_DATA, { recursive: true });
 process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
-const W = await import(path.join(REPO, 'src/brain/wiki-index.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
+const W = await import(pathToFileURL(path.join(REPO, 'src/brain/wiki-index.js')).href);
 const {
   INDEX_TABLE_HEADER, INDEX_TABLE_SEPARATOR, INDEX_DESCRIPTION_MAX, INDEX_SECTIONS,
   cellSafe, compareSlugs, linkFor, rowFor, isLinkableSlug, buildInventory, parseIndex,

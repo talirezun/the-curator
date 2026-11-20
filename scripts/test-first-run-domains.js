@@ -81,7 +81,7 @@
  * no LLM. Every write lands in os.tmpdir().
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -131,9 +131,9 @@ delete process.env.DOMAINS_PATH;
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-firstrun-'));
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
-const paths  = await import(path.join(ROOT, 'src/brain/paths.js'));
-const config = await import(path.join(ROOT, 'src/brain/config.js'));
-const files  = await import(path.join(ROOT, 'src/brain/files.js'));
+const paths  = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+const config = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+const files  = await import(pathToFileURL(path.join(ROOT, 'src/brain/files.js')).href);
 
 // Fingerprint the REAL user files BEFORE any test runs, so §7 can prove this
 // suite never touched them. sha256 + size + existence only — mtime makes this
@@ -260,7 +260,7 @@ section('§3  The ROUTE — the first screen gets 200 + [], not 500 + a stack st
     'ANTI-VACUITY: the route is exercised against a genuinely absent folder');
 
   const express = (await import('express')).default;
-  const domainsRouter = (await import(path.join(ROOT, 'src/routes/domains.js'))).default;
+  const domainsRouter = (await import(pathToFileURL(path.join(ROOT, 'src/routes/domains.js')).href)).default;
   const app = express();
   app.use('/api/domains', domainsRouter);
 
@@ -319,7 +319,7 @@ section('§4  ensureDefaultDomainsDir — provisions the DEFAULT, refuses the CO
   // The write that used to fail FIRST on a fresh bundle install: sync.setup()
   // opens by writing <domains>/.gitignore, and writeFileAtomic does not create
   // parents. Proven directly rather than asserted about.
-  const aw = await import(path.join(ROOT, 'src/brain/atomic-write.js'));
+  const aw = await import(pathToFileURL(path.join(ROOT, 'src/brain/atomic-write.js')).href);
   let gitignoreErr = null;
   try { await aw.writeFileAtomic(path.join(dir, '.gitignore'), '*/raw/\n', 'utf8'); }
   catch (err) { gitignoreErr = err; }
@@ -443,7 +443,7 @@ section('§6  The ESCAPE HATCH — the folder picker must work in a packaged app
 // the shell's registration is asserted to exist.
 
 {
-  const cfgRoutes = await import(path.join(ROOT, 'src/routes/config.js'));
+  const cfgRoutes = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
   const chosen = path.join(tmpBase, 'picked-folder');
   fs.mkdirSync(chosen, { recursive: true });
 

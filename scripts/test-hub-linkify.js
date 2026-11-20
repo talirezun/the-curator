@@ -15,7 +15,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = mkdtempSync(path.join(tmpdir(), 'curator-hub-linkify-'));
@@ -24,11 +24,11 @@ mkdirSync(DOMAINS);
 process.env.CURATOR_TEST_USER_DATA_DIR = path.join(ROOT, 'userdata');
 mkdirSync(process.env.CURATOR_TEST_USER_DATA_DIR);
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS);
-const { createDomain } = await import(path.join(REPO, 'src/brain/files.js'));
-const { __testing } = await import(path.join(REPO, 'src/brain/ingest.js'));
-const { scanWiki } = await import(path.join(REPO, 'src/brain/health.js'));
+const { createDomain } = await import(pathToFileURL(path.join(REPO, 'src/brain/files.js')).href);
+const { __testing } = await import(pathToFileURL(path.join(REPO, 'src/brain/ingest.js')).href);
+const { scanWiki } = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
 const { linkifyHubPages } = __testing;
 
 let passed = 0, failed = 0;

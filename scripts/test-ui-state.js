@@ -100,7 +100,7 @@
  */
 
 import { readFileSync, readdirSync, statSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -168,8 +168,8 @@ const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-uistate-'));
 process.env.CURATOR_TEST_USER_DATA_DIR = TMP;
 const CFG_FILE = path.join(TMP, '.curator-config.json');
 
-const cfgMod = await import(path.join(ROOT, 'src/brain/config.js'));
-const client = await import(path.join(ROOT, 'src/public/next/shared/ui-state.js'));
+const cfgMod = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+const client = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/ui-state.js')).href);
 
 function resetConfig(obj) {
   writeFileSync(CFG_FILE, JSON.stringify(obj || {}, null, 2) + '\n');

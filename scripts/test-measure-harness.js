@@ -41,7 +41,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -93,7 +93,7 @@ function line(sid, tool, { ts, ok: okVal = true, client, via } = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0  the exported units, imported directly (never a source regex)');
 // ═══════════════════════════════════════════════════════════════════════════
-const mod = await import(path.join(ROOT, 'scripts', 'measure-harness.js'));
+const mod = await import(pathToFileURL(path.join(ROOT, 'scripts', 'measure-harness.js')).href);
 const {
   parseUsageLine, bucketLines, summariseSession, buildHarnessRow, buildAllRows,
   parseArgs, validateArgs, formatTable, run, VERDICTS, DEFAULT_MIN_SESSIONS,

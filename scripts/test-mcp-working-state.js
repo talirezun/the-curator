@@ -40,7 +40,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -172,7 +172,7 @@ ok(wireNames.includes('get_working_state'), 'tools/list carries get_working_stat
 ok(wireNames.includes('save_working_state'), 'tools/list carries save_working_state');
 
 // Registration is additive: nothing that shipped before may have been dropped.
-const { tools: registry } = await import(path.join(REPO_ROOT, 'mcp/tools/index.js'));
+const { tools: registry } = await import(pathToFileURL(path.join(REPO_ROOT, 'mcp/tools/index.js')).href);
 const PRE_EXISTING = [
   'list_domains', 'get_index', 'get_graph_overview', 'get_tags', 'search_wiki',
   'search_cross_domain', 'get_node', 'get_connected_nodes', 'get_backlinks',

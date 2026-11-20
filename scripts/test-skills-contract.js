@@ -33,7 +33,7 @@
 import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
@@ -154,7 +154,7 @@ for (const [name, phrases] of Object.entries(REQUIRED_PHRASES)) {
 
 console.log('\n§2 — Declared tools match the MCP registry');
 
-const { tools } = await import(path.join(REPO, 'mcp', 'tools', 'index.js'));
+const { tools } = await import(pathToFileURL(path.join(REPO, 'mcp', 'tools', 'index.js')).href);
 const registered = new Set(tools.map(t => t.definition.name));
 ok(registered.size >= 15, `mcp/tools/index.js registers ${registered.size} tools (sanity floor)`);
 
@@ -226,7 +226,7 @@ for (const name of SKILLS) {
 console.log('\n§3 — Every cap quoted in a skill equals the constant in the code');
 
 // Working state exports its caps, so read the real values.
-const ws = await import(path.join(REPO, 'src', 'brain', 'working-state.js'));
+const ws = await import(pathToFileURL(path.join(REPO, 'src', 'brain', 'working-state.js')).href);
 
 // compile.js keeps its caps module-private, so they are read out of the source
 // text. A regex, deliberately: importing would not expose them, and a wrong

@@ -23,7 +23,7 @@
 
 import { readFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
@@ -147,7 +147,7 @@ section('3. The Appearance lede names the tray on Windows');
 section('4. The update phases: Windows does not "unpack beside" the app (wave 2)');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const UP = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+  const UP = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/update-phases.js')).href);
   const MAC_ONLY = /beside the one you are running|Unpacking|the app inside it/;
   for (const ph of UP.UPDATE_PHASE_ORDER) {
     const shared = UP.phaseCopy(ph, 'panel');

@@ -76,7 +76,7 @@
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -111,12 +111,12 @@ function stripJsComments(src) {
 
 let model, menu, icon, mode, watchMod, remote;
 try {
-  model = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
-  menu = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
-  remote = await import(path.join(DESKTOP, 'lib', 'tray-remote.js'));
-  icon = await import(path.join(DESKTOP, 'lib', 'tray-icon.js'));
-  mode = await import(path.join(DESKTOP, 'lib', 'background-mode.js'));
-  watchMod = await import(path.join(DESKTOP, 'lib', 'state-watch.js'));
+  model = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
+  menu = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu.js')).href);
+  remote = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-remote.js')).href);
+  icon = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-icon.js')).href);
+  mode = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'background-mode.js')).href);
+  watchMod = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'state-watch.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the tray modules: ${err.message}`);
   process.exit(1);
@@ -1827,7 +1827,7 @@ section('§17 sections, the two pictures, and the items that are now reachable')
     'THE DEFECT: the exact reading the photographed menu cut to `5 days known · 55 saves…` now renders WHOLE');
   // AND THE BUDGET IS DERIVED FROM THE PRODUCER, not from a number typed here.
   let pulseProducer = null;
-  try { pulseProducer = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js')); } catch { pulseProducer = null; }
+  try { pulseProducer = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'pulse-strip.js')).href); } catch { pulseProducer = null; }
   if (typeof pulseProducer?.longestPulseLabel === 'function') {
     const longest = pulseProducer.longestPulseLabel();
     eq(stripBudget, Math.max(model.labelBudgetChars(55), model.stripPulseNoun(longest).length),
@@ -1998,8 +1998,8 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
 // module that vanished cannot leave this section passing on nothing.
 {
   let dotsMod = null, stripMod = null;
-  try { dotsMod = await import(path.join(DESKTOP, 'lib', 'menu-dots.js')); } catch { dotsMod = null; }
-  try { stripMod = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js')); } catch { stripMod = null; }
+  try { dotsMod = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu-dots.js')).href); } catch { dotsMod = null; }
+  try { stripMod = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'pulse-strip.js')).href); } catch { stripMod = null; }
 
   let pins = 0;
   if (dotsMod) {
@@ -2061,7 +2061,7 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
   // import src/). shared/age.js touches no DOM, so the REAL ones are imported
   // and both copies run over one matrix that crosses every boundary.
   {
-    const age = await import(path.join(ROOT, 'src', 'public', 'next', 'shared', 'age.js'));
+    const age = await import(pathToFileURL(path.join(ROOT, 'src', 'public', 'next', 'shared', 'age.js')).href);
     const matrix = [-1, 0, 1, 59, 60, 61, 3599, 3600, 3601, 86399, 86400, 86401, 604799, 604800, 604801,
       30 * 86400, null, undefined, NaN, Infinity, '60', {}];
     const diff = matrix.filter((v) => age.freshnessTier(v) !== model.freshnessTier(v) || age.freshnessStep(v) !== model.freshnessStep(v));
@@ -2080,7 +2080,7 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
   // SAID rather than passed silently.
   {
     let hn = null;
-    try { hn = await import(path.join(ROOT, 'src', 'brain', 'harness-names.js')); } catch { hn = null; }
+    try { hn = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'harness-names.js')).href); } catch { hn = null; }
     if (hn && typeof hn.normaliseHarness === 'function') {
       const matrix = ['Claude Code', 'Claude Code (desktop)', 'Claude Code (desktop app)', 'Claude Code (worker agent)',
         'claude-code', 'claudecode', 'CLAUDE_CODE', 'claude-desktop', 'Claude Desktop', 'claude-ai', 'Antigravity',

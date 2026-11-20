@@ -61,7 +61,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -113,11 +113,11 @@ function visibleText(html) {
   return String(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-const win = await import(path.join(ROOT, 'desktop/lib/update-window.js'));
-const client = await import(path.join(ROOT, 'desktop/lib/update-client.js'));
-const verdict = await import(path.join(ROOT, 'desktop/lib/update-verdict.js'));
-const page = await import(path.join(ROOT, 'src/public/next/views/update-window.js'));
-const phases = await import(path.join(ROOT, 'src/public/next/shared/update-phases.js'));
+const win = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/update-window.js')).href);
+const client = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/update-client.js')).href);
+const verdict = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/update-verdict.js')).href);
+const page = await import(pathToFileURL(path.join(ROOT, 'src/public/next/views/update-window.js')).href);
+const phases = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/update-phases.js')).href);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0 the modules load, and the names main.js will import are pinned');

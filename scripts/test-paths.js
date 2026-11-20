@@ -45,7 +45,7 @@
  * outside os.tmpdir().
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -66,7 +66,7 @@ function section(t) { console.log(`\n${t}`); }
 
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
+const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§1  Repo-mode equivalence — every path resolves EXACTLY as before');
@@ -121,8 +121,8 @@ for (const rel of HISTORICAL_CREDENTIAL_RELS) {
 // The live resolvers the app and the MCP actually call must agree with each
 // other. A disagreement here is the "Claude Desktop silently reads a stale or
 // empty wiki" bug that motivated routing mcp/storage/local.js through paths.js.
-const { getDomainsDir } = await import(path.join(ROOT, 'src/brain/config.js'));
-const { createStorageAdapter } = await import(path.join(ROOT, 'mcp/storage/local.js'));
+const { getDomainsDir } = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
+const { createStorageAdapter } = await import(pathToFileURL(path.join(ROOT, 'mcp/storage/local.js')).href);
 eq(path.resolve(createStorageAdapter({}).getBase()), path.resolve(getDomainsDir()),
   'MCP storage adapter resolves the SAME domains folder as the app');
 eq(getDomainsDir(), path.join(OLD_ROOT, 'domains'),
@@ -151,7 +151,7 @@ ok(path.relative(getDomainsDir(), paths.getTrashDir()).startsWith('..'),
   'the trash is OUTSIDE the domains folder (Personal Sync\'s work-tree)');
 ok(ignoreLines.includes('.curator-trash/'),
   'the trash is excluded from the app repo — it holds a user\'s whole deleted wiki, and the repo is public');
-const DGR = (await import(path.join(ROOT, 'src/brain/sync.js'))).__testing.DOMAINS_GITIGNORE_RULES;
+const DGR = (await import(pathToFileURL(path.join(ROOT, 'src/brain/sync.js')).href)).__testing.DOMAINS_GITIGNORE_RULES;
 ok(Array.isArray(DGR) && DGR.includes('.curator-trash/'),
   'DOMAINS_GITIGNORE_RULES carries .curator-trash/ for the pathological domainsPath === user-data-dir install');
 
@@ -352,7 +352,7 @@ section('§4  The existing test seams still win, with unchanged precedence');
 // getDomainsDir's precedence is: __setDomainsDirOverride > CURATOR_TEST_DOMAINS_DIR
 // > config.domainsPath > DOMAINS_PATH > default. paths.js only supplies the
 // DEFAULT — every override above it must still take priority.
-const cfgModule = await import(path.join(ROOT, 'src/brain/config.js'));
+const cfgModule = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
 const seamDir = path.join(tmpBase, 'seam-domains');
 
 const savedEnvTest = process.env.CURATOR_TEST_DOMAINS_DIR;

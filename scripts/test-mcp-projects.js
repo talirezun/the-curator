@@ -35,7 +35,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -154,7 +154,7 @@ const wireNames = wireTools.map((t) => t.name);
 ok(wireNames.includes('list_projects'), 'tools/list carries list_projects');
 ok(wireNames.includes('save_project_brief'), 'tools/list carries save_project_brief');
 
-const { tools: registry } = await import(path.join(REPO_ROOT, 'mcp/tools/index.js'));
+const { tools: registry } = await import(pathToFileURL(path.join(REPO_ROOT, 'mcp/tools/index.js')).href);
 // v3.59.0: 22 → 24 (get_project_context, save_foundation).
 ok(wireNames.length === registry.length && wireNames.length === 24,
   `the wire holds all ${registry.length} registered tools, and that is 24 (got ${wireNames.length})`);

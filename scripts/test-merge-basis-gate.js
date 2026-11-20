@@ -38,7 +38,7 @@ import { createServer } from 'http';
 import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const USER_DIR = mkdtempSync(path.join(os.tmpdir(), 'curator-basis-user-'));
@@ -51,13 +51,13 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.LLM_MODEL;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
-const ai = await import(path.join(REPO, 'src/brain/health-ai.js'));
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
-const routes = await import(path.join(REPO, 'src/routes/health.js'));
-const { fixWikiIssueHandler } = await import(path.join(REPO, 'mcp/tools/health.js'));
-const { createStorageAdapter } = await import(path.join(REPO, 'mcp/storage/local.js'));
+const ai = await import(pathToFileURL(path.join(REPO, 'src/brain/health-ai.js')).href);
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
+const routes = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
+const { fixWikiIssueHandler } = await import(pathToFileURL(path.join(REPO, 'mcp/tools/health.js')).href);
+const { createStorageAdapter } = await import(pathToFileURL(path.join(REPO, 'mcp/storage/local.js')).href);
 const { default: express } = await import('express');
 
 const app = express();

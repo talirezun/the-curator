@@ -75,7 +75,7 @@
 import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-tray-projects-'));
 const DOMAINS = path.join(TMP, 'domains');
@@ -104,18 +104,18 @@ function eq(actual, expected, label) {
 }
 const section = (t) => console.log(`\n${t}`);
 
-const TS = await import(path.join(ROOT, 'src', 'brain', 'tray-summary.js'));
-const M = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
-const MENU = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
-const RP = await import(path.join(DESKTOP, 'lib', 'resume-prompt.js'));
-const WATCH = await import(path.join(DESKTOP, 'lib', 'state-watch.js'));
+const TS = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'tray-summary.js')).href);
+const M = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
+const MENU = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu.js')).href);
+const RP = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'resume-prompt.js')).href);
+const WATCH = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'state-watch.js')).href);
 // The store's OWN provenance parser (v3.76.0, truth audit F3): the fake below
 // hands the data layer `briefAuthoredBy` in the shape the real store returns —
 // an object `{kind, harness, model, at, commissionedBy}` or null — derived by
 // the real function from a real stamp line, never a hand-typed string. The
 // string 'agent' this fake used to return is exactly why a data layer that
 // compared the object to 'agent' passed here and never fired in production.
-const { parseBriefProvenance } = await import(path.join(ROOT, 'src', 'brain', 'working-state.js'));
+const { parseBriefProvenance } = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'working-state.js')).href);
 /** A brief's provenance, as the real store parses it from its stamp line. */
 function briefProvenance(brief) {
   if (!brief || !brief.authoredBy) return parseBriefProvenance('# no stamp\n');

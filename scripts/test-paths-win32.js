@@ -33,7 +33,7 @@
  * (a simulated host is not a Windows filesystem).
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -318,7 +318,7 @@ const tracked = execFileSync('git', ['-C', ROOT, 'ls-files', '-z'], { encoding: 
 ok(tracked.length > 500, `listed ${tracked.length} tracked files (anti-vacuity)`);
 ok(!tracked.some(f => path.posix.basename(f) === '.curator-bundle'), 'no tracked file is named .curator-bundle');
 ok(!fs.existsSync(path.join(ROOT, '.curator-bundle')), 'this checkout has no .curator-bundle at its root');
-const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
+const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
 eq(paths.isBundleInstall(), false, 'so THIS checkout is a repo install');
 eq(paths.BUNDLE_MARKER_FILE, '.curator-bundle', 'the marker name is the agreed constant');
 
@@ -356,7 +356,7 @@ for (const planted of ['install.ps1', 'scripts/windows/curator-common.ps1', 'src
 section('§5  Capabilities are platform-aware, complete, and only the Windows bundle differs');
 // ═══════════════════════════════════════════════════════════════════════════
 
-const im = await import(path.join(ROOT, 'src/brain/install-mode.js'));
+const im = await import(pathToFileURL(path.join(ROOT, 'src/brain/install-mode.js')).href);
 const KEYS = ['canSelfUpdateViaGit', 'canRunNpmInstall', 'canRebuildAppleScriptApp', 'canWriteBesideCode',
   'mcpLaunchStyle', 'restartStyle', 'updateStyle', 'folderPickerStyle'];
 const records = im.listCapabilityRecords();

@@ -68,7 +68,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -88,12 +88,12 @@ function section(t) { console.log(`\n${t}`); }
 
 let rgba, strip, dots, png, contrast;
 try {
-  rgba = await import(path.join(DESKTOP, 'lib', 'rgba-png.js'));
-  strip = await import(path.join(DESKTOP, 'lib', 'pulse-strip.js'));
-  dots = await import(path.join(DESKTOP, 'lib', 'menu-dots.js'));
+  rgba = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'rgba-png.js')).href);
+  strip = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'pulse-strip.js')).href);
+  dots = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu-dots.js')).href);
   // INDEPENDENT of the modules under test — see the header.
-  png = await import(path.join(ROOT, 'scripts', 'visual', 'png.js'));
-  contrast = await import(path.join(ROOT, 'scripts', 'visual', 'contrast.js'));
+  png = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'png.js')).href);
+  contrast = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'contrast.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the modules under test: ${err.message}`);
   process.exit(1);
@@ -588,7 +588,7 @@ section('§7 the freshness dots: THE APP\'S SCALE, and the app\'s marks (v3.74.0
   // The tier names come from tray-model.js's pinned copy of the app's
   // `freshnessTier` — derived HERE by calling it, so a tier this module draws
   // that the model never produces, or the reverse, reds.
-  const model = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
+  const model = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
   const derived = [
     model.freshnessTier(1), model.freshnessTier(600), model.freshnessTier(3 * 3600),
     model.freshnessTier(3 * 86400), model.freshnessTier(30 * 86400), model.freshnessTier(null),

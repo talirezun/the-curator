@@ -25,7 +25,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import os from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-link-forms-'));
@@ -40,13 +40,13 @@ const REAL_CONFIG = path.join(REPO, '.curator-config.json');
 const fp = (f) => (existsSync(f) ? createHash('sha256').update(readFileSync(f)).digest('hex') : 'absent');
 const CONFIG_BEFORE = fp(REAL_CONFIG);
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS);
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const undo = await import(path.join(REPO, 'src/brain/health-undo.js'));
-const links = await import(path.join(REPO, 'src/brain/health-links.js'));
-const { fenceRuns } = await import(path.join(REPO, 'src/brain/files.js'));
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const undo = await import(pathToFileURL(path.join(REPO, 'src/brain/health-undo.js')).href);
+const links = await import(pathToFileURL(path.join(REPO, 'src/brain/health-links.js')).href);
+const { fenceRuns } = await import(pathToFileURL(path.join(REPO, 'src/brain/files.js')).href);
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {
@@ -306,8 +306,8 @@ section('6. A link that reaches a DIFFERENT page of the same name is left alone'
 // ═══════════════════════════════════════════════════════════════════════════
 section('7. The MCP: fix_wiki_issue preview, then the merge, says what moved');
 {
-  const { fixWikiIssueHandler } = await import(path.join(REPO, 'mcp/tools/health.js'));
-  const { createStorageAdapter } = await import(path.join(REPO, 'mcp/storage/local.js'));
+  const { fixWikiIssueHandler } = await import(pathToFileURL(path.join(REPO, 'mcp/tools/health.js')).href);
+  const { createStorageAdapter } = await import(pathToFileURL(path.join(REPO, 'mcp/storage/local.js')).href);
   const storage = createStorageAdapter({ domainsPath: DOMAINS });
   const d = mkDomain({
     'entities/epsilon.md': page('Epsilon', 'entity'),
@@ -461,7 +461,7 @@ section('11. The re-audit\'s cases');
 }
 {
   // A later ingest's link tidy keeps the folder a merge wrote on purpose.
-  const files = await import(path.join(REPO, 'src/brain/files.js'));
+  const files = await import(pathToFileURL(path.join(REPO, 'src/brain/files.js')).href);
   const d = mkDomain({
     'concepts/bar.md': page('Bar', 'concept'), 'entities/bar.md': page('Bar E', 'entity'), 'concepts/baz.md': page('Baz', 'concept'),
     'entities/l.md': '# L\n\n- [[concepts/bar]] the concept\n- [[concepts/baz]] a plain prefix\n- [[entities/bar]] the entity\n',

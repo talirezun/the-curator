@@ -39,7 +39,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const USER_DIR = mkdtempSync(path.join(os.tmpdir(), 'curator-dupchecks-user-'));
@@ -52,13 +52,13 @@ delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.LLM_MODEL;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const ai = await import(path.join(REPO, 'src/brain/health-ai.js'));
-const { addDismissal, loadDismissed } = await import(path.join(REPO, 'src/brain/health-dismissed.js'));
-const { getDuplicateChecksDir } = await import(path.join(REPO, 'src/brain/paths.js'));
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const ai = await import(pathToFileURL(path.join(REPO, 'src/brain/health-ai.js')).href);
+const { addDismissal, loadDismissed } = await import(pathToFileURL(path.join(REPO, 'src/brain/health-dismissed.js')).href);
+const { getDuplicateChecksDir } = await import(pathToFileURL(path.join(REPO, 'src/brain/paths.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {
@@ -543,7 +543,7 @@ section('9. The server decides what a batch may delete');
   ok(single.fixed === 1, '9.13 NEGATIVE CONTROL — a single merge is not held to the batch rule');
 
   // A mirror route refusal is the route's; the guard stays on the route.
-  const routes = await import(path.join(REPO, 'src/routes/health.js'));
+  const routes = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
   const layer = routes.default.stack.find((l) => l.route && l.route.path === '/:domain/semantic-dupes/forget');
   ok(!!layer && !!layer.route.methods.post, '9.14 the forget route is registered as a POST');
 }
@@ -616,7 +616,7 @@ section('11. No file, a corrupt file, a wrong shape: a first scan, never a crash
 // ═══════════════════════════════════════════════════════════════════════════
 section('12. The MCP tool reports coverage');
 {
-  const { scanSemanticDuplicatesHandler, scanSemanticDuplicatesDefinition } = await import(path.join(REPO, 'mcp/tools/health.js'));
+  const { scanSemanticDuplicatesHandler, scanSemanticDuplicatesDefinition } = await import(pathToFileURL(path.join(REPO, 'mcp/tools/health.js')).href);
   const d = mkDomain({ 'concepts/hand-off.md': page('Hand-off'), 'concepts/handoff.md': page('Handoff'),
     'concepts/data-store.md': page('Data store'), 'concepts/data-stores.md': page('Data stores') });
   const storage = { listDomains: async () => [d.name] };

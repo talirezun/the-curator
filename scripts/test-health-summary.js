@@ -35,12 +35,12 @@ process.env.CURATOR_TEST_USER_DATA_DIR = USER_DIR;
 process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS_DIR;
 delete process.env.DOMAINS_PATH;
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
-const hs = await import(path.join(REPO, 'src/brain/health-summary.js'));
-const { getHealthSummaryPath } = await import(path.join(REPO, 'src/brain/paths.js'));
-const { scanWiki } = await import(path.join(REPO, 'src/brain/health.js'));
-const { formatAge } = await import(path.join(REPO, 'src/public/next/shared/age.js'));
+const hs = await import(pathToFileURL(path.join(REPO, 'src/brain/health-summary.js')).href);
+const { getHealthSummaryPath } = await import(pathToFileURL(path.join(REPO, 'src/brain/paths.js')).href);
+const { scanWiki } = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const { formatAge } = await import(pathToFileURL(path.join(REPO, 'src/public/next/shared/age.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {
@@ -173,8 +173,8 @@ section('3. RESTART — a fresh process reads what this one recorded');
 section('4. The routes, over real HTTP');
 {
   const { default: express } = await import('express');
-  const { default: healthRouter } = await import(path.join(REPO, 'src/routes/health.js'));
-  const { default: domainsRouter } = await import(path.join(REPO, 'src/routes/domains.js'));
+  const { default: healthRouter } = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
+  const { default: domainsRouter } = await import(pathToFileURL(path.join(REPO, 'src/routes/domains.js')).href);
   const app = express();
   app.use(express.json());
   app.use('/api/health', healthRouter);

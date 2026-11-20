@@ -26,7 +26,7 @@
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, utimesSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -39,12 +39,12 @@ const USER_DATA = path.join(TMP, 'user-data');
 process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA;
 mkdirSync(USER_DATA, { recursive: true });
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS);
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const undo = await import(path.join(REPO, 'src/brain/health-undo.js'));
-const { getHealthUndoDir } = await import(path.join(REPO, 'src/brain/paths.js'));
-const { SECTION_KIT: SECTION_KIT_OBJ } = await import(path.join(REPO, 'scripts/test-helpers/section-kit.js'));
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const undo = await import(pathToFileURL(path.join(REPO, 'src/brain/health-undo.js')).href);
+const { getHealthUndoDir } = await import(pathToFileURL(path.join(REPO, 'src/brain/paths.js')).href);
+const { SECTION_KIT: SECTION_KIT_OBJ } = await import(pathToFileURL(path.join(REPO, 'scripts/test-helpers/section-kit.js')).href);
 
 let pass = 0;
 let fail = 0;
@@ -216,7 +216,7 @@ section('§1b The record: plain words, page counts, the deleted page');
   ok(r2.fixed === 0 && !r2.undo && (await undo.listHealthChanges(d.name)).length === 1, 'a refused action leaves no record', JSON.stringify(r2));
 
   // A write of the same bytes is not a change: no record, no copy left behind.
-  const { writeFileAtomic } = await import(path.join(REPO, 'src/brain/atomic-write.js'));
+  const { writeFileAtomic } = await import(pathToFileURL(path.join(REPO, 'src/brain/atomic-write.js')).href);
   const same0 = await undo.withHealthUndo(d.name, { kind: 'test', title: 'same bytes' }, async () => {
     const f = path.join(d.wiki, 'concepts/linker.md');
     await writeFileAtomic(f, readFileSync(f));
@@ -236,7 +236,7 @@ section('§1b The record: plain words, page counts, the deleted page');
     'and undo puts the link back as a link, and the page as it was');
 
   // A batch of spelling variants is ONE change, undone all at once.
-  const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+  const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
   const files = {};
   const memory = new Map();
   const pairs = [];
@@ -367,7 +367,7 @@ section('§3 Copy failure blocks the action');
   ok(same(tree(d.wiki), before), 'and undoing it gives the wiki before', JSON.stringify(diffKeys(tree(d.wiki), before)));
 
   // (d) A synchronous write inside an action is refused rather than written uncopied.
-  const { writeFileAtomicSync, writeRecorder } = await import(path.join(REPO, 'src/brain/atomic-write.js'));
+  const { writeFileAtomicSync, writeRecorder } = await import(pathToFileURL(path.join(REPO, 'src/brain/atomic-write.js')).href);
   err = null;
   try {
     await undo.withHealthUndo(d.name, { kind: 'test', title: 'sync' }, async () => {
@@ -480,7 +480,7 @@ section('§5 30 days, and a size cap that never deletes the newest');
 section('§6 The routes over a real Express dispatch');
 {
   const express = (await import('express')).default;
-  const router = (await import(path.join(REPO, 'src/routes/health.js'))).default;
+  const router = (await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href)).default;
   const app = express();
   app.use(express.json());
   app.use('/api/health', router);
@@ -604,7 +604,7 @@ section('§8 A record applies only to the folder it was made in');
 // ── §10 The words, the row, and start-up ───────────────────────────────────
 section('§10 Words true for every change, the row always there, a refusal cleared, expiry at start');
 {
-  const { extractFunction } = await import(path.join(REPO, 'scripts/test-helpers/mcp-page-sandbox.js'));
+  const { extractFunction } = await import(pathToFileURL(path.join(REPO, 'scripts/test-helpers/mcp-page-sandbox.js')).href);
   const SRC = readFileSync(path.join(REPO, 'src/public/next/views/domains.js'), 'utf8');
   const lift = (names, deps, ret) => new Function('state', ...Object.keys(deps),
     names.map((n) => extractFunction(SRC, n)).join('\n') + '\nreturn ' + ret + ';');

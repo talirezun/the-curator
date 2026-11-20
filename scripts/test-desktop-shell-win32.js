@@ -32,7 +32,7 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -57,15 +57,15 @@ function stripJsComments(src) {
 
 let sp, mode, winIcon, menu, trayMenu, trayModel, appVersion, png, contrast;
 try {
-  sp = await import(path.join(DESKTOP, 'lib', 'shell-platform.js'));
-  mode = await import(path.join(DESKTOP, 'lib', 'background-mode.js'));
-  winIcon = await import(path.join(DESKTOP, 'lib', 'tray-icon-win.js'));
-  menu = await import(path.join(DESKTOP, 'lib', 'menu.js'));
-  trayMenu = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
-  trayModel = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
-  appVersion = await import(path.join(DESKTOP, 'lib', 'app-version.js'));
-  png = await import(path.join(ROOT, 'scripts', 'visual', 'png.js'));
-  contrast = await import(path.join(ROOT, 'scripts', 'visual', 'contrast.js'));
+  sp = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'shell-platform.js')).href);
+  mode = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'background-mode.js')).href);
+  winIcon = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-icon-win.js')).href);
+  menu = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu.js')).href);
+  trayMenu = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu.js')).href);
+  trayModel = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-model.js')).href);
+  appVersion = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'app-version.js')).href);
+  png = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'png.js')).href);
+  contrast = await import(pathToFileURL(path.join(ROOT, 'scripts', 'visual', 'contrast.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the shell modules: ${err.message}`);
   process.exit(1);
@@ -146,7 +146,7 @@ section('§3 closing the window: hide to the tray ONLY on win32 with a live tray
 section('§3b refusing to start on incomplete Windows program files (audit M1)');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const paths = await import(path.join(ROOT, 'src', 'brain', 'paths.js'));
+  const paths = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'paths.js')).href);
   const INST = 'C:\\Users\\Ana\\AppData\\Local\\Programs\\The Curator';
   const ROOTW = INST + '\\resources\\app';
   const MARK = ROOTW + '\\.curator-bundle';
@@ -221,7 +221,7 @@ section('§5 how the tray is driven');
   ok(Object.isFrozen(mac) && Object.isFrozen(win), 'both plans are frozen');
   // The remote-check allow-list must still contain the trigger the Windows
   // right-click passes — or the Windows menu would never ask about other machines.
-  const remote = await import(path.join(DESKTOP, 'lib', 'tray-remote.js'));
+  const remote = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-remote.js')).href);
   ok(remote.REMOTE_CHECK_TRIGGERS.includes('right-click'), 'the right-click trigger Windows uses is in tray-remote.js\'s allow-list');
 }
 
@@ -270,7 +270,7 @@ section('§8 the in-app updater is never the darwin engine on a PC');
   eq(sp.updaterSupported('win32', null), false, 'win32 with nothing → not built');
   eq(sp.updaterSupported('win32', { createUpdateInstaller() {} }), true,
     'win32 once the update-engine package exports createUpdateInstaller → built');
-  const engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
+  const engine = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-engine.js')).href);
   console.log(`    (today update-engine.js ${typeof engine.createUpdateInstaller === 'function' ? 'DOES' : 'does NOT yet'} export createUpdateInstaller)`);
 }
 
@@ -453,10 +453,10 @@ function walk(t, f, trail = []) {
   eq(trayMenu.rowActionsFor('win32').map(([id]) => id), trayMenu.ROW_ACTIONS.map(([id]) => id), 'win32 changes words only, never ids or order');
   // The input is not mutated.
   const before = ser(mac);
-  (await import(path.join(DESKTOP, 'lib', 'tray-menu-win.js'))).adaptTrayMenuForWindows(mac);
+  (await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu-win.js')).href)).adaptTrayMenuForWindows(mac);
   eq(ser(mac), before, 'adaptTrayMenuForWindows does not mutate the Mac template');
   // A disabled statement with a tooltip opens a submenu of facts, and stays a statement.
-  const tw = await import(path.join(DESKTOP, 'lib', 'tray-menu-win.js'));
+  const tw = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-menu-win.js')).href);
   const [stmt] = tw.adaptTrayMenuForWindows([{ label: 'short', enabled: false, toolTip: 'the whole sentence\nsecond fact' }]);
   ok(stmt.enabled === true && stmt.submenu.length === 2 && stmt.submenu.every((x) => x.enabled === false),
     'a clipped statement becomes a parent whose submenu holds only its disabled detail lines');
@@ -524,8 +524,8 @@ section('§14 wave-2 wiring: the updater, the folder dialog, runCommand, afterSt
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const { spawn } = await import('node:child_process');
-  const rc = await import(path.join(DESKTOP, 'lib', 'run-command.js'));
-  const engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
+  const rc = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'run-command.js')).href);
+  const engine = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-engine.js')).href);
 
   // runCommand, through a RECORDING spawn: the options it hands Node.
   const calls = [];

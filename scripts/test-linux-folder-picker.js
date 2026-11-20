@@ -11,7 +11,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-linuxpick-')));
@@ -34,8 +34,8 @@ function fakeRes() {
   return r;
 }
 
-const lfd = await import(path.join(ROOT, 'src/brain/linux-folder-dialog.js'));
-const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
+const lfd = await import(pathToFileURL(path.join(ROOT, 'src/brain/linux-folder-dialog.js')).href);
+const configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
 
 const ENV = { DISPLAY: ':0', PATH: '/usr/bin' };
 const NO_MSG = 'This computer has no folder dialog The Curator can open — paste the folder\'s full path instead.';

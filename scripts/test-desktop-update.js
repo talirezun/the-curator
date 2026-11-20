@@ -70,7 +70,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -134,11 +134,11 @@ function makeFixtureApp(at, { version = '9.9.9', name = 'The Curator.app' } = {}
 
 let plan, release, engine, host, cfg;
 try {
-  plan = await import(path.join(DESKTOP, 'lib', 'update-plan.js'));
-  release = await import(path.join(DESKTOP, 'lib', 'update-release.js'));
-  engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
-  host = await import(path.join(ROOT, 'src', 'brain', 'desktop-host.js'));
-  cfg = await import(path.join(ROOT, 'src', 'routes', 'config.js'));
+  plan = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-plan.js')).href);
+  release = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-release.js')).href);
+  engine = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-engine.js')).href);
+  host = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'desktop-host.js')).href);
+  cfg = await import(pathToFileURL(path.join(ROOT, 'src', 'routes', 'config.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the update modules: ${err.message}`);
   process.exit(1);
@@ -201,7 +201,7 @@ section('§2 electron-updater is not merely absent — it is UNUSABLE');
   // AD-HOC, so its designated requirement can only be a cdhash — a hash of
   // this exact build, which no later build can match. That is not asserted
   // about a config string; the build hook's own refusal is EXECUTED.
-  const adhoc = await import(path.join(DESKTOP, 'lib', 'adhoc-sign.mjs'));
+  const adhoc = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'adhoc-sign.mjs')).href);
   let threw = null;
   try {
     adhoc.assertAdhocOnly({
@@ -312,7 +312,7 @@ section('§4 Which .dmg — digests, arch tokens, https-only');
 // ═══════════════════════════════════════════════════════════════════════════
 section('§5 Where we are installed — and the REUSED translocation classifier');
 // ═══════════════════════════════════════════════════════════════════════════
-const launcher = await import(path.join(ROOT, 'src', 'brain', 'mcp-launcher.js'));
+const launcher = await import(pathToFileURL(path.join(ROOT, 'src', 'brain', 'mcp-launcher.js')).href);
 {
   eq(plan.bundlePathFromExecPath('/Applications/The Curator.app/Contents/MacOS/The Curator'),
      '/Applications/The Curator.app', 'the bundle is found from the executable');

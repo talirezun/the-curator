@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // v3.89.0: the fold items and action chips are the section kit's (real functions).
 import { SECTION_KIT_NAMES, SECTION_KIT_VALUES } from './test-helpers/section-kit.js';
@@ -118,7 +118,7 @@ section('§4 ingest "For review" classifier');
 section('§5 queue counts, label list, MCP trim list');
 {
   ok(/summaryLinkSections:\s*\(report\.summaryLinkSections \|\| \[\]\)\.length/.test(rd('src/brain/ingest-queue.js')), 'queue end-of-batch counts carry summaryLinkSections');
-  const { formatHealthCounts } = await import(path.join(ROOT, 'src/public/next/shared/ingest-queue-logic.js'));
+  const { formatHealthCounts } = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/ingest-queue-logic.js')).href);
   eq(formatHealthCounts({ summaryLinkSections: 3, brokenLinks: 1 }), '1 broken links, 3 summary link lists', 'formatHealthCounts names it');
   ok(/'summaryLinkSections'/.test(rd('mcp/tools/index.js').split('trimmable')[1] || ''), 'MCP trimmable list carries summaryLinkSections');
 }

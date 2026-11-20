@@ -58,7 +58,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, statSy
 import os from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -81,14 +81,14 @@ function fingerprint(file) {
 }
 const CONFIG_BEFORE = fingerprint(REAL_CONFIG);
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS_DIR);
 
 const {
   fixIssue,
   previewSemanticDuplicateMerge,
   fixSemanticDuplicatesBatch,
-} = await import(path.join(REPO, 'src/brain/health.js'));
+} = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
 
 let passed = 0, failed = 0;
 function ok(cond, label, detail = '') {
@@ -102,7 +102,7 @@ function page(title, body = '') {
   return `---\ntype: entity\ntags: [type/entity]\n---\n\n# ${title}\n\n## Key Facts\n\n- a fact about ${title}\n${body}`;
 }
 
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
 /** A remembered yes/high answer for two pages, about their openings on disk now. */
 async function remember(d, a, b) {
   const [fa, sa] = a.split('/');
@@ -272,7 +272,7 @@ section('5. The preview ROUTE answers 409, not 500');
 {
   // The route handler is driven directly (no HTTP server): find it on the
   // router's own stack by path, then call it with fake req/res.
-  const routerMod = await import(path.join(REPO, 'src/routes/health.js'));
+  const routerMod = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
   const router = routerMod.default;
   const layer = router.stack.find((l) => l.route && l.route.path === '/:domain/semantic-dupes/preview');
   ok(!!layer, '5.0 the preview route is registered');

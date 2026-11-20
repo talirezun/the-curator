@@ -66,7 +66,7 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -112,8 +112,8 @@ function stripJsComments(src) {
   return out;
 }
 
-const client = await import(path.join(DESKTOP, 'lib', 'update-client.js'));
-const verdictMod = await import(path.join(DESKTOP, 'lib', 'update-verdict.js'));
+const client = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-client.js')).href);
+const verdictMod = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-verdict.js')).href);
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0 positive control — the module really loaded');

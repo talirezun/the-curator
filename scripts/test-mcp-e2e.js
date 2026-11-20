@@ -59,7 +59,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -273,7 +273,7 @@ child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/ini
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('§2  tools/list IS the real registry (name SET, not a count)');
-const { tools: registry } = await import(path.join(REPO_ROOT, 'mcp/tools/index.js'));
+const { tools: registry } = await import(pathToFileURL(path.join(REPO_ROOT, 'mcp/tools/index.js')).href);
 const listed = await rpc('tools/list');
 const wireNames = (listed?.result?.tools || []).map((t) => t.name).sort();
 const srcNames = registry.map((t) => t.definition.name).sort();
@@ -434,7 +434,7 @@ ok(asJson(dotRawPath)?.found === true,
 
 // Widening must not have widened DOMAINS. `isValidDomain` was an alias of
 // `isValidSlug`; it is now a deliberate split (see mcp/util.js).
-const util = await import(path.join(REPO_ROOT, 'mcp/util.js'));
+const util = await import(pathToFileURL(path.join(REPO_ROOT, 'mcp/util.js')).href);
 ok(util.isValidSlug('claude-sonnet-3.5') === true, 'isValidSlug permits an interior dot');
 ok(util.isValidDomain('a.b') === false,
   'isValidDomain REFUSES a dot — domains are the outer path segment and the app cannot produce one');
@@ -625,7 +625,7 @@ ok(inventedJson?.report !== noopJson?.report,
 // Behavioural half: every type the code accepts really is accepted over the
 // wire (a bad `type` is rejected before any handler runs, so this exercises
 // FIXABLE_TYPES itself).
-const health = await import(path.join(REPO_ROOT, 'src/brain/health.js'));
+const health = await import(pathToFileURL(path.join(REPO_ROOT, 'src/brain/health.js')).href);
 const codeFixable = [...health.AUTO_FIXABLE].sort();
 for (const t of codeFixable) {
   const probe = asJson(await callTool('fix_wiki_issue', { domain: FIX, type: t, issue: { __probe: true }, preview: true }));
@@ -703,11 +703,11 @@ ok(readFileSync(path.join(DOMAINS_DIR, FIX, 'wiki', 'concepts', 'home.md'), 'utf
 // seam for exactly this and outranks every other rung; the assertion below
 // then PROVES the redirection took effect before anything is written, rather
 // than trusting it.
-const cfg = await import(path.join(REPO_ROOT, 'src/brain/config.js'));
+const cfg = await import(pathToFileURL(path.join(REPO_ROOT, 'src/brain/config.js')).href);
 cfg.__setDomainsDirOverride(DOMAINS_DIR);
 ok(cfg.getDomainsDir() === path.resolve(DOMAINS_DIR),
   'in-process domains dir is pinned to the tempdir BEFORE any local write (a failure here means the next lines would touch real user data)');
-const fixAll = await import(path.join(REPO_ROOT, 'src/brain/health.js'));
+const fixAll = await import(pathToFileURL(path.join(REPO_ROOT, 'src/brain/health.js')).href);
 const beforeScan = await fixAll.scanWiki(FIX);
 const dupIssues = beforeScan.brokenLinks.filter(b => b.linkText === 'dr-tali-rezun');
 ok(dupIssues.length === 2 && dupIssues.every(b => b.suggestedTarget),

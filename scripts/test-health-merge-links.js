@@ -75,15 +75,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import { rmSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const HEALTH_SRC_PATH = path.join(REPO, 'src', 'brain', 'health.js');
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 const { scanWiki, fixIssue, fixAllSafe, AUTO_FIXABLE } =
-  await import(path.join(REPO, 'src/brain/health.js'));
+  await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
 
 let passed = 0;
 let failed = 0;

@@ -54,7 +54,7 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -98,9 +98,9 @@ const HANDLERS = {
 
 let menu, verdict, updateCheck;
 try {
-  menu = await import(path.join(DESKTOP, 'lib', 'menu.js'));
-  verdict = await import(path.join(DESKTOP, 'lib', 'update-verdict.js'));
-  updateCheck = await import(path.join(DESKTOP, 'lib', 'update-check.js'));
+  menu = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'menu.js')).href);
+  verdict = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-verdict.js')).href);
+  updateCheck = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'update-check.js')).href);
 } catch (err) {
   console.log(`\n  ✗ FATAL — could not import the desktop menu modules: ${err.message}`);
   process.exit(1);

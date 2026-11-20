@@ -32,7 +32,7 @@
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, linkSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -43,13 +43,13 @@ mkdirSync(DOMAINS, { recursive: true });
 process.env.CURATOR_TEST_USER_DATA_DIR = path.join(TMP, 'user-data');
 mkdirSync(process.env.CURATOR_TEST_USER_DATA_DIR, { recursive: true });
 
-const { __setDomainsDirOverride } = await import(path.join(REPO, 'src/brain/config.js'));
+const { __setDomainsDirOverride } = await import(pathToFileURL(path.join(REPO, 'src/brain/config.js')).href);
 __setDomainsDirOverride(DOMAINS);
-const health = await import(path.join(REPO, 'src/brain/health.js'));
-const { composeMergedPage, composeReusedPage, findLostLines } = await import(path.join(REPO, 'src/brain/page-merge.js'));
-const { mergeWikiPage, writePage } = await import(path.join(REPO, 'src/brain/files.js'));
-const { isWindowsReservedName } = await import(path.join(REPO, 'src/brain/reserved-names.js'));
-const dc = await import(path.join(REPO, 'src/brain/duplicate-checks.js'));
+const health = await import(pathToFileURL(path.join(REPO, 'src/brain/health.js')).href);
+const { composeMergedPage, composeReusedPage, findLostLines } = await import(pathToFileURL(path.join(REPO, 'src/brain/page-merge.js')).href);
+const { mergeWikiPage, writePage } = await import(pathToFileURL(path.join(REPO, 'src/brain/files.js')).href);
+const { isWindowsReservedName } = await import(pathToFileURL(path.join(REPO, 'src/brain/reserved-names.js')).href);
+const dc = await import(pathToFileURL(path.join(REPO, 'src/brain/duplicate-checks.js')).href);
 
 let pass = 0;
 let fail = 0;
@@ -702,7 +702,7 @@ section('§10 crossFolderDupes and hyphenVariants check the claim on the server'
   // The route: stable code, plain message, nothing deleted. The screen's bulk call still works.
   const { default: express } = await import('express');
   const { createServer } = await import('node:http');
-  const routes = await import(path.join(REPO, 'src/routes/health.js'));
+  const routes = await import(pathToFileURL(path.join(REPO, 'src/routes/health.js')).href);
   const app = express();
   app.use(express.json());
   app.use('/api/health', routes.default);
@@ -1051,7 +1051,7 @@ section('§15 A repair stays out of code fences and other tools\' folders');
 // ── §16 The two model-read sources agree on which page stays ────────────────
 section('§16 The tool description and the skill do not say the longer page is kept');
 {
-  const { fixWikiIssueDefinition } = await import(path.join(REPO, 'mcp/tools/health.js'));
+  const { fixWikiIssueDefinition } = await import(pathToFileURL(path.join(REPO, 'mcp/tools/health.js')).href);
   const skill = readFileSync(path.join(REPO, 'skills/my-curator/SKILL.md'), 'utf8');
   for (const [label, text] of [['description', fixWikiIssueDefinition.description], ['skill', skill]]) {
     ok(!/whichever is longer/.test(text), `16.1 ${label}: no "whichever is longer"`);

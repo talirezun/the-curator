@@ -81,14 +81,14 @@ function fakeRes() {
 }
 const errno = (code) => Object.assign(new Error(`${code}: simulated`), { code });
 
-const FA = await import(path.join(ROOT, 'src/brain/folder-access.js'));
-const kfp = await import(path.join(ROOT, 'src/brain/knowledge-folder-path.js'));
-const files = await import(path.join(ROOT, 'src/brain/files.js'));
-const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
-const domainsRoute = await import(path.join(ROOT, 'src/routes/domains.js'));
-const UE = await import(path.join(ROOT, 'src/public/next/shared/user-errors.js'));
-const FD = await import(path.join(ROOT, 'desktop/lib/folder-dialog.js'));
-const host = await import(path.join(ROOT, 'src/brain/desktop-host.js'));
+const FA = await import(pathToFileURL(path.join(ROOT, 'src/brain/folder-access.js')).href);
+const kfp = await import(pathToFileURL(path.join(ROOT, 'src/brain/knowledge-folder-path.js')).href);
+const files = await import(pathToFileURL(path.join(ROOT, 'src/brain/files.js')).href);
+const configRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/config.js')).href);
+const domainsRoute = await import(pathToFileURL(path.join(ROOT, 'src/routes/domains.js')).href);
+const UE = await import(pathToFileURL(path.join(ROOT, 'src/public/next/shared/user-errors.js')).href);
+const FD = await import(pathToFileURL(path.join(ROOT, 'desktop/lib/folder-dialog.js')).href);
+const host = await import(pathToFileURL(path.join(ROOT, 'src/brain/desktop-host.js')).href);
 
 // A Windows profile, in Windows' own path shape.
 const WENV = {
@@ -412,8 +412,8 @@ function winDisk({ dirs = [], fail = {}, statFail = {}, readFail = {}, bundle = 
   eq(A(prog + '\\kb', prog + '\\kb', { platform: 'darwin' }), null, 'macOS / Linux: a no-op (unchanged)');
 
   // getDomainsDir() itself, on a simulated Windows APP (the config file is the isolated one).
-  const paths = await import(path.join(ROOT, 'src/brain/paths.js'));
-  const cfgMod = await import(path.join(ROOT, 'src/brain/config.js'));
+  const paths = await import(pathToFileURL(path.join(ROOT, 'src/brain/paths.js')).href);
+  const cfgMod = await import(pathToFileURL(path.join(ROOT, 'src/brain/config.js')).href);
   const cfgFile = path.join(process.env.CURATOR_TEST_USER_DATA_DIR, '.curator-config.json');
   const savedDomains = process.env.CURATOR_TEST_DOMAINS_DIR;
   const savedEnvPath = process.env.DOMAINS_PATH;
@@ -452,7 +452,7 @@ function winDisk({ dirs = [], fail = {}, statFail = {}, readFail = {}, bundle = 
     });
     eq([res.statusCode, applied], [200, ['D:\\New KB']], 'while the old folder is refused, choosing another one still works');
     // The MCP's read adapter is held to the same rule.
-    const local = await import(path.join(ROOT, 'mcp/storage/local.js'));
+    const local = await import(pathToFileURL(path.join(ROOT, 'mcp/storage/local.js')).href);
     let mcpErr = null;
     try { local.createStorageAdapter({ domainsPath: prog + '\\kb' }); } catch (err) { mcpErr = err; }
     eq(mcpErr && mcpErr.code, 'folder-inside-app', 'the MCP read adapter refuses --domains-path inside the program folder');
