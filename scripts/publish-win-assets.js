@@ -2,7 +2,7 @@
 /**
  * publish-win-assets.js — the Windows twin of publish-dmg-assets.js: prove the
  * files a Windows release publishes are the ones the in-app updater can use,
- * and REFUSE otherwise. Two modes.
+ * and REFUSE otherwise. Three modes.
  *
  * ── 1. THE SETUP PROGRAM (`--dir desktop/dist --version X.Y.Z`) ────────────
  * electron-builder.yml's `nsis.artifactName` already writes the published
@@ -26,35 +26,62 @@
  *
  *   It writes `setup=<path>` to $GITHUB_OUTPUT so later steps never glob.
  *
- * ── 2. THE GPLv2 SOURCE (`--source --out <dir>`) ───────────────────────────
- * The Windows app ships MinGit (GPL-2.0). Section 3 of the GPL is met by
- * attaching the corresponding source to the same release (owner's decision,
- * 2026-11-20). desktop/lib/fetch-mingit.mjs `MINGIT_SOURCE` names it, derived
- * from the pinned tag, and the app's THIRD-PARTY-NOTICES.txt prints that same
- * name. This mode downloads GitHub's archive of that tag, checks it IS that
- * tag's tree (gzip, a tar whose every entry sits under `git-<tag>/`, with git's
- * own `GIT-VERSION-GEN` and `COPYING`), checks a notices file names it
- * (`--notices <file>`, the one the build shipped), and writes `source=<path>`.
+ * ── 2. THE SOURCE CODE (`--sources --out <dir> --notices <file>`) ──────────
+ * The Windows app ships MinGit, which contains GPL, LGPL and MPL components.
+ * Owner's decision (2026-11-20): the exact corresponding source of EVERY one
+ * of them is attached to the same GitHub release. The list is
+ * desktop/lib/fetch-mingit.mjs `RELEASE_SOURCE_ASSETS` (GitHub's archive of
+ * the git-for-windows tag, plus one makepkg source package per copyleft
+ * component, desktop/lib/mingit-components.mjs). This mode, BEFORE anything
+ * is published:
+ *
+ *   · checks the notices file the build shipped names every one of them
+ *     (so what the app tells a person to look for is what the release has)
+ *   · downloads each, and refuses unless it is the pinned file: the exact
+ *     byte size, the SHA-256 where the host publishes one, and its structure
+ *     (a tar in which every entry sits under `<pkgbase>/`, with
+ *     `<pkgbase>/PKGBUILD`; for the git archive, `git-<tag>/` with git's
+ *     `GIT-VERSION-GEN` and `COPYING`)
+ *   · writes the verified paths, one per line, to `<dir>/sources.txt`, and
+ *     `sources_list=<that file>` to $GITHUB_OUTPUT
+ *
+ * One missing, short, changed or wrong-tree file fails the job, and the
+ * workflow then publishes NOTHING (the setup included).
+ *
+ * ── 3. THE RELEASE, AFTERWARDS (`--check-release <json> --setup <path> --sources-list <file>`) ──
+ * Reads `gh release view <tag> --json assets` and checks, BY EXACT NAME, that
+ * the setup and every source file are there with the size (and, where GitHub
+ * records one, the SHA-256) of the file that was verified. A missing one
+ * exits 1, so publish-windows goes red.
  *
  * ── CLI ───────────────────────────────────────────────────────────────────
- *     node scripts/publish-win-assets.js --dir desktop/dist --version 3.100.0 [--check-consumers]
- *     node scripts/publish-win-assets.js --source --out <dir> [--notices <file>]
+ *     node scripts/publish-win-assets.js --dir desktop/dist --version 4.0.0 [--check-consumers]
+ *     node scripts/publish-win-assets.js --sources --out <dir> --notices <file>
+ *     node scripts/publish-win-assets.js --check-release <json> --setup <path> --sources-list <file>
  *
  * Exit 0 only when every check passed; anything else is exit 1 with a named
  * reason. Zero dependencies (node: builtins, and imports from desktop/lib/,
- * which are Electron-free and src/-free).
+ * which are Electron-free and src/-free). Reading a `.tar.zst` needs a Node
+ * with zstd in node:zlib (22.15 or later); without one it REFUSES
+ * (`zstd-unavailable`) rather than skip the check.
  */
 
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, appendFileSync, statSync, renameSync, rmSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import {
+  closeSync, createReadStream, createWriteStream, existsSync, openSync, readSync, mkdirSync, readFileSync, readdirSync, appendFileSync,
+  statSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs';
+import * as zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { archFromAssetName } from '../desktop/lib/update-plan.js';
 import { installerFileName } from '../desktop/lib/win-pack.mjs';
-import { MINGIT, MINGIT_SOURCE, mingitSourceFor } from '../desktop/lib/fetch-mingit.mjs';
+import { MINGIT, MINGIT_SOURCE, RELEASE_SOURCE_ASSETS, mingitSourceFor } from '../desktop/lib/fetch-mingit.mjs';
+
+const { gunzipSync } = zlib;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -68,7 +95,17 @@ export const WIN_PUBLISH_REFUSALS = Object.freeze([
   'update-feed-present', 'name-does-not-resolve', 'not-a-windows-installer', 'counted-as-mac-installer',
 ]);
 
+/** Named refusals of the source and release checks. */
+export const SOURCE_REFUSALS = Object.freeze([
+  'notices-unreadable', 'notices-do-not-name-source', 'download-failed', 'wrong-size', 'wrong-sha256',
+  'not-gzip', 'not-zstd', 'zstd-unavailable', 'not-a-tar', 'too-few-entries', 'wrong-tree', 'not-git-source',
+  'no-pkgbuild', 'unsafe-asset-name', 'release-unreadable', 'missing-on-release', 'wrong-size-on-release',
+  'wrong-digest-on-release',
+]);
+
 const PLAIN_SEMVER = /^\d+\.\d+\.\d+$/;
+/** What a release asset name may be (GitHub rewrites anything else). */
+export const SAFE_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 /**
  * Pure. The names in electron-builder's output folder → {ok, setup} or a named
@@ -126,46 +163,118 @@ export async function publishWinSetup({ dir, version, checkConsumers = false, lo
   return { ok: true, setup: full, bytes: statSync(full).size };
 }
 
-// ── The GPLv2 source archive ────────────────────────────────────────────────
+// ── Tar reading ─────────────────────────────────────────────────────────────
 
-/** Read a tar's entry names (ustar + pax), stopping at the end marker. Pure. */
-export function tarEntryNames(buf) {
-  const names = [];
-  let off = 0;
-  let paxPath = null;
-  while (off + 512 <= buf.length) {
-    const h = buf.subarray(off, off + 512);
-    if (h.every((b) => b === 0)) break;
-    const field = (o, n) => h.subarray(o, o + n).toString('utf8').replace(/\0.*$/s, '');
-    const size = parseInt(field(124, 12).trim() || '0', 8);
-    if (!Number.isFinite(size) || size < 0) throw new Error(`bad tar header at ${off}`);
-    const type = field(156, 1) || '0';
-    const magic = field(257, 6);
-    const prefix = magic.startsWith('ustar') ? field(345, 155) : '';
-    let name = prefix ? `${prefix}/${field(0, 100)}` : field(0, 100);
-    const body = buf.subarray(off + 512, off + 512 + size);
-    if (body.length < size) throw new Error('the archive is truncated');
-    off += 512 + Math.ceil(size / 512) * 512;
-    if (type === 'g') continue;                       // pax global header (GitHub puts the commit there)
-    if (type === 'x') {                               // pax header for the NEXT entry
-      const m = body.toString('utf8').match(/(?:^|\n)\d+ path=([^\n]*)\n/);
-      paxPath = m ? m[1] : null;
-      continue;
-    }
-    if (paxPath) { name = paxPath; paxPath = null; }
-    names.push(name);
+/**
+ * A streaming tar header reader (ustar, pax `x`/`g`, GNU `L` long names).
+ * It never holds more than one header and one small metadata body, so a
+ * 600 MB source tar is scanned in constant memory. `names` collects every
+ * entry name; `paxGlobalComment` keeps the first `comment=` of a global
+ * header (GitHub records the commit there).
+ */
+export class TarScanner {
+  constructor() {
+    this.names = [];
+    this.paxGlobalComment = null;
+    this.pending = [];
+    this.pendingLen = 0;
+    this.skip = 0;              // body bytes still to drop
+    this.collect = null;        // {type, size, chunks, len} while reading a metadata body
+    this.nextName = null;
+    this.ended = false;
+    this.error = null;
   }
-  return names;
+
+  _take(n) {
+    const out = Buffer.allocUnsafe(n);
+    let off = 0;
+    while (off < n) {
+      const head = this.pending[0];
+      const k = Math.min(head.length, n - off);
+      head.copy(out, off, 0, k);
+      off += k;
+      if (k === head.length) this.pending.shift();
+      else this.pending[0] = head.subarray(k);
+    }
+    this.pendingLen -= n;
+    return out;
+  }
+
+  push(chunk) {
+    if (this.ended || this.error) return;
+    this.pending.push(chunk);
+    this.pendingLen += chunk.length;
+    try { this._drain(); } catch (err) { this.error = err; }
+  }
+
+  _drain() {
+    for (;;) {
+      if (this.skip > 0) {
+        if (this.pendingLen === 0) return;
+        const k = Math.min(this.skip, this.pendingLen);
+        this._take(k);
+        this.skip -= k;
+        continue;
+      }
+      if (this.collect) {
+        const want = this.collect.padded;
+        if (this.pendingLen < want) return;
+        const body = this._take(want).subarray(0, this.collect.size);
+        const { type } = this.collect;
+        this.collect = null;
+        const text = body.toString('utf8');
+        if (type === 'x') {
+          const m = text.match(/(?:^|\n)\d+ path=([^\n]*)\n/);
+          if (m) this.nextName = m[1];
+        } else if (type === 'g') {
+          const m = text.match(/comment=([0-9a-f]{40})/);
+          if (m && !this.paxGlobalComment) this.paxGlobalComment = m[1];
+        } else if (type === 'L') {
+          this.nextName = text.replace(/\0.*$/s, '');
+        }
+        continue;
+      }
+      if (this.pendingLen < 512) return;
+      const h = this._take(512);
+      if (h.every((b) => b === 0)) { this.ended = true; return; }
+      const field = (o, n) => h.subarray(o, o + n).toString('utf8').replace(/\0.*$/s, '');
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 0x20 : h[i];
+      const stored = parseInt(field(148, 8).trim() || 'x', 8);
+      if (!Number.isFinite(stored) || stored !== sum) throw new Error('a tar header fails its checksum');
+      const size = parseInt(field(124, 12).trim() || '0', 8);
+      if (!Number.isFinite(size) || size < 0) throw new Error('bad tar header size');
+      const type = field(156, 1) || '0';
+      const padded = Math.ceil(size / 512) * 512;
+      if (type === 'x' || type === 'g' || type === 'L') {
+        if (size > 1024 * 1024) throw new Error('a tar metadata header is implausibly large');
+        this.collect = { type, size, padded };
+        continue;
+      }
+      const magic = field(257, 6);
+      const prefix = magic.startsWith('ustar') ? field(345, 155) : '';
+      let name = prefix ? `${prefix}/${field(0, 100)}` : field(0, 100);
+      if (this.nextName) { name = this.nextName; this.nextName = null; }
+      this.names.push(name);
+      this.skip = padded;
+    }
+  }
+}
+
+/** Read a tar's entry names from a buffer. Pure. (The git archive check uses it.) */
+export function tarEntryNames(buf) {
+  const s = new TarScanner();
+  s.push(buf);
+  if (s.error) throw s.error;
+  if (!s.ended && (s.pendingLen > 0 || s.skip > 0 || s.collect)) throw new Error('the archive is truncated');
+  return s.names;
 }
 
 /** The pax global header's `comment=` (GitHub writes the commit id there), or null. */
 export function tarCommitComment(buf) {
-  if (buf.length < 1024) return null;
-  const h = buf.subarray(0, 512);
-  if (h.subarray(156, 157).toString() !== 'g') return null;
-  const size = parseInt(h.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim() || '0', 8);
-  const m = buf.subarray(512, 512 + size).toString('utf8').match(/comment=([0-9a-f]{40})/);
-  return m ? m[1] : null;
+  const s = new TarScanner();
+  s.push(buf);
+  return s.paxGlobalComment;
 }
 
 /**
@@ -192,13 +301,108 @@ export function verifySourceArchive(gz, source = MINGIT_SOURCE) {
   return { ok: true, entries: names.length, commit: tarCommitComment(tar) };
 }
 
-/** Does a notices text name the source file (and the MinGit tag it is for)? Pure. */
+/**
+ * Pure. Are these tar entry names a makepkg source package of `pkgbase`?
+ * (makepkg --source writes every file under `<pkgbase>/`, PKGBUILD included.)
+ */
+export function verifyMakepkgTree(names, pkgbase) {
+  if (!Array.isArray(names) || names.length === 0) return { ok: false, reason: 'not-a-tar', detail: 'no entries' };
+  const prefix = `${pkgbase}/`;
+  const outside = names.filter((n) => !(n === pkgbase || n === prefix || n.startsWith(prefix)));
+  if (outside.length) return { ok: false, reason: 'wrong-tree', detail: `${outside.length} entries outside ${prefix}, e.g. ${outside[0]}` };
+  if (!names.includes(`${prefix}PKGBUILD`)) return { ok: false, reason: 'no-pkgbuild', detail: `no ${prefix}PKGBUILD` };
+  return { ok: true, entries: names.length };
+}
+
+/** The decompressor for a source file name; null when this Node cannot read it. */
+export function decompressorFor(name, z = zlib) {
+  if (/\.tar\.gz$/i.test(name) || /\.tgz$/i.test(name)) return { kind: 'gzip', make: () => z.createGunzip() };
+  if (/\.tar\.zst$/i.test(name)) {
+    return typeof z.createZstdDecompress === 'function' ? { kind: 'zstd', make: () => z.createZstdDecompress() } : { kind: 'zstd', make: null };
+  }
+  return null;
+}
+
+/**
+ * Read a downloaded source file ONCE: its SHA-256 and size from the raw
+ * bytes, its tar entry names through the decompressor. Never throws.
+ */
+export async function inspectSourceFile(file, name, { z = zlib } = {}) {
+  const d = decompressorFor(name, z);
+  if (!d) return { ok: false, reason: 'not-a-tar', detail: `${name} is neither .tar.gz nor .tar.zst` };
+  if (!d.make) return { ok: false, reason: 'zstd-unavailable', detail: `this Node (${process.version}) has no zstd in node:zlib; use 22.15 or later` };
+  const fd = Buffer.alloc(4);
+  const h = openSync(file, 'r');
+  try { readSync(h, fd, 0, 4, 0); } finally { closeSync(h); }
+  if (d.kind === 'gzip' && !(fd[0] === 0x1f && fd[1] === 0x8b)) return { ok: false, reason: 'not-gzip', detail: 'the file is not gzip data' };
+  if (d.kind === 'zstd' && fd.readUInt32LE(0) !== 0xFD2FB528) return { ok: false, reason: 'not-zstd', detail: 'the file is not zstd data' };
+  const hash = createHash('sha256');
+  let size = 0;
+  const scanner = new TarScanner();
+  const raw = createReadStream(file);
+  raw.on('data', (c) => { hash.update(c); size += c.length; });
+  try {
+    await pipeline(raw, d.make(), new Writable({
+      write(chunk, _enc, cb) { scanner.push(chunk); cb(scanner.error || null); },
+    }));
+  } catch (err) {
+    return { ok: false, reason: d.kind === 'gzip' ? 'not-gzip' : 'not-zstd', detail: err.message };
+  }
+  if (scanner.error) return { ok: false, reason: 'not-a-tar', detail: scanner.error.message };
+  return { ok: true, sha256: hash.digest('hex'), size, names: scanner.names };
+}
+
+// ── The source files ────────────────────────────────────────────────────────
+
+/** Does a notices text name the git source file (and the MinGit tag it is for)? Pure. */
 export function noticesNameSource(text, source = MINGIT_SOURCE, pin = MINGIT) {
   const t = typeof text === 'string' ? text : '';
   return t.includes(source.asset) && t.includes(pin.tag);
 }
 
-/** The source mode. Downloads, verifies, renames into place. Never throws. */
+/** Every attachment name a notices text does NOT name. Pure. */
+export function noticesMissingSources(text, assets = RELEASE_SOURCE_ASSETS) {
+  const t = typeof text === 'string' ? text : '';
+  return assets.map((a) => a.asset).filter((n) => !t.includes(n));
+}
+
+/** Download `url` to `dest` (streamed). Throws on HTTP or network failure. */
+async function downloadTo(url, dest, fetchImpl) {
+  const res = await fetchImpl(url, { headers: { 'User-Agent': 'the-curator-release-ci' }, redirect: 'follow' });
+  if (!res || !res.ok || !res.body) throw new Error(`HTTP ${res ? res.status : 'no response'} for ${url}`);
+  await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
+}
+
+/**
+ * Check one downloaded file against its entry in RELEASE_SOURCE_ASSETS.
+ * {ok, sha256, size} or a named refusal. Never throws.
+ */
+export async function verifySourceFile(file, asset, { z = zlib } = {}) {
+  if (!SAFE_ASSET_NAME.test(asset.asset)) return { ok: false, reason: 'unsafe-asset-name', detail: asset.asset };
+  const st = statSync(file);
+  if (asset.size != null && st.size !== asset.size) {
+    return { ok: false, reason: 'wrong-size', detail: `${st.size} bytes, the pin says ${asset.size}` };
+  }
+  if (asset.kind === 'git-tag-archive') {
+    const buf = readFileSync(file);
+    const v = verifySourceArchive(buf, { topDir: asset.topDir });
+    if (!v.ok) return v;
+    return { ok: true, size: buf.length, sha256: createHash('sha256').update(buf).digest('hex'), entries: v.entries, commit: v.commit };
+  }
+  const info = await inspectSourceFile(file, asset.upstreamName || asset.asset, { z });
+  if (!info.ok) return info;
+  if (asset.sha256 && info.sha256 !== asset.sha256) {
+    return { ok: false, reason: 'wrong-sha256', detail: `SHA-256 is ${info.sha256}, the pin says ${asset.sha256}` };
+  }
+  const tree = verifyMakepkgTree(info.names, asset.topDir);
+  if (!tree.ok) return tree;
+  return { ok: true, size: info.size, sha256: info.sha256, entries: tree.entries };
+}
+
+/**
+ * The single-file git-archive mode the first Windows release design used;
+ * kept for the suite and for a person re-checking that one file by hand.
+ */
 export async function fetchSourceArchive({ out, notices = null, fetchImpl = globalThis.fetch, source = MINGIT_SOURCE, log = console.log }) {
   if (notices) {
     let text = '';
@@ -212,9 +416,7 @@ export async function fetchSourceArchive({ out, notices = null, fetchImpl = glob
   const dest = path.join(out, source.asset);
   const partial = `${dest}.partial`;
   try {
-    const res = await fetchImpl(source.url, { headers: { 'User-Agent': 'the-curator-release-ci' } });
-    if (!res || !res.ok || !res.body) return { ok: false, reason: 'download-failed', detail: `status ${res ? res.status : 'none'}` };
-    await pipeline(Readable.fromWeb(res.body), createWriteStream(partial));
+    await downloadTo(source.url, partial, fetchImpl);
   } catch (err) {
     rmSync(partial, { force: true });
     return { ok: false, reason: 'download-failed', detail: err.message };
@@ -227,33 +429,141 @@ export async function fetchSourceArchive({ out, notices = null, fetchImpl = glob
   return { ok: true, source: dest, commit: v.commit };
 }
 
+/**
+ * The sources mode: every file of RELEASE_SOURCE_ASSETS, downloaded and
+ * verified, or a refusal naming the first that failed. Writes
+ * `<out>/sources.txt` (one verified path per line) only when ALL passed.
+ * Never throws. `retries` re-tries a failed download (not a failed check).
+ */
+export async function fetchAllSources({
+  out, notices, fetchImpl = globalThis.fetch, assets = RELEASE_SOURCE_ASSETS, log = console.log, retries = 1, z = zlib,
+}) {
+  let text = '';
+  try { text = readFileSync(notices, 'utf8'); } catch (err) { return { ok: false, reason: 'notices-unreadable', detail: String(err && err.message) }; }
+  const unnamed = noticesMissingSources(text, assets);
+  if (unnamed.length) {
+    return { ok: false, reason: 'notices-do-not-name-source', detail: `${notices} does not name ${unnamed.join(', ')}` };
+  }
+  log(`  ${path.basename(notices)} names all ${assets.length} source files`);
+  mkdirSync(out, { recursive: true });
+  const listFile = path.join(out, 'sources.txt');
+  rmSync(listFile, { force: true });
+  const done = [];
+  for (const a of assets) {
+    if (!SAFE_ASSET_NAME.test(a.asset)) return { ok: false, reason: 'unsafe-asset-name', asset: a.asset, detail: a.asset };
+    const dest = path.join(out, a.asset);
+    const partial = `${dest}.partial`;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      rmSync(partial, { force: true });
+      try { await downloadTo(a.url, partial, fetchImpl); lastErr = null; break; } catch (err) { lastErr = err; }
+    }
+    if (lastErr) {
+      rmSync(partial, { force: true });
+      return { ok: false, reason: 'download-failed', asset: a.asset, detail: lastErr.message };
+    }
+    const v = await verifySourceFile(partial, a, { z });
+    if (!v.ok) { rmSync(partial, { force: true }); return { ...v, asset: a.asset }; }
+    renameSync(partial, dest);
+    done.push({ path: dest, asset: a.asset, size: v.size, sha256: v.sha256 });
+    log(`  ${a.asset}: ${v.size} bytes, SHA-256 ${v.sha256}${a.sha256 ? ' (matches the pin)' : ' (size pinned; tree checked)'}`);
+  }
+  writeFileSync(listFile, done.map((d) => d.path).join('\n') + '\n');
+  return { ok: true, files: done, list: listFile };
+}
+
+/**
+ * Pure. The release as `gh release view --json assets` printed it, against
+ * what must be on it: [{name, size, sha256?}]. Exact names; the size of the
+ * verified file; GitHub's digest when it records one.
+ */
+export function checkReleaseAssets(release, expected) {
+  const assets = release && Array.isArray(release.assets) ? release.assets : null;
+  if (!assets) return { ok: false, reason: 'release-unreadable', detail: 'no assets array' };
+  const byName = new Map(assets.map((a) => [a && a.name, a]));
+  const missing = [], wrongSize = [], wrongDigest = [];
+  for (const e of expected) {
+    const a = byName.get(e.name);
+    if (!a || (a.state && a.state !== 'uploaded')) { missing.push(e.name); continue; }
+    if (e.size != null && Number(a.size) !== e.size) wrongSize.push(`${e.name} (${a.size} bytes, expected ${e.size})`);
+    const d = typeof a.digest === 'string' ? a.digest.replace(/^sha256:/, '') : null;
+    if (d && e.sha256 && d !== e.sha256) wrongDigest.push(`${e.name} (${d}, expected ${e.sha256})`);
+  }
+  if (missing.length) return { ok: false, reason: 'missing-on-release', detail: missing.join(', '), missing };
+  if (wrongSize.length) return { ok: false, reason: 'wrong-size-on-release', detail: wrongSize.join('; ') };
+  if (wrongDigest.length) return { ok: false, reason: 'wrong-digest-on-release', detail: wrongDigest.join('; ') };
+  return { ok: true, checked: expected.length };
+}
+
+/**
+ * What must be on the release, built from the files that were verified:
+ * the setup, then every line of the sources list, which must itself cover
+ * every RELEASE_SOURCE_ASSETS name (a shortened list is a refusal too).
+ */
+export function expectedReleaseAssets({ setup, sourcesList, assets = RELEASE_SOURCE_ASSETS }) {
+  const files = readFileSync(sourcesList, 'utf8').split(/\r?\n/).filter(Boolean);
+  const byName = new Map(files.map((f) => [path.basename(f), f]));
+  const out = [{ name: path.basename(setup), size: statSync(setup).size, sha256: null }];
+  const missing = [];
+  for (const a of assets) {
+    const f = byName.get(a.asset);
+    if (!f) { missing.push(a.asset); continue; }
+    out.push({ name: a.asset, size: statSync(f).size, sha256: a.sha256 || createHash('sha256').update(readFileSync(f)).digest('hex') });
+  }
+  return { expected: out, missing };
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 export function parseWinPublishArgs(argv) {
-  const o = { dir: null, version: null, checkConsumers: false, source: false, out: null, notices: null };
+  const o = { dir: null, version: null, checkConsumers: false, sources: false, out: null, notices: null, checkRelease: null, setup: null, sourcesList: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dir') o.dir = argv[++i];
     else if (a === '--version') o.version = argv[++i];
     else if (a === '--check-consumers') o.checkConsumers = true;
-    else if (a === '--source') o.source = true;
+    else if (a === '--sources') o.sources = true;
     else if (a === '--out') o.out = argv[++i];
     else if (a === '--notices') o.notices = argv[++i];
+    else if (a === '--check-release') o.checkRelease = argv[++i];
+    else if (a === '--setup') o.setup = argv[++i];
+    else if (a === '--sources-list') o.sourcesList = argv[++i];
     else return { error: `unrecognised argument ${a}` };
   }
-  if (o.source) {
-    if (!o.out) return { error: '--source needs --out <dir>' };
-    if (o.dir || o.version || o.checkConsumers) return { error: '--source takes only --out and --notices' };
+  const setupMode = o.dir || o.version || o.checkConsumers;
+  const modes = [setupMode, o.sources, o.checkRelease].filter(Boolean).length;
+  if (modes !== 1) return { error: 'give exactly one of --dir/--version, --sources, --check-release' };
+  if (o.sources) {
+    if (!o.out) return { error: '--sources needs --out <dir>' };
+    if (!o.notices) return { error: '--sources needs --notices <file> (the notices the build shipped)' };
+    if (o.setup || o.sourcesList) return { error: '--sources takes only --out and --notices' };
+  } else if (o.checkRelease) {
+    if (!o.setup || !o.sourcesList) return { error: '--check-release needs --setup <path> and --sources-list <file>' };
+    if (o.out || o.notices) return { error: '--check-release takes only --setup and --sources-list' };
   } else {
     if (!o.dir) return { error: '--dir is required' };
     if (!o.version) return { error: '--version is required' };
-    if (o.out || o.notices) return { error: '--out and --notices belong to --source' };
+    if (o.out || o.notices || o.setup || o.sourcesList) return { error: '--out, --notices, --setup and --sources-list belong to the other modes' };
   }
   return o;
 }
 
 function writeOutput(key, value) {
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+}
+
+/** The --check-release mode, against files on disk. Never throws. */
+export function checkReleaseFromFiles({ releaseJson, setup, sourcesList, assets = RELEASE_SOURCE_ASSETS }) {
+  let release;
+  try { release = JSON.parse(readFileSync(releaseJson, 'utf8')); } catch (err) {
+    return { ok: false, reason: 'release-unreadable', detail: String(err && err.message) };
+  }
+  let exp;
+  try { exp = expectedReleaseAssets({ setup, sourcesList, assets }); } catch (err) {
+    return { ok: false, reason: 'release-unreadable', detail: String(err && err.message) };
+  }
+  if (exp.missing.length) return { ok: false, reason: 'missing-on-release', detail: `never verified: ${exp.missing.join(', ')}`, missing: exp.missing };
+  return checkReleaseAssets(release, exp.expected);
 }
 
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -263,15 +573,17 @@ if (isDirectRun) {
     console.error(`publish-win-assets: ${args.error}`);
     process.exit(2);
   }
-  const r = args.source
-    ? await fetchSourceArchive({ out: args.out, notices: args.notices })
-    : await publishWinSetup({ dir: args.dir, version: args.version, checkConsumers: args.checkConsumers });
+  let r;
+  if (args.sources) r = await fetchAllSources({ out: args.out, notices: args.notices });
+  else if (args.checkRelease) r = checkReleaseFromFiles({ releaseJson: args.checkRelease, setup: args.setup, sourcesList: args.sourcesList });
+  else r = await publishWinSetup({ dir: args.dir, version: args.version, checkConsumers: args.checkConsumers });
   if (!r.ok) {
-    console.error(`publish-win-assets: REFUSED (${r.reason}) ${r.detail || ''}`);
+    console.error(`publish-win-assets: REFUSED (${r.reason})${r.asset ? ` ${r.asset}:` : ''} ${r.detail || ''}`);
     process.exit(1);
   }
-  if (args.source) writeOutput('source', r.source);
-  else writeOutput('setup', r.setup);
+  if (args.sources) writeOutput('sources_list', r.list);
+  else if (!args.checkRelease) writeOutput('setup', r.setup);
+  if (args.checkRelease) console.log(`  the release carries all ${r.checked} files, by exact name and size`);
   console.log('publish-win-assets: ok');
 }
 

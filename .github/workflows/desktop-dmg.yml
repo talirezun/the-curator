@@ -534,7 +534,7 @@ jobs:
             Get-ChildItem -LiteralPath $d -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.json', '.ps1' } | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content -LiteralPath $_.FullName -Tail 80 }
           }
 
-  # Attach the installer and the MinGit source to the SAME release the Mac job
+  # Attach the installer and the MinGit sources to the SAME release the Mac job
   # published (or create it, when the Mac job failed). On a release tag only,
   # and only when both Windows jobs passed. `always()` makes it wait for the
   # Mac job without depending on its result; the Mac job does not wait for
@@ -568,36 +568,73 @@ jobs:
         id: names
         run: node scripts/publish-win-assets.js --dir win-release --version "${{ needs.gate.outputs.version }}"
 
-      # GPL-2.0 section 3: the source of the MinGit inside the installer, under
-      # the name the app's THIRD-PARTY-NOTICES.txt gives (checked against the
-      # notices file that build shipped), verified to be that tag's tree.
-      - name: Fetch the GPLv2 source of the bundled MinGit
-        id: source
-        run: node scripts/publish-win-assets.js --source --out "$RUNNER_TEMP/gpl-source" --notices win-release/win-unpacked/resources/THIRD-PARTY-NOTICES.txt
+      # MinGit contains GPL, LGPL and MPL parts. The exact corresponding source
+      # of EVERY one of them goes on the same release (owner's decision,
+      # 2026-11-20): GitHub's archive of the git-for-windows tag plus one
+      # makepkg source package per copyleft component, as
+      # desktop/lib/fetch-mingit.mjs RELEASE_SOURCE_ASSETS lists them. Each is
+      # downloaded and held to its pin (exact size; SHA-256 where the host
+      # publishes one; its tree) BEFORE anything is published, and the notices
+      # file the build shipped must name every one. One failure: nothing at all
+      # is published.
+      - name: Fetch and verify the source of every copyleft MinGit component
+        id: sources
+        run: node scripts/publish-win-assets.js --sources --out "$RUNNER_TEMP/gpl-source" --notices win-release/win-unpacked/resources/THIRD-PARTY-NOTICES.txt
 
-      - name: Attach the Windows installer and the MinGit source to the release
+      - name: Attach the Windows installer and the source files to the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           SETUP: ${{ steps.names.outputs.setup }}
-          SOURCE: ${{ steps.source.outputs.source }}
+          SOURCES_LIST: ${{ steps.sources.outputs.sources_list }}
         run: |
           set -euo pipefail
+          mapfile -t SOURCES < "$SOURCES_LIST"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG exists (the Mac job made it): adding the Windows files."
-            gh release upload "$TAG" "$SETUP" "$SOURCE" --clobber
+            gh release upload "$TAG" "$SETUP" "${SOURCES[@]}" --clobber
           else
             echo "Release $TAG does not exist (the Mac job failed or was skipped): creating it."
-            gh release create "$TAG" "$SETUP" "$SOURCE" \
+            gh release create "$TAG" "$SETUP" "${SOURCES[@]}" \
               --title "The Curator $TAG" \
               --generate-notes \
               --verify-tag \
               --latest
           fi
+
+      # By EXACT name: the setup and every source file, each with the size of
+      # the file verified above (and GitHub's digest where it records one). A
+      # missing one fails this job. GitHub's API is eventually consistent, so
+      # a miss is re-read a few times before it counts.
+      - name: Check every file is on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SETUP: ${{ steps.names.outputs.setup }}
+          SOURCES_LIST: ${{ steps.sources.outputs.sources_list }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            gh release view "$TAG" --json assets > "$RUNNER_TEMP/release-assets.json" &&
+              node scripts/publish-win-assets.js --check-release "$RUNNER_TEMP/release-assets.json" --setup "$SETUP" --sources-list "$SOURCES_LIST" &&
+              exit 0
+            echo "Attempt $attempt: the release does not show every file yet."
+            sleep 10
+          done
+          exit 1
+
+      - name: Summary
+        env:
+          SETUP: ${{ steps.names.outputs.setup }}
+          SOURCES_LIST: ${{ steps.sources.outputs.sources_list }}
+          TAG: ${{ github.ref_name }}
+        run: |
           {
             echo "### Windows files on $TAG"
             echo
             echo "- \`$(basename "$SETUP")\`"
-            echo "- \`$(basename "$SOURCE")\` (GPL-2.0 source of the bundled MinGit)"
+            echo "- $(wc -l < "$SOURCES_LIST" | tr -d ' ') source files (GPL/LGPL/MPL parts of the bundled MinGit):"
+            while IFS= read -r f; do echo "  - \`$(basename "$f")\`"; done < "$SOURCES_LIST"
           } >> "$GITHUB_STEP_SUMMARY"

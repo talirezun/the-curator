@@ -30,8 +30,12 @@
  *
  * Alongside the git folder it writes:
  *   · THIRD-PARTY-NOTICES.txt  (shipped as resources\THIRD-PARTY-NOTICES.txt):
- *     MinGit, its licence, where its source is offered, and every component
- *     listed in MinGit's own etc/package-versions.txt
+ *     MinGit, every component listed in its own etc/package-versions.txt with
+ *     its licence and where its source is (desktop/lib/mingit-components.mjs),
+ *     every source file attached to the release, and the full licence texts
+ *     (desktop/licences/mingit/, each SHA-256 pinned). On the REAL pin the
+ *     archive's component list must equal that table exactly, or the build
+ *     is refused: no component ships whose licence nobody decided.
  *   · mingit-manifest.json     (NOT shipped): every file's size and CRC-32, so
  *     the win32 afterPack can prove the packaged resources\git is exactly what
  *     was verified here — nothing dropped, nothing added, nothing changed.
@@ -62,7 +66,17 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 
+import {
+  MINGIT_COMPONENTS, COPYLEFT_SOURCES, LICENCE_TEXTS, PACKAGE_VERSIONS_PROVENANCE,
+  classifyComponents, sourceFor,
+} from './mingit-components.mjs';
+
+export { MINGIT_COMPONENTS, COPYLEFT_SOURCES, LICENCE_TEXTS, PACKAGE_VERSIONS_PROVENANCE, classifyComponents };
+
 const DESKTOP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Where the pinned full licence texts live (read when the notices are written). */
+export const LICENCE_DIR = path.join(DESKTOP_DIR, 'licences', 'mingit');
 
 /** The pin. Every value here is checked; none is informational only. */
 export const MINGIT = Object.freeze({
@@ -96,6 +110,24 @@ export function mingitSourceFor(pin = MINGIT) {
   });
 }
 export const MINGIT_SOURCE = mingitSourceFor(MINGIT);
+
+/**
+ * EVERY file of source code CI attaches to each Windows release, by the exact
+ * name it is attached under: GitHub's archive of the git-for-windows tag, then
+ * one makepkg source package per copyleft component (mingit-components.mjs).
+ * publish-win-assets.js downloads and verifies each BEFORE anything is
+ * published, and checks the release afterwards by these names; a missing one
+ * fails the job. The notices print every name, so what the app tells a
+ * person to look for is what the release has.
+ */
+export function releaseSourceAssets(pin = MINGIT, sources = COPYLEFT_SOURCES) {
+  const git = mingitSourceFor(pin);
+  return Object.freeze([
+    Object.freeze({ kind: 'git-tag-archive', key: `git-${pin.tag}`, asset: git.asset, url: git.url, topDir: git.topDir, size: null, sha256: null }),
+    ...sources.map((s) => Object.freeze({ kind: 'makepkg-source', ...s, topDir: s.pkgbase })),
+  ]);
+}
+export const RELEASE_SOURCE_ASSETS = releaseSourceAssets();
 
 /** The default output folder, relative to desktop/ (gitignored). */
 export const DEFAULT_OUT_DIR = path.join(DESKTOP_DIR, 'vendor');
@@ -339,10 +371,62 @@ export function parsePackageVersions(text) {
 }
 
 /**
+ * One pinned licence text, read from LICENCE_DIR and checked against its
+ * SHA-256 (a text that drifted from what was reviewed throws). LF endings.
+ */
+export function readLicenceText(key, { dir = LICENCE_DIR, texts = LICENCE_TEXTS } = {}) {
+  const t = texts[key];
+  if (!t) throw new Error(`no licence text named "${key}"`);
+  const buf = readFileSync(path.join(dir, t.file));
+  const got = createHash('sha256').update(buf).digest('hex');
+  if (got !== t.sha256) throw new Error(`licence text ${t.file} has SHA-256 ${got}, the pin says ${t.sha256}`);
+  return buf.toString('utf8').replace(/\r\n/g, '\n');
+}
+
+/**
  * The THIRD-PARTY-NOTICES.txt text for the Windows build. Plain text with CRLF
  * line endings, because Notepad is what opens it on Windows.
+ *
+ * Section 1 is the MinGit that was verified (its own component lines, as the
+ * archive lists them). Section 2 is every component's licence and where its
+ * source is, from the pinned table; section 3 every source file attached to
+ * the release; section 6 the full licence texts.
  */
-export function thirdPartyNotices({ pin = MINGIT, components = [], releasesUrl = CURATOR_RELEASES_URL } = {}) {
+export function thirdPartyNotices({
+  pin = MINGIT, components = [], releasesUrl = CURATOR_RELEASES_URL,
+  table = MINGIT_COMPONENTS, sources = COPYLEFT_SOURCES, readText = (k) => readLicenceText(k),
+} = {}) {
+  const attached = releaseSourceAssets(pin, sources);
+  const usedTexts = [];
+  for (const c of table) for (const k of c.texts) if (!usedTexts.includes(k)) usedTexts.push(k);
+  const componentBlock = [];
+  for (const c of table) {
+    const s = sourceFor(c, sources);
+    componentBlock.push(
+      `   ${c.name} ${c.version}`,
+      `     Licence:  ${c.licence}${c.note ? ` (${c.note})` : ''}`,
+      `     Project:  ${c.homepage}`,
+      s
+        ? `     Source:   ATTACHED to The Curator's release as ${s.asset} (from ${s.url})`
+        : `     Source:   ${c.source}`,
+      '',
+    );
+  }
+  const textBlock = [];
+  for (const k of usedTexts) {
+    const t = LICENCE_TEXTS[k];
+    const users = table.filter((c) => c.texts.includes(k)).map((c) => c.name);
+    textBlock.push(
+      '-'.repeat(78),
+      `${t.title}`,
+      `Applies to: ${users.join(', ')}`,
+      `Text from:  ${t.from}`,
+      '-'.repeat(78),
+      '',
+      ...readText(k).replace(/\s+$/, '').split('\n'),
+      '',
+    );
+  }
   const lines = [
     'The Curator for Windows: third-party software',
     '=============================================',
@@ -355,32 +439,54 @@ export function thirdPartyNotices({ pin = MINGIT, components = [], releasesUrl =
     '',
     '   Where it is:  resources\\git (in the folder The Curator is installed in)',
     '   What it does: Personal Sync uses it to save your knowledge base to GitHub.',
-    '   Licence:      GNU General Public License, version 2 (GPL-2.0). The licence',
-    '                 texts of git and of every component are in resources\\git\\LICENSE.txt.',
+    '   Licence:      git itself: GNU General Public License, version 2 (GPL-2.0).',
+    '                 Its other components: each one\'s licence is in section 2, the',
+    '                 full texts in section 6 (and git\'s in resources\\git\\LICENSE.txt).',
     `   Upstream:     https://gitforwindows.org/ and ${pin.releaseUrl}`,
     `   The file:     ${pin.asset}, ${pin.size} bytes,`,
     `                 SHA-256 ${pin.sha256}`,
     '                 (checked before it was unpacked into this app).',
     '',
-    '   Source code: under section 3 of the GPL, the complete corresponding source',
-    `   code of this MinGit build is attached to the GitHub release of The Curator`,
-    `   that contains this app, as ${mingitSourceFor(pin).asset}, at ${releasesUrl}`,
-    '   The Git for Windows project also publishes it, with its build recipes, at',
-    `   ${pin.releaseUrl} and https://github.com/git-for-windows/build-extra`,
+    '   Source code: MinGit contains parts under the GNU GPL, the GNU LGPL and the',
+    '   Mozilla Public License. The complete corresponding source code of each of',
+    '   those parts is attached to the GitHub release of The Curator that contains',
+    `   this app, at ${releasesUrl} (section 3 lists every file).`,
+    `   Git itself: ${mingitSourceFor(pin).asset} (GitHub's archive of ${pin.tag})`,
+    '   and its build package (section 3). The Git for Windows project also',
+    `   publishes them, with its build recipes, at ${pin.releaseUrl}`,
+    '   and https://github.com/git-for-windows/build-extra',
     '',
     `   Components (from resources\\git\\etc\\package-versions.txt, ${components.length} entries):`,
     ...components.map((c) => `     ${c}`),
     '',
-    '2. Electron, Chromium and Node.js',
+    '2. Every MinGit component: its licence and where its source is',
+    '',
+    `   ${table.length} components. The list was checked against the one Git for Windows`,
+    `   publishes for this MinGit (${PACKAGE_VERSIONS_PROVENANCE.asset}, SHA-256`,
+    `   ${PACKAGE_VERSIONS_PROVENANCE.sha256}); the build refuses a MinGit whose`,
+    '   own list differs. Copyleft parts (GPL, LGPL, MPL) have their source ATTACHED',
+    '   to The Curator\'s release; the others name their source package. Every',
+    '   licence text is in full in section 6.',
+    '',
+    ...componentBlock,
+    `3. Source code attached to The Curator's release (${attached.length} files)`,
+    '',
+    `   At ${releasesUrl}, on the release that contains this app:`,
+    ...attached.map((a) => `     ${a.asset}`),
+    '',
+    '4. Electron, Chromium and Node.js',
     '',
     '   The app runs on Electron. Their licences are in LICENSE.electron.txt and',
     '   LICENSES.chromium.html, in the folder The Curator is installed in.',
     '',
-    '3. JavaScript packages',
+    '5. JavaScript packages',
     '',
     '   The packages in resources\\app\\node_modules each carry their own licence',
     '   file in their own folder.',
     '',
+    `6. Licence texts (${usedTexts.length})`,
+    '',
+    ...textBlock,
   ];
   return lines.join('\r\n');
 }
@@ -445,6 +551,10 @@ export async function fetchMinGit({
   fetchImpl = globalThis.fetch,
   extract = extractZip,
   log = (m) => console.log(m),
+  // The component table the archive's own etc/package-versions.txt must
+  // match exactly. Bound to the REAL pinned archive: a test's fixture pin
+  // (another SHA-256) is not held to it unless the test passes one.
+  table = String(pin.sha256).toLowerCase() === MINGIT.sha256 ? MINGIT_COMPONENTS : null,
 } = {}) {
   mkdirSync(outDir, { recursive: true });
   let archive = zipPath ? path.resolve(zipPath) : path.join(outDir, pin.asset);
@@ -490,6 +600,18 @@ export async function fetchMinGit({
     const components = parsePackageVersions(
       readFileSync(path.join(gitStage, ...'etc/package-versions.txt'.split('/')), 'utf8'));
     if (components.length === 0) throw new Error('MinGit REFUSED — etc/package-versions.txt lists no components');
+    if (table) {
+      // Nothing ships whose licence nobody decided (desktop/lib/mingit-components.mjs).
+      const cls = classifyComponents(components, table);
+      if (!cls.ok) {
+        throw new Error(
+          'MinGit REFUSED — etc/package-versions.txt does not match the component table in ' +
+          'desktop/lib/mingit-components.mjs (each component\'s licence and source must be decided first).\n' +
+          cls.unknown.map((l) => `  · not in the table: ${l}`).join('\n') +
+          (cls.unknown.length && cls.absent.length ? '\n' : '') +
+          cls.absent.map((l) => `  · in the table but not in this MinGit: ${l}`).join('\n'));
+      }
+    }
     writeFileSync(path.join(staging, NOTICES_FILE), thirdPartyNotices({ pin, components }));
     writeFileSync(path.join(staging, MANIFEST_FILE), JSON.stringify({
       version: pin.version, tag: pin.tag, asset: pin.asset, sha256: v.sha256, size: v.size,

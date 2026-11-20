@@ -47,6 +47,14 @@
  *     only. §3 asserts it exists, runs after the rename, and uses the arch
  *     spellings `LIPO_ARCH` declares — it cannot prove `lipo` reports what is
  *     expected of it.
+ *   • NO REAL SOURCE PACKAGE WAS DOWNLOADED (§6). The 28 MinGit source
+ *     packages and the git archive are checked here against FIXTURES of the
+ *     same shape; that each real file has its pinned size, digest and
+ *     `<pkgbase>/PKGBUILD` tree is proven only when publish-windows runs on a
+ *     real release tag, and fails that job if not. The component table was
+ *     checked against Git for Windows' published package-versions list, not
+ *     against the list inside the MinGit zip (fetch-mingit refuses the build
+ *     if those ever differ).
  *   • The parser in §3 is a SUBSET of YAML — enough for these two workflows,
  *     and deliberately strict so it fails rather than guesses. It treats `on`
  *     as the string key `on`, where a YAML 1.1 loader would give `true`.
@@ -67,12 +75,20 @@ import {
 } from './publish-dmg-assets.js';
 import {
   planWinPublish, WIN_PUBLISH_REFUSALS, parseWinPublishArgs, verifySourceArchive, noticesNameSource, fetchSourceArchive,
+  SOURCE_REFUSALS, SAFE_ASSET_NAME, noticesMissingSources, fetchAllSources, verifySourceFile, checkReleaseAssets, tarEntryNames,
 } from './publish-win-assets.js';
 import * as ci from './ci-win-app.mjs';
 import { installerFileName } from '../desktop/lib/win-pack.mjs';
-import { MINGIT, MINGIT_SOURCE, thirdPartyNotices } from '../desktop/lib/fetch-mingit.mjs';
+import * as fm from '../desktop/lib/fetch-mingit.mjs';
+import {
+  MINGIT, MINGIT_SOURCE, thirdPartyNotices, RELEASE_SOURCE_ASSETS, MINGIT_COMPONENTS, COPYLEFT_SOURCES, LICENCE_TEXTS,
+  PACKAGE_VERSIONS_PROVENANCE, classifyComponents,
+} from '../desktop/lib/fetch-mingit.mjs';
 import { resolveInstallerRelease } from '../desktop/lib/update-release.js';
-import { gzipSync } from 'node:zlib';
+import * as zlib from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { Transform } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,13 +116,41 @@ function eq(actual, expected, label) {
 }
 function section(t) { console.log(`\n${t}`); }
 function throwsMsg(fn) { try { fn(); return null; } catch (e) { return e.message || 'threw'; } }
+const sha256 = (b) => createHash('sha256').update(b).digest('hex');
+
+/** A zip of STORED entries [[name, bytes]] with real CRC-32s (fetch-mingit's reader checks them). */
+function storedZip(entries) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [n, data] of entries) {
+    const name = Buffer.from(n);
+    const crc = fm.crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(name.length, 26);
+    locals.push(lh, name, data);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(offset, 42);
+    centrals.push(ch, name);
+    offset += 30 + name.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
+}
 
 /** A gzip'd tar in GitHub's archive shape: a pax global header carrying the
  *  commit, then every file under `top/`. ustar headers with real checksums. */
 function makeTarGz(top, files, commit) {
   const header = (name, size, type) => {
     const h = Buffer.alloc(512, 0);
+    let pre = '';
+    if (name.length > 100) { const cut = name.lastIndexOf('/', name.length - 2 > 155 ? 155 : name.length - 2); pre = name.slice(0, cut); name = name.slice(cut + 1); }
     h.write(name.slice(0, 100), 0, 'utf8');
+    if (pre) h.write(pre, 345, 'utf8');
     h.write('0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
     h.write(size.toString(8).padStart(11, '0') + '\0', 124);
     h.write('00000000000\0', 136);
@@ -617,52 +661,251 @@ section('§5  The Windows setup program: publish-win-assets.js against the updat
   ok(bad.status === 1 && /blockmap-present/.test(bad.stderr), 'a refusal exits 1 and names itself, so the job fails before publishing');
   ok(parseWinPublishArgs(['--dir', 'x']).error && parseWinPublishArgs(['--version', WV]).error, 'the setup mode needs --dir and --version');
   ok(parseWinPublishArgs(['--dir', 'x', '--version', WV, '--wat']).error, 'an unrecognised flag is a hard error');
-  ok(parseWinPublishArgs(['--source']).error && !parseWinPublishArgs(['--source', '--out', 'o']).error, 'the source mode needs --out');
+  ok(parseWinPublishArgs(['--sources']).error && parseWinPublishArgs(['--source', '--out', 'o']).error, 'the sources mode needs --out (and the retired single --source flag is refused)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§6  The GPLv2 source of the bundled MinGit: named by the notices, verified before upload');
+section('§6  The source of EVERY copyleft MinGit component: classified, named by the notices, verified before upload, checked on the release');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  eq([MINGIT_SOURCE.asset, MINGIT_SOURCE.topDir], ['git-for-windows-2.56.1.windows.1-source.tar.gz', 'git-2.56.1.windows.1'],
-    'the source file name and its top folder are derived from the pinned tag');
-  eq(MINGIT_SOURCE.url, `https://github.com/git-for-windows/git/archive/refs/tags/${MINGIT.tag}.tar.gz`, 'it is GitHub\'s archive of exactly the pinned tag');
+  // ── 6a. The component table ───────────────────────────────────────────────
+  // The list Git for Windows publishes for this MinGit, byte for byte. Its
+  // SHA-256 is the one GitHub records for the asset (pinned in the table's
+  // provenance), so this copy cannot drift from upstream unnoticed.
+  const PUBLISHED = [
+    'gawk 5.4.1-1', 'coreutils 8.32-5', 'diffutils 3.12-1', 'findutils 4.11.0-2', 'gcc-libs 16.2.0-1', 'gmp 6.3.0-2',
+    'grep 1~3.0-7', 'heimdal-libs 7.8.0-5', 'libcbor 0.11.0-1', 'libfido2 1.15.0-1', 'libiconv 1.19-1', 'libintl 0.22.5-1',
+    'libopenssl 3.5.9-1', 'libpcre 8.45-5', 'libreadline 8.3.006-1', 'libsqlite 3.54.0-1', 'libxcrypt 4.5.2-1',
+    'mingw-w64-ucrt-x86_64-brotli 1.2.1-1', 'mingw-w64-ucrt-x86_64-ca-certificates 20260816-3', 'mingw-w64-ucrt-x86_64-cc-libs 16.2.0-6',
+    'mingw-w64-ucrt-x86_64-curl-winssl 8.23.0-1', 'mingw-w64-ucrt-x86_64-curl-openssl-alternate 8.23.0-1', 'mingw-w64-ucrt-x86_64-curl-winssl 8.23.0-1',
+    'mingw-w64-ucrt-x86_64-docx2txt-rs 0.2.0-1', 'mingw-w64-ucrt-x86_64-expat 2.9.0-1', 'mingw-w64-ucrt-x86_64-gcc-libs 16.2.0-6',
+    'mingw-w64-ucrt-x86_64-gettext-runtime 1.0-1', 'mingw-w64-ucrt-x86_64-git 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-git-credential-manager 2.9.1-1',
+    'mingw-w64-ucrt-x86_64-git-credential-wincred 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-git-extra 1.1.715.85f886165-1',
+    'mingw-w64-ucrt-x86_64-git-for-windows-addons 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-git-gui 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-git-perl 2.56.1.1-1',
+    'mingw-w64-ucrt-x86_64-git-send-email 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-git-subtree 2.56.1.1-1', 'mingw-w64-ucrt-x86_64-gitk 2.56.1.1-1',
+    'mingw-w64-ucrt-x86_64-libatomic 16.2.0-6', 'mingw-w64-ucrt-x86_64-libffi 3.8.0-1', 'mingw-w64-ucrt-x86_64-libgcc 16.2.0-6',
+    'mingw-w64-ucrt-x86_64-libgomp 16.2.0-6', 'mingw-w64-ucrt-x86_64-libiconv 1.19-1', 'mingw-w64-ucrt-x86_64-libidn2 2.3.8-4',
+    'mingw-w64-ucrt-x86_64-libpsl 0.21.5-3', 'mingw-w64-ucrt-x86_64-libquadmath 16.2.0-6', 'mingw-w64-ucrt-x86_64-libssh2-wincng 1.11.1-2',
+    'mingw-w64-ucrt-x86_64-libssh2-wincng 1.11.1-2', 'mingw-w64-ucrt-x86_64-libstdc++ 16.2.0-6', 'mingw-w64-ucrt-x86_64-libtasn1 4.21.0-1',
+    'mingw-w64-ucrt-x86_64-libunistring 1.4.2-1', 'mingw-w64-ucrt-x86_64-libwinpthread 14.0.0.r536.g7ce22f663-1', 'mingw-w64-ucrt-x86_64-nghttp2 1.70.0-1',
+    'mingw-w64-ucrt-x86_64-openssl 3.5.9-1', 'mingw-w64-ucrt-x86_64-pcre2 10.49-1', 'mingw-w64-ucrt-x86_64-zlib 1.3.2-3', 'mingw-w64-ucrt-x86_64-zstd 1.5.7-2',
+    'mpfr 4.2.2-1', 'msys2-runtime 3.6.10-4', 'ncurses 6.6-2', 'openssh 10.6p1-1', 'openssl 3.5.9-1', 'sed 4.9-1', 'bash 5.3.015-2', 'zlib 1.3.2-1',
+    'filesystem 2026.10.17-1', 'dash 0.5.13.5-1', 'rebase 4.5.0-5',
+  ];
+  const publishedText = PUBLISHED.join('\n') + '\n';
+  eq([Buffer.byteLength(publishedText), sha256(publishedText)], [PACKAGE_VERSIONS_PROVENANCE.size, PACKAGE_VERSIONS_PROVENANCE.sha256],
+    'the fixture IS Git for Windows\' published package-versions-2.56.1-MinGit.txt (size and SHA-256 GitHub records)');
+  const cls = classifyComponents(fm.parsePackageVersions(publishedText));
+  eq([cls.ok, cls.unknown, cls.absent], [true, [], []], `every one of its ${new Set(PUBLISHED).size} components has exactly one row in the table, and the table has no row it lacks`);
+  eq(classifyComponents([...PUBLISHED, 'mingw-w64-ucrt-x86_64-newthing 1.0-1']).unknown, ['mingw-w64-ucrt-x86_64-newthing 1.0-1'], 'CONTROL: a component nobody classified is caught');
+  eq(classifyComponents(PUBLISHED.map((l) => (l === 'sed 4.9-1' ? 'sed 4.10-1' : l))).unknown, ['sed 4.10-1'], 'CONTROL: the same component at ANOTHER version is caught (the source must be of the exact version)');
+  eq(classifyComponents(PUBLISHED.filter((l) => l !== 'bash 5.3.015-2')).absent, ['bash 5.3.015-2'], 'CONTROL: a row the archive no longer has is caught');
+
+  // The rule, cross-checked against each row's own licence string (a dumb
+  // second reading of the same decision).
+  const looksCopyleft = (lic) => /\b(A?GPL|LGPL|MPL)\b|GPL-|MPL-/.test(lic);
+  const misfiled = MINGIT_COMPONENTS.filter((c) => (looksCopyleft(c.licence) ? 'copyleft' : 'permissive') !== c.kind && !(c.name.endsWith('-zstd')));
+  eq(misfiled.map((c) => c.name), [], 'every row whose licence names GPL, LGPL or MPL is "copyleft"; every other row "permissive" (zstd: dual BSD OR GPL, taken as BSD)');
+  const sourceKeys = new Set(COPYLEFT_SOURCES.map((s) => s.key));
+  eq(MINGIT_COMPONENTS.filter((c) => c.kind === 'copyleft' && !sourceKeys.has(c.source)).map((c) => c.name), [], 'every copyleft component points at a source package that is attached');
+  eq(MINGIT_COMPONENTS.filter((c) => c.kind === 'permissive' && !/^https:\/\/(repo\.msys2\.org|github\.com\/git-for-windows)\//.test(c.source)).map((c) => c.name), [],
+    'every permissive component names the address of its exact source package');
+  const usedKeys = new Set(MINGIT_COMPONENTS.filter((c) => c.kind === 'copyleft').map((c) => c.source));
+  eq(COPYLEFT_SOURCES.filter((s) => !usedKeys.has(s.key)).map((s) => s.key), [], 'and no source package is attached that no component needs');
+  for (const lic of ['GPL-2.0', 'GPL-3.0', 'LGPL-2.1', 'LGPL-3.0', 'MPL-2.0']) {
+    ok(MINGIT_COMPONENTS.some((c) => c.texts.includes(lic)), `the ${lic} text is used by at least one component (and therefore printed)`);
+  }
+  eq(MINGIT_COMPONENTS.flatMap((c) => c.texts).filter((k) => !LICENCE_TEXTS[k]), [], 'every licence a row names has a pinned full text');
+  const textProblems = Object.keys(LICENCE_TEXTS).filter((k) => { try { return fm.readLicenceText(k).length < 400; } catch { return true; } });
+  eq(textProblems, [], `all ${Object.keys(LICENCE_TEXTS).length} licence texts read back with their pinned SHA-256 (and are real texts, not stubs)`);
+  const td = tmp();
+  for (const t of Object.values(LICENCE_TEXTS)) writeFileSync(path.join(td, t.file), readFileSync(path.join(fm.LICENCE_DIR, t.file)));
+  writeFileSync(path.join(td, LICENCE_TEXTS.curl.file), readFileSync(path.join(fm.LICENCE_DIR, LICENCE_TEXTS.curl.file), 'utf8').replace('Daniel', 'Someone'));
+  ok(/curl\.txt has SHA-256/.test(throwsMsg(() => fm.readLicenceText('curl', { dir: td })) || ''), 'CONTROL: one changed word in a licence text is refused (the notices are never written from an unreviewed text)');
+
+  // ── 6b. The attachments: names, hosts, pins ───────────────────────────────
+  eq(RELEASE_SOURCE_ASSETS.length, COPYLEFT_SOURCES.length + 1, `${RELEASE_SOURCE_ASSETS.length} files: GitHub's archive of the git tag plus one source package per copyleft package base`);
+  eq([RELEASE_SOURCE_ASSETS[0].asset, RELEASE_SOURCE_ASSETS[0].kind, MINGIT_SOURCE.topDir], ['git-for-windows-2.56.1.windows.1-source.tar.gz', 'git-tag-archive', 'git-2.56.1.windows.1'],
+    'the first is the git archive, its name and top folder derived from the pinned tag');
+  eq(MINGIT_SOURCE.url, `https://github.com/git-for-windows/git/archive/refs/tags/${MINGIT.tag}.tar.gz`, '…GitHub\'s archive of exactly the pinned tag');
+  const names = RELEASE_SOURCE_ASSETS.map((a) => a.asset);
+  eq(names.filter((n) => !SAFE_ASSET_NAME.test(n)), [], 'every attachment name survives GitHub unchanged (letters, digits, . _ + - only; MSYS2\'s "~" becomes "_")');
+  eq(names.length, new Set(names.map((n) => n.toLowerCase())).size, 'no two attachments share a name (compared ignoring case)');
+  ok(names.includes('grep-1_3.0-7.src.tar.zst') && COPYLEFT_SOURCES.find((s) => s.pkgbase === 'grep').url.endsWith('/grep-1~3.0-7.src.tar.zst'),
+    'grep\'s epoch: fetched by its real name, attached as grep-1_3.0-7.src.tar.zst');
+  eq(COPYLEFT_SOURCES.filter((s) => !(s.size > 0)).map((s) => s.asset), [], 'every source package has its exact byte size pinned');
+  eq(COPYLEFT_SOURCES.filter((s) => /^https:\/\/github\.com\/git-for-windows\//.test(s.url) !== !!s.sha256).map((s) => s.asset), [],
+    'a SHA-256 is pinned exactly where the host records one (Git for Windows\' GitHub releases); repo.msys2.org files are pinned by size and tree');
+  eq(COPYLEFT_SOURCES.filter((s) => !/^https:\/\/(repo\.msys2\.org\/(msys|mingw)\/sources\/|github\.com\/git-for-windows\/(git|pacman-repo)\/releases\/download\/)/.test(s.url)).map((s) => s.url), [],
+    'every source comes from MSYS2\'s source repository or a Git for Windows release, never anywhere else');
+  for (const p of ['win32', 'darwin']) {
+    eq(cfgMod.installerAssetsFor({ assets: names.map((name) => ({ name })) }, p), [], `the REAL installerAssetsFor(…, '${p}') counts none of them as an installer (an updater never downloads a source file)`);
+  }
+
+  // ── 6c. The notices name every one ────────────────────────────────────────
   const shipped = thirdPartyNotices({ components: ['git 2.56.1.windows.1'] });
-  ok(noticesNameSource(shipped), 'the THIRD-PARTY-NOTICES.txt the build ships names that file (so a person can find it on the release)');
-  ok(!noticesNameSource(shipped.replace(MINGIT_SOURCE.asset, 'source.tar.gz')), 'CONTROL: notices that do not name it are caught');
+  eq(noticesMissingSources(shipped), [], 'the THIRD-PARTY-NOTICES.txt the build ships names EVERY attached file');
+  ok(noticesNameSource(shipped), '…including the git archive and the MinGit tag');
+  eq(noticesMissingSources(shipped.replaceAll('sed-4.9-1.src.tar.zst', 'sed.tar')), ['sed-4.9-1.src.tar.zst'], 'CONTROL: notices that leave one out are caught, by name');
+  ok(MINGIT_COMPONENTS.every((c) => shipped.includes(`   ${c.name} ${c.version}\r\n     Licence:  ${c.licence}`)), 'every component is in the notices with its licence');
+  ok(Object.keys(LICENCE_TEXTS).every((k) => shipped.includes(LICENCE_TEXTS[k].title)), 'every licence text is printed in full, under its title');
+  ok(shipped.includes('GNU GENERAL PUBLIC LICENSE') && shipped.includes('Apache License') && shipped.includes('Version 2.0, January 2004'),
+    'CONTROL: the full GPL and Apache texts really are in the file, not only their names');
+  ok(!/[^\r]\n/.test(shipped), 'CRLF throughout (Notepad opens it)');
 
-  // A synthetic GitHub archive: pax global header with the commit, entries under the top folder.
+  // ── 6d. fetch-mingit refuses a MinGit whose component list differs ────────
+  const pvGood = Buffer.from(publishedText);
+  const zipOf = (pv) => storedZip([['cmd/git.exe', Buffer.from('MZ fake git')], ['LICENSE.txt', Buffer.from('GPL v2 text')], ['etc/package-versions.txt', pv]]);
+  const runFetch = async (pv, table) => {
+    const z = zipOf(pv);
+    const f = path.join(tmp(), 'm.zip');
+    writeFileSync(f, z);
+    const pin = { ...MINGIT, size: z.length, sha256: sha256(z) };
+    try { await fm.fetchMinGit({ outDir: tmp(), zipPath: f, pin, table, log: () => {} }); return null; } catch (e) { return e.message; }
+  };
+  eq(await runFetch(pvGood, MINGIT_COMPONENTS), null, 'fetchMinGit, held to the table, accepts a MinGit whose list is the published one');
+  const extra = await runFetch(Buffer.from(publishedText + 'perl 5.40.0-1\n'), MINGIT_COMPONENTS);
+  ok(/REFUSED/.test(extra || '') && /not in the table: perl 5\.40\.0-1/.test(extra || ''), 'REFUSED: a MinGit carrying a component nobody classified (named in the message)');
+  const fewer = await runFetch(Buffer.from(publishedText.replace('dash 0.5.13.5-1\n', '')), MINGIT_COMPONENTS);
+  ok(/REFUSED/.test(fewer || '') && /in the table but not in this MinGit: dash 0\.5\.13\.5-1/.test(fewer || ''), 'REFUSED: a MinGit whose list lacks a row (the notices would describe something else)');
+  eq(await runFetch(Buffer.from(publishedText + 'perl 5.40.0-1\n'), null), null, 'CONTROL: a fixture pin is not held to the table unless the caller passes it (the default binds the table to the REAL pin\'s SHA-256)');
+
+  // ── 6e. Each source file is verified, gzip and zstd alike ─────────────────
   const COMMIT = 'a'.repeat(40);
-  const files = [['GIT-VERSION-GEN', 'v'], ['COPYING', 'GPL'], ...Array.from({ length: 120 }, (_, i) => [`builtin/f${i}.c`, `int f${i};`])];
-  const good = makeTarGz(MINGIT_SOURCE.topDir, files, COMMIT);
-  const v = verifySourceArchive(good);
-  eq([v.ok, v.entries, v.commit], [true, files.length + 1, COMMIT], 'the archive check reads the tree and the commit GitHub records');
+  const gitFiles = [['GIT-VERSION-GEN', 'v'], ['COPYING', 'GPL'], ...Array.from({ length: 120 }, (_, i) => [`builtin/f${i}.c`, `int f${i};`])];
+  const gitGood = makeTarGz(MINGIT_SOURCE.topDir, gitFiles, COMMIT);
+  const v = verifySourceArchive(gitGood);
+  eq([v.ok, v.entries, v.commit], [true, gitFiles.length + 1, COMMIT], 'the git archive check reads the tree and the commit GitHub records');
   eq(verifySourceArchive(Buffer.from('not gzip')).reason, 'not-gzip', 'REFUSED: not gzip');
-  eq(verifySourceArchive(makeTarGz('git-2.55.0.windows.1', files, COMMIT)).reason, 'wrong-tree', 'REFUSED: another tag\'s tree');
-  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, files.filter(([n]) => n !== 'COPYING'), COMMIT)).reason, 'not-git-source', 'REFUSED: no COPYING');
-  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, files.slice(0, 10), COMMIT)).reason, 'too-few-entries', 'REFUSED: a handful of files');
+  eq(verifySourceArchive(makeTarGz('git-2.55.0.windows.1', gitFiles, COMMIT)).reason, 'wrong-tree', 'REFUSED: another tag\'s tree');
+  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, gitFiles.filter(([n]) => n !== 'COPYING'), COMMIT)).reason, 'not-git-source', 'REFUSED: no COPYING');
+  eq(verifySourceArchive(makeTarGz(MINGIT_SOURCE.topDir, gitFiles.slice(0, 10), COMMIT)).reason, 'too-few-entries', 'REFUSED: a handful of files');
+  const tarBytes = (gz) => gunzipSync(gz);
+  const bigName = `pkg/${'d'.repeat(60)}/${'f'.repeat(60)}.c`;
+  eq(tarEntryNames(tarBytes(makeTarGz('pkg', [[bigName.slice(4), 'x']], COMMIT))).slice(-1), [bigName], 'a name longer than 100 characters is read whole (ustar prefix)');
+  ok(/checksum/.test(throwsMsg(() => { const t = Buffer.from(tarBytes(makeTarGz('pkg', [['PKGBUILD', 'x']], COMMIT))); t[1024 + 10] ^= 1; tarEntryNames(t); }) || ''),
+    'a damaged tar header is refused on its checksum, not read past');
 
-  const notices = path.join(tmp(), 'THIRD-PARTY-NOTICES.txt');
-  writeFileSync(notices, shipped);
+  const pkg = (base, extraFiles = []) => makeTarGz(base, [['PKGBUILD', 'pkgname=x'], ['.SRCINFO', 'x'], ['x-1.0.tar.gz', 'payload'], ...extraFiles], COMMIT);
+  const gzPkg = pkg('mingw-w64-demo');
+  const asset = (over) => ({ kind: 'makepkg-source', pkgbase: 'mingw-w64-demo', topDir: 'mingw-w64-demo', upstreamName: 'mingw-w64-demo-1.0-1.src.tar.gz',
+    asset: 'mingw-w64-demo-1.0-1.src.tar.gz', url: 'https://example.invalid/mingw-w64-demo-1.0-1.src.tar.gz', size: gzPkg.length, sha256: sha256(gzPkg), ...over });
+  const fileWith = (bytes, name = 'f.partial') => { const f = path.join(tmp(), name); writeFileSync(f, bytes); return f; };
+  const vf = await verifySourceFile(fileWith(gzPkg), asset());
+  eq([vf.ok, vf.size, vf.sha256], [true, gzPkg.length, sha256(gzPkg)], 'a makepkg .src.tar.gz of the pinned size, SHA-256 and tree is accepted');
+  eq((await verifySourceFile(fileWith(gzPkg), asset({ size: gzPkg.length + 1 }))).reason, 'wrong-size', 'REFUSED: one byte off the pinned size');
+  eq((await verifySourceFile(fileWith(gzPkg), asset({ sha256: '0'.repeat(64) }))).reason, 'wrong-sha256', 'REFUSED: another SHA-256');
+  const other = pkg('mingw-w64-other');
+  eq((await verifySourceFile(fileWith(other), asset({ size: other.length, sha256: null }))).reason, 'wrong-tree', 'REFUSED: another package\'s source (entries outside <pkgbase>/), with only the size pinned');
+  const noPkgbuild = makeTarGz('mingw-w64-demo', [['README', 'x']], COMMIT);
+  eq((await verifySourceFile(fileWith(noPkgbuild), asset({ size: noPkgbuild.length, sha256: null }))).reason, 'no-pkgbuild', 'REFUSED: no <pkgbase>/PKGBUILD');
+  eq((await verifySourceFile(fileWith(Buffer.from('<html>rate limited</html>')), asset({ size: 25, sha256: null }))).reason, 'not-gzip', 'REFUSED: an HTML error page of the right size is not a source package');
+  eq((await verifySourceFile(fileWith(gzPkg), asset({ asset: 'a~b.tar.gz' }))).reason, 'unsafe-asset-name', 'REFUSED: a name GitHub would rewrite');
+
+  // zstd: a stand-in decompressor (this Node may have none), and the refusal when there is none.
+  const ZMAGIC = Buffer.from([0x28, 0xB5, 0x2F, 0xFD]);
+  const fakeZstd = { ...zlib, createZstdDecompress: () => {
+    const parts = [];
+    return new Transform({ transform(c, _e, cb) { parts.push(c); cb(); }, flush(cb) { cb(null, gunzipSync(Buffer.concat(parts).subarray(4))); } });
+  } };
+  const zstPkg = Buffer.concat([ZMAGIC, gzPkg]);
+  const zAsset = asset({ upstreamName: 'mingw-w64-demo-1.0-1.src.tar.zst', asset: 'mingw-w64-demo-1.0-1.src.tar.zst', size: zstPkg.length, sha256: null });
+  eq((await verifySourceFile(fileWith(zstPkg), zAsset, { z: fakeZstd })).ok, true, 'a .src.tar.zst is read through node:zlib\'s zstd decompressor (stand-in here) and its tree checked');
+  const noZstd = { ...zlib, createZstdDecompress: undefined };
+  eq((await verifySourceFile(fileWith(zstPkg), zAsset, { z: noZstd })).reason, 'zstd-unavailable', 'REFUSED (not skipped) on a Node without zstd');
+  eq((await verifySourceFile(fileWith(gzPkg), zAsset, { z: fakeZstd })).reason, 'wrong-size', 'a gzip file under a .zst name: refused');
+  const zAsset2 = { ...zAsset, size: gzPkg.length };
+  eq((await verifySourceFile(fileWith(gzPkg), zAsset2, { z: fakeZstd })).reason, 'not-zstd', '…and refused as not zstd when the size happens to match');
+
+  // ── 6f. fetchAllSources: all or nothing, notices first ────────────────────
+  const assets3 = [
+    { kind: 'git-tag-archive', key: 'git', asset: MINGIT_SOURCE.asset, url: 'https://example.invalid/git.tar.gz', topDir: MINGIT_SOURCE.topDir, size: null, sha256: null },
+    asset(),
+    { ...zAsset, url: 'https://example.invalid/demo.zst' },
+  ];
+  const served = { 'https://example.invalid/git.tar.gz': gitGood, [asset().url]: gzPkg, 'https://example.invalid/demo.zst': zstPkg };
   let fetched = [];
-  const fakeFetch = (body, status = 200) => async (url) => { fetched.push(url); return new Response(body, { status }); };
-  const out = tmp();
-  const r = await fetchSourceArchive({ out, notices, fetchImpl: fakeFetch(good), log: () => {} });
-  eq([r.ok, r.source, r.commit], [true, path.join(out, MINGIT_SOURCE.asset), COMMIT], 'fetchSourceArchive: downloaded, verified, saved under the notices\' name');
-  eq(fetched, [MINGIT_SOURCE.url], '…from exactly the pinned tag\'s archive URL');
-  const wrongNotices = path.join(tmp(), 'n.txt');
-  writeFileSync(wrongNotices, 'MinGit 2.56.1 without a file name');
-  fetched = [];
-  eq((await fetchSourceArchive({ out: tmp(), notices: wrongNotices, fetchImpl: fakeFetch(good), log: () => {} })).reason,
-    'notices-do-not-name-source', 'notices that do not name the file: refused BEFORE any download');
-  eq(fetched, [], '…nothing was fetched');
+  const serve = (over = {}) => async (url) => {
+    fetched.push(url);
+    if (over[url] instanceof Error) throw over[url];
+    const body = over[url] !== undefined ? over[url] : served[url];
+    return body === null ? new Response('nope', { status: 404 }) : new Response(body, { status: 200 });
+  };
+  const noticesFile = path.join(tmp(), 'THIRD-PARTY-NOTICES.txt');
+  writeFileSync(noticesFile, assets3.map((a) => a.asset).join('\r\n'));
+  const outAll = tmp();
+  const all = await fetchAllSources({ out: outAll, notices: noticesFile, fetchImpl: serve(), assets: assets3, log: () => {}, z: fakeZstd });
+  eq([all.ok, all.files && all.files.length], [true, 3], 'fetchAllSources: all three downloaded and verified');
+  eq(readFileSync(path.join(outAll, 'sources.txt'), 'utf8').trim().split('\n'), assets3.map((a) => path.join(outAll, a.asset)), '…sources.txt lists each verified file, under its attachment name');
+  eq(readdirSync(outAll).filter((n) => n.endsWith('.partial')), [], '…and no .partial is left');
+
+  const outFail = tmp();
+  const failed1 = await fetchAllSources({ out: outFail, notices: noticesFile, fetchImpl: serve({ [asset().url]: other }), assets: assets3, log: () => {}, z: fakeZstd });
+  eq([failed1.ok, failed1.asset], [false, asset().asset], 'ONE wrong file: refused, naming it');
+  ok(!existsSync(path.join(outFail, 'sources.txt')), '…and there is no sources.txt, so the publish step has nothing to attach');
   const out404 = tmp();
-  eq((await fetchSourceArchive({ out: out404, fetchImpl: fakeFetch('nope', 404), log: () => {} })).reason, 'download-failed', 'a 404 is download-failed');
-  const outBad = tmp();
-  eq((await fetchSourceArchive({ out: outBad, fetchImpl: fakeFetch(makeTarGz('elsewhere', files, COMMIT)), log: () => {} })).reason,
-    'wrong-tree', 'a downloaded archive of the wrong tree is refused');
-  eq(readdirSync(outBad), [], '…and nothing (not even a .partial) is left to be uploaded');
+  const f404 = await fetchAllSources({ out: out404, notices: noticesFile, fetchImpl: serve({ 'https://example.invalid/demo.zst': null }), assets: assets3, log: () => {}, z: fakeZstd });
+  eq([f404.reason, f404.asset], ['download-failed', zAsset.asset], 'a source that is gone (404) fails the job, naming it');
+
+  fetched = [];
+  let flaky = 0;
+  const flakyFetch = async (url, o) => { if (url === asset().url && flaky++ === 0) throw new Error('ECONNRESET'); return serve()(url, o); };
+  eq((await fetchAllSources({ out: tmp(), notices: noticesFile, fetchImpl: flakyFetch, assets: assets3, log: () => {}, z: fakeZstd })).ok, true, 'a dropped connection is retried once');
+
+  const thin = path.join(tmp(), 'n.txt');
+  writeFileSync(thin, assets3.slice(0, 2).map((a) => a.asset).join('\n'));
+  fetched = [];
+  const nn = await fetchAllSources({ out: tmp(), notices: thin, fetchImpl: serve(), assets: assets3, log: () => {}, z: fakeZstd });
+  eq([nn.reason, fetched], ['notices-do-not-name-source', []], 'notices that leave a file out: refused BEFORE any download');
+
+  // The single-file mode is still exact.
+  fetched = [];
+  const legacy = await fetchSourceArchive({ out: tmp(), fetchImpl: async (u) => { fetched.push(u); return new Response(gitGood); }, log: () => {} });
+  eq([legacy.ok, legacy.commit, fetched], [true, COMMIT, [MINGIT_SOURCE.url]], 'fetchSourceArchive (one file, by hand) fetches exactly the pinned tag\'s archive');
+
+  // ── 6g. The release, afterwards: every file BY EXACT NAME ─────────────────
+  const SETUP = installerFileName('4.0.0');
+  const setupFile = path.join(outAll, SETUP);
+  writeFileSync(setupFile, 'MZ setup');
+  const expected = [{ name: SETUP, size: 8, sha256: null }, ...all.files.map((f) => ({ name: f.asset, size: f.size, sha256: f.sha256 }))];
+  const release = { assets: expected.map((e) => ({ name: e.name, size: e.size, state: 'uploaded', digest: e.sha256 ? `sha256:${e.sha256}` : null })) };
+  eq(checkReleaseAssets(release, expected).ok, true, 'a release with the setup and every source file passes');
+  for (const e of expected) {
+    const r = checkReleaseAssets({ assets: release.assets.filter((a) => a.name !== e.name) }, expected);
+    eq([r.ok, r.reason, r.missing], [false, 'missing-on-release', [e.name]], `REFUSED when ${e.name} is missing from the release`);
+  }
+  eq(checkReleaseAssets({ assets: release.assets.map((a) => (a.name === expected[2].name ? { ...a, name: a.name.replace('.tar.gz', '.tar.gz.1') } : a)) }, expected).reason,
+    'missing-on-release', 'a file GitHub renamed counts as missing (the notices name the exact name)');
+  eq(checkReleaseAssets({ assets: release.assets.map((a, i) => (i === 1 ? { ...a, state: 'starter' } : a)) }, expected).reason, 'missing-on-release', 'an upload that never finished counts as missing');
+  eq(checkReleaseAssets({ assets: release.assets.map((a, i) => (i === 2 ? { ...a, size: a.size - 1 } : a)) }, expected).reason, 'wrong-size-on-release', 'a short upload is refused');
+  eq(checkReleaseAssets({ assets: release.assets.map((a, i) => (i === 2 ? { ...a, digest: `sha256:${'f'.repeat(64)}` } : a)) }, expected).reason, 'wrong-digest-on-release', 'GitHub\'s digest, when it gives one, must be the verified SHA-256');
+  eq(checkReleaseAssets({}, expected).reason, 'release-unreadable', 'an unreadable answer is a refusal, not a pass');
+
+  // The CLI, for real, on files: what the workflow runs.
+  const relFile = path.join(tmp(), 'release.json');
+  const listFile = path.join(outAll, 'sources.txt');
+  const runCheck = (rel, list = listFile) => { writeFileSync(relFile, JSON.stringify(rel)); return spawnSync(process.execPath, [WIN_CLI, '--check-release', relFile, '--setup', setupFile, '--sources-list', list], { encoding: 'utf8' }); };
+  const realAssets = RELEASE_SOURCE_ASSETS;
+  // The CLI checks against the REAL list; serve it a complete fake release of those names.
+  const realDir = tmp();
+  const realFiles = realAssets.map((a) => { const f = path.join(realDir, a.asset); writeFileSync(f, a.asset); return f; });
+  const realList = path.join(realDir, 'sources.txt');
+  writeFileSync(realList, realFiles.join('\n') + '\n');
+  const realRelease = { assets: [{ name: SETUP, size: 8, state: 'uploaded' }, ...realAssets.map((a) => ({ name: a.asset, size: Buffer.byteLength(a.asset), state: 'uploaded' }))] };
+  const okRun = runCheck(realRelease, realList);
+  eq(okRun.status, 0, `the CLI --check-release exits 0 when all ${realAssets.length + 1} files are on the release`);
+  const drop = realAssets[7].asset;
+  const badRun = runCheck({ assets: realRelease.assets.filter((a) => a.name !== drop) }, realList);
+  ok(badRun.status === 1 && /missing-on-release/.test(badRun.stderr) && badRun.stderr.includes(drop), `the CLI exits 1 naming the missing file (${drop}), so publish-windows goes red`);
+  writeFileSync(realList, realFiles.filter((f) => !f.endsWith(drop)).join('\n') + '\n');
+  const shortList = runCheck(realRelease, realList);
+  ok(shortList.status === 1 && shortList.stderr.includes(drop), 'a sources list that lost a file is refused too (the release is checked against the PINNED names, not against whatever was downloaded)');
+  ok(parseWinPublishArgs(['--sources', '--out', 'o']).error && !parseWinPublishArgs(['--sources', '--out', 'o', '--notices', 'n']).error, 'the sources mode needs --out and --notices');
+  ok(parseWinPublishArgs(['--check-release', 'r', '--setup', 's']).error && !parseWinPublishArgs(['--check-release', 'r', '--setup', 's', '--sources-list', 'l']).error, 'the release check needs --setup and --sources-list');
+  ok(parseWinPublishArgs(['--sources', '--out', 'o', '--notices', 'n', '--dir', 'd']).error, 'two modes at once is a hard error');
+  ok(SOURCE_REFUSALS.includes('missing-on-release') && SOURCE_REFUSALS.includes('zstd-unavailable'), 'the refusals are named in one list');
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§7  The update rehearsal\'s fixture is accepted by the REAL resolver; its fetch reaches nothing else');
@@ -793,20 +1036,33 @@ section('§8  The Windows jobs — PARSED, and the gate\'s release test EXECUTED
   // The publish job.
   const ps = (J['publish-windows'] && J['publish-windows'].steps) || [];
   const iPNames = at(ps, (s) => s.id === 'names');
-  const iSrc = at(ps, (s) => s.id === 'source');
-  const iPub = at(ps, (s) => /gh release/.test(s.run || ''));
-  ok(iPNames >= 0 && iPNames < iSrc && iSrc < iPub, 'publish: check the name, fetch and verify the source, then publish');
-  ok(/--notices win-release\/win-unpacked\/resources\/THIRD-PARTY-NOTICES\.txt/.test((ps[iSrc] || {}).run || ''),
-    'the source step checks the notices file the build SHIPPED (it travels in the artifact)');
+  const iSrc = at(ps, (s) => s.id === 'sources');
+  const iPub = at(ps, (s) => /gh release (upload|create)/.test(s.run || ''));
+  const iChk = at(ps, (s) => /--check-release/.test(s.run || ''));
+  ok(iPNames >= 0 && iPNames < iSrc && iSrc < iPub && iPub < iChk,
+    'publish: check the name, fetch and verify EVERY source, publish, then check the release by name (in that order)');
+  ok(/publish-win-assets\.js --sources --out /.test((ps[iSrc] || {}).run || '') &&
+     /--notices win-release\/win-unpacked\/resources\/THIRD-PARTY-NOTICES\.txt/.test((ps[iSrc] || {}).run || ''),
+    'the sources step runs --sources against the notices file the build SHIPPED (it travels in the artifact)');
   const upPaths = String(((steps[iUp] || {}).with || {}).path || '');
   ok(upPaths.includes('desktop/dist/win-unpacked/resources/THIRD-PARTY-NOTICES.txt'), '…and the build job does upload that file');
   const pub = ps[iPub] || {};
   const pubRun = pub.run || '';
-  ok(/--verify-tag/.test(pubRun) && /gh release upload "\$TAG" "\$SETUP" "\$SOURCE" --clobber/.test(pubRun) && /gh release create "\$TAG" "\$SETUP" "\$SOURCE"/.test(pubRun),
-    'publish: create (--verify-tag) or upload --clobber, BOTH the setup and the source, in both arms');
+  ok(/set -euo pipefail/.test(pubRun) && /mapfile -t SOURCES < "\$SOURCES_LIST"/.test(pubRun), 'publish reads the VERIFIED list (sources.txt), under set -euo pipefail');
+  ok(/--verify-tag/.test(pubRun) && /gh release upload "\$TAG" "\$SETUP" "\$\{SOURCES\[@\]\}" --clobber/.test(pubRun) && /gh release create "\$TAG" "\$SETUP" "\$\{SOURCES\[@\]\}"/.test(pubRun),
+    'publish: create (--verify-tag) or upload --clobber, the setup AND every source file, in both arms');
   ok(/gh release view "\$TAG"/.test(pubRun), '…deciding by whether the release already exists (the Mac job usually made it)');
   ok(!/git push|git tag/.test(pubRun), 'it pushes nothing and tags nothing');
-  eq([pub.env && pub.env.SETUP, pub.env && pub.env.SOURCE], ['${{ steps.names.outputs.setup }}', '${{ steps.source.outputs.source }}'], 'it attaches the checked paths, by step output');
+  eq([pub.env && pub.env.SETUP, pub.env && pub.env.SOURCES_LIST], ['${{ steps.names.outputs.setup }}', '${{ steps.sources.outputs.sources_list }}'], 'it attaches the checked paths, by step output');
+  const chk = ps[iChk] || {};
+  const chkRun = chk.run || '';
+  ok(/gh release view "\$TAG" --json assets > "\$RUNNER_TEMP\/release-assets\.json"/.test(chkRun) &&
+     /--check-release "\$RUNNER_TEMP\/release-assets\.json" --setup "\$SETUP" --sources-list "\$SOURCES_LIST"/.test(chkRun),
+    'the release check reads the release\'s assets and runs --check-release on the same setup and list');
+  ok(/for attempt in 1 2 3 4 5 6/.test(chkRun) && /exit 1\s*$/.test(chkRun) && !/continue-on-error/.test(JSON.stringify(chk)),
+    '…re-reading a few times (GitHub is eventually consistent), then FAILING the job; never continue-on-error');
+  eq([chk.env && chk.env.SETUP, chk.env && chk.env.SOURCES_LIST], ['${{ steps.names.outputs.setup }}', '${{ steps.sources.outputs.sources_list }}'], '…on exactly the files that were verified and attached');
+  ok(!ps.some((st) => st.if) && !ps.some((st) => st['continue-on-error']), 'no step of publish-windows is skippable or allowed to fail');
   ok(pub.env && /github\.token/.test(String(pub.env.GH_TOKEN || '')), 'the automatic GITHUB_TOKEN, never a PAT');
 
   // THE GATE, EXECUTED: which tags are releases.
