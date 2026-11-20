@@ -78,12 +78,29 @@ markdown, so you can also open the `domains` folder in [Obsidian](user-guide.md#
 **Why your data is not in the program folder.** Windows lets you write into your own program
 folder, and the installer replaces that folder on every update and deletes it on uninstall.
 So the app keeps nothing of yours there, and it refuses a knowledge folder inside it
-(`folder-inside-app` in [the error catalogue](errors.md#choosing-a-folder-on-windows)). The
-installer also refuses to install into, or uninstall from, the data folder.
+(`folder-inside-app` in [the error catalogue](errors.md#choosing-a-folder-on-windows)). It also
+refuses one inside its own working folders, which it tidies itself: `%LOCALAPPDATA%\TheCurator`
+anywhere outside `App`, the `App` folder itself (its `domains` folder is fine), and
+`%APPDATA%\The Curator`. The check follows every spelling of a folder: a short name such as
+`THECUR~1`, a junction or link that leads there, and `\\localhost\C$\…` all count. The update
+tidy-up deletes only the update files it downloaded itself, never a folder. The installer also
+refuses to install into, or uninstall from, the data folder.
+
+**If the folder already set breaks these rules** (set before this check existed, or by hand), the
+app reads and writes nothing in it, and the Domains page says why. Nothing is moved or deleted:
+move the folder with File Explorer to one in your user folder, then choose it again. A folder
+setting that is not a full path (no drive letter) is treated the same way.
+
+**If the program files are incomplete,** the app does not start at all. It shows *The Curator
+could not start* and exits, because without them it could not tell your notes apart from the
+program and might keep them inside the program folder. Nothing is read or changed: download the
+installer again and run it, and the new copy finds your notes and settings.
 
 **How your keys are protected.** Your API keys and GitHub token are in files inside
 `%LOCALAPPDATA%`, which Windows lets only your own account (and administrators) read. That is the
-same protection the browser install has.
+same protection the browser install has. One known gap, on every platform: while Sync connects,
+or saves a replaced token, the token is on git's command line for a moment, where another program
+running under your own account could read it.
 
 ---
 
@@ -116,7 +133,16 @@ that is running. The update then stops before changing anything and offers:
 opens, in words, with what to do ([all the messages](errors.md#updating-the-windows-app)). An
 update replaces the program's files in one step and cannot be rolled back halfway, so a power cut
 in the middle can leave the program incomplete. Your data is untouched in that case too: download
-the installer from the Releases page and run it, and the app is back with everything in it.
+the installer from the Releases page and run it, and the app is back with everything in it. Before
+it runs a downloaded installer again, the app checks its SHA-256 again.
+
+**Known limits, so you can avoid them:**
+
+| Situation | What can happen | What to do |
+|---|---|---|
+| You sign out of Windows, or run the installer by hand, while The Curator is saving (an ingest, a compile, a Sync) | Windows closes the app without waiting, so that one save can be cut short. Your other pages are not affected. | Let the save finish first. If one was cut short, run the ingest again. |
+| **Close the connection and update** while your AI app is saving to your wiki | Ending the connection stops that save part-way | Wait until the AI app has finished saving, then update |
+| Your Windows user folder has an apostrophe in its name (`C:\Users\O'Brien`) and you run the installer **by hand** | The installer may not notice that The Curator is still open | Quit The Curator (tray icon → Quit, or **File → Exit**) before running the installer. Updates from inside the app are not affected: the app closes itself first. |
 
 > **Not measured yet:** an update the app downloads itself should not show the blue SmartScreen
 > screen again (the warning comes from files a browser downloaded), but this has not yet been
@@ -139,11 +165,12 @@ save pulse, the last 24 hours' active work, your domains, and Open The Curator �
 | **Right-click** the icon | Opens the menu |
 | Can't see it? | Windows often puts a new icon with the hidden ones. Click the **^** arrow beside the clock, and drag the icon onto the taskbar to keep it in view. |
 | Close the window (X) **with the tray icon on** | The window hides; the app keeps running in the tray. Quit from the tray menu or **File → Exit**. |
-| Close the window (X) **with the tray icon off** | The app quits. If an ingest or another write is running, it asks first (**Quit now?**). |
+| Close the window (X) **with the tray icon off** | The app quits. If an ingest or another write is running, it asks first (**Quit now?**), with the window still open; **Keep working** keeps it open. |
 
-The **Hide the taskbar button while it is showing** tick is kept with your settings, but on Windows
-the taskbar button stays for now: Windows often hides a new tray icon, and an app with neither
-would be hard to get back to.
+The taskbar button always stays. The Mac app has an extra choice to hide its Dock icon; Windows
+has no such setting, because Windows often hides a new tray icon and an app with neither would be
+hard to get back to. (A copy of that choice saved by an earlier test build simply shows the tray
+icon.)
 
 ---
 
@@ -178,11 +205,13 @@ Personal Sync (backing your knowledge up to a private GitHub repository, [User G
 needs git, and the Windows app brings its own: **MinGit 2.56.1** from the
 [Git for Windows](https://gitforwindows.org/) project, inside the program folder at
 `resources\git`. You do not need to install Git for Windows. If you have it anyway, the app still
-uses its own copy first.
+uses its own copy first, and so does everything else in the app that runs git (Shared Brain, the
+setup check, the agents' working state and the `my-curator` command line).
 
 - It does not open a sign-in window: the app's token travels with each request, so a rejected token
   is a plain message with **Replace token**, not a Windows sign-in window.
 - It trusts the certificates Windows trusts, so a company network's own certificates work.
+- It handles file paths longer than Windows' old 260-character limit.
 - If the copy is damaged or removed, Sync and **Run system check** say so; running the latest
   installer again puts it back and keeps your notes and settings.
 
@@ -202,7 +231,8 @@ is wrong. Every message is in [the error catalogue → Choosing a folder on Wind
 | A **reserved name** (CON, PRN, AUX, NUL, COM1–COM9, LPT1–LPT9) or a name ending in a dot or a space | Refused | Rename the folder, or choose another |
 | A **whole drive** (`D:\`) | Refused | Make a folder on it (`D:\Curator`) and choose that |
 | A **network folder** | Works while it can be reached; otherwise refused with a network message | Check the connection to the share |
-| A folder inside the **program folder** | Refused (updates replace it) | Choose a folder in your user folder |
+| A folder inside the **program folder**, or inside the app's own working folders (`%LOCALAPPDATA%\TheCurator` outside `App\domains`, `%APPDATA%\The Curator`), however it is spelled | Refused (updates replace or tidy them) | Choose a folder in your user folder |
+| A path with **no drive letter** (`notes\wiki`) | Refused | Choose the folder in the dialog, or paste the full path |
 | A **read-only** folder | Refused | Choose a folder you can change |
 | The same folder typed in **another case** (`c:\users\ana\wiki`) | Used under its real name | Nothing |
 
@@ -229,14 +259,14 @@ from each other.
 
 | | Windows app | Browser install |
 |---|---|---|
-| Shortcut name | **The Curator** | **The Curator (browser)** when the app is installed (otherwise **The Curator**), and **Stop The Curator** |
+| Shortcut names | **The Curator** | **The Curator (browser)** and **Stop The Curator (browser)** when the app is installed (otherwise without "(browser)") |
 | Knowledge folder | `%LOCALAPPDATA%\TheCurator\App\domains` | `%USERPROFILE%\the-curator\domains` |
 | API keys and settings | `%LOCALAPPDATA%\TheCurator\App` | `%USERPROFILE%\the-curator` |
 | Remove it | Installed apps → Uninstall | Delete `%USERPROFILE%\the-curator` |
 
 **To use the knowledge you already have in the app:**
 
-1. Double-click **Stop The Curator**, so the browser install is not running.
+1. Double-click **Stop The Curator (browser)**, so the browser install is not running.
 2. Open the app. In **Settings → Knowledge base → Choose folder**, pick `%USERPROFILE%\the-curator\domains`.
    Nothing is copied or moved: the app now works on the same files.
 3. Paste your API key again in **Settings** (keys are never copied between installs).
@@ -260,13 +290,19 @@ listed in `THIRD-PARTY-NOTICES.txt` in `%LOCALAPPDATA%\Programs\The Curator\reso
 
 | Component | Licence | Where |
 |---|---|---|
-| **MinGit** (Git for Windows), unmodified | GNU General Public License, version 2 | `resources\git`; its licence texts in `resources\git\LICENSE.txt`, its components in `resources\git\etc\package-versions.txt` |
+| **MinGit** (Git for Windows), unmodified | git: GNU General Public License, version 2. Its 65 components each have their own licence (GPL, LGPL, MPL, MIT, BSD, Apache 2.0, zlib, curl and others) | `resources\git`. `THIRD-PARTY-NOTICES.txt` lists every component with its licence and where its source is, and carries every licence text in full |
 | Electron, Chromium and Node.js | Their own licences | `LICENSE.electron.txt` and `LICENSES.chromium.html` in the program folder |
 | The JavaScript packages | Their own licences | Each package's folder in `resources\app\node_modules` |
 
-**The source code of the bundled git** is offered under section 3 of the GPL: it is attached to the
-GitHub release of The Curator that contains the app, and the Git for Windows project publishes it
-with its build recipes at its [v2.56.1 release](https://github.com/git-for-windows/git/releases/tag/v2.56.1.windows.1)
+**The source code.** Every part of MinGit under the GPL, the LGPL or the MPL has its complete
+source attached to the same [GitHub release](https://github.com/talirezun/the-curator/releases) as
+the installer: GitHub's archive of git's `v2.56.1.windows.1` tag plus 28 source packages (the
+build recipe, every patch and the original source of each), named in section 3 of the notices
+file. Before the release is published, each file is checked against its pinned size (and SHA-256,
+where Git for Windows publishes one); the installer is published only after all of them passed,
+and the release is then checked for every one by its exact name. The
+permissive components name their source package in the notices. Git for Windows also publishes
+its sources and build recipes at its [v2.56.1 release](https://github.com/git-for-windows/git/releases/tag/v2.56.1.windows.1)
 and [build-extra](https://github.com/git-for-windows/build-extra).
 
 ---
@@ -276,7 +312,9 @@ and [build-extra](https://github.com/git-for-windows/build-extra).
 | What you see | What to do |
 |---|---|
 | **Windows protected your PC** | **More info → Run anyway** ([above](#the-blue-windows-protected-your-pc-screen)) |
+| *The Curator could not start* … *its program files are incomplete* | Download the installer from the Releases page and run it; your notes and settings are safe ([§ Where everything is](#where-everything-is)) |
 | *The Curator cannot be installed in …* | Run the installer again without choosing a folder |
+| The Domains page says your knowledge folder is inside The Curator's own folders | Move that folder with File Explorer into your user folder, then choose it again; nothing was moved or deleted |
 | The app is running but no window shows | The tray icon is on: click it, or look under the **^** by the clock |
 | *The Curator is already running* | Only one copy may run. Switch to the open window (or the tray icon). |
 | An update stops because an AI app is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |

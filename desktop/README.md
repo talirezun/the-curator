@@ -442,7 +442,11 @@ on and leaves the Dock icon alone. Hiding it needs
 direction the mode depends on — the *accessory → regular* transition, which is
 what happens the moment the user opens the window from the tray. That cannot be
 tested from here. `resolveTrayPlan()` returns `hedged: true` and a reason rather
-than pretending.
+than pretending. **On Windows it is not offered at all** (2026-11-20): the server's
+`backgroundModeNames()` leaves it out there, `POST /api/config/background-mode`
+refuses it, and a `tray-only` stored earlier reads as `tray`. The taskbar button
+always stays (Windows often hides a new tray icon; an app with neither would be
+unreachable).
 
 **One coordination point with `src/`:** the shell cannot be told the setting
 changed. `registerDesktopHost()` **throws** on an unknown hook name and its
@@ -1049,7 +1053,29 @@ itself. Run anything you build with `CURATOR_TEST_USER_DATA_DIR`, `CURATOR_TEST_
 | `resources\app\node_modules` holds the runtime dependencies | The Windows twin of "launches only inside the checkout" ([the `files` bug](#the-files-bug-and-why-building-it-was-not-enough-to-catch-it)) |
 | `resources\git` is file-for-file the MinGit that was verified | Sync runs it; nothing may have changed it after the hash check |
 | RunAsNode fuse ON in the built exe | Claude Desktop starts `The Curator.exe` with `ELECTRON_RUN_AS_NODE=1` as the MCP bridge; with the fuse off it opens a second window instead |
-| Notices and tray icons present | GPLv2 notice for MinGit; the tray has no template image on Windows |
+| Notices and tray icons present | `THIRD-PARTY-NOTICES.txt` lists every MinGit component with its licence and source and carries the full licence texts; the tray has no template image on Windows |
+
+**MinGit's licences** (`lib/mingit-components.mjs`, `lib/fetch-mingit.mjs`). The 65 components
+of MinGit 2.56.1 are a table, each with its licence decided from its MSYS2 package metadata and its
+project's licence file, and its source: copyleft ones (GPL, LGPL, MPL; 28 source packages) are
+ATTACHED to each release, permissive ones name their source package. The table was checked
+against Git for Windows' published `package-versions-2.56.1-MinGit.txt` (digest-checked), not
+against the copy inside the zip; `fetch-mingit.mjs` therefore refuses a real MinGit whose own
+`etc\package-versions.txt` differs from the table in either direction, so nothing ships whose
+licence nobody decided. The full licence texts are pinned files in `desktop/licences/mingit/`
+(SHA-256 of the LF text, so a CRLF checkout still matches). `desktop-dmg.yml`'s
+`publish-windows` job downloads all 29 source files (GitHub's archive of the git tag + the 28
+makepkg `.src.tar.*`), holds each to its exact size, its SHA-256 where Git for Windows' GitHub
+release records one, and its tree (`<pkgbase>/PKGBUILD`), publishes nothing unless all pass, then
+checks the release for every one by exact name and size (`scripts/publish-win-assets.js`
+`--sources` and `--check-release`).
+
+**A missing marker refuses to start** (2026-11-20). `paths.js` throws `app-files-incomplete` when
+the packaged Windows app (Electron, or its exe as Node for the MCP bridge) runs from
+`…\resources\app` without `.curator-bundle`; `main.js` shows *The Curator could not start* (the
+sentence is `paths.js`'s `WIN32_APP_FILES_INCOMPLETE_MESSAGE`) and exits before anything reads or
+writes user data. The MCP server prints it to stderr and exits 1. Reinstalling fixes it; the
+notes are elsewhere and untouched.
 
 ### Where things live on a PC
 
@@ -1072,7 +1098,16 @@ bridges the person agreed to stop (`stopConnections`), proves the exe is free, r
 setup, runs it with `/S --updated --force-run`, makes sure the app runs, and records
 `last-update.json` for `afterStart()` to read once. **It is not atomic and has no rollback**: an
 NSIS update runs the old uninstaller and then extracts. User data is outside the program folder,
-so it is untouched either way, and the verified setup stays in `updates\` for a re-run.
+so it is untouched either way, and the verified setup stays in `updates\` for a re-run (it is
+re-hashed before it runs again). The tidy-up of `updates\` removes only the engine's own file names,
+files only, never recursively.
+
+**Known limits** (2026-11-20, not fixed): NSIS's own running-app check may miss a running app when
+the Windows profile path holds an apostrophe (an in-app update is unaffected: the helper waits for
+the PID itself); a log-off, or a reinstall by hand, while a write runs can cut that write short
+(Windows ends the process without the app's quit question); `stopConnections` ends Claude
+Desktop's bridge immediately, so an MCP `compile_to_wiki` in flight can be cut mid-write; and, on
+every platform, the token is on git's argv for a moment during `remote set-url`.
 electron-updater is not used, for the reasons in *In-app updating* above plus one more: it would be
 a second release resolver beside `config.js`'s.
 

@@ -224,7 +224,11 @@ desktop/          — the Electron shell (macOS .dmg and, since 2026-11-20, the 
     win-pack.mjs  — Windows afterPack + afterSign: version, node_modules, MinGit tree, notices, tray icons,
                     RunAsNode fuse; writes resources\app\.curator-bundle
     fetch-mingit.mjs — downloads MinGit, verifies size + SHA-256 against the pin, unpacks it to
-                    desktop/vendor/mingit (gitignored), writes THIRD-PARTY-NOTICES.txt
+                    desktop/vendor/mingit (gitignored), writes THIRD-PARTY-NOTICES.txt; refuses a
+                    MinGit whose package list differs from mingit-components.mjs
+    mingit-components.mjs — every MinGit component's licence and source; the 28 copyleft source
+                    packages CI attaches to each release (size, and SHA-256 where published); the
+                    full licence texts the notices print are in desktop/licences/mingit/ (pinned)
     dist.js / app-version.js — `npm run dist`: --mac on macOS, --win on Windows (fetches MinGit first)
     update-engine.js — createUpdateInstaller(platform): update-install-darwin.js (the Mac engine) or
                     update-install-win32.js (download, verify, PowerShell helper, silent NSIS run);

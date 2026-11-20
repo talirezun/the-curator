@@ -378,7 +378,9 @@ No administrator rights and no folder to choose. Your notes, keys and settings l
 `%LOCALAPPDATA%\TheCurator\App`, outside the program folder, so updates and uninstalling never
 touch them. **It updates itself** (Settings → General, or **Help → Check for Updates…**), can show
 an optional **tray icon** with what your agents just saved, connects **Claude Desktop in one click**
-(Settings → MCP bridge → Install for me), and **Sync works out of the box** with the git it carries.
+(Settings → MCP bridge → Install for me), and **Sync works out of the box** with the git it carries
+(MinGit from Git for Windows; every component's licence is in the app's `THIRD-PARTY-NOTICES.txt`,
+and the source of each GPL, LGPL or MPL part is attached to the same release as the installer).
 Everything, including switching from the browser install: **[docs/windows-app.md](docs/windows-app.md)**.
 
 ### Windows — one-line install
@@ -397,11 +399,11 @@ and installs nothing on your system: it downloads its own private copy of Node.j
 download is checked against a fixed checksum), puts the app in `%USERPROFILE%\the-curator`, and
 opens The Curator in your browser. It needs Windows 10 (version 1809 or newer) or Windows 11, 64-bit, and about 500 MB of free disk space. The app's own first-run panel takes over from there.
 
-Afterwards you have two icons, each in two places (four shortcuts in all): on your Desktop and in the Start menu folder **The Curator**:
+Afterwards you have two icons, each in two places (four shortcuts in all): on your Desktop and in the Start menu folder **The Curator**. When the Windows app is installed too, all three are named with **(browser)** at the end (**The Curator (browser)**, **Stop The Curator (browser)**, folder **The Curator (browser)**), so the two installs never overwrite each other's shortcuts:
 
 | Icon | What it does |
 |---|---|
-| **The Curator** (**The Curator (browser)** when the Windows app is installed too) | Starts the app if it is not running, and opens it in your browser |
+| **The Curator** | Starts the app if it is not running, and opens it in your browser |
 | **Stop The Curator** | Stops the app |
 
 Your knowledge lives in `%USERPROFILE%\the-curator\domains` (open that folder in Obsidian).

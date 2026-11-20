@@ -1065,10 +1065,18 @@ already has: `CLAUDE.md`'s v3.29.0 row says 25, and the object declares 30.
 `release.js` finishes at the tag. **The installers are not out yet**, and the
 gap between those two facts used to be silent and expensive.
 
-`.github/workflows/desktop-dmg.yml` triggers on the `v*` tag push and does five
-things, in this order:
+`.github/workflows/desktop-dmg.yml` triggers on any `v*` tag push. Its first,
+cheap job (`gate`, on Linux) decides whether the tag is a **release**: only a tag
+that is exactly `vX.Y.Z` is one (the project ships plain semver, no suffixes).
+**Any other `v*` tag is a rehearsal**: the Mac job is skipped, the Windows build,
+install and update checks run with the version in `package.json`, and **nothing
+is published**, so no release exists for any updater to see. That is the safe
+way to exercise the workflow: push a tag such as `v4.0.0-wintest.1`, watch, then
+delete the tag. On a release tag it does this:
 
-1. Builds both DMGs on a macOS runner, with the version injected from the tag.
+**The Mac DMGs** (job `dmg`, macOS runner):
+
+1. Builds both DMGs, with the version injected from the tag.
 2. Runs `node scripts/publish-dmg-assets.js --dir desktop/dist --version <v>`,
    which **renames** them and then feeds the final names through the app's own
    `archFromAssetName()` — the imported function, not a copied regex — and
@@ -1078,6 +1086,31 @@ things, in this order:
 4. Uploads the pair as a 14-day workflow artifact, as a fallback.
 5. Creates the GitHub Release for that tag with both DMGs attached, marked
    latest. `--verify-tag` makes `gh` abort rather than create a tag.
+
+**The Windows installer** (jobs `windows`, `windows-update`, `publish-windows`):
+
+1. `windows` builds `TheCurator-<version>-x64-Windows-Setup.exe` on
+   `windows-latest` (MinGit fetched and held to its pinned size and SHA-256
+   first), checks what was built (versions, the bundle marker, the runtime
+   dependencies, the notices), installs it silently, launches it, and
+   uninstalls it.
+2. `windows-update` installs that build, updates it to a rebuilt N+1 served
+   from a local fixture, and proves the app reopens on N+1.
+3. `publish-windows` runs only when both passed, and only AFTER the Mac job
+   (`always()`, so a failed Mac job does not block Windows, and the two never
+   race to create the release). It checks the installer's name again
+   (`scripts/publish-win-assets.js --dir`), then downloads and verifies the
+   source code of **every GPL, LGPL or MPL component of the bundled MinGit**
+   (`--sources`: GitHub's archive of the git tag plus 28 makepkg source
+   packages, each held to its exact size, its SHA-256 where Git for Windows
+   records one, and its tree; the notices file the build shipped must name
+   every one). Only if all of them pass does it attach the installer and every
+   source file to the release (creating it, if the Mac job did not), and then
+   it checks the release for every file by exact name and size
+   (`--check-release`). A missing file fails the job.
+
+The Mac job never waits for a Windows job, so a Windows failure cannot stop or
+delay a Mac release.
 
 **The rename is not cosmetic.** electron-builder writes
 `The Curator-3.37.0-arm64.dmg` and — the dangerous one —
@@ -1102,9 +1135,12 @@ and renaming and publishing them was a manual step nobody had written down.
 unwired parameter"; that reasoning had expired six releases earlier.
 
 Guarded by `scripts/test-release-publish.js` (the naming rule and the rename,
-driven as real code) and `scripts/test-release-preconditions.js` §6b (the
-closing banner). Neither runs a GitHub Action, so the publish path itself is
-covered by structure, not by execution.
+driven as real code; the Windows setup name against the updater's own
+matchers; the MinGit component table, the source checks and the release check
+against fixtures; the gate's release-or-rehearsal decision, executed) and
+`scripts/test-release-preconditions.js` §6b (the closing banner). Neither runs
+a GitHub Action or downloads a real source package, so the publish path itself
+is covered by structure, not by execution.
 
 ### When a release is bad
 

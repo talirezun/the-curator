@@ -819,7 +819,7 @@ Open **The Curator** from the Start menu or the Desktop. Like the Mac app it ope
 
 | You do… | Tray icon **off** (the default) | Tray icon **on** |
 |---|---|---|
-| Close the window (**X**) | The app **quits**, and asks first (**Quit now?**) if a write is in progress | The window **hides**; the app keeps running in the tray |
+| Close the window (**X**) | The app **quits**, and asks first (**Quit now?**) if a write is in progress; **Keep working** keeps the window open | The window **hides**; the app keeps running in the tray |
 | Click the tray icon (left button) | — | The window comes back |
 | Right-click the tray icon | — | The tray menu, with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)) |
 | **File → Exit**, or **Quit** in the tray menu | The app quits, with the same work-in-progress check | The same |
@@ -835,7 +835,7 @@ Click **The Curator** icon in your Dock. It starts the local server and opens in
 
 ### The browser install — Windows
 
-Double-click **The Curator** (Desktop or Start menu; it is named **The Curator (browser)** when the Windows app is installed too). To stop it, double-click **Stop The Curator**. Full detail in [§3 → Windows: one-line installer](#windows-one-line-installer).
+Double-click **The Curator** (Desktop or Start menu). To stop it, double-click **Stop The Curator**. When the Windows app is installed too, these are named **The Curator (browser)** and **Stop The Curator (browser)**, in a Start menu folder of the same name. Full detail in [§3 → Windows: one-line installer](#windows-one-line-installer).
 
 ### The browser install — manual / Linux
 
@@ -870,7 +870,7 @@ It is a **local web app** — a small Express server runs on your machine and re
 
 *Mac app, and the Windows app as a **tray icon**. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
 
-> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left-click** opens the window and a **right-click** opens the menu; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. **Hide the Dock icon** reads **Hide the taskbar button** there, and the taskbar button stays for now. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
+> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left-click** opens the window and a **right-click** opens the menu; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. There is no **Hide the Dock icon** choice on Windows: the taskbar button always stays, so the app can always be found. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
 
 ### The one question it answers
 
@@ -7104,6 +7104,8 @@ The same screens as the Mac app below, from **Settings → General → Software 
 | **Restart and finish** | The app closes, the setup program runs silently, and The Curator opens again on the new version |
 | If Claude Desktop is connected | The update stops before changing anything. **Close the connection and update** ends that connection and installs; or quit Claude Desktop and press **Restart and finish** again |
 | If it does not finish | A message box says so, and the app says it again when it next opens. Your data is never in the program folder; running the installer from the Releases page repairs the app |
+| If the program files are incomplete | The app does not start: *The Curator could not start*. Nothing was read or changed; run the installer from the Releases page again and it finds your notes |
+| Avoid | Signing out of Windows, or running the installer by hand, while The Curator is saving; and **Close the connection and update** while your AI app is saving to your wiki. Either can cut that one save short ([the known limits](windows-app.md#updating)) |
 
 Every message is listed in [errors.md → Updating the Windows app](errors.md#updating-the-windows-app). The details, including what has not yet been measured on a real PC, are in [windows-app.md § Updating](windows-app.md#updating).
 
@@ -7385,7 +7387,10 @@ safe to press, not an explanation.
 
 > **On Windows** a chosen or pasted folder is also checked against Windows' own rules: OneDrive,
 > Controlled folder access, long paths, reserved names (CON, NUL…), a whole drive, a network share,
-> and, in the Windows app, its own program folder. A refusal says what is wrong and that nothing
+> and, in the Windows app, its own program folder and its own working folders (`%LOCALAPPDATA%\TheCurator`
+> outside `App\domains`, `%APPDATA%\The Curator`), however the path is spelled. A folder that is already
+> set and breaks that rule is left alone: the Domains page says so, and you choose a folder in your user
+> folder instead. A refusal says what is wrong and that nothing
 > was changed; the list is in [errors.md → Choosing a folder on Windows](errors.md#choosing-a-folder-on-windows)
 > and what to do about each in [windows-app.md § Choosing a folder](windows-app.md#choosing-a-folder).
 
@@ -7466,7 +7471,7 @@ card.
 > with a field: paste the folder's full path (File Explorer's address bar shows it; a path
 > copied with *Copy as path*, quotes and all, works too) and press **Use this folder**. The
 > path must be a full path to an existing folder you can read, and not one of the app's own
-> program folders. The `DOMAINS_PATH` environment variable still works as well.
+> program or working folders. The `DOMAINS_PATH` environment variable still works as well.
 
 #### Pick the folder that CONTAINS your domains
 

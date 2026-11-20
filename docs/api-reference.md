@@ -3298,8 +3298,9 @@ only), one check at a time (**409** `busy`). The server resolves the app's own c
 `mcpServers["my-curator"]` from each (no other server in the file is touched), and starts it with
 `initialize` + `tools/list` — but only when the command is The Curator's own launcher with no arguments,
 or an absolute `node` / `node.exe` whose arguments are exactly THIS install's `mcp/server.js` and,
-optionally, `--domains-path <absolute path>`. **In the Windows app only** (2026-11-20, its own launch
-line is `app-binary`) a third shape is accepted: `{command: <this app's own The Curator.exe>, args:
+optionally, `--domains-path <absolute path>` (that `node` shape is refused in the Windows app, as
+`not_allowed`). **In the Windows app only** (2026-11-20, its own launch
+line is `app-binary`) a third shape is accepted, and it is the only one there: `{command: <this app's own The Curator.exe>, args:
 [<this install's mcp\server.js>], env: {"ELECTRON_RUN_AS_NODE": "1"}}`, both paths in their canonical
 drive-letter spelling, the same files as this process's own (case ignored, file identity checked), no
 other argument and exactly that `env`. Another install's exe, a copy, a renamed one or any other `env`
@@ -6056,7 +6057,7 @@ side effects.
 | `defaultDomain` | The domain MCP write tools use when the user says "my wiki" without naming one. `null` if unset |
 | `releaseChannel` | The **resolved** channel name (v3.29.0). Always `stable` in this build |
 | `backgroundMode` | The **resolved** menu bar mode: `window` (no menu bar icon — the default) · `tray` · `tray-only`. Absent or unrecognised in the config file reads as `window` |
-| `backgroundModes` | Every mode name **this build** understands, in order. Shipped beside the value so a client renders what the server would accept rather than a hardcoded triple |
+| `backgroundModes` | Every mode name **this build** understands **on this platform**, in order. Shipped beside the value so a client renders what the server would accept rather than a hardcoded triple. **On Windows it is `["window", "tray"]`**: `tray-only` is not offered there (the Windows app never hides its taskbar button), and a `tray-only` stored earlier reads as `tray` |
 
 `backgroundMode` is resolved for the same reason `releaseChannel` is: an absent or unrecognised key
 reads as `window` here exactly as it does in the desktop shell, so this endpoint cannot tell the
@@ -6145,7 +6146,7 @@ and the field is stored and returned identically there.
 |---|---|
 | `window` | No menu bar icon. The Dock icon and the window behave exactly as they did before the field existed. **The default.** |
 | `tray` | A menu bar icon alongside the Dock icon |
-| `tray-only` | Menu bar icon, Dock icon hidden — **accepted and recorded, but the Dock icon is not actually hidden today.** The shell treats it as `tray` and reports the hedge; see [the roadmap's §0a](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan) |
+| `tray-only` | Menu bar icon, Dock icon hidden — **accepted and recorded, but the Dock icon is not actually hidden today.** The shell treats it as `tray` and reports the hedge; see [the roadmap's §0a](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan). **Refused on Windows** (`400`, `invalid_value`): there it is not in `backgroundModes` |
 
 **Success response** `200 OK`
 
@@ -6167,6 +6168,10 @@ let a client report *"tray-only saved"* while the file holds `window`.
 
 `backgroundMode` in a refusal is **the mode still in force**, not the one that was asked for, so a
 client that renders the response shows the truth even if it ignores the status code.
+
+On Windows the same refusal answers `tray-only`, and its `error` and `backgroundModes` list only
+`window, tray`. On Windows the setting is the **tray icon** (notification area) rather than a menu
+bar icon; the two values behave the same way.
 
 **Not behind `guardConcurrent`, and not registered as a write.** Nothing on any write path reads
 this field — its only consumer is the desktop shell, which reads it before it creates the tray or
@@ -6317,12 +6322,24 @@ carrying a `code` from the published catalogue ([errors.md → Choosing a folder
 `reserved-name` + `folder-reserved-name` (CON … LPT9, or a name ending in a dot or space, anywhere in
 the path) · `too-long` + `folder-path-too-long` (over 247 characters) · `missing` +
 `folder-network-unreachable` (an unreachable share) · `inside-app` + `folder-inside-app` (in the
-Windows app: its whole program folder, no `domains` exception) · `not-writable` +
+Windows app: its whole program folder, no `domains` exception, AND its working folders:
+`%LOCALAPPDATA%\TheCurator` outside `App\`, `App\` itself and its dot-folders, and
+`%APPDATA%\The Curator`; compared on every spelling: the real path of both sides, so a short 8.3
+name, a junction or a link into them is caught, and a local admin share such as `\\localhost\C$\…`
+as its drive) · `not-writable` +
 `folder-protected-by-windows` | `folder-not-writable` | `folder-cloud-busy` | `folder-busy` |
 `folder-cloud-unavailable` (a test file could not be written) · `unreadable` with one of those codes.
 A path over 120 characters is accepted with `"warnings": [{"code": "folder-path-long", "message": "…"}]`
 beside `ok` and `domainsPath`. A folder typed in another case is applied (and returned) under its real
 name. macOS and Linux bodies are unchanged and never carry `code` or `warnings`.
+
+**A folder that is ALREADY set** (2026-11-20, the Windows app only) is held to the same
+`folder-inside-app` rule wherever it came from (Settings, `DOMAINS_PATH`, `--domains-path`), and a
+value that is not a full path (`knowledge-folder-not-absolute`) is refused rather than resolved
+against whatever folder the app was started from. The app then reads and writes nothing in it: the
+server still starts (so the Domains page can say why and offer another folder), and the MCP server
+writes one plain line to stderr and exits `1`, so the AI app reports a server that did not start.
+Nothing is moved or deleted.
 
 **Refusal response** `409` — behind `guardConcurrent('change the knowledge folder')`, so it refuses
 while an ingest, sync or update is in flight. Moving the knowledge folder out from under a running

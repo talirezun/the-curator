@@ -37,11 +37,14 @@ the AI service): see [how to get one](user-guide.md#4-get-your-api-key-gemini-cl
 
 ## Every day after that
 
-You now have two icons on your Desktop (and in the Start menu, in the folder **The Curator**):
+You now have two icons on your Desktop (and in the Start menu, in the folder **The Curator**). If the
+Windows app is installed too, all three names end in **(browser)**: **The Curator (browser)**,
+**Stop The Curator (browser)** and the folder **The Curator (browser)**, so the app's own **The Curator**
+shortcut is never overwritten.
 
 | Icon | What it does |
 |---|---|
-| **The Curator** (named **The Curator (browser)** if the Windows app is installed too) | Starts the app and opens it in your browser |
+| **The Curator** | Starts the app and opens it in your browser |
 | **Stop The Curator** | Stops the app (do not do this in the middle of adding a document) |
 
 ## If something goes wrong

@@ -75,8 +75,8 @@ name: Desktop DMG
 #                     launch, uninstall silently, the data-folder guard
 #    windows-update   install THIS build, update it to a rebuilt N+1 served
 #                     from a local fixture, prove the app reopens on N+1
-#    publish-windows  attach the installer AND the GPLv2 source of the MinGit
-#                     inside it to the SAME release, AFTER the Mac job
+#    publish-windows  attach the installer AND the source of every copyleft part
+#                     of the MinGit inside it to the SAME release, AFTER the Mac job
 #
 #  The Mac job never needs a Windows job, so a Windows failure can never stop
 #  or delay the Mac release. publish-windows needs `dmg` only to run AFTER it
