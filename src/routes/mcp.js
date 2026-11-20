@@ -639,6 +639,12 @@ export function classifyDomainsResult(listDomainsResponse, domainsDirExists) {
   return { domains: null, domains_status: 'unreadable', domains_message: truncate(text), domains_error: null };
 }
 
+/** How long the self-test waits for the bridge's initialize answer: a cold
+ *  start of the Windows app's exe as Node is the slow case. */
+export const SELF_TEST_INIT_DEADLINE_MS = 15_000;
+/** …and for each later answer (tools/list, list_domains). */
+export const SELF_TEST_STEP_DEADLINE_MS = 10_000;
+
 /**
  * POST /self-test — spawn the bridge exactly as the wizard prescribes and report
  * what came back.
@@ -701,19 +707,36 @@ export async function selfTestHandler(_req, res) {
     spawn_args: selfTestEntry.args,
   });
   proc.on('error', (err) => cleanup({ ok: false, error: err.message, ...failureExtras() }));
+  let exited = false;
+  proc.on('exit', () => { exited = true; });
 
-  const send = (obj) => proc.stdin.write(JSON.stringify(obj) + '\n');
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const send = (obj) => { try { proc.stdin.write(JSON.stringify(obj) + '\n'); } catch { /* the child is gone; the wait below sees it */ } };
+  // WAIT FOR EACH ANSWER, under a bounded deadline (2026-11-20). This used to
+  // send on fixed sleeps (200 + 100 + 200 + 500 ms) and read whatever had come
+  // back after one second. A bridge that takes longer to start (a loaded Mac,
+  // a cold Windows PC starting the app's own exe as Node) answered after the
+  // reads were done, and the test reported a working bridge as broken. It
+  // also sent `notifications/initialized` before the initialize ANSWER, which
+  // a real client never does. Now: each request waits for its own reply, the
+  // notification follows the initialize reply, and a child that exits stops
+  // the wait at once. A healthy bridge answers sooner than before.
+  const waitForReply = async (id, ms) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const r = responses.find((x) => x && x.id === id);
+      if (r || resolved || exited || Date.now() >= end) return r;
+      await new Promise((done) => setTimeout(done, 25));
+    }
+  };
 
   try {
     send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'curator-self-test', version: '1' } } });
-    await sleep(200);
+    await waitForReply(1, SELF_TEST_INIT_DEADLINE_MS);
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    await sleep(100);
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    await sleep(200);
+    await waitForReply(2, SELF_TEST_STEP_DEADLINE_MS);
     send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_domains', arguments: {} } });
-    await sleep(500);
+    await waitForReply(3, SELF_TEST_STEP_DEADLINE_MS);
 
     const init = responses.find(r => r.id === 1);
     const toolsList = responses.find(r => r.id === 2);

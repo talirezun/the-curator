@@ -1452,26 +1452,53 @@ section('§13  A bridge that is OPENED and never used is still a session');
   const solo = spawn(process.execPath, [MCP_SERVER, '--domains-path', DOMAINS], { stdio: ['pipe', 'pipe', 'pipe'], env: soloEnv });
   let soloOut = '';
   solo.stdout.on('data', (d) => { soloOut += d; });
+  // EVENT-DRIVEN, NOT FIXED SLEEPS (2026-11-20). This used to wait 400 ms,
+  // send `notifications/initialized`, wait 600 ms and kill. On a loaded
+  // machine the bridge was still starting at 400 ms, so BOTH messages sat in
+  // the pipe and arrived in one read; the SDK schedules each handler on its own
+  // microtask, so `oninitialized` could run before `_oninitialize` had stored
+  // the client, and the session line was written with no client (3 reds:
+  // client, measure-harness sessions, verdict). Reproduced with 8 copies of
+  // this suite at once: 8 of 8 red. A real client never does that: the
+  // protocol has it send `initialized` only AFTER the initialize RESPONSE. So
+  // this waits for the response, as a client does, then polls the log for the
+  // session line, each under a bounded deadline.
+  const SOLO_DEADLINE_MS = 20_000;
+  const waitUntil = async (cond, ms) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (cond()) return true;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return cond();
+  };
+  const readSolo = () => {
+    try { return readFileSync(SOLO_LOG, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); }
+    catch { return []; }
+  };
   solo.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claude-code', version: '1' } } })}\n`);
-  await new Promise((r) => setTimeout(r, 400));
+  const answered = await waitUntil(() => /"id":1\b/.test(soloOut), SOLO_DEADLINE_MS);
+  ok(answered, 'the bridge answered initialize (waited for the response, as a client does)');
   solo.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
-  await new Promise((r) => setTimeout(r, 600));
+  await waitUntil(() => readSolo().length > 0, SOLO_DEADLINE_MS);
+  // A short grace AFTER the line exists: a second (duplicate) line, if the
+  // code ever wrote one, would land here and be caught by the length check.
+  await new Promise((r) => setTimeout(r, 200));
   try { solo.kill('SIGKILL'); } catch { /* gone */ }
   await new Promise((r) => setTimeout(r, 150));
 
-  let soloLines = [];
-  try { soloLines = readFileSync(SOLO_LOG, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); }
-  catch { soloLines = []; }
+  const soloLines = readSolo();
 
   eq(soloLines.length, 1, `a bridge that answered only initialize still wrote ${soloLines.length} line(s)`);
-  eq(soloLines[0].ev, usage.SESSION_EV,
+  const soloFirst = soloLines[0] || {};
+  eq(soloFirst.ev, usage.SESSION_EV,
     'and it is a session line — no tool ran, so no tool line exists');
-  ok(usage.SID_RE.test(soloLines[0].sid), 'carrying a well-formed sid');
+  ok(usage.SID_RE.test(String(soloFirst.sid)), 'carrying a well-formed sid');
   // WHY `notifications/initialized` AND NOT `connect()`: a line with no client
   // cannot be attributed to a harness, and attribution is the whole point of
   // the measurement. The SDK populates `getClientVersion()` in `_oninitialize`,
   // so this is the first instant the name exists.
-  eq(soloLines[0].client, 'claude-code',
+  eq(soloFirst.client, 'claude-code',
     '…and the CLIENT, which is what makes the session attributable to a harness at all');
   ok(soloOut.trim().split('\n').filter(Boolean).every((l) => { try { JSON.parse(l); return true; } catch { return false; } }),
     'and stdout is still pure JSON-RPC — the v2.5.3 rule, re-checked on the new write');

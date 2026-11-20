@@ -726,6 +726,39 @@ section("§11  The Windows app: mcpLaunchStyle 'app-binary' (no shim; the exe it
     ok(body && body.ok === true && body.spawn_command === process.execPath && Array.isArray(body.spawn_args) && body.spawn_args[0] === fs.realpathSync(gate),
       'the self-test spawns the app-binary line WITH ELECTRON_RUN_AS_NODE (a server that exits without it answered)', JSON.stringify(body).slice(0, 300));
 
+    // A SLOW BRIDGE (2026-11-20). The self-test used to read the replies after
+    // fixed sleeps totalling one second, so a bridge that took longer to start
+    // (a loaded machine; a cold Windows PC starting the app's exe as Node) was
+    // reported broken. This one waits 2.5 s before it even loads the server.
+    const slow = path.join(TMP, 'slow-bridge.mjs');
+    fs.writeFileSync(slow, `if (process.env.ELECTRON_RUN_AS_NODE !== '1') process.exit(9);\n`
+      + `await new Promise((r) => setTimeout(r, 2500));\n`
+      + `await import(${JSON.stringify('file://' + path.join(ROOT, 'mcp', 'server.js'))});\n`);
+    routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: process.execPath, serverPath: slow });
+    const t0 = Date.now();
+    const slowBody = await new Promise((resolve) => {
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve(b); } };
+      routes.selfTestHandler({}, res);
+    });
+    ok(slowBody && slowBody.ok === true && slowBody.tool_count > 0 && slowBody.domains_status !== 'no_response',
+      `a bridge that starts 2.5 s late still passes the self-test (waited ${Date.now() - t0} ms for the replies, not a fixed second)`,
+      JSON.stringify(slowBody).slice(0, 300));
+    ok(routes.SELF_TEST_INIT_DEADLINE_MS >= 10_000 && routes.SELF_TEST_INIT_DEADLINE_MS <= 30_000,
+      `…under a BOUNDED deadline (${routes.SELF_TEST_INIT_DEADLINE_MS} ms for initialize), never an open-ended wait`);
+    // A bridge that dies at once must not hold the request for the whole deadline.
+    const dies = path.join(TMP, 'dies-bridge.mjs');
+    fs.writeFileSync(dies, `process.exit(3);\n`);
+    routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: process.execPath, serverPath: dies });
+    const t1 = Date.now();
+    const diedBody = await new Promise((resolve) => {
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve(b); } };
+      routes.selfTestHandler({}, res);
+    });
+    const diedMs = Date.now() - t1;
+    ok(diedBody && diedBody.ok === false && diedMs < 5000,
+      `a bridge that exits at once is reported failed promptly (${diedMs} ms), not after the deadline`, JSON.stringify(diedBody).slice(0, 200));
+    routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: process.execPath, serverPath: gate });
+
     // "Run every tool" (POST /api/mcp/exercise) spawns the SAME line, so it
     // must carry the same env: without it the Windows app's exe opens a second
     // copy of the app. The gate server exits 9 unless the variable arrived.
