@@ -19,7 +19,7 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 | sync-busy-retry | Another sync check (for example the MCP server or a second copy of the app) ran at the same moment. Nothing was changed. | Wait a moment, then try again. |
 | sync-held-back-collision | A file Sync does not send (one that looks like a secret) was changed here and on GitHub. Nothing was replaced. | See What Sync does not back up on the Sync page, move that file out of your knowledge folder, then sync again. |
 | sync-nested-repo | A folder inside your knowledge folder has its own git history, so Sync cannot back it up. | Sync again. The Curator leaves that folder out and names it on the Sync page. |
-| sync-git-missing | Git, which Sync uses, is not installed or not found. | On a Mac, run `xcode-select --install` in Terminal, then try again. |
+| sync-git-missing | Git, which Sync uses, is not installed or not found. The Windows app carries its own copy of git, so there this means the app’s install is damaged. | On a Mac, run `xcode-select --install` in Terminal, then try again. In the Windows app, run the latest Windows installer again (your notes and settings are kept). In the Windows browser install, install Git for Windows or run the one-line installer again, then restart The Curator. |
 | sync-failed | Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished. | Try again in a minute. If it repeats, send the Technical detail line to support. |
 | git-other | A git step The Curator runs failed in a way it does not recognise. | Try again. If it fails the same way, send the Technical detail line to support. |
 

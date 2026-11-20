@@ -147,6 +147,56 @@ section('1. Registry root resolution — the four rungs, and the shared default'
     'CONTROL: reading the production default created nothing (this resolver is pure)');
 }
 
+// ── §1b. A Windows app and a browser install share ONE registry ────────────
+// The win32 bundle keeps its data one level BELOW the shared root
+// (%LOCALAPPDATA%\TheCurator\App). Compared against the shared root, that
+// data dir read as "isolated" and the app's registry landed in App\instances,
+// where the browser install (repo mode, %LOCALAPPDATA%\TheCurator\instances)
+// never looks. Driven in a CHILD with paths.js's simulated host, no seam env.
+section('1b. Windows: the app and the browser install resolve the SAME registry root');
+{
+  const { spawnSync } = await import('child_process');
+  const WIN_LOCAL = 'C:\\Users\\Ana Müller\\AppData\\Local';
+  const probeAs = (h) => {
+    const script = `
+      import * as p from ${JSON.stringify(path.join(REPO_ROOT, 'src/brain/paths.js'))};
+      import * as ip from ${JSON.stringify(path.join(REPO_ROOT, 'src/brain/instance-probe.js'))};
+      const H = ${JSON.stringify(h)};
+      p.__setHostForTest({ platform: H.platform, appRoot: H.appRoot, env: H.env, homedir: H.homedir,
+        exists: (f) => H.marker && f === H.appRoot + (H.platform === 'win32' ? '\\\\' : '/') + '.curator-bundle',
+        mkdir: () => {} });
+      const out = { userData: p.getUserDataDir(), bundle: p.isBundleInstall(), root: ip.getInstanceRegistryRoot() };
+      p.__setHostForTest(null);
+      process.stdout.write(JSON.stringify(out));
+    `;
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (/^CURATOR_TEST_/.test(k)) delete env[k];
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8', cwd: TMP_ROOT });
+    if (r.status !== 0) { console.log(r.stderr); return null; }
+    return JSON.parse(r.stdout);
+  };
+  // The registry root is a path.join() of a win32 folder on this POSIX host,
+  // so its separators are mixed; normalise to compare it as Windows would.
+  const norm = (x) => path.win32.normalize(String(x)).toLowerCase();
+  const home = 'C:\\Users\\Ana Müller';
+  const app = probeAs({ platform: 'win32', appRoot: WIN_LOCAL + '\\Programs\\The Curator\\resources\\app',
+    env: { LOCALAPPDATA: WIN_LOCAL }, homedir: home, marker: true });
+  const browser = probeAs({ platform: 'win32', appRoot: home + '\\the-curator',
+    env: { LOCALAPPDATA: WIN_LOCAL }, homedir: home, marker: false });
+  ok(app && app.bundle === true && norm(app.userData) === norm(WIN_LOCAL + '\\TheCurator\\App'),
+    `CONTROL: the simulated Windows app is a bundle with its data in TheCurator\\App (got ${app && app.userData})`);
+  ok(browser && browser.bundle === false, 'CONTROL: the simulated browser install is repo mode');
+  eq(app && norm(app.root), norm(WIN_LOCAL + '\\TheCurator\\instances'),
+    'the Windows APP registers in the shared %LOCALAPPDATA%\\TheCurator\\instances, not in App\\instances');
+  eq(browser && norm(browser.root), norm(WIN_LOCAL + '\\TheCurator\\instances'),
+    'the browser install on the same PC resolves the same folder, so the two see each other');
+  // macOS is unchanged: the bundle's data dir IS the shared root.
+  const mac = probeAs({ platform: 'darwin', appRoot: '/Applications/The Curator.app/Contents/Resources/app',
+    env: {}, homedir: '/Users/ana', marker: false });
+  eq(mac && mac.root, '/Users/ana/Library/Application Support/The Curator/instances',
+    'macOS app: the registry is Application Support/The Curator/instances, as before');
+}
+
 // ── §2. The hash BUCKETS; the recorded path DECIDES ─────────────────────────
 section('2. Bucketing by domains path — symlinks collapse, different folders do not');
 {

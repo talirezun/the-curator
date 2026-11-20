@@ -37,7 +37,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import {
   USER_MESSAGES, SURFACE_MESSAGES, CATALOGUE_CODES,
 } from '../src/public/next/shared/user-errors.js';
-import { describeSyncError, REPLACE_TOKEN_MESSAGES } from '../src/brain/sync.js';
+import { describeSyncError, REPLACE_TOKEN_MESSAGES, gitMissingMessage } from '../src/brain/sync.js';
 import { SHAREDBRAIN_TOKEN_MESSAGES } from '../src/brain/sharedbrain-token.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,6 +75,25 @@ const MERGE_CONFLICT_TRIGGERS = [
   'Automatic merge failed; fix conflicts and then commit the result.',
 ];
 
+// ── PLATFORM VARIANTS (Windows app, 2026-11-20) ──────────────────────────
+// Some sentences differ by platform or install form. The page lists them all,
+// each from the app's OWN function called with that platform spelled out, so
+// the page is the same whichever machine builds it (the build used to read
+// this machine's platform for sync-git-missing, so a Windows run would have
+// rewritten the page). The first entry is the unlabelled one (what most
+// people see); the rest are labelled by where they appear.
+//
+// HOOK for the other Windows packages: a sentence that has a Windows wording
+// is added HERE, as {label, text: () => <the app's own function>(…)}. Never a
+// sentence typed out in this file: the page must say what the app says.
+export const PLATFORM_SENTENCES = {
+  'sync-git-missing': [
+    { label: '', text: () => gitMissingMessage({ platform: 'darwin' }) },
+    { label: 'In the Windows app', text: () => gitMissingMessage({ platform: 'win32', isBundle: true }) },
+    { label: 'On Windows, in the browser install or a checkout', text: () => gitMissingMessage({ platform: 'win32', isBundle: false }) },
+  ],
+};
+
 function syncSentence(code, text, opts) {
   const d = describeSyncError(new Error(text), opts);
   if (d.code !== code) throw new Error(`build-error-catalogue: the text for ${code} now maps to ${d.code}; update SYNC_TRIGGERS`);
@@ -107,6 +126,12 @@ export function sentencesFor(code) {
   if (Object.prototype.hasOwnProperty.call(SHAREDBRAIN_TOKEN_MESSAGES, code)) {
     const v = SHAREDBRAIN_TOKEN_MESSAGES[code];
     return [{ label: '', text: typeof v === 'function' ? v(P.repo) : v }];
+  }
+  if (Object.prototype.hasOwnProperty.call(PLATFORM_SENTENCES, code)) {
+    // The sync trigger must still map to this code (the classifier is what
+    // makes the app show these words at all).
+    if (Object.prototype.hasOwnProperty.call(SYNC_TRIGGERS, code)) syncSentence(code, SYNC_TRIGGERS[code]);
+    return PLATFORM_SENTENCES[code].map((v) => ({ label: v.label, text: v.text() }));
   }
   if (code === 'sync-merge-conflict') {
     return MERGE_CONFLICT_TRIGGERS.map((t, i) => ({ label: i ? 'Or, for a conflict inside a page' : '', text: syncSentence(code, t) }));
@@ -169,8 +194,8 @@ export const ENTRIES = {
     means: 'A folder inside your knowledge folder has its own git history, so Sync cannot back it up.',
     todo: 'Sync again. The Curator leaves that folder out and names it on the Sync page.' },
   'sync-git-missing': { section: 'sync',
-    means: 'Git, which Sync uses, is not installed or not found.',
-    todo: 'On a Mac, run `xcode-select --install` in Terminal, then try again.' },
+    means: 'Git, which Sync uses, is not installed or not found. The Windows app carries its own copy of git, so there this means the app’s install is damaged.',
+    todo: 'On a Mac, run `xcode-select --install` in Terminal, then try again. In the Windows app, run the latest Windows installer again (your notes and settings are kept). In the Windows browser install, install Git for Windows or run the one-line installer again, then restart The Curator.' },
   'sync-failed': { section: 'sync',
     means: 'Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished.',
     todo: 'Try again in a minute. If it repeats, send the Technical detail line to support.' },

@@ -149,7 +149,7 @@ import { existsSync } from 'fs';
 import { appendFile, rename, stat, readFile } from 'fs/promises';
 import path from 'path';
 import {
-  APP_ROOT, getAppSupportDir, getMcpUsageLogPath, getUserDataDir, isBundleInstall,
+  APP_ROOT, getBundleUserDataDir, getMcpUsageLogPath, getUserDataDir, isBundleInstall,
 } from './paths.js';
 import { labelForClient, normaliseStoredClient } from './mcp-clients.js';
 
@@ -658,8 +658,10 @@ export async function appendUsage(entry) {
  *
  * ── THE BUNDLE PATH IS IMPORTED, NEVER RETYPED ─────────────────────────────
  *
- * `getAppSupportDir()` is the same function `paths.js`'s own bundle branch
- * calls, and the BASENAME is taken from `getMcpUsageLogPath()` rather than
+ * `getBundleUserDataDir()` is the same function `paths.js`'s own bundle
+ * branch calls (on macOS it is Application Support/The Curator; on Windows
+ * %LOCALAPPDATA%\TheCurator\App, one level BELOW the shared root, which is
+ * why it is not getAppSupportDir()), and the BASENAME is taken from `getMcpUsageLogPath()` rather than
  * written out a second time. A second spelling of either would be the exact
  * class of drift this module's own docblock warns about — and the failure
  * would be silent, because a path that names no file reads as an empty log.
@@ -694,7 +696,7 @@ export function candidateUsageLogPaths(deps = {}) {
       if (c !== primary && exists(c)) out.push(c);
       return out;
     }
-    const bundle = deps.bundleDir !== undefined ? deps.bundleDir : getAppSupportDir();
+    const bundle = deps.bundleDir !== undefined ? deps.bundleDir : getBundleUserDataDir();
     const userData = deps.userDataDir !== undefined ? deps.userDataDir : getUserDataDir();
     const bundleInstall = deps.isBundle !== undefined ? deps.isBundle : isBundleInstall();
     const env = deps.env || process.env;

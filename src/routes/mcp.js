@@ -49,13 +49,39 @@ const router = express.Router();
 // mcp/server.js is CODE — it ships inside the app, never in the user-data dir.
 const MCP_SERVER_PATH = appPath('mcp', 'server.js');
 const MCP_SERVER_NAME = 'my-curator';
-const CLAUDE_CONFIG_PATH = path.join(
-  os.homedir(),
-  'Library',
-  'Application Support',
-  'Claude',
-  'claude_desktop_config.json',
-);
+const CLAUDE_CONFIG_PATH = claudeConfigPathFor();
+
+/**
+ * Where Claude Desktop keeps its config, for this wizard's reads and its
+ * reveal. macOS (and anything not Windows) is the path this file always used,
+ * byte for byte. Windows (2026-11-20): Claude Desktop's classic install reads
+ * %APPDATA%\Claude\claude_desktop_config.json (<home>\AppData\Roaming when
+ * APPDATA is unset or not absolute). The Microsoft Store build can keep it
+ * elsewhere, which is why this wizard never WRITES on Windows (see
+ * `writeConfigHandler`): the one-click installer (Install for me, the brain installer module's
+ * `resolveWinClaude`) finds the right file and checks Claude is closed.
+ * Pure: every input is a parameter.
+ */
+export function claudeConfigPathFor({ platform = process.platform, env = process.env, homedir = os.homedir() } = {}) {
+  if (platform === 'win32') {
+    const ad = env && typeof env.APPDATA === 'string' && /^(?:[A-Za-z]:\\|\\\\)/.test(env.APPDATA)
+      ? env.APPDATA : path.win32.join(homedir, 'AppData', 'Roaming');
+    return path.win32.join(ad, 'Claude', 'claude_desktop_config.json');
+  }
+  return path.join(
+    homedir,
+    'Library',
+    'Application Support',
+    'Claude',
+    'claude_desktop_config.json',
+  );
+}
+
+/** Windows: the old wizard does not write; it says where the one-click installer is. */
+export const WINDOWS_WRITE_REFUSAL =
+  'On Windows, The Curator connects Claude Desktop with Install for me (Settings, under Connect your agent apps). ' +
+  'It finds the right settings file, including for Claude Desktop from the Microsoft Store, and checks that ' +
+  'Claude Desktop is closed first. Nothing was written to your Claude Desktop config.';
 
 // ── The launch style, and the one test seam on it ──────────────────────────
 //
@@ -445,6 +471,11 @@ export function planConfigWrite(existing, domainsDir, launcherState = null) {
  * only half understood would be a worse copy than the one it replaced.
  */
 export async function writeConfigHandler(_req, res, deps = {}) {
+  // Windows: never written from here (see claudeConfigPathFor). Refused before
+  // anything is read, so no path on disk is touched.
+  if ((deps.platform || process.platform) === 'win32') {
+    return res.status(409).json({ ok: false, refused: 'use_install_for_me', error: WINDOWS_WRITE_REFUSAL, written: false });
+  }
   const io = {
     exists: deps.exists || ((p) => existsSync(p)),
     read: deps.read || ((p) => readFileSync(p, 'utf8')),

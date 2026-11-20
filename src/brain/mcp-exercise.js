@@ -370,7 +370,11 @@ export async function exerciseAllTools(opts = {}) {
     const { buildCuratorEntry } = await import('../routes/mcp.js');
     entry = buildCuratorEntry(domainsRoot);
 
-    const env = { ...process.env };
+    // The launch line's own env rides along, exactly as Claude Desktop passes
+    // it. Only the Windows app's line has one (ELECTRON_RUN_AS_NODE=1): without
+    // it the app's exe starts a SECOND COPY OF THE APP instead of the bridge.
+    // Every other line has no `env`, so this is the old object, byte for byte.
+    const env = entry.env ? { ...process.env, ...entry.env } : { ...process.env };
     for (const k of STRIPPED_ENV) delete env[k];
     env.CURATOR_TEST_DOMAINS_DIR = domainsRoot;
     if (opts.userDataDir) env.CURATOR_TEST_USER_DATA_DIR = opts.userDataDir;

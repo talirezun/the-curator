@@ -801,6 +801,80 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // F2. WINDOWS: System Check runs the git Sync runs (planGit), and words a
+  // missing one as Sync does (gitMissingMessage). Driven with the real
+  // planGit and an injected execFile that records what it was asked to run.
+  // ═══════════════════════════════════════════════════════════════════════
+  section('checkGit on Windows — the bundled git first, Sync\'s own words when it is missing');
+  {
+    const SKIP_DETAIL_F2 = 'Not required by this build.';
+    const { planGit } = await import('../src/brain/subprocess-env.js');
+    const { gitMissingMessage } = await import('../src/brain/sync.js');
+    const APPR = 'C:\\Users\\Ana Müller\\AppData\\Local\\Programs\\The Curator\\resources\\app';
+    const BUNDLED = 'C:\\Users\\Ana Müller\\AppData\\Local\\Programs\\The Curator\\resources\\git\\cmd\\git.exe';
+    const WENV = { Path: 'C:\\Windows\\system32', SystemRoot: 'C:\\Windows' };
+    const BUNDLE_CAPS = { canSelfUpdateViaGit: false, canRunNpmInstall: false };
+    const planFor = (isBundle, present) => planGit({ platform: 'win32', env: WENV, execPath: 'C:\\P\\The Curator.exe',
+      appRoot: APPR, isBundle, exists: (p) => present && p === BUNDLED });
+    const recorder = (outcome) => {
+      const calls = [];
+      const fn = async (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        if (outcome === 'enoent') { const e = new Error(`spawn ${cmd} ENOENT`); e.code = 'ENOENT'; throw e; }
+        return { stdout: 'git version 2.56.1.windows.1\n' };
+      };
+      return { calls, fn };
+    };
+
+    // The Windows APP with its bundled git: probed (never skipped, though it
+    // cannot update via git), by the bundled exe's absolute path, with Sync's env.
+    const r1 = recorder('ok');
+    const appRow = await checkGit(BUNDLE_CAPS, { platform: 'win32', isBundle: true, plan: planFor(true, true), execFile: r1.fn });
+    assert(appRow.status === 'ok' && appRow.detail === 'git version 2.56.1.windows.1',
+      `Windows app: the row is OK with the bundled git's version (got ${appRow.status}: ${appRow.detail})`);
+    assert(r1.calls.length === 1 && r1.calls[0].cmd === BUNDLED && r1.calls[0].args.join(' ') === '--version',
+      `…and it ran the BUNDLED exe by its absolute path (got ${r1.calls[0] && r1.calls[0].cmd})`);
+    const pk = Object.keys(r1.calls[0].opts.env).find((k) => k.toUpperCase() === 'PATH');
+    assert(String(r1.calls[0].opts.env[pk]).startsWith(path.win32.dirname(BUNDLED) + ';')
+      && r1.calls[0].opts.env.GIT_TERMINAL_PROMPT === '0',
+      '…with Sync\'s own environment (the bundled cmd folder first on PATH, no terminal prompts)');
+
+    // Bundled copy gone, a git on PATH: works, but says the app's copy is missing.
+    const r2 = recorder('ok');
+    const pathRow = await checkGit(BUNDLE_CAPS, { platform: 'win32', isBundle: true, plan: planFor(true, false), execFile: r2.fn });
+    assert(r2.calls[0].cmd === 'git' && pathRow.status === 'warn' && /comes with The Curator is missing/.test(pathRow.detail),
+      `Windows app, bundled git missing, git on PATH: WARN naming the missing copy (got ${pathRow.status}: ${pathRow.detail})`);
+
+    // No git at all: Sync's own sentence, never xcode-select.
+    const appMissing = await checkGit(BUNDLE_CAPS, { platform: 'win32', isBundle: true, plan: planFor(true, false), execFile: recorder('enoent').fn });
+    assert(appMissing.status === 'fail' && appMissing.detail === gitMissingMessage({ platform: 'win32', isBundle: true }),
+      `Windows app, no git: FAIL with sync.js's Windows-app sentence (got "${appMissing.detail}")`);
+    const browserMissing = await checkGit({ canSelfUpdateViaGit: true, canRunNpmInstall: true },
+      { platform: 'win32', isBundle: false, plan: planFor(false, false), execFile: recorder('enoent').fn });
+    assert(browserMissing.status === 'fail' && browserMissing.detail === gitMissingMessage({ platform: 'win32', isBundle: false })
+      && !/xcode/i.test(browserMissing.detail),
+      `Windows browser install, no git: FAIL with the Git for Windows sentence, no xcode-select (got "${browserMissing.detail}")`);
+
+    // With no isBundle in deps, the Windows-app question is the CAPABILITY
+    // mcpLaunchStyle (never the install form): 'app-binary' = the Windows app.
+    const capApp = await checkGit({ ...BUNDLE_CAPS, mcpLaunchStyle: 'app-binary' },
+      { platform: 'win32', plan: planFor(true, false), execFile: recorder('enoent').fn });
+    const capRepo = await checkGit({ canSelfUpdateViaGit: true, canRunNpmInstall: true, mcpLaunchStyle: 'node-script' },
+      { platform: 'win32', plan: planFor(false, false), execFile: recorder('enoent').fn });
+    const capNull = await checkGit(null, { platform: 'win32', plan: planFor(false, false), execFile: recorder('enoent').fn });
+    assert(capApp.detail === gitMissingMessage({ platform: 'win32', isBundle: true })
+      && capRepo.detail === gitMissingMessage({ platform: 'win32', isBundle: false })
+      && capNull.detail === capRepo.detail,
+      "mcpLaunchStyle 'app-binary' words it as the Windows app; 'node-script', or an unreadable table, as the browser install");
+
+    // CONTROL: macOS is untouched — the same injected deps are ignored there,
+    // the bundle still skips and the repo arm still names xcode-select.
+    const macBundle = await checkGit(BUNDLE_CAPS, { platform: 'darwin', isBundle: true, execFile: recorder('enoent').fn });
+    assert(macBundle.status === 'info' && macBundle.detail === SKIP_DETAIL_F2,
+      'CONTROL: on macOS the app still takes the skip row');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   section('v3.67.0 — GET /quick carries liveCheck.runsOn; every existing field is unchanged');
   {
     const layer = diagnosticsRouter.stack.find(l => l.route && l.route.path === '/quick' && l.route.methods.get);
