@@ -271,7 +271,9 @@ const EXPECTED_COMMON = [
   if (process.platform !== 'win32') {
     eq(dflt.calls.length, 7, 'no platform injected: this Mac runs build-app.sh as before');
   }
-  ok(mac.calls.every((c) => c.env && c.env.PATH === se.buildSubprocessPath()),
+  // On a Windows host the env keeps ONE path key in Windows' own spelling ("Path"), so read it case-insensitively.
+  const pathOf = (e) => { const k = e && Object.keys(e).find((x) => x.toUpperCase() === 'PATH'); return k ? e[k] : undefined; };
+  ok(mac.calls.every((c) => c.env && pathOf(c.env) === se.buildSubprocessPath()),
     'every updater command runs with the PATH subprocess-env.js builds (config.js uses the helper)');
 }
 {
