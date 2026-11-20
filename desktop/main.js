@@ -50,16 +50,17 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { pickFreePort, appUrl } from './lib/port.js';
-import { createUpdateEngine } from './lib/update-engine.js';
-// The same module as a namespace, ONLY to ask whether the update-engine
-// package has shipped its platform adapter factory (`createUpdateInstaller`)
-// — see updaterSupported() in lib/shell-platform.js. A named import of an
-// export that does not exist yet would refuse to link and take the whole
-// shell down with it; a namespace property is simply undefined.
+// One engine per platform (lib/update-engine.js): the Mac engine on darwin,
+// the Windows engine on win32, null elsewhere (no hooks registered).
+import { createUpdateInstaller } from './lib/update-engine.js';
+// The same module as a namespace, for updaterSupported() in
+// lib/shell-platform.js, which asks whether the platform factory exists.
 import * as updateEngineModule from './lib/update-engine.js';
+import { createPickFolder } from './lib/folder-dialog.js';
+import { runCommandWith } from './lib/run-command.js';
 import {
   appUserModelIdFor, singleInstanceMessage, closeHidesToTray, attachDialogToWindow,
-  trayInteraction, clampTrayToolTip, aboutDialogOptions, updaterSupported,
+  trayInteraction, clampTrayToolTip, aboutDialogOptions, updaterSupported, afterStartNotice,
 } from './lib/shell-platform.js';
 import { winTrayIconPngs } from './lib/tray-icon-win.js';
 import { resolveInstallerRelease } from './lib/update-release.js';
@@ -339,13 +340,10 @@ async function boot() {
   const updater = await buildUpdateEngine();
 
   registerDesktopHost({
-    pickFolder: async ({ prompt }) => {
-      const r = await dialog.showOpenDialog(mainWindow, {
-        title: prompt,
-        properties: ['openDirectory', 'createDirectory'],
-      });
-      return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
-    },
+    // lib/folder-dialog.js: on macOS exactly the inline dialog this file had
+    // (same options, same window, same answer); on Windows one dialog at a
+    // time, unparented when the window is gone, and one checked path or null.
+    pickFolder: createPickFolder({ dialog, getWindow: () => mainWindow, platform: process.platform }),
     relaunch: () => { quitAuthorised = true; app.relaunch(); app.exit(0); },
     // Registered only when the engine could be built. A partial registration is
     // the designed shape (`desktop-host.js`: "a shell that can relaunch but has
@@ -406,6 +404,21 @@ async function boot() {
   } catch { /* the app runs; the menu bar icon simply does not appear */ }
 
   createWindow();
+
+  // ONCE per start, after the window exists (F API). On Windows the update
+  // helper recorded how the last update went; when it did not land, the
+  // reopened app says so in the helper's own sentence. darwin: a no-op.
+  // Never fatal, never awaited by anything: the app is already running.
+  if (updater && typeof updater.afterStart === 'function') {
+    updater.afterStart({ currentVersion: readAppVersion() }).then((r) => {
+      const notice = afterStartNotice(r);
+      if (!notice) return;
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      return win ? dialog.showMessageBox(win, notice) : dialog.showMessageBox(notice);
+    }).catch((err) => {
+      console.error('[The Curator] after-update check failed:', err && err.message ? err.message : err);
+    });
+  }
 }
 
 // ── 2a. The in-app updater ───────────────────────────────────────────────────
@@ -435,11 +448,13 @@ async function boot() {
 // executable code in lib/, and this function is the fifteen lines of wiring
 // that cannot be anywhere else.
 async function buildUpdateEngine() {
-  // WINDOWS: not until the platform adapter exists. Today's engine stages a
-  // .dmg with hdiutil/ditto/codesign; built on a PC it would fail mid-update.
-  // Returning null leaves the hooks unregistered, and the update route then
-  // refuses with its own named reason (the no-fallback rule). darwin: true,
-  // so nothing below changes for the Mac.
+  // The platform's own engine: darwin the Mac engine (unchanged, byte for
+  // byte), win32 the Windows engine (downloads the setup program and runs it
+  // silently through a helper), anything else null. A null engine leaves the
+  // hooks unregistered and the update route refuses with its own named reason
+  // (the no-fallback rule). The darwin engine ignores the Windows-only deps
+  // below (env), and the Windows engine the Mac-only ones (homeDir,
+  // classifyLaunchOrigin).
   if (!updaterSupported(process.platform, updateEngineModule)) return null;
   try {
     const paths = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
@@ -452,7 +467,7 @@ async function buildUpdateEngine() {
     // what keeps that true.
     const cfg = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'routes', 'config.js')).href);
 
-    return createUpdateEngine({
+    return createUpdateInstaller(process.platform, {
       // ── which release, and which .dmg inside it ──
       resolveRelease: ({ signal }) => resolveInstallerRelease({
         configModule: cfg,
@@ -472,6 +487,9 @@ async function buildUpdateEngine() {
       execPath: process.execPath,
       homeDir: app.getPath('home'),
       arch: process.arch,
+      // Windows: the engine reads SystemRoot (PowerShell, Explorer by absolute
+      // path) and hands the helper its environment. Ignored by the Mac engine.
+      env: process.env,
       // REUSED, not re-implemented. The path-component match on
       // `AppTranslocation`, the case-insensitive ~/Downloads check (because
       // APFS is case-insensitive) and the empty-execPath case were all got
@@ -490,12 +508,19 @@ async function buildUpdateEngine() {
 
       // ── subprocesses ──
       runCommand,
-      spawnDetached: (cmd, args) => {
+      spawnDetached: (cmd, args, opts = {}) => {
         // `detached` gives the helper its own process group, so it survives
         // this app's exit — which is the entire point of it. `stdio: 'ignore'`
         // because a pipe nobody reads fills and blocks, and there is nobody
         // left to read it. `unref` so this process is not held open by it.
-        const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+        // `windowsHide` keeps the Windows helper's console from flashing up
+        // (ignored off Windows); `opts.env` is the environment the Windows
+        // engine builds for its helper. The Mac engine passes no opts, so its
+        // child inherits this process's environment exactly as before.
+        const child = spawn(cmd, args, {
+          detached: true, stdio: 'ignore', windowsHide: true,
+          ...(opts && opts.env ? { env: opts.env } : {}),
+        });
         child.unref();
         return child;
       },
@@ -516,15 +541,6 @@ async function buildUpdateEngine() {
         endUpdate: registry.endUpdate,
       },
 
-      // ── the platform's stage + install steps (update-engine package F) ──
-      // WIRED AGAINST AN API THAT HAD NOT LANDED when this was written: the
-      // agreed name is `createUpdateInstaller(platform)`, returning the same
-      // methods the darwin adapter exposes. Passed only when it exists, so
-      // the Mac's engine is called with exactly the options it had before.
-      // If F's engine selects its adapter itself, this line is inert.
-      ...(typeof updateEngineModule.createUpdateInstaller === 'function'
-        ? { installer: updateEngineModule.createUpdateInstaller(process.platform) }
-        : {}),
     });
   } catch (err) {
     // A shell that cannot build the updater still runs the app. The hooks are
@@ -556,21 +572,7 @@ function readAppVersion() {
  * not control is a memory hazard for no benefit.
  */
 function runCommand(cmd, args, opts = {}) {
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
-      resolve({ status: 127, stdout: '', stderr: String(err && err.message ? err.message : err) });
-      return;
-    }
-    const cap = Number.isFinite(opts.maxOutput) ? opts.maxOutput : 64 * 1024;
-    let stdout = ''; let stderr = '';
-    child.stdout.on('data', (d) => { if (stdout.length < cap) stdout += d.toString(); });
-    child.stderr.on('data', (d) => { if (stderr.length < cap) stderr += d.toString(); });
-    child.on('error', (err) => resolve({ status: 127, stdout, stderr: String(err && err.message ? err.message : err) }));
-    child.on('close', (code) => resolve({ status: typeof code === 'number' ? code : 1, stdout, stderr }));
-  });
+  return runCommandWith(spawn, cmd, args, opts);
 }
 
 // ── 2b. The application menu ─────────────────────────────────────────────────

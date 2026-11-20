@@ -231,3 +231,29 @@ export function updaterSupported(platform, engineModule) {
   if (platform !== 'win32') return true;
   return !!engineModule && typeof engineModule.createUpdateInstaller === 'function';
 }
+
+/**
+ * What to show after a start, from the updater's `afterStart()` answer
+ * (lib/update-engine.js, F API). On Windows the helper that ran the installer
+ * records how it went; when the reopened app finds that the update did NOT
+ * land, it says so once, in the helper's own sentence (already in the
+ * published catalogue). Anything else — the Mac's no-op, a successful update,
+ * an unreadable answer — shows nothing.
+ *
+ * @param {{ok?:boolean, outcome?:{status?:string, message?:string}|null}|null} result
+ * @returns {object|null} showMessageBox options, or null
+ */
+export function afterStartNotice(result) {
+  const o = result && typeof result === 'object' && result.ok !== false ? result.outcome : null;
+  if (!o || typeof o !== 'object' || o.status !== 'failed') return null;
+  if (typeof o.message !== 'string' || !o.message.trim()) return null;
+  return {
+    type: 'warning',
+    title: 'The Curator',
+    message: o.message.trim(),
+    buttons: ['OK'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+}

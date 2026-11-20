@@ -530,8 +530,12 @@ section('§6  The ESCAPE HATCH — the folder picker must work in a packaged app
     'desktop/main.js calls registerDesktopHost — the hook registry is wired at all');
   ok(/pickFolder\s*:/.test(mainJs),
     'desktop/main.js registers a pickFolder hook, so the packaged app takes branch (a) and not (c)');
-  ok(/showOpenDialog/.test(mainJs),
-    "and that hook is Electron's own dialog rather than a shell-out");
+  // Since the Windows app (2026-11-20) the hook is built by
+  // desktop/lib/folder-dialog.js from Electron's `dialog`, handed in here.
+  const folderDialogJs = read('desktop/lib/folder-dialog.js');
+  ok(/pickFolder:\s*createPickFolder\(\{\s*dialog,/.test(mainJs)
+      && /dialog\.showOpenDialog\(/.test(folderDialogJs) && !/child_process/.test(folderDialogJs),
+    "and that hook is Electron's own dialog (lib/folder-dialog.js, given Electron's `dialog`) rather than a shell-out");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

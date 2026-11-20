@@ -459,6 +459,96 @@ section('§13 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
     'the Mac menu theme still reads AppleInterfaceStyle');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§14 wave-2 wiring: the updater, the folder dialog, runCommand, afterStart (EXECUTED where it can be)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { spawn } = await import('node:child_process');
+  const rc = await import(path.join(DESKTOP, 'lib', 'run-command.js'));
+  const engine = await import(path.join(DESKTOP, 'lib', 'update-engine.js'));
+
+  // runCommand, through a RECORDING spawn: the options it hands Node.
+  const calls = [];
+  const fakeSpawn = (cmd, args, opts) => { calls.push({ cmd, args, opts }); return spawn(process.execPath, ['-e', 'process.stdout.write("hi")'], opts); };
+  const r1 = await rc.runCommandWith(fakeSpawn, '/usr/bin/plutil', ['-x'], {});
+  eq(calls[0].opts, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    'runCommand spawns with the Mac stdio it always had, plus windowsHide (no flashing PowerShell console; ignored off Windows)');
+  eq([r1.status, r1.stdout, r1.stderr], [0, 'hi', ''], '…and collects output and status as before');
+  const capped = await rc.runCommandWith(spawn, process.execPath, ['-e', 'process.stdout.write("x".repeat(200000))'], { maxOutput: 1000 });
+  ok(capped.status === 0 && capped.stdout.length >= 1000 && capped.stdout.length < 200000, `the output cap still applies (${capped.stdout.length} chars kept)`);
+  const thrown = await rc.runCommandWith(() => { throw new Error('EINVAL'); }, 'x', [], {});
+  eq([thrown.status, thrown.stderr], [127, 'EINVAL'], 'a spawn that throws resolves 127, never rejects');
+  const missing = await rc.runCommandWith(spawn, '/nonexistent/definitely-not-here', [], {});
+  eq(missing.status, 127, 'a program that is not there resolves 127 (the error event), never rejects');
+  const failing = await rc.runCommandWith(spawn, process.execPath, ['-e', 'process.exit(3)'], {});
+  eq(failing.status, 3, 'a non-zero exit is reported as is');
+
+  // The timeout: a hung child must not hang Prepare.
+  const t0 = Date.now();
+  const hung = await rc.runCommandWith(spawn, process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { timeoutMs: 300 });
+  const took = Date.now() - t0;
+  ok(hung.status === rc.TIMEOUT_STATUS && hung.timedOut === true && took < 5000,
+    `a child that hangs is killed at opts.timeoutMs and resolves {status: 124} (${took} ms, not 60 s)`);
+  // Killed, not orphaned: a child that would write a file after 1.5 s must not.
+  const { mkdtempSync, existsSync, rmSync } = await import('node:fs');
+  const os = await import('node:os');
+  const td = mkdtempSync(path.join(os.tmpdir(), 'curator-runcmd-'));
+  const late = path.join(td, 'late.txt');
+  await rc.runCommandWith(spawn, process.execPath, ['-e', `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(late)}, 'x'), 1500)`], { timeoutMs: 200 });
+  await new Promise((r) => setTimeout(r, 2000));
+  ok(!existsSync(late), '…and the hung child is actually killed (it never got to write its file)');
+  rmSync(td, { recursive: true, force: true });
+  const quick = await rc.runCommandWith(spawn, process.execPath, ['-e', 'process.stdout.write("ok")'], { timeoutMs: 10000 });
+  eq([quick.status, quick.stdout, quick.timedOut], [0, 'ok', undefined], 'a child that finishes in time is unaffected by its timeout');
+
+  // afterStart → what the reopened app shows.
+  eq(sp.afterStartNotice({ ok: true, outcome: null, removed: 0, kept: 0 }), null, 'the Mac no-op answer shows nothing');
+  eq(sp.afterStartNotice({ ok: true, outcome: { status: 'updated', result: 'installed', version: '9.9.9', message: null } }), null,
+    'an update that landed shows nothing');
+  eq(sp.afterStartNotice({ ok: true, outcome: { status: 'updated', result: 'installing', version: '9.9.9', message: 'any words' } }), null,
+    '…even if a future record carried words: only a FAILED outcome is shown');
+  const failedOutcome = { status: 'failed', result: 'exe-in-use', version: '9.9.9', message: 'The Curator was not updated, because …' };
+  const n = sp.afterStartNotice({ ok: true, outcome: failedOutcome });
+  ok(n && n.type === 'warning' && n.message === failedOutcome.message && n.buttons.length === 1,
+    'an update that did NOT land shows the helper\'s own sentence once, as a warning with one button');
+  eq([sp.afterStartNotice(null), sp.afterStartNotice({ ok: false }), sp.afterStartNotice({ ok: true, outcome: { status: 'failed', message: '  ' } })],
+    [null, null, null], 'an unreadable or empty answer shows nothing (never an empty box)');
+  // The real Windows engine's own answer, driven over a temp work dir.
+  const wd = mkdtempSync(path.join(os.tmpdir(), 'curator-afterstart-'));
+  const { writeFileSync } = await import('node:fs');
+  const W = engine.createUpdateInstaller('win32', { workDir: wd, env: {}, pathImpl: path, showMessages: false, runCommand: async () => ({ status: 0, stdout: '', stderr: '' }) });
+  writeFileSync(path.join(wd, 'last-update.json'), JSON.stringify({ version: '9.9.9', result: 'exe-in-use' }));
+  const real = await W.afterStart({ currentVersion: '1.0.0' });
+  const rn = sp.afterStartNotice(real);
+  ok(rn && /not updated/.test(rn.message), `the Windows engine's failed record → a notice in its own words ("${rn && rn.message.slice(0, 60)}…")`);
+  const D = engine.createUpdateInstaller('darwin', {});
+  eq(sp.afterStartNotice(await D.afterStart({ currentVersion: '1.0.0' })), null, 'the Mac engine\'s afterStart → no notice');
+  rmSync(wd, { recursive: true, force: true });
+  eq(engine.createUpdateInstaller('linux', {}), null, 'any other platform: no engine, so no hooks (the route refuses no-updater)');
+
+  // main.js — WEAK source scan of the wiring that cannot run here.
+  const raw = read(path.join(DESKTOP, 'main.js'));
+  const src = stripJsComments(raw);
+  ok(/return createUpdateInstaller\(process\.platform, \{/.test(src) && !/createUpdateEngine\(/.test(src),
+    'main.js builds the engine with createUpdateInstaller(process.platform, deps), not the Mac-only factory');
+  ok(/env: process\.env,/.test(src), '…handing the Windows engine its environment');
+  ok(/windowsHide: true,\s*\n\s*\.\.\.\(opts && opts\.env \? \{ env: opts\.env \} : \{\}\)/.test(src),
+    'spawnDetached passes windowsHide and opts.env (only when given, so the Mac child inherits as before)');
+  ok(/return runCommandWith\(spawn, cmd, args, opts\);/.test(src), 'runCommand is the executed lib/run-command.js');
+  ok(/createWindow\(\);\s*if \(updater && typeof updater\.afterStart === 'function'\) \{\s*updater\.afterStart\(\{ currentVersion: readAppVersion\(\) \}\)/.test(src)
+      && (src.match(/updater\.afterStart\(/g) || []).length === 1,
+    'afterStart is called once per start, AFTER the window is created, with the running version');
+  ok(/afterStartNotice\(r\)/.test(src), '…and what it shows is decided by afterStartNotice (executed above)');
+  ok(/pickFolder: createPickFolder\(\{ dialog, getWindow: \(\) => mainWindow, platform: process\.platform \}\),/.test(src),
+    'the folder dialog is the FA wiring line, exactly');
+  ok(!/showOpenDialog/.test(src), '…and no second inline dialog survives in main.js');
+  // NSIS starts the app with `--updated` after a silent update
+  // (app-builder-lib templates/nsis/common.nsh StartApp). The shell reads no
+  // argv at all, so the argument is ignored.
+  ok(!/process\.argv/.test(src) && !/commandLine\.(hasSwitch|getSwitchValue)/.test(src),
+    'main.js reads no command-line arguments, so NSIS\'s `--updated` after a silent update changes nothing');
+}
+
 console.log(`\n  ────────────────────────────────────────`);
 console.log(`  Passed: ${passed}   Failed: ${failed}`);
 console.log(`  ────────────────────────────────────────\n`);
