@@ -1186,6 +1186,70 @@ section('§8  The Windows jobs — PARSED, and the gate\'s release test EXECUTED
   eq(wi.length && JSON.stringify(wi).includes('80ccaaf9-11be-57fd-99fb-d73402b182f5'), true, '…using the app\'s real uninstall key (win-pack.mjs NSIS_GUID)');
 }
 
+section('§9  The install smoke\'s Apps & features probe: absent, present, and a PowerShell failure are three different answers');
+{
+  // v3.99.3-wintest.2: the probe piped an `if` statement into ConvertTo-Json,
+  // which Windows PowerShell refuses to parse; the empty stdout read as "no
+  // key", so "exists" failed and "is gone" passed for the same wrong reason.
+  const GUID = '80ccaaf9-11be-57fd-99fb-d73402b182f5';
+  // A minimal PowerShell grammar rule: a top-level statement that STARTS with a
+  // keyword statement (if/foreach/for/while/switch/try) may not contain a pipe
+  // outside braces and quotes. `if (…) {…} else {…} | X` is a parse error
+  // ("An empty pipe element is not allowed"); `$x = @(… | …)` is not.
+  function pipedStatements(cmd) {
+    const stmts = [];
+    let depth = 0, cur = '', q = false;
+    for (const ch of cmd) {
+      if (q) { cur += ch; if (ch === "'") q = false; continue; }
+      if (ch === "'") { q = true; cur += ch; continue; }
+      if (ch === '{' || ch === '(') depth++;
+      if (ch === '}' || ch === ')') depth--;
+      if (ch === ';' && depth === 0) { stmts.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    stmts.push(cur);
+    return stmts.filter((st) => {
+      if (!/^\s*(if|foreach|for|while|switch|try)\b/i.test(st)) return false;
+      let d = 0, inQ = false;
+      for (const ch of st) {
+        if (inQ) { if (ch === "'") inQ = false; continue; }
+        if (ch === "'") { inQ = true; continue; }
+        if (ch === '{' || ch === '(') d++;
+        else if (ch === '}' || ch === ')') d--;
+        else if (ch === '|' && d === 0) return true;
+      }
+      return false;
+    });
+  }
+  const OLD = `$k = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${GUID}'; if (Test-Path -LiteralPath $k) { Get-ItemProperty -LiteralPath $k | Select-Object DisplayName } else { $null } | ConvertTo-Json -Compress -Depth 4`;
+  eq(pipedStatements(OLD).length, 1, 'CONTROL: the rule catches the wintest.2 probe (an if/else piped into ConvertTo-Json)');
+  eq(pipedStatements('$a = @(Get-ChildItem x | Where-Object { $_ }); ConvertTo-Json -InputObject $a').length, 0, 'CONTROL: …and passes a pipe inside @( ) after an assignment');
+  const keyCmd = ci.uninstallKeyCommand(GUID);
+  eq(pipedStatements(keyCmd), [], 'the key probe pipes no statement');
+  eq(pipedStatements(ci.uninstallListCommand()), [], 'the Uninstall listing pipes no statement');
+  ok(keyCmd.includes(`'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${GUID}'`) && keyCmd.includes(ci.KEY_ABSENT),
+    'the key probe looks at HKCU\\…\\Uninstall\\<NSIS_GUID> and answers a sentinel when it is absent');
+  ok(!!throwsMsg(() => ci.uninstallKeyCommand("x'; Remove-Item C:\\ -Recurse; '")), 'the key probe refuses anything but a GUID');
+
+  eq(ci.parseUninstallKeyProbe({ status: 0, stdout: ci.KEY_ABSENT + '\r\n', stderr: '' }), null, 'absent: the sentinel → null');
+  eq(ci.parseUninstallKeyProbe({ status: 0, stdout: '{"DisplayName":"The Curator","DisplayVersion":"3.99.3"}', stderr: '' }),
+    { DisplayName: 'The Curator', DisplayVersion: '3.99.3' }, 'present: the values');
+  const parseErr = 'At line:1 char:200\r\n+ … } else { $null } | ConvertTo-Json …\r\nAn empty pipe element is not allowed.';
+  const m1 = throwsMsg(() => ci.parseUninstallKeyProbe({ status: 1, stdout: '', stderr: parseErr }));
+  ok(!!m1 && /exited 1/.test(m1) && /At line:1/.test(m1), 'a PowerShell failure THROWS, with its first error line (never reads as "absent")');
+  ok(!!throwsMsg(() => ci.parseUninstallKeyProbe({ status: 0, stdout: '', stderr: '' })), 'empty stdout with exit 0 THROWS (never reads as "absent")');
+  ok(!!throwsMsg(() => ci.parseUninstallKeyProbe({ status: 0, stdout: 'null', stderr: '' })), '"null" THROWS (never reads as "absent")');
+
+  const one = { Key: GUID, DisplayName: 'The Curator', DisplayVersion: '3.99.3', UninstallString: '"C:\\x\\Uninstall The Curator.exe" /currentuser' };
+  eq(ci.parseUninstallList({ status: 0, stdout: '[]', stderr: '' }), [], 'listing: none');
+  eq(ci.parseUninstallList({ status: 0, stdout: JSON.stringify(one), stderr: '' }), [one], 'listing: one entry (PowerShell unwraps a one-element array)');
+  const stranger = { Key: '{ABC}', DisplayName: 'The Curator Pro (someone else)', DisplayVersion: '1', UninstallString: 'x' };
+  const both = ci.parseUninstallList({ status: 0, stdout: JSON.stringify([stranger, one]), stderr: '' });
+  eq(both.length, 2, 'listing: several');
+  eq(ci.appUninstallKeys(both), [GUID], 'the app\'s own entry is the one whose DisplayName is exactly "The Curator"; a stranger\'s "Curator" entry never matches');
+  ok(!!throwsMsg(() => ci.parseUninstallList({ status: 1, stdout: '', stderr: 'boom' })), 'listing: a PowerShell failure THROWS');
+}
+
 for (const d of tmps) rmSync(d, { recursive: true, force: true });
 
 console.log(`\n${'─'.repeat(60)}`);

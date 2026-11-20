@@ -161,7 +161,14 @@ check(install.includes("'node_modules\\npm\\bin\\npm-cli.js'"), 'install.ps1: np
 // Shortcut naming (D3): the Windows app owns "The Curator"; when its HKCU
 // uninstall key exists, the browser install names its own icons "(browser)".
 // Get-ShortcutNames is evaluated from the script's own text for both states.
-const APP_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\80ccaaf9-11be-57fd-99fb-d73402b182f5';
+// The key is DERIVED from desktop/lib/win-pack.mjs (UNINSTALL_REGISTRY_KEY =
+// …\Uninstall\<NSIS_GUID>, NSIS_GUID = electron-builder 26.15.3's UUID v5 of
+// appId, cross-checked against its own UUID.v5 in test-desktop-win-build.js),
+// so install.ps1, test.yml and the install smoke can never name different keys.
+const wp = await import(new URL('../desktop/lib/win-pack.mjs', import.meta.url).href);
+const APP_KEY = `HKCU:\\${wp.UNINSTALL_REGISTRY_KEY}`;
+check(APP_KEY === 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\80ccaaf9-11be-57fd-99fb-d73402b182f5',
+  'CROSS-CHECK: win-pack.mjs names HKCU\\…\\Uninstall\\80ccaaf9-11be-57fd-99fb-d73402b182f5 (UUID v5 of appId, as electron-builder derives it; the install smoke lists the real one)');
 check(install.includes(`$AppUninstallKey = '${APP_KEY}'`), "install.ps1: looks for exactly the app's HKCU uninstall key");
 check(/Test-Path -LiteralPath \$AppUninstallKey/.test(install), "install.ps1: the key's presence is what decides the names");
 function shortcutNames(appInstalled) {
@@ -222,6 +229,11 @@ const wf = readFileSync(path.join(ROOT, '.github/workflows/test.yml'), 'utf8');
 const jobStart = wf.indexOf('\n  windows-install:\n');
 check(jobStart >= 0, 'test.yml: the windows-install job exists');
 const jobBody = jobStart >= 0 ? wf.slice(jobStart + 1).split(/\n  [a-z][a-z-]*:\n/)[0] : '';
+{
+  // Every HKCU Uninstall key the windows-install job fakes or removes is the app's real one.
+  const keys = [...jobBody.matchAll(/'(HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[^']*)'/g)].map((m) => m[1]);
+  check(keys.length >= 2 && keys.every((k) => k === APP_KEY), `test.yml: the windows-install job fakes and removes exactly the app's uninstall key (${keys.length} place(s))`);
+}
 check(/name: Windows one-line install\n/.test(jobBody), 'test.yml: job name "Windows one-line install"');
 check(/runs-on: windows-latest/.test(jobBody), 'test.yml: runs on windows-latest');
 check(!/^    if:/m.test(jobBody), 'test.yml: the job has no if: (a skipped job does not gate a release)');

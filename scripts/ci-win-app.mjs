@@ -282,6 +282,55 @@ export function spawnErrorText(err) {
 // ═════════════════════════════════════════════════════════════════════════
 
 let failures = 0;
+// ── The app's Apps & features key (HKCU\…\Uninstall\<NSIS_GUID>) ─────────
+//
+// v3.99.3-wintest.2 failed "…\Uninstall\80ccaaf9-… exists — null" whatever the
+// installer had written: the probe piped an `if` STATEMENT
+// (`if (…) {…} else {…} | ConvertTo-Json`), which Windows PowerShell refuses
+// to parse ("An empty pipe element is not allowed"), so stdout was empty and
+// the empty reply read as "no key" — and the later "the key is gone" checks
+// passed for the same wrong reason. The probe below never pipes a statement,
+// prints a sentinel for "absent", and a PowerShell failure THROWS.
+
+export const UNINSTALL_ROOT_PS = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';
+export const KEY_ABSENT = '__CURATOR_KEY_ABSENT__';
+const UNINSTALL_FIELDS = 'DisplayName, DisplayVersion, UninstallString, QuietUninstallString, Publisher';
+
+function psSingleQuote(s) { return `'${String(s).replace(/'/g, "''")}'`; }
+
+export function uninstallKeyCommand(guid) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(guid))) throw new Error(`not a GUID: ${guid}`);
+  const k = psSingleQuote(`${UNINSTALL_ROOT_PS}\\${guid}`);
+  return `$k = ${k}; if (Test-Path -LiteralPath $k) { Get-ItemProperty -LiteralPath $k | Select-Object ${UNINSTALL_FIELDS} | ConvertTo-Json -Compress -Depth 4 } else { ${psSingleQuote(KEY_ABSENT)} }`;
+}
+/** {status, stdout, stderr} → the key's values, or null when the key is absent; throws when PowerShell failed. */
+export function parseUninstallKeyProbe(r) {
+  if (!r || r.status !== 0) throw new Error(`PowerShell exited ${r && r.status}: ${firstLine(r && r.stderr)}`);
+  const out = String(r.stdout || '').trim();
+  if (out === KEY_ABSENT) return null;
+  let v;
+  try { v = JSON.parse(out); } catch { throw new Error(`unreadable probe reply: ${JSON.stringify(out.slice(0, 200))}`); }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`unexpected probe reply: ${JSON.stringify(out.slice(0, 200))}`);
+  return v;
+}
+export function uninstallListCommand() {
+  return `$root = ${psSingleQuote(UNINSTALL_ROOT_PS)}; $rows = @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue; [pscustomobject]@{ Key = $_.PSChildName; DisplayName = $p.DisplayName; DisplayVersion = $p.DisplayVersion; UninstallString = $p.UninstallString } } | Where-Object { $_.DisplayName -like '*Curator*' }); ConvertTo-Json -InputObject $rows -Compress -Depth 3`;
+}
+/** {status, stdout, stderr} → [{Key, DisplayName, DisplayVersion, UninstallString}]; throws when PowerShell failed. */
+export function parseUninstallList(r) {
+  if (!r || r.status !== 0) throw new Error(`PowerShell exited ${r && r.status}: ${firstLine(r && r.stderr)}`);
+  const out = String(r.stdout || '').trim();
+  if (!out) return [];
+  let v;
+  try { v = JSON.parse(out); } catch { throw new Error(`unreadable list reply: ${JSON.stringify(out.slice(0, 200))}`); }
+  const rows = v == null ? [] : Array.isArray(v) ? v : [v];
+  return rows.filter((e) => e && typeof e === 'object' && typeof e.Key === 'string');
+}
+/** The keys whose DisplayName is exactly the product name: the app's own entry, never a stranger's "Curator-something". */
+export function appUninstallKeys(entries, product = 'The Curator') {
+  return entries.filter((e) => e.DisplayName === product).map((e) => e.Key);
+}
+
 function ok(cond, label, detail = '') {
   if (cond) console.log(`  ✓ ${label}`);
   else { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`); console.log(`::error::${label}${detail ? ` — ${String(detail).replace(/\r?\n/g, ' ')}` : ''}`); }
@@ -310,8 +359,12 @@ function ps(command, timeout = 120000) {
 }
 function psJson(command) {
   const r = ps(`${command} | ConvertTo-Json -Compress -Depth 4`);
+  // A command PowerShell cannot even parse prints nothing on stdout: say so,
+  // instead of letting it read as "no such thing" (v3.99.3-wintest.2).
+  if (r.status !== 0) console.log(`    · PowerShell exited ${r.status}: ${firstLine(r.stderr)}`);
   try { return r.stdout ? JSON.parse(r.stdout) : null; } catch { return null; }
 }
+function firstLine(text) { return String(text || '').split(/\r?\n/).find((l) => l.trim()) || '(no error text)'; }
 
 function sha256File(p) { return createHash('sha256').update(readFileSync(p)).digest('hex'); }
 function snapshot(dir) {
@@ -441,7 +494,22 @@ function shortcutPaths() {
   };
 }
 async function uninstallKey(guid) {
-  return psJson(`$k = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}'; if (Test-Path -LiteralPath $k) { Get-ItemProperty -LiteralPath $k | Select-Object DisplayName, DisplayVersion, UninstallString, InstallLocation, Publisher } else { $null }`);
+  return parseUninstallKeyProbe(ps(uninstallKeyCommand(guid)));
+}
+/** Every HKCU Uninstall subkey that names The Curator, with its key name: printed when the expected key is missing. */
+function curatorUninstallEntries() {
+  return parseUninstallList(ps(uninstallListCommand()));
+}
+/** Throws (a failed check, never "absent") when PowerShell itself failed. */
+function probeAbsent(guid, label) {
+  try { return ok(uninstallKeyAbsentNow(guid), label); } catch (e) { return ok(false, label, e.message); }
+}
+function uninstallKeyAbsentNow(guid) { return parseUninstallKeyProbe(ps(uninstallKeyCommand(guid))) === null; }
+function printCuratorUninstallEntries() {
+  let list;
+  try { list = curatorUninstallEntries(); } catch (e) { console.log(`    · could not list HKCU\\…\\Uninstall: ${e.message}`); return; }
+  if (!list.length) { console.log('    · no HKCU\\…\\Uninstall subkey has a DisplayName containing "Curator"'); return; }
+  for (const e of list) console.log(`    · HKCU\\…\\Uninstall\\${e.Key}: DisplayName ${JSON.stringify(e.DisplayName)}, DisplayVersion ${JSON.stringify(e.DisplayVersion)}, UninstallString ${JSON.stringify(e.UninstallString)}`);
 }
 function machineKeyExists(guid) {
   const r = ps(`(Test-Path -LiteralPath 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}') -or (Test-Path -LiteralPath 'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${guid}')`);
@@ -734,8 +802,14 @@ async function installSmoke({ setup, version }) {
   let installed = null;
   try { wp.winAfterSign({ appOutDir: installDir, repoRoot: ROOT, log: () => {} }); } catch (e) { installed = e.message; }
   ok(installed === null, 'the bundle marker is INSIDE the installer payload (win-pack.mjs winAfterSign on the INSTALLED folder: marker, exe version, RunAsNode)', installed);
-  const key = await uninstallKey(wp.NSIS_GUID);
-  ok(!!key, `HKCU\\…\\Uninstall\\${wp.NSIS_GUID} exists`, JSON.stringify(key));
+  let key = null;
+  let keyError = '';
+  try { key = await uninstallKey(wp.NSIS_GUID); } catch (e) { keyError = e.message; }
+  ok(!!key, `HKCU\\…\\Uninstall\\${wp.NSIS_GUID} exists`, keyError || 'the key is absent');
+  if (!key) printCuratorUninstallEntries();
+  let entries = null;
+  try { entries = curatorUninstallEntries(); } catch (e) { ok(false, 'HKCU\\…\\Uninstall can be listed', e.message); }
+  if (entries) eq(appUninstallKeys(entries, PRODUCT), [wp.NSIS_GUID], `CROSS-CHECK: the one HKCU Uninstall subkey named "${PRODUCT}" is ${wp.NSIS_GUID} (win-pack.mjs NSIS_GUID, what install.ps1 looks for)`);
   if (key) {
     eq([key.DisplayName, key.DisplayVersion], [PRODUCT, version], 'Apps & features: "The Curator", and its DisplayVersion is the version');
     ok(String(key.UninstallString || '').toLowerCase().includes(installDir.toLowerCase()), 'its UninstallString points into the install folder', key.UninstallString);
@@ -767,7 +841,7 @@ async function installSmoke({ setup, version }) {
   const roamingBefore = existsSync(roaming);
   eq(runInstaller(path.join(installDir, UNINSTALLER), ['/S']), 0, 'the uninstaller /S exits 0');
   ok(!!(await waitUninstalled(installDir)), 'the program files are gone');
-  ok(!(await uninstallKey(wp.NSIS_GUID)), 'the HKCU uninstall key is gone');
+  probeAbsent(wp.NSIS_GUID, 'the HKCU uninstall key is gone');
   for (const [where, lnk] of [['Desktop', sc.desktop], ['Start menu', sc.startMenu]]) ok(!lnk || !existsSync(lnk), `${where} shortcut removed`);
   const after = snapshot(dataDir);
   const d = snapshotDiff(seeded, after);
@@ -784,7 +858,7 @@ async function installSmoke({ setup, version }) {
     const diff = snapshotDiff(before, now);
     eq([diff.changed, diff.missing, diff.added], [[], [], []], '…and nothing in %LOCALAPPDATA%\\TheCurator changed, vanished or appeared');
     ok(!existsSync(path.join(target, EXE_NAME)), '…and no The Curator.exe was written there');
-    ok(!(await uninstallKey(wp.NSIS_GUID)), '…and no uninstall key was written');
+    probeAbsent(wp.NSIS_GUID, '…and no uninstall key was written');
   }
   rmSync(tmp, { recursive: true, force: true });
   finish('install-smoke');
@@ -931,8 +1005,10 @@ async function rehearseUpdate({ from, fromVersion, to, toVersion }) {
     existsSync(updatesDir) ? readdirSync(updatesDir).join(', ') : '');
   const ev = versionInfo(exe);
   ok(ev && String(ev.ProductVersion).startsWith(toVersion), `the installed exe is ${toVersion}`, JSON.stringify(ev));
-  const key = await uninstallKey(wp.NSIS_GUID);
+  let key = null;
+  try { key = await uninstallKey(wp.NSIS_GUID); } catch (e) { console.log(`    · ${e.message}`); }
   eq(key && key.DisplayVersion, toVersion, 'the HKCU uninstall key now says the new version');
+  if (!key) printCuratorUninstallEntries();
   eq([shortcutTarget(sc.desktop), shortcutTarget(sc.startMenu)], targetsBefore, 'both shortcuts are kept, pointing where they did');
 
   section('the data');
