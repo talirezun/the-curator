@@ -78,6 +78,25 @@ export const MINGIT = Object.freeze({
 /** Where The Curator's own releases live (the GPLv2 source is attached there). */
 export const CURATOR_RELEASES_URL = 'https://github.com/talirezun/the-curator/releases';
 
+/**
+ * The GPLv2 source of the pinned MinGit, as CI attaches it to EVERY Windows
+ * release (.github/workflows/desktop-dmg.yml, job publish-windows, through
+ * scripts/publish-win-assets.js). The file is GitHub's archive of the
+ * git-for-windows/git tag the binary was built from; its top folder is
+ * `git-<tag without v>`. Derived from the pin's tag, never typed twice: the
+ * notices below name `asset`, and the publish step uploads under the same
+ * name, so what the app tells a person to look for is what the release has.
+ */
+export function mingitSourceFor(pin = MINGIT) {
+  const bare = String(pin.tag).replace(/^v/, '');
+  return Object.freeze({
+    url: `https://github.com/git-for-windows/git/archive/refs/tags/${pin.tag}.tar.gz`,
+    asset: `git-for-windows-${bare}-source.tar.gz`,
+    topDir: `git-${bare}`,
+  });
+}
+export const MINGIT_SOURCE = mingitSourceFor(MINGIT);
+
 /** The default output folder, relative to desktop/ (gitignored). */
 export const DEFAULT_OUT_DIR = path.join(DESKTOP_DIR, 'vendor');
 /** Subfolder of the output folder that holds everything the build copies. */
@@ -345,7 +364,7 @@ export function thirdPartyNotices({ pin = MINGIT, components = [], releasesUrl =
     '',
     '   Source code: under section 3 of the GPL, the complete corresponding source',
     `   code of this MinGit build is attached to the GitHub release of The Curator`,
-    `   that contains this app, at ${releasesUrl}`,
+    `   that contains this app, as ${mingitSourceFor(pin).asset}, at ${releasesUrl}`,
     '   The Git for Windows project also publishes it, with its build recipes, at',
     `   ${pin.releaseUrl} and https://github.com/git-for-windows/build-extra`,
     '',

@@ -66,8 +66,16 @@ jobs:
   # are simulated (inside a scratch home); the suite fingerprints the runner's
   # real Claude Desktop candidates before and after.
   #
-  # Only this suite runs here: the macOS install suites assert POSIX modes,
+  # The macOS install suites do not run here: they assert POSIX modes,
   # symlinks and `~/Library` paths, which are not Windows facts.
+  #
+  # THE WINDOWS APP (2026-11-20) adds the suites whose last section runs only
+  # on real Windows, and the bundled-git checks (scripts/ci-win-app.mjs
+  # git-checks): NTFS folder access, the update helper EXECUTED by real
+  # PowerShell, the shell, win32 paths, the subprocess environment, and
+  # Personal Sync's bundled git with no git on PATH. Each is its own step so a
+  # red run names what failed. They need full history (several compare
+  # against a fixed baseline commit with `git show`), hence fetch-depth: 0.
   #
   # THIS JOB GATES A RELEASE. `scripts/release.js` reads per-JOB conclusions and
   # treats every job not named in its ADVISORY_JOBS as part of the gate, and
@@ -85,6 +93,8 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -101,6 +111,35 @@ jobs:
       - run: node scripts/test-mcp-install-windows.js
         env:
           CURATOR_REQUIRE_ELECTRON: '1'
+      - name: Windows app, folder access on a real NTFS disk (section 8)
+        run: node scripts/test-win-folder-access.js
+      # CURATOR_REQUIRE_WIN_HELPER: the helper section is REQUIRED here.
+      - name: Windows app, the update helper run by real PowerShell (section 9)
+        run: node scripts/test-desktop-update-win32.js
+        env:
+          CURATOR_REQUIRE_WIN_HELPER: '1'
+      - name: Windows app, shell and tray
+        run: node scripts/test-desktop-shell-win32.js
+      - name: Windows app, paths
+        run: node scripts/test-paths-win32.js
+      - name: Windows app, subprocess environment and git plan
+        run: node scripts/test-subprocess-env.js
+      # The bundled git, for real: the pinned MinGit (re-checked against its
+      # size and SHA-256 even when it comes from the cache) laid out where an
+      # install has it, then init/commit/push/clone with NO git on PATH, a 401
+      # that ends in seconds with no Git Credential Manager process, and System
+      # Check's repair sentence with it hidden. The desktop workflow runs the
+      # same checks against the INSTALLED app on every tag.
+      - name: Reuse the MinGit download
+        uses: actions/cache@v4
+        with:
+          path: desktop/vendor/MinGit-2.56.1-64-bit.zip
+          key: mingit-4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd
+      - name: Fetch MinGit 2.56.1 (size and SHA-256 checked before anything is unpacked)
+        working-directory: desktop
+        run: node lib/fetch-mingit.mjs
+      - name: Windows app, Personal Sync's bundled git (no git on PATH, no credential window)
+        run: node scripts/ci-win-app.mjs git-checks --mingit desktop/vendor/mingit/git
 
   # ── Windows: the one-line installer, end to end, on a real Windows PC ───────
   # v3.87.0. `install.ps1` is what non-technical Windows users paste into
@@ -413,6 +452,117 @@ jobs:
           $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $port)
           $l.Start(); $l.Stop()
           Write-Host 'repair run OK; data byte-identical; port free'
+
+      # The Windows app (2026-11-20, package L): the app's NSIS installer owns
+      # the plain names "The Curator" on the Desktop and in the Start menu, so
+      # install.ps1 names its own icons "(browser)" while the app's per-user
+      # uninstall key exists, and goes back to the plain names when it is gone.
+      # The app is FAKED here (its HKCU key + a Desktop shortcut to a dummy exe);
+      # the real app installer is exercised by .github/workflows/desktop-dmg.yml.
+      - name: Icons beside the Windows app ((browser) names), and back
+        shell: powershell
+        timeout-minutes: 20
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = $env:CI_CURATOR_DIR
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\80ccaaf9-11be-57fd-99fb-d73402b182f5'
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          $programs = [Environment]::GetFolderPath('Programs')
+          $sh = New-Object -ComObject WScript.Shell
+          function Rerun {
+            & ([scriptblock]::Create((Get-Content -Raw -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'install.ps1')))) -Branch $env:CI_CURATOR_BRANCH -NoStart -InstallDir $dir -RepoUrl $env:CI_CURATOR_REPO
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 re-run reported failure ($LASTEXITCODE)" }
+          }
+          # The same target / arguments / working folder / icon checks as the first install.
+          function Assert-Ours([string]$lnkPath, [string]$scriptName, [string]$icoName) {
+            if (-not (Test-Path -LiteralPath $lnkPath -PathType Leaf)) { throw "missing shortcut: $lnkPath" }
+            $l = $sh.CreateShortcut($lnkPath)
+            $script = Join-Path $dir ('scripts\windows\' + $scriptName)
+            $ico = Join-Path $dir ('scripts\windows\assets\' + $icoName)
+            if ($l.TargetPath -notlike '*\System32\WindowsPowerShell\v1.0\powershell.exe') { throw "$lnkPath target: $($l.TargetPath)" }
+            if (-not $l.Arguments.Contains('-File "' + $script + '"')) { throw "$lnkPath arguments: $($l.Arguments)" }
+            if (-not $l.Arguments.Contains('-ExecutionPolicy Bypass') -or -not $l.Arguments.Contains('-WindowStyle Hidden')) { throw "$lnkPath arguments: $($l.Arguments)" }
+            if ($l.WorkingDirectory -ne $dir) { throw "$lnkPath working folder: $($l.WorkingDirectory)" }
+            if ($l.IconLocation -ne ($ico + ',0')) { throw "$lnkPath icon: $($l.IconLocation) (expected $ico,0)" }
+            Write-Host "ok: $lnkPath"
+          }
+          function Assert-Absent([string]$p) { if (Test-Path -LiteralPath $p) { throw "should not exist: $p" } }
+          function Hash([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash }
+          function New-Lnk([string]$path, [string]$target) { $l = $sh.CreateShortcut($path); $l.TargetPath = $target; $l.Save() }
+          $plainMenu = Join-Path $programs 'The Curator'
+          $browserMenu = Join-Path $programs 'The Curator (browser)'
+
+          # (1) App absent (the state the steps above left): plain names, nothing "(browser)".
+          if (Test-Path -LiteralPath $key) { throw 'the app key exists before the test made it' }
+          foreach ($place in @($desktop, $plainMenu)) {
+            Assert-Ours (Join-Path $place 'The Curator.lnk') 'start-curator.ps1' 'curator-start.ico'
+            Assert-Ours (Join-Path $place 'Stop The Curator.lnk') 'stop-curator.ps1' 'curator-stop.ico'
+          }
+          Assert-Absent (Join-Path $desktop 'The Curator (browser).lnk')
+          Assert-Absent (Join-Path $desktop 'Stop The Curator (browser).lnk')
+          Assert-Absent $browserMenu
+
+          # (2) App present: its key, and its own Desktop shortcut (to a dummy exe).
+          $fakeDir = Join-Path $env:RUNNER_TEMP 'Fake App'
+          [void][System.IO.Directory]::CreateDirectory($fakeDir)
+          $fakeExe = Join-Path $fakeDir 'The Curator.exe'
+          Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\whoami.exe') -Destination $fakeExe -Force
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -LiteralPath $key -Name DisplayName -Value 'The Curator' -Force | Out-Null
+          $appLnk = Join-Path $desktop 'The Curator.lnk'
+          New-Lnk $appLnk $fakeExe
+          $appHash = Hash $appLnk
+          Rerun
+          foreach ($place in @($desktop, $browserMenu)) {
+            Assert-Ours (Join-Path $place 'The Curator (browser).lnk') 'start-curator.ps1' 'curator-start.ico'
+            Assert-Ours (Join-Path $place 'Stop The Curator (browser).lnk') 'stop-curator.ps1' 'curator-stop.ico'
+          }
+          Assert-Absent (Join-Path $desktop 'Stop The Curator.lnk')
+          Assert-Absent (Join-Path $plainMenu 'The Curator.lnk')
+          Assert-Absent (Join-Path $plainMenu 'Stop The Curator.lnk')
+          if ((Hash $appLnk) -ne $appHash) { throw "the app's own shortcut was changed: $appLnk" }
+          if ($sh.CreateShortcut($appLnk).TargetPath -ne $fakeExe) { throw "the app's shortcut no longer points at the app" }
+          Write-Host "ok: the app's Desktop shortcut is byte-identical"
+
+          # (4) A foreign file under a plain name, with the app present, survives a re-run.
+          $foreign = Join-Path $desktop 'Stop The Curator.lnk'
+          New-Lnk $foreign (Join-Path $env:SystemRoot 'System32\notepad.exe')
+          $foreignHash = Hash $foreign
+          Rerun
+          if (-not (Test-Path -LiteralPath $foreign -PathType Leaf) -or (Hash $foreign) -ne $foreignHash) { throw "a shortcut that is not install.ps1's was changed or removed: $foreign" }
+          if ((Hash $appLnk) -ne $appHash) { throw "the app's own shortcut was changed on the second run" }
+          Write-Host 'ok: a foreign "Stop The Curator.lnk" and the app shortcut survived'
+
+          # (3) App uninstalled: plain names back, no (browser) leftovers.
+          Remove-Item -LiteralPath $foreign -Force
+          Remove-Item -LiteralPath $appLnk -Force
+          Remove-Item -LiteralPath $key -Recurse -Force
+          Rerun
+          foreach ($place in @($desktop, $plainMenu)) {
+            Assert-Ours (Join-Path $place 'The Curator.lnk') 'start-curator.ps1' 'curator-start.ico'
+            Assert-Ours (Join-Path $place 'Stop The Curator.lnk') 'stop-curator.ps1' 'curator-stop.ico'
+            $ours = @(Get-ChildItem -LiteralPath $place -Filter '*.lnk' | Where-Object { $_.Name -like '*The Curator*' })
+            if ($ours.Count -ne 2) { throw "expected exactly one start and one stop icon in $place, found: $($ours.Name -join ', ')" }
+          }
+          Assert-Absent (Join-Path $desktop 'The Curator (browser).lnk')
+          Assert-Absent (Join-Path $desktop 'Stop The Curator (browser).lnk')
+          Assert-Absent $browserMenu
+          Write-Host 'ok: plain names back, no (browser) icon or folder left'
+
+      # (5) Whatever happened above, the fake app's key and files go.
+      - name: Remove the fake Windows app
+        if: always()
+        shell: powershell
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\80ccaaf9-11be-57fd-99fb-d73402b182f5'
+          if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
+          $fakeDir = Join-Path $env:RUNNER_TEMP 'Fake App'
+          if (Test-Path -LiteralPath $fakeDir) { Remove-Item -LiteralPath $fakeDir -Recurse -Force }
+          $sh = New-Object -ComObject WScript.Shell
+          foreach ($n in @('The Curator.lnk', 'Stop The Curator.lnk')) {
+            $p = Join-Path ([Environment]::GetFolderPath('Desktop')) $n
+            if ((Test-Path -LiteralPath $p) -and ($sh.CreateShortcut($p).TargetPath -notlike '*powershell.exe')) { Remove-Item -LiteralPath $p -Force }
+          }
 
       - name: Logs
         if: always()
