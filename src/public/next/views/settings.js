@@ -2696,8 +2696,15 @@ function renderBackgroundMode() {
   // WHICH id it sends. That is what makes this a rendering change rather
   // than a protocol change.
   const PAIR_MODES = ['window', 'tray', 'tray-only'];
-  const usePair = !!modes && modes.length === PAIR_MODES.length
-    && PAIR_MODES.every((m) => modes.indexOf(m) !== -1);
+  // WINDOWS (audit minor 7, 2026-11-20): the server offers only 'window' and
+  // 'tray' there (hiding the taskbar button is not done), so the same switch
+  // is drawn WITHOUT the dependent checkbox. Any other list keeps the rules
+  // below, so the macOS control is unchanged.
+  const SWITCH_ONLY_MODES = ['window', 'tray'];
+  const switchOnly = !!W && !!modes && modes.length === SWITCH_ONLY_MODES.length
+    && SWITCH_ONLY_MODES.every((m) => modes.indexOf(m) !== -1);
+  const usePair = switchOnly || (!!modes && modes.length === PAIR_MODES.length
+    && PAIR_MODES.every((m) => modes.indexOf(m) !== -1));
 
   const buttons = (!usePair && modes) ? modes.map((id) => {
     const [label] = LABELS[id] || [id];
@@ -2732,13 +2739,14 @@ function renderBackgroundMode() {
       // disabled rather than hidden while the switch is off — hiding it would
       // make the row's height jump on every toggle, and a user who has never
       // turned the icon on would never learn the option exists.
+      (switchOnly ? '' :
       '<label class="cur-switch-sub">' +
         '<input type="checkbox" class="cur-check cur-check-sm"' +
           ' data-background-mode="' + (hideDock ? 'tray' : 'tray-only') + '"' +
           (hideDock ? ' checked' : '') +
           (!on || state.backgroundModeSaving ? ' disabled' : '') + '>' +
         '<span>' + (W ? W.hideLabel : 'Hide the Dock icon while it is showing') + '</span>' +
-      '</label>'
+      '</label>')
     : '';
 
   // What the CHOSEN option actually does, in visible text. A mode this build

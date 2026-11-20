@@ -13,7 +13,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { writeFileAtomicSync } from './atomic-write.js';
-import { getCuratorConfigFile, getDefaultDomainsDir } from './paths.js';
+import { getCuratorConfigFile, getDefaultDomainsDir, getPlatform } from './paths.js';
+import { assertWindowsAppKnowledgeFolder } from './knowledge-folder-path.js';
 
 // v3.1.0+: these resolve through paths.js instead of this file's own location.
 // In a repo install getUserDataDir() === APP_ROOT, so both are byte-identical
@@ -121,6 +122,10 @@ export function getDomainsDir() {
   // never set in production. The legacy DOMAINS_PATH (below, loses to config)
   // remains for the documented developer fallback.
   if (process.env.CURATOR_TEST_DOMAINS_DIR) return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
+  // THE WINDOWS APP (audit M2, 2026-11-20): the same rungs, then held to the
+  // knowledge-folder rules before anything uses the answer. Off Windows this
+  // branch is never taken and the four lines below it are unchanged.
+  if (getPlatform() === 'win32') return windowsDomainsDir();
   // PRODUCTION launch override — the `--domains-path` this process was started
   // with (MCP only). Ranked here, below both test seams and above the stored
   // setting, to mirror the read adapter exactly so MCP reads and writes cannot
@@ -131,6 +136,43 @@ export function getDomainsDir() {
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
   return getDefaultDomainsDir();
 }
+
+/**
+ * Windows: getDomainsDir's production rungs, unchanged in order and value, and
+ * then — on the Windows APP only — assertWindowsAppKnowledgeFolder
+ * (knowledge-folder-path.js): a folder inside the program folder or the app's
+ * own working folders, under any spelling, or a relative setting (which would
+ * resolve against the working folder, the program folder on a shortcut
+ * launch) THROWS a plain sentence instead of being served. Nothing is
+ * deleted or moved; the Domains page's folder picker and typed path do not
+ * read this, so a person can still choose another folder. On the browser
+ * install and a checkout the assertion is a no-op. A passing answer is
+ * remembered for a few seconds: this runs on nearly every request and the
+ * check asks the file system for real paths.
+ */
+let _winDomainsOk = { key: null, at: 0 };
+const WIN_DOMAINS_OK_MS = 3000;
+function windowsDomainsDir() {
+  const P = path.win32;
+  let raw = null;
+  let resolved;
+  if (_cliDomainsDir) { raw = _cliDomainsDir; resolved = P.resolve(_cliDomainsDir); }
+  else {
+    const cfg = readRaw();
+    if (cfg.domainsPath) { raw = cfg.domainsPath; resolved = P.resolve(cfg.domainsPath); }
+    else if (process.env.DOMAINS_PATH) { raw = process.env.DOMAINS_PATH; resolved = P.resolve(process.env.DOMAINS_PATH); }
+    else resolved = getDefaultDomainsDir();
+  }
+  const key = `${raw}\0${resolved}`;
+  const now = Date.now();
+  if (_winDomainsOk.key === key && now - _winDomainsOk.at < WIN_DOMAINS_OK_MS) return resolved;
+  assertWindowsAppKnowledgeFolder(typeof raw === 'string' ? raw : null, resolved);
+  _winDomainsOk = { key, at: now };
+  return resolved;
+}
+
+/** TEST-ONLY: forget the remembered Windows check (scripts/test-win-folder-access.js). */
+export function __resetWindowsDomainsCheckForTest() { _winDomainsOk = { key: null, at: 0 }; }
 
 /**
  * Provision the DEFAULT domains directory if it is not there yet.
@@ -186,7 +228,17 @@ export function getDomainsDir() {
  * @returns {{status:'exists'|'created'|'not-default'|'failed', dir:string, error?:Error}}
  */
 export function ensureDefaultDomainsDir() {
-  const dir = getDomainsDir();
+  // The Windows app refuses an unsafe knowledge folder by throwing (see
+  // windowsDomainsDir); at boot that is reported, never fatal, and nothing is
+  // created. Off Windows getDomainsDir() never throws this, so the line below
+  // the catch runs exactly as before.
+  let dir;
+  try { dir = getDomainsDir(); } catch (err) {
+    if (err && (err.code === 'folder-inside-app' || err.code === 'knowledge-folder-not-absolute')) {
+      return { status: 'refused', dir: null, error: err };
+    }
+    throw err;
+  }
   if (path.resolve(dir) !== path.resolve(getDefaultDomainsDir())) {
     return { status: 'not-default', dir };
   }
@@ -217,8 +269,24 @@ export function getConfig() {
                : cfg.domainsPath ? 'ui'
                : process.env.DOMAINS_PATH ? 'env'
                : 'default';
+  // The Windows app's unsafe-folder refusal (windowsDomainsDir) must not take
+  // Settings down with it: the folder AS SET is reported, with the plain
+  // sentence beside it, so the screen can show both and offer another. Every
+  // other error, and every other platform, is exactly as before.
+  let domainsPath;
+  try { domainsPath = getDomainsDir(); } catch (err) {
+    if (err && (err.code === 'folder-inside-app' || err.code === 'knowledge-folder-not-absolute')) {
+      const raw = _cliDomainsDir || cfg.domainsPath || process.env.DOMAINS_PATH || null;
+      return {
+        domainsPath: typeof raw === 'string' ? raw : null,
+        domainsPathSource: source,
+        domainsPathRefused: { code: err.code, message: err.message },
+      };
+    }
+    throw err;
+  }
   return {
-    domainsPath: getDomainsDir(),
+    domainsPath,
     domainsPathSource: source,
   };
 }
@@ -1301,9 +1369,16 @@ if (!Object.hasOwn(BACKGROUND_MODES, DEFAULT_BACKGROUND_MODE)) {
   );
 }
 
-/** The mode names this build understands. Sole source of truth for callers. */
-export function backgroundModeNames() {
-  return Object.keys(BACKGROUND_MODES);
+/**
+ * The mode names this build OFFERS on this platform. Sole source of truth for
+ * callers. On Windows `tray-only` is left out (audit minor 7, 2026-11-20): the
+ * desktop shell does not hide the taskbar button (desktop/lib/background-mode.js
+ * explains why), so Settings must not offer a choice that does nothing. Every
+ * other platform: the whole table, unchanged.
+ */
+export function backgroundModeNames({ platform = getPlatform() } = {}) {
+  const names = Object.keys(BACKGROUND_MODES);
+  return platform === 'win32' ? names.filter((m) => m !== 'tray-only') : names;
 }
 
 /**
@@ -1320,7 +1395,11 @@ export function resolveBackgroundMode(raw) {
 
 /** The resolved mode for this install. Never throws, never returns null. */
 export function getBackgroundMode() {
-  return resolveBackgroundMode(readRaw().backgroundMode);
+  const mode = resolveBackgroundMode(readRaw().backgroundMode);
+  // Windows: a stored `tray-only` (written before it stopped being offered)
+  // is what the shell does with it — the tray icon, taskbar button kept.
+  if (mode === 'tray-only' && getPlatform() === 'win32') return 'tray';
+  return mode;
 }
 
 /**
@@ -1343,7 +1422,10 @@ export function getBackgroundModeCaps() {
  * it ignores `ok`. `reason` is `'invalid_value'` and nothing else today.
  */
 export function setBackgroundMode(mode) {
-  if (typeof mode !== 'string' || !Object.hasOwn(BACKGROUND_MODES, mode)) {
+  // The last test is Windows-only (backgroundModeNames leaves `tray-only` out
+  // there); it is NOT a third guard against prototype keys.
+  if (typeof mode !== 'string' || !Object.hasOwn(BACKGROUND_MODES, mode)
+      || (mode === 'tray-only' && getPlatform() === 'win32')) {
     return { ok: false, mode: getBackgroundMode(), reason: 'invalid_value' };
   }
   const cfg = readRaw();

@@ -6507,12 +6507,15 @@ async function sourceDigest(realRoot, relPath) {
 async function gitHeadCommit(realRoot) {
   try {
     const { execFile } = await import('child_process');
+    // The SAME git Sync runs (audit M4); off the Windows app, bare `git` as before.
+    const { gitInvocation } = await import('./subprocess-env.js');
     return await new Promise((resolve) => {
       let settled = false;
       const done = (v) => { if (!settled) { settled = true; resolve(v); } };
       try {
-        execFile('git', ['-C', realRoot, 'rev-parse', 'HEAD'],
-          { timeout: 4000, windowsHide: true, maxBuffer: 4096 },
+        const g = gitInvocation(['-C', realRoot, 'rev-parse', 'HEAD']);
+        execFile(g.file, g.args,
+          { timeout: 4000, windowsHide: true, maxBuffer: 4096, ...(g.env ? { env: g.env } : {}) },
           (err, stdout) => {
             if (err) return done(null);
             const s = String(stdout || '').trim();
@@ -6545,12 +6548,15 @@ async function gitOriginRemote(realRoot) {
   let url = null;
   try {
     const { execFile } = await import('child_process');
+    // The SAME git Sync runs (audit M4); off the Windows app, bare `git` as before.
+    const { gitInvocation } = await import('./subprocess-env.js');
     url = await new Promise((resolve) => {
       let settled = false;
       const done = (v) => { if (!settled) { settled = true; resolve(v); } };
       try {
-        execFile('git', ['-C', realRoot, 'remote', 'get-url', 'origin'],
-          { timeout: 4000, windowsHide: true, maxBuffer: 4096 },
+        const g = gitInvocation(['-C', realRoot, 'remote', 'get-url', 'origin']);
+        execFile(g.file, g.args,
+          { timeout: 4000, windowsHide: true, maxBuffer: 4096, ...(g.env ? { env: g.env } : {}) },
           (err, stdout) => done(err ? null : String(stdout || '').trim() || null));
       } catch { done(null); }
     });
@@ -9145,12 +9151,15 @@ export const MAX_ADD_FILES_PER_CALL = MAX_FOUNDATIONS_PER_PROJECT;
 async function gitTopLevel(realRoot) {
   try {
     const { execFile } = await import('child_process');
+    // The SAME git Sync runs (audit M4); off the Windows app, bare `git` as before.
+    const { gitInvocation } = await import('./subprocess-env.js');
     const out = await new Promise((resolve) => {
       let settled = false;
       const done = (v) => { if (!settled) { settled = true; resolve(v); } };
       try {
-        execFile('git', ['-C', realRoot, 'rev-parse', '--show-toplevel'],
-          { timeout: 4000, windowsHide: true, maxBuffer: 8192 },
+        const g = gitInvocation(['-C', realRoot, 'rev-parse', '--show-toplevel']);
+        execFile(g.file, g.args,
+          { timeout: 4000, windowsHide: true, maxBuffer: 8192, ...(g.env ? { env: g.env } : {}) },
           (err, stdout) => done(err ? null : String(stdout || '').trim() || null));
       } catch { done(null); }
     });

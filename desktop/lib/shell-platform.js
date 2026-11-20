@@ -98,6 +98,50 @@ export function closeHidesToTray({ platform, quitAuthorised = false, trayActive 
 }
 
 /**
+ * Windows, NO tray (audit minor 5, 2026-11-20): should the X ask the quit
+ * question BEFORE the window goes, instead of closing it?
+ *
+ * Without this the close went through, the last window was destroyed, and only
+ * then did `window-all-closed` → `app.quit()` → `before-quit` ask "Quit now?"
+ * about an ingest in progress. "Keep working" then left a process with no
+ * window, no tray icon and no taskbar button: invisible, still running. So on
+ * win32 with no live tray the close is cancelled and turned into the same
+ * `app.quit()` a menu Quit uses; the write-status question appears with the
+ * window still there, and "Keep working" keeps it. An authorised quit and a
+ * Windows log-off/shut-down go through as before. Answers FALSE on every other
+ * platform (the Mac keeps its own handler), and FALSE whenever the tray hide
+ * above applies.
+ */
+export function closeAsksQuitFirst({ platform, quitAuthorised = false, trayActive = false, sessionEnding = false } = {}) {
+  if (platform !== 'win32') return false;
+  if (quitAuthorised || sessionEnding) return false;
+  return trayActive !== true;
+}
+
+/**
+ * WINDOWS (audit M1, 2026-11-20): the box shown INSTEAD of starting when the
+ * packaged app's program files are incomplete — the packager's marker is
+ * missing, so paths.js would otherwise read this install as a checkout and keep
+ * user data inside the program folder. The decision is paths.js's own
+ * `win32AppFilesIncomplete()` (the same one that makes paths.js refuse in the
+ * MCP bridge), handed in as `pathsModule`. Null means start normally; it is
+ * null on every platform but win32, and when the module cannot answer.
+ *
+ * @param {object|null} pathsModule  src/brain/paths.js's namespace
+ * @returns {{title:string, body:string}|null}
+ */
+export function appFilesIncompleteBox(pathsModule) {
+  if (!pathsModule || typeof pathsModule.win32AppFilesIncomplete !== 'function') return null;
+  let incomplete = false;
+  try { incomplete = pathsModule.win32AppFilesIncomplete() === true; } catch { incomplete = false; }
+  if (!incomplete) return null;
+  const body = typeof pathsModule.WIN32_APP_FILES_INCOMPLETE_MESSAGE === 'string'
+    ? pathsModule.WIN32_APP_FILES_INCOMPLETE_MESSAGE
+    : 'The Curator did not start because its program files are incomplete. Run its installer again; your notes are safe.';
+  return { title: 'The Curator could not start', body };
+}
+
+/**
  * Should a modal dialog be attached to the main window, or be app-modal?
  *
  * On Windows a message box owned by a HIDDEN window (the window hidden to the

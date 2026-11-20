@@ -63,6 +63,7 @@ import {
   adapterFor, listHarnesses, refusals, resolveTemplates, instructionSnippetFor, shellQuote,
 } from '../brain/harness-adapters.js';
 import { HARNESS_HOOKS } from './hook.js';
+import { gitInvocation } from '../brain/subprocess-env.js';
 import {
   EXIT_OK, EXIT_REFUSED, EXIT_USAGE, out, note, flagStr, flagBool, findMarker,
 } from './resolve.js';
@@ -557,7 +558,9 @@ export async function runInstallHooks(parsed) {
  */
 export function addToGitExclude(projectRoot, rel) {
   try {
-    const r = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: projectRoot, encoding: 'utf8', timeout: 3000 });
+    // The SAME git Sync runs (gitInvocation, audit M4); off the Windows app, bare `git` as before.
+    const g = gitInvocation(['rev-parse', '--git-path', 'info/exclude']);
+    const r = spawnSync(g.file, g.args, { cwd: projectRoot, encoding: 'utf8', timeout: 3000, ...(g.env ? { env: g.env } : {}) });
     if (r.status !== 0 || !r.stdout.trim()) return { ok: false, reason: 'this folder is not a git repository' };
     const file = path.resolve(projectRoot, r.stdout.trim());
     const line = `/${rel.split(path.sep).join('/')}`;

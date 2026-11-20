@@ -52,7 +52,20 @@ const domainsPath = domainsPathIdx !== -1 ? args[domainsPathIdx + 1] : null;
 // fall through to the stored setting exactly as they always have.
 setCliDomainsDir(domainsPath);
 
-const storage = createStorageAdapter({ domainsPath });
+// The Windows app refuses an unsafe knowledge folder here (storage/local.js,
+// audit M2): one plain line on stderr — never stdout, the JSON-RPC stream —
+// and exit 1, so the AI app reports a server that did not start. Every other
+// error is rethrown exactly as before; off the Windows app nothing throws this.
+let storage;
+try {
+  storage = createStorageAdapter({ domainsPath });
+} catch (err) {
+  if (err && (err.code === 'folder-inside-app' || err.code === 'knowledge-folder-not-absolute' || err.code === 'app-files-incomplete')) {
+    process.stderr.write(`[my-curator] ${err.message}\n`);
+    process.exit(1);
+  }
+  throw err;
+}
 
 // `title` is the human-readable display name added in MCP spec 2025-06-18.
 // We lead it with the brain glyph in case the host (Claude Desktop) derives

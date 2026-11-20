@@ -52,6 +52,7 @@ import { generateDeltaSummary } from './sharedbrain-delta.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
 import { writePage, syncSummaryEntities, appendLog } from './files.js';
 import { getSyncGitDir } from './paths.js';
+import { gitInvocation } from './subprocess-env.js';
 
 // execFile — NOT exec. Page paths come from readdir over a folder the user
 // (or, via pull, a remote shared brain) controls; exec would interpolate
@@ -395,11 +396,16 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     const pathspec = `${domain}/wiki/${pagePath}`;
     const sinceIso = sinceDate.toISOString();
 
-    const { stdout: shaOut } = await execFileAsync(
-      'git',
+    // The SAME git Sync runs (subprocess-env.js gitInvocation, audit M4): in
+    // the Windows app the bundled one; everywhere else exactly the bare `git`
+    // and options that were here.
+    const logGit = gitInvocation(
       [`--git-dir=${gitDir}`, `--work-tree=${domainsDir}`, '--literal-pathspecs',
-       'log', '--format=%H', `--before=${sinceIso}`, '-1', '--', pathspec],
-      { encoding: 'utf-8' }
+       'log', '--format=%H', `--before=${sinceIso}`, '-1', '--', pathspec]);
+    const { stdout: shaOut } = await execFileAsync(
+      logGit.file,
+      logGit.args,
+      { encoding: 'utf-8', ...(logGit.env ? { env: logGit.env } : {}) }
     );
     const sha = shaOut.trim();
     if (!sha) return null;
@@ -408,10 +414,11 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     // measured to make no difference here — it is kept only so both
     // invocations are obviously magic-free. If the page was DELETED in `sha`,
     // this throws and we correctly fall through to null.
+    const showGit = gitInvocation([`--git-dir=${gitDir}`, '--literal-pathspecs', 'show', `${sha}:${pathspec}`]);
     const { stdout: content } = await execFileAsync(
-      'git',
-      [`--git-dir=${gitDir}`, '--literal-pathspecs', 'show', `${sha}:${pathspec}`],
-      { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10 }
+      showGit.file,
+      showGit.args,
+      { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10, ...(showGit.env ? { env: showGit.env } : {}) }
     );
 
     // THE RETURN VALUE IS A THREE-STATE SIGNAL, AND '' IS NOT ONE OF THE
