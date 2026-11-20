@@ -552,8 +552,11 @@ async function checkBuild({ unpacked, setup, version }) {
   eq(JSON.parse(readFileSync(path.join(app, 'package.json'), 'utf8')).version, version, 'resources\\app\\package.json carries the version');
 
   section('bundle marker, notices, icons, dependencies');
-  ok(existsSync(path.join(app, wp.BUNDLE_MARKER_FILE)) && readFileSync(path.join(app, wp.BUNDLE_MARKER_FILE), 'utf8') === wp.MARKER_TEXT,
-    'resources\\app\\.curator-bundle is there, with the marker text');
+  // The marker is named only by desktop/ and paths.js (scripts/test-paths-win32.js
+  // scans for it), so it is checked through win-pack.mjs's own afterSign check.
+  const signCheck = (dir) => { try { wp.winAfterSign({ appOutDir: dir, repoRoot: ROOT, log: () => {} }); return null; } catch (e) { return e.message; } };
+  const built = signCheck(unpacked);
+  ok(built === null, 'win-pack.mjs winAfterSign on the built tree: the bundle marker, the exe version and RunAsNode all hold', built);
   const notices = path.join(res, fm.NOTICES_FILE);
   const nt = existsSync(notices) ? readFileSync(notices, 'utf8') : '';
   ok(nt.includes(`MinGit ${fm.MINGIT.version}`) && nt.includes(fm.MINGIT.tag), 'THIRD-PARTY-NOTICES.txt names MinGit 2.56.1 and its tag');
@@ -631,8 +634,9 @@ async function installSmoke({ setup, version }) {
   for (const f of [EXE_NAME, UNINSTALLER, path.join('resources', 'app', 'package.json'), path.join('resources', 'git', 'cmd', 'git.exe'), path.join('resources', 'THIRD-PARTY-NOTICES.txt')]) {
     ok(existsSync(path.join(installDir, f)), `installed: %LOCALAPPDATA%\\Programs\\The Curator\\${f}`);
   }
-  const marker = path.join(installDir, 'resources', 'app', wp.BUNDLE_MARKER_FILE);
-  ok(existsSync(marker) && readFileSync(marker, 'utf8') === wp.MARKER_TEXT, 'the bundle marker is INSIDE the installer payload (installed resources\\app\\.curator-bundle)');
+  let installed = null;
+  try { wp.winAfterSign({ appOutDir: installDir, repoRoot: ROOT, log: () => {} }); } catch (e) { installed = e.message; }
+  ok(installed === null, 'the bundle marker is INSIDE the installer payload (win-pack.mjs winAfterSign on the INSTALLED folder: marker, exe version, RunAsNode)', installed);
   const key = await uninstallKey(wp.NSIS_GUID);
   ok(!!key, `HKCU\\…\\Uninstall\\${wp.NSIS_GUID} exists`, JSON.stringify(key));
   if (key) {
