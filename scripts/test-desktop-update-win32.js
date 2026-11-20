@@ -342,7 +342,7 @@ const GOOD = {
   ok(s.includes('.WaitForExit($InstallTimeoutSeconds * 1000)') && !/Start-Process[^\n]*-Wait\b/.test(s),
     'it waits for the setup PROCESS only (Start-Process -Wait would also wait for the app the setup reopens)');
   ok(s.includes('$null = $proc.Handle'), 'the process handle is taken at once, so ExitCode is readable afterwards');
-  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'Get-FileHash', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "Write-Result 'installed' 0", 'Test-AppRunning) { $running'];
+  const order = ['while (Get-Process -Id $AppPid', 'foreach ($sp in $StopPids)', 'while (-not (Test-ExeFree))', 'if (-not (Test-InstallerUnchanged))', "Write-Result 'installing'", 'Start-Process -FilePath $Installer -ArgumentList $InstallerArgs', "Write-Result 'installed' 0", 'Test-AppRunning) { $running'];
   const idx = order.map((k) => s.indexOf(k));
   ok(idx.every((i) => i > 0) && idx.every((v, i) => i === 0 || v > idx[i - 1]),
     `the steps are in order: wait → stop agreed connections → exe free → hash → record → run → record → reopen (${idx.join(',')})`);
@@ -365,6 +365,52 @@ const GOOD = {
   for (const [label, over] of bad) {
     let threw = false; try { planWin.buildWin32InstallScript({ ...GOOD, ...over }); } catch { threw = true; }
     ok(threw, `refuses to build a helper with ${label}`);
+  }
+  // ── audit minor 8: the "Run the installer now?" answer hashes the kept setup AGAIN ──
+  {
+    const fn = s.slice(s.indexOf('function Test-InstallerUnchanged'), s.indexOf('function Show-Message'));
+    ok(/Get-FileHash -LiteralPath \$Installer -Algorithm SHA256/.test(fn) && /\$len -eq \$Size -and \$h -eq \$Sha256/.test(fn),
+      'Test-InstallerUnchanged reads the length and the SHA-256 from the disk and compares both with the checked ones');
+    const sm = s.slice(s.indexOf('function Show-Message'), s.indexOf('function Start-App'));
+    const yes = sm.slice(sm.indexOf("if ([string]$r -eq 'Yes')"));
+    const iTest = yes.indexOf('Test-InstallerUnchanged');
+    const iRun = yes.indexOf('Start-Process -FilePath $Installer');
+    ok(iTest > 0 && iRun > iTest && /if \(Test-InstallerUnchanged\) \{ try \{ Start-Process -FilePath \$Installer/.test(yes),
+      'after "Yes" the kept setup program is run ONLY inside `if (Test-InstallerUnchanged)` (re-hashed at the moment of running)');
+    ok(/else \{ Log 'REFUSED: the kept setup program changed; it was not run'; \[void\]\[System\.Windows\.Forms\.MessageBox\]::Show\(\$MsgChanged/.test(yes),
+      '…and a changed one is not run: logged, and the "installer-changed" sentence is shown');
+    eq((s.match(/Start-Process -FilePath \$Installer(?! -ArgumentList)/g) || []).length, 1,
+      'the kept setup is started in exactly one place (the re-hashed one)');
+    // DUMB CROSS-CHECK: the main run uses the same test (one hashing rule, not two).
+    ok(/\nif \(-not \(Test-InstallerUnchanged\)\) \{\r?\n  Log 'REFUSED: the setup program is not the one that was checked/.test(s),
+      'the step-4 check before the silent run is the same Test-InstallerUnchanged');
+  }
+  // ── audit minor 2: psQuote doubles EVERY quote PowerShell ends a '…' string at ──
+  {
+    for (const [cp, ch] of [['U+0027', "'"], ['U+2018', '\u2018'], ['U+2019', '\u2019'], ['U+201A', '\u201A'], ['U+201B', '\u201B']]) {
+      eq(planWin.psQuote(`O${ch}Brien`), `'O${ch}${ch}Brien'`, `psQuote doubles ${cp}`);
+    }
+    eq(planWin.psQuote('a\u2019\u2018b\'c'), "'a\u2019\u2019\u2018\u2018b''c'", 'mixed quotes: each doubled in place');
+    eq(planWin.psQuote('C:\\Users\\Ana \u017Dagar\\x'), "'C:\\Users\\Ana \u017Dagar\\x'", 'no quote: unchanged (non-ASCII kept)');
+    // DUMB CROSS-CHECK, independent of psQuote: a minimal model of PowerShell's single-quoted
+    // tokenizer (any of the five ends the string unless doubled) reads every literal back whole.
+    const Q = new Set(["'", '\u2018', '\u2019', '\u201A', '\u201B']);
+    const readBack = (lit) => {
+      if (!Q.has(lit[0])) return null;
+      let out = '';
+      for (let i = 1; i < lit.length; i++) {
+        if (Q.has(lit[i])) { if (Q.has(lit[i + 1])) { out += lit[i]; i++; continue; } return i === lit.length - 1 ? out : null; }
+        out += lit[i];
+      }
+      return null;
+    };
+    for (const v of ["O'Brien", 'O\u2019Brien', '\u2018quoted\u2019', 'a\u201Ab\u201Bc', "C:\\Users\\Ž O\u2019B'x\\The Curator.exe"]) {
+      eq(readBack(planWin.psQuote(v)), v, `the tokenizer model reads ${JSON.stringify(v)} back whole`);
+    }
+    ok(readBack(`'${'O\u2019Brien'.replace(/'/g, "''")}'`) !== 'O\u2019Brien', 'CONTROL: the old ASCII-only doubling does NOT survive U+2019 (the audit\'s case)');
+    const curly = planWin.buildWin32InstallScript({ ...GOOD, exePath: 'C:\\Users\\O\u2019Brien\\AppData\\Local\\Programs\\The Curator\\The Curator.exe' });
+    ok(curly.includes("$Exe = 'C:\\Users\\O\u2019\u2019Brien\\AppData\\Local\\Programs\\The Curator\\The Curator.exe'"), 'a user name with U+2019 reaches the helper as one literal');
+    ok(planWin.buildProbeScript('C:\\Users\\O\u2019Brien\\x\\probe-1.txt').includes("'C:\\Users\\O\u2019\u2019Brien\\x\\probe-1.txt'"), '…and the probe script too');
   }
   // How it is started.
   const args = planWin.helperArgs("C:\\U\\O'B\\updates\\install-update.ps1");
@@ -739,6 +785,44 @@ section('§8 afterStart: the outcome record and update cleanup');
     eq(r.outcome, null, 'an unreadable record is no outcome (and never a crash)');
     const missing = await win.createWin32UpdateEngine({ workDir: path.join(TMP, 'does-not-exist') }).afterStart({});
     eq(missing.ok, true, 'afterStart with no updates folder at all: fine');
+  }
+  // ── audit M3: the sweeps delete ONLY the engine's own files ──
+  {
+    const fx = fixture();
+    mkdirSync(path.join(fx.workDir, 'my-domain', 'wiki', 'concepts'), { recursive: true });
+    const page = path.join(fx.workDir, 'my-domain', 'wiki', 'concepts', 'page.md');
+    writeFileSync(page, '# a page\n');
+    // A FOLDER named like an engine file is not the engine's either.
+    mkdirSync(path.join(fx.workDir, win.HELPER_SCRIPT), { recursive: true });
+    writeFileSync(path.join(fx.workDir, win.HELPER_SCRIPT, 'inside.md'), 'kept');
+    mkdirSync(path.join(fx.workDir, 'v9.9.9-folder.exe'), { recursive: true });
+    for (const f of ['notes.txt', 'index.md', 'Setup.exe', 'probe-.ps1', 'probe-x.ps1.bak', 'last-update.json.bak']) writeFileSync(path.join(fx.workDir, f), 'mine');
+    const engineFiles = [win.RESULT_FILE, `${win.RESULT_FILE}.tmp`, 'probe-ab12.ps1', 'probe-ab12.txt', setup('2.0.0'), 'v3.100.0-TheCurator-3.100.0-x64-Windows-Setup.exe'];
+    for (const f of engineFiles) { const p = path.join(fx.workDir, f); writeFileSync(p, 'x'); chmodSync(p, 0o444); }
+    const r = await makeEngine(fx).eng.afterStart({ currentVersion: '3.0.0' });
+    eq(r.removed, engineFiles.length, `afterStart removes exactly the ${engineFiles.length} engine files`);
+    eq(listWork(fx), [win.HELPER_SCRIPT, 'Setup.exe', 'index.md', 'last-update.json.bak', 'my-domain', 'notes.txt', 'probe-.ps1', 'probe-x.ps1.bak', 'v9.9.9-folder.exe'].sort(),
+      '…and keeps everything else: a knowledge folder, files a person put there, folders named like engine files');
+    eq(readFileSync(page, 'utf8'), '# a page\n', '…the page inside the knowledge folder is untouched (the audit\'s repro)');
+    eq(readFileSync(path.join(fx.workDir, win.HELPER_SCRIPT, 'inside.md'), 'utf8'), 'kept', '…and nothing inside a folder is ever removed (never recursive)');
+    // prepareUpdate's clean slate is the same sweep.
+    const fx2 = fixture();
+    mkdirSync(path.join(fx2.workDir, 'kb', 'wiki'), { recursive: true });
+    writeFileSync(path.join(fx2.workDir, 'kb', 'wiki', 'p.md'), 'p');
+    writeFileSync(path.join(fx2.workDir, 'readme.txt'), 'mine');
+    writeFileSync(path.join(fx2.workDir, setup('0.0.1')), 'old');
+    const p2 = await makeEngine(fx2).eng.prepareUpdate({});
+    ok(p2.ok, `CONTROL: prepareUpdate succeeded beside a person's files (${p2.reason || 'ok'})`);
+    ok(existsSync(path.join(fx2.workDir, 'kb', 'wiki', 'p.md')) && existsSync(path.join(fx2.workDir, 'readme.txt')),
+      'prepareUpdate\'s clean slate keeps a knowledge folder and a person\'s file');
+    ok(!existsSync(path.join(fx2.workDir, setup('0.0.1'))), '…and still removes the old staged setup program');
+    // The name test, directly.
+    for (const n of [win.HELPER_SCRIPT, win.RESULT_FILE, 'probe-id0.ps1', 'probe-id0.txt', 'v4.0.0-TheCurator-4.0.0-x64-Windows-Setup.exe', '4.0.0-x.exe']) {
+      ok(win.isEngineFileName(n), `engine file: ${n}`);
+    }
+    for (const n of ['domains', 'notes.md', 'Setup.exe', 'probe-a/b.ps1', 'v4-x.exe', '.curator-config.json', '', 'probe-x.ps1.bak']) {
+      ok(!win.isEngineFileName(n), `not the engine's: ${JSON.stringify(n)}`);
+    }
   }
   for (const [k, msg] of Object.entries(planWin.WIN32_INSTALL_OUTCOMES)) {
     ok(!MAC_WORDS.test(msg) && msg.length > 40, `outcome "${k}" is a plain Windows sentence`);

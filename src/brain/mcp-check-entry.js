@@ -258,7 +258,14 @@ export function vetEntry(entry, ctx, deps = {}) {
     return { ok: true, command, args: [], shape: 'launcher' };
   }
 
-  // (b) node + this install's server
+  // (b) node + this install's server — never in the Windows app either (audit
+  // minor 4, 2026-11-20). There the only entry The Curator writes is shape
+  // (c), so the rule is exactly "(c) or refuse": a node.exe from anywhere on
+  // the PC that merely names this install's server is not started. macOS and
+  // the browser install (no appExecPath) keep shape (b) unchanged.
+  if (appExe) {
+    return refuse('not_allowed', `Its entry starts ${command}, not The Curator itself, so The Curator does not run it. Install for me writes the entry this app runs.`);
+  }
   const nodeName = win ? /^node\.exe$/i : /^node$/;
   if (!nodeName.test(P.basename(command)) || !nodeName.test(P.basename(realCmd))) {
     return refuse('not_allowed', `Its entry starts ${command}, which is neither node nor The Curator’s launcher, so The Curator does not run it.`);

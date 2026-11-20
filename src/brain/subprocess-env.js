@@ -24,10 +24,14 @@
  * Every function takes the platform, environment and node path as arguments
  * (defaulting to the live process), so a suite on macOS can drive the Windows
  * arm. Pure: no I/O, no spawn, nothing written to stdout (this module is
- * reachable from `mcp/` through sync.js).
+ * reachable from `mcp/` through sync.js). The one exception is
+ * gitInvocation() at the end, which on Windows only reads the live install
+ * (one marker test) on first use.
  */
 
 import path from 'path';
+import { existsSync } from 'fs';
+import { APP_ROOT, isBundleInstall } from './paths.js';
 
 /** The POSIX folders prepended off Windows (unchanged since v2.3.5). */
 export const POSIX_EXTRA_DIRS = Object.freeze([
@@ -163,7 +167,12 @@ export function bundledGitLocation(appRoot) {
 export function gitConfigArgs({ platform = process.platform, bundled = false } = {}) {
   if (platform !== 'win32') return [];
   const args = ['-c', 'credential.helper=', '-c', 'core.askPass='];
-  if (bundled) args.push('-c', 'http.sslBackend=schannel');
+  // The Windows APP's own git only (audit minor 10, 2026-11-20): paths past
+  // Windows' 260-character limit work (`core.longpaths`, Git for Windows'
+  // setting; a knowledge folder plus `\<domain>\wiki\entities\<page>.md`
+  // reaches it). Not added for a git on PATH, so the browser install's git
+  // command lines stay as they were.
+  if (bundled) args.push('-c', 'http.sslBackend=schannel', '-c', 'core.longpaths=true');
   return args;
 }
 
@@ -216,4 +225,60 @@ export function planGit({
     bundledExe: loc ? loc.exe : null,
     bundledPresent: present,
   };
+}
+
+// ── One git for every other caller (audit M4, 2026-11-20) ────────────────────
+//
+// Sync (sync.js) and System Check (diagnostics.js) already start git through
+// planGit(). Every OTHER git this app starts — Shared Brain's prior-version
+// read, the setup check's read-only git, the memory layer's project-checkout
+// reads, the CLI's info/exclude lookup — used to start bare `git` from the
+// inherited PATH, which in the Windows app (started from Explorer, no Git for
+// Windows installed) finds nothing, so each silently answered "nothing".
+// gitInvocation() gives them the SAME git Sync runs.
+//
+// THE WINDOWS APP ONLY. Everywhere else — macOS, Linux, the browser install
+// and a checkout on Windows — it returns the call site's own invocation
+// unchanged: program `git`, the arguments as given, and `env` exactly what the
+// call site passed before (undefined = inherit; `extraEnv` = `{ ...process.env,
+// ...extraEnv }`, the object those call sites built themselves). On the Windows
+// app: the bundled git first on PATH, no credential helper or askpass window,
+// GIT_TERMINAL_PROMPT=0, and planGit's `-c` settings before the arguments
+// (`credential.helper=`, `core.askPass=`, schannel, `core.longpaths=true`),
+// plus the call site's `extraEnv`. Unlike the rest of this module it reads the
+// live install (paths.js), once, on first use, and only on Windows.
+
+let _liveGitInvocation = null;
+let _gitInvocationOverride = null;
+
+/** TEST-ONLY: `{ isBundle, plan }` to use instead of the live install; null restores it. */
+export function __setGitInvocationForTest(o) {
+  _gitInvocationOverride = o ? { isBundle: !!o.isBundle, plan: o.plan || null } : null;
+}
+
+function liveGitInvocation() {
+  if (_gitInvocationOverride) return _gitInvocationOverride;
+  if (process.platform !== 'win32') return { isBundle: false, plan: null };
+  if (!_liveGitInvocation) {
+    const isBundle = isBundleInstall();
+    _liveGitInvocation = {
+      isBundle,
+      plan: isBundle ? planGit({ appRoot: APP_ROOT, isBundle, exists: existsSync }) : null,
+    };
+  }
+  return _liveGitInvocation;
+}
+
+/**
+ * `{ file, args, env }` for starting git with `args`. `env` is undefined when
+ * the child should inherit this process's environment: pass it on only when
+ * defined, so the options object is the one the call site built before.
+ */
+export function gitInvocation(args, { extraEnv = null } = {}) {
+  const list = Array.isArray(args) ? args.slice() : [];
+  const { isBundle, plan } = liveGitInvocation();
+  if (!isBundle || !plan) {
+    return { file: 'git', args: list, env: extraEnv ? { ...process.env, ...extraEnv } : undefined };
+  }
+  return { file: 'git', args: [...plan.configArgs, ...list], env: { ...plan.env, ...(extraEnv || {}) } };
 }

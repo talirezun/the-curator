@@ -465,8 +465,8 @@ section('§8  Git: the Windows app\'s bundled git first; nothing changes off Win
   eq([app.env.GCM_INTERACTIVE, app.env.GIT_TERMINAL_PROMPT], ['never', '0'], 'win32 app: Git Credential Manager may never show a window; git may never prompt');
   eq(Object.keys(app.env).filter((k) => /^(GCM_INTERACTIVE|GIT_TERMINAL_PROMPT)$/i.test(k)).length, 2, 'win32 app: and those are not doubled by another spelling');
   eq([app.env.Foo, app.env.SystemRoot], ['bar', 'C:\\Windows'], 'win32 app: every other variable is kept');
-  eq(app.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'http.sslBackend=schannel'],
-    'win32 app: no credential helper, no askpass, Windows\' certificate store');
+  eq(app.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'http.sslBackend=schannel', '-c', 'core.longpaths=true'],
+    'win32 app: no credential helper, no askpass, Windows\' certificate store, paths past 260 characters (audit minor 10)');
   eq(app.bundledExe, EXE, 'win32 app: the plan names the bundled git');
   eq(winEnv.Path, 'C:\\Program Files\\Git\\cmd;C:\\Windows\\system32', 'win32: the caller\'s env is not mutated');
 
@@ -484,6 +484,88 @@ section('§8  Git: the Windows app\'s bundled git first; nothing changes off Win
   eq([web.bundledExe, web.bundledPresent], [null, false], 'win32 browser install: no bundled git');
   eq(web.env.Path, `${WIN_NODE_DIR};C:\\Program Files\\Git\\cmd;C:\\Windows\\system32`, 'win32 browser install: the v3.87.0 PATH (its own MinGit arrives on the inherited PATH)');
   eq(web.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass='], 'win32 browser install: no helper, no askpass window either');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9  Every other git (audit M4): the SAME git Sync runs in the Windows app; unchanged elsewhere');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { execFileSync } = await import('child_process');
+  // ── the helper itself, on this (non-Windows) host: byte-for-byte the old invocation ──
+  const a = ['-C', '/x', 'rev-parse', 'HEAD'];
+  const plain = se.gitInvocation(a);
+  eq([plain.file, plain.args, plain.env], ['git', a, undefined],
+    `${process.platform}: bare \`git\`, the arguments as given, and NO env (the child inherits, exactly as before)`);
+  ok(plain.args !== a, '…a copy of the arguments, never the caller\'s array');
+  const extra = se.gitInvocation(a, { extraEnv: { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } });
+  eq(extra.env, { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+    `${process.platform}: with extraEnv, exactly the { ...process.env, ...extra } object the setup check built itself`);
+  eq(Object.keys(extra.env), Object.keys({ ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' }), '…in the same key order');
+
+  // ── the Windows browser install / a checkout: unchanged as well ──
+  se.__setGitInvocationForTest({ isBundle: false, plan: null });
+  eq(se.gitInvocation(a), { file: 'git', args: a, env: undefined }, 'win32 browser install: unchanged (its MinGit is on the inherited PATH)');
+
+  // ── the Windows app: the plan's arguments first, the plan's env + extraEnv ──
+  const plan = { env: { Path: 'C:\\P\\resources\\git\\cmd;C:\\W', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+    configArgs: ['-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'http.sslBackend=schannel', '-c', 'core.longpaths=true'] };
+  se.__setGitInvocationForTest({ isBundle: true, plan });
+  const w = se.gitInvocation(a, { extraEnv: { GIT_OPTIONAL_LOCKS: '0' } });
+  eq(w.args, [...plan.configArgs, ...a], 'win32 app: planGit\'s -c settings go BEFORE the subcommand, as in Sync');
+  eq(w.env, { ...plan.env, GIT_OPTIONAL_LOCKS: '0' }, 'win32 app: the plan\'s environment (bundled git first on PATH), plus the caller\'s additions');
+  eq(w.file, 'git', '…started as `git` and found on the plan\'s PATH, exactly as Sync starts it');
+  se.__setGitInvocationForTest(null);
+
+  // ── BEHAVIOUR at the call sites: a process PATH with NO git, and a plan that
+  //    knows where git is. Before the fix each of these silently answered
+  //    "nothing" (the audit's p3 repro for Shared Brain). ──
+  let realGit = null;
+  try { realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(); } catch { realGit = null; }
+  if (!realGit) {
+    ok(false, 'this machine has git (the call-site checks below need a real one)');
+  } else {
+    const gitBinDir = path.join(tmp, 'only-git');
+    fs.mkdirSync(gitBinDir, { recursive: true });
+    fs.symlinkSync(realGit, path.join(gitBinDir, 'git'));
+    const savedPath = process.env.PATH;
+    const userDir = process.env.CURATOR_TEST_USER_DATA_DIR;
+    const domains = process.env.CURATOR_TEST_DOMAINS_DIR;
+    const gitDir = path.join(userDir, '.knowledge-git');
+    fs.mkdirSync(path.join(domains, 'd', 'wiki', 'concepts'), { recursive: true });
+    fs.writeFileSync(path.join(domains, 'd', 'wiki', 'concepts', 'p.md'), 'PRIOR TEXT\n');
+    const G = (...args) => execFileSync(realGit, [`--git-dir=${gitDir}`, `--work-tree=${domains}`, ...args],
+      { env: { ...process.env, GIT_AUTHOR_DATE: '2020-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2020-01-01T00:00:00Z' }, stdio: 'ignore' });
+    execFileSync(realGit, ['init', '-q', '--bare', gitDir], { stdio: 'ignore' });
+    G('-c', 'user.name=a', '-c', 'user.email=a@b', 'add', '-A');
+    G('-c', 'user.name=a', '-c', 'user.email=a@b', 'commit', '-q', '-m', 'x');
+    const repo = path.join(tmp, 'checkout');
+    fs.mkdirSync(repo, { recursive: true });
+    execFileSync(realGit, ['init', '-q', repo], { stdio: 'ignore' });
+
+    const sb = await import(path.join(ROOT, 'src/brain/sharedbrain.js'));
+    const sc = await import(path.join(ROOT, 'src/brain/setup-check.js'));
+    const ih = await import(path.join(ROOT, 'src/cli/install-hooks.js'));
+    const since = new Date('2024-01-01T00:00:00Z');
+    const appPlan = { env: { ...process.env, PATH: gitBinDir }, configArgs: ['-c', 'credential.helper=', '-c', 'core.askPass='] };
+    try {
+      eq(await sb.loadPriorContent(domains, 'd', 'concepts/p.md', since), 'PRIOR TEXT\n', 'CONTROL: git on the process PATH → Shared Brain reads the prior version');
+      process.env.PATH = '/nonexistent-curator-test';
+      se.__setGitInvocationForTest({ isBundle: false, plan: null });
+      eq(await sb.loadPriorContent(domains, 'd', 'concepts/p.md', since), null,
+        'CONTROL: no git on the process PATH and no app plan → nothing (the bug the Windows app had)');
+      eq((await sc.gitRead(repo, ['rev-parse', '--git-dir'])).ok, false, 'CONTROL: the setup check\'s gitRead finds no git either');
+      se.__setGitInvocationForTest({ isBundle: true, plan: appPlan });
+      eq(await sb.loadPriorContent(domains, 'd', 'concepts/p.md', since), 'PRIOR TEXT\n',
+        'Windows app shape: Shared Brain\'s prior-version read runs the PLAN\'s git (found with no git on the process PATH)');
+      const gr = await sc.gitRead(repo, ['rev-parse', '--git-dir']);
+      eq([gr.ok, gr.out.trim()], [true, '.git'], 'Windows app shape: the setup check\'s read-only git runs the plan\'s git');
+      const ex = ih.addToGitExclude(repo, '.claude/hooks/x.json');
+      eq(ex.ok, true, `Windows app shape: the CLI's info/exclude lookup runs the plan's git (${ex.reason || 'ok'})`);
+    } finally {
+      process.env.PATH = savedPath;
+      se.__setGitInvocationForTest(null);
+    }
+  }
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

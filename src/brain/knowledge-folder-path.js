@@ -47,13 +47,159 @@
  * deps (win32): `bundle`, `realpathNative`, `writeFileSync`, `unlinkSync`, `env`.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import nodePath from 'node:path';
-import { APP_ROOT, isBundleInstall } from './paths.js';
+import {
+  APP_ROOT, isBundleInstall, getAppSupportDir, WINDOWS_BUNDLE_DATA_SUBDIR, APP_SUPPORT_DIR_NAME, getPlatform,
+  getHostEnv, appPath,
+} from './paths.js';
 import {
   isWindowsDevicePath, isUncPath, isDriveRoot, windowsBadSegment, sameLocationIgnoringCase,
   windowsProgramFolder, isInsideWindows, classifyFolderError, folderAccessMessage, probeWritable,
-  WIN_FOLDER_MAX_CHARS, WIN_FOLDER_WARN_CHARS,
+  localAdminShareToDrive, WIN_FOLDER_MAX_CHARS, WIN_FOLDER_WARN_CHARS,
 } from './folder-access.js';
+
+const W = nodePath.win32;
+
+/** A win32 path with a drive letter or a UNC prefix (`\folder` is the current drive, not absolute). */
+function isWindowsFullPath(p) {
+  return typeof p === 'string' && (/^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p));
+}
+
+/**
+ * The real on-disk spelling of `p` through `native` (fs.realpathSync.native:
+ * GetFinalPathNameByHandle, which expands 8.3 short names and follows
+ * junctions, symlinks and subst drives), or — when `p` does not exist yet —
+ * of its deepest existing ancestor with the rest re-attached. Null when
+ * nothing could be resolved or there is no `native`.
+ */
+function realNativeOrAncestor(p, native) {
+  if (typeof native !== 'function' || !isWindowsFullPath(p)) return null;
+  let cur = W.resolve(p);
+  const tail = [];
+  for (let i = 0; i < 128; i++) {
+    try {
+      const r = native(cur);
+      if (typeof r === 'string' && r) return tail.length ? W.join(r, ...tail.reverse()) : r;
+    } catch { /* not there: try the parent */ }
+    const up = W.dirname(cur);
+    if (up === cur) return null;
+    tail.push(W.basename(cur));
+    cur = up;
+  }
+  return null;
+}
+
+/** Every spelling of `p` worth comparing: as written, the local admin share as its drive, the real one. */
+function windowsSpellings(p, native, env) {
+  const out = new Set();
+  const add = (x) => { if (typeof x === 'string' && isWindowsFullPath(x)) out.add(W.resolve(x)); };
+  add(p);
+  add(localAdminShareToDrive(p, env));
+  for (const x of [...out]) {
+    const r = realNativeOrAncestor(x, native);
+    add(r);
+    add(localAdminShareToDrive(r, env));
+  }
+  return [...out];
+}
+
+/**
+ * WINDOWS APP ONLY (audit M2/M3, 2026-11-20). Where a knowledge folder may
+ * never be, judged on every spelling of BOTH sides (as written, a local admin
+ * share `\\localhost\C$\…` as its drive, and the real on-disk path through
+ * realpath.native, which expands 8.3 names and follows junctions and subst
+ * drives — the program folder is derived from the REAL APP_ROOT too):
+ *
+ *   • the program folder (`…\Programs\The Curator`): replaced by every update,
+ *     deleted by an uninstall;
+ *   • the app's shared working folder %LOCALAPPDATA%\TheCurator — its
+ *     updates\, logs\, instances\ and the browser install's runtime\ — EXCEPT
+ *     a folder strictly inside its App\ subfolder that is not one of the app's
+ *     own dot-folders. App\ is the Windows app's own user-data folder: neither
+ *     an update nor an uninstall touches it, and its default knowledge folder
+ *     is App\domains. App\ ITSELF is refused (it holds the API keys and the
+ *     sync repository, which would then sit inside Sync's work tree), and so
+ *     are App\.knowledge-git, App\.ingest-queue and the other dot-folders;
+ *   • Electron's own profile %APPDATA%\The Curator (Chromium's caches).
+ *
+ * Returns null, or `{ code: 'folder-inside-app', ctx }` for folderAccessMessage.
+ * Pure apart from `deps.realpathNative`. Never called off a Windows bundle.
+ */
+export function windowsAppFolderRefusal(candidate, deps = {}) {
+  const env = deps.env || process.env;
+  const appRoot = deps.appRoot || APP_ROOT;
+  const homedir = (env && typeof env.USERPROFILE === 'string' && isWindowsFullPath(env.USERPROFILE))
+    ? env.USERPROFILE : (deps.homedir || os.homedir());
+  const native = deps.realpathNative;
+  const forms = windowsSpellings(candidate, native, env);
+  if (!forms.length) return null;
+  const name = deps.name || candidate;
+
+  const programForms = windowsSpellings(appRoot, native, env)
+    .map((r) => windowsProgramFolder({ platform: 'win32', bundle: true, appRoot: r }));
+  if (forms.some((f) => programForms.some((pf) => isInsideWindows(f, pf)))) {
+    return { code: 'folder-inside-app', ctx: { name } };
+  }
+
+  const supportRoot = getAppSupportDir({ platform: 'win32', env, homedir });
+  const supportForms = windowsSpellings(supportRoot, native, env);
+  const appDataForms = windowsSpellings(W.join(supportRoot, WINDOWS_BUNDLE_DATA_SUBDIR), native, env);
+  const roaming = (env && typeof env.APPDATA === 'string' && isWindowsFullPath(env.APPDATA))
+    ? env.APPDATA : W.join(homedir, 'AppData', 'Roaming');
+  const profileForms = windowsSpellings(W.join(roaming, APP_SUPPORT_DIR_NAME), native, env);
+
+  const inAllowedAppData = (f) => appDataForms.some((a) => {
+    if (!isInsideWindows(f, a)) return false;
+    const rel = W.relative(a.toLowerCase(), f.toLowerCase());
+    return rel !== '' && !rel.split(/[\\/]+/)[0].startsWith('.');
+  });
+  for (const f of forms) {
+    if (profileForms.some((r) => isInsideWindows(f, r))) return { code: 'folder-inside-app', ctx: { name, appData: true } };
+    if (supportForms.some((r) => isInsideWindows(f, r)) && !inAllowedAppData(f)) {
+      return { code: 'folder-inside-app', ctx: { name, appData: true } };
+    }
+  }
+  return null;
+}
+
+/** The sentence for a knowledge folder setting that is not a full path (Windows app, at start). */
+export const WINDOWS_RELATIVE_KNOWLEDGE_FOLDER_MESSAGE = (p) =>
+  `Your knowledge folder setting (${p}) is not a full path, so The Curator would look for it in whatever folder it ` +
+  `happened to be started from. Nothing was read or changed. Choose your knowledge folder again on the Domains page.`;
+
+/**
+ * THE WINDOWS APP, AT START (audit M2): the knowledge folder ALREADY SET —
+ * a hand-edited `.curator-config.json` domainsPath, DOMAINS_PATH, the MCP's
+ * `--domains-path`, even the default — is held to the rules above before
+ * anything is read from it or written to it. `raw` is the value as set (a
+ * relative one is refused: it would resolve against the working folder, which
+ * is the program folder on a shortcut launch), `resolved` the absolute path.
+ * Throws an Error with `code` and a plain sentence; never deletes or moves
+ * anything. A no-op off a Windows bundle, so macOS, Linux, the browser
+ * install and every checkout are untouched. `deps` is the test seam
+ * ({ platform, bundle, env, appRoot, realpathNative }).
+ */
+export function assertWindowsAppKnowledgeFolder(raw, resolved, deps = {}) {
+  const platform = deps.platform || getPlatform();
+  if (platform !== 'win32') return;
+  const bundle = Object.hasOwn(deps, 'bundle') ? !!deps.bundle : isBundleInstall();
+  if (!bundle) return;
+  if (typeof raw === 'string' && raw && !isWindowsFullPath(raw.trim())) {
+    throw Object.assign(new Error(WINDOWS_RELATIVE_KNOWLEDGE_FOLDER_MESSAGE(raw)), { code: 'knowledge-folder-not-absolute' });
+  }
+  const realHost = process.platform === 'win32';
+  const native = Object.hasOwn(deps, 'realpathNative') ? deps.realpathNative
+    : (realHost && fs.realpathSync && fs.realpathSync.native);
+  // The live install's root and environment (a simulated host's in a suite;
+  // APP_ROOT and process.env in production).
+  const r = windowsAppFolderRefusal(resolved, {
+    env: deps.env || getHostEnv(), appRoot: deps.appRoot || appPath(), realpathNative: native, name: resolved,
+  });
+  if (r) {
+    throw Object.assign(new Error(folderAccessMessage(r.code, { ...r.ctx, configured: true })), { code: r.code });
+  }
+}
 
 export const KNOWLEDGE_FOLDER_REFUSALS = Object.freeze([
   'empty', 'invalid', 'not-absolute', 'missing', 'not-a-folder', 'unreadable', 'inside-app',
@@ -144,6 +290,16 @@ export function validateKnowledgeFolderPath(input, deps = {}) {
   const programFolder = windowsProgramFolder({ platform, bundle, appRoot });
   if (programFolder && (isInsideWindows(resolved, programFolder) || isInsideWindows(real, programFolder))) {
     return refuseCode('inside-app', 'folder-inside-app', { name: resolved });
+  }
+  // …and every other spelling of it, plus the app's own working folders
+  // (audit M2/M3): 8.3 names, junctions and subst drives through
+  // realpath.native on BOTH sides, `\\localhost\C$\…`, %LOCALAPPDATA%\TheCurator
+  // outside App\, and Electron's %APPDATA%\The Curator. Windows app only.
+  if (programFolder) {
+    const nativeFn = deps.realpathNative
+      || (process.platform === 'win32' && fs.realpathSync && fs.realpathSync.native) || null;
+    const r = windowsAppFolderRefusal(resolved, { env, appRoot, realpathNative: nativeFn, homedir: deps.homedir, name: resolved });
+    if (r) return refuseCode('inside-app', r.code, r.ctx);
   }
   const fold = (s) => (platform === 'win32' || platform === 'darwin') ? s.toLowerCase() : s;
   const rel = P.relative(fold(rootReal), fold(real));

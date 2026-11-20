@@ -84,7 +84,8 @@
 import fs from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { getCuratorConfigFile, getDefaultDomainsDir } from '../../src/brain/paths.js';
+import { getCuratorConfigFile, getDefaultDomainsDir, getPlatform } from '../../src/brain/paths.js';
+import { assertWindowsAppKnowledgeFolder } from '../../src/brain/knowledge-folder-path.js';
 // The symlink-aware half of the path guard below. IMPORTED, not copied: the
 // v3.2.0 CRITICAL in this repo was two hand-maintained copies of exactly this
 // guard drifting apart, and the copy that lagged was the one that could delete
@@ -113,7 +114,35 @@ export function createStorageAdapter({ domainsPath } = {}) {
     return getDefaultDomainsDir();
   };
 
-  const base = resolveDomainsPath();
+  // WINDOWS (audit M2, 2026-11-20): the same rungs in the same order, and on
+  // the Windows APP the answer — including `--domains-path` — is held to the
+  // knowledge-folder rules (assertWindowsAppKnowledgeFolder): a folder inside
+  // the program folder or the app's own working folders, or a relative value
+  // (resolved against whatever folder Claude started the bridge in), stops the
+  // bridge with a plain sentence on stderr instead of being served. Nothing is
+  // deleted or moved. A no-op on the browser install; never reached off Windows.
+  const resolveWindowsDomainsPath = () => {
+    if (process.env.CURATOR_TEST_DOMAINS_DIR) {
+      return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
+    }
+    let raw = null;
+    if (domainsPath) raw = domainsPath;
+    else {
+      const configPath = getCuratorConfigFile();
+      if (existsSync(configPath)) {
+        try {
+          const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+          if (cfg.domainsPath) raw = cfg.domainsPath;
+        } catch { /* fall through */ }
+      }
+      if (raw === null && process.env.DOMAINS_PATH) raw = process.env.DOMAINS_PATH;
+    }
+    const resolved = raw !== null ? path.win32.resolve(raw) : getDefaultDomainsDir();
+    assertWindowsAppKnowledgeFolder(typeof raw === 'string' ? raw : null, resolved);
+    return resolved;
+  };
+
+  const base = getPlatform() === 'win32' ? resolveWindowsDomainsPath() : resolveDomainsPath();
   const resolvedBase = path.resolve(base);
 
   /**

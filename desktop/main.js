@@ -61,6 +61,7 @@ import { runCommandWith } from './lib/run-command.js';
 import {
   appUserModelIdFor, singleInstanceMessage, closeHidesToTray, attachDialogToWindow,
   trayInteraction, clampTrayToolTip, aboutDialogOptions, updaterSupported, afterStartNotice,
+  closeAsksQuitFirst, appFilesIncompleteBox,
 } from './lib/shell-platform.js';
 import { winTrayIconPngs } from './lib/tray-icon-win.js';
 import { resolveInstallerRelease } from './lib/update-release.js';
@@ -272,6 +273,15 @@ if (!app.requestSingleInstanceLock()) {
 let dialogSanitizer = minimalScrub;
 
 async function boot() {
+  // ── WINDOWS: refuse to start on incomplete program files (audit M1) ──────
+  //
+  // Before ANYTHING reads or writes user data. Without the packager's marker
+  // paths.js would read this install as a checkout and keep the wiki, keys and
+  // sync repo inside the program folder, which an update or an uninstall
+  // deletes. The decision is paths.js's own (appFilesIncompleteBox in
+  // lib/shell-platform.js, executed by the suite); it is null on macOS, so
+  // this block does nothing there. Nothing is written, moved or deleted.
+  if (process.platform === 'win32' && await refusedIncompleteWindowsInstall()) return;
   loadSanitizer(() => import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'user-errors.js')).href))
     .then((fn) => { dialogSanitizer = fn; })
     .catch(() => { /* keep the local scrub */ });
@@ -1871,6 +1881,25 @@ function createWindow() {
     mainWindow.hide();
   });
 
+  // ── WINDOWS, no tray: ask the quit question BEFORE the window goes ───────
+  //
+  // A THIRD listener, for the same reason as the one above. Without it the X
+  // destroyed the window first and `before-quit` asked "Quit now?" afterwards,
+  // so "Keep working" left an invisible process (no window, no tray, no
+  // taskbar button). closeAsksQuitFirst() (lib/shell-platform.js, executed by
+  // the suite) answers false on every platform but win32, while the tray hide
+  // above applies, during an authorised quit and while Windows logs off.
+  mainWindow.on('close', (event) => {
+    if (!closeAsksQuitFirst({
+      platform: process.platform,
+      quitAuthorised,
+      trayActive: !!(tray && !tray.isDestroyed()),
+      sessionEnding,
+    })) return;
+    event.preventDefault();
+    app.quit();
+  });
+
   // Anything the page tries to open in a new window goes to the real browser.
   // Without this, an external link opens a chrome-less Electron window with no
   // address bar, which is both a bad experience and a phishing surface.
@@ -2006,6 +2035,8 @@ app.on('before-quit', (event) => {
     if (response === 1) {
       quitAuthorised = true;
       app.quit();
+    } else {
+      keepReachableAfterKeepWorking();
     }
   })()
     .catch((err) => {
@@ -2014,9 +2045,23 @@ app.on('before-quit', (event) => {
       console.error('[The Curator] quit check failed:', (err && err.stack) || err);
       dialog.showErrorBox('Could not check for writes in progress',
         dialogText(QUIT_CHECK_MAIN, err, dialogSanitizer));
+      keepReachableAfterKeepWorking();
     })
     .finally(() => { quitCheckInFlight = false; });
 });
+
+/**
+ * WINDOWS (audit minor 5): after "Keep working" (or a failed check), a process
+ * with no window and no tray icon is unreachable, so the window comes back.
+ * The close listener above normally keeps the window alive through the
+ * question; this covers any other way the last window went first. Never on
+ * macOS (the Dock reaches the app there), never while a tray icon is live.
+ */
+function keepReachableAfterKeepWorking() {
+  if (process.platform !== 'win32') return;
+  if (tray && !tray.isDestroyed()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) revealWindow();
+}
 
 // macOS convention: closing the last window does not quit the app.
 app.on('window-all-closed', () => {
@@ -2051,6 +2096,24 @@ function revealWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   if (!mainWindow.isVisible()) mainWindow.show();
   mainWindow.focus();
+}
+
+/**
+ * WINDOWS (audit M1): true when the app refused to start because its program
+ * files are incomplete — the box is shown and the app exits. The decision is
+ * paths.js's own, through appFilesIncompleteBox (lib/shell-platform.js).
+ */
+async function refusedIncompleteWindowsInstall() {
+  let pathsModule = null;
+  try {
+    pathsModule = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
+  } catch { pathsModule = null; }
+  const refusal = appFilesIncompleteBox(pathsModule);
+  if (!refusal) return false;
+  dialog.showErrorBox(refusal.title, refusal.body);
+  quitAuthorised = true;
+  app.exit(1);
+  return true;
 }
 
 function fatal(err) {

@@ -284,9 +284,15 @@ try {
     put(LCH, LCH, 301n);
     ok('CONTROL: with no appExecPath that launcher file IS the launcher shape', C.vetEntry({ command: LCH, args: [] }, { platform: 'win32', launcherPath: LCH, serverPath: SRV }, deps).shape === 'launcher');
     refuse('…but with appExecPath set, an entry naming the launcher path is refused', { command: LCH, args: [] }, 'not_allowed', { ...CTXC, launcherPath: LCH });
-    // Shape (b) still works in the Windows app (node.exe + this server.js).
+    // Shape (b) is OFF in the Windows app (audit minor 4): "(c) or refuse".
     const NODEW = 'C:\\Program Files\\nodejs\\node.exe'; put(NODEW, NODEW, 401n);
-    ok('shape (b) is unchanged beside (c): node.exe + this server.js may start', C.vetEntry({ command: NODEW, args: [SRV] }, CTXC, deps).shape === 'node');
+    ok('CONTROL: with no appExecPath (the browser install) node.exe + this server.js IS shape (b)',
+      C.vetEntry({ command: NODEW, args: [SRV] }, { platform: 'win32', launcherPath: null, serverPath: SRV }, deps).shape === 'node');
+    refuse('…but in the Windows app node.exe + this server.js is refused (shape (b) is off: "(c) or refuse")', { command: NODEW, args: [SRV] }, 'not_allowed', CTXC);
+    refuse('…and so is node.exe + this server.js + --domains-path', { command: NODEW, args: [SRV, '--domains-path', 'C:\\x'] }, 'not_allowed', CTXC);
+    const DLNODE = 'C:\\Users\\Ziga Novak\\Downloads\\node.exe'; put(DLNODE, DLNODE, 402n);
+    refuse('…and a node.exe from Downloads naming this server (the audit\'s repro)', { command: DLNODE, args: [SRV] }, 'not_allowed', CTXC);
+    ok('…the refusal says what to do in words, no stack', /Install for me writes the entry this app runs/.test(C.vetEntry({ command: NODEW, args: [SRV] }, CTXC, deps).message || ''));
 
     section('§6b winPathProblem — the one canonical spelling');
     for (const [p, want] of [

@@ -289,9 +289,14 @@ export function classifyInstallProcesses({ processes = [], selfPid = null } = {}
   return { bridges, others };
 }
 
-/** PowerShell single-quoted literal. The only escape inside '…' is '' . */
+/**
+ * PowerShell single-quoted literal. PowerShell ends a '…' string at ANY of
+ * five single-quote characters — the ASCII apostrophe and U+2018, U+2019,
+ * U+201A, U+201B (its tokenizer treats them alike) — and each is escaped by
+ * doubling it (audit minor 2: a Windows user name such as O’Brien). Pure.
+ */
 export function psQuote(s) {
-  return `'${String(s).replace(/'/g, "''")}'`;
+  return `'${String(s).replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`;
 }
 
 /** The read-only listing of the processes running `exePath`, as JSON on
@@ -510,6 +515,15 @@ export function buildWin32InstallScript(opts = {}) {
     "  } catch { Log ('could not record the outcome: ' + $result) }",
     '}',
     '',
+    '# True only while the setup program is still the one that was checked: its',
+    '# length and SHA-256, read again from the disk at the moment of asking.',
+    'function Test-InstallerUnchanged {',
+    "  $h = ''",
+    '  $len = -1',
+    "  try { $len = (Get-Item -LiteralPath $Installer -ErrorAction Stop).Length; $h = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() } catch { $h = '' }",
+    '  return ($len -eq $Size -and $h -eq $Sha256)',
+    '}',
+    '',
     'function Show-Message([string]$text, [bool]$offerRun) {',
     '  if (-not $ShowMessages) { return }',
     '  try {',
@@ -517,7 +531,8 @@ export function buildWin32InstallScript(opts = {}) {
     '    $top = [System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly',
     '    if ($offerRun -and (Test-Path -LiteralPath $Installer -PathType Leaf)) {',
     "      $r = [System.Windows.Forms.MessageBox]::Show($text + [Environment]::NewLine + [Environment]::NewLine + $RunQuestion, 'The Curator', 'YesNo', 'Warning', 'Button1', $top)",
-    "      if ([string]$r -eq 'Yes') { try { Start-Process -FilePath $Installer } catch { Log 'could not start the installer' } }",
+    '      # Hashed AGAIN before it runs: the box may have waited for minutes.',
+    "      if ([string]$r -eq 'Yes') { if (Test-InstallerUnchanged) { try { Start-Process -FilePath $Installer } catch { Log 'could not start the installer' } } else { Log 'REFUSED: the kept setup program changed; it was not run'; [void][System.Windows.Forms.MessageBox]::Show($MsgChanged, 'The Curator', 'OK', 'Warning', 'Button1', $top) } }",
     '    } else {',
     "      [void][System.Windows.Forms.MessageBox]::Show($text, 'The Curator', 'OK', 'Warning', 'Button1', $top)",
     '    }',
@@ -591,10 +606,7 @@ export function buildWin32InstallScript(opts = {}) {
     '}',
     '',
     '# ── 4. Still the setup program that was checked ──',
-    "$h = ''",
-    '$len = -1',
-    "try { $len = (Get-Item -LiteralPath $Installer -ErrorAction Stop).Length; $h = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() } catch { $h = '' }",
-    'if ($len -ne $Size -or $h -ne $Sha256) {',
+    'if (-not (Test-InstallerUnchanged)) {',
     "  Log 'REFUSED: the setup program is not the one that was checked; nothing was changed'",
     `  Write-Result 'installer-changed' ${HELPER_EXIT_CODES['installer-changed']}`,
     '  Start-App',

@@ -123,6 +123,25 @@ export function windowsProgramFolder({ platform, bundle, appRoot }) {
   return W.resolve(appRoot, '..', '..');
 }
 
+/**
+ * `\\localhost\C$\x` → `C:\x` (audit M2, 2026-11-20). A drive's administrative
+ * share on THIS computer — reached as `localhost`, `127.0.0.1`, `[::1]`/`::1`
+ * or the computer's own name (COMPUTERNAME) — is the same folder as the drive
+ * path, but no realpath turns one into the other, so a containment test that
+ * compares paths must do it first. Any other path is returned unchanged.
+ */
+export function localAdminShareToDrive(p, env = {}) {
+  if (typeof p !== 'string') return p;
+  const m = /^[\\/]{2}([^\\/]+)[\\/]([A-Za-z])\$(?:[\\/](.*))?$/.exec(p);
+  if (!m) return p;
+  const host = m[1].toLowerCase().replace(/^\[|\]$/g, '');
+  const own = typeof (env && env.COMPUTERNAME) === 'string' ? env.COMPUTERNAME.toLowerCase() : null;
+  const local = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0--1.ipv6-literal.net'
+    || (own && (host === own || host.split('.')[0] === own));
+  if (!local) return p;
+  return W.join(`${m[2].toUpperCase()}:\\`, m[3] || '');
+}
+
 /** True when `p` is `root` or inside it, case-insensitively (Windows). */
 export function isInsideWindows(p, root) {
   if (!p || !root) return false;
@@ -212,9 +231,24 @@ export const FOLDER_ACCESS_MESSAGES = Object.freeze({
   'folder-device-path': () =>
     `That is a Windows device path, not a folder, so nothing was changed. Use the folder's normal path, starting with ` +
     `a drive letter such as C:\\ (File Explorer's address bar shows it).`,
-  'folder-inside-app': (c) =>
-    `That folder is part of The Curator's own program files${c.name ? ` (${c.name})` : ''}, which an update replaces and an uninstall ` +
-    `deletes, so nothing was changed. Choose a folder outside the program folder, for example one in your user folder.`,
+  // Three wordings under one code (audit M2/M3, 2026-11-20). The first is the
+  // published one; `appData` is a folder of the app's own working files, and
+  // `configured` is the knowledge folder ALREADY set (in a hand-edited
+  // settings file, DOMAINS_PATH or the MCP's --domains-path), found at start.
+  'folder-inside-app': (c) => {
+    const where = c.appData
+      ? `The Curator's own working folder${c.name ? ` (${c.name})` : ''}, which holds its update downloads, logs and settings and is tidied by the app itself`
+      : `part of The Curator's own program files${c.name ? ` (${c.name})` : ''}, which an update replaces and an uninstall deletes`;
+    if (c.configured) {
+      return `Your knowledge folder is ${c.appData ? 'inside ' : ''}${where}, so The Curator is not reading or writing it. ` +
+        `Nothing was moved or deleted. Move that folder with File Explorer to one in your user folder, then choose it ` +
+        `again on the Domains page.`;
+    }
+    if (c.appData) {
+      return `That folder is ${where}, so nothing was changed. Choose a folder outside it, for example one in your user folder.`;
+    }
+    return `That folder is ${where}, so nothing was changed. Choose a folder outside the program folder, for example one in your user folder.`;
+  },
   'folder-path-long': (c) =>
     `This folder's path is ${c.length} characters long. Windows programs such as File Explorer, Obsidian and Git can ` +
     `fail on paths over 260 characters, and page names are added below it. If a page can't be opened later, move ` +
