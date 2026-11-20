@@ -2654,9 +2654,11 @@ const BACKGROUND_MODE_WORDS_WIN32 = {
     'the clock, and drag the icon onto the taskbar to keep it in view.',
 };
 
-function renderBackgroundMode(platform = (typeof browserPlatform === 'function' ? browserPlatform() : 'darwin')) {
+function renderBackgroundMode() {
   // Windows words when the app runs on Windows; every other platform keeps
-  // the macOS strings below byte for byte.
+  // the macOS strings below byte for byte. Guarded so a DOM-free suite that
+  // lifts this function without its imports gets the macOS row.
+  const platform = typeof browserPlatform === 'function' ? browserPlatform() : 'darwin';
   const W = platform === 'win32' ? BACKGROUND_MODE_WORDS_WIN32 : null;
   const LABELS = W ? BACKGROUND_MODE_LABELS_WIN32 : BACKGROUND_MODE_LABELS;
   const cfg = state.config;

@@ -58,7 +58,7 @@ const CLAUDE_CONFIG_PATH = claudeConfigPathFor();
  * %APPDATA%\Claude\claude_desktop_config.json (<home>\AppData\Roaming when
  * APPDATA is unset or not absolute). The Microsoft Store build can keep it
  * elsewhere, which is why this wizard never WRITES on Windows (see
- * `writeConfigHandler`): the one-click installer (src/brain/mcp-install.js
+ * `writeConfigHandler`): the one-click installer (Install for me, the brain installer module's
  * `resolveWinClaude`) finds the right file and checks Claude is closed.
  * Pure: every input is a parameter.
  */
