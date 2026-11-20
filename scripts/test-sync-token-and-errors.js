@@ -295,6 +295,49 @@ for (const [label, text] of Object.entries(MEASURED)) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§1c  Git missing: the words of the platform (2026-11-20, the Windows app)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // The macOS sentence, TRANSCRIBED from v3.99.3 (never read out of sync.js).
+  const MAC = 'Git is not available to The Curator, so syncing cannot run. ' +
+    'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
+    'If git is installed somewhere unusual, launching The Curator from a terminal ' +
+    '(`npm start`) will pick up your shell PATH.';
+  // What each platform prints when git cannot be started.
+  const MISSING = {
+    'posix shell': '/bin/sh: git: command not found',
+    'dash': '/bin/sh: 1: git: not found',
+    'spawn (no shell)': 'spawn git ENOENT',
+    'cmd.exe': "Command failed: git --git-dir=\"C:\\Users\\x\\AppData\\Local\\TheCurator\\App\\.knowledge-git\" status\n'git' is not recognized as an internal or external command,\noperable program or batch file.",
+  };
+  const run = (ctx, text) => { sync.__setGitMissingContextForTest(ctx); try { return describeSyncError(new Error(text)); } finally { sync.__setGitMissingContextForTest(null); } };
+  for (const [label, text] of Object.entries(MISSING)) {
+    const live = describeSyncError(new Error(text));
+    ok(live.code === 'sync-git-missing' && live.error === MAC, `${label}: on this ${process.platform} machine, the macOS sentence byte for byte`, live);
+    for (const isBundle of [false, true]) {
+      const d = run({ platform: 'darwin', isBundle }, text);
+      ok(d.error === MAC, `${label}: darwin (${isBundle ? 'app' : 'repo'}) keeps the macOS sentence`, d.error);
+      const l = run({ platform: 'linux', isBundle }, text);
+      ok(l.error === MAC, `${label}: linux (${isBundle ? 'bundle' : 'repo'}) is unchanged`, l.error);
+      const w = run({ platform: 'win32', isBundle }, text);
+      ok(w.code === 'sync-git-missing', `${label}: win32 ${isBundle ? 'app' : 'browser/repo'} still code sync-git-missing`, w.code);
+      ok(!/xcode-select|macOS|Terminal|npm start/.test(w.error), `${label}: win32 ${isBundle ? 'app' : 'browser/repo'} never says xcode-select, macOS, Terminal or npm start`, w.error);
+      ok(friendlyError(new Error(text)) === MAC, `${label}: friendlyError() with no seam is the live (this machine) sentence`);
+    }
+    const app = run({ platform: 'win32', isBundle: true }, text);
+    ok(/copy of git that comes with The Curator is missing or damaged/.test(app.error) &&
+       app.error.includes('https://github.com/talirezun/the-curator/releases') && /keeps your notes and settings/.test(app.error) &&
+       !/Git for Windows/.test(app.error),
+      `${label}: the Windows APP says its own git is missing or damaged, names the installer download, and does not send the user to Git for Windows`, app.error);
+    const web = run({ platform: 'win32', isBundle: false }, text);
+    ok(/Install Git for Windows from https:\/\/git-scm\.com\/downloads\/win/.test(web.error) && /restart The Curator/.test(web.error),
+      `${label}: a Windows browser install or checkout is sent to Git for Windows' real download page`, web.error);
+  }
+  ok(sync.gitMissingMessage({ platform: 'darwin' }) === MAC && sync.gitMissingMessage() === MAC || process.platform === 'win32',
+    'gitMissingMessage(): darwin and the default are the macOS sentence');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§1b  A status number counts only where git prints one; the detail scrub');
 // ═══════════════════════════════════════════════════════════════════════════
 {
@@ -642,6 +685,61 @@ section('§5  Replace token succeeds: both places, agreeing, and a push works');
   ok(p2 && p2.pushed === true, 'the push that failed with the revoked token now goes through', p2);
   const st = await sync.getStatus();
   ok(st.configured && leaks(JSON.stringify(st)).length === 0, 'status carries no token');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5b  The Windows -c settings reach EVERY git call, and stop a credential helper and askpass');
+// ═══════════════════════════════════════════════════════════════════════════
+// The live plan on this machine adds nothing (CONTROL). The Windows plan's
+// `-c credential.helper= -c core.askPass=` is driven through the SAME sync.js
+// chokepoints (exec'd git() and spawned gitArgv()) with real git: a helper and
+// an askpass program configured for the repository (standing in for Git
+// Credential Manager, which would open a sign-in window) are never started.
+{
+  const se = await import('../src/brain/subprocess-env.js');
+  const winArgs = se.gitConfigArgs({ platform: 'win32' });
+  ok(JSON.stringify(sync.__gitConfigArgsForTest()) === (process.platform === 'win32' ? JSON.stringify(sync.__gitConfigArgsForTest()) : '[]'),
+    'CONTROL: off Windows sync.js adds no argument before a git subcommand', sync.__gitConfigArgsForTest());
+  const rig = path.join(TMP, 'helper-rig');
+  fs.mkdirSync(rig, { recursive: true });
+  const helperMark = path.join(rig, 'helper-ran');
+  const askMark = path.join(rig, 'askpass-ran');
+  const askScript = path.join(rig, 'askpass.sh');
+  fs.writeFileSync(askScript, `#!/bin/sh\ntouch "${askMark}"\necho nothing\n`, { mode: 0o755 });
+  sh(`git --git-dir="${GITDIR}" config credential.helper '!f() { touch "${helperMark}"; }; f'`);
+  sh(`git --git-dir="${GITDIR}" config core.askPass "${askScript}"`);
+  const live = { env: sync.__subprocessEnvForTest(), configArgs: sync.__gitConfigArgsForTest() };
+  const attempt = async (plan, label) => {
+    for (const m of [helperMark, askMark]) fs.rmSync(m, { force: true });
+    const trace = path.join(rig, `${label}.trace`);
+    fs.rmSync(trace, { force: true });
+    sync.__setGitPlanForTest({ env: { ...plan.env, GIT_TRACE2: trace }, configArgs: plan.configArgs });
+    fs.writeFileSync(path.join(TMP_DOMAINS, 'demo', 'wiki', 'entities', `${label}.md`), `# ${label}\n`);
+    let err = null;
+    try { await sync.push(); } catch (e) { err = e; } finally { sync.__setGitPlanForTest(null); }
+    const t = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8') : '';
+    const starts = t.split('\n').filter((l) => /\bstart\b/.test(l) && /--git-dir/.test(l));
+    return { err, starts, helper: fs.existsSync(helperMark), ask: fs.existsSync(askMark) };
+  };
+  fake.accepted.delete(NEW_TOKEN);
+  const control = await attempt(live, 'live');
+  ok(control.err && describeSyncError(control.err).code === 'sync-token-rejected', 'CONTROL: with a refused token the push fails as a token refusal', control.err && control.err.message.slice(-160));
+  ok(control.helper || control.ask, 'CONTROL: without the Windows settings git DOES start the configured helper or askpass (the window the settings prevent)', control);
+  const win = await attempt({ env: live.env, configArgs: winArgs }, 'win');
+  ok(win.err && describeSyncError(win.err).code === 'sync-token-rejected', 'Windows settings: the push still fails as a token refusal (Replace token is offered)', win.err && win.err.message.slice(-200));
+  ok(!win.helper, 'Windows settings: the credential helper is never started');
+  ok(!win.ask, 'Windows settings: the askpass program is never started');
+  const marked = (re) => win.starts.filter((l) => l.includes('-c credential.helper= -c core.askPass=') && re.test(l));
+  ok(win.starts.length > 0 && win.starts.every((l) => l.includes('-c credential.helper= -c core.askPass=')),
+    `Windows settings: every git process Sync started carries them (${win.starts.length} starts)`, win.starts.filter((l) => !l.includes('credential.helper=')).slice(0, 3));
+  ok(marked(/ ls-files -s -z/).length > 0, 'Windows settings: the spawned, shell-free gitArgv() path carries them (ls-files -s -z)', win.starts.slice(0, 4));
+  ok(marked(/ push -u origin main/).length > 0, 'Windows settings: the exec\'d git() path carries them (push -u origin main)', win.starts.slice(-4));
+  ok(control.starts.length > 0 && control.starts.every((l) => !l.includes('credential.helper=')), 'CONTROL: the live plan\'s git processes carry no such setting');
+  sh(`git --git-dir="${GITDIR}" config --unset credential.helper`);
+  sh(`git --git-dir="${GITDIR}" config --unset core.askPass`);
+  fake.accepted.add(NEW_TOKEN);
+  const again = await sync.push();
+  ok(again && again.pushed === true, 'with the token accepted again and the rig removed, a push goes through', again);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

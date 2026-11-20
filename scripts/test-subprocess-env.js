@@ -412,6 +412,76 @@ for (const [name, handler] of [['reveal-config', mcpRoute.revealConfigHandler], 
     'reveal-log win32: the refusal names the log file so it can be opened by hand');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8  Git: the Windows app\'s bundled git first; nothing changes off Windows (2026-11-20)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // Off Windows: exactly the v3.86.0 PATH, plus GIT_TERMINAL_PROMPT=0 (the
+  // 2026-11-19 line in sync.js), and no extra argument, whatever the inputs.
+  for (const platform of ['darwin', 'linux']) {
+    for (const c of POSIX_CASES) {
+      const env = c.PATH === undefined ? { HOME: '/h', GIT_ASKPASS: '/a' } : { HOME: '/h', PATH: c.PATH, GIT_ASKPASS: '/a' };
+      for (const isBundle of [false, true]) {
+        let asked = 0;
+        const plan = se.planGit({ platform, env, execPath: c.execPath, appRoot: '/Applications/The Curator.app/Contents/Resources/app', isBundle, exists: () => { asked++; return true; } });
+        eq(plan, { env: { ...env, PATH: legacyPath(c.execPath, c.PATH), GIT_TERMINAL_PROMPT: '0' }, configArgs: [], bundledExe: null, bundledPresent: false },
+          `${platform} ${isBundle ? 'bundle' : 'repo'} ${c.execPath}: the env is the v3.86.0 one plus GIT_TERMINAL_PROMPT=0, no argument added`);
+        eq(asked, 0, `${platform} ${isBundle ? 'bundle' : 'repo'}: no file is looked for`);
+      }
+    }
+    eq(se.gitConfigArgs({ platform, bundled: true }), [], `${platform}: gitConfigArgs is empty`);
+  }
+  if (process.platform !== 'win32') {
+    const syncMod = await import(path.join(ROOT, 'src/brain/sync.js'));
+    eq(syncMod.__gitConfigArgsForTest(), [], 'LIVE: sync.js puts no argument before a git subcommand on this machine');
+    const canon = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+    ok(canon(syncMod.__subprocessEnvForTest()) === canon(se.planGit({ appRoot: ROOT, isBundle: false, exists: () => true }).env),
+      'LIVE: sync.js runs git with planGit()\'s env (same keys and values)');
+  }
+
+  // Windows: where the build puts MinGit, relative to APP_ROOT.
+  const APP = 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator\\resources\\app';
+  const EXE = 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator\\resources\\git\\cmd\\git.exe';
+  const BIN = 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator\\resources\\git\\cmd';
+  const APP_EXE = 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator\\The Curator.exe';
+  const APP_DIR = 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator';
+  eq(se.bundledGitLocation(APP), { root: 'C:\\Users\\Ana Žagar\\AppData\\Local\\Programs\\The Curator\\resources\\git', binDir: BIN, exe: EXE },
+    'win32: the bundled git is <resources>\\git\\cmd\\git.exe, beside APP_ROOT (<resources>\\app)');
+  eq(se.bundledGitLocation(APP + '\\'), se.bundledGitLocation(APP), 'win32: a trailing separator on APP_ROOT changes nothing');
+
+  const winEnv = { Path: 'C:\\Program Files\\Git\\cmd;C:\\Windows\\system32', SystemRoot: 'C:\\Windows', Git_AskPass: 'C:\\gcm\\askpass.exe', SSH_ASKPASS: 'C:\\x.exe', gcm_interactive: 'always', GIT_TERMINAL_PROMPT: '1', Foo: 'bar' };
+  const seen = [];
+  const app = se.planGit({ platform: 'win32', env: winEnv, execPath: APP_EXE, appRoot: APP, isBundle: true, exists: (p) => { seen.push(p); return p === EXE; } });
+  eq(seen, [EXE], 'win32 app: exactly one file is looked for, the bundled git.exe');
+  eq(app.bundledPresent, true, 'win32 app: the bundled git is found');
+  eq(app.env.Path, `${BIN};${APP_DIR};C:\\Program Files\\Git\\cmd;C:\\Windows\\system32`,
+    'win32 app: the bundled git\'s folder is FIRST on PATH, ahead of a Git for Windows on the user\'s PATH');
+  eq(Object.keys(app.env).filter((k) => k.toUpperCase() === 'PATH'), ['Path'], 'win32 app: still one path key, with its own spelling');
+  eq(Object.keys(app.env).filter((k) => /ASKPASS/i.test(k)), [], 'win32 app: GIT_ASKPASS and SSH_ASKPASS are removed, whatever their spelling');
+  eq([app.env.GCM_INTERACTIVE, app.env.GIT_TERMINAL_PROMPT], ['never', '0'], 'win32 app: Git Credential Manager may never show a window; git may never prompt');
+  eq(Object.keys(app.env).filter((k) => /^(GCM_INTERACTIVE|GIT_TERMINAL_PROMPT)$/i.test(k)).length, 2, 'win32 app: and those are not doubled by another spelling');
+  eq([app.env.Foo, app.env.SystemRoot], ['bar', 'C:\\Windows'], 'win32 app: every other variable is kept');
+  eq(app.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'http.sslBackend=schannel'],
+    'win32 app: no credential helper, no askpass, Windows\' certificate store');
+  eq(app.bundledExe, EXE, 'win32 app: the plan names the bundled git');
+  eq(winEnv.Path, 'C:\\Program Files\\Git\\cmd;C:\\Windows\\system32', 'win32: the caller\'s env is not mutated');
+
+  const gone = se.planGit({ platform: 'win32', env: winEnv, execPath: APP_EXE, appRoot: APP, isBundle: true, exists: () => false });
+  eq([gone.bundledPresent, gone.env.Path], [false, `${APP_DIR};C:\\Program Files\\Git\\cmd;C:\\Windows\\system32`],
+    'win32 app, bundled git missing: falls back to the PATH (nothing invented)');
+  eq(gone.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass='], 'win32 app, bundled git missing: still no helper or askpass; the user\'s own TLS setting is left alone');
+  const throws = se.planGit({ platform: 'win32', env: winEnv, execPath: APP_EXE, appRoot: APP, isBundle: true, exists: () => { throw new Error('EPERM'); } });
+  eq(throws.bundledPresent, false, 'win32 app: a file test that throws counts as missing');
+
+  let asked = 0;
+  const NODE = 'C:\\Users\\Ana Žagar\\AppData\\Local\\TheCurator\\runtime\\node\\node.exe';
+  const web = se.planGit({ platform: 'win32', env: winEnv, execPath: NODE, appRoot: 'C:\\Users\\Ana Žagar\\the-curator', isBundle: false, exists: () => { asked++; return true; } });
+  eq(asked, 0, 'win32 browser install / checkout: no bundled git is looked for');
+  eq([web.bundledExe, web.bundledPresent], [null, false], 'win32 browser install: no bundled git');
+  eq(web.env.Path, `${WIN_NODE_DIR};C:\\Program Files\\Git\\cmd;C:\\Windows\\system32`, 'win32 browser install: the v3.87.0 PATH (its own MinGit arrives on the inherited PATH)');
+  eq(web.configArgs, ['-c', 'credential.helper=', '-c', 'core.askPass='], 'win32 browser install: no helper, no askpass window either');
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

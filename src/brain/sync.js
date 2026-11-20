@@ -8,8 +8,8 @@ import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { recordKind, mergeRecordFile } from './sync-records.js';
 import { clearStaleLock } from './write-registry.js';
-import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
-import { buildSubprocessEnv } from './subprocess-env.js';
+import { APP_ROOT, getSyncGitDir, getSyncConfigFile, isBundleInstall } from './paths.js';
+import { planGit } from './subprocess-env.js';
 import { scrubSecrets } from './logger.js';
 import { scrubPaths } from './scrub-paths.js';
 import { toUserError } from './user-errors.js';
@@ -125,11 +125,34 @@ function looksLikeGitDir(dir) {
 // prompts disabled" (measured with git 2.48.1, against a local server answering
 // 401 and against github.com with an obviously fake token). friendlyError()
 // maps both texts. Only git started from this module gets it.
-const SUBPROCESS_ENV = buildSubprocessEnv();
-const GIT_ENV = { ...SUBPROCESS_ENV, GIT_TERMINAL_PROMPT: '0' };
+//
+// THE WINDOWS APP'S OWN GIT (2026-11-20). planGit() (subprocess-env.js) puts
+// the bundled MinGit (`<resources>\git\cmd`) first on PATH on a Windows
+// bundle, and adds the `-c` settings that keep any credential helper or
+// askpass window from appearing (GIT_CONFIG_ARGS, placed before every git
+// subcommand below). Off Windows GIT_ENV is exactly the expression it replaced,
+// `{ ...buildSubprocessEnv(), GIT_TERMINAL_PROMPT: '0' }`, and GIT_CONFIG_ARGS
+// is empty, so every git command line is byte-identical.
+const LIVE_GIT_PLAN = planGit({ appRoot: APP_ROOT, isBundle: isBundleInstall(), exists: existsSync });
+let GIT_ENV = LIVE_GIT_PLAN.env;
+let GIT_CONFIG_ARGS = LIVE_GIT_PLAN.configArgs;
+let GIT_PROGRAM = ['git', ...GIT_CONFIG_ARGS].join(' ');
 
 /** TEST-ONLY: the env every git() call here runs with (scripts/test-subprocess-env.js §1). */
 export function __subprocessEnvForTest() { return GIT_ENV; }
+/** TEST-ONLY: the arguments placed before every git subcommand here (empty off Windows). */
+export function __gitConfigArgsForTest() { return GIT_CONFIG_ARGS.slice(); }
+/**
+ * TEST-ONLY: run git with another plan ({ env, configArgs }), e.g. the Windows
+ * one, so a suite can prove both git() and gitArgv() carry it. null restores
+ * the live plan.
+ */
+export function __setGitPlanForTest(plan) {
+  const p = plan || LIVE_GIT_PLAN;
+  GIT_ENV = p.env;
+  GIT_CONFIG_ARGS = p.configArgs.slice();
+  GIT_PROGRAM = ['git', ...GIT_CONFIG_ARGS].join(' ');
+}
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -208,7 +231,7 @@ async function git(cmd, opts = {}) {
   // opts.env — extra environment for ONE call. Only GIT_INDEX_FILE uses it,
   // so that assessPullOverwrite() can load a tree into a SCRATCH index and
   // never touch the real one.
-  const full = `git --git-dir="${opts.gitDir || currentGitDir()}" --work-tree="${getDomainsDir()}" ${cmd}`;
+  const full = `${GIT_PROGRAM} --git-dir="${opts.gitDir || currentGitDir()}" --work-tree="${getDomainsDir()}" ${cmd}`;
   try {
     const { stdout, stderr } = await execAsync(full, {
       timeout: opts.timeout || 30000,
@@ -290,6 +313,36 @@ const NOT_AN_ERROR = Symbol('not-an-error');
 const SYNC_FAILED_MESSAGE =
   'Sync couldn\u2019t finish. ' +
   'Try again in a minute; if it keeps happening, copy the technical detail below and send it to support.';
+
+// GIT IS MISSING, in the words of the platform (2026-11-20). The macOS
+// sentence is unchanged, and stays the answer everywhere except Windows. On
+// Windows `xcode-select` means nothing: the Windows APP carries its own git
+// (planGit() in subprocess-env.js), so a missing one means its install is
+// damaged and the fix is to reinstall the app; a browser install or a checkout
+// needs Git for Windows (the browser installer provides it).
+const GIT_MISSING_MESSAGE_MAC =
+  'Git is not available to The Curator, so syncing cannot run. ' +
+  'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
+  'If git is installed somewhere unusual, launching The Curator from a terminal ' +
+  '(`npm start`) will pick up your shell PATH.';
+const GIT_MISSING_MESSAGE_WIN_APP =
+  'The copy of git that comes with The Curator is missing or damaged, so syncing cannot run. ' +
+  'Download the latest Windows installer from https://github.com/talirezun/the-curator/releases ' +
+  'and run it to repair the app, then try again. Reinstalling keeps your notes and settings.';
+const GIT_MISSING_MESSAGE_WIN =
+  'Git is not available to The Curator, so syncing cannot run. ' +
+  'Install Git for Windows from https://git-scm.com/downloads/win (or run The Curator’s ' +
+  'one-line installer again, which includes git), then restart The Curator and try again.';
+
+/** The git-missing sentence for a platform and install form. Exported for tests. */
+export function gitMissingMessage({ platform = process.platform, isBundle = false } = {}) {
+  if (platform !== 'win32') return GIT_MISSING_MESSAGE_MAC;
+  return isBundle ? GIT_MISSING_MESSAGE_WIN_APP : GIT_MISSING_MESSAGE_WIN;
+}
+
+// TEST-ONLY: drive the git-missing words as another platform / install form.
+let _gitMissingContext = null;
+export function __setGitMissingContextForTest(ctx) { _gitMissingContext = ctx || null; }
 
 function errorText(err) {
   if (err && typeof err.message === 'string') return err.message;
@@ -483,10 +536,8 @@ function classifySyncError(err) {
       msg.includes('git: not found') ||
       msg.includes('spawn git enoent') ||
       msg.includes('is not recognized as an internal or external command')) {
-    return { error: 'Git is not available to The Curator, so syncing cannot run. ' +
-           'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
-           'If git is installed somewhere unusual, launching The Curator from a terminal ' +
-           '(`npm start`) will pick up your shell PATH.', code: 'sync-git-missing' };
+    return { error: gitMissingMessage(_gitMissingContext || { platform: process.platform, isBundle: isBundleInstall() }),
+             code: 'sync-git-missing' };
   }
   // THE ACCESS TOKEN WAS REFUSED (2026-11-19). A token GitHub no longer
   // accepts (expired, revoked, deleted) is answered 401, and git then asks for
@@ -1377,7 +1428,7 @@ export async function preflightSetup(repoUrl, token) {
 function gitArgv(args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', [
-      `--git-dir=${opts.gitDir || currentGitDir()}`, `--work-tree=${getDomainsDir()}`, ...args,
+      ...GIT_CONFIG_ARGS, `--git-dir=${opts.gitDir || currentGitDir()}`, `--work-tree=${getDomainsDir()}`, ...args,
     ], { cwd: ROOT, env: GIT_ENV, timeout: opts.timeout || 60000 });
     const out = [];
     const errOut = [];
