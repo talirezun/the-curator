@@ -1250,6 +1250,56 @@ section('§9  The install smoke\'s Apps & features probe: absent, present, and a
   ok(!!throwsMsg(() => ci.parseUninstallList({ status: 1, stdout: '', stderr: 'boom' })), 'listing: a PowerShell failure THROWS');
 }
 
+section('§10  The install smoke waits until the silent uninstall has FINISHED, not until two of its files are gone');
+{
+  // A fake clock and a scripted uninstall in the order app-builder-lib's
+  // uninstaller.nsh runs it: top-level files go early in RMDir /r, the folder
+  // later, the uninstall key LAST. Run 44771959833 checked at "files gone".
+  let t = 0;
+  const now = () => t;
+  const sleepFn = async (ms) => { t += ms; };
+  const KEY = { DisplayName: 'The Curator' };
+  const timeline = { folderGoneAt: 30000, keyGoneAt: 34000 };
+  const dirExists = () => t < timeline.folderGoneAt;
+  const probeKey = () => (t < timeline.keyGoneAt ? KEY : null);
+
+  eq(ci.uninstallPending({ dirExists: () => true, probeKey: () => KEY }), ['the install folder', 'the HKCU uninstall key'], 'pending: folder and key both named');
+  eq(ci.uninstallPending({ dirExists: () => false, probeKey: () => KEY }), ['the HKCU uninstall key'], 'pending: the folder gone is NOT finished while the key (the last act) is there');
+  eq(ci.uninstallPending({ dirExists: () => true, probeKey: () => null }), ['the install folder'], 'pending: the key gone is not finished while any of the folder is there');
+  eq(ci.uninstallPending({ dirExists: () => false, probeKey: () => null }), [], 'pending: folder and key gone = finished');
+  const unreadable = ci.uninstallPending({ dirExists: () => false, probeKey: () => { throw new Error('PowerShell exited 1: boom'); } });
+  ok(unreadable.length === 1 && /could not be read: PowerShell exited 1: boom/.test(unreadable[0]), 'pending: a key probe that THROWS is not finished (never read as "absent"), with its error');
+
+  const r = await ci.waitUninstallFinished({ dirExists, probeKey, sleepFn, now, timeoutMs: 240000, everyMs: 1000 });
+  eq([r.finished, r.pending, r.waitedMs], [true, [], timeline.keyGoneAt], 'the wait returns only once the key is gone (34 s), not when the folder went (30 s)');
+
+  t = 0;
+  const stuck = await ci.waitUninstallFinished({ dirExists: () => false, probeKey: () => KEY, sleepFn, now, timeoutMs: 240000, everyMs: 1000 });
+  eq([stuck.finished, stuck.pending, stuck.waitedMs >= 240000 && stuck.waitedMs <= 241000], [false, ['the HKCU uninstall key'], true],
+    'a key that never goes (a guard abort, say) times out at 240 s, naming what is still there');
+  t = 0;
+  const neverRead = await ci.waitUninstallFinished({ dirExists: () => false, probeKey: () => { throw new Error('x'); }, sleepFn, now, timeoutMs: 5000 });
+  eq(neverRead.finished, false, 'a key that can never be read times out unfinished');
+  t = 0;
+  const already = await ci.waitUninstallFinished({ dirExists: () => false, probeKey: () => null, sleepFn, now });
+  eq([already.finished, already.waitedMs], [true, 0], 'already finished: returns at once');
+
+  // CROSS-CHECK against the uninstaller's real order (the template this
+  // version of app-builder-lib ships): the guard before RMDir /r $INSTDIR,
+  // the shortcuts after it, DeleteRegKey of the uninstall key after both.
+  const tpl = path.join(ROOT, 'desktop', 'node_modules', 'app-builder-lib', 'templates', 'nsis', 'uninstaller.nsh');
+  if (existsSync(tpl)) {
+    const body = readFileSync(tpl, 'utf8');
+    const sec = body.slice(body.indexOf('Section "un.'), body.indexOf('SectionEnd', body.indexOf('Section "un.')));
+    const at = (re) => { const m = re.exec(sec); return m ? m.index : -1; };
+    const order = [at(/!insertmacro customUnInstall\b/), at(/RMDir \/r \$INSTDIR/), at(/Delete "\$oldDesktopLink"/), at(/Delete "\$oldStartMenuLink"/), at(/DeleteRegKey SHELL_CONTEXT "\$\{UNINSTALL_REGISTRY_KEY\}"/)];
+    ok(order.every((i) => i >= 0) && order.every((i, k) => k === 0 || i > order[k - 1]),
+      'CROSS-CHECK: uninstaller.nsh runs the guard, RMDir /r $INSTDIR, the two shortcuts, then the uninstall key LAST', JSON.stringify(order));
+  } else {
+    console.log('  · (desktop/node_modules not installed here: the uninstaller.nsh order cross-check is skipped)');
+  }
+}
+
 for (const d of tmps) rmSync(d, { recursive: true, force: true });
 
 console.log(`\n${'─'.repeat(60)}`);

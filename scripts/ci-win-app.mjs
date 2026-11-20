@@ -30,7 +30,9 @@
  *     the installed app launched (isolated data) answers /api/version; the
  *     git checks below against the INSTALLED app, plus System Check's git row
  *     over HTTP with no git on PATH (ok, then the repair sentence with the
- *     bundled git hidden); silent uninstall → program, key and shortcuts gone,
+ *     bundled git hidden); silent uninstall, waited on until it FINISHED
+ *     (install folder gone entirely and the uninstall key, its last act,
+ *     removed) → program, key and shortcuts gone,
  *     %LOCALAPPDATA%\TheCurator\App\sentinel.txt and a seeded wiki page
  *     byte-identical, %APPDATA%\The Curator kept; then the installer guard:
  *     /S /D=%LOCALAPPDATA%\TheCurator (and …\App) exits 2 and writes nothing.
@@ -326,6 +328,37 @@ export function parseUninstallList(r) {
   const rows = v == null ? [] : Array.isArray(v) ? v : [v];
   return rows.filter((e) => e && typeof e === 'object' && typeof e.Key === 'string');
 }
+// When is a silent uninstall FINISHED? `Uninstall The Curator.exe /S` copies
+// itself to %TEMP% and relaunches that copy, so its own exit (0, within
+// ~0.1 s on the runner) says nothing. app-builder-lib's uninstaller.nsh
+// (section un.Uninstall) then runs: our customUnInstall guard → RMDir /r
+// $INSTDIR → the shortcuts → DeleteRegKey of the uninstall key, LAST. Waiting
+// for two top-level files to vanish returned while resources\ was still being
+// deleted (run 44771959833: key and shortcuts "still there"). Finished means:
+// the install folder is gone ENTIRELY and the uninstall key is absent. A probe
+// that cannot read the key counts as NOT finished (never as "absent").
+
+/** What a finished uninstall would have removed but is still there ([] = finished). */
+export function uninstallPending({ dirExists, probeKey }) {
+  const pending = [];
+  if (dirExists()) pending.push('the install folder');
+  let key;
+  try { key = probeKey(); } catch (e) { pending.push(`the HKCU uninstall key (could not be read: ${e.message})`); return pending; }
+  if (key !== null) pending.push('the HKCU uninstall key');
+  return pending;
+}
+/** Polls uninstallPending until it is empty or the time is up: {finished, pending, waitedMs}. */
+export async function waitUninstallFinished({ dirExists, probeKey, timeoutMs = 240000, everyMs = 1000,
+  sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+  const start = now();
+  for (;;) {
+    const pending = uninstallPending({ dirExists, probeKey });
+    if (!pending.length) return { finished: true, pending, waitedMs: now() - start };
+    if (now() - start >= timeoutMs) return { finished: false, pending, waitedMs: now() - start };
+    await sleepFn(everyMs);
+  }
+}
+
 /** The keys whose DisplayName is exactly the product name: the app's own entry, never a stranger's "Curator-something". */
 export function appUninstallKeys(entries, product = 'The Curator') {
   return entries.filter((e) => e.DisplayName === product).map((e) => e.Key);
@@ -522,10 +555,6 @@ function runInstaller(setup, args, timeout = 600000) {
   return r.status;
 }
 
-async function waitUninstalled(installDir, timeoutMs = 240000) {
-  return waitFor(() => !existsSync(path.join(installDir, EXE_NAME)) && !existsSync(path.join(installDir, UNINSTALLER)),
-    { timeoutMs, everyMs: 1000 });
-}
 
 /** Write an MCP initialize to a bridge and wait for its reply. */
 function mcpInitialize(child, timeoutMs = 45000) {
@@ -840,7 +869,17 @@ async function installSmoke({ setup, version }) {
   const roaming = path.join(process.env.APPDATA, PRODUCT);
   const roamingBefore = existsSync(roaming);
   eq(runInstaller(path.join(installDir, UNINSTALLER), ['/S']), 0, 'the uninstaller /S exits 0');
-  ok(!!(await waitUninstalled(installDir)), 'the program files are gone');
+  const un = await waitUninstallFinished({
+    dirExists: () => existsSync(installDir),
+    probeKey: () => parseUninstallKeyProbe(ps(uninstallKeyCommand(wp.NSIS_GUID))),
+  });
+  ok(un.finished, `the uninstall finished: the install folder is gone and the uninstall key (its last act) removed (${Math.round(un.waitedMs / 1000)} s)`,
+    `still present after ${Math.round(un.waitedMs / 1000)} s: ${un.pending.join('; ')}`);
+  if (!un.finished) {
+    printCuratorUninstallEntries();
+    if (existsSync(installDir)) console.log(describeTree(installDir, 2).split('\n').map((l) => `    · ${l}`).join('\n'));
+  }
+  ok(!existsSync(installDir), 'the install folder %LOCALAPPDATA%\\Programs\\The Curator is gone entirely');
   probeAbsent(wp.NSIS_GUID, 'the HKCU uninstall key is gone');
   for (const [where, lnk] of [['Desktop', sc.desktop], ['Start menu', sc.startMenu]]) ok(!lnk || !existsSync(lnk), `${where} shortcut removed`);
   const after = snapshot(dataDir);
