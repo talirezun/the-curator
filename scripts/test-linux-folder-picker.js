@@ -139,6 +139,10 @@ async function pick(handler, platform, lin, extra = {}, body = {}) {
     setDomainsDir: (p) => { log.set.push(p); },
     pickFolderHook: null, platform,
     pickFolderWin32: async (o) => { log.win.push(o); return { kind: 'picked', path: 'C:\\w' }; },
+    // The Windows app (2026-11-20): on win32 a picked folder also goes through
+    // the typed path's Windows validation; these fakes stand in for its fs.
+    validate: { appRoot: 'C:\\Program Files\\nowhere', bundle: false, statSync: () => ({ isDirectory: () => true }), readdirSync: () => [],
+      realpathSync: (p) => p, realpathNative: (p) => p, writeFileSync: () => {}, unlinkSync: () => {}, env: {} },
     ...extra,
   };
   if (lin !== undefined) deps.pickFolderLinux = async (o) => { log.lin.push(o); return lin; };

@@ -2466,7 +2466,23 @@ When answering a query:
 `;
 }
 
-async function generateUniqueSlug(displayName, excludeSlug = null) {
+/**
+ * The folder name for a new (or renamed) domain: lower-case ASCII letters,
+ * digits and hyphens, at most 32 characters, unique in the knowledge folder.
+ *
+ * ON WINDOWS (the Windows app, 2026-11-20) a reserved device name — `con`,
+ * `nul`, `com1`, `lpt9` … — is treated as TAKEN, so "CON" becomes `con-2`.
+ * Node's fs prefixes `\\?\`, which switches Windows' own check off: `mkdir
+ * …\con` succeeds and leaves a folder File Explorer, Obsidian and git cannot
+ * open or delete. Case clashes need no rule of their own: the name is always
+ * lower case, and `existsSync` answers for `Notes` when asked about `notes`
+ * on a case-insensitive disk (NTFS, APFS), so the new domain becomes
+ * `notes-2` rather than writing into the existing folder. macOS and Linux are
+ * unchanged. `deps` ({platform, existsSync}) is the test seam.
+ */
+async function generateUniqueSlug(displayName, excludeSlug = null, deps = {}) {
+  const platform = deps.platform || process.platform;
+  const exists = deps.existsSync || existsSync;
   let base = displayName
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
@@ -2485,7 +2501,8 @@ async function generateUniqueSlug(displayName, excludeSlug = null) {
   // Collision detection
   const candidate = async (slug) => {
     if (slug === excludeSlug) return slug; // renaming to same — caller handles this
-    if (!existsSync(domainPath(slug))) return slug;
+    if (platform === 'win32' && isWindowsReservedName(slug)) return null; // see the docblock
+    if (!exists(domainPath(slug))) return slug;
     return null;
   };
 

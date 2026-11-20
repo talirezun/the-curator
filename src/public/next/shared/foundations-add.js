@@ -255,7 +255,8 @@ export function listBlockedReason(rec) {
   }
   const root = String(r.root || '').trim();
   if (!root) return 'Choose a folder first.';
-  if (!/^(\/|[A-Za-z]:[\\/])/.test(root)) return 'The folder must be a full path on this computer, like /Users/you/notes.';
+  // A Windows network share (\\server\share) is a full path too.
+  if (!/^(\/|[A-Za-z]:[\\/]|\\\\[^\\?.])/.test(root)) return 'The folder must be a full path on this computer, like /Users/you/notes.';
   return null;
 }
 

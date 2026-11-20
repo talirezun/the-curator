@@ -163,6 +163,10 @@ async function pick(handler, platform, win, extra = {}, body = {}) {
     setDomainsDir: (p) => { log.set.push(p); },
     pickFolderHook: null,
     platform,
+    // The Windows app (2026-11-20): on win32 a picked folder also goes through
+    // the typed path's Windows validation; these fakes stand in for its fs.
+    validate: { appRoot: 'C:\\Program Files\\nowhere', bundle: false, statSync: () => ({ isDirectory: () => true }), readdirSync: () => [],
+      realpathSync: (p) => p, realpathNative: (p) => p, writeFileSync: () => {}, unlinkSync: () => {}, env: {} },
     ...extra,
   };
   if (win !== undefined) deps.pickFolderWin32 = async (o) => { log.win.push(o); return win; };
@@ -269,6 +273,8 @@ section('§4  The typed-path route: POST /api/config/domains-path validates');
   const winFs = {
     platform: 'win32', appRoot: 'C:\\Users\\Ana\\the-curator',
     existsSync: () => true, statSync: () => ({ isDirectory: () => true }), readdirSync: () => [], realpathSync: (p) => p,
+    // The Windows app (2026-11-20): the write probe and the on-disk-case read.
+    realpathNative: (p) => p, writeFileSync: () => {}, unlinkSync: () => {}, bundle: false, env: {},
   };
   const v = (p) => kfp.validateKnowledgeFolderPath(p, winFs);
   eq(v('C:\\Users\\Žiga\\Znanje'), { ok: true, path: 'C:\\Users\\Žiga\\Znanje' }, 'win32: a drive path is accepted');

@@ -355,6 +355,10 @@ async function runPick(handler, platform, body = {}, win = { kind: 'picked', pat
     setDomainsDir: () => { set++; },
     pickFolderHook: null,
     pickFolderWin32: async () => { winCalls++; return win; },
+    // The Windows app (2026-11-20): on win32 a picked folder also goes through
+    // the typed path's Windows validation; these fakes stand in for its fs.
+    validate: { appRoot: 'C:\\Program Files\\nowhere', bundle: false, statSync: () => ({ isDirectory: () => true }), readdirSync: () => [],
+      realpathSync: (p) => p, realpathNative: (p) => p, writeFileSync: () => {}, unlinkSync: () => {}, env: {} },
   };
   if (platform) deps.platform = platform;
   await handler({ body }, res, deps);

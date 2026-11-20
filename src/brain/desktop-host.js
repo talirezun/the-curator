@@ -101,11 +101,14 @@
  * The hook names this process will accept, and what each one promises.
  *
  * `pickFolder(opts) -> Promise<string|null>`
- *   Show a native directory chooser and resolve with the ABSOLUTE POSIX path
- *   the user selected, or `null` if they cancelled. It must NOT validate the
- *   path, mutate config, or throw for a cancel — the route owns all three, so
- *   that both arms of the fork share one set of post-pick rules.
- *   `opts.prompt` is the dialog's title.
+ *   Show a native directory chooser and resolve with the ABSOLUTE path the
+ *   user selected, in the platform's own form (`/Users/…` on macOS, `C:\…`
+ *   or `\\server\share\…` on Windows), or `null` if they cancelled. It must
+ *   NOT validate the path, mutate config, or throw for a cancel — the route
+ *   owns all three, so that both arms of the fork share one set of post-pick
+ *   rules (on Windows those include knowledge-folder-path.js's Windows rules).
+ *   `opts.prompt` is the dialog's title. The desktop app builds this hook with
+ *   `createPickFolder()` from desktop/lib/folder-dialog.js.
  *
  * `relaunch() -> void`
  *   Restart the whole desktop application. Called AFTER the HTTP response has
