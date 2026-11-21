@@ -37,6 +37,17 @@
  *     byte-identical, %APPDATA%\The Curator kept; then the installer guard:
  *     /S /D=%LOCALAPPDATA%\TheCurator (and …\App) exits 2 and writes nothing.
  *
+ *   popover-selftest --setup <exe> --version X.Y.Z
+ *     the Windows tray popover (v4.1.0) in the INSTALLED app: silent install,
+ *     launch with isolated data, the tray on (backgroundMode 'tray' in the
+ *     isolated config) and CURATOR_TEST_TRAY_POPOVER_SELFTEST=1, which the app
+ *     honours ONLY alongside CURATOR_TEST_USER_DATA_DIR
+ *     (desktop/lib/tray-popover-shell.js); the app shows the popover, asserts
+ *     it visible, inside the work area, the page painted N > 0 rows, 0 CSP
+ *     violations, and that Esc hides it, then writes
+ *     `tray-popover-selftest: pass` to curator.log, which this greps; then
+ *     a silent uninstall, waited on until it finished.
+ *
  *   git-checks     --mingit <dir> | --install-dir <dir>
  *     Personal Sync's git, as planGit() (src/brain/subprocess-env.js) plans it,
  *     with NO git on PATH: init / commit / push to a local bare repository /
@@ -947,6 +958,62 @@ async function installSmoke({ setup, version }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+//  popover-selftest
+// ═════════════════════════════════════════════════════════════════════════
+
+/** The app's own variable (desktop/lib/tray-popover-shell.js SELFTEST_ENV; the suite keeps them equal). */
+export const POPOVER_SELFTEST_ENV = 'CURATOR_TEST_TRAY_POPOVER_SELFTEST';
+
+/** The self-test's line in curator.log text, or null (desktop/lib/tray-popover-shell.js). */
+export function popoverSelfTestLine(logText) {
+  const lines = String(logText || '').split(/\r?\n/);
+  return lines.find((l) => /\btray-popover-selftest: (pass$|fail: )/.test(l)) || null;
+}
+
+async function popoverSelfTest({ setup, version }) {
+  const wp = await import(pathToFileURL(path.join(ROOT, 'desktop', 'lib', 'win-pack.mjs')).href);
+  const installDir = installDirExpected();
+  const exe = path.join(installDir, EXE_NAME);
+
+  section('install');
+  ok(!existsSync(exe), 'nothing is installed yet (install-smoke uninstalled its copy)');
+  eq(runInstaller(setup, ['/S']), 0, 'the setup program /S exits 0');
+  ok(existsSync(exe), `installed: %LOCALAPPDATA%\\Programs\\${PRODUCT}\\${EXE_NAME}`);
+
+  section('the tray popover self-test, in the installed app');
+  const tmp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ci-popover-')));
+  const iso = isolatedEnv(path.join(tmp, 'run'), { [POPOVER_SELFTEST_ENV]: '1' });
+  // The tray is ON for this run (the default mode is 'window', which has no tray).
+  writeFileSync(path.join(iso.env.CURATOR_TEST_USER_DATA_DIR, '.curator-config.json'), JSON.stringify({ backgroundMode: 'tray' }, null, 2));
+  const logFile = path.join(iso.env.CURATOR_TEST_LOG_DIR, 'curator.log');
+  const run = await launchApp({ exe, env: iso.env, instancesRoot: iso.instancesRoot, version });
+  ok(!!run, 'the installed app started (tray mode, isolated data) and its local server answered /api/version');
+  let line = null;
+  if (run) {
+    line = await waitFor(() => (existsSync(logFile) ? popoverSelfTestLine(readFileSync(logFile, 'utf8')) : null),
+      { timeoutMs: 120000, everyMs: 1000 });
+    ok(!!line && /tray-popover-selftest: pass$/.test(line), 'curator.log: tray-popover-selftest: pass (shown, inside the work area, rows painted, 0 CSP violations, Esc hides it)',
+      line || 'no self-test line in curator.log within 120 s');
+    if (!line || !/pass$/.test(line)) {
+      const text = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '(no curator.log)';
+      console.log(text.split(/\r?\n/).filter((l) => /tray-popover|\[desktop\]/.test(l)).slice(-40).map((l) => `    · ${l}`).join('\n'));
+    }
+    killTree(run.pid);
+    await waitFor(() => !alive(run.pid), { timeoutMs: 30000 });
+  }
+
+  section('silent uninstall');
+  eq(runInstaller(path.join(installDir, UNINSTALLER), ['/S']), 0, 'the uninstaller /S exits 0');
+  const un = await waitUninstallFinished({
+    dirExists: () => existsSync(installDir),
+    probeKey: () => parseUninstallKeyProbe(ps(uninstallKeyCommand(wp.NSIS_GUID))),
+  });
+  ok(un.finished, `the uninstall finished (${Math.round(un.waitedMs / 1000)} s)`, `still present: ${un.pending.join('; ')}`);
+  rmSync(tmp, { recursive: true, force: true });
+  finish('popover-selftest');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 //  rehearse-update
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -1215,6 +1282,7 @@ export function parseArgs(argv) {
   const need = {
     'check-build': ['unpacked', 'setup', 'version'],
     'install-smoke': ['setup', 'version'],
+    'popover-selftest': ['setup', 'version'],
     'rehearse-update': ['from', 'fromVersion', 'to', 'toVersion'],
     'next-version': ['version'],
     'stamp-version': ['version'],
@@ -1245,6 +1313,7 @@ if (isDirectRun) {
   requireWindows(a.cmd);
   if (a.cmd === 'check-build') await checkBuild({ unpacked: path.resolve(a.unpacked), setup: path.resolve(a.setup), version: a.version });
   else if (a.cmd === 'install-smoke') await installSmoke({ setup: path.resolve(a.setup), version: a.version });
+  else if (a.cmd === 'popover-selftest') await popoverSelfTest({ setup: path.resolve(a.setup), version: a.version });
   else if (a.cmd === 'rehearse-update') {
     await rehearseUpdate({ from: path.resolve(a.from), fromVersion: a.fromVersion, to: path.resolve(a.to), toVersion: a.toVersion });
   } else if (a.cmd === 'git-checks') {

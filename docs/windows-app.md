@@ -151,11 +151,10 @@ it runs a downloaded installer again, the app checks its SHA-256 again.
 | **Close the connection and update** while your AI app is saving to your wiki | Ending the connection stops that save part-way | Wait until the AI app has finished saving, then update |
 | Your Windows user folder has an apostrophe in its name (`C:\Users\O'Brien`) and you run the installer **by hand** | The installer may not notice that The Curator is still open | Quit The Curator (tray icon → Quit, or **File → Exit**) before running the installer. Updates from inside the app are not affected: the app closes itself first. |
 
-> **Not measured yet:** a real update from one version to the next is rehearsed on every release
-> in CI (install, check, close, silent install, reopen; your data byte-identical), but on a real PC
-> nobody has yet watched whether the blue SmartScreen screen is avoided (the warning comes from
-> files a browser downloaded, and an update the app downloads itself should not show it) or
-> whether any console window flashes during the update. If you see the SmartScreen screen, choose **More info → Run anyway** and please
+> **Seen on a real PC:** an update from inside the app, 4.0.0 → 4.0.1, was confirmed on a real
+> PC on 2026-11-21, with no security prompt (no SmartScreen screen). Every release also rehearses
+> an update in CI (install, check, close, silent install, reopen; your data byte-identical). If you
+> do see the SmartScreen screen, choose **More info → Run anyway** and please
 > [tell us](https://github.com/talirezun/the-curator/issues).
 
 ---
@@ -171,10 +170,12 @@ save pulse, the last 24 hours' active work, your domains, and Open The Curator �
 |---|---|
 | Turn it on | **Settings → General → Tray icon → Show the tray icon**. It is off by default. |
 | The icon | A ring, as on the Mac: **empty** while The Curator is running, with a **filled centre** while an agent is saving working state on this PC (within the last two minutes). White on a dark taskbar, black on a light one. |
-| **Click** the icon (left or right) | Opens the menu, as on the Mac. **Open The Curator** in the menu opens the window. |
-| What the menu shows | The same as the Mac menu, with the same pictures: the save pulse, the coloured freshness dots, each domain's bar in its own colour. Windows menus cannot show a second line or hover text, so a second line follows the label after " — ", and the details the Mac shows on hover open in a submenu when you point at the item (or are listed at the end of the submenu the item is in). |
+| **Left-click** the icon | Opens the **popover**: a small panel above the clock with everything the Mac menu shows, in the same order, with the same pictures (the save pulse at twice its size, the coloured freshness dots, each domain's bar in its own colour) and each item's second line under it. An item with a **›** opens its own page inside the panel (a project's actions and its details, the saves by tool, your domains); **‹** goes back. Click the icon again, press **Esc**, or click anywhere else to close it. It follows Windows' light or dark mode. **Open The Curator** opens the window. |
+| Keyboard | **Win+B** then the arrow keys reach the icon; **Enter** opens the popover. **↑ ↓** move, **→** or **Enter** opens a page, **←** or **Backspace** goes back, **Esc** goes back or closes. |
+| **Right-click** the icon | Opens the classic Windows menu with the same facts (as in 4.0.1). Windows menus cannot show a second line or hover text, so a second line follows the label after " — ", and the details the Mac shows on hover open in a submenu when you point at the item (or are listed at the end of the submenu the item is in). |
+| If the popover cannot open | That click opens the classic menu instead, and one line is written to `curator.log`. If that happens twice, the left click opens the classic menu for the rest of the session. |
 | Can't see it? | Windows often puts a new icon with the hidden ones. Click the **^** arrow beside the clock, and drag the icon onto the taskbar to keep it in view. |
-| Close the window (X) **with the tray icon on** | The window hides; the app keeps running in the tray. Quit from the tray menu or **File → Exit**. |
+| Close the window (X) **with the tray icon on** | The window hides; the app keeps running in the tray. Quit from the popover or the tray menu (**Quit The Curator**), or **File → Exit**. Quitting from the popover asks first if a write is running, as every quit does. |
 | Close the window (X) **with the tray icon off** | The app quits. If an ingest or another write is running, it asks first (**Quit now?**), with the window still open; **Keep working** keeps it open. |
 
 The taskbar button always stays. The Mac app has an extra choice to hide its Dock icon; Windows
@@ -325,7 +326,7 @@ and [build-extra](https://github.com/git-for-windows/build-extra).
 | *The Curator could not start* … *its program files are incomplete* | Download the installer from the Releases page and run it; your notes and settings are safe ([§ Where everything is](#where-everything-is)) |
 | *The Curator cannot be installed in …* | Run the installer again without choosing a folder |
 | The Domains page says your knowledge folder is inside The Curator's own folders | Move that folder with File Explorer into your user folder, then choose it again; nothing was moved or deleted |
-| The app is running but no window shows | The tray icon is on: click it, or look under the **^** by the clock |
+| The app is running but no window shows | The tray icon is on: click it and choose **Open The Curator**, or look under the **^** by the clock |
 | *The Curator is already running* | Only one copy may run. Switch to the open window (or the tray icon). |
 | An update stops because an AI app is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |
 | Sync says its git is missing or damaged | Run the latest installer from the Releases page; your data is kept |

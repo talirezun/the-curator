@@ -216,15 +216,16 @@ section('§5 how the tray is driven');
   eq(win.templateImage, false, 'win32: NOT a template image — Windows does not tint; the ink is chosen from the taskbar theme');
   eq(win.iconTheme, 'system-integrated-ui', 'win32: the icon ink follows the SYSTEM (taskbar) theme, not the app theme boot() pins dark');
   eq(win.setContextMenu, false, 'win32: the menu is never SET on the tray…');
-  eq([win.popUpOnLeftClick, win.popUpOnRightClick], [true, true], '…it is POPPED on a left AND a right click, rebuilt immediately before it is shown');
-  eq(win.leftClick, 'menu', 'win32: left-click opens the widget menu, as on the Mac (owner 2026-11-21, reversing v4.0.0\'s left = window)');
-  eq(win.remoteCheckOnLeftClick, true, 'win32: a left-click IS a menu open, so it may ask GitHub, as on the Mac');
+  eq([win.popUpOnLeftClick, win.popUpOnRightClick], [false, true], '…it is POPPED on a RIGHT click only, rebuilt immediately before it is shown (v4.1.0, owner D1)');
+  eq(win.leftClick, 'popover', 'win32: a LEFT click opens the tray POPOVER (v4.1.0, owner D1; v4.0.1 popped the menu on both clicks)');
+  eq(win.remoteCheckOnLeftClick, true, 'win32: a left-click IS a widget open, so it may ask GitHub, as on the Mac');
 
   // EXECUTED: the very handlers main.js registers, driven with recording effects.
   const drive = (platform) => {
     const log = [];
     const h = sp.trayClickHandlers(platform, {
       popMenu: () => log.push('pop'), refresh: () => log.push('refresh'), checkRemote: (t) => log.push('remote:' + t),
+      showPopover: () => log.push('popover'),
     });
     const out = {};
     for (const ev of Object.keys(h)) { log.length = 0; h[ev](); out[ev] = log.slice(); }
@@ -232,13 +233,22 @@ section('§5 how the tray is driven');
   };
   eq(drive('darwin'), { click: ['refresh', 'remote:click'], 'right-click': ['refresh', 'remote:right-click'] },
     'darwin: exactly the v3.x handlers — re-read, then the remote check; nothing popped (the menu is SET on the tray)');
-  eq(drive('win32'), { click: ['pop', 'refresh', 'remote:click'], 'right-click': ['pop', 'refresh', 'remote:right-click'] },
-    'win32: a LEFT click and a RIGHT click each pop the menu FIRST (fresh from memory), then re-read and ask — no window reveal');
-  ok(!Object.keys(sp.trayClickHandlers('win32', { popMenu() {}, refresh() {}, checkRemote() {} })).includes('double-click'),
-    'win32: no double-click handler — the first click has already opened the menu, which takes the second');
+  eq(drive('win32'), { click: ['popover', 'refresh', 'remote:click'], 'right-click': ['pop', 'refresh', 'remote:right-click'] },
+    'win32: a LEFT click opens the popover FIRST, a RIGHT click pops the native menu FIRST (fresh from memory); each then re-reads and asks — no window reveal');
+  ok(!Object.keys(sp.trayClickHandlers('win32', { popMenu() {}, refresh() {}, checkRemote() {}, showPopover() {} })).includes('double-click'),
+    'win32: no double-click handler — the first click has already opened the popover, which takes the second');
   let threw = false;
   try { sp.trayClickHandlers('win32', { popMenu() {}, refresh() {} }); } catch { threw = true; }
   ok(threw, 'a missing effect is refused when the handlers are BUILT, not when a click lands');
+  let threwPop = null;
+  try { sp.trayClickHandlers('win32', { popMenu() {}, refresh() {}, checkRemote() {} }); } catch (e) { threwPop = e.message; }
+  ok(threwPop && /showPopover/.test(threwPop), 'win32: building the clicks WITHOUT showPopover is refused (the left click could open nothing)');
+  {
+    const log = [];
+    const h = sp.trayClickHandlers('darwin', { popMenu: () => log.push('pop'), refresh: () => log.push('refresh'), checkRemote: () => log.push('remote'), showPopover: () => log.push('popover') });
+    h.click(); h['right-click']();
+    eq(log, ['refresh', 'remote', 'refresh', 'remote'], 'darwin: a showPopover handed over anyway is NEVER called (the Mac click path is v4.0.1\'s)');
+  }
   ok(Object.isFrozen(mac) && Object.isFrozen(win), 'both plans are frozen');
   // The remote-check allow-list must contain both triggers the Windows clicks
   // pass — or the Windows menu would never ask about other machines.
@@ -659,8 +669,20 @@ section('§13 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
   ok(/tray\.popUpContextMenu\(trayMenu\)/.test(src), 'Windows pops the kept menu');
   ok(/function popTrayMenu\(\)[\s\S]{0,120}renderTrayFromSnapshot\(\)/.test(src),
     'and rebuilds it from the in-memory snapshot (no I/O) immediately before popping');
-  ok(/const clicks = trayClickHandlers\(process\.platform, \{\s*popMenu: popTrayMenu,\s*refresh: \(\) => \{ refreshTraySummary\(\); \},\s*checkRemote: \(trigger\) => \{ maybeCheckRemote\(trigger\); \},\s*\}\);\s*for \(const \[event, handler\] of Object\.entries\(clicks\)\) tray\.on\(event, handler\);/.test(src),
-    'the tray\'s clicks are EXACTLY the handlers §5 executes (trayClickHandlers), wired to popTrayMenu / refreshTraySummary / maybeCheckRemote');
+  ok(/const clicks = trayClickHandlers\(process\.platform, \{\s*popMenu: popTrayMenu,\s*refresh: \(\) => \{ refreshTraySummary\(\); \},\s*checkRemote: \(trigger\) => \{ maybeCheckRemote\(trigger\); \},\s*\.\.\.\(TRAY_UI\.leftClick === 'popover' \? \{ showPopover: showTrayPopover \} : \{\}\),\s*\}\);\s*for \(const \[event, handler\] of Object\.entries\(clicks\)\) tray\.on\(event, handler\);/.test(src),
+    'the tray\'s clicks are EXACTLY the handlers §5 executes (trayClickHandlers), wired to popTrayMenu / refreshTraySummary / maybeCheckRemote, and showTrayPopover only where the plan says popover');
+  ok(/function showTrayPopover\(\)[\s\S]{0,200}popoverLeftClick\(\{\s*popover: trayPopover,\s*publish: publishPopover,\s*popMenu: popTrayMenu,/.test(src),
+    'the left click is lib/tray-popover-shell.js popoverLeftClick (executed by test-tray-popover-shell.js): publish, then toggle; no controller → the native menu');
+  ok(/quit: \(\) => app\.quit\(\),/.test(src) && !/app\.exit\(/.test(src.slice(src.indexOf('createTrayPopover({'), src.indexOf('createTrayPopover({') + 2500)),
+    'the popover\'s Quit is app.quit() (before-quit runs the write-status guard), never app.exit()');
+  ok(/onFallback: popoverFallbackHandler\(\{ popMenu: popTrayMenu,/.test(src), 'the popover\'s fallback pops the native menu (popoverFallbackHandler)');
+  ok(/mainWindow\.on\('focus', \(\) => \{ if \(trayPopover\) trayPopover\.mainWindowFocused\(\); \}\);/.test(src), 'the main window\'s focus hides the popover (mainWindowFocused)');
+  ok(/function stopTray\(\) \{[\s\S]{0,80}destroyTrayPopover\(\);/.test(src) && /if \(quitAuthorised\) \{ destroyTrayPopover\(\); return; \}/.test(src),
+    'the popover is destroyed in stopTray() and on the authorised quit');
+  ok(/dark = nativeTheme\.shouldUseDarkColorsForSystemIntegratedUI === true/.test(src) && /imageScales: POPOVER_IMAGE_SCALES/.test(src) && /theme: dark \? 'dark' : 'light'/.test(src),
+    'the popover\'s payload follows the SYSTEM mode (D3), with the popover\'s picture scales');
+  ok(/Menu\.buildFromTemplate\(buildTrayMenuTemplate\(model, \{\s*\.\.\.trayMenuHandlers\(\),/.test(src) && /buildTrayPopover\(model, \{[\s\S]{0,120}\.\.\.trayMenuHandlers\(\),/.test(src),
+    'the native menu and the popover get the SAME five handlers (trayMenuHandlers)');
   ok(!/tray\.on\('(click|right-click|double-click)'/.test(src), 'and no click handler is registered beside them (no window reveal on a click)');
   ok(/platform: process\.platform,\s*\}\)\);/.test(src) && /identityHex,\s*platform: process\.platform/.test(src),
     'the platform is handed to the tray model and the tray menu');

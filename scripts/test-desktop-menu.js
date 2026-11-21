@@ -912,8 +912,18 @@ section('§11 main.js source scan — WEAK BY NATURE, and what is NOT enforced')
   ok(/isLoading\(\)\)\s*await waitForLoad\(/.test(main),
      'the injected click waits for the page when the window is still loading — revealWindow() legitimately CREATES a window and loadURL is async, so without this ⌘, on a destroyed window injects into a blank page and reports a failure for a window that was about to work');
   ok(!/insertCSS/.test(main), 'main.js still injects no CSS');
-  ok(!/ipcMain|contextBridge|exposeInMainWorld/.test(main),
-     'no IPC channel was opened for the menu — the preload stays empty, so there is no second way into the app\'s capabilities that bypasses the HTTP guards');
+  // v4.1.0: main.js imports ipcMain ONLY to hand it to the Windows tray popover's controller,
+  // whose one narrow, allow-listed channel lives in lib/tray-popover-ipc.js (its own preload,
+  // lib/tray-popover-preload.js, guarded by scripts/test-tray-popover.js). main.js itself registers
+  // nothing, and the app window's preload stays empty.
+  ok(!/ipcMain\.(handle|handleOnce|on|once|addListener)\(|contextBridge|exposeInMainWorld/.test(main),
+     'no IPC channel was opened for the menu — main.js registers no ipcMain handler, so there is no second way into the app\'s capabilities that bypasses the HTTP guards');
+  ok((main.match(/\bipcMain\b/g) || []).length === 2 && /createTrayPopover\(\{\s*BrowserWindow, screen, session, ipcMain,/.test(main),
+     'ipcMain appears exactly twice in main.js: the import and the hand-over to the tray popover controller');
+  {
+    const preload = stripJsComments(read(path.join(DESKTOP, 'preload.js'))).trim();
+    ok(!/contextBridge|exposeInMainWorld|ipcRenderer/.test(preload), 'the app window\'s preload (desktop/preload.js) still exposes nothing');
+  }
 
   // v3.64.0 — Risk 4 (a rail entry can vanish silently) applies to BOTH
   // Electron [data-view] selectors, not just the memory one scripts/test-

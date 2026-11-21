@@ -51,6 +51,9 @@ export const MAX_HEIGHT = 4000;
 /** In memory only: no `persist:` prefix. */
 export const PARTITION = 'tray-popover';
 /** --surface-raised in tokens/color.css (dark: --ink-850; light: #FFFFFF), so no white flash. */
+/** How Chromium words a Content Security Policy refusal on the console. */
+export const CSP_VIOLATION = /Content Security Policy/i;
+
 export const BACKGROUND = Object.freeze({ dark: '#10101A', light: '#FFFFFF' });
 
 const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
@@ -203,6 +206,8 @@ export function createTrayPopover(deps) {
   let contentHeight = INITIAL_HEIGHT;
   let lastPainted = null;
   let lastBounds = null;
+  let dismissals = 0;        // Esc on the root page (curatorTray.dismiss) — the CI self-test
+  let cspViolations = 0;     // Chromium's own console reports of a refused load (CI self-test)
 
   const live = () => {
     if (win && safe(() => win.isDestroyed()) === true) resetWindow();
@@ -288,6 +293,15 @@ export function createTrayPopover(deps) {
       fail('crashed', during);
     });
     wc.on('unresponsive', () => { if (win === w) safe(() => w.hide()); });
+    // Content counted, never logged: Chromium reports each load the page's CSP refused on the
+    // console ("Refused to … because it violates the following Content Security Policy …").
+    // Electron 43 hands a details object; older builds positional (event, level, message).
+    wc.on('console-message', (event, _level, message) => {
+      if (win !== w) return;
+      const text = event && typeof event.message === 'string' ? event.message
+        : (typeof message === 'string' ? message : '');
+      if (CSP_VIOLATION.test(text)) cspViolations += 1;
+    });
     w.on('page-title-updated', refuse);
     w.on('blur', () => onBlur(w));
     w.on('close', (event) => {
@@ -512,7 +526,7 @@ export function createTrayPopover(deps) {
       if (w && windowVisible()) place(w);
     },
     onPainted,
-    onDismiss: () => hide(),
+    onDismiss: () => { dismissals += 1; hide(); },
   });
 
   return {
@@ -527,7 +541,18 @@ export function createTrayPopover(deps) {
     /** For P5's CI self-test and for diagnostics: no content, only state. */
     stats: () => ({
       failures, off, visible: windowVisible(), waiting: !!pending,
-      loaded, painted, sentGen, lastPainted, bounds: lastBounds,
+      loaded, painted, sentGen, lastPainted, bounds: lastBounds, cspViolations, dismissals,
     }),
+    /** For the CI self-test only (lib/tray-popover-selftest.js): one real key press into the
+     *  page, as a person's keyboard would deliver it. False when there is no window. */
+    pressKey: (keyCode) => {
+      const w = live();
+      if (!w || typeof keyCode !== 'string') return false;
+      return safe(() => {
+        w.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+        w.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+        return true;
+      }) === true;
+    },
   };
 }

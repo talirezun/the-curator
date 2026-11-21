@@ -1147,7 +1147,20 @@ section('§11 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
     const h = sp.trayClickHandlers('darwin', { popMenu: () => log.push('pop'), refresh: () => log.push('refresh'), checkRemote: () => log.push('remote') });
     h.click(); h['right-click']();
     eq(log, ['refresh', 'remote', 'refresh', 'remote'], 'EXECUTED (darwin): each click re-reads the index, then asks about the other machines — nothing popped, the menu is SET on the tray');
+    // v4.1.0 (the Windows popover): the Mac's click path is v4.0.1's, exactly. Its plan has no
+    // popover, a showPopover handed over is never called, and none is required to build it.
+    eq({ ...sp.trayInteraction('darwin') }, {
+      templateImage: true, setContextMenu: true, popUpOnRightClick: false,
+      leftClick: 'menu', remoteCheckOnLeftClick: true, menuTheme: 'apple-interface-style',
+    }, 'darwin\'s tray plan is v4.0.1\'s, key for key (no popover)');
+    const log2 = [];
+    const h2 = sp.trayClickHandlers('darwin', { popMenu: () => log2.push('pop'), refresh: () => log2.push('refresh'), checkRemote: () => log2.push('remote'), showPopover: () => log2.push('popover') });
+    h2.click(); h2['right-click']();
+    eq(log2, ['refresh', 'remote', 'refresh', 'remote'], 'EXECUTED (darwin): a showPopover effect is never called on a Mac click');
+    eq(Object.keys(h2).sort(), ['click', 'right-click'], 'darwin: the same two events are registered as in v4.0.1');
   }
+  ok(/if \(TRAY_UI\.leftClick === 'popover'\) \{\s*trayPopoverGate = createPopoverActionGate\(\);/.test(src),
+    'the popover controller is created ONLY where the plan\'s left click is the popover (win32), so a Mac never builds one');
   ok(!/setInterval\(/.test(src),
     'main.js starts no interval of its own — the only periodic thing in the design is the 5-minute fallback inside lib/state-watch.js');
   ok(/applyBackgroundMode\(await readBackgroundMode\(\)\)/.test(src),
@@ -1274,12 +1287,12 @@ section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §1
   const sp = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'shell-platform.js')).href);
   const triggersFor = (platform) => {
     const seen = [];
-    const h = sp.trayClickHandlers(platform, { popMenu() {}, refresh() {}, checkRemote: (t) => seen.push(t) });
+    const h = sp.trayClickHandlers(platform, { popMenu() {}, refresh() {}, checkRemote: (t) => seen.push(t), showPopover() {} });
     for (const ev of Object.keys(h)) h[ev]();
     return seen;
   };
   eq(triggersFor('darwin'), ['click', 'right-click'], 'EXECUTED: a click asks about the other machines, and so does a right-click (darwin)');
-  eq(triggersFor('win32'), ['click', 'right-click'], 'EXECUTED: the same two triggers on Windows, where both clicks open the menu');
+  eq(triggersFor('win32'), ['click', 'right-click'], 'EXECUTED: the same two triggers on Windows, where the left click opens the popover and the right click the menu');
   ok(/checkRemote: \(trigger\) => \{ maybeCheckRemote\(trigger\); \}/.test(src),
     'main.js hands the handlers\' own trigger to maybeCheckRemote');
   // HOVER DOES NOT. Asserted two ways, because a loose window regex here would

@@ -820,9 +820,9 @@ Open **The Curator** from the Start menu or the Desktop. Like the Mac app it ope
 | You do… | Tray icon **off** (the default) | Tray icon **on** |
 |---|---|---|
 | Close the window (**X**) | The app **quits**, and asks first (**Quit now?**) if a write is in progress; **Keep working** keeps the window open | The window **hides**; the app keeps running in the tray |
-| Click the tray icon (left button) | — | The window comes back |
-| Click the tray icon (left or right) | — | The tray menu, with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)) |
-| **File → Exit**, or **Quit** in the tray menu | The app quits, with the same work-in-progress check | The same |
+| **Left-click** the tray icon | — | The **popover**: a small panel above the clock with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)); **Open The Curator** in it brings the window back |
+| **Right-click** the tray icon | — | The classic Windows tray menu, with the same facts |
+| **File → Exit**, or **Quit The Curator** in the popover or the tray menu | The app quits, with the same work-in-progress check | The same |
 | Open The Curator a second time | The existing window comes forward | The same |
 
 The menu is **File** (Settings, Exit) · Edit · View · Window · **Help** (Check for Updates…, About The Curator). The tray icon is switched on in **Settings → General → Tray icon**. More in [windows-app.md](windows-app.md#the-tray-icon).
@@ -870,7 +870,7 @@ It is a **local web app** — a small Express server runs on your machine and re
 
 *Mac app, and the Windows app as a **tray icon**. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
 
-> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left- or right-click** opens the menu, as on the Mac (**Open The Curator** in it opens the window), and the icon is the same ring, empty or with a filled centre; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. There is no **Hide the Dock icon** choice on Windows: the taskbar button always stays, so the app can always be found. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
+> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left-click** opens the **popover** (new in 4.1.0): a small panel above the clock that shows everything below, in the same order and with the same pictures, each item's second line under it; an item with **›** opens its own page in the panel (a project's actions and details, the saves by tool, your domains), **‹** goes back, and **Esc** or a click elsewhere closes it. It follows Windows' light or dark mode, and works with the keyboard (**Win+B**, arrows, **Enter**). A **right-click** opens the classic Windows menu with the same facts, where a second line or a hover tooltip goes after the label or into a submenu, because Windows menus draw neither; if the popover ever cannot open, that click shows this menu instead. **Open The Curator** opens the window. The icon is the same ring, empty or with a filled centre; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. There is no **Hide the Dock icon** choice on Windows: the taskbar button always stays, so the app can always be found. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
 
 ### The one question it answers
 

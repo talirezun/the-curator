@@ -106,7 +106,8 @@ names out of both files rather than from a hardcoded list.
 | `lib/background-mode.js` | Resolves `backgroundMode` and the 3x3 live transition between modes. Pure. |
 | `lib/state-watch.js` | The refresh strategy: `/state/` path filter, 150 ms debounce, 5-minute fallback, one-shot glyph expiry. Every timer injected. |
 | `lib/shell-platform.js` | Every decision `main.js` makes differently on Windows, as pure functions of a platform string: AUMID, close-to-tray, dialog parenting, tray clicks, tooltip clamp, the About dialog, the after-update notice. darwin answers pinned unchanged. |
-| `lib/tray-menu-win.js` / `lib/tray-icon-win.js` | The SAME tray menu re-expressed for a Windows menu (sublabel/toolTip/header moved into the label or a submenu, `&` escaped); the coloured 16/24/32 px tray icon. |
+| `lib/tray-menu-win.js` / `lib/tray-icon-win.js` | The SAME tray menu re-expressed for a Windows menu (sublabel/toolTip/header moved into the label or a submenu, `&` escaped): the RIGHT-click menu and the popover's fallback; the 16/24/32 px tray icon. |
+| `lib/tray-popover*.js` | The Windows tray POPOVER (v4.1.0), a LEFT click: `tray-popover-model.js` (the Mac template → drill-in pages + the generation-checked action gate, pure), `tray-popover-position.js` (where it opens, pure), `tray-popover.js` (the controller, Electron injected), `tray-popover-ipc.js` + `tray-popover-preload.js` (the one narrow channel), `tray-popover-shell.js` (the left click = publish then toggle, the fallback, the curator.log line, the env-gated CI self-test). The page is `src/public/next/tray-popover.html`. |
 | `lib/folder-dialog.js` | The Electron folder dialog behind the `pickFolder` desktop hook (macOS = the old inline hook; Windows: one dialog at a time). |
 | `lib/run-command.js` | `runCommand` for the updater (`windowsHide`, a timeout). |
 | `lib/update-download.js` | The platform-neutral downloader + size/SHA-256 check both engines use. |
@@ -1111,13 +1112,38 @@ every platform, the token is on git's argv for a moment during `remote set-url`.
 electron-updater is not used, for the reasons in *In-app updating* above plus one more: it would be
 a second release resolver beside `config.js`'s.
 
+### The tray popover (v4.1.0)
+
+A **left click** on the Windows tray icon opens the popover (owner D1, 2026-11-21): a frameless
+window above the clock that paints the Mac menu's own template as pages (`lib/tray-popover-model.js`),
+in the SYSTEM light/dark mode, loaded from disk (`src/public/next/tray-popover.html`, so it works
+while the server restarts), sandboxed in its own denied session with a strict CSP. A **right click**
+opens the v4.0.1 native menu. main.js publishes a payload from the snapshot in memory, then
+toggles the popover at `tray.getBounds()`; Quit is `app.quit()` (never `app.exit()`). If the popover
+cannot be created, load, or paint within 1 s, that click pops the native menu and curator.log gets
+one line; after two failures the left click is the native menu for the session.
+
+**CI self-test** (`desktop-dmg.yml` `windows` job, step *The tray popover self-test*):
+`scripts/ci-win-app.mjs popover-selftest` installs the build, launches it with isolated data, the
+tray on and `CURATOR_TEST_TRAY_POPOVER_SELFTEST=1` (honoured only alongside
+`CURATOR_TEST_USER_DATA_DIR`), and greps `tray-popover-selftest: pass` from curator.log: the app
+showed the popover, it was visible and inside the work area, the page painted rows, the console
+reported no CSP refusal, and a real Esc hid it.
+
+### Seen on a real PC
+
+The in-app update 4.0.0 → 4.0.1 was confirmed on a real PC on 2026-11-21 (owner): it installed and
+reopened, with no security prompt.
+
 ### Not proven on a real PC yet
 
 The offline suites run every decision above with injected platform and effects, and the CI jobs on
 GitHub's `windows-latest` runner build, launch and exercise it. A person on a real PC has not yet
-seen: the SmartScreen wording on first install, whether an in-app update shows any SmartScreen
-or Defender prompt, the real shortcuts and install folder, the tray icon on HiDPI and whether
-`mouse-enter` fires on a Windows tray (nothing relies on it), Claude Desktop (classic and Store)
+seen: the SmartScreen wording on first install, the real shortcuts and install folder, the tray
+icon on HiDPI and whether `mouse-enter` fires on a Windows tray (nothing relies on it); the tray
+POPOVER on a real desktop (focus landing on it after a tray click, its place above the clock and
+in the `^` overflow, mixed-DPI displays, Win11 corners and shadow, Narrator reading its pages,
+clicking the icon while it is open); Claude Desktop (classic and Store)
 starting the exe over stdio, a full in-app update with a real download and relaunch, and the x64
 build on Windows on ARM.
 

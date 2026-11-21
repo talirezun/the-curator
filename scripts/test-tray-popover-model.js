@@ -366,7 +366,11 @@ function census(storeName, summaryFn) {
     if (typeof item.toolTip === 'string') {
       for (const l of item.toolTip.split('\n').map((x) => x.trim()).filter(Boolean)) {
         if (l === label.trim() || l === (item.sublabel || '').trim()) continue;
-        if (!details.has(l)) missing.push('detail: ' + l);
+        // A line opening with the row's own label (the Knowledge bars, v4.1.0) is shown without
+        // that opening: the label is on the row, the rest in Details — both facts still on the page.
+        const lead = label.trim() + ' · ';
+        const rest = label.trim() && l.startsWith(lead) ? l.slice(lead.length).trim() : null;
+        if (!details.has(l) && !(rest && details.has(rest) && strings.has(label))) missing.push('detail: ' + l);
       }
     }
   }
@@ -599,6 +603,45 @@ for (const [name, fn] of Object.entries(STORES)) {
   const ids = odd.payload.pages.root.rows.map((r) => r.id || null);
   ok(ids[0] !== long && ids[0].length <= 200 && ids[1] === 'dup' && ids[2] !== 'dup' && ids[3] && ids[4] === null,
     `too-long, duplicate and missing ids are replaced; a disabled item is a statement (${JSON.stringify(ids)})`);
+}
+
+section('§10 the Knowledge page: a bar row\'s Details do not repeat the row\'s label (v4.1.0, P5)');
+{
+  const m = winModel(richSummary());
+  const p = pop.buildTrayPopover(m, { theme: 'dark', ...NOOPS }).payload;
+  const knowledge = Object.values(p.pages).find((pg) => pg.rows.some((r) => r.kind === 'action' && /^tray-domain-/.test(r.id)));
+  ok(!!knowledge, `CONTROL — the Knowledge page exists (${knowledge && knowledge.title})`);
+  const bars = knowledge ? knowledge.rows.filter((r) => r.kind === 'action' && /^tray-domain-/.test(r.id)) : [];
+  ok(bars.length >= 1, `CONTROL — it has bar rows (${bars.length})`);
+  const repeats = [];
+  for (const r of bars) {
+    const g = knowledge.details.find((d) => d.label === r.label);
+    if (!g) { repeats.push(`${r.label}: no Details group`); continue; }
+    for (const l of g.lines) if (l.startsWith(r.label + ' · ') || l === r.label) repeats.push(`${r.label}: ${l}`);
+  }
+  eq(repeats, [], 'no bar row\'s Details line opens with the row\'s own label');
+  const work = bars.find((r) => r.label === 'work · 767 pages');
+  const workLines = work ? knowledge.details.find((d) => d.label === work.label).lines : null;
+  eq(workLines, ['400 entities · 300 concepts · 67 summaries · Bar: against the largest domain, work (767 pages)'],
+    'the "work · 767 pages" row: its Details carry the rest of the line, word for word');
+  // The MAC (and the native Windows menu) keep the full tooltip: only the popover's view changed.
+  const macTip = (() => {
+    const k = macTemplate(macModel(richSummary())).find((i) => i && i.id === 'tray-knowledge');
+    const d = k && k.submenu.find((i) => i && i.label === 'work · 767 pages');
+    return d ? d.toolTip : null;
+  })();
+  eq(macTip, 'work · 767 pages · 400 entities · 300 concepts · 67 summaries · Bar: against the largest domain, work (767 pages)',
+    'the Mac template\'s tooltip for that row is unchanged (the full line)');
+  // tipLines, the rule itself
+  const t = (label, toolTip, sublabel) => pop.tipLines({ label, toolTip, ...(sublabel ? { sublabel } : {}) });
+  eq(t('notes · 687 pages', 'notes · 687 pages · Bar: x'), ['Bar: x'], 'a line opening with "<label> · " loses that opening');
+  eq(t('notes', 'notes'), [], 'a line equal to the label is still dropped');
+  eq(t('notes', 'notes · '), [], '…and one that is only the label and the separator says nothing new');
+  eq(t('work', 'workshop · 3 pages'), ['workshop · 3 pages'], 'a label that is only a prefix of the first word is NOT stripped');
+  eq(t('a', 'b · a · c'), ['b · a · c'], 'the label in the middle of a line is NOT stripped');
+  eq(t('x', 'x · one\nx · two\nthree'), ['one', 'two', 'three'], 'each line on its own');
+  eq(t('', ' · y'), ['· y'], 'an empty label strips nothing');
+  eq(pop.tipLines(null), [], 'no item → no lines');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -77,15 +77,26 @@ function sublabelOf(item) {
   return typeof item.sublabel === 'string' && item.sublabel.trim() ? item.sublabel.trim() : null;
 }
 
+/** The separator a one-line tooltip joins its facts with (tray-model.js). */
+export const TIP_CLAUSE_SEPARATOR = ' · ';
+
 /** An item's tooltip as lines, minus lines its own label or sublabel already
  *  says (the same rule the native Windows menu uses, without its line cap:
- *  the popover scrolls). */
-function tipLines(item) {
+ *  the popover scrolls). A line that OPENS with the row's own label as its
+ *  first clauses ("notes · 687 pages · Bar: …" under the row "notes · 687
+ *  pages", the Knowledge page) loses that repeated opening: the Details block
+ *  sits under the row's label, so it would say it twice. Nothing else in the
+ *  line is touched. */
+export function tipLines(item) {
+  if (!item || typeof item !== 'object') return [];
   const tip = typeof item.toolTip === 'string' ? item.toolTip.trim() : '';
   if (!tip) return [];
   const label = str(item.label).trim();
   const sub = sublabelOf(item) || '';
-  return tip.split('\n').map((l) => l.trim()).filter((l) => l && l !== label && l !== sub);
+  const lead = label ? label + TIP_CLAUSE_SEPARATOR : null;
+  return tip.split('\n').map((l) => l.trim())
+    .map((l) => (!lead ? l : (l.startsWith(lead) ? l.slice(lead.length).trim() : (l === lead.trim() ? '' : l))))
+    .filter((l) => l && l !== label && l !== sub);
 }
 
 function dataUrl(buf) {

@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, nativeImage, nativeTheme, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, systemPreferences } from 'electron';
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, watch as fsWatch } from 'node:fs';
 import path from 'node:path';
@@ -80,6 +80,12 @@ import {
 } from './lib/window-state.js';
 import { buildTrayModel, liveExpiresInMs, TRAY_FETCH_ROWS } from './lib/tray-model.js';
 import { buildTrayMenuTemplate, trayToolTip, ID_ROW_RESUME, ID_ROW_HANDOFF, ID_ROW_REVEAL } from './lib/tray-menu.js';
+import { createTrayPopover } from './lib/tray-popover.js';
+import { buildTrayPopover, createPopoverActionGate, POPOVER_IMAGE_SCALES } from './lib/tray-popover-model.js';
+import {
+  appendDesktopLogLine, popoverSelfTestRequested, runTrayPopoverSelfTest,
+  popoverLeftClick, popoverWantsRepaint, popoverFallbackHandler,
+} from './lib/tray-popover-shell.js';
 import { composeResumePrompt, composeHandoffMarkdown, stateRelPath } from './lib/resume-prompt.js';
 import { decideRemoteCheck, remoteAnswerIsRenderable } from './lib/tray-remote.js';
 import { trayIconPngs } from './lib/tray-icon.js';
@@ -208,6 +214,13 @@ const TRAY_UI = trayInteraction(process.platform);
 /** Windows: the tray menu is POPPED on a click rather than set on the
  *  tray, so the freshest build is kept here. Unused on darwin. */
 let trayMenu = null;
+/** Windows (v4.1.0): the tray POPOVER (lib/tray-popover.js) a left click
+ *  opens, and the action gate its payloads are published through. Both null
+ *  on darwin, and whenever the tray is off. */
+let trayPopover = null;
+let trayPopoverGate = null;
+/** The CI self-test runs once per process (lib/tray-popover-shell.js). */
+let trayPopoverSelfTestStarted = false;
 /** Windows: the session is ending (log off / shut down) — a close must not be
  *  turned into a hide then. */
 let sessionEnding = false;
@@ -1259,11 +1272,7 @@ function renderTrayFromSnapshot() {
   // Clamped on Windows only (127 units, at a word); darwin: unchanged.
   tray.setToolTip(clampTrayToolTip(trayToolTip(model), process.platform));
   const menu = Menu.buildFromTemplate(buildTrayMenuTemplate(model, {
-    onOpenScope: openScopeInApp,
-    onOpenMemory: () => openMemoryView(null),
-    onOpenApp: () => revealWindow(),
-    onOpenSettings: () => { openSettingsView(); },
-    onRowAction: (row, action) => { void runRowAction(row, action); },
+    ...trayMenuHandlers(),
     makeIcon: menuImage,
     platform: process.platform,
   }));
@@ -1273,12 +1282,87 @@ function renderTrayFromSnapshot() {
   // never set there.
   if (TRAY_UI.setContextMenu) tray.setContextMenu(menu);
   else trayMenu = menu;
+  // Windows: a popover on screen (or about to be) is repainted from the same
+  // snapshot, so a save or a refresh shows in it at once. A hidden one is not
+  // rebuilt on every render: the left click publishes before it shows.
+  if (popoverWantsRepaint(trayPopover)) publishPopover();
 
   // THE ONE-SHOT CORRECTOR, NOT A TICK. `liveExpiresInMs` is null unless the
   // glyph is `live`, so in the state the process is in almost all of the time
   // this arms nothing at all. When it does fire it re-renders from this same
   // snapshot — no index read, no filesystem, no network.
   if (glyphExpiry) glyphExpiry.arm(liveExpiresInMs(model));
+}
+
+/** The five handlers the tray widget's items run — the SAME functions for the
+ *  native menu (every platform) and the Windows popover, so a press in either
+ *  does exactly the same thing. */
+function trayMenuHandlers() {
+  return {
+    onOpenScope: openScopeInApp,
+    onOpenMemory: () => openMemoryView(null),
+    onOpenApp: () => revealWindow(),
+    onOpenSettings: () => { openSettingsView(); },
+    onRowAction: (row, action) => { void runRowAction(row, action); },
+  };
+}
+
+/**
+ * Windows: build the popover's payload from the snapshot in memory (no I/O)
+ * and hand it to the controller. The pictures and the page are drawn for the
+ * SYSTEM mode (owner D3) — `shouldUseDarkColorsForSystemIntegratedUI`, as
+ * Windows' own tray flyouts follow it — never `menuAppearanceIsDark()`, which
+ * reads the app's pinned dark on win32.
+ */
+function publishPopover() {
+  if (!trayPopover || !trayPopoverGate) return;
+  let dark = false;
+  try { dark = nativeTheme.shouldUseDarkColorsForSystemIntegratedUI === true; } catch { dark = false; }
+  try {
+    const model = buildTrayModel(traySnapshot, {
+      dark,
+      identityHex,
+      platform: process.platform,
+      imageScales: POPOVER_IMAGE_SCALES,
+    });
+    const built = buildTrayPopover(model, {
+      theme: dark ? 'dark' : 'light',
+      appName: 'The Curator',
+      ...trayMenuHandlers(),
+    });
+    trayPopover.update(trayPopoverGate.publish(built));
+  } catch (err) {
+    trayLog('tray-popover: the payload could not be built: ' + ((err && err.message) || String(err)));
+  }
+}
+
+/** Windows, a LEFT click: publish, then open or close the popover at the icon. */
+function showTrayPopover() {
+  if (!tray || tray.isDestroyed()) return;
+  popoverLeftClick({
+    popover: trayPopover,
+    publish: publishPopover,
+    popMenu: popTrayMenu,
+    trayBounds: () => tray.getBounds(),
+  });
+}
+
+/** One line to curator.log (the popover's fallbacks; the CI self-test). */
+function trayLog(line) {
+  appendDesktopLogLine({ logsDir, line, fs: { appendFileSync, mkdirSync } });
+}
+
+/** CI only (windows-latest): see lib/tray-popover-shell.js. Never on a person's app. */
+function maybeRunPopoverSelfTest() {
+  if (trayPopoverSelfTestStarted || !trayPopover) return;
+  if (!popoverSelfTestRequested(process.env, process.platform)) return;
+  trayPopoverSelfTestStarted = true;
+  void runTrayPopoverSelfTest({
+    popover: trayPopover,
+    publish: publishPopover,
+    getTrayBounds: () => { try { return tray && !tray.isDestroyed() ? tray.getBounds() : undefined; } catch { return undefined; } },
+    workAreaFor: (b) => { try { return screen.getDisplayMatching(b).workArea; } catch { return null; } },
+  }).then((r) => trayLog(r.line));
 }
 
 /** Re-read the index, then render. This is the only thing here that touches
@@ -1607,10 +1691,40 @@ function startTray() {
   // from the snapshot in memory first so every age in it is exact when it
   // appears, then re-reads the index and asks about the other machines for
   // the next open — the latency contract the Mac menu has.
+  //
+  // WINDOWS (v4.1.0, owner D1): a LEFT click publishes the popover's payload
+  // from memory and toggles it at the icon; a RIGHT click pops the native
+  // menu. Each then re-reads the index and asks about the other machines.
+  if (TRAY_UI.leftClick === 'popover') {
+    trayPopoverGate = createPopoverActionGate();
+    try {
+      trayPopover = createTrayPopover({
+        BrowserWindow, screen, session, ipcMain,
+        gate: trayPopoverGate,
+        pagePath: path.join(APP_ROOT, 'src', 'public', 'next', 'tray-popover.html'),
+        preloadPath: path.join(__dirname, 'lib', 'tray-popover-preload.js'),
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        // NEVER app.exit(): `before-quit` carries the write-status guard.
+        quit: () => app.quit(),
+        // A log-off closes every window: the popover must not hold it open.
+        isQuitting: () => quitAuthorised || sessionEnding,
+        // This click gets the v4.0.1 native menu instead — except during the
+        // CI self-test, where a popped native menu would block the runner.
+        onFallback: popoverFallbackHandler({ popMenu: popTrayMenu, selfTestRunning: () => trayPopoverSelfTestStarted }),
+        log: trayLog,
+        getTrayBounds: () => { try { return tray && !tray.isDestroyed() ? tray.getBounds() : undefined; } catch { return undefined; } },
+      });
+    } catch (err) {
+      trayPopover = null;
+      trayLog('tray-popover: could not be created (the left click opens the native menu): ' + ((err && err.message) || String(err)));
+    }
+  }
   const clicks = trayClickHandlers(process.platform, {
     popMenu: popTrayMenu,
     refresh: () => { refreshTraySummary(); },
     checkRemote: (trigger) => { maybeCheckRemote(trigger); },
+    ...(TRAY_UI.leftClick === 'popover' ? { showPopover: showTrayPopover } : {}),
   });
   for (const [event, handler] of Object.entries(clicks)) tray.on(event, handler);
 
@@ -1623,20 +1737,30 @@ function startTray() {
   });
   stateWatcher.start();
 
-  refreshTraySummary();
+  if (trayPopover) refreshTraySummary().then(maybeRunPopoverSelfTest, () => {});
+  else refreshTraySummary();
 }
 
 /** Windows: rebuild the menu from memory (no I/O) and pop it at the cursor. */
 function popTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
+  if (trayPopover) trayPopover.hide();
   renderTrayFromSnapshot();
   if (!trayMenu) return;
   try { tray.popUpContextMenu(trayMenu); } catch { /* a tray handler must not take the process with it */ }
 }
 
+/** Windows: close the popover's window and its IPC for good. */
+function destroyTrayPopover() {
+  if (trayPopover) { try { trayPopover.destroy(); } catch { /* best effort */ } }
+  trayPopover = null;
+  trayPopoverGate = null;
+}
+
 /** Tear the tray down, including everything it was paying for. */
 function stopTray() {
   trayMenu = null;
+  destroyTrayPopover();
   nativeTheme.removeListener('updated', renderTrayFromSnapshot);
   if (themeNotificationId !== null && themeNotificationId !== undefined) {
     try { systemPreferences.unsubscribeNotification(themeNotificationId); } catch { /* best effort */ }
@@ -1817,6 +1941,9 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
+  // Windows: the app's window coming forward hides the tray popover (except
+  // right after it was shown — the controller's MAIN_FOCUS_GRACE_MS).
+  mainWindow.on('focus', () => { if (trayPopover) trayPopover.mainWindowFocused(); });
 
   // ── Remember size and position ───────────────────────────────────────────
   //
@@ -1999,7 +2126,7 @@ function createWindow() {
 // can be tested without a window. Read that file for why `safeToQuit: null`
 // is its own case rather than being folded into "safe" or "busy".
 app.on('before-quit', (event) => {
-  if (quitAuthorised) return;
+  if (quitAuthorised) { destroyTrayPopover(); return; }
   event.preventDefault();
   if (quitCheckInFlight) return;
   quitCheckInFlight = true;
