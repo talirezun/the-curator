@@ -59,6 +59,30 @@ import {
 export const DOT_POINTS = 13;
 
 /**
+ * ── EXTRA SCALES, OPT-IN (the Windows tray popover, v4.1.0) ────────────────
+ *
+ * A menu takes a 1x and a 2x representation, and that is all every caller
+ * before the popover ever asked for. The popover draws these pictures in a web
+ * page on displays at 125 %, 150 %, 200 % and 300 %, and at 2x CSS size for the
+ * pulse strip (D6), where a 2x buffer is soft. So a caller MAY pass
+ * `opts.scales` — integer scale factors — and the spec then also carries
+ * `buffers: [{scale, buffer}]`, one PNG per scale, ascending.
+ *
+ * ABSENT, EMPTY OR UNUSABLE → `null` here, and the spec is byte-identical to
+ * the one every earlier release produced: no `buffers` key at all. The Mac
+ * menu never passes scales. Integers only, because every canvas in this
+ * folder is drawn in whole points times an integer factor; 1..8, deduplicated.
+ * Exported so the strip and the bars read the option through ONE rule.
+ */
+export const MAX_IMAGE_SCALE = 8;
+export function normaliseImageScales(scales) {
+  if (!Array.isArray(scales)) return null;
+  const out = [...new Set(scales.filter((s) => Number.isInteger(s) && s >= 1 && s <= MAX_IMAGE_SCALE))]
+    .sort((a, b) => a - b);
+  return out.length ? out : null;
+}
+
+/**
  * Every colour drawn by this module, per theme. MEASURED, NOT PICKED: each
  * clears 3:1 (WCAG 2.2 1.4.11, the non-text floor) against every background
  * of its theme's band in rgba-png.js's `MENU_BG_BAND` — the suite recomputes
@@ -182,6 +206,7 @@ export function dotCanvas(tier, scale, palette) {
 export function renderRecencyDot(tier, opts) {
   if (typeof tier !== 'string' || !Object.prototype.hasOwnProperty.call(DOT_INK, tier)) return null;
   const palette = dotPalette(opts);
+  const scales = normaliseImageScales(opts && opts.scales);
   return {
     buffer: encodeRgbaPng(dotCanvas(tier, 1, palette)),
     // TWO representations: a 1x-only image is soft on every Retina Mac, and a
@@ -194,6 +219,7 @@ export function renderRecencyDot(tier, opts) {
     // never read by Electron.
     kind: 'dot',
     tier,
+    ...(scales ? { buffers: scales.map((scale) => ({ scale, buffer: encodeRgbaPng(dotCanvas(tier, scale, palette)) })) } : {}),
   };
 }
 

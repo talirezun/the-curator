@@ -1531,6 +1531,28 @@ export function clockText(date) {
   return p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A stored save time as a person reads it: "21 Nov 2026, 13:37", in this
+ * computer's LOCAL time zone, 24-hour, English month (the app's own words are
+ * English). Used on Windows only (D5) — the native fallback menu and the
+ * popover; the Mac keeps the raw stamp. Exported so the Windows menu tidy
+ * (tray-menu-win.js) and the suites read the one format.
+ *
+ * Nothing is lost when it cannot parse: a string that is not a date comes
+ * back exactly as given (the fact stays, only unprettified); anything that is
+ * not a non-empty string → null.
+ */
+export function writtenAtText(iso) {
+  if (typeof iso !== 'string' || !iso.trim()) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', '
+    + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
 // ── The model ───────────────────────────────────────────────────────────────
 
 function readScopes(summary) {
@@ -1864,6 +1886,10 @@ export function staleDocsFull(name, stale, unchecked = 0, host = 'this Mac') {
  * @param {number} [opts.maxRows]  a SHRINK-ONLY seam: clamped to `MAX_ROWS`,
  *                                 never able to raise the display cap.
  * @param {boolean} [opts.dark]    the menu's appearance, read by main.js.
+ * @param {string}  [opts.platform] 'win32' → "this PC" words and the friendly
+ *                                 `written:` time (D5); anything else: the Mac's.
+ * @param {number[]} [opts.imageScales] extra integer picture scales for the
+ *                                 popover (`buffers` on each spec); absent → none.
  * @returns {object} the model consumed by tray-menu.js.
  */
 export function buildTrayModel(summary, opts = {}) {
@@ -1883,23 +1909,35 @@ export function buildTrayModel(summary, opts = {}) {
   // "this Mac" / "this PC". Absent or anything but 'win32' keeps the Mac
   // wording, so every pre-Windows caller renders byte-identical text.
   const host = hostNoun(opts.platform);
+  // D5 (owner, 2026-11-21): the row's `written:` line is a friendly local
+  // time ("21 Nov 2026, 13:37") on Windows only — the native fallback menu
+  // and the popover. Every other platform keeps the stored ISO text verbatim,
+  // so the Mac model is byte-identical.
+  const writtenWords = opts.platform === 'win32' ? writtenAtText : (iso) => iso;
 
   // ── THE RENDERERS, INJECTABLE AND WRAPPED ──────────────────────────────
   // A renderer that throws must cost a picture, never the menu.
   const dotFn = typeof opts.renderDot === 'function' ? opts.renderDot : _renderRecencyDot;
   const stripFn = typeof opts.renderStrip === 'function' ? opts.renderStrip : _renderPulseStrip;
+  // ── EXTRA PICTURE SCALES, OPT-IN (the Windows tray popover) ────────────
+  // `imageScales` reaches each renderer as `scales`, and each renderer then
+  // adds `buffers: [{scale, buffer}]` to its spec (see menu-dots.js
+  // `normaliseImageScales`). ABSENT — every native menu, Mac and Windows —
+  // the renderers are called with exactly `{ dark }`, as before, so the specs
+  // and therefore the Mac model are byte-identical.
+  const scaleOpt = Array.isArray(opts.imageScales) ? { scales: opts.imageScales.slice() } : null;
   const renderDot = (tier) => {
     if (!dotFn) return null;
-    try { return dotFn(tier, { dark }) || null; } catch { return null; }
+    try { return dotFn(tier, scaleOpt ? { dark, ...scaleOpt } : { dark }) || null; } catch { return null; }
   };
   const renderStrip = (raw) => {
     if (!stripFn) return null;
-    try { return stripFn(raw, { dark }) || null; } catch { return null; }
+    try { return stripFn(raw, scaleOpt ? { dark, ...scaleOpt } : { dark }) || null; } catch { return null; }
   };
   const barFn = typeof opts.renderBar === 'function' ? opts.renderBar : _renderGutterBar;
   const renderBar = (o) => {
     if (!barFn) return null;
-    try { return barFn({ ...o, dark }) || null; } catch { return null; }
+    try { return barFn(scaleOpt ? { ...o, dark, ...scaleOpt } : { ...o, dark }) || null; } catch { return null; }
   };
   // The identity colour is the kit's (`identityHex(index, theme)` from
   // src/brain/identity-palette.js), handed in by main.js. Absent, a domain's
@@ -2180,7 +2218,7 @@ export function buildTrayModel(summary, opts = {}) {
     r.model ? 'model: ' + r.model : null,
     r.kind === 'trimmed' ? 'this save did not all fit — part of the handoff was not stored' : null,
     r.headline && r.headline.length > 0 ? r.headline : null,
-    r.ageSource === 'agent' && r.writtenAt ? 'written: ' + r.writtenAt : null,
+    r.ageSource === 'agent' && r.writtenAt ? 'written: ' + writtenWords(r.writtenAt) : null,
     r.ageSource === 'file'
       ? 'this age is the file timestamp on this disk, which git rewrites on checkout, not the agent’s clock'
       : null,

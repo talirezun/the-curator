@@ -174,6 +174,13 @@ export const ID_EMPTY = 'tray-empty';
 export const ID_QUIT = 'tray-quit';
 export const ID_HEADER_DOMAINS = 'tray-header-domains';
 
+/** On Windows a top-level leaf that carries facts becomes a parent, and its
+ *  own action moves into it as the first item, worded for what it does —
+ *  the pulse opens Project Context, not the app at large. Keyed by item id;
+ *  an id not listed gets lib/tray-menu-win.js's `WIN_OPEN_LABEL`. Shared by
+ *  the native Windows menu and the tray popover, so the two say one thing. */
+export const WIN_LEAF_ACTION_LABELS = Object.freeze({ [ID_PULSE]: 'Open Project Context…' });
+
 /** The empty state is the first thing a new user sees, and it must not read
  *  like an error. It says what the surface is for and how something gets into
  *  it — nothing else. It is also why the whole feature is off by default: on a
@@ -340,6 +347,12 @@ export function buildTrayMenuTemplate(model, o = {}) {
     // 'win32' rewords one action ("Show current.md in File Explorer"); absent
     // or anything else keeps the Mac words, so pre-Windows callers are unchanged.
     platform,
+    // win32 only: `false` returns the FULL template (sublabels, tooltips,
+    // headers) with the Windows words, for the tray popover, which paints that
+    // template itself (lib/tray-popover-model.js). Absent or anything but
+    // `false`: the native Windows menu's adaptation runs, as before. No
+    // effect on any other platform.
+    adaptForWindows,
   } = o;
   const actions = rowActionsFor(platform);
 
@@ -538,8 +551,8 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // A top-level leaf that becomes a parent there keeps its action as the
   // submenu's first item, worded for what it does: the pulse opens Project
   // Context, not the app at large.
-  return platform === 'win32'
-    ? adaptTrayMenuForWindows(template, { actionLabels: { [ID_PULSE]: 'Open Project Context…' } })
+  return platform === 'win32' && adaptForWindows !== false
+    ? adaptTrayMenuForWindows(template, { actionLabels: WIN_LEAF_ACTION_LABELS })
     : template;
 }
 

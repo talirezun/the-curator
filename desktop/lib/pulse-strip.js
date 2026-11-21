@@ -142,6 +142,16 @@ import {
   createCanvas, fillRect, encodeRgbaPng, hexToRgb,
 } from './rgba-png.js';
 
+/** Opt-in extra scales, the same rule as menu-dots.js `normaliseImageScales`
+ *  (integers 1..8, deduplicated, ascending; anything else → null → no
+ *  `buffers` key, byte-identical to every earlier release). A local copy, not
+ *  an import: a missing sibling module must cost a picture, never this one. */
+function imageScalesOf(scales) {
+  if (!Array.isArray(scales)) return null;
+  const out = [...new Set(scales.filter((s) => Number.isInteger(s) && s >= 1 && s <= 8))].sort((a, b) => a - b);
+  return out.length ? out : null;
+}
+
 // ── Geometry, in POINTS ─────────────────────────────────────────────────────
 //
 // Every dimension is in points and multiplied by the scale factor, so the 1x
@@ -637,6 +647,7 @@ export function renderPulseStrip(pulse, opts) {
   if (!cells.length) return null;
   const palette = stripPalette(opts);
   const perDay = cellsPerDay(pulse);
+  const scales = imageScalesOf(opts && opts.scales);
 
   return {
     buffer: encodeRgbaPng(stripCanvas(cells, 1, palette, perDay)),
@@ -651,6 +662,9 @@ export function renderPulseStrip(pulse, opts) {
     // drawn as they are — the confusion that produced the "barely visible"
     // report in the first place.
     template: false,
+    // Opt-in extra scales (see menu-dots.js normaliseImageScales): absent,
+    // the spec is byte-identical to every earlier release's.
+    ...(scales ? { buffers: scales.map((scale) => ({ scale, buffer: encodeRgbaPng(stripCanvas(cells, scale, palette, perDay)) })) } : {}),
   };
 }
 
