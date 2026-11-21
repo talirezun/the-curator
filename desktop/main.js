@@ -60,10 +60,10 @@ import { createPickFolder } from './lib/folder-dialog.js';
 import { runCommandWith } from './lib/run-command.js';
 import {
   appUserModelIdFor, singleInstanceMessage, closeHidesToTray, attachDialogToWindow,
-  trayInteraction, clampTrayToolTip, aboutDialogOptions, updaterSupported, afterStartNotice,
+  trayInteraction, trayClickHandlers, clampTrayToolTip, aboutDialogOptions, updaterSupported, afterStartNotice,
   closeAsksQuitFirst, appFilesIncompleteBox,
 } from './lib/shell-platform.js';
-import { winTrayIconPngs } from './lib/tray-icon-win.js';
+import { winTrayIconPngs, trayIconKey } from './lib/tray-icon-win.js';
 import { resolveInstallerRelease } from './lib/update-release.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
@@ -205,7 +205,7 @@ let domainsDirForWatch = null;
  *  this is the pre-existing behaviour, and every darwin line below that reads
  *  it takes the branch that was there before. */
 const TRAY_UI = trayInteraction(process.platform);
-/** Windows: the tray menu is POPPED on right-click rather than set on the
+/** Windows: the tray menu is POPPED on a click rather than set on the
  *  tray, so the freshest build is kept here. Unused on darwin. */
 let trayMenu = null;
 /** Windows: the session is ending (log off / shut down) — a close must not be
@@ -1248,9 +1248,13 @@ function renderTrayFromSnapshot() {
     platform: process.platform,
   });
 
-  if (model.glyph !== trayGlyph) {
-    trayGlyph = model.glyph;
-    tray.setImage(trayImage(model.glyph));
+  // darwin: the key IS the glyph state, as before. win32: the state and the
+  // taskbar's tone, so a light/dark taskbar switch redraws the icon as well.
+  const darkTaskbar = taskbarIsDark();
+  const iconKey = trayIconKey(process.platform, model.glyph, darkTaskbar);
+  if (iconKey !== trayGlyph) {
+    trayGlyph = iconKey;
+    tray.setImage(trayImage(model.glyph, darkTaskbar));
   }
   // Clamped on Windows only (127 units, at a word); darwin: unchanged.
   tray.setToolTip(clampTrayToolTip(trayToolTip(model), process.platform));
@@ -1264,8 +1268,9 @@ function renderTrayFromSnapshot() {
     platform: process.platform,
   }));
   // macOS: the menu is SET on the tray, as it always was. Windows: it is kept
-  // and POPPED on right-click (startTray), so it is rebuilt immediately before
-  // it is shown — see trayInteraction() for why it is never set there.
+  // and POPPED on a left or right click (startTray), so it is rebuilt
+  // immediately before it is shown — see trayInteraction() for why it is
+  // never set there.
   if (TRAY_UI.setContextMenu) tray.setContextMenu(menu);
   else trayMenu = menu;
 
@@ -1344,14 +1349,27 @@ function menuImage(spec) {
   }
 }
 
+/**
+ * WINDOWS: is the TASKBAR dark? `shouldUseDarkColorsForSystemIntegratedUI` is
+ * the system theme on Windows (the taskbar's), documented as distinct from the
+ * app theme boot() pins dark. null on darwin, where macOS tints the template
+ * glyph itself. A read that throws counts as dark, the Windows default.
+ * Read on every render (a registry read, no I/O worth the name), so a taskbar
+ * switch is picked up even if `nativeTheme`'s `updated` never fires for it.
+ */
+function taskbarIsDark() {
+  if (TRAY_UI.iconTheme !== 'system-integrated-ui') return null;
+  try { return nativeTheme.shouldUseDarkColorsForSystemIntegratedUI !== false; } catch { return true; }
+}
+
 /** The template image for a glyph state. Generated, not shipped — see
  *  lib/tray-icon.js for why, and for why it is greyscale+alpha. */
-function trayImage(state) {
-  // WINDOWS: a coloured icon carrying the same one bit (lib/tray-icon-win.js),
-  // at 16/24/32 px, and NEVER a template — Windows does not tint, so a black
-  // template glyph would be invisible on the default dark taskbar.
+function trayImage(state, darkTaskbar) {
+  // WINDOWS: the Mac glyph — an EMPTY ring idle, a filled centre live — drawn
+  // in the taskbar's ink (lib/tray-icon-win.js), at 16/24/32 px, and NEVER a
+  // template: Windows does not tint, so the ink is chosen there instead.
   if (!TRAY_UI.templateImage) {
-    const win = winTrayIconPngs(state);
+    const win = winTrayIconPngs(state, { darkTaskbar });
     const [first, ...rest] = win.reps;
     const wimg = nativeImage.createFromBuffer(first.buffer, { scaleFactor: first.scale });
     for (const r of rest) wimg.addRepresentation({ scaleFactor: r.scale, buffer: r.buffer });
@@ -1531,8 +1549,9 @@ async function openMemoryView(project) {
 /** Create the tray icon and everything that keeps it current. */
 function startTray() {
   if (tray) return;
-  trayGlyph = 'idle';
-  tray = new Tray(trayImage('idle'));
+  const darkTaskbarAtStart = taskbarIsDark();
+  trayGlyph = trayIconKey(process.platform, 'idle', darkTaskbarAtStart);
+  tray = new Tray(trayImage('idle', darkTaskbarAtStart));
   tray.setToolTip('The Curator');
 
   glyphExpiry = createExpiryTimer({ onExpire: renderTrayFromSnapshot });
@@ -1581,21 +1600,19 @@ function startTray() {
     themeNotificationId = systemPreferences.subscribeNotification(
       'AppleInterfaceThemeChangedNotification', () => renderTrayFromSnapshot());
   } catch { themeNotificationId = null; }
-  if (TRAY_UI.leftClick === 'menu') {
-    // macOS, unchanged: either click opens the menu that is set on the tray.
-    tray.on('click', () => { refreshTraySummary(); maybeCheckRemote('click'); });
-    tray.on('right-click', () => { refreshTraySummary(); maybeCheckRemote('right-click'); });
-  } else {
-    // WINDOWS conventions (lib/shell-platform.js trayInteraction): a LEFT click
-    // shows the window — a deliberate act, so the index is re-read, but it is
-    // not a menu open and does not ask GitHub. A RIGHT click rebuilds the menu
-    // from the snapshot in memory and pops it, so every age in it is exact
-    // when it appears without relying on `mouse-enter` firing on a Windows
-    // tray; the read and the remote check then run for the next open, exactly
-    // the latency contract the Mac menu has.
-    tray.on('click', () => { revealWindow(); refreshTraySummary(); });
-    tray.on('right-click', () => { popTrayMenu(); refreshTraySummary(); maybeCheckRemote('right-click'); });
-  }
+  // THE CLICKS. Built by lib/shell-platform.js trayClickHandlers(), where the
+  // suite executes them. macOS, unchanged: either click re-reads the index and
+  // asks about the other machines; the menu that is SET on the tray opens by
+  // itself. WINDOWS (owner, 2026-11-21): either click POPS the menu, rebuilt
+  // from the snapshot in memory first so every age in it is exact when it
+  // appears, then re-reads the index and asks about the other machines for
+  // the next open — the latency contract the Mac menu has.
+  const clicks = trayClickHandlers(process.platform, {
+    popMenu: popTrayMenu,
+    refresh: () => { refreshTraySummary(); },
+    checkRemote: (trigger) => { maybeCheckRemote(trigger); },
+  });
+  for (const [event, handler] of Object.entries(clicks)) tray.on(event, handler);
 
   stateWatcher = createStateWatcher({
     roots: trayWatchRoots(),

@@ -23,11 +23,28 @@
  * draws it:
  *
  *   sublabel → appended to the label, after " — ".
- *   toolTip  → the detail lines go INTO a submenu, as disabled items, under a
- *              separator. An item that already has a submenu gains them at the
- *              end; a leaf becomes a submenu parent, and if it had an action,
- *              that action becomes the submenu's first item ("Open in The
- *              Curator"), so nothing that was clickable stops being clickable.
+ *   toolTip  → the detail lines go into a submenu, as disabled items under a
+ *              separator — hovering a Windows submenu parent opens it, which
+ *              is the nearest thing a Windows menu has to a hover tooltip:
+ *
+ *              · an item that already has a submenu gains them at its end;
+ *              · a LEAF INSIDE A SUBMENU (a domain's bar, a tool's strip)
+ *                STAYS A LEAF with its own click, exactly as on the Mac, and
+ *                its lines join the end of the submenu it sits in (v4.0.1:
+ *                v4.0.0 turned each one into a parent whose first item was a
+ *                generic "Open in The Curator" — on a domain row that opened
+ *                Settings, and the menu no longer looked like the Mac's);
+ *              · a TOP-LEVEL leaf (the save pulse, a clipped notice) becomes a
+ *                parent, and its action becomes the submenu's first item,
+ *                worded for what it really does (`actionLabels` by id,
+ *                default WIN_OPEN_LABEL), so nothing clickable stops being
+ *                clickable.
+ *
+ *              A line the same submenu already shows (a row's header, its
+ *              own second line) is not repeated; when every leaf in one
+ *              submenu explains itself with the same sentence after its own
+ *              label ("Bar: against the largest domain, …"), that sentence is
+ *              shown once.
  *   header   → a disabled caption item.
  *
  * And one thing Windows draws that macOS does not: `&` in a label is a
@@ -50,49 +67,125 @@ export function escapeWinMnemonic(label) {
   return typeof label === 'string' ? label.replace(/&/g, '&&') : label;
 }
 
-function detailItems(toolTip) {
+function tipLines(toolTip) {
   return String(toolTip)
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .slice(0, WIN_DETAIL_LINES_MAX)
-    .map((l) => ({ label: escapeWinMnemonic(l), enabled: false }));
+    .slice(0, WIN_DETAIL_LINES_MAX);
 }
 
-function adaptItem(item) {
-  if (!item || typeof item !== 'object') return item;
-  if (item.type === 'separator') return { type: 'separator' };
+function caption(line) {
+  return { label: escapeWinMnemonic(line), enabled: false };
+}
 
+/** The raw (unescaped) label an item will show on Windows. */
+function shownLabel(item) {
+  const label = typeof item.label === 'string' ? item.label : '';
+  return typeof item.sublabel === 'string' && item.sublabel.trim()
+    ? label + ' — ' + item.sublabel.trim() : label;
+}
+
+/** An item's own tooltip lines, minus those its own label already says. */
+function ownTipLines(item) {
+  const tip = typeof item.toolTip === 'string' ? item.toolTip.trim() : '';
+  if (!tip) return [];
+  const label = (typeof item.label === 'string' ? item.label : '').trim();
+  const sub = (typeof item.sublabel === 'string' ? item.sublabel : '').trim();
+  // A tooltip that only repeats the label adds no fact.
+  if (tip === label) return [];
+  return tipLines(tip).filter((l) => l !== label && l !== sub);
+}
+
+/** Append caption lines under a separator, skipping any the menu already shows. */
+function appendDetails(submenu, lines) {
+  const shown = new Set();
+  for (const i of submenu) if (i && typeof i.label === 'string') shown.add(i.label);
+  const add = [];
+  for (const l of lines) {
+    const esc = escapeWinMnemonic(l);
+    if (shown.has(esc)) continue;
+    shown.add(esc);
+    add.push(caption(l));
+  }
+  if (add.length) submenu.push({ type: 'separator' }, ...add.slice(0, WIN_DETAIL_LINES_MAX));
+}
+
+/**
+ * The lines the LEAVES of one submenu move out to its end. A line that starts
+ * with the leaf's own label + " · " is that leaf restating itself; when every
+ * such leaf's remainder is the SAME sentence, it is said once. Otherwise each
+ * restating line is kept whole, so a fact never loses the name it belongs to.
+ */
+function leafLines(leaves) {
+  const entries = [];
+  for (const leaf of leaves) {
+    const label = (typeof leaf.label === 'string' ? leaf.label : '').trim();
+    for (const full of ownTipLines(leaf)) {
+      const rem = label && full.startsWith(label + ' · ') ? full.slice(label.length + 3).trim() : null;
+      entries.push({ full, rem: rem || null });
+    }
+  }
+  const rems = new Set(entries.filter((e) => e.rem !== null).map((e) => e.rem));
+  // One sentence shared by every leaf that restates itself → that sentence
+  // applies to each of them, so it is said once; a line with no restated
+  // label is kept whole either way.
+  const shared = rems.size === 1;
+  return entries.map((e) => (shared && e.rem !== null ? e.rem : e.full));
+}
+
+function baseItem(item) {
+  if (item.type === 'separator') return { type: 'separator' };
   const out = { ...item };
   delete out.sublabel;
   delete out.toolTip;
-
   // A section header → the disabled caption the Mac module's own fallback is.
   if (out.type === 'header') delete out.type;
-
   // `role: 'quit'` keeps whatever label it has; Electron draws it.
-  let label = typeof item.label === 'string' ? item.label : undefined;
-  if (label !== undefined && typeof item.sublabel === 'string' && item.sublabel.trim()) {
-    label = label + ' — ' + item.sublabel.trim();
-  }
-  if (label !== undefined) out.label = escapeWinMnemonic(label);
+  if (typeof item.label === 'string') out.label = escapeWinMnemonic(shownLabel(item));
+  return out;
+}
 
-  const tip = typeof item.toolTip === 'string' ? item.toolTip.trim() : '';
-  // A tooltip that only repeats the label adds no fact.
-  const details = tip && tip !== (item.label || '').trim() ? detailItems(tip) : [];
+/**
+ * Adapt one submenu: its leaves stay leaves, their facts collect at its end,
+ * then the parent's own facts.
+ */
+function adaptSubmenu(items, parentLines, actionLabels) {
+  const list = Array.isArray(items) ? items : [];
+  const out = [];
+  const leaves = [];
+  for (const it of list) {
+    if (!it || typeof it !== 'object') { out.push(it); continue; }
+    if (it.type === 'separator') { out.push({ type: 'separator' }); continue; }
+    if (Array.isArray(it.submenu)) { out.push(adaptItem(it, actionLabels)); continue; }
+    out.push(baseItem(it));
+    leaves.push(it);
+  }
+  appendDetails(out, [...leafLines(leaves), ...parentLines]);
+  return out;
+}
+
+function adaptItem(item, actionLabels = {}) {
+  if (!item || typeof item !== 'object') return item;
+  if (item.type === 'separator') return { type: 'separator' };
+
+  const out = baseItem(item);
+  const details = ownTipLines(item);
 
   if (Array.isArray(item.submenu)) {
-    out.submenu = item.submenu.map(adaptItem);
-    if (details.length) out.submenu.push({ type: 'separator' }, ...details);
+    out.submenu = adaptSubmenu(item.submenu, details, actionLabels);
     return out;
   }
 
   if (details.length && !item.role) {
     const sub = [];
     if (typeof item.click === 'function') {
-      sub.push({ label: WIN_OPEN_LABEL, click: item.click }, { type: 'separator' });
+      const word = (item.id && typeof actionLabels[item.id] === 'string') ? actionLabels[item.id] : WIN_OPEN_LABEL;
+      sub.push({ label: escapeWinMnemonic(word), click: item.click });
     }
-    sub.push(...details);
+    appendDetails(sub, details);
+    // No action → no separator above the facts.
+    if (sub[0] && sub[0].type === 'separator') sub.shift();
     delete out.click;
     // A parent must be enabled or its submenu cannot open; a statement that
     // was disabled stays a statement — its submenu holds only disabled lines.
@@ -104,8 +197,11 @@ function adaptItem(item) {
 
 /**
  * @param {Array} template  a `buildTrayMenuTemplate()` result
+ * @param {{actionLabels?: Object<string,string>}} [opts]  the words for a
+ *   top-level leaf's own action once it becomes a parent, by item id
  * @returns {Array} a new template; the input is not mutated
  */
-export function adaptTrayMenuForWindows(template) {
-  return (Array.isArray(template) ? template : []).map(adaptItem);
+export function adaptTrayMenuForWindows(template, opts = {}) {
+  const actionLabels = opts && opts.actionLabels && typeof opts.actionLabels === 'object' ? opts.actionLabels : {};
+  return (Array.isArray(template) ? template : []).map((i) => adaptItem(i, actionLabels));
 }

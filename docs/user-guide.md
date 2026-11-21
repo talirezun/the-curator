@@ -821,7 +821,7 @@ Open **The Curator** from the Start menu or the Desktop. Like the Mac app it ope
 |---|---|---|
 | Close the window (**X**) | The app **quits**, and asks first (**Quit now?**) if a write is in progress; **Keep working** keeps the window open | The window **hides**; the app keeps running in the tray |
 | Click the tray icon (left button) | — | The window comes back |
-| Right-click the tray icon | — | The tray menu, with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)) |
+| Click the tray icon (left or right) | — | The tray menu, with the same facts as the Mac menu bar icon ([§6b](#6b-the-menu-bar-icon-mac-app)) |
 | **File → Exit**, or **Quit** in the tray menu | The app quits, with the same work-in-progress check | The same |
 | Open The Curator a second time | The existing window comes forward | The same |
 
@@ -870,7 +870,7 @@ It is a **local web app** — a small Express server runs on your machine and re
 
 *Mac app, and the Windows app as a **tray icon**. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
 
-> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left-click** opens the window and a **right-click** opens the menu; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. There is no **Hide the Dock icon** choice on Windows: the taskbar button always stays, so the app can always be found. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
+> **On Windows** the same menu lives in the notification area (by the clock): **Settings → General → Tray icon → Show the tray icon**. A **left- or right-click** opens the menu, as on the Mac (**Open The Curator** in it opens the window), and the icon is the same ring, empty or with a filled centre; Windows often files a new icon under the **^** arrow, from where you can drag it onto the taskbar. The facts are the same as below; where a Mac menu shows a second line or a hover tooltip, the Windows menu puts that text after the label or in a submenu, because Windows menus draw neither. There is no **Hide the Dock icon** choice on Windows: the taskbar button always stays, so the app can always be found. See [windows-app.md § The tray icon](windows-app.md#the-tray-icon).
 
 ### The one question it answers
 

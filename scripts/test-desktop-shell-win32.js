@@ -213,16 +213,38 @@ section('§5 how the tray is driven');
     leftClick: 'menu', remoteCheckOnLeftClick: true, menuTheme: 'apple-interface-style',
   }, 'darwin is exactly the pre-existing behaviour: template glyph, menu SET on the tray, either click opens it');
   const win = sp.trayInteraction('win32');
-  eq(win.templateImage, false, 'win32: NOT a template image — Windows does not tint, a black glyph vanishes on a dark taskbar');
+  eq(win.templateImage, false, 'win32: NOT a template image — Windows does not tint; the ink is chosen from the taskbar theme');
+  eq(win.iconTheme, 'system-integrated-ui', 'win32: the icon ink follows the SYSTEM (taskbar) theme, not the app theme boot() pins dark');
   eq(win.setContextMenu, false, 'win32: the menu is never SET on the tray…');
-  eq(win.popUpOnRightClick, true, '…it is popped on right-click, so it is rebuilt immediately before it is shown');
-  eq(win.leftClick, 'show-window', 'win32: left-click shows the window (the Windows convention)');
-  eq(win.remoteCheckOnLeftClick, false, 'win32: a left-click is not a menu open, so it does not ask GitHub');
+  eq([win.popUpOnLeftClick, win.popUpOnRightClick], [true, true], '…it is POPPED on a left AND a right click, rebuilt immediately before it is shown');
+  eq(win.leftClick, 'menu', 'win32: left-click opens the widget menu, as on the Mac (owner 2026-11-21, reversing v4.0.0\'s left = window)');
+  eq(win.remoteCheckOnLeftClick, true, 'win32: a left-click IS a menu open, so it may ask GitHub, as on the Mac');
+
+  // EXECUTED: the very handlers main.js registers, driven with recording effects.
+  const drive = (platform) => {
+    const log = [];
+    const h = sp.trayClickHandlers(platform, {
+      popMenu: () => log.push('pop'), refresh: () => log.push('refresh'), checkRemote: (t) => log.push('remote:' + t),
+    });
+    const out = {};
+    for (const ev of Object.keys(h)) { log.length = 0; h[ev](); out[ev] = log.slice(); }
+    return out;
+  };
+  eq(drive('darwin'), { click: ['refresh', 'remote:click'], 'right-click': ['refresh', 'remote:right-click'] },
+    'darwin: exactly the v3.x handlers — re-read, then the remote check; nothing popped (the menu is SET on the tray)');
+  eq(drive('win32'), { click: ['pop', 'refresh', 'remote:click'], 'right-click': ['pop', 'refresh', 'remote:right-click'] },
+    'win32: a LEFT click and a RIGHT click each pop the menu FIRST (fresh from memory), then re-read and ask — no window reveal');
+  ok(!Object.keys(sp.trayClickHandlers('win32', { popMenu() {}, refresh() {}, checkRemote() {} })).includes('double-click'),
+    'win32: no double-click handler — the first click has already opened the menu, which takes the second');
+  let threw = false;
+  try { sp.trayClickHandlers('win32', { popMenu() {}, refresh() {} }); } catch { threw = true; }
+  ok(threw, 'a missing effect is refused when the handlers are BUILT, not when a click lands');
   ok(Object.isFrozen(mac) && Object.isFrozen(win), 'both plans are frozen');
-  // The remote-check allow-list must still contain the trigger the Windows
-  // right-click passes — or the Windows menu would never ask about other machines.
+  // The remote-check allow-list must contain both triggers the Windows clicks
+  // pass — or the Windows menu would never ask about other machines.
   const remote = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-remote.js')).href);
-  ok(remote.REMOTE_CHECK_TRIGGERS.includes('right-click'), 'the right-click trigger Windows uses is in tray-remote.js\'s allow-list');
+  ok(remote.REMOTE_CHECK_TRIGGERS.includes('click') && remote.REMOTE_CHECK_TRIGGERS.includes('right-click'),
+    'both triggers Windows passes are in tray-remote.js\'s allow-list');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -300,73 +322,109 @@ section('§9 background mode on Windows');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§10 the Windows tray icon: coloured, two states, three sizes');
+section('§10 the Windows tray icon: the Mac glyph, its one bit, in the taskbar\'s ink');
 {
-  const DISC = [0x7C, 0x5A, 0xF5];
+  const macIcon = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'tray-icon.js')).href);
   const pix = (img, x, y) => {
     const p = (y * img.width + x) * img.channels;
     return [img.data[p], img.data[p + 1], img.data[p + 2], img.data[p + 3]];
   };
-  const tokens = read(path.join(ROOT, 'src', 'public', 'next', 'tokens', 'color.css'));
-  ok(new RegExp('--violet-500:\\s*' + winIcon.WIN_TRAY_DISC_HEX + ';', 'i').test(tokens),
-    'the disc colour IS --violet-500 in the app\'s own tokens, not a second copy that can drift');
-  for (const state of ['idle', 'live']) {
-    const r = winIcon.winTrayIconPngs(state);
-    eq(r.template, false, `${state}: never marked as a template`);
-    eq(r.reps.map((x) => [x.scale, x.size]), [[1, 16], [1.5, 24], [2, 32]], `${state}: 16, 24 and 32 px for 100/150/200 %`);
-    for (const rep of r.reps) {
-      const img = png.decodePng(rep.buffer);
-      eq([img.width, img.height, img.channels], [rep.size, rep.size, 4], `${state} ${rep.size}px decodes (independent decoder) as RGBA ${rep.size}×${rep.size}`);
-      eq(pix(img, 0, 0)[3], 0, `${state} ${rep.size}px: the corner is transparent — a disc, not a square`);
-      // Somewhere on the disc, between the edge and the ring, is pure violet.
-      const n = rep.size;
-      // Midway between the disc's edge and the ring's outer edge, straight up.
-      const gq = winIcon.WIN_TRAY_GEOMETRY;
-      const band = pix(img, Math.floor(n / 2), Math.floor(n / 2 - n * (gq.disc + gq.ringOuter) / 2));
-      ok(band[3] > 200 && Math.abs(band[0] - DISC[0]) < 6 && Math.abs(band[2] - DISC[2]) < 6,
-        `${state} ${n}px: the disc is violet (${band.slice(0, 3).join(',')})`);
+  const INK = { dark: [0xFF, 0xFF, 0xFF], light: [0x1F, 0x1F, 0x1F] };
+  const TONES = [['dark', true], ['light', false]];
+  for (const [tone, darkTaskbar] of TONES) {
+    for (const state of ['idle', 'live']) {
+      const r = winIcon.winTrayIconPngs(state, { darkTaskbar });
+      eq([r.template, r.tone], [false, tone], `${state}/${tone}: never a template, tone ${tone}`);
+      eq(r.reps.map((x) => [x.scale, x.size]), [[1, 16], [1.5, 24], [2, 32]], `${state}/${tone}: 16, 24 and 32 px for 100/150/200 %`);
+      for (const rep of r.reps) {
+        const img = png.decodePng(rep.buffer);
+        const n = rep.size;
+        eq([img.width, img.height, img.channels], [n, n, 4], `${state}/${tone} ${n}px decodes (independent decoder) as RGBA ${n}×${n}`);
+        eq(pix(img, 0, 0)[3], 0, `${state}/${tone} ${n}px: the corner is transparent — no disc, no tile`);
+        // Every drawn pixel is the taskbar's ink: a monochrome glyph, like the Mac's.
+        let off = 0, drawn = 0;
+        for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+          const q = pix(img, x, y);
+          if (q[3] === 0) continue;
+          drawn++;
+          if (q[0] !== INK[tone][0] || q[1] !== INK[tone][1] || q[2] !== INK[tone][2]) off++;
+        }
+        ok(drawn > 0 && off === 0, `${state}/${tone} ${n}px: all ${drawn} drawn pixels are the ${tone}-taskbar ink`);
+        // THE SAME DRAWING AS THE MAC: alpha equals glyphMatrix at this size, pixel for pixel.
+        const mac = macIcon.glyphMatrix(n, state);
+        let mism = 0;
+        for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (pix(img, x, y)[3] !== Math.round(mac[y][x])) mism++;
+        eq(mism, 0, `${state}/${tone} ${n}px: the alpha IS the Mac glyph's (lib/tray-icon.js glyphMatrix), pixel for pixel`);
+      }
     }
   }
-  const centre = (state, size) => {
-    const rep = winIcon.winTrayIconPngs(state).reps.find((x) => x.size === size);
+  // THE OWNER'S REPORT (2026-11-21): "always a circle with a filled dot". The
+  // idle centre must be EMPTY — measured as alpha, and by a dumb count over the
+  // whole central area the live dot occupies.
+  const centreArea = (state, size, darkTaskbar) => {
+    const rep = winIcon.winTrayIconPngs(state, { darkTaskbar }).reps.find((x) => x.size === size);
     const img = png.decodePng(rep.buffer);
-    return pix(img, Math.floor(size / 2), Math.floor(size / 2));
+    const c = size / 2, r = size * 0.19;
+    let opaque = 0, total = 0;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2 > r * r) continue;
+      total++;
+      if (pix(img, x, y)[3] > 0) opaque++;
+    }
+    return { opaque, total, centre: pix(img, Math.floor(c), Math.floor(c)) };
   };
-  for (const size of [16, 24, 32]) {
-    const live = centre('live', size), idle = centre('idle', size);
-    ok(live[0] > 240 && live[1] > 240 && live[2] > 240, `${size}px live: the centre is WHITE (the Mac's filled dot)`);
-    ok(Math.abs(idle[0] - DISC[0]) < 10 && Math.abs(idle[1] - DISC[1]) < 10, `${size}px idle: the centre is violet (the Mac's empty ring)`);
+  for (const size of [16, 24, 32]) for (const [tone, d] of TONES) {
+    const idle = centreArea('idle', size, d), live = centreArea('live', size, d);
+    eq(idle.opaque, 0, `${size}px ${tone}: IDLE draws nothing in the centre (${idle.total} px checked) — an empty ring, as on the Mac`);
+    ok(live.centre[3] === 255 && live.opaque >= live.total * 0.9, `${size}px ${tone}: LIVE fills the centre (${live.opaque}/${live.total} px) — the Mac's dot`);
   }
   // The one bit is the ONLY difference: outside the centre, both states agree.
-  {
-    const a = png.decodePng(winIcon.winTrayIconPngs('idle').reps[2].buffer);
-    const b = png.decodePng(winIcon.winTrayIconPngs('live').reps[2].buffer);
+  for (const [tone, d] of TONES) {
+    const a = png.decodePng(winIcon.winTrayIconPngs('idle', { darkTaskbar: d }).reps[2].buffer);
+    const b = png.decodePng(winIcon.winTrayIconPngs('live', { darkTaskbar: d }).reps[2].buffer);
     let diffOutside = 0, diffInside = 0;
-    const c = 16, rDot = 32 * winIcon.WIN_TRAY_GEOMETRY.dot + 1;
+    const c = 16, rDot = 32 * 0.19 + 1;
     for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
       const p = (y * 32 + x) * 4;
       const same = a.data.subarray(p, p + 4).equals(b.data.subarray(p, p + 4));
       const inDot = (x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2 <= rDot * rDot;
       if (!same) { if (inDot) diffInside++; else diffOutside++; }
     }
-    ok(diffInside > 10, `live and idle really differ in the centre (${diffInside} px)`);
-    eq(diffOutside, 0, 'and NOWHERE else — the icon carries exactly the Mac glyph\'s one bit');
+    ok(diffInside > 10 && diffOutside === 0, `${tone}: live and idle differ in the centre (${diffInside} px) and NOWHERE else — exactly the Mac glyph's one bit`);
   }
-  // Contrast, computed from the decoded pixels.
+  // Contrast, computed from the decoded pixels, and the reason the tone exists.
   {
-    const img = png.decodePng(winIcon.winTrayIconPngs('live').reps[2].buffer);
-    const disc = pix(img, 16, 3);
-    const mark = pix(img, 16, 16);
-    const white = contrast.contrastRatio(mark, disc);
-    const dark = contrast.contrastRatio(disc, [0x20, 0x20, 0x20]);
-    const light = contrast.contrastRatio(disc, [0xF3, 0xF3, 0xF3]);
-    ok(white >= 3, `the white mark on the disc: ${contrast.round2(white)}:1 (non-text floor 3:1)`);
-    ok(dark >= 3, `the disc on a dark taskbar #202020: ${contrast.round2(dark)}:1`);
-    ok(light >= 3, `the disc on a light taskbar #F3F3F3: ${contrast.round2(light)}:1 — legible on both, no theme detection needed`);
+    const ring = (d) => {
+      const img = png.decodePng(winIcon.winTrayIconPngs('idle', { darkTaskbar: d }).reps[2].buffer);
+      for (let x = 0; x < 32; x++) { const q = pix(img, x, 16); if (q[3] === 255) return q; }
+      return null;
+    };
+    const white = ring(true), black = ring(false);
+    ok(!!white && !!black, 'CONTROL — a fully opaque ring pixel was found on both tones');
+    const onDark = contrast.contrastRatio(white, [0x20, 0x20, 0x20]);
+    const onLight = contrast.contrastRatio(black, [0xF3, 0xF3, 0xF3]);
+    ok(onDark >= 3, `the dark-taskbar ink on #202020: ${contrast.round2(onDark)}:1 (non-text floor 3:1)`);
+    ok(onLight >= 3, `the light-taskbar ink on #F3F3F3: ${contrast.round2(onLight)}:1`);
+    ok(contrast.contrastRatio(white, [0xF3, 0xF3, 0xF3]) < 3,
+      'CONTROL — the dark-taskbar ink on a LIGHT taskbar fails the floor, which is why the tone is read rather than fixed');
   }
-  // Mark inside disc at every size (geometry, not trust).
-  const g = winIcon.WIN_TRAY_GEOMETRY;
-  ok(g.ringOuter < g.disc && g.dot < g.ringOuter - g.ringWidth, 'the ring sits inside the disc and the dot inside the ring');
+  // Unknown taskbar → dark (the Windows default), never a throw.
+  eq(winIcon.winTrayIconPngs('idle').tone, 'dark', 'no taskbar reading → the dark-taskbar ink (the Windows 10/11 default)');
+  eq(winIcon.winTrayIconPngs('idle', { darkTaskbar: null }).tone, 'dark', 'a null reading → dark');
+  eq(winIcon.winTrayIconPngs('weird').state, 'idle', 'an unknown state draws idle (never a false "live")');
+  // The image key main.js compares before re-setting the icon.
+  eq(['idle', 'live'].map((g) => winIcon.trayIconKey('darwin', g, null)), ['idle', 'live'],
+    'darwin: the key IS the glyph state, exactly the v3.x comparison');
+  eq(winIcon.trayIconKey('darwin', 'live', false), 'live', 'darwin ignores any taskbar reading');
+  eq([winIcon.trayIconKey('win32', 'idle', true), winIcon.trayIconKey('win32', 'live', false), winIcon.trayIconKey('win32', 'idle')],
+    ['idle:dark', 'live:light', 'idle:dark'], 'win32: the state AND the taskbar tone, so either change redraws the icon');
+  // Wiring the state through on win32 — the trayImage → winTrayIconPngs call
+  // and the key — can only be source-scanned (main.js does not run here).
+  const src = stripJsComments(read(path.join(DESKTOP, 'main.js')));
+  ok(/const iconKey = trayIconKey\(process\.platform, model\.glyph, darkTaskbar\);\s*if \(iconKey !== trayGlyph\) \{\s*trayGlyph = iconKey;\s*tray\.setImage\(trayImage\(model\.glyph, darkTaskbar\)\);/.test(src),
+    'WEAK (source scan): every render re-keys on the model\'s glyph and the taskbar tone, and re-sets the image when either changes');
+  ok(/winTrayIconPngs\(state, \{ darkTaskbar \}\)/.test(src), 'WEAK (source scan): win32 draws the requested STATE with the taskbar tone');
+  ok(/shouldUseDarkColorsForSystemIntegratedUI !== false/.test(src), 'WEAK (source scan): the tone is the SYSTEM theme, not shouldUseDarkColors (pinned dark by boot())');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -390,6 +448,17 @@ function fixture() {
         writtenAt: at(3 * 86400), ageSource: 'agent', headline: 'old work', isThisMachine: true, isThisHost: true },
     ],
     brief: null, remote: null, warnings: [],
+    // The widget's pictures: the save pulse (a top-level leaf with a legend
+    // tooltip) and the Knowledge submenu (leaves with tooltips inside a submenu).
+    domains: [
+      { domain: 'posts', index: 0, slot: 5, displayName: 'posts', pageCount: 687 },
+      { domain: 'work', index: 1, slot: 2, displayName: 'work', pageCount: 30 },
+    ],
+    pulse: {
+      windowSeconds: 604800, bucketSeconds: 21600, buckets: new Array(28).fill(0).map((_, i) => (i > 20 ? 1 : 0)),
+      events: 7, eventsOutsideWindow: 0, pairsCounted: 2, pairsTruncated: 0, clock: 'agent',
+      oldestEventAt: null, coversWholeWindow: true, firstKnownBucket: 0,
+    },
   };
 }
 function walk(t, f, trail = []) {
@@ -430,8 +499,64 @@ function walk(t, f, trail = []) {
   });
   ok(macSubs.every((s) => winLabels.some((l) => l.includes(esc(s)))),
     `every Mac sublabel (${macSubs.length}) is on a Windows label`);
-  const missing = macTipLines.filter((l) => !winLabels.includes(esc(l)));
-  eq(missing.length, 0, `every Mac tooltip line (${macTipLines.length}) is a Windows item${missing.length ? ' — missing: ' + missing.slice(0, 3).join(' | ') : ''}`);
+  // Every Mac tooltip FACT is on the Windows menu: as an item of its own, inside
+  // a label (a row's second line), or — when a leaf restates its own label
+  // first — the rest of the line, shown once for the whole submenu.
+  const tipFacts = [];
+  walk(pre, (i) => {
+    if (!i.toolTip || i.toolTip.trim() === (i.label || '').trim()) return;
+    for (const l of i.toolTip.split('\n').map((x) => x.trim()).filter(Boolean)) tipFacts.push({ l, label: (i.label || '').trim() });
+  });
+  const missing = tipFacts.filter(({ l, label }) => !winLabels.includes(esc(l))
+    && !winLabels.some((w) => w.includes(esc(l)))
+    && !(label && l.startsWith(label + ' · ') && winLabels.includes(esc(l.slice(label.length + 3)))));
+  ok(tipFacts.length > 10, `CONTROL — the Mac menu carries real tooltip facts (${tipFacts.length} lines)`);
+  eq(missing.length, 0, `every Mac tooltip fact (${tipFacts.length}) is visible on the Windows menu${missing.length ? ' — missing: ' + missing.slice(0, 3).map((m) => m.l).join(' | ') : ''}`);
+
+  // THE MAC'S SHAPE (owner 2026-11-21: "a different design"): a leaf INSIDE a
+  // submenu stays a leaf on Windows — no extra arrow, no generic first item —
+  // with its own click and its own picture, exactly as on the Mac.
+  const byId = (t) => { const m = new Map(); walk(t, (i, trail) => { if (i.id) m.set(i.id, { i, depth: trail.length }); }); return m; };
+  const macIds = byId(mac), winIds = byId(win);
+  let innerLeaves = 0;
+  for (const [id, { i, depth }] of macIds) {
+    if (depth < 1 || Array.isArray(i.submenu) || i.type === trayMenu.MENU_HEADER_TYPE) continue;
+    innerLeaves++;
+    const w = winIds.get(id);
+    ok(!!w && !Array.isArray(w.i.submenu) && (typeof w.i.click === 'function') === (typeof i.click === 'function'),
+      `inner leaf ${id}: still a leaf on Windows, with ${typeof i.click === 'function' ? 'its own click' : 'no click'}`);
+  }
+  ok(innerLeaves >= 2, `CONTROL — inner leaves with tooltips were really compared (${innerLeaves})`);
+  const domainRows = [...winIds.values()].filter(({ i }) => /^tray-domain-/.test(i.id));
+  ok(domainRows.length === 2 && domainRows.every(({ i }) => !i.submenu && typeof i.click === 'function'),
+    'each domain row is a clickable leaf, as on the Mac (v4.0.0 made it a parent whose "Open in The Curator" opened Settings)');
+  const know = trayMenu.flattenTrayMenu(win).find((i) => i.id === trayMenu.ID_KNOWLEDGE);
+  const legend = know.submenu.filter((i) => typeof i.label === 'string' && i.label.startsWith('Bar: against the largest domain'));
+  eq(legend.length, 1, 'the bars\' shared sentence ("Bar: against the largest domain, …") is said ONCE, at the end of the Knowledge submenu');
+  // THE PICTURES: every image the Mac menu draws (pulse strip, freshness
+  // dots, domain bars) is on the same item on Windows, and none is a template
+  // image (Windows does not tint; a template would be drawn black).
+  {
+    const pics = (platform) => {
+      const m = trayModel.buildTrayModel(fixture(), { now: NOW, platform, dark: true });
+      const t = trayMenu.buildTrayMenuTemplate(m, { ...NOOPS, platform, makeIcon: (spec) => spec });
+      const out = new Map();
+      walk(t, (i) => { if (i.icon) out.set(i.id, i.icon); });
+      return out;
+    };
+    const macPics = pics('darwin'), winPics = pics('win32');
+    const kinds = new Set([...winPics.values()].map((sp2) => (sp2.kind === 'dot' ? 'dot' : 'frac' in sp2 ? 'bar' : 'strip')));
+    ok(macPics.size >= 5 && kinds.has('dot') && kinds.has('bar') && kinds.has('strip'),
+      `CONTROL — the fixture's Mac menu draws dots, bars and the pulse strip (${macPics.size} pictures)`);
+    eq([...winPics.keys()].sort(), [...macPics.keys()].sort(), 'win32: every picture sits on the same item as on the Mac, and no other');
+    ok([...winPics.values()].every((sp2) => sp2.template === false && Buffer.isBuffer(sp2.buffer) && Buffer.isBuffer(sp2.buffer2x)),
+      'win32: every picture is a colour image with a 1x and a 2x representation, never a template');
+  }
+  // The pulse, a TOP-LEVEL leaf with a legend, becomes a parent whose first
+  // item is its own action, worded for what it does.
+  const pulse = win.find((i) => i.id === trayMenu.ID_PULSE);
+  ok(!!pulse && Array.isArray(pulse.submenu), 'CONTROL — the fixture draws the save pulse, and on Windows its legend is a submenu');
+  eq(pulse.submenu[0].label, 'Open Project Context…', 'the pulse\'s first item says what its click does (it opens Project Context, not "Open in The Curator")');
 
   // The mnemonic.
   ok(winLabels.some((l) => l.includes('r&&d')), 'an "&" in a project name is escaped to "&&", so Windows draws "r&d" and not "rd"');
@@ -466,6 +591,28 @@ function walk(t, f, trail = []) {
   act.submenu[0].click();
   eq(hit, 1, 'and that item runs the original handler');
   ok(typeof act.click !== 'function', 'the parent itself carries no handler (Windows opens the submenu)');
+  // A leaf inside a submenu stays a leaf; its lines join the end of that submenu,
+  // without repeating anything the submenu already shows.
+  let leafHit = 0;
+  const [parent] = tw.adaptTrayMenuForWindows([{ label: 'P', submenu: [
+    { label: 'Head', enabled: false },
+    { id: 'a', label: 'alpha · 3', click: () => { leafHit++; }, toolTip: 'alpha · 3 · same legend' },
+    { id: 'b', label: 'beta · 9', click: () => {}, toolTip: 'beta · 9 · same legend' },
+    { id: 'c', label: 'gamma', click: () => {}, toolTip: 'Head' },
+  ] }]);
+  const la = parent.submenu.find((i) => i.id === 'a');
+  ok(la && !la.submenu && typeof la.click === 'function', 'a leaf with a tooltip inside a submenu stays a clickable leaf');
+  la.click();
+  eq(leafHit, 1, '…running its own handler');
+  eq(parent.submenu.map((i) => i.type === 'separator' ? '—' : i.label), ['Head', 'alpha · 3', 'beta · 9', 'gamma', '—', 'same legend'],
+    'the leaves\' shared sentence once, under a separator; a line the submenu already shows ("Head") not repeated');
+  const [mixed] = tw.adaptTrayMenuForWindows([{ label: 'P', submenu: [
+    { label: 'x', click() {}, toolTip: 'x · one fact' }, { label: 'y', click() {}, toolTip: 'y · another fact' },
+  ] }]);
+  eq(mixed.submenu.slice(3).map((i) => i.label), ['x · one fact', 'y · another fact'],
+    'different sentences keep their leaf\'s name, so no fact loses what it is about');
+  const [pl] = tw.adaptTrayMenuForWindows([{ id: 'p1', label: 'pulse', click() {}, toolTip: 'legend' }], { actionLabels: { p1: 'Open Project Context…' } });
+  eq(pl.submenu[0].label, 'Open Project Context…', 'a top-level leaf\'s action takes the words it is given by id');
   const [plain] = tw.adaptTrayMenuForWindows([{ label: 'same', toolTip: 'same' }]);
   ok(!plain.submenu, 'a tooltip that only repeats the label adds nothing');
   const many = tw.adaptTrayMenuForWindows([{ label: 'x', enabled: false, toolTip: Array.from({ length: 40 }, (_, k) => 'line ' + k).join('\n') }])[0];
@@ -509,8 +656,9 @@ section('§13 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
   ok(/tray\.popUpContextMenu\(trayMenu\)/.test(src), 'Windows pops the kept menu');
   ok(/function popTrayMenu\(\)[\s\S]{0,120}renderTrayFromSnapshot\(\)/.test(src),
     'and rebuilds it from the in-memory snapshot (no I/O) immediately before popping');
-  ok(/tray\.on\('click', \(\) => \{ revealWindow\(\); refreshTraySummary\(\); \}\)/.test(src),
-    'Windows left-click shows the window and re-reads the index, without a remote check');
+  ok(/const clicks = trayClickHandlers\(process\.platform, \{\s*popMenu: popTrayMenu,\s*refresh: \(\) => \{ refreshTraySummary\(\); \},\s*checkRemote: \(trigger\) => \{ maybeCheckRemote\(trigger\); \},\s*\}\);\s*for \(const \[event, handler\] of Object\.entries\(clicks\)\) tray\.on\(event, handler\);/.test(src),
+    'the tray\'s clicks are EXACTLY the handlers §5 executes (trayClickHandlers), wired to popTrayMenu / refreshTraySummary / maybeCheckRemote');
+  ok(!/tray\.on\('(click|right-click|double-click)'/.test(src), 'and no click handler is registered beside them (no window reveal on a click)');
   ok(/platform: process\.platform,\s*\}\)\);/.test(src) && /identityHex,\s*platform: process\.platform/.test(src),
     'the platform is handed to the tray model and the tray menu');
   ok(/updaterSupported\(process\.platform, updateEngineModule\)/.test(src), 'the updater is gated on the platform adapter');

@@ -1138,8 +1138,16 @@ section('§11 main.js source scan — WEAK BY CONSTRUCTION, and labelled as such
   ok(/mouse-enter/.test(src), 'hover re-renders, so the ages are exact at the moment the menu is about to open');
   ok(/tray\.on\('mouse-enter', renderTrayFromSnapshot\)/.test(src),
     'and hover calls the SNAPSHOT renderer — no index read and no network on a gesture the user did not commit to');
-  ok(/tray\.on\('click'[\s\S]{0,80}refreshTraySummary/.test(src),
-    'a click, which IS a deliberate act, is where the index read happens');
+  ok(/refresh: \(\) => \{ refreshTraySummary\(\); \}/.test(src)
+    && /for \(const \[event, handler\] of Object\.entries\(clicks\)\) tray\.on\(event, handler\);/.test(src),
+    'a click, which IS a deliberate act, is where the index read happens (the handlers come from shell-platform.js trayClickHandlers)');
+  {
+    const sp = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'shell-platform.js')).href);
+    const log = [];
+    const h = sp.trayClickHandlers('darwin', { popMenu: () => log.push('pop'), refresh: () => log.push('refresh'), checkRemote: () => log.push('remote') });
+    h.click(); h['right-click']();
+    eq(log, ['refresh', 'remote', 'refresh', 'remote'], 'EXECUTED (darwin): each click re-reads the index, then asks about the other machines — nothing popped, the menu is SET on the tray');
+  }
   ok(!/setInterval\(/.test(src),
     'main.js starts no interval of its own — the only periodic thing in the design is the 5-minute fallback inside lib/state-watch.js');
   ok(/applyBackgroundMode\(await readBackgroundMode\(\)\)/.test(src),
@@ -1261,10 +1269,19 @@ section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §1
 {
   const src = stripJsComments(read(path.join(DESKTOP, 'main.js')));
 
-  ok(/tray\.on\('click'[\s\S]{0,120}maybeCheckRemote\('click'\)/.test(src),
-    'a click asks about the other machines');
-  ok(/tray\.on\('right-click'[\s\S]{0,120}maybeCheckRemote\('right-click'\)/.test(src),
-    '…and so does a right-click');
+  // The clicks are built by shell-platform.js trayClickHandlers and EXECUTED
+  // here; main.js only hands their effects over (source scan below).
+  const sp = await import(pathToFileURL(path.join(DESKTOP, 'lib', 'shell-platform.js')).href);
+  const triggersFor = (platform) => {
+    const seen = [];
+    const h = sp.trayClickHandlers(platform, { popMenu() {}, refresh() {}, checkRemote: (t) => seen.push(t) });
+    for (const ev of Object.keys(h)) h[ev]();
+    return seen;
+  };
+  eq(triggersFor('darwin'), ['click', 'right-click'], 'EXECUTED: a click asks about the other machines, and so does a right-click (darwin)');
+  eq(triggersFor('win32'), ['click', 'right-click'], 'EXECUTED: the same two triggers on Windows, where both clicks open the menu');
+  ok(/checkRemote: \(trigger\) => \{ maybeCheckRemote\(trigger\); \}/.test(src),
+    'main.js hands the handlers\' own trigger to maybeCheckRemote');
   // HOVER DOES NOT. Asserted two ways, because a loose window regex here would
   // match the `click` line two lines below and prove nothing.
   ok(!/tray\.on\('mouse-enter',[^;]*maybeCheckRemote/.test(src),
@@ -1272,10 +1289,11 @@ section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §1
   // Every trigger main.js actually passes, compared as a SET against the
   // module's own allow-list. A new call site with a new trigger string reds
   // this even if it is written somewhere the regexes above do not look.
-  const passedTriggers = [...src.matchAll(/maybeCheckRemote\('([^']+)'\)/g)].map((m) => m[1]).sort();
-  eq([...new Set(passedTriggers)], [...remote.REMOTE_CHECK_TRIGGERS].sort(),
-    'the triggers main.js passes are EXACTLY the module\'s allow-list — no fourth call site, and no hover');
-  ok(passedTriggers.length >= 2, `CONTROL — trigger call sites were really found (${passedTriggers.length})`);
+  const passedTriggers = [...new Set([...triggersFor('darwin'), ...triggersFor('win32')])].sort();
+  eq(passedTriggers, [...remote.REMOTE_CHECK_TRIGGERS].sort(),
+    'the triggers the click handlers pass are EXACTLY the module\'s allow-list — no hover');
+  const callSites = [...src.matchAll(/maybeCheckRemote\(/g)].length;
+  eq(callSites, 2, 'main.js has exactly ONE call site besides the definition — the click handlers\' checkRemote — so no fourth trigger can be smuggled in');
   ok(!/setInterval\(/.test(src),
     'STILL no interval in main.js — the check must never fire on a timer while nothing is watching');
   ok(!/setTimeout\([\s\S]{0,80}maybeCheckRemote/.test(src),

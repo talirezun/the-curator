@@ -170,8 +170,9 @@ save pulse, the last 24 hours' active work, your domains, and Open The Curator �
 | | |
 |---|---|
 | Turn it on | **Settings → General → Tray icon → Show the tray icon**. It is off by default. |
-| **Left-click** the icon | Opens the window |
-| **Right-click** the icon | Opens the menu |
+| The icon | A ring, as on the Mac: **empty** while The Curator is running, with a **filled centre** while an agent is saving working state on this PC (within the last two minutes). White on a dark taskbar, black on a light one. |
+| **Click** the icon (left or right) | Opens the menu, as on the Mac. **Open The Curator** in the menu opens the window. |
+| What the menu shows | The same as the Mac menu, with the same pictures: the save pulse, the coloured freshness dots, each domain's bar in its own colour. Windows menus cannot show a second line or hover text, so a second line follows the label after " — ", and the details the Mac shows on hover open in a submenu when you point at the item (or are listed at the end of the submenu the item is in). |
 | Can't see it? | Windows often puts a new icon with the hidden ones. Click the **^** arrow beside the clock, and drag the icon onto the taskbar to keep it in view. |
 | Close the window (X) **with the tray icon on** | The window hides; the app keeps running in the tray. Quit from the tray menu or **File → Exit**. |
 | Close the window (X) **with the tray icon off** | The app quits. If an ingest or another write is running, it asks first (**Quit now?**), with the window still open; **Keep working** keeps it open. |

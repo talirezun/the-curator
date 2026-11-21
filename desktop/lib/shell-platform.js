@@ -165,31 +165,34 @@ export function attachDialogToWindow({ platform, hasWindow = false, visible = fa
  * click opens it; `mouse-enter` re-renders from memory so the ages are exact
  * when the menu appears; both clicks re-read the index and may ask GitHub.
  *
- * ── Windows ────────────────────────────────────────────────────────────────
- * Windows conventions: LEFT click shows the window, RIGHT click opens the
- * menu. The menu is NOT set with `setContextMenu`, it is POPPED on
- * `right-click` with `popUpContextMenu(menu)`, for two reasons:
+ * ── Windows (owner decision 2026-11-21, reversing v4.0.0) ──────────────────
+ * The widget behaves like the Mac one: a LEFT click opens the menu, and so
+ * does a RIGHT click. (v4.0.0 followed the Windows convention instead — left
+ * click = window — and the owner found that the widget then never opened
+ * where he expected it. "Open The Curator" is in the menu, as on the Mac.)
  *
- *   1. Freshness. There is no "menu will open" event on a Tray. On Windows the
- *      right-click handler runs BEFORE the menu is shown when we pop it
- *      ourselves, so the menu is rebuilt from the in-memory snapshot first and
- *      every age in it is exact at the moment it appears. This does not rely
- *      on `mouse-enter`, which Electron 43's typings list for win32 but which
- *      nobody on this project has seen fire on a Windows tray.
- *   2. Electron's Windows notify icon pops a menu set with `setContextMenu`
- *      itself on a right click; with a menu set, our own right-click handler
- *      is not the thing that opens it, so (1) could not be guaranteed.
- *      (Read from Electron's documentation and source knowledge, not
- *      measured — it is on the human check list. The design here is correct
- *      whichever way that goes, because no menu is ever set on win32.)
+ * The menu is NOT set with `setContextMenu`; it is POPPED from both click
+ * handlers with `popUpContextMenu(menu)`, for two reasons:
  *
- * A right click is a menu OPEN, so it is the trigger for the remote check
- * (lib/tray-remote.js allows 'right-click'). A left click on Windows is NOT a
- * menu open — it shows the window — so it re-reads the index (cheap, local,
- * a deliberate act) but does not ask GitHub.
+ *   1. Freshness. There is no "menu will open" event on a Tray. Popping it
+ *      ourselves, the handler runs BEFORE the menu is shown, so the menu is
+ *      rebuilt from the in-memory snapshot first and every age in it is exact
+ *      at the moment it appears. This does not rely on `mouse-enter`, which
+ *      Electron 43's typings list for win32 but which nobody on this project
+ *      has seen fire on a Windows tray.
+ *   2. A menu set with `setContextMenu` is opened by Electron's notify icon on
+ *      a RIGHT click only; a left click would still need a pop, and the two
+ *      paths would show menus of different ages.
  *
- * The icon is coloured, not a template (Windows does not tint tray icons;
- * a black template glyph is invisible on the default dark taskbar).
+ * Both clicks are menu opens, so both are triggers for the remote check
+ * (lib/tray-remote.js allows 'click' and 'right-click'), exactly as on the Mac.
+ *
+ * A double-click is NOT wired: the first click has already opened the menu,
+ * which takes the second click. "Open The Curator" is the menu's own item.
+ *
+ * The icon is not a template (Windows does not tint tray icons): it is the
+ * Mac glyph drawn in the taskbar's ink, chosen from the SYSTEM theme
+ * (`iconTheme: 'system-integrated-ui'`, see lib/tray-icon-win.js).
  */
 export function trayInteraction(platform) {
   if (platform === 'win32') {
@@ -197,9 +200,11 @@ export function trayInteraction(platform) {
       templateImage: false,
       setContextMenu: false,
       popUpOnRightClick: true,
-      leftClick: 'show-window',
-      remoteCheckOnLeftClick: false,
+      popUpOnLeftClick: true,
+      leftClick: 'menu',
+      remoteCheckOnLeftClick: true,
       menuTheme: 'native-theme',
+      iconTheme: 'system-integrated-ui',
     });
   }
   return Object.freeze({
@@ -210,6 +215,38 @@ export function trayInteraction(platform) {
     remoteCheckOnLeftClick: true,
     menuTheme: 'apple-interface-style',
   });
+}
+
+/**
+ * The tray's click handlers, built from `trayInteraction(platform)` so the
+ * suite EXECUTES the wiring main.js registers (Electron cannot run in
+ * `npm test`; only this map's entries are handed to `tray.on`).
+ *
+ * Each handler, in order: pop the menu (only where the plan pops it — win32),
+ * re-read the index (a deliberate act), then ask about the other machines
+ * with the click's own trigger. darwin: exactly the v3.x handlers —
+ * refresh, then the remote check — and nothing popped (the menu is set).
+ *
+ * @param {string} platform
+ * @param {{popMenu: Function, refresh: Function, checkRemote: Function}} fx
+ * @returns {{click: Function, 'right-click': Function}}
+ */
+export function trayClickHandlers(platform, fx) {
+  const ui = trayInteraction(platform);
+  for (const name of ['popMenu', 'refresh', 'checkRemote']) {
+    if (!fx || typeof fx[name] !== 'function') {
+      throw new Error(`trayClickHandlers: ${name} must be a function`);
+    }
+  }
+  const handler = (trigger, pops, asks) => () => {
+    if (pops === true) fx.popMenu();
+    fx.refresh();
+    if (asks) fx.checkRemote(trigger);
+  };
+  return {
+    click: handler('click', ui.popUpOnLeftClick, ui.remoteCheckOnLeftClick === true),
+    'right-click': handler('right-click', ui.popUpOnRightClick, true),
+  };
 }
 
 /**

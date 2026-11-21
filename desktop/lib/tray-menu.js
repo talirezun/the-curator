@@ -535,7 +535,12 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // Windows draws no sublabel, no item tooltip and no section header; the
   // pass moves each of those facts somewhere Windows does draw it (see
   // lib/tray-menu-win.js). The Mac template is returned as built.
-  return platform === 'win32' ? adaptTrayMenuForWindows(template) : template;
+  // A top-level leaf that becomes a parent there keeps its action as the
+  // submenu's first item, worded for what it does: the pulse opens Project
+  // Context, not the app at large.
+  return platform === 'win32'
+    ? adaptTrayMenuForWindows(template, { actionLabels: { [ID_PULSE]: 'Open Project Context…' } })
+    : template;
 }
 
 /**
