@@ -1,8 +1,28 @@
 # The Windows app — The Curator
 
-The Curator for Windows is a normal Windows program: you download one installer, click through
-three pages, and the app opens in its own window. It carries everything it needs, including its
-own copy of git for Sync, so there is nothing else to install and no terminal to open.
+## Download
+
+**[Download The Curator for Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe)** (Windows 10 or 11, 64-bit)
+
+1. **Open the downloaded file** (`TheCurator-Windows-Setup.exe`, in your Downloads folder).
+2. **A blue screen appears: "Windows protected your PC".** Click **More info** (the small link under
+   the text), then **Run anyway**. Windows shows this because the app is not code-signed yet.
+3. **Click Next, wait a moment, then click Finish.** The Curator opens in its own window.
+
+That is the whole install: no administrator rights, no folder to choose, nothing else to download.
+The app's [Getting started panel](user-guide.md#5-first-run--the-getting-started-panel) then helps
+you add a key from an AI company. From then on **the app updates itself** ([§ Updating](#updating)).
+
+*The download link always gives you the newest version. It works from version 4.1.0 on; every
+file of every version is also on the [Releases page](https://github.com/talirezun/the-curator/releases).*
+
+---
+
+## What it is
+
+The Curator for Windows is a normal Windows program in its own window. It carries everything it
+needs, including its own copy of git for Sync, so there is nothing else to install and no terminal
+to open.
 
 | | |
 |---|---|
@@ -15,7 +35,7 @@ own copy of git for Sync, so there is nothing else to install and no terminal to
 
 | | **The Windows app** (this page, recommended) | **The one-line browser installer** ([install-windows.md](install-windows.md)) |
 |---|---|---|
-| How you install it | Download `TheCurator-<version>-x64-Windows-Setup.exe`, double-click it | Paste one line into PowerShell |
+| How you install it | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) and open it | Paste one line into PowerShell |
 | Where it appears | Its own window | A tab in your browser at `http://localhost:3333` |
 | Tray icon | Optional ([§ The tray icon](#the-tray-icon)) | None |
 | Updates | From inside the app: it downloads and installs the new version and reopens | Settings → Update, or the same PowerShell line again |
@@ -27,12 +47,11 @@ or [let your coding agent do it](user-guide.md#20-install-with-a-coding-agent).
 
 ---
 
-## Install it
+## The install, screen by screen
 
-1. Open the [**Releases page**](https://github.com/talirezun/the-curator/releases) and download
-   **`TheCurator-<version>-x64-Windows-Setup.exe`** from the newest release.
-2. Double-click the downloaded file. Windows shows a blue screen first: see the next section.
-3. The installer has three pages:
+1. [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) and open it. Windows shows a blue screen first: see the next
+   section.
+2. The installer has three pages:
 
 | Page | What you do |
 |---|---|
@@ -44,7 +63,7 @@ The app's own [Getting started panel](user-guide.md#5-first-run--the-getting-sta
 
 You get a **The Curator** shortcut on the Desktop and in the Start menu, and the app is listed in
 **Settings → Apps → Installed apps** (Windows 10: **Apps & features**) as **The Curator**.
-**You only need the Releases page once:** after that the app updates itself.
+**You only download it once:** after that the app updates itself.
 
 ### The blue "Windows protected your PC" screen
 
@@ -140,7 +159,7 @@ verified installer stays in `%LOCALAPPDATA%\TheCurator\updates`; running it agai
 repairs the app. An
 update replaces the program's files in one step and cannot be rolled back halfway, so a power cut
 in the middle can leave the program incomplete. Your data is untouched in that case too: download
-the installer from the Releases page and run it, and the app is back with everything in it. Before
+[the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it, and the app is back with everything in it. Before
 it runs a downloaded installer again, the app checks its SHA-256 again.
 
 **Known limits, so you can avoid them:**
@@ -323,13 +342,13 @@ and [build-extra](https://github.com/git-for-windows/build-extra).
 | What you see | What to do |
 |---|---|
 | **Windows protected your PC** | **More info → Run anyway** ([above](#the-blue-windows-protected-your-pc-screen)) |
-| *The Curator could not start* … *its program files are incomplete* | Download the installer from the Releases page and run it; your notes and settings are safe ([§ Where everything is](#where-everything-is)) |
+| *The Curator could not start* … *its program files are incomplete* | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it; your notes and settings are safe ([§ Where everything is](#where-everything-is)) |
 | *The Curator cannot be installed in …* | Run the installer again without choosing a folder |
 | The Domains page says your knowledge folder is inside The Curator's own folders | Move that folder with File Explorer into your user folder, then choose it again; nothing was moved or deleted |
 | The app is running but no window shows | The tray icon is on: click it and choose **Open The Curator**, or look under the **^** by the clock |
 | *The Curator is already running* | Only one copy may run. Switch to the open window (or the tray icon). |
 | An update stops because an AI app is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |
-| Sync says its git is missing or damaged | Run the latest installer from the Releases page; your data is kept |
+| Sync says its git is missing or damaged | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it; your data is kept |
 | A folder is refused | The message says why; see [§ Choosing a folder](#choosing-a-folder) |
 | Anything else | **Settings → General → Run system check**, and the log at `%LOCALAPPDATA%\TheCurator\logs\curator.log` |
 

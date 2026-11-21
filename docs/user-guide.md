@@ -276,7 +276,7 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 
 | | **The Mac app** | **The Windows app** | **The browser install** |
 |---|---|---|---|
-| What you get | A `.dmg` you drag to Applications | A setup `.exe` you double-click | A folder on your disk running a local server |
+| What you get | A download you open and drag to Applications | A setup program you download and open | A folder on your disk running a local server |
 | Platforms | macOS only | Windows 10 and 11, 64-bit (x64) | macOS, Windows, Linux |
 | Node.js and git | Bundled Node.js; git from macOS | Both bundled — nothing to install | Installed for you on Mac and Windows by the one-line installers; on Linux you install them |
 | Where the UI appears | Its own window, with its own title bar | Its own window | A tab at `http://localhost:3333` |
@@ -308,13 +308,37 @@ Exactly four things genuinely differ — how it launches, how it updates, where 
 
 ## 3. Installation
 
+**The quickest way: download the app for your computer.** Each link gives the newest version
+(from version 4.1.0 on), and the three steps for each are just below.
+
+| Your computer | Download | Steps |
+|---|---|---|
+| **Windows** 10 or 11 | **[The Curator for Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe)** | [Windows: the Windows app](#windows-the-windows-app-recommended) |
+| **Mac with an Apple chip** (M1 and later) | **[The Curator for Mac (Apple chip)](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg)** | [The Mac app](#the-mac-app-macos-only) |
+| **Mac with an Intel chip** | **[The Curator for Mac (Intel chip)](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg)** | [The Mac app](#the-mac-app-macos-only) |
+| **Linux** | No app: the browser install | [Manual setup](#manual-setup-alternative--linux-or-technical-users-on-mac-and-windows) |
+
+Not sure which Mac you have? Apple menu → **About This Mac**: *Chip: Apple M…* or *Processor: Intel…*.
+
 ### The Mac app (macOS only)
 
-A packaged macOS application is published on the project's
-[**Releases page**](https://github.com/talirezun/the-curator/releases). Download the
-`.dmg` that matches your Mac — the file names say which is which (Apple Silicon for
-M-series Macs, Intel for older ones) — open it, and drag **The Curator** into
-**Applications**.
+| Your Mac | Download |
+|---|---|
+| **Apple chip** (M1, M2, M3, M4 …) | **[The Curator for Mac with Apple chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg)** |
+| **Intel chip** | **[The Curator for Mac with Intel chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg)** |
+
+**Which Mac do I have?** Apple menu (the apple, top-left) → **About This Mac**. *Chip: Apple M…*
+means an Apple chip; *Processor: Intel…* means Intel.
+
+| Step | What you do | What you see |
+|---|---|---|
+| 1 | Open the downloaded file and drag **The Curator** into **Applications** | A window with the app and an Applications folder side by side |
+| 2 | Open **The Curator** from Applications | macOS stops it the first time. Click **Done** |
+| 3 | **System Settings → Privacy & Security**, scroll to **Security**, click **Open Anyway**, confirm, then open The Curator again | The app opens. macOS remembers your answer |
+
+The links always download the newest version (they work from version 4.1.0 on; every file of every
+version is on the [Releases page](https://github.com/talirezun/the-curator/releases)). Why macOS
+asks, and what to do if it says something else:
 
 > ⚠️ **It is a preview, and it carries no Apple developer identity yet.** The app is
 > **ad-hoc signed** — its contents are sealed, so macOS can tell it has not been
@@ -351,7 +375,7 @@ M-series Macs, Intel for older ones) — open it, and drag **The Curator** into
 The app **does not need Node.js** and does not need the Terminal. It keeps its data in
 `~/Library/Application Support/The Curator/`.
 
-**You only need the Releases page for the first install.** After that the app updates
+**You only download it once.** After that the app updates
 itself — [§16 → Version and updates](#version-and-updates).
 
 **Already using the browser install?** Nothing is converted and nothing is moved — see
@@ -384,8 +408,8 @@ A normal Windows program in its own window. It carries its own runtime **and its
 
 | Step | What you do |
 |---|---|
-| 1. Download | From the newest release on the [Releases page](https://github.com/talirezun/the-curator/releases): **`TheCurator-<version>-x64-Windows-Setup.exe`** (64-bit Windows 10 or 11) |
-| 2. Allow it | Double-click it. The blue **"Windows protected your PC"** screen appears because the app is not code-signed yet: click **More info → Run anyway** |
+| 1. Download | **[Download The Curator for Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe)** (64-bit Windows 10 or 11) and open the downloaded file. The link always gives the newest version (from version 4.1.0 on) |
+| 2. Allow it | The blue **"Windows protected your PC"** screen appears because the app is not code-signed yet: click **More info**, then **Run anyway** |
 | 3. Install | **Welcome → Next**, wait, then **Finish** with **Run The Curator** ticked. No administrator prompt, no folder to choose |
 | 4. Use it | The app opens and its [Getting started panel](#5-first-run--the-getting-started-panel) takes over |
 
@@ -7103,15 +7127,15 @@ The same screens as the Mac app below, from **Settings → General → Software 
 | **Download and install** | The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 against what GitHub publishes for it, and its version against the one offered |
 | **Restart and finish** | The app closes, the setup program runs silently, and The Curator opens again on the new version |
 | If Claude Desktop is connected | The update stops before changing anything. **Close the connection and update** ends that connection and installs; or quit Claude Desktop and press **Restart and finish** again |
-| If it does not finish | A message box says so, and the app says it again when it next opens. Your data is never in the program folder; running the installer from the Releases page repairs the app |
-| If the program files are incomplete | The app does not start: *The Curator could not start*. Nothing was read or changed; run the installer from the Releases page again and it finds your notes |
+| If it does not finish | A message box says so, and the app says it again when it next opens. Your data is never in the program folder; [downloading the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and running it repairs the app |
+| If the program files are incomplete | The app does not start: *The Curator could not start*. Nothing was read or changed; [download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it, and it finds your notes |
 | Avoid | Signing out of Windows, or running the installer by hand, while The Curator is saving; and **Close the connection and update** while your AI app is saving to your wiki. Either can cut that one save short ([the known limits](windows-app.md#updating)) |
 
 Every message is listed in [errors.md → Updating the Windows app](errors.md#updating-the-windows-app). The details, including what has not yet been measured on a real PC, are in [windows-app.md § Updating](windows-app.md#updating).
 
 #### The Mac app — it updates itself
 
-**You do not go back to the Releases page.** That is a first install only.
+**You do not download it again.** That is a first install only.
 
 The in-place git update above does not apply here, by design: it works by pulling new
 source into the folder the app is running from and reinstalling its dependencies, and

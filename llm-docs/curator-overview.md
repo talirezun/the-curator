@@ -104,13 +104,13 @@ These are not two products, and you do not have to pick. A book, a thesis or a r
 
 | Platform | How you install it | Status |
 |---|---|---|
-| Mac | A downloadable application, a `.dmg` from the Releases page, in two builds: `arm64` for Apple Silicon and `x64` for Intel. About 140 MB, because the app carries its own runtime | Supported |
+| Mac | A downloadable application in two builds: Apple chip (https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg) and Intel chip (https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg). About 140 MB, because the app carries its own runtime | Supported |
 | Mac | A one-command shell installer that fetches Node.js if needed, clones the repo, installs dependencies and builds the Dock application | Supported |
-| Windows | The Windows app: a setup `.exe` from the Releases page (`TheCurator-<version>-x64-Windows-Setup.exe`, 64-bit Windows 10 or 11), installed per user with no administrator rights. It carries its own runtime and its own git, updates itself, and has an optional tray icon. Recommended | Supported, new |
+| Windows | The Windows app: a setup program (https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe, 64-bit Windows 10 or 11), installed per user with no administrator rights. It carries its own runtime and its own git, updates itself, and has an optional tray icon. Recommended | Supported, new |
 | Windows | A one-line PowerShell installer that sets up its own Node.js and git, the app, and two shortcuts, each on the Desktop and in the Start menu (The Curator, Stop The Curator). No administrator rights. It runs The Curator in a browser tab | Supported |
 | Linux and Mac | Manual setup: git, Node.js, current LTS recommended (18 minimum), `npm install`, then run the local server and open it in a browser at `http://localhost:3333` | Supported, and first-class — not a legacy path |
 
-There is no Linux application; on Linux the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health work identically everywhere. What differs between platforms is the packaging, not the features.
+The download links give the newest version, from version 4.1.0 on. There is no Linux application; on Linux the browser install is the way in, and ingest, chat, wiki, MCP, sync and Health work identically everywhere. What differs between platforms is the packaging, not the features.
 
 The Windows app is **not code-signed yet**, so on the first install Windows shows a blue "Windows protected your PC" screen; **More info**, then **Run anyway**, lets it run. That is a signing status, not a verdict on the app.
 
@@ -266,4 +266,4 @@ Version **3.98.0**, as of 14 November 2026. The project is open source, active, 
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 
-Downloads and release notes: https://github.com/talirezun/the-curator/releases — the official website, with a one-page overview and this assistant, is https://mycurator.xyz
+Release notes and every downloadable file: https://github.com/talirezun/the-curator/releases — the official website, with a one-page overview and this assistant, is https://mycurator.xyz

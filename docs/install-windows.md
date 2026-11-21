@@ -4,15 +4,19 @@ There are two ways. Both need no administrator rights, and both are the same pro
 
 | | **The Windows app** (recommended) | **The one-line browser installer** (this page) |
 |---|---|---|
-| You | Download one `.exe` and double-click it | Paste one line into PowerShell |
+| You | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) and open it | Paste one line into PowerShell |
 | You get | The Curator in its own window, with an optional tray icon | The Curator in a tab of your browser |
 | Guide | **[The Windows app](windows-app.md)** | The three steps below |
 
-**For the app:** download `TheCurator-<version>-x64-Windows-Setup.exe` from the newest release on the
-[Releases page](https://github.com/talirezun/the-curator/releases), double-click it, and on the blue
-**"Windows protected your PC"** screen click **More info → Run anyway** (the app is not code-signed
-yet). Then **Next**, wait, and **Finish** with **Run The Curator** ticked: the app opens. Everything
-else, including updating and uninstalling, is in [windows-app.md](windows-app.md).
+**For the app (recommended):**
+
+1. **[Download The Curator for Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe)** and open the downloaded file.
+2. On the blue **"Windows protected your PC"** screen, click **More info**, then **Run anyway**
+   (the app is not code-signed yet).
+3. Click **Next**, wait a moment, then **Finish**. The Curator opens.
+
+The download link works from version 4.1.0 on. Everything else about the app, including updating
+and uninstalling, is in [windows-app.md](windows-app.md).
 
 The rest of this page is the browser installer. It takes about 5 minutes.
 

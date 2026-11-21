@@ -1,5 +1,12 @@
 # `desktop/` — Electron shell
 
+> **Want to install the app, not build it?** Download it:
+> [Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) ·
+> [Mac with Apple chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg) ·
+> [Mac with Intel chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg) (newest version, from v4.1.0 on).
+> The steps are in [docs/windows-app.md](../docs/windows-app.md) and
+> [docs/mac-app.md](../docs/mac-app.md). This file is for people who build the app.
+
 **Installed, built and launched on 2026-08-31.** Before that date nothing in
 this folder had ever been run, and the file said so; that sentence is gone
 because it is no longer true.

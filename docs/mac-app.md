@@ -1,5 +1,35 @@
 # Mac App — The Curator
 
+## Download
+
+| Your Mac | Download |
+|---|---|
+| **Apple chip** (M1, M2, M3, M4 …) | **[Download The Curator for Mac with Apple chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg)** |
+| **Intel chip** | **[Download The Curator for Mac with Intel chip](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg)** |
+
+**Which Mac do I have?** Click the Apple menu (the apple in the top-left corner of the screen) →
+**About This Mac**. *Chip: Apple M…* means an Apple chip; *Processor: Intel…* means Intel.
+
+1. **Open the downloaded file and drag The Curator into Applications.** A window opens with the app
+   and an Applications folder side by side; drag one onto the other.
+2. **Open The Curator from Applications. The first time, macOS stops it.** Close the message
+   (click **Done**).
+3. **Open System Settings → Privacy & Security, scroll down to Security, click Open Anyway** next
+   to the line about The Curator, confirm (and type your Mac password if asked). Then open The
+   Curator again. It opens, and macOS remembers your answer.
+
+Do step 3 soon after step 2: the **Open Anyway** button only shows for a while after a blocked
+start. macOS asks this once because the app is not yet signed with an Apple developer identity
+([the detail](#getting-the-packaged-app)). From then on **the app updates itself**
+([§ Updating](#updating-the-packaged-app)), and updates never ask again.
+
+*The download links always give you the newest version. They work from version 4.1.0 on; every
+file of every version is also on the [Releases page](https://github.com/talirezun/the-curator/releases).*
+
+---
+
+## The two Mac shapes
+
 There are **two** Mac shapes, both current, and this page covers both.
 
 | | **The packaged app** (`.dmg`) | **The Dock launcher** (built by `install.sh`) |
@@ -35,25 +65,20 @@ already running on 3333.
 
 ## Getting the packaged app
 
-Download the `.dmg` from the
-[**Releases page**](https://github.com/talirezun/the-curator/releases) — the newest
-release at the top, and the build for your chip:
+Use the [Download](#download) buttons at the top of this page: one for a Mac
+with an Apple chip ([download](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg)), one for a Mac with an Intel chip
+([download](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg)). About 140 MB, because the app carries its own runtime.
+Open it and drag **The Curator** onto **Applications**.
 
-| Your Mac | The file |
-|---|---|
-| Apple Silicon (M1 and later) | `TheCurator-<version>-arm64-AppleSilicon.dmg` |
-| Intel | `TheCurator-<version>-x64-Intel.dmg` |
-
-About 140 MB, because the app carries its own runtime. Open it and drag
-**The Curator** onto **Applications**.
-
-> Both files are attached to every release from **v3.38.0** onward, built and
-> published by the same automated job, so a release either carries the pair or
-> does not exist. Earlier releases were named differently and some carry no
+> Those links always lead to the newest release, from **v4.1.0** onward, which
+> carries the two installers under these fixed names as well as under their
+> versioned names (`TheCurator-<version>-arm64-AppleSilicon.dmg`,
+> `TheCurator-<version>-x64-Intel.dmg`, attached to every release from
+> **v3.38.0** onward). Earlier releases were named differently and some carry no
 > installer at all.
 
 **This is a first install only.** Once the app is on your machine it updates
-itself — you should not need the Releases page again. See
+itself — you should not need to download it again. See
 [§ Updating](#updating-the-packaged-app).
 
 > **First launch is blocked by Gatekeeper, and you allow it once.** The app is
@@ -283,7 +308,7 @@ You click **Check for updates** in the **Settings** view (reached from the left 
 
 ## Updating the packaged app
 
-**The app updates itself.** You do not go back to the Releases page — that is a
+**The app updates itself.** You do not download it again — that is a
 first install only. There are two ways in and they run the same update:
 **Settings → General → Check for updates**, and **Check for Updates…** in the
  menu, which since v3.42.0 opens a small **Software Update** window showing

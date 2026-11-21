@@ -10,9 +10,15 @@ The official website is https://mycurator.xyz — a one-page overview with downl
 
 Yes — a 2-minute product video on YouTube: https://youtu.be/1QUIppY80x8
 
-## Where do I download the Mac app?
+## Where do I download the app?
 
-Go here for the .dmg installer (Apple Silicon and Intel builds are published side by side): https://github.com/talirezun/the-curator/releases
+Each link downloads the newest version directly (from version 4.1.0 on):
+
+- Windows (10 or 11, 64-bit): https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe
+- Mac with an Apple chip (M1 and later): https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg
+- Mac with an Intel chip: https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg
+
+Every file of every version, with release notes, is on the Releases page: https://github.com/talirezun/the-curator/releases
 
 ## Where is the one-line installer for the Dock launcher on macOS?
 

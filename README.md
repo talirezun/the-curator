@@ -10,8 +10,8 @@
 <p align="center">
   <a href="#licensing"><img src="https://img.shields.io/badge/License-MIT%20%2B%20source--available-yellow.svg" alt="License: MIT + source-available"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
-  <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/badge/Mac%20app-.dmg%20(not%20notarised)-blue" alt="Mac app: .dmg (not notarised)"></a>
-  <a href="docs/windows-app.md"><img src="https://img.shields.io/badge/Windows%20app-.exe%20(not%20signed)-0078D4" alt="Windows app: .exe (not signed)"></a>
+  <a href="#download"><img src="https://img.shields.io/badge/Mac%20app-download-blue" alt="Mac app: download"></a>
+  <a href="#download"><img src="https://img.shields.io/badge/Windows%20app-download-0078D4" alt="Windows app: download"></a>
   <a href="#windows--one-line-install"><img src="https://img.shields.io/badge/Windows-one--line%20install-0078D4" alt="Windows: one-line install"></a>
   <a href="#option-c--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Linux-lightgrey" alt="Manual setup: Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
@@ -22,11 +22,40 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
-<p align="center"><b>Mac:</b> <a href="docs/mac-app.md">the Mac app</a> · <b>Windows:</b> <a href="docs/windows-app.md">the Windows app</a> (recommended) or <a href="docs/install-windows.md">the one-line browser installer</a> · <b>Linux:</b> <a href="#option-c--manual-setup-windows--linux--mac">manual install</a> or <a href="docs/user-guide.md#20-install-with-a-coding-agent">with your coding agent</a></p>
-
 <p align="center"><strong>Build a second brain from what you read, share it with a team, and give it to your agents.</strong></p>
 
 <p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
+
+## Download
+
+<p align="center">
+  <a href="https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe"><img src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge" alt="Download for Windows" height="36"></a>&nbsp;
+  <a href="https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg"><img src="https://img.shields.io/badge/Download-Mac%20with%20Apple%20chip-222222?style=for-the-badge" alt="Download for Mac with Apple chip" height="36"></a>&nbsp;
+  <a href="https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg"><img src="https://img.shields.io/badge/Download-Mac%20with%20Intel%20chip-555555?style=for-the-badge" alt="Download for Mac with Intel chip" height="36"></a>
+</p>
+
+Each button downloads the newest version directly. The app is free.
+
+| Your computer | Download | Then |
+|---|---|---|
+| **Windows** 10 or 11 | **[The Curator for Windows](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe)** | 1. Open the downloaded file.<br>2. A blue screen says **"Windows protected your PC"**. Click **More info**, then **Run anyway**.<br>3. Click **Next**, wait a moment, then **Finish**. The Curator opens. |
+| **Mac with an Apple chip** (M1, M2, M3, M4 …) | **[The Curator for Mac (Apple chip)](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg)** | 1. Open the downloaded file and drag **The Curator** into **Applications**.<br>2. Open The Curator. The first time, macOS stops it: close the message (click **Done**).<br>3. Open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and confirm. Then open The Curator again. |
+| **Mac with an Intel chip** | **[The Curator for Mac (Intel chip)](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg)** | The same three steps as above. |
+
+**Which Mac do I have?** Click the Apple menu (the apple in the top-left corner of the screen) → **About This Mac**.
+*Chip: Apple M…* means an Apple chip. *Processor: Intel…* means an Intel chip.
+
+**Why the warning?** The app is not signed by Microsoft or Apple yet, so the first time you open
+it, your computer asks you to confirm. That is about signing, not about what the app does.
+
+**When it opens**, a short Getting started panel helps you add a key from an AI company
+(Google Gemini has a free tier); [how to get one](docs/user-guide.md#4-get-your-api-key-gemini-claude-or-openrouter).
+After that the app **updates itself**: you never come back here.
+
+On **Linux**, or if you prefer The Curator in your browser, see
+[other ways to install](#other-ways-to-install). Full guides: [Windows app](docs/windows-app.md) ·
+[Mac app](docs/mac-app.md). *(These download links work from version 4.1.0 on. Every file of every
+version is on the [Releases page](https://github.com/talirezun/the-curator/releases).)*
 
 <p align="center">
   <a href="https://youtu.be/1QUIppY80x8"><img src="docs/images/curator-video-thumbnail.jpg" alt="Thumbnail of The Curator's two-minute product video. A dark knowledge graph of coloured dots joined by purple links fills the frame, under three labels — Second brain, Company brain, Organizational brain — and a timeline reading Today, 1 year, 2 years. The caption reads 'Every source connects to everything before it. Picture it after one year. After two.' A purple play button sits in the centre, with the label 'Watch the product video · 2 min'." width="800"></a>
@@ -101,9 +130,8 @@ switch into.
 These are not two products. A book, a thesis or a research programme outlives any one session —
 which is the day the second becomes the first's future.
 
-**On a Mac, [download the app](#option-a--download-the-mac-app-dmg) and you are running in a
-couple of minutes. On Windows, [install the Windows app](#windows--the-windows-app-recommended)
-(or [paste one command into PowerShell](#windows--one-line-install)).**
+**On a Mac or on Windows, [download the app](#download) and you are running in a couple of
+minutes** (on Windows you can also [paste one command into PowerShell](#windows--one-line-install)).
 On Linux it runs as a local server you open in your browser — same code, same release, same
 features.
 
@@ -351,28 +379,28 @@ flowchart TD
 
 ---
 
-## Quick start
+<a id="quick-start"></a>
+
+## Other ways to install
+
+**Most people only need the [Download](#download) buttons at the top of this page.** This section
+is the rest: more about the two apps, the browser installs, and Linux.
 
 | Your computer | Install | Guide |
 |---|---|---|
-| **macOS** | The Mac app (`.dmg`) | [Option A](#option-a--download-the-mac-app-dmg) · [docs/mac-app.md](docs/mac-app.md) |
-| **Windows** | The Windows app (`.exe`, recommended), or the one-line browser installer | [The Windows app](#windows--the-windows-app-recommended) · [one-line install](#windows--one-line-install) |
+| **macOS** | The Mac app ([download](#download)), or the one-command browser installer | [More about the Mac app](#more-about-the-mac-app) · [docs/mac-app.md](docs/mac-app.md) · [Option B](#option-b--one-command-installer-mac-no-download) |
+| **Windows** | The Windows app ([download](#download), recommended), or the one-line browser installer | [More about the Windows app](#more-about-the-windows-app) · [one-line install](#windows--one-line-install) |
 | **Linux** | Manual install, or let your coding agent do it | [Option C](#option-c--manual-setup-windows--linux--mac) · [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent) |
 
 On **Linux** — and on a Mac or a PC too, if you prefer it — The Curator runs as a **local server
 you open in your browser**: one shell around `src/`, not a fork, so the browser install is **not**
 a legacy path and is fully supported everywhere.
 
-### Windows — the Windows app (recommended)
+### More about the Windows app
 
 A normal Windows program in its own window, carrying its own runtime and its own git, so nothing
-else needs installing (64-bit Windows 10 or 11).
-
-1. From the newest release on the **[Releases page](https://github.com/talirezun/the-curator/releases)**,
-   download **`TheCurator-<version>-x64-Windows-Setup.exe`** and double-click it.
-2. The installer is **not code-signed yet**, so Windows shows a blue **"Windows protected your PC"**
-   screen the first time: click **More info → Run anyway**.
-3. **Welcome → Next**, wait, then **Finish** with **Run The Curator** ticked. The app opens.
+else needs installing (64-bit Windows 10 or 11). **[Download it](#download)**; the three steps are
+in the table at the top.
 
 No administrator rights and no folder to choose. Your notes, keys and settings live in
 `%LOCALAPPDATA%\TheCurator\App`, outside the program folder, so updates and uninstalling never
@@ -411,21 +439,14 @@ To **update**, press Update in the app's Settings, or run the same command again
 updates (and restarts the app if it was running), and never touches your notes, keys or settings. Step-by-step help, troubleshooting and uninstalling:
 [User Guide § 3 → Windows](docs/user-guide.md#windows-one-line-installer).
 
-### Option A — Download the Mac app (`.dmg`)
+### More about the Mac app
 
-**[→ Download from the Releases page](https://github.com/talirezun/the-curator/releases)** — take
-the newest release at the top. Two builds are attached to each one; you need exactly one:
+**[Download it](#download)**: one button for a Mac with an Apple chip (M1 and later), one for a Mac
+with an Intel chip. Not sure which you have? Apple menu → **About This Mac**: *Chip: Apple M…* is
+an Apple chip; *Processor: Intel…* is Intel. It is a big download — about **140 MB** — because the
+app carries its own runtime.
 
-| Your Mac | Download the `.dmg` with… |
-|---|---|
-| **Apple Silicon** (M1 and later) | **`arm64`** in the filename |
-| **Intel** | **`x64`** in the filename |
-
-Not sure which you have?  → **About This Mac**. *Chip: Apple M…* is Apple Silicon;
-*Processor: Intel…* is Intel. It is a big download — about **140 MB** — because the app carries
-its own runtime.
-
-Then open the `.dmg` and **drag The Curator onto the Applications folder** in the window that
+Open the downloaded file and **drag The Curator onto the Applications folder** in the window that
 appears. Eject the disk image afterwards.
 
 **Nothing below is hard — it is three clicks, once.** macOS asks you to confirm the very first
@@ -483,7 +504,7 @@ See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
 **After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)
 downloads the new version, verifies it against the sha256 GitHub publishes on the asset, and
 swaps it in, showing progress as it goes. You do not come back to this page for updates — the
-Releases page is for a first install. An update installed this way carries **no Gatekeeper prompt
+download is for a first install. An update installed this way carries **no Gatekeeper prompt
 at all**, because macOS flags a file your *browser* downloads but not one the app fetched itself
 — measured, with the browser download kept as the control.
 
@@ -519,7 +540,7 @@ points you to API key setup.
 
 **There is no Linux app**, so this is the way in on Linux — and it is a first-class one: ingest,
 chat, wiki, MCP, sync and Health are all here. (On Windows use the
-[Windows app](#windows--the-windows-app-recommended) or the [one-line install](#windows--one-line-install)
+[Windows app](#download) or the [one-line install](#windows--one-line-install)
 above; the steps below also work there if you prefer to manage Node and git yourself.) The Node
 server runs anywhere Node 18+ runs; only the `.dmg`, the Mac one-command installer and the
 auto-built `.app` Dock launcher are macOS-specific, and only the `.exe` is Windows-specific.

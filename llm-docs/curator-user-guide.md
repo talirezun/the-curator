@@ -1,5 +1,27 @@
 # The Curator — installing and using the app
 
+## Where do I download The Curator?
+
+Each link downloads the newest version directly. The links work from version 4.1.0 on.
+
+| Your computer | Download link |
+|---|---|
+| Windows 10 or 11 (64-bit) | https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe |
+| Mac with an Apple chip (M1 and later) | https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg |
+| Mac with an Intel chip | https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg |
+| Linux | No app. Use the browser install; see "How do I install it on Linux?" |
+
+To tell which Mac you have: Apple menu, then **About This Mac**. "Chip: Apple M…" means an Apple chip; "Processor: Intel…" means an Intel chip.
+
+The steps, in short:
+
+| Computer | Step 1 | Step 2 | Step 3 |
+|---|---|---|---|
+| Windows | Open the downloaded file | On the blue **"Windows protected your PC"** screen, click **More info**, then **Run anyway** | Click **Next**, wait, then **Finish**. The Curator opens |
+| Mac | Open the downloaded file and drag **The Curator** into **Applications** | Open The Curator. macOS stops it the first time: click **Done** | **System Settings → Privacy & Security**, scroll to **Security**, click **Open Anyway**, confirm, then open The Curator again |
+
+The warning appears because the app is not yet signed by Microsoft or Apple. After the first install the app updates itself. Every file of every version is also on the Releases page: https://github.com/talirezun/the-curator/releases
+
 ## What do I need before I install it?
 
 | Requirement | Detail |
@@ -14,7 +36,7 @@ Which install to use, by computer:
 
 | Computer | Use | Where |
 |---|---|---|
-| Mac | The Mac app | The Releases page, next question |
+| Mac | The Mac app | The download links above, and the next question |
 | Windows | The Windows app (recommended), or the one-line browser installer | See "How do I install the Windows app?" and "How do I install it on Windows?" |
 | Linux | The manual install, or let your coding agent do it | See "How do I install it on Linux?" |
 
@@ -22,14 +44,13 @@ There are several ways to run The Curator and they are the same program, one cod
 
 ## How do I install the Mac app?
 
-1. Open the Releases page: https://github.com/talirezun/the-curator/releases
-2. Download the `.dmg` that matches your Mac. `TheCurator-<version>-arm64-AppleSilicon.dmg` for M1 and later, `TheCurator-<version>-x64-Intel.dmg` for Intel. Each is about 140 MB, because the app carries its own runtime.
-3. Open the `.dmg` and drag **The Curator** into **Applications**. The disk image includes an Applications shortcut for this.
-4. Open it. macOS will refuse the first launch — see the next question.
+1. Download the app for your Mac. Apple chip (M1 and later): https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg . Intel chip: https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg . Each is about 140 MB, because the app carries its own runtime. The links give the newest version, from version 4.1.0 on.
+2. Open the downloaded file and drag **The Curator** into **Applications**. The window that opens includes an Applications shortcut for this.
+3. Open it. macOS will refuse the first launch — see the next question.
 
 The app needs no Node.js and no Terminal. Its data lives in `~/Library/Application Support/The Curator/`, and its log in `~/Library/Logs/The Curator/curator.log`.
 
-You only need the Releases page for the first install. After that the app updates itself.
+You only download it once. After that the app updates itself.
 
 The Intel build comes out of the same automated build but has never been run on Intel hardware, because there is no Intel Mac to run it on.
 
@@ -65,8 +86,8 @@ It does not add the app to your Dock for you. Open Finder, go to `~/the-curator/
 
 ## How do I install the Windows app?
 
-1. Open the Releases page, https://github.com/talirezun/the-curator/releases , and download `TheCurator-<version>-x64-Windows-Setup.exe` from the newest release. It needs 64-bit (x64) Windows 10 or 11; there is no ARM build yet.
-2. Double-click it. Windows shows a blue screen, **"Windows protected your PC"**, because the installer is not code-signed yet. Click **More info**, then **Run anyway**. This happens once, on the first install.
+1. Download the installer: https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe . The link gives the newest version, from version 4.1.0 on. It needs 64-bit (x64) Windows 10 or 11; there is no ARM build yet.
+2. Open the downloaded file. Windows shows a blue screen, **"Windows protected your PC"**, because the installer is not code-signed yet. Click **More info**, then **Run anyway**. This happens once, on the first install.
 3. The installer has three pages: **Welcome** (click **Next**), installing (wait), and **Finish** with **Run The Curator** ticked (click **Finish**). The app opens in its own window and its Getting started panel takes over.
 
 There is no administrator prompt, no folder to choose, nothing else to download and no terminal: the app carries its own Node.js and its own git. It installs for your Windows account only, in `%LOCALAPPDATA%\Programs\The Curator`, with a **The Curator** shortcut on the Desktop and in the Start menu.
@@ -81,7 +102,7 @@ There is no administrator prompt, no folder to choose, nothing else to download 
 
 **Folders on Windows.** When you choose a knowledge folder, the app checks it against Windows' rules and says in plain words what is wrong and that nothing was changed: OneDrive busy or not running, Windows Security's Controlled folder access blocking Documents, Desktop, Pictures, Music or Videos (choose another folder, or allow The Curator in Windows Security, Virus and threat protection, Manage ransomware protection, Allow an app through Controlled folder access), a path over 247 characters (a warning over 120), a reserved name such as CON or NUL, a whole drive such as `D:\`, an unreachable network folder, a read-only folder, a path with no drive letter, the app's own program folder, or the app's own working folders (`%LOCALAPPDATA%\TheCurator` outside `App\domains`, and `%APPDATA%\The Curator`), however the path is spelled (a short name, a junction or `\\localhost\C$` count too). If the folder already set breaks that rule, the app reads and writes nothing there and the Domains page says why; nothing is moved or deleted. Move the folder with File Explorer into your user folder and choose it again.
 
-**If the Windows app says "The Curator could not start" because its program files are incomplete,** nothing was read or changed: download the installer from the Releases page and run it again, and the app finds your notes and settings.
+**If the Windows app says "The Curator could not start" because its program files are incomplete,** nothing was read or changed: download the installer again (https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) and run it, and the app finds your notes and settings.
 
 ## How do I install it on Windows?
 
@@ -233,9 +254,9 @@ There is no **Stop server** button in the interface, deliberately. Quitting the 
 
 ## How do I update to a new version?
 
-**The Mac app updates itself.** Use **The Curator → Check for Updates…** in the menu bar, or **Settings → General → Software update → Check for updates**. It downloads the new version, checks it, swaps it in and restarts, with no Gatekeeper prompt to click through. Your knowledge base, keys and sync settings are untouched. If a check fails it says why and the copy you are running keeps working, because the new version is never put in place until every check on it has passed. You do not go back to the Releases page.
+**The Mac app updates itself.** Use **The Curator → Check for Updates…** in the menu bar, or **Settings → General → Software update → Check for updates**. It downloads the new version, checks it, swaps it in and restarts, with no Gatekeeper prompt to click through. Your knowledge base, keys and sync settings are untouched. If a check fails it says why and the copy you are running keeps working, because the new version is never put in place until every check on it has passed. You do not download it again.
 
-**The Windows app updates itself.** Use **Help → Check for Updates…** or **Settings → General → Software update → Check for updates**, then **Download and install**. The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 must match what GitHub publishes, and its version must be the one offered; a file that fails a check is never run. At **Update ready to install** nothing has changed yet; **Restart and finish** closes the app, runs the installer silently and reopens The Curator on the new version. Your knowledge base, keys and settings are outside the program folder and are never touched. If Claude Desktop is connected to The Curator, it keeps a copy of the app running as its connection and Windows cannot replace a running program, so the update stops before changing anything and offers **Close the connection and update** (afterwards quit and reopen Claude Desktop), or you quit Claude Desktop and press **Restart and finish** again. The app closes only once its update helper is running; if the helper cannot start, the app stays open, keeps the downloaded setup and says so. If an update does not finish, a message box says so and the app says it again when it next opens; every step is logged in `%LOCALAPPDATA%\TheCurator\logs\update-install.log`, and running the kept setup from `%LOCALAPPDATA%\TheCurator\updates` (or the one from the Releases page) repairs the app with your data intact. A real update from one version to the next is rehearsed in CI, and the update from 4.0.0 to 4.0.1 was confirmed on a real PC on 2026-11-21 with no security prompt. Known limits: signing out of Windows, or running the installer by hand, while The Curator is saving can cut that one save short; **Close the connection and update** can cut short a save your AI app is making to your wiki at that moment, so let it finish first; and if your Windows user folder name contains an apostrophe, quit The Curator yourself before running the installer by hand, because the installer may not notice it is open.
+**The Windows app updates itself.** Use **Help → Check for Updates…** or **Settings → General → Software update → Check for updates**, then **Download and install**. The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 must match what GitHub publishes, and its version must be the one offered; a file that fails a check is never run. At **Update ready to install** nothing has changed yet; **Restart and finish** closes the app, runs the installer silently and reopens The Curator on the new version. Your knowledge base, keys and settings are outside the program folder and are never touched. If Claude Desktop is connected to The Curator, it keeps a copy of the app running as its connection and Windows cannot replace a running program, so the update stops before changing anything and offers **Close the connection and update** (afterwards quit and reopen Claude Desktop), or you quit Claude Desktop and press **Restart and finish** again. The app closes only once its update helper is running; if the helper cannot start, the app stays open, keeps the downloaded setup and says so. If an update does not finish, a message box says so and the app says it again when it next opens; every step is logged in `%LOCALAPPDATA%\TheCurator\logs\update-install.log`, and running the kept setup from `%LOCALAPPDATA%\TheCurator\updates` (or the installer downloaded again from https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe ) repairs the app with your data intact. A real update from one version to the next is rehearsed in CI, and the update from 4.0.0 to 4.0.1 was confirmed on a real PC on 2026-11-21 with no security prompt. Known limits: signing out of Windows, or running the installer by hand, while The Curator is saving can cut that one save short; **Close the connection and update** can cut short a save your AI app is making to your wiki at that moment, so let it finish first; and if your Windows user folder name contains an apostrophe, quit The Curator yourself before running the installer by hand, because the installer may not notice it is open.
 
 **The browser install updates in place.** **Settings → General → Check for updates**; if one is available an install button appears and the confirmation names the versions. It replaces its own program files with the published version, reinstalls dependencies and restarts, and the browser reloads itself. From the terminal, the equivalent is `cd ~/the-curator && git pull && npm install` and then restarting the server.
 
@@ -944,7 +965,7 @@ The most likely cause is App Translocation: macOS runs an unsigned app that is s
 
 ## Why does Personal Sync say git is missing in the Windows app?
 
-The Windows app carries its own git, so this means that copy is damaged or was removed (an antivirus can do that). Download the latest installer from the Releases page and run it: it repairs the app and keeps your notes and settings. **Settings → General → Run system check** shows the same on its Git row.
+The Windows app carries its own git, so this means that copy is damaged or was removed (an antivirus can do that). Download the installer again (https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) and run it: it repairs the app and keeps your notes and settings. **Settings → General → Run system check** shows the same on its Git row.
 
 ## Why does Personal Sync fail in the Mac app with a git error?
 
