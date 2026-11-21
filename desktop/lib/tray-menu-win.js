@@ -59,6 +59,10 @@
  *  cap keeps a pathological one from growing a menu taller than the screen. */
 export const WIN_DETAIL_LINES_MAX = 12;
 
+/** A Windows menu is as wide as its widest item, so a detail line longer than
+ *  this many characters is wrapped into consecutive disabled rows. */
+export const WIN_DETAIL_LINE_CHARS = 60;
+
 /** The action label a leaf's own click moves to when it becomes a parent. */
 export const WIN_OPEN_LABEL = 'Open in The Curator';
 
@@ -67,12 +71,36 @@ export function escapeWinMnemonic(label) {
   return typeof label === 'string' ? label.replace(/&/g, '&&') : label;
 }
 
-function tipLines(toolTip) {
+function tipLines(toolTip, writtenAtText) {
+  const human = typeof writtenAtText === 'string' && writtenAtText.trim() ? writtenAtText.trim() : null;
   return String(toolTip)
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
+    // A row that carries a readable time shows it instead of the ISO text.
+    .map((l) => (human && /^written:\s/.test(l) ? 'written: ' + human : l))
     .slice(0, WIN_DETAIL_LINES_MAX);
+}
+
+/**
+ * Wrap one line at word boundaries into rows of about WIN_DETAIL_LINE_CHARS.
+ * A backticked span and an identifier-like word (no spaces) are never split:
+ * one longer than the limit simply gets its own, wider row. Every word is
+ * kept, in order.
+ */
+export function wrapDetailLine(line, width = WIN_DETAIL_LINE_CHARS) {
+  const text = String(line).trim();
+  if (text.length <= width) return [text];
+  const tokens = text.match(/`[^`]*`\S*|\S*`[^`]*`\S*|\S+/g) || [text];
+  const rows = [];
+  let cur = '';
+  for (const t of tokens) {
+    if (!cur) { cur = t; continue; }
+    if ((cur + ' ' + t).length <= width) cur += ' ' + t;
+    else { rows.push(cur); cur = t; }
+  }
+  if (cur) rows.push(cur);
+  return rows;
 }
 
 function caption(line) {
@@ -94,7 +122,7 @@ function ownTipLines(item) {
   const sub = (typeof item.sublabel === 'string' ? item.sublabel : '').trim();
   // A tooltip that only repeats the label adds no fact.
   if (tip === label) return [];
-  return tipLines(tip).filter((l) => l !== label && l !== sub);
+  return tipLines(tip, item.writtenAtText).filter((l) => l !== label && l !== sub);
 }
 
 /** Append caption lines under a separator, skipping any the menu already shows. */
@@ -106,7 +134,7 @@ function appendDetails(submenu, lines) {
     const esc = escapeWinMnemonic(l);
     if (shown.has(esc)) continue;
     shown.add(esc);
-    add.push(caption(l));
+    for (const row of wrapDetailLine(l)) add.push(caption(row));
   }
   if (add.length) submenu.push({ type: 'separator' }, ...add.slice(0, WIN_DETAIL_LINES_MAX));
 }
@@ -139,6 +167,7 @@ function baseItem(item) {
   const out = { ...item };
   delete out.sublabel;
   delete out.toolTip;
+  delete out.writtenAtText;
   // A section header → the disabled caption the Mac module's own fallback is.
   if (out.type === 'header') delete out.type;
   // `role: 'quit'` keeps whatever label it has; Electron draws it.

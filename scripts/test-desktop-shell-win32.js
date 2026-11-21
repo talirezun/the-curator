@@ -507,8 +507,11 @@ function walk(t, f, trail = []) {
     if (!i.toolTip || i.toolTip.trim() === (i.label || '').trim()) return;
     for (const l of i.toolTip.split('\n').map((x) => x.trim()).filter(Boolean)) tipFacts.push({ l, label: (i.label || '').trim() });
   });
+  // A long line is wrapped (v4.0.2) into consecutive rows: joined with one space they read as the line.
+  const winText = winLabels.join(' ');
   const missing = tipFacts.filter(({ l, label }) => !winLabels.includes(esc(l))
     && !winLabels.some((w) => w.includes(esc(l)))
+    && !winText.includes(esc(l).replace(/\s+/g, ' '))
     && !(label && l.startsWith(label + ' · ') && winLabels.includes(esc(l.slice(label.length + 3)))));
   ok(tipFacts.length > 10, `CONTROL — the Mac menu carries real tooltip facts (${tipFacts.length} lines)`);
   eq(missing.length, 0, `every Mac tooltip fact (${tipFacts.length}) is visible on the Windows menu${missing.length ? ' — missing: ' + missing.slice(0, 3).map((m) => m.l).join(' | ') : ''}`);
