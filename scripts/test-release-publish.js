@@ -55,6 +55,12 @@
  *     checked against Git for Windows' published package-versions list, not
  *     against the list inside the MinGit zip (fetch-mingit refuses the build
  *     if those ever differ).
+ *   • THE STABLE-NAME COPIES (§11-§13) are proven against the REAL picker
+ *     and resolver and the publish steps' shell is EXECUTED against a fake
+ *     `gh`; that GitHub accepts the uploads, that `--notes-file` renders the
+ *     body as written, and that /releases/latest/download/<name> serves the
+ *     copy are seen only on a real release. On macOS the Windows step runs
+ *     under a `mapfile` shim (bash 3.2); the runner's bash has it built in.
  *   • The parser in §3 is a SUBSET of YAML — enough for these two workflows,
  *     and deliberately strict so it fails rather than guesses. It treats `on`
  *     as the string key `on`, where a YAML 1.1 loader would give `true`.
@@ -85,6 +91,8 @@ import {
   PACKAGE_VERSIONS_PROVENANCE, classifyComponents,
 } from '../desktop/lib/fetch-mingit.mjs';
 import { resolveInstallerRelease } from '../desktop/lib/update-release.js';
+import { pickInstallerAsset } from '../desktop/lib/update-plan.js';
+import * as dl from './release-downloads.js';
 import * as zlib from 'node:zlib';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
@@ -1298,6 +1306,410 @@ section('§10  The install smoke waits until the silent uninstall has FINISHED, 
   } else {
     console.log('  · (desktop/node_modules not installed here: the uninstaller.nsh order cross-check is skipped)');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§11  The stable-name copies are INVISIBLE to the in-app updater — the REAL resolver and picker, darwin arm64, darwin x64, win32 x64');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const NEW = '9.1.0', OLD = '9.0.0', CUR = '8.0.0';
+  const DL = 'https://github.com/talirezun/the-curator/releases/download/';
+  const asset = (tag, name, size, hex) => ({ name, size, digest: `sha256:${hex}`, state: 'uploaded', content_type: 'application/octet-stream', browser_download_url: `${DL}${tag}/${name}` });
+  const filesOf = (v) => ({
+    'win32-x64': [installerFileName(v), 120000003, '1'.repeat(64)],
+    'darwin-arm64': [publishedNameFor(v, 'arm64'), 140000001, '2'.repeat(64)],
+    'darwin-x64': [publishedNameFor(v, 'x64'), 140000002, '3'.repeat(64)],
+  });
+  // The copies go FIRST in the listing: pickInstallerAsset takes the FIRST
+  // match, so a copy the matcher accepted would win, and this would see it.
+  function release(v, { versioned = true, copies = true, sources = true, only = null } = {}) {
+    const tag = `v${v}`;
+    const f = filesOf(v);
+    const keys = only || dl.INSTALLERS.map((i) => i.key);
+    const out = [];
+    if (copies) for (const i of dl.INSTALLERS) if (keys.includes(i.key)) out.push(asset(tag, i.stable, f[i.key][1], f[i.key][2]));
+    if (versioned) for (const k of keys) out.push(asset(tag, f[k][0], f[k][1], f[k][2]));
+    if (sources) out.push(asset(tag, RELEASE_SOURCE_ASSETS[0].asset, 1000, 'c'.repeat(64)));
+    return {
+      tag_name: tag, name: `The Curator ${tag}`, draft: false, prerelease: false,
+      html_url: `https://github.com/talirezun/the-curator/releases/tag/${tag}`, published_at: '2026-11-21T00:00:00Z', assets: out,
+    };
+  }
+  const fetchOf = (payload) => async () => new Response(JSON.stringify(payload), { status: 200 });
+  const resolve = (payload, platform, arch) => resolveInstallerRelease({ configModule: cfgMod, fetchImpl: fetchOf(payload), currentVersion: CUR, arch, platform });
+  const PLAT = [['darwin', 'arm64', 'darwin-arm64'], ['darwin', 'x64', 'darwin-x64'], ['win32', 'x64', 'win32-x64']];
+
+  for (const name of dl.STABLE_NAMES) {
+    eq([archFromAssetName(name), archFromAssetName(name, { ext: '.dmg' }), archFromAssetName(name, { ext: '.exe' })], [null, null, null],
+      `the REAL archFromAssetName reads ${name} as no architecture, on either extension`);
+    eq(dl.updaterWouldPick(name), null, `…and the real pickInstallerAsset picks it for no arch on either extension`);
+  }
+
+  for (const [platform, arch, key] of PLAT) {
+    const want = filesOf(NEW)[key];
+    const withCopies = await resolve([release(NEW), release(OLD)], platform, arch);
+    const without = await resolve([release(NEW, { copies: false }), release(OLD, { copies: false })], platform, arch);
+    eq([withCopies.ok, withCopies.version, withCopies.asset && withCopies.asset.name, withCopies.asset && withCopies.asset.size, withCopies.asset && withCopies.asset.digest && withCopies.asset.digest.hex],
+      [true, NEW, want[0], want[1], want[2]],
+      `${platform} ${arch}: the REAL resolveInstallerRelease downloads the VERSIONED ${want[0]}, though the copies are listed first`);
+    eq(withCopies, without, `${platform} ${arch}: …every field identical to the same releases WITHOUT copies (URL, size, digest, version, release)`);
+  }
+  for (const platform of ['darwin', 'win32', undefined]) {
+    eq(cfgMod.pickInstallableRelease([release(NEW), release(OLD)], { platform }), cfgMod.pickInstallableRelease([release(NEW, { copies: false }), release(OLD, { copies: false })], { platform }),
+      `config.js pickInstallableRelease (${platform || 'no platform'}): the same release with or without copies (Settings' check is unchanged)`);
+  }
+  eq(cfgMod.installerAssetsFor(release(NEW), 'win32').map((a) => a.name), ['TheCurator-Windows-Setup.exe', installerFileName(NEW)],
+    'installerAssetsFor DOES count the .exe copy (an extension rule); the arch rule is what drops it, as the lines above show');
+
+  // CONTROL: the same checks CAN see a copy being chosen. A copy whose name
+  // carried an arch token, listed first, wins.
+  const bad = 'TheCurator-Mac-x64.dmg';
+  const ctl = pickInstallerAsset([asset('v9.1.0', bad, 5, 'd'.repeat(64)), asset('v9.1.0', publishedNameFor(NEW, 'x64'), 6, 'e'.repeat(64))], { arch: 'x64' });
+  eq(ctl.ok && ctl.asset.name, bad, 'CONTROL: a copy named with an x64 token, listed first, WOULD be downloaded, so a green line above is not vacuous');
+  ok(/archFromAssetName/.test(dl.updaterWouldPick(bad) || ''), 'CONTROL: updaterWouldPick names that copy');
+
+  // A release carrying ONLY copies (cannot be produced by the workflow: a copy
+  // is uploaded only after its versioned file, in a second upload).
+  const copiesOnly = [release(NEW, { versioned: false, sources: false }), release(OLD, { copies: false })];
+  for (const [platform, arch] of PLAT) {
+    eq((cfgMod.pickInstallableRelease(copiesOnly, { platform }) || {}).version, NEW,
+      `copies only, ${platform}: the picker still counts it (extension rule), exactly as it counts a release missing this arch`);
+    const r = await resolve(copiesOnly, platform, arch);
+    eq([r.ok, r.reason], [false, 'no-asset-for-arch'], `copies only, ${platform} ${arch}: a NAMED failure (no-asset-for-arch); nothing is downloaded, never a copy`);
+  }
+  // One platform's job failed: its copy is absent with its versioned file, so
+  // the other platform's copies never make this release "installable" for it.
+  const macOnly = [release(NEW, { only: ['darwin-arm64', 'darwin-x64'] }), release(OLD)];
+  const w = await resolve(macOnly, 'win32', 'x64');
+  eq([w.ok, w.version, w.asset && w.asset.name], [true, OLD, installerFileName(OLD)], 'Mac files and Mac copies only on the newest release: Windows is offered the older release\'s versioned setup, as before');
+  const winOnly = [release(NEW, { only: ['win32-x64'] }), release(OLD)];
+  const m = await resolve(winOnly, 'darwin', 'arm64');
+  eq([m.ok, m.version, m.asset && m.asset.name], [true, OLD, publishedNameFor(OLD, 'arm64')], 'Windows files and the Windows copy only: a Mac is offered the older release\'s versioned DMG, as before');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§12  release-downloads.js: the copies (staged, byte-checked), the release check, the body');
+// ═══════════════════════════════════════════════════════════════════════════
+const DLCLI = path.join(__dirname, 'release-downloads.js');
+const RV = '4.1.0';
+function makeBuild(dir, version, bytes = { 'win32-x64': 3001, 'darwin-arm64': 4001, 'darwin-x64': 5001 }) {
+  mkdirSync(dir, { recursive: true });
+  const out = {};
+  for (const i of dl.INSTALLERS) {
+    const f = path.join(dir, i.versioned(version));
+    const buf = Buffer.alloc(bytes[i.key]);
+    for (let k = 0; k < buf.length; k++) buf[k] = (k * 31 + i.key.length) & 0xff;
+    writeFileSync(f, buf);
+    out[i.key] = f;
+  }
+  return out;
+}
+const relJson = (entries) => ({ assets: entries.map(([name, size, hex]) => ({ name, size, state: 'uploaded', ...(hex ? { digest: `sha256:${hex}` } : {}) })) });
+{
+  eq(dl.STABLE_NAMES, ['TheCurator-Windows-Setup.exe', 'TheCurator-Mac-AppleSilicon.dmg', 'TheCurator-Mac-Intel.dmg'], 'the three stable names (the owner\'s)');
+  eq(dl.INSTALLERS.map((i) => dl.stableDownloadUrl(i.stable)), [
+    'https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe',
+    'https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-AppleSilicon.dmg',
+    'https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Mac-Intel.dmg',
+  ], 'the three stable URLs');
+  eq(`${dl.REPO_URL}/releases`, cfgMod.RELEASES_PAGE_URL, 'CROSS-CHECK: the repository is the one config.js reads releases from');
+  eq(dl.INSTALLERS.map((i) => i.versioned(RV)), [installerFileName(RV), publishedNameFor(RV, 'arm64'), publishedNameFor(RV, 'x64')],
+    'the versioned names are the publish scripts\' own (installerFileName, publishedNameFor), never retyped');
+
+  // ── stage ──
+  const top = tmp();
+  const build = makeBuild(path.join(top, 'dist'), RV);
+  const out = path.join(top, 'stable');
+  const pairs = dl.INSTALLERS.map((i) => ({ key: i.key, file: build[i.key] }));
+  const st = dl.stageStableCopies({ pairs, version: RV, out });
+  ok(st.ok, `stage: all three copies made (${st.reason || ''} ${st.detail || ''})`);
+  for (const i of dl.INSTALLERS) {
+    const c = path.join(out, i.stable);
+    ok(existsSync(c) && sha256(readFileSync(c)) === sha256(readFileSync(build[i.key])), `stage: ${i.stable} is byte-identical to ${path.basename(build[i.key])}`);
+  }
+  eq(readdirSync(path.join(top, 'dist')).sort(), dl.INSTALLERS.map((i) => i.versioned(RV)).sort(), 'stage writes nothing into the build folder (the rename\'s re-read and the artifact never see a copy)');
+  eq(dl.stageStableCopies({ pairs: [{ key: 'darwin-x64', file: build['darwin-arm64'] }], version: RV, out }).reason, 'not-the-versioned-file', 'stage refuses the arm64 DMG offered as the Intel one');
+  eq(dl.stageStableCopies({ pairs: [{ key: 'win32-x64', file: path.join(top, 'nope.exe') }], version: RV, out }).reason, 'missing-file', 'stage refuses a missing file');
+  eq(dl.stageStableCopies({ pairs, version: '4.1.0-rc1', out }).reason, 'bad-version', 'stage refuses a version that is not bare X.Y.Z');
+  eq(dl.stageStableCopies({ pairs: [{ key: 'linux-x64', file: build['win32-x64'] }], version: RV, out }).reason, 'unknown-key', 'stage refuses an unknown platform key');
+  // THE GUARD: a stable name the updater would pick is refused before any copy.
+  const picky = [{ ...dl.INSTALLERS[2], stable: 'TheCurator-Mac-x64-Intel.dmg' }];
+  const out2 = path.join(top, 'stable2');
+  const g = dl.stageStableCopies({ pairs: [{ key: 'darwin-x64', file: build['darwin-x64'] }], version: RV, out: out2, installers: picky });
+  eq(g.reason, 'stable-name-matched-by-updater', 'stage REFUSES a stable name the real updater matcher would pick (here one with an x64 token)');
+  ok(!existsSync(path.join(out2, 'TheCurator-Mac-x64-Intel.dmg')), '…before making any copy');
+  // THE GUARD: a copy that is not the same bytes is refused.
+  const short = (a, b) => writeFileSync(b, readFileSync(a).subarray(1));
+  eq(dl.stageStableCopies({ pairs: [{ key: 'win32-x64', file: build['win32-x64'] }], version: RV, out: path.join(top, 'stable3'), copyFile: short }).reason, 'copy-differs',
+    'stage REFUSES a copy one byte short (size and SHA-256 are re-read from disk)');
+  const flip = (a, b) => { const buf = readFileSync(a); buf[0] ^= 1; writeFileSync(b, buf); };
+  eq(dl.stageStableCopies({ pairs: [{ key: 'win32-x64', file: build['win32-x64'] }], version: RV, out: path.join(top, 'stable4'), copyFile: flip }).reason, 'copy-differs',
+    'stage REFUSES a copy of the right size with one byte changed');
+
+  // The CLI, as the workflow runs it.
+  const ghOut = path.join(top, 'gh-output');
+  const cli = spawnSync(process.execPath, [DLCLI, 'stage', '--version', RV, '--out', path.join(top, 'stable5'),
+    '--file', `darwin-arm64=${build['darwin-arm64']}`, '--file', `darwin-x64=${build['darwin-x64']}`],
+  { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: ghOut } });
+  eq(cli.status, 0, `stage CLI exits 0 (${cli.stderr.trim()})`);
+  eq(existsSync(ghOut) ? readFileSync(ghOut, 'utf8') : '(no output written)', `darwin_arm64=${path.join(top, 'stable5', 'TheCurator-Mac-AppleSilicon.dmg')}\ndarwin_x64=${path.join(top, 'stable5', 'TheCurator-Mac-Intel.dmg')}\n`,
+    '…and writes darwin_arm64= and darwin_x64= (the step outputs the publish step reads)');
+  const cliBad = spawnSync(process.execPath, [DLCLI, 'stage', '--version', RV, '--out', path.join(top, 'stable6'), '--file', `win32-x64=${build['darwin-x64']}`], { encoding: 'utf8' });
+  ok(cliBad.status === 1 && /not-the-versioned-file/.test(cliBad.stderr), 'stage CLI exits 1 naming the refusal');
+  ok(spawnSync(process.execPath, [DLCLI, 'stage', '--version', RV], { encoding: 'utf8' }).status === 2, 'stage CLI without --out/--file is a usage error (2)');
+
+  // ── check ──
+  const full = [];
+  for (const i of dl.INSTALLERS) {
+    const b = readFileSync(build[i.key]);
+    full.push([i.versioned(RV), b.length, sha256(b)], [i.stable, b.length, sha256(b)]);
+  }
+  full.push([RELEASE_SOURCE_ASSETS[0].asset, 10, null]);
+  eq(dl.checkReleaseCopies({ release: relJson(full), pairs, version: RV }), { ok: true, checked: 6 }, 'check: three versioned files and three copies, by exact name, size and digest');
+  const without = (name) => relJson(full.filter((e) => e[0] !== name));
+  for (const i of dl.INSTALLERS) {
+    const r = dl.checkReleaseCopies({ release: without(i.stable), pairs, version: RV });
+    eq([r.reason, r.missing], ['missing-on-release', [i.stable]], `check: the copy ${i.stable} missing FAILS (missing-on-release)`);
+  }
+  eq(dl.checkReleaseCopies({ release: without(installerFileName(RV)), pairs, version: RV }).reason, 'missing-on-release', 'check: the versioned setup missing fails too');
+  const wrongSize = relJson(full.map((e) => (e[0] === 'TheCurator-Mac-Intel.dmg' ? [e[0], e[1] - 1, null] : e)));
+  eq(dl.checkReleaseCopies({ release: wrongSize, pairs, version: RV }).reason, 'wrong-size-on-release', 'check: a copy one byte short on the release FAILS (wrong-size-on-release)');
+  const wrongDigest = relJson(full.map((e) => (e[0] === 'TheCurator-Windows-Setup.exe' ? [e[0], e[1], 'f'.repeat(64)] : e)));
+  eq(dl.checkReleaseCopies({ release: wrongDigest, pairs, version: RV }).reason, 'wrong-digest-on-release', 'check: a copy whose GitHub digest differs FAILS');
+  const starter = relJson(full); starter.assets.find((a) => a.name === 'TheCurator-Mac-AppleSilicon.dmg').state = 'starter';
+  eq(dl.checkReleaseCopies({ release: starter, pairs, version: RV }).reason, 'missing-on-release', 'check: a copy still uploading (state starter) does not count');
+  const relFile = path.join(top, 'rel.json');
+  writeFileSync(relFile, JSON.stringify(without('TheCurator-Windows-Setup.exe')));
+  const ck = spawnSync(process.execPath, [DLCLI, 'check', '--release-json', relFile, '--version', RV, '--file', `win32-x64=${build['win32-x64']}`], { encoding: 'utf8' });
+  ok(ck.status === 1 && /missing-on-release.*TheCurator-Windows-Setup\.exe/.test(ck.stderr), 'check CLI exits 1 naming the missing copy');
+  writeFileSync(relFile, JSON.stringify(relJson(full)));
+  eq(spawnSync(process.execPath, [DLCLI, 'check', '--release-json', relFile, '--version', RV, '--file', `win32-x64=${build['win32-x64']}`], { encoding: 'utf8' }).status, 0, 'check CLI exits 0 when both are there');
+
+  // ── the previous release, for the changelog link ──
+  const tags = [
+    'aaa\trefs/tags/v4.0.0', 'bbb\trefs/tags/v4.0.1', 'ccc\trefs/tags/v4.0.1^{}', 'ddd\trefs/tags/v3.99.3-wintest.11',
+    'eee\trefs/tags/v4.1.0', 'fff\trefs/tags/v4.2.0', 'ggg\trefs/tags/v3.100.0', 'hhh\trefs/heads/v4.0.9',
+  ].join('\n');
+  eq(dl.previousReleaseTag(tags, '4.1.0'), 'v4.0.1', 'previousReleaseTag: the newest plain tag below this one (numeric, not text order; rehearsal tags, branches and newer tags ignored)');
+  eq(dl.previousReleaseTag(tags, '4.0.0'), 'v3.100.0', '…3.100.0 is newer than 3.99.x');
+  eq([dl.previousReleaseTag('', '4.1.0'), dl.previousReleaseTag(null, '4.1.0')], [null, null], '…none when there is nothing to read');
+
+  // ── body ──
+  const allNames = full.map((e) => e[0]);
+  const body = dl.releaseBody({ version: RV, assets: allNames, previousTag: 'v4.0.1' });
+  const lines = body.split('\n');
+  eq(lines[0], '## Download', 'the body STARTS with "## Download"');
+  const rows = lines.filter((l) => l.startsWith('- **'));
+  eq(rows.length, 3, 'one line per installer');
+  dl.INSTALLERS.forEach((i, k) => {
+    ok(rows[k].includes(`(${dl.stableDownloadUrl(i.stable)})`) && rows[k].includes(`\`${i.versioned(RV)}\``), `row ${k + 1}: the stable link to ${i.stable} AND the versioned name ${i.versioned(RV)}`);
+  });
+  ok(/^- \*\*Windows 10\/11:\*\*/.test(rows[0]) && /Run it\. If "Windows protected your PC" appears, click More info, then Run anyway\./.test(rows[0]), 'Windows: run it; "Windows protected your PC" → More info → Run anyway');
+  for (const r of rows.slice(1)) {
+    ok(/drag The Curator onto Applications/.test(r) && /System Settings → Privacy & Security, click Open Anyway/.test(r), 'Mac: drag to Applications; first open via System Settings → Privacy & Security → Open Anyway');
+  }
+  // The wording must match the user docs as they are, not the brief's guess
+  // (docs/mac-app.md: Control-click → Open no longer works on Sequoia).
+  const macDoc = readFileSync(path.join(ROOT, 'docs', 'mac-app.md'), 'utf8');
+  const winDoc = readFileSync(path.join(ROOT, 'docs', 'windows-app.md'), 'utf8');
+  ok(/System Settings → Privacy & Security/.test(macDoc) && /\*\*Open Anyway\*\*/.test(macDoc) && /drag\s+\*\*The Curator\*\* onto \*\*Applications\*\*/.test(macDoc),
+    'CROSS-CHECK: docs/mac-app.md gives the same route (Privacy & Security → Open Anyway; drag onto Applications)');
+  ok(!/right-click|Control-click/i.test(body), '…and the body does not send anyone to right-click → Open (the docs say it no longer works on Sequoia)');
+  ok(/Windows protected your PC/.test(winDoc) && /\*\*More info\*\*/.test(winDoc) && /\*\*Run anyway\*\*/.test(winDoc), 'CROSS-CHECK: docs/windows-app.md names the same SmartScreen steps');
+  const iGpl = lines.findIndex((l) => /source code of the git program bundled in the Windows app/.test(l) && /GPL/.test(l));
+  const iLog = lines.findIndex((l) => l === '**Changelog:** https://github.com/talirezun/the-curator/compare/v4.0.1...v4.1.0');
+  ok(iGpl > lines.indexOf(rows[2]) && iLog > iGpl, 'then the one-line GPL note, then the changelog link (compare from the previous release)');
+  eq(dl.releaseBody({ version: RV, assets: allNames }).trim().split('\n').at(-1), '**Changelog:** https://github.com/talirezun/the-curator/commits/v4.1.0', 'no previous release known: the tag\'s commit history');
+  const macOnlyBody = dl.releaseBody({ version: RV, assets: allNames.filter((n) => !/Windows/.test(n)) });
+  ok(!/Windows 10/.test(macOnlyBody) && !/GPL/.test(macOnlyBody) && (macOnlyBody.match(/^- \*\*/gm) || []).length === 2, 'Mac files only: two rows, no Windows row and no GPL note');
+  const noCopy = dl.releaseBody({ version: RV, assets: allNames.filter((n) => n !== 'TheCurator-Mac-Intel.dmg') });
+  ok(!/Mac with Intel/.test(noCopy), 'an installer whose copy is not on the release is NOT listed (the body never links a file the release lacks)');
+  const noVersioned = dl.releaseBody({ version: RV, assets: allNames.filter((n) => n !== publishedNameFor(RV, 'arm64')) });
+  ok(!/Apple Silicon/.test(noVersioned), '…nor one whose versioned file is missing');
+  ok(/^## Download\n\nNo installer is attached to this release yet\.\n/.test(dl.releaseBody({ version: RV, assets: [] })), 'no installer at all: still "## Download" first, saying so');
+  eq(throwsMsg(() => dl.releaseBody({ version: 'v4.1.0', assets: [] })) !== null, true, 'the body refuses a version with a v');
+
+  // body CLI: the release's own assets, unioned with the names about to be uploaded.
+  const bodyFile = path.join(top, 'body.md');
+  const tagsFile = path.join(top, 'tags.txt');
+  writeFileSync(tagsFile, tags);
+  writeFileSync(relFile, JSON.stringify(relJson(full.filter((e) => !/Windows/.test(e[0])))));
+  const bc = spawnSync(process.execPath, [DLCLI, 'body', '--version', RV, '--out', bodyFile, '--tags', tagsFile, '--release-json', relFile,
+    '--asset', installerFileName(RV), '--asset', 'TheCurator-Windows-Setup.exe'], { encoding: 'utf8' });
+  eq(bc.status, 0, `body CLI exits 0 (${bc.stderr.trim()})`);
+  eq(readFileSync(bodyFile, 'utf8'), body, '…and writes exactly the body above (release assets + names about to upload; previous tag from ls-remote text)');
+  const bt = spawnSync(process.execPath, [DLCLI, 'body', '--version', RV, '--out', bodyFile, '--tags', path.join(top, 'no-tags.txt'), '--asset', 'x'], { encoding: 'utf8' });
+  ok(bt.status === 0 && /commits\/v4\.1\.0/.test(readFileSync(bodyFile, 'utf8')), 'an unreadable tags file falls back to the commit history link, never fails the publish');
+  ok(spawnSync(process.execPath, [DLCLI, 'body', '--version', RV, '--out', bodyFile], { encoding: 'utf8' }).status === 2, 'body CLI with neither --release-json nor --asset is a usage error');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§13  The publish steps — PARSED, then their shell EXECUTED against a fake gh (both arms, both jobs)');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const doc = (() => { try { return parseYaml(readFileSync(DMG_WORKFLOW, 'utf8')); } catch { return { jobs: {} }; } })();
+  const J = doc.jobs || {};
+  const ms = (J.dmg && J.dmg.steps) || [];
+  const ps = (J['publish-windows'] && J['publish-windows'].steps) || [];
+  const at = (steps, pred) => steps.findIndex(pred);
+
+  // ── Mac: order and wiring ──
+  const iLipo = at(ms, (s) => /lipo -archs/.test(s.run || ''));
+  const iArt = at(ms, (s) => /upload-artifact/.test(s.uses || ''));
+  const iStage = at(ms, (s) => s.id === 'stable');
+  const iPub = at(ms, (s) => /gh release create/.test(s.run || ''));
+  const iChk = at(ms, (s) => /release-downloads\.js check/.test(s.run || ''));
+  const iBody = at(ms, (s) => /release-downloads\.js body/.test(s.run || '') && /--release-json/.test(s.run || '') && !/gh release create/.test(s.run || ''));
+  ok(iLipo >= 0 && iArt > iLipo && iStage > iArt && iPub > iStage && iChk > iPub && iBody > iChk,
+    `Mac: lipo, artifact, stage the copies, publish, check the release, write the body (in that order: ${[iLipo, iArt, iStage, iPub, iChk, iBody]})`);
+  const stRun = (ms[iStage] || {}).run || '';
+  ok(/release-downloads\.js stage --version "\$\{GITHUB_REF_NAME#v\}" --out "\$RUNNER_TEMP\/stable"/.test(stRun)
+    && stRun.includes('--file "darwin-arm64=${{ steps.names.outputs.arm64 }}"') && stRun.includes('--file "darwin-x64=${{ steps.names.outputs.x64 }}"'),
+  'Mac stage: both renamed DMGs by step output, copies into $RUNNER_TEMP (never desktop/dist, which the artifact globs)');
+  const pub = ms[iPub] || {};
+  eq([pub.env && pub.env.ARM64_STABLE, pub.env && pub.env.X64_STABLE], ['${{ steps.stable.outputs.darwin_arm64 }}', '${{ steps.stable.outputs.darwin_x64 }}'], 'Mac publish: the copies by the stage step\'s outputs');
+  const chk = ms[iChk] || {};
+  ok(/for attempt in 1 2 3 4 5 6/.test(chk.run || '') && /exit 1\s*$/.test(chk.run || '') && /--file "darwin-arm64=\$ARM64_DMG" --file "darwin-x64=\$X64_DMG"/.test(chk.run || '') && !chk['continue-on-error'] && !chk.if,
+    'Mac check: re-read a few times, then FAIL the job; both DMGs (and so both copies); never skippable');
+  ok(!ms.some((s) => s['continue-on-error']), 'no Mac step may fail quietly');
+  ok(!/--generate-notes/.test(JSON.stringify(J)), 'no job uses --generate-notes any more (the body is ours, on both paths)');
+
+  // ── Windows: order and wiring ──
+  const wNames = at(ps, (s) => s.id === 'names');
+  const wStage = at(ps, (s) => s.id === 'stable');
+  const wSrc = at(ps, (s) => s.id === 'sources');
+  const wPub = at(ps, (s) => /gh release (upload|create)/.test(s.run || ''));
+  const wChk = at(ps, (s) => /--check-release/.test(s.run || ''));
+  ok(wNames >= 0 && wStage > wNames && wStage < wPub && wSrc < wPub && wPub < wChk, `Windows: name check, stage the copy, sources, publish, check (${[wNames, wStage, wSrc, wPub, wChk]})`);
+  ok(((ps[wStage] || {}).run || '').includes('--file "win32-x64=${{ steps.names.outputs.setup }}"') && /--out "\$RUNNER_TEMP\/stable"/.test((ps[wStage] || {}).run || ''), 'Windows stage: the checked setup, by step output');
+  eq((ps[wPub] || {}).env && ps[wPub].env.SETUP_STABLE, '${{ steps.stable.outputs.win32_x64 }}', 'Windows publish: the copy by the stage step\'s output');
+  ok(/publish-win-assets\.js --check-release [^\n]*&&\s*\n\s*node scripts\/release-downloads\.js check --release-json "\$RUNNER_TEMP\/release-assets\.json" --version "\$VERSION" --file "win32-x64=\$SETUP" &&/.test((ps[wChk] || {}).run || ''),
+    'Windows check: the GPL check AND the copy check must both pass, in the same retry loop');
+  eq((ps[wChk] || {}).env && ps[wChk].env.VERSION, '${{ needs.gate.outputs.version }}', '…with the gate\'s version');
+
+  // ── EXECUTED: the shell of each publish step, against a fake gh ──
+  const top = tmp();
+  const bin = path.join(top, 'bin');
+  mkdirSync(bin);
+  const log = path.join(top, 'gh.log');
+  const notes = path.join(top, 'notes');
+  mkdirSync(notes);
+  writeFileSync(path.join(bin, 'gh'), [
+    '#!/bin/bash',
+    'printf "%s|" "$@" >> "$FAKE_LOG"; printf "\\n" >> "$FAKE_LOG"',
+    'if [ "$1" = release ] && [ "$2" = view ]; then',
+    '  if [ "${4:-}" = --json ]; then cat "$FAKE_ASSETS_JSON"; exit 0; fi',
+    '  [ "$FAKE_EXISTS" = 1 ]; exit $?',
+    'fi',
+    'prev=""; for a in "$@"; do if [ "$prev" = --notes-file ]; then cp "$a" "$FAKE_NOTES/$(ls "$FAKE_NOTES" | wc -l | tr -d " ").md"; fi; prev="$a"; done',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 });
+  writeFileSync(path.join(bin, 'git'), '#!/bin/bash\n[ "$1" = ls-remote ] && printf "a\\trefs/tags/v4.0.1\\nb\\trefs/tags/v4.0.0\\n" && exit 0\nexit 1\n', { mode: 0o755 });
+  writeFileSync(path.join(bin, 'sleep'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  const bashMajor = Number(spawnSync('bash', ['-c', 'echo ${BASH_VERSINFO[0]}'], { encoding: 'utf8' }).stdout.trim());
+  // macOS ships bash 3.2, which has no mapfile; the runner's bash 5 has it.
+  // A shim for THIS harness only, so the Windows step's text runs unchanged.
+  const shim = bashMajor >= 4 ? '' : 'mapfile() { [ "$1" = -t ] && shift; local __n=$1 __l; eval "$__n=()"; while IFS= read -r __l; do eval "$__n+=(\\"\\$__l\\")"; done; }\n';
+  const build = makeBuild(path.join(top, 'dist'), RV);
+  const stable = path.join(top, 'stable');
+  const st = dl.stageStableCopies({ pairs: dl.INSTALLERS.map((i) => ({ key: i.key, file: build[i.key] })), version: RV, out: stable });
+  ok(st.ok, 'harness: real copies staged');
+  const srcFile = path.join(top, RELEASE_SOURCE_ASSETS[0].asset);
+  writeFileSync(srcFile, 'src');
+  const srcList = path.join(top, 'sources.txt');
+  writeFileSync(srcList, `${srcFile}\n`);
+  const fullRel = path.join(top, 'full.json');
+  const fullAssets = [];
+  for (const i of dl.INSTALLERS) {
+    const b = readFileSync(build[i.key]);
+    fullAssets.push([i.versioned(RV), b.length, sha256(b)], [i.stable, b.length, sha256(b)]);
+  }
+  fullAssets.push([path.basename(srcFile), 3, null]);
+  writeFileSync(fullRel, JSON.stringify(relJson(fullAssets)));
+  const macOnlyRel = path.join(top, 'mac.json');
+  writeFileSync(macOnlyRel, JSON.stringify(relJson(fullAssets.filter((e) => /Mac|AppleSilicon|Intel/.test(e[0])))));
+
+  function runStep(step, { exists, assetsJson, env }) {
+    rmSync(notes, { recursive: true, force: true }); mkdirSync(notes);
+    writeFileSync(log, '');
+    const rt = mkdtempSync(path.join(top, 'rt-'));
+    const r = spawnSync('bash', ['-c', shim + (step.run || 'exit 99')], {
+      cwd: ROOT, encoding: 'utf8',
+      env: {
+        ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: rt, GITHUB_STEP_SUMMARY: path.join(rt, 'summary'),
+        FAKE_LOG: log, FAKE_NOTES: notes, FAKE_EXISTS: exists ? '1' : '0', FAKE_ASSETS_JSON: assetsJson, GH_TOKEN: 'x', TAG: `v${RV}`, ...env,
+      },
+    });
+    const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => l.split('|').slice(0, -1));
+    const bodies = readdirSync(notes).sort().map((f) => readFileSync(path.join(notes, f), 'utf8'));
+    return { status: r.status, stderr: r.stderr, calls, bodies };
+  }
+  const short = (c) => c.slice(0, 2).join(' ') + ' ' + c.slice(2).map((a) => path.basename(a)).join(' ');
+  const macEnv = { ARM64_DMG: build['darwin-arm64'], X64_DMG: build['darwin-x64'], ARM64_STABLE: path.join(stable, 'TheCurator-Mac-AppleSilicon.dmg'), X64_STABLE: path.join(stable, 'TheCurator-Mac-Intel.dmg') };
+  const winEnv = { SETUP: build['win32-x64'], SETUP_STABLE: path.join(stable, 'TheCurator-Windows-Setup.exe'), SOURCES_LIST: srcList, VERSION: RV };
+
+  // Mac, no release yet: create (with the body), then the copies.
+  const mc = runStep(pub, { exists: false, assetsJson: fullRel, env: macEnv });
+  eq(mc.status, 0, `Mac publish, NEW release: the step's shell runs to the end (${mc.stderr.trim().split('\n').at(-1) || ''})`);
+  const mcCalls = mc.calls.filter((c) => c[1] !== 'view').map(short);
+  eq(mcCalls, [
+    `release create v${RV} ${publishedNameFor(RV, 'arm64')} ${publishedNameFor(RV, 'x64')} --title The Curator v${RV} --notes-file release-body.md --verify-tag --latest`,
+    `release upload v${RV} TheCurator-Mac-AppleSilicon.dmg TheCurator-Mac-Intel.dmg --clobber`,
+  ], '…gh release create WITH --notes-file, then the copies in a SECOND upload');
+  ok(mc.bodies.length === 1 && mc.bodies[0].startsWith('## Download\n') && /TheCurator-Mac-AppleSilicon\.dmg/.test(mc.bodies[0]) && /compare\/v4\.0\.1\.\.\.v4\.1\.0/.test(mc.bodies[0]),
+    '…and the body it was given starts with "## Download", lists the Mac files, links the changelog from the previous tag');
+  // Mac, release exists (a re-run, or Windows went first).
+  const me = runStep(pub, { exists: true, assetsJson: fullRel, env: macEnv });
+  eq(me.status, 0, 'Mac publish, EXISTING release: runs to the end');
+  eq(me.calls.filter((c) => c[1] !== 'view').map(short), [
+    `release upload v${RV} ${publishedNameFor(RV, 'arm64')} ${publishedNameFor(RV, 'x64')} --clobber`,
+    `release upload v${RV} TheCurator-Mac-AppleSilicon.dmg TheCurator-Mac-Intel.dmg --clobber`,
+    `release edit v${RV} --latest --notes-file release-body.md`,
+  ], '…versioned files, then the copies, then gh release edit --notes-file (the body is set on this path too)');
+  // Mac: the check step, executed (sleep is a no-op here).
+  const okChk = runStep(chk, { exists: true, assetsJson: fullRel, env: macEnv });
+  eq(okChk.status, 0, 'Mac check step: exit 0 when the release carries both DMGs and both copies');
+  writeFileSync(path.join(top, 'missing.json'), JSON.stringify(relJson(fullAssets.filter((e) => e[0] !== 'TheCurator-Mac-Intel.dmg'))));
+  const badChk = runStep(chk, { exists: true, assetsJson: path.join(top, 'missing.json'), env: macEnv });
+  ok(badChk.status === 1 && badChk.calls.filter((c) => c[1] === 'view').length === 6 && /TheCurator-Mac-Intel\.dmg/.test(badChk.stderr),
+    'Mac check step: a missing copy FAILS the job after six reads, naming the file');
+  // Mac: the final body step, from what the release carries.
+  const mb = runStep(ms[iBody], { exists: true, assetsJson: fullRel, env: {} });
+  eq([mb.status, mb.calls.filter((c) => c[1] === 'edit').map(short)], [0, [`release edit v${RV} --notes-file release-body.md`]], 'Mac body step: gh release edit --notes-file');
+  ok(mb.bodies.length === 1 && (mb.bodies[0].match(/^- \*\*/gm) || []).length === 3 && /GPL/.test(mb.bodies[0]), '…with all three installers and the GPL note when the Windows files are already there');
+
+  // Windows, no release yet (the Mac job failed): create with the body, then the copy.
+  const wp = ps[wPub] || {};
+  const wc = runStep(wp, { exists: false, assetsJson: fullRel, env: winEnv });
+  eq(wc.status, 0, `Windows publish, NEW release: runs to the end (${wc.stderr.trim().split('\n').at(-1) || ''})`);
+  eq(wc.calls.filter((c) => c[1] !== 'view').map(short), [
+    `release create v${RV} ${installerFileName(RV)} ${path.basename(srcFile)} --title The Curator v${RV} --notes-file release-body.md --verify-tag --latest`,
+    `release upload v${RV} TheCurator-Windows-Setup.exe --clobber`,
+  ], '…gh release create WITH --notes-file, then the copy in a SECOND upload');
+  ok(wc.bodies.length === 1 && wc.bodies[0].startsWith('## Download\n') && (wc.bodies[0].match(/^- \*\*/gm) || []).length === 1 && /GPL/.test(wc.bodies[0]),
+    '…its body lists the Windows installer only (the Mac files are not there) and the GPL note');
+  // Windows, release exists (the usual order: the Mac job made it).
+  const we = runStep(wp, { exists: true, assetsJson: macOnlyRel, env: winEnv });
+  eq(we.status, 0, 'Windows publish, EXISTING release: runs to the end');
+  eq(we.calls.filter((c) => c[1] !== 'view').map(short), [
+    `release upload v${RV} ${installerFileName(RV)} ${path.basename(srcFile)} --clobber`,
+    `release upload v${RV} TheCurator-Windows-Setup.exe --clobber`,
+    `release edit v${RV} --notes-file release-body.md`,
+  ], '…setup and sources, then the copy, then gh release edit --notes-file');
+  ok(we.bodies.length === 1 && (we.bodies[0].match(/^- \*\*/gm) || []).length === 3 && /GPL/.test(we.bodies[0]),
+    '…and that body lists all THREE installers: the Mac files read back from the release plus the Windows files just uploaded');
+  // Windows check step: the copy is required.
+  const wck = ps[wChk] || {};
+  // (publish-win-assets' own check reads the real RELEASE_SOURCE_ASSETS list,
+  // which this fixture does not carry; so the copy check is executed alone.)
+  const copyCheckLine = ((wck.run || '').match(/node scripts\/release-downloads\.js check [^\n]*?(?= &&)/) || [''])[0];
+  ok(copyCheckLine.length > 0, 'harness: the copy check line is extracted from the Windows check step');
+  const runLine = (assetsFile) => spawnSync('bash', ['-c', `cp "${assetsFile}" "$RUNNER_TEMP/release-assets.json" && ${copyCheckLine}`], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: mkdtempSync(path.join(top, 'rt-')), ...winEnv },
+  });
+  eq(runLine(fullRel).status, 0, 'Windows check (the copy line, executed): passes with the setup and its copy');
+  writeFileSync(path.join(top, 'nowin.json'), JSON.stringify(relJson(fullAssets.filter((e) => e[0] !== 'TheCurator-Windows-Setup.exe'))));
+  eq(runLine(path.join(top, 'nowin.json')).status, 1, '…and FAILS without the copy');
 }
 
 for (const d of tmps) rmSync(d, { recursive: true, force: true });
