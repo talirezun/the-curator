@@ -565,7 +565,7 @@ section('§8 pictures');
     pop.popoverImage({ widthPoints: 5, heightPoints: 5 })], [null, null, null], 'nothing drawable → null, never a broken picture');
   eq(payload.theme, 'light', 'theme light');
   eq(['dark', 'light', 'Dark', undefined, 1].map((t) => pop.popoverFromTemplate([], { theme: t }).payload.theme),
-    ['dark', 'light', 'light', 'light', 'light'], 'theme: only the literal \'dark\' is dark');
+    ['dark', 'light', 'dark', 'dark', 'dark'], 'theme: only the literal \'light\' is light; the default is the controller\'s dark');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -642,6 +642,116 @@ section('§10 the Knowledge page: a bar row\'s Details do not repeat the row\'s 
   eq(t('x', 'x · one\nx · two\nthree'), ['one', 'two', 'three'], 'each line on its own');
   eq(t('', ' · y'), ['· y'], 'an empty label strips nothing');
   eq(pop.tipLines(null), [], 'no item → no lines');
+}
+
+section('§11 page identity `sid` (the v4.1.0 audit\'s M1): a refresh never swaps the open page for another project\'s');
+{
+  // The audit's case: alpha and beta, each with `main` and `research` on the same harness, the
+  // two `research` streams in the same age bucket. beta saves and moves to the top.
+  const two = (betaAge) => ({ ok: true, warnings: [], scopes: [
+    sc({ domain: 'work', project: 'alpha', scope: 'main', age: 600 }),
+    sc({ domain: 'work', project: 'alpha', scope: 'research', age: 7300 }),
+    sc({ domain: 'work', project: 'beta', scope: 'main', age: betaAge }),
+    sc({ domain: 'work', project: 'beta', scope: 'research', age: 7400 }),
+  ] });
+  const H = (log) => ({ ...NOOPS, onRowAction: (row, a) => log.push(a + ' ' + row.route + '/' + row.scope) });
+  const log = [];
+  const p1 = pop.buildTrayPopover(winModel(two(3000)), { theme: 'dark', ...H(log) }).payload;
+  const p2 = pop.buildTrayPopover(winModel(two(5)), { theme: 'dark', ...H(log) }).payload;
+  const byLine = (p, line) => Object.values(p.pages).find((pg) => pg.details[0] && pg.details[0].lines[0] === line);
+  const a1 = byLine(p1, 'work / alpha · research');
+  const a2 = byLine(p2, 'work / alpha · research');
+  ok(!!a1 && !!a2 && a1.title === a2.title && a1.title === 'research · 2 hr ago', `CONTROL — alpha·research exists in both builds, same title "${a1 && a1.title}"`);
+  ok(a1.id !== a2.id, `CONTROL — …under a DIFFERENT page id (${a1.id} → ${a2.id}): ids are a per-build sequence`);
+  const same1 = p2.pages[a1.id];
+  ok(same1 && same1.title === a1.title && same1.details[0].lines[0] === 'work / beta · research',
+    `CONTROL — the audit\'s trap: ${a1.id} in the new build has the SAME title but is beta·research`);
+  ok(typeof a1.sid === 'string' && a1.sid === a2.sid, 'alpha·research keeps its sid across the builds');
+  ok(same1.sid !== a1.sid, '…and beta·research at the old id has a DIFFERENT sid (the painter will not stay on it)');
+  const sids = (p) => Object.values(p.pages).map((pg) => pg.sid);
+  ok(sids(p1).every((x) => typeof x === 'string') && new Set(sids(p1)).size === sids(p1).length, 'every page of a real build has a sid, all distinct');
+  eq(p1.pages.root.sid, '[]', 'root\'s sid is the empty path');
+  // Age changes alone (a minute later) never change a work-stream\'s identity.
+  const later = pop.buildTrayPopover(winModel(two(3000), true, { now: new Date(T.getTime() + 60000) }), { theme: 'dark', ...NOOPS }).payload;
+  eq(Object.values(later.pages).map((pg) => pg.sid).sort(), sids(p1).sort(), 'a minute later: the same set of sids');
+  // The rich store: every stream page is named by its `domain / project · scope` and its machine.
+  const rich = pop.buildTrayPopover(winModel(richSummary()), { theme: 'dark', ...NOOPS }).payload;
+  const streams = Object.values(rich.pages).filter((pg) => pg.details[0] && /^[^ ]+ \/ .+ · .+/.test(pg.details[0].lines[0]));
+  ok(streams.length >= 3 && streams.every((pg) => JSON.parse(pg.sid).at(-1)[0] === pg.details[0].lines[0]
+    && JSON.parse(pg.sid).at(-1)[1] === pg.details[0].lines[1]), `each of ${streams.length} work-stream pages is identified by its first two Details lines`);
+  // A ROOT leaf's facts page (d:N, a clipped notice) is identified by its facts too, not its position.
+  const longA = 'Notice A: ' + 'the first long warning that is clipped on the menu row '.repeat(3);
+  const longB = 'Notice B: ' + 'the second long warning that is clipped on the menu row '.repeat(3);
+  const nb = (w) => pop.buildTrayPopover(winModel({ ok: true, scopes: [], warnings: w }), { theme: 'dark', ...NOOPS }).payload;
+  const ab = nb([longA, longB]), ba = nb([longB, longA]);
+  const dOf = (p, start) => Object.values(p.pages).find((pg) => /^d:/.test(pg.id) && pg.details[0].lines[0].startsWith(start));
+  ok(dOf(ab, 'Notice A') && dOf(ba, 'Notice A') && dOf(ab, 'Notice A').id !== dOf(ba, 'Notice A').id,
+    `CONTROL — notice A\'s facts page moves (${dOf(ab, 'Notice A') && dOf(ab, 'Notice A').id} → ${dOf(ba, 'Notice A') && dOf(ba, 'Notice A').id}) when the notices swap`);
+  ok(dOf(ab, 'Notice A').sid === dOf(ba, 'Notice A').sid && ab.pages['d:0'].sid !== ba.pages['d:0'].sid,
+    '…and keeps its sid, while d:0 now has notice B\'s');
+  // Two pages that cannot be told apart get NO identity.
+  const twin = { label: 'Twin', toolTip: 'same\nlines', submenu: [{ id: 'a', label: 'A', click() {} }] };
+  const tw = pop.popoverFromTemplate([twin, { ...twin }]).payload;
+  eq([tw.pages['p:0'].sid, tw.pages['p:1'].sid], [null, null], 'two indistinguishable pages → sid null on both (the painter returns to root)');
+  eq(pop.pageIdentity('T', []), ['T'], 'pageIdentity: no lines → the title');
+  eq(pop.pageIdentity('T', ['a', 'b', 'c']), ['a', 'b'], 'pageIdentity: the first two lines');
+}
+
+section('§12 the gate does not re-publish an unchanged payload (the audit\'s minor 2)');
+{
+  const log = [];
+  const H = { ...NOOPS, onOpenApp: () => log.push('app') };
+  const gate = pop.createPopoverActionGate();
+  const p1 = gate.publish(pop.buildTrayPopover(winModel(richSummary()), { theme: 'dark', ...H }));
+  const H2 = { ...NOOPS, onOpenApp: () => log.push('app-2') };
+  const p2 = gate.publish(pop.buildTrayPopover(winModel(richSummary()), { theme: 'dark', ...H2 }));
+  ok(p2 === p1 && gate.gen === p1.gen, 'an idle refresh (same payload apart from gen) → the SAME payload object, the same gen');
+  eq([gate.act(p1.gen, 'tray-open-app'), log], [true, ['app-2']], 'a press painted before it still works, and runs the NEWEST handlers');
+  const s3 = richSummary(); s3.scopes[0].headline = 'something new';
+  const p3 = gate.publish(pop.buildTrayPopover(winModel(s3), { theme: 'dark', ...H }));
+  ok(p3 !== p1 && p3.gen === p1.gen + 1, 'CONTROL — a changed payload is a new generation');
+  eq(gate.act(p1.gen, 'tray-open-app'), false, '…and the old press is then refused');
+  const p4 = gate.publish(pop.buildTrayPopover(winModel(s3, false), { theme: 'light', ...H }));
+  ok(p4.gen === p3.gen + 1, 'a theme change alone is a new generation');
+}
+
+section('§13 the picture cache (the audit\'s minor 3)');
+{
+  const counts = { dot: 0, strip: 0, bar: 0 };
+  const cache = pop.createPopoverImageCache({
+    renderDot: (...a) => { counts.dot++; return dots.renderRecencyDot(...a); },
+    renderStrip: (...a) => { counts.strip++; return strip.renderPulseStrip(...a); },
+    renderBar: (...a) => { counts.bar++; return bars.renderGutterBar(...a); },
+  });
+  const plain = (d) => JSON.stringify(pop.buildTrayPopover(winModel(richSummary(), d), { theme: d ? 'dark' : 'light', ...NOOPS }).payload);
+  const cached = (d) => JSON.stringify(pop.buildTrayPopover(winModel(richSummary(), d, cache.renderers), { theme: d ? 'dark' : 'light', ...NOOPS }).payload);
+  const first = cached(true);
+  eq(first, plain(true), 'with the cache, the payload is byte-identical to the uncached one (dark)');
+  const m1 = cache.stats().misses;
+  ok(m1 > 0 && counts.dot + counts.strip + counts.bar === m1, `CONTROL — the first build rendered every picture once (${m1})`);
+  eq(cached(true), first, 'a repeat build: the same payload');
+  eq([cache.stats().misses, counts.dot + counts.strip + counts.bar], [m1, m1], '…and NOTHING was rendered again');
+  eq(cached(false), plain(false), 'light: byte-identical too — the theme is part of the key, never a dark picture on a light page');
+  ok(cache.stats().misses > m1, 'CONTROL — the light build rendered its own pictures');
+  const boom = () => { throw new Error('x'); };
+  const c2 = pop.createPopoverImageCache({ renderDot: boom, renderStrip: boom, renderBar: boom });
+  const m = winModel(richSummary(), true, c2.renderers);
+  ok(m.active.rows.every((r) => r.dot === null), 'a renderer that throws still costs only the picture (tray-model.js\'s own guard), and nothing is cached');
+  eq(c2.stats().size, 0, '…nothing cached for it');
+  // the real default renderers are wrapped
+  const real = pop.createPopoverImageCache();
+  ok(['renderDot', 'renderStrip', 'renderBar'].every((k) => typeof real.renderers[k] === 'function'), 'by default the three real renderers are wrapped');
+  // timing, reported (not a gate)
+  const big = { ok: true, warnings: [], scopes: [] };
+  for (let i = 0; i < 12; i++) for (let j = 0; j < 4; j++) big.scopes.push(sc({ domain: 'd' + (i % 3), project: 'proj' + i, scope: 's' + j, age: 100 * (i + 1) * (j + 1) }));
+  big.domains = [0, 1, 2, 3, 4, 5].map((i) => ({ domain: 'd' + i, index: i, slot: i + 1, pageCount: 100 * (i + 1) }));
+  big.pulse = richSummary().pulse;
+  const time = (o) => { const t0 = performance.now(); for (let i = 0; i < 5; i++) pop.buildTrayPopover(winModel(big, true, o), { theme: 'dark', ...NOOPS }); return (performance.now() - t0) / 5; };
+  const tc = pop.createPopoverImageCache();
+  const t0 = performance.now(); pop.buildTrayPopover(winModel(big, true, tc.renderers), { theme: 'dark', ...NOOPS }); const cold = performance.now() - t0;
+  const unc = time({}), warm = time(tc.renderers);
+  console.log(`    (12 projects × 4 scopes: uncached ${unc.toFixed(1)} ms · cached cold ${cold.toFixed(1)} ms · cached repeat ${warm.toFixed(1)} ms per publish build)`);
+  ok(warm < unc, 'a repeat publish with the cache is cheaper than without it');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

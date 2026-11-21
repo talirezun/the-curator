@@ -81,7 +81,9 @@ import {
 import { buildTrayModel, liveExpiresInMs, TRAY_FETCH_ROWS } from './lib/tray-model.js';
 import { buildTrayMenuTemplate, trayToolTip, ID_ROW_RESUME, ID_ROW_HANDOFF, ID_ROW_REVEAL } from './lib/tray-menu.js';
 import { createTrayPopover } from './lib/tray-popover.js';
-import { buildTrayPopover, createPopoverActionGate, POPOVER_IMAGE_SCALES } from './lib/tray-popover-model.js';
+import {
+  buildTrayPopover, createPopoverActionGate, createPopoverImageCache, POPOVER_IMAGE_SCALES,
+} from './lib/tray-popover-model.js';
 import {
   appendDesktopLogLine, popoverSelfTestRequested, runTrayPopoverSelfTest,
   popoverLeftClick, popoverWantsRepaint, popoverFallbackHandler,
@@ -219,8 +221,13 @@ let trayMenu = null;
  *  on darwin, and whenever the tray is off. */
 let trayPopover = null;
 let trayPopoverGate = null;
-/** The CI self-test runs once per process (lib/tray-popover-shell.js). */
+/** The popover's pictures, encoded once per (picture, scale, theme) — a
+ *  repeat publish encodes nothing (lib/tray-popover-model.js). */
+let trayPopoverImages = null;
+/** The CI self-test runs once per process (lib/tray-popover-shell.js)… */
 let trayPopoverSelfTestStarted = false;
+/** …and holds back the native-menu fallback only WHILE it runs. */
+let trayPopoverSelfTestRunning = false;
 /** Windows: the session is ending (log off / shut down) — a close must not be
  *  turned into a hide then. */
 let sessionEnding = false;
@@ -1324,6 +1331,7 @@ function publishPopover() {
       identityHex,
       platform: process.platform,
       imageScales: POPOVER_IMAGE_SCALES,
+      ...(trayPopoverImages ? trayPopoverImages.renderers : {}),
     });
     const built = buildTrayPopover(model, {
       theme: dark ? 'dark' : 'light',
@@ -1357,12 +1365,13 @@ function maybeRunPopoverSelfTest() {
   if (trayPopoverSelfTestStarted || !trayPopover) return;
   if (!popoverSelfTestRequested(process.env, process.platform)) return;
   trayPopoverSelfTestStarted = true;
+  trayPopoverSelfTestRunning = true;
   void runTrayPopoverSelfTest({
     popover: trayPopover,
     publish: publishPopover,
     getTrayBounds: () => { try { return tray && !tray.isDestroyed() ? tray.getBounds() : undefined; } catch { return undefined; } },
     workAreaFor: (b) => { try { return screen.getDisplayMatching(b).workArea; } catch { return null; } },
-  }).then((r) => trayLog(r.line));
+  }).then((r) => trayLog(r.line)).finally(() => { trayPopoverSelfTestRunning = false; });
 }
 
 /** Re-read the index, then render. This is the only thing here that touches
@@ -1697,6 +1706,7 @@ function startTray() {
   // menu. Each then re-reads the index and asks about the other machines.
   if (TRAY_UI.leftClick === 'popover') {
     trayPopoverGate = createPopoverActionGate();
+    trayPopoverImages = createPopoverImageCache();
     try {
       trayPopover = createTrayPopover({
         BrowserWindow, screen, session, ipcMain,
@@ -1711,7 +1721,7 @@ function startTray() {
         isQuitting: () => quitAuthorised || sessionEnding,
         // This click gets the v4.0.1 native menu instead — except during the
         // CI self-test, where a popped native menu would block the runner.
-        onFallback: popoverFallbackHandler({ popMenu: popTrayMenu, selfTestRunning: () => trayPopoverSelfTestStarted }),
+        onFallback: popoverFallbackHandler({ popMenu: popTrayMenu, selfTestRunning: () => trayPopoverSelfTestRunning }),
         log: trayLog,
         getTrayBounds: () => { try { return tray && !tray.isDestroyed() ? tray.getBounds() : undefined; } catch { return undefined; } },
       });
@@ -1737,6 +1747,10 @@ function startTray() {
   });
   stateWatcher.start();
 
+  // Windows: the popover's hidden window is created and its page loaded NOW,
+  // so the first left click only paints and reveals it — on a cold load it
+  // would fall back to the native menu at the 1 s backstop instead.
+  if (trayPopover) { try { trayPopover.preload(); } catch { /* the first click loads it */ } }
   if (trayPopover) refreshTraySummary().then(maybeRunPopoverSelfTest, () => {});
   else refreshTraySummary();
 }
@@ -1744,7 +1758,9 @@ function startTray() {
 /** Windows: rebuild the menu from memory (no I/O) and pop it at the cursor. */
 function popTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
-  if (trayPopover) trayPopover.hide();
+  // 'menu': this click's answer IS the menu, so a waiting show is cancelled
+  // without a second fallback menu.
+  if (trayPopover) trayPopover.hide('menu');
   renderTrayFromSnapshot();
   if (!trayMenu) return;
   try { tray.popUpContextMenu(trayMenu); } catch { /* a tray handler must not take the process with it */ }
@@ -1755,6 +1771,7 @@ function destroyTrayPopover() {
   if (trayPopover) { try { trayPopover.destroy(); } catch { /* best effort */ } }
   trayPopover = null;
   trayPopoverGate = null;
+  trayPopoverImages = null;
 }
 
 /** Tear the tray down, including everything it was paying for. */

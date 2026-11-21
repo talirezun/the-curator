@@ -747,6 +747,137 @@ ok(isPageUrl('file:///Users/a/next/tray-popover.html', '/Users/a/next/tray-popov
   && !isPageUrl('file:///users/a/next/tray-popover.html', '/Users/a/next/tray-popover.html', 'darwin'), 'posix: exact, case-sensitive');
 ok(requestAllowed('file:///Users/a/next/x.css', '/Users/a/next', 'darwin') && !requestAllowed('file:///Users/a/other.css', '/Users/a/next', 'darwin'), 'requestAllowed on posix paths too');
 
+// ── §11 the v4.1.0 audit's fixes ────────────────────────────────────────────
+console.log('\n§11 audit fixes: consecutive failures, no lost click, log-off, preload, no stale flash');
+{
+  // Minor 1: only CONSECUTIVE failures switch it off.
+  const r = makeRig();
+  r.open(); r.clock.advance(1000);
+  r.popover.hide();
+  const w = r.win();
+  w.webContents.emit('render-process-gone');                      // failure 1 (not during a click)
+  ok(r.popover.stats().failures === 1 && r.popover.isEnabled(), 'one failure: still on');
+  r.publish();
+  r.popover.show(r.trayBounds);                        // reload, paint → a successful show
+  w.finishLoad(); r.paint(w);
+  ok(w.visible && r.popover.stats().failures === 0 && r.popover.stats().failuresTotal === 1,
+    'a successful show resets the run (failures 0) but the session total stays 1');
+  r.popover.hide('toggle');
+  w.webContents.emit('render-process-gone');                      // failure 2, weeks later in effect
+  ok(r.popover.isEnabled() && r.popover.stats().failuresTotal === 2,
+    'two failures with a good show between them: the popover stays ON');
+  r.publish(); r.popover.show(r.trayBounds); w.finishLoad();
+  r.clock.advance(FIRST_PAINT_BACKSTOP_MS);            // no paint: a second CONSECUTIVE failure
+  ok(!r.popover.isEnabled() && r.popover.stats().off, 'two consecutive failures: off for the session (CONTROL)');
+}
+{
+  // Minor 5: a waiting show cancelled by anything but the person's own toggle/Esc, or the menu
+  // itself, gives that click the native menu.
+  const waiting = () => { const r = makeRig(); r.publish(); r.popover.show(r.trayBounds); r.win().finishLoad(); return r; };
+  const a = waiting();
+  a.clock.advance(MAIN_FOCUS_GRACE_MS + 1);
+  a.popover.mainWindowFocused();
+  eq(a.fallbacks, ['cancelled'], 'main-window focus cancelling a waiting show → that click gets the native menu');
+  a.clock.advance(FIRST_PAINT_BACKSTOP_MS * 2);
+  eq(a.fallbacks, ['cancelled'], '…once, and the cancelled backstop never fires a second one');
+  const b = waiting();
+  b.popover.hide();
+  eq(b.fallbacks, ['cancelled'], 'a bare hide() of a waiting show falls back too');
+  const c = waiting();
+  ok(c.popover.toggle(c.trayBounds) === false, 'CONTROL — a second click while waiting closes it');
+  eq(c.fallbacks, [], '…and the person\'s own toggle is NOT answered with a menu');
+  const d = waiting();
+  d.popover.hide('menu');
+  eq(d.fallbacks, [], 'hide(\'menu\') (main pops the native menu itself) → no second menu');
+  const e = waiting();
+  const w = e.win();
+  w.close();
+  eq(e.fallbacks, ['cancelled'], 'a close while waiting → the native menu (never neither)');
+  const f = makeRig(); f.open(); f.clock.advance(1000);
+  f.popover.mainWindowFocused();
+  eq(f.fallbacks, [], 'CONTROL — hiding a popover that is already SHOWN is no fallback');
+}
+{
+  // Minor 6: the popover window hears the log-off itself.
+  for (const ev of ['query-session-end', 'session-end']) {
+    const r = makeRig();
+    const w = r.open();
+    ok(w.close().prevented, `CONTROL — before ${ev}, close only hides`);
+    r.popover.show(r.trayBounds); r.paint(w);
+    w.emit(ev, evt());
+    const e = w.close();
+    ok(!e.prevented && w.destroyed, `after the window's own ${ev}, close really closes (main's isQuitting still false)`);
+  }
+}
+{
+  // Minor 4: preload at tray start → the first click only paints and reveals.
+  const r = makeRig();
+  ok(r.popover.preload() === true, 'preload() answers true');
+  const w = r.win();
+  eq([w.loads, w.visible, r.fallbacks], [[PAGE], false, []], 'preload: the window is created and the page loaded, hidden, no fallback');
+  w.finishLoad();
+  r.publish();
+  ok(r.popover.show(r.trayBounds) === true && !w.visible, 'the first click: waits only for the paint of its payload');
+  r.paint(w);
+  ok(w.visible, '…which reveals it');
+  r.clock.advance(FIRST_PAINT_BACKSTOP_MS * 2);
+  eq([r.fallbacks, w.loads.length, r.popover.stats().failuresTotal], [[], 1, 0], 'no fallback to the native menu, one load, no failure');
+  const cold = makeRig();
+  cold.publish(); cold.popover.show(cold.trayBounds); cold.clock.advance(FIRST_PAINT_BACKSTOP_MS);
+  eq(cold.fallbacks, ['slow-load'], 'CONTROL — WITHOUT preload the cold first click falls back at the backstop');
+  const broken = makeRig(); broken.loadReject = true;
+  broken.popover.preload(); await flush();
+  eq(broken.fallbacks, [], 'a preload whose load fails is no click\'s failure: no menu pops by itself');
+}
+{
+  // Minor 2: the SAME payload object (the gate found nothing changed) is not re-sent.
+  const r = makeRig();
+  const w = r.open();
+  const p = r.gate.current();
+  const n = w.webContents.sent.length;
+  r.popover.update(p);
+  ok(w.webContents.sent.length === n, 'update() with the payload already sent: no send, no repaint');
+  r.publish();
+  ok(w.webContents.sent.length === n + 1, 'CONTROL — a new payload is sent');
+}
+{
+  // Nit: a warm window never flashes the previous open's content.
+  const r = makeRig();
+  const w = r.open(); r.clock.advance(1000);
+  r.popover.hide('toggle');
+  r.popover.show(r.trayBounds);
+  ok(w.visible, 'nothing new published: the warm window reveals at once');
+  r.popover.hide('toggle');
+  r.publish();                                         // gen 2 sent, page has painted gen 1
+  r.popover.show(r.trayBounds);
+  ok(!w.visible, 'a newer payload sent: it waits for that paint (no flash of the last one)');
+  r.ipcMain.send(CHANNELS.painted, r.ev(w), { gen: 1, rows: 5 });
+  ok(!w.visible, 'an older paint crossing it does not reveal it');
+  r.paint(w);
+  ok(w.visible, 'the newest paint does');
+}
+{
+  // Nit: hardening is idempotent per session; refusals are counted where the newest controller reads.
+  const ses = new Emitter();
+  let filters = 0;
+  ses.webRequest = { onBeforeRequest(fn) { filters += 1; ses.filter = fn; } };
+  ses.setPermissionRequestHandler = () => {}; ses.setPermissionCheckHandler = () => {};
+  ses.setDevicePermissionHandler = () => {}; ses.setDisplayMediaRequestHandler = () => {};
+  let a = 0, b = 0;
+  const dir = 'C:\\x\\src\\public\\next';
+  ok(pop.hardenPopoverSession(ses, { pageDir: dir, platform: 'win32', onRefused: () => { a += 1; } }) === true, 'first hardening registers');
+  ok(pop.hardenPopoverSession(ses, { pageDir: dir, platform: 'win32', onRefused: () => { b += 1; } }) === false, 'a second one does not');
+  ok(filters === 1 && ses.count('will-download') === 1 && ses.count('select-usb-device') === 1, 'one filter, one listener of each kind (a tray toggled off and on stacks nothing)');
+  let res; ses.filter({ url: 'file:///C:/x/package.json' }, (v) => { res = v; });
+  ok(res.cancel === true && a === 0 && b === 1, 'a refused request is counted by the NEWEST controller');
+  ses.filter({ url: 'file:///C:/x/src/public/next/views/a.css' }, (v) => { res = v; });
+  ok(res.cancel === false && b === 1, 'an allowed one is not counted');
+  const r = makeRig();
+  r.open();
+  let got; r.sessions[0].beforeRequest({ url: 'file:///C:/Windows/win.ini' }, (v) => { got = v; });
+  ok(got.cancel === true && r.popover.stats().refusedRequests === 1, 'the controller\'s stats count the refusal (the CI self-test\'s negative probe)');
+}
+
 // ── §10 the preload in a vm ─────────────────────────────────────────────────
 console.log('\n§10 the preload (vm, fake electron, fake navigator)');
 const PRELOAD_SRC = fs.readFileSync(path.join(LIB, 'tray-popover-preload.js'), 'utf8');

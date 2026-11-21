@@ -1119,16 +1119,25 @@ window above the clock that paints the Mac menu's own template as pages (`lib/tr
 in the SYSTEM light/dark mode, loaded from disk (`src/public/next/tray-popover.html`, so it works
 while the server restarts), sandboxed in its own denied session with a strict CSP. A **right click**
 opens the v4.0.1 native menu. main.js publishes a payload from the snapshot in memory, then
-toggles the popover at `tray.getBounds()`; Quit is `app.quit()` (never `app.exit()`). If the popover
-cannot be created, load, or paint within 1 s, that click pops the native menu and curator.log gets
-one line; after two failures the left click is the native menu for the session.
+toggles the popover at `tray.getBounds()`; Quit is `app.quit()` (never `app.exit()`). The hidden
+window is created and its page loaded when the tray starts (`preload()`), so the first click only
+paints and reveals it. If the popover cannot be created, load, or paint within 1 s, or a waiting
+show is cancelled by anything but the person's own second click or Esc, that click pops the native
+menu and curator.log gets one line; after two CONSECUTIVE failures (a successful show resets the
+count) the left click is the native menu for the session. A refresh keeps an open drill page only
+when the new build has a page with the same identity (`sid`: the `domain / project · scope` and
+machine lines, not the per-build page id) and the same title; otherwise it returns to the top and
+says so. An idle refresh whose payload is unchanged is not re-sent (no repaint), and the pictures
+are encoded once per (picture, scale, theme) (`createPopoverImageCache`).
 
 **CI self-test** (`desktop-dmg.yml` `windows` job, step *The tray popover self-test*):
 `scripts/ci-win-app.mjs popover-selftest` installs the build, launches it with isolated data, the
 tray on and `CURATOR_TEST_TRAY_POPOVER_SELFTEST=1` (honoured only alongside
 `CURATOR_TEST_USER_DATA_DIR`), and greps `tray-popover-selftest: pass` from curator.log: the app
 showed the popover, it was visible and inside the work area, the page painted rows, the console
-reported no CSP refusal, and a real Esc hid it.
+reported no CSP refusal, a file: load outside `src/public/next/` issued from the page itself was
+cancelled by the session's request filter (the negative probe, counted in `stats().refusedRequests`),
+and a real Esc hid it.
 
 ### Seen on a real PC
 

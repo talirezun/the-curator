@@ -33,7 +33,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -145,9 +145,18 @@ function load(src = SRC, { withApi = true } = {}) {
 // ── Payload fixtures, shaped as CONTRACT-tray-popover.md §1 ─────────────────
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const img = (kind, w, h, tier = null) => ({ kind, tier, w, h, sources: [{ density: 1, url: PNG }, { density: 2, url: PNG }, { density: 3, url: PNG }] });
+/** Each page's `sid` the way tray-popover-model.js derives it: the path of identities
+ *  (a page's first two own Details lines, else its title) from root down. */
+function withSids(p) {
+  const ident = (pg) => { const l = pg.details && pg.details[0] && pg.details[0].label === null ? pg.details[0].lines : [];
+    return l.length ? l.slice(0, 2) : [pg.title]; };
+  const pathOf = (id) => { const pg = p.pages[id]; return !pg || pg.parent === null ? [] : [...pathOf(pg.parent), ident(pg)]; };
+  for (const id of Object.keys(p.pages)) if (!('sid' in p.pages[id])) p.pages[id].sid = JSON.stringify(pathOf(id));
+  return p;
+}
 function payload(gen = 7, theme = 'dark', o = {}) {
   const label1 = o.projectLabel || 'ott · Claude Code · 8 min ago';
-  return {
+  return withSids({
     v: 1, gen, theme, root: 'root',
     pages: {
       root: { id: 'root', parent: null, title: null, subtitle: null, details: [], rows: [
@@ -185,8 +194,33 @@ function payload(gen = 7, theme = 'dark', o = {}) {
         { kind: 'action', key: 'k40', id: 'tray-row-1:open', label: 'ott · tests', sublabel: null, img: null },
       ], details: [] },
     },
-  };
+  });
 }
+
+/** The audit's M1 case, as the model builds it: two projects, each with a `research` stream in
+ *  the same age bucket ("research · 2 hr ago"), nested under its main row. `betaFirst` = beta
+ *  just saved and moved to the top, so the per-build page ids now name the OTHER project. */
+function twoProjects(gen, betaFirst) {
+  const proj = (name, age) => ({ name, age });
+  const order = betaFirst ? [proj('beta', 'just now'), proj('alpha', '10 min ago')] : [proj('alpha', '10 min ago'), proj('beta', '50 min ago')];
+  const pages = { root: { id: 'root', parent: null, title: null, subtitle: null, details: [], rows: [] } };
+  let n = 0, k = 0;
+  order.forEach((pr, i) => {
+    const main = 'p:' + (n++), research = 'p:' + (n++);
+    pages.root.rows.push({ kind: 'drill', key: 'k' + (k++), drill: main, label: `${pr.name} · Claude Code · ${pr.age}`, sublabel: null, img: null });
+    pages[main] = { id: main, parent: 'root', title: `${pr.name} · Claude Code · ${pr.age}`, subtitle: null,
+      details: [{ label: null, lines: [`work / ${pr.name} · main`, 'machine: pc-1'] }], rows: [
+        { kind: 'action', key: 'k' + (k++), id: `tray-row-${i}:resume`, label: 'Copy resume prompt', sublabel: null, img: null },
+        { kind: 'drill', key: 'k' + (k++), drill: research, label: 'research · 2 hr ago', sublabel: null, img: null }] };
+    pages[research] = { id: research, parent: main, title: 'research · 2 hr ago', subtitle: null,
+      details: [{ label: null, lines: [`work / ${pr.name} · research`, 'machine: pc-1'] }], rows: [
+        { kind: 'action', key: 'k' + (k++), id: `tray-row-${i + 2}:open`, label: 'Open in The Curator', sublabel: null, img: null },
+        { kind: 'action', key: 'k' + (k++), id: `tray-row-${i + 2}:resume`, label: 'Copy resume prompt', sublabel: null, img: null }] };
+  });
+  pages.root.rows.push({ kind: 'action', key: 'k' + (k++), id: 'tray-quit', label: 'Quit The Curator', sublabel: null, img: null });
+  return withSids({ v: 1, gen, theme: 'dark', root: 'root', pages });
+}
+const detailsFirstLine = (doc) => (doc.pop.all(e => e.hasClass('pop-details-line'))[0] || { textContent: null }).textContent;
 
 // helpers over the painted tree
 const menuOf = (doc) => doc.pop.all(e => e.getAttribute('role') === 'menu')[0];
@@ -484,6 +518,7 @@ section('§9 a new payload while a page is open; stale nodes never act');
   byLabel(t2.doc, 'ott · Claude Code · 8 min ago').click();
   t2.send(p);
   ok(t2.paint.instance.state().pageId === 'root', 'the page vanished → back to root');
+  ok(/That page changed/.test(t2.doc.live.textContent), `…and the live region says so ("${t2.doc.live.textContent}")`);
   // a node painted under gen 7 that somehow survives is never acted on under gen 8
   const t3 = load(); t3.send(payload(7));
   const oldNode = byLabel(t3.doc, 'Open The Curator');
@@ -497,6 +532,65 @@ section('§9 a new payload while a page is open; stale nodes never act');
   t3.fireWin('focus');
   ok(items(t3.doc).includes(t3.doc.activeElement), 'when the window regains focus with nothing focused, a row takes focus');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9b the audit\'s M1: a refresh never swaps the open page for another project\'s work-stream');
+{
+  const t = load(); t.send(twoProjects(1, false));
+  byLabel(t.doc, 'alpha · Claude Code · 10 min ago').click();
+  byLabel(t.doc, 'research · 2 hr ago').click();
+  ok(detailsFirstLine(t.doc) === 'work / alpha · research', 'CONTROL — on alpha·research');
+  t.doc.key('ArrowDown');
+  const focusedLabel = items(t.doc).find((e) => e === t.doc.activeElement)?.getAttribute('aria-label');
+  const next = twoProjects(2, true);
+  ok(next.pages[t.paint.instance.state().pageId].title === 'research · 2 hr ago'
+    && next.pages[t.paint.instance.state().pageId].details[0].lines[0] === 'work / beta · research',
+    'CONTROL — in the new build the SAME page id has the SAME title but is beta·research');
+  t.send(next);
+  eq2(detailsFirstLine(t.doc), 'work / alpha · research', 'after beta saves and moves up, the open page is STILL alpha·research (found by its sid, at its new id)');
+  ok(t.paint.instance.state().pageId === 'p:3', `…now page ${t.paint.instance.state().pageId}`);
+  ok(items(t.doc).find((e) => e === t.doc.activeElement)?.getAttribute('aria-label') === focusedLabel, `focus stays on the same row by what it says ("${focusedLabel}")`);
+  byLabel(t.doc, 'Copy resume prompt').click();
+  eq2(t.api.acts.at(-1), [2, 'tray-row-3:resume'], 'the press carries the id of ALPHA·research in the new build (tray-row-3), never beta\'s (tray-row-2)');
+  // without a sid on the old page (or a sid that no longer exists): back to root, never a guess
+  const u = load(); u.send(twoProjects(1, false));
+  byLabel(u.doc, 'alpha · Claude Code · 10 min ago').click();
+  byLabel(u.doc, 'research · 2 hr ago').click();
+  const gone = twoProjects(2, true);
+  for (const pg of Object.values(gone.pages)) if (pg.sid && pg.sid.includes('alpha · research')) pg.sid = null;
+  u.send(gone);
+  ok(u.paint.instance.state().pageId === 'root' && /That page changed/.test(u.doc.live.textContent), 'its sid is gone (an ambiguous page) → root, announced');
+}
+{
+  // END TO END, the auditor's repro as a test: the REAL model (tray-model.js → tray-popover-model.js),
+  // the REAL gate, this painter. The press after the refresh must run for alpha·research.
+  const LIB = path.join(ROOT, 'desktop', 'lib');
+  const popM = await import(pathToFileURL(path.join(LIB, 'tray-popover-model.js')).href);
+  const trayM = await import(pathToFileURL(path.join(LIB, 'tray-model.js')).href);
+  const T = new Date('2026-11-21T13:37:00Z');
+  const at = (sec) => new Date(T.getTime() - sec * 1000).toISOString();
+  const sc = (o) => ({ machine: 'laptop-a1b2c3', harness: 'claude-code', model: 'm', ageSource: 'agent', isThisMachine: true,
+    isThisHost: true, harnessShared: false, ...o, writtenAgeSeconds: o.age, writtenAt: at(o.age) });
+  const store = (betaAge) => ({ ok: true, warnings: [], scopes: [
+    sc({ domain: 'work', project: 'alpha', scope: 'main', age: 600 }), sc({ domain: 'work', project: 'alpha', scope: 'research', age: 7300 }),
+    sc({ domain: 'work', project: 'beta', scope: 'main', age: betaAge }), sc({ domain: 'work', project: 'beta', scope: 'research', age: 7400 })] });
+  const ran = [];
+  const H = { onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {},
+    onRowAction: (row, a) => ran.push(a + ' ' + row.route + ' / ' + row.scope) };
+  const gate = popM.createPopoverActionGate();
+  const build = (betaAge) => gate.publish(popM.buildTrayPopover(trayM.buildTrayModel(store(betaAge),
+    { now: T, dark: true, platform: 'win32' }), { theme: 'dark', ...H }));
+  const t = load(); t.send(build(3000));
+  byLabel(t.doc, 'alpha · Claude Code · 10 min ago').click();
+  byLabel(t.doc, 'research · 2 hr ago').click();
+  ok(detailsFirstLine(t.doc) === 'work / alpha · research', 'REAL MODEL — CONTROL: on alpha·research');
+  t.send(build(5));                                    // beta saves, moves to the top
+  ok(detailsFirstLine(t.doc) === 'work / alpha · research', 'REAL MODEL — after the refresh the open page is still alpha·research');
+  byLabel(t.doc, 'Copy resume prompt').click();
+  const [g, id] = t.api.acts.at(-1);
+  eq2([gate.act(g, id, {}), ran], [true, ['resume work/alpha / research']], 'REAL MODEL — "Copy resume prompt" runs for work/alpha research, never beta');
+}
+function eq2(a, b, label) { ok(JSON.stringify(a) === JSON.stringify(b), label + (JSON.stringify(a) === JSON.stringify(b) ? '' : ` — got ${JSON.stringify(a)}`)); }
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§10 size() and painted()');
@@ -570,9 +664,21 @@ function check(name, src, probe) {
       const t = load(src); t.send(p); return t.doc.pop.all(e => e.tagName === 'IMG' && e.hasClass('pop-img--strip')).length === 0; });
   // 10. page kept even when its title changed
   check('page kept on a changed title',
-    mutant('page(prevPage).title === prevTitle', 'true'),
+    mutant('if (same && page(same).title === prevTitle) {', 'if (same) {'),
     (src) => { const t = load(src); t.send(payload(7)); byLabel(t.doc, 'ott · Claude Code · 8 min ago').click();
       t.send(payload(9, 'dark', { projectLabel: 'ott · Claude Code · 9 min ago' })); return t.paint.instance.state().pageId === 'root'; });
+  // 10b. M1: stay on the same page ID (the pre-audit rule) instead of the same identity
+  check('stays on the same page id, not the same sid (audit M1)',
+    mutant('var same = pageBySid(prevSid);', 'var same = page(prevPage) ? prevPage : null;'),
+    (src) => { const t = load(src); t.send(twoProjects(1, false)); byLabel(t.doc, 'alpha · Claude Code · 10 min ago').click();
+      byLabel(t.doc, 'research · 2 hr ago').click(); t.send(twoProjects(2, true)); return detailsFirstLine(t.doc) === 'work / alpha · research'; });
+  // 10c. focus restored by the old KEY instead of by what the row says
+  check('focus restored by key, not by label',
+    mutant('focusKey = cur ? keyOnPage(page(same), cur) : null;', 'focusKey = cur ? cur.key : null;'),
+    (src) => { const t = load(src); t.send(twoProjects(1, false)); byLabel(t.doc, 'alpha · Claude Code · 10 min ago').click();
+      byLabel(t.doc, 'research · 2 hr ago').click(); t.doc.key('ArrowDown');
+      const before = items(t.doc).find((e) => e === t.doc.activeElement)?.getAttribute('aria-label');
+      t.send(twoProjects(2, true)); return items(t.doc).find((e) => e === t.doc.activeElement)?.getAttribute('aria-label') === before; });
   // 11. Details painted on root too
   check('Details on root',
     mutant('if (!isRoot && Array.isArray(pg.details) && pg.details.length) {', 'if (Array.isArray(pg.details) && pg.details.length) {'),

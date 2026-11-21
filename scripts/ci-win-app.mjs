@@ -992,7 +992,7 @@ async function popoverSelfTest({ setup, version }) {
   if (run) {
     line = await waitFor(() => (existsSync(logFile) ? popoverSelfTestLine(readFileSync(logFile, 'utf8')) : null),
       { timeoutMs: 120000, everyMs: 1000 });
-    ok(!!line && /tray-popover-selftest: pass$/.test(line), 'curator.log: tray-popover-selftest: pass (shown, inside the work area, rows painted, 0 CSP violations, Esc hides it)',
+    ok(!!line && /tray-popover-selftest: pass$/.test(line), 'curator.log: tray-popover-selftest: pass (shown, inside the work area, rows painted, 0 CSP violations, a file: load outside src/public/next/ cancelled by the request filter, Esc hides it)',
       line || 'no self-test line in curator.log within 120 s');
     if (!line || !/pass$/.test(line)) {
       const text = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '(no curator.log)';

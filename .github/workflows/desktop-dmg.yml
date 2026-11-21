@@ -445,9 +445,11 @@ jobs:
       # v4.1.0: the tray popover in the INSTALLED app (install, launch in tray
       # mode with isolated data and CURATOR_TEST_TRAY_POPOVER_SELFTEST=1, which
       # the app honours only alongside CURATOR_TEST_USER_DATA_DIR; it shows the
-      # popover, checks it and logs `tray-popover-selftest: pass`, which the
-      # runner greps from curator.log; then uninstall).
-      - name: The tray popover self-test (shown, inside the work area, painted, no CSP refusal, Esc hides it)
+      # popover, checks it — including a NEGATIVE probe: a file: load outside
+      # src/public/next/ from the page itself must be cancelled by the request
+      # filter — and logs `tray-popover-selftest: pass`, which the runner greps
+      # from curator.log; then uninstall).
+      - name: The tray popover self-test (shown, inside the work area, painted, no CSP refusal, a forbidden load cancelled, Esc hides it)
         timeout-minutes: 15
         run: node scripts/ci-win-app.mjs popover-selftest --setup "${{ steps.names.outputs.setup }}" --version $env:VERSION
 

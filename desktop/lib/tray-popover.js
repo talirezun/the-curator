@@ -118,15 +118,26 @@ export function requestAllowed(url, pageDir, platform = process.platform) {
   return true;
 }
 
-/** Hardens the popover's own session (once). */
-export function hardenPopoverSession(ses, { pageDir, platform }) {
+/** Per session: what its one set of listeners reads. A tray toggled off and on builds a new
+ *  controller on the SAME partition; it must update these, never add a second set of listeners. */
+const hardened = new WeakMap();
+
+/** Hardens the popover's own session ONCE per session object; a later call only updates where
+ *  refusals are reported (`onRefused`, the CI self-test's negative probe) and the allowed folder. */
+export function hardenPopoverSession(ses, { pageDir, platform, onRefused }) {
+  const known = ses && typeof ses === 'object' ? hardened.get(ses) : undefined;
+  if (known) { Object.assign(known, { pageDir, platform, onRefused }); return false; }
+  const conf = { pageDir, platform, onRefused };
+  if (ses && typeof ses === 'object') hardened.set(ses, conf);
   const quiet = (fn) => { try { fn(); } catch { /* an API this build lacks is not a hole: the rest still apply */ } };
   quiet(() => ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false)));
   quiet(() => ses.setPermissionCheckHandler(() => false));
   quiet(() => ses.setDevicePermissionHandler(() => false));
   quiet(() => ses.setDisplayMediaRequestHandler((_req, callback) => callback({})));
   quiet(() => ses.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !requestAllowed(details && details.url, pageDir, platform) });
+    const cancel = !requestAllowed(details && details.url, conf.pageDir, conf.platform);
+    if (cancel && typeof conf.onRefused === 'function') { try { conf.onRefused(); } catch { /* */ } }
+    callback({ cancel });
   }));
   quiet(() => ses.on('will-download', (event, item) => {
     try { event.preventDefault(); } catch { /* */ }
@@ -138,6 +149,7 @@ export function hardenPopoverSession(ses, { pageDir, platform }) {
       try { if (typeof callback === 'function') callback(); } catch { /* */ }
     }));
   }
+  return true;
 }
 
 /** The ids of every `action` row in a payload (a cross-check of the gate's own map). */
@@ -181,7 +193,7 @@ export function createTrayPopover(deps) {
   const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
   const log = (line) => { try { if (typeof deps.log === 'function') deps.log(line); } catch { /* */ } };
   const fallback = (reason) => { try { if (typeof deps.onFallback === 'function') deps.onFallback(reason); } catch { /* */ } };
-  const isQuitting = () => safe(() => deps.isQuitting && deps.isQuitting()) === true;
+  const isQuitting = () => sessionEnding || safe(() => deps.isQuitting && deps.isQuitting()) === true;
 
   let win = null;
   let ses = null;
@@ -195,8 +207,10 @@ export function createTrayPopover(deps) {
   let shownAt = -Infinity;
   let showCount = 0;
   let blurHiddenAt = -Infinity;
-  let failures = 0;
+  let failures = 0;          // CONSECUTIVE failures: a successful reveal resets it
+  let failuresTotal = 0;     // every failure this session (stats, the CI self-test)
   let off = false;
+  let sessionEnding = false; // this window saw query-session-end / session-end (a log-off)
   let destroyed = false;
   let payload = null;
   let sentGen = 0;
@@ -208,6 +222,7 @@ export function createTrayPopover(deps) {
   let lastBounds = null;
   let dismissals = 0;        // Esc on the root page (curatorTray.dismiss) — the CI self-test
   let cspViolations = 0;     // Chromium's own console reports of a refused load (CI self-test)
+  let refusedRequests = 0;   // requests the session's webRequest filter cancelled (CI self-test)
 
   const live = () => {
     if (win && safe(() => win.isDestroyed()) === true) resetWindow();
@@ -228,6 +243,7 @@ export function createTrayPopover(deps) {
 
   function fail(reason, duringClick) {
     failures += 1;
+    failuresTotal += 1;
     log(`tray-popover: ${reason} (fallback to the native menu)`);
     if (duringClick) fallback(reason);
     needsLoad = true;
@@ -252,7 +268,7 @@ export function createTrayPopover(deps) {
   function ensureSession() {
     if (ses) return ses;
     ses = deps.session.fromPartition(PARTITION, { cache: false });
-    hardenPopoverSession(ses, { pageDir, platform });
+    hardenPopoverSession(ses, { pageDir, platform, onRefused: () => { refusedRequests += 1; } });
     return ses;
   }
 
@@ -303,6 +319,11 @@ export function createTrayPopover(deps) {
       if (CSP_VIOLATION.test(text)) cspViolations += 1;
     });
     w.on('page-title-updated', refuse);
+    // A log-off (Windows): the window hears it itself, so its close is never prevented then, even
+    // before main's own handlers have run (or if they never do).
+    const ending = () => { sessionEnding = true; };
+    w.on('query-session-end', ending);
+    w.on('session-end', ending);
     w.on('blur', () => onBlur(w));
     w.on('close', (event) => {
       if (isQuitting()) return;
@@ -383,6 +404,9 @@ export function createTrayPopover(deps) {
     showCount += 1;
     safe(() => w.show());
     safe(() => w.focus());
+    // A show that worked ends a run of failures: only CONSECUTIVE ones switch the popover off,
+    // never two transient ones weeks apart.
+    failures = 0;
   }
 
   function pointerOnIcon() {
@@ -422,6 +446,8 @@ export function createTrayPopover(deps) {
     if (sentGen < 1 || gen > sentGen || !loaded) return;
     painted = true;
     lastPainted = { gen, rows };
+    // A show waiting on a warm window reveals on the NEWEST paint only (see show()).
+    if (pending && pending.warm && gen < sentGen) return;
     if (pending) {
       cancelPending();
       const w = live();
@@ -455,32 +481,77 @@ export function createTrayPopover(deps) {
     }
     if (windowVisible()) { place(w); safe(() => w.focus()); return true; }
     if (pending) return true;
-    if (!needsLoad && loaded && painted) { reveal(w); return true; }
+    // A warm window reveals at once — but only when its last paint is the newest payload sent,
+    // so a person never sees the previous open's content first; otherwise it waits for that paint.
+    if (!needsLoad && loaded && painted && lastPainted && lastPainted.gen >= sentGen) { reveal(w); return true; }
     showsOnWindow += 1;
     const attempt = showsOnWindow;
-    const p = { attempt, timer: null };
+    const p = { attempt, timer: null, warm: !needsLoad && loaded && painted };
     pending = p;
     p.timer = safe(() => setTimer(() => { if (pending === p) backstop(w, attempt); }, FIRST_PAINT_BACKSTOP_MS));
     if (needsLoad) load(w);   // a synchronous load failure ends `pending` and falls back this click
     return pending === p;
   }
 
-  function hide() {
+  /** Causes that end a waiting show WITHOUT the native menu: the person's own second click or
+   *  Esc, and the native menu itself being popped (it is that click's answer already). */
+  const QUIET_CAUSES = new Set(['toggle', 'dismiss', 'menu']);
+
+  /**
+   * Hides the popover. A show still WAITING for its first paint is cancelled; unless `cause` is
+   * one of QUIET_CAUSES, that click then gets the native menu (fallback 'cancelled'), so a click
+   * never produces neither a popover nor a menu.
+   */
+  function hide(cause) {
+    const wasPending = !!pending;
     cancelPending();
     const w = live();
     if (w && windowVisible()) safe(() => w.hide());
+    if (wasPending && !QUIET_CAUSES.has(cause) && !destroyed) {
+      log('tray-popover: a waiting show was cancelled (fallback to the native menu)');
+      fallback('cancelled');
+    }
+  }
+
+  /** CI self-test only: from the PAGE's own context, ask for a file outside src/public/next/
+   *  (a stylesheet, which the page's CSP allows as 'self'); the session's webRequest filter must
+   *  cancel it. Resolves 'error' | 'load' | 'timeout' | null (no window). */
+  function probeRefusedLoad() {
+    const w = live();
+    if (!w || !loaded) return Promise.resolve(null);
+    const code = "new Promise(function (r) { var l = document.createElement('link'); l.rel = 'stylesheet';"
+      + " l.href = '../../../package.json'; l.onload = function () { r('load'); };"
+      + " l.onerror = function () { r('error'); }; setTimeout(function () { r('timeout'); }, 3000);"
+      + ' document.head.appendChild(l); })';
+    try { return Promise.resolve(w.webContents.executeJavaScript(code)).catch(() => null); } catch { return Promise.resolve(null); }
   }
 
   /** The tray icon's left click. */
   function toggle(trayBounds) {
-    if (windowVisible() || pending) { hide(); return false; }
+    if (windowVisible() || pending) { hide('toggle'); return false; }
     if (now() - blurHiddenAt < TOGGLE_GRACE_MS) { blurHiddenAt = -Infinity; return false; }
     return show(trayBounds);
   }
 
-  /** A new payload (gate.publish(...)'s result). Sent at once when the page is loaded. */
+  /**
+   * Creates the hidden window and loads the page ahead of the first click (main calls it when
+   * the tray starts), so that click only has to paint and reveal instead of falling back to the
+   * native menu at the 1 s backstop on a cold load. Nothing is shown. A load that fails here is
+   * not a click's failure (no fallback); the next show loads again.
+   */
+  function preload() {
+    if (destroyed || off || pending) return false;
+    let w;
+    try { w = ensure(); } catch { return false; }
+    if (needsLoad) load(w);
+    return true;
+  }
+
+  /** A new payload (gate.publish(...)'s result). Sent at once when the page is loaded. The SAME
+   *  payload object again (the gate found nothing changed) is not re-sent: no repaint. */
   function update(next) {
     if (destroyed || !next || typeof next !== 'object' || !Number.isSafeInteger(next.gen) || next.gen < 1) return;
+    if (next === payload && sentGen === next.gen) return;
     payload = next;
     const t = next.theme === 'light' ? 'light' : 'dark';
     if (t !== theme) {
@@ -526,13 +597,14 @@ export function createTrayPopover(deps) {
       if (w && windowVisible()) place(w);
     },
     onPainted,
-    onDismiss: () => { dismissals += 1; hide(); },
+    onDismiss: () => { dismissals += 1; hide('dismiss'); },
   });
 
   return {
     show,
     hide,
     toggle,
+    preload,
     update,
     destroy,
     mainWindowFocused,
@@ -540,8 +612,8 @@ export function createTrayPopover(deps) {
     isEnabled: () => !off && !destroyed,
     /** For P5's CI self-test and for diagnostics: no content, only state. */
     stats: () => ({
-      failures, off, visible: windowVisible(), waiting: !!pending,
-      loaded, painted, sentGen, lastPainted, bounds: lastBounds, cspViolations, dismissals,
+      failures, failuresTotal, off, visible: windowVisible(), waiting: !!pending,
+      loaded, painted, sentGen, lastPainted, bounds: lastBounds, cspViolations, dismissals, refusedRequests,
     }),
     /** For the CI self-test only (lib/tray-popover-selftest.js): one real key press into the
      *  page, as a person's keyboard would deliver it. False when there is no window. */
@@ -554,5 +626,7 @@ export function createTrayPopover(deps) {
         return true;
       }) === true;
     },
+    /** For the CI self-test only: see probeRefusedLoad. */
+    probeRefusedLoad,
   };
 }

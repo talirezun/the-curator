@@ -47,6 +47,63 @@ import {
 } from './tray-menu.js';
 import { WIN_OPEN_LABEL } from './tray-menu-win.js';
 
+// The three picture renderers, read the same guarded way tray-model.js reads
+// them (a missing renderer costs a picture, never the popover), so the cache
+// below can wrap exactly the functions buildTrayModel would call by default.
+let _dots = null, _bars = null, _strip = null;
+try { const m = await import('./menu-dots.js'); if (typeof m.renderRecencyDot === 'function') _dots = m.renderRecencyDot; } catch { _dots = null; }
+try { const m = await import('./menu-bars.js'); if (typeof m.renderGutterBar === 'function') _bars = m.renderGutterBar; } catch { _bars = null; }
+try { const m = await import('./pulse-strip.js'); if (typeof m.renderPulseStrip === 'function') _strip = m.renderPulseStrip; } catch { _strip = null; }
+
+/** The most pictures the cache keeps before it starts again (a dot per tier and
+ *  theme, a bar per fraction and ink, a strip per pulse: a few dozen in use). */
+export const IMAGE_CACHE_MAX = 512;
+
+/**
+ * Memoised picture renderers for the popover's `buildTrayModel` call
+ * (`{ ...cache.renderers }` as its options). Encoding the PNGs at five scales
+ * is nearly all of a publish (the v4.1.0 audit measured ~85 ms for 12 projects
+ * × 4 scopes, synchronously in main); the renderers are pure functions of
+ * their arguments (tier / pulse / bar options, the theme and the scales), so
+ * the key is those arguments as JSON and a repeat publish encodes nothing.
+ * The native menus never use it: their model is built without these options,
+ * byte-identical.
+ *
+ * @param {{renderDot?, renderStrip?, renderBar?}} [base]  the renderers to wrap
+ *   (the suite injects counting ones); default: the real three
+ * @returns {{renderers: object, stats: () => {hits:number, misses:number, size:number}, clear: () => void}}
+ */
+export function createPopoverImageCache(base = {}) {
+  const fns = {
+    dot: typeof base.renderDot === 'function' ? base.renderDot : _dots,
+    strip: typeof base.renderStrip === 'function' ? base.renderStrip : _strip,
+    bar: typeof base.renderBar === 'function' ? base.renderBar : _bars,
+  };
+  const cache = new Map();
+  let hits = 0, misses = 0;
+  const memo = (kind, fn) => (...args) => {
+    let k;
+    try { k = kind + JSON.stringify(args); } catch { k = null; }
+    if (k !== null && cache.has(k)) { hits += 1; return cache.get(k); }
+    misses += 1;
+    const out = fn(...args);      // a throw reaches tray-model.js's own guard, uncached
+    if (k !== null) {
+      if (cache.size >= IMAGE_CACHE_MAX) cache.clear();
+      cache.set(k, out);
+    }
+    return out;
+  };
+  const renderers = {};
+  if (fns.dot) renderers.renderDot = memo('dot', fns.dot);
+  if (fns.strip) renderers.renderStrip = memo('strip', fns.strip);
+  if (fns.bar) renderers.renderBar = memo('bar', fns.bar);
+  return {
+    renderers,
+    stats: () => ({ hits, misses, size: cache.size }),
+    clear: () => { cache.clear(); },
+  };
+}
+
 /** The payload's shape version (CONTRACT §1). */
 export const POPOVER_PAYLOAD_VERSION = 1;
 
@@ -142,6 +199,23 @@ export function popoverImage(spec) {
   };
 }
 
+/** How many of a page's own tooltip lines name WHAT it is. A work-stream's
+ *  tooltip opens `domain / project · scope`, then `machine: …` (tray-model.js
+ *  toolTipOf) — together the stream itself, on every build. */
+export const IDENTITY_LINES = 2;
+
+/**
+ * One level of a page's identity: its own opening tooltip lines when it has
+ * any (a work-stream: `work / beta · research`, `machine: pc-1`), else its
+ * title. Never the row's position: page ids are a per-build sequence, so
+ * `p:1` can be alpha·research in one build and beta·research in the next, with
+ * the same title ("research · 2 hr ago") — the v4.1.0 audit's M1.
+ */
+export function pageIdentity(title, lines) {
+  const l = Array.isArray(lines) ? lines.filter((x) => typeof x === 'string' && x) : [];
+  return l.length ? l.slice(0, IDENTITY_LINES) : [typeof title === 'string' ? title : ''];
+}
+
 /**
  * Template → `{ payload, actions }`. `payload.gen` is 0 until a gate
  * publishes it. Exported for the suite; main.js calls `buildTrayPopover`.
@@ -152,8 +226,11 @@ export function popoverImage(spec) {
  * @returns {{payload: object, actions: Map<string, Function|'quit'>}}
  */
 export function popoverFromTemplate(template, o = {}) {
-  const theme = o && o.theme === 'dark' ? 'dark' : 'light';
+  // The controller's own default is dark (tray-popover.js); so is this one.
+  // Only the literal 'light' is light.
+  const theme = o && o.theme === 'light' ? 'light' : 'dark';
   const pages = {};
+  const sidCount = new Map();
   const actions = new Map();
   let keyN = 0, drillN = 0, detailN = 0, synthN = 0;
   const key = () => 'k' + (keyN++);
@@ -176,8 +253,16 @@ export function popoverFromTemplate(template, o = {}) {
     sublabel: sublabelOf(item), img: popoverImage(item.icon),
   });
 
-  function buildPage(id, parent, title, subtitle, items, ownLines) {
-    const page = { id, parent, title, subtitle, rows: [], details: [] };
+  /** A page's build-independent identity (contract §1 `sid`): the identity
+   *  of every page above it, then its own (see pageIdentity). */
+  const sidOf = (path) => {
+    const sid = JSON.stringify(path);
+    sidCount.set(sid, (sidCount.get(sid) || 0) + 1);
+    return sid;
+  };
+
+  function buildPage(id, parent, title, subtitle, items, ownLines, path) {
+    const page = { id, parent, title, subtitle, sid: sidOf(path), rows: [], details: [] };
     pages[id] = page;
     const isRoot = parent === null;
     if (ownLines.length) page.details.push({ label: null, lines: ownLines });
@@ -191,7 +276,7 @@ export function popoverFromTemplate(template, o = {}) {
       if (Array.isArray(item.submenu)) {
         const pid = 'p:' + (drillN++);
         page.rows.push({ kind: 'drill', key: key(), drill: pid, label, sublabel, img: popoverImage(item.icon) });
-        buildPage(pid, id, label, sublabel, item.submenu, lines);
+        buildPage(pid, id, label, sublabel, item.submenu, lines, [...path, pageIdentity(label, lines)]);
         continue;
       }
       if (isRoot && lines.length) {
@@ -200,7 +285,10 @@ export function popoverFromTemplate(template, o = {}) {
         // worded as the native Windows menu words it.
         const pid = 'd:' + (detailN++);
         page.rows.push({ kind: 'drill', key: key(), drill: pid, label, sublabel, img: popoverImage(item.icon) });
-        const sub = { id: pid, parent: id, title: label, subtitle: sublabel, rows: [], details: [{ label: null, lines }] };
+        const sub = {
+          id: pid, parent: id, title: label, subtitle: sublabel,
+          sid: sidOf([...path, pageIdentity(label, lines)]), rows: [], details: [{ label: null, lines }],
+        };
         pages[pid] = sub;
         if (actionable(item)) {
           const word = typeof item.id === 'string' && typeof WIN_LEAF_ACTION_LABELS[item.id] === 'string'
@@ -217,7 +305,10 @@ export function popoverFromTemplate(template, o = {}) {
     return page;
   }
 
-  buildPage('root', null, null, null, template, []);
+  buildPage('root', null, null, null, template, [], []);
+  // Two pages that cannot be told apart have NO identity: the painter returns
+  // to root rather than guess which of them the open one was.
+  for (const pg of Object.values(pages)) if (sidCount.get(pg.sid) > 1) pg.sid = null;
   return {
     payload: { v: POPOVER_PAYLOAD_VERSION, gen: 0, theme, root: 'root', pages },
     actions,
@@ -257,7 +348,14 @@ export function buildTrayPopover(model, o = {}) {
  * reaches a handler. One per popover controller.
  *
  *   publish(built)        → the payload, stamped gen = previous + 1; the
- *                           previous generation's ids die with it
+ *                           previous generation's ids die with it — UNLESS
+ *                           the payload is the last one apart from `gen`
+ *                           (an idle refresh): then the SAME payload object
+ *                           comes back with its gen, only the action map is
+ *                           replaced (same ids, same rows, fresh handlers),
+ *                           and the controller does not repaint. A repaint
+ *                           replaces every node, so a press straddling it
+ *                           would be lost; an unchanged one need not be.
  *   current()             → the last published payload, or null
  *   resolve(gen, id)      → null (refused) | 'quit' | the item's own click
  *   act(gen, id, {quit})  → boolean; runs what resolve returned ('quit' →
@@ -271,6 +369,7 @@ export function buildTrayPopover(model, o = {}) {
 export function createPopoverActionGate() {
   let gen = 0;
   let payload = null;
+  let signature = null;       // the last payload as JSON, without its gen
   let actions = new Map();
   function resolve(g, id) {
     if (!payload || !Number.isSafeInteger(g) || g < 1 || g !== gen) return null;
@@ -284,7 +383,15 @@ export function createPopoverActionGate() {
       if (!built || typeof built !== 'object' || !built.payload || !(built.actions instanceof Map)) {
         throw new Error('createPopoverActionGate.publish: expected a buildTrayPopover() result');
       }
+      // Stable: popoverFromTemplate builds every object in one fixed key order, and the payload
+      // is plain JSON by contract (§1), so equal payloads stringify equal.
+      const sig = JSON.stringify({ ...built.payload, gen: 0 });
+      if (payload && sig === signature) {
+        actions = new Map(built.actions);
+        return payload;
+      }
       gen += 1;
+      signature = sig;
       payload = { ...built.payload, gen };
       actions = new Map(built.actions);
       return payload;

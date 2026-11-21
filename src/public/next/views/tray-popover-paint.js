@@ -399,23 +399,63 @@
       return handled;
     }
 
+    /** The page of the CURRENT payload whose build-independent identity is `sid`, or null. */
+    function pageBySid(sid) {
+      if (!isStr(sid) || !sid.length) return null;
+      var ps = state.payload.pages;
+      for (var k in ps) {
+        if (hasOwn(ps, k) && isObj(ps[k]) && ps[k].sid === sid && isStr(ps[k].id) && ps[k].id === k) return k;
+      }
+      return null;
+    }
+
     /** A new payload from main. Invalid payloads are ignored (the last good paint stays). */
     function render(raw) {
       var p = validPayload(raw);
       if (!p) return false;
       var prev = state.payload;
       var prevPage = state.pageId;
-      var prevTitle = prev && page(prevPage) ? page(prevPage).title : null;
-      var focusKey = state.focusIndex >= 0 && state.rows[state.focusIndex] ? state.rows[state.focusIndex].key : null;
+      var old = prev && page(prevPage) ? page(prevPage) : null;
+      var wasRoot = !old || prevPage === rootId();
+      var prevSid = old && isStr(old.sid) ? old.sid : null;
+      var prevTitle = old ? old.title : null;
+      var cur = state.focusIndex >= 0 && state.rows[state.focusIndex] ? state.rows[state.focusIndex] : null;
       state.payload = p;
       state.gen = p.gen;
       setTheme(p.theme);
       var target = rootId();
-      // Contract §1: stay only when the page still exists AND its title is unchanged.
-      if (prev && prevPage && page(prevPage) && page(prevPage).title === prevTitle) target = prevPage;
-      else focusKey = null;
+      var focusKey = null;
+      if (wasRoot) {
+        // Keys are a per-build sequence: the focused row is found again by what it says.
+        if (cur) focusKey = keyOnPage(page(target), cur);
+      } else {
+        // Contract §1 (amended after the v4.1.0 audit, M1): page ids are a per-build sequence, so
+        // `p:1` may now be a DIFFERENT project's work-stream with the very same title. Stay only on
+        // the page with the same IDENTITY (`sid`) and an unchanged title, wherever it now sits;
+        // anything else returns to root, and says so.
+        var same = pageBySid(prevSid);
+        if (same && page(same).title === prevTitle) {
+          target = same;
+          focusKey = cur ? keyOnPage(page(same), cur) : null;
+        }
+      }
       paintPage(target, focusKey, null);
+      if (!wasRoot && target === rootId() && live) live.textContent = 'That page changed. Back at the top of ' + (opts.appName || 'The Curator') + '.';
       return true;
+    }
+
+    /** The key of the row on `pg` that matches the focused row of the previous paint: same kind and
+     *  label (keys are a per-build sequence too), else null (focus goes to the first useful row). */
+    function keyOnPage(pg, cur) {
+      if (cur.kind === 'back') return '__back';
+      var rows = Array.isArray(pg.rows) ? pg.rows : [];
+      var r0 = cur.row;
+      if (!r0) return null;
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (isObj(r) && r.kind === r0.kind && r.label === r0.label) return r.key;
+      }
+      return null;
     }
 
     function onWindowFocus() {

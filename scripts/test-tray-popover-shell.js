@@ -101,6 +101,23 @@ function makeRig(page = {}) {
       }
     }
     setWindowOpenHandler() {}
+    /** The negative probe (probeRefusedLoad): the page asks for a stylesheet outside its folder.
+     *  Like Chromium, the request goes through the SESSION's webRequest filter first. */
+    executeJavaScript(code) {
+      const m = /l\.href = '([^']+)'/.exec(code);
+      if (!m) return Promise.resolve('no-probe');
+      const url = new URL(m[1], this.mainFrame.url || PAGE_URL).href;
+      const ses = this.win.options.webPreferences.session;
+      if (P.cspBlocksProbe) {
+        this.emit('console-message', { message: `Refused to load the stylesheet '${url}' because it violates the following Content Security Policy directive: "style-src 'self'".`, level: 'error' });
+        return Promise.resolve('error');
+      }
+      return new Promise((resolve) => {
+        const filter = ses && ses.filter;
+        if (typeof filter !== 'function') { resolve('load'); return; }
+        filter({ url, resourceType: 'stylesheet' }, ({ cancel }) => resolve(cancel ? 'error' : 'load'));
+      });
+    }
   }
   class Win extends Emitter {
     constructor(options) {
@@ -135,7 +152,7 @@ function makeRig(page = {}) {
   const session = {
     fromPartition() {
       const s = new Emitter();
-      s.webRequest = { onBeforeRequest() {} };
+      s.webRequest = { onBeforeRequest(fn) { s.filter = P.filterAllowsAll ? (d, cb) => cb({ cancel: false }) : fn; } };
       s.setPermissionRequestHandler = () => {}; s.setPermissionCheckHandler = () => {};
       s.setDevicePermissionHandler = () => {}; s.setDisplayMediaRequestHandler = () => {};
       return s;
@@ -306,7 +323,8 @@ const selfTest = (r, extra = {}) => shell.runTrayPopoverSelfTest({
   const r = makeRig();
   r.selfTestRunning = true;
   const res = await selfTest(r);
-  eq([res.pass, res.line], [true, shell.SELFTEST_PASS_LINE], `the REAL controller passes: shown, painted, inside the work area, no CSP refusal, Esc hides it (${JSON.stringify(res.facts)})`);
+  eq([res.pass, res.line], [true, shell.SELFTEST_PASS_LINE], `the REAL controller passes: shown, painted, inside the work area, no CSP refusal, a forbidden load cancelled, Esc hides it (${JSON.stringify(res.facts)})`);
+  ok(res.facts.probe === 'error' && res.facts.refusedRequests === 1, 'the NEGATIVE probe: the page\'s own request for ../../../package.json was cancelled by the session\'s filter, and counted once');
   ok(res.facts.rows > 0 && res.facts.cspViolations === 0 && res.facts.dismissals === 1, 'its facts: rows painted, 0 CSP violations, one dismissal');
   ok(r.win().webContents.keys.some((k) => k.type === 'keyDown' && k.keyCode === 'Escape'), 'Esc arrived as a real key event (sendInputEvent), not a direct hide');
 }
@@ -320,6 +338,25 @@ const selfTest = (r, extra = {}) => shell.runTrayPopoverSelfTest({
   const r = makeRig({ csp: ['an ordinary console line'] });
   r.selfTestRunning = true;
   eq((await selfTest(r)).pass, true, 'CONTROL — an ordinary console line is not counted');
+}
+{
+  const r = makeRig({ filterAllowsAll: true });
+  r.selfTestRunning = true;
+  const res = await selfTest(r);
+  ok(!res.pass && /negative probe was not refused/.test(res.line), `a request filter that lets a file: load outside src/public/next/ through fails it (${res.line.slice(0, 70)})`);
+}
+{
+  const r = makeRig({ cspBlocksProbe: true });
+  r.selfTestRunning = true;
+  const res = await selfTest(r);
+  ok(!res.pass && /not cancelled by the request filter/.test(res.line), `a probe refused only by the page's CSP (the filter never saw it) fails it (${res.line.slice(0, 70)})`);
+}
+{
+  const r = makeRig();
+  r.selfTestRunning = true;
+  r.popover.probeRefusedLoad = undefined;
+  const res = await selfTest(r);
+  ok(!res.pass && /negative probe is missing/.test(res.line), 'a controller without the probe fails it');
 }
 {
   const r = makeRig({ rows: 0 });

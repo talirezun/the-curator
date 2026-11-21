@@ -65,7 +65,9 @@ export function boundsInside(b, area) {
  * rejects. `line` is what main writes to curator.log.
  *
  * deps:
- *   popover        the controller (createTrayPopover): show, isVisible, stats, pressKey
+ *   popover        the controller (createTrayPopover): show, isVisible, stats, pressKey,
+ *                  probeRefusedLoad (the negative probe: a file: load outside the page's folder,
+ *                  from the page itself, that the session's request filter must cancel)
  *   publish        () => void   main's publishPopover (a payload before the first show)
  *   getTrayBounds  () => Rectangle | undefined
  *   workAreaFor    (bounds) => Rectangle | null   the work area of the display the popover is on
@@ -98,18 +100,31 @@ export async function runTrayPopoverSelfTest(deps) {
     }
     const s1 = stats();
     Object.assign(facts, {
-      shows, failures: s1.failures, off: s1.off, sentGen: s1.sentGen,
+      shows, failures: s1.failuresTotal === undefined ? s1.failures : s1.failuresTotal, off: s1.off, sentGen: s1.sentGen,
       rows: s1.lastPainted ? s1.lastPainted.rows : null, bounds: s1.bounds || null,
       cspViolations: s1.cspViolations,
     });
     if (!popover.isVisible()) return fail('the popover never became visible');
-    if (s1.off || s1.failures !== 0) return fail('the popover recorded a failure');
+    // EVERY failure this session, not only the consecutive run a successful show resets.
+    if (s1.off || s1.failures !== 0 || (s1.failuresTotal || 0) !== 0) return fail('the popover recorded a failure');
     // 2. Painted rows, inside the work area, no CSP refusal.
     if (!s1.lastPainted || !(s1.lastPainted.rows > 0)) return fail('the page painted no rows');
     const area = workAreaFor(s1.bounds);
     facts.workArea = area || null;
     if (!boundsInside(s1.bounds, area)) return fail('the popover is not inside the work area');
     if (s1.cspViolations !== 0) return fail('the page reported Content Security Policy violations');
+    // 2b. The NEGATIVE probe: a file: request outside src/public/next/, issued from the page's own
+    //     context, must be cancelled by the session's webRequest filter (not merely never made).
+    if (typeof popover.probeRefusedLoad !== 'function') return fail('the negative probe is missing');
+    const refusedBefore = s1.refusedRequests || 0;
+    const probe = await popover.probeRefusedLoad();
+    const sp = stats();
+    facts.probe = probe;
+    facts.refusedRequests = sp.refusedRequests;
+    facts.cspViolations = sp.cspViolations;
+    if (probe !== 'error') return fail('the negative probe was not refused');
+    if (!((sp.refusedRequests || 0) > refusedBefore)) return fail('the negative probe was not cancelled by the request filter');
+    if (sp.cspViolations !== 0) return fail('the negative probe was refused by the page\'s CSP, not the request filter');
     // 3. Esc on the root page dismisses it (the page's own key map → curatorTray.dismiss()).
     const dismissedBefore = s1.dismissals || 0;
     if (!popover.pressKey('Escape')) return fail('Esc could not be pressed');
