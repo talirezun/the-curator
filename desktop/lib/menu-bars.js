@@ -69,6 +69,16 @@ import {
   createCanvas, coverage, paintPixel, hexToRgb, encodeRgbaPng,
 } from './rgba-png.js';
 
+/** Opt-in extra scales, the same rule as menu-dots.js `normaliseImageScales`
+ *  (integers 1..8, deduplicated, ascending; anything else → null → no
+ *  `buffers` key, byte-identical to every earlier release). A local copy, not
+ *  an import: a missing sibling module must cost a picture, never this one. */
+function imageScalesOf(scales) {
+  if (!Array.isArray(scales)) return null;
+  const out = [...new Set(scales.filter((s) => Number.isInteger(s) && s >= 1 && s <= 8))].sort((a, b) => a - b);
+  return out.length ? out : null;
+}
+
 /** The whole image, in points. The height is `menu-dots.js`'s DOT_POINTS. */
 export const BAR_CANVAS_POINTS = 28;
 export const BAR_HEIGHT_POINTS = 13;
@@ -189,6 +199,7 @@ export function renderGutterBar(o = {}) {
   // An identity ink is honoured only when it is a real hex and the bar is not
   // a danger bar: an over-run speaks in the danger ink whatever it measures.
   if (!danger && typeof o.ink === 'string' && /^#[0-9a-fA-F]{6}$/.test(o.ink)) ink = o.ink;
+  const scales = imageScalesOf(o.scales);
   return {
     buffer: encodeRgbaPng(barCanvas(frac, 1, ink)),
     buffer2x: encodeRgbaPng(barCanvas(frac, 2, ink)),
@@ -201,6 +212,9 @@ export function renderGutterBar(o = {}) {
     over: frac > 1,
     danger,
     ink,
+    // Opt-in extra scales (see menu-dots.js normaliseImageScales): absent,
+    // the spec is byte-identical to every earlier release's.
+    ...(scales ? { buffers: scales.map((scale) => ({ scale, buffer: encodeRgbaPng(barCanvas(frac, scale, ink)) })) } : {}),
   };
 }
 
