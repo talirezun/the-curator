@@ -1121,7 +1121,38 @@ async function main() {
     };
     const syn1Wiki = path.join(tempRoot, 'syn1', 'wiki');
     const before = snapshotWiki(syn1Wiki);
-    const result = await runIngest('syn1', path.join(INPUTS_DIR, '01-tiny-baseline.md'), '01-tiny-baseline.md', sc);
+    // What the product PROMISES for this press depends on what SYN-1 left (planRepeatIngest):
+    // 'nothing' = no call; 'gaps' = the first reading fell short (a summary without Key
+    // Takeaways, a stub, a "fell short" warning) and this model gets ONE more reading.
+    // CI 44827728760: SYN-1 got a summary-only reply with no Key Takeaways, the planner
+    // rightly said 'gaps', and this block asserted 'nothing' anyway. Ask the planner first.
+    const { planRepeatIngest } = await import('../src/brain/ingest.js');
+    const { hashRawSource } = await import('../src/brain/raw-store.js');
+    const { getProviderInfo: gpi8 } = await import('../src/brain/llm.js');
+    const syn1Src = path.join(INPUTS_DIR, '01-tiny-baseline.md');
+    const plan8 = await planRepeatIngest('syn1', await hashRawSource(syn1Src), gpi8().model,
+      { sourceText: async () => readFileSync(syn1Src, 'utf8') });
+    if (plan8.kind === 'gaps') {
+      inconclusive(sc, 'SYN-8: SYN-1 left a gap, so this press is the one gap-filling reading, not the no-call press',
+        `planRepeatIngest: gaps = ${plan8.gaps.join('; ')}`);
+      const r = await runIngest('syn1', syn1Src, '01-tiny-baseline.md', sc);
+      assertTrue(sc, (r.tokenUsage?.calls || 0) >= 1, 'SYN-8 (gaps): the gap-filling reading made a call');
+      assertTrue(sc, (r.warnings || []).some(w => /already ingested into this domain \(same content\)/.test(w)),
+        'SYN-8 (gaps): the "same content, existing pages kept their text" notice is shown');
+      const mid = snapshotWiki(syn1Wiki);
+      // Add-only: every line an existing page had is still on it.
+      const lost = [...before.keys()].filter(k => /^(entities|concepts|summaries)\//.test(k)).filter(k => {
+        const now = mid.has(k) ? mid.get(k).toString('utf8') : '';
+        return before.get(k).toString('utf8').split('\n').some(l => l.trim() && !now.includes(l));
+      });
+      assertEq(sc, lost.length, 0, 'SYN-8 (gaps): no existing page lost a line');
+      // A gap earns ONE more reading per model, never a bill on every press.
+      const plan8b = await planRepeatIngest('syn1', await hashRawSource(syn1Src), gpi8().model,
+        { sourceText: async () => readFileSync(syn1Src, 'utf8') });
+      assertEq(sc, plan8b.kind, 'nothing', 'SYN-8 (gaps): after the one gap-filling reading the planner says nothing');
+      before.clear(); for (const [k, v] of mid) before.set(k, v);
+    }
+    const result = await runIngest('syn1', syn1Src, '01-tiny-baseline.md', sc);
     assertEq(sc, result.tokenUsage?.calls, 0, 'SYN-8: same-model re-ingest made no AI call');
     assertEq(sc, (result.tokenUsage?.inputTokens || 0) + (result.tokenUsage?.outputTokens || 0), 0,
       'SYN-8: same-model re-ingest spent no tokens');
