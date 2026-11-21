@@ -1,0 +1,180 @@
+/* tray-popover.css — the Windows tray popover (v4.1.0), linked ONLY from
+   next/tray-popover.html (scripts/test-css-tokens.js §9 knows that page as a
+   second entry). Every colour is a token from tokens/color.css, and the theme is
+   the `data-theme` the payload sets (D3: the Windows SYSTEM mode, never
+   prefers-color-scheme, which the app pins to dark).
+
+   Geometry follows the owner's Mac widget: 360 px wide, two-line rows (a 14 px
+   label over a 12 px grey second line) at 44 px, one-line rows at 32 px, an
+   8 px corner, a chevron on rows that open a page. The face is Segoe UI
+   Variable Text, Windows' own flyout type; the sizes come from the ramp so they
+   stay on the design system's steps. */
+
+html, body { height: auto; }
+
+body {
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  letter-spacing: normal;
+  overflow-x: hidden;
+  overflow-y: auto;
+  user-select: none;
+  cursor: default;
+}
+
+.pop {
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  overflow: hidden;
+}
+
+.pop-page {
+  /* The leading icon column; the painter widens it to the page's widest dot or
+     bar through the CSSOM (an inline style attribute would break the CSP). */
+  --pop-icon-w: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+.pop-enter-fwd  { animation: pop-in-fwd var(--t-enter) both; }
+.pop-enter-back { animation: pop-in-back var(--t-enter) both; }
+@keyframes pop-in-fwd  { from { opacity: 0; transform: translateX(var(--space-8)); } to { opacity: 1; transform: none; } }
+@keyframes pop-in-back { from { opacity: 0; transform: translateX(calc(-1 * var(--space-8))); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pop-enter-fwd, .pop-enter-back { animation: none; }
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────────── */
+.pop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: var(--control-md);              /* 32 px: one line */
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: background var(--t-state);
+}
+.pop-row--two { min-height: var(--control-xl); } /* 44 px: two lines */
+
+.pop-row--action:hover,
+.pop-row--drill:hover,
+.pop-row--back:hover { background: var(--surface-hover); }
+.pop-row:focus { background: var(--surface-hover); }
+.pop-row--action:active,
+.pop-row--drill:active,
+.pop-row--back:active { background: var(--surface-active); }
+.pop-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--border-focus);
+  border-radius: var(--radius-md);
+}
+
+.pop-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pop-icon-w);
+}
+.pop-img { display: block; flex: none; }
+
+.pop-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.pop-label {
+  font-size: var(--text-base);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.pop-sub {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+/* A drill row's full text is the next page's title (wrapped), so the row
+   itself may clip to one line each. Every other row wraps: no fact is cut. */
+.pop-row--drill .pop-label,
+.pop-row--drill .pop-sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pop-row--header,
+.pop-row--stamp { min-height: var(--control-sm); }
+.pop-row--header .pop-label,
+.pop-row--stamp .pop-label { font-size: var(--text-sm); color: var(--text-3); }
+.pop-row--statement .pop-label { color: var(--text-3); }
+
+/* The back bar: the page's title, wrapped in full. */
+.pop-row--back .pop-title { font-weight: var(--weight-semibold); }
+
+/* ── Chevrons (CSS-drawn: no icon font, no inline SVG markup) ─────────── */
+.pop-chev {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  margin: 0 var(--space-1);
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+}
+.pop-chev--back { transform: rotate(135deg); }
+
+/* ── Separators ───────────────────────────────────────────────────────── */
+.pop-sep {
+  height: var(--hairline-w);
+  margin: var(--space-2) var(--space-5);
+  background: var(--hairline);
+}
+
+/* ── Details (D7: visible on the drill page, never a tooltip) ─────────── */
+.pop-details {
+  margin: var(--space-2) var(--space-5) 0;
+  padding-top: var(--space-4);
+  border-top: var(--hairline-w) solid var(--hairline);
+  user-select: text;
+  cursor: auto;
+}
+.pop-details-head {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-2);
+  margin-bottom: var(--space-2);
+}
+.pop-details-group + .pop-details-group { margin-top: var(--space-4); }
+.pop-details-label { font-size: var(--text-sm); color: var(--text-2); }
+.pop-details-line {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+  padding: var(--space-1) 0;
+}
+
+/* ── Screen-reader-only live region ───────────────────────────────────── */
+.pop-live {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── High contrast: system colours, real borders ──────────────────────── */
+@media (forced-colors: active) {
+  body { background: Canvas; color: CanvasText; }
+  .pop-label, .pop-sub, .pop-details-line, .pop-details-label, .pop-details-head { color: CanvasText; }
+  .pop-row--statement .pop-label,
+  .pop-row--header .pop-label,
+  .pop-row--stamp .pop-label { color: GrayText; }
+  .pop-row:focus, .pop-row:hover { background: Highlight; forced-color-adjust: none; }
+  .pop-row:focus .pop-label, .pop-row:focus .pop-sub,
+  .pop-row:hover .pop-label, .pop-row:hover .pop-sub { color: HighlightText; }
+  .pop-row:focus-visible { outline: 2px solid CanvasText; outline-offset: -2px; box-shadow: none; }
+  .pop-sep { background: CanvasText; }
+  .pop-chev { border-color: CanvasText; }
+}

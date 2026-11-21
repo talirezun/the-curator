@@ -1498,7 +1498,7 @@ console.log(`  → /next JS files reference ${nextJsTotalRefs} var() usage(s) ac
 // `nextFiles` from section 6, i.e. linked-from-index.html PLUS everything
 // transitively @imported, so a stylesheet pulled in by an @import counts as
 // reachable and is not falsely reported.
-section('9. Every /next stylesheet on disk is reachable from next/index.html');
+section('9. Every /next stylesheet on disk is reachable from next/index.html (or a second entry page)');
 
 // The ONLY permitted unreachable stylesheets. Every entry needs a reason,
 // and both directions are asserted below: an entry that no longer exists,
@@ -1512,10 +1512,103 @@ const NEXT_ALLOWED_UNLINKED = new Map([
     'from the design bundle is lost.'],
 ]);
 
+// ── SECOND ENTRY PAGES (v4.1.0) ──────────────────────────────────────────
+// The shell is not the only page that links /next stylesheets any more. The
+// Windows tray popover (next/tray-popover.html) is loaded from DISK by the
+// desktop app, links the tokens plus its own views/tray-popover.css with
+// RELATIVE refs (file:// has no /next/ root), and never loads the shell. A
+// stylesheet linked from such a page IS reachable, so it joins the reachable
+// set; but it is held to the same standard as the shell's: every link must
+// resolve to a readable local file, nothing may be fetched from the network
+// (no tokens/fonts.css — the popover's CSP also forbids it), and every var()
+// in that page's universe must resolve inside THAT universe (the page does not
+// get the shell's definitions for free, because the shell is not loaded there).
+const NEXT_SECOND_ENTRY_PAGES = ['src/public/next/tray-popover.html'];
+
+/** Walk one entry page: its linked files (expanded through @import), and every
+ *  var() in them that its own universe does not define. Pure over the disk. */
+function auditEntryPage(relHtml) {
+  const abs = path.resolve(ROOT, relHtml);   // absolute paths (the self-test's tmp dir) pass through
+  const html = readFileSync(abs, 'utf8');
+  const disc = discoverStylesheetLinks(html);
+  const dir = path.dirname(abs);
+  const initial = disc.local.map(href => {
+    const clean = href.replace(/^\.\//, '');
+    const absPath = path.resolve(dir, clean);
+    return { relPath: path.relative(ROOT, absPath).split(path.sep).join('/'), absPath, href };
+  });
+  const expanded = expandWithImports(initial.map(({ relPath, absPath }) => ({ relPath, absPath })));
+  const defs = new Set();
+  const perFile = [];
+  for (const f of expanded.files) {
+    const raw = readFileSync(f.absPath, 'utf8');
+    const cleaned = cleanCss(raw);
+    for (const name of extractDefinitions(cleaned).keys()) defs.add(name);
+    perFile.push({ ...f, raw, refs: extractReferences(cleaned), lineStarts: computeLineStarts(raw) });
+  }
+  const undefinedRefs = [];
+  let refCount = 0;
+  for (const f of perFile) {
+    for (const ref of f.refs) {
+      refCount++;
+      if (defs.has(ref.name)) continue;
+      undefinedRefs.push(`${f.relPath}:${lineNumberFor(f.lineStarts, ref.index)}  var(--${ref.name})`);
+    }
+  }
+  return { disc, initial, expanded, defs, refCount, undefinedRefs };
+}
+
+const nextSecondEntryReachable = new Set();
+for (const relHtml of NEXT_SECOND_ENTRY_PAGES) {
+  const a = auditEntryPage(relHtml);
+  ok(a.initial.length > 0, `${relHtml} links at least one local stylesheet (found ${a.initial.length})`);
+  ok(a.disc.externalCount === 0, `${relHtml} links NO external stylesheet (found ${a.disc.externalCount})`);
+  ok(a.expanded.skippedExternalImports.length === 0,
+    `${relHtml}: nothing it links @imports a remote URL` +
+    (a.expanded.skippedExternalImports.length ? ` — ${a.expanded.skippedExternalImports.map(x => x.target).join(', ')}` : ''));
+  ok(!a.expanded.files.some(f => f.relPath === 'src/public/next/tokens/fonts.css'),
+    `${relHtml} does not link tokens/fonts.css (it imports Google Fonts)`);
+  ok(a.initial.every(f => !f.href.startsWith('/')),
+    `${relHtml}: every stylesheet ref is RELATIVE (the page is loaded over file://, where /next/… is the drive root)`);
+  ok(a.expanded.unreadableFiles.length === 0 && a.initial.every(f => a.expanded.files.some(x => x.absPath === f.absPath)),
+    `${relHtml}: every linked stylesheet resolves to a readable file` +
+    (a.expanded.unreadableFiles.length ? ` — ${a.expanded.unreadableFiles.map(u => u.relPath).join(', ')}` : ''));
+  ok(a.refCount > 20, `anti-vacuity: ${a.refCount} var() references scanned in ${relHtml}'s universe`);
+  ok(a.undefinedRefs.length === 0,
+    a.undefinedRefs.length === 0
+      ? `every var() in ${relHtml}'s universe resolves to a definition that page itself loads`
+      : `${a.undefinedRefs.length} var() reference(s) in ${relHtml}'s universe resolve to nothing that page loads ` +
+        `(the shell's tokens are NOT loaded there):\n` + a.undefinedRefs.map(x => `        ${x}`).join('\n'));
+  for (const f of a.expanded.files) nextSecondEntryReachable.add(f.relPath);
+}
+ok(nextSecondEntryReachable.has('src/public/next/views/tray-popover.css'),
+  'views/tray-popover.css is reachable from next/tray-popover.html');
+
+// Self-test: the per-page resolver can go red. A synthetic page that links a
+// sheet referencing a token only a DIFFERENT (unlinked) sheet defines must be
+// reported, and the same page linking both must not.
+{
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-entry-'));
+  try {
+    writeFileSync(path.join(dir, 'tokens.css'), ':root { --only-here: red; }\n');
+    writeFileSync(path.join(dir, 'view.css'), '.a { color: var(--only-here); }\n');
+    writeFileSync(path.join(dir, 'bad.html'), '<link rel="stylesheet" href="view.css">');
+    writeFileSync(path.join(dir, 'good.html'), '<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="view.css">');
+    const rel = (f) => path.join(dir, f);
+    const bad = auditEntryPage(rel('bad.html'));
+    const good = auditEntryPage(rel('good.html'));
+    ok(bad.undefinedRefs.length === 1 && /only-here/.test(bad.undefinedRefs[0]),
+      'self-test: a page whose sheet uses a token it does not load is REPORTED');
+    ok(good.undefinedRefs.length === 0, 'self-test: the same sheet with its token file linked is NOT reported');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const nextCssOnDisk = walkCssFiles(nextRootDir)
   .map(abs => path.relative(ROOT, abs).split(path.sep).join('/'))
   .sort();
-const nextReachable = new Set(nextFiles.map(f => f.relPath));
+const nextReachable = new Set([...nextFiles.map(f => f.relPath), ...nextSecondEntryReachable]);
 
 ok(nextCssOnDisk.length > 1,
   `walked the /next tree and found ${nextCssOnDisk.length} stylesheet(s) on disk`);
