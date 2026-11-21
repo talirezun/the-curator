@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<!-- ── The Windows tray popover (v4.1.0) ─────────────────────────────────────
+     Loaded from DISK by desktop/lib/tray-popover.js (loadFile), never from the
+     local server: the tray reads its facts in the main process, so the popover
+     must work while the server restarts. Over file://, so every reference here
+     is RELATIVE (a root-absolute "/next/…" would resolve to the drive root).
+
+     The content security policy allows this page's own scripts and styles and
+     data: images, and nothing else: no remote fonts (tokens/fonts.css is NOT
+     linked: it imports Google Fonts, and the text is Segoe UI), no inline
+     script, no connections. The main process also cancels every non-file:,
+     non-data: request.
+
+     Without window.curatorTray (the preload, desktop/lib/tray-popover-preload.js)
+     nothing is drawn: opened in a browser, this page is inert.
+──────────────────────────────────────────────────────────────────────────── -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Curator</title>
+<link rel="stylesheet" href="tokens/base.css">
+<link rel="stylesheet" href="tokens/color.css">
+<link rel="stylesheet" href="tokens/space.css">
+<link rel="stylesheet" href="tokens/shape.css">
+<link rel="stylesheet" href="tokens/motion.css">
+<link rel="stylesheet" href="tokens/typography.css">
+<link rel="stylesheet" href="tokens/material.css">
+<link rel="stylesheet" href="views/tray-popover.css">
+</head>
+<body>
+<div id="pop" class="pop"></div>
+<div id="pop-live" class="pop-live" aria-live="polite" aria-atomic="true"></div>
+<script src="views/tray-popover-paint.js"></script>
+</body>
+</html>
