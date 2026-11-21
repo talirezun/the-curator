@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.99.2` | Every error is plain words: what happened, whether anything was lost or charged, and the one next step, with the technical text underneath for support; Sync and Shared Brain get Replace token; every message is in a published catalogue. |
 | `v3.99.1` | Chat no longer lets one oversized page crowd out the small pages that hold the answer: a long page can be read in part to make room for a page at least as relevant. |
 | `v3.99.0` | Six fixes for wikis people rely on: Sync keeps both computers' records, ingest never charges for a run that cannot finish, non-UTF-8 files are named, follow-up documents update existing pages, Health merges repoint every link form, large wikis no longer freeze. |
 | `v3.98.3` | MCP agents keep hard data like ingest: compile_to_wiki and the my-curator skill put figures and technical specifics in a Key Facts section, and read it first for an exact figure. |
