@@ -425,12 +425,13 @@ function appRunningHere(tool, platform) {
 /** Reveal is `open -R` (macOS only): never a dead button on Windows or Linux. */
 const canReveal = (platform) => !isStr(platform) || platform === 'darwin';
 /**
- * The skill zip is made with macOS's `ditto`: GET /api/setup/skills/<name>.zip
- * answers 501 anywhere else (routes/setup.js), so off macOS no download link is
- * drawn and the words say to copy the folder instead (v4.1.2, audit W2).
+ * The skill zip: GET /api/setup/skills/<name>.zip serves it on EVERY platform
+ * (macOS with `ditto`, Windows and Linux with src/brain/setup-skill-zip.js —
+ * v4.1.2, audit W2), so the download link is drawn everywhere, as Setup's
+ * step 5 and the machine view draw it. (An earlier v4.1.2 draft hid it off
+ * macOS while the route still answered 501 there; scripts/test-win-setup-check.js
+ * now holds the view and the route to each other on win32, linux and darwin.)
  */
-export const canDownloadSkill = (platform) => !isStr(platform) || platform === 'darwin';
-const COPY_SKILL_WORDS = (name) => 'Copy the ' + name + ' folder from the skills folder inside The Curator’s install';
 
 /**
  * The open bridges of ONE app, reduced to the one fact worth saying.
@@ -514,9 +515,7 @@ export function machineWarnings(h, ctx = {}) {
       const where = x.dirDisplay || x.dir || 'the skill folder';
       out.push({ kind: 'skill', tone: 'warn',
         text: 'Its ' + name + ' skill is older than this app’s copy' + (how ? ' (' + how + ').' : '.'),
-        strong: canDownloadSkill(ctx.platform)
-          ? 'Download it, replace ' + where + ' with it, then start a new ' + label + ' session.'
-          : COPY_SKILL_WORDS(name) + ' over ' + where + ', then start a new ' + label + ' session.',
+        strong: 'Download it, replace ' + where + ' with it, then start a new ' + label + ' session.',
         acts: [fixAct({ kind: 'download-skill', skill: name }, ctx), x.dir ? fixAct({ kind: 'reveal', path: x.dir, label: 'Reveal folder' }, ctx) : null].filter(Boolean) });
     }
   }
@@ -534,7 +533,6 @@ function fixAct(f, ctx) {
   if (!f || typeof f !== 'object') return null;
   const kind = f.kind;
   if (kind === 'download-skill' || kind === 'downloadSkill') {
-    if (!canDownloadSkill(ctx && ctx.platform)) return null;
     // Only this app's own zip route — a payload `href` elsewhere is never followed.
     const skill = isStr(f.skill) ? f.skill.replace(/[^A-Za-z0-9_-]/g, '') : 'my-curator';
     return '<a class="btn btn-secondary btn-xs" href="/api/setup/skills/' + skill + '.zip" download data-mcpi-download="' + skill + '">'
@@ -755,9 +753,8 @@ const btnS = (act, label, extra = '') => '<button type="button" class="btn btn-s
 const btnDanger = (act, label, extra = '') => '<button type="button" class="btn btn-danger btn-xs" data-mcpi-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
 const showFileBtn = (p, label = 'Show the file') => '<button type="button" class="btn btn-secondary btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(p) + '">' + escapeHtml(label) + '</button>';
 
-/** A skill's own download — a link to this app's own copy, styled as the secondary button. '' off macOS (no zip there). */
-export function skillDownloadLink(skill, label, platform) {
-  if (!canDownloadSkill(platform)) return '';
+/** A skill's own download — a link to this app's own copy, styled as the secondary button (every platform). */
+export function skillDownloadLink(skill, label) {
   const s = String(skill || '').replace(/[^A-Za-z0-9_-]/g, '') || 'my-curator';
   return '<a class="btn btn-secondary btn-xs" href="/api/setup/skills/' + s + '.zip" download data-mcpi-download="' + s + '">'
     + escapeHtml(label || 'Download ' + s + '.zip') + '</a>';
@@ -1043,10 +1040,8 @@ export function nextStepItems(models) {
     }
     for (const s of outdatedSkills(m)) {
       items.push({ key: 'skill', id: m.id, skill: s,
-        html: strong(m.label + '’s ' + s + ' skill is out of date.') + escapeHtml(canDownloadSkill(m.platform)
-          ? ' Download the new version and replace the old one — see Skills below.'
-          : ' Replace it with this app’s copy — see Skills below.'),
-        actsHtml: skillDownloadLink(s, 'Download ' + s, m.platform) });
+        html: strong(m.label + '’s ' + s + ' skill is out of date.') + escapeHtml(' Download the new version and replace the old one — see Skills below.'),
+        actsHtml: skillDownloadLink(s, 'Download ' + s) });
     }
   }
   return items;
@@ -1268,9 +1263,7 @@ export function renderSkills(machine, opts = {}) {
     const upToDate = checkable.filter((a) => a.state === 'current').length;
     const body = [];
     if (machine.skillsShipped) {
-      body.push(canDownloadSkill(platform)
-        ? withAttrs(renderFoldLine({ text: '', actionHtml: skillDownloadLink(s.skill, undefined, platform) }), ' data-mcpi-skill-download')
-        : withAttrs(renderFoldLine({ text: COPY_SKILL_WORDS(s.skill) + ' into the app’s skills folder.' }), ' data-mcpi-skill-copy'));
+      body.push(withAttrs(renderFoldLine({ text: '', actionHtml: skillDownloadLink(s.skill) }), ' data-mcpi-skill-download'));
     }
     for (const a of apps) {
       if (a.kind === 'account') {
@@ -1284,7 +1277,7 @@ export function renderSkills(machine, opts = {}) {
       body.push(withAttrs(itemTextFirst(escapeHtml(a.label + (word ? ' — ' + word : '')), path || null, show),
         ' data-mcpi-skill-app="' + escapeHtml(a.id || '') + '" data-mcpi-skill-state="' + escapeHtml(a.state || '') + '"'));
       if (a.state === 'outdated') {
-        body.push(renderFoldLine({ quiet: true, text: 'Replace the folder with ' + (canDownloadSkill(platform) ? 'the downloaded one' : 'this app’s copy') + ', then start a new ' + a.label + ' session.' }));
+        body.push(renderFoldLine({ quiet: true, text: 'Replace the folder with the downloaded one, then start a new ' + a.label + ' session.' }));
       }
     }
     const key = 'skill-' + s.skill;

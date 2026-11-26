@@ -187,6 +187,37 @@ section('W2. The skill zip off macOS');
     const d = await call('GET', '/api/setup/skills/my-curator.zip');
     ok(d.status === 200 && d.buf.slice(0, 2).toString() === 'PK', 'darwin: still ditto\'s zip (unchanged path)');
   }
+  // THE SEAM (integration, v4.1.2): every link the views draw for an out-of-date
+  // skill must be one this route serves on THAT platform. A stale my-curator in
+  // Claude Code's folder; GET /machine reads it; the MCP bridge view and Setup's
+  // step 5 render their download links; each href is fetched on the same platform.
+  {
+    const V = await import('../src/public/next/views/mcp-install.js');
+    const S = await import('../src/public/next/views/setup-step.js');
+    const stale = path.join(HOME, '.claude', 'skills', 'my-curator');
+    for (const f of list(src)) w(path.join(stale, f), readFileSync(path.join(src, f)));
+    w(path.join(stale, 'SKILL.md'), '---\nname: my-curator\n---\nan older copy\n');
+    for (const plat of ['win32', 'linux', 'darwin']) {
+      if (plat === 'darwin' && process.platform !== 'darwin') continue; // ditto only on a Mac
+      SC.__setSetupPlatform(plat);
+      const m = await call('GET', '/api/setup/machine');
+      const cc = (m.body.harnesses || []).find((x) => x.id === 'claude-code');
+      ok(cc && cc.skills && cc.skills.state === 'fix', `${plat}: the stale skill reads as a fix`, cc && cc.skills);
+      const ww = cc ? V.machineWarnings(cc, { platform: plat }) : [];
+      const skillWarn = ww.find((x) => x.kind === 'skill');
+      const hrefs = [...String(skillWarn ? skillWarn.acts.join('') : '').matchAll(/href="([^"]+)"/g)].map((x) => x[1]);
+      ok(hrefs.length === 1 && hrefs[0] === '/api/setup/skills/my-curator.zip', `${plat}: the MCP bridge view draws the my-curator.zip link`, { ww });
+      ok(skillWarn && /^Download it/.test(skillWarn.strong), `${plat}: …and its words say Download`, skillWarn);
+      const stepHtml = S.fixButtons({ tool: 'claude-code', fixes: [{ kind: 'download-skill', skill: 'my-curator', href: '/api/setup/skills/my-curator.zip', label: 'Download my-curator.zip' }] }, null);
+      ok(/href="\/api\/setup\/skills\/my-curator\.zip"/.test(stepHtml), `${plat}: Setup step 5 draws the same link`, stepHtml);
+      for (const h of hrefs) {
+        const got = await call('GET', h);
+        ok(got.status === 200 && got.buf.slice(0, 2).toString() === 'PK', `${plat}: the drawn link ${h} is served (200, a zip)`, got.status);
+      }
+    }
+    rmSync(path.join(HOME, '.claude', 'skills'), { recursive: true, force: true });
+    SC.__setSetupPlatform('win32');
+  }
   const { crc32 } = await import('../src/brain/setup-skill-zip.js');
   ok(crc32(Buffer.from('123456789')) === 0xcbf43926, 'crc32 check value (IEEE) is right');
 }

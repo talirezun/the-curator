@@ -18,7 +18,7 @@
  *        config in the (fake) home byte-identical, no other server's secret
  *        in any reply.
  *   §M9  A child that ignores SIGTERM is killed (SIGKILL) after the timeout.
- *   §W2  The skill zip (darwin only, `routes/setup.js`) is never drawn as a
+ *   §W2  (revised at integration) The skill zip is served on every platform, so the link is drawn on each; was: never drawn as a
  *        download link on Windows or Linux by the MCP bridge views.
  *
  * OFFLINE. Isolated: a fake HOME (set BEFORE any import, so routes/mcp.js's
@@ -275,28 +275,27 @@ try {
     if (alive) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
   }
 
-  section('§W2 — no skill-zip link off macOS (the route answers 501 there)');
+  section('§W2 — the skill-zip link is drawn on every platform (the route serves the zip on each: test-win-setup-check.js W2)');
   {
     const machine = { skillsShipped: true, raw: { skills: [{ skill: 'my-curator', apps: [{ id: 'claude-code', label: 'Claude Code', kind: 'folder', state: 'outdated', dir: '/h/.claude/skills/my-curator' }] }] } };
-    const zip = /\/api\/setup\/skills\/[a-z-]+\.zip/;
-    for (const plat of ['win32', 'linux']) {
+    const zip = /\/api\/setup\/skills\/my-curator\.zip/;
+    for (const plat of ['win32', 'linux', 'darwin']) {
       const h = V.renderSkills(machine, { platform: plat });
-      ok(`${plat}: Skills draws no zip link`, !zip.test(h));
-      ok(`${plat}: …and says to copy the folder instead`, /copy/i.test(h), h.slice(0, 300));
+      ok(`${plat}: Skills draws the zip link`, zip.test(h), h.slice(0, 300));
+      ok(`${plat}: …and never tells the person to copy a folder out of the install`, !/Copy the my-curator folder/.test(h));
+      const hh = { id: 'claude-code', label: 'Claude Code', skills: { state: 'fix', installed: [{ skill: 'my-curator', match: false, differs: ['SKILL.md'], dir: '/h/.claude/skills/my-curator' }] } };
+      const ww = V.machineWarnings(hh, { platform: plat });
+      ok(`${plat}: the out-of-date skill warning carries the link and says Download`, ww.length === 1 && ww[0].acts.some((a) => zip.test(a)) && /^Download/.test(ww[0].strong), JSON.stringify(ww));
+      const setupFix = V.machineWarnings({ id: 'claude-code', label: 'Claude Code', toFix: [{ kind: 'skill', text: 'x', fixes: [{ kind: 'download-skill', skill: 'my-curator' }] }] }, { platform: plat });
+      ok(`${plat}: a Setup-check download fix draws its link`, setupFix.length === 1 && setupFix[0].acts.some((a) => zip.test(a)), JSON.stringify(setupFix));
+      const model = { id: 'claude-code', label: 'Claude Code', status: 'connected', platform: plat, tool: { skill: { reason: 'outdated', skills: ['my-curator'] } } };
+      const items = V.nextStepItems([model]).filter((x) => x.key === 'skill');
+      ok(`${plat}: the Next step skill item draws the link`, items.length === 1 && zip.test(items[0].actsHtml || '') && /Download the new version/.test(items[0].html), JSON.stringify(items));
     }
-    ok('CONTROL darwin: Skills draws the zip link', zip.test(V.renderSkills(machine, { platform: 'darwin' })));
-    const h = { id: 'claude-code', label: 'Claude Code', skills: { state: 'fix', installed: [{ skill: 'my-curator', match: false, differs: ['SKILL.md'], dir: '/h/.claude/skills/my-curator' }] } };
-    const ww = V.machineWarnings(h, { platform: 'win32' });
-    ok('win32: the out-of-date skill warning carries no zip link', ww.length === 1 && !ww[0].acts.some((a) => zip.test(a)) && !/^Download/.test(ww[0].strong), JSON.stringify(ww));
-    const wm = V.machineWarnings(h, { platform: 'darwin' });
-    ok('CONTROL darwin: …it carries the link', wm.length === 1 && wm[0].acts.some((a) => zip.test(a)));
-    const setupFix = V.machineWarnings({ id: 'claude-code', label: 'Claude Code', toFix: [{ kind: 'skill', text: 'x', fixes: [{ kind: 'download-skill', skill: 'my-curator' }] }] }, { platform: 'win32' });
-    ok('win32: a Setup-check download fix draws no link', setupFix.length === 1 && setupFix[0].acts.length === 0, JSON.stringify(setupFix));
-    const model = { id: 'claude-code', label: 'Claude Code', status: 'connected', platform: 'win32', tool: { skill: { reason: 'outdated', skills: ['my-curator'] } } };
-    const items = V.nextStepItems([model]).filter((x) => x.key === 'skill');
-    ok('win32: the Next step skill item draws no zip link', items.length === 1 && !zip.test(items[0].actsHtml || '') && !/Download the new version/.test(items[0].html), JSON.stringify(items));
-    const itemsMac = V.nextStepItems([{ ...model, platform: 'darwin' }]).filter((x) => x.key === 'skill');
-    ok('CONTROL darwin: …it draws the link', itemsMac.length === 1 && zip.test(itemsMac[0].actsHtml || ''));
+    const unshipped = V.renderSkills({ ...machine, skillsShipped: false }, { platform: 'win32' });
+    ok('CONTROL: an install that ships no skills draws no zip link (the route answers 404 there)', !zip.test(unshipped));
+    const evil = V.machineWarnings({ id: 'x', label: 'X', toFix: [{ kind: 'skill', text: 'x', fixes: [{ kind: 'download-skill', skill: '../../etc', href: 'https://evil.example/x.zip' }] }] }, { platform: 'win32' });
+    ok('CONTROL: only this app\'s own zip route is linked; a payload href is never followed', !/evil\.example|\.\.\//.test(JSON.stringify(evil)), JSON.stringify(evil));
   }
   section('§W11 — Settings › Providers: "0600" is not said on Windows');
   {
