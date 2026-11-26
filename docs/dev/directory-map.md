@@ -60,6 +60,7 @@ src/
                     retries EPERM/EACCES/EBUSY, at most 7 attempts (~2.75 s); one rename elsewhere
     setup-skill-zip.js — v4.1.2: builds a skill's zip in-process off macOS (macOS keeps `ditto`)
     reserved-names.js — page names Windows keeps for devices (con, nul, com1…): `writePage` and synthesis never create one; an existing page is left alone
+    sync-deletions.js — v4.2.1 the Sync deletion guard's pure half: the threshold (more than 5 files, a whole domain, or ≥3 files over 10%), the confirm token, the words; no git, no file system
     sync-safety.js — what Sync must not send: secret-shaped names, nested repositories, plugin settings holding a key; no git, no network
     duplicate-checks.js — what "Find duplicate pages" remembers (per domain, in the user-data dir, outside domains/) and the spelling-variant test that gates batch merge
     health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks);
@@ -271,7 +272,8 @@ scripts/
   bulk-reingest.js              — re-ingest all raw files in a domain
   repair-wiki.js                — comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
   build-app.sh                  — rebuild The Curator.app from the AppleScript template
-  test-*.js                     — the suites; scripts/run-tests.js is the manifest (OFFLINE / LIVE). v4.1.2 added:
+  test-*.js                     — the suites; scripts/run-tests.js is the manifest (OFFLINE / LIVE). v4.2.1 added
+                                  test-sync-deletion-guard.js (the deletion guard: 95 checks). v4.1.2 added:
                                   test-sync-folder-safety.js (argv git, the folder guard, connect rollback,
                                   second-computer Merge/Pull), test-config-durability.js and
                                   test-config-durability-ui.js (damaged settings files, the banner, the routes),

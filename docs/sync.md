@@ -387,6 +387,35 @@ For everyday use, prefer **Sync now**.
 
 ---
 
+## When Sync asks before deleting
+
+*(Since v4.2.1.)* Sync backs up the whole knowledge folder, so a page that is missing from the folder is a page deleted from your GitHub backup at the next push, and a pull deletes the pages another computer removed. That is right when you deleted pages on purpose. It is a disaster when a drive was not mounted, a cloud folder had not finished downloading, or a shortcut now points somewhere else. So before a push or a pull, Sync counts what it would delete, and when the number is large it stops and asks. **Nothing is changed while it asks.**
+
+| What the sync would delete | Does Sync ask? |
+|---|---|
+| One or two pages | No. Ordinary editing never sees the question. |
+| 3, 4 or 5 files, under 10% of everything Sync tracks | No. |
+| 3 to 5 files that are over 10% of everything Sync tracks (a small wiki losing a big share of itself) | Yes. |
+| More than 5 files | Yes. |
+| A whole domain: every file it has goes and none stays on the other side | Yes, even if it is a handful of files. |
+| Housekeeping files such as `.DS_Store` or `.write-lock` | Never counted. |
+
+It checks both directions: **push** (what your GitHub backup would lose) and **pull** (what this computer would lose because the backup no longer has it).
+
+The question reads, for example: "This sync would delete 41 pages from your GitHub backup (articles 38 · research 3)." with three buttons:
+
+- **Cancel** changes nothing. Your pages and your GitHub backup stay exactly as they are.
+- **Show the pages** lists the files that would be deleted, so you can tell a clean-up you meant from a loss.
+- **Delete them** carries out the sync, deleting exactly that list. If the list has changed since you looked (another page went, or a page's content changed), Sync asks again instead of acting on the old answer.
+
+**Examples.** You delete 40 old pages on purpose and press Sync now: it asks once, you look at the list and press Delete them. You move the knowledge folder to a drive that is not plugged in and press Sync now: the folder is empty, so it would delete everything from GitHub; you press Cancel, plug the drive in and nothing was lost. Another computer reorganised a domain and removed 12 pages: your pull asks before deleting them here.
+
+A sync you start away from the Sync page (for example the Sync button on the Context page, or something that calls Sync automatically) is stopped with the same sentence and changes nothing; open the **Sync** page and the same question is waiting there with the three buttons.
+
+Sync also records where the knowledge folder really is on disk, links followed, and refuses to run when that is a different place from the one it was connected with. A shortcut that has been re-pointed at another folder is refused rather than backed up as if it were your wiki. A pull merges exactly the version it counted, not a newer one that arrived in between.
+
+---
+
 ## Replacing the token
 
 Since v3.99.2 you can give Sync a new GitHub token **without disconnecting**. Your sync history, your repository and your wiki files all stay as they are; only the token changes.
@@ -602,6 +631,10 @@ sending this folder up on top of it would throw that wiki away.
 - If both sides have content you want, choose **Merge — keep both**.
 - If this computer is the one you want to start from, choose **Pull an existing
   wiki** — and read the count it shows you first.
+
+### "This sync would delete N pages" (or "...on this computer that are no longer in your GitHub backup")
+
+*(Since v4.2.1.)* Sync stopped before changing anything because it would delete a lot: more than 5 files, a whole domain, or at least 3 files that are over 10% of what it tracks. Open **Sync**, choose **Show the pages**, and read the list. If you removed those pages on purpose, press **Delete them**. If you did not, press **Cancel**: check that the knowledge folder is the right one and fully present (a drive plugged in, a cloud folder finished downloading), then sync again. See [When Sync asks before deleting](#when-sync-asks-before-deleting).
 
 ### "Pulling would overwrite N files in your domains folder"
 

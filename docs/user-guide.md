@@ -6914,6 +6914,8 @@ After **Sync now**, domain stats and page lists update automatically. Open **Cha
 
 **One-way operations.** Next to **Sync now** sit **Push only** and **Pull only**. Use these only when you know exactly what you need: *Push only* uploads your local changes without pulling first; *Pull only* downloads remote changes without pushing yours. For everyday use, prefer **Sync now**.
 
+**When Sync asks before deleting** *(since v4.2.1)*. If a push or pull would delete more than 5 files, a whole domain, or at least 3 files that are over 10% of what Sync tracks, it stops and asks, and changes nothing: "This sync would delete 41 pages from your GitHub backup", with **Cancel**, **Show the pages** and **Delete them**. One or two deleted pages never ask. A sync started from another page shows the same question on the Sync page. Details and examples: [sync.md](sync.md#when-sync-asks-before-deleting).
+
 **How to tell whether you have anything to push.** The Sync view's monitor shows **Connected** as its state word, your repository URL and when you last synced as its two lines, and — beside the buttons — a plain count: *"7 local changes not pushed"*. That count is the signal to look at.
 
 **"Last synced" is the time this computer last completed a sync with GitHub** — a push that actually reached it, a pull, or a connect that finished — recorded at that moment. It is **not** the date of your newest change: after a **Pull only**, for example, it is when the pull finished, not when the pulled changes were made on the other machine. An install connected before v3.72.1 reads **"not recorded yet"** until its next sync; that is expected, not an error.
