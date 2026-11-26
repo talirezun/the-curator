@@ -39,6 +39,15 @@
  *    log, etc.) MUST KEEP using `appendFile` — they are crash-safe at
  *    line granularity on local filesystems. Converting them to atomic
  *    rewrite would be a regression.
+ *
+ * 6. WINDOWS ONLY (v4.1.2, audit W5): the rename is retried when it fails
+ *    with EPERM, EACCES or EBUSY — the errors an antivirus, the search
+ *    indexer, OneDrive or an editor cause while they hold the target open
+ *    for a moment. Bounded: 7 attempts, waits of 50/100/200/400/800/1200 ms
+ *    (about 2.75 s, the MCP installer's own WIN_RENAME_BACKOFF_MS). Any
+ *    other error, and every error on macOS and Linux, is thrown at once
+ *    after ONE rename, exactly as before. The temp file is still removed if
+ *    the last attempt fails.
  */
 
 import { writeFile, rename, unlink, lstat, chmod } from 'fs/promises';
@@ -53,6 +62,51 @@ import {
 import path from 'path';
 import { randomBytes } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
+
+/** The rename errors a lock causes on Windows (the MCP installer's LOCK_CODES). */
+export const WIN_RENAME_LOCK_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
+/** Waits between Windows rename attempts: 7 attempts, about 2.75 s in all. */
+export const WIN_RENAME_BACKOFF_MS = Object.freeze([50, 100, 200, 400, 800, 1200]);
+
+// Test seams only (scripts/test-win-atomic-write.js). Production never sets
+// them: the platform is the real one and the renames are fs's own.
+let _platform = process.platform;
+let _rename = rename;
+let _renameSync = renameSync;
+let _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let _sleepSync = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+function isWinLock(err) {
+  return _platform === 'win32' && !!err && WIN_RENAME_LOCK_CODES.includes(err.code);
+}
+
+/**
+ * rename(tmp → target). Off Windows: exactly one rename, its error thrown as
+ * is. On Windows: a lock error waits and tries again, up to the backoff's end.
+ */
+async function renameIntoPlace(tmpPath, targetPath) {
+  if (_platform !== 'win32') return _rename(tmpPath, targetPath);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await _rename(tmpPath, targetPath);
+    } catch (err) {
+      if (!isWinLock(err) || attempt >= WIN_RENAME_BACKOFF_MS.length) throw err;
+      await _sleep(WIN_RENAME_BACKOFF_MS[attempt]);
+    }
+  }
+}
+
+function renameIntoPlaceSync(tmpPath, targetPath) {
+  if (_platform !== 'win32') return _renameSync(tmpPath, targetPath);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return _renameSync(tmpPath, targetPath);
+    } catch (err) {
+      if (!isWinLock(err) || attempt >= WIN_RENAME_BACKOFF_MS.length) throw err;
+      _sleepSync(WIN_RENAME_BACKOFF_MS[attempt]);
+    }
+  }
+}
 
 /**
  * THE UNDO RECORDER'S SEAM (owner's decision, 2026-11-07). While a Wiki health
@@ -167,7 +221,7 @@ export async function writeFileAtomic(targetPath, content, opts = 'utf8') {
     // POSIX rename is atomic. If targetPath already exists as a regular
     // file, it's atomically replaced. If it doesn't exist, the temp file
     // is moved into place.
-    await rename(tmpPath, targetPath);
+    await renameIntoPlace(tmpPath, targetPath);
   } catch (err) {
     // Best-effort cleanup of the orphaned tempfile.
     if (written) {
@@ -208,7 +262,7 @@ export function writeFileAtomicSync(targetPath, content, opts = 'utf8') {
     written = true;
     // See writeFileAtomic — explicit chmod so umask can't loosen 0600.
     if (mode !== undefined) chmodSync(tmpPath, mode);
-    renameSync(tmpPath, targetPath);
+    renameIntoPlaceSync(tmpPath, targetPath);
   } catch (err) {
     if (written && existsSync(tmpPath)) {
       try { unlinkSync(tmpPath); } catch { /* ignore */ }
@@ -221,4 +275,14 @@ export function writeFileAtomicSync(targetPath, content, opts = 'utf8') {
  * Test helper — exposes the temp-path generator so battle tests can verify
  * the same-directory naming convention without monkey-patching fs.
  */
-export const __testing = { nextTmpName };
+export const __testing = {
+  nextTmpName,
+  /** Pretend to run on `platform` and/or swap the rename and sleep functions. Pass nothing to reset. */
+  setSeams({ platform, renameFn, renameSyncFn, sleep, sleepSync } = {}) {
+    _platform = platform || process.platform;
+    _rename = renameFn || rename;
+    _renameSync = renameSyncFn || renameSync;
+    _sleep = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    _sleepSync = sleepSync || ((ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); });
+  },
+};

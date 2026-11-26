@@ -53,6 +53,73 @@ export function machineWord(platform = _platformOverride || process.env.CURATOR_
 }
 const thisMachineText = () => `this ${machineWord()}`;
 
+/** The platform the Setup check reads for (the same seams as machineWord). */
+export function setupPlatform() {
+  return _platformOverride || process.env.CURATOR_TEST_SETUP_PLATFORM || process.platform;
+}
+
+const WIN_PATH_LOOK_RE = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+/** path.win32 for a Windows-looking path, else the host's path (a simulated win32 over a POSIX scratch home). */
+function pathForHome(home) {
+  if (process.platform === 'win32') return path.win32;
+  return typeof home === 'string' && WIN_PATH_LOOK_RE.test(home) ? path.win32 : path;
+}
+
+/**
+ * `{localAppData, appData}` on Windows (v4.1.2, audit W1), or null. Production
+ * reads %LOCALAPPDATA% and %APPDATA%. A test (CURATOR_TEST_SETUP_HOME or
+ * CURATOR_TEST_USER_DATA_DIR set) NEVER reads the process's real ones — on a
+ * Windows CI runner they are the runner's real folders — and derives
+ * `<home>\AppData\Local` and `<home>\AppData\Roaming` instead. The same rule as
+ * the installer's `winRoots` (src/brain/mcp-install.js).
+ */
+export function setupWinRoots(home, env = process.env) {
+  if (!home) return null;
+  const P = pathForHome(home);
+  const test = !!(env.CURATOR_TEST_SETUP_HOME || env.CURATOR_TEST_USER_DATA_DIR);
+  const la = test ? P.join(home, 'AppData', 'Local') : env.LOCALAPPDATA;
+  const ad = test ? P.join(home, 'AppData', 'Roaming') : env.APPDATA;
+  if (typeof la !== 'string' || typeof ad !== 'string' || !P.isAbsolute(la) || !P.isAbsolute(ad)) return null;
+  return { localAppData: P.resolve(la), appData: P.resolve(ad) };
+}
+
+/**
+ * Claude Desktop's Windows config files, every candidate the one-click
+ * installer reads (`harness-adapters.js` → mcpConfig.platforms.win32; the
+ * selection rules are `resolveWinClaude` in mcp-install.js). The Setup check
+ * only READS, so it reads all of them: whichever one holds the entry is the
+ * evidence. Returns absolute paths, or [] without roots.
+ */
+export function winClaudeDesktopFiles(home, roots) {
+  const w = adapterFor('claude-desktop')?.mcpConfig?.platforms?.win32;
+  if (!w || !roots) return [];
+  const P = pathForHome(home);
+  return w.candidates.map((c) => {
+    const base = c.base === 'localappdata' ? roots.localAppData : c.base === 'appdata' ? roots.appData : null;
+    return base ? P.join(base, ...c.segments) : null;
+  }).filter(Boolean);
+}
+
+/**
+ * Two paths name the same place? On Windows a path is case-insensitive and
+ * either separator works (v4.1.2, audit W12); elsewhere a strict compare,
+ * exactly as before.
+ */
+export function samePath(a, b, platform = setupPlatform()) {
+  if (typeof a !== 'string' || typeof b !== 'string') return a === b;
+  if (platform !== 'win32') return a === b;
+  const norm = (p) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/** `p` is inside folder `dir` (not equal)? Case-insensitive on Windows (W12). */
+export function isInsideDir(p, dir, platform = setupPlatform()) {
+  if (typeof p !== 'string' || typeof dir !== 'string' || !dir) return false;
+  if (platform !== 'win32') return p.startsWith(dir + path.sep);
+  const norm = (x) => x.replace(/\//g, '\\').toLowerCase();
+  return norm(p).startsWith(norm(dir).replace(/\\+$/, '') + '\\');
+}
+
 export const STATES = Object.freeze({
   OK: 'ok',
   FIX: 'fix',
@@ -75,6 +142,29 @@ const BAD_FILE_WORDS = Object.freeze({
 /** `~/…` for a path under `home` — a DISPLAY string only; paths stay absolute. */
 export function tildeUnder(home, p) {
   return typeof p === 'string' && home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p;
+}
+
+/**
+ * A path for a HUMAN on the Setup check's platform. Off Windows: tildeUnder,
+ * unchanged. On Windows (v4.1.2, W1): `%LOCALAPPDATA%\…`, `%APPDATA%\…` or
+ * `%USERPROFILE%\…`, the forms the installer's displayFor uses, else as is.
+ */
+export function setupDisplay(home, p, platform = setupPlatform(), roots = undefined) {
+  if (platform !== 'win32') return tildeUnder(home, p);
+  if (typeof p !== 'string') return p;
+  const r = roots === undefined ? setupWinRoots(home) : roots;
+  const bases = [];
+  if (r) bases.push(['%LOCALAPPDATA%', r.localAppData], ['%APPDATA%', r.appData]);
+  if (home) bases.push(['%USERPROFILE%', home]);
+  bases.sort((x, y) => y[1].length - x[1].length);
+  const norm = (x) => x.replace(/\//g, '\\').toLowerCase();
+  const pl = norm(p);
+  for (const [name, b] of bases) {
+    const bl = norm(b).replace(/\\+$/, '');
+    if (pl === bl) return name;
+    if (pl.startsWith(`${bl}\\`)) return `${name}${p.slice(bl.length).replace(/\//g, '\\')}`;
+  }
+  return p;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -194,8 +284,16 @@ export function readJsonFile(file) {
  * (Moved from `src/cli/doctor.js`, whose docblock carries the full argument
  * for which harnesses get a row.)
  */
-export function harnessTargets({ home = '', project = '' } = {}) {
+export function harnessTargets({ home = '', project = '', platform = setupPlatform(), roots = undefined } = {}) {
   const dirs = { home, project };
+  // WINDOWS (v4.1.2, audit W1): Claude Desktop keeps its config under
+  // %APPDATA% / %LOCALAPPDATA%, never ~/Library or ~/.config. Its row reads
+  // the installer's Windows candidates instead, and the macOS-only readAlso
+  // (Claude Desktop's ~/Library file, which cannot exist on Windows) is not
+  // listed. Every other harness and every other platform is unchanged.
+  const win = platform === 'win32';
+  const winRoots = win ? (roots === undefined ? setupWinRoots(home) : roots) : null;
+  const isMacOnly = (tpl) => tpl && tpl.base === 'home' && tpl.segments[0] === 'Library';
   // `cordis`: dsh's YAML patch layers, read by LINE-SCAN (no YAML parser in
   // this repository — the TOML precedent below). goose's `config.yaml` stays
   // opaque: its entry shape was never line-scanned and is not claimed here.
@@ -206,8 +304,11 @@ export function harnessTargets({ home = '', project = '' } = {}) {
     const a = adapterFor(id);
     if (!a) continue;
     const cfg = a.mcpConfig || null;
+    const userFiles = cfg && win && cfg.platforms?.win32
+      ? winClaudeDesktopFiles(home, winRoots)
+      : resolveTemplates(cfg?.user || [], dirs);
     const mcpFiles = cfg
-      ? [...resolveTemplates(cfg.user || [], dirs), ...resolveTemplates(cfg.project || [], dirs)]
+      ? [...userFiles, ...resolveTemplates(cfg.project || [], dirs)]
       : [];
     // One file per sub-folder (dsh's `~/.dsh/profiles/<name>/cordis.patch.yml`),
     // marked `expanded` because no template names it. Read-only: a listing.
@@ -231,7 +332,7 @@ export function harnessTargets({ home = '', project = '' } = {}) {
       label: a.label,
       mcp: [...mcpFiles.map((f) => mk(f, 'own')), ...expanded.map((f) => mk(f, 'own', { expanded: true }))],
       // Read for this row, never written for it (see the adapter's note).
-      mcpAlso: cfg ? resolveTemplates(cfg.readAlso || [], dirs).map((f) => mk(f, 'readAlso')) : [],
+      mcpAlso: cfg ? resolveTemplates((cfg.readAlso || []).filter((tpl) => !(win && isMacOnly(tpl))), dirs).map((f) => mk(f, 'readAlso')) : [],
       projectsKey: cfg?.projectsKey || null,
       hooks: ['user', 'project', 'local']
         .flatMap((scope) => resolveTemplates(a.hooks?.configPath?.[scope] || [], dirs)
@@ -272,7 +373,9 @@ function entryFacts(entry) {
   // OUR entry's server script (`<install>/mcp/server.js`) — which Curator
   // install this tool launches, so the Setup check can find that install's
   // machine id on this Mac (v3.78.0). Our own entry's argument, never another's.
-  const serverScript = args.find((x) => /(^|\/)mcp\/server\.js$/.test(x)) || null;
+  // Either separator (v4.1.2, audit W10): a Windows entry names
+  // `…\resources\app\mcp\server.js`.
+  const serverScript = args.find((x) => /(^|[\\/])mcp[\\/]server\.js$/i.test(x)) || null;
   return { command, domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null, serverScript, launchArgs: args };
 }
 
@@ -826,13 +929,14 @@ export function collectMachineSetup(o = {}) {
   })();
   const hookSummary = o.hookSummary || {};
   const out = [];
-  for (const t of harnessTargets({ home, project: repo })) {
+  const platform = setupPlatform();
+  for (const t of harnessTargets({ home, project: repo, platform })) {
     const a = adapterFor(t.id);
     const files = [];
     for (const m of [...t.mcp, ...t.mcpAlso]) {
       const r = inspectMcpFile(m, { projectsKey: m.via === 'own' ? t.projectsKey : null, repo });
       const status = r.status || (r.present ? 'ok' : 'missing');
-      const rec = { file: m.file, display: tildeUnder(home, m.file), via: m.via, present: !!r.present, named: r.named === true, status };
+      const rec = { file: m.file, display: setupDisplay(home, m.file, platform), via: m.via, present: !!r.present, named: r.named === true, status };
       if (m.expanded) rec.expanded = true;
       if (r.jsonc) rec.jsonc = true;
       if (status === 'invalid' || status === 'empty') rec.parseError = true;
@@ -841,7 +945,7 @@ export function collectMachineSetup(o = {}) {
       if (r.scan) rec.lineScan = true;
       if (r.at) rec.at = r.at;
       if (r.named) {
-        if (r.domainsPath && o.domainsDir && r.domainsPath !== o.domainsDir) rec.otherFolder = true;
+        if (r.domainsPath && o.domainsDir && !samePath(r.domainsPath, o.domainsDir, platform)) rec.otherFolder = true;
         const missing = missingLaunchFiles(r.command, r.launchArgs);
         if (missing.length) { rec.commandMissing = true; rec.missingFiles = missing; }
         rec.command = r.command || null;
@@ -878,7 +982,7 @@ export function collectMachineSetup(o = {}) {
       // A PROJECT-level file (Antigravity's <workspace>/.agents/mcp_config.json,
       // v3.84.1) is that workspace's own and legitimately names other servers:
       // only the USER files are held to "every file has the entry".
-      const notIn = userOwn.filter((f) => !f.named && t.id === 'antigravity' && !(repo && f.file.startsWith(repo + path.sep)));
+      const notIn = userOwn.filter((f) => !f.named && t.id === 'antigravity' && !(repo && isInsideDir(f.file, repo, platform)));
       bridge = notIn.length
         ? { state: STATES.FIX, word: `not in ${notIn.length} of ${userOwn.length} files` }
         : { state: STATES.OK, word: 'configured', count: `${namedOwn.length} of ${presentOwn.length || namedOwn.length} file${(presentOwn.length || namedOwn.length) === 1 ? '' : 's'}` };
