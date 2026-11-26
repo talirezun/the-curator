@@ -80,6 +80,16 @@ export const PROTECTED_CLASSES = Object.freeze([
   /^settings-inline-error$/, /^settings-fail-note$/,
   /^mem-setup-note$/,        // Context › Setup: a to-fix line
   /^mem-setup-err$/, /^mem-setup-fix-note$/, /^mem-setup-gfix$/,
+  // v4.2.0 fix (audit M3): the surfaces the first list missed. Context's
+  // step-4 notices and save errors (`mem-note`), the monitor's cut /
+  // trimmed-layer sentence, the meter's notes, a harness row's to-fix lines,
+  // the "not on GitHub yet" outcome, the folder-picker refusal.
+  /^mem-note$/, /^cur-mon-note$/, /^bk-note$/, /^mem-hr-fix$/, /^mem-setup-unsynced$/, /^mem-setup-empty$/,
+  // …and by MEANING, not by a list: any class whose last word says it is a
+  // note, a notice, a warning, an error or a failure is protected, so a new
+  // warning surface is covered the day it is written (`*-note`, `*-warn`,
+  // `*-error`, `*-err`, `*-fail`, `*-alert`, `*-refused`, `*-unsynced`).
+  /(?:^|-)(?:note|notice|warn|warning|error|err|fail|failed|alert|refused|unsynced)$/,
 ]);
 export const PROTECTED_ROLES = Object.freeze(['alert', 'alertdialog', 'status']);
 // A money amount ($0.04, US$1, under $0.01) is a cost line wherever it is.
@@ -93,6 +103,9 @@ export function protectedReason(n) {
   if (PROTECTED_ROLES.includes(n.attrs.role)) return `role="${n.attrs.role}"`;
   if (n.attrs['aria-live'] === 'assertive') return 'aria-live="assertive"';
   if ('data-never-pro' in n.attrs) return 'data-never-pro';
+  // An element whose id names a notice or an error (Context's
+  // mem-ss-budget-error, mem-ss-ctx-error, mem-ss-over…) is one too.
+  if (/(?:^|-)(?:error|err|warn|warning|notice|alert|over|cost)$/.test(String(n.attrs.id || ''))) return `id="${n.attrs.id}"`;
   return null;
 }
 
@@ -134,8 +147,14 @@ export function protectedTexts(html, { words = false } = {}) {
 }
 
 /** Rule 2: every protected text of the Pro render is visible in the simple render. */
+// A byte size beside a token figure is the same fact twice: Context's compact
+// step 4 keeps the tokens and leaves the bytes to Pro (v4.2 design §5), so
+// parity compares the words with byte sizes taken out — on both sides.
+const BYTES_RE = /\s*(?:·\s*)?\b\d[\d.,]*\s*(?:bytes?|KB|MB|GB)\b/g;
+const unbyte = (t) => t.replace(BYTES_RE, '').replace(/\s+/g, ' ').trim();
+
 export function parityFaults(proHtml, simpleHtml) {
-  const visible = textOf(parseHtml(simpleHtml), { skipPro: true }).replace(/\s+/g, ' ');
-  return protectedTexts(proHtml, { words: true }).filter((t) => !visible.includes(t))
+  const visible = unbyte(textOf(parseHtml(simpleHtml), { skipPro: true }).replace(/\s+/g, ' '));
+  return protectedTexts(proHtml, { words: true }).filter((t) => !visible.includes(unbyte(t)))
     .map((t) => `shown in Pro but not in the simple view: "${t.slice(0, 160)}"`);
 }

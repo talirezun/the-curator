@@ -63,6 +63,17 @@ section('§1 the checks catch the kit\'s real warning surfaces (controls)');
   ok(proGuardFaults('<p class="mem-setup-note"' + P.proAttr() + '>x</p>').length > 0, '…and when the protected element itself carries the marker');
   ok(proGuardFaults(pro('<button class="btn cfd-confirm">Delete</button>')).length > 0, 'rule 1 flags a confirm control behind Pro');
 
+  // v4.2.0 fix (audit M3): the surfaces the first list missed, by class and by meaning.
+  ok(proGuardFaults(pro('<p class="cur-mon-note">The handoff was trimmed to fit.</p>')).length > 0, 'rule 1 flags the monitor\'s note (cur-mon-note) behind Pro');
+  ok(proGuardFaults(pro('<p class="bk-note">Your harness’s share is not set.</p>')).length > 0, 'rule 1 flags a meter note (bk-note) behind Pro');
+  ok(proGuardFaults(pro('<div class="mem-note"><span>The reading budget was not changed.</span></div>')).length > 0, 'rule 1 flags a step-4 notice or save error (mem-note) behind Pro');
+  ok(proGuardFaults(pro('<span class="mem-hr-fix">AGENTS.md has no Curator block.</span>')).length > 0, 'rule 1 flags a harness row\'s to-fix line behind Pro');
+  ok(proGuardFaults(pro('<p class="brand-new-warning">x</p>')).length > 0, 'rule 1 flags a NEW class whose last word says warning (by meaning, not by list)');
+  ok(proGuardFaults(pro('<div id="mem-ss-budget-error">x</div>')).length > 0, 'rule 1 flags an element whose id names an error');
+  ok(proGuardFaults(pro('<div data-never-pro><p class="tx-desc">could not be measured</p></div>')).length > 0, 'rule 1 flags a data-never-pro element (the failed measurement)');
+  ok(proGuardFaults(pro('<p class="mem-setup-note-text">x</p>')).length === 0, 'NEGATIVE control: a class that only CONTAINS "note" mid-name is not protected by meaning');
+  ok(parityFaults('<p class="cur-mon-note">Trimmed.</p><span class="cur-mon-warn">read first 14k · 58 KB</span>', '<span class="cur-mon-warn">read first 14k</span>').length === 1,
+    'rule 2: the compact form may drop a byte size, never the note itself');
   ok(proGuardFaults(pro(evidence)).length === 0, 'NEGATIVE control: an evidence line behind Pro is fine (detail)');
   ok(proGuardFaults(pro(column)).length === 0, 'NEGATIVE control: a table column behind Pro is fine');
   ok(proGuardFaults(loud + cost + toFix + evidence).length === 0, 'NEGATIVE control: warnings NOT behind Pro are fine');
@@ -159,7 +170,11 @@ section('§4 the "PRO" mark and hairline land only on Pro-only detail, so never 
   const marks = [...css.matchAll(/([^{}]+)\{[^{}]*content:\s*"PRO"[^{}]*\}/g)].map((m) => m[1]);
   const sels = marks.flatMap((s) => s.split(/,(?![^(]*\))/).map((x) => x.trim())).filter(Boolean);
   ok(sels.length >= 3, `the "PRO" micro-label has ${sels.length} header selectors (anti-vacuity)`);
-  const stray = sels.filter((s) => !s.startsWith('html[data-pro="on"] [data-detail="pro"] '));
+  // v4.2.0 fix (e2e DEF-3): a part DRAWN only in Pro is marked by
+  // `[data-pro-drawn]` — never hidden by CSS, so held by rule 2 (parity).
+  const stray = sels.filter((s) => !s.startsWith('html[data-pro="on"] [data-detail="pro"] ') && !s.startsWith('html[data-pro="on"] [data-pro-drawn] '));
+  ok(sels.some((s) => s.startsWith('html[data-pro="on"] [data-pro-drawn] ')) && P.proDrawnAttr() === ' data-pro-drawn', 'proDrawnAttr() emits the attribute pro.css marks (a Pro-drawn fold or label gets the "PRO" label)');
+  ok(!/\[data-pro-drawn\][^{]*\{[^}]*display:\s*none/.test(css), 'nothing in pro.css HIDES [data-pro-drawn] (it is marking only)');
   // v4.2 integration: the label is placed by structure or by proMarkAttr()'s
   // attribute — never by an attribute match on a kit class name.
   ok(!sels.some((s) => /\[class[*^$~|]?=/.test(s)), 'no "PRO" selector matches on a class name ([class*=…])', sels.join(' | '));
