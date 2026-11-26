@@ -386,7 +386,7 @@ import { machineWord as thisMachine } from '../shared/platform.js';
 // v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
 // `isPro()` at render and repaint on `onProChange`; the view never keeps its
 // own copy of the mode. `moreInProLine` is the one quiet door to what Pro adds.
-import { isPro, onProChange, moreInProLine } from '../shared/pro.js';
+import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr } from '../shared/pro.js';
 // v3.99.2: plain-language errors. A failed request on this page becomes the
 // plain sentence (a string in state, as before) with its technical detail
 // remembered beside it, and every place that shows the sentence shows the
@@ -11653,7 +11653,10 @@ function sessionMeterHtml(data, error) {
     // v3.79.0 (contract §D): one note, always — what the figure is for.
     const hint = '<p class="mem-ss-preview-of mem-ss-harness-hint" id="mem-ss-harness-hint">'
       + escapeHtml(HARNESS_LABEL + ' — what the app your agent runs in (Claude Code, Codex, Cursor…) puts in the window itself: ' + HARNESS_NOTE) + '</p>';
-    inner = renderBucket(m) + which + hint;
+    // v4.2 (integration): with Pro off the step keeps the ONE window bar and
+    // every note; "The Curator's part, enlarged", its bar and the legend are
+    // the detail Pro reveals (one render path, hidden by shared/pro.css).
+    inner = renderBucket(m, { detailAttr: proAttr(), labelAttr: proMarkAttr() }) + which + hint;
   } else {
     inner = renderDescription(error
       ? 'What an agent receives could not be measured: ' + error

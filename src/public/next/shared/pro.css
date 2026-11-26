@@ -92,10 +92,11 @@ html[data-pro="on"] .rail::after {
 /* 3 · PRO DETAILS, MARKED — every revealed `data-detail="pro"` element gets a
    faint gradient hairline on its left edge (a background LAYER, so its own
    background colour, padding and size are untouched), and a tiny "PRO" label
-   after its heading when it has one: a kit fold's label, a section title, or a
-   first-child h2–h6 — matched by STRUCTURE, never by a kit class name, since
-   shared/section.css alone styles the kit (test-next-section-kit.js); this
-   only adds a ::after mark. Controls are left alone (their gloss is their face). The
+   after its heading when it has one: a fold's label, a first-child h2–h6 —
+   matched by STRUCTURE — or any heading the view marks with proMarkAttr()
+   (`data-pro-mark`), never by a kit class name, since shared/section.css
+   alone styles the kit (test-next-section-kit.js); this only adds a ::after
+   mark. Controls are left alone (their gloss is their face). The
    label's alt text is empty, so a screen reader does not read "PRO". Never on
    a warning: the guard (scripts/test-pro-guard.js) forbids a Pro-only one. */
 html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, .btn) {
@@ -105,7 +106,7 @@ html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, 
   background-position: left top;
 }
 html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
-html[data-pro="on"] [data-detail="pro"] > :first-child [class*="section-title"]::after,
+html[data-pro="on"] [data-detail="pro"] [data-pro-mark]::after,
 html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
   content: "PRO" / "";
   display: inline-block;
@@ -120,7 +121,7 @@ html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::a
 }
 @supports ((background-clip: text) or (-webkit-background-clip: text)) {
   html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
-  html[data-pro="on"] [data-detail="pro"] > :first-child [class*="section-title"]::after,
+  html[data-pro="on"] [data-detail="pro"] [data-pro-mark]::after,
   html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
     background: var(--pro-ink);
     -webkit-background-clip: text;

@@ -215,6 +215,16 @@ export function onProChange(cb) {
 /** The ONE marker for Pro-only markup (leading space, ready to concatenate). */
 export function proAttr() { return ' data-detail="pro"'; }
 
+/**
+ * Where the "PRO" micro-label goes inside a Pro-only block, when the block's
+ * heading is not a fold summary or a first-child h2–h6 (which pro.css finds
+ * by structure): the view puts this on that heading's element (leading
+ * space). An attribute the view emits, never a match on a kit class name, so
+ * the section kit's classes stay shared/section.css's alone. Additive (v4.2
+ * integration); decorative only — the label's alt text is empty.
+ */
+export function proMarkAttr() { return ' data-pro-mark'; }
+
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

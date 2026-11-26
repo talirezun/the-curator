@@ -159,7 +159,11 @@ section('§4 the "PRO" mark and hairline land only on Pro-only detail, so never 
   const marks = [...css.matchAll(/([^{}]+)\{[^{}]*content:\s*"PRO"[^{}]*\}/g)].map((m) => m[1]);
   const sels = marks.flatMap((s) => s.split(/,(?![^(]*\))/).map((x) => x.trim())).filter(Boolean);
   ok(sels.length >= 3, `the "PRO" micro-label has ${sels.length} header selectors (anti-vacuity)`);
-  const stray = sels.filter((s) => !s.startsWith('html[data-pro="on"] [data-detail="pro"] >'));
+  const stray = sels.filter((s) => !s.startsWith('html[data-pro="on"] [data-detail="pro"] '));
+  // v4.2 integration: the label is placed by structure or by proMarkAttr()'s
+  // attribute — never by an attribute match on a kit class name.
+  ok(!sels.some((s) => /\[class[*^$~|]?=/.test(s)), 'no "PRO" selector matches on a class name ([class*=…])', sels.join(' | '));
+  ok(sels.some((s) => /\[data-pro-mark\]::after$/.test(s)) && P.proMarkAttr() === ' data-pro-mark', 'proMarkAttr() emits the attribute pro.css labels');
   ok(!stray.length, 'every one sits INSIDE a data-detail="pro" element (rule 1 keeps warnings out of those)', stray.join(' | '));
   const hair = /(html\[data-pro="on"\] \[data-detail="pro"\][^{]*)\{[^}]*background-image:\s*var\(--pro-hair\)/.exec(css);
   ok(!!hair, 'the left hairline is drawn on data-detail="pro" elements only');
