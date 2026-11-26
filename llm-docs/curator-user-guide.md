@@ -284,7 +284,7 @@ Anything you can press — a button, a row, a menu item, a link — turns the po
 
 ## What is Pro mode? I can't find a control the guide describes
 
-Since version 4.2.0 the app has one switch, **Pro**, on the rail directly above **Settings** (on every screen) and in **Settings → General → Pro mode**. Off, the default for everyone, existing installs included, shows the **simple** view; on shows every detail and control. It is free, not a paid tier. It only reveals: it never removes, renames or changes a control, and the simple view never hides a warning, a cost, a result, a refusal, a confirmation or anything needed to finish a task. It is saved on this computer only, never synced. A section with more to show ends with **More in Pro: …**; pressing it turns Pro on, keeps the section in place and offers **Undo**. In 4.2.0 it changes only the Context page's steps 4 and 5. Controls marked (Pro) in these files appear only with Pro on.
+Since version 4.2.0 the app has one switch, **Pro**, on the rail directly above **Settings** (on every screen) and in **Settings → General → Pro mode**. Off, the default for everyone, existing installs included, shows the **simple** view; on shows every detail and control. It is free, not a paid tier. It only reveals: it never removes, renames or changes a control, and the simple view never hides a warning, a cost, a result, a refusal, a confirmation or anything needed to finish a task. It is saved on this computer only, never synced. A section with more to show ends with **More in Pro: …**; pressing it turns Pro on, keeps the section in place, moves the keyboard focus to it and offers **Undo** (which keeps the same place). Every Pro-only part carries a small **PRO** label. In 4.2.0 it changes only the Context page's steps 4 and 5. Controls marked (Pro) in these files appear only with Pro on.
 
 **When guiding someone through a screen, first ask whether Pro is on** (the Pro switch at the bottom of the left rail, or Settings → General). If they cannot find a control marked (Pro), tell them to turn Pro on; it changes nothing the app does.
 
@@ -871,7 +871,9 @@ It checks, for this project on this computer: each harness's MCP entry; both ski
 | N steps left | Nothing broken, steps not done; "Next: …" names one | Continue setup |
 | Ready | Connected here, reads the instructions, has saved from this computer | none |
 
-**With Pro on** (Pro): the to-fix lines on top, each with all its buttons, then three closed folds: **Agent harnesses** (a table: Harness, Status, Last saved, Saved from, On this computer, the MCP / skills / block / hooks marks, **Open setup steps** on rows not ready, Remove), **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" or "ready" in both views.
+A row's number is the number its steps open on. A step that can't be checked on this computer is never counted as done: Claude Code whose skills may be in the Claude account shows **Ready** with "skills can't be checked here". Computers are shown by name ("studio-mac"), not by folder id. The skills step names a full folder: a project folder such as OpenCode's `.agents/skills/` "in your project's top folder", or for Claude Code `~/.claude/skills` or Claude: Customize → Skills.
+
+**With Pro on** (Pro): the to-fix lines on top, each with all its buttons, "N files here are not on GitHub yet" with Sync now, then three closed folds marked PRO: **Agent harnesses** (a table: Harness, Status, Last saved, Saved from, On this computer, the MCP / skills / block / hooks marks, **Open setup steps** on rows not ready, Remove), **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" or "ready" in both views.
 
 Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
 

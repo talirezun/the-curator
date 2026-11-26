@@ -1753,7 +1753,10 @@ bottom:
    free, and every note the meter has (a trimmed layer, a cut, **Set a reading budget** when the
    start is large).
 3. **A four-line reading** — the **standing brief**, the **latest handoff**, **read first**, and
-   the **session start** in tokens with *"of a ‹window›"* and what is left free. While a suggested
+   the **session start** in tokens with *"of a ‹window›"* and what is left free (*"≈197k free
+   before your harness's share"* while that share is not set — the note under the bar then says
+   so without naming a picker, since the picker is in Pro). Each figure sits beside its name, not
+   across the page. While a suggested
    reading plan or budget is pending, the session-start line also carries its **if applied**
    figure.
 4. **What an agent receives, in full ›** — opens every layer, sizes included, in the reader on
@@ -3198,12 +3201,16 @@ differ, as the theme can.
 
 **"More in Pro".** A section that has more to show ends with one quiet line, **"More in Pro:
 …"**, naming exactly what is behind it. Press it: Pro turns on, the section stays where it was
-on screen so the new rows appear below your eye, and a short note says **Pro is on** with
-**Undo**. While Pro is on these lines are gone. A section with nothing hidden never shows one.
+on screen so the new rows appear below your eye (at the very end of the page, as close as the
+page allows), the keyboard focus moves to that section, and a short note says **Pro is on** with
+**Undo**. **Undo** turns Pro off again and keeps the same place and focus. While Pro is on these
+lines are gone. A section with nothing hidden never shows one.
 
 **You can tell what Pro added.** While Pro is on the switch glows, a thin violet line runs down
 the edge of the rail, and every revealed block carries a faint line at its left and a small
-**PRO** label. Switching it on plays one short shimmer down the rail (none if your system asks to
+**PRO** label — on Context that is the **Window** and **Your harness's share** pickers, the
+**What an agent receives** and **How an agent reaches this** folds, the enlarged Curator part,
+and the three Setup folds. Switching it on plays one short shimmer down the rail (none if your system asks to
 reduce motion).
 
 **What Pro shows today — the Context page.** In v4.2.0 the switch changes **steps 4 and 5 of
@@ -6382,11 +6389,21 @@ With Pro off ([§7c](#7c-simple-and-pro)), step 5 is a short list, top to bottom
    | **N steps left** | Nothing is broken, but some of the four steps are not done | **Continue setup**, with *"Next: …"* naming the step |
    | **Ready** | Connected here, reads the agent instructions, and has saved this project from this computer | none |
 
+   The number on a row is the number its reader opens on (*"N steps to do"*); a **Needs a fix** row
+   says it as *"N steps left in all"*. A step The Curator **can't check** on this computer is never
+   counted as done: when it is the only thing left (Claude Code's skills, held by your Claude
+   account), the row says **Ready** with the grey line *"skills can't be checked here"*, and the
+   reader says *"Nothing left to do here; skills can't be checked here"*.
+
    Under the name, a grey line says when it last saved and from which computer (*"saved 2 hours ago
-   on this Mac"*, or *"not saved yet"*), and, for a harness The Curator has not tested, that you
+   on this Mac"*, *"saved yesterday on studio-mac"* — a computer is shown by its **name**, never
+   by its folder id such as `studio-mac-aa11bb`; two computers with one name get a short tag, as
+   in the menu-bar widget — or *"not saved yet"*), and, for a harness The Curator has not tested, that you
    should check its own settings too. **The whole row is the button**: press anywhere on it (the
    pointer turns into a hand) and its **setup steps** open in the reader on the right.
-3. **+ Add an agent harness**, with the gloss beside it (below).
+3. **+ Add an agent harness**, with the gloss beside it (below). Pick one and its setup steps
+   open in the reader with the keyboard focus on them; the list's last item, **Another
+   harness…**, adds one by name.
 4. **Files not on GitHub yet** — *"N files here are not on GitHub yet, across all domains"* with
    **Sync now**, when there are any.
 5. **The three travel routes, said once**: handoffs, the brief and Documents by Sync now; the agent
@@ -6406,7 +6423,7 @@ a numbered guide — the same in both views:
 | Step | What it asks | How often |
 |---|---|---|
 | ① **Connect it to The Curator** | Put The Curator's MCP entry in the exact file this harness reads, in its format: **Copy MCP entry**, **Reveal** when the file exists, and **Install for me** for Claude Desktop, Cursor and Antigravity (Claude Desktop only on Windows), which opens Settings → MCP bridge | Once per computer, for every project |
-| ② **Teach it how to use The Curator** | Install the two skills. The step says what a skill is: *"short instruction packs a harness loads when a task calls for them: my-curator teaches it how to read and write your wiki, curator-continuity when to save a handoff. A skill never updates itself, so an old copy can miss a rule added since."* Then where they go, with the two `.zip` files, or *skip* when the harness has no skills support | Once per computer, for every project |
+| ② **Teach it how to use The Curator** | Install the two skills. The step says what a skill is: *"short instruction packs a harness loads when a task calls for them: my-curator teaches it how to read and write your wiki, curator-continuity when to save a handoff. A skill never updates itself, so an old copy can miss a rule added since."* Then where they go, always as a full folder, with the two `.zip` files, or *skip* when the harness has no skills support. A harness that reads skills from the project (OpenCode's `.agents/skills/`) is told *"in your project's top folder (‹folder›)"*, or `~/.claude/skills` for every project. Claude Code is told both places it reads: `~/.claude/skills` on this computer, or **Claude: Customize → Skills** in your account (which The Curator can't read, so the step says *can't check here*) | Once per computer, for every project (once per project for a project folder) |
 | ③ **Point it at this project** | Paste the agent instructions at the very top of the file it reads (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`…), then commit and push, so your other computers get it too; *not checked yet* until the project's folder is set | Once per project, carried by its git |
 | ④ **Let it save once, from this computer** | Open a new conversation in the project's folder and give it a task; it turns ready once it saves this project from this computer under its own name | Once per computer |
 
@@ -6414,14 +6431,17 @@ Each step carries its own state (done, to fix, to do, optional, skip, can't chec
 checked yet) and its own buttons; a warning about the harness appears **inside** the step it
 belongs to. A ready harness's page shows its evidence instead: every file it read and what each
 said, in plain words — ages such as *"2 hours ago"*, never a raw timestamp, and no note about how
-The Curator was tested beyond *"when The Curator was tested"*. Close the reader and the row you
+or when The Curator was tested. **Re-check** (or coming back to the window) with a reader open
+updates it in place: **What Setup read** stays open or shut as you left it, and the reader keeps
+its scroll. Close the reader and the row you
 came from has focus again, so the steps are always one press away.
 
 ### What Pro shows on this step
 
 With Pro on, step 5 is the full instrument described in the rest of this section: every to-fix
 line on top, each with all its buttons; the repository question; **+ Add an agent harness**; then
-three closed folds — **Agent harnesses** (a table: Harness · Status · Last saved · Saved from · On
+**files not on GitHub yet** with **Sync now** (never only inside the closed Computers fold);
+then three closed folds, each marked **PRO** — **Agent harnesses** (a table: Harness · Status · Last saved · Saved from · On
 this computer, with the MCP / skills / block / hooks marks, an **Open setup steps** button on every
 row that is not ready, and Remove on a row you added), **Repository on this computer** and
 **Computers**. The whole table row opens the harness's steps, as in the simple view. Below 1200 px
