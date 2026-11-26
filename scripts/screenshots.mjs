@@ -174,11 +174,32 @@ const SHOTS = [
     async go(page) { await page.evaluate(inPage.settings, 'health'); await waitText(page, 'candidate pairs'); } },
   { name: 'mcp-bridge', file: 'curator-mcp-bridge', themes: ['light'], h: 1000, view: 'settings',
     async before(origin) {
-      // Exactly what "Set up Claude Desktop" does — into the FAKE home.
-      const r = await fetch(`${origin}/api/mcp/write-config`, { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: '{}' });
-      if (!r.ok) throw new Error(`write-config refused: ${r.status} ${await r.text()}`);
+      // Exactly what Settings › MCP bridge's Install does — into the FAKE home:
+      // plan (the preview) → a single-use token → apply. (v4.1.2: the old
+      // POST /api/mcp/write-config was removed; /api/mcp/install is the one writer.)
+      const post = async (url, body) => {
+        const r = await fetch(`${origin}${url}`, { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(body) });
+        const text = await r.text();
+        let json = null; try { json = JSON.parse(text); } catch { /* reported below */ }
+        if (!r.ok || !json) throw new Error(`${url} refused: ${r.status} ${text}`);
+        return json;
+      };
+      const plan = await post('/api/mcp/install/plan', { action: 'install', ids: ['claude-desktop'] });
+      const refused = (plan.items || []).filter((i) => i.refused);
+      if (!plan.token || refused.length) throw new Error(`install plan refused: ${JSON.stringify(refused.map((i) => i.refused))}`);
+      const applied = await post('/api/mcp/install/apply', { token: plan.token });
+      if (applied.ok === false) throw new Error(`install apply failed: ${JSON.stringify(applied)}`);
     },
-    async go(page) { await page.evaluate(inPage.settings, 'mcp'); await waitText(page, 'Tool map'); } },
+    async go(page) {
+      // "Tool map" left the page in v3.90.0; wait for the row the install above connected.
+      await page.evaluate(inPage.settings, 'mcp');
+      await waitText(page, 'Claude Desktop');
+      for (let i = 0; i < 100; i++) {
+        if (await page.evaluate(() => document.querySelector('#mcpi-rows [data-mcpi-tool="claude-desktop"]')?.dataset.mcpiStatus === 'connected')) return;
+        await delay(100);
+      }
+      throw new Error('timed out waiting for Claude Desktop to read as connected');
+    } },
   { name: 'settings-trash', file: 'curator-settings-trash', themes: ['light'], h: 760, view: 'settings',
     async go(page) { await page.evaluate(inPage.settings, 'trash'); await waitText(page, 'old-drafts'); } },
   { name: 'shared-brain', file: 'curator-shared-brain', themes: ['light'], h: 640, view: 'domains',
@@ -237,6 +258,9 @@ async function startServer(ws) {
   Object.assign(env, {
     PORT: String(port), CURATOR_NO_OPEN: '1', HOME: ws.home,
     CURATOR_TEST_USER_DATA_DIR: ws.userData, CURATOR_TEST_DOMAINS_DIR: ws.domains,
+    // The MCP installer resolves its home through its OWN seam and fails closed
+    // (no_home) in an isolated process that names none: point it at the fake home.
+    CURATOR_TEST_INSTALL_HOME: ws.home,
   });
   const child = spawn(process.execPath, [path.join(REPO_ROOT, 'src', 'server.js')],
     { cwd: REPO_ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -277,6 +301,9 @@ function makeWorkspace() {
   const base = mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'curator-demo-'));
   const ws = { base, domains: path.join(base, 'domains'), userData: path.join(base, 'userdata'), home: path.join(base, 'home') };
   mkdirSync(ws.home);
+  // An (empty) Claude.app in the fake home's Applications, so the MCP bridge shot's
+  // install finds Claude Desktop the way it would on a Mac that has it.
+  mkdirSync(path.join(ws.home, 'Applications', 'Claude.app'), { recursive: true });
   execFileSync(process.execPath, [path.join(REPO_ROOT, 'scripts', 'demo-domain.mjs'), ws.domains, '--workspace', ws.userData], {
     cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'inherit'],
     env: { ...process.env, HOME: ws.home, CURATOR_TEST_DOMAINS_DIR: ws.domains, CURATOR_TEST_USER_DATA_DIR: ws.userData },
