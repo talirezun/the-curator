@@ -478,7 +478,6 @@ section('5. The POINTER rule: what opens or does something shows the hand; disab
      rules are listed in the hand-off. DELETE THIS ENTRY when they convert, so
      the guard covers them. The tray popover is its own window and its body is
      chrome, not a control. */
-  const PENDING = ['views/memory.css', 'shell.css'];
   const NOT_A_CONTROL = ['body'];
   /* Selectors that legitimately keep the arrow: text and containers. */
   const DEFAULT_OK = ['.chat-citation-tag', '.reader-body-text .chat-citation-tag', '.reader-source-url',
@@ -500,13 +499,13 @@ section('5. The POINTER rule: what opens or does something shows the hand; disab
   const offenders = [];
   let pointerRules = 0;
   for (const rel of ALL_CSS) {
-    if (PENDING.includes(rel) || rel === 'views/tray-popover.css') continue;
+    if (rel === 'views/tray-popover.css') continue;
     const css = read(rel);
     for (const s of arrowOnControls(css, DEFAULT_OK)) offenders.push(`${rel} ${s}`);
     pointerRules += (stripComments(css).match(/cursor:\s*pointer/g) || []).length;
   }
   ok(offenders.length === 0, offenders.length === 0
-    ? `no control keeps \`cursor: default\` in ${ALL_CSS.length - PENDING.length - 1} stylesheets (only the text and container exemptions remain)`
+    ? `no control keeps \`cursor: default\` in ${ALL_CSS.length - 1} stylesheets (only the text and container exemptions remain)`
     : 'a control still shows the arrow: ' + offenders.join(', '));
   ok(pointerRules >= 40, `${pointerRules} rules declare \`cursor: pointer\` — the rule was applied, not just the old one removed`);
 
@@ -550,8 +549,6 @@ section('5. The POINTER rule: what opens or does something shows the hand; disab
     'the :where() net covers button, summary and role=option, with `:not(:disabled)` INSIDE the :where so its specificity stays zero');
   ok(/(^|\})\s*button:disabled\s*\{\s*cursor:\s*not-allowed/m.test(lbClean),
     '`button:disabled` carries not-allowed above any one-class pointer');
-  ok(PENDING.every((f) => ALL_CSS.includes(f)),
-    `control: the pending files exist (${PENDING.join(', ')}); their rules are in the hand-off and this entry is to be deleted`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
