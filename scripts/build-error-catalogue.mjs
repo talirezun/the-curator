@@ -72,6 +72,7 @@ const SYNC_TRIGGERS = {
   'sync-held-back-collision': 'error: Your local changes to the following files would be overwritten by merge',
   'sync-nested-repo': "error: 'notes/' does not have a commit checked out",
   'sync-git-missing': '/bin/sh: git: command not found',
+  'sync-index-locked': "fatal: Unable to create '/Users/you/notes/.knowledge-git/index.lock': File exists.",
   'sync-failed': 'an error text The Curator does not recognise',
 };
 // sync-merge-conflict has two sentences, one per situation.
@@ -214,6 +215,9 @@ export const ENTRIES = {
   'sync-git-missing': { section: 'sync',
     means: 'Git, which Sync uses, is not installed or not found. The Windows app carries its own copy of git, so there this means the app’s install is damaged.',
     todo: 'On a Mac, run `xcode-select --install` in Terminal, then try again. In the Windows app, run the latest Windows installer again (your notes and settings are kept). In the Windows browser install, install Git for Windows or run the one-line installer again, then restart The Curator.' },
+  'sync-index-locked': { section: 'sync',
+    means: 'A sync that stopped part-way left git’s lock file behind. Nothing was changed.',
+    todo: 'If no other sync is running, delete index.lock in the hidden .knowledge-git folder in The Curator’s data folder, then sync again.' },
   'sync-failed': { section: 'sync',
     means: 'Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished.',
     todo: 'Try again in a minute. If it repeats, send the Technical detail line to support.' },

@@ -1327,13 +1327,15 @@ section('§13 main.js wiring for the remote check — SOURCE SCAN, weak like §1
   // THE PROPERTY THE WHOLE DESIGN RESTS ON, pinned against sync.js's source.
   // Read-only; this suite must never edit that file.
   const syncSrc = read(path.join(ROOT, 'src', 'brain', 'sync.js'));
-  const countRawFetches = (text) => (stripJsComments(text).match(/git\(`fetch /g) || []).length;
+  const countRawFetches = (text) => (stripJsComments(text).match(/git\(\s*(\[\s*)?[`'"]fetch\b/g) || []).length;
   // CONTROL. These four pins are over a file this change is forbidden to edit,
   // so they were never mutation-tested by breaking their subject. The counter
   // is instead proven capable of other answers against synthetic input — a
   // count that can only ever return 1 would assert nothing.
   eq(countRawFetches('nothing here'), 0, 'CONTROL — the raw-fetch counter can return 0');
   eq(countRawFetches('git(`fetch a`); git(`fetch b`);'), 2, 'CONTROL — …and 2, so counting 1 is a measurement');
+  eq(countRawFetches("git(['fetch', 'origin']); git(`fetch b`);"), 2, 'CONTROL — the counter sees BOTH the argv form and the old string form');
+  eq(countRawFetches("git(['fetchx']); git(['push'])"), 0, 'CONTROL — …and is not fooled by a longer word or another command');
   const rawFetches = countRawFetches(syncSrc);
   eq(rawFetches, 1,
     'brain/sync.js still has exactly ONE raw fetch invocation — the one inside gitFetch(), which is what makes the gate a CLASS invariant rather than a per-call-site one');

@@ -234,7 +234,7 @@ export const SYNC_CODES = Object.freeze([
   'sync-failed', 'sync-token-missing', 'sync-token-invalid', 'sync-new-token-rejected', 'sync-new-token-no-access',
   'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
   'sync-not-configured', 'sync-new-token-read-only', 'sync-token-check-rate-limited', 'sync-token-save-partial',
-  'sync-new-token-org-blocked', 'sync-token-check-redirected',
+  'sync-new-token-org-blocked', 'sync-token-check-redirected', 'sync-index-locked',
 ]);
 // Shared Brain's Replace token refusals (src/brain/sharedbrain-token.js, whose
 // SHAREDBRAIN_TOKEN_MESSAGES holds their sentences as data).

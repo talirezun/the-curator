@@ -209,6 +209,13 @@ AuthKey_*.p8
 .mcp-installs.json
 .mcp-installs.json.unreadable-*
 
+# Kept copies of a damaged config file (v4.1.2, src/brain/config.js and
+# sharedbrain-config.js setAsideDamaged*): `<file>.unreadable-<sha:12>`, the
+# owner's original bytes, so they can hold API keys and GitHub tokens. In REPO
+# mode the user-data folder is this PUBLIC repository's root.
+.curator-config.json.unreadable-*
+.sharedbrain-config.json.unreadable-*
+
 # Windows app build input: MinGit as desktop/lib/fetch-mingit.mjs downloads,
 # verifies and unpacks it (desktop/vendor/mingit/ is copied into the installer).
 desktop/vendor/
