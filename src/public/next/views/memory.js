@@ -383,6 +383,10 @@ import {
   fileReaderContent, computerReaderContent,
 } from './setup-step.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
+// v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
+// `isPro()` at render and repaint on `onProChange`; the view never keeps its
+// own copy of the mode. `moreInProLine` is the one quiet door to what Pro adds.
+import { isPro, onProChange, moreInProLine } from '../shared/pro.js';
 // v3.99.2: plain-language errors. A failed request on this page becomes the
 // plain sentence (a string in state, as before) with its technical detail
 // remembered beside it, and every place that shows the sentence shows the
@@ -500,7 +504,8 @@ const CONTEXT_WINDOW_CHOICES = [200000, 400000, 1000000];
 // ESTIMATE of what the agent tool itself puts in the window (its own prompt,
 // tools and files). The Curator cannot measure it; every figure here is an
 // estimate and is said so, never "measured".
-const HARNESS_LABEL = 'Your tool’s share';
+// v4.2 (owner, 2026-11-26): "agent harness" is the word; the figure is the harness's.
+const HARNESS_LABEL = 'Your harness’s share';
 const HARNESS_PRESETS = [
   { tokens: 20000, label: 'Light', hint: 'A simple agent: short system prompt, a few tools.' },
   // Harness-neutral (v3.74.0): the instruction file is CLAUDE.md in Claude
@@ -509,7 +514,7 @@ const HARNESS_PRESETS = [
   { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers or skills, or a long CLAUDE.md or AGENTS.md.' },
 ];
 // Where the exact figure comes from, said wherever the estimate is set.
-const HARNESS_HINT = 'The figure your tool reports. In Claude Code, /context lists system prompt, tools, '
+const HARNESS_HINT = 'The figure your harness reports. In Claude Code, /context lists system prompt, tools, '
   + 'MCP tools, memory files and skills — add them up.';
 // Said under the picker, always: what the figure is for, and what it is not.
 const HARNESS_NOTE = 'The Curator can’t measure this. It only changes the meter; nothing is sent.';
@@ -1157,6 +1162,10 @@ let ageTimer = null;
 // repaints the rail only when the clock alone has moved it (see there).
 let sidebarBandSig = null;
 let wakeHandler = null;
+// v4.2: the Pro switch subscription, held for the life of the mount.
+let offPro = null;
+let proDoorListener = null;
+let proDoorPressed = null;
 // The signature of what render() last painted. Compared against a freshly
 // computed one so a revalidation that changed nothing costs no render at
 // all — see screenSignature.
@@ -1382,6 +1391,40 @@ registerView('memory', {
     if (typeof window !== 'undefined') window.addEventListener('focus', wakeHandler);
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wakeHandler);
     schedulePoll(mountToken);
+    // v4.2 — THE PRO SWITCH repaints steps 4 and 5 in place (never the page:
+    // a fold, a draft or a scroll elsewhere is kept), and a harness's reader
+    // that is open follows (its "What Setup read" fold opens with Pro).
+    offPro = onProChange(() => {
+      if (!isCurrentMount(mountToken)) return;
+      closeAllListboxes();
+      // KEEP THE SECTION UNDER THE POINTER (DESIGN §2.6): the step whose
+      // "More in Pro" door was pressed — else the step nearest the top of
+      // the view — stays where it was; what Pro adds above it must not push
+      // it away. The page scrolls in `main`, not the window.
+      const anchorOf = () => {
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
+        const pressed = proDoorPressed && Date.now() - proDoorPressed.at < 3000 ? document.querySelector(proDoorPressed.sel) : null;
+        if (pressed) return proDoorPressed.sel;
+        const steps = ['.settings-block-context-session', '.settings-block-' + SETUP_JUMP];
+        const vis = steps.map((sel) => [sel, document.querySelector(sel)]).filter(([, el]) => el && el.getBoundingClientRect().bottom > 0);
+        return vis.length ? vis[0][0] : null;
+      };
+      const sel = anchorOf();
+      const before = sel ? document.querySelector(sel).getBoundingClientRect().top : null;
+      patchSessionStart(mountToken);
+      patchSetup(mountToken);
+      proDoorPressed = null;
+      const after = sel && document.querySelector(sel) ? document.querySelector(sel).getBoundingClientRect().top : null;
+      const scroller = typeof document !== 'undefined' ? document.querySelector('main.main') : null;
+      if (scroller && before !== null && after !== null && Math.abs(after - before) > 1) scroller.scrollTop += after - before;
+    });
+    // Which step's door was pressed, read by the anchor above.
+    proDoorListener = (e) => {
+      const b = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-pro-more]') : null;
+      const block = b ? b.closest('.settings-block-context-session, .settings-block-' + SETUP_JUMP) : null;
+      if (block) proDoorPressed = { sel: block.classList.contains('settings-block-context-session') ? '.settings-block-context-session' : '.settings-block-' + SETUP_JUMP, at: Date.now() };
+    };
+    if (typeof document !== 'undefined') document.addEventListener('click', proDoorListener, true);
 
     return () => {
       // Timer hygiene: an armed delay timer surviving teardown would paint a
@@ -1404,6 +1447,8 @@ registerView('memory', {
       closeAllListboxes();
       // v3.67.0: the helper's cost gate is a view-owned overlay too.
       closeConfirmIfOpen();
+      if (offPro) { offPro(); offPro = null; }
+      if (proDoorListener) { if (typeof document !== 'undefined') document.removeEventListener('click', proDoorListener, true); proDoorListener = null; }
       if (wakeHandler) {
         if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
@@ -4475,7 +4520,7 @@ function renderLayerStrip(read) {
   cards.push({
     label: 'SETUP',
     value: stpValue,
-    sub: stpS ? [stpTools.length ? stpTools.join(' · ') : 'no agent app yet',
+    sub: stpS ? [stpTools.length ? stpTools.join(' · ') : 'no agent harness yet',
       stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null].filter(Boolean).join(' · ') : null,
     hidden: !stpS,
     jump: 'context-setup',
@@ -11607,7 +11652,7 @@ function sessionMeterHtml(data, error) {
     // drawn, and only while the estimate is Not set.
     // v3.79.0 (contract §D): one note, always — what the figure is for.
     const hint = '<p class="mem-ss-preview-of mem-ss-harness-hint" id="mem-ss-harness-hint">'
-      + escapeHtml(HARNESS_LABEL + ': ' + HARNESS_NOTE) + '</p>';
+      + escapeHtml(HARNESS_LABEL + ' — what the app your agent runs in (Claude Code, Codex, Cursor…) puts in the window itself: ' + HARNESS_NOTE) + '</p>';
     inner = renderBucket(m) + which + hint;
   } else {
     inner = renderDescription(error
@@ -11720,7 +11765,7 @@ function ssDocs(tier) {
  * The harness is its own line, "your estimate, not measured", and is never
  * summed into the session start above it.
  */
-function sessionReceivesMonitor(data, facts) {
+function sessionReceivesMonitor(data, facts, compact = false) {
   const t = data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
   const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
   const planned = data.planned === true;
@@ -11801,13 +11846,13 @@ function sessionReceivesMonitor(data, facts) {
     // HARNESS-NEUTRAL (v3.74.0): an agent tool's instruction file is
     // CLAUDE.md in Claude Code and AGENTS.md in most others; naming only
     // Claude's told every other tool's user the line was not about them.
-    ? { key: 'your tool’s share', value: 'not set',
+    ? { key: 'your harness’s share', value: 'not set',
       sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · pick an estimate above' }
-    : { key: 'your tool’s share', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
+    : { key: 'your harness’s share', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
       sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · your estimate' });
   lines.push({ key: 'free at start',
     value: tok(Math.max(0, winTokens - mcpTokens - (harness || 0))),
-    sub: 'of a ' + WIN + (harness === null ? ', before your tool’s share' : '') });
+    sub: 'of a ' + WIN + (harness === null ? ', before your harness’s share' : '') });
   const omitted = tier(t.omitted);
   if (Number.isInteger(omitted.count) && omitted.count > 0) {
     lines.push({ key: 'left out, by name', value: ssDocs(omitted), sub: 'fetched by name when needed' });
@@ -11856,11 +11901,81 @@ function sessionReceivesMonitor(data, facts) {
     }
   }
   const notes = Array.isArray(data.notes) ? data.notes.filter((n) => typeof n === 'string' && n) : [];
+  // ── v4.2: THE COMPACT FORM (Pro off; DESIGN-context-redesign §5) ─────────
+  // Four lines, from the SAME lines built above — never a second arithmetic:
+  // the brief, the handoff, read first, and the session start with what is
+  // free (and, when a suggestion is pending, its "if applied" figure, an
+  // outcome, in the same line). Tokens only: the bytes stay in the full form.
+  // The monitor's note (a cut or trimmed layer) is kept as it is.
+  if (compact) {
+    const by = (k) => lines.find((l) => l.key === k) || null;
+    const lean = (sub) => String(sub || '').replace(/^\s*[\d.,]+\s*(?:bytes?|KB|MB|GB)\s*·\s*/, '')
+      .replace(/\s*·\s*[\d.,]+\s*(?:bytes?|KB|MB|GB)(?=\s*·|\s*$)/g, '');
+    const start = by('session start');
+    const free = by('free at start');
+    const ifa = by('if applied');
+    const shown = [by('standing brief'), by('latest handoff'), by('read first')].filter(Boolean)
+      .map((l) => ({ ...l, sub: lean(l.sub) }));
+    if (start) {
+      shown.push({ ...start, sub: [ifa ? 'if applied: ' + ifa.value + ' (' + ifa.sub + ')' : null,
+        'of a ' + WIN, free ? free.value + ' free' : null].filter(Boolean).join(' · ') });
+    }
+    return renderMonitor({
+      id: 'mem-ss-monitor-compact',
+      label: 'What an agent receives at the start of a session, in short',
+      lines: shown,
+      note: notes.join(' '),
+    });
+  }
   return renderMonitor({
     id: 'mem-ss-monitor',
     label: 'What an agent receives at the start of a session',
     lines,
     note: notes.join(' '),
+  });
+}
+
+/**
+ * "HOW AN AGENT REACHES THIS" — the per-transport figures: one MCP reply (or
+ * several), the session-start hook, Chat. Moved out of renderSessionStart in
+ * v4.2, UNCHANGED, because the compact step 4 shows it in the reader ("What an
+ * agent receives, in full") and Pro shows it in its fold: one builder, two
+ * places.
+ */
+function sessionReachMonitor(data) {
+  const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
+  const mcpTokens = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp : Math.round(mcp / 4);
+  const hook = data.bytes && Number.isInteger(data.bytes.hook) ? data.bytes.hook : 0;
+  const hookTokens = data.tokens && Number.isInteger(data.tokens.hook) ? data.tokens.hook : Math.round(hook / 4);
+  const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
+  const pageTokens = data.delivery && Number.isInteger(data.delivery.pageTokens) && data.delivery.pageTokens > 0
+    ? data.delivery.pageTokens : null;
+  const chatCeiling = data.chat && Number.isInteger(data.chat.ceilingChars) ? data.chat.ceilingChars : null;
+  const chatChars = chatCeiling !== null && Number.isInteger(data.chat.effectiveChars) && data.chat.effectiveChars >= 0
+    ? data.chat.effectiveChars : null;
+  const chatWord = chatChars === null ? ''
+    : chatChars === 0 ? 'no document text (Index only)'
+      : '≤ ' + chatChars.toLocaleString('en-US') + ' characters';
+  return renderMonitor({
+    id: 'mem-ss-reach',
+    label: 'How an agent reaches this context',
+    lines: [
+      // v3.72.1 (truth audit F7): the per-reply cap is the route's
+      // `delivery.pageTokens` — the figure the meter's own delivery line
+      // prints — never a typed "≈20k" that disagreed with it ("≈20.5k").
+      { key: 'MCP get_project_context', value: tok(mcpTokens),
+        sub: repliesWord(replies)
+          + (pageTokens !== null ? ' of at most ' + tok(pageTokens) + ' tokens' : '')
+          + ' · the owner’s budget' },
+      { key: 'session-start hook', value: tok(hookTokens),
+        sub: 'Markdown, one piece · the owner’s budget' },
+      // …and Chat's figure is the store's min(this budget, Chat's
+      // ceiling), so Lean reads 32,768 and Index only reads none.
+      chatChars !== null
+        ? { key: 'Chat', value: chatWord,
+          sub: 'the smaller of this budget and ' + chatCeiling.toLocaleString('en-US') + ' characters' }
+        : { key: 'Chat', value: 'not measured', sub: 'the smaller of this budget and Chat’s ceiling' },
+    ],
   });
 }
 
@@ -11938,9 +12053,15 @@ function renderSessionStart(read) {
     ? '<span class="mem-ss-budget-fixed">'
       + escapeHtml(owner === null ? 'Default' : presetName(owner)) + '</span>'
     : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true));
-  const headHtml = ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
-    + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
-    + ctl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)));
+  // v4.2: Pro off, the head holds the project's own setting only. The window
+  // and the harness's share are this computer's estimates; the meter still
+  // draws them from their saved values, and Pro puts their pickers back here.
+  const pro = isPro();
+  const headHtml = pro
+    ? ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
+      + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
+      + ctl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)))
+    : ctl('Reading budget', 'mem-ss-budget-label', budgetCtl);
 
   const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
     && state.budgetError.project === state.activeProject
@@ -11956,22 +12077,17 @@ function renderSessionStart(read) {
   let rows = '';
   if (data) {
     const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
-    const hook = data.bytes && Number.isInteger(data.bytes.hook) ? data.bytes.hook : 0;
     const mcpTokens = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp : Math.round(mcp / 4);
-    const hookTokens = data.tokens && Number.isInteger(data.tokens.hook) ? data.tokens.hook : Math.round(hook / 4);
-    const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
     const winTokens = contextWindowNow();
     const folds = state.openFolds || {};
-    const pageTokens = data.delivery && Number.isInteger(data.delivery.pageTokens) && data.delivery.pageTokens > 0
-      ? data.delivery.pageTokens : null;
     const chatCeiling = data.chat && Number.isInteger(data.chat.ceilingChars) ? data.chat.ceilingChars : null;
     const chatChars = chatCeiling !== null && Number.isInteger(data.chat.effectiveChars) && data.chat.effectiveChars >= 0
       ? data.chat.effectiveChars : null;
     const chatWord = chatChars === null ? ''
       : chatChars === 0 ? 'no document text (Index only)'
         : '≤ ' + chatChars.toLocaleString('en-US') + ' characters';
-    rows = plannerFoldHtml(read, data, readonly)
-      + '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
+    rows = plannerFoldHtml(read, data, readonly) + (pro
+      ? '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
           + '<span>What an agent receives</span>'
           + '<span class="mem-fold-meta">' + escapeHtml(tok(mcpTokens) + ' tokens · ' + ssSize(mcp)
@@ -11987,28 +12103,14 @@ function renderSessionStart(read) {
           + '<span class="mem-fold-meta">MCP · session-start hook · Chat'
             + (chatChars !== null ? escapeHtml(' (' + chatWord + ')') : '') + '</span>'
         + '</summary>'
-        + '<div class="mem-fold-body">' + renderMonitor({
-          id: 'mem-ss-reach',
-          label: 'How an agent reaches this context',
-          lines: [
-            // v3.72.1 (truth audit F7): the per-reply cap is the route's
-            // `delivery.pageTokens` — the figure the meter's own delivery line
-            // prints — never a typed "≈20k" that disagreed with it ("≈20.5k").
-            { key: 'MCP get_project_context', value: tok(mcpTokens),
-              sub: repliesWord(replies)
-                + (pageTokens !== null ? ' of at most ' + tok(pageTokens) + ' tokens' : '')
-                + ' · the owner’s budget' },
-            { key: 'session-start hook', value: tok(hookTokens),
-              sub: 'Markdown, one piece · the owner’s budget' },
-            // …and Chat's figure is the store's min(this budget, Chat's
-            // ceiling), so Lean reads 32,768 and Index only reads none.
-            chatChars !== null
-              ? { key: 'Chat', value: chatWord,
-                sub: 'the smaller of this budget and ' + chatCeiling.toLocaleString('en-US') + ' characters' }
-              : { key: 'Chat', value: 'not measured', sub: 'the smaller of this budget and Chat’s ceiling' },
-          ],
-        }) + '</div>'
-      + '</details>';
+        + '<div class="mem-fold-body">' + sessionReachMonitor(data) + '</div>'
+      + '</details>'
+      // v4.2 — Pro off: the four-line monitor, the door to the rest in the
+      // reader, and — last line of the step — the quiet "More in Pro" door.
+      : sessionReceivesMonitor(data, facts, true)
+        + '<div class="mem-k-doors mem-ss-full-doors"><button type="button" class="btn btn-ghost btn-xs" id="mem-ss-full">'
+          + 'What an agent receives, in full ›</button></div>'
+        + moreInProLine('the window and harness estimates, everything an agent receives, how it reaches it'));
   }
 
   return memStep({
@@ -12046,8 +12148,12 @@ function renderSetupStep() {
       repoError: state.setupRepoError, editRepo: state.setupEditRepo,
       forceRepoOpen: state.setupRepoForceOpen, pickUnavailable: state.setupPickUnavailable,
       customOpen: state.setupCustomOpen, customDraft: state.setupCustomDraft, customError: state.setupCustomError,
-      // "+ Add an agent app" — the SHARED listbox, from the one cfg `bindSetup` mounts.
+      // "+ Add an agent harness" — the SHARED listbox, from the one cfg `bindSetup` mounts.
       pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
+      // v4.2: the mode, passed in (the builders never read a global), and the
+      // one "More in Pro" door, shared/pro.js's.
+      pro: isPro(),
+      moreInPro: moreInProLine,
     }),
   });
 }
@@ -12170,11 +12276,36 @@ async function setupCopy(text, title, line) {
  * views/setup-step.js `toolReaderContent`; its buttons are step 5's own
  * `data-setup-act` controls, bound here on the reader's live root.
  */
-function openSetupToolReader(toolId, token) {
+function openSetupToolReader(toolId, token, step = null) {
   const s = setupFor();
-  const content = s && s.data ? toolReaderContent(s.data, toolId) : null;
+  const content = s && s.data ? toolReaderContent(s.data, toolId, { pro: isPro() }) : null;
   if (!content) return;
+  // v4.2 (audit bug 4): the row the reader returns focus to must be on screen
+  // when it closes, or focus falls to <body> and the steps are lost behind a
+  // closed fold. With Pro on, opening a harness opens its fold; with Pro off
+  // the row is always on screen.
+  if (isPro() && !(state.openFolds && state.openFolds['setup-tools'])) {
+    if (!state.openFolds) state.openFolds = {};
+    state.openFolds['setup-tools'] = true;
+    patchSetupBlockOnly(token);
+  }
   showSetupReader({ kind: 'tool', key: toolId }, content, token);
+  // "Continue setup" / "Show the fix" open the reader AT their step.
+  if (step && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    const el = document.getElementById('mem-setup-gstep-' + step);
+    if (el && typeof el.scrollIntoView === 'function') { try { el.scrollIntoView({ block: 'start' }); } catch { /* old engines */ } }
+  }
+}
+
+/**
+ * Repaint step 5's block (not its tile, not the reader) — the one paint a
+ * reader opening needs, so it can never re-open itself (patchSetup re-opens
+ * the reader on screen, and this is called while one is being opened).
+ */
+function patchSetupBlockOnly(token) {
+  const keep = setupReader;
+  setupReader = null;
+  try { patchSetup(token); } finally { setupReader = keep; }
 }
 
 /** Open one step-5 page in the reader and bind its buttons (the shared tail). */
@@ -12266,7 +12397,7 @@ async function putSetupToolIds(ids, token) {
   } catch (err) { reportAsyncActionFailure(err); return false; }
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
-    if (isCurrentMount(token)) showToast({ key: 'setup-tools', tone: 'danger', title: 'Could not change the list', lines: errorLines(failText(j, res.status, 'The list of agent apps was not changed.')) });
+    if (isCurrentMount(token)) showToast({ key: 'setup-tools', tone: 'danger', title: 'Could not change the list', lines: errorLines(failText(j, res.status, 'The list of agent harnesses was not changed.')) });
     return false;
   }
   return true;
@@ -12301,7 +12432,7 @@ async function removeSetupTool(toolId, token) {
   if (!ok || !isCurrentMount(token)) return;
   if (setupReader && setupReader.kind === 'tool' && setupReader.key === toolId && isCurrentReader(setupReader.epoch)) closeReader();
   showToast({ key: 'setup-tools', tone: 'success', title: 'Removed ' + (t.label || t.id) + ' from this computer’s list',
-    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add an agent app” brings it back.'] });
+    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add an agent harness” brings it back.'] });
   await reloadSetupThenOpen(null, token);
   const add = typeof document !== 'undefined' ? document.getElementById('mem-setup-add') : null;
   if (add && typeof add.focus === 'function') { try { add.focus({ preventScroll: true }); } catch { add.focus(); } }
@@ -12324,7 +12455,7 @@ async function saveCustomTool(change, token, { reload = true } = {}) {
   } catch (err) { reportAsyncActionFailure(err); return false; }
   if (!isCurrentMount(token)) return false;
   if (!res.ok) {
-    const why = failText(j, res.status, change.custom ? 'That agent app was not added.' : 'That agent app was not removed.');
+    const why = failText(j, res.status, change.custom ? 'That agent harness was not added.' : 'That agent harness was not removed.');
     if (change.custom) { state.setupCustomError = why; patchSetup(token); }
     else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: errorLines(why) });
     return false;
@@ -12390,6 +12521,20 @@ function bindSetup(root, token) {
       if (b) b.click();
     });
   }
+  // v4.2 (audit bug 3): A ROW OPENS FROM ANYWHERE ON IT, as the Handoffs rows
+  // do (bindWorkStreamRows). The row names its own button; a press that lands
+  // on another control inside the row (a fix, the trash, a link) is that
+  // control's, never the row's.
+  root.querySelectorAll('[data-setup-row]').forEach((row) => {
+    if (row.__setupRowBound) return;
+    row.__setupRowBound = true;
+    row.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && typeof t.closest === 'function' && t.closest('button, a, input, select, textarea, summary, [role="option"]')) return;
+      const btn = document.getElementById(row.dataset.setupRow || '');
+      if (btn && row.contains(btn)) btn.click();
+    });
+  });
   root.querySelectorAll('[data-setup-act]').forEach((el) => {
     if (el.__setupBound) return;
     el.__setupBound = true;
@@ -12397,8 +12542,12 @@ function bindSetup(root, token) {
       const act = el.dataset.setupAct;
       const domain = state.activeDomain;
       const project = state.activeProject;
+      // A repository door pressed INSIDE the reader acts on the page's field:
+      // the reader closes first, so what it opens is on screen.
+      if ((act === 'choose-repo' || act === 'change-repo') && typeof document !== 'undefined'
+        && document.getElementById('reader-root') && document.getElementById('reader-root').contains(el)) closeReader();
       if (act === 'check') { maybeLoadSetup(token, true); return; }
-      if (act === 'tool-open') { openSetupToolReader(el.dataset.tool || '', token); return; }
+      if (act === 'tool-open') { openSetupToolReader(el.dataset.tool || '', token, el.dataset.step || null); return; }
       if (act === 'file-open') { await openSetupFileReader(el.dataset.name || '', token); return; }
       if (act === 'computer-open') { openSetupComputerReader(el.dataset.computer || '', token); return; }
       if (act === 'copy-block') { copyAgentInstructions(token); return; }
@@ -12419,7 +12568,7 @@ function bindSetup(root, token) {
         const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
         const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
         if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Re-check here.');
-        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Settings › MCP bridge for this agent app’s entry.'] });
+        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Settings › MCP bridge for this agent harness’s entry.'] });
         return;
       }
       if (act === 'reveal') {
@@ -12491,7 +12640,7 @@ function bindSetup(root, token) {
       if (act === 'choose-repo') {
         state.setupRepoForceOpen = true;
         patchSetup(token);
-        const fold = document.querySelector('[data-mem-fold="setup-repo"]');
+        const fold = document.querySelector('[data-mem-fold="setup-repo"]') || document.getElementById('mem-setup-repo-input');
         if (fold && typeof fold.scrollIntoView === 'function') fold.scrollIntoView({ block: 'nearest' });
         const input = document.getElementById('mem-setup-repo-input');
         if (input && typeof input.focus === 'function') { try { input.focus({ preventScroll: true }); } catch { input.focus(); } }
@@ -12501,6 +12650,8 @@ function bindSetup(root, token) {
         state.setupEditRepo = true;
         state.setupRepoError = null;
         patchSetup(token);
+        const input = document.getElementById('mem-setup-repo-input');
+        if (input && typeof input.focus === 'function') { try { input.focus({ preventScroll: false }); } catch { input.focus(); } }
         return;
       }
       if (act === 'cancel-repo') {
@@ -12603,6 +12754,7 @@ function patchSessionStart(token) {
     ? document.activeElement.id : null;
   const openInfo = block.querySelector('[data-tx-info][aria-expanded="true"]') !== null;
   block.outerHTML = renderSessionStart(state.projectRead);
+  if (sessionFullEpoch !== null && isCurrentReader(sessionFullEpoch)) openSessionFullReader(token);
   const fresh = document.querySelector('.settings-block-context-session');
   if (fresh) {
     if (openInfo) {
@@ -13386,8 +13538,46 @@ async function setContextSetting(body, token) {
  * `patchSessionStart` replaced it. Guarded per element, so a second pass over
  * a node that is still there binds nothing twice.
  */
+/**
+ * v4.2 — "WHAT AN AGENT RECEIVES, IN FULL", IN THE READER (Pro off). Today's
+ * full monitor and the per-transport figures, the SAME builders Pro draws
+ * inline, moved rather than rewritten (DESIGN-context-redesign §5.3).
+ * Returns the reader payload, or null with nothing measured yet. Pure over
+ * `state`.
+ */
+function sessionFullReaderContent() {
+  const ss = sessionStartFor();
+  const data = ss && ss.data;
+  const read = state.projectRead;
+  if (!data || !read) return null;
+  return {
+    slug: 'Session start › in full',
+    title: 'What an agent receives',
+    typeLabel: 'session start',
+    bodyHtml: '<div class="mem-setup-reader">'
+      + sessionReceivesMonitor(data, foundationsFacts(read))
+      + '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">How an agent reaches this</h3>'
+      + sessionReachMonitor(data) + '</section></div>',
+    hideBacklinks: true,
+    returnFocusTo: 'mem-ss-full',
+  };
+}
+
+let sessionFullEpoch = null;
+function openSessionFullReader(token) {
+  const content = sessionFullReaderContent();
+  if (content) sessionFullEpoch = openReader(content, token);
+}
+
 function bindSessionAndPlan(root, token) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
+  {
+    const full = typeof root.querySelector === 'function' ? root.querySelector('#mem-ss-full') : null;
+    if (full && !full.__ssFullBound) {
+      full.__ssFullBound = true;
+      full.addEventListener('click', () => openSessionFullReader(token));
+    }
+  }
   // v3.72.1 (F6): after every paint, the helper's estimate follows the budget
   // and documents on screen rather than the ones the panel opened with.
   refreshPlanEstimateIfStale(token);

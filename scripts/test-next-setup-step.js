@@ -60,7 +60,11 @@ const ok = (cond, label, detail) => {
 };
 const section = (t) => console.log(`\n${t}`);
 
-const S = await import('../src/public/next/views/setup-step.js');
+// v4.2: this suite holds the PRO view of step 5 (today's body, the folds and
+// tables, with the audit's fixes). The simple view and the two modes'
+// warning parity are scripts/test-context-setup-modes.js's.
+const S0 = await import('../src/public/next/views/setup-step.js');
+const S = { ...S0, renderSetupBody: (s, ui = {}) => S0.renderSetupBody(s, { pro: true, ...ui }) };
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 const ALL_OPEN = { 'setup-tools': true, 'setup-repo': true, 'setup-computers': true };
 
@@ -286,7 +290,7 @@ section('§5  escaping');
 section('§6  the fix buttons');
 {
   const html = S.renderSetupBody({ data: old() }, {});
-  ok(/data-setup-act="copy-block"[^>]*>Copy instructions</.test(html), 'block missing (v3.78.0 `fix`) → "Copy instructions"');
+  ok(/data-setup-act="copy-block"[^>]*>Copy agent instructions</.test(html), 'block missing (v3.78.0 `fix`) → "Copy agent instructions" (v4.2: one name for one thing)');
   ok(/data-setup-act="reveal" data-path="\/Users\/t\/code\/ott\/AGENTS\.md">Reveal AGENTS\.md/.test(html), '…and Reveal, at <repo>/AGENTS.md');
   ok(html.includes('data-cmd="git add .curator-project &amp;&amp; git commit -m &quot;Add The Curator project marker&quot;"'), 'the git command rides verbatim (escaped) on Copy command');
   ok(/data-setup-act="sync"[^>]*>Sync now</.test(html), 'a waiting handoff → Sync now');
@@ -309,40 +313,40 @@ section('§7  the Tools table');
 {
   const html = S.renderSetupBody({ data: maint() }, { openFolds: ALL_OPEN });
   const body = foldNamed(html, 'setup-tools').body;
-  ok(/Tool<\/th><th scope="col">Status<\/th><th scope="col">Last saved<\/th><th scope="col">Saved from<\/th><th scope="col">On this computer/.test(body),
-    'columns TOOL · STATUS · LAST SAVED · SAVED FROM · ON THIS COMPUTER');
-  ok(/class="mem-ws-table mem-setup-table"/.test(body) && /class="mem-ws-row"/.test(body) && /class="mem-ws-count"/.test(body), 'built from the Handoffs table\'s own parts');
+  ok(/Harness<\/th><th scope="col">Status<\/th><th scope="col">Last saved<\/th><th scope="col">Saved from<\/th><th scope="col">On this computer/.test(body),
+    'columns HARNESS · STATUS · LAST SAVED · SAVED FROM · ON THIS COMPUTER (v4.2: "Tool" → "Harness")');
+  ok(/class="mem-ws-table mem-setup-table"/.test(body) && /class="mem-ws-row mem-setup-row"/.test(body) && /class="mem-ws-count"/.test(body), 'built from the Handoffs table\'s own parts');
   ok(/cur-setup-st-q">partly checked</.test(body) && /cur-setup-st-none">no save from here</.test(body), 'status words from the payload: partly checked, no save from here');
   ok(/talis-macbook-pro-acb035<\/span><span class="mem-ws-mine">this computer</.test(body), 'saved from this computer: the machine and the chip');
   ok(/data-setup-act="tool-open" data-tool="claude-code"/.test(body), 'a row opens the tool\'s evidence (in the reader)');
   ok(/<span class="cur-setup-st cur-setup-st-ok">MCP<span class="visually-hidden"> configured<\/span>/.test(body), 'a part that is fine: its name, the word only for a screen reader');
-  ok(metaOf(html, 'setup-tools') === '2 agent apps', 'fold meta with nothing to fix: "2 agent apps"', metaOf(html, 'setup-tools'));
+  ok(metaOf(html, 'setup-tools') === '2 agent harnesses', 'fold meta with nothing to fix: "2 agent harnesses"', metaOf(html, 'setup-tools'));
   // Derived from a v3.77.0 row.
   const o = S.renderSetupBody({ data: old() }, { openFolds: ALL_OPEN });
   const ob = foldNamed(o, 'setup-tools').body;
   ok(/cur-setup-st-fix">1 to fix</.test(ob) && /cur-setup-st-q">partly checked</.test(ob), 'v3.77.0 shape: "1 to fix" for Antigravity, "partly checked" for Claude Code (skills can\'t check here)');
   ok(/cur-setup-st-fix">skills: my-curator outdated</.test(ob) && /cur-setup-st-fix">block: missing</.test(ob), 'a failing part shows its word');
-  ok(metaOf(o, 'setup-tools') === '2 agent apps · 1 to fix', 'fold meta: "2 agent apps · 1 to fix"');
+  ok(metaOf(o, 'setup-tools') === '2 agent harnesses · 1 to fix', 'fold meta: "2 agent harnesses · 1 to fix"');
   const st = (t, d) => S.toolStatus(t, d || { toFix: [] }).word;
   const base = { id: 'x', saved: { at: iso(1000), thisMachine: true }, bridge: { state: 'ok' }, skills: { state: 'ok' }, block: { state: 'ok' }, hooks: { state: 'none' } };
   ok(st(base) === 'ready', 'derived: all parts fine and a save from here → ready');
   ok(st({ ...base, saved: { at: iso(1000), thisMachine: false } }) === 'no save from here', 'derived: saved only elsewhere → no save from here');
   ok(st({ ...base, block: { state: 'not-checked' } }) === 'partly checked', 'derived: a part not checked → partly checked');
   ok(st(base, { toFix: [{ tool: 'x' }, { tool: 'x' }] }) === '2 to fix', 'derived: two to-fix lines name it → 2 to fix');
-  ok(/No agent app has saved/.test(S.renderSetupBody({ data: { ...maint(), tools: [] } }, { openFolds: ALL_OPEN })), 'no tools: said in words');
+  ok(/No agent harness has saved/.test(S.renderSetupBody({ data: { ...maint(), tools: [] } }, { openFolds: ALL_OPEN })), 'no tools: said in words');
 }
 
 section('§8  computers are PHYSICAL — two installs on one Mac are one row');
 {
   const html = S.renderSetupBody({ data: maint() }, { openFolds: ALL_OPEN });
   const body = foldNamed(html, 'setup-computers').body;
-  const rows = [...body.matchAll(/<tr class="mem-ws-row">/g)];
+  const rows = [...body.matchAll(/<tr class="mem-ws-row mem-setup-row"/g)];
   ok(rows.length === 1, 'the maintainer\'s MacBook: ONE row, not two', rows.length);
   ok(metaOf(html, 'setup-computers') === '1 computer · 2 installs', 'fold meta: "1 computer · 2 installs"', metaOf(html, 'setup-computers'));
   ok(/talis-macbook-pro-acb035<\/span><span class="mem-ws-mine">this computer<\/span>/.test(body), 'named by its newest install, with the "this computer" chip');
   ok(/<span class="mem-setup-sub">Mac app · source checkout talis-macbook-pro-17d23c \(also saved as mac-17d23c\)<\/span>/.test(body),
     'its installs on a secondary line, with the second machine name', (body.match(/mem-setup-sub">[^<]*/) || [''])[0]);
-  ok(/Computer<\/th><th scope="col">Tools that saved<\/th><th scope="col">Newest save<\/th><th scope="col">Curator<\/th><th scope="col">Sync/.test(body), 'columns COMPUTER · TOOLS THAT SAVED · NEWEST SAVE · CURATOR · SYNC');
+  ok(/Computer<\/th><th scope="col">Harnesses that saved<\/th><th scope="col">Newest save<\/th><th scope="col">Curator<\/th><th scope="col">Sync/.test(body), 'columns COMPUTER · HARNESSES THAT SAVED · NEWEST SAVE · CURATOR · SYNC');
   ok(/Antigravity, Claude Code/.test(body) && /3\.78\.0/.test(body), 'tools from every install; the newest install\'s Curator version');
   const t = textOf(body);
   ok(t.includes('Sync now pulls and pushes your whole knowledge folder — every domain.') && t.includes('5 files not on GitHub, across all domains.'),
@@ -369,18 +373,18 @@ section('§8  computers are PHYSICAL — two installs on one Mac are one row');
 section('§9  "+ Add a tool" — the shared listbox cfg, and custom tools');
 {
   const cfg = S.setupToolPickerCfg(maint());
-  ok(cfg.id === 'mem-setup-add' && cfg.triggerText === '+ Add an agent app' && cfg.triggerClass === 'btn btn-secondary btn-xs', 'the trigger is an action: "+ Add an agent app", step ③\'s button face');
-  ok(JSON.stringify(cfg.options.map((o) => o.group)) === JSON.stringify(['Known agent apps', 'Known agent apps', 'Other', 'Other']), 'groups: Known agent apps, then Other', JSON.stringify(cfg.options));
+  ok(cfg.id === 'mem-setup-add' && cfg.triggerText === '+ Add an agent harness' && cfg.triggerClass === 'btn btn-secondary btn-xs', 'the trigger is an action: "+ Add an agent harness", step ③\'s button face');
+  ok(JSON.stringify(cfg.options.map((o) => o.group)) === JSON.stringify(['Known harnesses', 'Known harnesses', 'Other', 'Other']), 'groups: Known harnesses, then Other', JSON.stringify(cfg.options));
   const last = cfg.options[cfg.options.length - 1];
-  ok(last.value === S.CUSTOM_TOOL_VALUE && last.label === 'Custom tool…' && last.action === true && cfg.actionValues.includes(S.CUSTOM_TOOL_VALUE),
-    '"Custom tool…" is the LAST row and an action row (declared in the cfg too)');
+  ok(last.value === S.CUSTOM_TOOL_VALUE && last.label === 'Another harness…' && last.action === true && cfg.actionValues.includes(S.CUSTOM_TOOL_VALUE),
+    '"Another harness…" is the LAST row and an action row (declared in the cfg too), whatever an older server called it');
   // v3.80.0: a v3.79.0 `addable` (no `reads`, no `configPaths`) still shows
   // its `detail` as the second line; "not measured" is the right-hand fact.
   const dshOpt = cfg.options.find((o) => o.value === 'dsh');
   ok(/class="mr-fact">not measured</.test(dshOpt.html), 'an adapter whose config location is not measured says so, at the right', dshOpt.html);
   ok(/class="mr-meta">MCP · AGENTS\.md</.test(cfg.options.find((o) => o.value === 'codex').html), 'a v3.79.0 row carries its detail as line 2');
   const oc = S.setupToolPickerCfg(old());
-  ok(oc.options.length === 1 && oc.options[0].group === 'Known agent apps' && !oc.options.some((o) => o.action) && oc.actionValues.length === 0,
+  ok(oc.options.length === 1 && oc.options[0].group === 'Known harnesses' && !oc.options.some((o) => o.action) && oc.actionValues.length === 0,
     'v3.77.0 shape: one known tool, NO custom row (that server would refuse it)');
   ok(S.setupToolPickerCfg({ ...old(), addable: [] }).disabled === true, 'nothing to add: disabled');
   ok(S.setupToolPickerCfg(maint(), true).disabled === true && S.setupToolPickerCfg(maint(), true).triggerText === 'Adding…', 'while adding: disabled, "Adding…"');
@@ -390,7 +394,7 @@ section('§9  "+ Add a tool" — the shared listbox cfg, and custom tools');
   ok(S.CUSTOM_TOOL_RE.test('x'.repeat(40)) && !S.CUSTOM_TOOL_RE.test('x'.repeat(41)), 'the rule is 1–40 characters, the route\'s');
   const f = S.renderSetupBody({ data: maint() }, { customOpen: true, customError: 'Use letters…' });
   ok(/id="mem-setup-custom-input"/.test(f) && /data-setup-act="add-custom">Add</.test(f) && /role="alert">Use letters…</.test(f), 'the inline name field, Add, and a refusal under it');
-  ok(/<div class="mem-k-pick mem-setup-pick">PICKER<\/div>/.test(S.renderSetupBody({ data: maint() }, { pickerHtml: 'PICKER' })), 'the picker sits in step ③\'s picker row');
+  ok(/<div class="mem-k-pick mem-setup-pick">PICKER<span class="mem-setup-gloss">An agent harness is the app your agent runs in — Claude Code, Codex, Cursor, Antigravity…<\/span><\/div>/.test(S.renderSetupBody({ data: maint() }, { pickerHtml: 'PICKER' })), 'the picker sits in step ③\'s picker row');
 }
 
 section('§10 a tool\'s evidence, in the reader');
@@ -409,7 +413,7 @@ section('§10 a tool\'s evidence, in the reader');
     mcpSnippet: { format: 'json', text: '{"mcpServers":{"my-curator":{}}}' }, instructionFile: 'AGENTS.md' }] };
   const c = S.toolReaderContent(custom, 'my-harness').bodyHtml;
   ok(/<pre class="mem-setup-snippet"><code>\{&quot;mcpServers&quot;/.test(c) && /data-setup-act="copy-snippet" data-tool="my-harness">Copy MCP entry</.test(c), 'a custom tool: its MCP entry, "Copy MCP entry"');
-  ok(/reads AGENTS\.md/.test(c) && /data-setup-act="copy-block">Copy instructions</.test(c), '…the AGENTS.md hint with "Copy instructions"');
+  ok(/reads AGENTS\.md/.test(c) && /data-setup-act="copy-block">Copy agent instructions</.test(c), '…the AGENTS.md hint with "Copy agent instructions"');
   ok(/my-curator\.zip/.test(c) && /curator-continuity\.zip/.test(c), '…the skills .zip links');
   ok(/data-setup-act="remove-tool" data-tool="my-harness">Remove from this list</.test(c), '…and Remove (a v3.79.0 payload: a custom tool the owner added)');
   const dsh = { ...maint(), tools: [{ id: 'dsh', label: 'DeepSeek Harness', status: 'no-save', saved: { at: null }, mcpSnippet: { format: 'yaml', text: 'plugins:\n  - my-curator' } }] };
@@ -543,13 +547,16 @@ section('§15 every button is labelled with what it does — fixes[] in order (a
   const b0 = S.fixButtons(d.toFix[0], d.repo);
   const order = [...b0.matchAll(/data-setup-act="([a-z-]+)"/g)].map((m) => m[1]);
   ok(JSON.stringify(order) === '["copy-block","reveal","copy-command"]', 'block missing: Copy instructions · Reveal AGENTS.md · Copy the git command — in the payload\'s order', JSON.stringify(order));
-  ok(/>Copy instructions</.test(b0) && />Reveal AGENTS\.md</.test(b0) && />Copy the git command that commits and pushes it</.test(b0), '…each with the payload\'s own label', b0);
+  ok(/>Copy agent instructions</.test(b0) && />Reveal AGENTS\.md</.test(b0) && />Copy the git command that commits and pushes it</.test(b0), '…each with the payload\'s own label', b0);
   ok(/data-cmd="git add AGENTS\.md &amp;&amp; git commit -m &quot;Add The Curator instructions&quot; &amp;&amp; git push" data-cwd="~\/code\/ott"/.test(b0),
     'the git command rides escaped, with the folder to run it in (the toast names it)', b0);
   ok(/^<button type="button" class="btn btn-secondary btn-xs"/.test(b0) && (b0.match(/btn-ghost/g) || []).length === 2, 'the first button is the primary action; the rest are ghost');
   ok(S.fixButtons(d.toFix[1], d.repo) === '', 'wrong-scope with a current block: NO button at all (it clears on its own)');
   const n1 = notes(S.renderSetupBody({ data: d }, {}))[1];
-  ok(!/mem-setup-note-acts/.test(n1) && /not its own name “antigravity”/.test(n1), '…its note is words only, and says “its own name”, never “scope”', n1);
+  // v4.2: a page note about one harness carries ONE door, to that harness's
+  // steps (audit bug 4) — and still no fix button of its own.
+  ok(![...n1.matchAll(/data-setup-act="([a-z-]+)"/g)].some((m) => m[1] !== 'tool-open') && /data-setup-act="tool-open" data-tool="antigravity" data-step="save">Show its setup steps</.test(n1)
+    && /not its own name “antigravity”/.test(n1), '…its note is words only (and the door to its steps), and says “its own name”, never “scope”', n1);
   ok(!/\bscope\b/i.test(textOf(S.renderSetupBody({ data: d }, {})).replace(/data-[a-z-]+="[^"]*"/g, '')), 'no "scope" anywhere in the step\'s to-fix copy');
   const b2 = S.fixButtons(d.toFix[2], d.repo);
   ok(/data-setup-act="reveal" data-path="\/Users\/t\/\.gemini\/antigravity\/mcp_config\.json">Reveal file</.test(b2)
@@ -557,7 +564,7 @@ section('§15 every button is labelled with what it does — fixes[] in order (a
   'bridge-file: Reveal file · Re-check · Open Settings › MCP bridge (an older server\'s "Open Tools on this Mac" label is re-worded)', b2);
   ok(/data-setup-act="copy-snippet" data-tool="antigravity">Copy MCP entry</.test(S.fixButtons(d.toFix[3], d.repo)), 'copy-snippet: "Copy MCP entry", naming its tool');
   const b4 = S.fixButtons(d.toFix[4], d.repo);
-  ok(/<a class="btn btn-secondary btn-xs" href="\/api\/setup\/skills\/my-curator\.zip" download>Download my-curator\.zip<\/a>/.test(b4)
+  ok(/<a class="btn btn-secondary btn-xs" href="\/api\/setup\/skills\/my-curator\.zip" download>Get the new my-curator skill \(\.zip\)<\/a>/.test(b4)
     && !/curator-continuity/.test(b4) && />Reveal folder</.test(b4), 'a stale skill: ONLY its own .zip, and Reveal folder', b4);
   const evilDl = S.fixButtons({ fixes: [{ kind: 'download-skill', skill: 'x', href: 'https://evil.test/x.zip' }] }, null);
   ok(!/evil/.test(evilDl) && /href="\/api\/setup\/skills\/x\.zip"/.test(evilDl),
@@ -567,7 +574,7 @@ section('§15 every button is labelled with what it does — fixes[] in order (a
   ok(S.fixButtons({ fixes: [{ kind: 'mystery', label: 'Do it' }] }, null) === '', 'an unknown kind draws nothing rather than a dead button');
   // A v3.78.0 item: `fix` only, no labels — still every action it carried.
   const legacy = S.fixButtons({ tool: 'antigravity', file: 'AGENTS.md', fix: { kind: 'copy-block', reveal: 'AGENTS.md' } }, { path: '/Users/t/code/ott' });
-  ok(/>Copy instructions</.test(legacy) && /data-path="\/Users\/t\/code\/ott\/AGENTS\.md">Reveal AGENTS\.md</.test(legacy), 'v3.78.0 `fix`: Copy instructions and its Reveal', legacy);
+  ok(/>Copy agent instructions</.test(legacy) && /data-path="\/Users\/t\/code\/ott\/AGENTS\.md">Reveal AGENTS\.md</.test(legacy), 'v3.78.0 `fix`: Copy instructions and its Reveal', legacy);
   ok(S.fixListOf({ fix: { kind: 'sync' } }).length === 1 && S.fixListOf({ fixes: [] }).length === 0 && S.fixListOf(null).length === 0, 'fixListOf: fixes[] wins, even empty; `fix` is the fallback');
 }
 
@@ -609,12 +616,12 @@ section('§17 a Repository file, in the reader (contract §C)');
   ok(r && r.hideBacklinks === true && r.title === 'AGENTS.md' && r.returnFocusTo === 'mem-setup-file-AGENTS_md', 'the reader: titled by the file, no backlinks, focus returns to its row');
   ok(/cur-setup-st-ok">block current/.test(r.bodyHtml) && /data-travels="project-git"[\s\S]*?travels by project’s git/.test(r.bodyHtml), 'the head: the row\'s state and "travels by project’s git"');
   const frame = /<section class="mem-setup-frame"[\s\S]*?<\/section>/.exec(r.bodyHtml);
-  ok(!!frame && /The Curator instructions<\/span><span class="cur-setup-st cur-setup-st-ok">current/.test(frame[0])
-    && /data-setup-act="copy-block">Copy current instructions</.test(frame[0]), 'the block is FRAMED, with its state and "Copy current instructions"', frame && frame[0]);
+  ok(!!frame && /The agent instructions<\/span><span class="cur-setup-st cur-setup-st-ok">current/.test(frame[0])
+    && /data-setup-act="copy-block">Copy the current agent instructions</.test(frame[0]), 'the block is FRAMED, with its state and "Copy the current agent instructions"', frame && frame[0]);
   ok(!!frame && /## Working state/.test(frame[0]) && !/Intro\./.test(frame[0]) && !/npm test/.test(frame[0]), '…and the frame holds the block and nothing else');
   ok(r.bodyHtml.indexOf('Intro.') < r.bodyHtml.indexOf('mem-setup-frame') && r.bodyHtml.indexOf('npm test') > r.bodyHtml.lastIndexOf('</section>'), 'before · block · after, in order');
   ok((r.bodyHtml.match(/class="MD"/g) || []).length === 3, 'every piece goes through the renderer handed in (renderMarkdown in the app)');
-  ok(/data-setup-act="reveal" data-path="\/Users\/t\/code\/ott\/AGENTS\.md">Reveal AGENTS\.md</.test(r.bodyHtml) && /data-setup-act="copy-block">Copy instructions</.test(r.bodyHtml), 'Reveal and Copy instructions at the top');
+  ok(/data-setup-act="reveal" data-path="\/Users\/t\/code\/ott\/AGENTS\.md">Reveal AGENTS\.md</.test(r.bodyHtml) && /data-setup-act="copy-block">Copy agent instructions</.test(r.bodyHtml), 'Reveal and Copy agent instructions at the top');
   // The cap rule.
   const capAt = agentsText.indexOf('Call get_project_context');
   const rc = S.fileReaderContent(d, 'AGENTS.md', fileResp({ cap: { bytes: 60, tool: 'antigravity', at: capAt } }), { md });
@@ -626,16 +633,16 @@ section('§17 a Repository file, in the reader (contract §C)');
   ok(!/mem-setup-cap-rule/.test(short.bodyHtml) && /Antigravity reads the first 32,768 bytes; this file is shorter\./.test(short.bodyHtml), 'a file shorter than the cap: no rule, said in words');
   // Offsets past a truncated text are clamped.
   const tr = S.fileReaderContent(d, 'AGENTS.md', fileResp({ truncated: true, text: 'abc', block: { start: 900000, end: 900500, state: 'current' } }), { md });
-  ok(/Showing the first 256 KB of this file\./.test(tr.bodyHtml) && /The Curator instructions start past the part shown here\./.test(tr.bodyHtml) && !/mem-setup-frame"/.test(tr.bodyHtml),
+  ok(/Showing the first 256 KB of this file\./.test(tr.bodyHtml) && /The agent instructions start past the part shown here\./.test(tr.bodyHtml) && !/mem-setup-frame"/.test(tr.bodyHtml),
     'truncated with the block past the cut: said, no empty frame', tr.bodyHtml);
   // No block.
   const nb = S.fileReaderContent(d, 'AGENTS.md', fileResp({ block: null }), { md });
-  ok(/No Curator instructions in this file\./.test(nb.bodyHtml) && !/mem-setup-frame"/.test(nb.bodyHtml), 'no block: said, nothing framed');
+  ok(/No agent instructions in this file\./.test(nb.bodyHtml) && !/mem-setup-frame"/.test(nb.bodyHtml), 'no block: said, nothing framed');
   ok(/cur-setup-st-fix">outdated/.test(S.fileReaderContent(d, 'AGENTS.md', fileResp({ block: { start: bStart, end: bEnd, state: 'outdated' } }), { md }).bodyHtml), 'an outdated block: its frame says "outdated", inked to fix');
   // Missing file.
   const miss = S.fileReaderContent(d, 'AGENTS.md', { ok: true, name: 'AGENTS.md', exists: false, text: '', block: null }, { md });
-  ok(/Not in this folder/.test(miss.bodyHtml) && /Antigravity reads AGENTS\.md at the start of every session\. Create it at the top of ~\/code\/ott, paste the Curator instructions at its very top, then commit and push\./.test(miss.bodyHtml)
-    && /data-setup-act="copy-block">Copy instructions</.test(miss.bodyHtml), 'a missing file: what goes there, and Copy instructions', miss.bodyHtml);
+  ok(/Not in this folder/.test(miss.bodyHtml) && /Antigravity reads AGENTS\.md at the start of every session\. Create it at the top of ~\/code\/ott, paste the agent instructions at its very top, then commit and push\./.test(miss.bodyHtml)
+    && /data-setup-act="copy-block">Copy agent instructions</.test(miss.bodyHtml), 'a missing file: what goes there, and Copy agent instructions', miss.bodyHtml);
   const mk = S.fileReaderContent(d, '.curator-project', { ok: true, name: '.curator-project', exists: false, text: '' }, { md });
   ok(/holds one line — projects\/ott — so agents and hooks/.test(mk.bodyHtml) && /data-setup-act="copy-marker">Copy marker line</.test(mk.bodyHtml)
     && /data-path="\/Users\/t\/code\/ott">Reveal the folder</.test(mk.bodyHtml), 'a missing marker: its one line, Copy marker line, Reveal the folder');
@@ -689,7 +696,7 @@ section('§18 a computer, in the reader (contract §C)');
   ok(here.title === 'mac-a' && here.hideBacklinks === true && here.returnFocusTo === 'mem-setup-comp-0', 'titled by the computer, no backlinks, focus returns to its row');
   ok(/mem-setup-here">this computer/.test(here.bodyHtml) && /data-travels="personal-sync"[\s\S]*?travels by Personal Sync/.test(here.bodyHtml), 'the head: this computer, travels by Personal Sync');
   ok(/Mac app mac-a · <span class="cur-setup-mono">Curator 3\.79\.0<\/span>/.test(here.bodyHtml), 'installs, each with its Curator version', here.bodyHtml);
-  const saves = /Each tool’s newest save<\/h3><ul class="mem-setup-ev-lines">([\s\S]*?)<\/ul>/.exec(here.bodyHtml);
+  const saves = /Each harness’s newest save<\/h3><ul class="mem-setup-ev-lines">([\s\S]*?)<\/ul>/.exec(here.bodyHtml);
   ok(!!saves && (saves[1].match(/<li>/g) || []).length === 1 && /Claude Code<\/span> · /.test(saves[1]) && /saved under “claude-code”/.test(saves[1]) && /Curator 3\.79\.0/.test(saves[1]) && !/3\.78\.0/.test(saves[1]),
     'each tool\'s NEWEST save only — with its date, the name it saved under and its Curator version', saves && saves[1]);
   ok(/Last synced/.test(here.bodyHtml) && /1 file here not on GitHub yet, across all domains\./.test(here.bodyHtml) && /1 file waiting on GitHub for this Mac\./.test(here.bodyHtml)
@@ -786,7 +793,7 @@ section('§21 "+ Add a tool" is the composer\'s model menu: two-line rows, a sen
 {
   const cfg = S.setupToolPickerCfg({ ...maint(), addable: addable380() });
   ok(cfg.menuClass === 'lb-rich mr-menu' && cfg.minWidth === 360, 'the model menu\'s surface: `lb-rich mr-menu` (360–420 px), never full-bleed', JSON.stringify([cfg.menuClass, cfg.minWidth]));
-  ok(/^<p class="mr-foot">Adding an agent app only tells Setup to check it on this computer — you connect it yourself\.<\/p>$/.test(cfg.footHtml), 'the foot line, the model menu\'s `.mr-foot`', cfg.footHtml);
+  ok(/^<p class="mr-foot">Adds it to this list so Setup can guide you through it on this computer\. Claude Code and Antigravity are already on the list\.<\/p>$/.test(cfg.footHtml), 'the foot line, the model menu\'s `.mr-foot`: what adding does, and who is already listed (v4.2)', cfg.footHtml);
   const row = (v) => cfg.options.find((o) => o.value === v);
   ok(cfg.options.every((o) => typeof o.html === 'string' && o.html.startsWith('<span class="mr-body">')), 'every row owns its body: the model row\'s `.mr-body`');
   ok(/<span class="mr-title">OpenAI Codex CLI<\/span><span class="mr-meta">reads AGENTS\.md<span class="mr-sep" aria-hidden="true"> · <\/span>MCP config in ~\/\.codex<\/span>/.test(row('codex').html),
@@ -802,8 +809,8 @@ section('§21 "+ Add a tool" is the composer\'s model menu: two-line rows, a sen
     'no row lists alternatives ("… or …") or a config FILE deeper than home (the reader names the file)', texts.join(' | '));
   ok(texts.every((t) => t.length <= 90), 'every row is short (≤ 90 characters of text)', texts.map((t) => t.length).join(','));
   const last = cfg.options[cfg.options.length - 1];
-  ok(last.value === S.CUSTOM_TOOL_VALUE && last.group === 'Other' && last.action === true && /mr-title">Custom tool…</.test(last.html),
-    '"Other › Custom tool…" is still the last row, an action row');
+  ok(last.value === S.CUSTOM_TOOL_VALUE && last.group === 'Other' && last.action === true && /mr-title">Another harness…</.test(last.html),
+    '"Other › Another harness…" is still the last row, an action row');
   const evil = S.setupToolPickerCfg({ ...maint(), addable: [{ id: 'x', label: '<img src=x>', group: 'known', reads: ['<b>'], configPaths: ['~/<i>/c.json'] }] });
   ok(!/<img|<b>|<i>/.test(evil.options[0].html) && /&lt;img/.test(evil.options[0].html), 'payload text is escaped in the row', evil.options[0].html);
   ok(S.shortConfigPlace('~/.codex/config.toml') === '~/.codex' && S.shortConfigPlace('~/.claude.json') === '~/.claude.json'
@@ -826,7 +833,7 @@ section('§22 Remove — where it would take the row away, and why a saved tool 
   const ws = windsurf380();
   const d = { ...maint(), tools: [maint().tools[0], ws], addedTools: ['windsurf'] };
   const tools = foldNamed(S.renderSetupBody({ data: d }, { openFolds: ALL_OPEN }), 'setup-tools').body;
-  const rows = tools.split('<tr class="mem-ws-row">').slice(1);
+  const rows = tools.split('<tr class="mem-ws-row mem-setup-row"').slice(1);
   const rowOf = (id) => rows.find((r) => r.includes('data-tool="' + id + '"')) || '';
   ok(/<button type="button" class="row-act mem-setup-del" id="mem-setup-del-windsurf" data-setup-act="remove-tool" data-tool="windsurf" aria-label="Remove Windsurf \/ Devin Desktop from this computer’s list"><svg/.test(rowOf('windsurf')),
     'the removable row carries the Handoffs row\'s trash (`.row-act`, a named aria-label)', rowOf('windsurf').slice(-600));
@@ -901,7 +908,10 @@ section('§23 a tool that is not ready opens on its numbered SETUP GUIDE');
   const verifiedNoSkills = S.toolGuideSteps({ ...ag, skillsTarget: { path: null, verified: true } }, agd).steps[1];
   ok(verifiedNoSkills.state === 'skip' && /has no skills support — skip this step/.test(verifiedNoSkills.html) && !verifiedNoSkills.doors, 'a tool known to have no skills: skip, no downloads');
   const ready = { ...maint().tools[0], status: 'ready' };
-  ok(!/mem-setup-guide/.test(S.toolReaderContent({ ...maint(), tools: [ready] }, 'claude-code').bodyHtml), 'a READY tool opens on its evidence, no guide');
+  // v4.2: one layout for every harness — a ready one opens on the same guide,
+  // its steps done, with the evidence behind "What Setup read".
+  const rb = S.toolReaderContent({ ...maint(), tools: [ready] }, 'claude-code').bodyHtml;
+  ok(/mem-setup-guide/.test(rb) && /What Setup read/.test(rb), 'a READY harness opens on the same guide, the evidence behind "What Setup read"');
   const sv = S.toolGuideSteps({ ...ag, saved: { state: 'ok', at: iso(60e3), thisMachine: true, scope: 'antigravity', wrongScope: false } }, agd).steps[3];
   ok(sv.state === 'done' && /data-age-at=/.test(sv.html), 'saved from here under its own name: step 4 done, with the age');
   const elsewhere = S.toolGuideSteps({ ...ag, saved: { state: 'ok', at: iso(60e3), thisMachine: false, machine: 'mac-b', scope: 'antigravity' } }, agd).steps[3];
@@ -913,8 +923,8 @@ section('§23 a tool that is not ready opens on its numbered SETUP GUIDE');
 section('§24 the Tools fold says what "ready" takes, in one sentence');
 {
   const tools = foldNamed(S.renderSetupBody({ data: maint() }, { openFolds: ALL_OPEN }), 'setup-tools').body;
-  ok(tools.includes(S.TOOLS_COUNT_LINE) && /press one for its setup steps\.$/.test(S.TOOLS_COUNT_LINE) && (S.TOOLS_COUNT_LINE.match(/\./g) || []).length === 1,
-    'the count line: one sentence, ending "press one for its setup steps"');
+  ok(tools.includes(S.TOOLS_COUNT_LINE) && /press a row for its setup steps\.$/.test(S.TOOLS_COUNT_LINE) && (S.TOOLS_COUNT_LINE.match(/\./g) || []).length === 1,
+    'the count line: one sentence, ending "press a row for its setup steps"');
   ok(tools.includes(S.TRAVELS_LINES['setup-tools']), '…beside the fold\'s own travels line');
 }
 

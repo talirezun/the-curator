@@ -679,11 +679,9 @@
   font-family: inherit;
   font-size: var(--text-xs);
   text-align: left;
-  /* `cursor: default` with `user-select: none` — the kit's rule for chrome, and
-     scripts/test-next-views-kit.js pairs them: a control that shows an I-beam
-     and drag-selects its own label reads as text rather than as a row you can
-     press. */
-  cursor: default;
+  /* v4.2 (owner, 2026-11-26): a control that opens something shows the hand;
+     `user-select: none` stays, so it never drag-selects its own label. */
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -934,7 +932,7 @@
   color: var(--accent);
   width: 100%;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1210,7 +1208,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 11px 14px;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   list-style: none;
@@ -1653,7 +1651,7 @@
   /* The kit's chrome pair (scripts/test-next-views-kit.js checks they travel
      together): a control that shows an I-beam and drag-selects its own label
      reads as text rather than as a row you can press. */
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -1696,7 +1694,7 @@
   font: inherit;
   color: inherit;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   text-decoration: underline dotted;
   text-underline-offset: 3px;
@@ -2452,7 +2450,7 @@
   height: 100%;
   margin: 0;
   opacity: 0;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
 }
 .mem-pl-opt > span {
@@ -2936,3 +2934,119 @@
 /* A to-fix line inside its step: step ④'s two-line note, without the card. */
 .mem-setup-gfix { display: flex; align-items: flex-start; gap: var(--space-4); color: var(--text); }
 .mem-setup-gfix > svg { flex: none; margin-top: 3px; color: var(--attention-text); }
+
+/* ── v4.2 — STEP 5, BOTH MODES (Pro off: one row per harness; Pro on: today's
+   folds with the audit's bugs fixed). Built from this page's parts: the
+   Handoffs row's hover (`--mat-row-hover`) and press, the freshness dot, the
+   Setup check's state word with its dot (shared/setup-check.css), step ③'s
+   door row. A row that OPENS something shows the hand (owner decision,
+   2026-11-26: CONTRACT-pro-context-v1 "Cursor"). ─────────────────────────── */
+.mem-setup-row { cursor: pointer; }
+.mem-setup-row .mem-ws-open { cursor: pointer; }
+/* "Open setup steps" under a Pro row's status: the way back to the steps. */
+.mem-setup-row-door { display: block; margin-top: var(--space-2); }
+.mem-setup-row-door .btn { margin-left: calc(-1 * var(--space-3)); }
+/* Audit bug 7: the Setup tables no longer need 1200 px. Every cell may wrap;
+   the parts wrap inside their cell; the name keeps one line. */
+.mem-setup-table .mem-setup-cell-parts { min-width: 0; }
+.mem-setup-table td { white-space: normal; }
+.mem-setup-table .mem-setup-cell-status { white-space: normal; }
+/* Audit bug 8: a note's sentence keeps a readable measure; its buttons drop
+   under it rather than squeezing it into a 290 px column. */
+.mem-ss-stack > .mem-setup-note > .mem-setup-note-text,
+.mem-setup-reader > .mem-setup-note > .mem-setup-note-text { flex: 1 1 min(26rem, calc(100% - 24px)); }
+.mem-ss-stack > .mem-setup-note > .mem-setup-note-acts,
+.mem-setup-reader > .mem-setup-note > .mem-setup-note-acts { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; }
+/* …and on a column too narrow for the table (the Context column is ~400 px
+   at a 1100 px window), each row stacks: the name on its own line, its
+   facts and its controls wrapping under it — Remove and "Open setup steps"
+   never scroll out of view. The header row is kept for screen readers. */
+.mem-setup-wrap { container-type: inline-size; }
+@container (max-width: 600px) {
+  .mem-setup-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .mem-setup-table, .mem-setup-table tbody { display: block; }
+  .mem-setup-table tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); box-sizing: border-box; width: 100%;
+    padding: var(--space-3) var(--space-3) var(--space-3) 10px;
+    border-bottom: var(--hairline-w) solid var(--hairline);
+  }
+  .mem-setup-table td { display: block; padding: 0; border: none; }
+  .mem-setup-table td.mem-ws-cell-name { flex: 1 1 100%; padding-left: 0; }
+  .mem-setup-table td.mem-ws-cell-act { margin-left: auto; width: auto; padding-right: 0; }
+}
+/* Audit bug 9: the MCP entry wraps inside the reader instead of running off it. */
+.mem-setup-snippet { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The harness list (Pro off): a list of rows, each one control. */
+.mem-hr-list {
+  list-style: none; margin: 0; padding: 0;
+  border-top: var(--hairline-w) solid var(--hairline);
+  container-type: inline-size;
+}
+.mem-hr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "name status act chev" "lines lines lines lines";
+  align-items: center;
+  column-gap: var(--space-5);
+  padding: var(--space-3) var(--space-4) var(--space-4) 10px;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  transition: background var(--t-state), transform var(--t-press);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mem-hr:hover { background: var(--mat-row-hover); }
+.mem-hr:active { transform: translateX(var(--press-shift)); }
+.mem-hr-open {
+  grid-area: name;
+  display: flex; align-items: center; gap: var(--space-4);
+  min-height: var(--hit-min); min-width: 0;
+  padding: 0; border: none; background: transparent; color: var(--text);
+  font-family: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); text-align: left;
+  cursor: pointer;
+}
+.mem-hr-open:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+.mem-hr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-hr-status { grid-area: status; }
+.mem-hr-act { grid-area: act; display: flex; align-items: center; }
+.mem-hr-chev { grid-area: chev; display: flex; color: var(--text-2); }
+.mem-hr-lines {
+  grid-area: lines;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding-left: calc(8px + var(--space-4));
+  font-size: var(--text-xs); color: var(--text-2);
+}
+.mem-hr-fix { color: var(--text); }
+.mem-hr-sub { color: var(--text-2); }
+/* On a narrow column the action drops under the lines instead of crushing the name. */
+@container (max-width: 560px) {
+  .mem-hr { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name status chev" "lines lines lines" "act act act"; }
+  .mem-hr-act { padding-left: calc(8px + var(--space-4)); margin-top: var(--space-3); }
+}
+@media (prefers-reduced-motion: reduce) { .mem-hr:active { transform: none; } }
+
+/* "+ Add an agent harness" and the gloss beside it (the word's first use on
+   the step: "the app your agent runs in — Claude Code, Codex, Cursor…"). */
+.mem-setup-pick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); }
+.mem-setup-gloss { font-size: var(--text-xs); color: var(--text-2); }
+
+/* The three travel routes, said once at the foot of the step (Pro off). */
+.mem-setup-route { margin: 0; font-size: var(--text-xs); line-height: 1.7; color: var(--text-2); }
+/* Each glyph rides with the words after it: a sentence that wraps, never a
+   glyph left alone at a line's end. */
+.mem-setup-route-item { white-space: normal; }
+.mem-setup-route-glyph { display: inline-block; vertical-align: -2px; margin-right: var(--space-2); color: var(--text-2); }
+.mem-setup-route-item + .mem-setup-route-item::before { content: " · "; }
+.mem-setup-route .btn { margin-left: var(--space-3); vertical-align: baseline; }
+
+/* A guide step's "how often": the route a step travels by, in words. */
+.mem-setup-gwhen { font-size: var(--text-2xs); color: var(--text-2); }
+/* "What Setup read" in a harness's reader: one fold, its sections inside. */
+.mem-setup-evbody { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-4) var(--space-5) var(--space-5); }
+
+/* The "More in Pro" door (shared/pro.js's markup) wraps on a narrow column
+   instead of running past it. */
+.mem-ss-stack [data-pro-more] { white-space: normal; text-align: left; height: auto; min-height: var(--hit-min); }
+/* Step ④, Pro off: the door to the full reading, under the compact monitor. */
+.mem-ss-full-doors { margin-top: calc(-1 * var(--space-3)); }

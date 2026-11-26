@@ -248,6 +248,9 @@ import * as FA from '../src/public/next/shared/foundations-add.js';
 import * as FSRC from '../src/public/next/shared/foundations-sources.js';
 // v3.77.0 — step 5 "Setup": the REAL DOM-free builders, injected.
 import * as SETUP_STEP from '../src/public/next/views/setup-step.js';
+// v4.2: the real Pro module (see v367Lift).
+import * as PRO_MOD from '../src/public/next/shared/pro.js';
+globalThis.__ctxProMod = PRO_MOD;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -1272,9 +1275,20 @@ const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml
   // v3.70.1: the "Documents at start" planner, composed into step ④.
   'plannerFor', 'plannerRows', 'plannerBody', 'plannerPreviewFor', 'plannerCountsWord', 'plannerFoldHtml',
   // v3.72.1: the window-default read (F4) and the plan's input signature (F6).
-  'contextWindowIsDefault', 'planInputSig', 'refreshPlanEstimateIfStale'];
+  'contextWindowIsDefault', 'planInputSig', 'refreshPlanEstimateIfStale',
+  // v4.2: the per-transport figures, one builder for Pro's fold and the simple view's reader.
+  'sessionReachMonitor'];
 function v367Lift() {
   return V367_CONSTS.map((n) => constDecl(viewSrc, n)).join('\n') + '\n'
+    // v4.2 — THE PRO SWITCH. memory.js imports isPro/moreInProLine from
+    // shared/pro.js; a lifted body sees neither, so they are bound here: the
+    // REAL door (shared/pro.js is DOM-free at import) and a mode this suite
+    // sets. Pro ON is this suite's default, because what it pins is today's
+    // step 4 (the full monitor, the reach fold); the simple view is
+    // scripts/test-context-setup-modes.js's.
+    + 'const isPro = () => globalThis.__ctxPro !== false;\n'
+    + 'const moreInProLine = globalThis.__ctxProMod.moreInProLine;\n'
+    + extractFunction(viewSrc, 'sessionReachMonitor', 'memory.js') + '\n'
     // Named one by one rather than mapped over V367_FNS, for §17's census: it
     // reads this file for real extractFunction calls, so a name in a list is
     // not proof that the function was lifted.
@@ -4232,7 +4246,7 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
   const log = { scheduled: [], stopped: 0, gateCancelled: 0, closedListboxes: 0, renders: [], loadIndex: 0, refresh: 0,
     // The age clock: every arm, every disarm, and the callback it was armed
     // with, so "armed" can be distinguished from "armed with the right thing".
-    intervalsArmed: [], intervalsCleared: [], ticks: 0 };
+    intervalsArmed: [], intervalsCleared: [], ticks: 0, pro: { subscribed: 0, unsubscribed: 0 } };
   const listeners = { window: [], document: [] };
   const mkTarget = (bucket) => ({
     addEventListener: (type, fn) => bucket.push({ type, fn }),
@@ -4247,6 +4261,12 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
 
   const body =
     'let state, myMountToken, loadGate, wakeHandler, ageTimer = null;\n' +
+    // v4.2: the Pro switch subscription — the REAL onProChange's shape: it
+    // hands back an unsubscribe, and teardown must call it (checked below).
+    'let offPro = null, proDoorListener = null, proDoorPressed = null;\n' +
+    'const SETUP_JUMP = \'context-setup\';\n' +
+    'const onProChange = (cb) => { __proLog.subscribed++; return () => { __proLog.unsubscribed++; }; };\n' +
+    'const patchSessionStart = () => {}; const patchSetup = () => {};\n' +
     'const __view = {' + liftOnEnter() + '};\n' +
     'return { onEnter: __view.onEnter, wake: () => wakeHandler, token: () => myMountToken,' +
     '         timer: () => ageTimer };';
@@ -4268,7 +4288,7 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     // v3.67.0: the helper's cost gate is a view-owned overlay, closed on teardown.
     'closeConfirmIfOpen',
     // v3.72.1: wake re-asks the two cached readings too (truth audit F2/F5).
-    'revalidateReadings', body)(
+    'revalidateReadings', '__proLog', body)(
     () => ({ loading: true }),
     () => ({ begin: () => {}, cancel: () => { log.gateCancelled++; } }),
     () => mounted,
@@ -4288,7 +4308,8 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     noIntervals ? undefined : ((fn, ms) => { log.intervalsArmed.push({ fn, ms, id: nextHandle }); return nextHandle++; }),
     (id) => { log.intervalsCleared.push(id); },
     () => { log.closedConfirms = (log.closedConfirms || 0) + 1; },
-    (t) => { log.readings = (log.readings || 0) + 1; log.readingsToken = t; });
+    (t) => { log.readings = (log.readings || 0) + 1; log.readingsToken = t; },
+    log.pro);
 
   return { ...api, log, listeners, tickSpy,
     setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
@@ -4297,6 +4318,13 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
 {
   const m = mountView();
   const teardown = m.onEnter(7);
+  // v4.2: the Pro switch is subscribed once per mount, and released on teardown.
+  eq('mount: the Pro switch is listened to once', m.log.pro.subscribed, 1);
+  if (typeof teardown === 'function') {
+    const probe = mountView();
+    probe.onEnter(8)();
+    eq('teardown: the Pro switch listener is released', probe.log.pro.unsubscribed, 1);
+  }
 
   // ── The mount half ──
   eq('mount: the first paint happens with the mount token', m.log.renders[0], 7);
@@ -11863,8 +11891,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...each after the ⓘ, each with its visible label',
       !!head && head[1].indexOf('tx-vh-info') < head[1].indexOf('mem-window-lb')
       && /mem-ss-ctl-label[^>]*>Window</.test(head[1]) && /id="mem-ss-budget-label">Reading budget<\/span>/.test(head[1])
-      // v3.79.0 (contract §D): "Harness" is "Your tool’s share".
-      && /mem-ss-ctl-label[^>]*>Your tool’s share</.test(head[1]) && !/>Harness</.test(head[1]), head ? head[1] : waiting);
+      // v3.79.0 (contract §D): "Harness" is "Your tool’s share". v4.2: "Your harness’s share".
+      && /mem-ss-ctl-label[^>]*>Your harness’s share</.test(head[1]) && !/>Harness</.test(head[1]), head ? head[1] : waiting);
     const budgetStub = (h) => { const m = /id="mem-budget-lb" data-lb-stub="([^"]*)"/.exec(h);
       return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null; };
     ok('...the budget picker waits for the ROUTE\'s presets: disabled, no rows, before they land',
@@ -11892,7 +11920,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     // v3.79.0 (contract §D): the note under the picker, ALWAYS — what the
     // figure is for and what it is not; where it comes from is Exact…'s hint.
     ok('...and the note says The Curator cannot measure it, it only changes the meter, nothing is sent',
-      /id="mem-ss-harness-hint">Your tool’s share: The Curator can’t measure this\. It only changes the meter; nothing is sent\.</.test(html));
+      /id="mem-ss-harness-hint">Your harness’s share — what the app your agent runs in \(Claude Code, Codex, Cursor…\) puts in the window itself: The Curator can’t measure this\. It only changes the meter; nothing is sent\.</.test(html));
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
       /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
     ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
@@ -11915,7 +11943,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const keys = [...html.matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g)].map((m) => m[1]);
     eq('the monitor reads every layer, then the window it lands in, then what stays outside',
       keys.join('|'), 'standing brief|latest handoff|journal|document list|read first|'
-        + 'other document text|framing|session start|your tool’s share|free at start|left out, by name|domain pages|'
+        + 'other document text|framing|session start|your harness’s share|free at start|left out, by name|domain pages|'
         + 'MCP get_project_context|session-start hook|Chat');
     ok('the brief is TOKENS first, bytes as the hint, its bar against the 32 KB brief budget, NAMED',
       /standing brief<\/span><span class="cur-mon-value">[\s\S]*?cur-depth-value">≈0\.2k<\/span><span class="visually-hidden"> 796 bytes of the 32 KB brief budget/.test(html)
@@ -11928,9 +11956,9 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...the session start is a SHARE of the window (never danger), named, with its replies',
       /session start<\/span>[\s\S]*?≈13\.2k · 6\.6%[\s\S]*?≈13\.2k tokens of a 200K-token window[\s\S]*?51\.7 KB · measured · 1 MCP reply/.test(html), html);
     ok('...the harness is its own line, "not set" — never summed into the start',
-      /your tool’s share<\/span><span class="cur-mon-value">not set/.test(html));
+      /your harness’s share<\/span><span class="cur-mon-value">not set/.test(html));
     ok('...and free at start is the window less the MEASURED start (the harness unknown)',
-      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window \(default\), before your tool’s share/.test(html), html);
+      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window \(default\), before your harness’s share/.test(html), html);
     ok('...and no line is danger-toned on a start that is within every budget',
       !/cur-depth-danger|cur-mon-tone-danger/.test(html), html);
     // THIS COMPUTER's window and harness change the drawing and nothing the project stores.
@@ -11938,7 +11966,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       harnessEstimateTokens: 120000, choices: [200000, 400000, 1000000] } })).renderSessionStart(st.projectRead);
     ok('1M + a 120k harness: the share, the words and the harness line follow the SETTINGS',
       /≈13\.2k tokens · 51\.7 KB · 1\.3% of 1M/.test(big)
-      && /your tool’s share<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">its own prompt, tools and files, such as CLAUDE\.md or AGENTS\.md · your estimate</.test(big)
+      && /your harness’s share<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">its own prompt, tools and files, such as CLAUDE\.md or AGENTS\.md · your estimate</.test(big)
       && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
     ok('...the note stays once an estimate is set (it says what the figure is for, not that it is missing)', /mem-ss-harness-hint/.test(big));
     ok('...and nowhere does the step call the estimate "measured"',
@@ -11960,7 +11988,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         ds && ds.label === 'Context window: 200K tokens, the default — not set on this computer', JSON.stringify(ds));
       ok('F4: ...no option is marked chosen, because nobody chose one', ds && ds.value === null, JSON.stringify(ds));
       ok('F4: ...and the meter says "(default)" wherever it names the window',
-        /of a 200K-token window \(default\), before your tool’s share/.test(dflt)
+        /of a 200K-token window \(default\), before your harness’s share/.test(dflt)
         && /% of 200K \(default\)<\/span>/.test(dflt), dflt.slice(0, 400));
       const set = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 200000,
         contextWindowSet: true, harnessEstimateTokens: null, choices: [200000, 400000, 1000000] } }))
@@ -12189,13 +12217,13 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const hs = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 1000000, harnessEstimateTokens: 37000 } }))
       .harnessPickerCfg(false);
     ok('...an exact figure is labelled YOUR ESTIMATE on the trigger', hs.value === null
-      && hs.triggerText === '≈37k · estimate' && /your estimate/.test(hs.ariaLabel) && /^Your tool’s share:/.test(hs.ariaLabel), JSON.stringify(hs));
+      && hs.triggerText === '≈37k · estimate' && /your estimate/.test(hs.ariaLabel) && /^Your harness’s share:/.test(hs.ariaLabel), JSON.stringify(hs));
     // THE INLINE EDITOR
     const ed = makeRenderers(baseSt({ ctxEdit: { kind: 'harness', text: '<b>' } })).ctxEditHtml();
     ok('Exact… opens an inline number field with Save and Cancel, the /context hint, the draft escaped',
       /id="mem-ss-edit-input"/.test(ed) && /id="mem-ss-edit-save">Save</.test(ed)
       && /id="mem-ss-edit-cancel">Cancel</.test(ed) && /In Claude Code, \/context lists/.test(ed)
-      && /Your tool’s share, in tokens/.test(ed) && /nothing is sent/.test(ed)
+      && /Your harness’s share, in tokens/.test(ed) && /nothing is sent/.test(ed)
       && /value="&lt;b&gt;"/.test(ed), ed);
     eq('...and nothing when no edit is open', makeRenderers(baseSt()).ctxEditHtml(), '');
   }
@@ -12437,6 +12465,69 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const stale = { ...withPrev, sessionPreview: { ...withPrev.sessionPreview, key: '{"plan":{}}' } };
     ok('...and never a preview measured for a DIFFERENT set of ticks',
       !/if applied/.test(makeRenderers(stale).renderSessionStart(stale.projectRead)));
+
+    // ── v4.2 — STEP ④ IN BOTH MODES (Pro off: the compact step) ───────────
+    // The same reading, rendered with Pro on and off. Pro may only REVEAL:
+    // every notice (cost, over budget, same-for-every-budget, index only) and
+    // the pending "if applied" figure Pro shows is on screen with Pro off too,
+    // unfolded. Pro off: the head holds the reading budget only, the monitor
+    // is four lines, the rest is one press away in the reader, and the step
+    // ends with the quiet "More in Pro" door.
+    {
+      const both = (s) => {
+        globalThis.__ctxPro = true;
+        const pro = makeRenderers(s).renderSessionStart(s.projectRead);
+        globalThis.__ctxPro = false;
+        const simple = makeRenderers(s).renderSessionStart(s.projectRead);
+        globalThis.__ctxPro = true;
+        return { pro, simple };
+      };
+      const NOTICE = /id="(mem-ss-(?:cost|over|same|index-only|budget-error|ctx-error))"/g;
+      const ids = (h) => [...h.matchAll(NOTICE)].map((m) => m[1]);
+      const overRead = { scopes: [], brief: { present: false }, readingBudgetBytes: 65536,
+        foundations: fndPayload([fndDoc({ readFirst: true, bytes: 154624 })], { readFirstCount: 1, readFirstBytes: 154624 }) };
+      const overData = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
+        budget: { bytes: 65536, tokens: 16384, source: 'owner', defaulted: false, ownerBytes: 65536,
+          preset: 'standard', custom: false, nearest: null, cap: 819200, capTokens: 204800, replyCapBytes: 307200 },
+        tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 },
+          readFirst: { bytes: 59392, count: 1, budgetBytes: 65536, exceeded: true } },
+        bytes: { mcp: 150000, hook: 90000 }, replies: 2 });
+      const arms = [
+        ['the untouched project (the cost line)', withSS(ssData())],
+        ['a pending suggestion (if applied)', withPrev],
+        ['over the reading budget', withSS(overData, { projectRead: overRead })],
+        ['a read-only mirror', withSS(ssData(), { detail: { readonly: true } })],
+      ];
+      for (const [name, s] of arms) {
+        const { pro, simple } = both(s);
+        const lost = ids(pro).filter((x) => !ids(simple).includes(x));
+        ok('v4.2 ④ ' + name + ': every notice Pro shows is on screen with Pro off', lost.length === 0 && ids(pro).length > 0 === ids(simple).length > 0, JSON.stringify({ pro: ids(pro), simple: ids(simple) }));
+        const firstFold = simple.indexOf('<details');
+        ok('v4.2 ④ ' + name + ': ...unfolded (before any chevron)', ids(simple).every((x) => firstFold < 0 || simple.indexOf('id="' + x + '"') < firstFold));
+        const ifa = /if applied<\/span><span class="cur-mon-value">([^<]*)</.exec(pro);
+        ok('v4.2 ④ ' + name + ': the "if applied" figure Pro shows is in the compact monitor too',
+          !ifa || simple.includes('if applied: ' + ifa[1]), ifa ? ifa[1] : 'none');
+        const keys = [...((/id="mem-ss-monitor-compact"[\s\S]*$/.exec(simple) || [''])[0].matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g))].map((m) => m[1]);
+        eq('v4.2 ④ ' + name + ': Pro off, the monitor is FOUR lines', keys.join('|'), 'standing brief|latest handoff|read first|session start');
+        ok('v4.2 ④ ' + name + ': ...no full monitor and no reach fold on the page (they are in the reader)',
+          !/id="mem-ss-monitor"/.test(simple) && !/data-mem-fold="receives"/.test(simple) && !/data-mem-fold="reach"/.test(simple)
+          && /id="mem-ss-full">What an agent receives, in full ›<\/button>/.test(simple));
+        ok('v4.2 ④ ' + name + ': ...the head holds the reading budget only',
+          !/id="mem-window-lb"/.test(simple) && !/id="mem-harness-lb"/.test(simple) && /mem-ss-budget-label/.test(simple));
+        ok('v4.2 ④ ' + name + ': ...and the step ENDS with the one "More in Pro" door, naming what is behind it',
+          /data-pro-more>More in Pro: the window and harness estimates, everything an agent receives, how it reaches it ›<\/button><\/p><\/div><\/div><\/div>$/.test(simple)
+          && (simple.match(/data-pro-more/g) || []).length === 1, simple.slice(-300));
+        ok('v4.2 ④ ' + name + ': Pro on is today\'s step: three pickers, the full monitor, the reach fold, no door',
+          /id="mem-window-lb"/.test(pro) && /id="mem-harness-lb"/.test(pro) && /id="mem-ss-monitor"/.test(pro)
+          && /data-mem-fold="reach"/.test(pro) && !/data-pro-more/.test(pro) && !/id="mem-ss-full"/.test(pro));
+      }
+      // The compact lines are TOKENS: the bytes stay in the full form.
+      const { simple } = both(withSS(ssData()));
+      const compact = (/id="mem-ss-monitor-compact"[\s\S]*$/.exec(simple) || [''])[0];
+      ok('v4.2 ④ the compact monitor carries no byte figures, and the start line says what is free',
+        !/\b\d[\d.,]*\s*(?:bytes|KB)\b/.test(compact.replace(/<span class="visually-hidden">[^<]*<\/span>/g, ''))
+        && /of a 200K-token window \(default\) · ≈187k free/.test(compact), compact.slice(0, 1200));
+    }
   }
 
   // ── §25e — Apply: the budget first, then one PATCH per ticked row ─────
@@ -12929,7 +13020,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       eq('a harness choice is ONE PUT to the settings route with ONE field', seen.join(),
         '/api/config/context-window PUT {"harnessEstimateTokens":120000}');
       ok('...the confirmation is a TOAST ("set for this computer"), the editor closes',
-        calls.toasts.length === 1 && calls.toasts[0].title === 'Your tool’s share set to ≈120k tokens'
+        calls.toasts.length === 1 && calls.toasts[0].title === 'Your harness’s share set to ≈120k tokens'
         && /For this computer/.test(calls.toasts[0].lines[0]) && st.ctxEdit === null && !st.ctxError,
         JSON.stringify(calls.toasts));
       ok('...and the measurement is asked for again, so the route\'s own window/harness agree',
@@ -13308,6 +13399,8 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 const EXECUTED = new Set([
   // v3.77.0 — step 5, composed into the page by renderProject (makeRenderers).
   'setupFor', 'renderSetupStep',
+  // v4.2: the per-transport monitor, drawn by renderSessionStart's Pro fold (v367Lift).
+  'sessionReachMonitor',
   // v3.74.0 — the replaced handoff (previous.md): its line, its reader
   // payload, the reader wrapper that binds it and the press that fetches it.
   'previousHandoffHtml', 'previousReaderContent', 'openHandoffReader', 'openPreviousHandoff',
@@ -13485,6 +13578,10 @@ const EXECUTED = new Set([
 // NOT executed, each with the reason it is not — so the gap is a decision on
 // the record rather than an omission nobody noticed.
 const NOT_EXECUTED = {
+  // v4.2 — the simple step 4's reader and step 5's in-place repaint.
+  sessionFullReaderContent: 'composes sessionReceivesMonitor + sessionReachMonitor (both executed here) into a reader payload over module state; its output is rendered in the headless browser pass (build-shots/K)',
+  openSessionFullReader: 'openReader wrapper with an epoch, DOM-only; driven in the browser pass',
+  patchSetupBlockOnly: 'a three-line guard around patchSetup (DOM patch) that suspends the open-reader follow-up; browser pass',
   // v3.77.0 — step 5's glue. The words and markup are views/setup-step.js,
   // imported and EXECUTED by scripts/test-next-setup-step.js; the route is
   // executed by scripts/test-setup-routes.js; these five only fetch, patch
