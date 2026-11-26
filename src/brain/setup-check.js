@@ -33,7 +33,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
-  MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates, skillRootsFor,
+  MCP_SERVER_NAME, adapterFor, displayTemplate, listHarnesses, resolveTemplates, skillRootsFor,
 } from './harness-adapters.js';
 import { normaliseHarness } from './harness-names.js';
 import { gitInvocation } from './subprocess-env.js';
@@ -1020,6 +1020,11 @@ export function collectMachineSetup(o = {}) {
     else if (!roots.length) skills = { state: STATES.CANT, word: 'can’t check here', note: 'no known skill folder for this agent harness' };
     else skills = { state: STATES.NONE, word: 'not installed' };
     skills.roots = roots;
+    // v4.2 (audit bug 11): a harness whose skills folder sits in the PROJECT
+    // (OpenCode's `.agents/`) was reported as "Looked in: ~/.claude" while its
+    // step said ".agents/skills/" — the project root is not looked in until the
+    // project's folder is set, so the evidence says which folder it skipped.
+    skills.notLookedIn = repo ? [] : (a?.skillsTree?.roots || []).filter((r) => r && r.base === 'project').map(displayTemplate);
     skills.installed = installed;
 
     // Hooks
@@ -1266,7 +1271,8 @@ export function collectProjectSetup(o) {
         if (!reveal) reveal = sk.dir;
       }
       if (!m?.skills?.installed?.length && m?.skills?.roots?.length) lines.push(`Looked in: ${m.skills.roots.map((r) => tildeUnder(o.home || '', r)).join(', ')}.`);
-      if (!a) lines.push('Where this agent harness keeps skills is not known; download the skill .zip files and install them the way the app documents.');
+      if (!m?.skills?.installed?.length && m?.skills?.notLookedIn?.length) lines.push(`Not looked in yet: ${m.skills.notLookedIn.join(', ')} in the project’s folder — set the folder so Setup can check it.`);
+      if (!a) lines.push('Where this agent harness keeps skills is not known; download the skill .zip files and install them the way the harness documents.');
       evidence.push({ heading: 'Skills', lines, ...(reveal ? { reveal } : {}) });
     }
 

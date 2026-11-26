@@ -391,6 +391,31 @@ section('§9  the project view');
   ok(S.incomingMachine('projects/state/main/mac-a/current.md', 'projects', 'projects') === 'mac-a', 'the domain\'s own project: <scope>/<machine>');
 }
 
+section('§10b skills evidence names the project folder it did not look in (v4.2, audit bug 11)');
+{
+  // OpenCode's skills live in <repo>/.agents (and ~/.claude). With no project
+  // folder set, the check only reaches ~/.claude, so "Looked in: ~/.claude"
+  // alone contradicted its step's ".agents/skills/".
+  const h = path.join(ROOT, 'skills-home');
+  mkdirSync(h, { recursive: true });
+  const noRepoRows = S.collectMachineSetup({ home: h, repo: '', skillsDir, domainsDir: DOMAINS });
+  const withRepoRows = S.collectMachineSetup({ home: h, repo: REPO, skillsDir, domainsDir: DOMAINS });
+  const skillLines = (rows, repo) => {
+    const r = S.collectProjectSetup({ domain: 'projects', project: 'ott', home: h, pairs: [], addedTools: ['opencode'], machine: { ids: [] }, machineRows: rows, repo, template: TEMPLATE });
+    const oc = r.tools.find((t) => t.id === 'opencode');
+    return ((oc && oc.evidence) || []).find((e) => e.heading === 'Skills')?.lines || [];
+  };
+  const none = skillLines(noRepoRows, null);
+  ok(none.some((l) => /^Looked in: ~\/\.claude\./.test(l)) && none.some((l) => /^Not looked in yet: \.agents in the project’s folder/.test(l)),
+    'no folder set: OpenCode says it looked in ~/.claude AND that .agents in the project is not looked in yet', none);
+  const set = skillLines(withRepoRows, { path: REPO, source: 'set' });
+  ok(!set.some((l) => /Not looked in yet/.test(l)), 'folder set: nothing is left unlooked', set);
+  const cc = noRepoRows.find((x) => x.id === 'claude-code');
+  ok(cc && cc.skills.notLookedIn.length === 1, 'claude-code (~/.claude and .claude) names its project root too', cc && cc.skills);
+  const cursor = noRepoRows.find((x) => x.id === 'cursor');
+  ok(cursor && cursor.skills.notLookedIn.length === 0, 'CONTROL: a harness with no project root names none');
+}
+
 section('§11 config file states (v3.78.0): empty, invalid, unopenable');
 {
   const agWorking = { mcpServers: { 'my-curator': ours, ...other } };
