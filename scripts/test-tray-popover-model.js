@@ -99,7 +99,7 @@ function pngIdentity(buf) {
 function canon(v) {
   return JSON.stringify(v, function (k, val) {
     const raw = this[k];
-    if (Buffer.isBuffer(raw)) return 'png:' + raw.length + ':' + pngIdentity(raw);
+    if (Buffer.isBuffer(raw)) return 'png:' + pngIdentity(raw);
     if (typeof raw === 'function') return '[fn]';
     if (raw === undefined) return '[undefined]';
     return val;
@@ -275,13 +275,16 @@ section('§3 writtenAtText (D5): a local time a person reads, on Windows only');
 section('§4 THE MAC IS BYTE-IDENTICAL');
 {
   // Computed by running this suite's own canon() over the v4.0.1 modules
-  // (git show c865493:desktop/lib/*.js into a scratch folder). A red here
+  // (git archive c865493 desktop/lib into a scratch folder). PNGs enter the hash
+  // by header + INFLATED pixels only, never by compressed length (zlib builds differ
+  // across Node versions: 2026-11-26, same v4.0.1 and current modules, new hash on
+  // Node 22.23.5; the length-free goldens were recomputed from the v4.0.1 modules). A red here
   // means the Mac menu changed. If that was deliberate, recompute; if it
   // came from a popover or Windows option, the option leaked.
   const GOLDEN = {
-    'rich/dark': '9daf2bde6b9abb85c5a4',
-    'rich/light': '752b8d347332b720e26f',
-    'plainPulse/dark': 'd878c4513566c754a0cb',
+    'rich/dark': '77676d48ca7d88a57b60',
+    'rich/light': '4026d2ca1e8843ce2544',
+    'plainPulse/dark': 'e407a826ab8c24d4a82b',
     'empty/dark': '8174f4ed06268fc055fe',
     'unreadable/dark': '9b6598f5fbca0f77c429',
     'garbage/dark': '8174f4ed06268fc055fe',
