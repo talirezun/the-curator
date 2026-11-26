@@ -1288,6 +1288,8 @@ function v367Lift() {
     // scripts/test-context-setup-modes.js's.
     + 'const isPro = () => globalThis.__ctxPro !== false;\n'
     + 'const moreInProLine = globalThis.__ctxProMod.moreInProLine;\n'
+    + 'const proAttr = globalThis.__ctxProMod.proAttr;\n'
+    + 'const proMarkAttr = globalThis.__ctxProMod.proMarkAttr;\n'
     + extractFunction(viewSrc, 'sessionReachMonitor', 'memory.js') + '\n'
     // Named one by one rather than mapped over V367_FNS, for §17's census: it
     // reads this file for real extractFunction calls, so a name in a list is
@@ -11915,7 +11917,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...its sentence is the measured total against THIS computer\'s window (200K until set)',
       /The Curator about 13\.2k tokens \(measured, 6\.6%\)/.test(html), html.slice(0, 2500));
     ok('...with the harness NOT SET said in words, never drawn as a guess',
-      /Your tool’s share is not set/.test(html) && !/bk-harness"/.test(html));
+      /Your harness’s share is not set/.test(html) && !/bk-harness"/.test(html));
     ok('...and a single-reply start carries no delivery line', !/Delivered in/.test(html));
     // v3.79.0 (contract §D): the note under the picker, ALWAYS — what the
     // figure is for and what it is not; where it comes from is Exact…'s hint.
@@ -12005,7 +12007,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...and the meter is drawn against THIS COMPUTER\'s window, not the one the measurement was taken with',
       /A 1M-token window, drawn to scale/.test(big) && !/A 200k-token window/.test(big));
     ok('...the meter draws the harness HATCHED, labelled an estimate, and never adds it to The Curator',
-      /bk-harness/.test(big) && /your tool&#39;s share about 120k \(your estimate\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
+      /bk-harness/.test(big) && /your harness&#39;s share about 120k \(your estimate\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
     // THE ⓘ
     // v3.71.0: the `context.session-start` explainer — the meter drawing, the
     // three controls named, and `/context` for the harness. The ±20% accuracy
@@ -12019,7 +12021,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       // v3.79.0 (contract §D): the ⓘ point says what the figure IS ("its own
       // prompt, tools and files; estimated, meter only"); where to read it
       // (/context) is the Exact… option's own hint, asserted above.
-      && info.body.includes('Your tool’s share')
+      && info.body.includes('Your harness’s share')
       && /#session-start-and-the-context-window"/.test(info.body)
       && /±20%/.test(guide), info ? info.body.slice(0, 300) : html.slice(0, 400));
     // A READ-ONLY MIRROR
@@ -12517,6 +12519,28 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         ok('v4.2 ④ ' + name + ': ...and the step ENDS with the one "More in Pro" door, naming what is behind it',
           /data-pro-more>More in Pro: the window and harness estimates, everything an agent receives, how it reaches it <span aria-hidden=\"true\">›<\/span><\/button><\/p><\/div><\/div><\/div>$/.test(simple)
           && (simple.match(/data-pro-more/g) || []).length === 1, simple.slice(-300));
+        // v4.2 integration (the orchestrator's screen review): Pro off, step 4
+        // keeps the ONE window bar and its notes; "The Curator's part,
+        // enlarged", its bar and the legend are Pro-only (one render path).
+        const stripPro = (h) => { // drop every data-detail="pro" subtree (balanced <div>s)
+          let out = h, i;
+          while ((i = out.indexOf('<div data-detail="pro">')) >= 0) {
+            let d = 0, j = i;
+            const re = /<div\b|<\/div>/g; re.lastIndex = i;
+            let m2;
+            while ((m2 = re.exec(out))) { d += m2[0] === '</div>' ? -1 : 1; if (d === 0) { j = re.lastIndex; break; } }
+            out = out.slice(0, i) + out.slice(j);
+          }
+          return out;
+        };
+        const seen = stripPro(simple);
+        ok('v4.2 ④ ' + name + ': Pro off shows the one window bar, not the enlargement, its zoom or the legend',
+          /class="bk-window/.test(seen) && !/bk-enlarged|bk-legend|bk-zoom/.test(seen)
+          && /<div data-detail="pro">[^]*bk-enlarged[^]*bk-legend/.test(simple), seen.slice(0, 600));
+        ok('v4.2 ④ ' + name + ': ...and every meter note stays outside the Pro part',
+          (simple.match(/class="bk-note/g) || []).length === (seen.match(/class="bk-note/g) || []).length);
+        ok('v4.2 ④ ' + name + ': ...the enlargement\'s label carries the "PRO" mark attribute, the window bar\'s does not',
+          /<span class="bk-label" data-pro-mark>The Curator’s part, enlarged/.test(simple) && !/<span class="bk-label" data-pro-mark>Your context window/.test(simple));
         ok('v4.2 ④ ' + name + ': Pro on is today\'s step: three pickers, the full monitor, the reach fold, no door',
           /id="mem-window-lb"/.test(pro) && /id="mem-harness-lb"/.test(pro) && /id="mem-ss-monitor"/.test(pro)
           && /data-mem-fold="reach"/.test(pro) && !/data-pro-more/.test(pro) && !/id="mem-ss-full"/.test(pro));

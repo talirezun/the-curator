@@ -288,7 +288,7 @@ export function bucketModel(m) {
     windowTokens, harnessSet, harness, curator, used, over, free,
     harnessPct, curatorPct, freePct,
     // v3.79.0 (contract §D): "your tool", an ESTIMATE — never "measured".
-    harnessText: harnessSet ? pickLabel(['your tool ≈' + formatTokens(harness) + ' · estimate', 'tool ≈' + formatTokens(harness), 'tool'], harnessPct) : { short: '', wide: '' },
+    harnessText: harnessSet ? pickLabel(['your harness ≈' + formatTokens(harness) + ' · estimate', 'harness ≈' + formatTokens(harness), 'harness'], harnessPct) : { short: '', wide: '' },
     freeText: pickLabel(['free ≈' + formatTokens(free), '≈' + formatTokens(free)], freePct),
     layers: zoomLayers, pages, readTokens, fixed, budget, room, roomPct, roomState, roomWords, roomText,
     onDemand: onDemandOf(m.onDemand),
@@ -305,10 +305,10 @@ export function bucketText(m) {
   const W = formatTokens(g.windowTokens);
   const pre = g.preview ? 'Preview, not saved: ' : '';
   const win = pre + 'A ' + W + '-token window, drawn to scale: '
-    + (g.harnessSet ? 'your tool\'s share about ' + formatTokens(g.harness) + ' (your estimate), ' : '')
+    + (g.harnessSet ? 'your harness\'s share about ' + formatTokens(g.harness) + ' (your estimate), ' : '')
     + 'The Curator about ' + formatTokens(g.curator) + ' tokens (measured, ' + share(g.curator, g.windowTokens) + '), '
     + (g.over > 0 ? 'over the window by about ' + formatTokens(g.over) + '.' : 'about ' + formatTokens(g.free) + ' free.')
-    + (g.harnessSet ? '' : ' Your tool\'s share is not set: its own prompt, tools and files also use this window.');
+    + (g.harnessSet ? '' : ' Your harness\'s share is not set: its own prompt, tools and files also use this window.');
   const parts = g.layers.map((l) => l.label + ' ' + formatTokens(l.tokens)
     + (l.parts ? ' (' + l.parts.map((p) => p.label + ' ' + formatTokens(p.tokens)).join(', ') + ')' : ''));
   let budgetWords;
@@ -347,9 +347,9 @@ export function renderBucketText(m) {
 }
 
 // ── The renderers ─────────────────────────────────────────────────────────
-function head(label, scaleWord, figureHtml, preview) {
+function head(label, scaleWord, figureHtml, preview, labelAttr = '') {
   return '<div class="bk-head">'
-    + '<span class="bk-label">' + escapeHtml(label) + '</span>'
+    + '<span class="bk-label"' + labelAttr + '>' + escapeHtml(label) + '</span>'
     + '<span class="bk-scale">' + escapeHtml(scaleWord) + '</span>'
     + (preview ? '<span class="bk-preview">preview</span>' : '')
     + (figureHtml ? '<span class="bk-figure">' + figureHtml + '</span>' : '')
@@ -373,7 +373,7 @@ export function renderWindowBar(m) {
     : 'The Curator ≈' + escapeHtml(formatTokens(g.curator)) + ' · ' + escapeHtml(share(g.curator, g.windowTokens)) + ' of ' + escapeHtml(W);
   let segs = '';
   if (g.harnessSet) {
-    segs += '<div class="bk-seg bk-harness" style="width:' + pct(g.harnessPct) + '%" title="your tool’s share ≈' + escapeHtml(formatTokens(g.harness)) + ' · your estimate">'
+    segs += '<div class="bk-seg bk-harness" style="width:' + pct(g.harnessPct) + '%" title="your harness’s share ≈' + escapeHtml(formatTokens(g.harness)) + ' · your estimate">'
       + labelHtml(g.harnessText) + '</div>';
   }
   segs += '<div class="bk-seg bk-curator" style="width:' + pct(g.curatorPct) + '%" title="The Curator ≈' + escapeHtml(formatTokens(g.curator)) + ' · measured"></div>';
@@ -382,7 +382,7 @@ export function renderWindowBar(m) {
   return '<div class="bk-window' + (g.preview ? ' is-preview' : '') + '">'
     + head('Your context window at the start of a session', 'to scale', figure, g.preview)
     + (g.harnessSet ? '' : '<p class="bk-note bk-harness-unset"><span class="bk-sw bk-sw-harness" aria-hidden="true"></span>'
-      + 'Your tool’s share is not set. Its own prompt, tools and files also use this window — pick an estimate to see them.</p>')
+      + 'Your harness’s share is not set. Its own prompt, tools and files also use this window — pick an estimate to see them.</p>')
     + '<div class="bk-bar" role="img" aria-label="' + escapeHtml(t.window) + '">' + segs + '</div>'
     + axis(g.windowTokens)
     + (g.over > 0 ? '<p class="bk-note">Over the window by ≈' + escapeHtml(formatTokens(g.over)) + ' tokens at the start of a session.</p>' : '')
@@ -398,7 +398,9 @@ export function renderZoomLink(m) {
     + '<path d="M' + a + ' 0 L0 22 M' + b + ' 0 L100 22" /></svg></div>';
 }
 
-export function renderEnlargement(m) {
+/** `o.labelAttr` (v4.2): extra attributes for the head's label — the view's
+ *  `proMarkAttr()` when the enlargement is Pro-only detail. Default: none. */
+export function renderEnlargement(m, o = {}) {
   const g = bucketModel(m);
   if (!g) return '';
   const t = bucketText(m);
@@ -422,7 +424,7 @@ export function renderEnlargement(m) {
       + labelHtml(g.roomText) + '</div>';
   }
   return '<div class="bk-enlarged' + (g.preview ? ' is-preview' : '') + '">'
-    + head('The Curator’s part, enlarged', 'enlarged', 'to its own scale: the fixed layers plus your reading budget', g.preview)
+    + head('The Curator’s part, enlarged', 'enlarged', 'to its own scale: the fixed layers plus your reading budget', g.preview, o.labelAttr || '')
     + '<div class="bk-bar bk-bar-zoom" role="img" aria-label="' + escapeHtml(t.enlargement) + '">' + segs + '</div>'
     + (g.pages ? pagesStrip(g.pages) : '')
     + '</div>';
@@ -459,7 +461,7 @@ export function renderLegend(m) {
     }
   }
   if (g.roomState === 'unused' || g.roomState === 'left') out += it('bk-sw-room', escapeHtml(g.roomWords));
-  out += it('bk-sw-harness', g.harnessSet ? 'your tool’s share (estimate) <b>' + escapeHtml(formatTokens(g.harness)) + '</b>' : 'your tool’s share — not set');
+  out += it('bk-sw-harness', g.harnessSet ? 'your harness’s share (estimate) <b>' + escapeHtml(formatTokens(g.harness)) + '</b>' : 'your harness’s share — not set');
   out += it('bk-sw-free', 'free <b>' + escapeHtml(formatTokens(g.free)) + '</b>');
   if (g.onDemand) {
     out += it('bk-sw-ondemand', 'on demand — outside the window <b>'
@@ -481,9 +483,18 @@ export function renderDeliveryLine(m) {
   return '<p class="bk-delivery">' + escapeHtml(words) + '</p>';
 }
 
-export function renderBucket(m) {
+/**
+ * The whole meter. `o.detailAttr` (v4.2, Pro mode): when given (a view passes
+ * shared/pro.js's `proAttr()`), the zoom link, the enlargement and the legend
+ * are wrapped in ONE element carrying it — the detail Pro reveals. The window
+ * bar and its notes ("not set", "over the window") and the delivery line stay
+ * outside it, on screen in both modes. `o.labelAttr` marks the enlargement's
+ * label (proMarkAttr()). Without options the markup is byte-identical.
+ */
+export function renderBucket(m, o = {}) {
   if (!bucketModel(m)) return '';
+  const detail = renderZoomLink(m) + renderEnlargement(m, { labelAttr: o.labelAttr || '' }) + renderLegend(m);
   return '<div class="bk">'
-    + renderWindowBar(m) + renderZoomLink(m) + renderEnlargement(m) + renderLegend(m) + renderDeliveryLine(m)
+    + renderWindowBar(m) + (o.detailAttr ? '<div' + o.detailAttr + '>' + detail + '</div>' : detail) + renderDeliveryLine(m)
     + '</div>';
 }

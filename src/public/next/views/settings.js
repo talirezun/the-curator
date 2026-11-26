@@ -2991,7 +2991,7 @@ function renderInAppUpdate() {
     const canStop = !!(f && f.canStopConnections === true && Number.isInteger(f.connections) && f.connections > 0);
     const stopHint = canStop
       ? 'Or choose Close the connection and update: The Curator ends ' +
-        (f.connections === 1 ? 'the AI app’s connection to it' : 'the ' + f.connections + ' AI app connections to it') +
+        (f.connections === 1 ? 'the agent harness’s connection to it' : 'the ' + f.connections + ' agent harness connections to it') +
         ', then installs. To use The Curator from that app again afterwards, quit the app and open it again. ' +
         'Your knowledge base, API keys and sync settings are untouched.'
       : 'Your knowledge base, API keys and sync settings are untouched.';

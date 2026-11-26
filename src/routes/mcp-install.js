@@ -510,7 +510,7 @@ router.get('/status', async (_req, res) => {
   try {
     res.json(await buildStatus());
   } catch (err) {
-    res.status(500).json({ error: `Could not read the agent apps on this ${installPlatform() === 'win32' ? 'PC' : 'Mac'}: ${err && err.message}` });
+    res.status(500).json({ error: `Could not read the agent harnesses on this ${installPlatform() === 'win32' ? 'PC' : 'Mac'}: ${err && err.message}` });
   }
 });
 
@@ -546,8 +546,8 @@ export function validatePlanBody(body) {
   const extra = Object.keys(body).filter((k) => k !== 'action' && k !== 'ids');
   if (extra.length) return `Unexpected field${extra.length > 1 ? 's' : ''}: ${extra.slice(0, 5).join(', ')}.`;
   if (!ACTIONS.includes(body.action)) return 'action must be install, remove or restore.';
-  if (!Array.isArray(body.ids) || body.ids.length === 0 || body.ids.length > INSTALL_IDS.length) return 'ids must list one or more agent apps.';
-  if (!body.ids.every((x) => typeof x === 'string' && INSTALL_IDS.includes(x))) return 'ids may only name agent apps The Curator can install for.';
+  if (!Array.isArray(body.ids) || body.ids.length === 0 || body.ids.length > INSTALL_IDS.length) return 'ids must list one or more agent harnesses.';
+  if (!body.ids.every((x) => typeof x === 'string' && INSTALL_IDS.includes(x))) return 'ids may only name agent harnesses The Curator can install for.';
   return null;
 }
 
@@ -703,7 +703,7 @@ export function validateCheckBody(body) {
   if (!isPlainObject(body)) return 'The request body must be a JSON object.';
   const keys = Object.keys(body);
   if (keys.length !== 1 || keys[0] !== 'id') return 'The request body must be {id}.';
-  if (typeof body.id !== 'string' || !INSTALL_IDS.includes(body.id)) return 'id may only name an agent app The Curator can check.';
+  if (typeof body.id !== 'string' || !INSTALL_IDS.includes(body.id)) return 'id may only name an agent harness The Curator can check.';
   return null;
 }
 

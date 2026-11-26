@@ -703,7 +703,7 @@ async function driveApplyReq(req, deps) {
   return res;
 }
 {
-  const IN_USE = 'An AI app connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
+  const IN_USE = 'An agent harness connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
   const seen = [];
   const hook = async (args) => {
     seen.push(Object.keys(args).sort().join(','));
@@ -1077,7 +1077,7 @@ const IDLE = { updatePhase: 'idle', updateCheck: AVAILABLE, version: VER };
 
 // ── The Windows app's choice on the staged card (in-use-by-ai-app) ────────
 {
-  const IN_USE = 'An AI app connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
+  const IN_USE = 'An agent harness connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.';
   const offered = mkStatus(IDLE, {
     phase: 'staged', job: null, version: '3.32.0',
     failure: { reason: 'in-use-by-ai-app', error: IN_USE, connections: 1, canStopConnections: true },
@@ -1087,14 +1087,14 @@ const IDLE = { updatePhase: 'idle', updateCheck: AVAILABLE, version: VER };
     '§13 WINDOWS: held by an AI app, the card offers BOTH ways: quit it and finish, or Close the connection and update');
   ok(offered.includes('>Close the connection and update</button>'), '§13 …the second button says what it does');
   ok(offered.includes('Quit that app'), '§13 …beside the engine\u2019s own sentence');
-  ok(/ends the AI app’s connection to it/.test(offered) && /quit the app and open it again/.test(offered),
+  ok(/ends the agent harness’s connection to it/.test(offered) && /quit the app and open it again/.test(offered),
     '§13 …and the card says, in plain words and on screen, what closing the connection does and how to get it back');
   ok(!/<details|chevron/.test(offered), '§13 …nothing behind a chevron');
   const two = mkStatus(IDLE, {
     phase: 'staged', job: null, version: '3.32.0',
     failure: { reason: 'in-use-by-ai-app', error: IN_USE, connections: 2, canStopConnections: true }, restartHint: false,
   }, true)();
-  ok(/the 2 AI app connections to it/.test(two), '§13 …and counts them when there are two');
+  ok(/the 2 agent harness connections to it/.test(two), '§13 …and counts them when there are two');
   const notOffered = mkStatus(IDLE, {
     phase: 'staged', job: null, version: '3.32.0',
     failure: { reason: 'in-use-by-ai-app', error: IN_USE }, restartHint: false,
@@ -1367,7 +1367,7 @@ const HAPPY_FRAMES = [
     sent.push(opts);
     if (applyCalls === 1) {
       return { ok: false, status: 500, json: async () => ({
-        reason: 'in-use-by-ai-app', error: 'An AI app connected to The Curator, such as Claude Desktop, is using it right now…',
+        reason: 'in-use-by-ai-app', error: 'An agent harness connected to The Curator, such as Claude Desktop, is using it right now…',
         connections: 1, canStopConnections: true, releasesPageUrl: 'https://example.invalid/releases',
       }) };
     }

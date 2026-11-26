@@ -70,7 +70,7 @@ export const WIN32_UPDATE_FAILURES = Object.freeze({
   'digest-missing': 'GitHub did not publish a checksum for this download, so it was not installed. Download the installer from the releases page instead.',
   'installer-check-failed': 'The downloaded installer could not be checked, so it was not run and nothing was changed. Try again, or download the installer from the releases page.',
   'helper-unavailable': 'Windows did not let The Curator run the final step of the update on this PC (this is usually a setting made by whoever manages it), so nothing was changed. Download the installer from the releases page and run it.',
-  'in-use-by-ai-app': 'An AI app connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.',
+  'in-use-by-ai-app': 'An agent harness connected to The Curator, such as Claude Desktop, is using it right now, so the update cannot replace it. Quit that app, then choose Install update again. Nothing was changed.',
   'in-use-other': 'Another copy of The Curator is running on this PC, so the update cannot replace it. Quit the other copy, then choose Install update again. Nothing was changed.',
 });
 
@@ -125,7 +125,7 @@ export function win32MessageFor(reason) {
  * never silent even when no app comes back to say it.
  */
 export const WIN32_INSTALL_OUTCOMES = Object.freeze({
-  'exe-in-use': 'The Curator was not updated, because an AI app connected to it (such as Claude Desktop) was still using it. Quit that app, then open The Curator and choose Install update again. Nothing was changed.',
+  'exe-in-use': 'The Curator was not updated, because an agent harness connected to it (such as Claude Desktop) was still using it. Quit that app, then open The Curator and choose Install update again. Nothing was changed.',
   'app-did-not-quit': 'The Curator did not close in time, so the update was not installed. Nothing was changed. Quit The Curator, open it again and choose Install update.',
   'installer-changed': 'The downloaded installer changed after it was checked, so it was not run. Nothing was changed. Check for updates again.',
   'installer-failed': 'The update could not be completed. Your notes, keys and settings are safe: they are kept outside the program folder. To repair The Curator, run the installer again, or download it from the releases page.',
