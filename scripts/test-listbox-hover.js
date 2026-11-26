@@ -43,18 +43,18 @@ const hexOf = (v) => { const m = /^#([0-9a-f]{6})$/i.exec(v.trim()); return m ? 
 /** The first two literal values of `--name:` in a stylesheet: dark, then light. */
 const twoValues = (css, name) => [...css.matchAll(new RegExp(name + ':\\s*(rgba?\\([^)]*\\))', 'g'))].map((m) => rgbaOf(m[1])).slice(0, 2);
 
-const MIN_STEP = 1.2;       // measured: dark 1.30-1.34, light 1.22-1.24
+const MIN_STEP = 1.5;       // v4.2.0 fix (audit minor 6, was 1.2): measured dark 1.59-1.61, light 1.51-1.55
 console.log('\n── .lb-opt.is-active uses the overlay, not an absolute fill');
 const lb = strip(read('shared/listbox.css'));
 const activeRule = /\.lb-opt\.is-active\s*\{([^}]*)\}/.exec(lb);
 ok(!!activeRule, '.lb-opt.is-active rule exists');
-ok(activeRule && /background:\s*var\(--mat-row-active\)/.test(activeRule[1]), 'it paints var(--mat-row-active)');
+ok(activeRule && /background:\s*var\(--mat-menu-row-active\)/.test(activeRule[1]), 'it paints var(--mat-menu-row-active) (the menu row\'s own, stronger overlay)');
 ok(activeRule && !/--surface-/.test(activeRule[1]), 'it does not paint any --surface-* (an absolute fill vanishes on the material menu)');
 
 console.log('\n── the computed step against the menu plane, both themes');
 const mat = strip(read('tokens/material.css'));
 const menu = twoValues(mat, '--mat-menu');
-const active = twoValues(mat, '--mat-row-active');
+const active = twoValues(mat, '--mat-menu-row-active');
 ok(menu.length === 2 && menu.every(Boolean) && active.length === 2 && active.every(Boolean), 'dark and light --mat-menu and --mat-row-active parse');
 const backs = { dark: { page: [0x0b, 0x0b, 0x12], black: [0, 0, 0] }, light: { page: [0xf5, 0xf5, 0xf9], white: [255, 255, 255] } };
 backs.dark.white = [255, 255, 255]; backs.light.black = [0, 0, 0];
@@ -68,6 +68,25 @@ const report = [];
   }
 });
 console.log('  measured: ' + report.join(' · '));
+
+console.log('\n── the selected row is not touched, and text on the lit row stays readable');
+const selRule = /\.lb-opt\.is-selected\s*\{([^}]*)\}/.exec(lb);
+ok(selRule && /background:\s*var\(--accent\)/.test(selRule[1]), 'the committed row is still the accent pill (a different device from the keyboard row)');
+const selActive = /\.lb-opt\.is-selected\.is-active\s*\{([^}]*)\}/.exec(lb);
+ok(selActive && !/background/.test(selActive[1]), 'keyboard on the committed row moves no fill (the accent stays)');
+{
+  const color = strip(read('tokens/color.css'));
+  // --text-2 is the dimmest text on a row (the sub line): dark, then light.
+  const t2s = [...color.matchAll(/--text-2:\s*(#[0-9a-f]{6})/gi)].map((m) => hexOf(m[1])).slice(0, 2);
+  ok(t2s.length === 2 && t2s.every(Boolean), 'dark and light --text-2 parse (anti-vacuity)');
+  ['dark', 'light'].forEach((theme, i) => {
+    const t2 = t2s[i];
+    const b = theme === 'dark' ? backs.dark.page : backs.light.page;
+    const lit = over(active[i], over(menu[i], b));
+    const r = ratio(t2, lit);
+    ok(r >= 4.5, `${theme}: --text-2 on the lit row ${r.toFixed(2)}:1 >= 4.5`);
+  });
+}
 
 console.log('\n── control: the old fill really was invisible');
 const surfaceHover = hexOf(/--surface-hover:\s*var\(--ink-800\)/.test(read('tokens/color.css')) ? read('tokens/color.css').match(/--ink-800:\s*(#[0-9a-f]{6})/i)[1] : '#000000');

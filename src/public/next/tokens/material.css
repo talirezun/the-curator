@@ -378,6 +378,11 @@
      1.16:1, active 1.32:1. */
   --mat-row-hover:  rgba(255,255,255,0.06);
   --mat-row-active: rgba(255,255,255,0.10);
+  /* The keyboard / hover row of a LISTBOX menu (v4.2.0 fix, audit minor 6):
+     it is the only cue for where the keyboard is, so it is stronger than a
+     pane's row — ≥ 1.5:1 against the menu plane over any backdrop
+     (scripts/test-listbox-hover.js computes it; dark ≈1.59, light ≈1.51). */
+  --mat-menu-row-active: rgba(255,255,255,0.16);
 
   /* ── 4d · GLOSS ───────────────────────────────────────────────────────
      THREE SEPARABLE DEVICES, so a control can take one, two or none:
@@ -587,6 +592,7 @@
   --mat-edge-lo: rgba(16,16,26,0.12);
   --mat-row-hover:  rgba(16,16,26,0.06);
   --mat-row-active: rgba(16,16,26,0.10);
+  --mat-menu-row-active: rgba(16,16,26,0.20);
 
   /* ── THE PHANTOM LINE, FIXED AT THE PAIRING ───────────────────────────
      The specular is 0.18, NOT 0.90. Over --accent #6538E0, 0.90 composites

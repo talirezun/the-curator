@@ -168,12 +168,14 @@
    user arrowing down a 193-row list must be able to see both where they are
    and what is still selected — collapsing them into one style is how a
    listbox stops being able to say "you have not committed this yet". */
-.lb-opt.is-active { background: var(--mat-row-active); }
+.lb-opt.is-active { background: var(--mat-menu-row-active); }
 /* WHY --mat-row-active AND NOT --surface-hover. The menu is a material plane
    (--mat-menu, rgba 0.80), and --surface-hover is an ABSOLUTE fill: on dark it
    was rgb(21,21,31) on a plane of rgb(22,22,33) — one point apart, so neither
    the mouse hover nor the keyboard position could be seen (audit-context-ux
-   bug 1; shell.css documents the same failure for the rail). --mat-row-active
+   bug 1; shell.css documents the same failure for the rail). v4.2.0: its own
+   token, --mat-menu-row-active, stronger again (≥ 1.5:1, audit minor 6);
+   --mat-row-active
    is a translucent overlay that composites on whatever the plane is, in both
    themes, and is one step stronger than the rail's --mat-row-hover because a
    menu has no other cue to say "this is the row Enter will pick". Measured
