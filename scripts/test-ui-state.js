@@ -197,6 +197,8 @@ const STAYS = {
     'per-device convenience, and the alternative was actively worse: a conversation\'s JSON is TRACKED by the knowledge repo, so a per-conversation pin would be a schema field that travels to a machine where that project may not resolve. chat.js reconciles it against the live project list on every mount and clears it when the project is gone.',
   'curator-next-theme':
     'cosmetic, visible on the first frame, one click in the rail to restore. It is also the highest-FREQUENCY write in the shell, and the argument for keeping the credential file quiet applies to it more than to anything else.',
+  'curator-next-pro':
+    'NOT the Pro setting itself — a first-paint MIRROR of it (v4.2). The setting lives on the server, in .curator-config.json as the top-level `uiDetail` (GET/POST /api/config/ui-detail), so the Electron window and a browser tab on this computer agree. shared/pro.js reads this key only to paint <html data-pro> synchronously before the server answers, then overwrites it with the server\'s value. Its fail-safe is OFF: an absent, junk or throwing store paints the simple view, which hides no warning, and the server read corrects it a moment later.',
   'curator-next-view':
     'which screen was last open — positional, per-device, and arguably CORRECT as per-device: a desktop and a laptop have no business agreeing about it.',
   'curator-next-font-scale':

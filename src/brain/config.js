@@ -1630,6 +1630,74 @@ export function setBackgroundMode(mode) {
   return { ok: true, mode: getBackgroundMode(), reason: null };
 }
 
+// ── UI detail: the app-wide Pro switch (v4.2, contract 2026-11-26) ──────────
+//
+// `uiDetail` is how much each view SHOWS: 'simple' (the default) or 'pro'
+// (every detail and control). It never changes what the app DOES — no write,
+// fetch or check reads it; only src/public/next/shared/pro.js does.
+//
+// A TOP-LEVEL FIELD BESIDE `backgroundMode`, NOT A `ui.*` FIELD. The UI_STATE
+// table below only expresses monotonic, write-once or clearable consents; a
+// preference that goes both ways for ever is the shape backgroundMode already
+// has, so it is stored the same way. This computer only: .curator-config.json
+// is never synced, so two computers may differ, as the theme does.
+//
+// LENIENT READ, STRICT WRITE — the backgroundMode asymmetry, for its reason.
+// Absent, unknown, a prototype key or a value a newer build wrote all read as
+// 'simple' (the owner's decision: everyone starts in the simple view, existing
+// installs too — no migration, no seeding). A damaged file reads as 'simple'
+// too, because readRaw() answers {} for it. A write of anything else is
+// REFUSED, never coerced, so the switch can never report a value the file
+// does not hold. The write goes through writeRaw(), the module's single
+// writer, so a damaged file refuses it with config_unreadable (F2's rule).
+//
+// Null-prototype table + Object.hasOwn, as BACKGROUND_MODES and
+// RELEASE_CHANNELS do, for the same prototype-key reason.
+const UI_DETAILS = Object.freeze(Object.assign(Object.create(null), {
+  simple: true,
+  pro: true,
+}));
+const DEFAULT_UI_DETAIL = 'simple';
+
+/** The value names this build understands. */
+export function uiDetailNames() {
+  return Object.keys(UI_DETAILS);
+}
+
+/** Fail-safe resolver: anything that is not a defined name reads as 'simple'. */
+export function resolveUiDetail(raw) {
+  return (typeof raw === 'string' && Object.hasOwn(UI_DETAILS, raw)) ? raw : DEFAULT_UI_DETAIL;
+}
+
+/** The resolved value for this computer. Never throws, never returns null. */
+export function getUiDetail() {
+  try {
+    return resolveUiDetail(readRaw().uiDetail);
+  } catch {
+    return DEFAULT_UI_DETAIL;
+  }
+}
+
+/**
+ * Records the value. Returns `{ ok, uiDetail, reason }`; on refusal `uiDetail`
+ * is the value still in force and `reason` is 'invalid_value'. A damaged
+ * settings file THROWS ConfigFileUnreadableError (code config_unreadable)
+ * from writeRaw — the caller maps it to 409.
+ */
+export function setUiDetail(value) {
+  if (typeof value !== 'string' || !Object.hasOwn(UI_DETAILS, value)) {
+    return { ok: false, uiDetail: getUiDetail(), reason: 'invalid_value' };
+  }
+  const cfg = readRaw();
+  // Already stored: nothing to write. Only a READABLE file can hold the
+  // value (a damaged one reads as {}), so this never answers "saved" over a
+  // damaged file — that case falls through to writeRaw, which refuses it.
+  if (cfg.uiDetail === value) return { ok: true, uiDetail: value, reason: null };
+  cfg.uiDetail = value;
+  writeRaw(cfg);
+  return { ok: true, uiDetail: getUiDetail(), reason: null };
+}
+
 // ── Release channel ─────────────────────────────────────────────────────────
 //
 // ── WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT ──────────────────────────

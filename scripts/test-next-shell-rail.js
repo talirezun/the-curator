@@ -89,6 +89,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const PRO = await import('../src/public/next/shared/pro.js');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP = path.join(ROOT, 'src/public/next/app.js');
@@ -254,7 +255,7 @@ function buildSandbox({ dividerAfter } = {}) {
     : `const RAIL_DIVIDER_AFTER = ${JSON.stringify(dividerAfter)};`;
   return new Function('__env', `
     const { document, icon, syncBadgeTitle, syncBadgeMarkup, renderThemeToggleIcon,
-            renderRailActive, applySyncBadge, toggleTheme, navigate, state } = __env;
+            renderRailActive, applySyncBadge, toggleTheme, navigate, state, proSwitchHtml, PRO_TOOLTIP } = __env;
     let _syncPendingCount = __env.syncPending;
     ${extractConst(appJs, 'NAV_VIEWS')}
     ${extractConst(appJs, 'HOSTED_VIEWS')}
@@ -294,6 +295,8 @@ function render({ theme = 'dark', syncPending = 0, box = sandbox } = {}) {
     syncBadgeMarkup: (n) => (n > 0 ? `<span class="rail-badge">${n}</span>` : ''),
     renderThemeToggleIcon() {}, renderRailActive() {}, applySyncBadge() {},
     toggleTheme() {},
+    // v4.2 — the REAL Pro switch (shared/pro.js), so the rail renders as shipped.
+    proSwitchHtml: PRO.proSwitchHtml, PRO_TOOLTIP: PRO.PRO_TOOLTIP,
     navigate: (v) => navigated.push(v),
   });
   api.renderRail();
@@ -384,7 +387,9 @@ for (const v of ALL) {
   // +1: v3.76.0's Sidebar toggle (the narrow-window drawer) is a rail
   // button with a caption and no data-view — it opens a panel, not a view.
   // Its own behaviour is scripts/test-next-sidebar-drawer.js's.
-  eq(capTags.length, ALL.length + 1, 'one .rail-cap per button (the views, plus the Sidebar toggle)');
+  // +1 more (v4.2): the Pro switch's caption — a switch, not a view; its own
+  // behaviour is scripts/test-pro-mode.js's.
+  eq(capTags.length, ALL.length + 2, 'one .rail-cap per button (the views, plus the Sidebar toggle and the Pro switch)');
   const toggle = R.tags.find((t) => t.attrs.id === 'rail-sidebar-toggle');
   ok(!!toggle && toggle.attrs['aria-controls'] === 'sidebar' && !toggle.attrs['data-view'],
     'the extra caption belongs to the Sidebar toggle — aria-controls="sidebar", no data-view');

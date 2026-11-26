@@ -256,6 +256,8 @@ import { depthIdentitySlotClass } from '../shared/depth-bar.js';
 // near-byte copy of the first. One component now, and `views/sync.js` makes
 // the same call shape.
 import { renderMonitor } from '../shared/monitor.js';
+// v4.2 — the Pro switch in General (renderProMode). The rail draws the same one.
+import { proSwitchHtml } from '../shared/pro.js';
 // (v3.71.1: no direct docs-links import any more — every "Read more" on this
 // screen is the guide card inside an explainer, keyed in shared/explainers.js.)
 // The ONE age vocabulary and the ONE freshness scale (shared/age.js +
@@ -315,7 +317,7 @@ const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter'], // v3.72.1 (audit F14): no local provider exists yet
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
-  ['mcp',       'MCP bridge',           'Connect your AI apps to My Curator'], // v3.90.0: the copy deck's rail hint
+  ['mcp',       'MCP bridge',           'Connect your agent harnesses to My Curator'], // v3.90.0: the copy deck's rail hint
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
   // v3.76.0: last, because it is the least often visited — a place you go
   // to after a delete, not a setting. See views/trash-list.js.
@@ -2540,11 +2542,41 @@ function renderGeneral() {
   return (
     settingsBlock(null, 'updates', 'Software update', updateLede, updateBody, 'settings.update') +
     settingsBlock(null, 'appearance', 'Appearance', appearanceLede, appearanceBody, 'settings.appearance') +
+    renderProMode() +
     settingsBlock(null, 'system-check', 'System check', checkLede, checkBody, 'settings.system-check') +
     // Setup guide: NO ⓘ (v3.71.1, cut) — its lede already says what the one
     // button does; the rest ("dismissing is never permanent") is in the guide.
     settingsBlock(null, 'setup-guide', 'Setup guide', guideLede, guideBody, null)
   );
+}
+
+/**
+ * Pro mode (v4.2) — the SAME switch as the rail's, in Settings › General.
+ *
+ * One state, two places (owner, 2026-11-26): the rail item above Settings is
+ * the visible one, this block is where app-wide preferences live and where
+ * the switch is explained. Both are `proSwitchHtml()`; shared/pro.js owns the
+ * click and keeps every copy's aria-checked in step, so nothing here binds a
+ * listener and a re-render needs no re-wiring.
+ *
+ * The lede is the contract's tooltip sentence; the hint says the two facts a
+ * user would otherwise have to guess — it is per computer, and which page it
+ * changes today (a switch that silently did nothing on Chat would read as
+ * broken). NO ⓘ: the lede already says what it does.
+ */
+function renderProMode() {
+  const lede = 'Shows every detail and control. Free — nothing is removed.';
+  const body =
+    '<div class="cur-group cur-group-fields">' +
+      '<div class="settings-field-block" id="block-pro-mode">' +
+        '<div class="cur-group-label">' +
+          '<span class="settings-field-label">Pro</span>' +
+          '<p class="settings-hint-text">Saved on this computer. Today it adds detail to the Context page.</p>' +
+        '</div>' +
+        proSwitchHtml({ id: 'settings-pro-switch' }) +
+      '</div>' +
+    '</div>';
+  return settingsBlock(null, 'pro-mode', 'Pro mode', lede, body, null);
 }
 
 /**
@@ -9021,11 +9053,11 @@ function lastSelfTest() {
 }
 
 /** v3.90.0 — the MCP page's one-line lede under its title (the copy deck). */
-const MCP_LEDE = 'This page connects your AI apps — Claude, Cursor, Antigravity and others — to your knowledge, and shows whether the connection works.';
+const MCP_LEDE = 'This page connects your agent harnesses — the apps your agent runs in: Claude Code, Codex, Cursor, Antigravity and others — to your knowledge, and shows whether the connection works.';
 /** v3.90.0 — the page's closing line (the copy deck). */
-const MCP_FOOT = 'The Curator only reads your AI apps’ settings files. It changes one only when you press Install for me, Remove or Restore, and it always keeps a backup first.';
+const MCP_FOOT = 'The Curator only reads your agent harnesses’ settings files. It changes one only when you press Install for me, Remove or Restore, and it always keeps a backup first.';
 /** v3.90.0 — ② Skills' lede (the copy deck; one bold sentence, so it is HTML). */
-const SKILLS_LEDE_HTML = 'Skills are instruction files that teach an AI app how to use My Curator well — how to search your knowledge, save a handoff and write to your wiki. '
+const SKILLS_LEDE_HTML = 'Skills are instruction files that teach your agent how to use My Curator well — how to search your knowledge, save a handoff and write to your wiki. '
   + '<strong>They don’t update on their own.</strong> When The Curator updates its skills, download them again here.';
 
 /** How many tools My Curator has: the usage catalogue's rows, else the open connections' count. */
@@ -9093,16 +9125,16 @@ function renderMcp() {
   // — ① Your AI apps · ② Skills · ③ Connection test · ④ Tool activity —
   // each a head + ONE card, then the closing line. The view header (with its
   // lede) is renderMain's. Held to scripts/test-next-page-contract.js.
-  const apps = (meta, inner) => mcpSection(1, 'apps', 'Your AI apps', explainerMark('mcp-sec-apps-info', 'settings.mcp-connect'), meta, inner);
+  const apps = (meta, inner) => mcpSection(1, 'apps', 'Agent harnesses', explainerMark('mcp-sec-apps-info', 'settings.mcp-connect'), meta, inner);
   if (!state.mcp && !state.mcpError) {
     // Nothing yet: the overview and section ① only, so the page does not
     // jump when the readings land — and only once the gate says a loader is
     // worth showing (no flash on a fast load).
     if (!(loadGate && loadGate.visible)) return '';
-    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', gatedLoader(loadGate, 'Checking your AI apps…', 'tx-note'));
+    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', gatedLoader(loadGate, 'Checking your agent harnesses…', 'tx-note'));
   }
   if (state.mcpError) {
-    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', renderUserError({ error: state.mcpError, detail: errorDetailOf(state.mcpError) }, { title: 'Could not check your AI apps' }));
+    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', renderUserError({ error: state.mcpError, detail: errorDetailOf(state.mcpError) }, { title: 'Could not check your agent harnesses' }));
   }
   const n = mcpToolCount();
   // The page's one-line lede is the column's first block under the view
@@ -9112,9 +9144,9 @@ function renderMcp() {
     + mcpSection(2, 'skills', 'Skills', explainerMark('mcp-sec-skills-info', 'settings.mcp-skills'), skillsMetaWords(), renderSkillsCard(),
       { lede: SKILLS_LEDE_HTML, ledeIsHtml: true })
     + mcpSection(3, 'bridge', 'Connection test', explainerMark('mcp-sec-bridge-info', 'settings.mcp-bridge'), bridgeMetaWords(), renderBridgeCard(),
-      { lede: 'Starts My Curator the way your AI apps do and checks that it answers.' })
+      { lede: 'Starts My Curator the way your agent harnesses do and checks that it answers.' })
     + mcpSection(4, 'use', 'Tool activity', explainerMark('mcp-sec-use-info', 'settings.mcp-tool-map'), agentUseMetaWords(), renderToolMapBody(),
-      { lede: 'Which of My Curator’s ' + (Number.isInteger(n) ? n + ' ' : '') + 'tools your AI apps used in the last 7 days. Tests are not counted.' })
+      { lede: 'Which of My Curator’s ' + (Number.isInteger(n) ? n + ' ' : '') + 'tools your agent harnesses used in the last 7 days. Tests are not counted.' })
     + renderPageFoot(MCP_FOOT);
 }
 
@@ -9156,9 +9188,9 @@ function mcpOverviewHtml() {
     minTrack: 120,
     cards: [
       { label: 'CONNECTED', value: c ? String(c.connected) : dash, toneClass: c && c.connected > 0 ? 'settings-ov-ok' : '',
-        jump: 'mcp-sec-apps', name: c ? c.connected + ' AI apps connected — open Your AI apps' : 'Your AI apps' },
+        jump: 'mcp-sec-apps', name: c ? c.connected + ' agent harnesses connected — open Agent harnesses' : 'Agent harnesses' },
       { label: 'NEEDS ATTENTION', value: c ? String(c.fix) : dash, toneClass: c && c.fix > 0 ? 'settings-ov-attn' : '',
-        jump: c && c.fix > 0 ? 'mcpi-next-step' : 'mcp-sec-apps', name: c ? c.fix + ' need attention — open Your AI apps' : 'Your AI apps' },
+        jump: c && c.fix > 0 ? 'mcpi-next-step' : 'mcp-sec-apps', name: c ? c.fix + ' need attention — open Agent harnesses' : 'Agent harnesses' },
       { label: 'TOOLS WORKING', value: tw && Number.isInteger(tw.total) ? tw.answered + ' of ' + tw.total : dash,
         toneClass: tw && !tw.ok ? 'settings-ov-attn' : '', jump: 'mcp-sec-bridge', name: 'Tools working — open Connection test' },
       { label: 'LAST USED', value: lastWords || dash,
@@ -9236,8 +9268,8 @@ function renderBridgeCard() {
   if (cfg.mcp_server_exists === false) line = notWorking('The Curator’s own files are incomplete — update or reinstall The Curator');
   else if (domainsStatus === 'missing_folder') {
     // Said as what it is: the folder, not an AI app's settings (v3.75.x D1).
-    line = notWorking('your knowledge folder ' + (folderPath ? tildePath(folderPath, home) : '') + ' does not exist, so an AI app connects and sees nothing. '
-      + 'This is not a mistake in an AI app’s settings — open Settings → Knowledge base and choose the folder your knowledge lives in');
+    line = notWorking('your knowledge folder ' + (folderPath ? tildePath(folderPath, home) : '') + ' does not exist, so an agent harness connects and sees nothing. '
+      + 'This is not a mistake in an agent harness’s settings — open Settings → Knowledge base and choose the folder your knowledge lives in');
   } else if (state.mcpExerciseError) line = notWorking(state.mcpExerciseError);
   else {
     const t = lastConnectionTest();
@@ -9274,7 +9306,7 @@ function renderBridgeCard() {
     onChange: (value) => onSaveDefaultDomain(value, myMountToken),
   };
   pendingListboxes.push(defaultDomainCfg);
-  const domainBody = renderFoldLine({ text: 'When an AI app says “save this to my wiki” without naming a domain, it goes to:',
+  const domainBody = renderFoldLine({ text: 'When an agent says “save this to my wiki” without naming a domain, it goes to:',
       actionHtml: renderListboxHtml(defaultDomainCfg) })
     + (state.defaultDomainSaving ? renderStatus({ state: 'neutral', title: 'Saving…' }) : '')
     // v3.72.1 (truth audit F11): a refused save says so, here, beside the control.
@@ -9530,7 +9562,7 @@ function renderToolMapBody(now) {
   // `count7dAgent`, never `count7d`: the latter counts this page's own test
   // run. NEVER RED (max, not budget).
   const counted = readings.every((r) => r.calls !== null);
-  const lines = [sessionLine('last time an AI app started My Curator', lastAppStartAt(), at)];
+  const lines = [sessionLine('last time an agent harness started My Curator', lastAppStartAt(), at)];
   if (lines[0].value === 'none since this log began') lines[0] = { key: lines[0].key, value: '—' };
   let note = '';
   if (counted) {
@@ -9824,7 +9856,7 @@ function stopUsagePoll() {
  */
 const SCAN_LIMIT_REFUSAL = 'A scan estimates its cost first, and does not start when the estimate is over the ceiling.';
 // v3.90.0 — the copy deck's muted line under the default-project picker.
-const MCP_DOMAIN_CONSEQUENCE = 'Leave it on “Ask every time” to make the AI app name the domain.';
+const MCP_DOMAIN_CONSEQUENCE = 'Leave it on “Ask every time” to make the agent name the domain.';
 
 /**
  * The cost-ceiling hint, from the route's own figures (v3.72.1, audit F7 /

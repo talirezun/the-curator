@@ -56,6 +56,7 @@ import { explainerHtml, explainerMark } from '../src/public/next/shared/explaine
 // The REAL sidebar kit, injected into the lifted `renderSidebar` below.
 import { machineWord } from '../src/public/next/views/mcp-install.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
+import { proSwitchHtml } from '../src/public/next/shared/pro.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -232,11 +233,11 @@ if (renderSidebarSrc) {
   };
   // v3.90.0 — the copy deck's rail hint, the same on every platform.
   railFor('darwin');
-  ok(/Connect your AI apps to My Curator/.test(captured), 'rail hint on darwin: "Connect your AI apps to My Curator" exactly');
+  ok(/Connect your agent harnesses to My Curator/.test(captured), 'rail hint on darwin: "Connect your agent harnesses to My Curator" exactly');
   railFor('win32');
-  ok(/Connect your AI apps to My Curator/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: the same words, no "this Mac"');
+  ok(/Connect your agent harnesses to My Curator/.test(captured) && !/this Mac/.test(captured), 'rail hint on win32: the same words, no "this Mac"');
   railFor('');
-  ok(/Connect your AI apps to My Curator/.test(captured), 'rail hint before the platform is known: the same words');
+  ok(/Connect your agent harnesses to My Curator/.test(captured), 'rail hint before the platform is known: the same words');
   railFor('darwin');
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
@@ -347,7 +348,7 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     // explainer kit, injected below as `explainerMark`.
     constSrc(/const BACKGROUND_MODE_LABELS = \{[\s\S]*?\n\};/, 'BACKGROUND_MODE_LABELS'),
     fnSrc('settingsBlock'), fnSrc('installUpdateStyle'),
-    fnSrc('renderTextSize'), fnSrc('renderBackgroundMode'), fnSrc('renderGeneral'),
+    fnSrc('renderTextSize'), fnSrc('renderBackgroundMode'), fnSrc('renderProMode'), fnSrc('renderGeneral'),
   ].join('\n\n');
 
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -364,6 +365,7 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     explainerMark,
     explainerHtml,
     icon: () => '<svg aria-hidden="true"></svg>',
+    proSwitchHtml, // v4.2 — the REAL switch, so the Pro block renders as shipped
     currentTheme: () => 'dark',
     currentFontScale: () => 'default',
     fontScaleOptions: () => [['default', 'Default', 'The default size']],
@@ -405,7 +407,7 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     if (label === 'git checkout') rendered = html;
     const ledes = [...html.matchAll(/<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/g)]
       .map((m) => stripTags(m[1]));
-    eq(ledes.length, 4, `"${label}" renders four ledes, one per block`);
+    eq(ledes.length, 5, `"${label}" renders five ledes, one per block (v4.2: + Pro mode)`);
     for (const l of ledes) {
       const n = l.split(/\s+/).filter(Boolean).length;
       ledesSeen++;
@@ -413,7 +415,7 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
       ok(n <= 13, `"${label}" lede is ${n} visible words (ceiling 13, the v3.58.0 rule): ${l}`);
     }
   }
-  ok(ledesSeen === 12, `CONTROL: twelve ledes were actually measured across the three modes (got ${ledesSeen}) — ` +
+  ok(ledesSeen === 15, `CONTROL: fifteen ledes were actually measured across the three modes (got ${ledesSeen}) — ` +
     'a mode that silently rendered none would make the ceiling above vacuous');
   console.log(`      (longest lede across all three install modes: ${worst} words)`);
 

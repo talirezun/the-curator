@@ -663,7 +663,7 @@ textarea {
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
   background: transparent;
-  cursor: default;
+  cursor: pointer;
   flex: none;
   transition: background var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
@@ -728,7 +728,7 @@ textarea {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
   flex: none;
   /* `transform` is in the list for the press state defined beside the button
      variants below; the amplitude and the reduced-motion decision live there
@@ -795,13 +795,51 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: default;
+  cursor: pointer;
   margin-bottom: 2px;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 /* Overlay, not an absolute fill — same reason as .rail-btn:hover above. */
 .rail-theme-toggle:hover { background: var(--mat-row-hover); color: var(--text-2); border-color: var(--border); }
 .rail-theme-toggle svg { width: 15px; height: 15px; }
+
+/* ── THE PRO SWITCH (v4.2) ─────────────────────────────────────────────
+   Directly above Settings, on every screen (owner, 2026-11-26). It is the
+   app's ONE switch component (shared/switch.css: the sunken well off, the
+   lit accent track on, the knob that travels) with a caption under it, laid
+   out exactly like a rail button — same width, padding, radius, gap and
+   caption — so it reads as one more rail item and not as a stray control.
+
+   The whole item is the hit target (shared/pro.js delegates the click from
+   [data-pro-toggle]); the <button role="switch"> inside is the one focusable
+   control and draws the focus ring. Hover is the rail's own relative
+   overlay, so it shows on the material plane in both themes.
+
+   ON, the caption takes the accent text colour the active rail button uses:
+   the switch and its word say the same thing at a glance. */
+.rail-pro {
+  position: relative;
+  width: calc(var(--app-rail-w) - var(--space-4));
+  min-height: var(--space-20);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-px) var(--space-2);
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  flex: none;
+  transition: background var(--t-state), color var(--t-state);
+}
+.rail-pro:hover { background: var(--mat-row-hover); color: var(--text-2); }
+/* The whole item toggles, so the track inside it shows the same pointer as
+   the item around it (switch.css's own cursor is package L's to change). */
+.rail-pro .cur-switch { cursor: pointer; }
+.rail-pro:active { background: var(--mat-row-active); }
+.rail-pro:has(.cur-switch[aria-checked="true"]) { color: var(--accent-text); }
 
 /* The Sync-pending count on the rail icon. This is a THEME-PARITY and
    TOKEN-CONFORMANCE fix, not an accessibility one — the old raw hex already
@@ -876,20 +914,8 @@ textarea {
   box-shadow: 0 0 0 2px var(--mat-sidebar);
 }
 
-.rail-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  /* Was two raw hexes. They are --violet-600 and --entity-600 exactly, so
-     naming them changes no pixel and removes the last colour literal from
-     this file — the discipline scripts/test-next-design-kit.js §10 ratchets.
-     They are FIXED POINTS in the brand ramp (neither is redefined under
-     [data-theme="light"]), so one declaration still serves both themes,
-     which is why this is a rename and not a theming change. */
-  background: linear-gradient(140deg, var(--violet-600), var(--entity-600));
-  margin-top: 4px;
-  flex: none;
-}
+/* v4.2: `.rail-avatar` (a decorative gradient circle at the foot of the
+   rail) is removed — owner, 2026-11-26. */
 
 /* ── Contextual sidebar ─────────────────────────────────────────────── */
 
@@ -1783,15 +1809,13 @@ body.guide-docked .main {
      strip it takes `.btn-xs` (--control-sm). That is a property of where the
      button IS, so it is never a judgement call at the call site. */
 
-/* ── THE TWO NATIVE TELLS, AND THEY COST ONE LINE EACH ────────────────────
-   `cursor: default` and `user-select: none` are the cheapest things in this
-   whole redesign and, per the design research, worth more than the entire
-   gloss recipe.
-
-   THE HAND CURSOR BELONGS TO LINKS THAT LEAVE THE APP. No AppKit control
-   shows one — not a push button, not a segment, not a switch, not a sidebar
-   row. Nothing marks a desktop app as a web page faster than a pointing hand
-   over a button, and the app had `cursor: pointer` on every one of them.
+/* ── THE CURSOR AND THE SELECTION ─────────────────────────────────────────
+   CURSOR (owner decision, 2026-11-26, reversing the earlier "no hand cursor"
+   rule): a control that opens or does something shows `cursor: pointer`, and
+   `not-allowed` while disabled (`.btn[disabled]` below). The kit rule in
+   scripts/test-next-views-kit.js §5 enforces it. The earlier rule held that
+   no AppKit control shows a hand; users of this app read the missing hand as
+   "this does nothing", which is the stronger failure.
 
    `user-select: none` is the same argument from the other side: a button
    label that turns blue and drag-selects when a click starts a pixel early
@@ -1811,7 +1835,7 @@ body.guide-docked .main {
   /* was --radius-md (6px). --radius-control is 7px: one step, applied to
      controls only, so nothing that is not a control moves. */
   border-radius: var(--radius-control);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   white-space: nowrap;
@@ -2406,7 +2430,7 @@ body.guide-docked .main {
   padding: 0 14px;
   border-radius: var(--radius-md);
   border: none;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font-family: inherit;
@@ -2676,7 +2700,7 @@ body.guide-docked .main {
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .reader-close::before {
@@ -2771,7 +2795,7 @@ body.guide-docked .main {
   border: none;
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   font: inherit;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
