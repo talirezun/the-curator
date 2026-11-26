@@ -122,8 +122,8 @@ function writeRaw(data) {
  * Whether .sharedbrain-config.json is usable. Never throws; basenames only.
  *   { file, state: 'missing'|'ok'|'damaged', reason?, backup? }
  */
-export function getSharedBrainConfigFileStatus() {
-  const r = inspectSettingsFile(configFile(), { validShape: validSharedBrainShape });
+export function getSharedBrainConfigFileStatus({ keepCopy = true } = {}) {
+  const r = inspectSettingsFile(configFile(), { validShape: validSharedBrainShape, keepCopy });
   const out = { file: path.basename(configFile()), state: r.state };
   if (r.state === 'damaged') { out.reason = r.reason; out.backup = r.backup; }
   return out;

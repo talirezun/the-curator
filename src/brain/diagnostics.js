@@ -24,7 +24,8 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { describeInstall, getCapabilities } from './install-mode.js';
-import { getDomainsDir, getApiKeys, getEffectiveKey } from './config.js';
+import { getDomainsDir, getApiKeys, getEffectiveKey, getConfigFileStatus } from './config.js';
+import { getSharedBrainConfigFileStatus } from './sharedbrain-config.js';
 import { appPath, getCredentialFiles, APP_ROOT } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus, gitMissingMessage } from './sync.js';
@@ -306,6 +307,26 @@ async function checkGitWindows(caps, deps) {
 // action lives beside this file's sibling (POST /api/diagnostics/reveal-log,
 // same execFile('open', ['-R', ...]) pattern as /api/mcp/reveal-config); no
 // frontend button consumes it yet.
+// ── Settings files readable (v4.1.2) ─────────────────────────────────────────
+// .curator-config.json and .sharedbrain-config.json. A damaged one is never
+// overwritten and every change to it is refused (config.js THE RULE); this row
+// says so. READ-ONLY, like the rest of this module: `keepCopy: false`, so the
+// check names a kept copy only if one is already there and never writes one.
+export function checkSettingsFiles(deps = {}) {
+  const read = (fn) => { try { return fn({ keepCopy: false }); } catch { return null; } };
+  const files = [read(deps.curator || getConfigFileStatus), read(deps.sharedBrain || getSharedBrainConfigFileStatus)].filter(Boolean);
+  const damaged = files.filter((f) => f.state === 'damaged');
+  if (!damaged.length) {
+    return check('settings-files', 'Settings files', 'ok',
+      `${files.filter((f) => f.state === 'ok').length ? 'Readable' : 'None saved yet'}: ${files.map((f) => f.file).join(', ')}.`);
+  }
+  const each = damaged.map((f) => f.file + (f.reason === 'read'
+    ? ' could not be opened (check its permissions)'
+    : ' is damaged' + (f.backup ? `; a copy is kept as ${f.backup}` : ''))).join('. ');
+  return check('settings-files', 'Settings files', 'fail',
+    `${each}. Nothing is saved to ${damaged.length === 1 ? 'it' : 'them'} until ${damaged.length === 1 ? 'it is' : 'they are'} fixed by hand or set aside with Start fresh in the banner at the top of the app.`);
+}
+
 function checkLogFile() {
   const stats = getLogFileStats();
   if (!stats) {
@@ -326,6 +347,7 @@ export async function runQuickDiagnostics() {
     checkProvider(),
     await checkDomainsWritable(),
     checkCredentialPerms(),
+    checkSettingsFiles(),
     await checkGit(),
     await checkSync(),
     checkLogFile(),

@@ -280,6 +280,7 @@ import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 import { docsUrl } from './shared/docs-links.js';
 import { createSidebarDrawer } from './shared/sidebar-drawer.js';
 import { checkModelRetirement } from './shared/model-retirement.js';
+import { checkSettingsFiles, armSettingsFileRecheck } from './shared/settings-file-banner.js';
 // v3.89.2: the personal-sync run lives in the shell, so the RAIL shows it
 // running and then its outcome wherever the user has gone. Neither module
 // imports app.js, so this creates no cycle.
@@ -3543,6 +3544,12 @@ function boot() {
   // that and for any build pick the server moved. Same fire-and-forget shape
   // as the line above: async, never throws, not awaited.
   checkModelRetirement();
+
+  // v4.1.2: a damaged settings file (never overwritten; every save to it is
+  // refused) gets a persistent banner naming the file and its kept copy, with
+  // Start fresh. Same fire-and-forget shape: async, never throws, not awaited.
+  checkSettingsFiles();
+  armSettingsFileRecheck();
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs

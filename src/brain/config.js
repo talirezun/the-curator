@@ -109,6 +109,23 @@ function keepDamagedCopy(file, buf, sha) {
   }
 }
 
+/** The kept copy's basename if it already exists, else null. Writes nothing. */
+function existingCopyName(file, sha) {
+  const name = backupNameFor(file, sha);
+  try { return existsSync(path.join(path.dirname(file), name)) ? name : null; } catch { return null; }
+}
+
+/**
+ * True when `text` carries ConfigFileUnreadableError's own sentence (see its
+ * constructor), even inside a route's prefix. Routes that answer
+ * `500 {error: err.message}` are turned into a 409 `config_unreadable` by
+ * src/brain/user-errors.js's userErrorBodies on this test (v4.1.2).
+ */
+export function isConfigUnreadableText(text) {
+  return typeof text === 'string'
+    && text.includes(' could not be read, so nothing was saved: saving now would have erased everything in it.');
+}
+
 function reportDamage(file, key, detail, backup) {
   if (_reportedDamage.has(key)) return;
   _reportedDamage.add(key);
@@ -127,7 +144,7 @@ function reportDamage(file, key, detail, backup) {
  *
  * `validShape(parsed)` decides the shape; the default is a plain object.
  */
-export function inspectSettingsFile(file, { validShape = isPlainObject } = {}) {
+export function inspectSettingsFile(file, { validShape = isPlainObject, keepCopy = true } = {}) {
   let buf;
   try { buf = readFileSync(file); }
   catch (err) {
@@ -143,7 +160,9 @@ export function inspectSettingsFile(file, { validShape = isPlainObject } = {}) {
   if (!reason && !validShape(parsed)) reason = 'shape';
   if (!reason) return { state: 'ok', value: parsed };
   const sha = createHash('sha256').update(buf).digest('hex');
-  const backup = keepDamagedCopy(file, buf, sha);
+  // keepCopy:false (System Check, which writes nothing): name the copy only if
+  // it is already there — the app's own reads keep it on the first read.
+  const backup = keepCopy ? keepDamagedCopy(file, buf, sha) : existingCopyName(file, sha);
   reportDamage(file, `${file}\0${sha}`,
     reason === 'parse' ? 'it is not valid JSON' : 'it does not hold the expected settings', backup);
   return { state: 'damaged', reason, backup };
@@ -209,8 +228,8 @@ function writeRaw(data) {
  * a banner. Never throws; names files by basename only.
  *   { file, state: 'missing'|'ok'|'damaged', reason?, backup? }
  */
-export function getConfigFileStatus() {
-  const r = inspectSettingsFile(configFile());
+export function getConfigFileStatus({ keepCopy = true } = {}) {
+  const r = inspectSettingsFile(configFile(), { keepCopy });
   const out = { file: path.basename(configFile()), state: r.state };
   if (r.state === 'damaged') { out.reason = r.reason; out.backup = r.backup; }
   return out;

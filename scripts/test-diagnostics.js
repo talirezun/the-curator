@@ -419,7 +419,7 @@ try {
   // install-mode release (`install-mode` and `git` joined the five before
   // that). The count is pinned deliberately rather than relaxed to `>= 5` —
   // a row silently disappearing is exactly what this assertion is for.
-  assert(res.checks.length === 8, `8 checks returned (got ${res.checks?.length})`);
+  assert(res.checks.length === 9, `9 checks returned (got ${res.checks?.length})`);
   assert(res.checks.every(c => c.id && c.label && VALID.has(c.status) && typeof c.detail === 'string'),
     'every check has id/label/valid-status/detail');
 

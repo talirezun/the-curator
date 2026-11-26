@@ -35,6 +35,7 @@ import {
   scrubHomes,
 } from '../public/next/shared/user-errors.js';
 import { scrubPaths } from './scrub-paths.js';
+import { isConfigUnreadableText } from './config.js';
 import { scrubSecrets, logWarn, logError } from './logger.js';
 
 export {
@@ -357,10 +358,26 @@ export function userErrorBodies(req, res, next) {
         args[i] = out;
         logWarn('api-error', `${req.method} ${pathOnly(req)} → ${out.code}: ${out.detail}`);
       }
+      // v4.1.2: a write refused because a settings file is damaged is not a
+      // server fault. Every route that answers it as `500 {error: err.message}`
+      // (or `{message}`) becomes 409 `config_unreadable` here, at one place,
+      // rather than in each of the routes that reach a config writer.
+      if (res.statusCode >= 500 && unreadableBody(args[i])) {
+        res.status(409);
+        if (i === 1) args[0] = 409;
+        const b = args[i];
+        if (!b.code || b.code === 'write_failed' || b.code === KLASS_CODES['internal-error']) args[i] = { ...b, code: 'config_unreadable' };
+      }
     } catch { /* a translation failure must never break a response */ }
     return original.apply(this, args);
   };
   next();
+}
+
+/** A JSON error body carrying ConfigFileUnreadableError's sentence. */
+function unreadableBody(b) {
+  return !!b && typeof b === 'object' && !Array.isArray(b)
+    && (isConfigUnreadableText(b.error) || isConfigUnreadableText(b.message));
 }
 
 /** `app.all('/api/*', apiNotFound)`: an unknown API path is JSON, not the SPA's HTML. */
@@ -397,6 +414,11 @@ export function apiErrorHandler(err, req, res, next) {
   } else if (BODY_PARSER_MALFORMED.has(type)) {
     status = 400;
     body = { error: USER_MESSAGES['request-malformed'](), code: KLASS_CODES['request-malformed'] };
+  } else if (err && err.code === 'config_unreadable' && typeof err.message === 'string') {
+    // v4.1.2: a damaged settings file refused the write (config.js). Its own
+    // sentence names the file and the kept copy; 409, never a server fault.
+    status = 409;
+    body = { error: err.message, code: 'config_unreadable' };
   } else {
     const declared = Number(err && (err.statusCode || err.status));
     const surface = surfaceFromPath(pathOnly(req));

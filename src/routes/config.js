@@ -3,6 +3,8 @@ import { existsSync, readFileSync, realpathSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+import { getConfigFileStatus, setAsideDamagedConfig } from '../brain/config.js';
+import { getSharedBrainConfigFileStatus, setAsideDamagedSharedBrainConfig } from '../brain/sharedbrain-config.js';
 import { getConfig, setDomainsDir as writeDomainsDirSetting, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings, getModelMigrationNotes, dismissModelMigrationNotes } from '../brain/config.js';
 // v3.65.2 — the GitHub read-only token's TEST route. The read client is the
 // one implementation of GET-only GitHub plumbing (v3.63.0); this route reuses
@@ -2380,7 +2382,7 @@ router.put('/github-read-token', guardConcurrent('save the GitHub token'), (req,
       return res.status(400).json({ ok: false, code: 'invalid_token', message: err.message });
     }
     if (err && err.code === 'config_unreadable') {
-      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
+      return res.status(409).json({ ok: false, code: 'config_unreadable', message: err.message });
     }
     // An unexpected failure (a disk error) — its message is a path at worst,
     // but it is still scrubbed of the value rather than trusted.
@@ -2397,7 +2399,7 @@ router.delete('/github-read-token', guardConcurrent('remove the GitHub token'), 
     res.json({ ok: true, present: st.present });
   } catch (err) {
     if (err && err.code === 'config_unreadable') {
-      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
+      return res.status(409).json({ ok: false, code: 'config_unreadable', message: err.message });
     }
     res.status(500).json({ ok: false, code: 'write_failed',
       message: scrubPaths(err?.message || 'The token could not be removed.') });
@@ -5167,5 +5169,61 @@ export async function updateHandler(_req, res, deps = null) {
 }
 
 router.post('/update', (req, res) => updateHandler(req, res));
+
+// ── Damaged settings files (v4.1.2, the F2 follow-up) ───────────────────────
+//
+// src/brain/config.js holds THE RULE: a .curator-config.json or
+// .sharedbrain-config.json that is present but unreadable, not JSON or the
+// wrong shape is never overwritten; a copy is kept beside it as
+// `<file>.unreadable-<sha:12>` and every write is refused (`config_unreadable`,
+// 409 — src/brain/user-errors.js maps a route's 500 to it). These two routes
+// are the app shell's banner: one READ that names each damaged file and its
+// kept copy, and the explicit "Start fresh" that sets one aside.
+//
+//   GET  /api/config/settings-files
+//        → {ok:true, files:[{file, state:'missing'|'ok'|'damaged', reason?, backup?}]}
+//   POST /api/config/settings-files/set-aside   body exactly {file}
+//        → 200 {ok:true, file, backup} | 409 {ok:false, reason} | 400
+//
+// Basenames only, never a path. The set-aside verifies its byte-for-byte copy
+// before removing the live file (setAsideSettingsFile), and refuses a file that
+// is not damaged — so a stale banner can never remove a good settings file.
+const SETTINGS_FILES = Object.freeze({
+  '.curator-config.json': { status: getConfigFileStatus, setAside: setAsideDamagedConfig },
+  '.sharedbrain-config.json': { status: getSharedBrainConfigFileStatus, setAside: setAsideDamagedSharedBrainConfig },
+});
+const SET_ASIDE_REFUSALS = {
+  not_damaged: 'That settings file can be read, so it was not set aside.',
+  missing: 'That settings file is not there, so there is nothing to set aside.',
+  unreadable_bytes: 'This computer did not let The Curator read that settings file, so no copy could be kept and it was not set aside. Check the file’s permissions in The Curator’s data folder, then try again.',
+  copy_failed: 'The Curator could not keep a copy of that settings file, so it was not set aside. Check that the disk is not full, then try again.',
+};
+
+export function settingsFilesStatus() {
+  return Object.values(SETTINGS_FILES).map((f) => {
+    try { return f.status(); } catch { return null; }
+  }).filter(Boolean);
+}
+
+router.get('/settings-files', (_req, res) => {
+  res.json({ ok: true, files: settingsFilesStatus() });
+});
+
+router.post('/settings-files/set-aside', guardConcurrent('set a settings file aside'), (req, res) => {
+  const b = req.body;
+  const file = b && typeof b === 'object' && !Array.isArray(b) && Object.keys(b).length === 1 ? b.file : undefined;
+  if (typeof file !== 'string' || !Object.prototype.hasOwnProperty.call(SETTINGS_FILES, file)) {
+    return res.status(400).json({ ok: false, reason: 'unknown_file',
+      error: `The request body must be {file}, one of ${Object.keys(SETTINGS_FILES).join(', ')}.` });
+  }
+  let r;
+  try { r = SETTINGS_FILES[file].setAside(); }
+  catch (err) { return res.status(500).json({ ok: false, error: scrubPaths(err?.message || 'The file could not be set aside.') }); }
+  if (!r || !r.setAside) {
+    const reason = (r && r.reason) || 'copy_failed';
+    return res.status(409).json({ ok: false, reason, error: SET_ASIDE_REFUSALS[reason] || SET_ASIDE_REFUSALS.copy_failed });
+  }
+  res.json({ ok: true, file, backup: r.backup });
+});
 
 export default router;
