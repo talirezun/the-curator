@@ -481,9 +481,29 @@ const PAT_REFUSAL = {
  *  Before this there was one copy inside the debounce; the Check button
  *  would have been a second, and two renderings of one verdict is the drift
  *  shape this repo keeps recording. */
-function patVerdict(j, meta) {
+function patVerdict(j, meta, mode) {
   if (!j || typeof j !== 'object') {
     return { kind: 'error', message: 'GitHub’s answer could not be read. Press Check token to try again.' };
+  }
+  // v4.1.2 (audit B6): in CREATE mode the person at this step IS the admin,
+  // so the contributor's words ("ask the admin", "continue as a read-only
+  // member") are wrong — and an admin's connection must write (synthesis and
+  // revoke write to the repository), so a read-only token cannot continue.
+  const forAdmin = mode === 'create';
+  if (forAdmin && j.valid === false && j.code === 'sharedbrain-pat-no-access') {
+    return {
+      kind: 'error',
+      message: 'Repository not found, or your token cannot open it. Check the repository you typed in the ' +
+        'first step (owner/name, exactly as on GitHub), and that the token’s Resource owner is the account or ' +
+        'organisation that owns it. Then press Check token again.',
+    };
+  }
+  if (forAdmin && j.valid && !j.hasWriteAccess) {
+    return {
+      kind: 'error',
+      message: 'Token works but is read-only. As the admin you need write access: synthesis and revoke write ' +
+        'to the repository. Re-create the token with Contents: Read AND write, then re-paste.',
+    };
   }
   if (!j.valid) {
     // The sentence is the server's (or this fallback), unchanged; a body that
@@ -543,7 +563,9 @@ function plainInviteError(serverError) {
       'Copy it again from your admin’s message, including the whole line.';
   }
   if (/supports up to v/i.test(raw)) {
-    return raw + ' Update The Curator (Settings → Updates), then paste the token again.';
+    // v4.1.2 (audit B9): the server's sentence already ends "Update The
+    // Curator.", so appending ours said it twice.
+    return raw.replace(/\s*Update The Curator\.?\s*$/i, '') + ' Update The Curator (Settings → Updates), then paste the token again.';
   }
   return plainError(raw);
 }
@@ -1292,7 +1314,7 @@ function panelStep5() {
           '<dt>Contributing domains</dt><dd data-field="domains"></dd>' +
           '<dt>Display name</dt><dd data-field="display-name"></dd>' +
           '<dt>Name attribution</dt><dd data-field="attribution"></dd>' +
-          '<dt class="sbw-hidden" data-field="admin-token-dt">Admin token</dt><dd class="sbw-hidden" data-field="admin-token"></dd>' +
+          '<dt class="sbw-hidden" data-field="admin-token-dt" hidden>Admin token</dt><dd class="sbw-hidden" data-field="admin-token" hidden></dd>' +
         '</dl>' +
       '</div>' +
       '<div class="sbw-consent">' +
@@ -1596,7 +1618,7 @@ function bindStep3() {
       const j = await r.json();
       if (mySeq !== state.patSeq || !isFresh(myGen)) return;
 
-      const verdict = patVerdict(j, state.inviteMetadata);
+      const verdict = patVerdict(j, state.inviteMetadata, state.mode);
       setValidation(verdict.kind, verdict.message, verdict.support);
       if (!patVerdictAccepts(verdict)) { clearVerdict(); return; }
 
@@ -1811,9 +1833,13 @@ function populateReview() {
   const adminDt = box.querySelector('[data-field="admin-token-dt"]');
   const adminDd = box.querySelector('[data-field="admin-token"]');
   const holdsAdmin = state.mode === 'create' && !!state.generatedAdminToken;
-  if (adminDt) adminDt.classList.toggle('sbw-hidden', !holdsAdmin);
+  // v4.1.2 (audit B9): `.sbw-hidden` has only compound CSS rules, none for a
+  // dt/dd, so the class alone left an empty ADMIN TOKEN row on every join.
+  // The `hidden` attribute is what hides it; the class is kept for callers.
+  if (adminDt) { adminDt.classList.toggle('sbw-hidden', !holdsAdmin); adminDt.hidden = !holdsAdmin; }
   if (adminDd) {
     adminDd.classList.toggle('sbw-hidden', !holdsAdmin);
+    adminDd.hidden = !holdsAdmin;
     adminDd.textContent = holdsAdmin ? 'stored on this computer when you press Save & Connect' : '';
   }
   box.querySelector('[data-field="repo"]').textContent =

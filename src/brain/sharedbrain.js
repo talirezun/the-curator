@@ -396,6 +396,8 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     const pathspec = `${domain}/wiki/${pagePath}`;
     const sinceIso = sinceDate.toISOString();
 
+    // windowsHide (v4.1.2, audit W3): in the Windows app each git call would
+    // otherwise flash a console window. A no-op on macOS and Linux.
     // The SAME git Sync runs (subprocess-env.js gitInvocation, audit M4): in
     // the Windows app the bundled one; everywhere else exactly the bare `git`
     // and options that were here.
@@ -405,7 +407,7 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     const { stdout: shaOut } = await execFileAsync(
       logGit.file,
       logGit.args,
-      { encoding: 'utf-8', ...(logGit.env ? { env: logGit.env } : {}) }
+      { encoding: 'utf-8', windowsHide: true, ...(logGit.env ? { env: logGit.env } : {}) }
     );
     const sha = shaOut.trim();
     if (!sha) return null;
@@ -418,7 +420,7 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     const { stdout: content } = await execFileAsync(
       showGit.file,
       showGit.args,
-      { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10, ...(showGit.env ? { env: showGit.env } : {}) }
+      { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10, windowsHide: true, ...(showGit.env ? { env: showGit.env } : {}) }
     );
 
     // THE RETURN VALUE IS A THREE-STATE SIGNAL, AND '' IS NOT ONE OF THE
@@ -966,6 +968,40 @@ export function mirrorOwnerMismatch(content, connection) {
   return null;
 }
 
+// Files an operating system drops into any folder it shows. They are never a
+// person's work, so they do not make a folder "someone's".
+const OS_LITTER = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized']);
+const APP_OWN_TOP_LEVEL = new Set(['.write-lock', '.curator-identity.json']);
+
+/**
+ * The first file anywhere under `dir` (relative path, forward slashes), or
+ * null when it holds only directories, OS litter and the app's own top-level
+ * bookkeeping files (APP_OWN_TOP_LEVEL). A symlink counts as a
+ * file (it is never followed). An unreadable directory counts as content:
+ * "cannot tell" must refuse, never adopt. Stops at the first hit.
+ */
+async function firstFileInside(dir, rel = '') {
+  let entries;
+  try { entries = await readdir(path.join(dir, rel), { withFileTypes: true }); }
+  catch { return rel || '.'; }
+  for (const entry of entries) {
+    const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      const inner = await firstFileInside(dir, childRel);
+      if (inner) return inner;
+      continue;
+    }
+    if (entry.isFile() && OS_LITTER.has(entry.name.toLowerCase())) continue;
+    // The Pull route takes the mirror's `.write-lock` (write-registry.js)
+    // BEFORE this check runs, so the first Pull always finds it; and
+    // `.curator-identity.json` (domain-identity.js) can outlive a domain whose
+    // files a Sync removed. Both are the app's own, never a person's.
+    if (!rel && entry.isFile() && APP_OWN_TOP_LEVEL.has(entry.name)) continue;
+    return childRel;
+  }
+  return null;
+}
+
 /**
  * Ensure the local shared-brain mirror domain exists on disk.
  *
@@ -1050,6 +1086,34 @@ export async function ensureSharedDomainExists(localDomain, connection, domainsD
       );
     }
     return; // a genuine mirror of THIS brain — already initialised
+  }
+
+  // ── A FOLDER WITHOUT CLAUDE.md IS NOT AN EMPTY MIRROR (v4.1.2, audit B1) ──
+  //
+  // The refusal above only ran when CLAUDE.md existed, and the comment there
+  // claimed hand-made folders were covered. They were not: a folder named
+  // `shared-<slug>` with the user's own pages and NO CLAUDE.md fell through to
+  // the creation below, which wrote the mirror marker into it, and step 7b of
+  // that same Pull then pruned every page the collective did not send. Proven
+  // with a local store: "Pull complete: 1 new … 2 removed", both of the user's
+  // pages gone, no trash. The slug still comes from an unsigned invite, and
+  // folders adopted from other tools are a stated use case.
+  //
+  // The only folder this function may initialise is one that holds nothing:
+  // absent, or empty directories alone (what an interrupted first creation
+  // leaves, because CLAUDE.md is the first FILE written below). Any file —
+  // a page, an index.md, a note, anything but OS litter — means the folder is
+  // someone's, and a Pull would delete or overwrite it.
+  if (existsSync(base)) {
+    const found = await firstFileInside(base);
+    if (found) {
+      throw new Error(
+        `Refusing to pull into "${localDomain}": a folder with that name already exists on this machine ` +
+        `and holds files (for example ${found}), but it is not a Shared Brain mirror (it has no CLAUDE.md). ` +
+        `Pulling would delete or overwrite them. Nothing was changed. If these are your own pages, rename ` +
+        `or move that folder, or ask the brain's admin for an invite whose name does not collide with it.`
+      );
+    }
   }
 
   await mkdir(path.join(base, 'wiki', 'entities'),  { recursive: true });

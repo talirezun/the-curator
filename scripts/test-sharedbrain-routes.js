@@ -676,10 +676,17 @@ try {
     const mintedToken = invite.body.admin_token;
     assert(/^sbat_[0-9a-f]{40}$/.test(mintedToken || ''), 'generate-invite mints a sbat_ token');
 
-    const { pending_pages, has_admin_token, ...current } =
+    const { pending_pages, pending_retry_pages, has_admin_token, ...current } =
       (await request('GET', '/list')).body.connections.find(c => c.id === p5Id);
+    // v4.1.2 (audit B3): an UPDATE can no longer add an admin token — that was
+    // a contributor's way round the rotate gate. The token is set when the
+    // connection is CREATED (the Create wizard's one /save), so the fixture
+    // now leaves and re-creates it, the way an admin's setup arrives.
+    const planted = await request('POST', '/save', { connection: { ...current, admin_token: mintedToken } });
+    assertEq(planted.status, 403, 'an update cannot add an admin token to a token-less connection (v4.1.2, B3)');
+    assertEq((await request('DELETE', `/${p5Id}`)).status, 200, 'leave the token-less connection');
     const resaved = await request('POST', '/save', { connection: { ...current, admin_token: mintedToken } });
-    assertEq(resaved.status, 200, 'save persists the freshly-minted admin_token onto the existing connection');
+    assertEq(resaved.status, 200, 'creating the connection with the freshly-minted admin_token persists it');
 
     const list1 = await request('GET', '/list');
     const mine1 = (list1.body.connections || []).find(c => c.id === p5Id);
