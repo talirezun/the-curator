@@ -696,6 +696,11 @@ const RENDER_INJECTED_VALUES = {
   explainerMark,
   explainerHtml,
   formatUsdHonest,
+  // v4.1.2 (F4, audit W11): renderConnectBlock asks the platform so it never
+  // says "0600" on Windows. A fixed Mac answer here keeps this suite's rows
+  // byte-identical to what it pinned before; test-mcp-install-safety §W11
+  // holds the Windows wording.
+  browserPlatform: () => 'darwin',
   // v3.72.1 — the REAL price-per-1M formatter settings.js imports from
   // shared/model-row.js, so an exact price is what the rows assert.
   formatPricePerM,

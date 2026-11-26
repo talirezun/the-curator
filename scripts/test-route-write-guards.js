@@ -844,8 +844,20 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
   // The refusal must be built by the SHARED conflictResponse, never a
   // hand-rolled 409 — that is what keeps status/body/message identical to
   // every other refusal in the app.
-  assert(!/res\.status\(409\)/.test(src),
-    'no hand-rolled 409 in config.js — all refusals go through conflictResponse()');
+  // v4.1.2: two 409s that are NOT write conflicts are allowed, each named by
+  // its body: a damaged settings file (`code: 'config_unreadable'`) and a
+  // set-aside refused for the file's state (SET_ASIDE_REFUSALS). Any other
+  // hand-rolled 409 — a conflict built by hand — still fails.
+  const hand409 = [...src.matchAll(/res\.status\(409\)\.json\(([^;]*)\);/g)].map((m) => m[1]);
+  const conflict409 = hand409.filter((b) => !/code: 'config_unreadable'/.test(b) && !/SET_ASIDE_REFUSALS/.test(b));
+  assert((src.match(/res\.status\(409\)/g) || []).length === hand409.length && conflict409.length === 0,
+    'no hand-rolled CONFLICT 409 in config.js — all write-conflict refusals go through conflictResponse() (only config_unreadable and a set-aside refusal answer 409 themselves)');
+  {
+    const probe = "return res.status(409).json({ error: 'A write is running.' });";
+    const pb = [...probe.matchAll(/res\.status\(409\)\.json\(([^;]*)\);/g)].map((m) => m[1]);
+    assert(pb.length === 1 && pb.filter((b) => !/code: 'config_unreadable'/.test(b) && !/SET_ASIDE_REFUSALS/.test(b)).length === 1,
+      'CONTROL: the same filter flags a hand-built conflict 409');
+  }
 
   // pick-folder's post-dialog re-check. The middleware only proves the state
   // when the dialog OPENED; the dialog blocks for up to 60 s. This cannot be
@@ -1315,7 +1327,10 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // 21 -> 22: POST /model-retirement/dismiss (2026-10-08) — clears the
     // one-time "your model was moved forward" notes. Exempted below on
     // /ui-state's axis: no write path reads the notes.
-    expectedMutatingCount: 22,
+    // 22 -> 23: POST /settings-files/set-aside (v4.1.2) — sets a DAMAGED
+    // settings file aside after a verified copy. Guarded (guardConcurrent):
+    // it removes the file every config read resolves.
+    expectedMutatingCount: 23,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
