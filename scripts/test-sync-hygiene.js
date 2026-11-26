@@ -829,7 +829,9 @@ try {
     // window) by a catch whose block checks `.message.includes('nothing to
     // commit')` — the catch parameter name itself is not load-bearing (this
     // file uses both `err` and `commitErr`), so the regex accepts either.
-    const commitCallRe = /await git\(\s*['"`]commit\b[^)]*\)/g;
+    // v4.1.2: git() takes an argv array (no shell), so the call reads
+    // `await git(['commit', …])`; a string command is refused by git() itself.
+    const commitCallRe = /await git\(\s*\[\s*['"`]commit['"`][^)]*\)/g;
     const commitCalls = [...src.matchAll(commitCallRe)];
     assertTrue(commitCalls.length >= 3, `found at least 3 commit call sites (setup/push/pull incl. the new post-merge cleanup + conflict-recovery commits) — found ${commitCalls.length}`);
 
@@ -860,7 +862,7 @@ try {
       'push(): cleanupStaleLocalLocks() runs before the status/commit block');
 
     const pullBody = src.slice(src.indexOf('export async function pull()'), src.indexOf('async function recoverHygieneMergeConflict'));
-    const idxMerge         = pullBody.indexOf("git('pull --no-rebase");
+    const idxMerge         = pullBody.indexOf("git(['pull', '--no-rebase'");
     const idxUntrackLocks  = pullBody.indexOf('await untrackStaleWriteLocks()');
     const idxUntrackDS     = pullBody.indexOf('await untrackStaleDSStore()');
     const idxCleanupLocks  = pullBody.indexOf('await cleanupStaleLocalLocks()');
@@ -1435,7 +1437,7 @@ try {
       const pullFnMatch = syncSrc.match(/export async function pull\(\)[\s\S]*?\n}\n/);
       assertTrue(!!pullFnMatch, 'mutation sanity — pull() was extractable from the real source file');
       const pullFnSrc = pullFnMatch[0];
-      const mergeIdx = pullFnSrc.indexOf("git('pull --no-rebase -X theirs origin main'");
+      const mergeIdx = pullFnSrc.indexOf("git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main']");
       const workspaceUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianWorkspace();');
       const leftoversUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianLeftovers();');
       assertTrue(mergeIdx > -1 && workspaceUntrackIdx > -1 && leftoversUntrackIdx > -1,
@@ -1916,11 +1918,12 @@ try {
       const t = l.trim();
       return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'));
     });
-    const rawFetchSites = codeLines.filter((l) => /\bgit\(\s*[`'"]fetch\b/.test(l));
+    // Both spellings count: the argv form (v4.1.2) and the old string form.
+    const rawFetchSites = codeLines.filter((l) => /\bgit\(\s*(\[\s*)?[`'"]fetch\b/.test(l));
     assertEq(rawFetchSites.length, 1,
       'sync.js contains EXACTLY ONE raw git fetch invocation (inside gitFetch) — every other site must go through the gate');
     const gateBody = syncSrc.slice(syncSrc.indexOf('function gitFetch('));
-    assertTrue(/\bgit\(\s*`fetch \$\{args\}`/.test(gateBody.slice(0, 500)),
+    assertTrue(/\bgit\(\s*\[\s*'fetch',\s*\.\.\.args\s*\]/.test(gateBody.slice(0, 500)),
       'and that one invocation is gitFetch\'s own');
     // Every caller reaches fetch through the gate, so the callers are named
     // here too — a site could otherwise "pass" (a) by not fetching at all.

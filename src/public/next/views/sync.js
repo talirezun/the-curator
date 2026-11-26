@@ -610,7 +610,7 @@ function renderUnconfigured() {
         // through. wireListeners() sets `.value` as a DOM property right
         // after this markup is inserted, so the previously-typed token is
         // still restored across re-renders — it just never touches HTML.
-        '<input type="password" class="mono sync-setup-input" id="setup-token" placeholder="ghp_… or a fine-grained token">' +
+        '<input type="password" class="mono sync-setup-input" id="setup-token" autocomplete="off" spellcheck="false" placeholder="ghp_… or a fine-grained token">' +
       '</div>' +
       '<div class="sync-setup-field">' +
         '<span class="sync-setup-label">Starting direction</span>' +

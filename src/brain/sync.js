@@ -1,8 +1,8 @@
-import { exec, spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { mkdir, mkdtemp, readFile, readdir, unlink, rm, chmod } from 'fs/promises';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, lstatSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
@@ -30,7 +30,7 @@ import {
 // the user's GitHub PAT.
 const ROOT       = APP_ROOT;
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Test-only overrides — same pattern as config.js's __setDomainsDirOverride.
 // Production code NEVER calls this; both stay null, so currentGitDir() /
@@ -136,7 +136,6 @@ function looksLikeGitDir(dir) {
 const LIVE_GIT_PLAN = planGit({ appRoot: APP_ROOT, isBundle: isBundleInstall(), exists: existsSync });
 let GIT_ENV = LIVE_GIT_PLAN.env;
 let GIT_CONFIG_ARGS = LIVE_GIT_PLAN.configArgs;
-let GIT_PROGRAM = ['git', ...GIT_CONFIG_ARGS].join(' ');
 
 /** TEST-ONLY: the env every git() call here runs with (scripts/test-subprocess-env.js §1). */
 export function __subprocessEnvForTest() { return GIT_ENV; }
@@ -151,7 +150,6 @@ export function __setGitPlanForTest(plan) {
   const p = plan || LIVE_GIT_PLAN;
   GIT_ENV = p.env;
   GIT_CONFIG_ARGS = p.configArgs.slice();
-  GIT_PROGRAM = ['git', ...GIT_CONFIG_ARGS].join(' ');
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -199,7 +197,7 @@ function gitFetch(args, opts) {
   // above. Both arms of the .then() below share it, so a rejected
   // predecessor does not become a second literal call site the guard would
   // have to learn about.
-  const runOne = () => { _fetchCount++; return git(`fetch ${args}`, opts); };
+  const runOne = () => { _fetchCount++; return git(['fetch', ...args], opts); };
   // TWO LAYERS, and NEITHER IS INDIVIDUALLY LOAD-BEARING — stated that way
   // because it was measured, not assumed. The gate must survive a
   // rejection: one failed fetch must not wedge every later one for the
@@ -220,7 +218,7 @@ function sanitize(str) {
     .replace(/https?:\/\/[^@\s]+@/g,           'https://***@');
 }
 
-async function git(cmd, opts = {}) {
+async function git(args, opts = {}) {
   // opts.gitDir — operate on a git dir OTHER than this install's own. Used by
   // two callers and only two: setup(), which must run against the dir it is
   // about to adopt BEFORE that choice is written to config, and
@@ -231,12 +229,33 @@ async function git(cmd, opts = {}) {
   // opts.env — extra environment for ONE call. Only GIT_INDEX_FILE uses it,
   // so that assessPullOverwrite() can load a tree into a SCRATCH index and
   // never touch the real one.
-  const full = `${GIT_PROGRAM} --git-dir="${opts.gitDir || currentGitDir()}" --work-tree="${getDomainsDir()}" ${cmd}`;
+  //
+  // ARGV ONLY, NO SHELL (v4.1.2, audit S2/S3/W6). `args` is an ARRAY handed to
+  // execFile, so nothing in it is ever read by /bin/sh or cmd.exe. Until v4.1.2
+  // this built one shell string with the git dir, the knowledge folder and the
+  // remote URL inside double quotes, so a folder named `Cash$flow notes` made
+  // git operate on `Cash notes`, `My "Brain"` broke the command, a folder or a
+  // repository URL containing `$(…)` or a backtick RAN it, and on Windows a `%`
+  // or a UNC share root did the same through cmd.exe. A string is refused
+  // outright, so a future call site cannot quietly bring the shell back.
+  // Every other option is the old one: the timeout, `cwd: ROOT`, the env, and
+  // planGit()'s `-c` arguments before the subcommand (GIT_CONFIG_ARGS; MinGit
+  // on the Windows app is found on the plan's PATH, exactly as gitArgv() below
+  // has always started it). windowsHide (audit W3): no console window flashes
+  // on Windows for a git child; ignored on every other platform.
+  if (!Array.isArray(args)) throw new TypeError('git() takes an argument array, never a command string');
+  const argv = [
+    ...GIT_CONFIG_ARGS,
+    `--git-dir=${opts.gitDir || currentGitDir()}`,
+    `--work-tree=${getDomainsDir()}`,
+    ...args.map(String),
+  ];
   try {
-    const { stdout, stderr } = await execAsync(full, {
+    const { stdout, stderr } = await execFileAsync('git', argv, {
       timeout: opts.timeout || 30000,
       cwd: ROOT,              // Explicit cwd prevents "getcwd: Operation not permitted" on macOS
       env: opts.env ? { ...GIT_ENV, ...opts.env } : GIT_ENV,
+      windowsHide: true,
     });
     return { stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (err) {
@@ -248,6 +267,43 @@ async function git(cmd, opts = {}) {
     const detail = err.stdout ? `${err.message}\n${err.stdout}` : err.message;
     throw new Error(sanitize(detail));
   }
+}
+
+// What Connect accepts, checked before anything is written (v4.1.2, audit
+// S6, and a second wall behind the argv-only git() for S3). The refusals name
+// the field. An `https://` address, `git@github.com:owner/repo`, or `file://`
+// (a local repository, used by the offline suites); a token of the shapes
+// GitHub issues. A trailing slash and a pasted GitHub page address
+// (`…/owner/repo/tree/main`) are reduced to the repository.
+const CONNECT_URL_MESSAGE =
+  'That repository address is not one Sync can use. Paste the address of the repository itself, ' +
+  'such as https://github.com/your-name/your-wiki, with no spaces.';
+const CONNECT_TOKEN_MESSAGE =
+  'That token is not in a shape GitHub issues. Copy the whole token again (it starts with ghp_ or ' +
+  'github_pat_), with no spaces, and paste it here.';
+
+/** `{repoUrl, token}` cleaned, or a refusal naming the field. Writes nothing. */
+function checkConnectInput(repoUrl, token) {
+  if (typeof repoUrl !== 'string' || !repoUrl.trim() || /[\s\x00-\x1f\x7f]/.test(repoUrl.trim())) {
+    throw refusal('invalid-repo-url', CONNECT_URL_MESSAGE, { field: 'repoUrl' });
+  }
+  let url = repoUrl.trim();
+  const isFile = /^file:\/\//i.test(url);
+  if (!isFile) {
+    if (!/^https?:\/\/[^/@\s]+\/[^/@\s]+\/[^@\s]+$/i.test(url.replace(/\/+$/, '')) &&
+        !/^git@github\.com:[^/@\s]+\/[^@\s]+$/i.test(url)) {
+      throw refusal('invalid-repo-url', CONNECT_URL_MESSAGE, { field: 'repoUrl' });
+    }
+    if (typeof token !== 'string' || !TOKEN_SHAPE.test(token.trim())) {
+      throw refusal('invalid-token', CONNECT_TOKEN_MESSAGE, { field: 'token' });
+    }
+    token = token.trim();
+    url = url.replace(/\/+$/, '');
+    // github.com: the repository is exactly the first two path segments.
+    const gh = /^https?:\/\/(www\.)?github\.com\/([^/]+)\/([^/]+)(\/.*)?$/i.exec(url);
+    if (gh) url = `https://github.com/${gh[2]}/${gh[3]}`;
+  }
+  return { repoUrl: url, token };
 }
 
 function buildRemoteUrl(repoUrl, token) {
@@ -466,6 +522,18 @@ function authStatus(msg) {
 
 function classifySyncError(err) {
   const msg = errorText(err).toLowerCase();
+  // A LOCK FILE GIT LEFT BEHIND (v4.1.2, audit S8). `index.lock` exists while
+  // a git command is changing the index; a git that was stopped part-way (a
+  // kill, a crash, a laptop that slept) leaves it, and every later sync then
+  // fails at once. "Try again in a minute" was wrong: it never clears by
+  // itself. Not removed automatically: another process (the MCP server, a
+  // second app window) may genuinely be holding it. Long and specific, and
+  // above everything so a SHA or a path in the text cannot route it elsewhere.
+  if (msg.includes('index.lock') && (msg.includes('file exists') || msg.includes('unable to create'))) {
+    return { error: 'Sync could not start because git left a lock file behind in this computer’s ' +
+           'sync history (a sync stopped part-way). Nothing was changed. If no other sync is running, delete ' +
+           'the file index.lock inside the .knowledge-git folder, then sync again.', code: 'sync-index-locked' };
+  }
   // These two only reach the user if recoverHygieneMergeConflict() (in
   // pull()) declined to auto-resolve — meaning at least one conflicting
   // path did NOT look like one of our own hygiene junk files (.write-lock /
@@ -849,7 +917,7 @@ async function ensureDomainsGitignore() {
 async function listTrackedGlob(pathspec) {
   let stdout;
   try {
-    ({ stdout } = await git(`ls-files -z -- "${pathspec}"`));
+    ({ stdout } = await git(['ls-files', '-z', '--', pathspec]));
   } catch {
     return []; // no repo / nothing tracked yet — safe no-op
   }
@@ -954,7 +1022,7 @@ async function untrackStaleWriteLocks() {
   for (const p of candidates) {
     if (!isSafeTrackedPath(p, '.write-lock', 1)) continue;
     try {
-      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      await git(['--literal-pathspecs', 'rm', '--cached', '--ignore-unmatch', '--', p]);
       untracked.push(p);
     } catch { /* best-effort — a failed untrack here must never block sync */ }
   }
@@ -974,7 +1042,7 @@ async function untrackStaleDSStore() {
   for (const p of candidates) {
     if (!isSafeTrackedPath(p, '.DS_Store', null)) continue;
     try {
-      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      await git(['--literal-pathspecs', 'rm', '--cached', '--ignore-unmatch', '--', p]);
       untracked.push(p);
     } catch { /* best-effort */ }
   }
@@ -995,7 +1063,7 @@ async function untrackStaleObsidianWorkspace() {
   for (const p of candidates) {
     if (!isSafeTrackedTailPath(p, ['.obsidian', 'workspace.json'])) continue;
     try {
-      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      await git(['--literal-pathspecs', 'rm', '--cached', '--ignore-unmatch', '--', p]);
       untracked.push(p);
     } catch { /* best-effort */ }
   }
@@ -1016,7 +1084,7 @@ async function untrackStaleObsidianLeftovers() {
   for (const p of baseCandidates) {
     if (!isSafeTrackedPathSuffix(p, '.base', null)) continue;
     try {
-      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      await git(['--literal-pathspecs', 'rm', '--cached', '--ignore-unmatch', '--', p]);
       untracked.push(p);
     } catch { /* best-effort */ }
   }
@@ -1025,7 +1093,7 @@ async function untrackStaleObsidianLeftovers() {
     for (const p of candidates) {
       if (!isSafeTrackedPath(p, finalName, null)) continue;
       try {
-        await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+        await git(['--literal-pathspecs', 'rm', '--cached', '--ignore-unmatch', '--', p]);
         untracked.push(p);
       } catch { /* best-effort */ }
     }
@@ -1181,7 +1249,7 @@ async function detectForeignSyncRepo(requestedRepoUrl) {
 
   let originUrl = null;
   try {
-    const { stdout } = await git('config --get remote.origin.url', { gitDir: candidate });
+    const { stdout } = await git(['config', '--get', 'remote.origin.url'], { gitDir: candidate });
     originUrl = stdout.trim() || null;
   } catch { /* no origin configured — still a real repo governing this tree */ }
 
@@ -1230,11 +1298,11 @@ async function assessPullOverwrite(gitDir) {
   const scratch = await mkdtemp(path.join(tmpdir(), 'curator-sync-idx-'));
   const env = { GIT_INDEX_FILE: path.join(scratch, 'index') };
   try {
-    await git('read-tree origin/main', { gitDir, env });
+    await git(['read-tree', 'origin/main'], { gitDir, env });
     try {
-      await git('update-index --refresh', { gitDir, env });
+      await git(['update-index', '--refresh'], { gitDir, env });
     } catch { /* non-zero whenever anything differs — that IS the answer */ }
-    const { stdout } = await git('diff-files --name-status -z', { gitDir, env });
+    const { stdout } = await git(['diff-files', '--name-status', '-z'], { gitDir, env });
     // `status\0path\0status\0path\0…` — `-z` is never C-quoted, so a
     // non-ASCII domain name survives intact (the v3.0.16 lesson, applied
     // here from the start rather than after it bit someone).
@@ -1294,7 +1362,7 @@ export function syncRefusalOf(err) {
  *
  * THE FILE'S ONLY SETUP-SIDE FETCH LIVES HERE, and that is structural rather
  * than tidy: test-sync-hygiene.js asserts a CLASS invariant — exactly one
- * raw `git('fetch …')` in this module, and a fixed number of gitFetch()
+ * raw git fetch invocation in this module, and a fixed number of gitFetch()
  * callers. preflightSetup() and setup() both need a fetch and both reach it
  * through this one function, so the connect path cannot grow a second
  * ungated fetch site without going red. See gitFetch()'s own docblock for
@@ -1307,21 +1375,40 @@ export function syncRefusalOf(err) {
  * error). Anything else throws.
  */
 async function prepareRemote(gitDir, remoteUrl, timeout) {
+  // Decided BEFORE `git init`, which would make any directory look like one.
+  const fresh = !looksLikeGitDir(gitDir);
   await mkdir(gitDir, { recursive: true });
   // Idempotent on an existing repo — `git init` re-initialises without
   // touching refs, objects or the work tree, which is what makes it safe on
   // the ADOPT path where gitDir is another install's live repository.
-  await git('init', { gitDir });
-  await git('config user.email "thecurator@local"', { gitDir });
-  await git('config user.name "The Curator"', { gitDir });
-  await git('config push.autoSetupRemote true', { gitDir });
+  await git(['init'], { gitDir });
+  await git(['config', 'user.email', 'thecurator@local'], { gitDir });
+  await git(['config', 'user.name', 'The Curator'], { gitDir });
+  await git(['config', 'push.autoSetupRemote', 'true'], { gitDir });
+  // LINE ENDINGS ARE NEVER TOUCHED (v4.1.2, audit W4). Git for Windows sets
+  // `core.autocrlf=true` system-wide by default, so a page pushed from a Mac
+  // would land on a Windows computer with CRLF line endings: different bytes,
+  // so a different sha256 for a foundations document and a "changed" on a
+  // file nobody edited. Pinned in THIS repository's own config, which wins
+  // over the system and global ones. ONLY on a repository created here and
+  // now, before anything is checked out or staged: on an existing repository
+  // whose files were already written with CRLF, turning conversion off would
+  // make git see every such file as modified and the next Sync would push
+  // CRLF bytes to every other computer. Off Windows autocrlf is already false
+  // by default, so the setting changes nothing there.
+  if (fresh) await git(['config', 'core.autocrlf', 'false'], { gitDir });
+  // argv, so a URL is one argument whatever it contains (audit S3).
   try {
-    await git(`remote add origin "${remoteUrl}"`, { gitDir });
+    await git(['remote', 'add', 'origin', remoteUrl], { gitDir });
   } catch {
-    await git(`remote set-url origin "${remoteUrl}"`, { gitDir });
+    await git(['remote', 'set-url', 'origin', remoteUrl], { gitDir });
   }
+  // The address now carries the token: owner-only at once, not only after a
+  // connect that succeeds (audit S4). Best-effort: chmod means nothing on
+  // Windows, and a failed chmod must not fail the connect.
+  await chmod(path.join(gitDir, 'config'), 0o600).catch(() => {});
   try {
-    await gitFetch('origin main', { gitDir, timeout });
+    await gitFetch(['origin', 'main'], { gitDir, timeout });
     return true;
   } catch (err) {
     // An empty repository, or one with no `main`. `couldn't find remote ref`
@@ -1354,6 +1441,7 @@ async function prepareRemote(gitDir, remoteUrl, timeout) {
  * install, against a class of loss that is unrecoverable.
  */
 export async function preflightSetup(repoUrl, token) {
+  ({ repoUrl, token } = checkConnectInput(repoUrl, token));
   const remoteUrl = buildRemoteUrl(repoUrl, token);
   const foreign = await detectForeignSyncRepo(repoUrl);
   const tmpRoot = await mkdtemp(path.join(tmpdir(), 'curator-sync-preflight-'));
@@ -1429,7 +1517,7 @@ function gitArgv(args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('git', [
       ...GIT_CONFIG_ARGS, `--git-dir=${opts.gitDir || currentGitDir()}`, `--work-tree=${getDomainsDir()}`, ...args,
-    ], { cwd: ROOT, env: GIT_ENV, timeout: opts.timeout || 60000 });
+    ], { cwd: ROOT, env: GIT_ENV, timeout: opts.timeout || 60000, windowsHide: true });
     const out = [];
     const errOut = [];
     child.stdout.on('data', (d) => out.push(d));
@@ -1451,7 +1539,7 @@ function gitArgv(args, opts = {}) {
 const zSplit = (s) => String(s || '').split('\0').filter(Boolean);
 
 async function headExists(opts) {
-  try { await git('rev-parse --verify -q HEAD', opts); return true; } catch { return false; }
+  try { await git(['rev-parse', '--verify', '-q', 'HEAD'], opts); return true; } catch { return false; }
 }
 
 /**
@@ -1530,7 +1618,7 @@ async function dropUnsafeFromIndex(safety) {
 }
 
 async function stageAll(safety) {
-  await git('add -A', safety.opts);
+  await git(['add', '-A'], safety.opts);
   await dropUnsafeFromIndex(safety);
 }
 
@@ -1546,7 +1634,7 @@ function isCleanIndexError(err) {
 
 async function guardedCommit(message, opts = {}) {
   try {
-    await git(`commit -m "${message}"`, opts);
+    await git(['commit', '-m', message], opts);
     return true;
   } catch (err) {
     if (!isCleanIndexError(err)) throw err;
@@ -1712,10 +1800,73 @@ export function isConfigured() {
 // carries the tokenised remote URL.
 const LAST_SYNC_KEY = 'curator.lastSyncAt';
 
+// ── The folder Sync backs up is a recorded fact (v4.1.2, audit O1) ───────────
+//
+// THE INCIDENT THIS PREVENTS. git() binds `--work-tree` to getDomainsDir() at
+// call time, and staging is `git add -A`. So after the knowledge folder was
+// changed (Settings › Knowledge base, Domains › Use existing folder, a
+// `--domains-path`, an edited config file) the next Sync committed the NEW
+// folder as the whole wiki and pushed the deletion of every domain the old
+// one held. Measured: a remote holding history/ and physics/ held only
+// cooking/ after one sync. The old folder and git history kept the files, but
+// every other computer would have removed them on its next pull.
+//
+// Two layers. The routes that change the folder refuse while Sync is
+// connected (src/routes/config.js). This one is the floor under every other
+// way: the folder each successful connect or sync ran over is written to the
+// sync repo's own git config (machine-local, never pushed, beside
+// curator.lastSyncAt), and push() and pull() refuse before touching anything
+// when the current folder is another one. A repo with no record yet (every
+// install before v4.1.2, until its first sync) is checked by what it tracks:
+// if NOT ONE of the top-level names in its index exists in the current
+// folder, that folder is not the one it backed up. That check can only
+// refuse, never send, and the record is written by the first sync it lets
+// through, so it stops applying after one sync.
+const WORK_TREE_KEY = 'curator.workTree';
+
+const FOLDER_CHANGED_MESSAGE =
+  'Your knowledge folder is not the one Sync backs up on this computer, so Sync stopped before ' +
+  'sending or receiving anything. Syncing now would remove the other folder\u2019s pages from ' +
+  'GitHub. Nothing was changed. To keep syncing the folder you had, set the knowledge folder back ' +
+  'in Settings. To sync this folder instead, open Sync, choose Disconnect, then connect again: ' +
+  'connecting shows what it would change before it changes anything.';
+
+/** A folder path in one comparable spelling: resolved, real, no trailing separator. */
+function comparableFolder(p) {
+  let r = path.resolve(String(p));
+  try { r = realpathSync.native(r); } catch { /* keep the resolved path */ }
+  r = r.replace(/[\\/]+$/, '') || r;
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** Throws the 'folder-changed' refusal when the folder is not the synced one. */
+async function assertSyncedFolderUnchanged(opts = {}) {
+  const current = getDomainsDir();
+  let recorded = null;
+  try { recorded = (await git(['config', '--get', WORK_TREE_KEY], opts)).stdout.trim() || null; } catch { recorded = null; }
+  if (recorded) {
+    if (comparableFolder(recorded) === comparableFolder(current)) return;
+    throw refusal('folder-changed', FOLDER_CHANGED_MESSAGE, { field: 'domainsPath' });
+  }
+  let tracked;
+  try { tracked = zSplit((await git(['ls-files', '-z'], opts)).stdout); } catch { return; }
+  const tops = new Set(tracked.map((p) => p.split('/')[0]).filter((n) => n && n !== '.gitignore'));
+  if (!tops.size) return;
+  if ([...tops].some((t) => existsSync(path.join(current, t)))) {
+    // The folder it tracks: recorded now, so the exact check applies from here on.
+    await git(['config', WORK_TREE_KEY, current], opts).catch(() => {});
+    return;
+  }
+  throw refusal('folder-changed', FOLDER_CHANGED_MESSAGE, { field: 'domainsPath' });
+}
+
 async function recordSyncSuccess(gitDir) {
   const at = new Date().toISOString();
   try {
-    await git(`config ${LAST_SYNC_KEY} ${at}`, gitDir ? { gitDir } : {});
+    await git(['config', WORK_TREE_KEY, getDomainsDir()], gitDir ? { gitDir } : {});
+  } catch { /* the legacy check above still stands for a repo with no record */ }
+  try {
+    await git(['config', LAST_SYNC_KEY, String(at)], gitDir ? { gitDir } : {});
     await chmod(path.join(gitDir || currentGitDir(), 'config'), 0o600).catch(() => {});
   } catch { /* a stamp that cannot be written must never fail a sync that succeeded */ }
   return at;
@@ -1723,7 +1874,7 @@ async function recordSyncSuccess(gitDir) {
 
 async function readLastSyncStamp() {
   try {
-    const { stdout } = await git(`config --get ${LAST_SYNC_KEY}`);
+    const { stdout } = await git(['config', '--get', LAST_SYNC_KEY]);
     const v = stdout.trim();
     return v && Number.isFinite(Date.parse(v)) ? v : null;
   } catch { return null; /* exit 1 = never recorded */ }
@@ -1741,34 +1892,34 @@ const zList = (out) => String(out || '').split('\0').map((s) => s.trim()).filter
 async function countNotOnGitHub() {
   const uncommitted = new Set();
   let headExists = true;
-  try { await git('rev-parse --verify -q HEAD'); } catch { headExists = false; }
+  try { await git(['rev-parse', '--verify', '-q', 'HEAD']); } catch { headExists = false; }
   if (headExists) {
-    const { stdout } = await git('diff --name-only -z HEAD');
+    const { stdout } = await git(['diff', '--name-only', '-z', 'HEAD']);
     for (const p of zList(stdout)) uncommitted.add(p);
   } else {
-    const { stdout } = await git('ls-files -z');
+    const { stdout } = await git(['ls-files', '-z']);
     for (const p of zList(stdout)) uncommitted.add(p);
   }
-  const { stdout: untracked } = await git('ls-files -z --others --exclude-standard');
+  const { stdout: untracked } = await git(['ls-files', '-z', '--others', '--exclude-standard']);
   for (const p of zList(untracked)) uncommitted.add(p);
 
   const all = new Set(uncommitted);
   let unpushedCommits = null;
   if (headExists) {
     let haveOrigin = true;
-    try { await git('rev-parse --verify -q refs/remotes/origin/main'); } catch { haveOrigin = false; }
+    try { await git(['rev-parse', '--verify', '-q', 'refs/remotes/origin/main']); } catch { haveOrigin = false; }
     if (haveOrigin) {
-      const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
+      const { stdout: ahead } = await git(['rev-list', '--count', 'origin/main..HEAD']);
       unpushedCommits = parseInt(ahead.trim(), 10) || 0;
       if (unpushedCommits > 0) {
-        const { stdout: baseOut } = await git('merge-base HEAD origin/main').catch(() => ({ stdout: '' }));
+        const { stdout: baseOut } = await git(['merge-base', 'HEAD', 'origin/main']).catch(() => ({ stdout: '' }));
         const base = baseOut.trim();
-        const { stdout: names } = await git(`diff --name-only -z ${base ? `${base}..HEAD` : 'origin/main..HEAD'}`);
+        const { stdout: names } = await git(['diff', '--name-only', '-z', base ? `${base}..HEAD` : 'origin/main..HEAD']);
         for (const p of zList(names)) all.add(p);
       }
     } else {
       // Never pushed: push() would send every tracked file — count them.
-      const { stdout: tracked } = await git('ls-files -z');
+      const { stdout: tracked } = await git(['ls-files', '-z']);
       for (const p of zList(tracked)) all.add(p);
     }
   }
@@ -2008,7 +2159,7 @@ async function runRemoteCheck(now, repoKey) {
     // Timeout is deliberately shorter than pull()'s 120s: this runs
     // unattended on a timer, so a hanging network must degrade to "unknown"
     // quickly rather than pin an open request for two minutes.
-    await gitFetch('origin main', { timeout: 30000 });
+    await gitFetch(['origin', 'main'], { timeout: 30000 });
     const incoming = await countIncoming();
     payload = {
       configured: true,
@@ -2114,12 +2265,55 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   if (!SETUP_MODES.includes(mode)) {
     throw refusal('invalid-mode', `mode must be one of ${SETUP_MODES.join(', ')}`);
   }
+  // Checked before anything is written (audit S6/S9): a URL or token this
+  // refuses leaves the knowledge folder and the git dir untouched.
+  ({ repoUrl, token } = checkConnectInput(repoUrl, token));
+  const remoteUrl = buildRemoteUrl(repoUrl, token);
+  // A connect that does not finish takes its .gitignore back out of the
+  // folder (audit S9): left behind, it was an untracked copy of the remote's
+  // own, and refused the Pull that followed a refused Push with "would
+  // overwrite 0 files" (S1). See restoreFolderGitignore().
+  const gitignore = await snapshotFolderGitignore();
+  try {
+    return await connect(repoUrl, token, mode, opts, remoteUrl, gitignore);
+  } catch (err) {
+    await restoreFolderGitignore(gitignore);
+    throw err;
+  }
+}
+
+async function snapshotFolderGitignore() {
+  const p = path.join(getDomainsDir(), '.gitignore');
+  let before = null;
+  try { before = await readFile(p, 'utf8'); } catch { before = null; }
+  return { path: p, before, after: undefined };
+}
+
+/**
+ * Only when nothing can be relying on the file: no sync repository is left
+ * for this install, and the file is byte-for-byte what this connect wrote (a
+ * change made meanwhile by anything else is kept). A file that was there
+ * before gets its old content back; one this connect created is removed.
+ */
+async function restoreFolderGitignore(snap) {
+  if (!snap || snap.after === undefined || snap.after === snap.before) return;
+  if (isConfigured() || looksLikeGitDir(currentGitDir())) return;
+  let now = null;
+  try { now = await readFile(snap.path, 'utf8'); } catch { return; }
+  if (now !== snap.after) return;
+  try {
+    if (snap.before === null) await unlink(snap.path);
+    else await writeFileAtomic(snap.path, snap.before, 'utf8');
+  } catch { /* best-effort: the connect's own error is the one to show */ }
+}
+
+async function connect(repoUrl, token, mode, opts, remoteUrl, gitignore) {
   // Not before a pull: the file would be an untracked collision with the remote's own,
   // which refused every second computer with "would overwrite 0 files".
   if (mode !== 'pull') await ensureDomainsGitignore();
   await applyLeaveOut(opts.leaveOut);
+  try { gitignore.after = await readFile(gitignore.path, 'utf8'); } catch { gitignore.after = null; }
 
-  const remoteUrl = buildRemoteUrl(repoUrl, token);
   const foreign = await detectForeignSyncRepo(repoUrl);
 
   if (foreign && !foreign.matchesRequestedRepo) {
@@ -2141,8 +2335,16 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // out, does not reset, does not merge — the work tree is not touched by
     // this branch at all, which is the property that makes adoption safe to
     // do automatically.
-    await prepareRemote(foreign.path, remoteUrl, 120000);
-    await saveConfig(repoUrl, token, foreign.path);
+    // The other install's address is put back if this does not finish (the
+    // rollback note below): its repository must not be left on our token.
+    const otherUrl = await originUrlOf(foreign.path);
+    try {
+      await prepareRemote(foreign.path, remoteUrl, 120000);
+      await saveConfig(repoUrl, token, foreign.path);
+    } catch (err) {
+      await undoFailedConnect(foreign.path, { createdHere: false, keepAddress: true, previousUrl: otherUrl });
+      throw err;
+    }
     // The adopted repo's config now carries our PAT in the remote URL.
     // getCredentialFiles()'s 0600 startup sweep is anchored on
     // getSyncGitDir(), not on the adopted path, so harden it here rather
@@ -2169,6 +2371,110 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   // Did this directory exist before we touched it? Decides whether a refusal
   // below is allowed to clean up after itself — see the rollback note.
   const preexisting = looksLikeGitDir(gitDir);
+  // ROLLBACK OF A FAILED CONNECT (v4.1.2, audit S1/S4). Whatever went wrong —
+  // a refused push, a rejected token, an unreachable host, a refusal below —
+  // a connect that did not finish must leave the install as it found it:
+  //   · a git dir THIS call created is removed. Before v4.1.2 a refused push
+  //     left one behind holding a commit and a `main` branch, so the next
+  //     Merge failed for good ("a branch named 'main' already exists") and
+  //     Pull reported "would overwrite 0 files" (S1); and every failed
+  //     connect left the token in its config, at the umask's mode, on an
+  //     install that read "not connected" (S4).
+  //   · a git dir that was already there keeps everything, and only its
+  //     address is put back: the previous one if the install was connected
+  //     (or the dir belongs to another install), none at all if it was not,
+  //     so no token stays behind for a connection that does not exist.
+  // `createdHere` is "the directory did not exist", not "was not a git dir":
+  // a directory someone else put at that path is never deleted.
+  const createdHere = !existsSync(gitDir);
+  const wasConfigured = existsSync(currentConfigFile());
+  const previousUrl = preexisting ? await originUrlOf(gitDir) : null;
+  try {
+    return await connectOwnRepo({ repoUrl, token, mode, opts, remoteUrl, gitDir, adoptedDir, preexisting, wasConfigured });
+  } catch (err) {
+    await undoFailedConnect(gitDir, { createdHere, keepAddress: wasConfigured || !!adoptedDir, previousUrl });
+    throw err;
+  }
+}
+
+/** The raw `origin` address of a git dir, or null. Never leaves this module. */
+async function originUrlOf(gitDir) {
+  try {
+    const { stdout } = await git(['config', '--get', 'remote.origin.url'], { gitDir });
+    return stdout.trim() || null;
+  } catch { return null; }
+}
+
+/** See setup()'s rollback note. Best-effort: the connect's own error is the one the user needs. */
+async function undoFailedConnect(gitDir, { createdHere, keepAddress, previousUrl }) {
+  if (createdHere) {
+    await rm(gitDir, { recursive: true, force: true }).catch(() => {});
+    return;
+  }
+  if (!looksLikeGitDir(gitDir)) return;
+  try {
+    if (keepAddress && previousUrl) await git(['remote', 'set-url', 'origin', previousUrl], { gitDir });
+    else if ((await originUrlOf(gitDir)) !== null) await git(['remote', 'remove', 'origin'], { gitDir });
+  } catch { /* nothing more can be done here without risking the repository */ }
+  await chmod(path.join(gitDir, 'config'), 0o600).catch(() => {});
+}
+
+/**
+ * A git dir left by a connect that never finished (an earlier version did not
+ * roll back, audit S1) can hold a commit on `main`. A pull checks out over the
+ * folder as if the repository were new, so that commit would make `checkout
+ * -b main` fail, and switching from it would DELETE every file it tracks that
+ * the remote lacks. So the commit is set aside on its own branch (kept, never
+ * deleted), HEAD is made unborn again and the index emptied. The work tree is
+ * not touched: every file in it is then exactly as it is in a new repository,
+ * untracked, and the measured overwrite check and git's own refusal see it so.
+ * Only for an install that is not connected and has not adopted another
+ * install's repository; returns the branch name, or null if nothing was done.
+ */
+async function setAsideUnfinishedConnect(gitDir) {
+  if (!(await headExists({ gitDir }))) return null;
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+  const aside = `curator-before-connect-${stamp}`;
+  await git(['branch', '-f', aside, 'HEAD'], { gitDir });
+  await git(['update-ref', '-d', 'refs/heads/main'], { gitDir }).catch(() => {});
+  await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], { gitDir });
+  await git(['read-tree', '--empty'], { gitDir });
+  return aside;
+}
+
+/**
+ * Is every path of origin/main that exists in the folder a regular file with
+ * exactly the remote's bytes? One `ls-tree` and one `hash-object
+ * --no-filters` (raw bytes, no line-ending conversion), never a checkout.
+ * Anything it cannot vouch for (a directory or link in the way, a name with a
+ * newline, a submodule) answers false, which keeps git's refusal.
+ */
+async function collisionsAreIdentical(gitDir) {
+  try {
+    const { stdout } = await gitArgv(['ls-tree', '-r', '-z', 'origin/main'], { gitDir });
+    const base = getDomainsDir();
+    const want = new Map();
+    for (const rec of zSplit(stdout)) {
+      const tab = rec.indexOf('\t');
+      if (tab < 0) return false;
+      const [mode, type, oid] = rec.slice(0, tab).split(' ');
+      const p = rec.slice(tab + 1);
+      let st = null;
+      try { st = lstatSync(path.join(base, p)); } catch { continue; }   // absent: created, not overwritten
+      if (type !== 'blob' || !/^100(644|755)$/.test(mode) || !st.isFile() || p.includes('\n')) return false;
+      want.set(p, oid);
+    }
+    if (!want.size) return true;
+    const paths = [...want.keys()];
+    const { stdout: got } = await gitArgv(['hash-object', '--no-filters', '--stdin-paths'], {
+      gitDir, input: paths.map((p) => path.join(base, p)).join('\n') + '\n',
+    });
+    const oids = got.split('\n').filter(Boolean);
+    return oids.length === paths.length && paths.every((p, i) => oids[i] === want.get(p));
+  } catch { return false; }
+}
+
+async function connectOwnRepo({ repoUrl, token, mode, opts, remoteUrl, gitDir, adoptedDir, preexisting, wasConfigured }) {
 
   if (mode === 'push') {
     await prepareRemote(gitDir, remoteUrl, 120000);
@@ -2176,14 +2482,14 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     await refuseIfOnlyNestedRepos(safety, gitDir, preexisting, adoptedDir);
     await stageAll(safety);
     try {
-      await git('commit -m "Initial The Curator sync"', { gitDir });
+      await git(['commit', '-m', 'Initial The Curator sync'], { gitDir });
     } catch (err) {
       // `isCleanIndexError` is the wider form of `includes('nothing to commit')`.
       if (!isCleanIndexError(err)) throw err;
     }
-    await git('branch -M main', { gitDir });
+    await git(['branch', '-M', 'main'], { gitDir });
     try {
-      await git('push -u origin main', { gitDir, timeout: 120000 });
+      await git(['push', '-u', 'origin', 'main'], { gitDir, timeout: 120000 });
     } catch (err) {
       // THE REFUSAL THE USER ACTUALLY HIT, and the reason its old wording
       // was its own defect. friendlyError() maps non-fast-forward to
@@ -2235,21 +2541,25 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     await stageAll(safety);
     let haveLocalCommit = true;
     try {
-      await git('commit -m "Local wiki, before connecting sync"', { gitDir });
+      await git(['commit', '-m', 'Local wiki, before connecting sync'], { gitDir });
     } catch (err) {
       if (!isCleanIndexError(err)) throw err;
-      haveLocalCommit = false;
+      // Nothing new to commit. With a HEAD already there (a git dir an
+      // earlier, unfinished connect left behind, audit S1) that HEAD is this
+      // folder, just staged and found identical, so it is what gets merged;
+      // `checkout -b main` below would fail on its `main` every time.
+      haveLocalCommit = await headExists({ gitDir });
     }
     if (!haveLocalCommit) {
       // Empty folder: there is nothing to merge WITH, and a merge from an
       // unborn HEAD fails. Degrade to the pull path, which is safe here
       // precisely because there is nothing to overwrite.
-      await git('checkout -b main origin/main', { gitDir });
+      await git(['checkout', '-b', 'main', 'origin/main'], { gitDir });
       await saveConfig(repoUrl, token, adoptedDir);
       await recordSyncSuccess(gitDir);
       return finishWithBackup({ adopted: !!adoptedDir, mode: 'merge', degradedToPull: true }, safety);
     }
-    await git('branch -M main', { gitDir });
+    await git(['branch', '-M', 'main'], { gitDir });
     // `--allow-unrelated-histories` is required and is not a warning sign
     // here: this repo was created seconds ago by `git init`, so it shares no
     // commit with the remote by construction.
@@ -2276,8 +2586,8 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // merge — a page reappearing is visible and fixable, a page vanishing is
     // the thing this whole section exists to prevent — and docs/sync.md says
     // so where the user can read it.
-    const { stdout: localHead } = await git('rev-parse HEAD', { gitDir });
-    await git('merge --allow-unrelated-histories --no-edit -X ours FETCH_HEAD',
+    const { stdout: localHead } = await git(['rev-parse', 'HEAD'], { gitDir });
+    await git(['merge', '--allow-unrelated-histories', '--no-edit', '-X', 'ours', 'FETCH_HEAD'],
               { gitDir, timeout: 120000 });
     // `-X ours` drops the remote side's records the same way; keep both.
     await reconcileRecordFiles(localHead.trim(), { gitDir });
@@ -2288,6 +2598,9 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   }
 
   // ── PULL — the destructive route, now gated ───────────────────────────
+  // A commit an unfinished connect left here is set aside first (audit S1),
+  // so the pull below starts from exactly the state of a new repository.
+  if (preexisting && !adoptedDir && !wasConfigured) await setAsideUnfinishedConnect(gitDir);
   const assessment = await assessPullOverwrite(gitDir);
   if (assessment.overwriteCount > 0 && opts.confirmOverwrite !== true) {
     // ROLLBACK. A refusal must not leave a half-configured install behind:
@@ -2330,8 +2643,24 @@ export async function setup(repoUrl, token, mode, opts = {}) {
   // reset is reached only when the caller confirmed, and its comment says
   // what it does.
   try {
-    await git('checkout -b main origin/main', { gitDir });
+    await git(['checkout', '-b', 'main', 'origin/main'], { gitDir });
   } catch (err) {
+    // IDENTICAL COPIES ARE NOT AN OVERWRITE (v4.1.2, audit S1). git refuses
+    // to check out over ANY untracked file the remote also has, even one with
+    // the same bytes: a .gitignore an earlier connect left, a page copied by
+    // hand. The measurement above already found no file that differs; this
+    // checks it again independently, path by path, against the bytes, and
+    // only when every collision is a regular file identical to the remote's
+    // does the checkout go ahead (it then rewrites the same bytes).
+    if (opts.confirmOverwrite !== true && assessment.overwriteCount === 0 &&
+        await collisionsAreIdentical(gitDir)) {
+      await git(['checkout', '-f', '-B', 'main', 'origin/main'], { gitDir });
+      await saveConfig(repoUrl, token, adoptedDir);
+      invalidateRemoteCache();
+      await recordSyncSuccess(gitDir);
+      return finishWithBackup({ adopted: !!adoptedDir, mode: 'pull', overwrote: 0 },
+        await refreshSyncSafety({ gitDir }));
+    }
     if (opts.confirmOverwrite !== true) {
       // NO SILENT ESCALATION. This is where the old code fell through to
       // `reset --hard` and destroyed the user's files. If git refused and
@@ -2358,7 +2687,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
     // count and said yes.
     // On a new repo HEAD is the default branch, often `master`: `reset --hard` left no
     // `main`, and every later push failed. `-B` makes the branch, `-f` is the overwrite.
-    await git('checkout -f -B main origin/main', { gitDir });
+    await git(['checkout', '-f', '-B', 'main', 'origin/main'], { gitDir });
   }
 
   await saveConfig(repoUrl, token, adoptedDir);
@@ -2369,6 +2698,8 @@ export async function setup(repoUrl, token, mode, opts = {}) {
 }
 
 export async function push() {
+  // Before anything is written, the work tree included (audit O1).
+  await assertSyncedFolderUnchanged();
   // Self-heal: existing installs configured before a DOMAINS_GITIGNORE_RULES
   // addition (e.g. the */.write-lock rule) never re-run ensureDomainsGitignore()
   // otherwise — it was previously only called from setup(). Idempotent no-op
@@ -2409,7 +2740,7 @@ export async function push() {
   await cleanupStaleLocalLocks();
 
   // Stage and commit any uncommitted changes
-  const { stdout } = await git('status --porcelain');
+  const { stdout } = await git(['status', '--porcelain']);
   const uncommittedCount = stdout.split('\n').filter(Boolean).length;
 
   if (uncommittedCount > 0) {
@@ -2444,13 +2775,13 @@ export async function push() {
   let filesToPush = 0;
   let filePreview = [];
   try {
-    const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
+    const { stdout: ahead } = await git(['rev-list', '--count', 'origin/main..HEAD']);
     aheadCount = parseInt(ahead.trim(), 10) || 0;
     if (aheadCount > 0) {
-      const { stdout: baseOut } = await git('merge-base HEAD origin/main');
+      const { stdout: baseOut } = await git(['merge-base', 'HEAD', 'origin/main']);
       const base = baseOut.trim();
       const diffRange = base ? `${base}..HEAD` : 'origin/main..HEAD';
-      const { stdout: names } = await git(`diff --name-only ${diffRange}`);
+      const { stdout: names } = await git(['diff', '--name-only', diffRange]);
       const list = names.split('\n').filter(Boolean);
       filesToPush = list.length;
       filePreview = list.slice(0, 20);
@@ -2458,7 +2789,7 @@ export async function push() {
   } catch {
     // First push ever: origin/main doesn't exist yet. Count tracked files.
     try {
-      const { stdout: names } = await git('ls-files');
+      const { stdout: names } = await git(['ls-files']);
       const list = names.split('\n').filter(Boolean);
       filesToPush = list.length;
       filePreview = list.slice(0, 20);
@@ -2476,7 +2807,7 @@ export async function push() {
     };
   }
 
-  await git('push -u origin main', { timeout: 120000 });
+  await git(['push', '-u', 'origin', 'main'], { timeout: 120000 });
 
   // origin/main just moved — a cached "waiting to pull" answer is now stale.
   invalidateRemoteCache();
@@ -2519,20 +2850,22 @@ export async function push() {
  * that as "nothing known to be incoming", never as an error to surface.
  */
 async function countIncoming() {
-  const { stdout: cnt } = await git('rev-list --count HEAD..origin/main');
+  const { stdout: cnt } = await git(['rev-list', '--count', 'HEAD..origin/main']);
   const commits = parseInt(cnt.trim(), 10) || 0;
   if (commits <= 0) return { commits: 0, files: 0, preview: [] };
 
-  const { stdout: baseOut } = await git('merge-base HEAD origin/main');
+  const { stdout: baseOut } = await git(['merge-base', 'HEAD', 'origin/main']);
   const base = baseOut.trim();
   if (!base) return { commits, files: 0, preview: [] };
 
-  const { stdout: names } = await git(`diff --name-only ${base}..origin/main`);
+  const { stdout: names } = await git(['diff', '--name-only', `${base}..origin/main`]);
   const list = names.split('\n').filter(Boolean);
   return { commits, files: list.length, preview: list.slice(0, 20) };
 }
 
 export async function pull() {
+  // Before anything is written, the work tree included (audit O1).
+  await assertSyncedFolderUnchanged();
   // Self-heal: see push() — keeps .gitignore current on installs configured
   // before a DOMAINS_GITIGNORE_RULES addition. Safe to run before the merge:
   // it only writes a config FILE, never touches a path the incoming merge
@@ -2546,7 +2879,7 @@ export async function pull() {
 
   // Auto-commit local changes so the pull merge succeeds — unchanged,
   // pre-existing behaviour (real content, unrelated to hygiene).
-  const { stdout } = await git('status --porcelain');
+  const { stdout } = await git(['status', '--porcelain']);
   if (stdout.trim()) {
     const date = new Date().toLocaleString();
     await stageAll(safety);
@@ -2563,7 +2896,7 @@ export async function pull() {
   // condition here, it means nothing can have been deleted yet.
   let preMergeHead = null;
   try {
-    const { stdout: headSha } = await git('rev-parse HEAD');
+    const { stdout: headSha } = await git(['rev-parse', 'HEAD']);
     preMergeHead = headSha.trim() || null;
   } catch { /* no commits yet — prune nothing */ }
 
@@ -2614,7 +2947,7 @@ export async function pull() {
   let commitsPulled = 0;
   let filePreview = [];
   try {
-    await gitFetch('origin main', { timeout: 120000 });
+    await gitFetch(['origin', 'main'], { timeout: 120000 });
     const incoming = await countIncoming();
     commitsPulled = incoming.commits;
     filesPulled   = incoming.files;
@@ -2651,7 +2984,7 @@ export async function pull() {
   // untracked-file collision.
   let pullOut;
   try {
-    ({ stdout: pullOut } = await git('pull --no-rebase -X theirs origin main', { timeout: 120000 }));
+    ({ stdout: pullOut } = await git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main'], { timeout: 120000 }));
   } catch (err) {
     // Even with the reordering above, the SAME preflight check (or a
     // genuine modify/delete conflict — see recoverHygieneMergeConflict) can
@@ -2689,7 +3022,7 @@ export async function pull() {
   // fully self-heals in one call — matches push()'s existing behaviour of
   // bundling the untrack into a real commit, instead of leaving the user
   // with dangling uncommitted changes after a "Pull only" click.
-  const { stdout: postStatus } = await git('status --porcelain');
+  const { stdout: postStatus } = await git(['status', '--porcelain']);
   if (postStatus.trim()) {
     await stageAll(safety);
     await guardedCommit(`Sync hygiene cleanup — ${new Date().toLocaleString()}`);
@@ -2764,7 +3097,7 @@ async function recoverHygieneMergeConflict(err) {
     // state is created — so a plain retry is the correct next step. If this
     // retry ALSO throws (e.g. a genuinely different problem), it propagates
     // unchanged to the caller; we deliberately do not loop/recurse here.
-    const { stdout } = await git('pull --no-rebase -X theirs origin main', { timeout: 120000 });
+    const { stdout } = await git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main'], { timeout: 120000 });
     return stdout;
   }
 
@@ -2773,7 +3106,7 @@ async function recoverHygieneMergeConflict(err) {
   // against isHygieneJunkPath) is the source of truth for exactly which
   // paths are unresolved — more reliable than re-parsing the error text,
   // which is not guaranteed to enumerate every conflicting path.
-  const { stdout: statusOut } = await git('-c core.quotePath=false status --porcelain');
+  const { stdout: statusOut } = await git(['-c', 'core.quotePath=false', 'status', '--porcelain']);
   const unmerged = statusOut.split('\n')
     .filter(Boolean)
     .filter(line => /^(?:DU|UD|AU|UA|UU|AA)[ \t]/.test(line))
@@ -2785,10 +3118,10 @@ async function recoverHygieneMergeConflict(err) {
     // --literal-pathspecs: defense in depth alongside isHygieneJunkPath's
     // own pathspec-magic character rejection (same reasoning as
     // untrackStaleWriteLocks/DSStore above).
-    await git(`--literal-pathspecs add -A -- "${p}"`);
+    await git(['--literal-pathspecs', 'add', '-A', '--', p]);
   }
   try {
-    await git('commit --no-edit');
+    await git(['commit', '--no-edit']);
   } catch (commitErr) {
     if (!commitErr.message.includes('nothing to commit')) throw commitErr;
   }
@@ -2967,10 +3300,10 @@ async function pruneGhostDomainDirs(preMergeHead) {
   const pruned = [];
   const keptLocalContent = [];
 
-  // Rule 1's baseline. Also the injection gate: this value is interpolated
-  // into a shell command string by git(), so it must be a commit id and
-  // nothing else, even though today's only caller derives it from
-  // rev-parse.
+  // Rule 1's baseline. It must be a commit id and nothing else, even though
+  // today's only caller derives it from rev-parse: git() no longer goes
+  // through a shell (v4.1.2), but a value starting with `-` would still be
+  // read by git as an option.
   if (!preMergeHead || !/^[0-9a-f]{7,64}$/.test(preMergeHead)) return { pruned, keptLocalContent };
 
   const base = getDomainsDir();
@@ -2980,7 +3313,7 @@ async function pruneGhostDomainDirs(preMergeHead) {
     // 1. What did this merge actually delete? Empty ⇒ nothing to do, which
     //    is the common case (most pulls delete nothing).
     const { stdout: deleted } =
-      await git(`diff --diff-filter=D --name-only -z ${preMergeHead} HEAD`);
+      await git(['diff', '--diff-filter=D', '--name-only', '-z', preMergeHead, 'HEAD']);
     nominated = topLevelSegments(deleted);
     // An OPTIMISATION, not a guard: `nominated.has(name)` below is already
     // false for every name when the set is empty, and mutation M2 (removing
@@ -2991,10 +3324,10 @@ async function pruneGhostDomainDirs(preMergeHead) {
     // 3. What does git still track, and 4. what is untracked-not-ignored?
     //    Both are one bulk call each — no per-directory pathspec, so no
     //    quoting of a user-chosen folder name ever reaches a shell.
-    const { stdout: tracked } = await git('ls-files -z');
+    const { stdout: tracked } = await git(['ls-files', '-z']);
     trackedTops = topLevelSegments(tracked);
 
-    const { stdout: status } = await git('status --porcelain -z');
+    const { stdout: status } = await git(['status', '--porcelain', '-z']);
     unpushedTops = topLevelSegments(status, '?? ');
 
     // 5. Holds something that exists nowhere else and that git was told not to
@@ -3003,7 +3336,7 @@ async function pruneGhostDomainDirs(preMergeHead) {
     //    the very folder that holds the repository. Added because that rm would
     //    have deleted the nested repo on the OTHER computer.
     const { nestedRepos } = await scanWorkTree(base);
-    const { stdout: ignored } = await git('ls-files --others --ignored --exclude-standard -z');
+    const { stdout: ignored } = await git(['ls-files', '--others', '--ignored', '--exclude-standard', '-z']);
     protectedTops = new Set([
       ...nestedRepos.map((p) => p.split('/')[0]),
       ...zSplit(ignored).filter(isCredentialPath).map((p) => p.split('/')[0]),
@@ -3407,6 +3740,11 @@ export { friendlyError };
 // point. Production code never imports this. Mirrors the __testing pattern
 // already used by atomic-write.js and write-registry.js.
 export const __testing = {
+  git,
+  checkConnectInput,
+  assertSyncedFolderUnchanged,
+  WORK_TREE_KEY,
+  setAsideUnfinishedConnect,
   repoIdentity,
   foreignSyncGitDirCandidate,
   detectForeignSyncRepo,
