@@ -172,6 +172,12 @@ router.post('/preflight', guardConcurrent('check sync'), async (req, res) => {
     if (!token)   return res.status(400).json({ error: 'token is required' });
     res.json(await preflightSetup(repoUrl, token));
   } catch (err) {
+    // A repository address or token Connect cannot use (v4.1.2, audit S6) is
+    // the person's input, named by field: 400, not a server failure.
+    const refusal = syncRefusalOf(err);
+    if (refusal && (refusal.code === 'invalid-repo-url' || refusal.code === 'invalid-token')) {
+      return res.status(400).json({ ok: false, error: refusal.message, code: refusal.code, details: refusal.details });
+    }
     res.status(500).json({ ok: false, ...describeSyncError(err, { context: 'connect' }) });
   }
 });
@@ -189,6 +195,17 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     if (!token)   return res.status(400).json({ error: 'token is required' });
     if (!SETUP_MODES.includes(mode))
       return res.status(400).json({ error: `mode must be one of ${SETUP_MODES.join(', ')}` });
+    // Connected already (audit S9): a second connect would re-point this
+    // install's history at another repository with no question asked.
+    // Replace token changes the token; Disconnect then Connect changes the
+    // repository, through the connect screen's own checks.
+    if (isConfigured()) {
+      return res.status(409).json({
+        error: 'Sync is already connected on this computer. To use a different repository, choose ' +
+               'Disconnect first, then connect again. To change only the token, use Replace token.',
+        code: 'already-connected', details: {},
+      });
+    }
 
     // `confirmOverwrite` is the ONLY way to reach setup()'s destructive
     // branch, and it is compared with === true rather than coerced. A
