@@ -27,7 +27,7 @@
  * fingerprinted before and after.
  */
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -254,7 +254,7 @@ try {
     eq('POST /api/mcp/write-config (no Origin) → 404', w.status, 404);
     const w2 = await call('POST', '/api/mcp/write-config', {});
     eq('POST /api/mcp/write-config (same Origin) → 404', w2.status, 404);
-    ok('…Claude Desktop\'s config is byte-identical and still 0644', readFileSync(CD, 'utf8') === claudeText && (spawnSync('stat', ['-f', '%Lp', CD]).stdout.toString().trim() === '644'));
+    ok('…Claude Desktop\'s config is byte-identical and still 0644', readFileSync(CD, 'utf8') === claudeText && (process.platform === 'win32' || (statSync(CD).mode & 0o777) === 0o644));
     ok('…and no .bak was made', !existsSync(CD + '.bak'));
     ok('the writer is not exported any more', typeof RM.writeConfigHandler === 'undefined' && typeof RM.planConfigWrite === 'undefined' && typeof RM.buildFullConfigPayload === 'undefined');
     const snip = await call('GET', '/api/mcp/claude-config', undefined, { origin: null });
