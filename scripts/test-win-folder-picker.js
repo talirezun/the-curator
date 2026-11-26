@@ -316,6 +316,7 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
       calls.fetch.push({ url, method: opts && opts.method, body: opts && opts.body });
       const n = queue.shift(); return { ok: n.status < 400, status: n.status, json: async () => n.body };
     }
+    ${(src.match(/^const SYNC_CONNECTED_FOLDER_TITLE = .*;$/m) || [''])[0]}
     ${names.map((n) => extractFunction(src, n)).join('\n')}
     return { ${names.join(', ')}, setState: (s) => { state = s; }, getState: () => state, calls, q: (r) => queue.push(r) };`);
   const D = make(escapeHtml, renderStatus, renderDescription);
@@ -388,6 +389,29 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
   await D.onTypedKnowledgeFolder('   ', 1);
   ok(D.calls.fetch.length === before && /first/.test(D.getState().kbTypedError), 'Domains: an empty field sends nothing and says so');
   ok(!/cannot open a folder picker on Windows yet/.test(src), 'Domains: no v3.87.0 refusal text left in the view');
+  // v4.1.2 (integration): a change refused because Sync is connected is not a
+  // problem with THAT folder, so it never reads "That folder cannot be used".
+  {
+    const SYNC_MSG = 'Sync is connected to your current knowledge folder, so the folder can\u2019t be changed while it is: the next Sync would remove that folder\u2019s pages from GitHub. Nothing was changed. To use another folder, open Sync and choose Disconnect, change the folder, then connect Sync again.';
+    D.setState(base());
+    D.q({ status: 400, body: { ok: false, reason: 'sync-connected', error: SYNC_MSG } });
+    await D.onChooseKnowledgeFolder(1);
+    const n = D.getState().kbNotice;
+    ok(n && n.title === 'Disconnect Sync before you change the folder' && n.detail.includes('choose Disconnect'),
+      'Domains: a pick refused while Sync is connected is titled "Disconnect Sync before you change the folder", with the server\'s sentence', n);
+    D.setState(base());
+    D.q({ status: 400, body: { ok: false, reason: 'sync-connected', error: SYNC_MSG } });
+    await D.onTypedKnowledgeFolder('C:\\other', 1);
+    const typedHtml = D.renderTypedKnowledgePath();
+    ok(/Disconnect Sync before you change the folder/.test(typedHtml) && !/That folder cannot be used/.test(typedHtml) && /choose Disconnect/.test(typedHtml),
+      'Domains: a typed path refused while Sync is connected carries the same title and sentence', typedHtml.slice(0, 400));
+    D.q({ status: 400, body: { ok: false, reason: 'protected-by-windows', error: 'Windows didn\'t let The Curator save there.' } });
+    await D.onTypedKnowledgeFolder('C:\\Users\\a\\Documents', 1);
+    ok(/That folder cannot be used/.test(D.renderTypedKnowledgePath()), 'CONTROL: the next refusal, about the folder itself, reads "That folder cannot be used" again (the title does not stick)');
+    const ssrc0 = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+    ok(/Moving this folder loses nothing; the graph is picked up as-is\. While Sync is connected the folder can\\u2019t change: disconnect Sync first\./.test(ssrc0),
+      'Settings: the Vault folder note says to disconnect Sync first (source, weak)');
+  }
 
   // Settings.
   const ssrc = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');

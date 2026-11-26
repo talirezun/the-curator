@@ -2052,6 +2052,9 @@ async function loadDomainsList(token) {
  * @returns {{kind:'cancelled'|'switched'|'refused'|'unsupported'|'error',
  *            path?:string, title?:string, detail?:string}}
  */
+/** The title of a folder change refused because Sync is connected (picker and typed path alike). */
+const SYNC_CONNECTED_FOLDER_TITLE = 'Disconnect Sync before you change the folder';
+
 function classifyPickResponse(status, body) {
   const b = (body && typeof body === 'object') ? body : {};
   // See the docblock: FIRST, unconditionally.
@@ -2082,6 +2085,13 @@ function classifyPickResponse(status, body) {
         'Set the folder from Settings → Knowledge base instead.',
       support,
     };
+  }
+  // v4.1.2: Sync is connected, so NO folder change is accepted (routes/config.js
+  // refuses it before the dialog opens; the next Sync would have removed the old
+  // folder's pages from GitHub). The folder is not the problem, so the title
+  // names what to do; the server's sentence says why and how.
+  if (status === 400 && b.reason === 'sync-connected' && serverMsg) {
+    return { kind: 'error', title: SYNC_CONNECTED_FOLDER_TITLE, detail: serverMsg, support };
   }
   // The Windows app: the picker DID finish, and the folder was refused by the
   // same rules a typed path meets (400 with a `reason`: the program folder, a
@@ -2271,12 +2281,14 @@ async function onTypedKnowledgeFolder(typed, token) {
   state.kbTypedValue = value;
   if (!value.trim()) {
     state.kbTypedError = 'Paste the full path of your knowledge folder first.';
+    state.kbTypedErrorTitle = null;
     render(token);
     return;
   }
   const previousPath = (state.kb && state.kb.domainsPath) || null;
   state.kbBusy = true;
   state.kbTypedError = null;
+  state.kbTypedErrorTitle = null;
   render(token);
   try {
     const res = await fetch('/api/config/domains-path', {
@@ -2289,6 +2301,7 @@ async function onTypedKnowledgeFolder(typed, token) {
     if (!isCurrentMount(token)) return;
     if (!res.ok) {
       state.kbTypedError = plainError(body, { status: res.status, fallback: 'That folder could not be set. Try again.' });
+      state.kbTypedErrorTitle = body && body.reason === 'sync-connected' ? SYNC_CONNECTED_FOLDER_TITLE : null;
       return;
     }
     state.kbTypedValue = '';
@@ -3679,7 +3692,7 @@ function renderTypedKnowledgePath() {
     renderDescription('File Explorer\u2019s address bar (or Finder\u2019s Get Info) shows a folder\u2019s full path \u2014 ' +
       'use the folder that contains your domains.') +
     (state.kbTypedError
-      ? renderStatus({ state: 'danger', title: 'That folder cannot be used', detail: state.kbTypedError, support: errorDetailOf(state.kbTypedError) ? DETAIL_PREFIX + errorDetailOf(state.kbTypedError) : '' })
+      ? renderStatus({ state: 'danger', title: state.kbTypedErrorTitle || 'That folder cannot be used', detail: state.kbTypedError, support: errorDetailOf(state.kbTypedError) ? DETAIL_PREFIX + errorDetailOf(state.kbTypedError) : '' })
       : '') +
   '</div>';
 }

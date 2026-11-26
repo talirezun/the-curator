@@ -10105,7 +10105,7 @@ function renderStorage(domainsMonitorHtml) {
     '</div>' +
     '<div class="settings-note-row">' +
       icon('folder', 15) +
-      '<span>Moving this folder loses nothing; the graph is picked up as-is.</span>' +
+      '<span>Moving this folder loses nothing; the graph is picked up as-is. While Sync is connected the folder can\u2019t change: disconnect Sync first.</span>' +
     '</div>' +
     (state.folderWarning ? renderStatus({ state: 'attention', title: 'Worth knowing about this folder', detail: state.folderWarning }) : '') +
     renderTypedFolderFallback() +
