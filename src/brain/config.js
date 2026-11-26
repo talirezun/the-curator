@@ -10,8 +10,9 @@
  *
  * (Two TEST-ONLY seams sit above all of these — see getDomainsDir.)
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { writeFileAtomicSync } from './atomic-write.js';
 import { getCuratorConfigFile, getDefaultDomainsDir, getPlatform } from './paths.js';
 import { assertWindowsAppKnowledgeFolder } from './knowledge-folder-path.js';
@@ -28,11 +29,168 @@ import { assertWindowsAppKnowledgeFolder } from './knowledge-folder-path.js';
 // and WRITING the developer's real .curator-config.json.
 const configFile = () => getCuratorConfigFile();
 
+// ── Damaged settings files (v4.1.2) ─────────────────────────────────────────
+//
+// THE RULE, for .curator-config.json here and .sharedbrain-config.json in
+// sharedbrain-config.js (which imports these helpers, so the two files cannot
+// drift apart):
+//
+//   • MISSING (ENOENT), or present but EMPTY / whitespace-only: exactly as
+//     before — reads answer "nothing configured" and the first write creates
+//     the file. An empty file holds no bytes worth keeping, and refusing every
+//     write over it would strand a user for nothing.
+//   • DAMAGED — present, but not readable (EACCES, EISDIR, EBUSY …), not JSON,
+//     or JSON of the wrong shape (`null`, an array, a number; for the Shared
+//     Brain file, no `connections` array): reads still answer "nothing
+//     configured" (they must never throw — this module is imported by the MCP
+//     server and by the app's start), but
+//       1. a byte-for-byte copy is kept beside it, ONCE per distinct content,
+//          as `<file>.unreadable-<sha256:12>` (0600, atomic, in the user-data
+//          dir — never under domains/, so Sync never sees it);
+//       2. stderr gets ONE line per distinct content per process (never
+//          stdout: the MCP's stdout is its protocol channel);
+//       3. EVERY write is refused at the module's single writer (writeRaw)
+//          with a ConfigFileUnreadableError, code `config_unreadable`, whose
+//          message names the file and the copy by basename only;
+//       4. the damaged file is never touched — a hand-edit typo stays a
+//          one-comma fix. Setting it aside is a separate, explicit act
+//          (setAsideDamagedConfig / setAsideDamagedSharedBrainConfig).
+//
+// Before v4.1.2 readRaw() answered `{}` for an unparseable file and the next
+// ordinary write — dismissing the setup guide was enough — replaced it, taking
+// every API key, the knowledge-folder pointer and the GitHub read token with
+// it (audit O2; B2 is the same class for every Shared Brain token).
+// setGithubReadToken and setContextWindowSettings already refused; this makes
+// the refusal the rule at the chokepoint rather than a property of two writers.
+
+/** A write refused because the settings file on disk could not be read. */
+export class ConfigFileUnreadableError extends Error {
+  constructor(file, backup, what) {
+    super(`${what} (${file}) could not be read, so nothing was saved: saving now would have erased `
+      + `everything in it. ${backup ? `A copy of it is kept beside it as ${backup}. ` : ''}`
+      + 'Fix the file, or move it out of the way, and try again.');
+    this.name = 'ConfigFileUnreadableError';
+    this.code = 'config_unreadable';
+    this.file = file;
+    this.backup = backup;
+  }
+}
+
+const _reportedDamage = new Set();
+
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+// The ONE physical writer in this module: 0600, atomic. writeRaw and the
+// damaged-file copy both go through it (scripts/test-selected-model.js pins
+// that this module has exactly one).
+function writePrivateFileAtomic(file, content) {
+  writeFileAtomicSync(file, content, { mode: 0o600 });
+}
+
+function backupNameFor(file, sha) {
+  return `${path.basename(file)}.unreadable-${sha.slice(0, 12)}`;
+}
+
+/**
+ * Keep the damaged bytes. Idempotent by content: the copy's name carries the
+ * content hash, so every process (app, MCP servers, restarts) reuses one copy.
+ * Best-effort — returns the basename, or null if it could not be written.
+ */
+function keepDamagedCopy(file, buf, sha) {
+  const name = backupNameFor(file, sha);
+  const abs = path.join(path.dirname(file), name);
+  try {
+    if (!existsSync(abs)) writePrivateFileAtomic(abs, buf);
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+function reportDamage(file, key, detail, backup) {
+  if (_reportedDamage.has(key)) return;
+  _reportedDamage.add(key);
+  // stderr ONLY — see the rule above.
+  console.error(`[The Curator] ${path.basename(file)} could not be read (${detail}). It will not be `
+    + 'overwritten: every change to it is refused until it is fixed or set aside.'
+    + (backup ? ` A copy of it is kept at ${path.join(path.dirname(file), backup)}.` : ''));
+}
+
+/**
+ * Inspect a JSON settings file. Never throws, never writes stdout.
+ * Returns one of:
+ *   { state: 'missing' }                        — absent, or empty/whitespace
+ *   { state: 'ok', value }
+ *   { state: 'damaged', reason: 'read'|'parse'|'shape', backup: <basename>|null }
+ *
+ * `validShape(parsed)` decides the shape; the default is a plain object.
+ */
+export function inspectSettingsFile(file, { validShape = isPlainObject } = {}) {
+  let buf;
+  try { buf = readFileSync(file); }
+  catch (err) {
+    if (err && err.code === 'ENOENT') return { state: 'missing' };
+    const code = (err && err.code) || 'error';
+    reportDamage(file, `${file}\0read:${code}`, `it could not be opened: ${code}`, null);
+    return { state: 'damaged', reason: 'read', backup: null };
+  }
+  const text = stripBom(buf.toString('utf8'));
+  if (text.trim() === '') return { state: 'missing' };
+  let parsed, reason = null;
+  try { parsed = JSON.parse(text); } catch { reason = 'parse'; }
+  if (!reason && !validShape(parsed)) reason = 'shape';
+  if (!reason) return { state: 'ok', value: parsed };
+  const sha = createHash('sha256').update(buf).digest('hex');
+  const backup = keepDamagedCopy(file, buf, sha);
+  reportDamage(file, `${file}\0${sha}`,
+    reason === 'parse' ? 'it is not valid JSON' : 'it does not hold the expected settings', backup);
+  return { state: 'damaged', reason, backup };
+}
+
+function isPlainObject(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * The guard every writer of a settings file passes through. Re-inspects the
+ * file NOW (not whatever a lenient read saw earlier), so a file that is
+ * damaged at write time is refused even if it was fine when read.
+ */
+export function assertSettingsFileWritable(file, { validShape, what } = {}) {
+  const r = inspectSettingsFile(file, { validShape });
+  if (r.state === 'damaged') throw new ConfigFileUnreadableError(path.basename(file), r.backup, what);
+}
+
+/**
+ * Explicitly set a damaged settings file aside, so the next write starts a
+ * fresh one. The damaged bytes are copied first and the copy is verified
+ * byte-for-byte before the live file is removed. Refuses (returns
+ * `{setAside:false, reason}`) when the file is not damaged, or when its bytes
+ * cannot be read (nothing could be kept, so nothing is removed).
+ */
+export function setAsideSettingsFile(file, { validShape } = {}) {
+  const r = inspectSettingsFile(file, { validShape });
+  if (r.state !== 'damaged') return { setAside: false, reason: r.state === 'ok' ? 'not_damaged' : 'missing' };
+  if (r.reason === 'read') return { setAside: false, reason: 'unreadable_bytes' };
+  let buf;
+  try { buf = readFileSync(file); } catch { return { setAside: false, reason: 'unreadable_bytes' }; }
+  const sha = createHash('sha256').update(buf).digest('hex');
+  const name = keepDamagedCopy(file, buf, sha);
+  const abs = name && path.join(path.dirname(file), name);
+  let kept = null;
+  try { kept = abs ? readFileSync(abs) : null; } catch { kept = null; }
+  if (!kept || !kept.equals(buf)) return { setAside: false, reason: 'copy_failed' };
+  unlinkSync(file);
+  return { setAside: true, backup: name };
+}
+
+const CURATOR_CONFIG_WHAT = 'Your settings file';
+
 function readRaw() {
-  const f = configFile();
-  if (!existsSync(f)) return {};
-  try { return JSON.parse(readFileSync(f, 'utf8')); }
-  catch { return {}; }
+  const r = inspectSettingsFile(configFile());
+  return r.state === 'ok' ? r.value : {};
 }
 
 // v3.0.1-beta.8: atomic write so a kill-mid-write of .curator-config.json
@@ -40,8 +198,27 @@ function readRaw() {
 // callers in this module don't await.
 // v3.0.1-beta.20: 0600 — this file holds the Gemini/Anthropic API keys, so it
 // must not be readable by other local users.
+// v4.1.2: refuses while the file on disk is damaged (see the rule above).
 function writeRaw(data) {
-  writeFileAtomicSync(configFile(), JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+  assertSettingsFileWritable(configFile(), { what: CURATOR_CONFIG_WHAT });
+  writePrivateFileAtomic(configFile(), JSON.stringify(data, null, 2) + '\n');
+}
+
+/**
+ * Whether .curator-config.json is usable, for a status route, System Check or
+ * a banner. Never throws; names files by basename only.
+ *   { file, state: 'missing'|'ok'|'damaged', reason?, backup? }
+ */
+export function getConfigFileStatus() {
+  const r = inspectSettingsFile(configFile());
+  const out = { file: path.basename(configFile()), state: r.state };
+  if (r.state === 'damaged') { out.reason = r.reason; out.backup = r.backup; }
+  return out;
+}
+
+/** Set a damaged .curator-config.json aside (see setAsideSettingsFile). */
+export function setAsideDamagedConfig() {
+  return setAsideSettingsFile(configFile());
 }
 
 // Test-only override. Production code NEVER sets this — it stays null, so

@@ -59,11 +59,11 @@
  *     messages. Spec Part 10 invariants 2 and 8.
  */
 
-import { readFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { writeFileAtomicSync } from './atomic-write.js';
 import { getSharedBrainConfigFile } from './paths.js';
+import { inspectSettingsFile, assertSettingsFileWritable, setAsideSettingsFile } from './config.js';
 
 // v3.1.0+: resolves through paths.js so this token-bearing file can live
 // outside a read-only .app bundle. Byte-identical in a repo install.
@@ -82,22 +82,56 @@ const MASK_VISIBLE_PREFIX = 8;
 
 // ── File I/O ────────────────────────────────────────────────────────────────
 
+// v4.1.2 (audit B2): the damaged-file rule in config.js applies here too.
+// Before, a file that did not parse — or parsed without a `connections` array —
+// read as "no connections", and the next save, remove or patch wrote that
+// over it: every OTHER connection's PAT and its shown-once admin token gone,
+// no copy. Now reads still answer "no connections" (they must never throw),
+// a copy of the damaged bytes is kept beside it, and every write is refused.
+//
+// The shape: a plain object whose `connections` is an array of plain objects.
+// An empty object `{}` is the one exception — it holds nothing to lose and
+// reads as no connections, as before. Anything else without that array (a
+// future version's layout, a hand-edit that renamed the key) is DAMAGED,
+// because writing `{connections:[…]}` over it would drop what it holds.
+const SHARED_BRAIN_WHAT = 'Your Shared Brain connections file';
+
+function validSharedBrainShape(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  if (!Object.prototype.hasOwnProperty.call(v, 'connections')) return Object.keys(v).length === 0;
+  return Array.isArray(v.connections)
+    && v.connections.every((c) => !!c && typeof c === 'object' && !Array.isArray(c));
+}
+
 function readRaw() {
-  if (!existsSync(configFile())) return { connections: [] };
-  try {
-    const parsed = JSON.parse(readFileSync(configFile(), 'utf8'));
-    if (!parsed || !Array.isArray(parsed.connections)) return { connections: [] };
-    return parsed;
-  } catch {
-    return { connections: [] };
-  }
+  const r = inspectSettingsFile(configFile(), { validShape: validSharedBrainShape });
+  if (r.state !== 'ok') return { connections: [] };
+  return Array.isArray(r.value.connections) ? r.value : { ...r.value, connections: [] };
 }
 
 // v3.0.1-beta.20: atomic + 0600 — this file holds Shared Brain credentials
 // (github_pat, fellow_token, admin_token), so it must not be world-readable,
 // and a kill mid-write must not corrupt every connection's tokens.
+// v4.1.2: refuses while the file on disk is damaged (config.js's rule).
 function writeRaw(data) {
+  assertSettingsFileWritable(configFile(), { validShape: validSharedBrainShape, what: SHARED_BRAIN_WHAT });
   writeFileAtomicSync(configFile(), JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+}
+
+/**
+ * Whether .sharedbrain-config.json is usable. Never throws; basenames only.
+ *   { file, state: 'missing'|'ok'|'damaged', reason?, backup? }
+ */
+export function getSharedBrainConfigFileStatus() {
+  const r = inspectSettingsFile(configFile(), { validShape: validSharedBrainShape });
+  const out = { file: path.basename(configFile()), state: r.state };
+  if (r.state === 'damaged') { out.reason = r.reason; out.backup = r.backup; }
+  return out;
+}
+
+/** Set a damaged .sharedbrain-config.json aside (config.js setAsideSettingsFile). */
+export function setAsideDamagedSharedBrainConfig() {
+  return setAsideSettingsFile(configFile(), { validShape: validSharedBrainShape });
 }
 
 // ── Masking ─────────────────────────────────────────────────────────────────
