@@ -226,7 +226,7 @@ try {
     step('…a Download button for each skill, this app’s own zip', mc.download === '/api/setup/skills/my-curator.zip' && cc.download === '/api/setup/skills/curator-continuity.zip');
     step('…Antigravity’s stale my-curator reads "out of date", its folder and Show the folder', /^Antigravity — out of date~\/\.gemini\/config\/skills\/my-curator/.test(mc.ag) && mc.show, mc.ag);
     step('…its current curator-continuity reads "up to date"', /^Antigravity — up to date/.test(cc.ag), cc.ag);
-    step('…"0 of 1 app up to date" / "1 of 1 app up to date"', mc.meta === '0 of 1 app up to date' && cc.meta === '1 of 1 app up to date', mc.meta + ' | ' + cc.meta);
+    step('…"0 of 1 harness up to date" / "1 of 1 harness up to date"', mc.meta === '0 of 1 harness up to date' && cc.meta === '1 of 1 harness up to date', mc.meta + ' | ' + cc.meta);
     step('…Claude: the upload path, and that The Curator can’t see the account', /^Claude — upload it in Claude: Customize → Skills\. The Curator can’t see your Claude account/.test(mc.claude), mc.claude);
     const res = await fetch(origin + mc.download);
     const buf = Buffer.from(await res.arrayBuffer());
