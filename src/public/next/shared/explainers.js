@@ -65,7 +65,7 @@ const E = {
         ['MEMORY', 'when an agent last saved'],
         ['KNOWLEDGE', 'pages in the domains it searches'],
         ['SESSION START', 'what an agent starts with'],
-        ['SETUP', 'can each tool reach this project?'],
+        ['SETUP', 'can each harness reach this project?'],
       ],
     },
     points: [
@@ -116,7 +116,7 @@ const E = {
     },
     points: [
       { icon: 'computer', text: 'Each computer keeps its own Handoffs, so syncing never overwrites them.' },
-      { icon: 'search', text: '**Agent connections** counts agent apps that connected through the MCP bridge.' },
+      { icon: 'search', text: '**Agent connections** counts agent harnesses that connected through the MCP bridge.' },
     ],
     guide: { key: 'context.memory', heading: 'Memory — the brief, Handoffs and the Journal' },
   },
@@ -142,7 +142,7 @@ const E = {
       { icon: 'window', text: '**Window** — how much your model can hold. Set per computer.' },
       { icon: 'gauge', text: '**Reading budget** — the most The Curator sends. Standard suits most.' },
       // v3.79.0 (contract §D): "Harness" became "Your tool’s share".
-      { icon: 'harness', text: '**Your tool’s share** — its own prompt, tools and files; estimated, meter only.' },
+      { icon: 'harness', text: '**Your harness’s share** — its own prompt, tools and files; estimated, meter only.' },
     ],
     try: 'In **Documents at start**, change a start state — the meter previews it.',
     guide: { key: 'context.session-start', heading: 'Session start and the context window' },
@@ -157,7 +157,7 @@ const E = {
   'context.setup': {
     label: 'About Setup',
     title: 'Setup',
-    lead: '**Setup** checks each agent app can reach this project. **Re-check** reads the files; apps needn’t run.',
+    lead: '**Setup** checks each agent harness (the app your agent runs in) reaches this project. **Re-check** reads the files.',
     visual: {
       type: 'table',
       caption: 'How each part reaches another computer',
@@ -165,7 +165,7 @@ const E = {
       rows: [
         ['Computers', 'handoffs, the brief', 'Sync now'],
         ['Repository on this computer', 'instruction files, the marker', 'your project’s own git'],
-        ['Agent apps', 'MCP, skills, hooks', 'set up per computer'],
+        ['Agent harnesses', 'MCP, skills, hooks', 'set up per computer'],
       ],
     },
     points: [
@@ -173,7 +173,7 @@ const E = {
       { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
       { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'An added agent app opens its setup steps. Unlisted? **Custom agent app…**',
+    try: 'An added harness opens setup steps. Unlisted? **Custom agent harness…**',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 
@@ -418,7 +418,7 @@ const E = {
     lead: '**Copy agent instructions** copies a short paragraph telling your agent to use this project’s memory.',
     points: [
       { icon: 'file', text: 'Paste it into the file your agent loads every session.' },
-      { icon: 'agent', text: 'It reads the memory first, then saves under its own tool’s handoff.' },
+      { icon: 'agent', text: 'It reads the memory first, then saves under its own harness’s handoff.' },
     ],
     try: 'Press **Copy agent instructions**, then paste it into your agent’s instructions file.',
     guide: { key: 'domains.agent-instructions', heading: 'Making sure your agent actually does it' },
@@ -648,10 +648,10 @@ const E = {
   'settings.mcp': {
     label: 'About MCP bridge',
     title: 'MCP bridge',
-    lead: 'This page connects your AI apps to your knowledge and shows whether the connection works.',
-    visual: { type: 'flow', caption: 'Four sections', steps: ['Your AI apps', 'Skills', 'Connection test', 'Tool activity'] },
+    lead: 'This page connects your agent harnesses (Claude Code, Codex, Cursor…) to your knowledge and shows whether the connection works.',
+    visual: { type: 'flow', caption: 'Four sections', steps: ['Your agent harnesses', 'Skills', 'Connection test', 'Tool activity'] },
     points: [
-      { icon: 'agent', text: 'Claude, Cursor, Antigravity and other AI apps can use My Curator.' },
+      { icon: 'agent', text: 'Claude, Cursor, Antigravity and other agent harnesses can use My Curator.' },
       { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
     ],
     guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
@@ -659,9 +659,9 @@ const E = {
 
   // MCP section 1 · Your AI apps — `mcp-sec-apps-info` (v3.90.0).
   'settings.mcp-connect': {
-    label: 'About Your AI apps',
-    title: 'Your AI apps',
-    lead: 'One row per AI app found on this computer, and whether it reaches My Curator.',
+    label: 'About Your agent harnesses',
+    title: 'Your agent harnesses',
+    lead: 'One row per agent harness found on this computer, and whether it reaches My Curator.',
     points: [
       { icon: 'computer', text: 'Works with Claude Desktop, Claude Code, Cursor and Antigravity.' },
       { icon: 'check', text: 'Install for me changes only The Curator’s own line, keeping a backup.' },
@@ -674,7 +674,7 @@ const E = {
   'settings.mcp-skills': {
     label: 'About Skills',
     title: 'Skills',
-    lead: 'Skills teach an AI app how to use My Curator well. Download them again after an update.',
+    lead: 'Skills teach an agent harness how to use My Curator well. Download them again after an update.',
     points: [
       { icon: 'refresh', text: 'A skill never updates itself: replace the old copy.' },
       { icon: 'agent', text: 'Claude keeps skills in your Claude account, out of sight here.' },
@@ -686,7 +686,7 @@ const E = {
   'settings.mcp-bridge': {
     label: 'About Connection test',
     title: 'Connection test',
-    lead: 'Starts My Curator the way your AI apps do and checks that it answers.',
+    lead: 'Starts My Curator the way your agent harnesses do and checks that it answers.',
     points: [
       { icon: 'check', text: 'Test all tools runs every tool on a throwaway copy.' },
       { icon: 'lock', text: 'Nothing of yours changes during a test.' },
@@ -701,9 +701,9 @@ const E = {
     title: 'Overview',
     lead: 'Is everything working? Each figure opens its section.',
     points: [
-      { icon: 'agent', text: 'Connected counts the AI apps that reach My Curator.' },
+      { icon: 'agent', text: 'Connected counts the agent harnesses that reach My Curator.' },
       { icon: 'check', text: 'Tools working comes from the last test on this page.' },
-      { icon: 'clock', text: 'Last used: an AI app’s newest tool call. Tests never count.' },
+      { icon: 'clock', text: 'Last used: an agent harness’s newest tool call. Tests never count.' },
     ],
     guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
@@ -712,7 +712,7 @@ const E = {
   'settings.mcp-tool-map': {
     label: 'About Tool activity',
     title: 'Tool activity',
-    lead: 'Tool activity shows which tools your AI apps used, and when. It stays on this computer.',
+    lead: 'Tool activity shows which tools your agent harnesses used, and when. It stays on this computer.',
     points: [
       { icon: 'lock', text: 'It keeps tool names and times, never what was read or written.' },
       { icon: 'computer', text: 'It is never synced; deleting it only restarts the count.' },
@@ -918,7 +918,7 @@ export const SCREEN_WORDS = [
   'Connect a provider', 'Your AI model', 'Chat', 'All models', 'Wiki health',
   'measured for the build lane', 'measured on your wiki', 'not measured', 'Worth testing for this job',
   'Software update', 'Appearance', 'Text size', 'Menu bar', 'System check',
-  'Connect your agent apps', 'Default domain for MCP writes', 'Tool map', 'Across projects',
+  'Connect your agent harnesses', 'Default domain for MCP writes', 'Tool map', 'Across projects',
   'Maximum candidate pairs per scan', 'Vault folder', 'GitHub read-only token', 'Choose folder', 'Test',
   'Access token', 'Check now', 'Sync', 'Sync now',
   // v3.76.0 — Settings › Trash.
@@ -928,12 +928,12 @@ export const SCREEN_WORDS = [
   // v3.78.0 — step 5 rebuilt: its head control, its marks, its folds and its
   // picker, each as printed.
   'Re-check', 'ready', 'to fix', 'can’t check here', 'not checked', 'repository',
-  'Computers', 'Custom agent app…', '+ Add an agent app',
+  'Computers', 'Custom agent harness…', '+ Add an agent harness',
   // v3.79.0 — step 5's other two fold titles (the travels-by table's row
   // names) and step 4's renamed picker.
-  'Agent apps', 'Repository on this computer', 'Your tool’s share',
+  'Agent harnesses', 'Repository on this computer', 'Your harness’s share',
   // v3.90.0 — Settings › MCP bridge from the copy deck: its section titles and buttons.
-  'Your AI apps', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default domain for writes',
+  'Your agent harnesses', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default domain for writes',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

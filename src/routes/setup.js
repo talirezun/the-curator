@@ -6,7 +6,7 @@
  *   GET  /api/setup/projects/:domain/:project/file?name=  (v3.79.0) → one repository file's text,
  *                                                     for the reader; its OWN allow-list (see there)
  *   PUT  /api/setup/projects/:domain/:project/repo  → {path} | {path: null} — this machine only
- *   PUT  /api/setup/tools                           → {ids: [...]} — the "+ Add a tool" choice
+ *   PUT  /api/setup/tools                           → {ids: [...]} — the "+ Add an agent harness" choice
  *                                                     {custom: {name}} | {removeCustom: name} (v3.78.0)
  *   POST /api/setup/reveal                          → {path} — Finder; only a path a check listed
  *   GET  /api/setup/skills/:name.zip                → the current skill folder, zipped
@@ -279,7 +279,7 @@ function genericSnippet(launch) {
   return { format: 'json', text: `${JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: entry } }, null, 2)}\n` };
 }
 
-/** The "+ Add a tool" menu (v3.78.0): every adapter the app can write an MCP entry for. */
+/** The "+ Add an agent harness" menu (v3.78.0): every adapter the app can write an MCP entry for. */
 function addableFor(shownIds) {
   const shown = new Set(shownIds);
   const known = listHarnesses()
@@ -300,7 +300,7 @@ function addableFor(shownIds) {
       // v3.79.0 view.
       return { id, label: a.label, group: 'known', detail, measured, reads: [...names], configPaths: measured ? paths : [] };
     });
-  return [...known, { id: '__custom', label: 'Custom tool…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false, reads: ['AGENTS.md'], configPaths: [] }];
+  return [...known, { id: '__custom', label: 'Custom agent harness…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false, reads: ['AGENTS.md'], configPaths: [] }];
 }
 
 function customToolIds() {
@@ -589,7 +589,7 @@ router.get('/projects/:domain/:project/file', async (req, res) => {
     if (!listedTools.has(key)) await projectPayload(domain, project);
     const listed = listedTools.get(key) || [];
     const allowed = readableNames(listed);
-    if (!name || !allowed.has(name)) return refuse(400, 'not_allowed', 'Only .curator-project and the instruction files a listed tool reads can be opened here.');
+    if (!name || !allowed.has(name)) return refuse(400, 'not_allowed', 'Only .curator-project and the instruction files a listed agent harness reads can be opened here.');
     let realRepo;
     try {
       realRepo = realpathSync(repoPath);
@@ -728,7 +728,7 @@ router.put('/tools', (req, res) => {
   if (Object.hasOwn(body, 'custom')) {
     const name = body.custom && typeof body.custom.name === 'string' ? body.custom.name.trim() : '';
     if (!SETUP_CUSTOM_TOOL_RE.test(name)) {
-      return res.status(400).json({ ok: false, reason: 'invalid_name', error: 'A tool name is 1–40 characters: letters, digits, spaces, dot, underscore or hyphen.' });
+      return res.status(400).json({ ok: false, reason: 'invalid_name', error: 'An agent harness name is 1–40 characters: letters, digits, spaces, dot, underscore or hyphen.' });
     }
     const n = normaliseHarness(name);
     // A name that IS a known tool ("claude code", "DSH") joins the known list.
@@ -741,7 +741,7 @@ router.put('/tools', (req, res) => {
       return res.json({ ok: true, ids: getSetupTools(), custom: current, added: { id: n.id, known: false } });
     }
     if (current.length >= SETUP_CUSTOM_TOOLS_MAX) {
-      return res.status(409).json({ ok: false, reason: 'too_many', error: `At most ${SETUP_CUSTOM_TOOLS_MAX} custom tools. Remove one first.` });
+      return res.status(409).json({ ok: false, reason: 'too_many', error: `At most ${SETUP_CUSTOM_TOOLS_MAX} custom agent harnesses. Remove one first.` });
     }
     const custom = setSetupCustomTools([...current, n.label]);
     return res.json({ ok: true, ids: getSetupTools(), custom, added: { id: n.id, known: false } });
@@ -755,7 +755,7 @@ router.put('/tools', (req, res) => {
   }
   const ids = Array.isArray(body.ids) ? body.ids : null;
   if (!ids || ids.some((x) => !adapterFor(x))) {
-    return res.status(400).json({ ok: false, reason: 'invalid_tools', error: 'Send {"ids": [...]} with known tool ids.' });
+    return res.status(400).json({ ok: false, reason: 'invalid_tools', error: 'Send {"ids": [...]} with known agent harness ids.' });
   }
   res.json({ ok: true, ids: setSetupTools(ids) });
 });

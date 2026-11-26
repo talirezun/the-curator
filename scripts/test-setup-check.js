@@ -674,7 +674,7 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
     mkdirSync(miss, { recursive: true });
     const m = run({ pairs: [], machine: { ids: [] }, machineRows: [], repo: { path: miss, source: 'set' }, addedTools: ['antigravity'] });
     const bm = m.toFix.find((f) => f.kind === 'block-missing');
-    ok(bm && bm.text === `AGENTS.md in ${S.tildeUnder(ROOT, miss)} has no Curator instructions, so Antigravity doesn’t know this project and may overwrite another agent app’s handoff.`
+    ok(bm && bm.text === `AGENTS.md in ${S.tildeUnder(ROOT, miss)} has no Curator instructions, so Antigravity doesn’t know this project and may overwrite another agent harness’s handoff.`
       && /Paste them at the very top \(create the file if it isn’t there\), then commit and push\.$/.test(bm.detail), 'block-missing: the contract\'s two lines', bm);
   }
 

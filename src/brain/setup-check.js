@@ -1017,7 +1017,7 @@ export function collectMachineSetup(o = {}) {
     else if (installed.length && haveBoth) skills = { state: STATES.OK, word: `${SKILL_NAMES.length} of ${SKILL_NAMES.length} current` };
     else if (installed.length) skills = { state: STATES.FIX, word: `${SKILL_NAMES.filter((n) => !installed.some((s) => s.skill === n)).join(', ')} missing` };
     else if (accountHeld) skills = { state: STATES.CANT, word: 'can’t check here', note: 'held by your Claude account' };
-    else if (!roots.length) skills = { state: STATES.CANT, word: 'can’t check here', note: 'no known skill folder for this agent app' };
+    else if (!roots.length) skills = { state: STATES.CANT, word: 'can’t check here', note: 'no known skill folder for this agent harness' };
     else skills = { state: STATES.NONE, word: 'not installed' };
     skills.roots = roots;
     skills.installed = installed;
@@ -1207,11 +1207,11 @@ export function collectProjectSetup(o) {
       ] });
     } else {
       row.saved = { state: STATES.NONE, at: null };
-      evidence.push({ heading: 'Saved', lines: [`${label} has not saved to this project yet. An agent app is ready only once it has saved from this computer under its own name.`] });
+      evidence.push({ heading: 'Saved', lines: [`${label} has not saved to this project yet. An agent harness is ready only once it has saved from this computer under its own name.`] });
     }
 
     // Bridge (this machine), with evidence overriding an absent entry
-    if (!m) row.bridge = { state: STATES.CANT, word: a ? 'this agent app has no config file The Curator knows' : 'config location not known — copy the entry by hand' };
+    if (!m) row.bridge = { state: STATES.CANT, word: a ? 'this agent harness has no config file The Curator knows' : 'config location not known — copy the entry by hand' };
     else if (m.bridge.state === STATES.NONE && s && s.thisMachine) {
       row.bridge = { state: STATES.OK, word: 'working', note: 'entry not found in the files read — a save from this computer proves it works' };
     } else row.bridge = { ...m.bridge };
@@ -1235,7 +1235,7 @@ export function collectProjectSetup(o) {
       const lines = [row.bridge.word + (row.bridge.note ? ` — ${row.bridge.note}` : '')];
       let reveal = null;
       for (const f of m?.files || []) {
-        const where = f.via === 'readAlso' ? ' (read for this agent app; another app owns it)' : '';
+        const where = f.via === 'readAlso' ? ' (read for this agent harness; another harness owns it)' : '';
         let what;
         if (f.status === 'missing') what = 'not found';
         else if (BAD_FILE_STATES.has(f.status)) what = BAD_FILE_WORDS[f.status];
@@ -1266,7 +1266,7 @@ export function collectProjectSetup(o) {
         if (!reveal) reveal = sk.dir;
       }
       if (!m?.skills?.installed?.length && m?.skills?.roots?.length) lines.push(`Looked in: ${m.skills.roots.map((r) => tildeUnder(o.home || '', r)).join(', ')}.`);
-      if (!a) lines.push('Where this agent app keeps skills is not known; download the skill .zip files and install them the way the app documents.');
+      if (!a) lines.push('Where this agent harness keeps skills is not known; download the skill .zip files and install them the way the app documents.');
       evidence.push({ heading: 'Skills', lines, ...(reveal ? { reveal } : {}) });
     }
 
@@ -1299,13 +1299,13 @@ export function collectProjectSetup(o) {
       if (!a) {
         // An ASSUMPTION (the common convention), so never a to-fix line.
         Object.assign(row.block, best && best.current && !best.wrongProject
-          ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most agent apps read AGENTS.md' }
-          : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this agent app reads is not known' });
+          ? { state: STATES.OK, word: 'current in AGENTS.md', note: 'assumed: most agent harnesses read AGENTS.md' }
+          : { state: STATES.UNMEASURED, word: best ? 'AGENTS.md has an older or other block' : 'AGENTS.md has no Curator block', note: 'which file this agent harness reads is not known' });
       } else if (!best) {
         const f = names[0];
         Object.assign(row.block, { state: STATES.FIX, word: 'missing', note: `${fileWord} has no Curator block` });
         blockItem = item({ ...at, kind: 'block-missing', file: f,
-          text: `${f} in ${repoDisplay} has no Curator instructions, so ${label} doesn’t know this project and may overwrite another agent app’s handoff.`,
+          text: `${f} in ${repoDisplay} has no Curator instructions, so ${label} doesn’t know this project and may overwrite another agent harness’s handoff.`,
           detail: `${names.includes('CLAUDE.md') ? '' : `${label} reads ${names.join(' and ')}, not CLAUDE.md. `}Paste them at the very top (create the file if it isn’t there), then commit and push.`,
         }, blockFixes(f, 'Add The Curator instructions'));
       } else if (best.wrongProject) {
