@@ -686,7 +686,7 @@ export function __setApplyInFlight(v) { applyInFlight = !!v; }
 // a path or a command from the client: the file is the one this server
 // resolves for that app, and the command is read from it. What may run is
 // decided by vetEntry (src/brain/mcp-check-entry.js — read its header): this
-// app's own launcher, or an absolute node with this install's own
+// app's own launcher, or the node this app runs on with this install's own
 // mcp/server.js. One check in flight.
 
 let checkInFlight = false;
@@ -743,7 +743,11 @@ export async function checkEntryHandler(req, res) {
     const { launch: own, style: ownStyle } = launchNow();
     const ctx = ownStyle === 'app-binary'
       ? { platform: r.platform, launcherPath: null, serverPath: own.args[0], appExecPath: own.command }
-      : { platform: r.platform, launcherPath: getMcpLauncherPath(), serverPath: getMcpServerPath() };
+      : { platform: r.platform, launcherPath: getMcpLauncherPath(), serverPath: getMcpServerPath(),
+        // v4.1.2 (audit M1): shape (b)'s node is the node THIS install writes
+        // into the entry (its own process.execPath), and only in a source
+        // install; the Mac app writes its launcher, so it has none.
+        ...(ownStyle === 'node-script' && typeof own.command === 'string' ? { nodePath: own.command } : {}) };
     const results = [];
     const seen = new Map();
     for (const f of r.files) {

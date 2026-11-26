@@ -16,8 +16,9 @@
  *       HOME (CURATOR_TEST_INSTALL_HOME): the router is mounted, GET status →
  *       plan → apply → status connected → remove, end to end; and a
  *       no-Origin POST that the GLOBAL guard would let through is 403 here.
- *   §W  `POST /api/mcp/write-config` and its module are untouched, and nothing
- *       under mcp/ imports the installer.
+ *   §W  the retired `POST /api/mcp/write-config` is gone (v4.1.2, audit M7;
+ *       its 404 is proved in test-mcp-install-safety.js), routes/mcp.js does
+ *       not import the installer, and nothing under mcp/ imports it.
  *
  * The REAL config files are fingerprinted before and after.
  */
@@ -219,10 +220,12 @@ try {
     ok('remove written', a.body.results[0].outcome === 'written' && !JSON.parse(readFileSync(CU, 'utf8')).mcpServers['my-curator']);
     const s = await call('GET', '/api/mcp/install/status');
     eq('Cursor back to not-installed', tool(s.body, 'cursor').status, 'not-installed');
-    ok('restorable right after the remove (the file is what the remove left)', tool(s.body, 'cursor').restorable === true);
+    // v4.1.2 (audit M2): after a Remove the entry is already gone, so there
+    // is no "original" to put back (a Restore used to put the entry BACK).
+    eq('NOT restorable after the remove (nothing to put back)', tool(s.body, 'cursor').restorable, false);
     writeFileSync(CU, readFileSync(CU, 'utf8') + '\n');
     const r = await call('POST', '/api/mcp/install/plan', { action: 'restore', ids: ['cursor'] });
-    ok('restore after a later edit → refused changed_since', r.body.items[0].refused && r.body.items[0].refused.reason === 'changed_since');
+    ok('a restore planned after the remove is nothing to do, not a refusal', r.body.items[0].action === 'none' && !r.body.items[0].refused, JSON.stringify(r.body.items[0]));
     const s2 = await call('GET', '/api/mcp/install/status');
     eq('...and status says restorable: false', tool(s2.body, 'cursor').restorable, false);
   }
@@ -293,11 +296,11 @@ try {
     }
   }
 
-  section('§W — write-config untouched; mcp/ does not import the installer');
+  section('§W — write-config retired; mcp/ does not import the installer');
   {
     const src = readFileSync(path.join(ROOT, 'src/routes/mcp.js'), 'utf8');
-    ok('routes/mcp.js does not import the installer (write-config is not delegated)', !src.includes('mcp-install'));
-    ok('write-config still keeps its .bak and response shape', src.includes("const backupPath = io.configPath + '.bak';") && src.includes('preserved_servers'));
+    ok('routes/mcp.js does not import the installer', !/from\s+['"][^'"]*mcp-install[^'"]*['"]/.test(src));
+    ok('routes/mcp.js mounts no write-config or claude-full-config route', !/router\.(post|get)\(\s*['"]\/(write-config|claude-full-config)['"]/.test(src));
     const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
     const offenders = walk(path.join(ROOT, 'mcp')).filter((f) => /mcp-install|harness-detect/.test(readFileSync(f, 'utf8')));
     eq('no file under mcp/ imports mcp-install or harness-detect', offenders.length, 0);

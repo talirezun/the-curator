@@ -19,7 +19,10 @@
  *       launcher file (getMcpLauncherPath()) and `args` is empty;
  *   (b) NODE + THIS APP'S SERVER — `command` is an ABSOLUTE path whose
  *       basename, and whose realpath's basename, is `node` (`node.exe` on
- *       Windows, any case); `args[0]` resolves (realpath) to THIS install's
+ *       Windows, any case), AND whose realpath is the node this app itself
+ *       runs on and writes into the entry (`ctx.nodePath`, process.execPath
+ *       in a source install; v4.1.2 — a file merely NAMED node is not node);
+ *       `args[0]` resolves (realpath) to THIS install's
  *       own `mcp/server.js`; and the only other args allowed are exactly
  *       `--domains-path <absolute path>`. Node is an interpreter: allowing
  *       "node + any args" would allow `node -e <anything>`, so the script and
@@ -85,6 +88,8 @@ import path from 'node:path';
 export const CHECK_TIMEOUT_MS = 8000;
 export const STDOUT_CAP = 2 * 1024 * 1024;
 export const STDERR_CAP = 16 * 1024;
+/** After SIGTERM, how long a child gets before SIGKILL. */
+export const KILL_GRACE_MS = 1500;
 /** How many distinct entries one press may start (Antigravity keeps up to three files). */
 export const MAX_ENTRIES_PER_CHECK = 3;
 
@@ -217,9 +222,10 @@ const samePath = (a, b, win) => !!a && !!b && (win ? a.toLowerCase() === b.toLow
  * `deps` ({realpath, stat}). Returns
  *   {ok: true, command, args, shape: 'launcher'|'node'|'app-binary'}  or
  *   {ok: false, code, message, path?}
- * `ctx`: {platform, launcherPath, serverPath, appExecPath?}. `appExecPath`
- * (this process's own exe, Windows app only) turns shape (c) on and shape
- * (a) off.
+ * `ctx`: {platform, launcherPath, serverPath, nodePath?, appExecPath?}.
+ * `nodePath` (the node the installer writes, source installs only) turns
+ * shape (b) on; `appExecPath` (this process's own exe, Windows app only)
+ * turns shape (c) on and shapes (a) and (b) off.
  */
 export function vetEntry(entry, ctx, deps = {}) {
   const win = ctx.platform === 'win32';
@@ -269,6 +275,15 @@ export function vetEntry(entry, ctx, deps = {}) {
   const nodeName = win ? /^node\.exe$/i : /^node$/;
   if (!nodeName.test(P.basename(command)) || !nodeName.test(P.basename(realCmd))) {
     return refuse('not_allowed', `Its entry starts ${command}, which is neither node nor The Curator’s launcher, so The Curator does not run it.`);
+  }
+  // A real node is THE node this app runs on (v4.1.2, audit M1): a file is
+  // not node because it is NAMED node. `ctx.nodePath` is the node the
+  // installer writes into the entry (`process.execPath` in a source install),
+  // and the entry's command must resolve to that same file. No nodePath (the
+  // Mac app writes its launcher, never a node line) → shape (b) is off.
+  const realNode = typeof ctx.nodePath === 'string' && ctx.nodePath ? realOrNull(ctx.nodePath, deps) : null;
+  if (!realNode || !samePath(realCmd, realNode, win) || (win && !sameFile(realCmd, realNode, deps))) {
+    return refuse('not_allowed', `Its entry starts ${command}, which is not the node The Curator runs on${realNode ? ` (${ctx.nodePath})` : ''}, so The Curator does not run it. Install for me points it at this app’s own node.`);
   }
   const script = args[0];
   if (typeof script !== 'string' || !P.isAbsolute(script)) {
@@ -331,6 +346,13 @@ export function runEntryCheck(vetted, deps = {}) {
       done = true;
       clearTimeout(timer);
       try { child && child.kill(); } catch { /* already gone */ }
+      // A child that ignores SIGTERM is killed outright (v4.1.2, audit M9).
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const hard = setTimeout(() => {
+          try { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); } catch { /* gone */ }
+        }, KILL_GRACE_MS);
+        if (typeof hard.unref === 'function') hard.unref();
+      }
       const starts = st.initialized && st.listed;
       resolve({
         starts, toolCount: st.toolCount, serverName: st.serverName, serverVersion: st.serverVersion,

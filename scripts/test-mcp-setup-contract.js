@@ -4,7 +4,8 @@
  *
  * Covers two defects fixed in src/routes/mcp.js:
  *
- *   D1  GET /claude-full-config reported a CORRUPT claude_desktop_config.json
+ *   D1  (RETIRED v4.1.2 with the route itself; §1 now pins that it is gone)
+ *       GET /claude-full-config reported a CORRUPT claude_desktop_config.json
  *       identically to an ABSENT one, and in the corrupt case returned a
  *       `merged` object containing ONLY the curator entry — rendered by the
  *       wizard as "your file after" beside a copy button. Pasting it deletes
@@ -46,10 +47,10 @@ import { spawn } from 'child_process';
 import {
   buildCuratorEntry,
   parseClaudeConfigText,
-  buildFullConfigPayload,
   classifyDomainsResult,
   selfTestHandler,
 } from '../src/routes/mcp.js';
+import * as RoutesMod from '../src/routes/mcp.js';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,72 +75,14 @@ const routeSrc = readFileSync(ROUTE_SRC_PATH, 'utf8');
 const DOMAINS = '/tmp/zz-fake-domains';
 
 // ---------------------------------------------------------------------------
-section('§1  D1 — absent vs corrupt vs readable are three DISTINCT outcomes');
+section('§1  D1 — the merged-preview route is RETIRED; the parser stays');
 // ---------------------------------------------------------------------------
-
-const absent   = buildFullConfigPayload(null, DOMAINS);
-const corrupt  = buildFullConfigPayload(parseClaudeConfigText('{ "mcpServers": { ,, }'), DOMAINS);
-
-// The headline defect: these two used to be byte-identical.
-check('absent and corrupt payloads are NOT identical', JSON.stringify(absent) !== JSON.stringify(corrupt));
-check('absent and corrupt differ specifically in `merged`',
-  JSON.stringify(absent.merged) !== JSON.stringify(corrupt.merged));
-
-// --- corrupt: structurally cannot be presented as a safe merge --------------
-eq('corrupt: merged is null', corrupt.merged, null);
-eq('corrupt: parse_error true', corrupt.parse_error, true);
-eq('corrupt: merge_available false', corrupt.merge_available, false);
-check('corrupt: merge_error is a non-empty explanatory string',
-  typeof corrupt.merge_error === 'string' && corrupt.merge_error.length > 40);
-// A naive consumer must not be able to find ANY pasteable config in this payload
-// except the one explicitly named `entry`.
-const mcpServersBearingKeys = Object.entries(corrupt)
-  .filter(([, v]) => v && typeof v === 'object' && 'mcpServers' in v)
-  .map(([k]) => k);
-check('corrupt: the ONLY mcpServers-bearing value is the clearly-named `entry`',
-  mcpServersBearingKeys.length === 1 && mcpServersBearingKeys[0] === 'entry');
-check('corrupt: entry snippet is still available to add by hand',
-  !!corrupt.entry?.mcpServers?.['my-curator']?.command);
-
-// --- absent: the pre-existing happy path still works -----------------------
-eq('absent: parse_error false', absent.parse_error, false);
-eq('absent: merge_available true', absent.merge_available, true);
-eq('absent: was_empty true', absent.was_empty, true);
-eq('absent: merge_error null', absent.merge_error, null);
-check('absent: merged is a usable config with our entry',
-  !!absent.merged?.mcpServers?.['my-curator']?.args?.includes('--domains-path'));
-eq('absent: merged carries exactly one server', Object.keys(absent.merged.mcpServers).length, 1);
-
-// --- readable: merge is genuinely non-destructive ---------------------------
-const existing = {
-  mcpServers: {
-    filesystem: { command: 'npx', args: ['-y', '@x/fs'] },
-    github:     { command: 'npx', args: ['-y', '@x/gh'] },
-    'my-curator': { command: '/old/node', args: ['/old/server.js'] },
-  },
-  globalShortcut: 'Alt+Space',
-};
-const merged = buildFullConfigPayload(JSON.parse(JSON.stringify(existing)), DOMAINS);
-eq('readable: was_empty false', merged.was_empty, false);
-eq('readable: parse_error false', merged.parse_error, false);
-eq('readable: merge_available true', merged.merge_available, true);
-check('readable: every pre-existing top-level key survives',
-  Object.keys(existing).every(k => k in merged.merged));
-eq('readable: unrelated top-level value preserved', merged.merged.globalShortcut, 'Alt+Space');
-check('readable: every OTHER mcpServer survives the merge',
-  ['filesystem', 'github'].every(k => JSON.stringify(merged.merged.mcpServers[k]) === JSON.stringify(existing.mcpServers[k])));
-check('readable: our own stale entry is REPLACED, not duplicated',
-  merged.merged.mcpServers['my-curator'].command === process.execPath &&
-  merged.merged.mcpServers['my-curator'].args.includes(DOMAINS));
-eq('readable: server count is 3 (2 theirs + 1 ours)', Object.keys(merged.merged.mcpServers).length, 3);
-check('readable: input object was not mutated in place',
-  existing.mcpServers['my-curator'].command === '/old/node');
-
-// A readable config with no mcpServers key at all.
-const noServers = buildFullConfigPayload({ globalShortcut: 'X' }, DOMAINS);
-eq('readable/no-mcpServers: was_empty false', noServers.was_empty, false);
-eq('readable/no-mcpServers: unrelated key preserved', noServers.merged.globalShortcut, 'X');
-eq('readable/no-mcpServers: our entry added', Object.keys(noServers.merged.mcpServers).length, 1);
+// v4.1.2 (audit M7): GET /claude-full-config returned the whole Claude Desktop
+// config (other servers' secrets included) to any local caller, and nothing
+// in the app called it. It and its payload builder are gone; the 404 itself is
+// proved behaviourally in scripts/test-mcp-install-safety.js §M7.
+check('buildFullConfigPayload is no longer exported', typeof RoutesMod.buildFullConfigPayload === 'undefined');
+check('source: no claude-full-config route is mounted', !/router\.get\(\s*['"]\/claude-full-config['"]/.test(routeSrc));
 
 // --- parseClaudeConfigText, both directions --------------------------------
 eq('parse: valid JSON yields no sentinel', parseClaudeConfigText('{"a":1}').__parseError, undefined);
@@ -150,22 +93,6 @@ eq('parse: truncated JSON yields the sentinel', parseClaudeConfigText('{"mcpServ
 // Documented edge: a file containing literal `null` is VALID JSON and is treated
 // as "absent" downstream. Pinned so the behaviour is a decision, not a surprise.
 eq('parse: literal null is valid JSON (not a parse error)', parseClaudeConfigText('null'), null);
-
-// ---------------------------------------------------------------------------
-section('§2  D1 — additive-only: no legacy field removed or renamed');
-// ---------------------------------------------------------------------------
-
-for (const [name, p] of [['absent', absent], ['corrupt', corrupt], ['readable', merged]]) {
-  check(`${name}: legacy field 'was_empty' still present`, 'was_empty' in p);
-  check(`${name}: legacy field 'merged' still present`, 'merged' in p);
-  eq(`${name}: was_empty is a boolean`, typeof p.was_empty, 'boolean');
-}
-// Legacy consumer compatibility: src/public/app.js dereferences `merged` on the
-// was_empty===false branch. `merged` must never be null while was_empty is false.
-for (const [name, p] of [['absent', absent], ['corrupt', corrupt], ['readable', merged]]) {
-  check(`${name}: never (was_empty=false AND merged=null) — would crash the shipped wizard`,
-    !(p.was_empty === false && p.merged === null));
-}
 
 // ---------------------------------------------------------------------------
 section('§3  D2 — the self-test spawns EXACTLY the prescribed launch line');

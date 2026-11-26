@@ -761,11 +761,20 @@ export function appendManifestRow(row, io = defaultIO(), file = getMcpInstallMan
  * The newest manifest row this app wrote for (harness, file) that a Restore
  * could undo, and whether it still can: only while the file is byte-for-byte
  * what that write left (`shaAfter`).
+ *
+ * "Restore original" puts back the file as it was before The Curator ADDED
+ * or CHANGED its entry, so only an install or an update is a candidate, and
+ * only when it is our NEWEST write to that file (v4.1.2, audit M2). When the
+ * newest write was a Remove (the entry is already gone) or a Restore (the
+ * original is already back) there is nothing to put back: `row: null`, which
+ * the planner reads as "nothing to do", never as a refusal. A Restore after a
+ * Remove used to put our entry BACK under the words "the original settings
+ * file", and a second Restore was refused with an untrue "has changed since".
  */
 export function restoreCandidate(rows, harness, file, currentSha) {
   const row = [...rows].reverse().find((r) => r.harness === harness && r.file === file
-    && ['install', 'update', 'remove'].includes(r.action));
-  if (!row) return { eligible: false, reason: 'no_backup', row: null };
+    && ['install', 'update', 'remove', 'restore'].includes(r.action));
+  if (!row || row.action === 'remove' || row.action === 'restore') return { eligible: false, reason: 'no_backup', row: null };
   if (!row.backup) return { eligible: false, reason: 'no_backup', row };
   if (row.shaAfter !== currentSha) return { eligible: false, reason: 'changed_since', row };
   return { eligible: true, reason: null, row };
@@ -941,6 +950,9 @@ export function planTool(id, action, ctx) {
       items.push({
         ...base,
         action: f.read.state === 'missing' ? 'add' : (ours === undefined ? 'add' : 'update'),
+        // The planned entry only: a kept key's VALUE (an env may hold a
+        // secret) is never echoed; its NAME is in `kept`, which the preview
+        // shows (v4.1.2, audit M3).
         entryText: JSON.stringify(planned, null, 2),
         kept,
         backupWillBe: f.read.exists ? newCopy : null,

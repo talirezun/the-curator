@@ -4648,7 +4648,11 @@ function renderConnectBlock(k, crossBusy) {
     // credentials screen actually raises.
     '<div class="settings-note-row">' +
       icon('lockAlt', 15) +
-      '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
+      // v4.1.2 (audit W11): "0600" is a Unix permission; on Windows chmod
+      // protects nothing, so the Windows app names the place, not the mode.
+      ((typeof browserPlatform === 'function' && browserPlatform() === 'win32')
+        ? '<span>Keys live in <code class="mono">.curator-config.json</code> in your user folder on this PC. Never committed, '
+        : '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ') +
       'never sent anywhere except the provider you call.</span>' +
     '</div>';
 
