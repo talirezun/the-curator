@@ -688,7 +688,11 @@ section('5. Every step POINTS. Nothing here writes anything.');
   // whose button only appears when the mount does. Both arms are driven: the
   // deferred one (motion on) and the immediate one (motion off, or a first
   // navigation, where afterViewMount runs its callback in the same task).
-  const goSrc = extractFunction(obCode, 'go') + '\n' + extractFunction(obCode, 'goToDomainsCreate');
+  // v4.1.2 (integration): go() hands the key and bridge steps to their own
+  // helpers too (audit O3); extracted with it, so those steps no longer throw
+  // a ReferenceError inside this stub (it was caught into r.threw, unseen).
+  const goSrc = extractFunction(obCode, 'go') + '\n' + extractFunction(obCode, 'goToDomainsCreate')
+    + '\n' + extractFunction(obCode, 'goToMcpBridge') + '\n' + extractFunction(obCode, 'goToProvidersAndKeys');
   ok(/afterViewMount\(/.test(goSrc),
     'go() hands the create click to the shell’s afterViewMount() rather than calling it inline');
   ok(/import \{[^}]*\bafterViewMount\b[^}]*\} from '\.\.\/app\.js'/.test(obCode),
@@ -719,7 +723,11 @@ section('5. Every step POINTS. Nothing here writes anything.');
       },
       (id) => (id === 'domain' ? 'domains' : id === 'api-key' ? 'settings'
         : id === 'ingest' ? 'domains' : null),
-      { getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null) },
+      { getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null),
+        querySelector: (sel) => {
+          const m = /^\.settings-nav-row\[data-section="([a-z]+)"\]$/.exec(sel);
+          return m && mounted ? { click: () => log.push('section:' + m[1]) } : null;
+        } },
       () => log.push('refresh'),
       0,
       // v3.64.0: the shell handoff that opens the ADD SOURCES fold. Logged
@@ -764,6 +772,9 @@ section('5. Every step POINTS. Nothing here writes anything.');
     const other = runGo('api-key', { deferMount: false });
     ok(!other.log.includes('click'), 'a step that is not step 2 never reaches the create flow');
     ok(other.log.includes('navigate:settings'), 'CONTROL: it did navigate');
+    ok(other.threw === null, 'the key step runs without throwing (its helper is real, not a missing name)', other.threw && String(other.threw));
+    ok(other.log.includes('section:providers') && other.log.indexOf('navigate:settings') < other.log.indexOf('section:providers'),
+      'the key step opens Settings, THEN its Providers & keys row (audit O3)', other.log.join(' → '));
 
     const unknown = runGo('nope', { deferMount: false });
     ok(unknown.log.length === 0, 'an unknown step id navigates nowhere and clicks nothing');
