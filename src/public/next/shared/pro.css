@@ -98,8 +98,13 @@ html[data-pro="on"] .rail::after {
    alone styles the kit (test-next-section-kit.js); this only adds a ::after
    mark. Controls are left alone (their gloss is their face). The
    label's alt text is empty, so a screen reader does not read "PRO". Never on
-   a warning: the guard (scripts/test-pro-guard.js) forbids a Pro-only one. */
-html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, .btn) {
+   a warning: the guard (scripts/test-pro-guard.js) forbids a Pro-only one.
+   `data-pro-drawn` (proDrawnAttr(), v4.2.0 fix) marks the same way a part a
+   view DRAWS only while Pro is on (isPro() + re-render) — never hidden by CSS,
+   so its warnings are held by the guard's parity rule against the simple
+   render instead. */
+html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, .btn),
+html[data-pro="on"] [data-pro-drawn]:not(button, input, select, textarea, a, .btn) {
   background-image: var(--pro-hair);
   background-repeat: no-repeat;
   background-size: 1px 100%;
@@ -107,7 +112,9 @@ html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, 
 }
 html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
 html[data-pro="on"] [data-detail="pro"] [data-pro-mark]::after,
-html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
+html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after,
+html[data-pro="on"] [data-pro-drawn] > summary > span:first-of-type::after,
+html[data-pro="on"] [data-pro-drawn] [data-pro-mark]::after {
   content: "PRO" / "";
   display: inline-block;
   margin-left: var(--space-3);
@@ -122,7 +129,9 @@ html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::a
 @supports ((background-clip: text) or (-webkit-background-clip: text)) {
   html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
   html[data-pro="on"] [data-detail="pro"] [data-pro-mark]::after,
-  html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
+  html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after,
+  html[data-pro="on"] [data-pro-drawn] > summary > span:first-of-type::after,
+  html[data-pro="on"] [data-pro-drawn] [data-pro-mark]::after {
     background: var(--pro-ink);
     -webkit-background-clip: text;
     background-clip: text;

@@ -49,7 +49,7 @@ let _env = null;
 export function __setProEnv(env) { _env = env || null; }
 /** Tests only: forget all state, as a fresh page load would. */
 export function __resetPro() {
-  _on = false; _confirmed = false; _seq = 0; _initPromise = null; _delegated = false; _subs.clear(); _shimmerTimer = null;
+  _on = false; _confirmed = false; _seq = 0; _initPromise = null; _delegated = false; _subs.clear(); _shimmerTimer = null; _lastDoorAnchorId = null;
 }
 
 function g(name) {
@@ -225,6 +225,16 @@ export function proAttr() { return ' data-detail="pro"'; }
  */
 export function proMarkAttr() { return ' data-pro-mark'; }
 
+/**
+ * The marking for a part a view DRAWS only while Pro is on (isPro() +
+ * re-render), where one render path is not possible (v4.2.0 fix, e2e DEF-3):
+ * the same hairline and "PRO" label as `proAttr()` markup (shared/pro.css),
+ * but nothing hides it — in the simple view it is simply not drawn, and every
+ * warning it holds must be on the simple page too (the guard's parity rule).
+ * Additive; decorative only.
+ */
+export function proDrawnAttr() { return ' data-pro-drawn'; }
+
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -317,13 +327,21 @@ function holdAnchor(anchor, top, scroller, takeFocus) {
   const delta = anchor.getBoundingClientRect().top - top;
   if (scroller && Math.abs(delta) >= 1) scroller.scrollTop += delta;
   if (takeFocus) {
-    if (!anchor.hasAttribute('tabindex')) { anchor.setAttribute('tabindex', '-1'); anchor.setAttribute('data-pro-focus', ''); }
+    // A section is made focusable by script only (tabindex -1, out of the
+    // tab order); a control that already takes focus (the switch) is left alone.
+    const native = typeof anchor.tabIndex === 'number' && anchor.tabIndex >= 0;
+    if (!native && !anchor.hasAttribute('tabindex')) { anchor.setAttribute('tabindex', '-1'); anchor.setAttribute('data-pro-focus', ''); }
     try { anchor.focus({ preventScroll: true }); } catch { /* */ }
   }
 }
 
+// The anchor of the last door pressed, by id, so the toast's Undo can keep
+// the same place and hand focus back to it (v4.2.0 fix, audit minor 1a).
+let _lastDoorAnchorId = null;
+
 async function openFromDoor(btn) {
   const anchor = anchorOf(btn);
+  _lastDoorAnchorId = anchor && anchor.id ? anchor.id : null;
   const top = anchor && typeof anchor.getBoundingClientRect === 'function' ? anchor.getBoundingClientRect().top : 0;
   const scroller = scrollerOf(anchor);
   const d = doc();
@@ -356,6 +374,19 @@ function addUndo() {
 
 async function undoFromToast() {
   const t = toastApi();
+  const d = doc();
+  // Undo keeps the door's section where it is and gives it focus — the
+  // toast it was pressed in is about to go, and focus must never fall to
+  // body (v4.2.0 fix, audit minor 1a). No door anchor: the rail's switch.
+  let anchor = _lastDoorAnchorId && d && typeof d.getElementById === 'function' ? d.getElementById(_lastDoorAnchorId) : null;
+  if (!anchor && d && typeof d.querySelector === 'function') anchor = d.querySelector('[data-pro-switch]');
+  const top = anchor && typeof anchor.getBoundingClientRect === 'function' ? anchor.getBoundingClientRect().top : 0;
+  const scroller = anchor ? scrollerOf(anchor) : null;
+  const done = setPro(false);
+  if (anchor) holdAnchor(anchor, top, scroller, true);
   try { t.dismissToast(TOAST_ON_KEY); } catch { /* */ }
-  return setPro(false);
+  const raf = g('requestAnimationFrame');
+  if (anchor && typeof raf === 'function') raf(() => holdAnchor(anchor, top, scroller, !!d && d.activeElement === d.body));
+  _lastDoorAnchorId = null;
+  return done;
 }

@@ -173,7 +173,11 @@ section('§1  to-fix lines are loud notes, never folded — and nothing shows wh
   ok(!/cur-mon|renderMonitor|mem-setup-monitor/.test(html), 'no summary card and no monitor (the approved design)');
   const clean = { ...old(), toFix: [] };
   const h2 = S.renderSetupBody({ data: clean }, {});
-  ok(notes(h2).length === 0, 'NOTHING WRONG → no note at all', notes(h2).map(textOf));
+  // v4.2.0 fix (e2e DEF-4): the "files not on GitHub yet · Sync now" line is
+  // an outcome and sits above the folds with Pro on too; it is not a to-fix.
+  ok(notes(h2).filter((n) => !/not on GitHub yet/.test(textOf(n))).length === 0, 'NOTHING WRONG → no to-fix note at all', notes(h2).map(textOf));
+  ok(/class="tx-note mem-ss-note mem-setup-note mem-setup-unsynced"/.test(h2) && h2.indexOf('mem-setup-unsynced') < h2.indexOf('<details'),
+    '…and files not on GitHub yet are said ABOVE the first fold, never inside the Computers fold (DEF-4)');
   ok(!/Nothing to fix|nothing to fix/.test(h2), '…and no "nothing to fix" sentence standing in for one');
 }
 
@@ -327,7 +331,9 @@ section('§7  the Tools table');
     'columns HARNESS · STATUS · LAST SAVED · SAVED FROM · ON THIS COMPUTER (v4.2: "Tool" → "Harness")');
   ok(/class="mem-ws-table mem-setup-table"/.test(body) && /class="mem-ws-row mem-setup-row"/.test(body) && /class="mem-ws-count"/.test(body), 'built from the Handoffs table\'s own parts');
   ok(/cur-setup-st-q">partly checked</.test(body) && /cur-setup-st-none">no save from here</.test(body), 'status words from the payload: partly checked, no save from here');
-  ok(/talis-macbook-pro-acb035<\/span><span class="mem-ws-mine">this computer</.test(body), 'saved from this computer: the machine and the chip');
+  // v4.2.0 fix (e2e A, confusion 7): the computer's NAME, never its folder id —
+  // two installs share the host part here, so each carries a short tag.
+  ok(/>talis-macbook-pro·acb0<\/span><span class="mem-ws-mine">this computer</.test(body) && !/talis-macbook-pro-acb035</.test(body), 'saved from this computer: the machine\'s NAME (not its folder id) and the chip');
   ok(/data-setup-act="tool-open" data-tool="claude-code"/.test(body), 'a row opens the tool\'s evidence (in the reader)');
   ok(/<span class="cur-setup-st cur-setup-st-ok">MCP<span class="visually-hidden"> configured<\/span>/.test(body), 'a part that is fine: its name, the word only for a screen reader');
   ok(metaOf(html, 'setup-tools') === '2 agent harnesses', 'fold meta with nothing to fix: "2 agent harnesses"', metaOf(html, 'setup-tools'));
@@ -353,8 +359,8 @@ section('§8  computers are PHYSICAL — two installs on one Mac are one row');
   const rows = [...body.matchAll(/<tr class="mem-ws-row mem-setup-row"/g)];
   ok(rows.length === 1, 'the maintainer\'s MacBook: ONE row, not two', rows.length);
   ok(metaOf(html, 'setup-computers') === '1 computer · 2 installs', 'fold meta: "1 computer · 2 installs"', metaOf(html, 'setup-computers'));
-  ok(/talis-macbook-pro-acb035<\/span><span class="mem-ws-mine">this computer<\/span>/.test(body), 'named by its newest install, with the "this computer" chip');
-  ok(/<span class="mem-setup-sub">Mac app · source checkout talis-macbook-pro-17d23c \(also saved as mac-17d23c\)<\/span>/.test(body),
+  ok(/>talis-macbook-pro·acb0<\/span><span class="mem-ws-mine">this computer<\/span>/.test(body), 'named by its newest install (its NAME, not the folder id), with the "this computer" chip');
+  ok(/<span class="mem-setup-sub">Mac app · source checkout talis-macbook-pro·17d2 \(also saved as mac-17d23c\)<\/span>/.test(body),
     'its installs on a secondary line, with the second machine name', (body.match(/mem-setup-sub">[^<]*/) || [''])[0]);
   ok(/Computer<\/th><th scope="col">Harnesses that saved<\/th><th scope="col">Newest save<\/th><th scope="col">Curator<\/th><th scope="col">Sync/.test(body), 'columns COMPUTER · HARNESSES THAT SAVED · NEWEST SAVE · CURATOR · SYNC');
   ok(/Antigravity, Claude Code/.test(body) && /3\.78\.0/.test(body), 'tools from every install; the newest install\'s Curator version');
@@ -472,7 +478,7 @@ section('§13 the explainer');
   ok(/code checkout, not your knowledge folder; set per computer/.test(all), 'the repository: a code checkout, separate from the knowledge folder, per computer');
   ok(/two installs on one Mac count once/.test(all), 'Computers: installs on one Mac are grouped');
   ok(/whole knowledge folder, every domain/.test(all), 'Sync now syncs the whole knowledge folder');
-  ok(/\*\*Custom agent harness…\*\*/.test(all), 'custom agent harnesses');
+  ok(/\*\*Another harness…\*\*/.test(all), 'custom agent harnesses');
   // v3.79.0 (contract §B): the marks table became HOW EACH PART TRAVELS; what
   // each mark means moved to the user guide.
   ok(JSON.stringify(e.visual.rows.map((r) => r[0])) === JSON.stringify(['Computers', 'Repository on this computer', 'Agent harnesses']),
@@ -679,7 +685,7 @@ section('§17 a Repository file, in the reader (contract §C)');
   // Amendment 4's exact shapes: the block's `pill` decides the ink; past-cap; `git` on the file.
   const pc = S.fileReaderContent(d, 'AGENTS.md', fileResp({ block: { start: bStart, end: bEnd, state: 'past-cap', pill: 'fix' },
     git: { committed: true, pushed: false, gitRepo: true } }), { md }).bodyHtml;
-  ok(/cur-setup-st-fix">past what the tool reads/.test(pc) && /Committed, not pushed yet\./.test(pc), 'past-cap: inked to fix and said; the file\'s git state is said', pc.slice(0, 900));
+  ok(/cur-setup-st-fix">past what the harness reads/.test(pc) && /Committed, not pushed yet\./.test(pc), 'past-cap: inked to fix and said; the file\'s git state is said', pc.slice(0, 900));
   ok(/cur-setup-st-ok">current/.test(S.fileReaderContent(d, 'AGENTS.md', fileResp({ block: { start: bStart, end: bEnd, state: 'current', pill: 'ok' } }), { md }).bodyHtml),
     'the pill wins for the ink');
   ok(/Not committed to the project’s git yet\./.test(S.fileReaderContent(d, 'AGENTS.md', fileResp({ git: { committed: false } }), { md }).bodyHtml), 'an uncommitted file: said');
@@ -913,8 +919,8 @@ section('§23 a tool that is not ready opens on its numbered SETUP GUIDE');
     instructionFixes: [{ kind: 'copy-block', label: 'Copy instructions' }, { kind: 'copy-command', label: 'Copy the git command that commits and pushes it',
       command: 'git add -- AGENTS.md && git commit -m "Add The Curator instructions" -- AGENTS.md && git push', cwdDisplay: '~/code/ott' }] };
   const cus = S.toolGuideSteps(cu, { ...agd, tools: [cu], toFix: [] }).steps;
-  ok(cus[0].state === 'cant' && /most tools read this mcpServers shape/.test(cus[0].html), 'a custom tool: MCP "can’t check here", with the generic entry');
-  ok(cus[2].state === 'todo' && /assumed — most tools do/.test(cus[2].html) && /data-cmd="git add -- AGENTS\.md/.test(cus[2].doors), '…its assumed AGENTS.md, with the commit-and-push command');
+  ok(cus[0].state === 'cant' && /most harnesses read this mcpServers shape/.test(cus[0].html), 'a custom tool: MCP "can’t check here", with the generic entry');
+  ok(cus[2].state === 'todo' && /assumed — most harnesses do/.test(cus[2].html) && /data-cmd="git add -- AGENTS\.md/.test(cus[2].doors), '…its assumed AGENTS.md, with the commit-and-push command');
   const verifiedNoSkills = S.toolGuideSteps({ ...ag, skillsTarget: { path: null, verified: true } }, agd).steps[1];
   ok(verifiedNoSkills.state === 'skip' && /has no skills support — skip this step/.test(verifiedNoSkills.html) && !verifiedNoSkills.doors, 'a tool known to have no skills: skip, no downloads');
   const ready = { ...maint().tools[0], status: 'ready' };

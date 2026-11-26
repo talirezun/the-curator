@@ -386,7 +386,9 @@ import { machineWord as thisMachine } from '../shared/platform.js';
 // v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
 // `isPro()` at render and repaint on `onProChange`; the view never keeps its
 // own copy of the mode. `moreInProLine` is the one quiet door to what Pro adds.
-import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr } from '../shared/pro.js';
+import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr, proDrawnAttr } from '../shared/pro.js';
+// v4.2.0 fix (e2e A, confusion 7): a computer is shown by its NAME, never its folder id.
+import { machineDisplayName } from '../shared/machine-name.js';
 // v3.99.2: plain-language errors. A failed request on this page becomes the
 // plain sentence (a string in state, as before) with its technical detail
 // remembered beside it, and every place that shows the sentence shows the
@@ -1411,6 +1413,16 @@ registerView('memory', {
       };
       const sel = anchorOf();
       const before = sel ? document.querySelector(sel).getBoundingClientRect().top : null;
+      // v4.2.0 fix (audit M1): the browser's own scroll anchoring would
+      // correct the same move AGAIN at the next frame (measured: step 4 thrown
+      // 154 px with no script touching scrollTop), so it is off for the
+      // repaint and back on two frames later — one corrector, this one.
+      const mainEl = typeof document !== 'undefined' ? document.querySelector('main.main') : null;
+      if (mainEl && mainEl.style) {
+        mainEl.style.overflowAnchor = 'none';
+        const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f) => setTimeout(f, 16);
+        raf(() => raf(() => { try { mainEl.style.overflowAnchor = ''; } catch { /* */ } }));
+      }
       patchSessionStart(mountToken);
       patchSetup(mountToken);
       proDoorPressed = null;
@@ -3186,7 +3198,7 @@ function patchOpenPair(token) {
   tbody.innerHTML = ordered.slice(0, shown)
     .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
       state.projectRead && state.projectRead.stateBudgetBytes,
-      !(d && d.readonly) && !(state.projectRead && state.projectRead.readonly))).join('');
+      !(d && d.readonly) && !(state.projectRead && state.projectRead.readonly), ordered.map((x) => x && x.machine))).join('');
   // The rows are new elements, so their listeners are too. Scoped to the
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
@@ -4207,7 +4219,12 @@ function memStep(o) {
     ? explainerMark('settings-block-info-' + id, o.infoKey)
     : { btn: '', panel: '' };
   return (
-    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
+    // v4.2.0 fix (audit M1 / e2e DEF-1, contract Amendment 1): the step's
+    // root is the "More in Pro" door's anchor — shared/pro.js keeps it where
+    // it was on screen and gives it focus, and its stable id lets pro.js find
+    // it again after the Pro switch repaints the step (patchSetup and
+    // patchSessionStart replace the whole block).
+    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '" id="mem-step-' + escapeHtml(id) + '" data-pro-anchor>' +
       (o.noticeHtml || '') +
       '<div class="settings-block-hd">' +
         '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(o.num)) + '</span>' +
@@ -5782,7 +5799,7 @@ function renderCaptureMeter() {
     if (Number.isInteger(sbt.eventsWithoutTool) && sbt.eventsWithoutTool > 0) {
       parts.push(sbt.eventsWithoutTool.toLocaleString('en-US') + ' named no tool');
     }
-    const head = 'Saves by tool' + (sbtDays ? ', last ' + sbtDays + ' day' + (sbtDays === 1 ? '' : 's') : '') + ': ';
+    const head = 'Saves by harness' + (sbtDays ? ', last ' + sbtDays + ' day' + (sbtDays === 1 ? '' : 's') : '') + ': ';
     toolsHtml = '<p class="mem-capture-limits mem-capture-tools" id="mem-capture-tools">'
       + escapeHtml(head + (parts.length ? parts.join(' · ') : 'none'))
       + (floor && typeof sbt.note === 'string' && sbt.note ? ' ' + escapeHtml(sbt.note) : '')
@@ -6494,7 +6511,7 @@ function renderSaveStatus(read, d) {
     if (!samePair && there !== null && (here === null || there < here - 60)) {
       lines.push({
         text: 'Newer state in this project: ' + newest.scope
-          + (newest.machine && newest.machine !== shownMachine ? ' on ' + newest.machine : '')
+          + (newest.machine && newest.machine !== shownMachine ? ' on ' + machineDisplayName(newest.machine, scopes.map((x) => x && x.machine)) : '')
           + ' — ' + (formatAge(there) || 'unknown age') + '.',
       });
     }
@@ -6523,7 +6540,7 @@ function renderSaveStatus(read, d) {
   if (elsewhere) {
     lines.push({
       strongText: 'Pull before you continue, or that work will be waiting there.',
-      text: elsewhere.machine + ' saved after this computer — ' + elsewhere.scope + ', '
+      text: machineDisplayName(elsewhere.machine, scopes.map((x) => x && x.machine)) + ' saved after this computer — ' + elsewhere.scope + ', '
         + (formatAge(effectiveSave(elsewhere).seconds) || 'unknown age') + '.',
     });
   }
@@ -6934,7 +6951,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
   const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
 
   const body = rows.map(
-    (s) => wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete)).join('');
+    (s) => wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete, ordered.map((x) => x && x.machine))).join('');
 
   return (
     '<div class="mem-ws-wrap">' +
@@ -6966,7 +6983,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
  * and two hand-maintained copies is how the appended rows quietly stop matching
  * the painted ones.
  */
-function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete = false) {
+function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete = false, machines = []) {
   {
     const eff = effectiveSave(s);
     const age = formatAge(eff.seconds);
@@ -7006,7 +7023,7 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelet
           // at 140px, and a third mark there costs more than it says.
           '<button type="button" class="mem-ws-open"' +
             ' aria-label="' + escapeHtml('Open the handoff for ' + s.scope
-              + (s.machine ? ' on ' + s.machine : '')) + '"' +
+              + (s.machine ? ' on ' + machineDisplayName(s.machine, machines) : '')) + '"' +
             (isOpen ? ' id="mem-ws-active"' : '') +
             ' data-mem-scope="' + escapeHtml(s.scope) + '"' +
             ' data-mem-machine="' + escapeHtml(s.machine || '') + '">' +
@@ -7029,7 +7046,7 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelet
             : '') +
         '</td>' +
         '<td class="mem-ws-cell-machine">' +
-          '<span class="mem-ws-machine">' + escapeHtml(s.machine || '—') + '</span>' +
+          '<span class="mem-ws-machine">' + escapeHtml(s.machine ? machineDisplayName(s.machine, machines) : '—') + '</span>' +
           (mine ? '<span class="mem-ws-mine">this machine</span>' : '') +
         '</td>' +
         '<td class="mem-ws-cell-who">' + (who || '—') + '</td>' +
@@ -11656,11 +11673,17 @@ function sessionMeterHtml(data, error) {
     // v4.2 (integration): with Pro off the step keeps the ONE window bar and
     // every note; "The Curator's part, enlarged", its bar and the legend are
     // the detail Pro reveals (one render path, hidden by shared/pro.css).
-    inner = renderBucket(m, { detailAttr: proAttr(), labelAttr: proMarkAttr() }) + which + hint;
+    // v4.2.0 fix (audit minor 3): the "not set" note names no picker — with
+    // Pro off there is none on screen, and one sentence for both modes keeps
+    // the warning's words identical (the Pro guard's parity rule). With Pro
+    // on, the harness picker sits in the step's head beside it.
+    inner = renderBucket(m, { detailAttr: proAttr(), labelAttr: proMarkAttr(), unsetHint: '' }) + which + hint;
   } else {
-    inner = renderDescription(error
-      ? 'What an agent receives could not be measured: ' + error
-      : 'Measuring what an agent receives…') + (error ? errorDetailHtml(error) : '');
+    // v4.2.0 fix (audit M3): a failed measurement is a refusal — marked by
+    // meaning (`data-never-pro`), so the Pro guard protects it.
+    inner = error
+      ? '<div data-never-pro>' + renderDescription('What an agent receives could not be measured: ' + error) + errorDetailHtml(error) + '</div>'
+      : renderDescription('Measuring what an agent receives…');
   }
   return '<div class="mem-ss-meter" id="mem-ss-meter" aria-live="polite">' + inner + '</div>';
 }
@@ -11850,7 +11873,9 @@ function sessionReceivesMonitor(data, facts, compact = false) {
     // CLAUDE.md in Claude Code and AGENTS.md in most others; naming only
     // Claude's told every other tool's user the line was not about them.
     ? { key: 'your harness’s share', value: 'not set',
-      sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · pick an estimate above' }
+      // v4.2.0 fix: this monitor is also the simple view's "in full" reader,
+      // where there is no picker above — it says how to get one.
+      sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · ' + (isPro() ? 'pick an estimate above' : 'turn on Pro to add an estimate') }
     : { key: 'your harness’s share', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
       sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · your estimate' });
   lines.push({ key: 'free at start',
@@ -11921,13 +11946,17 @@ function sessionReceivesMonitor(data, facts, compact = false) {
       .map((l) => ({ ...l, sub: lean(l.sub) }));
     if (start) {
       shown.push({ ...start, sub: [ifa ? 'if applied: ' + ifa.value + ' (' + ifa.sub + ')' : null,
-        'of a ' + WIN, free ? free.value + ' free' : null].filter(Boolean).join(' · ') });
+        // v4.2.0 fix (audit minor 3): the full form's qualifier, kept — with
+        // the harness's share unset, the free figure is an upper bound.
+        'of a ' + WIN, free ? free.value + ' free' + (harness === null ? ' before your harness’s share' : '') : null].filter(Boolean).join(' · ') });
     }
     return renderMonitor({
       id: 'mem-ss-monitor-compact',
       label: 'What an agent receives at the start of a session, in short',
       lines: shown,
       note: notes.join(' '),
+      // v4.2.0 fix: each key near its value, in both modes.
+      width: 'readable',
     });
   }
   return renderMonitor({
@@ -11935,6 +11964,7 @@ function sessionReceivesMonitor(data, facts, compact = false) {
     label: 'What an agent receives at the start of a session',
     lines,
     note: notes.join(' '),
+    width: 'readable',
   });
 }
 
@@ -11962,6 +11992,7 @@ function sessionReachMonitor(data) {
   return renderMonitor({
     id: 'mem-ss-reach',
     label: 'How an agent reaches this context',
+    width: 'readable',
     lines: [
       // v3.72.1 (truth audit F7): the per-reply cap is the route's
       // `delivery.pageTokens` — the figure the meter's own delivery line
@@ -12060,10 +12091,15 @@ function renderSessionStart(read) {
   // and the harness's share are this computer's estimates; the meter still
   // draws them from their saved values, and Pro puts their pickers back here.
   const pro = isPro();
+  // v4.2.0 fix (e2e DEF-3): what is drawn only with Pro on carries the Pro
+  // marking — `proDrawnAttr()` on its root and the "PRO" label on its own label
+  // (`proMarkAttr()`), so every Pro-only part is marked, not one.
+  const proCtl = (label, id, control) => '<span class="mem-ss-ctl"' + proDrawnAttr() + '>'
+    + '<span class="mem-ss-ctl-label" id="' + id + '"' + proMarkAttr() + '>' + label + '</span>' + control + '</span>';
   const headHtml = pro
-    ? ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
+    ? proCtl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
       + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
-      + ctl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)))
+      + proCtl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)))
     : ctl('Reading budget', 'mem-ss-budget-label', budgetCtl);
 
   const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
@@ -12090,7 +12126,7 @@ function renderSessionStart(read) {
       : chatChars === 0 ? 'no document text (Index only)'
         : '≤ ' + chatChars.toLocaleString('en-US') + ' characters';
     rows = plannerFoldHtml(read, data, readonly) + (pro
-      ? '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
+      ? '<details class="mem-fold" data-mem-fold="receives"' + proDrawnAttr() + (folds.receives === false ? '' : ' open') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
           + '<span>What an agent receives</span>'
           + '<span class="mem-fold-meta">' + escapeHtml(tok(mcpTokens) + ' tokens · ' + ssSize(mcp)
@@ -12100,7 +12136,7 @@ function renderSessionStart(read) {
         + '</summary>'
         + '<div class="mem-fold-body">' + sessionReceivesMonitor(data, facts) + '</div>'
       + '</details>'
-      + '<details class="mem-fold" data-mem-fold="reach"' + (folds.reach ? ' open' : '') + '>'
+      + '<details class="mem-fold" data-mem-fold="reach"' + proDrawnAttr() + (folds.reach ? ' open' : '') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-reach">' + icon('chevronRight', 14)
           + '<span>How an agent reaches this</span>'
           + '<span class="mem-fold-meta">MCP · session-start hook · Chat'
@@ -12157,6 +12193,8 @@ function renderSetupStep() {
       // one "More in Pro" door, shared/pro.js's.
       pro: isPro(),
       moreInPro: moreInProLine,
+      // v4.2.0 fix (e2e DEF-3): the Pro-only folds carry the Pro marking.
+      proDrawnAttr,
     }),
   });
 }
@@ -12260,8 +12298,35 @@ function patchSetup(token) {
   if (setupReader && isCurrentReader(setupReader.epoch) && s && s.data) {
     if (setupReader.kind === 'file') openSetupFileReader(setupReader.key, token, true);
     else if (setupReader.kind === 'computer') openSetupComputerReader(setupReader.key, token);
-    else openSetupToolReader(setupReader.key, token);
+    else refreshSetupToolReader(setupReader.key, token);
   }
+}
+
+/**
+ * A RE-CHECK WITH A HARNESS'S READER OPEN (v4.2.0 fix, audit minor 2) follows
+ * the new reading WITHOUT moving the reader under the user: "What Setup
+ * read" stays open or shut as they left it, the reader keeps its scroll, and
+ * a focused control inside it keeps focus (never body).
+ */
+function refreshSetupToolReader(toolId, token) {
+  const root = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('reader-root') : null;
+  const body = root && typeof root.querySelector === 'function' ? root.querySelector('.reader-body') : null;
+  const fold = root && typeof root.querySelector === 'function' ? root.querySelector('.mem-setup-evfold') : null;
+  const wasOpen = fold ? fold.open : null;
+  const scroll = body ? body.scrollTop : 0;
+  const act = document.activeElement;
+  const focusId = act && root && root.contains(act) && act.id ? act.id : null;
+  const focusAct = act && root && root.contains(act) && !act.id && act.getAttribute ? act.getAttribute('data-setup-act') : null;
+  openSetupToolReader(toolId, token);
+  const root2 = document.getElementById('reader-root');
+  if (!root2) return;
+  const fold2 = root2.querySelector('.mem-setup-evfold');
+  if (fold2 && wasOpen !== null) fold2.open = wasOpen;
+  const body2 = root2.querySelector('.reader-body');
+  if (body2) body2.scrollTop = scroll;
+  const back = focusId ? document.getElementById(focusId)
+    : focusAct ? root2.querySelector('[data-setup-act="' + focusAct.replace(/[^\w-]/g, '') + '"]') : null;
+  if (back && typeof back.focus === 'function') { try { back.focus({ preventScroll: true }); } catch { back.focus(); } }
 }
 
 async function setupCopy(text, title, line) {
@@ -12279,7 +12344,7 @@ async function setupCopy(text, title, line) {
  * views/setup-step.js `toolReaderContent`; its buttons are step 5's own
  * `data-setup-act` controls, bound here on the reader's live root.
  */
-function openSetupToolReader(toolId, token, step = null) {
+function openSetupToolReader(toolId, token, step = null, focusIn = false) {
   const s = setupFor();
   const content = s && s.data ? toolReaderContent(s.data, toolId, { pro: isPro() }) : null;
   if (!content) return;
@@ -12297,6 +12362,14 @@ function openSetupToolReader(toolId, token, step = null) {
   if (step && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
     const el = document.getElementById('mem-setup-gstep-' + step);
     if (el && typeof el.scrollIntoView === 'function') { try { el.scrollIntoView({ block: 'start' }); } catch { /* old engines */ } }
+  }
+  // v4.2.0 fix (e2e DEF-6): a reader opened by "+ Add an agent harness" or
+  // by a step door takes focus — the control that opened it is behind the
+  // reader (or gone, the menu closed), and focus is never left on body.
+  // The step it opened at, else the guide's heading (both tabindex -1).
+  if ((focusIn || step) && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    const target = (step && document.getElementById('mem-setup-gstep-' + step)) || document.getElementById('mem-setup-guide-h');
+    if (target && typeof target.focus === 'function') { try { target.focus({ preventScroll: !!step }); } catch { target.focus(); } }
   }
 }
 
@@ -12383,7 +12456,7 @@ async function reloadSetupThenOpen(toolId, token) {
   if (!isCurrentMount(token) || !toolId) return;
   const s = setupFor();
   if (!s || !s.data || !(s.data.tools || []).some((t) => t && t.id === toolId)) return;
-  openSetupToolReader(toolId, token);
+  openSetupToolReader(toolId, token, null, true);
 }
 
 /**
@@ -13562,7 +13635,11 @@ function sessionFullReaderContent() {
       + '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">How an agent reaches this</h3>'
       + sessionReachMonitor(data) + '</section></div>',
     hideBacklinks: true,
-    returnFocusTo: 'mem-ss-full',
+    // v4.2.0 fix (audit minor 1b): with Pro on there is no "in full" door —
+    // the same figures are the "What an agent receives" fold — so focus goes
+    // back to that fold's summary, never to body. patchSessionStart re-opens
+    // this reader on a Pro flip, so the target follows the mode.
+    returnFocusTo: isPro() ? 'mem-fold-receives' : 'mem-ss-full',
   };
 }
 
@@ -14295,7 +14372,7 @@ function showMoreWorkStreams(token) {
   tbody.insertAdjacentHTML('beforeend', ordered.slice(from, to)
     .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
       pr && pr.stateBudgetBytes,
-      !(open && open.readonly) && !(pr && pr.readonly))).join(''));
+      !(open && open.readonly) && !(pr && pr.readonly), ordered.map((x) => x && x.machine))).join(''));
   // `wsWindow` records what was ASKED for, which `wsShownCount` may still
   // stretch to reach an open row further down. Storing the stretched figure
   // would silently make the open row's position part of the user's request.

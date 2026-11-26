@@ -35,6 +35,10 @@ import './test-helpers/context-error-globals.js';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+// v4.2.0 fix: lifted renderers name machines by the REAL shared/machine-name.js
+// (a free name in `new Function` code resolves on globalThis).
+import * as MACHINE_NAME_MOD from '../src/public/next/shared/machine-name.js';
+globalThis.machineDisplayName = MACHINE_NAME_MOD.machineDisplayName;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');

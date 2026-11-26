@@ -297,6 +297,8 @@ export function renderDepthCell(o) {
  *                  text: string, strongText?: string }>,
  *   note?: string,                   // the producer's own sentence, verbatim
  *   label?: string,                  // the block's accessible name
+ *   keys?: 'identifier',             // keys are names: no uppercase
+ *   width?: 'readable',              // v4.2.0: lines keep a reading width
  * }} o
  * @returns {string} HTML — '' when there is no line, no loud entry and no note.
  */
@@ -404,7 +406,11 @@ export function renderMonitor(o) {
   // `keys: 'identifier'` (v3.89.0): the keys are names — tools, projects —
   // so they are not uppercased (a tool called `get_node` must read as itself).
   const ident = opts.keys === 'identifier';
-  return '<div class="cur-mon' + (ident ? ' cur-mon-ident' : '') + '"' +
+  // `width: 'readable'` (v4.2.0 fix, audit polish "known nit 2"): the lines
+  // keep a reading width, so a key is never 600 px from its value on a wide
+  // step. Opt-in — every other monitor keeps its full-width lines.
+  const readable = opts.width === 'readable';
+  return '<div class="cur-mon' + (ident ? ' cur-mon-ident' : '') + (readable ? ' cur-mon-readable' : '') + '"' +
       (id ? ' id="' + escapeHtml(id) + '"' : '') +
       (label ? ' role="group" aria-label="' + escapeHtml(label) + '"' : '') + '>' +
     headHtml + lineHtml + loudHtml + noteHtml +

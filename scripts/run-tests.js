@@ -404,6 +404,7 @@ const OFFLINE = [
   'test-credential-kept-copies.js',          // v4.1.2 candidate audit N5: the kept copy of a damaged settings file (`<file>.unreadable-<sha12>`, a byte copy holding keys) is in getCredentialFiles() (the real spawned startup sweep makes it 0600) and isCredentialPath(), and Personal Sync never pushes one; the generated .gitignore rules are unchanged.
   'test-sharedbrain-empty-repo.js',          // v4.1.2 E2E D2: a Shared Brain Pull on a repository with no commit yet (GitHub's tree read answers 409 "Git Repository is empty.") is "nothing to pull yet", not the raw GitHub error; any other 409 on that read still fails. Real pullCollective + GitHub adapter against a fake GitHub on 127.0.0.1.
   'test-context-setup-modes.js',             // v4.2 (package K). Context step 5 in BOTH modes of the Pro switch: Pro off = one row per harness (one status, at most one action, the whole row one control, the "More in Pro" door last), the four statuses; Pro on = today's step with the audit's fixes (Harness column, whole-row targets, "Open setup steps", a note's door to its steps); WARNING PARITY (every to-fix line and fix Pro shows is on screen with Pro off or one press away in its harness's reader); the page contract and the vocabulary in both modes; the reader (what a skill is, no maintainer notes or raw ISO dates); the hand cursor.
+  'test-machine-name.js',         // v4.2.0 fix: a computer is NAMED on Context (studio-mac, never studio-mac-aa11bb) — shared/machine-name.js cross-checked against the menu-bar widget's own display on 4,000 generated names, and the names on the harness row, its reader, the Pro table, the Computers fold and the computer's reader.
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
@@ -515,6 +516,8 @@ const LIVE_LOCAL = [
   // agent-app configs fingerprinted before and after. Here for the browser,
   // like its neighbours; self-skips at exit 0 when none is installed.
   'e2e-mcp-bridge.mjs',
+  // e2e-context-pro.mjs (v4.2.0 fix): Context's Pro switch in a real browser on an isolated demo workspace — "More in Pro" on steps 4 and 5 keeps the step where it was (±8 px, or as close as the page's end allows) and moves focus to it; the toast's Undo; the "in full" reader closed after Pro turned on; Re-check with a harness's reader open keeps "What Setup read" and the reader's scroll; no maintainer notes in it; focus inside the reader after "+ Add an agent harness"; no sideways scroll at 375 px in either mode. Self-skips at exit 0 without a browser.
+  'e2e-context-pro.mjs',
   // e2e-wiki-health.mjs: the Wiki health measuring stick — every Health action driven with real mouse events against a STUBBED model on an isolated workspace and a fake HOME, a per-frame sampler over named landmarks (time to a visible change, landmark movement, scrollTop, outcome in view, focus, node identity, live region, overflow) judged against scripts/e2e-wiki-health.baseline.json (a stage config tightens each metric to its required threshold). Self-skips at exit 0 without a browser.
   'e2e-wiki-health.mjs',
   'test-visual-regression.js',

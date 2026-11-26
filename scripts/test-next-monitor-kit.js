@@ -791,6 +791,18 @@ section('§10 — shared/depth-bar.js IS THE BAR\'S ADDRESS, AND ITS IDENTITY TO
   eq('depth-bar.js reaches exactly ./identity-palette.js and ./monitor.js', froms.join(','), './identity-palette.js,./monitor.js');
 }
 
+// ── v4.2.0 fix: `width: 'readable'` keeps a key near its value, opt-in ──
+{
+  const one = { lines: [{ key: 'standing brief', value: '≈200' }] };
+  const plain = renderMonitor(one);
+  const readable = renderMonitor({ ...one, width: 'readable' });
+  ok(/^<div class="cur-mon cur-mon-readable"/.test(readable) && !/cur-mon-readable/.test(plain),
+    'width: "readable" adds cur-mon-readable; without it (every other monitor) nothing changes', readable.slice(0, 80));
+  const rule = /\.cur-mon-readable \.cur-mon-lines\s*\{([^}]*)\}/.exec(KIT_CSS.replace(/\/\*[\s\S]*?\*\//g, ''));
+  ok(rule && /max-width:\s*\d/.test(rule[1]), 'monitor.css caps the readable monitor\'s lines at a reading width', rule && rule[1]);
+  ok(!/^\.cur-mon-lines\s*\{[^}]*max-width/m.test(KIT_CSS), '...and the bare .cur-mon-lines has no cap (Settings, Sync, Domains keep full-width lines)');
+}
+
 console.log('\n  ' + '─'.repeat(60));
 console.log('  Passed: ' + passed + '   Failed: ' + failed);
 if (failed) {

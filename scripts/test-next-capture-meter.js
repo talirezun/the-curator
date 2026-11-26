@@ -1140,7 +1140,7 @@ section('§v3.74.0 — CONNECTIONS, THE WINDOW THE LOG COVERS, AND SAVES BY TOOL
   const t1 = tools({ windowSeconds: 604800, events: 12, lowerBound: false, eventsWithoutTool: 0, note: null,
     tools: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: '2026-09-25T09:00:00Z' },
       { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: new Date(2026, 8, 1, 12).toISOString() }] });
-  ok(/id="mem-capture-tools">Saves by tool, last 7 days: Claude Code 12 · Antigravity none \(last seen 1 Sep\)<\/p>/.test(t1),
+  ok(/id="mem-capture-tools">Saves by harness, last 7 days: Claude Code 12 · Antigravity none \(last seen 1 Sep\)<\/p>/.test(t1),
     '★ one clause per tool; a tool idle in the window says when it was LAST SEEN, never "last save"', t1.slice(-500));
   ok(t1.indexOf('mem-capture-tools') > t1.indexOf('</details>'),
     '...and it sits OUTSIDE the fold — a reading never needs a click to find');

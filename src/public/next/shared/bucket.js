@@ -362,7 +362,12 @@ function axis(windowTokens) {
   return '<div class="bk-axis" aria-hidden="true">' + ticks.map((t) => '<span>' + escapeHtml(t) + '</span>').join('') + '</div>';
 }
 
-export function renderWindowBar(m) {
+// What the "not set" note says to do about it. `o.unsetHint` (v4.2.0 fix,
+// audit minor 3): a view with no picker on screen (Context with Pro off)
+// passes '' so the note never names a control that is not there.
+const UNSET_HINT = ' — pick an estimate to see them';
+export function renderWindowBar(m, o = {}) {
+  const hint = typeof o.unsetHint === 'string' ? o.unsetHint : UNSET_HINT;
   const g = bucketModel(m);
   if (!g) return '';
   const t = bucketText(m);
@@ -382,7 +387,7 @@ export function renderWindowBar(m) {
   return '<div class="bk-window' + (g.preview ? ' is-preview' : '') + '">'
     + head('Your context window at the start of a session', 'to scale', figure, g.preview)
     + (g.harnessSet ? '' : '<p class="bk-note bk-harness-unset"><span class="bk-sw bk-sw-harness" aria-hidden="true"></span>'
-      + 'Your harness’s share is not set. Its own prompt, tools and files also use this window — pick an estimate to see them.</p>')
+      + 'Your harness’s share is not set. Its own prompt, tools and files also use this window' + escapeHtml(hint) + '.</p>')
     + '<div class="bk-bar" role="img" aria-label="' + escapeHtml(t.window) + '">' + segs + '</div>'
     + axis(g.windowTokens)
     + (g.over > 0 ? '<p class="bk-note">Over the window by ≈' + escapeHtml(formatTokens(g.over)) + ' tokens at the start of a session.</p>' : '')
@@ -495,6 +500,6 @@ export function renderBucket(m, o = {}) {
   if (!bucketModel(m)) return '';
   const detail = renderZoomLink(m) + renderEnlargement(m, { labelAttr: o.labelAttr || '' }) + renderLegend(m);
   return '<div class="bk">'
-    + renderWindowBar(m) + (o.detailAttr ? '<div' + o.detailAttr + '>' + detail + '</div>' : detail) + renderDeliveryLine(m)
+    + renderWindowBar(m, { unsetHint: o.unsetHint }) + (o.detailAttr ? '<div' + o.detailAttr + '>' + detail + '</div>' : detail) + renderDeliveryLine(m)
     + '</div>';
 }

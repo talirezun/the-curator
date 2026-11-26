@@ -251,6 +251,10 @@ import * as SETUP_STEP from '../src/public/next/views/setup-step.js';
 // v4.2: the real Pro module (see v367Lift).
 import * as PRO_MOD from '../src/public/next/shared/pro.js';
 globalThis.__ctxProMod = PRO_MOD;
+// v4.2.0 fix: the REAL machine-name display, for every lifted renderer (a
+// free name in `new Function` code resolves on globalThis).
+import * as MACHINE_NAME from '../src/public/next/shared/machine-name.js';
+globalThis.machineDisplayName = MACHINE_NAME.machineDisplayName;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -1291,6 +1295,7 @@ function v367Lift() {
     + 'const moreInProLine = globalThis.__ctxProMod.moreInProLine;\n'
     + 'const proAttr = globalThis.__ctxProMod.proAttr;\n'
     + 'const proMarkAttr = globalThis.__ctxProMod.proMarkAttr;\n'
+    + 'const proDrawnAttr = globalThis.__ctxProMod.proDrawnAttr;\n'
     + extractFunction(viewSrc, 'sessionReachMonitor', 'memory.js') + '\n'
     // Named one by one rather than mapped over V367_FNS, for §17's census: it
     // reads this file for real extractFunction calls, so a name in a list is
@@ -7781,7 +7786,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   ok('...and it is the step\'s FIRST row, above CAPTURE',
     atStack < atMeter, atStack + ' vs meter ' + atMeter);
   ok('nothing at all is emitted between step ②\'s wrapper and its heading',
-    /class="settings-job-block settings-block settings-block-context-state"><div class="settings-block-hd">/
+    /class="settings-job-block settings-block settings-block-context-state" id="mem-step-context-state" data-pro-anchor><div class="settings-block-hd">/
       .test(page), page.slice(page.indexOf('settings-block-context-state') - 60,
       page.indexOf('settings-block-context-state') + 140));
 }
@@ -11925,13 +11930,13 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...and the note says The Curator cannot measure it, it only changes the meter, nothing is sent',
       /id="mem-ss-harness-hint">Your harness’s share — what the app your agent runs in \(Claude Code, Codex, Cursor…\) puts in the window itself: The Curator can’t measure this\. It only changes the meter; nothing is sent\.</.test(html));
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
-      /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
+      /<details class="mem-fold" data-mem-fold="receives" data-pro-drawn open>/.test(html), html.slice(0, 300));
     ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
       /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K \(default\)<\/span>\s*<\/summary>/.test(html)
       && !/cur-depth/.test((/id="mem-fold-receives">([\s\S]*?)<\/summary>/.exec(html) || ['', 'cur-depth'])[1]), html);
     ok('the per-viewer "Context window" fold is GONE (the window is in the head row now); "How an agent reaches this" stays closed',
       !/data-mem-fold="window"/.test(html) && !/data-ctx-window/.test(html)
-      && /<details class="mem-fold" data-mem-fold="reach">/.test(html)
+      && /<details class="mem-fold" data-mem-fold="reach" data-pro-drawn>/.test(html)
       && /How an agent reaches this<\/span><span class="mem-fold-meta">MCP · session-start hook · Chat \(≤ 40,000 characters\)/.test(html));
     // THE COST LINE — unfolded, before the first chevron, with its one action.
     const cost = /id="mem-ss-cost"[\s\S]*?<\/div>/.exec(html);
@@ -12500,9 +12505,33 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         ['a pending suggestion (if applied)', withPrev],
         ['over the reading budget', withSS(overData, { projectRead: overRead })],
         ['a read-only mirror', withSS(ssData(), { detail: { readonly: true } })],
+        // v4.2.0 fix (audit M3): the arms whose warnings the first guard never
+        // rendered — a failed budget save and a failed window save, the
+        // monitor's cut-layer note, and a measurement that failed.
+        ['a budget and a window save that failed', withSS(ssData(), {
+          budgetError: { domain: 'acme', project: 'lumina', error: 'Another write is in progress' },
+          ctxError: 'The window was not saved: the settings file could not be read.' })],
+        ['the monitor trimmed a layer', withSS(ssData({ notes: ['The latest handoff was trimmed to fit one reply.'] }))],
       ];
+      {
+        const failedM = baseSt({ sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: null, error: 'The store did not answer' } });
+        const { pro, simple } = both(failedM);
+        const par = PRO_GUARD.parityFaults(pro, simple);
+        ok('v4.2 ④ a measurement that failed: the refusal Pro shows is visible with Pro off (shared parity guard)',
+          par.length === 0 && PRO_GUARD.protectedTexts(pro).some((t) => /could not be measured/.test(t)), par.join(' | ') || PRO_GUARD.protectedTexts(pro).join(' | '));
+        const g = PRO_GUARD.proGuardFaults(simple).concat(PRO_GUARD.proGuardFaults(pro));
+        ok('v4.2 ④ a measurement that failed: nothing protected behind data-detail="pro"', g.length === 0, g.join(' | '));
+      }
       for (const [name, s] of arms) {
         const { pro, simple } = both(s);
+        // v4.2.0 fix (audit M3): rule 2, the dumb cross-check, over step 4 —
+        // every protected sentence the Pro render shows is VISIBLE with Pro off.
+        const par = PRO_GUARD.parityFaults(pro, simple);
+        ok('v4.2 ④ ' + name + ': every warning, error and note Pro shows is visible with Pro off (shared parity guard)', par.length === 0, par.join(' | ') + ' || simple: ' + PRO_GUARD.protectedTexts(simple).join(' | '));
+        ok('v4.2 ④ ' + name + ': ...anti-vacuity: the Pro render carries protected sentences', PRO_GUARD.protectedTexts(pro).length > 0, pro.slice(0, 300));
+        // v4.2.0 fix (audit minor 3): with Pro off there is no estimate picker,
+        // so the step never tells the user to pick one.
+        ok('v4.2 ④ ' + name + ': Pro off never says "pick an estimate" (no picker is on screen)', !/pick an estimate/.test(simple), (simple.match(/.{80}pick an estimate.{20}/) || [''])[0]);
         const lost = ids(pro).filter((x) => !ids(simple).includes(x));
         ok('v4.2 ④ ' + name + ': every notice Pro shows is on screen with Pro off', lost.length === 0 && ids(pro).length > 0 === ids(simple).length > 0, JSON.stringify({ pro: ids(pro), simple: ids(simple) }));
         const firstFold = simple.indexOf('<details');
@@ -12555,7 +12584,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       const compact = (/id="mem-ss-monitor-compact"[\s\S]*$/.exec(simple) || [''])[0];
       ok('v4.2 ④ the compact monitor carries no byte figures, and the start line says what is free',
         !/\b\d[\d.,]*\s*(?:bytes|KB)\b/.test(compact.replace(/<span class="visually-hidden">[^<]*<\/span>/g, ''))
-        && /of a 200K-token window \(default\) · ≈187k free/.test(compact), compact.slice(0, 1200));
+        && /of a 200K-token window \(default\) · ≈187k free before your harness’s share/.test(compact), compact.slice(0, 1200));
     }
   }
 
@@ -13628,6 +13657,7 @@ const NOT_EXECUTED = {
   // screen check).
   refreshSetupOnWake: 'one staleness gate (setup-step.js setupCheckIsStale, executed in test-next-setup-step.js) in front of maybeLoadSetup; its call from revalidateReadings is asserted above',
   openSetupToolReader: 'openReader + bindSetup on #reader-root; the payload is setup-step.js toolReaderContent, executed in test-next-setup-step.js',
+  refreshSetupToolReader: 'DOM-only (the reader\'s fold, scroll and focus across a re-check); driven in a real browser by scripts/e2e-context-pro.mjs',
   addSetupTool: 'orchestration: putSetupToolIds with the current list plus the pick, then reloadSetupThenOpen; the listbox cfg it is picked from is executed in test-next-setup-step.js',
   putSetupToolIds: 'the tools PUT named in this file\u2019s fetch census ({ids}) \u2014 the ONE call site for add (v3.78.0) and remove (v3.80.0)',
   reloadSetupThenOpen: 'orchestration over loadSetup and openSetupToolReader (v3.80.0); the guide it opens is toolGuide/toolReaderContent, executed in test-next-setup-step.js \u00a723',

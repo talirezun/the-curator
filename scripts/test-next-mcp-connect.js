@@ -139,7 +139,7 @@ section('§5 the client list lives in the ⓘ, and the docs back it');
   const guide = readFileSync(path.join(ROOT, 'docs/mcp-user-guide.md'), 'utf8');
   for (const c of ['Claude Desktop', 'Claude Code', 'Cursor']) { ok(all.includes(c), `the ⓘ names ${c}`); ok(guide.includes(c), `CONTROL: docs/mcp-user-guide.md names ${c} too`); }
   ok(/ChatGPT[^.]*cannot run (?:a )?local server/.test(all), '…and the honest exclusion, as a MECHANISM');
-  ok(e.title === 'Your agent harnesses', 'the ⓘ is titled like the section');
+  ok(e.title === 'Agent harnesses', 'the ⓘ is titled like the section');
   const { renderMcpPage, baseState } = await import('./test-helpers/mcp-page-sandbox.js');
   ok(/class="tx-vh-panel" id="mcp-sec-apps-info"[^>]*hidden/.test(renderMcpPage(baseState()).html), 'the explanation is a closed panel in the shipped markup');
 }

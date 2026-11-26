@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { shortMachineNames } from '../public/next/shared/machine-name.js';
 import {
   MCP_SERVER_NAME, adapterFor, displayTemplate, listHarnesses, resolveTemplates, skillRootsFor,
 } from './harness-adapters.js';
@@ -1404,8 +1405,14 @@ export function collectProjectSetup(o) {
           format: cfg?.format || null, verified: cfg?.verified === true, exists: !!pick.present }
         : null;
       const tree = a?.skillsTree || null;
+      // v4.2.0 fix (e2e A, confusions 3 and 4): where else the harness
+      // reads skills — each root's `skills/` folder, as a person types it —
+      // so the guide names a full folder, never a bare relative path.
+      const rootDirs = (Array.isArray(tree?.roots) ? tree.roots : []).filter((r) => r && (r.base === 'home' || r.base === 'project'))
+        .map((r) => ({ base: r.base, display: displayTemplate(r) + '/skills' }));
       row.skillsTarget = tree
-        ? { path: typeof tree.path === 'string' && tree.path ? tree.path : null, verified: tree.verified === true, accountHeld: tree.accountHeld === true }
+        ? { path: typeof tree.path === 'string' && tree.path ? tree.path : null, verified: tree.verified === true, accountHeld: tree.accountHeld === true,
+          roots: rootDirs }
         : null;
     }
     // The instruction file's own doors, for a guide step that has no to-fix
@@ -1505,7 +1512,10 @@ export function collectProjectSetup(o) {
     toFix.push(item({
       kind: 'sync-incoming', machine: c.primary, thisMachine: false, waiting: c.waiting,
       ...(c.newestSaveAt ? { at: c.newestSaveAt } : {}),
-      text: `${c.primary} saved a newer handoff; it’s waiting in your Personal Sync on GitHub.`,
+      // v4.2.0 fix (e2e A, confusion 7): the computer's NAME (the host
+      // part, shared/machine-name.js), with a short tag only when two
+      // computers share one; `machine` keeps the raw id.
+      text: `${shortMachineNames(computers.rows.map((r) => r.primary)).get(c.primary) || c.primary} saved a newer handoff; it’s waiting in your Personal Sync on GitHub.`,
       detail: 'Sync now before you start the agent.',
     }, [FIX.sync()]));
   }

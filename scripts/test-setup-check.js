@@ -761,8 +761,8 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
     const r = run({ pairs, machine: { ids: ['mac-a-111111'] }, machineRows: [], repo: { path: curRepo, source: 'set' }, marker: { present: true, namesThis: true, line: 'projects/ott', git: { repo: false } },
       sync: { configured: true, incoming: ['projects/state/ott/main/mac-b-222222/current.md'] } });
     const si = r.toFix.find((f) => f.kind === 'sync-incoming');
-    ok(si && si.text === 'mac-b-222222 saved a newer handoff; it’s waiting in your Personal Sync on GitHub.' && si.detail === 'Sync now before you start the agent.' && si.machine === 'mac-b-222222' && si.fix.kind === 'sync' && si.fix.label === 'Sync now',
-      'sync-incoming names the computer, one line per computer', si);
+    ok(si && si.text === 'mac-b saved a newer handoff; it’s waiting in your Personal Sync on GitHub.' && si.detail === 'Sync now before you start the agent.' && si.machine === 'mac-b-222222' && si.fix.kind === 'sync' && si.fix.label === 'Sync now',
+      'sync-incoming names the computer by its NAME (mac-b, not the folder id mac-b-222222; v4.2.0 fix), one line per computer', si);
     const t = r.tools.find((x) => x.id === 'claude-code');
     ok(t.parts.mcp.travels === 'this-computer' && t.parts.skills.travels === 'this-computer' && t.parts.hooks.travels === 'this-computer' && t.parts.block.travels === 'project-git', 'tool parts: mcp/skills/hooks travel nowhere (this computer), the block by the project\'s git', t.parts);
     ok(t.block.files.length && t.block.files.every((f) => f.travels === 'project-git'), 'repository file rows (block.files) carry travels: project-git');

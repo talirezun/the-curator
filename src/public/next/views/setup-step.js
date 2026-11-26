@@ -55,6 +55,7 @@ import { freshnessTier } from '../shared/age.js';
 // (import-free, DOM-free — the suite still imports this module in Node).
 import { listRowBodyHtml } from '../shared/model-row.js';
 import { machineWord as thisMachine, browserPlatform } from '../shared/platform.js';
+import { shortMachineNames } from '../shared/machine-name.js';
 // v3.99.2 plain-language errors.
 import { userMessageFrom, renderErrorDetail, errorDetailHtml } from '../shared/net.js';
 
@@ -161,17 +162,56 @@ function groupOf(installs, thisComputer) {
  */
 export function physicalOf(data) {
   if (!data) return [];
+  let out;
   if (Array.isArray(data.physical) && data.physical.length) {
-    return data.physical
+    out = data.physical
       .filter((g) => g && Array.isArray(g.installs))
       .map((g) => groupOf(g.installs.filter(Boolean).map(installOf), g.thisComputer === true))
       .sort((a, b) => (b.thisComputer - a.thisComputer) || ((Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)));
+  } else {
+    const rows = (Array.isArray(data.computers) ? data.computers : []).filter(Boolean).map(installOf);
+    const here = rows.filter((r) => r.thisComputer);
+    out = here.length ? [groupOf(here, true)] : [];
+    for (const r of rows.filter((x) => !x.thisComputer)) out.push(groupOf([r], false));
   }
-  const rows = (Array.isArray(data.computers) ? data.computers : []).filter(Boolean).map(installOf);
-  const here = rows.filter((r) => r.thisComputer);
-  const out = here.length ? [groupOf(here, true)] : [];
-  for (const r of rows.filter((x) => !x.thisComputer)) out.push(groupOf([r], false));
+  // v4.2.0 fix (e2e A, confusion 7): a computer is NAMED, never shown by
+  // its raw folder id — `name` is the display name (the menu-bar widget's
+  // host part), `id` the folder name it came from.
+  const names = machineNamesOf(data);
+  for (const g of out) {
+    g.id = g.name;
+    g.name = names.get(g.name) || g.name;
+    for (const i of g.installs) i.display = names.get(i.primary) || i.primary;
+  }
   return out;
+}
+
+/**
+ * Every machine this payload names (each install's names, each harness's
+ * last save), as one Map raw id → display name — computed over them all so
+ * two computers sharing a host part get a short tag apart. Pure.
+ */
+export function machineNamesOf(data) {
+  const all = [];
+  for (const g of (data && Array.isArray(data.physical) ? data.physical : [])) {
+    for (const i of (g && Array.isArray(g.installs) ? g.installs : [])) {
+      if (i && Array.isArray(i.names)) all.push(...i.names.filter(isStr));
+      if (i && isStr(i.primary)) all.push(i.primary);
+    }
+  }
+  for (const c of (data && Array.isArray(data.computers) ? data.computers : [])) {
+    if (c && Array.isArray(c.names)) all.push(...c.names.filter(isStr));
+    if (c && isStr(c.primary)) all.push(c.primary);
+    if (c && isStr(c.machine)) all.push(c.machine);
+  }
+  for (const t of (data && Array.isArray(data.tools) ? data.tools : [])) if (t && t.saved && isStr(t.saved.machine)) all.push(t.saved.machine);
+  return shortMachineNames(all);
+}
+
+/** One machine's display name in this payload (raw id in, name out). Pure. */
+function machineName(id, data) {
+  if (!isStr(id)) return id;
+  return machineNamesOf(data).get(id) || id;
 }
 
 /** How many physical computers, and how many installs among them. Pure. */
@@ -287,7 +327,7 @@ function toolRow(t, data) {
         + btnG('tool-open', 'Open setup steps', ' data-tool="' + escapeHtml(t.id) + '"') + '</span>') + '</td>'
     + '<td class="mem-ws-cell-age">' + (saved ? ageSpan(saved.at, null) : '—') + '</td>'
     + '<td class="mem-ws-cell-machine">' + (saved && isStr(saved.machine)
-      ? '<span class="mem-ws-machine">' + escapeHtml(saved.machine) + '</span>'
+      ? '<span class="mem-ws-machine">' + escapeHtml(machineName(saved.machine, data)) + '</span>'
         + (saved.thisMachine ? '<span class="mem-ws-mine">this computer</span>' : '')
       : '—') + '</td>'
     + '<td class="mem-setup-cell-parts"><span class="mem-setup-parts">'
@@ -893,7 +933,7 @@ export function installsLine(group) {
   const parts = group.installs.map((i, idx) => {
     // The first install's name IS the row's name, so only its kind is said.
     const head = idx === 0 ? (KIND_WORD[i.kind] || '')
-      : [KIND_WORD[i.kind] || null, i.primary].filter(Boolean).join(' ');
+      : [KIND_WORD[i.kind] || null, i.display || i.primary].filter(Boolean).join(' ');
     const also = i.aliases.length ? '(also saved as ' + i.aliases.join(', ') + ')' : '';
     return [head, also].filter(Boolean).join(' ');
   }).filter(Boolean);
@@ -976,6 +1016,29 @@ function computersMeta(data) {
 /** Guide states that still leave work to do on this computer. */
 const LEFT_STATES = ['todo', 'fix', 'wait'];
 
+/** What a "can't check here" step is called in a sentence ("skills can't be checked here"). */
+const CANT_NOUNS = { mcp: 'the connection', skills: 'skills', block: 'the agent instructions', save: 'the first save' };
+
+/**
+ * THE ONE COUNT (v4.2.0 fix, audit M2 / e2e DEF-2). The simple row, the Pro
+ * reader and the guide's own line all count from here, so "1 step left" on a
+ * row never opens on "2 steps to do". `left` = steps with work to do (to do,
+ * to fix, not checked yet); `cant` = steps The Curator can't check on this
+ * computer — NOT done, and never counted as done: a row with nothing else
+ * left says "Ready" only beside "<what> can't be checked here". Pure.
+ */
+export function guideTally(steps) {
+  const list = Array.isArray(steps) ? steps : [];
+  const left = list.filter((x) => LEFT_STATES.includes(x.state));
+  const cant = list.filter((x) => x.state === 'cant');
+  const optional = list.filter((x) => x.state === 'optional');
+  const fix = list.filter((x) => x.state === 'fix');
+  const cantWords = cant.length
+    ? cant.map((x) => CANT_NOUNS[x.key] || 'one step').join(' and ') + ' can’t be checked here'
+    : '';
+  return { left, cant, optional, fix, cantWords };
+}
+
 /**
  * One harness row's model: `{status, word, state, action, lines}`. Pure.
  *   fix       a to-fix line names it      → "Needs a fix" + that line's first fix
@@ -986,11 +1049,13 @@ const LEFT_STATES = ['todo', 'fix', 'wait'];
 export function harnessRowModel(t, data) {
   const items = ((data && data.toFix) || []).filter((f) => f && f.tool === t.id);
   const { steps } = toolGuideSteps(t, data);
-  const left = steps.filter((x) => LEFT_STATES.includes(x.state));
+  const tally = guideTally(steps);
+  const left = tally.left;
+  const cantLine = tally.cantWords ? escapeHtml(tally.cantWords) : '';
   const sv = t.saved && isStr(t.saved.at) ? t.saved : null;
   const id = ' data-tool="' + escapeHtml(t.id) + '"';
   const savedLine = sv
-    ? 'saved ' + ageSpan(sv.at, null) + ' ' + escapeHtml(sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? sv.machine : 'another computer'))
+    ? 'saved ' + ageSpan(sv.at, null) + ' ' + escapeHtml(sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? machineName(sv.machine, data) : 'another computer'))
     : escapeHtml('not saved yet');
   const unmeasured = t.measured === false || ((data && data.addable) || []).some((a) => a && a.id === t.id && a.measured === false);
   const untested = unmeasured ? escapeHtml('The Curator hasn’t tested this harness, so check its own settings too.') : '';
@@ -999,7 +1064,6 @@ export function harnessRowModel(t, data) {
     let action = '';
     for (const fx of fixListOf(f)) { action = fixButton(fx, f, data && data.repo, true); if (action) break; }
     if (!action) action = btn2('tool-open', 'Show the fix', id + (stepKeyOfItem(f) ? ' data-step="' + stepKeyOfItem(f) + '"' : ''));
-    const rest = left.filter((x) => x.state !== 'fix').length;
     return {
       status: 'fix', word: 'Needs a fix', state: 'fix', action,
       // EVERY to-fix line about it, in its own words, IN FULL — the same
@@ -1008,8 +1072,10 @@ export function harnessRowModel(t, data) {
       // press away, in its step in the reader.
       fixLines: items.length,
       lines: [...items.map((x) => { const d = fixDetailHtml(x); return withPaths(String(x.text || '')) + (d ? ' ' + d : ''); }),
+        // The same count the guide opens on ("N steps to do"): every step
+        // with work left, the fix included.
         [savedLine, items.length > 1 ? escapeHtml('the other fixes are in its steps') : null,
-          rest ? escapeHtml('then ' + plural(rest, 'step') + ' left') : null].filter(Boolean).join(' · '),
+          left.length ? escapeHtml(plural(left.length, 'step') + ' left in all') : null, cantLine || null].filter(Boolean).join(' · '),
         untested].filter(Boolean),
     };
   }
@@ -1021,9 +1087,13 @@ export function harnessRowModel(t, data) {
   if (left.length) {
     return { status: 'steps', word: plural(left.length, 'step') + ' left', state: 'none',
       action: btn2('tool-open', 'Continue setup', id + ' data-step="' + left[0].key + '"'),
-      lines: [escapeHtml('Next: ' + left[0].title.charAt(0).toLowerCase() + left[0].title.slice(1)) + ' · ' + savedLine, untested].filter(Boolean) };
+      lines: [escapeHtml('Next: ' + left[0].title.charAt(0).toLowerCase() + left[0].title.slice(1)) + ' · ' + savedLine
+        + (cantLine ? ' · ' + cantLine : ''), untested].filter(Boolean) };
   }
-  return { status: 'ready', word: 'Ready', state: 'ok', action: '', lines: [savedLine, untested].filter(Boolean) };
+  // Ready with a step The Curator can't check (Claude Code's skills, held by
+  // the Claude account): "Ready" only beside the design's sub-line (§3.2).
+  return { status: 'ready', word: 'Ready', state: 'ok', action: '', cant: tally.cant.length,
+    lines: [cantLine ? cantLine + ' · ' + savedLine : savedLine, untested].filter(Boolean) };
 }
 
 /** One harness, one row: the whole row opens its reader (memory.js binds `data-setup-row`). Pure. */
@@ -1087,7 +1157,7 @@ export function setupProDoorWhat(data) {
 function simpleRepo(data, ui) {
   const field = ui.forceRepoOpen || ui.editRepo
     ? pathRow(data, ui, ui.repoDraft ?? (data.repo ? data.repo.path : ''))
-      + (ui.pickUnavailable ? '<p class="mem-setup-empty">' + escapeHtml(ui.pickUnavailable) + '</p>' : '')
+      + (ui.pickUnavailable ? '<p class="mem-setup-empty" data-never-pro>' + escapeHtml(ui.pickUnavailable) + '</p>' : '')
     : '';
   return (data.repo ? '' : repoNotSetNote(data)) + field;
 }
@@ -1096,8 +1166,8 @@ function simpleRepo(data, ui) {
 // THE STEP
 // ═══════════════════════════════════════════════════════════════════════════
 
-function fold(key, title, meta, body, open) {
-  return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + (open ? ' open' : '') + '>'
+function fold(key, title, meta, body, open, attr = '') {
+  return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + attr + (open ? ' open' : '') + '>'
     + '<summary class="mem-fold-summary" id="mem-fold-' + escapeHtml(key) + '">' + ICON_CHEV
     + '<span>' + escapeHtml(title) + '</span>'
     // v3.79.0 (contract §B): the fold's channel, a neutral pill in its meta.
@@ -1109,9 +1179,11 @@ function fold(key, title, meta, body, open) {
 }
 
 /** The picker row: "+ Add an agent harness", glossed beside it (the word's first use on the step). */
-function pickerRow(ui) {
+function pickerRow(ui, gloss = true) {
   return '<div class="mem-k-pick mem-setup-pick">' + (ui.pickerHtml || '')
-    + '<span class="mem-setup-gloss">' + escapeHtml('An agent harness is ' + HARNESS_GLOSS) + '</span></div>' + customField(ui);
+    // v4.2.0 fix (e2e DEF-5): said once on the step — an empty list's own
+    // line already says what a harness is, so the picker does not repeat it.
+    + (gloss ? '<span class="mem-setup-gloss">' + escapeHtml('An agent harness is ' + HARNESS_GLOSS) + '</span>' : '') + '</div>' + customField(ui);
 }
 
 /**
@@ -1140,7 +1212,7 @@ export function renderSetupBody(s, ui = {}) {
       // A to-fix line that names no harness on the list: a loud note, as in Pro.
       + toFixNotes(data, (f) => !harnessOfItem(f, data))
       + harnessList(data)
-      + pickerRow(ui)
+      + pickerRow(ui, ((data && data.tools) || []).some((t) => t && isStr(t.id)))
       + simpleRepo(data, ui)
       + unsyncedLine(data)
       + routeLineHtml(data)
@@ -1148,14 +1220,28 @@ export function renderSetupBody(s, ui = {}) {
       + '</div>';
   }
   const repoNote = data.repo ? '' : repoNotSetNote(data);
-  const repoBody = data.repo ? repoSetBody(data, ui) : repoNotSetBody(data, ui);
+  // v4.2.0 fix: a refusal of the folder field is said ABOVE the folds (an
+  // outcome never sits behind a chevron), so the fold below carries detail only.
+  const repoErr = ui.repoError ? '<p class="mem-setup-err" role="alert">' + escapeHtml(ui.repoError) + '</p>' + errorDetailHtml(ui.repoError) : '';
+  const foldUi = { ...ui, repoError: null };
+  const repoBody = data.repo ? repoSetBody(data, foldUi) : repoNotSetBody(data, foldUi);
+  // v4.2.0 fix (e2e DEF-3): the three folds exist only with Pro on, so they
+  // carry the Pro marking (`proDrawnAttr`, passed in by the view: the "PRO"
+  // label on the fold's title and the hairline). The to-fix lines, the
+  // repository question, its refusal and the "not on GitHub yet" line are all
+  // above them, on screen in both modes (scripts/test-pro-guard.js parity).
+  const pa = typeof ui.proDrawnAttr === 'function' ? ui.proDrawnAttr() : '';
   return '<div class="mem-ss-stack mem-setup-stack">'
-    + recheckErr + toFixNotes(data) + repoNote
+    + recheckErr + toFixNotes(data) + repoNote + repoErr
+    // v4.2.0 fix (e2e DEF-4): "N files here are not on GitHub yet · Sync now"
+    // is an outcome, so with Pro on too it is on screen, never inside the
+    // closed Computers fold.
+    + unsyncedLine(data)
     + pickerRow(ui)
-    + fold('setup-tools', 'Agent harnesses', toolsMeta(data), toolsTable(data), !!folds['setup-tools'])
+    + fold('setup-tools', 'Agent harnesses', toolsMeta(data), toolsTable(data), !!folds['setup-tools'], pa)
     + fold('setup-repo', 'Repository on this computer', repoMeta(data), repoBody,
-      !!folds['setup-repo'] || !!ui.forceRepoOpen || !!ui.editRepo)
-    + fold('setup-computers', 'Computers', computersMeta(data), computersBody(data), !!folds['setup-computers'])
+      !!folds['setup-repo'] || !!ui.forceRepoOpen || !!ui.editRepo, pa)
+    + fold('setup-computers', 'Computers', computersMeta(data), computersBody(data), !!folds['setup-computers'], pa)
     + '</div>';
 }
 
@@ -1190,6 +1276,12 @@ const ISO_AT_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]
  */
 export function plainEvidenceLine(line, now = Date.now()) {
   let out = String(line ?? '');
+  // v4.2.0 fix (e2e DEF-7): the test notes the adapters record, said as what
+  // they mean for this computer — never how or when the maintainer saw them.
+  out = out.replace(/(^|\s+)each held their own (\S+) on the maintainer['’]s Mac(?: on \d{4}-\d{2}-\d{2})?/gi, '$1can each hold their own $2');
+  out = out.replace(/\bran once(?: \(\d{4}-\d{2}-\d{2}\))? but its injection was not seen used(; the project file['’]s was)?/gi,
+    (m, proj) => 'runs, but it is not confirmed that the agent uses what it adds' + (proj ? '; the project file’s hook is confirmed' : ''));
+  out = out.replace(/\s*\((?:observed|seen)\b[^)]*\)/gi, '');
   out = out.replace(ISO_AT_RE, (iso) => ageWordsFor(iso, now, null) || iso);
   out = out.replace(/\s+on the maintainer['’]s Mac(?: on \d{4}-\d{2}-\d{2})?/gi, ' when The Curator was tested');
   out = out.replace(/\s*\((?:observed,?\s*)?\d{4}-\d{2}-\d{2}\)/g, '');
@@ -1198,7 +1290,7 @@ export function plainEvidenceLine(line, now = Date.now()) {
   return out.replace(/\s{2,}/g, ' ').trim();
 }
 
-export function toolEvidence(t) {
+export function toolEvidence(t, data = null) {
   if (Array.isArray(t && t.evidence) && t.evidence.length) {
     return t.evidence.filter((e) => e && isStr(e.heading)).map((e) => ({
       heading: EVIDENCE_HEADINGS[e.heading] || e.heading,
@@ -1211,7 +1303,7 @@ export function toolEvidence(t) {
   const sv = t && t.saved;
   out.push({ heading: 'Last saved', reveal: null, lines: sv && sv.at
     ? [ageWordsFor(sv.at, Date.now(), 'saved') || sv.at,
-      [isStr(sv.machine) ? 'from ' + sv.machine + (sv.thisMachine ? ' (this computer)' : '') : null,
+      [isStr(sv.machine) ? 'from ' + machineName(sv.machine, data) + (sv.thisMachine ? ' (this computer)' : '') : null,
         isStr(sv.scope) ? 'as ' + sv.scope + (sv.wrongScope ? ' — not its own name' : '') : null].filter(Boolean).join(' · ')].filter(isStr)
     : ['no save from any computer'] });
   out.push({ heading: 'Connection (MCP)', reveal: null, lines: cellLines(t && t.bridge) });
@@ -1332,7 +1424,7 @@ export function toolGuideSteps(t, data) {
       let where;
       if (t.id === 'dsh') where = 'Paste into ~/.dsh/cordis.patch.yml (merge — do not copy over the file); never cordis.yml.';
       else if (unmeasured) where = 'Config location not measured — copy the entry by hand into ' + label + '’s own MCP settings.';
-      else if (t.custom === true || !target) where = 'Add this entry to ' + label + '’s MCP settings' + (t.custom === true ? ' — most tools read this mcpServers shape.' : '.');
+      else if (t.custom === true || !target) where = 'Add this entry to ' + label + '’s MCP settings' + (t.custom === true ? ' — most harnesses read this mcpServers shape.' : '.');
       else where = 'Add this entry to ' + target.display + (fmt ? ' (' + fmt + ')' : '')
         + (target.exists ? ', beside what is already there' : ' — create the file if it isn’t there') + ', then restart ' + label + '.';
       html = (got.length ? fromItems(got).html : '') + p(where)
@@ -1354,6 +1446,15 @@ export function toolGuideSteps(t, data) {
     let state;
     let html;
     let doors = '';
+    let when = 'once per computer, for every project';
+    // v4.2.0 fix (e2e A, confusions 3 and 4): a skills folder is named IN
+    // FULL. A path that does not start at ~ or / is inside the project's top
+    // folder (the adapter's project root — OpenCode's .agents/skills/), so
+    // the step says which folder and that it is per project; a home folder
+    // the harness also reads is offered for every project.
+    const roots = Array.isArray(tree && tree.roots) ? tree.roots.filter((r) => r && isStr(r.display)) : [];
+    const homeDir = (roots.find((r) => r.base === 'home') || {}).display || null;
+    const inProject = !!(tree && isStr(tree.path) && !/^[~/]/.test(tree.path));
     if (got.length) {
       state = 'fix';
       ({ html, doors } = fromItems(got));
@@ -1364,11 +1465,21 @@ export function toolGuideSteps(t, data) {
       html = p('Both skills are installed and current (' + parts.skills.word + ').');
     } else if (tree && tree.accountHeld) {
       state = 'cant';
-      html = p(label + ' keeps skills in your Claude account, which The Curator can’t read. If they are not there yet, add both from these files.');
+      // Where to add them: the folder the harness reads on this computer
+      // (when it reads one), or the Claude account — Claude: Customize → Skills.
+      html = p(SKILL_GLOSS) + (homeDir
+        ? p(label + ' reads skills from ' + homeDir + ' on this computer and from your Claude account. The Curator can’t read your account, so this step can’t be checked here.')
+          + p('If they are in neither yet: unzip both into ' + homeDir + ' — one folder per skill — or upload both in Claude: Customize → Skills. Then start a new ' + label + ' session.')
+        : p(label + ' keeps skills in your Claude account, which The Curator can’t read. If they are not there yet, upload both in Claude: Customize → Skills.'));
       doors = zipLinksFor(t);
     } else if (tree && tree.verified && tree.path) {
       state = 'todo';
-      html = p(SKILL_GLOSS) + p('Unzip both into ' + tree.path + ' — one folder per skill — then start a new ' + label + ' session.');
+      const where = inProject
+        ? tree.path + ' in your project’s top folder' + (repoWhere ? ' (' + repoWhere + ')' : '')
+        : tree.path;
+      html = p(SKILL_GLOSS) + p('Unzip both into ' + where + ' — one folder per skill' + (inProject && homeDir ? ', or into ' + homeDir + ' for every project' : '')
+        + ' — then start a new ' + label + ' session.');
+      if (inProject) when = homeDir ? 'once per project (or once per computer, in ' + homeDir + ')' : 'once per project';
       doors = zipLinksFor(t);
     } else if (tree && tree.verified && !tree.path) {
       state = 'skip';
@@ -1378,7 +1489,7 @@ export function toolGuideSteps(t, data) {
       html = p(SKILL_GLOSS) + p('Whether ' + label + ' reads skills is not known. If it does, install both the way it documents; if not, skip this step.');
       doors = zipLinksFor(t);
     }
-    steps.push({ key: 'skills', title: 'Teach it how to use The Curator', when: 'once per computer, for every project', state, html, doors });
+    steps.push({ key: 'skills', title: 'Teach it how to use The Curator', when, state, html, doors });
   }
 
   // ── 3 · THE INSTRUCTIONS ─────────────────────────────────────────────────
@@ -1409,7 +1520,7 @@ export function toolGuideSteps(t, data) {
       doors = btn2('copy-block', 'Copy agent instructions') + btnG('choose-repo', 'Set the folder');
     } else {
       state = 'todo';
-      html = p(label + ' reads ' + fileList(names) + (t.custom === true ? ' (assumed — most tools do)' : '')
+      html = p(label + ' reads ' + fileList(names) + (t.custom === true ? ' (assumed — most harnesses do)' : '')
         + '. Paste the agent instructions at the very top of ' + file + ' in ' + repoWhere + ', then commit and push it so your other computers get it too.');
       const fx = Array.isArray(t.instructionFixes) ? t.instructionFixes : [];
       doors = (fx.length ? fixButtons({ fixes: fx, tool: t.id }, repo) : btn2('copy-block', 'Copy agent instructions'))
@@ -1436,7 +1547,7 @@ export function toolGuideSteps(t, data) {
       html = '<p class="mem-setup-ev-p">' + escapeHtml('Saved from this computer ') + ageSpan(sv.at, null) + '.</p>';
     } else if (sv && !sv.thisMachine) {
       state = 'todo';
-      html = p('It has saved this project from ' + (isStr(sv.machine) ? sv.machine : 'another computer') + ', not from this one yet. ' + how);
+      html = p('It has saved this project from ' + (isStr(sv.machine) ? machineName(sv.machine, data) : 'another computer') + ', not from this one yet. ' + how);
     } else {
       state = 'todo';
       html = p(how);
@@ -1450,17 +1561,20 @@ export function toolGuideSteps(t, data) {
 export function toolGuide(t, data) {
   const { steps, placed } = toolGuideSteps(t, data);
   const label = t.label || t.id;
-  const left = steps.filter((x) => !['done', 'skip', 'optional'].includes(x.state)).length;
-  const opt = steps.filter((x) => x.state === 'optional').length;
+  // v4.2.0 fix (audit M2): the row's count, from the one tally.
+  const tally = guideTally(steps);
+  const left = tally.left.length;
+  const opt = tally.optional.length;
+  const cant = tally.cantWords ? '; ' + tally.cantWords : '';
   const html = '<section class="mem-setup-guide" aria-label="' + escapeHtml('Set up ' + label + ' on this computer') + '">'
-    + '<h3 class="mem-setup-ev-h">' + escapeHtml('Set up ' + label + ' on this computer') + '</h3>'
-    + '<p class="mem-setup-ev-p">' + escapeHtml((left
-      ? plural(left, 'step') + ' to do' + (opt ? ', ' + opt + ' optional' : '') + '. Setup re-checks when you come back to this window.'
-      : 'Nothing left to do here' + (opt ? ' (' + opt + ' optional)' : '') + ' — Re-check to read it again.')) + '</p>'
+    + '<h3 class="mem-setup-ev-h" id="mem-setup-guide-h" tabindex="-1">' + escapeHtml('Set up ' + label + ' on this computer') + '</h3>'
+    + '<p class="mem-setup-ev-p" data-guide-left="' + left + '">' + escapeHtml((left
+      ? plural(left, 'step') + ' to do' + (opt ? ', ' + opt + ' optional' : '') + cant + '. Setup re-checks when you come back to this window.'
+      : 'Nothing left to do here' + (opt ? ' (' + opt + ' optional)' : '') + cant + ' — Re-check to read it again.')) + '</p>'
     + '<ol class="mem-setup-steps">'
     + steps.map((x, i) => {
       const [cls, word] = GUIDE_MARKS[x.state] || GUIDE_MARKS.todo;
-      return '<li class="mem-setup-gstep" id="mem-setup-gstep-' + x.key + '" data-guide-step="' + x.key + '" data-guide-state="' + x.state + '">'
+      return '<li class="mem-setup-gstep" id="mem-setup-gstep-' + x.key + '" tabindex="-1" data-guide-step="' + x.key + '" data-guide-state="' + x.state + '">'
         + '<span class="settings-block-num mem-setup-gnum" aria-hidden="true">' + (i + 1) + '</span>'
         + '<div class="mem-setup-gbody">'
         + '<div class="mem-setup-ghead"><span class="mem-setup-gtitle">' + escapeHtml(x.title) + '</span>' + st(cls, word)
@@ -1512,7 +1626,7 @@ export function toolReaderContent(data, toolId, opts = {}) {
   const guide = toolGuide(t, data);
   const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id && !guide.placed.has(f));
   const notes = fixes.map((f) => fixNote(f, data)).join('');
-  const ev = toolEvidence(t).map((e) => '<section class="mem-setup-ev">'
+  const ev = toolEvidence(t, data).map((e) => '<section class="mem-setup-ev">'
     + '<h3 class="mem-setup-ev-h">' + escapeHtml(e.heading) + '</h3>'
     + '<ul class="mem-setup-ev-lines">' + e.lines.map((l) => '<li>' + withPaths(l) + '</li>').join('') + '</ul>'
     + (e.reveal ? '<span class="mem-k-doors">' + btnG('reveal', 'Reveal ' + baseName(e.reveal), ' data-path="' + escapeHtml(e.reveal) + '"') + '</span>' : '')
@@ -1529,7 +1643,7 @@ export function toolReaderContent(data, toolId, opts = {}) {
     : '';
   const bodyHtml = '<div class="mem-setup-reader">'
     + '<p class="mem-setup-ev-status">' + st(s.state, s.word) + '</p>'
-    + whereItStands(t)
+    + whereItStands(t, data)
     + notes
     + guide.html
     + removeSection(t)
@@ -1547,10 +1661,10 @@ export function toolReaderContent(data, toolId, opts = {}) {
 }
 
 /** "Last saved 2 hours ago on this Mac, under “antigravity”." — the reader's first fact. Pure. */
-function whereItStands(t) {
+function whereItStands(t, data = null) {
   const sv = t && t.saved && isStr(t.saved.at) ? t.saved : null;
   if (!sv) return '<p class="mem-setup-ev-p">' + escapeHtml((t.label || t.id) + ' has not saved this project yet.') + '</p>';
-  const where = sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? sv.machine : 'another computer');
+  const where = sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? machineName(sv.machine, data) : 'another computer');
   return '<p class="mem-setup-ev-p">' + escapeHtml('Last saved ') + ageSpan(sv.at, null)
     + escapeHtml(' ' + where + (isStr(sv.scope) ? ', under “' + sv.scope + '”' : '') + '.') + '</p>';
 }
@@ -1574,7 +1688,7 @@ const BLOCK_WORDS = {
   current: ['ok', 'current'],
   outdated: ['fix', 'outdated'],
   'wrong-project': ['fix', 'names another project'],
-  'past-cap': ['fix', 'past what the tool reads'],
+  'past-cap': ['fix', 'past what the harness reads'],
 };
 
 /** A block's [state, word] for its frame. Pure. */
@@ -1655,7 +1769,7 @@ export function fileBodyHtml(text, block, cap, capLabel, md) {
       + '<span class="mem-k-doors">' + btn2('copy-block', 'Copy the current agent instructions') + '</span></div>'
     : '';
   const rule = capAt !== null
-    ? '<div class="mem-setup-cap-rule" role="separator"><span>' + escapeHtml((capLabel || 'This tool') + ' reads up to here') + '</span></div>'
+    ? '<div class="mem-setup-cap-rule" role="separator"><span>' + escapeHtml((capLabel || 'This harness') + ' reads up to here') + '</span></div>'
     : '';
   let out = '';
   let inFrame = false;
@@ -1733,7 +1847,7 @@ export function fileReaderContent(data, name, resp, opts = {}) {
       lines.push('The agent instructions start past the part shown here.');
     }
     if (resp.cap && Number.isFinite(resp.cap.bytes) && !Number.isFinite(resp.cap.at)) {
-      lines.push((capTool || 'The tool') + ' reads the first ' + resp.cap.bytes.toLocaleString('en-US') + ' bytes; this file is shorter.');
+      lines.push((capTool || 'The harness') + ' reads the first ' + resp.cap.bytes.toLocaleString('en-US') + ' bytes; this file is shorter.');
     }
     body = (lines.length ? '<p class="mem-setup-ev-p">' + escapeHtml(lines.join(' ')) + '</p>' : '')
       + '<div class="mem-setup-file">' + (isMarker
@@ -1785,7 +1899,7 @@ export function newestSavesOf(group) {
     for (const s of inst.saves || []) {
       const key = isStr(s.tool) ? s.tool : s.label;
       const cur = by.get(key);
-      if (!cur || (Date.parse(s.at) || 0) > (Date.parse(cur.at) || 0)) by.set(key, { ...s, install: inst.primary });
+      if (!cur || (Date.parse(s.at) || 0) > (Date.parse(cur.at) || 0)) by.set(key, { ...s, install: inst.display || inst.primary });
     }
   }
   return [...by.values()].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
@@ -1801,7 +1915,7 @@ export function computerReaderContent(data, idx) {
   const head = '<p class="mem-setup-ev-status mem-setup-file-status">'
     + (g.thisComputer ? '<span class="mem-ws-mine mem-setup-here">this computer</span>' : '')
     + travelsPill('personal-sync', 'travels by Personal Sync') + '</p>';
-  const installs = sec('Installs', ul(g.installs.map((i) => escapeHtml([KIND_WORD[i.kind] || 'install', i.primary].join(' '))
+  const installs = sec('Installs', ul(g.installs.map((i) => escapeHtml([KIND_WORD[i.kind] || 'install', i.display || i.primary].join(' '))
     + (i.aliases.length ? escapeHtml(' — also saved as ' + i.aliases.join(', ')) : '')
     + (i.curator ? ' · <span class="cur-setup-mono">' + escapeHtml('Curator ' + i.curator) + '</span>' : ''))));
   const saves = newestSavesOf(g);

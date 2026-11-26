@@ -300,7 +300,7 @@ function addableFor(shownIds) {
       // v3.79.0 view.
       return { id, label: a.label, group: 'known', detail, measured, reads: [...names], configPaths: measured ? paths : [] };
     });
-  return [...known, { id: '__custom', label: 'Custom agent harness…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false, reads: ['AGENTS.md'], configPaths: [] }];
+  return [...known, { id: '__custom', label: 'Another harness…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false, reads: ['AGENTS.md'], configPaths: [] }];
 }
 
 function customToolIds() {

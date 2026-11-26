@@ -316,9 +316,18 @@ section('§6 the harness reader');
     '"What Setup read" is closed with Pro off and open with Pro on — the readers\' one difference');
   ok(/mem-setup-guide/.test(cc) && /Connect it to The Curator/.test(cc) && /once per computer, for every project/.test(cc), 'a ready harness opens on the same four steps, each with how often it is done');
   ok(S.plainEvidenceLine('configured — observed working that way (2026-09-26)') === 'configured — observed working that way', 'plainEvidenceLine: a bare measurement date goes');
+  // v4.2.0 fix (e2e DEF-7): no test history at all — what it means here.
   ok(S.plainEvidenceLine('each held their own file on the maintainer\'s Mac on 2026-09-25 (observed, three separate files).')
-    === 'each held their own file when The Curator was tested (observed, three separate files).', 'plainEvidenceLine: the maintainer\'s Mac becomes "when The Curator was tested"',
+    === 'can each hold their own file.', 'plainEvidenceLine: "each held their own file on the maintainer\'s Mac (observed…)" becomes what it means: "can each hold their own file"',
   S.plainEvidenceLine('each held their own file on the maintainer\'s Mac on 2026-09-25 (observed, three separate files).'));
+  ok(S.plainEvidenceLine('a config on the maintainer\'s Mac on 2026-09-25') === 'a config when The Curator was tested', '…another maintainer line still becomes "when The Curator was tested"');
+  ok(S.plainEvidenceLine('user file: ran once (2026-09-26) but its injection was not seen used; the project file\'s was')
+    === 'user file: runs, but it is not confirmed that the agent uses what it adds; the project file’s hook is confirmed', 'plainEvidenceLine: the hook test note is said as what it means',
+  S.plainEvidenceLine('user file: ran once (2026-09-26) but its injection was not seen used; the project file\'s was'));
+  {
+    const ag = textOf(S.toolReaderContent(d, 'antigravity', { pro: true }).bodyHtml);
+    ok(!/observed|three separate files|not seen used|maintainer|\d{4}-\d{2}-\d{2}/.test(ag), 'Antigravity\'s reader: no maintainer notes, no test dates (DEF-7)', ag.slice(0, 600));
+  }
   ok(/^Newest save 2 (?:hr|hours?) ago under/.test(S.plainEvidenceLine('Newest save ' + new Date(Date.now() - 2 * 3600e3).toISOString() + ' under “x”.')), 'plainEvidenceLine: an ISO time becomes its age',
     S.plainEvidenceLine('Newest save ' + new Date(Date.now() - 2 * 3600e3).toISOString() + ' under “x”.'));
   const ro = S.toolReaderContent(d, 'codex', { pro: false }).bodyHtml;
@@ -334,6 +343,94 @@ section('§7 the hand cursor on what opens something');
   ok(/cursor:\s*pointer/.test(rule('.mem-hr')) && /cursor:\s*pointer/.test(rule('.mem-hr-open')), 'a harness row and its button show the hand');
   ok(/cursor:\s*pointer/.test(rule('.mem-setup-row')), 'a Pro row that opens something shows the hand');
   ok(/background:\s*var\(--mat-row-hover\)/.test(rule('.mem-hr:hover')), '...and lights with the rail\'s overlay (visible in both themes, not --surface-hover)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9 Pro on — the Pro-only folds are MARKED, and no outcome is behind one (v4.2.0 fix, e2e DEF-3 / DEF-4)');
+{
+  const d = demo();
+  const h = pro(d, { proDrawnAttr: PRO.proDrawnAttr, openFolds: {} });
+  const folds = [...h.matchAll(/<details class="mem-fold" data-mem-fold="([^"]+)"([^>]*)>/g)];
+  ok(folds.length === 3 && folds.every((m) => /data-pro-drawn/.test(m[2])), 'all three Setup folds carry the Pro marking (data-pro-drawn)', folds.map((m) => m[0]).join(' | '));
+  const at = h.indexOf('2 files here are not on GitHub yet');
+  ok(at > 0 && at < h.indexOf('<details'), '"2 files here are not on GitHub yet · Sync now" is ABOVE the first fold with Pro on (never inside the closed Computers fold)', at);
+  ok(/data-setup-act="sync"[^>]*>Sync now</.test(h.slice(at, h.indexOf('<details'))), '...with its Sync now');
+  const err = pro(repoSet(), { proDrawnAttr: PRO.proDrawnAttr, editRepo: true, repoError: 'That folder is not a git repository.' });
+  ok(err.indexOf('That folder is not a git repository.') < err.indexOf('<details'), 'a refusal of the folder field is said above the folds with Pro on');
+  ok(!/data-pro-drawn/.test(simple(d, { proDrawnAttr: PRO.proDrawnAttr })), 'Pro off: nothing drawn carries the Pro marking (nothing Pro-drawn is on the simple page)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§10 the skills step names a FULL folder and where to add them (v4.2.0 fix, e2e A confusions 3 and 4)');
+{
+  const d = repoSet();
+  const oc = { id: 'opencode', label: 'OpenCode', status: 'no-save', saved: { state: 'none', at: null },
+    parts: { mcp: { state: 'none', word: 'not found' }, skills: { state: 'none', word: 'not installed' }, block: { state: 'not-checked', word: 'x' }, hooks: { state: 'none', word: '—' } },
+    reads: ['AGENTS.md'], skillsTarget: { path: '.agents/skills/', verified: true, roots: [{ base: 'project', display: '.agents/skills' }, { base: 'home', display: '~/.claude/skills' }] } };
+  const sk = S.toolGuideSteps(oc, d).steps.find((x) => x.key === 'skills');
+  ok(/Unzip both into \.agents\/skills\/ in your project’s top folder \(\s*~\/Projects\/exhibit-site\s*\)/.test(textOf(sk.html)),
+    'OpenCode: ".agents/skills/ in your project’s top folder (~/Projects/exhibit-site)" — never a bare relative path', textOf(sk.html));
+  ok(/or into ~\/\.claude\/skills for every project/.test(textOf(sk.html)), '...and the home folder it also reads, for every project');
+  ok(/^once per project/.test(sk.when) && !/for every project$/.test(sk.when), '...tagged "once per project", not "once per computer, for every project"', sk.when);
+  const noRepo = S.toolGuideSteps(oc, demo()).steps.find((x) => x.key === 'skills');
+  ok(/in your project’s top folder — one folder/.test(textOf(noRepo.html)), '...with no folder set yet it still says "your project’s top folder"', textOf(noRepo.html));
+  const cc = { ...d.tools[0], parts: { ...d.tools[0].parts, skills: { state: 'cant-check', word: 'can’t check here' } },
+    skillsTarget: { path: '~/.claude/skills', accountHeld: true, roots: [{ base: 'home', display: '~/.claude/skills' }, { base: 'project', display: '.claude/skills' }] } };
+  const cs = S.toolGuideSteps(cc, d).steps.find((x) => x.key === 'skills');
+  ok(cs.state === 'cant' && /unzip both into ~\/\.claude\/skills/.test(textOf(cs.html)) && /Claude: Customize → Skills/.test(textOf(cs.html)),
+    'Claude Code: WHERE to add them — ~/.claude/skills on this computer, or Claude: Customize → Skills', textOf(cs.html));
+  const desk = { ...cc, id: 'claude-desktop', label: 'Claude Desktop', skillsTarget: { path: '~/.claude/skills', accountHeld: true, roots: [] } };
+  ok(/upload both in Claude: Customize → Skills/.test(textOf(S.toolGuideSteps(desk, d).steps.find((x) => x.key === 'skills').html)),
+    'a harness whose skills live only in the Claude account: upload them in Claude: Customize → Skills');
+}
+{
+  const h = simple(empty());
+  const gloss = (h.match(/the app your agent runs in/g) || []).length;
+  ok(gloss === 1, 'an empty project says what a harness is ONCE, not twice one line apart (DEF-5)', gloss);
+  ok(/class="mem-setup-gloss"/.test(simple(demo())), '...a project with harnesses keeps the gloss beside the picker');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8 ONE COUNT — the row, the Pro reader and the guide agree (v4.2.0 fix, audit M2 / DEF-2)');
+{
+  // Claude Code as the audit measured it: skills held by the Claude account
+  // (never checkable), instructions current, nothing to fix.
+  const cc = () => {
+    const d = repoSet();
+    d.toFix = d.toFix.filter((f) => f.tool !== 'claude-code');
+    d.tools[0] = { ...d.tools[0], status: 'partly', skillsTarget: { accountHeld: true },
+      parts: { ...d.tools[0].parts, skills: { state: 'cant-check', word: 'can’t check here' } } };
+    return d;
+  };
+  const d = cc();
+  const m = S.harnessRowModel(d.tools[0], d);
+  const reader = S.toolReaderContent(d, 'claude-code', { pro: true }).bodyHtml;
+  const guideLeft = (h) => Number((/data-guide-left="(\d+)"/.exec(h) || [])[1]);
+  ok(m.status === 'ready' && /skills can’t be checked here/.test(m.lines[0]),
+    'Claude Code, skills unchecked: "Ready" only WITH the sub-line "skills can’t be checked here"', JSON.stringify(m));
+  ok(/skills can’t be checked here/.test(textOf(rowOf(simple(d), 'claude-code').all)), '...and the sub-line is on the rendered row');
+  ok(guideLeft(reader) === 0 && /Nothing left to do here; skills can’t be checked here/.test(textOf(reader)),
+    '...and its reader says the same: nothing left to do, skills can’t be checked (never "1 step to do")', textOf(reader).slice(0, 400));
+  ok(/partly checked/.test(textOf(reader)), '...the reader keeps Pro\'s status word (partly checked), so Pro and the reader still agree');
+  // Every harness of every arm: the row's number IS the guide's number.
+  let checked = 0;
+  for (const [name, mk] of [...ARMS, ['Claude Code, skills unchecked', cc]]) {
+    const dd = mk();
+    for (const t of dd.tools) {
+      const rm = S.harnessRowModel(t, dd);
+      const g = guideLeft(S.toolGuide(t, dd).html);
+      const rowN = rm.status === 'steps' ? Number(rm.word.split(' ')[0])
+        : rm.status === 'fix' ? Number(((/(\d+) steps? left in all/.exec(rm.lines.join(' '))) || [0, 0])[1])
+          : rm.status === 'ready' ? 0 : null;
+      if (rowN === null) continue;
+      checked++;
+      ok(rowN === g, `${name} — ${t.label}: the row's count (${rowN}) is the guide's count (${g})`, rm.word + ' | ' + rm.lines.join(' / '));
+    }
+  }
+  ok(checked >= 6, `anti-vacuity: ${checked} harness rows compared`);
+  // A "can't check" step is never counted as done.
+  const t2 = S.guideTally([{ key: 'mcp', state: 'done' }, { key: 'skills', state: 'cant' }, { key: 'block', state: 'todo' }]);
+  ok(t2.left.length === 1 && t2.cant.length === 1 && t2.cantWords === 'skills can’t be checked here', 'guideTally: a can’t-check step is neither left nor done, and is named');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-context-setup-modes: ' + pass + ' passed, ' + fail + ' failed');

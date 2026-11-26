@@ -160,7 +160,7 @@ const E = {
     lead: '**Setup** checks each agent harness (the app your agent runs in) reaches this project. **Re-check** reads the files.',
     visual: {
       type: 'table',
-      caption: 'How each part reaches another computer',
+      caption: 'How each part reaches another computer (each is a fold with Pro on)',
       head: ['', 'What', 'Travels by'],
       rows: [
         ['Computers', 'handoffs, the brief', 'Sync now'],
@@ -173,7 +173,7 @@ const E = {
       { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
       { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'An added harness opens setup steps. Unlisted? **Custom agent harness…**',
+    try: 'An added harness opens setup steps. Unlisted? **Another harness…**',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 
@@ -649,7 +649,7 @@ const E = {
     label: 'About MCP bridge',
     title: 'MCP bridge',
     lead: 'This page connects your agent harnesses (Claude Code, Codex, Cursor…) to your knowledge and shows whether the connection works.',
-    visual: { type: 'flow', caption: 'Four sections', steps: ['Your agent harnesses', 'Skills', 'Connection test', 'Tool activity'] },
+    visual: { type: 'flow', caption: 'Four sections', steps: ['Agent harnesses', 'Skills', 'Connection test', 'Tool activity'] },
     points: [
       { icon: 'agent', text: 'Claude, Cursor, Antigravity and other agent harnesses can use My Curator.' },
       { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
@@ -659,8 +659,8 @@ const E = {
 
   // MCP section 1 · Your AI apps — `mcp-sec-apps-info` (v3.90.0).
   'settings.mcp-connect': {
-    label: 'About Your agent harnesses',
-    title: 'Your agent harnesses',
+    label: 'About Agent harnesses',
+    title: 'Agent harnesses',
     lead: 'One row per agent harness found on this computer, and whether it reaches My Curator.',
     points: [
       { icon: 'computer', text: 'Works with Claude Desktop, Claude Code, Cursor and Antigravity.' },
@@ -928,12 +928,12 @@ export const SCREEN_WORDS = [
   // v3.78.0 — step 5 rebuilt: its head control, its marks, its folds and its
   // picker, each as printed.
   'Re-check', 'ready', 'to fix', 'can’t check here', 'not checked', 'repository',
-  'Computers', 'Custom agent harness…', '+ Add an agent harness',
+  'Computers', 'Another harness…', '+ Add an agent harness',
   // v3.79.0 — step 5's other two fold titles (the travels-by table's row
   // names) and step 4's renamed picker.
   'Agent harnesses', 'Repository on this computer', 'Your harness’s share',
   // v3.90.0 — Settings › MCP bridge from the copy deck: its section titles and buttons.
-  'Your agent harnesses', 'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default domain for writes',
+  'Skills', 'Connection test', 'Tool activity', 'Test connection', 'Default domain for writes',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

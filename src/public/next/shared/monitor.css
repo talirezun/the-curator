@@ -128,6 +128,11 @@
   align-items: baseline;
   min-width: 0;
 }
+/* A READING WIDTH (v4.2.0 fix, `width: 'readable'`): on a wide step the key
+   and its value were measured 297–673 px apart (Context step 4 at 1100–1280);
+   capped, the eye can carry a key to its figure. Opt-in, so every other
+   monitor (Settings, Sync, Domains, the foundations panel) is unchanged. */
+.cur-mon-readable .cur-mon-lines { max-width: 34rem; }
 .cur-mon-key {
   font-size: var(--text-2xs);
   text-transform: uppercase;

@@ -2614,6 +2614,17 @@
    next line, right-aligned by its own `margin-left: auto`. At 1370 it fits on
    the title's line and nothing moves. */
 .settings-block-context-session > .settings-block-hd { flex-wrap: wrap; row-gap: var(--space-3); }
+/* v4.2.0 fix (e2e DEF-8, audit "Widths"): step ⑤'s head the same way — at
+   375 px "checked 2 min ago · Re-check" ran 15 px past the column and the
+   page scrolled sideways. It takes the next line instead. */
+.settings-block-context-setup > .settings-block-hd { flex-wrap: wrap; row-gap: var(--space-3); }
+.mem-setup-head { flex-wrap: wrap; min-width: 0; }
+/* A long button label in a loud line ("Copy the command that creates,
+   commits and pushes it") wraps inside its button on a phone rather than
+   running off the right edge. */
+@media (max-width: 480px) {
+  .mem-setup-note-acts > .btn { white-space: normal; text-align: left; max-width: 100%; }
+}
 /* The cost line's sentence keeps a readable measure and its action drops
    under it on a narrow column, instead of the sentence being squeezed into a
    column one word wide beside the button. */
