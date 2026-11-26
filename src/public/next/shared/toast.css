@@ -89,7 +89,7 @@
   line-height: 1;
   /* The house rule (scripts/test-next-views-kit.js §5): no pointing hand on
      a control in this app, and chrome does not drag-select. */
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }

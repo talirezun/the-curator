@@ -408,7 +408,7 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-6) var(--space-7);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   list-style: none;
@@ -1069,7 +1069,7 @@
   color: var(--accent-text);
   font: var(--type-body-sm);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   /* The other half of the same argument: a label that turns blue and
      drag-selects when a click starts on it is a web page, not a control. */
   user-select: none;
@@ -1162,7 +1162,7 @@
   background: var(--surface);
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1306,7 +1306,7 @@
   border-radius: var(--radius-full);
   background: var(--surface-inset);
   color: var(--text-2);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1349,7 +1349,7 @@
   border-radius: var(--radius-full);
   background: var(--surface-inset);
   color: var(--text-2);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1381,7 +1381,7 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1453,7 +1453,7 @@
   background: none;
   color: var(--accent);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -1591,7 +1591,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 4px 10px;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--t-press);

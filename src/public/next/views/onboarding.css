@@ -172,7 +172,7 @@
      3:1 floor that governs it, and the :hover step to --text below depends on
      this resting state being the dim one. */
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
@@ -283,7 +283,7 @@
   background: transparent;
   font-size: var(--text-2xs);
   color: var(--text-2);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   text-decoration: underline;

@@ -129,7 +129,7 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-2);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: color var(--t-state), background var(--t-state);

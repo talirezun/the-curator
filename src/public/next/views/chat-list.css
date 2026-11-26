@@ -113,7 +113,7 @@
   align-items: center;
   gap: 6px;
   min-height: var(--hit-min);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font-size: var(--text-2xs);
@@ -153,7 +153,7 @@
   width: var(--hit-min);
   height: var(--hit-min);
   margin-top: 4px;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }

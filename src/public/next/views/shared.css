@@ -383,7 +383,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--danger-tint);
 }
 .sb-card-skips summary {
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font-size: var(--text-sm);
@@ -413,7 +413,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-cohort summary {
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font-size: var(--text-sm);
@@ -489,7 +489,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sb-card-admin summary {
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font-size: var(--text-sm);
@@ -645,7 +645,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   gap: 9px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -780,7 +780,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--text); }
 .sb-outcome-notice-ok { color: var(--text-2); }
 
-.sb-outcome-raw summary { cursor: default; user-select: none; -webkit-user-select: none; font-size: var(--text-2xs); color: var(--text-2); }
+.sb-outcome-raw summary { cursor: pointer; user-select: none; -webkit-user-select: none; font-size: var(--text-2xs); color: var(--text-2); }
 .sb-outcome-summary {
   margin: 7px 0 0;
   font-size: var(--text-xs);
@@ -886,7 +886,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border: none;
   background: none;
   color: var(--text-2);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
@@ -1072,7 +1072,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
    `--hit-min` of height is what makes a 13px box hittable at macOS's default
    control size. `align-items: flex-start` is kept: these labels wrap to
    several lines of terms, and the tick belongs beside the FIRST line. */
-.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; min-height: var(--hit-min); font-size: var(--text-sm); color: var(--text); cursor: default; user-select: none; -webkit-user-select: none; }
+.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; min-height: var(--hit-min); font-size: var(--text-sm); color: var(--text); cursor: pointer; user-select: none; -webkit-user-select: none; }
 .sbw-checkbox-label .cur-check { margin-top: 2px; }
 
 /* ── Status / validation line ─────────────────────────────────────────── */

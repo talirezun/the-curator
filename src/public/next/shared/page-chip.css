@@ -42,7 +42,7 @@
   font: var(--type-body-sm);
   color: var(--text-2);
   background: var(--surface-raised);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }

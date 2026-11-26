@@ -37,8 +37,8 @@
  *   3  the domain stat counts clear AA on light (were 3.22-3.58)
  *   4  no colour literal was ADDED to a view — a per-file hex baseline that
  *      may only shrink
- *   5  `cursor: pointer` is gone from every control in every owned view, and
- *      chrome carries user-select: none
+ *   5  the POINTER rule (2026-11-26): controls show `cursor: pointer`, disabled
+ *      ones `not-allowed`, the arrow only on text and containers
  *   6  digits that align or tick carry tabular figures
  *   7  the monospace face is spent on LITERALS, not on facts
  *   8  rows on a material take the alpha overlay, never an opaque surface
@@ -46,7 +46,7 @@
  *  10  hit targets: every control reaches --hit-min, by box or by ::before
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -456,62 +456,102 @@ section('4. No colour literal was ADDED to a view — a shrinking baseline');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('5. The hand cursor is gone, and chrome does not drag-select');
+section('5. The POINTER rule: what opens or does something shows the hand; disabled does not');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  /* The cheapest native tell in the whole redesign: no AppKit control shows a
-     pointing hand — not a push button, not a segment, not a sidebar row — and
-     nothing marks a desktop app as a web page faster. Paired with
-     `user-select: none` on chrome, which is the same argument from the other
-     side: a button label that turns blue and drag-selects when a click starts
-     a pixel early is a web page's behaviour. */
+  /* OWNER DECISION 2026-11-26 — this section used to enforce the OPPOSITE
+     (`cursor: default` on every control, "no AppKit control shows a hand").
+     The owner read a page with no cursor change as inert, and with the
+     listbox's hover also invisible there was no feedback at all. The kit rule
+     is now: a row, menu item, link or button that opens or does something
+     uses `cursor: pointer`; a disabled one uses `not-allowed`; the arrow
+     survives only on text and containers that are not controls.
+
+     The tree is scanned whole (every .css under /next), not just the eight
+     view sheets, because the rule is app-wide. */
+  const walkCss = (dir, rel = '') => readdirSync(path.join(NEXT, dir), { withFileTypes: true })
+    .flatMap((e) => e.isDirectory() ? walkCss(path.join(dir, e.name), path.join(rel, e.name))
+      : e.name.endsWith('.css') ? [path.join(rel, e.name)] : []);
+  const ALL_CSS = walkCss('.');
+  /* Files whose package had not yet applied the rule when this pass landed
+     (K: views/memory.css; P: shell.css). Their remaining `cursor: default`
+     rules are listed in the hand-off. DELETE THIS ENTRY when they convert, so
+     the guard covers them. The tray popover is its own window and its body is
+     chrome, not a control. */
+  const PENDING = ['views/memory.css', 'shell.css'];
+  const NOT_A_CONTROL = ['body'];
+  /* Selectors that legitimately keep the arrow: text and containers. */
+  const DEFAULT_OK = ['.chat-citation-tag', '.reader-body-text .chat-citation-tag', '.reader-source-url',
+    '.sbw-dht-card', '.model-picker-empty-head', '.dm-lane-plain > .dm-group-summary',
+    '.dm-group-nofold > .dm-group-summary', ...NOT_A_CONTROL];
+
+  /** Selectors in `css` that declare `cursor: default` and are not in
+   *  `allowed`. Comments are stripped first. */
+  const arrowOnControls = (css, allowed) => {
+    const bad = [];
+    for (const m of stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/cursor:\s*default/.test(m[2])) continue;
+      const sel = m[1].trim().replace(/\s+/g, ' ');
+      if (!allowed.includes(sel)) bad.push(sel);
+    }
+    return bad;
+  };
+
   const offenders = [];
-  for (const rel of OWNED) {
-    const css = stripComments(read(rel));
-    const n = (css.match(/cursor:\s*pointer/g) || []).length;
-    if (n) offenders.push(`${rel}: ${n}`);
+  let pointerRules = 0;
+  for (const rel of ALL_CSS) {
+    if (PENDING.includes(rel) || rel === 'views/tray-popover.css') continue;
+    const css = read(rel);
+    for (const s of arrowOnControls(css, DEFAULT_OK)) offenders.push(`${rel} ${s}`);
+    pointerRules += (stripComments(css).match(/cursor:\s*pointer/g) || []).length;
   }
   ok(offenders.length === 0, offenders.length === 0
-    ? 'no `cursor: pointer` survives in any of the eight view stylesheets'
-    : '`cursor: pointer` still present: ' + offenders.join(', '));
+    ? `no control keeps \`cursor: default\` in ${ALL_CSS.length - PENDING.length - 1} stylesheets (only the text and container exemptions remain)`
+    : 'a control still shows the arrow: ' + offenders.join(', '));
+  ok(pointerRules >= 40, `${pointerRules} rules declare \`cursor: pointer\` — the rule was applied, not just the old one removed`);
 
-  // …and it was really replaced rather than deleted: every one of those rules
-  // still declares a cursor.
-  let cursorRules = 0, withSelect = 0;
-  /* THE THIRD EXEMPTION WAS FOUND BY THIS ASSERTION, NOT ANTICIPATED.
-     `.reader-source-url` declares `user-select: text` explicitly — it is the
-     source URL of a wiki page, and being able to select and copy it is the
-     only reason it is on screen. That is the rule working: `user-select:
-     none` is for CHROME, and a rule that opted OUT deliberately is evidence
-     the distinction is real rather than a blanket. */
-  // `.chat-conv-row-main` WAS the first exemption. v3.72.0 (P3) made Chat's
-  // conversation rows the ONE sidebar row (`.cur-sb-row`, shared/sidebar.css),
-  // so the selector no longer exists and the exemption goes with it.
-  const contentExempt = ['.sbw-dht-card', '.reader-source-url'];
-  const noSelect = [];
-  for (const rel of OWNED) {
-    const css = stripComments(read(rel));
-    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      if (!/cursor:\s*default/.test(m[2])) continue;
-      cursorRules++;
-      const sel = m[1].trim().replace(/\s+/g, ' ');
-      if (/user-select:\s*none/.test(m[2])) withSelect++;
-      else if (!contentExempt.includes(sel)) noSelect.push(`${rel} ${sel}`);
-    }
+  // Anti-vacuity: the scanner sees an arrow on a control, and lets an exemption through.
+  ok(arrowOnControls('.zz-row { cursor: default; }', DEFAULT_OK).length === 1,
+    'control: an arrow on a row is reported');
+  ok(arrowOnControls('.zz-row { cursor: pointer; }', DEFAULT_OK).length === 0,
+    'control: …a pointer on it is not');
+  ok(arrowOnControls('.sbw-dht-card { cursor: default; }', DEFAULT_OK).length === 0,
+    'control: …and a listed non-control keeps its arrow');
+  // The exemptions are real selectors, so none exempts nothing.
+  const allCss = ALL_CSS.map((r) => stripComments(read(r))).join('\n');
+  for (const sel of DEFAULT_OK.filter((s) => !NOT_A_CONTROL.includes(s))) {
+    ok(allCss.includes(sel), `control: the exempt selector ${sel} really exists`);
   }
-  ok(cursorRules >= 40, `${cursorRules} rules declare \`cursor: default\` — the pointer was replaced, not deleted`);
-  ok(noSelect.length === 0, noSelect.length === 0
-    ? `and ${withSelect} of them also set user-select: none, with only the two CONTENT-bearing rules exempt`
-    : 'chrome that still drag-selects: ' + noSelect.join(', '));
-  // The exemptions are real and are stated: both hold text a user may want to
-  // select — a conversation title the user typed, and terms they are agreeing
-  // to. A test that exempted a selector that does not exist would be exempting
-  // nothing while looking thorough.
-  const allOwned = OWNED.map((r) => stripComments(read(r))).join('\n');
-  for (const sel of contentExempt) {
-    ok(new RegExp(sel.replace('.', '\\.') + '\\s*\\{').test(allOwned),
-      `control: the exempt selector ${sel} really exists in an owned file`);
+
+  // The listbox is where the missing cursor was found: both its trigger and
+  // its rows carry the pointer, and the disabled states do not.
+  const lb = read('shared/listbox.css');
+  ok(/cursor:\s*pointer/.test(declForBody(lb, '.lb-btn')), '.lb-btn (the picker trigger) shows the pointer');
+  ok(/cursor:\s*pointer/.test(declForBody(lb, '.lb-opt')), '.lb-opt (a menu row) shows the pointer');
+  ok(/cursor:\s*not-allowed/.test(declForBody(lb, '.lb-btn:disabled')) &&
+     /cursor:\s*not-allowed/.test(declForBody(lb, '.lb-opt.is-disabled')),
+    '…and a disabled trigger or row shows `not-allowed`, never the hand');
+  for (const [file, sel] of [['shared/checkbox.css', '.cur-check'], ['shared/checkbox.css', '.cur-check-label'],
+                             ['shared/switch.css', '.cur-switch'], ['shared/text.css', '.tx-explainer-summary'],
+                             ['shared/sidebar.css', '.cur-sb-row'], ['views/chat.css', '.chat-copy-btn']]) {
+    ok(/cursor:\s*pointer/.test(declForBody(read(file), sel)), `${sel} (${file}) shows the pointer`);
   }
+  ok(!/cursor:\s*pointer/.test(declForBody(read('shared/text.css'), '.zz-no-such-control')),
+    'control: that pin fails on a selector that declares no cursor');
+
+  // The safety net: zero specificity (so it never overrides a deliberate
+  // rule) and disabled outranks any one-class pointer.
+  const lbClean = stripComments(lb);
+  const netStart = lbClean.indexOf(':where(button:not(:disabled)');
+  const netEnd = netStart < 0 ? -1 : lbClean.indexOf('{', netStart);
+  const netSel = netStart < 0 ? '' : lbClean.slice(netStart, netEnd);
+  ok(netSel && /role="option"/.test(netSel) && /summary/.test(netSel) && /\)\s*$/.test(netSel.trim()) &&
+     /cursor:\s*pointer/.test(lbClean.slice(netEnd, netEnd + 40)),
+    'the :where() net covers button, summary and role=option, with `:not(:disabled)` INSIDE the :where so its specificity stays zero');
+  ok(/(^|\})\s*button:disabled\s*\{\s*cursor:\s*not-allowed/m.test(lbClean),
+    '`button:disabled` carries not-allowed above any one-class pointer');
+  ok(PENDING.every((f) => ALL_CSS.includes(f)),
+    `control: the pending files exist (${PENDING.join(', ')}); their rules are in the hand-off and this entry is to be deleted`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -951,48 +991,6 @@ section('11. What §10 CANNOT see, pinned by name because a browser found it');
   ok(!/min-height:\s*var\(--hit-min\)/.test(declForBody(read('views/memory.css'), '.zz-not-a-real-selector')),
     'control: …and the pin above therefore fails on one, rather than matching an empty string');
 
-  /* ── AND THE THREE FOUNDATION CONTROLS, NOW FIXED ───────────────────────
-     The same rendered sweep found `cursor: pointer` on `.cur-check`
-     (shared/checkbox.css), `.tx-vh-info` and `.tx-explainer-summary`
-     (shared/text.css) — the hand cursor on a checkbox, on the info mark that
-     appears on eleven surfaces, and on every explainer disclosure. All three
-     were in the foundation layer THIS PASS did not own, so the assertion here
-     used to say `foreign.length === 2` — it asserted they were STILL WRONG,
-     so that it would go red the day they were fixed rather than sit as a lie.
-
-     They were fixed at the release merge, which is exactly the event that
-     assertion was built to force, so it is INVERTED rather than deleted: the
-     record becomes a guard. `.cur-check-label` was corrected in the same
-     sweep — it wraps `.cur-check`, so a hand cursor on the label put the hand
-     back over the checkbox by another door, and leaving it would have made a
-     file-level check impossible to state honestly.
-
-     `not-allowed` is deliberately NOT swept: it is a different statement (this
-     control exists and is refusing you) and is the idiom used throughout this
-     tree, in the views as well as here. */
-  const foreign = ['shared/checkbox.css', 'shared/text.css']
-    .filter((f) => /cursor:\s*pointer/.test(stripComments(read(f))));
-  ok(foreign.length === 0,
-    foreign.length === 0
-      ? 'FIXED: no `cursor: pointer` survives in shared/checkbox.css or shared/text.css either'
-      : `${foreign.join(' and ')} still set cursor: pointer`);
-  // Replaced, not merely deleted — the same distinction §5 draws for the
-  // views. An absent `cursor` inherits, which on a <button> is not the arrow.
-  for (const [file, sel] of [['shared/checkbox.css', '.cur-check'],
-                             ['shared/checkbox.css', '.cur-check-label'],
-                             ['shared/text.css', '.tx-vh-info'],
-                             ['shared/text.css', '.tx-explainer-summary']]) {
-    ok(/cursor:\s*default/.test(declForBody(read(file), sel)),
-      `${sel} (${file}) declares \`cursor: default\` — the pointer was replaced, not dropped`);
-  }
-  // Control: the pin above can fail. A selector with no cursor at all must
-  // not read as a pass.
-  ok(!/cursor:\s*default/.test(declForBody(read('shared/text.css'), '.zz-no-such-control')),
-    'control: …and that pin fails on a selector that declares no cursor, so an absent rule cannot pass it');
-  // …and `not-allowed` survives, so the sweep did not flatten the disabled
-  // statement into the ordinary one.
-  ok(/cursor:\s*not-allowed/.test(stripComments(read('shared/checkbox.css'))),
-    '…while `cursor: not-allowed` is untouched — a refusal is a different statement from an ordinary control');
 }
 
 console.log('\n' + '─'.repeat(60));

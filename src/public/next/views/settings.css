@@ -2199,7 +2199,7 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-md);
-  cursor: default;
+  cursor: pointer;
   list-style: none;
 }
 .build-change-summary::-webkit-details-marker { display: none; }

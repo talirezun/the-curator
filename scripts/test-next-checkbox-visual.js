@@ -377,11 +377,9 @@ try {
       `[${theme}] disabled computes opacity 0.45 — the design system's value, not one of the five ` +
       `others this tree uses (got ${dis.opacity})`, dis.opacity);
     ok(dis.cursor === 'not-allowed', `[${theme}] disabled computes cursor: not-allowed`, dis.cursor);
-    // `default`, not `pointer`: since v3.44.0 (shared/checkbox.css, "The hand
-    // cursor leaves the foundation layer too") a checkbox shows the macOS
-    // arrow, the hand being a web idiom for a link. This asserted `pointer`
-    // and went stale then; the disabled arm above still pins `not-allowed`.
-    ok(off.cursor === 'default', `[${theme}] an enabled box computes cursor: default (the arrow, never the hand)`, off.cursor);
+    // `pointer` again (owner rule, 2026-11-26): a checkbox does something when
+    // pressed. v3.44.0 had moved it to the arrow; the disabled arm still pins `not-allowed`.
+    ok(off.cursor === 'pointer', `[${theme}] an enabled box computes cursor: pointer (it does something when pressed)`, off.cursor);
     ok(off.rect.w === off.rect.h && off.rect.w >= 15 && off.rect.w <= 17,
       `[${theme}] the default box is square at the system's 16px (${off.rect.w}x${off.rect.h})`, off.rect);
     ok(sm.rect.w < off.rect.w && sm.rect.w >= 12,

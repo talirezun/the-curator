@@ -82,7 +82,7 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
