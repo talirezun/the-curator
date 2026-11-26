@@ -55,10 +55,11 @@ export function parseHtml(html) {
 const decode = (s) => s.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
-export function textOf(n, { skipPro = false } = {}) {
+export function textOf(n, { skipPro = false, skipButtons = false } = {}) {
   if (n.tag === '#text') return decode(n.text);
   if (skipPro && isProOnly(n)) return ' ';
-  return n.children.map((c) => textOf(c, { skipPro })).join(' ');
+  if (skipButtons && n.tag === 'button') return ' ';
+  return n.children.map((c) => textOf(c, { skipPro, skipButtons })).join(' ');
 }
 
 export const isProOnly = (n) => n.attrs && n.attrs['data-detail'] === 'pro';
@@ -113,12 +114,19 @@ export function proGuardFaults(html) {
   return faults;
 }
 
-/** Every protected text in a render (the words a user must always get). */
-export function protectedTexts(html) {
+/**
+ * Every protected text in a render (the words a user must always get).
+ * `{ words: true }` leaves out the labels of buttons inside it: a view may
+ * offer a warning's action in its own place (Context's simple harness row
+ * carries the fix button in the row's action slot, and the whole row opens
+ * the steps that Pro's "Show its setup steps" door names), but the warning's
+ * WORDS must be on screen. Rule 1 still guards a confirm control itself.
+ */
+export function protectedTexts(html, { words = false } = {}) {
   const out = [];
   walk(parseHtml(html), (n) => {
     if (protectedReason(n)) {
-      const t = textOf(n).replace(/\s+/g, ' ').trim();
+      const t = textOf(n, { skipButtons: words }).replace(/\s+/g, ' ').trim();
       if (t) out.push(t);
     }
   });
@@ -128,6 +136,6 @@ export function protectedTexts(html) {
 /** Rule 2: every protected text of the Pro render is visible in the simple render. */
 export function parityFaults(proHtml, simpleHtml) {
   const visible = textOf(parseHtml(simpleHtml), { skipPro: true }).replace(/\s+/g, ' ');
-  return protectedTexts(proHtml).filter((t) => !visible.includes(t))
+  return protectedTexts(proHtml, { words: true }).filter((t) => !visible.includes(t))
     .map((t) => `shown in Pro but not in the simple view: "${t.slice(0, 160)}"`);
 }

@@ -196,7 +196,7 @@ export function setupTile(data) {
   // ran (v3.77.0 screen review).
   const repoChecked = !!(data.repo && data.repo.exists !== false);
   const sub = [
-    tools.length ? tools.join(' · ') : 'no agent app yet',
+    tools.length ? tools.join(' · ') : 'no agent harness yet',
     comps ? plural(comps, 'computer') : null,
   ].filter(Boolean).join(' · ');
   if (n) return { value: n + ' to fix', sub, warn: true };
@@ -268,14 +268,20 @@ function toolRow(t, data) {
   const s = toolStatus(t, data);
   const parts = toolParts(t);
   const saved = t.saved && t.saved.at ? t.saved : null;
-  return '<tr class="mem-ws-row">'
+  // v4.2 (audit bug 3): the WHOLE row opens the harness — memory.js binds
+  // `data-setup-row` to press the row's own button, as the Handoffs rows do.
+  return '<tr class="mem-ws-row mem-setup-row" data-setup-row="mem-setup-tool-' + escapeHtml(t.id) + '">'
     + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="mem-setup-tool-' + escapeHtml(t.id) + '"'
       + ' data-setup-act="tool-open" data-tool="' + escapeHtml(t.id) + '"'
-      + ' aria-label="' + escapeHtml('Open the Setup evidence for ' + t.label) + '">'
+      + ' aria-label="' + escapeHtml('Open the setup steps for ' + t.label) + '">'
       + freshDot(saved && saved.at)
       + '<span class="mem-ws-slug">' + escapeHtml(t.label) + '</span>'
     + '</button></td>'
-    + '<td class="mem-setup-cell-status">' + st(s.state, s.word) + '</td>'
+    // v4.2 (audit bug 4): a harness that still needs something says where
+    // its steps are, on the row, so they can be found again after the reader closes.
+    + '<td class="mem-setup-cell-status">' + st(s.state, s.word)
+      + (s.status === 'ready' ? '' : '<span class="mem-setup-row-door">'
+        + btnG('tool-open', 'Open setup steps', ' data-tool="' + escapeHtml(t.id) + '"') + '</span>') + '</td>'
     + '<td class="mem-ws-cell-age">' + (saved ? ageSpan(saved.at, null) : '—') + '</td>'
     + '<td class="mem-ws-cell-machine">' + (saved && isStr(saved.machine)
       ? '<span class="mem-ws-machine">' + escapeHtml(saved.machine) + '</span>'
@@ -314,15 +320,15 @@ export function removableOf(t) {
 }
 
 /** The Tools fold's count line: how its parts travel, and what "ready" takes, in one sentence each. */
-export const TOOLS_COUNT_LINE = 'An agent app is ready once it is connected here, reads the Curator instructions and has saved this project from this computer — press one for its setup steps.';
+export const TOOLS_COUNT_LINE = 'A harness is ready once it is connected here, reads the agent instructions and has saved this project from this computer — press a row for its setup steps.';
 
 function toolsTable(data) {
   const tools = (data.tools || []).filter((t) => t && isStr(t.id));
   if (!tools.length) {
-    return '<p class="mem-setup-empty">No agent app has saved to this project or is set up on this computer.</p>';
+    return '<p class="mem-setup-empty">No agent harness has saved to this project or is set up on this computer.</p>';
   }
-  return '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table">'
-    + '<thead><tr><th scope="col">Tool</th><th scope="col">Status</th><th scope="col">Last saved</th>'
+  return '<div class="mem-ws-wrap mem-setup-wrap"><table class="mem-ws-table mem-setup-table">'
+    + '<thead><tr><th scope="col">Harness</th><th scope="col">Status</th><th scope="col">Last saved</th>'
     + '<th scope="col">Saved from</th><th scope="col">On this computer</th>'
     + '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th></tr></thead>'
     + '<tbody>' + tools.map((t) => toolRow(t, data)).join('') + '</tbody></table></div>'
@@ -332,7 +338,7 @@ function toolsTable(data) {
 function toolsMeta(data) {
   const tools = (data.tools || []).filter(Boolean);
   const fixN = tools.filter((t) => toolStatus(t, data).status === 'to-fix').length;
-  return [plural(tools.length, 'agent app'), fixN ? fixN + ' to fix' : null].filter(Boolean).join(' · ');
+  return [plural(tools.length, 'agent harness', 'agent harnesses'), fixN ? fixN + ' to fix' : null].filter(Boolean).join(' · ');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -381,7 +387,18 @@ export function toolMenuMeta(a) {
 }
 
 /** The menu's foot, the model menu's `.mr-foot` line. */
-export const TOOL_MENU_FOOT = 'Adding an agent app only tells Setup to check it on this computer — you connect it yourself.';
+export const TOOL_MENU_FOOT = 'Adds it to this list so Setup can guide you through it on this computer.';
+
+/** The gloss "agent harness" carries the first time a screen says it (owner, 2026-11-26). */
+export const HARNESS_GLOSS = 'the app your agent runs in — Claude Code, Codex, Cursor, Antigravity…';
+
+/** "Claude Code and Antigravity are already on the list." — said in the menu foot, so a missing name is explained. Pure. */
+export function alreadyListedLine(data) {
+  const names = ((data && data.tools) || []).map((t) => t && t.label).filter(isStr);
+  if (!names.length) return '';
+  const list = names.length <= 2 ? names.join(' and ') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  return list + (names.length === 1 ? ' is' : ' are') + ' already on the list.';
+}
 
 /**
  * ONE cfg, for both `renderListboxHtml` and `mountListbox` (memory.js calls
@@ -414,24 +431,25 @@ export function setupToolPickerCfg(data, busy = false) {
       html: listRowBodyHtml({ title: label, fact, meta }),
     };
   };
-  const options = [...known.map((a) => opt(a, 'Known agent apps')), ...other.map((a) => opt(a, 'Other'))];
+  const options = [...known.map((a) => opt(a, 'Known harnesses')), ...other.map((a) => opt(a, 'Other'))];
   if (custom) {
-    const label = isStr(custom.label) ? custom.label : 'Custom agent app…';
-    const meta = ['any other MCP client', 'you name it'];
+    // v4.2 vocabulary: the row says what it adds, whatever an older server calls it.
+    const label = 'Another harness…';
+    const meta = ['any other harness that speaks MCP', 'you name it'];
     options.push({ value: CUSTOM_TOOL_VALUE, label, group: 'Other', action: true,
       detail: meta.join(' · '), html: listRowBodyHtml({ title: label, meta }) });
   }
   return {
     id: 'mem-setup-add',
     value: null,
-    placeholder: '+ Add an agent app',
-    triggerText: busy ? 'Adding…' : '+ Add an agent app',
-    ariaLabel: 'Add an agent app to check on this computer',
+    placeholder: '+ Add an agent harness',
+    triggerText: busy ? 'Adding…' : '+ Add an agent harness',
+    ariaLabel: 'Add an agent harness to check on this computer',
     disabled: busy === true || options.length === 0,
     triggerClass: 'btn btn-secondary btn-xs',
     menuClass: 'lb-rich mr-menu',
     minWidth: 360,
-    footHtml: '<p class="mr-foot">' + escapeHtml(TOOL_MENU_FOOT) + '</p>',
+    footHtml: '<p class="mr-foot">' + escapeHtml([TOOL_MENU_FOOT, alreadyListedLine(data)].filter(Boolean).join(' ')) + '</p>',
     actionValues: custom ? [CUSTOM_TOOL_VALUE] : [],
     options,
   };
@@ -440,8 +458,8 @@ export function setupToolPickerCfg(data, busy = false) {
 /** The custom name's refusal, or null. The route's rule, said first here. Pure. */
 export function customToolNameError(name) {
   const n = String(name ?? '').trim();
-  if (!n) return 'Type the tool’s name.';
-  if (n.length > 40) return 'A tool name is at most 40 characters.';
+  if (!n) return 'Type the harness’s name.';
+  if (n.length > 40) return 'A harness name is at most 40 characters.';
   if (!CUSTOM_TOOL_RE.test(n)) return 'Use letters, digits, spaces, dots, dashes and underscores only.';
   return null;
 }
@@ -449,9 +467,9 @@ export function customToolNameError(name) {
 function customField(ui) {
   if (!ui.customOpen) return '';
   return '<div class="mem-setup-path-row mem-setup-custom">'
-    + '<label class="visually-hidden" for="mem-setup-custom-input">The custom tool’s name</label>'
+    + '<label class="visually-hidden" for="mem-setup-custom-input">The harness’s name</label>'
     + '<input type="text" id="mem-setup-custom-input" class="mem-setup-input" spellcheck="false" autocomplete="off" maxlength="40"'
-      + ' placeholder="The tool’s name, e.g. My Harness" value="' + escapeHtml(ui.customDraft || '') + '">'
+      + ' placeholder="The harness’s name, e.g. My Harness" value="' + escapeHtml(ui.customDraft || '') + '">'
     + '<button type="button" class="btn btn-secondary btn-xs" data-setup-act="add-custom">Add</button>'
     + '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="custom-cancel">Cancel</button>'
     + '</div>'
@@ -497,7 +515,8 @@ function fixButton(fx, f, repo, primary) {
   const label = (dflt) => (isStr(fx.label) && !/^Open Tools on this /.test(fx.label) ? fx.label : dflt);
   switch (fx.kind) {
     case 'copy-block':
-      return b('copy-block', label('Copy instructions'));
+      // One name for one thing (v4.2): the header's "Copy agent instructions".
+      return b('copy-block', fx.label === 'Copy instructions' ? 'Copy agent instructions' : label('Copy agent instructions'));
     case 'copy-marker':
       return b('copy-marker', label('Copy marker line'));
     case 'copy-command': {
@@ -515,8 +534,11 @@ function fixButton(fx, f, repo, primary) {
       const href = isStr(fx.href) && SKILL_HREF_RE.test(fx.href) ? fx.href
         : (isStr(fx.skill) && SKILL_NAME_RE.test(fx.skill) ? '/api/setup/skills/' + fx.skill + '.zip' : null);
       if (!href) return '';
+      // v4.2 (audit bug 5): the button names the OUTCOME, not the file.
+      const skillName = baseName(href).replace(/\.zip$/, '');
+      const word = !isStr(fx.label) || /^Download .*\.zip$/.test(fx.label) ? 'Get the new ' + skillName + ' skill (.zip)' : fx.label;
       return '<a class="btn ' + (primary ? 'btn-secondary' : 'btn-ghost') + ' btn-xs" href="' + escapeHtml(href) + '" download>'
-        + escapeHtml(label('Download ' + baseName(href))) + '</a>';
+        + escapeHtml(word) + '</a>';
     }
     case 'sync':
       return b('sync', label('Sync now'));
@@ -588,16 +610,45 @@ function noteHtml(iconSvg, line1Html, line2Html, buttonsHtml, cls = '', attrs = 
     + '</div>';
 }
 
-/** One to-fix item as a note. Pure. */
-function fixNote(f, data, attrs = '') {
-  return noteHtml(ICON_TRI, withPaths(String(f.text || '')), isStr(f.detail) ? withPaths(f.detail) : '',
-    fixButtons(f, data && data.repo), 'mem-setup-fix-note', attrs);
+/**
+ * WHAT A SKILL IS (v4.2, audit bug 5): the outdated-skill fix said "download
+ * the .zip" without saying what a skill is or why an old one matters. Said
+ * wherever a skill is asked for: the to-fix line and step 2 of the guide.
+ */
+export const SKILL_GLOSS = 'Skills are short instruction packs a harness loads when a task calls for them: '
+  + 'my-curator teaches it how to read and write your wiki, curator-continuity when to save a handoff. '
+  + 'A skill never updates itself, so an old copy can miss a rule added since.';
+
+/** A to-fix item's line 2, with the skill gloss in front of a skills item's own words. Pure. */
+function fixDetailHtml(f) {
+  const own = isStr(f.detail) ? withPaths(f.detail) : '';
+  if (f.kind !== 'skills') return own;
+  return escapeHtml(SKILL_GLOSS) + (own ? ' ' + own : '');
 }
 
-/** Every to-fix item as one loud note with its own fix. Pure. */
-export function toFixNotes(data) {
+/** The to-fix item's harness, when it names one that is on the list. */
+function harnessOfItem(f, data) {
+  return f && isStr(f.tool) ? ((data && data.tools) || []).find((t) => t && t.id === f.tool) || null : null;
+}
+
+/**
+ * One to-fix item as a note. Pure. `withSteps`: a note about one harness, on
+ * the PAGE, carries a door to that harness's setup steps (v4.2, audit bug 4:
+ * the reader shows the same fix in context, and nothing led back to it).
+ */
+function fixNote(f, data, attrs = '', withSteps = false) {
+  const t = withSteps ? harnessOfItem(f, data) : null;
+  const key = t ? stepKeyOfItem(f) : null;
+  const steps = t ? btnG('tool-open', 'Show its setup steps', ' data-tool="' + escapeHtml(t.id) + '"'
+    + (key ? ' data-step="' + key + '"' : '')) : '';
+  return noteHtml(ICON_TRI, withPaths(String(f.text || '')), fixDetailHtml(f),
+    fixButtons(f, data && data.repo) + steps, 'mem-setup-fix-note', attrs);
+}
+
+/** Every to-fix item as one loud note with its own fix (Pro, and the page's project-wide lines). Pure. */
+export function toFixNotes(data, only = null) {
   const toFix = Array.isArray(data && data.toFix) ? data.toFix.filter(Boolean) : [];
-  return toFix.map((f, i) => fixNote(f, data, ' data-setup-fix="' + i + '"')).join('');
+  return toFix.map((f, i) => (only && !only(f) ? '' : fixNote(f, data, ' data-setup-fix="' + i + '"', true))).join('');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -724,7 +775,7 @@ function pathRow(data, ui, draft) {
 function repoNotSetBody(data, ui) {
   const cands = repoCandidatesOf(data);
   const table = cands.length
-    ? '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
+    ? '<div class="mem-ws-wrap mem-setup-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
       + '<th scope="col">Found on this computer</th><th scope="col">Why</th>'
       + '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>'
       + cands.map((c) => '<tr class="mem-ws-row">'
@@ -793,10 +844,10 @@ function repoSetBody(data, ui) {
   const r = data.repo;
   const rows = repoFileRows(data);
   const table = r.exists === false ? ''
-    : '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
+    : '<div class="mem-ws-wrap mem-setup-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
       + '<th scope="col">File</th><th scope="col">State</th><th scope="col">Read by</th>'
       + '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>'
-      + rows.map((x) => '<tr class="mem-ws-row">'
+      + rows.map((x) => '<tr class="mem-ws-row mem-setup-row" data-setup-row="' + fileRowId(x.name) + '">'
         // v3.79.0 (contract §C): the row opens the file in the reader.
         + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="' + fileRowId(x.name) + '"'
           + ' data-setup-act="file-open" data-name="' + escapeHtml(x.name) + '"'
@@ -860,13 +911,13 @@ function computersBody(data) {
   const groups = physicalOf(data);
   const sync = data.sync || {};
   const table = groups.length
-    ? '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
-      + '<th scope="col">Computer</th><th scope="col">Tools that saved</th><th scope="col">Newest save</th>'
+    ? '<div class="mem-ws-wrap mem-setup-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
+      + '<th scope="col">Computer</th><th scope="col">Harnesses that saved</th><th scope="col">Newest save</th>'
       + '<th scope="col">Curator</th><th scope="col">Sync</th></tr></thead><tbody>'
       + groups.map((g, idx) => {
         const line = installsLine(g);
         // v3.79.0 (contract §C): the row opens the computer in the reader.
-        return '<tr class="mem-ws-row">'
+        return '<tr class="mem-ws-row mem-setup-row" data-setup-row="mem-setup-comp-' + idx + '">'
           + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="mem-setup-comp-' + idx + '"'
             + ' data-setup-act="computer-open" data-computer="' + idx + '"'
             + ' aria-label="' + escapeHtml('Open what ' + g.name + ' saved, in the reader') + '">' + freshDot(g.at)
@@ -908,6 +959,138 @@ function computersMeta(data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// THE SIMPLE VIEW (v4.2, Pro off) — one row per harness, one status, one action
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// DESIGN-context-redesign §3 and §7.1–7.4. The page shows the ANSWER ("is this
+// harness ready, and if not, what is my next step?"); the reader shows the
+// evidence. Nothing is hidden that Pro shows as a warning: a to-fix line that
+// names a harness becomes that harness's row — its status, its words in
+// full and its first fix button — and every other button it carries is one
+// press away, in the harness's reader (the same in both modes). A to-fix
+// line that names no harness stays a loud note above the list, as in Pro.
+
+/** Guide states that still leave work to do on this computer. */
+const LEFT_STATES = ['todo', 'fix', 'wait'];
+
+/**
+ * One harness row's model: `{status, word, state, action, lines}`. Pure.
+ *   fix       a to-fix line names it      → "Needs a fix" + that line's first fix
+ *   not-here  saved from another computer, not connected here → "Not on this computer" + Set up here
+ *   steps     steps left, nothing broken  → "N steps left" + Continue setup
+ *   ready     nothing left                → "Ready"
+ */
+export function harnessRowModel(t, data) {
+  const items = ((data && data.toFix) || []).filter((f) => f && f.tool === t.id);
+  const { steps } = toolGuideSteps(t, data);
+  const left = steps.filter((x) => LEFT_STATES.includes(x.state));
+  const sv = t.saved && isStr(t.saved.at) ? t.saved : null;
+  const id = ' data-tool="' + escapeHtml(t.id) + '"';
+  const savedLine = sv
+    ? 'saved ' + ageSpan(sv.at, null) + ' ' + escapeHtml(sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? sv.machine : 'another computer'))
+    : escapeHtml('not saved yet');
+  const unmeasured = t.measured === false || ((data && data.addable) || []).some((a) => a && a.id === t.id && a.measured === false);
+  const untested = unmeasured ? escapeHtml('The Curator hasn’t tested this harness, so check its own settings too.') : '';
+  if (items.length) {
+    const f = items[0];
+    let action = '';
+    for (const fx of fixListOf(f)) { action = fixButton(fx, f, data && data.repo, true); if (action) break; }
+    if (!action) action = btn2('tool-open', 'Show the fix', id + (stepKeyOfItem(f) ? ' data-step="' + stepKeyOfItem(f) + '"' : ''));
+    const rest = left.filter((x) => x.state !== 'fix').length;
+    return {
+      status: 'fix', word: 'Needs a fix', state: 'fix', action,
+      // EVERY to-fix line about it, in its own words, IN FULL — the same
+      // sentences Pro's loud lines say (the parity test reads them). The
+      // first one's first fix is the row's action; every other fix is one
+      // press away, in its step in the reader.
+      fixLines: items.length,
+      lines: [...items.map((x) => { const d = fixDetailHtml(x); return withPaths(String(x.text || '')) + (d ? ' ' + d : ''); }),
+        [savedLine, items.length > 1 ? escapeHtml('the other fixes are in its steps') : null,
+          rest ? escapeHtml('then ' + plural(rest, 'step') + ' left') : null].filter(Boolean).join(' · '),
+        untested].filter(Boolean),
+    };
+  }
+  const mcpDone = steps[0] && steps[0].state === 'done';
+  if (sv && !sv.thisMachine && !mcpDone) {
+    return { status: 'not-here', word: 'Not on this computer', state: 'none',
+      action: btn2('tool-open', 'Set up here', id + ' data-step="mcp"'), lines: [savedLine, untested].filter(Boolean) };
+  }
+  if (left.length) {
+    return { status: 'steps', word: plural(left.length, 'step') + ' left', state: 'none',
+      action: btn2('tool-open', 'Continue setup', id + ' data-step="' + left[0].key + '"'),
+      lines: [escapeHtml('Next: ' + left[0].title.charAt(0).toLowerCase() + left[0].title.slice(1)) + ' · ' + savedLine, untested].filter(Boolean) };
+  }
+  return { status: 'ready', word: 'Ready', state: 'ok', action: '', lines: [savedLine, untested].filter(Boolean) };
+}
+
+/** One harness, one row: the whole row opens its reader (memory.js binds `data-setup-row`). Pure. */
+function harnessRow(t, data) {
+  const m = harnessRowModel(t, data);
+  const sv = t.saved && isStr(t.saved.at) ? t.saved : null;
+  const rowId = 'mem-setup-tool-' + t.id;
+  return '<li class="mem-hr mem-setup-row" data-setup-row="' + escapeHtml(rowId) + '" data-harness-status="' + m.status + '">'
+    + '<button type="button" class="mem-hr-open" id="' + escapeHtml(rowId) + '" data-setup-act="tool-open" data-tool="' + escapeHtml(t.id) + '"'
+      + ' aria-label="' + escapeHtml(t.label + ', ' + m.word.toLowerCase() + ' — open its setup steps') + '">'
+      + freshDot(sv && sv.at) + '<span class="mem-hr-name">' + escapeHtml(t.label) + '</span></button>'
+    + '<span class="mem-hr-status">' + st(m.state, m.word) + '</span>'
+    + '<span class="mem-hr-act">' + m.action + '</span>'
+    + '<span class="mem-hr-chev" aria-hidden="true">' + ICON_CHEV + '</span>'
+    + '<span class="mem-hr-lines">' + m.lines.map((l, i) => '<span class="' + (i < (m.fixLines || 0) ? 'mem-hr-fix' : 'mem-hr-sub') + '">' + l + '</span>').join('') + '</span>'
+    + '</li>';
+}
+
+/** The harness list, or the empty state that says what a harness is (§7.1). Pure. */
+export function harnessList(data) {
+  const tools = ((data && data.tools) || []).filter((t) => t && isStr(t.id));
+  if (!tools.length) {
+    return '<p class="mem-setup-empty mem-hr-empty">' + escapeHtml('No agent harness on this project yet. A harness is '
+      + HARNESS_GLOSS + ' Add the one you use; Setup walks you through the four steps.') + '</p>';
+  }
+  return '<ul class="mem-hr-list" aria-label="Agent harnesses for this project">' + tools.map((t) => harnessRow(t, data)).join('') + '</ul>';
+}
+
+/** "N files here are not on GitHub yet" + Sync now — an outcome, so on screen in both modes (§3.5, D9). Pure. */
+export function unsyncedLine(data) {
+  const sync = (data && data.sync) || {};
+  if (!sync.configured || !Number.isInteger(sync.pending) || sync.pending <= 0) return '';
+  return noteHtml(ICON_CIRC, escapeHtml(plural(sync.pending, 'file') + ' here ' + (sync.pending === 1 ? 'is' : 'are') + ' not on GitHub yet, across all domains.'),
+    escapeHtml('Your other computers see this project’s newest handoff only after you Sync now here.'),
+    btn2('sync', 'Sync now'), 'mem-setup-unsynced');
+}
+
+/** The three travel routes, said ONCE, at the foot of the step (§3.5). Pure. */
+export function routeLineHtml(data) {
+  const sync = (data && data.sync) || {};
+  const g = (key) => '<span class="mem-setup-route-glyph" data-travels="' + key + '">' + SVG(GLYPH[key], 12) + '</span>';
+  const knowledge = sync.configured
+    ? 'Handoffs, the brief and Documents travel by Sync now'
+    : 'Handoffs, the brief and Documents travel by Personal Sync, which is not set up on this computer';
+  const item = (key, words) => '<span class="mem-setup-route-item">' + g(key) + escapeHtml(words) + '</span>';
+  return '<p class="mem-setup-route">'
+    + item('personal-sync', knowledge)
+    + item('project-git', 'the agent instructions and .curator-project by your project’s git')
+    + item('this-computer', 'steps 1 and 2 are set up on each computer.')
+    + (sync.configured ? '' : btnG('open-sync', 'Open Sync'))
+    + '</p>';
+}
+
+/** What the "More in Pro" door names — only what is really behind it. Pure. */
+export function setupProDoorWhat(data) {
+  const tools = ((data && data.tools) || []).filter(Boolean);
+  return [tools.length ? 'every check per harness' : null, 'the repository files', 'your computers']
+    .filter(Boolean).join(', ');
+}
+
+/** The repository line in the simple view: the quiet question when unset, the field when asked for. Pure. */
+function simpleRepo(data, ui) {
+  const field = ui.forceRepoOpen || ui.editRepo
+    ? pathRow(data, ui, ui.repoDraft ?? (data.repo ? data.repo.path : ''))
+      + (ui.pickUnavailable ? '<p class="mem-setup-empty">' + escapeHtml(ui.pickUnavailable) + '</p>' : '')
+    : '';
+  return (data.repo ? '' : repoNotSetNote(data)) + field;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // THE STEP
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -923,10 +1106,19 @@ function fold(key, title, meta, body, open) {
     + '</details>';
 }
 
+/** The picker row: "+ Add an agent harness", glossed beside it (the word's first use on the step). */
+function pickerRow(ui) {
+  return '<div class="mem-k-pick mem-setup-pick">' + (ui.pickerHtml || '')
+    + '<span class="mem-setup-gloss">' + escapeHtml('An agent harness is ' + HARNESS_GLOSS) + '</span></div>' + customField(ui);
+}
+
 /**
  * The step's body. `s` is `{data, error, loading}`; `ui` carries the fold
- * state, the repository field, the custom-tool field and the picker's markup
- * (`pickerHtml`, rendered by memory.js from `setupToolPickerCfg`).
+ * state, the repository field, the custom-tool field, the picker's markup
+ * (`pickerHtml`, rendered by memory.js from `setupToolPickerCfg`), and — v4.2
+ * — the mode: `ui.pro` (the view passes `isPro()`; this module never reads a
+ * global) and `ui.moreInPro`, shared/pro.js's `moreInProLine` (passed in, so
+ * this module stays DOM-free and importable in Node).
  */
 export function renderSetupBody(s, ui = {}) {
   const data = s && s.data;
@@ -939,13 +1131,26 @@ export function renderSetupBody(s, ui = {}) {
     ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + (/[.!?]$/.test(String(s.error)) ? '' : '.')),
       'What is shown is the reading before it.', btnG('check', 'Re-check')) + errorDetailHtml(s.error)
     : '';
+  if (!ui.pro) {
+    const door = typeof ui.moreInPro === 'function' ? ui.moreInPro(setupProDoorWhat(data)) : '';
+    return '<div class="mem-ss-stack mem-setup-stack mem-setup-simple">'
+      + recheckErr
+      // A to-fix line that names no harness on the list: a loud note, as in Pro.
+      + toFixNotes(data, (f) => !harnessOfItem(f, data))
+      + harnessList(data)
+      + pickerRow(ui)
+      + simpleRepo(data, ui)
+      + unsyncedLine(data)
+      + routeLineHtml(data)
+      + door
+      + '</div>';
+  }
   const repoNote = data.repo ? '' : repoNotSetNote(data);
-  const picker = '<div class="mem-k-pick mem-setup-pick">' + (ui.pickerHtml || '') + '</div>' + customField(ui);
   const repoBody = data.repo ? repoSetBody(data, ui) : repoNotSetBody(data, ui);
   return '<div class="mem-ss-stack mem-setup-stack">'
     + recheckErr + toFixNotes(data) + repoNote
-    + picker
-    + fold('setup-tools', 'Agent apps', toolsMeta(data), toolsTable(data), !!folds['setup-tools'])
+    + pickerRow(ui)
+    + fold('setup-tools', 'Agent harnesses', toolsMeta(data), toolsTable(data), !!folds['setup-tools'])
     + fold('setup-repo', 'Repository on this computer', repoMeta(data), repoBody,
       !!folds['setup-repo'] || !!ui.forceRepoOpen || !!ui.editRepo)
     + fold('setup-computers', 'Computers', computersMeta(data), computersBody(data), !!folds['setup-computers'])
@@ -969,11 +1174,33 @@ export function setupHeadHtml(s) {
  * The evidence sections. v3.78.0 sends `evidence: [{heading, lines, reveal?}]`;
  * for a v3.77.0 server they are built from the row's own cells. Pure.
  */
+// The evidence headings the backend writes, in the page's words (v4.2).
+const EVIDENCE_HEADINGS = { 'MCP bridge': 'Connection (MCP)', 'Instruction block': 'Agent instructions' };
+
+const ISO_AT_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/g;
+
+/**
+ * ONE EVIDENCE LINE, AS A PERSON READS IT (v4.2, audit bug 10). The backend's
+ * lines carry what the maintainer measured, as he wrote it down: "on the
+ * maintainer's Mac on 2026-09-25", "(2026-09-26)", and a save's raw ISO time.
+ * A timestamp becomes its age ("2 hours ago"); a bare measurement date and the
+ * maintainer's name go; the fact itself stays. Pure (the clock is `now`).
+ */
+export function plainEvidenceLine(line, now = Date.now()) {
+  let out = String(line ?? '');
+  out = out.replace(ISO_AT_RE, (iso) => ageWordsFor(iso, now, null) || iso);
+  out = out.replace(/\s+on the maintainer['’]s Mac(?: on \d{4}-\d{2}-\d{2})?/gi, ' when The Curator was tested');
+  out = out.replace(/\s*\((?:observed,?\s*)?\d{4}-\d{2}-\d{2}\)/g, '');
+  out = out.replace(/\s+on \d{4}-\d{2}-\d{2}\b/g, '');
+  out = out.replace(/\bthe maintainer['’]s\b/gi, 'a tested');
+  return out.replace(/\s{2,}/g, ' ').trim();
+}
+
 export function toolEvidence(t) {
   if (Array.isArray(t && t.evidence) && t.evidence.length) {
     return t.evidence.filter((e) => e && isStr(e.heading)).map((e) => ({
-      heading: e.heading,
-      lines: (Array.isArray(e.lines) ? e.lines : []).filter(isStr),
+      heading: EVIDENCE_HEADINGS[e.heading] || e.heading,
+      lines: (Array.isArray(e.lines) ? e.lines : []).filter(isStr).map((l) => plainEvidenceLine(l)),
       reveal: isStr(e.reveal) ? e.reveal : null,
     }));
   }
@@ -985,10 +1212,10 @@ export function toolEvidence(t) {
       [isStr(sv.machine) ? 'from ' + sv.machine + (sv.thisMachine ? ' (this computer)' : '') : null,
         isStr(sv.scope) ? 'as ' + sv.scope + (sv.wrongScope ? ' — not its own name' : '') : null].filter(Boolean).join(' · ')].filter(isStr)
     : ['no save from any computer'] });
-  out.push({ heading: 'MCP', reveal: null, lines: cellLines(t && t.bridge) });
+  out.push({ heading: 'Connection (MCP)', reveal: null, lines: cellLines(t && t.bridge) });
   out.push({ heading: 'Skills', reveal: null, lines: cellLines(t && t.skills) });
   const b = t && t.block;
-  out.push({ heading: 'Instruction block', reveal: null, lines: [...cellLines(b),
+  out.push({ heading: 'Agent instructions', reveal: null, lines: [...cellLines(b),
     ...((b && b.files) || []).filter((f) => f && isStr(f.name)).map((f) => f.name + ': ' + (!f.present ? 'no such file' : !f.hasBlock ? 'no Curator block' : f.current ? 'block current' : 'block outdated'))] });
   const h = t && t.hooks;
   const ev = h && h.evidence;
@@ -1036,6 +1263,12 @@ const STEP_KINDS = {
   block: (k) => /^block-/.test(k),
   save: (k) => k === 'wrong-scope',
 };
+
+/** The guide step a to-fix item belongs to ('mcp' · 'skills' · 'block' · 'save'), or null. Pure. */
+export function stepKeyOfItem(f) {
+  const k = String((f && f.kind) || '');
+  return Object.keys(STEP_KINDS).find((key) => STEP_KINDS[key](k)) || null;
+}
 
 /** This app's own skill downloads for a tool (a payload href is data). */
 function zipLinksFor(t) {
@@ -1109,7 +1342,7 @@ export function toolGuideSteps(t, data) {
         doors += btnG('reveal', 'Reveal ' + baseName(target.file), ' data-path="' + escapeHtml(target.file) + '"');
       }
     }
-    steps.push({ key: 'mcp', title: 'Connect The Curator’s MCP', state, html, doors });
+    steps.push({ key: 'mcp', title: 'Connect it to The Curator', when: 'once per computer, for every project', state, html, doors });
   }
 
   // ── 2 · SKILLS ───────────────────────────────────────────────────────────
@@ -1122,6 +1355,8 @@ export function toolGuideSteps(t, data) {
     if (got.length) {
       state = 'fix';
       ({ html, doors } = fromItems(got));
+      // v4.2 (audit bug 5): what a skill is, said where one is asked for.
+      html = p(SKILL_GLOSS) + html;
     } else if (parts.skills.state === 'ok') {
       state = 'done';
       html = p('Both skills are installed and current (' + parts.skills.word + ').');
@@ -1131,17 +1366,17 @@ export function toolGuideSteps(t, data) {
       doors = zipLinksFor(t);
     } else if (tree && tree.verified && tree.path) {
       state = 'todo';
-      html = p('Unzip both into ' + tree.path + ' — one folder per skill — then start a new ' + label + ' session.');
+      html = p(SKILL_GLOSS) + p('Unzip both into ' + tree.path + ' — one folder per skill — then start a new ' + label + ' session.');
       doors = zipLinksFor(t);
     } else if (tree && tree.verified && !tree.path) {
       state = 'skip';
-      html = p(label + ' has no skills support — skip this step. The instructions in step 3 carry what it needs.');
+      html = p(label + ' has no skills support — skip this step. The agent instructions in step 3 carry what it needs.');
     } else {
       state = 'optional';
-      html = p('Whether ' + label + ' reads skills is not known. If it does, install both the way it documents; if not, skip this step.');
+      html = p(SKILL_GLOSS) + p('Whether ' + label + ' reads skills is not known. If it does, install both the way it documents; if not, skip this step.');
       doors = zipLinksFor(t);
     }
-    steps.push({ key: 'skills', title: 'Install the two skills', state, html, doors });
+    steps.push({ key: 'skills', title: 'Teach it how to use The Curator', when: 'once per computer, for every project', state, html, doors });
   }
 
   // ── 3 · THE INSTRUCTIONS ─────────────────────────────────────────────────
@@ -1158,25 +1393,27 @@ export function toolGuideSteps(t, data) {
     } else if (parts.block.state === 'ok') {
       state = 'done';
       const cur = ((t.block && t.block.files) || []).find((f) => f && f.current && f.hasBlock && isStr(f.name));
-      html = p('The Curator instructions are current in ' + (cur ? cur.name : fileList(names) || file) + '.');
+      html = p('The agent instructions are current in ' + (cur ? cur.name : fileList(names) || file) + '.');
+      if (repo) doors = btnG('change-repo', 'Change folder');
     } else if (!names.length) {
       state = 'optional';
-      html = p(label + ' reads no instruction file The Curator knows — it keeps its own rules. Paste the Curator instructions into them, or skip this step.');
-      doors = btn2('copy-block', 'Copy instructions');
+      html = p(label + ' reads no instruction file The Curator knows — it keeps its own rules. Paste the agent instructions into them, or skip this step.');
+      doors = btn2('copy-block', 'Copy agent instructions');
     } else if (parts.block.state === 'not-checked' || !repo) {
       state = 'wait';
-      html = p(label + ' reads ' + fileList(names) + '. Paste the Curator instructions at the very top of ' + file
+      html = p(label + ' reads ' + fileList(names) + '. Paste the agent instructions at the very top of ' + file
         + ' in your project’s top folder, then commit and push it so your other computers get it too.')
         + p('Setup checks the file once you set where the project’s code is on this computer.');
-      doors = btn2('copy-block', 'Copy instructions') + btnG('choose-repo', 'Set the folder');
+      doors = btn2('copy-block', 'Copy agent instructions') + btnG('choose-repo', 'Set the folder');
     } else {
       state = 'todo';
       html = p(label + ' reads ' + fileList(names) + (t.custom === true ? ' (assumed — most tools do)' : '')
-        + '. Paste the Curator instructions at the very top of ' + file + ' in ' + repoWhere + ', then commit and push it so your other computers get it too.');
+        + '. Paste the agent instructions at the very top of ' + file + ' in ' + repoWhere + ', then commit and push it so your other computers get it too.');
       const fx = Array.isArray(t.instructionFixes) ? t.instructionFixes : [];
-      doors = fx.length ? fixButtons({ fixes: fx, tool: t.id }, repo) : btn2('copy-block', 'Copy instructions');
+      doors = (fx.length ? fixButtons({ fixes: fx, tool: t.id }, repo) : btn2('copy-block', 'Copy agent instructions'))
+        + btnG('change-repo', 'Change folder');
     }
-    steps.push({ key: 'block', title: 'Put the Curator instructions in the file it reads', state, html, doors });
+    steps.push({ key: 'block', title: 'Point it at this project', when: 'once per project, carried by its git', state, html, doors });
   }
 
   // ── 4 · THE FIRST SAVE ───────────────────────────────────────────────────
@@ -1202,7 +1439,7 @@ export function toolGuideSteps(t, data) {
       state = 'todo';
       html = p(how);
     }
-    steps.push({ key: 'save', title: 'Let it save once, from this computer', state, html, doors });
+    steps.push({ key: 'save', title: 'Let it save once, from this computer', when: 'once per computer', state, html, doors });
   }
   return { steps, placed };
 }
@@ -1221,10 +1458,11 @@ export function toolGuide(t, data) {
     + '<ol class="mem-setup-steps">'
     + steps.map((x, i) => {
       const [cls, word] = GUIDE_MARKS[x.state] || GUIDE_MARKS.todo;
-      return '<li class="mem-setup-gstep" data-guide-step="' + x.key + '" data-guide-state="' + x.state + '">'
+      return '<li class="mem-setup-gstep" id="mem-setup-gstep-' + x.key + '" data-guide-step="' + x.key + '" data-guide-state="' + x.state + '">'
         + '<span class="settings-block-num mem-setup-gnum" aria-hidden="true">' + (i + 1) + '</span>'
         + '<div class="mem-setup-gbody">'
-        + '<div class="mem-setup-ghead"><span class="mem-setup-gtitle">' + escapeHtml(x.title) + '</span>' + st(cls, word) + '</div>'
+        + '<div class="mem-setup-ghead"><span class="mem-setup-gtitle">' + escapeHtml(x.title) + '</span>' + st(cls, word)
+          + (x.when ? '<span class="mem-setup-gwhen">' + escapeHtml(x.when) + '</span>' : '') + '</div>'
         + x.html
         + (x.doors ? '<span class="mem-k-doors mem-setup-gdoors">' + x.doors + '</span>' : '')
         + '</div></li>';
@@ -1243,7 +1481,7 @@ function removeSection(t) {
   const label = t.label || t.id;
   if (r.ok) {
     return '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">On this computer’s list</h3>'
-      + '<p class="mem-setup-ev-p">' + escapeHtml('You added ' + label + ' here. Removing it only stops Setup checking it on this computer — nothing is uninstalled, and “+ Add an agent app” brings it back.') + '</p>'
+      + '<p class="mem-setup-ev-p">' + escapeHtml('You added ' + label + ' here. Removing it only stops Setup checking it on this computer — nothing is uninstalled, and “+ Add an agent harness” brings it back.') + '</p>'
       + '<span class="mem-k-doors">' + btnG('remove-tool', 'Remove from this list', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>';
   }
   if (t.userAdded !== true) return '';
@@ -1260,65 +1498,59 @@ function removeSection(t) {
  * wiki page, and "BACKLINKS · 0" under it would be a reading about nothing.
  * Pure.
  */
-export function toolReaderContent(data, toolId) {
+export function toolReaderContent(data, toolId, opts = {}) {
   const t = ((data && data.tools) || []).find((x) => x && x.id === toolId);
   if (!t) return null;
   const s = toolStatus(t, data);
-  // v3.80.0: a tool that is not ready opens on its numbered SETUP GUIDE; the
-  // guide carries the snippet, the instructions, the skills and each to-fix
-  // line it belongs to, so those are not said a second time below it.
-  const guide = s.status === 'ready' ? null : toolGuide(t, data);
-  const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id && !(guide && guide.placed.has(f)));
+  // v3.80.0: the reader opens on the numbered SETUP GUIDE; v4.2: for every
+  // harness, a ready one too (its four steps then read "done", one line
+  // each) — one layout, never a second one for "ready". The guide carries the
+  // MCP entry, the agent instructions, the skills and each to-fix line it
+  // belongs to, so those are not said a second time below it.
+  const guide = toolGuide(t, data);
+  const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id && !guide.placed.has(f));
   const notes = fixes.map((f) => fixNote(f, data)).join('');
   const ev = toolEvidence(t).map((e) => '<section class="mem-setup-ev">'
     + '<h3 class="mem-setup-ev-h">' + escapeHtml(e.heading) + '</h3>'
     + '<ul class="mem-setup-ev-lines">' + e.lines.map((l) => '<li>' + withPaths(l) + '</li>').join('') + '</ul>'
     + (e.reveal ? '<span class="mem-k-doors">' + btnG('reveal', 'Reveal ' + baseName(e.reveal), ' data-path="' + escapeHtml(e.reveal) + '"') + '</span>' : '')
     + '</section>').join('');
-  const parts = toolParts(t);
-  // Amendment A2: known rows carry their own entry too. It is offered where it
-  // is needed — a custom tool, or a tool whose MCP part is not ok here.
-  const snip = t.mcpSnippet && isStr(t.mcpSnippet.text) && (t.custom === true || parts.mcp.state !== 'ok') ? t.mcpSnippet : null;
-  const unmeasured = t.measured === false
-    || ((data.addable || []).some((a) => a && a.id === t.id && a.measured === false));
-  const snippet = snip
-    ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">The Curator’s MCP entry</h3>'
-      + '<p class="mem-setup-ev-p">' + escapeHtml(
-        // Amendment A1: dsh's user layer is a PATCH file; cordis.yml is rewritten on every boot.
-        t.id === 'dsh' ? 'Paste into ~/.dsh/cordis.patch.yml (merge — do not copy over the file); never cordis.yml.'
-          : unmeasured ? 'Config location not measured — copy the entry by hand into ' + t.label + '’s own config.'
-            : 'Paste this into ' + t.label + '’s MCP config.') + '</p>'
-      + '<pre class="mem-setup-snippet"><code>' + escapeHtml(snip.text) + '</code></pre>'
-      + '<span class="mem-k-doors">' + btn2('copy-snippet', 'Copy MCP entry', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>'
-    : '';
-  const instr = isStr(t.instructionFile)
-    ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Instruction file</h3><p class="mem-setup-ev-p">'
-      + escapeHtml(t.label + ' reads ' + t.instructionFile + ' at the top of the repository. Paste the Curator instructions at its very top.')
-      + '</p><span class="mem-k-doors">' + btn2('copy-block', 'Copy instructions') + '</span></section>'
-    : '';
-  const zipLinks = Array.isArray(t.skillZips) && t.skillZips.some((z) => z && isStr(z.href) && z.href.startsWith('/api/setup/skills/'))
-    ? t.skillZips.filter((z) => z && isStr(z.href) && z.href.startsWith('/api/setup/skills/'))
-      .map((z) => '<a class="btn btn-ghost btn-xs" href="' + escapeHtml(z.href) + '" download>' + escapeHtml(isStr(z.name) ? z.name : baseName(z.href)) + '</a>').join('')
-    : ZIPS;
-  const zips = t.custom === true || parts.skills.state === 'cant-check' || parts.skills.state === 'fix'
-    ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Skill downloads</h3><p class="mem-setup-ev-p">The two skills this app carries, to install in the tool’s own skills folder.</p>'
-      + '<span class="mem-k-doors">' + zipLinks + '</span></section>'
+  // "What Setup read": the evidence, behind ONE fold — open with Pro on (the
+  // only difference between the two modes' readers). Nothing in it is a
+  // warning: every to-fix line is in a step above or in `notes`.
+  const evFold = ev
+    ? '<details class="mem-fold mem-setup-evfold"' + (opts.pro ? ' open' : '') + '>'
+      + '<summary class="mem-fold-summary">' + ICON_CHEV + '<span>What Setup read</span>'
+      + '<span class="mem-fold-meta">' + escapeHtml('files on this computer'
+        + (isStr(data.checkedAt) ? ', ' + (ageWordsFor(data.checkedAt, Date.now(), 'checked') || '') : '')) + '</span></summary>'
+      + '<div class="mem-fold-body mem-setup-evbody">' + ev + '</div></details>'
     : '';
   const bodyHtml = '<div class="mem-setup-reader">'
     + '<p class="mem-setup-ev-status">' + st(s.state, s.word) + '</p>'
+    + whereItStands(t)
     + notes
-    + (guide ? guide.html + ev : ev + snippet + instr + zips)
+    + guide.html
     + removeSection(t)
+    + evFold
     + '<p class="mem-setup-ev-foot">Last saved is this project’s record from every computer. Everything else was read from files on this computer' + (isStr(data.checkedAt) ? ', ' + escapeHtml(ageWordsFor(data.checkedAt, Date.now(), null) || '') : '') + '.</p>'
     + '</div>';
   return {
     slug: 'Setup › ' + t.label,
     title: t.label,
-    typeLabel: 'agent app',
+    typeLabel: 'agent harness',
     bodyHtml,
     hideBacklinks: true,
     returnFocusTo: 'mem-setup-tool-' + t.id,
   };
+}
+
+/** "Last saved 2 hours ago on this Mac, under “antigravity”." — the reader's first fact. Pure. */
+function whereItStands(t) {
+  const sv = t && t.saved && isStr(t.saved.at) ? t.saved : null;
+  if (!sv) return '<p class="mem-setup-ev-p">' + escapeHtml((t.label || t.id) + ' has not saved this project yet.') + '</p>';
+  const where = sv.thisMachine ? 'on this ' + thisMachine() : 'on ' + (isStr(sv.machine) ? sv.machine : 'another computer');
+  return '<p class="mem-setup-ev-p">' + escapeHtml('Last saved ') + ageSpan(sv.at, null)
+    + escapeHtml(' ' + where + (isStr(sv.scope) ? ', under “' + sv.scope + '”' : '') + '.') + '</p>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1416,9 +1648,9 @@ export function fileBodyHtml(text, block, cap, capLabel, md) {
   const cuts = [...new Set([0, len, ...(hasBlock ? [bs, be] : []), ...(capAt !== null ? [capAt] : [])])].sort((a, b) => a - b);
   const [stateKey, word] = hasBlock ? blockMark(block) : [];
   const frameHead = hasBlock
-    ? '<div class="mem-setup-frame-head"><span class="mem-setup-frame-title">The Curator instructions</span>'
+    ? '<div class="mem-setup-frame-head"><span class="mem-setup-frame-title">The agent instructions</span>'
       + st(stateKey, word)
-      + '<span class="mem-k-doors">' + btn2('copy-block', 'Copy current instructions') + '</span></div>'
+      + '<span class="mem-k-doors">' + btn2('copy-block', 'Copy the current agent instructions') + '</span></div>'
     : '';
   const rule = capAt !== null
     ? '<div class="mem-setup-cap-rule" role="separator"><span>' + escapeHtml((capLabel || 'This tool') + ' reads up to here') + '</span></div>'
@@ -1431,7 +1663,7 @@ export function fileBodyHtml(text, block, cap, capLabel, md) {
     const b = cuts[i + 1];
     const inBlock = hasBlock && a >= bs && b <= be;
     if (!inBlock && inFrame) { out += '</section>'; inFrame = false; }
-    if (inBlock && !inFrame) { out += '<section class="mem-setup-frame" aria-label="The Curator instructions">' + frameHead; inFrame = true; }
+    if (inBlock && !inFrame) { out += '<section class="mem-setup-frame" aria-label="The agent instructions">' + frameHead; inFrame = true; }
     if (!ruleDone && capAt !== null && a === capAt) { out += rule; ruleDone = true; }
     const piece = text.slice(a, b);
     if (piece.trim()) out += '<div class="mem-reader-doc mem-setup-file-doc">' + render(typeof md === 'function' ? softWrap(piece) : piece) + '</div>';
@@ -1459,7 +1691,7 @@ export function fileReaderContent(data, name, resp, opts = {}) {
   // action — one button per action on the page.
   const copyAct = isMarker ? 'copy-marker' : 'copy-block';
   const doors = (notes.includes('data-setup-act="' + copyAct + '"') ? ''
-    : (isMarker ? btn2('copy-marker', 'Copy marker line') : btn2('copy-block', 'Copy instructions')))
+    : (isMarker ? btn2('copy-marker', 'Copy marker line') : btn2('copy-block', 'Copy agent instructions')))
     + (notes.includes('data-path="' + escapeHtml(row.path) + '"') ? ''
       : btnG('reveal', isMarker ? 'Reveal the folder' : 'Reveal ' + name, ' data-path="' + escapeHtml(row.path) + '"'));
   const head = '<p class="mem-setup-ev-status mem-setup-file-status">' + st(row.state, row.word)
@@ -1482,9 +1714,9 @@ export function fileReaderContent(data, name, resp, opts = {}) {
       + (isMarker
         ? escapeHtml('.curator-project holds one line — ' + (data.domain ? data.domain + '/' : '') + who
           + ' — so agents and hooks in this folder know which project it is. Create it at the top of the folder, then commit and push.')
-        : escapeHtml((row.readBy && row.readBy !== '—' ? row.readBy : 'An agent app') + ' reads ' + name
+        : escapeHtml((row.readBy && row.readBy !== '—' ? row.readBy : 'An agent harness') + ' reads ' + name
           + ' at the start of every session. Create it at the top of ' + (repoWhere || 'the folder')
-          + ', paste the Curator instructions at its very top, then commit and push.'))
+          + ', paste the agent instructions at its very top, then commit and push.'))
       + '</p></section>';
   } else {
     const text = isStr(resp.text) ? resp.text : '';
@@ -1494,9 +1726,9 @@ export function fileReaderContent(data, name, resp, opts = {}) {
     // Amendment 4: `git` on every file, `marker` for .curator-project.
     const gw = gitWords(isMarker && resp.marker && typeof resp.marker === 'object' ? resp.marker : resp.git);
     if (gw) lines.push(gw);
-    if (!isMarker && !resp.block) lines.push('No Curator instructions in this file.');
+    if (!isMarker && !resp.block) lines.push('No agent instructions in this file.');
     if (resp.block && Number.isFinite(resp.block.start) && resp.block.start >= text.length) {
-      lines.push('The Curator instructions start past the part shown here.');
+      lines.push('The agent instructions start past the part shown here.');
     }
     if (resp.cap && Number.isFinite(resp.cap.bytes) && !Number.isFinite(resp.cap.at)) {
       lines.push((capTool || 'The tool') + ' reads the first ' + resp.cap.bytes.toLocaleString('en-US') + ' bytes; this file is shorter.');
@@ -1573,7 +1805,7 @@ export function computerReaderContent(data, idx) {
   const saves = newestSavesOf(g);
   let savesHtml;
   if (saves.length) {
-    savesHtml = sec('Each tool’s newest save', ul(saves.map((s) => {
+    savesHtml = sec('Each harness’s newest save', ul(saves.map((s) => {
       const label = isStr(s.label) ? s.label : toolLabelOf(data, s.tool);
       // Flag ONLY a save the backend calls wrong (`wrongScope`: under "main"
       // or another tool's name). A session-named scope
@@ -1587,7 +1819,7 @@ export function computerReaderContent(data, idx) {
         + (isStr(s.curator) ? ' · <span class="cur-setup-mono">' + escapeHtml('Curator ' + s.curator) + '</span>' : '');
     })));
   } else {
-    savesHtml = sec('Saves', ul([escapeHtml((g.tools.length ? g.tools.join(', ') : 'No agent app') + ' saved this project here')
+    savesHtml = sec('Saves', ul([escapeHtml((g.tools.length ? g.tools.join(', ') : 'No agent harness') + ' saved this project here')
       + (g.at ? escapeHtml('; newest ' + shortDate(g.at) + ' (') + ageSpan(g.at, null) + ')' : '') + '.']));
   }
   let syncLines;
