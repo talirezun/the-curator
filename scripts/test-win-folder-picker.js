@@ -425,6 +425,17 @@ const renderStatus = (o) => `<div class="tx-status tx-status-${o.state}"><b>${es
     return { renderTypedFolderFallback, onChooseFolder, onUseTypedFolder, setState: (s) => { state = s; }, getState: () => state, calls, q: (r) => queue.push(r) };`)(escapeHtml);
   S.setState({ config: { domainsPath: 'C:\\a' }, pickingFolder: false });
   ok(S.renderTypedFolderFallback() === '', 'Settings: nothing extra before any picker failure');
+  // v4.1.2 (E2E D3): a pick refused because Sync is connected shows the
+  // refusal and one line, never a path field that would be refused again.
+  {
+    const SYNC_MSG_S = 'Sync is connected to your current knowledge folder, so the folder can\u2019t be changed while it is. Nothing was changed.';
+    S.q({ status: 400, body: { ok: false, reason: 'sync-connected', error: SYNC_MSG_S } });
+    await S.onChooseFolder(1);
+    const sc = S.renderTypedFolderFallback();
+    ok(sc.includes('Nothing was changed.') && !/typed-folder-input|typed-folder-use/.test(sc),
+      'Settings: a pick refused while Sync is connected shows the refusal and NO path field', sc);
+    ok(/settings-hint-text">A pasted path follows the same rule/.test(sc), 'Settings: with one line that says why there is no field', sc);
+  }
   S.q({ status: 501, body: { ok: false, reason: 'no-dialog', error: 'No PowerShell.', hint: 'Paste the path.' } });
   await S.onChooseFolder(1);
   const sh = S.renderTypedFolderFallback();

@@ -1156,6 +1156,7 @@ function freshState() {
     // INLINE under the path row, with the typed-path fallback, instead of
     // replacing the whole block through `configError`.
     folderPickError: null,
+    folderPickReason: null,
     // The Windows app: what a folder route said about a folder it ACCEPTED
     // (`warnings[].message`, e.g. a long path). Shown under the path, never
     // instead of it; cleared by the next pick or typed path.
@@ -10125,6 +10126,13 @@ function renderStorage(domainsMonitorHtml) {
  */
 function renderTypedFolderFallback() {
   if (!state.folderPickError) return '';
+  // v4.1.2 (E2E D3): a pick refused because Sync is connected offers no path
+  // field — the typed path is held to the same rule (src/routes/config.js),
+  // so a field here only led to a second refusal. One honest line instead.
+  if (state.folderPickReason === 'sync-connected') {
+    return '<div class="settings-inline-error">' + escapeHtml(state.folderPickError) + '</div>' + errorDetailHtml(state.folderPickError) +
+      '<p class="settings-hint-text">A pasted path follows the same rule, so there is no path field here while Sync is connected.</p>';
+  }
   const busy = state.typedFolderBusy || state.pickingFolder || crossWriteBusy();
   return '<div class="settings-inline-error">' + escapeHtml(state.folderPickError) + '</div>' + errorDetailHtml(state.folderPickError) +
     '<div class="provider-replace-row">' +
@@ -12774,12 +12782,13 @@ async function onChooseFolder(token) {
     // `configError` route hid the path row and every control with it.
     else if (data.error) {
       state.folderPickError = [plainError(data), data.hint].filter((x) => typeof x === 'string' && x.trim()).join(' ');
+      state.folderPickReason = typeof data.reason === 'string' ? data.reason : null;
       rememberErrorDetail(state.folderPickError, errorDetailOf(plainError(data)));
       state.typedFolderError = null;
     }
-    else { state.folderPickError = null; state.folderWarning = folderWarningText(data); await loadConfig(token); }
+    else { state.folderPickError = null; state.folderPickReason = null; state.folderWarning = folderWarningText(data); await loadConfig(token); }
   } catch (err) {
-    if (isCurrentMount(token)) { state.folderPickError = plainError(err); state.typedFolderError = null; }
+    if (isCurrentMount(token)) { state.folderPickError = plainError(err); state.folderPickReason = null; state.typedFolderError = null; }
   } finally {
     if (isCurrentMount(token)) { state.pickingFolder = false; render(token); }
   }
@@ -12812,6 +12821,7 @@ async function onUseTypedFolder(typed, token) {
       return;
     }
     state.folderPickError = null;
+    state.folderPickReason = null;
     state.folderWarning = folderWarningText(data);
     state.typedFolderValue = '';
     await loadConfig(token);

@@ -41,7 +41,7 @@ import { toUserError } from '../brain/user-errors.js';
 import { pickFolderWin32 } from '../brain/win-folder-dialog.js';
 import { pickFolderLinux, LINUX_NO_DIALOG_MESSAGE } from '../brain/linux-folder-dialog.js';
 import { validateKnowledgeFolderPath } from '../brain/knowledge-folder-path.js';
-import { isConfigured as isSyncConnected } from '../brain/sync.js';
+import { isConfigured as isSyncConnected, isRecordedSyncFolder, syncFolderIsElsewhere } from '../brain/sync.js';
 // NAMESPACE import, the same degradation contract as `llmModule` above: a
 // not-yet-shipped export resolves to undefined and the route reports it, rather
 // than failing this file's load and taking every config endpoint down.
@@ -775,8 +775,13 @@ router.put('/context-window', (req, res) => {
 //      and Disconnect then Connect sends the move through the connect screen,
 //      which shows what each choice would replace before anything happens
 //      (Merge keeps both). Choosing the folder that is already set is allowed:
-//      it changes nothing. The floor under this (any other way the folder
-//      changes) is in sync.js, assertSyncedFolderUnchanged().
+//      it changes nothing. So is choosing the folder Sync RECORDED
+//      (`curator.workTree`, candidate audit N2): when the folder changed some
+//      other way (a "Start fresh" on a damaged settings file, a change made
+//      before v4.1.2, a hand edit), Sync refuses `folder-changed` and tells the
+//      person to set the folder back; this is what lets them. The floor under
+//      this (any other way the folder changes) is in sync.js,
+//      assertSyncedFolderUnchanged().
 //   2. THE TYPED PATH'S RULES, ON EVERY PLATFORM (audit O4). The picker used
 //      to apply only Windows' checks, so on macOS and Linux it accepted the
 //      app's own code folder that the typed path refuses.
@@ -789,6 +794,13 @@ const SYNC_CONNECTED_FOLDER_MESSAGE =
   'Sync is connected to your current knowledge folder, so the folder can\u2019t be changed while it is: ' +
   'the next Sync would remove that folder\u2019s pages from GitHub. Nothing was changed. To use another ' +
   'folder, open Sync and choose Disconnect, change the folder, then connect Sync again.';
+// When the current folder is already not the one Sync backs up, the sentence
+// above would be untrue: say what IS allowed.
+const SYNC_ELSEWHERE_FOLDER_MESSAGE =
+  'Sync is connected to the knowledge folder you had before, so while it is connected the folder can ' +
+  'only be set back to that one. Nothing was changed. To use another folder, open Sync and choose ' +
+  'Disconnect, change the folder, then connect Sync again.';
+const syncConnectedMessage = () => (syncFolderIsElsewhere() ? SYNC_ELSEWHERE_FOLDER_MESSAGE : SYNC_CONNECTED_FOLDER_MESSAGE);
 
 function folderRefusalError(status, body) {
   const err = new Error(body.error);
@@ -806,11 +818,12 @@ function sameFolderPath(a, b) {
   return norm(a) === norm(b);
 }
 
-/** Refused while Sync is connected unless `next` is the folder already set. */
+/** Refused while Sync is connected unless `next` is the folder already set, or the one Sync recorded. */
 function syncConnectedRefusal(next) {
   if (!isSyncConnected()) return null;
   if (typeof next === 'string' && next && sameFolderPath(next, getDomainsDir())) return null;
-  return { ok: false, reason: 'sync-connected', error: SYNC_CONNECTED_FOLDER_MESSAGE };
+  if (isRecordedSyncFolder(next)) return null;
+  return { ok: false, reason: 'sync-connected', error: syncConnectedMessage() };
 }
 
 function setDomainsDir(next) {
@@ -823,9 +836,13 @@ function setDomainsDir(next) {
   writeDomainsDirSetting(next);
 }
 
-/** Before the picker opens: no dialog for a change that would be refused. */
+/**
+ * Before the picker opens: no dialog for a change that would be refused. In
+ * the 'folder-changed' state the dialog opens, because one answer (the folder
+ * Sync recorded) is accepted; setDomainsDir() above refuses any other.
+ */
 export function refuseFolderChangeWhileSyncConnected(_req, res, next) {
-  if (isSyncConnected()) {
+  if (isSyncConnected() && !syncFolderIsElsewhere()) {
     return res.status(400).json({ ok: false, reason: 'sync-connected', error: SYNC_CONNECTED_FOLDER_MESSAGE });
   }
   next();
