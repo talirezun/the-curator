@@ -767,7 +767,7 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 
 **Neither door locks anything in, and nothing is stored about "which kind of user you are."** The panel works out which list to show from what is actually on your disk — a wiki page means the first list, a project or an agent that has called the bridge means the second — and it asks only while neither is true. A **Pick a different start** link swaps lists whenever you like, and the third step of the agent list is the one screen you would otherwise have had to go looking for: **Settings → MCP bridge**, which the button opens directly.
 
-Each item has a button that takes you straight to the right place. The panel tracks real state, not clicks: it reads *"2 of 3 done"* (or *"0 of 4 done"*) and ticks items off by itself as you actually complete them, and it stops appearing once they are all done.
+Each item has a button that takes you straight to the right place: **Add an AI key → Open Settings** opens **Settings › Providers & keys**, the section with the key fields (before v4.1.2 it opened Settings › General, where there is no key field). The panel tracks real state, not clicks: it reads *"2 of 3 done"* (or *"0 of 4 done"*) and ticks items off by itself as you actually complete them, and it stops appearing once they are all done. On the agent list the key step is **Optional**, so it does not count: once the other three steps are done the guide stops appearing, even with no key (v4.1.2; before, it kept coming back reading "3 of 4 done").
 
 > **The "Connect your agent" step works for any MCP client, not just one.** It ticks over when the bridge has actually answered a call — from Claude Desktop, Claude Code, Cursor or anything else that runs a local MCP server — rather than by checking one product's config file. See [§18 → The tool map](#the-tool-map--what-your-agents-used) for where that reading comes from.
 
@@ -6274,7 +6274,8 @@ file if it isn't there), then commit and push."*) — the two are never glued in
 sentence. **Every button's label says what pressing it does** — never a bare "Copy command": you'll
 see things like **Copy instructions**, **Copy marker line**, **Copy the git command that commits and
 pushes it**, **Copy the git command that commits and pushes it, then run `git pull` there**,
-**Reveal AGENTS.md** (opens the exact file in Finder), **Sync now**, **Choose the folder**, **Open
+**Reveal AGENTS.md** (opens the exact file in Finder; on a Mac only, since v4.1.2 Windows and Linux
+show no Reveal), **Sync now**, **Choose the folder**, **Open
 Connect your agent apps**, or — on a bridge line for Claude Desktop, Cursor or Antigravity (Claude Desktop only, on Windows) — **Install for me**
 (v3.85.0), which opens Settings → MCP bridge → Your AI apps, the one place that writes. A line can carry more than one button — for example a missing block offers
 **Copy instructions**, **Reveal AGENTS.md** *and* the git command, in that order, because there is
@@ -6338,7 +6339,7 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
   you added with **+ Add a tool** (below). Each row's own word is one of **ready** (saved from this
   computer, its bridge OK, its block current or the tool reads none), **to fix**, **partly checked**,
   or **no save from here**. Click a row to open its full evidence — every file it read, what each one
-  said, and a **Reveal** for anything found — in the right-side reader, the same place every other
+  said, and (on a Mac) a **Reveal** for anything found — in the right-side reader, the same place every other
   detail page in the app opens. **Since v3.80.0, a row you added can be removed** — see "Adding a
   tool," below.
 - **Repository on this computer** — the folder, whether `.curator-project` names this project and is
@@ -6347,6 +6348,13 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
   **Since v3.79.0, each file's row opens in the reader too** — see "The two readers" below.
 - **Computers** — see "How many computers?" below. **Since v3.79.0, each row opens in the reader**
   as well.
+
+> **On Windows (v4.1.2)** the Setup check reads Claude Desktop's Windows settings file (every place the
+> one-click installer looks, under `%APPDATA%` and `%LOCALAPPDATA%`) and shows paths in those words, so
+> it agrees with Settings › MCP bridge; before, it looked only for the Mac's `~/Library` file and said
+> "no config file found". It also recognises the Windows app's own install as this computer's, and
+> compares paths without caring about upper/lower case or `\` versus `/`. The **skill `.zip` downloads on
+> every platform** (it answered an error off the Mac before v4.1.2).
 
 **"+ Add a tool."** A listbox with two groups, **Known tools** (every agent tool The Curator can
 write an MCP entry for, including DeepSeek Harness, that is not already a row) and **Other**, whose
@@ -6718,6 +6726,8 @@ On any additional computer:
 
 The Curator downloads all your wiki pages and conversations from GitHub. Done — you don't need to create a domain first; they arrive with the pull.
 
+**If you pressed Connect with Push my wiki by mistake** (it is the default), GitHub already has a wiki, so the push is refused and the screen offers **Merge — keep both** or **Pull an existing wiki**. Choose either; both work (v4.1.2: before, after a refused push Merge failed every time and Pull claimed it "would overwrite 0 files", leaving only Overwrite).
+
 ### What happens if you forget to sync
 
 If you worked on Computer A without syncing, then worked on Computer B without syncing first, the app handles it gracefully:
@@ -6725,6 +6735,20 @@ If you worked on Computer A without syncing, then worked on Computer B without s
 - **Sync now** on either machine commits your local changes, merges the remote version in, then pushes — so the two machines reconcile in one click
 - In most cases this resolves itself cleanly, because the two machines touched different parts of the wiki
 - ⚠️ **If the same part of the same page was edited on both machines**, the merge does **not** stop to ask you: it silently keeps the **GitHub (remote)** version for the conflicting section and drops the local one from the file, while still reporting success. Your pre-merge local version is committed to local git history first, so it is recoverable — see [sync.md → What if you forget to sync?](sync.md#what-if-you-forget-to-sync) for the exact recovery commands and the full explanation. The reliable habit is to **Sync now at the start *and* end of every session.**
+
+### When Connect does not finish *(v4.1.2)*
+
+A connect that stops (a wrong token, a typo in the address, no network, a refused push) leaves your computer as it found it: the half-made sync history folder is removed, the token is not left behind in it, and the `.gitignore` it wrote into your knowledge folder is taken back out. Fix what the message says and press **Connect** again.
+
+| You see | What it means | What to do |
+|---|---|---|
+| *"That repository address is not one Sync can use…"* | The address has spaces, is not a repository address, or is something else pasted by mistake | Paste the repository's own address, such as `https://github.com/your-name/your-wiki`. A trailing `/` or a pasted `…/tree/main` is fine |
+| *"That token is not in a shape GitHub issues…"* | Part of the token, or extra spaces | Copy the whole token again (it starts with `ghp_` or `github_pat_`) |
+| *"Sync is already connected on this computer…"* | Connect was sent to a connected install | To use another repository, **Disconnect** first. To change only the token, use **Replace token** |
+| *"Your knowledge folder is not the one Sync backs up on this computer…"* | The knowledge folder changed after Sync was connected | Set the folder back in Settings, or Disconnect and connect again. Nothing was sent or received |
+| *"Sync could not start because git left a lock file behind…"* (`sync-index-locked`) | A git command was stopped part-way (a crash, a laptop that slept) | Quit every Curator window, delete `index.lock` inside the `.knowledge-git` folder, then sync again |
+
+The lock-file message has a code in the [error catalogue](errors.md#sync), with every other Sync message; the four Connect and folder sentences above are complete in themselves and carry no catalogue code.
 
 ### Replacing the token *(v3.99.2)*
 
@@ -6809,7 +6833,7 @@ Turning it on connects you to nothing. It only unlocks the view; nothing leaves 
 
 > **v3.6.1 — invite tokens are GitHub-only, and a non-GitHub one is now refused at step 1.** Joining a Shared Brain works by accepting an invitation to a GitHub repository and creating a Personal Access Token, so only a GitHub-backed brain can issue an invite. A token describing any other storage backend is rejected on paste, with an explanation — previously it was accepted and you were walked all the way to the final step, **creating a real PAT on github.com along the way**, before saving failed with an internal message that read like the app was broken. (The non-GitHub backends still exist for cohort simulation; they are configured directly, not via an invite.)
 
-Each brain you join or create then appears as a card **in the Shared Brain view**, with **Push contributions** and **Pull updates** buttons and at-a-glance state: how many pages are ready to push, when the collective was last synthesised, any pages skipped after repeated failures (with a one-click **Retry these pages on next push**), and a "read-only member" pill for Pull-only memberships (a PAT with Contents: Read only). An **Advanced** area on each card holds the admin tools — generate or rotate an admin token, run synthesis, revoke a contributor — and **Leave**.
+Each brain you join or create then appears as a card **in the Shared Brain view**, with **Push contributions** and **Pull updates** buttons and at-a-glance state: how many pages are ready to push, when the collective was last synthesised, any pages skipped after repeated failures (with a one-click **Retry these pages on next push**), and a "read-only member" pill for Pull-only memberships (a PAT with Contents: Read only). An **Advanced** area on each card holds the admin tools — rotate the admin token, run synthesis, revoke a contributor — and **Leave**. An admin token is made only when you create a Shared Brain; The Curator can't add one to an existing connection (v4.1.2). **Leave** says on its confirm what you lose: pages you have not pushed stay unpushed, and if you are the admin, your admin token goes with the connection and joining again with an invite does not bring it back. Leave is refused while that brain's push, pull, synthesis or token replace is still running.
 
 **When the GitHub token stops working (v3.99.2).** Fine-grained GitHub tokens expire, and GitHub sends no warning. When GitHub rejects a connection's token, the card says so and opens a **Replace the GitHub token** panel right under the message (a new refusal opens it again, even after **Cancel**). To renew early, press the small **Replace token** button: on a domain you contribute from, it is beside **Check now** in the **Access token** row of the domain's **Shared Brain** section; on the brain's `shared-…` mirror domain (the only card a read-only member with no domain of their own has), beside **Pull updates**; in **Open Shared Brain**, under **Check now** on the brain's card. Paste a new token (Contents: Read and write on the brain's repository; a read-only member's needs only Read) and press **Check and save**. The Curator checks it with GitHub against that brain's repository and changes nothing unless GitHub accepts it; then only the token changes — you stay the same member with the same contributing domains, and an admin keeps their admin token. Leaving and re-joining is not the way to change a token. Details: [Shared Brain user guide](shared-brain-user-guide.md) and [error catalogue](errors.md#shared-brain-replacing-the-token).
 
@@ -7087,7 +7111,7 @@ they belong to each other and the blocks around them do not:
 
 **Settings → General → System check** confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider. Its lede says the three things you weigh before pressing it: what it looks at, that it is free, and that it never opens a wiki page.
 
-- **Run system check** (free, instant) checks a short list of things locally — no network call, no cost, and it never touches your wiki content: your installed version; **which install you are running** and how updates reach it; whether an AI key is configured; that your knowledge folder is writable; that your credential files are locked down (`0600`); whether `git` is available; your sync status; and your application log file. Each row shows OK, needs attention, failed, or info, with a one-line summary above them.
+- **Run system check** (free, instant) checks a short list of things locally — no network call, no cost, and it never touches your wiki content: your installed version; **which install you are running** and how updates reach it; whether an AI key is configured; that your knowledge folder is writable; that your credential files are locked down (`0600`); whether your two settings files can be read (v4.1.2; it only reads them); whether `git` is available; your sync status; and your application log file. Each row shows OK, needs attention, failed, or info, with a one-line summary above them.
 
 > The **Install mode** row is the quickest way to answer *"am I in the Mac app or the browser install?"*. It reads either **Source install (git checkout)** — *"Updates in place from GitHub"* — or **Packaged app** — *"Updates are installed by replacing the app, not from Settings"*. It is an information row, never a failure: neither install is wrong.
 >
@@ -7405,9 +7429,19 @@ moving anything — the move itself is yours to make in Finder.
 The block itself is one row: the path in monospace, a filled **Choose folder**
 (it opens the system's folder dialog on macOS, Windows and Linux; where none can open, a
 field to paste the path appears) and a plain **Copy** to paste the path into Obsidian. Under it, one
-visible line — *"Moving this folder loses nothing; the graph is picked up as-is."*
-That one stays in the open on purpose: it is the reassurance that makes the button
-safe to press, not an explanation.
+visible line — *"Moving this folder loses nothing; the graph is picked up as-is. While Sync is
+connected the folder can't change: disconnect Sync first."* That one stays in the open on purpose:
+it is what makes the button safe to press, not an explanation.
+
+> **While Sync is connected, the folder can't change (v4.1.2).** Sync backs up one folder. Before
+> v4.1.2, choosing another folder while connected made the next Sync treat the new folder as your
+> whole wiki and remove every other domain from GitHub. Now **Choose folder**, a pasted path and
+> **Domains › Use existing folder** all refuse while Sync is connected, with *"Disconnect Sync before
+> you change the folder"*, and nothing changes. To use another folder: open **Sync**, choose
+> **Disconnect**, change the folder, then connect Sync again (Connect shows what it would change
+> before it changes anything). If the folder changes some other way (an edited settings file, a
+> `--domains-path`), Sync stops before sending or receiving anything and says so; set the folder
+> back, or Disconnect and connect again.
 
 > **On Windows** a chosen or pasted folder is also checked against Windows' own rules: OneDrive,
 > Controlled folder access, long paths, reserved names (CON, NUL…), a whole drive, a network share,
@@ -8848,6 +8882,17 @@ If the update fails, it says why in plain language and the copy you are running 
 route if you would rather use it.
 
 ### Everything else
+
+**A red banner says "The Curator can't read its settings file" (or "its Shared Brain connections file")** *(v4.1.2)*
+
+A settings file is damaged: it is not valid JSON (often a hand edit with a missing comma), has the wrong shape, or this computer did not let the app open it. Before v4.1.2 the app treated such a file as empty and the next save erased everything in it. Now it never saves over it: every change is refused (*"…could not be read, so nothing was saved…"*) and a byte-for-byte copy is kept beside it in The Curator's data folder, named `<file>.unreadable-<12 letters and digits>`. The banner stays until the file can be read.
+
+| File | What it holds | Start fresh forgets |
+|---|---|---|
+| `.curator-config.json` (settings file) | Your API keys, where your knowledge folder is, your other choices | All of those: set your keys again, and point Settings › Knowledge base at your folder again. The folder itself and its pages are not touched |
+| `.sharedbrain-config.json` (Shared Brain connections file) | Your Shared Brain connections and their tokens | Every connection: join each Shared Brain again. Your wiki pages and mirror domains are not touched |
+
+Two ways out: **fix the file by hand** (open it in a text editor and correct the JSON; the banner clears when you come back to the window), or press **Start fresh** on the banner and confirm. Start fresh moves the damaged file aside (the kept copy stays) and the next save starts a new, empty one. If the banner says the app *can't open* the file, there is no Start fresh: check the file's permissions in The Curator's data folder, then quit The Curator and open it again. **System check** shows the same state in its settings-files row. In the browser install the data folder is the `the-curator` folder; for the apps see [mac-app.md](mac-app.md) and [windows-app.md](windows-app.md).
 
 **"command not found: node" when I type `node src/server.js`**
 

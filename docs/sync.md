@@ -263,6 +263,12 @@ folder — but you will see the count first, and you have to say so.
 > working-state handoffs and an append-only journal were destroyed. The count and
 > the Merge option are the fix.
 
+**If a connect does not finish (v4.1.2), nothing is left behind.** A wrong token, a mistyped address,
+no network, or a refused push: the half-made sync history folder is removed (or, if one was there
+before, put back as it was), the token is not left in it, and the `.gitignore` the connect wrote into
+your folder is taken out again. Fix what the message says and press **Connect** again. The address and
+the token are checked before anything is written, and the message names which one is wrong.
+
 **One thing Merge does that is worth knowing:** because the two sides have no
 shared history yet, every file in the repository looks new to it. So a page you
 **deleted** on this computer since its last push **comes back**. That is the
@@ -317,6 +323,30 @@ Once sync is working on your first computer, adding a second one takes about 2 m
 4. At Step 5, choose **Pull an existing wiki** to download the knowledge from GitHub — or **Merge — keep both** if this computer's domains folder already has anything in it
 
 Once it connects, all your wiki pages and conversations will appear on the new computer.
+
+**If you left Step 5 on Push my wiki** (the default), the push is refused because GitHub already holds
+a wiki, and the screen offers **Merge — keep both** or **Pull an existing wiki**. Choose either; both
+work. Before v4.1.2 they did not: Merge then failed every time ("a branch named 'main' already
+exists") and Pull said it "would overwrite 0 files", so only **Overwrite my local files** got through.
+If an older version left such a half-finished connect behind, the next Merge or Pull keeps that
+commit on a branch of its own (`curator-before-connect-…`, never pushed) and goes ahead.
+
+## Changing the knowledge folder while Sync is connected
+
+**You can't, and that is on purpose (v4.1.2).** Sync backs up exactly one folder. Before v4.1.2,
+choosing another folder in Settings while connected made the next Sync treat the new folder as your
+whole wiki: it removed every domain the old folder held from GitHub, and every other computer would
+have removed them on its next pull. Now:
+
+| You do | What happens |
+|---|---|
+| Settings › Knowledge base › **Choose folder**, a pasted path, or Domains › **Use existing folder** | Refused before anything changes: *"Disconnect Sync before you change the folder"* |
+| The folder changes another way (an edited settings file, `--domains-path`, an older version) | **Sync now**, **Push only** and **Pull only** stop before sending or receiving anything: *"Your knowledge folder is not the one Sync backs up on this computer…"* |
+
+To move to another folder: open **Sync → Disconnect**, change the folder, then connect Sync again.
+Connecting shows what it would change before it changes anything. To keep syncing the folder you had,
+set it back in Settings. The folder Sync backs up is recorded on this computer only, inside its sync
+history; it is never pushed. An install connected before v4.1.2 records it on its first sync.
 
 ---
 
@@ -537,6 +567,19 @@ Git for Windows ships with **Git Credential Manager**, which can intercept the p
 - Then retry. With no stale credential, Git for Windows uses the token The Curator already embeds — no popup.
 
 > **Is sync a "Windows problem"?** No. The underlying behaviour is identical on Mac and Windows. The cases above are triggered by *state* (a failed first push, a non-empty repo, a stale Windows credential), not by the operating system — a Mac in the same state behaves the same way.
+
+### Connect messages added in v4.1.2
+
+| Message | What it means | What to do |
+|---|---|---|
+| *"That repository address is not one Sync can use…"* | Not a repository address, or spaces in it | Paste the repository's own address, such as `https://github.com/your-name/your-wiki` |
+| *"That token is not in a shape GitHub issues…"* | Part of a token, or spaces | Copy the whole token again (`ghp_…` or `github_pat_…`) |
+| *"Sync is already connected on this computer…"* | Connect on an install that is connected | **Disconnect** first to use another repository; **Replace token** to change only the token |
+| *"Your knowledge folder is not the one Sync backs up…"* | The folder changed after connecting | See [Changing the knowledge folder while Sync is connected](#changing-the-knowledge-folder-while-sync-is-connected) |
+| *"Sync could not start because git left a lock file behind…"* | A git command was stopped part-way, so `index.lock` stayed | Quit every Curator window, delete `index.lock` inside `.knowledge-git`, sync again. The app never deletes it itself: another program may be using it |
+
+Before v4.1.2 a malformed address or token read *"Cannot reach GitHub"* or *"Repository not found"*,
+and a stale lock file read like a temporary error. The lock-file message is in [errors.md → Sync](errors.md#sync) as `sync-index-locked`, with every older Sync message; the other four are complete sentences with no catalogue code.
 
 ### "Push rejected" or "non-fast-forward update"
 

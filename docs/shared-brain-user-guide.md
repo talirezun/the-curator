@@ -230,7 +230,7 @@ In the Curator → **Shared Brain** view → on the **I’m starting a new Share
 The panel is headed **"Name your Shared Brain and its repository"**. Fill in the form:
 
 - **Repository (owner/name)**: paste `<owner>/<name>` from Step A
-- **Brain name**: a friendly label your contributors will see (e.g. "Spring 2026 ML Cohort"). NOT a URL or slug — humans-only.
+- **Brain name**: a friendly label your contributors will see (e.g. "Spring 2026 ML Cohort"). NOT a URL or slug — humans-only. One line, at most 200 characters (v4.1.2: a longer or multi-line name is refused here, so no contributor gets an invite that fails at their last step).
 - **Folder inside the repo**: filled in from the brain name, and you can change it. Where collective pages live in the repo (`collective/<folder>/wiki/`). Each contributor's machine sees this domain as `shared-<folder>/`. Override only if you want a specific slug.
 - **Branch**: a branch is one line of history inside the repository. A new repository has one, called `main` — keep that unless your cohort agreed otherwise.
 - **Data handling terms**: pick `contributor_retains` (educational/cohort default) or `organisational` (enterprise IP transfer). **Cannot be changed after invites go out** — re-issuing would require everyone to re-consent.
@@ -243,7 +243,7 @@ The wizard generates the invite token and displays it in a copy-to-clipboard box
 
 Send it to every cohort member via Slack, email, or any channel — the token contains no credentials, so it's safe to share. The wizard also gives you a link to the repo's **Settings → Collaborators** page so you can invite everyone if you haven't yet.
 
-Below the invite token, the wizard shows your **admin token** (`sbat_…`, v3.0.5+). This one is the opposite of the invite token: it is a **secret credential** that authorises contributor revocation (GDPR erasure), it is shown **only here, only once**, and you must NOT share it with contributors. Store it in your password manager now — the revoke panel will ask you to paste it. (Lost it? On the connection card, **Admin controls — admin token & contributor revocation** → **Rotate token** issues a new one and invalidates the old.)
+Below the invite token, the wizard shows your **admin token** (`sbat_…`, v3.0.5+). This one is the opposite of the invite token: it is a **secret credential** that authorises contributor revocation (GDPR erasure), it is shown **only here, only once**, and you must NOT share it with contributors. Store it in your password manager now — the revoke panel will ask you to paste it. (To replace it, the connection card's **Admin controls — admin token & contributor revocation** → **Rotate token** issues a new one and invalidates the old, but it needs the CURRENT token. A lost admin token can't be reissued, and since v4.1.2 The Curator never adds an admin token to an existing connection: one is made only here, when the Shared Brain is created.)
 
 Click **Set up my contribution →** to continue. You're now setting up YOUR own contributor identity (the admin is also a contributor).
 
@@ -387,6 +387,41 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 **The "Open GitHub to create my token" button does nothing**
 - A browser extension may be blocking it. Try in a private/incognito window, or right-click → Open in new tab.
+
+**"Invite token: the brain name must be a single line of at most 200 characters"** *(v4.1.2)*
+- The invite was made by a tool that allowed such a name. It is refused at step 1, before you create a
+  GitHub token (before v4.1.2 it was refused only at step 5). Ask your admin for a new invite.
+
+**Check token says the token doesn't look like a GitHub token, GitHub did not answer in time, or GitHub is limiting requests** *(v4.1.2)*
+- *"That doesn't look like a GitHub token…"*: copy the whole token again (it starts with `ghp_` or
+  `github_pat_`).
+- *"GitHub did not answer in time…"* or *"…couldn't reach GitHub…"*: check your connection and press
+  **Check token** again (the check gives up after 30 seconds instead of showing "Checking…" forever).
+- *"GitHub is limiting requests right now…"*: nothing is wrong with the token; wait a few minutes. Before
+  v4.1.2 this read as a rejected token.
+
+**Creating a brain: "Token works but is read-only. As the admin you need write access…"** *(v4.1.2)*
+- On the admin path a read-only token is refused: synthesis and revoke write to the repository. Make a
+  token with **Contents: Read and write**. (Joining as a read-only member is still allowed.)
+
+**"Refusing to pull into "shared-…": a folder with that name already exists on this machine and holds files…"** *(v4.1.2)*
+- You already have a folder of that name in your knowledge folder that is not a Shared Brain mirror (it
+  has no `CLAUDE.md`). Before v4.1.2 the Pull treated it as the mirror and deleted your own pages in it.
+  Nothing was changed. Rename or move that folder, or ask the admin for an invite with another name.
+
+### Leaving a Shared Brain
+
+**Leave this Shared Brain** removes the connection from this computer only; the shared repository and
+your own domains stay. Its confirm says what you lose (v4.1.2):
+
+| You are | Leave also means |
+|---|---|
+| A contributor with pages not yet pushed | They stay unpushed: push first if they belong in the Shared Brain (the confirm gives the count when it knows it) |
+| The admin | Your admin token is removed from this computer with the connection, and joining again with an invite does not bring it back, so you could no longer revoke members or rotate the admin token from here |
+| A read-only member | Nothing more: a read-only connection pushes nothing |
+
+Leave is refused with *"Cannot leave this Shared Brain while a write operation is running…"* while that
+brain's push, pull, synthesis, revoke or token replace is still running. Wait for it to finish, then press Leave again.
 
 ### Daily-workflow problems
 

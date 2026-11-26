@@ -593,6 +593,20 @@ key beats writing a one-shot importer for three secret files, is
 > helper did during a bundle swap. There is no `/tmp/the-curator.log` there —
 > that file is the AppleScript launcher's stdout capture and nothing else writes it.
 
+**A red banner says "The Curator can't read its settings file"** *(v4.1.2)*
+
+`.curator-config.json` (or `.sharedbrain-config.json`) in `~/Library/Application Support/The Curator/`
+is damaged, so the app saves nothing over it and keeps a copy beside it named
+`<file>.unreadable-<12 characters>`. Fix the file by hand, or press **Start fresh** on the banner. Start
+fresh on the settings file forgets your API keys and where your knowledge folder is (the folder itself is
+untouched): set the keys again and choose the folder again in Settings › Knowledge base. Full steps:
+[user-guide.md § 18 → Everything else](user-guide.md#everything-else).
+
+**"Disconnect Sync before you change the folder"** *(v4.1.2)*
+
+Sync is connected and backs up the folder you have now, so the knowledge folder can't change. Open
+**Sync → Disconnect**, change the folder, then connect again.
+
 **"The Curator could not start" dialog appears**
 
 Check the log first:

@@ -104,8 +104,11 @@ Only the **cohort admin** can revoke a contributor. Two gates stand in front of 
 > CURRENT token through the same gate as revocation, and refuses a connection that has none.
 >
 > **Consequence for pre-v3.0.5 admin connections**, stated rather than left to be discovered: an admin
-> whose connection predates admin tokens can no longer mint one from the card. Re-run the brain-setup
-> wizard, which issues a fresh admin token and saves it with the connection.
+> whose connection predates admin tokens can no longer mint one from the card, and since v4.1.2 cannot
+> get one at all: re-running the brain-setup wizard for a brain this computer is connected to is
+> refused, and saving a connection never adds an admin token to it. Such an admin removes a person on
+> GitHub (the repository's Settings › Collaborators). The admin token is a check on the admin's own
+> computer only; GitHub's collaborator permissions decide what any member can change in the repository.
 
 ### 2b — What the revocation does
 

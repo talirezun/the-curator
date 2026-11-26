@@ -212,6 +212,14 @@ The app can write its own entry into Claude Desktop's settings for you:
 2. In The Curator: **Settings → MCP bridge**, section **Your AI apps**. Tick Claude Desktop and click **Install for me**, then **Apply**.
 3. Open Claude Desktop again, then click **Check again** in The Curator; the row should read **connected**.
 
+**Context → a project → Setup agrees (v4.1.2).** The project Setup check reads Claude Desktop's Windows
+settings file from every place the installer looks (under `%APPDATA%` and `%LOCALAPPDATA%`), and
+shows paths in those words, such as `%APPDATA%\Claude\claude_desktop_config.json`. Before v4.1.2 it
+looked only for the Mac's file and said "no config file found" after a successful install. On Windows
+there is no **Reveal** button (it opens Finder, a Mac-only window); open the path the row names in File
+Explorer instead. The **my-curator.zip** and **curator-continuity.zip** skill downloads work on
+Windows too.
+
 The entry starts The Curator's own program (`The Curator.exe`) as the bridge, with the setting
 `ELECTRON_RUN_AS_NODE=1` that makes it run as a background helper instead of opening a second
 window. You never need to type it. Install for me refuses, with the reason, when the app runs from
@@ -244,6 +252,13 @@ setup check, the agents' working state and the `my-curator` command line).
 - It handles file paths longer than Windows' old 260-character limit.
 - If the copy is damaged or removed, Sync and **Run system check** say so; running the latest
   installer again puts it back and keeps your notes and settings.
+- No console window flashes while Sync runs git (v4.1.2).
+- Line endings are never converted: a repository Sync creates from v4.1.2 on is set so that a page
+  pushed from a Mac arrives with the same bytes. A repository connected before v4.1.2 is left as it
+  was, because changing it would make every page look changed.
+- Folder names with `%`, `$`, quotes or a network share root no longer break Sync (v4.1.2).
+- **The knowledge folder can't change while Sync is connected** (v4.1.2): disconnect Sync, change the
+  folder, then connect again. See [User Guide § 16 → Knowledge base folder](user-guide.md#knowledge-base-folder).
 
 ---
 
@@ -255,7 +270,7 @@ is wrong. Every message is in [the error catalogue → Choosing a folder on Wind
 
 | Situation | What the app does | What to do |
 |---|---|---|
-| A folder in **OneDrive** | Works. While OneDrive is syncing, or not running, a save can be refused with a OneDrive message. | Wait until OneDrive shows the folder up to date, or keep it **Always on this device** |
+| A folder in **OneDrive** | Works. When OneDrive, an antivirus scan or the search indexer holds a file for a moment, the save waits and tries again for up to about 3 seconds (v4.1.2). While OneDrive is syncing, or not running, a save can still be refused with a OneDrive message. | Wait until OneDrive shows the folder up to date, or keep it **Always on this device** |
 | **Controlled folder access** (Windows Security) is on, and the folder is in Documents, Desktop, Pictures, Music or Videos | Windows blocks the save; the app says so | Choose a folder outside those, or allow The Curator in **Windows Security → Virus & threat protection → Manage ransomware protection → Allow an app through Controlled folder access** |
 | A **long path** | Over 120 characters: accepted with a warning. Over 247: refused. | Choose a folder near the top of the drive, for example `C:\Users\<you>\Curator` |
 | A **reserved name** (CON, PRN, AUX, NUL, COM1–COM9, LPT1–LPT9) or a name ending in a dot or a space | Refused | Rename the folder, or choose another |
@@ -350,6 +365,8 @@ and [build-extra](https://github.com/git-for-windows/build-extra).
 | An update stops because an AI app is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |
 | Sync says its git is missing or damaged | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it; your data is kept |
 | A folder is refused | The message says why; see [§ Choosing a folder](#choosing-a-folder) |
+| *Disconnect Sync before you change the folder* | Sync is connected, and it backs up the folder you have now. Open **Sync → Disconnect**, change the folder, then connect again |
+| A red banner: *The Curator can't read its settings file* | The file in `%LOCALAPPDATA%\TheCurator\App` is damaged and nothing is saved over it. Fix it by hand, or press **Start fresh** ([User Guide § 18](user-guide.md#everything-else)) |
 | Anything else | **Settings → General → Run system check**, and the log at `%LOCALAPPDATA%\TheCurator\logs\curator.log` |
 
 How the app is built, and the decisions behind it, are in [desktop/README.md](../desktop/README.md)

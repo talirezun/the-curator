@@ -176,7 +176,7 @@ checks the tools it can find, shows you exactly what it would write, keeps a cop
 file, and changes nothing but its own `my-curator` entry.
 
 1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Your AI apps**): a **Next step** card when something needs doing, then one row per AI app found on this computer.
-2. Tick the apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Check the change · nothing written yet** and shows, per file, *‹app› — ‹path›*, **Adds:** with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›*.
+2. Tick the apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Check the change · nothing written yet** and shows, per file, *‹app› — ‹path›*, **Adds:** (or, for an update, **Changes the My Curator setup to:**) with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›*. An update that keeps settings from the old entry names them, never their values: *Also keeps what was added to the old setup: env, disabled.* (v4.1.2)
 3. Click **Apply**. One result line per file stays on screen, for example *"✓ Cursor is set up. Quit Cursor completely and open it again to use My Curator. (⌘Q — closing the window is not enough)"*.
 4. **Fully quit and reopen the app** (⌘Q on a Mac; on Windows right-click its icon by the clock → Quit). An AI app reads its list of MCP servers only when it starts. Claude Desktop rewrites its own file, so quitting it first is the safest install.
 5. Click **Check again** — the app's row should read **connected**; open it and press **Test connection** (*"Works — My Curator starts the way Claude Desktop starts it and answers with all 24 tools."*). Then, in Claude Desktop:
@@ -217,7 +217,7 @@ A copy-only row says *"‹app› can't be set up automatically yet. Copy the set
 
 | Status | Meaning | Ticked for you? | Buttons |
 |---|---|---|---|
-| **connected** | The file names `my-curator` and the entry is the one this install would write | No | **Remove**; **Restore original** while a backup of the previous file is still valid |
+| **connected** | The file names `my-curator` and the entry is the one this install would write | No | **Remove**; **Restore original** while a backup of the previous file is still valid, and only after an install or update (v4.1.2: not after a Remove or a Restore, where it used to put the Curator entry back) |
 | **needs an update** | An entry exists but differs: it launches a missing file, names another knowledge folder, or is in some of Antigravity's files and not others | Yes | **Install for me** (updates it) |
 | **can be added** | The tool is on this Mac but has no entry | Yes | **Install for me** |
 | **can't read** | The file is corrupt, has comments, or is a symlink; the reason is shown on the row | No | **Copy**, **Reveal** |
@@ -263,7 +263,9 @@ up spread over several lines. The values are identical, and the backup keeps the
 
 The page writes nothing on its own: only **Install for me**, **Remove** and **Restore** change an
 app's settings file, always after a preview and a backup. **Test connection** starts My Curator the
-way the app's settings start it and writes nothing. The screenshot below predates v3.85.0:
+way the app's settings start it and writes nothing. It runs only The Curator's own bridge: since v4.1.2
+an entry whose `node` is not the node this install runs on (a script or a copy merely named `node`) is
+refused and never started, and a test that does not stop is ended after a few seconds. The screenshot below predates v3.85.0:
 
 ![Settings → MCP bridge on the demo workspace. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The main column reads CONFIGURATION over MCP bridge. (Screenshot predates v3.88.0.) Step 1, Connect a client: 'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.' over a recessed monitor reading CONFIGURED, CLIENT Claude Desktop, SERVER my-curator and DOMAINS /tmp/curator-demo-…/domains, then Re-run setup (filled), Run self-test, View config and Copy snippet. Step 2, Default domain for MCP writes, with a picker reading '— none (require an explicit domain) —' and a line on what leaving it unset means. Step 3, Tool map: 'What your agents used, and when — kept on this machine only.', a Test all 24 tools button, a monitor with LAST SESSION START 38 min ago and LAST SAVE 8 min ago, and BUSIEST · LAST 5 DAYS · AGENTS ONLY — get_project_context 8, save_working_state 7, search_wiki 7.](images/curator-mcp-bridge.png)
 

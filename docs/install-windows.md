@@ -61,6 +61,12 @@ shortcut is never overwritten.
 | A security or antivirus message | Wait, and do not close the window. If your antivirus removes a file, allow the folder `%LOCALAPPDATA%\TheCurator` and run the line again. On a school PC, ask your IT department |
 | "Port 3333 is already used by another program" | Close the program it names, or double-click **Stop The Curator** and then **The Curator** |
 
+Once it runs, the browser install on Windows behaves like the Windows app in these ways (v4.1.2):
+saves wait and try again for up to about 3 seconds when OneDrive or an antivirus holds a file; the
+project Setup check finds Claude Desktop's settings under `%APPDATA%` and `%LOCALAPPDATA%`; there is no
+**Reveal** button (it is Mac-only); the skill `.zip` files download; and the knowledge folder can't change
+while Sync is connected (disconnect Sync first). Details: [windows-app.md](windows-app.md).
+
 More help: [the full troubleshooting table](user-guide.md#windows-one-line-installer).
 
 ## Updating

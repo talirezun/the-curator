@@ -40,7 +40,7 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 
 1. **Shared Brain** view → your connection card → **Admin controls — admin token & contributor revocation**
 2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
-3. Paste your **admin token** — the `sbat_…` credential shown once at brain setup (see §9). **If you do not have it, you cannot revoke, and there is no button that will issue you a new one.** Since v3.43.0 the rotate endpoint requires the CURRENT token; a connection holding no admin token is refused with `403 no_admin_token`. Re-run the brain-setup wizard to issue and save a fresh one.
+3. Paste your **admin token** — the `sbat_…` credential shown once at brain setup (see §9). **If you do not have it, you cannot revoke, and there is no button that will issue you a new one.** Since v3.43.0 the rotate endpoint requires the CURRENT token; a connection holding no admin token is refused with `403 no_admin_token`. Since v4.1.2 nothing can add one later: an admin token is made only when a Shared Brain is created, re-running the brain-setup wizard for a brain this computer is connected to is refused, and saving a connection never adds one. Without it, remove the person on GitHub (the repository's **Settings › Collaborators**), which is what decides who can change the repository in any case.
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
 5. Click **Permanently revoke this contributor** — the red button, which stays disabled until all three of the steps above are satisfied and tells you which one is missing. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
 
@@ -509,8 +509,9 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 
 **Provisioning:**
 - **New brains** — the admin wizard generates a `sbat_…` token (160 bits of entropy) and shows it **once** on step 2, next to the invite token. It's stored on your connection when you finish the wizard; save the plaintext in your password manager immediately.
-- **Existing connections created before v3.0.5** — re-run the brain-setup wizard against the same repo and shared domain. It mints a fresh admin token and saves it with the connection.
-- **Lost token, any vintage** — the same route: re-run the brain-setup wizard. Since v3.43.0 rotation is not a provisioning path (see the box below).
+- **Existing connections created before v3.0.5, and a lost token of any vintage** — there is no way to get one (v4.1.2). Re-running the brain-setup wizard for a brain this computer is connected to is refused (one membership per brain, below), and `POST /api/sharedbrain/save` refuses to add an admin token to an existing connection (`403 no_admin_token`) or change one (`403 admin_token_mismatch`). Rotation is not a provisioning path either (see the box below). Manage who can write to the repository on GitHub, in its **Settings › Collaborators**.
+- **What the admin token is, honestly.** It is a check on this computer only. Someone who edits their own `.sharedbrain-config.json` can hold a token they made up; what GitHub then lets them change is decided by their own GitHub token's write access to the repository, never by The Curator. GitHub's collaborator settings are the real gate.
+- **Leaving loses it.** **Leave this Shared Brain** removes your admin token from this computer with the connection, and joining again with an invite does not bring it back (the confirm says so, v4.1.2). Keep the plaintext in your password manager.
 - **Rotation** — connection card → **Admin controls — admin token & contributor revocation** → **Rotate token**, or `POST /api/sharedbrain/:id/admin-token/rotate` with `{"admin_token": "<your CURRENT sbat_… token>"}`. The old token stops working immediately; the new one is returned once and never again.
 
 > **v3.43.0 CLOSED A HOLE HERE, and the old text described it as a feature.**
@@ -527,7 +528,8 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 > | `admin_token_mismatch` | A token was supplied and it is not this connection's. |
 >
 > **The cost is real and is not hidden:** an admin who has genuinely lost their
-> token cannot recover it from a running app. Re-run the brain-setup wizard.
+> token cannot recover it from a running app, and since v4.1.2 cannot get a new one
+> for that connection at all. GitHub's collaborator settings remain the real gate.
 >
 > **Only ONE membership per brain.** Since v3.43.0, saving a second connection
 > to the same `(repo, shared_domain)` is refused. Two memberships meant two

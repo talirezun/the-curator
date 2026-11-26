@@ -34,13 +34,14 @@ no API cost — and shows a result for each:
 | **AI provider key** | That a key is configured for one of the three supported providers — Gemini, Anthropic or OpenRouter — and which provider and model are active, including a fallback model if one is in use. If a key is present but no model can be resolved for it, the check says so specifically instead of reporting that you have no key at all. |
 | **Knowledge folder** | That your `domains/` folder exists and is writable. The check writes a tiny throwaway file and immediately deletes it — **it never touches your wiki content.** |
 | **Credential file permissions** | That your credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`, and the sync git config) are owner-only (`0600`) so other accounts on the machine can't read your keys. |
+| **Settings files** *(v4.1.2)* | That `.curator-config.json` and `.sharedbrain-config.json` can be read. A damaged one fails the row, naming the file and the copy The Curator kept of it (`<file>.unreadable-…`); the app then saves nothing over it until it is fixed or set aside with the banner's **Start fresh** ([user-guide.md § 18](user-guide.md#everything-else)). Read-only: the row never makes a copy and never changes the file. |
 | **GitHub sync** | Whether sync is configured, and how many local changes are waiting to be pushed. |
 | **Install mode** | Which shape of The Curator you are running — *Source install (git checkout)* or *Packaged app* — and how updates reach it. Always ℹ️ **Info**: neither mode is wrong, and the point of the row is that a support conversation starts from the right mental model. **This is the fastest way to answer "which install do I have?"** |
 | **Git** | That `git` is on the PATH the app was launched with. It is here because a missing `git` breaks **two** features at once — Personal Sync and, in a source install, updating — and its natural error text used to be actively misleading (*"Repository not found. Check the URL"* for what was really *git is not installed*). On a build that needs neither, the row reports **Not required by this build** rather than warning about a tool that is never invoked. |
 | **Application log** | The full path to the app's own log file, and its size — so you can find it without knowing the OS convention. Always ℹ️ **Info**: a fresh install that has never hit an error legitimately has no log yet, and the row says *"Not written yet"* with the path rather than reporting a problem. |
 
 *(Enumerate this list from `src/brain/diagnostics.js` rather than trusting the table
-if you are checking it against a specific build — the rows have grown four times.)*
+if you are checking it against a specific build — the rows have grown five times.)*
 
 Each result is marked:
 
