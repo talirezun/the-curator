@@ -102,6 +102,8 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
+**Outstanding for v4.1.2**: `curator-user-guide.md` changed (the first-run key step, the folder that can't change while Sync is connected, failed connects, the second computer's Merge/Pull, the damaged-settings banner and Start fresh, Shared Brain admin token, Leave, the invite-name rule, the Windows Setup check); `curator-errors.md` gained `sync-index-locked`. `curator-agent-memory.md` (100%) and `curator-errors.md` (99%) are at their budgets: restructure before adding to either. Re-upload the whole set to Lumina, then remove this note.
+
 **Outstanding for the Windows app** (2026-11-20): `curator-user-guide.md` (install choice per platform, the Windows app, SmartScreen, updates, the tray icon, Claude Desktop in the app, uninstalling, coexisting with the browser install), `curator-overview.md` (platforms), `curator-links.md` and `curator-site-map.md` (the Windows app links) changed; `curator-errors.md` gained the Windows sentences. If the website's install section changes its ids or wording, update `curator-site-map.md`'s Quick start row to match. Re-upload the whole set to Lumina, then remove this note.
 
 **Outstanding for v3.99.2**: every error is a plain sentence with a published code. `curator-errors.md` is
