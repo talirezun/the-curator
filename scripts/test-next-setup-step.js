@@ -261,7 +261,17 @@ section('§4  states are words; tools and computers carry no identity colour');
   ok(marks.length > 20 && marks.every((m) => m[2].trim().length > 0), 'every state mark carries its word', marks.filter((m) => !m[2].trim()).length);
   ok(S.stateClass('ok') === 'cur-setup-st-ok' && S.stateClass('fix') === 'cur-setup-st-fix'
     && S.stateClass('not-checked') === 'cur-setup-st-q' && S.stateClass('bogus') === 'cur-setup-st-none', 'the class map');
-  ok(/class="fresh-dot fresh-[a-z]+"/.test(html), 'the one dot on a row is the freshness dot — the TIME channel');
+  // v4.2 integration (the orchestrator's screen review: OpenCode showed a
+  // green dot beside "Not on this computer"): a harness row's ONE dot is its
+  // status mark; when it saved is said in words. Both modes.
+  const rows = [...html.matchAll(/<tr class="mem-ws-row mem-setup-row" data-setup-row="mem-setup-tool-[^]*?<\/tr>/g)].map((m) => m[0]);
+  const simpleRows = [...S.renderSetupBody({ data: old() }, { pro: false }).matchAll(/<li class="mem-hr mem-setup-row"[^]*?<\/li>/g)].map((m) => m[0]);
+  ok(rows.length > 0 && simpleRows.length > 0, 'anti-vacuity: harness rows were rendered in both modes (' + rows.length + ' + ' + simpleRows.length + ')');
+  ok([...rows, ...simpleRows].every((r) => !/fresh-dot/.test(r))
+    && rows.every((r) => /<td class="mem-setup-cell-status"><span class="cur-setup-st /.test(r))
+    && simpleRows.every((r) => (r.match(/class="cur-setup-st /g) || []).length === 1),
+    'a harness row carries ONE dot, its status mark — no freshness dot that could disagree with it',
+    [...rows, ...simpleRows].find((r) => /fresh-dot/.test(r) || !/cur-setup-st /.test(r)));
 }
 
 section('§5  escaping');

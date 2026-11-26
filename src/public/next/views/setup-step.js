@@ -274,7 +274,10 @@ function toolRow(t, data) {
     + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="mem-setup-tool-' + escapeHtml(t.id) + '"'
       + ' data-setup-act="tool-open" data-tool="' + escapeHtml(t.id) + '"'
       + ' aria-label="' + escapeHtml('Open the setup steps for ' + t.label) + '">'
-      + freshDot(saved && saved.at)
+      // v4.2 integration: no leading dot. A harness row's ONE dot is its
+      // status mark (`st`, design rule 7's tone mark), so a row can never show
+      // a "just saved" green beside "Not on this computer"; when it last saved
+      // is said in words (the age column, the row's second line).
       + '<span class="mem-ws-slug">' + escapeHtml(t.label) + '</span>'
     + '</button></td>'
     // v4.2 (audit bug 4): a harness that still needs something says where
@@ -1026,12 +1029,11 @@ export function harnessRowModel(t, data) {
 /** One harness, one row: the whole row opens its reader (memory.js binds `data-setup-row`). Pure. */
 function harnessRow(t, data) {
   const m = harnessRowModel(t, data);
-  const sv = t.saved && isStr(t.saved.at) ? t.saved : null;
   const rowId = 'mem-setup-tool-' + t.id;
   return '<li class="mem-hr mem-setup-row" data-setup-row="' + escapeHtml(rowId) + '" data-harness-status="' + m.status + '">'
     + '<button type="button" class="mem-hr-open" id="' + escapeHtml(rowId) + '" data-setup-act="tool-open" data-tool="' + escapeHtml(t.id) + '"'
       + ' aria-label="' + escapeHtml(t.label + ', ' + m.word.toLowerCase() + ' — open its setup steps') + '">'
-      + freshDot(sv && sv.at) + '<span class="mem-hr-name">' + escapeHtml(t.label) + '</span></button>'
+      + '<span class="mem-hr-name">' + escapeHtml(t.label) + '</span></button>'
     + '<span class="mem-hr-status">' + st(m.state, m.word) + '</span>'
     + '<span class="mem-hr-act">' + m.action + '</span>'
     + '<span class="mem-hr-chev" aria-hidden="true">' + ICON_CHEV + '</span>'
