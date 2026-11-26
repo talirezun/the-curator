@@ -74,7 +74,8 @@ const NODE = process.execPath;
 const SERVER = getMcpServerPath();
 const LAUNCHER = getMcpLauncherPath();
 writeFileSync(LAUNCHER, '#!/bin/sh\nexec "' + NODE + '" "' + SERVER + '" "$@"\n'); chmodSync(LAUNCHER, 0o755);
-const CTX = { platform: 'darwin', launcherPath: LAUNCHER, serverPath: SERVER };
+// nodePath: the node this install writes into the entry (v4.1.2, audit M1).
+const CTX = { platform: 'darwin', launcherPath: LAUNCHER, serverPath: SERVER, nodePath: NODE };
 
 try {
   section('§1 vetEntry — only The Curator’s own bridge may be started');
@@ -109,11 +110,11 @@ try {
     refuse('args that are not a list of strings', { command: NODE, args: [SERVER, 7] }, 'not_allowed');
     refuse('a NUL in the command', { command: NODE + '\0', args: [SERVER] }, 'not_allowed');
     refuse('no entry at all', null, 'no_entry');
-    const win = C.vetEntry({ command: 'C:\\Program Files\\nodejs\\node.exe', args: ['C:\\x\\mcp\\server.js'] }, { ...CTX, platform: 'win32' }, {
-      realpath: (p) => p, stat: () => ({ isFile: () => true }) });
+    const WINNODE = 'C:\\Program Files\\nodejs\\node.exe';
+    const winDeps = { realpath: (p) => p, stat: (p) => ({ isFile: () => true, ino: String(p).toLowerCase() === WINNODE.toLowerCase() ? 9n : 8n, dev: 1n }) };
+    const win = C.vetEntry({ command: WINNODE, args: ['C:\\x\\mcp\\server.js'] }, { ...CTX, platform: 'win32', nodePath: WINNODE }, winDeps);
     ok('Windows: node.exe with ANOTHER server.js is still refused (other_install)', !win.ok && win.code === 'other_install');
-    const winOk = C.vetEntry({ command: 'C:\\Program Files\\nodejs\\NODE.EXE', args: ['C:\\App\\mcp\\server.js'] }, { platform: 'win32', launcherPath: null, serverPath: 'c:\\app\\mcp\\server.js' }, {
-      realpath: (p) => p, stat: () => ({ isFile: () => true }) });
+    const winOk = C.vetEntry({ command: 'C:\\Program Files\\nodejs\\NODE.EXE', args: ['C:\\App\\mcp\\server.js'] }, { platform: 'win32', launcherPath: null, serverPath: 'c:\\app\\mcp\\server.js', nodePath: WINNODE }, winDeps);
     ok('Windows: node.exe (any case) with THIS server (case-insensitive path) → may start', winOk.ok);
   }
 
@@ -287,7 +288,7 @@ try {
     // Shape (b) is OFF in the Windows app (audit minor 4): "(c) or refuse".
     const NODEW = 'C:\\Program Files\\nodejs\\node.exe'; put(NODEW, NODEW, 401n);
     ok('CONTROL: with no appExecPath (the browser install) node.exe + this server.js IS shape (b)',
-      C.vetEntry({ command: NODEW, args: [SRV] }, { platform: 'win32', launcherPath: null, serverPath: SRV }, deps).shape === 'node');
+      C.vetEntry({ command: NODEW, args: [SRV] }, { platform: 'win32', launcherPath: null, serverPath: SRV, nodePath: NODEW }, deps).shape === 'node');
     refuse('…but in the Windows app node.exe + this server.js is refused (shape (b) is off: "(c) or refuse")', { command: NODEW, args: [SRV] }, 'not_allowed', CTXC);
     refuse('…and so is node.exe + this server.js + --domains-path', { command: NODEW, args: [SRV, '--domains-path', 'C:\\x'] }, 'not_allowed', CTXC);
     const DLNODE = 'C:\\Users\\Ziga Novak\\Downloads\\node.exe'; put(DLNODE, DLNODE, 402n);

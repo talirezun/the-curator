@@ -47,8 +47,7 @@
  *   §5  the ephemeral refusals FIRE and write NOTHING
  *   §6  the shim is never written under getDomainsDir()
  *   §7  staleness — the reading that dropping the path argument depends on
- *   §8  the config writer — three input states, the parse_error refusal, other
- *       servers preserved, the .bak, and the launcher-missing refusal
+ *   §8  the retired wizard writer (POST /write-config) is gone (v4.1.2)
  *   §9  route files enumerated FROM DISK — no route branches on install form
  *   §10 anti-vacuity controls + what is NOT enforced
  *
@@ -500,113 +499,17 @@ eq(staleOf(bundleOld, bundleNew), false,
 deepEq(bundleOld, bundleNew, 'BUNDLE: the entry is literally identical across two different domains dirs');
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§8  The config writer — the three input states, and what it refuses');
+section('§8  The retired wizard writer is GONE (v4.1.2, audit M7)');
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Never `JSON.parse` a value a mutation could turn into null — that is a crash
-// with no assertion name attached.
-function safeParse(t) { try { return JSON.parse(t); } catch { return {}; } }
-
-function fakeRes() {
-  const r = { statusCode: 200, body: null };
-  r.status = (c) => { r.statusCode = c; return r; };
-  r.json = (b) => { r.body = b; return r; };
-  return r;
-}
-
-// A fixture carrying SEVERAL other MCP servers, plus a top-level key that is
-// not mcpServers — the exact shape whose loss the corrupt-file refusal exists
-// to prevent.
-const OTHERS = {
-  globalShortcut: 'Cmd+Shift+Space',
-  mcpServers: {
-    filesystem: { command: '/usr/local/bin/node', args: ['/srv/fs.js'] },
-    github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] },
-    postgres: { command: 'uvx', args: ['mcp-server-postgres'] },
-    'my-curator': { command: '/old/node', args: ['/old/mcp/server.js', '--domains-path', '/old/domains'] },
-  },
-};
-
-async function runWrite(fixtureText, opts = {}) {
-  const dir = fs.mkdtempSync(path.join(TMP, 'claudecfg-'));
-  const cfgPath = path.join(dir, 'claude_desktop_config.json');
-  if (fixtureText !== null) fs.writeFileSync(cfgPath, fixtureText);
-  const res = fakeRes();
-  await routes.writeConfigHandler({}, res, { configPath: cfgPath, ...opts });
-  return {
-    res, cfgPath, dir,
-    after: fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, 'utf8') : null,
-    bak: fs.existsSync(cfgPath + '.bak') ? fs.readFileSync(cfgPath + '.bak', 'utf8') : null,
-  };
-}
-
-// --- STATE 1: absent -------------------------------------------------------
-const absent = await runWrite(null);
-eq(absent.res.statusCode, 200, 'ABSENT: 200');
-eq(absent.res.body.ok, true, 'ABSENT: ok');
-eq(absent.res.body.created, true, 'ABSENT: reported as created');
-eq(absent.res.body.backup_path, null, 'ABSENT: no .bak — there was nothing to back up');
-deepEq(Object.keys(safeParse(absent.after).mcpServers || {}), ['my-curator'], 'ABSENT: the file now holds exactly our entry');
-eq(absent.bak, null, 'ABSENT: no .bak file on disk');
-
-// --- STATE 2: readable, with other servers ---------------------------------
-const readableText = JSON.stringify(OTHERS, null, 2);
-const readable = await runWrite(readableText);
-eq(readable.res.statusCode, 200, 'READABLE: 200');
-eq(readable.res.body.created, false, 'READABLE: reported as replaced, not created');
-const afterObj = safeParse(readable.after);
-deepEq(Object.keys(afterObj.mcpServers).sort(), ['filesystem', 'github', 'my-curator', 'postgres'],
-  'READABLE: all FOUR servers present — the three others are preserved');
-deepEq(afterObj.mcpServers.filesystem, OTHERS.mcpServers.filesystem, 'READABLE: another server is byte-for-byte unchanged');
-deepEq(afterObj.mcpServers.github, OTHERS.mcpServers.github, 'READABLE: and another');
-deepEq(afterObj.mcpServers.postgres, OTHERS.mcpServers.postgres, 'READABLE: and the third');
-eq(afterObj.globalShortcut, 'Cmd+Shift+Space', 'READABLE: a NON-mcpServers top-level key survives');
-deepEq(afterObj.mcpServers['my-curator'], routes.buildCuratorEntry(TMP_DOMAINS), 'READABLE: our entry is the freshly built one');
-eq(readable.bak, readableText, 'READABLE: the .bak holds the ORIGINAL BYTES, not a re-serialisation');
-deepEq(readable.res.body.preserved_servers.sort(), ['filesystem', 'github', 'postgres'],
-  'READABLE: the response NAMES the servers it preserved rather than asking the user to trust it');
-eq(readable.res.body.restart_required, true, 'READABLE: the response says Claude Desktop must be restarted');
-
-// --- STATE 3: corrupt — THE REFUSAL ----------------------------------------
-const corruptText = '{\n  "mcpServers": {\n    "filesystem": { "command": "node" },,\n  }\n}';
-const corrupt = await runWrite(corruptText);
-eq(corrupt.res.statusCode, 409, 'CORRUPT: 409, not a silent success');
-eq(corrupt.res.body.ok, false, 'CORRUPT: ok === false');
-eq(corrupt.res.body.refused, 'claude_config_parse_error', 'CORRUPT: machine-readable refusal code');
-eq(corrupt.res.body.written, false, 'CORRUPT: written === false');
-eq(corrupt.after, corruptText, 'CORRUPT: the file is BYTE-IDENTICAL — nothing was written');
-eq(corrupt.bak, null, 'CORRUPT: not even a .bak was created');
-ok(/other MCP servers/i.test(corrupt.res.body.error), 'CORRUPT: the message explains the harm it is avoiding');
-
-// The same decision, reachable without any filesystem at all.
-eq(routes.planConfigWrite({ __parseError: true }, '/d').ok, false, 'planConfigWrite refuses the parse-error sentinel');
-eq(routes.planConfigWrite({ __parseError: true }, '/d').refused, 'claude_config_parse_error', 'with the same code');
-ok(routes.planConfigWrite(OTHERS, '/d').ok, 'CONTROL: planConfigWrite accepts a readable config (the refusal is not unconditional)');
-eq(Object.keys(routes.planConfigWrite(OTHERS, '/d').next.mcpServers).length, 4, 'CONTROL: and its plan keeps all four servers');
-
-// --- The launcher-missing refusal ------------------------------------------
-const noLauncher = await runWrite(readableText, {
-  launcherState: { required: true, present: false, path: '/nope/my-curator-mcp', message: 'The launcher is missing.' },
-});
-eq(noLauncher.res.statusCode, 409, 'LAUNCHER MISSING: 409');
-eq(noLauncher.res.body.refused, 'launcher_missing', 'LAUNCHER MISSING: named refusal');
-eq(noLauncher.after, readableText, 'LAUNCHER MISSING: the config is untouched — a working entry is not replaced by a broken one');
-eq(noLauncher.bak, null, 'LAUNCHER MISSING: no .bak either');
-ok(routes.planConfigWrite(OTHERS, '/d', { required: true, present: true }).ok,
-  'CONTROL: a PRESENT launcher does not refuse');
-ok(routes.planConfigWrite(OTHERS, '/d', { required: false, present: true }).ok,
-  'CONTROL: repo mode (launcher not required) does not refuse');
-
-// --- Nothing may invoke this automatically ---------------------------------
-// It writes ANOTHER APPLICATION's config. It is reachable only from an
-// explicit user action; a poll or a page load must never reach it.
-const frontendFiles = fs.readdirSync(path.join(ROOT, 'src/public/next/views'))
-  .filter(f => f.endsWith('.js'));
-ok(frontendFiles.length >= 5, `enumerated ${frontendFiles.length} view files from disk`);
-eq((workRouteSrc.match(/router\.post\('\/write-config'/g) || []).length, 1,
-  'the writer is registered exactly ONCE, as a POST');
-ok(!/router\.get\([^)]*write-config/.test(workRouteSrc),
-  'it is not also reachable as a GET (a GET is what a poll or a prefetch would issue)');
+// POST /write-config rewrote ANOTHER APPLICATION's config with no Origin, no
+// token and no preview; the one-click installer (src/routes/mcp-install.js) is
+// now the only writer. The 404s are proved over HTTP in
+// scripts/test-mcp-install-safety.js §M7; here the module surface.
+ok(typeof routes.writeConfigHandler === 'undefined', 'writeConfigHandler is no longer exported');
+ok(typeof routes.planConfigWrite === 'undefined', 'planConfigWrite is no longer exported');
+ok(!/router\.(post|get)\(\s*'\/write-config'/.test(workRouteSrc), 'no write-config route is mounted, as a POST or a GET');
+ok(typeof routes.launchWritableState === 'function', 'CONTROL: launchWritableState (the installer\'s refusal input) is still exported');
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§9  Route files ENUMERATED FROM DISK — no route branches on the FORM');
@@ -694,24 +597,11 @@ section("§11  The Windows app: mcpLaunchStyle 'app-binary' (no shim; the exe it
   try {
     deepEq(routes.buildCuratorEntry('/ignored/domains'), { command: WEXE, args: [WSRV], env: { ELECTRON_RUN_AS_NODE: '1' } },
       "the REAL buildCuratorEntry under mcpLaunchStyle 'app-binary' → the app-binary line");
-    const okPlan = routes.planConfigWrite(null, '/d', routes.launchWritableState());
-    ok(okPlan.ok && okPlan.entry.env.ELECTRON_RUN_AS_NODE === '1', 'the wizard writer writes the app-binary entry WITH its env');
+    ok(routes.launchWritableState() && routes.launchWritableState().present === true, 'the app-binary launch line is writable from an installed exe');
     routes.__setMcpLaunchOverride({ style: 'app-binary', execPath: 'C:\\Users\\Ziga Novak\\Downloads\\The Curator.exe', serverPath: WSRV,
       launchStateDeps: { exists: () => true, homeDir: HOME, tempDirs: TEMPS } });
-    const noPlan = routes.planConfigWrite({ mcpServers: { other: { command: 'x' } } }, '/d', routes.launchWritableState());
-    ok(!noPlan.ok && noPlan.refused === 'launcher_missing' && /Downloads/.test(noPlan.message) && /Nothing was written/.test(noPlan.message),
-      '…and REFUSES from Downloads, saying nothing was written');
-    // The REAL handler with its OWN launcher state (no injected one), into a temp config.
-    const cfg = path.join(TMP, 'appbinary-claude', 'claude_desktop_config.json');
-    fs.mkdirSync(path.dirname(cfg), { recursive: true });
-    fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
-    const before = fs.readFileSync(cfg);
-    const hb = await new Promise((resolve) => {
-      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
-      routes.writeConfigHandler({}, res, { configPath: cfg });
-    });
-    ok(hb.status === 409 && hb.body.refused === 'launcher_missing' && Buffer.compare(fs.readFileSync(cfg), before) === 0,
-      'POST /write-config from Downloads: its own launcher state refuses (409) and the file is byte-identical');
+    const dl = routes.launchWritableState();
+    ok(dl && dl.present === false && /Downloads/.test(dl.message || ''), '…and NOT writable from Downloads (what Install for me refuses on)');
 
     // Self-test: the "exe" is this node; the "server" refuses to answer unless
     // ELECTRON_RUN_AS_NODE=1 reached it, then loads the real bridge.
@@ -779,7 +669,7 @@ section("§11  The Windows app: mcpLaunchStyle 'app-binary' (no shim; the exe it
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§11b  The old wizard on Windows: the right Claude config path, and no write');
+section('§11b  The Claude config path the status and reveal read, on Windows and macOS');
 // ═══════════════════════════════════════════════════════════════════════════
 {
   eq(routes.claudeConfigPathFor({ platform: 'win32', env: { APPDATA: 'C:\\Users\\Ana Müller\\AppData\\Roaming' }, homedir: 'C:\\Users\\Ana Müller' }),
@@ -792,28 +682,9 @@ section('§11b  The old wizard on Windows: the right Claude config path, and no 
     '/Users/ana/Library/Application Support/Claude/claude_desktop_config.json',
     'macOS: the path this wizard always used');
   if (process.platform === 'darwin') {
-    eq(routes.buildFullConfigPayload(null, '/d').claude_config_path, path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+    eq(routes.claudeConfigPathFor(), path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
       'CONTROL: on this Mac the live path is the macOS one, unchanged');
   }
-  // POST /write-config on Windows refuses BEFORE reading or writing anything.
-  const wdir = fs.mkdtempSync(path.join(TMP, 'claudecfg-win-'));
-  const wcfg = path.join(wdir, 'claude_desktop_config.json');
-  fs.writeFileSync(wcfg, JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
-  const before = fs.readFileSync(wcfg);
-  const touched = [];
-  const wr = await new Promise((resolve) => {
-    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
-    routes.writeConfigHandler({}, res, { platform: 'win32', configPath: wcfg,
-      exists: (p) => { touched.push(['exists', p]); return true; }, read: (p) => { touched.push(['read', p]); return '{}'; },
-      write: (p) => { touched.push(['write', p]); }, mkdir: (p) => { touched.push(['mkdir', p]); } });
-  });
-  ok(wr.status === 409 && wr.body.refused === 'use_install_for_me' && wr.body.written === false
-      && /Install for me/.test(wr.body.error) && /Nothing was written/.test(wr.body.error),
-    'Windows: POST /write-config refuses (409), points to Install for me, and says nothing was written');
-  ok(touched.length === 0 && Buffer.compare(fs.readFileSync(wcfg), before) === 0,
-    '…without even reading the file (no fs call at all), which stays byte-identical');
-  const mr = await runWrite(null, { platform: 'darwin' });
-  eq(mr.res.statusCode, 200, 'CONTROL: the same handler on macOS still writes (200)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -857,15 +728,9 @@ try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
  * 5. §9's mode-branch scan is TEXTUAL, inherited from test-install-mode.js
  *    §4 along with its blind spots: a computed `caps[someVar]` fork is
  *    invisible, and so is an aliased import.
- * 6. THE WRITER'S CONCURRENCY IS NOT ADDRESSED. Claude Desktop can itself
- *    rewrite claude_desktop_config.json (newer versions edit it when
- *    connectors are toggled). A write that lands between our read and our
- *    write is lost, mitigated only by the .bak. This is an explicit user
- *    action taken while the user is looking at the wizard, so the window is
- *    small, but it is a window.
- * 7. NO UI IS ASSERTED. POST /write-config has no frontend caller yet; the
- *    MCP wizard (src/public/next/views/mcp-wizard.js) is where it belongs,
- *    and that file was outside this change's scope.
+ * 6. (v4.1.2) The old wizard's writer, POST /write-config, and its two notes
+ *    here (its concurrency window, its missing UI) are retired with it: the
+ *    one-click installer (test-mcp-install-*.js) is the only writer now.
  */
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
