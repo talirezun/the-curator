@@ -913,5 +913,23 @@ export function getCredentialFiles() {
     { rel: '.sharedbrain-config.json', abs: getSharedBrainConfigFile() },
     { rel: '.env',                     abs: appPath('.env') },
     { rel: '.knowledge-git/config',    abs: hostPath().join(getSyncGitDir(), 'config') },
+    // The kept copies of a damaged settings file (v4.1.2, candidate audit N5):
+    // `<file>.unreadable-<sha:12>` (config.js / sharedbrain-config.js
+    // keepDamagedCopy) is a BYTE copy, so it holds the same keys and tokens.
+    // Only copies that exist are listed, after the fixed entries, so the list
+    // is unchanged on an install that has none.
+    ...keptDamagedCopies(getCuratorConfigFile()),
+    ...keptDamagedCopies(getSharedBrainConfigFile()),
   ];
+}
+
+/** `<file>.unreadable-*` beside `abs`, as {rel, abs}. Never throws; writes nothing. */
+function keptDamagedCopies(abs) {
+  const P = hostPath();
+  const dir = P.dirname(abs);
+  const prefix = `${P.basename(abs)}.unreadable-`;
+  let names;
+  try { names = readdirSync(dir); } catch { return []; }
+  return names.filter((n) => n.startsWith(prefix) && n.length > prefix.length).sort()
+    .map((n) => ({ rel: n, abs: P.join(dir, n) }));
 }

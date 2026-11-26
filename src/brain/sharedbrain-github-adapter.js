@@ -511,6 +511,19 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
       try { await response.text(); } catch { /* ignore */ }
       return { entries: [], truncated: false };
     }
+    if (response.status === 409) {
+      // A repository with no commit at all (the first day of a Shared Brain:
+      // the admin created it, a member pressed Pull before anyone pushed).
+      // GitHub answers this read with 409 "Git Repository is empty.", which
+      // reached the screen as raw text (v4.1.2 E2E D2). That one answer is an
+      // empty tree; any other 409 keeps its error, because a read that
+      // failed must never pass for "nothing there".
+      let detail = '';
+      try { const b = await response.json(); detail = b && typeof b.message === 'string' ? b.message : ''; } catch { /* non-JSON */ }
+      if (/\brepository is empty\b/i.test(detail)) return { entries: [], truncated: false };
+      throw new GitHubAdapterError('SHARED_BRAIN_SHA_CONFLICT',
+        `GitHub GET tree:${this.branch} → 409${detail ? `: ${sanitizeDetail(detail).slice(0, 200)}` : ''}`, 409);
+    }
     if (!response.ok) {
       await this._throwForStatus(response, `tree:${this.branch}`, 'GET');
     }

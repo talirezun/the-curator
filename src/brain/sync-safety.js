@@ -46,9 +46,16 @@ export const CREDENTIAL_GITIGNORE_RULES = [
   ...CREDENTIAL_DIRS.map((d) => `${d}/`),
 ];
 
+// The kept copy of a damaged settings file (`<file>.unreadable-<sha:12>`,
+// v4.1.2) is a byte copy of a credential file (candidate audit N5). Matched
+// here, at the staging guard (stageAll → dropUnsafeFromIndex), and on purpose
+// NOT added to CREDENTIAL_GITIGNORE_RULES: a new rule there would rewrite every
+// connected install's .gitignore and push that change from each computer.
+const KEPT_COPY_BASENAMES = ['.curator-config.json.unreadable-*', '.sharedbrain-config.json.unreadable-*'];
+
 const globToRegExp = (glob) =>
   new RegExp('^' + glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
-const BASENAME_RES = CREDENTIAL_BASENAMES.map(globToRegExp);
+const BASENAME_RES = [...CREDENTIAL_BASENAMES, ...KEPT_COPY_BASENAMES].map(globToRegExp);
 const DIR_SET = new Set(CREDENTIAL_DIRS.map((d) => d.toLowerCase()));
 
 /** Is this work-tree-relative path (forward slashes) credential-shaped by name? */
