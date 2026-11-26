@@ -133,6 +133,6 @@ Since version 3.99.2 every error is a plain sentence: what happened, whether any
 
 ## What do the Windows app's update messages mean?
 
-They carry no code; each says what happened and the next step. Most often: an AI app such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app
+They carry no code; each says what happened and the next step. Most often: an agent harness such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app
 
 <!-- error-catalogue:end -->

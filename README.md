@@ -106,8 +106,8 @@ each document has a third state too, **not at start**, and each project has its 
 budget — since v3.70.0, seven presets named in tokens, Index only (0) through Max (200k) — under
 the governing rule **"the right context, not all of it": an agent gets its foundations, the last
 state and the standing brief at the start; everything else is on demand.** Step ④ draws that
-bootstrap as a **context-window meter** — your window to scale, **your tool's share** (your own
-estimate of what the agent tool loads for itself) hatched, and
+bootstrap as a **context-window meter** — your window to scale, **your harness's share** (your own
+estimate of what the agent harness loads for itself) hatched, and
 The Curator's own share broken out layer by layer — so "the right context" is something you can
 actually see next to "all of it."
 
@@ -230,15 +230,18 @@ your sync credential — set it once in **Settings → Knowledge base → GitHub
 which shows only its last four characters back and offers a one-click **Test** against a named
 repository before you rely on it.
 
-**And a Setup check, so you don't have to remember the preconditions (v3.77.0–v3.80.0).** Context →
-a project → step ⑤ **Setup** checks, for that project on this computer, what several tools and
-several computers need: each agent tool's MCP entry, both skills, the instruction block in
+**And a Setup check, so you don't have to remember the preconditions (v3.77.0–v4.2.0).** Context →
+a project → step ⑤ **Setup** checks, for that project on this computer, what several agent harnesses
+(the apps your agent runs in: Claude Code, Codex, Cursor, Antigravity…) and several computers need,
+one row per harness with its status and next step: each harness's MCP entry, both skills, the instruction block in
 `CLAUDE.md` / `AGENTS.md`, a committed and pushed `.curator-project`, and a newer handoff waiting
 from another computer. Every problem is one line with its own fix button; nothing is written to your
-tools or your repository. It also says which route each thing travels by — **Personal Sync** for
+harnesses or your repository. It also says which route each thing travels by — **Personal Sync** for
 handoffs, the brief and Documents; **the project's own git** for the instruction files and the
 marker; **nothing** for MCP settings, skills and hooks, which are set up on each computer
 ([what travels how](docs/user-guide.md#what-travels-between-your-computers-and-how)).
+
+**Simple by default, Pro for every detail (v4.2.0):** one free switch on the rail that only reveals and never hides a warning, a cost or a result ([Simple and Pro](docs/user-guide.md#7c-simple-and-pro)).
 
 ---
 
@@ -515,7 +518,7 @@ the first real update is the first real test.
 
 Your knowledge is plain markdown in a folder you chose, so nothing above affects it. Coming
 from the shell installer below? Your wiki comes across untouched; you re-paste your API key and
-press **Install for me** in Settings → MCP bridge → Agent apps — and point the app at your existing folder, which is
+press **Install for me** in Settings → MCP bridge → Agent harnesses — and point the app at your existing folder, which is
 [one button and one trap](docs/user-guide.md#pick-the-folder-that-contains-your-domains). The
 decisions behind the packaging — and, for each, whether code exists yet — are in
 [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
@@ -567,10 +570,10 @@ Then open **http://localhost:3333**. Stop it with **Ctrl+C**. To update, stop it
 > `CURATOR_NO_OPEN=1` keeps the server from trying to open a browser for you.
 >
 > **Connecting your AI tools:** in Settings → MCP bridge, the **Install for me** button writes The
-> Curator's entry into your agent apps' config files on a Mac (Claude Desktop, Cursor, Antigravity) and
+> Curator's entry into your agent harnesses' config files on a Mac (Claude Desktop, Cursor, Antigravity) and
 > into **Claude Desktop only** on Windows (labelled "New on Windows — tell us if it works").
 > It refuses with a reason rather than guess which settings file Claude Desktop reads. On Linux, and
-> for every other agent app on Windows, copy the entry from the same screen and paste it in yourself.
+> for every other agent harness on Windows, copy the entry from the same screen and paste it in yourself.
 
 > **Install with a coding agent** — Claude Code, Cursor, Cline and friends can do the whole thing
 > from one pasted prompt: [User Guide § 20](docs/user-guide.md#20-install-with-a-coding-agent).

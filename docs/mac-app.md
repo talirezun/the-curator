@@ -489,6 +489,17 @@ it.
 
 ---
 
+## Simple and Pro
+
+*Since v4.2.0.* The app opens in the **simple** view. The **Pro** switch on the left rail, directly
+above **Settings** (also **Settings › General › Pro mode**), shows every detail and control. It is
+free, it only reveals (no warning, cost or result is ever hidden in the simple view), it is saved on
+this Mac only, and today it changes the Context page's steps 4 and 5. The same switch is in the
+Windows app and the browser install. Full description:
+[user guide §7c](user-guide.md#7c-simple-and-pro).
+
+---
+
 ## Adding to Dock
 
 After installation:

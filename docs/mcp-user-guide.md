@@ -175,10 +175,10 @@ A frontier model can always get the full picture — it just has to ask in piece
 checks the tools it can find, shows you exactly what it would write, keeps a copy of your original
 file, and changes nothing but its own `my-curator` entry.
 
-1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Your AI apps**): a **Next step** card when something needs doing, then one row per AI app found on this computer.
+1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Agent harnesses**): a **Next step** card when something needs doing, then one row per agent harness found on this computer.
 2. Tick the apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Check the change · nothing written yet** and shows, per file, *‹app› — ‹path›*, **Adds:** (or, for an update, **Changes the My Curator setup to:**) with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›*. An update that keeps settings from the old entry names them, never their values: *Also keeps what was added to the old setup: env, disabled.* (v4.1.2)
 3. Click **Apply**. One result line per file stays on screen, for example *"✓ Cursor is set up. Quit Cursor completely and open it again to use My Curator. (⌘Q — closing the window is not enough)"*.
-4. **Fully quit and reopen the app** (⌘Q on a Mac; on Windows right-click its icon by the clock → Quit). An AI app reads its list of MCP servers only when it starts. Claude Desktop rewrites its own file, so quitting it first is the safest install.
+4. **Fully quit and reopen the app** (⌘Q on a Mac; on Windows right-click its icon by the clock → Quit). An agent harness reads its list of MCP servers only when it starts. Claude Desktop rewrites its own file, so quitting it first is the safest install.
 5. Click **Check again** — the app's row should read **connected**; open it and press **Test connection** (*"Works — My Curator starts the way Claude Desktop starts it and answers with all 24 tools."*). Then, in Claude Desktop:
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
@@ -255,11 +255,11 @@ up spread over several lines. The values are identical, and the backup keeps the
 
 | Section | What you see |
 |---|---|
-| **Overview** | **CONNECTED** · **NEEDS ATTENTION** · **TOOLS WORKING** (*24 of 24* from the last test) · **LAST USED** (when an AI app last used a tool; tests do not count) |
-| **① Your AI apps** | **Check again**; a **Next step · N to do** card only when something needs doing; one row per AI app — one sentence, at most one button (**Test connection** or **Copy the setup text**), and a **Details** fold with each settings file that exists, **Remove** (red) and **Restore original** |
-| **② Skills** | `my-curator` and `curator-continuity`: **Download ‹skill›.zip**, and each AI app's copy — Claude's is uploaded to your account (**Customize → Skills**), Antigravity's is *up to date*, *out of date* or *not installed*, with **Show the folder**. Skills don't update on their own |
+| **Overview** | **CONNECTED** · **NEEDS ATTENTION** · **TOOLS WORKING** (*24 of 24* from the last test) · **LAST USED** (when an agent harness last used a tool; tests do not count) |
+| **① Agent harnesses** | **Check again**; a **Next step · N to do** card only when something needs doing; one row per agent harness — one sentence, at most one button (**Test connection** or **Copy the setup text**), and a **Details** fold with each settings file that exists, **Remove** (red) and **Restore original** |
+| **② Skills** | `my-curator` and `curator-continuity`: **Download ‹skill›.zip**, and each agent harness's copy — Claude's is uploaded to your account (**Customize → Skills**), Antigravity's is *up to date*, *out of date* or *not installed*, with **Show the folder**. Skills don't update on their own |
 | **③ Connection test** | **Test connection**, **Test all 24 tools**, one result line (*"Works. …"* / *"Not working: …"*), **Details** (version, knowledge folder, how many are open right now), **Default domain for writes** |
-| **④ Tool activity** | The last time an AI app started My Curator, the five busiest tools this week, *N tools not used this week*, and **All 24 tools** |
+| **④ Tool activity** | The last time an agent harness started My Curator, the five busiest tools this week, *N tools not used this week*, and **All 24 tools** |
 
 The page writes nothing on its own: only **Install for me**, **Remove** and **Restore** change an
 app's settings file, always after a preview and a backup. **Test connection** starts My Curator the
@@ -269,7 +269,7 @@ refused and never started, and a test that does not stop is ended after a few se
 
 ![Settings → MCP bridge on the demo workspace. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The main column reads CONFIGURATION over MCP bridge. (Screenshot predates v3.88.0.) Step 1, Connect a client: 'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.' over a recessed monitor reading CONFIGURED, CLIENT Claude Desktop, SERVER my-curator and DOMAINS /tmp/curator-demo-…/domains, then Re-run setup (filled), Run self-test, View config and Copy snippet. Step 2, Default domain for MCP writes, with a picker reading '— none (require an explicit domain) —' and a line on what leaving it unset means. Step 3, Tool map: 'What your agents used, and when — kept on this machine only.', a Test all 24 tools button, a monitor with LAST SESSION START 38 min ago and LAST SAVE 8 min ago, and BUSIEST · LAST 5 DAYS · AGENTS ONLY — get_project_context 8, save_working_state 7, search_wiki 7.](images/curator-mcp-bridge.png)
 
-**An older connection is reported on the AI app's own row (v3.88.0; v3.90.0 words: *"‹app› is still using the previous version of My Curator. Quit ‹app› completely and open it again."*).** When an agent app still has a bridge process
+**An older connection is reported on the agent harness's own row (v3.88.0; v3.90.0 words: *"‹app› is still using the previous version of My Curator. Quit ‹app› completely and open it again."*).** When an agent harness still has a bridge process
 open from before your last update, a warning line appears on that app's row, in its
 own colour, naming the app that opened the bridge and the exact quit step. It appears **only when the
 tool list differs** (each bridge records its pid, version and a signature of its tool list). The same
@@ -299,11 +299,11 @@ install with no domains yet passes, and says so, rather than being reported as b
 reads or validates `claude_desktop_config.json` — see Troubleshooting below.
 
 **And what a green pass does not cover.** The self-test spawns a *new* bridge; it cannot see the
-one your agent app already has open. An agent app keeps a bridge process alive until it is quit, so a
+one your agent harness already has open. An agent harness keeps a bridge process alive until it is quit, so a
 bridge started before an update carries on serving the tools it was launched with — on one machine one
 had been running for two days across five updates, offering 22 tools while the files on disk offered 24.
 Since v3.88.0 the reading compares the bridge's recorded **tool-list signature** with the one on disk
-(never file times), names the agent app that opened it (its parent process), and warns only when they
+(never file times), names the agent harness that opened it (its parent process), and warns only when they
 differ. Nothing in The Curator can restart the app for you — the process belongs to it. `my-curator doctor`
 reports the same reading in the terminal.
 
@@ -802,14 +802,14 @@ Composing every answer from raw source text instead of the compiled wiki would q
 | | **Source install** (git checkout) | **The packaged Mac app** |
 |---|---|---|
 | The entry Claude Desktop gets | your Node binary, `mcp/server.js`, **and `--domains-path <your folder>`** | a small launcher script the app writes for itself, with **no arguments at all** |
-| Move the knowledge folder | **The entry goes stale.** The tool's row in **Settings → MCP bridge → Your AI apps** reads **needs an update**: click **Install for me**, then restart Claude Desktop. The status card shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
+| Move the knowledge folder | **The entry goes stale.** The tool's row in **Settings → MCP bridge → Agent harnesses** reads **needs an update**: click **Install for me**, then restart Claude Desktop. The status card shows a banner naming every cause | **Nothing to do.** There is no folder path in the entry, so the bridge resolves the same live Settings value the app does |
 | Move the app itself | Rebuild the Dock launcher (`bash scripts/build-app.sh`) | The launcher script is **regenerated at every app launch**, so it repairs itself — with one honest gap: between moving the app and next opening it, the script still names the old location for one session. Launching The Curator once fixes it |
 
 The flag was dropped in the app deliberately. It is a **snapshot** taken when the config was written, and it outranks your live Settings choice — so under the app it would silently point the bridge at a folder you had already moved on from. The source install keeps it, equally deliberately: removing it there would mark every existing user's config stale overnight.
 
 **The MCP and the app now agree on `DOMAINS_PATH` vs Settings.** If you've set a `DOMAINS_PATH` environment variable (the developer-oriented `.env` fallback described in [user-guide.md](user-guide.md)) *and* a different Knowledge Base Location in Settings, the Settings value wins — in both the app and in Claude Desktop, identically. That particular disagreement can no longer happen.
 
-The one way they can still drift apart is the one described just above, **and it applies to a source install only** — the packaged app's entry carries no folder path, so there is nothing to go stale. In a source install, the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time the entry was written. If you change the Knowledge Base Location in Settings afterward without updating the entry (**Install for me**), Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → MCP bridge → Agent apps → **Install for me** → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
+The one way they can still drift apart is the one described just above, **and it applies to a source install only** — the packaged app's entry carries no folder path, so there is nothing to go stale. In a source install, the `--domains-path` baked into `claude_desktop_config.json` is a **snapshot** taken the last time the entry was written. If you change the Knowledge Base Location in Settings afterward without updating the entry (**Install for me**), Claude Desktop's read tools keep looking at the OLD folder (that baked-in argument always wins for reads) while the browser shows the NEW one. Writes don't follow the same path, though: `compile_to_wiki` and the Health-fix tools save through the Curator's own current Knowledge Base Location, not the snippet's baked-in path — so in this exact stale state, asking Claude to save research writes into the NEW folder while every read tool is still showing you the OLD one, and the pages will look missing even though they saved successfully. The fix is exactly what's already described above — Settings → MCP bridge → Agent harnesses → **Install for me** → restart Claude Desktop — and it's worth doing promptly, not just eventually, precisely because of that read/write split.
 
 **The Curator server does not need to be running.** Claude Desktop spawns `mcp/server.js` as a child process on demand. It's a separate, read-only path into the same markdown files.
 
@@ -910,7 +910,7 @@ A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotf
 
 | Symptom | Most likely cause | Fix |
 |---|---|---|
-| Claude Desktop shows no `my-curator` tools | The tool was not restarted, or the entry was pasted incorrectly | Press **Check again** in Connect your agent apps: the row should read **connected**. Then ⌘Q and reopen the tool |
+| Claude Desktop shows no `my-curator` tools | The tool was not restarted, or the entry was pasted incorrectly | Press **Check again** in Settings › MCP bridge › Agent harnesses: the row should read **connected**. Then ⌘Q and reopen the tool |
 | "Stale config" banner in Settings | **Source install:** Knowledge Base Location changed since you last generated the snippet. **Packaged app:** a folder change cannot cause this — the entry holds no folder path — so look for a moved app or a hand-edited config instead | Click **Install for me** on the tool's row, then restart Claude Desktop. In the app, launching it once also rewrites its own launcher script |
 | "Needs an update" **and** a green self-test at the same time | Not a contradiction, and not a detection bug. They answer different questions: staleness compares the command **saved on disk** in Claude Desktop's config against what this install would generate now, while the self-test deliberately never reads that file and always spawns the freshly-computed command — so a broken saved config can never be blamed on the bridge | Press **Install for me** to refresh what is saved on disk |
 | Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then press **Install for me** to rewrite the entry. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |

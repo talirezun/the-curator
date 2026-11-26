@@ -256,7 +256,7 @@ There is no **Stop server** button in the interface, deliberately. Quitting the 
 
 **The Mac app updates itself.** Use **The Curator → Check for Updates…** in the menu bar, or **Settings → General → Software update → Check for updates**. It downloads the new version, checks it, swaps it in and restarts, with no Gatekeeper prompt to click through. Your knowledge base, keys and sync settings are untouched. If a check fails it says why and the copy you are running keeps working, because the new version is never put in place until every check on it has passed. You do not download it again.
 
-**The Windows app updates itself.** Use **Help → Check for Updates…** or **Settings → General → Software update → Check for updates**, then **Download and install**. The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 must match what GitHub publishes, and its version must be the one offered; a file that fails a check is never run. At **Update ready to install** nothing has changed yet; **Restart and finish** closes the app, runs the installer silently and reopens The Curator on the new version. Your knowledge base, keys and settings are outside the program folder and are never touched. If Claude Desktop is connected to The Curator, it keeps a copy of the app running as its connection and Windows cannot replace a running program, so the update stops before changing anything and offers **Close the connection and update** (afterwards quit and reopen Claude Desktop), or you quit Claude Desktop and press **Restart and finish** again. The app closes only once its update helper is running; if the helper cannot start, the app stays open, keeps the downloaded setup and says so. If an update does not finish, a message box says so and the app says it again when it next opens; every step is logged in `%LOCALAPPDATA%\TheCurator\logs\update-install.log`, and running the kept setup from `%LOCALAPPDATA%\TheCurator\updates` (or the installer downloaded again from https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe ) repairs the app with your data intact. A real update from one version to the next is rehearsed in CI, and the update from 4.0.0 to 4.0.1 was confirmed on a real PC on 2026-11-21 with no security prompt. Known limits: signing out of Windows, or running the installer by hand, while The Curator is saving can cut that one save short; **Close the connection and update** can cut short a save your AI app is making to your wiki at that moment, so let it finish first; and if your Windows user folder name contains an apostrophe, quit The Curator yourself before running the installer by hand, because the installer may not notice it is open.
+**The Windows app updates itself.** Use **Help → Check for Updates…** or **Settings → General → Software update → Check for updates**, then **Download and install**. The new setup program is downloaded into `%LOCALAPPDATA%\TheCurator\updates` and checked: its size and SHA-256 must match what GitHub publishes, and its version must be the one offered; a file that fails a check is never run. At **Update ready to install** nothing has changed yet; **Restart and finish** closes the app, runs the installer silently and reopens The Curator on the new version. Your knowledge base, keys and settings are outside the program folder and are never touched. If Claude Desktop is connected to The Curator, it keeps a copy of the app running as its connection and Windows cannot replace a running program, so the update stops before changing anything and offers **Close the connection and update** (afterwards quit and reopen Claude Desktop), or you quit Claude Desktop and press **Restart and finish** again. The app closes only once its update helper is running; if the helper cannot start, the app stays open, keeps the downloaded setup and says so. If an update does not finish, a message box says so and the app says it again when it next opens; every step is logged in `%LOCALAPPDATA%\TheCurator\logs\update-install.log`, and running the kept setup from `%LOCALAPPDATA%\TheCurator\updates` (or the installer downloaded again from https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe ) repairs the app with your data intact. A real update from one version to the next is rehearsed in CI, and the update from 4.0.0 to 4.0.1 was confirmed on a real PC on 2026-11-21 with no security prompt. Known limits: signing out of Windows, or running the installer by hand, while The Curator is saving can cut that one save short; **Close the connection and update** can cut short a save your agent harness is making to your wiki at that moment, so let it finish first; and if your Windows user folder name contains an apostrophe, quit The Curator yourself before running the installer by hand, because the installer may not notice it is open.
 
 **The browser install updates in place.** **Settings → General → Check for updates**; if one is available an install button appears and the confirmation names the versions. It replaces its own program files with the published version, reinstalls dependencies and restarts, and the browser reloads itself. From the terminal, the equivalent is `cd ~/the-curator && git pull && npm install` and then restarting the server.
 
@@ -278,7 +278,15 @@ Since version 3.64.0 the rail is **three** places, read as *ask, knowledge, cont
 | Domains | Domains | knowledge | One subject at a time, and everything that acts on it: counts, ingest, the page list, Projects, Shared Brain and Wiki health. This is Home. |
 | Project context | Context | context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over the MCP bridge. Called Agent memory before v3.62.0. |
 
-At the bottom of the rail, separated by a gap: the sun/moon **theme toggle**, **Sync**, and **Settings**.
+At the bottom of the rail, separated by a gap: the sun/moon **theme toggle**, **Sync**, the **Pro** switch (since version 4.2.0) and **Settings**.
+
+Anything you can press — a button, a row, a menu item, a link — turns the pointer into a hand (since 4.2.0), and in every drop-down menu the row under the pointer or the arrow keys is highlighted in both themes.
+
+## What is Pro mode? I can't find a control the guide describes
+
+Since version 4.2.0 the app has one switch, **Pro**, on the rail directly above **Settings** (on every screen) and in **Settings → General → Pro mode**. Off, the default for everyone, existing installs included, shows the **simple** view; on shows every detail and control. It is free, not a paid tier. It only reveals: it never removes, renames or changes a control, and the simple view never hides a warning, a cost, a result, a refusal, a confirmation or anything needed to finish a task. It is saved on this computer only, never synced. A section with more to show ends with **More in Pro: …**; pressing it turns Pro on, keeps the section in place and offers **Undo**. In 4.2.0 it changes only the Context page's steps 4 and 5. Controls marked (Pro) in these files appear only with Pro on.
+
+**When guiding someone through a screen, first ask whether Pro is on** (the Pro switch at the bottom of the left rail, or Settings → General). If they cannot find a control marked (Pro), tell them to turn Pro on; it changes nothing the app does.
 
 **Ingest and Shared Brain left the rail in version 3.64.0 and did not leave the app.** Each acts on exactly one domain, so each is now a section of that domain's page — and each still has its own full-page view, one press from the section, still reachable and still restored if it is where you left off. It is one panel with two hosts, not two copies, so a batch you start in one is live in the other.
 
@@ -691,12 +699,12 @@ Chat conversations are synced deliberately, so sending one chat message legitima
 | All wiki pages | Original source files — your PDFs and text files in `raw/` |
 | Chat conversations | Your AI provider API keys and every other app setting |
 | Domain schemas | The app's own code |
-| Each project's standing brief, handoffs, journal and Documents | Each agent tool's MCP entry, skills and hooks |
+| Each project's standing brief, handoffs, journal and Documents | Each agent harness's MCP entry, skills and hooks |
 | Health dismissals | Your project's code folder, including its `CLAUDE.md`, `AGENTS.md` and `.curator-project` — those travel by the project's own git |
 
 ## How do I set up a second computer?
 
-Install the app, add your API key, then click **Sync** in the rail footer and enter the **same repository URL** and the **same token** as before, with **Starting direction** set to **Pull an existing wiki**. Click **Connect**. Everything downloads. You do not need to create a domain first — they arrive with the pull. If you left it on **Push my wiki**, the push is refused because GitHub already has a wiki; then choose **Merge — keep both** or **Pull an existing wiki**, and both work (version 4.1.2; before, only Overwrite did). That brings your knowledge folder only: a project's code and its `CLAUDE.md`, `AGENTS.md` and `.curator-project` come by that project's own git, and each agent tool's MCP entry and skills are set up again on the new computer.
+Install the app, add your API key, then click **Sync** in the rail footer and enter the **same repository URL** and the **same token** as before, with **Starting direction** set to **Pull an existing wiki**. Click **Connect**. Everything downloads. You do not need to create a domain first — they arrive with the pull. If you left it on **Push my wiki**, the push is refused because GitHub already has a wiki; then choose **Merge — keep both** or **Pull an existing wiki**, and both work (version 4.1.2; before, only Overwrite did). That brings your knowledge folder only: a project's code and its `CLAUDE.md`, `AGENTS.md` and `.curator-project` come by that project's own git, and each agent harness's MCP entry and skills are set up again on the new computer.
 
 If you worked on two machines without syncing, **Sync now** on either one commits your local changes, merges the remote in, then pushes, and in most cases resolves cleanly because the two machines touched different parts of the wiki. The one case worth knowing: if the same part of the same page was edited on both machines, the merge does not stop to ask — it silently keeps the GitHub version for the conflicting section and drops the local one, while still reporting success. Your pre-merge local version is committed to local git history first, so it is recoverable with a git client. The reliable habit is to sync at the start and the end of every session.
 
@@ -708,7 +716,7 @@ When you work on one project from two computers, everything travels by one of th
 |---|---|---|---|
 | A project's standing brief, handoffs, journal and Documents; wiki pages; chat conversations; domain schemas; Health dismissals | Your knowledge folder | Personal Sync, through your private knowledge repository on GitHub | **Sync now**, before you start and after the agent's last save |
 | The project's code, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` and `.curator-project` | The project folder, a git clone | The project's own git repository | Commit and `git push` on one computer, `git pull` on the other (the first time, `git clone`) |
-| Each agent tool's MCP entry, the two skills, hooks, the repository folder you chose in Setup, tools you added to Setup, API keys, the Personal Sync connection and app settings | That computer | Nothing — they stay on the computer | Set them up once on each computer |
+| Each agent harness's MCP entry, the two skills, hooks, the repository folder you chose in Setup, harnesses you added to Setup, the Pro switch, API keys, the Personal Sync connection and app settings | That computer | Nothing — they stay on the computer | Set them up once on each computer |
 
 A handoff is the note an agent saves about where the work stands; a scope is the name it is saved under. Your ingested source files in `raw/` are never synced. **Sync now** syncs your whole knowledge folder, every domain, not only one project.
 
@@ -786,21 +794,21 @@ The MCP bridge lets an AI client read and write your wiki directly. Since versio
 
 | Step | What to do |
 |---|---|
-| 1 | At the top, the overview reads **Connected**, **Needs attention**, **Tools working** ("24 of 24" from the last test) and **Last used** (when an AI app last used a tool; tests do not count). Section ① *Your AI apps* has **Check again**. |
+| 1 | At the top, the overview reads **Connected**, **Needs attention**, **Tools working** ("24 of 24" from the last test) and **Last used** (when an agent harness last used a tool; tests do not count). Section ① *Agent harnesses* has **Check again**. |
 | 2 | If anything needs doing, a **Next step · N to do** card lists it, one line each ("Cursor isn't connected yet.", "Antigravity's my-curator skill is out of date. …"), then **Install for me** (the apps are ticked for you) and **Copy the setup text**. **Install for me** shows **Check the change · nothing written yet**: each app and file, "Adds:" with the exact setup text, your other connections (which stay as they are) and the backup's name. When nothing needs doing the page says "Everything is connected." |
 | 3 | Click **Apply**. One result line per file stays on screen, for example "Cursor is set up. Quit Cursor completely and open it again to use My Curator." |
-| 4 | Fully quit and reopen the AI app (Command-Q on a Mac; closing the window is not enough), because an app reads its MCP list only when it starts. |
+| 4 | Fully quit and reopen the agent harness (Command-Q on a Mac; closing the window is not enough), because an app reads its MCP list only when it starts. |
 | 5 | Click **Check again**. Each app has one row with its state (connected, needs attention, not connected, can't read its settings). Open it for one sentence ("Connected. Claude Desktop last used My Curator 2 days ago.") and at most one button: **Test connection** starts My Curator the way the app does and answers "Works — … all 24 tools", or why not. The row's **Details** fold lists each settings file that exists, **Remove** and **Restore original**. |
 
-The page has four sections: ① *Your AI apps*, ② *Skills*, ③ *Connection test* (**Test connection**, **Test all 24 tools**, one result line, and **Default domain for writes** — leave it on "Ask every time" to make the AI app name the domain) and ④ *Tool activity*.
+The page has four sections: ① *Agent harnesses*, ② *Skills*, ③ *Connection test* (**Test connection**, **Test all 24 tools**, one result line, and **Default domain for writes** — leave it on "Ask every time" to make the agent harness name the domain) and ④ *Tool activity*.
 
-**Skills (since version 3.90.0).** Section ② lists the two skills, `my-curator` and `curator-continuity`, with **Download** for each and every AI app's copy. Skills don't update on their own: after an update, download them again. For Claude, upload the .zip in Claude under **Customize → Skills**; The Curator cannot see your Claude account, so it cannot tell whether that copy is current. For Antigravity the row says "up to date", "out of date" or "not installed" and offers **Show the folder**.
+**Skills (since version 3.90.0).** Section ② lists the two skills, `my-curator` and `curator-continuity`, with **Download** for each and every agent harness's copy. Skills don't update on their own: after an update, download them again. For Claude, upload the .zip in Claude under **Customize → Skills**; The Curator cannot see your Claude account, so it cannot tell whether that copy is current. For Antigravity the row says "up to date", "out of date" or "not installed" and offers **Show the folder**.
 
-Which AI apps can be installed this way depends on the computer: on a Mac, Claude Desktop, Cursor and Antigravity; on Windows, Claude Desktop only, and Claude Desktop must be fully quit first (right-click its icon by the clock, Quit). Every other app says "can't be set up automatically yet" with **Copy the setup text**.
+Which agent harnesses can be installed this way depends on the computer: on a Mac, Claude Desktop, Cursor and Antigravity; on Windows, Claude Desktop only, and Claude Desktop must be fully quit first (right-click its icon by the clock, Quit). Every other app says "can't be set up automatically yet" with **Copy the setup text**.
 
 **In the Windows app** the entry Install for me writes starts The Curator's own `The Curator.exe` as the bridge, with the setting `ELECTRON_RUN_AS_NODE=1` so it runs as a background helper instead of opening a second window; the copied setup text for other tools includes that setting too. Install for me refuses, with the reason, when the app runs from Downloads or a temporary folder: install it with the installer and open it from the Start menu. The entry is started and checked by an automated test on Windows, but Claude Desktop itself starting it has not yet been watched on a real PC.
 
-**Tool activity (section ④).** "Which of My Curator's 24 tools your AI apps used in the last 7 days. Tests are not counted." It shows the last time an AI app started My Curator, the five busiest tools as depth bars, "N tools not used this week", and a folded "All 24 tools" list with one plain line per tool. Handoffs per project are not on this page: they are project memory, shown on the Context page.
+**Tool activity (section ④).** "Which of My Curator's 24 tools your agent harnesses used in the last 7 days. Tests are not counted." It shows the last time an agent harness started My Curator, the five busiest tools as depth bars, "N tools not used this week", and a folded "All 24 tools" list with one plain line per tool. Handoffs per project are not on this page: they are project memory, shown on the Context page.
 
 ## What is in Settings?
 
@@ -808,10 +816,10 @@ Which AI apps can be installed this way depends on the computer: on a Mac, Claud
 
 | Section | What is in it |
 |---|---|
-| **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
+| **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **Pro mode** (the same switch as the rail's; "Saved on this computer. Today it adds detail to the Context page."), **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
 | **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder; and, since version 3.65.2, a **GitHub read-only token** field — see the next question. |
-| **MCP bridge** | An overview (connected, needs attention, tools working, last used) and four sections: ① Your AI apps (Check again, a Next step card with **Install for me** and **Copy the setup text**, one row per app with **Test connection** and a Details fold with **Remove** and **Restore original**, and a folded "Not on this Mac" list), ② Skills (download, each app's copy), ③ Connection test (Test connection, Test all 24 tools, default project for writes), ④ Tool activity.
+| **MCP bridge** | An overview (connected, needs attention, tools working, last used) and four sections: ① Agent harnesses (Check again, a Next step card with **Install for me** and **Copy the setup text**, one row per app with **Test connection** and a Details fold with **Remove** and **Restore original**, and a folded "Not on this Mac" list), ② Skills (download, each app's copy), ③ Connection test (Test connection, Test all 24 tools, default project for writes), ④ Tool activity.
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
 Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.68.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
@@ -850,29 +858,40 @@ System check answers "is the app working?". A domain's **Wiki health** panel ans
 
 ## What does the Setup step on the Context page check?
 
-**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. The check itself is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository — every fix is a button that copies, reveals a file in Finder (on a Mac only; Windows shows no Reveal), or runs Sync now, and you paste. On Windows (version 4.1.2) it reads Claude Desktop's settings under `%APPDATA%` and `%LOCALAPPDATA%` and shows paths in those words, and the skill `.zip` downloads on every platform. The one exception is **Install for me** on a bridge line for Claude Desktop, Cursor or Antigravity (version 3.85.0), which opens the installer and writes only the `my-curator` entry, after a preview. The machine-wide half is **Settings → MCP bridge → Your AI apps**.
+**Context → a project → step 5, Setup** (since version 3.77.0; a simple view since 4.2.0) checks whether each agent harness — the app your agent runs in: Claude Code, Claude Desktop, Codex, Cursor, Antigravity, opencode — can reach that project from this computer. The check is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository. Every fix is a button that copies, downloads, reveals a file in Finder (on a Mac only), or runs Sync now, and you paste. The exception is **Install for me** for Claude Desktop, Cursor or Antigravity (Claude Desktop only on Windows), which opens Settings → MCP bridge and writes only the `my-curator` entry, after a preview. On Windows it reads Claude Desktop's settings under `%APPDATA%` and `%LOCALAPPDATA%`. The machine-wide half is **Settings → MCP bridge → Agent harnesses**.
 
-It checks, for this project on this computer: each tool's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` — present, naming this project, current, and not past what the tool reads; `.curator-project` — present, naming this project, committed and pushed; whether each tool has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
+It checks, for this project on this computer: each harness's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` (present, naming this project, current, not past what the harness reads); `.curator-project` (present, naming this project, committed and pushed); whether each harness has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
 
-The page shows any problems first, one line each, never folded, each with its own fix buttons. Below them sit three closed folds: **Tools**, **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" (the repository checks have not run yet) or "ready", with the tools and the number of computers under it.
+**With Pro off**, the step is: any warning about the whole project, loud, with its buttons; then **one row per harness, with one status and one action**; **+ Add an agent harness**; "N files here are not on GitHub yet" with **Sync now** when there are any; the three travel routes said once; and **More in Pro: every check per harness, the repository files, your computers**. Pressing anywhere on a row opens that harness's setup steps in the side panel.
+
+| Status | Means | The row's action |
+|---|---|---|
+| Needs a fix | Something about this harness is wrong; the row says it in full | That fix's first button; any other fixes are in its steps |
+| Not on this computer | It saved this project from another computer and is not connected here | Set up here |
+| N steps left | Nothing broken, steps not done; "Next: …" names one | Continue setup |
+| Ready | Connected here, reads the instructions, has saved from this computer | none |
+
+**With Pro on** (Pro): the to-fix lines on top, each with all its buttons, then three closed folds: **Agent harnesses** (a table: Harness, Status, Last saved, Saved from, On this computer, the MCP / skills / block / hooks marks, **Open setup steps** on rows not ready, Remove), **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" or "ready" in both views.
 
 Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
 
 ## What do the Setup step's words mean?
 
+The Pro table's status words, and the words inside a harness's steps:
+
 | Word | Means |
 |---|---|
-| ready | Checked, and it works. A tool is ready only once it has saved this project from this computer under its own name |
+| ready | Checked, and it works. A harness is ready only once it has saved this project from this computer under its own name |
 | to fix | Shown at the top, with its fix |
-| partly checked | Some of the tool's parts could not be checked here |
-| no save from here | The tool has not saved this project from this computer yet |
-| can't check here | Nothing on this computer to read — for example skills held by your Claude account |
-| not checked | Needs the repository folder to be set first |
-| unmeasured | A fact nobody has measured — most tools' hooks, or a custom tool's instruction file |
+| partly checked | Some of its parts could not be checked here |
+| no save from here | It has not saved this project from this computer yet |
+| can't check here | Nothing on this computer to read, for example skills held by your Claude account |
+| not checked | Needs the project's folder to be set first |
+| unmeasured | A fact nobody has measured, such as most harnesses' hooks or a custom harness's instruction file |
 
-## Does an agent tool have to be running for Setup to check it?
+## Does an agent harness have to be running for Setup to check it?
 
-No. Setup only reads files already on disk; it never asks a tool whether it is open. A closed tool with a correct config file reads the same as an open one.
+No. Setup only reads files already on disk; it never asks a harness whether it is open. A closed harness with a correct config file reads the same as an open one.
 
 ## When does Setup check again?
 
@@ -880,17 +899,19 @@ Press **Re-check** at the head of the step, beside "checked N ago". It also re-c
 
 ## Why does Setup ask for a repository folder, and how does it find it?
 
-The instruction files and `.curator-project` live in your project's code folder — not in your knowledge folder, and often at a different path on each computer — so Setup has to know where that folder is before it can check them. It offers folders it found on this computer, each with **Use**: a folder Claude Code opened whose `.curator-project` names this project, a folder this project's Documents were read from, a folder a Curator hook started a session in, or a folder whose git remote matches the project's documents. Only folders under your home folder that name this project, or match its remote, are offered. Otherwise press **Choose the folder**. The choice is kept on this computer only and is never synced.
+The instruction files and `.curator-project` live in your project's code folder — not in your knowledge folder, and often at a different path on each computer — so Setup has to know where that folder is before it can check them. It offers folders it found on this computer, each with **Use**: a folder Claude Code opened whose `.curator-project` names this project, a folder this project's Documents were read from, a folder a Curator hook started a session in, or a folder whose git remote matches the project's documents. Only folders under your home folder that name this project, or match its remote, are offered. Otherwise press **Choose the folder** (in the simple view the question appears only while the folder is not set; in Pro it is the **Repository on this computer** fold). The choice is kept on this computer only and is never synced.
 
 ## Why does Setup show more computers, or installs, than I own?
 
-It doesn't any more. Since version 3.78.0 computers are grouped by physical machine: a Mac running both the downloaded app and a source checkout has two installs, each with its own name, and the Computers fold shows them as one computer — for example "1 computer · 2 installs". Each computer's row shows which tools saved from it, its newest save, and the Curator version it saved with. Press a row to read it in the side panel.
+It doesn't any more. Since version 3.78.0 computers are grouped by physical machine: a Mac running both the downloaded app and a source checkout has two installs, each with its own name, and the Computers fold (Pro) shows them as one computer — for example "1 computer · 2 installs". Each computer's row shows which tools saved from it, its newest save, and the Curator version it saved with. Press a row to read it in the side panel.
 
 ## What does Sync now on the Setup step sync?
 
-Your whole knowledge folder, every domain — not only this project. The "files not on GitHub" count on the Computers fold likewise adds up every domain.
+Your whole knowledge folder, every domain — not only this project. The "files not on GitHub" count likewise adds up every domain.
 
 ## What does each Setup warning mean, and what do I do?
+
+With Pro off, a warning about one harness is that harness's row ("Needs a fix"), in the same words, and its first fix is the row's button; the rest are in its steps.
 
 | Warning | What to do |
 |---|---|
@@ -906,38 +927,42 @@ Your whole knowledge folder, every domain — not only this project. The "files 
 | `.curator-project` is missing, names another project, isn't committed, or isn't pushed | Use the git command the line offers (it creates or rewrites, commits and pushes); if another computer already saved this project, `git pull` first |
 | Another computer's newer handoff is waiting on GitHub | **Sync now** before you start the agent |
 
-## How do I add an agent tool to Setup, and what are the four steps?
+## How do I add an agent harness to Setup, and what are the four steps?
 
-Press **+ Add a tool** under the to-fix lines. Since version 3.80.0 the menu looks like the chat model picker: each row gives the tool's name, then what it reads and where its MCP settings live, with "not measured" on the right where that location hasn't been verified. Its foot line says what picking does: "Adding a tool only tells Setup to check it on this computer — you connect it yourself." Nothing is written.
+Press **+ Add an agent harness** (called "+ Add a tool" before 4.2.0). The menu has two groups, **Known harnesses** and **Other**; each row gives the harness's name, then what it reads and where its MCP settings live, with "not measured" where that location hasn't been verified. Its foot line: "Adds it to this list so Setup can guide you through it on this computer." Nothing is written.
 
-The tool's page then opens in the side panel on a numbered guide (a tool that is already ready opens on its evidence instead):
+The harness's page then opens in the side panel on four numbered steps, the same in both views (a harness that is already ready opens on its evidence instead):
 
-| Step | What it asks |
-|---|---|
-| 1. Connect The Curator's MCP | Add the entry to the exact file the tool reads — **Copy MCP entry**, and **Reveal** if the file exists |
-| 2. Install the two skills | Unzip both into the tool's skills folder; skip, optional or can't check here when that applies |
-| 3. Put the Curator instructions in the file it reads | Paste at the very top, then commit and push; "not checked yet" until the repository folder is set |
-| 4. Let it save once from this computer | Open a session in the project folder and give it a task; done once it has saved under its own name |
+| Step | What it asks | How often |
+|---|---|---|
+| 1. Connect it to The Curator | Put the MCP entry in the exact file it reads: **Copy MCP entry**, **Reveal** if the file exists, **Install for me** where offered | Once per computer, for every project |
+| 2. Teach it how to use The Curator | Install the two skills. A skill is a short instruction pack a harness loads when a task calls for it: my-curator teaches it to read and write your wiki, curator-continuity when to save a handoff. A skill never updates itself, so an old copy can miss a rule added since. Skip when the harness has no skills support | Once per computer, for every project |
+| 3. Point it at this project | Paste the agent instructions at the very top of the file it reads, then commit and push; "not checked yet" until the project's folder is set | Once per project, carried by its git |
+| 4. Let it save once, from this computer | Open a new conversation in the project's folder and give it a task; ready once it saves under its own name | Once per computer |
 
-## How do I add a tool that isn't in the list?
+A warning about the harness appears inside the step it belongs to. Closing the side panel returns focus to the row.
 
-Pick **Custom tool…** at the bottom of **+ Add a tool** and type its name (up to 40 characters: letters, digits, spaces, dots, dashes, underscores). A name that matches a known tool joins that tool's row instead. A custom tool gets a generic `mcpServers` entry to paste into its config, the two skills' `.zip` files, and `AGENTS.md` assumed as its instruction file (marked unmeasured, never "to fix"). It turns ready once it saves this project from this computer under its own name. Custom tools are kept per computer, never synced, up to 12.
+## How do I add a harness that isn't in the list?
 
-## How do I remove a tool from Setup?
+Pick **Another harness…** (called "Custom tool…" before 4.2.0) at the bottom of **+ Add an agent harness** and type its name (up to 40 characters: letters, digits, spaces, dots, dashes, underscores). A name that matches a known harness joins that row instead. It gets a generic `mcpServers` entry to paste, the two skills' `.zip` files, and `AGENTS.md` assumed as its instruction file (marked unmeasured, never "to fix"). It turns ready once it saves this project from this computer under its own name. Kept per computer, never synced, up to 12.
 
-Press the trash icon on its row in the Tools fold, or "Remove from this list" on its page. There is no confirmation, because nothing is uninstalled: it only stops Setup checking that tool on this computer, and **+ Add a tool** brings it back. Two kinds of row can't be removed, and the page says why: a tool that has saved this project, and a tool whose MCP settings on this computer already name The Curator.
+## How do I remove a harness from Setup?
+
+Press **Remove from this list** on its page in the side panel, or the trash icon on its row in the Agent harnesses fold (Pro). There is no confirmation, because nothing is uninstalled: it only stops Setup checking it on this computer, and **+ Add an agent harness** brings it back. Two kinds of row can't be removed, and the page says why: a harness that has saved this project, and one whose MCP settings on this computer already name The Curator.
 
 ## Can I read my AGENTS.md or CLAUDE.md inside the app?
 
-Yes, since version 3.79.0. Press a file under **Repository on this computer** and it opens read-only in the side panel, with the Curator instructions framed and marked current, outdated, naming another project, or past what a tool reads; a line shows where a tool stops reading when it has a limit, and **Copy current instructions** sits on the frame. Only `.curator-project` and the instruction files of tools this project lists can be opened this way — never a tool's MCP config.
+Yes, since version 3.79.0. Press a file under **Repository on this computer** (Pro) and it opens read-only in the side panel, with the Curator instructions framed and marked current, outdated, naming another project, or past what a tool reads; a line shows where a tool stops reading when it has a limit, and **Copy current instructions** sits on the frame. Only `.curator-project` and the instruction files of tools this project lists can be opened this way — never a tool's MCP config.
 
 ## How do I set up DeepSeek Harness (dsh)?
 
 Put The Curator's entry in `~/.dsh/cordis.patch.yml` (every profile) or `~/.dsh/profiles/<name>/cordis.patch.yml` (one profile) — never in `cordis.yml`, which dsh empties on every launch. The entry is one `- insert:` item naming the `@deepseek-ai/dsh-mcp-client` plugin; merge it into the file rather than copying over it. dsh reads both `AGENTS.md` and `CLAUDE.md`, and its skills folders are `.dsh/skills`, `.agents/skills`, `~/.dsh/skills` and `~/.agents/skills`. Its hooks are unverified. Setup finds the entry by reading the patch file line by line, so it can tell whether the entry is there but cannot tell a malformed file from a correct one.
 
-## What is "Your tool's share" on the Session start step?
+## What does the Session start step show, and what is "Your harness's share"?
 
-It was called "Harness" until version 3.79.0; only the label changed. It is your own estimate of what your agent tool loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It is set per computer, beside **Window**.
+**Context → a project → step 4, Session start** shows what an agent is handed when it starts work on the project. With Pro off: the **Reading budget** picker, the context window drawn to scale with its notes, a four-line reading (standing brief, latest handoff, read first, and the session start in tokens with what is left free, plus the "if applied" figure while a suggestion is pending), **What an agent receives, in full ›** (opens in the side panel), and the **Documents at start** planner. Pro adds the **Window** and **Your harness's share** pickers (Pro), the enlarged bar with its legend (Pro), and the folds **What an agent receives** and **How an agent reaches this** (Pro).
+
+**Your harness's share** (Pro; "Harness" until 3.79.0, "Your tool's share" until 4.2.0, same setting) is your own estimate of what your agent harness loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It and **Window** are set per computer; with Pro off the meter still uses their saved values.
 
 ## How do I turn on the tray icon in the Windows app?
 

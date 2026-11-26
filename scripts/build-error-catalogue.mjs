@@ -465,10 +465,10 @@ export const UPDATE_ENTRIES = {
   'digest-missing': { when: 'GitHub published no checksum for the download', todo: 'Download the installer from the releases page.' },
   'installer-check-failed': { when: 'The downloaded installer could not be checked', todo: 'Try again, or download the installer from the releases page.' },
   'helper-unavailable': { when: 'Windows (usually a policy on a managed PC) would not run the update’s last step', todo: 'Download the installer from the releases page and run it.' },
-  'in-use-by-ai-app': { when: 'An AI app such as Claude Desktop is connected to The Curator', todo: 'Quit that app and choose Install update again, or choose Close the connection and update.' },
+  'in-use-by-ai-app': { when: 'An agent harness such as Claude Desktop is connected to The Curator', todo: 'Quit that app and choose Install update again, or choose Close the connection and update.' },
   'in-use-other': { when: 'Another copy of The Curator is running', todo: 'Quit the other copy, then choose Install update again.' },
   // WIN32_INSTALL_OUTCOMES
-  'exe-in-use': { when: 'After an update: an AI app was still using The Curator', todo: 'Quit that app, open The Curator and choose Install update again.' },
+  'exe-in-use': { when: 'After an update: an agent harness was still using The Curator', todo: 'Quit that app, open The Curator and choose Install update again.' },
   'app-did-not-quit': { when: 'After an update: The Curator did not close in time', todo: 'Quit The Curator, open it again and choose Install update.' },
   'installer-changed': { when: 'After an update: the installer changed after it was checked', todo: 'Check for updates again.' },
   'installer-failed': { when: 'After an update: the installer did not finish', todo: 'Run the installer again (the helper offers to), or download it. Your notes, keys and settings are safe.' },
@@ -477,7 +477,7 @@ export const UPDATE_ENTRIES = {
 };
 const UPDATE_SOURCES = { ...WIN32_UPDATE_FAILURES, ...WIN32_INSTALL_OUTCOMES };
 const UPDATES_TITLE = 'Updating the Windows app';
-const LLM_UPDATES_ANSWER = 'They carry no code; each says what happened and the next step. Most often: an AI app such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app';
+const LLM_UPDATES_ANSWER = 'They carry no code; each says what happened and the next step. Most often: an agent harness such as Claude Desktop, or another copy of The Curator, is using the app, so quit it and choose Install update again (or choose Close the connection and update); otherwise run the installer from the releases page. An update never touches notes, keys or settings: they live outside the program folder. Every message: https://github.com/talirezun/the-curator/blob/main/docs/errors.md#updating-the-windows-app';
 const UPDATES_INTRO = 'Messages in the Windows app when an update cannot be prepared or installed (Settings › General › Check for updates, and Help › Check for Updates), and the ones shown after the installer ran. They carry no code: each says what happened and what to do. Your notes, keys and settings are kept outside the program folder, so an update never touches them.';
 
 // ── Checks ──────────────────────────────────────────────────────────────────

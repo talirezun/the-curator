@@ -390,6 +390,16 @@ the-curator/
 │           │                    Wiki-health scan report; and, on Context, step ②'s "Last saved" body,
 │           │                    its save warnings, the Agent connections reading and the journal's count line,
 │           │                    plus step ③'s per-wiki figures (v3.65.0)
+│           │                    pro.js + pro.css — the app-wide Pro switch (v4.2.0): one state per
+│           │                    computer (`uiDetail` in .curator-config.json, GET/POST
+│           │                    /api/config/ui-detail), one marker (proAttr() → data-detail="pro",
+│           │                    hidden by ONE CSS rule while <html data-pro> is not "on", so a flip
+│           │                    needs no re-render), one switch (proSwitchHtml(), on the rail above
+│           │                    Settings and in Settings › General) and one door (moreInProLine()).
+│           │                    Pro only REVEALS: no warning, cost, refusal, confirm or outcome is
+│           │                    ever Pro-only — scripts/test-pro-guard.js (+ test-helpers/pro-guard.js)
+│           │                    renders Context in both modes and fails on either fault. Its first
+│           │                    consumer is Context steps 4 and 5 (views/memory.js, views/setup-step.js)
 │           └── views/          One file + one same-named CSS file per registered VIEW (chat, domains,
 │                                ingest, memory, settings, shared, sync — all real). Since v3.64.0 only
 │                                three of them are rail entries: ingest and shared are HOSTED_VIEWS,

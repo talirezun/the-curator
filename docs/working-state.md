@@ -2690,7 +2690,7 @@ one row and would change another.
 
 ### Antigravity (v3.76.0)
 
-Antigravity (Google's agent app, and its IDE variant) got its own row in
+Antigravity (Google's agent harness, and its IDE variant) got its own row in
 `src/brain/harness-adapters.js` in v3.76.0. Every fact in it comes from the vendor's own
 customization docs, which ship inside the app (`~/.gemini/antigravity/builtin/skills/agy-customizations/`),
 plus what was seen on one Mac on 2026-09-25. What is measured, what is documented and what is

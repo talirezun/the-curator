@@ -123,6 +123,16 @@ running under your own account could read it.
 
 ---
 
+## Simple and Pro
+
+*Since v4.2.0.* The app opens in the **simple** view. The **Pro** switch on the left rail, directly
+above **Settings** (also **Settings › General › Pro mode**), shows every detail and control. It is
+free, it only reveals (no warning, cost or result is ever hidden in the simple view), it is saved on
+this PC only (in `%LOCALAPPDATA%\TheCurator\App`, with your other settings), and today it changes the
+Context page's steps 4 and 5. Full description: [user guide §7c](user-guide.md#7c-simple-and-pro).
+
+---
+
 ## Updating
 
 The app updates itself. There are two ways in, and they run the same update:
@@ -167,7 +177,7 @@ it runs a downloaded installer again, the app checks its SHA-256 again.
 | Situation | What can happen | What to do |
 |---|---|---|
 | You sign out of Windows, or run the installer by hand, while The Curator is saving (an ingest, a compile, a Sync) | Windows closes the app without waiting, so that one save can be cut short. Your other pages are not affected. | Let the save finish first. If one was cut short, run the ingest again. |
-| **Close the connection and update** while your AI app is saving to your wiki | Ending the connection stops that save part-way | Wait until the AI app has finished saving, then update |
+| **Close the connection and update** while your agent harness is saving to your wiki | Ending the connection stops that save part-way | Wait until the agent harness has finished saving, then update |
 | Your Windows user folder has an apostrophe in its name (`C:\Users\O'Brien`) and you run the installer **by hand** | The installer may not notice that The Curator is still open | Quit The Curator (tray icon → Quit, or **File → Exit**) before running the installer. Updates from inside the app are not affected: the app closes itself first. |
 
 > **Seen on a real PC:** an update from inside the app, 4.0.0 → 4.0.1, was confirmed on a real
@@ -209,7 +219,7 @@ icon.)
 The app can write its own entry into Claude Desktop's settings for you:
 
 1. **Quit Claude Desktop fully**: right-click its icon by the clock → **Quit** (closing its window is not enough).
-2. In The Curator: **Settings → MCP bridge**, section **Your AI apps**. Tick Claude Desktop and click **Install for me**, then **Apply**.
+2. In The Curator: **Settings → MCP bridge**, section **Agent harnesses**. Tick Claude Desktop and click **Install for me**, then **Apply**.
 3. Open Claude Desktop again, then click **Check again** in The Curator; the row should read **connected**.
 
 **Context → a project → Setup agrees (v4.1.2).** The project Setup check reads Claude Desktop's Windows
@@ -362,7 +372,7 @@ and [build-extra](https://github.com/git-for-windows/build-extra).
 | The Domains page says your knowledge folder is inside The Curator's own folders | Move that folder with File Explorer into your user folder, then choose it again; nothing was moved or deleted |
 | The app is running but no window shows | The tray icon is on: click it and choose **Open The Curator**, or look under the **^** by the clock |
 | *The Curator is already running* | Only one copy may run. Switch to the open window (or the tray icon). |
-| An update stops because an AI app is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |
+| An update stops because an agent harness is using The Curator | **Close the connection and update**, or quit Claude Desktop first ([§ Updating](#updating)) |
 | Sync says its git is missing or damaged | [Download the installer](https://github.com/talirezun/the-curator/releases/latest/download/TheCurator-Windows-Setup.exe) again and run it; your data is kept |
 | A folder is refused | The message says why; see [§ Choosing a folder](#choosing-a-folder) |
 | *Disconnect Sync before you change the folder* | Sync is connected, and it backs up the folder you have now. Open **Sync → Disconnect**, change the folder, then connect again |

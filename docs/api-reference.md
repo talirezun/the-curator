@@ -3175,7 +3175,7 @@ that setter, so its own resolution is unchanged. See
 
 ### One-click install routes (`/api/mcp/install`, v3.85.0; Windows Claude Desktop, v3.86.0)
 
-Back **Settings › MCP bridge › 1 Connect your agent apps** (the page was five blocks before v3.88.0). They add, update or remove the `my-curator`
+Back **Settings › MCP bridge › ① Agent harnesses** (the page was five blocks before v3.88.0; the section was *Connect your agent apps*, then *Your AI apps*, before v4.2.0). They add, update or remove the `my-curator`
 entry in a tool's own user-level MCP file, and nothing else (the rule is in
 [decisions-app.md](dev/decisions-app.md#security-credentials-and-user-data-paths)). Install-capable
 tools: `claude-desktop`, `cursor`, `antigravity` — the fixed allow-list; every other tool is
@@ -3233,7 +3233,7 @@ origin (`http://127.0.0.1:<port>` or `http://localhost:<port>`): missing → **4
     "usedWithoutEntry": { "usedAt": "<ISO>", "text": "…" } | null,
     "setupFix": { "word": "…" } | null, "hooksFix": { "word": "…" } | null
   }],
-  "notFound": [{ "id": "…", "label": "…" }],          // agent apps not detected on this computer
+  "notFound": [{ "id": "…", "label": "…" }],          // agent harnesses not detected on this computer
   "manualSnippets": { "<id>": "<text to copy>" },
   // top level, added in v3.88.0:
   "counts": { "connected": 3, "toFix": 1, "notConnected": 2 },
@@ -3651,7 +3651,7 @@ at 500 chars) when it sent one.
 
 ## Setup check (`/api/setup`) *(v3.77.0)*
 
-Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Agent apps**. The
+Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Agent harnesses**. The
 GETs read this machine's agent-tool config files (only whether each names `my-curator`, plus our
 own entry's command and `--domains-path` — never file text, another server's name or an `env`
 value), the project's repository folder (its `.curator-project`, instruction files, and read-only
@@ -3664,7 +3664,7 @@ harness config, a skill folder, a repository file or a git ref; the two PUTs wri
 | `GET /api/setup/machine` | Per tool with something on this machine (or added): `files[]` (`file`, `display`, `via: own\|readAlso`, `present`, `named`, `at`, `jsonc`, `parseError`, `commandMissing`, `otherFolder`), `bridge`, `skills` (`installed[]` compared by sha256 with the copy this app carries), `hooks` (`files[]`, `format`, `evidence` from the hook activity log). Plus `version`, `install`, `skillsShipped`, `machine.{ids,split}`, `bridgeProcesses`, `copyEntries` (each tool's entry in its own format), `addable`, and (v3.90.0, Settings › MCP bridge › Skills) `skills[]`: per skill `{skill, apps[{id, label, kind: folder\|account, state: current\|outdated\|not-installed\|unknown, dir, dirDisplay}], checkable, upToDate}` — Claude Desktop and Claude Code with no local copy are one `account` line, `claude` |
 | `GET /api/setup/projects/:domain/:project` | `tools[]` × `saved` (from the project's handoffs, every computer) · `bridge` · `skills` · `block` · `hooks`; `repo` (`path`, `exists`, `marker` with `git.{repo,tracked,uncommitted,unpushed,upstream}`); `computers[]` (`machine`, `thisMachine`, `tools`, `newestAt`, `curator`, `waiting`); `sync`; `toFix[]` (`kind`, `text`, `detail`, `fix`); `repoSuggestions`; `markerLine`; `addedTools`. 400 bad name · 404 unknown domain |
 | `PUT /api/setup/projects/:domain/:project/repo` | `{path}` (absolute, an existing folder; `~/` expanded) or `{path: null}` to clear. 400 relative/junk · 409 no such folder |
-| `PUT /api/setup/tools` | `{ids: [...]}` — the "+ Add a tool" choice; ids must be known harnesses |
+| `PUT /api/setup/tools` | `{ids: [...]}` — the "+ Add an agent harness" choice (called "+ Add a tool" before v4.2.0); ids must be known harnesses |
 | `POST /api/setup/reveal` | `{path}` — opens Finder at a path a check has LISTED (or its folder if it does not exist yet); 400 otherwise. macOS only (v4.1.2): refused on every other platform, and step 5 draws no Reveal there |
 | `GET /api/setup/skills/:name.zip` | `my-curator.zip` / `curator-continuity.zip` of this app's own `skills/` folder, on every platform: macOS `ditto`, elsewhere built in-process (`src/brain/setup-skill-zip.js`, v4.1.2; until then 501 off macOS); 404 unknown name or no copy shipped |
 
@@ -6247,6 +6247,55 @@ the notes); the cross-origin guard applies.
 
 ---
 
+## GET /api/config/ui-detail
+
+*(v4.2.0)* The app-wide **Pro** switch: how much each view shows on this computer. No body.
+
+**Success response** `200 OK`, always:
+
+```json
+{ "uiDetail": "simple" }
+```
+
+`uiDetail` is `"simple"` (the default) or `"pro"`. It is the top-level `uiDetail` field of
+`.curator-config.json` (beside `backgroundMode`, not a `ui.*` field). Absent, an unknown value, a
+value a newer build wrote, or a damaged settings file all read as `"simple"`. **This endpoint never
+fails**: everyone starts in the simple view, existing installs included (no migration, no seeding),
+and the simple view hides no warning, cost or outcome, so the fail-safe direction is simple. This
+computer only: the file is never synced, so two computers may differ, as the theme can.
+
+The value changes only what views **show**. No write, fetch or check reads it; its one consumer is
+`src/public/next/shared/pro.js`, which also keeps a first-paint mirror in `localStorage`
+(`curator-next-pro`, fail-safe off) and reconciles it with this read.
+
+## POST /api/config/ui-detail
+
+*(v4.2.0)* Turn Pro on or off.
+
+**Request**, body **exactly** one of:
+
+```json
+{ "uiDetail": "pro" }
+```
+
+```json
+{ "uiDetail": "simple" }
+```
+
+| Status | Body | When |
+|---|---|---|
+| `200` | `{"uiDetail": "pro"}` | Saved (or already stored). The value is the one now in force |
+| `400` | `{"code": "invalid-ui-detail", "error": "…"}` | Any other body: a missing or extra key, another value, a non-object. **Refused, never coerced**, so the switch can never report a value the file does not hold |
+| `409` | `{"ok": false, "code": "config_unreadable", "error": "…"}` | `.curator-config.json` is damaged; nothing is written over it ([the v4.1.2 rule](#get-apiconfigsettings-files)) |
+
+Not behind `guardConcurrent`, for the `ui-state` routes' reason: nothing on a write path reads it,
+and a 409 while an ingest runs would refuse a preference for no reason. The cross-origin and Host
+guards apply, as to every mutating route. The strict body is what bounds a write into the file that
+holds the API keys: one key, two literal values. On a failed save the app reverts the switch to
+the last confirmed value and says so in a toast.
+
+---
+
 ## GET /api/config/ui-state
 
 Durable UI state (v3.28.0) — the handful of `/next` fields whose loss is a **correctness or trust
@@ -6378,7 +6427,7 @@ name. macOS and Linux bodies are unchanged and never carry `code` or `warnings`.
 value that is not a full path (`knowledge-folder-not-absolute`) is refused rather than resolved
 against whatever folder the app was started from. The app then reads and writes nothing in it: the
 server still starts (so the Domains page can say why and offer another folder), and the MCP server
-writes one plain line to stderr and exits `1`, so the AI app reports a server that did not start.
+writes one plain line to stderr and exits `1`, so the agent harness reports a server that did not start.
 Nothing is moved or deleted.
 
 **Refusal response** `409` — behind `guardConcurrent('change the knowledge folder')`, so it refuses

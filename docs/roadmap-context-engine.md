@@ -224,7 +224,7 @@ and audience 1 loses nothing.
 
 **What it deliberately does NOT do.**
 
-- **No persona or mode switch.** Argued down on four specific grounds, the first of which is
+- **No persona or mode switch.** *(Superseded in v4.2.0 by the owner's one Pro switch, which only reveals and never hides a warning, cost or outcome; see [decisions-app.md](dev/decisions-app.md#product-shape-and-ui).)* Argued down on four specific grounds, the first of which is
   decisive: the maintainer is both audiences. Nothing in the store models a persona, so the flag
   would live in one browser and diverge per machine — on a product whose whole thesis is that
   context travels between machines. And there is no clean cut: Domains hosts the wiki *and* the
@@ -1158,7 +1158,7 @@ Five rules that should survive this roadmap even if every release in it is re-pl
    future drafting aid opens **in the existing editor, unsaved, with its provenance stated**, and
    the owner's Save is the only thing that writes. A confident document generated from a digest is
    precisely the failure tier 0 exists to fix.
-4. **No persona or mode switch.** The maintainer is both audiences; nothing in the store models a
+4. **No persona or mode switch.** *(Superseded in v4.2.0: see the Pro rule in [decisions-app.md](dev/decisions-app.md#product-shape-and-ui).)* The maintainer is both audiences; nothing in the store models a
    persona; every shared screen would have to answer "which mode am I in"; and the app already
    refused this shape's modal ancestor. The legitimate need behind it — *meet me where I am* — is
    served by a door that explains all three layers, a rail in frequency order, and first-run

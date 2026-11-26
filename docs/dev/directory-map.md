@@ -182,6 +182,14 @@ src/
                     `sb-sec-*` ride as opt-in aliases. Guarded by scripts/test-next-section-kit.js and,
                     for a page's rendered markup, scripts/test-helpers/page-contract.js
                     (scripts/test-next-page-contract.js holds the per-page registry)
+    next/shared/pro.js + pro.css — v4.2.0: the app-wide PRO switch. initPro() (boot, before the
+                    first paint; a localStorage mirror `curator-next-pro`, fail-safe off, then
+                    GET /api/config/ui-detail), isPro(), setPro() (POST; revert + toast on failure),
+                    onProChange(), proAttr() (` data-detail="pro"`, the ONE marker), proMarkAttr(),
+                    moreInProLine(what) (the quiet "More in Pro" door, with Undo), proSwitchHtml()
+                    (the rail's and Settings › General's one switch). pro.css hides
+                    `[data-detail="pro"]` unless <html data-pro="on"> and draws the Pro-only visual
+                    signature. Pro only REVEALS; scripts/test-pro-guard.js holds that line
     next/shared/settings-file-banner.js — v4.1.2: the shell's persistent banner for a damaged
                     settings file (renderStatus danger, no Dismiss) and its Start fresh (confirmThen →
                     POST /api/config/settings-files/set-aside)
@@ -270,7 +278,14 @@ scripts/
                                   test-sharedbrain-safety-v412.js, test-mcp-install-safety.js,
                                   test-win-atomic-write.js, test-win-setup-check.js, test-onboarding-steps.js,
                                   test-credential-kept-copies.js (kept settings copies are credentials),
-                                  test-sharedbrain-empty-repo.js (Pull on a repository with no commit)
+                                  test-sharedbrain-empty-repo.js (Pull on a repository with no commit).
+                                  v4.2.0 added: test-pro-mode.js (the uiDetail field, the routes,
+                                  shared/pro.js, the rail and Settings switch, the visual signature),
+                                  test-pro-guard.js + test-helpers/pro-guard.js (`proGuardFaults`:
+                                  nothing Pro-only is or holds a warning, cost, refusal, confirm or
+                                  outcome; `parityFaults`: the simple view says every warning Pro
+                                  says), test-context-setup-modes.js (Context steps 4 and 5 in both
+                                  modes), test-listbox-hover.js (a visible listbox hover in both themes)
 domains/
   <domain>/
     CLAUDE.md         — domain schema (system prompt for LLM)
