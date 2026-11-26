@@ -110,7 +110,7 @@
   background: var(--surface);
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -464,7 +464,7 @@
   border: 1px solid var(--control-edge);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  cursor: default;
+  cursor: pointer;
   font-family: inherit;
   transition: border-color var(--t-state), background var(--t-state);
 }
@@ -574,7 +574,7 @@
   color: var(--text-2);
   font-size: var(--text-2xs);
   font-family: inherit;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state);
@@ -645,7 +645,7 @@
   color: var(--text-3);
   font-size: var(--text-sm);
   line-height: 1;
-  cursor: default;
+  cursor: pointer;
   transition: color var(--t-state);
 }
 .fnd-init-drop:hover { color: var(--text); }

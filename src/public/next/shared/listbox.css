@@ -36,7 +36,7 @@
   font-family: inherit;
   font-size: var(--text-md);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state);
@@ -160,7 +160,7 @@
   color: var(--text);
   font-size: var(--text-md);
   line-height: var(--leading-snug);
-  cursor: default;
+  cursor: pointer;
   scroll-margin: 5px;
 }
 /* `.is-active` is the KEYBOARD position and `.is-selected` is the committed
@@ -168,7 +168,16 @@
    user arrowing down a 193-row list must be able to see both where they are
    and what is still selected — collapsing them into one style is how a
    listbox stops being able to say "you have not committed this yet". */
-.lb-opt.is-active { background: var(--surface-hover); }
+.lb-opt.is-active { background: var(--mat-row-active); }
+/* WHY --mat-row-active AND NOT --surface-hover. The menu is a material plane
+   (--mat-menu, rgba 0.80), and --surface-hover is an ABSOLUTE fill: on dark it
+   was rgb(21,21,31) on a plane of rgb(22,22,33) — one point apart, so neither
+   the mouse hover nor the keyboard position could be seen (audit-context-ux
+   bug 1; shell.css documents the same failure for the rail). --mat-row-active
+   is a translucent overlay that composites on whatever the plane is, in both
+   themes, and is one step stronger than the rail's --mat-row-hover because a
+   menu has no other cue to say "this is the row Enter will pick". Measured
+   contrast against the menu plane is in scripts/test-listbox-hover.js. */
 /* ── THE COMMITTED ROW IS A FILLED ACCENT PILL ───────────────────────────
    macOS 11 replaced the full-bleed selection bar with an inset rounded pill
    in the accent colour, and that is what a committed value in an AppKit menu
@@ -265,3 +274,22 @@
 @media (prefers-reduced-motion: reduce) {
   .lb-btn, .lb-chevron { transition: none; }
 }
+
+/* ── THE POINTER RULE (owner, 2026-11-26; reverses the old `cursor: default`) ──
+   A row, a menu item, a link or a button that opens or does something shows
+   the pointing hand; a disabled one does not. The kit used the macOS-native
+   arrow everywhere and the owner read a page with no cursor change as inert.
+
+   This block is the SAFETY NET, not the rule's home: every stylesheet states
+   its own `cursor: pointer` on the control it styles. The net is `:where()`,
+   specificity ZERO, so it only reaches a control that declares no cursor of
+   its own (a bare <button>, a <summary>, a role=option) and can never
+   override a rule written on purpose. It lives here because listbox.css is
+   loaded by every page and carries the menu rows, the first place the missing
+   cursor was reported. scripts/test-next-views-kit.js §5 enforces the rule. */
+:where(button:not(:disabled), summary, [role="button"], [role="option"],
+       [role="menuitem"], [role="tab"], label[for], a[href]) { cursor: pointer; }
+/* A disabled control keeps the refusal cursor whatever its base rule said:
+   these outrank a one-class `cursor: pointer`. */
+button:disabled { cursor: not-allowed; }
+[role][aria-disabled="true"], button[aria-disabled="true"] { cursor: not-allowed; }

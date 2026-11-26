@@ -42,7 +42,7 @@
   /* A switch OFF is a sunken well, exactly as a field is — the inversion of
      the gloss, and the thing that says "nothing is happening here yet". */
   box-shadow: var(--gloss-well-quiet);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   vertical-align: middle;

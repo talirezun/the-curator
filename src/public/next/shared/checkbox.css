@@ -132,7 +132,7 @@
      the hand is a WEB idiom for a link, and a checkbox is not one. See §5 of
      scripts/test-next-views-kit.js; this file was outside the pass that made
      that true of the views, and is brought in line here. */
-  cursor: default;
+  cursor: pointer;
   border-radius: var(--radius-xs);
   /* --text-3, not --border-strong: see THE DELIBERATE DEVIATION above. This
      is the only visible part of an unchecked box and it has to clear 3:1. */
@@ -210,6 +210,6 @@
   /* Arrow, not hand — same reason as `.cur-check` above. The disabled
      variant below keeps `not-allowed`, which is a different statement and
      the idiom used throughout this tree. */
-  cursor: default;
+  cursor: pointer;
 }
 .cur-check-label:has(.cur-check:disabled) { cursor: not-allowed; opacity: var(--opacity-disabled); }

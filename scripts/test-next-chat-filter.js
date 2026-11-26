@@ -530,8 +530,8 @@ section('§6 — SOURCE GUARD: the field takes the kit’s sunken treatment');
   // shell's rule for chrome since v3.44.0).
   const askRule = declForBody(chatCss, '.chat-filter-ask');
   ok(/min-height:\s*var\(--hit-min\)/.test(askRule), 'the ask row is at least --hit-min tall');
-  ok(/cursor:\s*default/.test(askRule) && /user-select:\s*none/.test(askRule),
-    '…and is chrome: no hand cursor, not drag-selectable');
+  ok(/cursor:\s*pointer/.test(askRule) && /user-select:\s*none/.test(askRule),
+    '…and is a control: the pointer (2026-11-26 rule), not drag-selectable');
   ok(/\.chat-filter-ask:active\b/.test(stripComments(chatCss)),
     '…and acknowledges a press');
   ok(/prefers-reduced-motion[\s\S]*?\.chat-filter-ask:active/.test(stripComments(chatCss)),

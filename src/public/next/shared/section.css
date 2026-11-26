@@ -119,7 +119,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 2px;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   list-style: none;

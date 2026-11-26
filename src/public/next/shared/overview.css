@@ -140,7 +140,7 @@
   font: inherit;
   color: inherit;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);

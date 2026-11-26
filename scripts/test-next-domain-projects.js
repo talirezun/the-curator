@@ -2128,8 +2128,8 @@ const WRITABLE = () => freshState({
   ok('the row is full width, so the whole band is the target', /width:\s*100%/.test(body));
   ok('...with the <button> chrome removed rather than fought',
     /border:\s*0/.test(body) && /background:\s*none/.test(body) && /text-align:\s*left/.test(body));
-  ok('...and `cursor: default`, which is what this app’s chrome uses',
-    /cursor:\s*default/.test(body));
+  ok('...and `cursor: pointer`: it creates a project (the 2026-11-26 pointer rule)',
+    /cursor:\s*pointer/.test(body));
   ok('hover and press come from the kit surface tokens, not from new colours',
     /\.dm-proj-footer:hover\s*\{[^}]*var\(--surface-hover\)/.test(CSS)
     && /\.dm-proj-footer:active\s*\{[^}]*var\(--surface-active\)/.test(CSS));

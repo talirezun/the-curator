@@ -218,7 +218,7 @@
   text-align: center;
   color: var(--text-2);
   font: var(--type-body-sm);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
@@ -314,7 +314,7 @@
   align-items: center;
   min-height: var(--hit-min);
   color: var(--accent-text);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   text-decoration: underline;
@@ -349,7 +349,7 @@
   background: transparent;
   color: var(--text-2);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   font: inherit;
@@ -697,7 +697,7 @@
   border: none;
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   padding: var(--space-2) 0;
@@ -892,7 +892,7 @@
      its aria-label, so it is a graphic at 4.33 dark / 3.87 light, over the 3:1
      floor and under the 4.5 text floor that does not apply to it. */
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
@@ -1035,7 +1035,7 @@
   font-size: var(--text-sm);
   color: var(--text-2);
   margin-bottom: var(--space-8);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }

@@ -489,8 +489,8 @@ function renderThread(thread, over = {}) {
   ok(stripCssComments(chatCss).includes('.chat-copy-btn:active,'),
     '§5b SOURCE: the reduced-motion block in this same file neutralises that press');
   ok(/user-select:\s*none/.test(btn), '§5b SOURCE: chrome does not drag-select');
-  ok(/cursor:\s*default/.test(btn) && !/cursor:\s*pointer/.test(btn),
-    '§5b SOURCE: no hand cursor — no AppKit control shows one');
+  ok(/cursor:\s*pointer/.test(btn) && !/cursor:\s*default/.test(btn),
+    '§5b SOURCE: the pointer cursor, because it does something (2026-11-26 rule)');
   ok(/var\(--hit-min\)/.test(cssBody('.chat-copy-btn::before')),
     '§5b SOURCE: the 24px glyph is grown to the platform hit minimum by a transparent ::before');
   ok(/width:\s*13px/.test(cssBody('.chat-copy-glyph')) && /height:\s*13px/.test(cssBody('.chat-copy-glyph')),

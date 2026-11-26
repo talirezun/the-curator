@@ -49,7 +49,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-3);
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
