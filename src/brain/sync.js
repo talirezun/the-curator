@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { mkdir, mkdtemp, readFile, readdir, unlink, rm, chmod } from 'fs/promises';
@@ -1288,7 +1288,9 @@ async function detectForeignSyncRepo(requestedRepoUrl) {
  *   'M' → the path exists on disk with DIFFERENT content. A checkout
  *         replaces it. This is the destructive set.
  *   'D' → the path is in the remote tree and absent on disk. A checkout
- *         creates it. Harmless, counted separately.
+ *         creates it. Harmless, counted separately — but only when it is
+ *         proven absent (localPathState): a local file, link or folder in
+ *         its way is an overwrite, listed by its local path.
  *
  * A scratch index file is used rather than the repo's own, so this is safe
  * to run against a LIVE configured repo (setup() does exactly that) without
@@ -1307,19 +1309,57 @@ async function assessPullOverwrite(gitDir) {
     // non-ASCII domain name survives intact (the v3.0.16 lesson, applied
     // here from the start rather than after it bit someone).
     const parts = stdout.split('\0').filter((x) => x !== '');
-    const overwrite = [];
+    const overwrite = new Set();
     let createCount = 0;
+    const base = getDomainsDir();
     for (let i = 0; i + 1 < parts.length; i += 2) {
       const status = parts[i];
       const file = parts[i + 1];
-      if (status === 'D') createCount++;
-      else overwrite.push(file);
+      if (status !== 'D') { overwrite.add(file); continue; }
+      // 'D' is git's word for "not there as a tracked file", which is also
+      // what it says when a local FILE or LINK sits where the repository has a
+      // FOLDER (a file `alpha` where the repo has `alpha/…`), or a folder sits
+      // where it has a file. A checkout removes that local thing, so it is an
+      // overwrite, named by the local path (v4.1.2, audit N1). Only a path
+      // proven absent is a create.
+      const local = localPathState(base, file);
+      if (local.state === 'absent') createCount++;
+      else overwrite.add(local.at || file);
     }
-    overwrite.sort();
-    return { overwrite, overwriteCount: overwrite.length, createCount };
+    const list = [...overwrite].sort();
+    return { overwrite: list, overwriteCount: list.length, createCount };
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * What a checkout would meet at `rel` (a repository path, `/`-separated)
+ * under `base`, walked one name at a time with lstat, so a link is never
+ * followed (v4.1.2, audit N1):
+ *   {state:'absent'}           lstat answered ENOENT on the path or on a
+ *                              parent, and every parent before it is a real
+ *                              folder: the checkout only CREATES here.
+ *   {state:'present', st, at}  the path itself exists under real folders.
+ *   {state:'blocked', at}      a parent is a file, a link or anything but a
+ *                              real folder: the checkout would REMOVE `at`.
+ *   {state:'unknown', at}      any other error (EACCES, ELOOP, …): nothing
+ *                              is proven, so a caller treats it as in the way.
+ */
+function localPathState(base, rel) {
+  const parts = String(rel).split('/');
+  let cur = base;
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i]);
+    const at = parts.slice(0, i + 1).join('/');
+    let st;
+    try { st = lstatSync(cur); } catch (err) {
+      return err && err.code === 'ENOENT' ? { state: 'absent' } : { state: 'unknown', at };
+    }
+    if (i === parts.length - 1) return { state: 'present', st, at };
+    if (!st.isDirectory()) return { state: 'blocked', at };
+  }
+  return { state: 'unknown', at: rel };
 }
 
 /**
@@ -1824,14 +1864,38 @@ const LAST_SYNC_KEY = 'curator.lastSyncAt';
 // through, so it stops applying after one sync.
 const WORK_TREE_KEY = 'curator.workTree';
 
-const FOLDER_CHANGED_MESSAGE =
+// Two sentences, and each names only a way out that works (v4.1.2, candidate
+// audit N2/N3). With a record, the folder routes accept the recorded folder
+// while Sync is connected (src/routes/config.js), so "set it back in
+// Settings" is a real remedy, and the sentence names the folder, which after
+// a "Start fresh" on a damaged settings file nobody may remember. Without a
+// record (the legacy check) there is no folder to go back to, so the only way
+// out named is Disconnect.
+const folderChangedMessage = (recorded) =>
   'Your knowledge folder is not the one Sync backs up on this computer, so Sync stopped before ' +
   'sending or receiving anything. Syncing now would remove the other folder\u2019s pages from ' +
-  'GitHub. Nothing was changed. To keep syncing the folder you had, set the knowledge folder back ' +
-  'in Settings. To sync this folder instead, open Sync, choose Disconnect, then connect again: ' +
-  'connecting shows what it would change before it changes anything.';
+  `GitHub. Nothing was changed. To keep syncing the folder you had, set the knowledge folder back ` +
+  `to it in Settings: ${recorded}. To sync this folder instead, open Sync, choose Disconnect, then ` +
+  'connect again: connecting shows what it would change before it changes anything.';
+const FOLDER_CHANGED_LEGACY_MESSAGE =
+  'Your knowledge folder holds none of the domains Sync backs up on this computer, so Sync stopped ' +
+  'before sending or receiving anything. Syncing now would remove those domains from GitHub. ' +
+  'Nothing was changed. To sync this folder, or to go back to the one you had, open Sync, choose ' +
+  'Disconnect, set the knowledge folder in Settings, then connect again: connecting shows what it ' +
+  'would change before it changes anything.';
 
-/** A folder path in one comparable spelling: resolved, real, no trailing separator. */
+/**
+ * A folder path in one comparable spelling. Only what the OS itself treats as
+ * the same folder is folded (candidate audit N4: the record used to be
+ * trimmed, so a folder whose name ends in a space never matched):
+ *   · path.resolve — `.`, `..` and doubled separators name the same folder;
+ *   · realpath     — a link to the folder IS the folder, and on macOS it
+ *                    answers the name as stored, so another letter case or
+ *                    Unicode form of the same folder compares equal;
+ *   · one trailing separator — `/x/` and `/x` are one folder;
+ *   · lower case on Windows only — NTFS names compare case-insensitively.
+ * Spaces, dots and every other character are kept exactly.
+ */
 function comparableFolder(p) {
   let r = path.resolve(String(p));
   try { r = realpathSync.native(r); } catch { /* keep the resolved path */ }
@@ -1839,17 +1903,68 @@ function comparableFolder(p) {
   return process.platform === 'win32' ? r.toLowerCase() : r;
 }
 
+/**
+ * The folder recorded in this repo's OWN config, exactly as written (no
+ * trim: a name may end in a space), or null when none is recorded (git's exit
+ * 1). `--local`, so a global or system setting is never read as the record.
+ * Any other git failure throws: it is not "no record".
+ */
+async function readRecordedFolder(opts = {}) {
+  const r = await gitArgv(['config', '--local', '--null', '--get', WORK_TREE_KEY], { ...opts, okCodes: [1] });
+  if (r.code === 1) return null;
+  const v = r.stdout.endsWith('\0') ? r.stdout.slice(0, -1) : r.stdout;
+  return v === '' ? null : v;
+}
+
+/**
+ * The same read for the folder routes, which are synchronous. Null when there
+ * is no record OR it cannot be read: the routes then refuse, which is the
+ * safe answer.
+ */
+function readRecordedFolderSync() {
+  try {
+    const out = execFileSync('git', [
+      ...GIT_CONFIG_ARGS, `--git-dir=${currentGitDir()}`, 'config', '--local', '--null', '--get', WORK_TREE_KEY,
+    ], { cwd: ROOT, env: GIT_ENV, timeout: 10000, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const v = out.endsWith('\0') ? out.slice(0, -1) : out;
+    return v === '' ? null : v;
+  } catch { return null; }
+}
+
+/**
+ * For src/routes/config.js (candidate audit N2): is `p` the folder this
+ * connected install's Sync recorded? Setting the knowledge folder back to it
+ * is the way back to safety, so the routes allow exactly that while Sync is
+ * connected. False when nothing is recorded.
+ */
+export function isRecordedSyncFolder(p) {
+  if (!isConfigured() || typeof p !== 'string' || !p) return false;
+  const rec = readRecordedFolderSync();
+  return rec !== null && comparableFolder(rec) === comparableFolder(p);
+}
+
+/**
+ * True when Sync is connected, has a record, and the current folder is not
+ * it: the 'folder-changed' state. The picker route then opens its dialog
+ * (the only folder it will accept is the recorded one).
+ */
+export function syncFolderIsElsewhere() {
+  if (!isConfigured()) return false;
+  const rec = readRecordedFolderSync();
+  return rec !== null && comparableFolder(rec) !== comparableFolder(getDomainsDir());
+}
+
 /** Throws the 'folder-changed' refusal when the folder is not the synced one. */
 async function assertSyncedFolderUnchanged(opts = {}) {
   const current = getDomainsDir();
-  let recorded = null;
-  try { recorded = (await git(['config', '--get', WORK_TREE_KEY], opts)).stdout.trim() || null; } catch { recorded = null; }
-  if (recorded) {
+  const recorded = await readRecordedFolder(opts);
+  if (recorded !== null) {
     if (comparableFolder(recorded) === comparableFolder(current)) return;
-    throw refusal('folder-changed', FOLDER_CHANGED_MESSAGE, { field: 'domainsPath' });
+    throw refusal('folder-changed', folderChangedMessage(recorded), { field: 'domainsPath', syncedFolder: recorded });
   }
-  let tracked;
-  try { tracked = zSplit((await git(['ls-files', '-z'], opts)).stdout); } catch { return; }
+  // A failure to list is a failure, never "nothing tracked" (it would let
+  // the sync through and record whatever folder is current).
+  const tracked = zSplit((await git(['ls-files', '-z'], opts)).stdout);
   const tops = new Set(tracked.map((p) => p.split('/')[0]).filter((n) => n && n !== '.gitignore'));
   if (!tops.size) return;
   if ([...tops].some((t) => existsSync(path.join(current, t)))) {
@@ -1857,7 +1972,7 @@ async function assertSyncedFolderUnchanged(opts = {}) {
     await git(['config', WORK_TREE_KEY, current], opts).catch(() => {});
     return;
   }
-  throw refusal('folder-changed', FOLDER_CHANGED_MESSAGE, { field: 'domainsPath' });
+  throw refusal('folder-changed', FOLDER_CHANGED_LEGACY_MESSAGE, { field: 'domainsPath' });
 }
 
 async function recordSyncSuccess(gitDir) {
@@ -2285,8 +2400,12 @@ export async function setup(repoUrl, token, mode, opts = {}) {
 async function snapshotFolderGitignore() {
   const p = path.join(getDomainsDir(), '.gitignore');
   let before = null;
-  try { before = await readFile(p, 'utf8'); } catch { before = null; }
-  return { path: p, before, after: undefined };
+  let unknown = false;
+  // Only ENOENT is "there was none". Any other failure leaves the file's
+  // earlier state unknown, and an unknown state is never "restored" (an
+  // unlink of a file that could not be read is not a rollback).
+  try { before = await readFile(p, 'utf8'); } catch (err) { before = null; unknown = !(err && err.code === 'ENOENT'); }
+  return { path: p, before, after: undefined, unknown };
 }
 
 /**
@@ -2296,7 +2415,7 @@ async function snapshotFolderGitignore() {
  * before gets its old content back; one this connect created is removed.
  */
 async function restoreFolderGitignore(snap) {
-  if (!snap || snap.after === undefined || snap.after === snap.before) return;
+  if (!snap || snap.unknown || snap.after === undefined || snap.after === snap.before) return;
   if (isConfigured() || looksLikeGitDir(currentGitDir())) return;
   let now = null;
   try { now = await readFile(snap.path, 'utf8'); } catch { return; }
@@ -2459,8 +2578,15 @@ async function collisionsAreIdentical(gitDir) {
       if (tab < 0) return false;
       const [mode, type, oid] = rec.slice(0, tab).split(' ');
       const p = rec.slice(tab + 1);
-      let st = null;
-      try { st = lstatSync(path.join(base, p)); } catch { continue; }   // absent: created, not overwritten
+      // Only a path PROVEN absent is skipped (v4.1.2, audit N1): every lstat
+      // error used to count as absent, so a local file where the repository
+      // has a folder (ENOTDIR below it) was skipped and `checkout -f` removed
+      // it. A file, link or anything else in place of a folder, and any error
+      // but ENOENT, answers false and keeps git's refusal.
+      const local = localPathState(base, p);
+      if (local.state === 'absent') continue;           // created, not overwritten
+      if (local.state !== 'present') return false;
+      const st = local.st;
       if (type !== 'blob' || !/^100(644|755)$/.test(mode) || !st.isFile() || p.includes('\n')) return false;
       want.set(p, oid);
     }
@@ -3743,6 +3869,7 @@ export const __testing = {
   git,
   checkConnectInput,
   assertSyncedFolderUnchanged,
+  readRecordedFolder,
   WORK_TREE_KEY,
   setAsideUnfinishedConnect,
   repoIdentity,
@@ -3750,6 +3877,8 @@ export const __testing = {
   detectForeignSyncRepo,
   foreignSyncRepoPresent,
   assessPullOverwrite,
+  collisionsAreIdentical,
+  localPathState,
   prepareRemote,
   looksLikeGitDir,
   configuredGitDir,

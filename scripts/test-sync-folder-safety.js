@@ -18,6 +18,16 @@
  *                 one is left alone.
  *   §7  S6/S8/S9  input refusals name the field; a stale index.lock has its
  *                 own sentence; POST /setup on a connected install refuses.
+ *   §8  N1        (candidate audit) a Pull never removes a local file, link or
+ *                 folder in the way of the repository's folder or file: the
+ *                 measurement and the byte check each refuse it; unreadable
+ *                 files and folders are never "absent"; a failed connect never
+ *                 removes a .gitignore it could not read.
+ *   §9  N2/N3     the folder-changed sentence names only a remedy that works:
+ *                 the routes accept the folder Sync recorded while connected;
+ *                 without a record, it names only Disconnect.
+ *   §10 N4        the record is stored and compared exactly (a name ending
+ *                 in a space syncs; the trimmed name is another folder).
  *
  * Isolation: CURATOR_TEST_USER_DATA_DIR, CURATOR_TEST_DOMAINS_DIR, a fake HOME
  * and CURATOR_NO_OPEN are set BEFORE any app module is imported, and the sync
@@ -566,6 +576,245 @@ section('§7 S6/S8/S9 — inputs named by field; a stale lock; connect on a conn
   eq(second.body.code, 'already-connected', 'with code already-connected');
   eq(readFileSync(c.configFile, 'utf8'), cfgBefore, 'and the install still points at the first repository');
   await new Promise((r) => server.close(r));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8 N1 — a Pull never removes a local file, folder or link that is in the way');
+// ═══════════════════════════════════════════════════════════════════════════
+// The candidate audit's N1: a regular FILE where the repository has a FOLDER
+// (`shared`, or `shared/wiki`) made lstat throw ENOTDIR below it, the
+// identical-bytes check took that as "absent", and `checkout -f` removed the
+// file. Two independent layers now hold it, and each is checked on its own:
+// the measurement (assessPullOverwrite, which the preview and the first
+// refusal use) and the byte check behind git's own refusal
+// (collisionsAreIdentical). The end-to-end Pull needs only one of them.
+{
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const { symlinkSync, chmodSync, lstatSync } = await import('fs');
+  /** A computer whose folder is shaped by `shape(dir)`, its git dir fetched from A's remote. */
+  async function blocker(label, shape) {
+    const { url } = await firstComputer();   // remote: .gitignore, shared/wiki/index.md, shared/wiki/a.md
+    const dir = fresh(label);
+    shape(dir);
+    const c = computer(dir);
+    use(c);
+    return { url, c, dir };
+  }
+  async function layers(c, url) {
+    await T.prepareRemote(c.gitDir, url, 60000);
+    const a = await T.assessPullOverwrite(c.gitDir);
+    const same = await T.collisionsAreIdentical(c.gitDir);
+    rmSync(c.gitDir, { recursive: true, force: true });
+    return { a, same };
+  }
+  const cases = [
+    ['a FILE where the repository has a domain folder', 'fileTop',
+      (d) => writeFileSync(path.join(d, 'shared'), 'ONLY COPY top\n'), 'shared', 'ONLY COPY top\n'],
+    ['a FILE where the repository has a wiki folder', 'fileDeep',
+      (d) => { mkdirSync(path.join(d, 'shared')); writeFileSync(path.join(d, 'shared', 'wiki'), 'ONLY COPY deep\n'); },
+      'shared/wiki', 'ONLY COPY deep\n'],
+    ['a FOLDER where the repository has a file', 'dirWay',
+      (d) => domainsWith(d, { 'shared/wiki/a.md/kept.md': 'ONLY COPY in folder\n' }), 'shared/wiki/a.md', null],
+  ];
+  for (const [what, label, shape, at, body] of cases) {
+    const { url, c, dir } = await blocker(label, shape);
+    const { a, same } = await layers(c, url);
+    ok(a.overwrite.includes(at), `${what}: the measurement counts it as an overwrite, named by its local path`, a);
+    eq(same, false, `${what}: the byte check does not vouch for it`);
+    const pre = await sync.preflightSetup(url, 't');
+    ok(pre.overwriteCount >= 1 && pre.overwriteSample.includes(at), `${what}: the preview says so before anything is attempted`, pre.overwriteSample);
+    const p = await attempt(() => sync.setup(url, 't', 'pull'));
+    eq(codeOf(p), 'pull-would-overwrite', `${what}: a Pull with no confirmation is refused`);
+    const full = path.join(dir, at);
+    if (body !== null) {
+      ok(existsSync(full) && lstatSync(full).isFile() && readFileSync(full, 'utf8') === body, `${what}: and the file is still there with its bytes`);
+    } else {
+      eq(existsSync(path.join(full, 'kept.md')) ? readFileSync(path.join(full, 'kept.md'), 'utf8') : null, 'ONLY COPY in folder\n',
+        `${what}: and the page inside the folder is untouched`);
+    }
+    ok(!existsSync(c.gitDir), `${what}: and the refused connect left no git dir`);
+  }
+  {
+    // A LINK where the repository has a folder: the link is not replaced by a folder.
+    const outside = domainsWith(fresh('outside'), { 'mine.md': 'outside note\n' });
+    const { url, c, dir } = await blocker('linkTop', (d) => symlinkSync(outside, path.join(d, 'shared')));
+    const { a, same } = await layers(c, url);
+    ok(a.overwrite.includes('shared'), 'a LINK where the repository has a folder: counted as an overwrite', a);
+    eq(same, false, 'a LINK where the repository has a folder: the byte check does not vouch for it');
+    eq(codeOf(await attempt(() => sync.setup(url, 't', 'pull'))), 'pull-would-overwrite', 'a LINK in the way: the Pull is refused');
+    ok(lstatSync(path.join(dir, 'shared')).isSymbolicLink(), 'and the link is still a link');
+    eq(JSON.stringify(readdirSync(outside)), '["mine.md"]', 'and its target folder is untouched');
+  }
+  {
+    // A LINK at a file's own path, pointing at a file with the remote's bytes:
+    // identical content, but a checkout would replace the link, so not vouched for.
+    const twin = path.join(fresh('twin'), 'a.md');
+    writeFileSync(twin, 'A\n');
+    const { url, c } = await blocker('linkFile', (d) => { mkdirSync(path.join(d, 'shared', 'wiki'), { recursive: true }); symlinkSync(twin, path.join(d, 'shared', 'wiki', 'a.md')); });
+    const { same } = await layers(c, url);
+    eq(same, false, 'a LINK at a file path, even to identical bytes: the byte check does not vouch for it');
+  }
+  if (!isRoot) {
+    // An UNREADABLE file with the remote's exact bytes: nothing is proven.
+    const { url, c, dir } = await blocker('unread', (d) => domainsWith(d, { 'shared/wiki/a.md': 'A\n' }));
+    const f = path.join(dir, 'shared/wiki/a.md');
+    chmodSync(f, 0o000);
+    const { same } = await layers(c, url);
+    eq(same, false, 'an unreadable file, even with identical bytes: the byte check does not vouch for it');
+    const p = await attempt(() => sync.setup(url, 't', 'pull'));
+    ok(!!p.err, 'an unreadable file in the way: the Pull does not go ahead', p.value);
+    chmodSync(f, 0o644);
+    eq(readFileSync(f, 'utf8'), 'A\n', 'and the file is untouched');
+    // An unreadable FOLDER on the way to a remote file: lstat answers EACCES.
+    const { url: u2, c: c2, dir: d2 } = await blocker('unreadDir', (d) => domainsWith(d, { 'shared/wiki/x.md': 'mine\n' }));
+    chmodSync(path.join(d2, 'shared/wiki'), 0o000);
+    eq(T.localPathState(d2, 'shared/wiki/a.md').state, 'unknown', 'a folder that cannot be read: its contents are unknown, never "absent"');
+    const { same: same2 } = await layers(c2, u2);
+    eq(same2, false, 'and the byte check does not vouch for it');
+    chmodSync(path.join(d2, 'shared/wiki'), 0o755);
+    // A .gitignore the connect could not read: its earlier state is unknown,
+    // so a failed connect does not "restore" it by removing the file.
+    const gdir = domainsWith(fresh('gi'), { 'g/wiki/index.md': '# g\n', '.gitignore': 'my-private-notes/\n' });
+    chmodSync(path.join(gdir, '.gitignore'), 0o000);
+    use(computer(gdir));
+    const gr = await attempt(() => sync.setup(`file://${TMP}/missing.git`, 't', 'push'));
+    ok(!!gr.err, 'an unreadable .gitignore, a connect that fails: precondition, it fails');
+    ok(existsSync(path.join(gdir, '.gitignore')), 'and the rollback does not delete a .gitignore whose earlier state it could not read');
+    try { chmodSync(path.join(gdir, '.gitignore'), 0o644); } catch { /* replaced */ }
+  } else {
+    console.log('  (unreadable-file cases skipped: running as root)');
+  }
+  {
+    // Controls: absent paths are creates, identical copies are vouched for.
+    const { url, c } = await blocker('ctlEmpty', () => {});
+    const { a, same } = await layers(c, url);
+    eq(a.overwriteCount, 0, 'control: an empty folder has nothing to overwrite');
+    eq(same, true, 'control: and nothing in the way');
+    const { url: u2, c: c2 } = await blocker('ctlSame', (d) => domainsWith(d, { 'shared/wiki/a.md': 'A\n' }));
+    const r2 = await layers(c2, u2);
+    eq(r2.a.overwriteCount, 0, 'control: an identical hand-copied page is not counted');
+    eq(r2.same, true, 'control: and the byte check vouches for it');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9 N2/N3 — the folder-changed refusal names only a way out that works');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const fakeRes = () => { const r = { statusCode: 200, body: null, status(s) { r.statusCode = s; return r; }, json(b) { r.body = b; return r; } }; return r; };
+  const { remote, url } = bareRemote();
+  const synced = domainsWith(fresh('synced'), { 'physics/wiki/index.md': '# p\n' });
+  const fallback = domainsWith(fresh('fallback'), { 'scratch/wiki/index.md': '# s\n' });
+  const third = domainsWith(fresh('third'), { 'third/wiki/index.md': '# t\n' });
+  const c = computer(synced);
+  use(c);
+  await sync.setup(url, 't', 'push');
+  const before = remoteFiles(remote);
+  // The folder pointer goes elsewhere behind Sync's back (a "Start fresh" on
+  // a damaged settings file puts it back to the default folder).
+  __setDomainsDirOverride(fallback);
+  const r = await attempt(sync.sync);
+  eq(codeOf(r), 'folder-changed', 'the folder changed underneath: Sync refuses');
+  const msg = sync.describeSyncError(r.err).error;
+  ok(msg.includes('set the knowledge folder back') && msg.includes(synced), 'the sentence says to set the folder back, and names it', msg);
+  eq(sync.syncRefusalOf(r.err).details.syncedFolder, synced, 'the details carry the folder Sync backs up');
+  ok(sync.isRecordedSyncFolder(synced) && !sync.isRecordedSyncFolder(third), 'isRecordedSyncFolder answers for the recorded folder only');
+  ok(sync.syncFolderIsElsewhere(), 'and the install is in the folder-changed state');
+
+  // The remedy the sentence names: the typed path accepts the recorded folder.
+  const t1 = fakeRes();
+  cfgRoutes.domainsPathHandler({ body: { path: third } }, t1, null);
+  eq(t1.statusCode, 400, 'while connected, any OTHER folder is still refused');
+  ok(t1.body && t1.body.reason === 'sync-connected' && /only be set back/.test(t1.body.error),
+    'with a sentence that says only the folder Sync backs up is accepted (not "connected to your current folder")', t1.body);
+  const t2 = fakeRes();
+  cfgRoutes.domainsPathHandler({ body: { path: synced } }, t2, null);
+  eq(t2.statusCode, 200, 'the folder Sync recorded is accepted while connected: the way back');
+  ok(readFileSync(getCuratorConfigFile(), 'utf8').includes(JSON.stringify(synced).slice(1, -1)), 'and written to the (test) settings file');
+
+  // The picker: its dialog opens in this state, and accepts only the recorded folder.
+  let opened = false;
+  cfgRoutes.refuseFolderChangeWhileSyncConnected({}, fakeRes(), () => { opened = true; });
+  ok(opened, 'folder-changed state: the picker route lets the dialog open');
+  const pickDeps = (picked) => ({
+    caps: getCapabilities('repo', 'darwin'), platform: 'darwin', hasActiveWrites: () => false,
+    execAsync: async () => ({ stdout: picked + '\n' }),
+  });
+  const p1 = fakeRes();
+  await cfgRoutes.pickFolderHandler({}, p1, pickDeps(third));
+  ok(p1.statusCode === 400 && p1.body.reason === 'sync-connected', 'the picker refuses another folder', p1.body);
+  const p2 = fakeRes();
+  await cfgRoutes.pickFolderHandler({}, p2, pickDeps(synced));
+  eq(p2.statusCode, 200, 'the picker accepts the folder Sync recorded');
+
+  __setDomainsDirOverride(synced);
+  ok(!sync.syncFolderIsElsewhere(), 'back on the recorded folder: no longer elsewhere');
+  let opened2 = false;
+  const m = fakeRes();
+  cfgRoutes.refuseFolderChangeWhileSyncConnected({}, m, () => { opened2 = true; });
+  ok(!opened2 && m.statusCode === 400, 'and the picker is refused before its dialog again');
+  writeFileSync(path.join(synced, 'physics/wiki/new.md'), 'n\n');
+  const back = await attempt(sync.sync);
+  ok(!back.err, 'Sync works again', back.err && back.err.message);
+  ok(remoteFiles(remote).includes('physics/wiki/new.md') && before.every((f) => remoteFiles(remote).includes(f)), 'and nothing was lost on the remote');
+
+  // No record (the legacy check): no folder to go back to, so the sentence
+  // names only Disconnect, and the route still refuses (the sentence is true).
+  gitRun(['--git-dir', c.gitDir, 'config', '--unset', T.WORK_TREE_KEY]);
+  __setDomainsDirOverride(third);
+  const lr = await attempt(sync.push);
+  eq(codeOf(lr), 'folder-changed', 'no record, a folder with none of the tracked domains: refused');
+  const lmsg = sync.describeSyncError(lr.err).error;
+  ok(/Disconnect/.test(lmsg) && !/back to it in Settings:/.test(lmsg), 'and the sentence does not promise a Settings change the route would refuse', lmsg);
+  ok(!sync.isRecordedSyncFolder(synced), 'with no record, no folder is "the recorded one"');
+  const t3 = fakeRes();
+  cfgRoutes.domainsPathHandler({ body: { path: synced } }, t3, null);
+  eq(t3.statusCode, 400, 'and the route refuses, as the sentence says');
+  // A global setting of the same key is never read as this repo's record.
+  const gcfg = path.join(TMP_HOME, '.gitconfig');
+  writeFileSync(gcfg, `[curator]\n\tworkTree = ${synced}\n`);
+  ok(!sync.isRecordedSyncFolder(synced), 'a GLOBAL curator.workTree is not a record (--local only)');
+  const gr = await attempt(sync.push);
+  eq(codeOf(gr), 'folder-changed', 'and the brain check still uses the legacy rule');
+  rmSync(gcfg, { force: true });
+  __setDomainsDirOverride(synced);
+  await sync.disconnect();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§10 N4 — the recorded folder is stored and compared exactly');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  for (const [label, name] of [['a name ending in a space', 'trail '], ['a name ending in two spaces and a tab', 'tabbed  \t'], ['a name starting with a space', ' lead']]) {
+    const { remote, url } = bareRemote();
+    const dir = path.join(fresh('n4'), name);
+    domainsWith(dir, { 'n4/wiki/index.md': '# n4\n' });
+    const c = computer(dir);
+    use(c);
+    const conn = await attempt(() => sync.setup(url, 't', 'push'));
+    ok(!conn.err, `${label}: connect`, conn.err && conn.err.message);
+    const rec = await T.readRecordedFolder({ gitDir: c.gitDir });
+    eq(rec, dir, `${label}: the record is the folder byte for byte`);
+    writeFileSync(path.join(dir, 'n4/wiki/a.md'), 'a\n');
+    const s1 = await attempt(sync.sync);
+    ok(!s1.err, `${label}: Sync works`, s1.err && s1.err.message);
+    const s2 = await attempt(sync.sync);
+    ok(!s2.err, `${label}: and again`, s2.err && s2.err.message);
+    ok(remoteFiles(remote).includes('n4/wiki/a.md'), `${label}: the page reached the remote`);
+    // The same folder spelled with a trailing separator, or through a link, is the same folder.
+    const { symlinkSync } = await import('fs');
+    const link = path.join(fresh('n4link'), 'via');
+    symlinkSync(dir, link);
+    __setDomainsDirOverride(link);
+    ok(!(await attempt(sync.sync)).err, `${label}: through a link to the same folder: still the same folder`);
+    // The name WITHOUT its spaces is another folder.
+    const trimmed = path.join(path.dirname(dir), name.trim());
+    domainsWith(trimmed, { 'n4/wiki/index.md': '# other\n' });
+    __setDomainsDirOverride(trimmed);
+    eq(codeOf(await attempt(sync.sync)), 'folder-changed', `${label}: the trimmed name is ANOTHER folder: refused`);
+    __setDomainsDirOverride(dir);
+    await sync.disconnect();
+  }
 }
 
 // ── isolation ───────────────────────────────────────────────────────────────
