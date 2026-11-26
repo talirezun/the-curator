@@ -49,7 +49,7 @@ let _env = null;
 export function __setProEnv(env) { _env = env || null; }
 /** Tests only: forget all state, as a fresh page load would. */
 export function __resetPro() {
-  _on = false; _confirmed = false; _seq = 0; _initPromise = null; _delegated = false; _subs.clear();
+  _on = false; _confirmed = false; _seq = 0; _initPromise = null; _delegated = false; _subs.clear(); _shimmerTimer = null;
 }
 
 function g(name) {
@@ -85,15 +85,46 @@ function paint() {
 }
 
 /** Set what the screen shows; notify only on a real change. */
-function apply(on) {
+function apply(on, { byPress = false } = {}) {
   const changed = on !== _on;
   _on = on;
   writeMirror(on);
   paint();
   if (!changed) return;
+  if (on && byPress) shimmer();
   for (const cb of Array.from(_subs)) {
     try { cb(_on); } catch (err) { try { console.error('[pro] listener failed', err); } catch { /* */ } }
   }
+}
+
+// ── The switch-on moment (owner, 2026-11-26) ───────────────────────────────
+// Turning Pro ON by a press sends ONE light shimmer down the rail: pro.css
+// animates `.rail::before` while <html data-pro-shimmer> is set, and this
+// clears the attribute after the run, so it plays once per press. Never on
+// boot, never when the server's answer or a revert turns it on, never when
+// turning it off — and not at all under prefers-reduced-motion (pro.css also
+// switches the animation off there, so either guard alone holds).
+export const SHIMMER_MS = 900;
+let _shimmerTimer = null;
+function reducedMotion() {
+  try {
+    const w = g('window');
+    const mm = (w && w.matchMedia) || g('matchMedia');
+    return typeof mm === 'function' && !!mm('(prefers-reduced-motion: reduce)').matches;
+  } catch { return false; }
+}
+function shimmer() {
+  const d = doc();
+  if (!d || !d.documentElement || reducedMotion()) return;
+  const root = d.documentElement;
+  const st = g('setTimeout'), ct = g('clearTimeout');
+  try {
+    if (_shimmerTimer !== null && typeof ct === 'function') ct(_shimmerTimer);
+    root.setAttribute('data-pro-shimmer', '');
+    if (typeof st === 'function') {
+      _shimmerTimer = st(() => { _shimmerTimer = null; try { root.removeAttribute('data-pro-shimmer'); } catch { /* */ } }, SHIMMER_MS + 100);
+    }
+  } catch { /* decoration only */ }
 }
 
 // ── The API (contract) ──────────────────────────────────────────────────────
@@ -142,7 +173,7 @@ export function isPro() { return _on; }
 export async function setPro(on) {
   const want = !!on;
   const seq = ++_seq;
-  apply(want);
+  apply(want, { byPress: true });
   let failure = null;
   try {
     const f = g('fetch');

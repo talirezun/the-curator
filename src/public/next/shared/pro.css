@@ -24,3 +24,133 @@ html[data-pro="on"] .pro-more { display: none !important; }
 /* The Undo pro.js adds to the "Pro is on" toast (shared/toast.js draws text
    only). Sits under the title, left-aligned with it. */
 .pro-undo-btn { margin-top: var(--space-2); align-self: flex-start; }
+
+/* ══ PRO COMES ALIVE (owner, 2026-11-26) ══════════════════════════════════
+   Four refinements that exist ONLY while Pro is on: every rule below is
+   scoped to `html[data-pro="on"]` (scripts/test-pro-mode.js §5 holds that).
+   Colour stays reserved for domain identity, so the light here is the brand
+   violet ramp and the accent's own glow/border/tint tokens — gradients and
+   light, never a new flat hue. Nothing here changes a box's size: halos are
+   box-shadows, the hairlines are a pseudo-element and a background layer, the
+   label keeps its glyphs — so toggling Pro moves nothing.
+
+   Gradient text contrast (AA, 4.5:1 at the caption's 11px), every stop
+   measured against the rail plane AND its hover overlay:
+     dark  --violet-300 #BCA6FF 8.74 / 7.96 · --violet-400 #9D80F8 5.99 / 5.45
+     light --violet-600 #6538E0 6.15 / 5.43 · --violet-800 #3A1B82 11.84 / 10.47 */
+:root {
+  --pro-ink-a:   var(--violet-300);
+  --pro-ink-b:   var(--violet-400);
+  --pro-track-a: var(--violet-400);
+  --pro-track-b: var(--violet-700);
+  --pro-ink:     linear-gradient(100deg, var(--pro-ink-a), var(--pro-ink-b));
+  --pro-track:   linear-gradient(100deg, var(--pro-track-a), var(--pro-track-b));
+  --pro-hair:    linear-gradient(180deg, transparent, var(--accent-border) 30%, var(--accent-border) 70%, transparent);
+}
+[data-theme="light"] {
+  --pro-ink-a:   var(--violet-600);
+  --pro-ink-b:   var(--violet-800);
+  --pro-track-a: var(--violet-500);
+  --pro-track-b: var(--violet-800);
+}
+
+/* 1 · THE GLOWING SWITCH — the track a violet gradient with a soft halo, on
+   every Pro switch (rail and Settings), keeping the focus ring when focused. */
+html[data-pro="on"] [data-pro-switch][aria-checked="true"] {
+  background: var(--pro-track);
+  box-shadow: var(--gloss-specular), var(--gloss-shade), 0 0 0 3px var(--accent-tint), 0 0 12px var(--accent-glow);
+}
+html[data-pro="on"] [data-pro-switch][aria-checked="true"]:focus-visible {
+  box-shadow: var(--gloss-specular), var(--gloss-shade), var(--ring-focus), 0 0 12px var(--accent-glow);
+}
+/* …and the word "Pro" under it becomes gradient text. Only where the browser
+   can clip a background to text; elsewhere it keeps --accent-text (shell.css). */
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  html[data-pro="on"] .rail-pro .rail-cap {
+    background: var(--pro-ink);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* 2 · THE RAIL HAIRLINE — a 1px violet gradient along the rail's right edge,
+   over its two-line material edge. A pseudo-element: nothing reflows. */
+html[data-pro="on"] .rail { position: relative; }
+html[data-pro="on"] .rail::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--pro-track-a) 20%, var(--pro-track-b) 80%, transparent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* 3 · PRO DETAILS, MARKED — every revealed `data-detail="pro"` element gets a
+   faint gradient hairline on its left edge (a background LAYER, so its own
+   background colour, padding and size are untouched), and a tiny "PRO" label
+   after its heading when it has one: a kit fold's label, a section title, or a
+   first-child h2–h6 — matched by STRUCTURE, never by a kit class name, since
+   shared/section.css alone styles the kit (test-next-section-kit.js); this
+   only adds a ::after mark. Controls are left alone (their gloss is their face). The
+   label's alt text is empty, so a screen reader does not read "PRO". Never on
+   a warning: the guard (scripts/test-pro-guard.js) forbids a Pro-only one. */
+html[data-pro="on"] [data-detail="pro"]:not(button, input, select, textarea, a, .btn) {
+  background-image: var(--pro-hair);
+  background-repeat: no-repeat;
+  background-size: 1px 100%;
+  background-position: left top;
+}
+html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
+html[data-pro="on"] [data-detail="pro"] > :first-child [class*="section-title"]::after,
+html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
+  content: "PRO" / "";
+  display: inline-block;
+  margin-left: var(--space-3);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  font: var(--weight-semibold) var(--text-2xs)/1.2 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--accent-text);
+  vertical-align: middle;
+}
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  html[data-pro="on"] [data-detail="pro"] > summary > span:first-of-type::after,
+  html[data-pro="on"] [data-detail="pro"] > :first-child [class*="section-title"]::after,
+  html[data-pro="on"] [data-detail="pro"] > :is(h2, h3, h4, h5, h6):first-child::after {
+    background: var(--pro-ink);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* 4 · THE SWITCH-ON MOMENT — one light shimmer down the rail, once, when a
+   press turns Pro on (pro.js sets <html data-pro-shimmer> for one run). A
+   band of the accent's tint travels top to bottom inside the rail's own box;
+   background-position, so nothing escapes the rail and nothing reflows. */
+html[data-pro="on"][data-pro-shimmer] .rail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--accent-tint-strong) 45%, var(--accent-glow) 50%, var(--accent-tint-strong) 55%, transparent);
+  background-repeat: no-repeat;
+  background-size: 100% 35%;
+  background-position: 0 -40%;
+  opacity: 0;
+  animation: pro-rail-shimmer calc(var(--dur-slower) * 2.25) var(--ease-out) 1;
+}
+@keyframes pro-rail-shimmer {
+  0%   { background-position: 0 -40%; opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { background-position: 0 140%; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-pro="on"][data-pro-shimmer] .rail::before { animation: none; display: none; }
+}

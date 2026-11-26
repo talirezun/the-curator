@@ -1949,8 +1949,9 @@ function renderRail() {
     '<button class="rail-btn rail-btn-sm" data-view="settings" title="' + settingsMeta.title + '" aria-label="' + settingsMeta.title + '">' +
       icon(settingsMeta.icon, 18) +
       '<span class="rail-cap" aria-hidden="true">' + escapeHtml(settingsMeta.caption) + '</span>' +
-    '</button>' +
-    '<div class="rail-avatar" aria-hidden="true"></div>';
+    '</button>';
+  // v4.2: the decorative circle that ended the rail (.rail-avatar) is gone
+  // (owner, 2026-11-26) — it was no one's avatar and did nothing.
 
   // ONE delegation point for every [data-view] in the rail — the seven nav
   // buttons AND the home button, which carries data-view="domains" for

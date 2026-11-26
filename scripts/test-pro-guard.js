@@ -151,6 +151,20 @@ section('§3 Settings › General: the Pro block');
   ok(proGuardFaults(sw).length === 0 && !/data-detail="pro"/.test(sw), 'the switch itself is never Pro-only (it is how you get to Pro)');
 }
 
+// ════════════════════════════════════════════════════════════════════════
+section('§4 the "PRO" mark and hairline land only on Pro-only detail, so never on a warning');
+{
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/public/next/shared/pro.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const marks = [...css.matchAll(/([^{}]+)\{[^{}]*content:\s*"PRO"[^{}]*\}/g)].map((m) => m[1]);
+  const sels = marks.flatMap((s) => s.split(/,(?![^(]*\))/).map((x) => x.trim())).filter(Boolean);
+  ok(sels.length >= 3, `the "PRO" micro-label has ${sels.length} header selectors (anti-vacuity)`);
+  const stray = sels.filter((s) => !s.startsWith('html[data-pro="on"] [data-detail="pro"] >'));
+  ok(!stray.length, 'every one sits INSIDE a data-detail="pro" element (rule 1 keeps warnings out of those)', stray.join(' | '));
+  const hair = /(html\[data-pro="on"\] \[data-detail="pro"\][^{]*)\{[^}]*background-image:\s*var\(--pro-hair\)/.exec(css);
+  ok(!!hair, 'the left hairline is drawn on data-detail="pro" elements only');
+}
+
 P.__resetPro();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

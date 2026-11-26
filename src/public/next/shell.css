@@ -914,20 +914,8 @@ textarea {
   box-shadow: 0 0 0 2px var(--mat-sidebar);
 }
 
-.rail-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  /* Was two raw hexes. They are --violet-600 and --entity-600 exactly, so
-     naming them changes no pixel and removes the last colour literal from
-     this file — the discipline scripts/test-next-design-kit.js §10 ratchets.
-     They are FIXED POINTS in the brand ramp (neither is redefined under
-     [data-theme="light"]), so one declaration still serves both themes,
-     which is why this is a rename and not a theming change. */
-  background: linear-gradient(140deg, var(--violet-600), var(--entity-600));
-  margin-top: 4px;
-  flex: none;
-}
+/* v4.2: `.rail-avatar` (a decorative gradient circle at the foot of the
+   rail) is removed — owner, 2026-11-26. */
 
 /* ── Contextual sidebar ─────────────────────────────────────────────── */
 

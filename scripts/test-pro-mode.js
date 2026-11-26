@@ -241,6 +241,7 @@ section('§2 the routes on the real server');
 // ════════════════════════════════════════════════════════════════════════
 section('§3 shared/pro.js, driven with a fake DOM');
 const P = await import('../src/public/next/shared/pro.js');
+let railHtml = '';
 
 /** A DOM just big enough for pro.js: attributes, closest(), a click listener, a toast body. */
 function fakeEl(tag, attrs = {}, parent = null) {
@@ -250,6 +251,7 @@ function fakeEl(tag, attrs = {}, parent = null) {
     getAttribute: (k) => (a.has(k) ? a.get(k) : null),
     setAttribute: (k, v) => { a.set(k, String(v)); if (k === 'id') el.id = String(v); },
     hasAttribute: (k) => a.has(k),
+    removeAttribute: (k) => { a.delete(k); },
     closest(sel) {
       const alts = sel.split(',').map((s) => s.trim());
       for (let n = el; n; n = n.parentElement) {
@@ -269,11 +271,12 @@ function fakeEl(tag, attrs = {}, parent = null) {
   return el;
 }
 let doc;
-function makeEnv({ mirror, lsThrows = false, fetchImpl } = {}) {
+function makeEnv({ mirror, lsThrows = false, fetchImpl, reduced = false } = {}) {
   const root = fakeEl('html');
   const switches = [];
   const listeners = [];
   const toasts = [];
+  const timers = [];
   const store = new Map(mirror === undefined ? [] : [['curator-next-pro', mirror]]);
   const toastBody = fakeEl('div');
   doc = {
@@ -291,7 +294,9 @@ function makeEnv({ mirror, lsThrows = false, fetchImpl } = {}) {
   const calls = [];
   const env = {
     document: doc,
-    window: { getComputedStyle: () => ({ overflowY: 'visible' }) },
+    window: { getComputedStyle: () => ({ overflowY: 'visible' }), matchMedia: (q) => ({ matches: reduced && /reduce/.test(q) }) },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
     localStorage: lsThrows
       ? { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } }
       : { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
@@ -302,7 +307,7 @@ function makeEnv({ mirror, lsThrows = false, fetchImpl } = {}) {
   };
   P.__resetPro();
   P.__setProEnv(env);
-  return { root, switches, listeners, toasts, store, calls, toastBody,
+  return { root, switches, listeners, toasts, store, calls, toastBody, timers,
     click: (target) => listeners.filter((l) => l.type === 'click').forEach((l) => l.fn({ target, preventDefault() {} })) };
 }
 const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
@@ -461,7 +466,7 @@ section('§4 the wiring a browser runs');
     return app.slice(i, j).replace(/^\n?export /, '\n');
   };
   const constSrc = (name) => { const r = new RegExp('\\nconst ' + name + ' = [\\s\\S]*?;\\n').exec(app); return r ? r[0] : ''; };
-  let railHtml = '';
+  railHtml = '';
   const box = new Function('__env', `
     const { document, icon, syncBadgeTitle, syncBadgeMarkup, renderThemeToggleIcon, renderRailActive,
             applySyncBadge, toggleTheme, navigate, state, proSwitchHtml, PRO_TOOLTIP, sidebarDrawer } = __env;
@@ -497,6 +502,86 @@ section('§4 the wiring a browser runs');
   ok(gen && /renderProMode\(\)/.test(gen[0].replace(/\/\/.*$/gm, '')), 'Settings › General renders the Pro block');
   const pm = /\nfunction renderProMode\(\) \{[\s\S]*?\n\}\n/.exec(settings);
   ok(pm && /proSwitchHtml\(\{ id: 'settings-pro-switch' \}\)/.test(pm[0]) && /'Pro mode'/.test(pm[0]), '…with the same proSwitchHtml switch, under the heading "Pro mode"');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§5 Pro comes alive — only while on, from tokens, readable, once, never under reduced motion');
+{
+  // 5a — the switch-on moment: once, on a PRESS that turns Pro on, and never otherwise.
+  const ok200 = async (u, i) => json(200, { uiDetail: i && i.method === 'POST' ? JSON.parse(i.body).uiDetail : 'simple' });
+  let E = makeEnv({ fetchImpl: ok200 });
+  await P.initPro();
+  ok(!E.root.hasAttribute('data-pro-shimmer'), 'boot (off) plays nothing');
+  const sp = P.setPro(true);
+  ok(E.root.hasAttribute('data-pro-shimmer'), 'a press that turns Pro ON sets <html data-pro-shimmer> at once');
+  await sp;
+  const t = E.timers.find((x) => x.ms === P.SHIMMER_MS + 100);
+  ok(!!t, `…and arms ONE clearing timer at the run's length (${P.SHIMMER_MS + 100} ms)`, JSON.stringify(E.timers.map((x) => x.ms)));
+  if (t) t.fn();
+  ok(!E.root.hasAttribute('data-pro-shimmer'), '…which clears it, so it plays once');
+  await P.setPro(true);
+  ok(!E.root.hasAttribute('data-pro-shimmer'), 'pressing for the state already in force plays nothing');
+  await P.setPro(false);
+  ok(!E.root.hasAttribute('data-pro-shimmer'), 'turning Pro OFF plays nothing');
+
+  E = makeEnv({ fetchImpl: async () => json(200, { uiDetail: 'pro' }) });
+  await P.initPro();
+  ok(P.isPro() && !E.root.hasAttribute('data-pro-shimmer'), 'the server turning it on at boot plays nothing (it is not a press)');
+  E = makeEnv({ mirror: 'on', fetchImpl: async () => json(200, { uiDetail: 'pro' }) });
+  await P.initPro();
+  ok(!E.root.hasAttribute('data-pro-shimmer'), 'a mirror that says on plays nothing either');
+
+  E = makeEnv({ fetchImpl: ok200, reduced: true });
+  await P.initPro();
+  await P.setPro(true);
+  ok(P.isPro() && !E.root.hasAttribute('data-pro-shimmer') && !E.timers.length, 'prefers-reduced-motion: Pro turns on and NOTHING animates');
+
+  // 5b — the CSS: every refinement is scoped to Pro on, and built from tokens.
+  const css = readFileSync(path.join(ROOT, 'src/public/next/shared/pro.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const alive = css.slice(css.indexOf(':root'));
+  ok(alive.length > 500, 'the refinements are in pro.css (anti-vacuity)');
+  // Flatten @supports/@media wrappers, then read every rule's selector list.
+  const rules = [];
+  const re = /([^{}@]+)\{([^{}]*)\}/g;
+  let m;
+  const body = alive.replace(/@keyframes[^{]+\{(?:[^{}]*\{[^{}]*\})*\s*\}/g, '');
+  while ((m = re.exec(body))) rules.push({ sel: m[1].trim(), decl: m[2] });
+  const notVars = rules.filter((r) => !/^:root$|^\[data-theme="light"\]$/.test(r.sel));
+  const unscoped = notVars.flatMap((r) => r.sel.split(/,(?![^(]*\))/).map((s) => s.trim()))
+    .filter((s) => !s.startsWith('html[data-pro="on"]'));
+  ok(notVars.length >= 10 && !unscoped.length, `every one of ${notVars.length} refinement rules is scoped to html[data-pro="on"] — they exist only while Pro is on`, unscoped.join(' | '));
+  const literals = rules.map((r) => r.decl).join('\n').match(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(/g) || [];
+  ok(!literals.length, 'no colour literal: every hue is a brand-ramp or accent token (colour stays domain identity)', literals.join(' '));
+  const hueVars = [...rules.map((r) => r.decl).join('\n').matchAll(/var\(--([a-z0-9-]+)\)/g)].map((x) => x[1])
+    .filter((v) => /^(violet|ink|entity|concept|summary|identity|dom|red|green|amber|teal|blue)/.test(v) && !/^violet-/.test(v));
+  ok(!hueVars.length, 'and no token from another hue family (no domain or status colour)', hueVars.join(' '));
+  const reduce = /@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*html\[data-pro="on"\]\[data-pro-shimmer\] \.rail::before \{[^}]*animation: none/.exec(css);
+  ok(!!reduce, 'under prefers-reduced-motion the shimmer is animation: none (a second guard beside pro.js)');
+  ok(/html\[data-pro="on"\]\[data-pro-shimmer\] \.rail::before \{[^}]*animation: pro-rail-shimmer [^;]*\b1;/.test(css), 'the shimmer runs exactly once (iteration count 1)');
+  const layout = rules.filter((r) => /\[data-pro-switch\]|\.rail-cap|\.rail::after|\[data-detail="pro"\]:not/.test(r.sel))
+    .filter((r) => /(^|;)\s*(width|height|padding|margin|border(-width)?|font-size|font-weight|letter-spacing|display)\s*:/.test(r.decl) && !/::after/.test(r.sel));
+  ok(!layout.length, 'the switch, its label and the detail hairline change no box size (no layout shift)', layout.map((r) => r.sel).join(' | '));
+
+  // 5c — contrast of the gradient label, every stop, both themes (AA 4.5:1 at 11px).
+  const tok = readFileSync(path.join(ROOT, 'src/public/next/tokens/color.css'), 'utf8');
+  const hex = (name) => { const x = new RegExp('--' + name + ':\\s*(#[0-9A-Fa-f]{6})').exec(tok); return x && x[1]; };
+  const lum = (h) => { const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const stop = (block, v) => { const x = new RegExp(block + '\\s*\\{[^}]*--' + v + ':\\s*var\\(--([a-z0-9-]+)\\)').exec(alive); return x && x[1]; };
+  // The rail plane (material.css's opaque fallback), plus the hover overlay composited on it.
+  const PLANES = { dark: ['#14141E', '#1D1D2A'], light: ['#F7F7FA', '#E9E9EF'] };
+  for (const [theme, block] of [['dark', ':root'], ['light', '\\[data-theme="light"\\]']]) {
+    for (const v of ['pro-ink-a', 'pro-ink-b']) {
+      const name = stop(block, v), h = name && hex(name);
+      const worst = h ? Math.min(...PLANES[theme].map((p) => ratio(h, p))) : 0;
+      ok(worst >= 4.5, `${theme}: the "Pro" label's ${v} (--${name} ${h}) is ${worst.toFixed(2)}:1 on the rail and its hover — AA for 11px text`);
+    }
+  }
+  ok(ratio('#7C5AF5', '#14141E') < 4.5, 'CONTROL: the contrast check can fail (--violet-500 on the dark rail is under 4.5:1)');
+
+  // 5d — the decorative circle is gone.
+  const shell = readFileSync(path.join(ROOT, 'src/public/next/shell.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(!/\.rail-avatar/.test(shell) && !/rail-avatar/.test(railHtml), 'the decorative circle at the foot of the rail (.rail-avatar) is gone, in the rail and in shell.css');
 }
 
 console.error = origError;
