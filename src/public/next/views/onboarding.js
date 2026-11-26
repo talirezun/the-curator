@@ -598,7 +598,11 @@ function clearDismissed(storage) {
 // visible reads as broken. See that function's own comment.
 function shouldShowPanel(steps, dismissed) {
   if (!Array.isArray(steps) || steps.length === 0) return false;
-  if (steps.every((s) => s && s.done === true)) return false;
+  // v4.1.2 (audit O6): an OPTIONAL step left undone does not keep the guide
+  // coming back — the agent set's key is optional, and somebody who has done
+  // the other three needs nothing from this panel. Written inline (not a
+  // helper) in each of the three places, so each still runs standalone.
+  if (steps.every((s) => s && (s.done === true || s.optional === true))) return false;
   return dismissed !== true;
 }
 
@@ -1151,9 +1155,9 @@ function go(stepId) {
   // early.
   if (stepId === 'ingest') requestDomainFold(ADD_SOURCES_FOLD);
   navigate(view);
-  // views/settings.js's freshState() opens on the 'providers' section,
-  // which IS the API-keys section — so plain navigation lands on the right
-  // screen with no reach into that view's internals.
+  // views/settings.js's freshState() opens on SETTINGS_SECTIONS[0], which is
+  // 'general' since v3.72 — NOT the API-keys section. So the key step clicks
+  // the Providers & keys row below, as the bridge step clicks MCP bridge.
   //
   // THROUGH afterViewMount, NOT DIRECTLY. v3.57.0 gave navigate() an exit
   // animation, so the new view is mounted after that ~80ms rather than
@@ -1169,6 +1173,10 @@ function go(stepId) {
   // from SETTINGS_SECTIONS[0]), so without this the bridge step would send
   // somebody to the key screen it has just told them they do not need.
   if (stepId === 'bridge') afterViewMount(goToMcpBridge);
+  // v4.1.2 (audit O3): the key step opens Providers & keys the same way.
+  // Settings lands on its FIRST section, which is General (no key field
+  // there), so plain navigation sent people to the wrong screen.
+  if (stepId === 'api-key') afterViewMount(goToProvidersAndKeys);
 
   // The panel stays open on purpose: the user is meant to see step 2 next.
   // Re-check now so a step they completed a moment ago ticks over without
@@ -1218,6 +1226,12 @@ function goToMcpBridge() {
   document.querySelector('.settings-nav-row[data-section="mcp"]')?.click();
 }
 
+// The same, for the key step (v4.1.2, audit O3): Settings' own Providers &
+// keys row (`data-section="providers"`), the section with the key fields.
+function goToProvidersAndKeys() {
+  document.querySelector('.settings-nav-row[data-section="providers"]')?.click();
+}
+
 // ── Refresh loop ─────────────────────────────────────────────────────────
 
 // THE STOP CONDITION, in exactly one place so it cannot be half-applied the
@@ -1231,7 +1245,7 @@ function goToMcpBridge() {
 // if it did is what made the leak permanent on exactly the path a user
 // reaches deliberately.
 function shouldKeepPolling() {
-  return !!root && !steps.every((s) => s && s.done === true);
+  return !!root && !steps.every((s) => s && (s.done === true || s.optional === true));
 }
 
 /**
@@ -1331,7 +1345,7 @@ async function refresh(myGen) {
   steps = buildSteps(facts, activeDoor || 'knowledge');
   // D-D: finishing setup dismisses the panel by itself — but only for a
   // panel that opened itself. See autoCloseOnComplete's own comment.
-  if (autoCloseOnComplete && steps.every((s) => s.done)) { closePanel(); return; }
+  if (autoCloseOnComplete && steps.every((s) => s.done || s.optional === true)) { closePanel(); return; }
   // A complete checklist the user asked to SEE still stays on screen (that is
   // what autoCloseOnComplete is for) — but shouldKeepPolling() now reads
   // false, so startRefresh() will not re-arm and the loop ends here. Falling

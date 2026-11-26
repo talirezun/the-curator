@@ -38,7 +38,7 @@ import { execFile } from 'node:child_process';
 import {
   closeSync, createReadStream, existsSync, fstatSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync,
 } from 'node:fs';
-import { APP_SUPPORT_DIR_NAME, appPath, getUserDataDir } from '../brain/paths.js';
+import { APP_SUPPORT_DIR_NAME, WINDOWS_APP_DIR_NAME, WINDOWS_BUNDLE_DATA_SUBDIR, appPath, getUserDataDir } from '../brain/paths.js';
 import { describeInstall } from '../brain/install-mode.js';
 import {
   getDomainsDir, getProjectRepo, setProjectRepo, getSetupTools, setSetupTools,
@@ -48,8 +48,9 @@ import { listDomains } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import {
   analyseInstructionText, collectMachineSetup, collectProjectSetup, findRepoCandidates, inspectGitFile, inspectMarker,
-  readJsonFile, SKILL_NAMES, STATES, TRAVELS, skillsByName,
+  readJsonFile, SKILL_NAMES, STATES, TRAVELS, skillsByName, setupDisplay, setupPlatform, setupWinRoots,
 } from '../brain/setup-check.js';
+import { zipFolder } from '../brain/setup-skill-zip.js';
 import { adapterFor, displayTemplate, listHarnesses, mcpEntryFor, MCP_SERVER_NAME } from '../brain/harness-adapters.js';
 import { normaliseHarness } from '../brain/harness-names.js';
 import { TEMPLATE } from '../public/next/shared/agent-instructions.js';
@@ -83,6 +84,8 @@ function skillsDir() {
 /** `~/…` for a path under home — a display string only; `file` stays absolute. */
 function tilde(p) {
   const h = home();
+  // Windows (v4.1.2, W1): `%APPDATA%\…` / `%LOCALAPPDATA%\…` / `%USERPROFILE%\…`.
+  if (setupPlatform() === 'win32') return setupDisplay(h, p, 'win32');
   return typeof p === 'string' && h && (p === h || p.startsWith(`${h}/`)) ? `~${p.slice(h.length)}` : p;
 }
 
@@ -124,7 +127,20 @@ function appSupportDir() {
   // maintainer's real install identity (candidateUsageLogPaths' rule).
   if (process.env.CURATOR_TEST_USER_DATA_DIR && !homeOverride && !process.env.CURATOR_TEST_SETUP_HOME) return null;
   const h = home();
-  return h ? path.join(h, 'Library', 'Application Support', APP_SUPPORT_DIR_NAME) : null;
+  if (!h) return null;
+  // Windows (v4.1.2, audit W10): the Windows app keeps its user data in
+  // %LOCALAPPDATA%\TheCurator\App (paths.js getBundleUserDataDir, D1).
+  if (setupPlatform() === 'win32') {
+    const r = setupWinRoots(h);
+    const P = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(h) || process.platform === 'win32' ? path.win32 : path;
+    return r ? P.join(r.localAppData, WINDOWS_APP_DIR_NAME, WINDOWS_BUNDLE_DATA_SUBDIR) : null;
+  }
+  return path.join(h, 'Library', 'Application Support', APP_SUPPORT_DIR_NAME);
+}
+
+/** An absolute path in either syntax (a Windows entry's paths are `C:\…`). */
+function isAbsAny(p) {
+  return typeof p === 'string' && p !== '' && (path.posix.isAbsolute(p) || path.win32.isAbsolute(p));
 }
 
 /** A folder that is a checkout of this repository (its package.json names it). */
@@ -147,6 +163,14 @@ function installDirFromEntry(f) {
   if (typeof f.serverScript === 'string' && f.serverScript.startsWith('/')) {
     const root = path.resolve(f.serverScript, '..', '..');
     if (/\.app\/Contents\//.test(`${root}/`)) { if (support) out.push({ dir: support, kind: 'app' }); }
+    else if (isCuratorCheckout(root)) out.push({ dir: root, kind: 'source' });
+  } else if (setupPlatform() === 'win32' && isAbsAny(f.serverScript)) {
+    // Windows (v4.1.2, W10): the Windows app's script is
+    // `<install>\resources\app\mcp\server.js` (its user data is
+    // `support`); a checkout's is `<checkout>\mcp\server.js`.
+    const P = path.win32.isAbsolute(f.serverScript) && !path.posix.isAbsolute(f.serverScript) ? path.win32 : path;
+    const root = P.resolve(f.serverScript, '..', '..');
+    if (P.basename(root).toLowerCase() === 'app' && P.basename(P.dirname(root)).toLowerCase() === 'resources') { if (support) out.push({ dir: support, kind: 'app' }); }
     else if (isCuratorCheckout(root)) out.push({ dir: root, kind: 'source' });
   }
   if (typeof f.command === 'string' && f.command.startsWith('/')) {
@@ -744,6 +768,11 @@ router.post('/reveal', (req, res) => {
   if (!p || !path.isAbsolute(p) || !revealable.has(p)) {
     return res.status(400).json({ ok: false, reason: 'not_listed', error: 'Only a file the Setup check listed can be revealed.' });
   }
+  // v4.1.2 (audit W9): `open -R` is Finder's — macOS only, the rule
+  // /api/mcp/reveal-config follows. Step 5 draws no Reveal elsewhere.
+  if (setupPlatform() !== 'darwin') {
+    return res.status(501).json({ ok: false, reason: 'unsupported', error: 'Showing a file in the file manager is only supported on macOS. The path is shown beside the file; open it from there.' });
+  }
   const target = existsSync(p) ? p : path.dirname(p);
   revealer(target, (err) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
@@ -765,8 +794,17 @@ router.get('/skills/:file', (req, res) => {
   if (!dir || !existsSync(path.join(dir, name, 'SKILL.md'))) {
     return res.status(404).json({ ok: false, reason: 'not_shipped', error: 'This install carries no copy of the skills.' });
   }
-  if (process.platform !== 'darwin') {
-    return res.status(501).json({ ok: false, reason: 'unsupported', error: 'The zip is made with macOS’s ditto; copy the folder instead.', folder: path.join(dir, name) });
+  if (setupPlatform() !== 'darwin') {
+    // v4.1.2 (audit W2): Windows and Linux have no `ditto`, and every view
+    // draws this link — so the zip is built in-process (setup-skill-zip.js).
+    // macOS keeps ditto below, its bytes unchanged.
+    let buf;
+    try { buf = zipFolder(path.join(dir, name)); } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}.zip"`);
+    return res.end(buf);
   }
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'curator-skill-'));
   const zip = path.join(tmp, `${name}.zip`);

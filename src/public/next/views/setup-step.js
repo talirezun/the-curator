@@ -54,7 +54,7 @@ import { freshnessTier } from '../shared/age.js';
 // v3.80.0: the "+ Add an agent app" rows are the composer's model rows' anatomy
 // (import-free, DOM-free — the suite still imports this module in Node).
 import { listRowBodyHtml } from '../shared/model-row.js';
-import { machineWord as thisMachine } from '../shared/platform.js';
+import { machineWord as thisMachine, browserPlatform } from '../shared/platform.js';
 // v3.99.2 plain-language errors.
 import { userMessageFrom, renderErrorDetail, errorDetailHtml } from '../shared/net.js';
 
@@ -462,8 +462,12 @@ function customField(ui) {
 // THE TO-FIX NOTES — one loud line each, with its own fix
 // ═══════════════════════════════════════════════════════════════════════════
 
-const btn2 = (act, label, extra = '') => '<button type="button" class="btn btn-secondary btn-xs" data-setup-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
-const btnG = (act, label, extra = '') => '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>';
+// v4.1.2 (audit W9): Reveal is `open -R`, macOS only (the v3.86.0 rule, and
+// Settings › MCP bridge already hides it). Off macOS a Reveal is never drawn,
+// so no dead button; an unknown platform keeps it (the route still answers).
+export function revealAvailable() { const p = browserPlatform(); return !p || p === 'darwin'; }
+const btn2 = (act, label, extra = '') => (act === 'reveal' && !revealAvailable() ? '' : '<button type="button" class="btn btn-secondary btn-xs" data-setup-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>');
+const btnG = (act, label, extra = '') => (act === 'reveal' && !revealAvailable() ? '' : '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="' + act + '"' + extra + '>' + escapeHtml(label) + '</button>');
 const ZIPS = '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/my-curator.zip" download>my-curator.zip</a>'
   + '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/curator-continuity.zip" download>curator-continuity.zip</a>';
 // The tools whose config file The Curator can write (v3.85.0, macOS) — the link
@@ -1470,9 +1474,9 @@ export function fileReaderContent(data, name, resp, opts = {}) {
     const why = resp.error ? userMessageFrom(resp) : null;
     body = (why && /[.!?]$/.test(why.error))
       ? '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here. ' + why.error)
-        + ' Reveal it to open it in Finder.</p>' + renderErrorDetail(why.detail, why.code)
+        + (revealAvailable() ? ' Reveal it to open it in Finder.' : '') + '</p>' + renderErrorDetail(why.detail, why.code)
       : '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here: ' + ((why && why.error) || 'no answer') + '.')
-        + ' Reveal it to open it in Finder.</p>' + (why ? renderErrorDetail(why.detail, why.code) : '');
+        + (revealAvailable() ? ' Reveal it to open it in Finder.' : '') + '</p>' + (why ? renderErrorDetail(why.detail, why.code) : '');
   } else if (resp.exists === false) {
     body = '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Not in this folder</h3><p class="mem-setup-ev-p">'
       + (isMarker
