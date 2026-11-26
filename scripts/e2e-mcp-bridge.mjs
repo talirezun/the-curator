@@ -198,7 +198,7 @@ try {
     step('the live page passes the page contract (overview, four sections, one card each, the deck’s checks)', v.length === 0, v.join(' | '));
     step('Claude Desktop starts as "can be added"', (await rowStatus('claude-desktop')) === 'not-installed', await rowStatus('claude-desktop'));
     const titles = await page.evaluate(() => [...document.querySelectorAll('#settings-view-body .cur-section-title')].map((e) => e.textContent.trim()).join(' · '));
-    step('four sections, the deck’s words', titles === 'Your AI apps · Skills · Connection test · Tool activity', titles);
+    step('four sections, the deck’s words', titles === 'Agent harnesses · Skills · Connection test · Tool activity', titles);
     const ov = await text('#settings-view-body > .cur-ov');
     step('the overview: CONNECTED · NEEDS ATTENTION · TOOLS WORKING · LAST USED', /CONNECTED[^]*NEEDS ATTENTION[^]*TOOLS WORKING[^]*LAST USED/.test(ov || '') && !/HANDOFF|SAVES/.test(ov || ''), (ov || '').slice(0, 200));
     const nx = await text('#mcpi-next-step');

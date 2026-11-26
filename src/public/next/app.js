@@ -286,6 +286,9 @@ import { checkSettingsFiles, armSettingsFileRecheck } from './shared/settings-fi
 // imports app.js, so this creates no cycle.
 import { currentSyncRun, lastSyncOutcome, onSyncRunChange } from './shared/sync-run.js';
 import { showToast } from './shared/toast.js';
+// v4.2 — the app-wide Pro switch. initPro() runs first in boot(); the rail
+// draws the switch with proSwitchHtml(), which reads the current state.
+import { initPro, proSwitchHtml, PRO_TOOLTIP } from './shared/pro.js';
 // Plain-language errors (v3.99.2): boot() wraps window.fetch once so "Failed to
 // fetch" (the app's own server not answering) reads as a sentence in every
 // view. Aborts and Responses pass untouched. net.js imports no app.js: no cycle.
@@ -1933,6 +1936,16 @@ function renderRail() {
       '<span class="rail-cap" aria-hidden="true">' + escapeHtml(syncMeta.caption) + '</span>' +
       syncBadgeMarkup(_syncPendingCount) +
     '</button>' +
+    // v4.2 — THE PRO SWITCH, directly above Settings (owner, 2026-11-26), so
+    // it is on every screen. The item is the switch plus a caption, laid out
+    // like a rail button; the whole item is the hit target (data-pro-toggle)
+    // and the <button role="switch"> inside it is the one focusable control,
+    // named "Pro". shared/pro.js owns the click (one delegated listener) and
+    // keeps aria-checked in step, so a rail rebuild needs no re-binding.
+    '<div class="rail-pro" data-pro-toggle title="' + escapeHtml(PRO_TOOLTIP) + '">' +
+      proSwitchHtml({ id: 'rail-pro-switch', className: 'rail-pro-switch' }) +
+      '<span class="rail-cap" aria-hidden="true">Pro</span>' +
+    '</div>' +
     '<button class="rail-btn rail-btn-sm" data-view="settings" title="' + settingsMeta.title + '" aria-label="' + settingsMeta.title + '">' +
       icon(settingsMeta.icon, 18) +
       '<span class="rail-cap" aria-hidden="true">' + escapeHtml(settingsMeta.caption) + '</span>' +
@@ -3464,6 +3477,12 @@ function pickStartView(stored) {
 
 function boot() {
   installFetchTranslation();
+  // v4.2 — Pro mode, FIRST, before anything paints: initPro()'s synchronous
+  // prologue sets <html data-pro> from its mirror, so the first frame already
+  // shows the right detail; then it reconciles with the server. Not awaited,
+  // for the markBooted() reason documented below (and an async function can
+  // only reject, never throw here); the try/catch contains anything else.
+  try { initPro(); } catch (err) { console.error('[next] Pro mode init failed', err); }
   let savedTheme = 'dark';
   // ── FIRST LAUNCH LANDS ON DOMAINS, NOT CHAT (v3.49.0) ────────────────
   // This was 'chat'. A first launch therefore opened a composer against a

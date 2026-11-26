@@ -45,6 +45,7 @@
 
 import { readFileSync } from 'node:fs';
 import './test-helpers/net-globals.js'; // v3.99.2: the real net.js helpers, visible to lifted view functions
+import { proSwitchHtml } from '../src/public/next/shared/pro.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
@@ -186,6 +187,7 @@ const REAL = [
   extractFunction(src, 'installUpdateStyle'),
   extractFunction(src, 'renderTextSize'),
   extractFunction(src, 'renderBackgroundMode'),
+  extractFunction(src, 'renderProMode'), // v4.2 — General's Pro block, lifted real
   // ── BLOCK ③'s CHAIN, LIFTED REAL ───────────────────────────────────────
   // `renderMcp` calls `renderToolMap`, which calls the rest. Every one is
   // lifted rather than stubbed because G3 measures the lede block ③ paints
@@ -267,6 +269,7 @@ function lift(name, state, over) {
     // REAL rather than stubbed, because every measurement below is about the
     // markup this section actually ships.
     renderMonitor,
+    proSwitchHtml, // v4.2 — the REAL Pro switch (shared/pro.js), so General renders as shipped
     gatedLoader: () => '<LOADER/>',
     loadGate: null,
     renderSelfTestResult: () =>
@@ -478,7 +481,7 @@ function visibleWords(fragment) {
   for (const [label, shape, over] of INSTALL_MODES) {
     const html = run('renderGeneral', shape(baseState()), over);
     const ledes = ledesOf(html);
-    ok(ledes.length === 4, `"${label}" renders four ledes, one per General block (${ledes.length})`);
+    ok(ledes.length === 5, `"${label}" renders five ledes, one per General block (v4.2: + Pro mode) (${ledes.length})`);
     for (const l of ledes) {
       const words = visibleWords(l);
       modeLedes++;
@@ -486,7 +489,7 @@ function visibleWords(fragment) {
         `"${label}": "${words.slice(0, 6).join(' ')}…" is ${words.length} visible words (4..13)`);
     }
   }
-  ok(modeLedes === 12,
+  ok(modeLedes === 15,
     `CONTROL: ${modeLedes} ledes measured across the three install modes — a mode rendering none would make the ceiling vacuous`);
 }
 

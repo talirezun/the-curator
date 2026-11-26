@@ -5,7 +5,7 @@ import { promisify } from 'util';
 import path from 'path';
 import { getConfigFileStatus, setAsideDamagedConfig } from '../brain/config.js';
 import { getSharedBrainConfigFileStatus, setAsideDamagedSharedBrainConfig } from '../brain/sharedbrain-config.js';
-import { getConfig, setDomainsDir as writeDomainsDirSetting, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings, getModelMigrationNotes, dismissModelMigrationNotes } from '../brain/config.js';
+import { getConfig, setDomainsDir as writeDomainsDirSetting, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings, getModelMigrationNotes, dismissModelMigrationNotes, getUiDetail, setUiDetail } from '../brain/config.js';
 // v3.65.2 — the GitHub read-only token's TEST route. The read client is the
 // one implementation of GET-only GitHub plumbing (v3.63.0); this route reuses
 // its token reader and its getRef rather than composing a second request.
@@ -663,7 +663,47 @@ router.post('/ui-state', (req, res) => {
   }
 });
 
-// ── Retired models (2026-10-08) ─────────────────────────────────────────────
+// ── UI detail: the app-wide Pro switch (v4.2) ──────────────────────────────
+//
+//   GET  /api/config/ui-detail → 200 {"uiDetail":"simple"|"pro"}. NEVER fails:
+//        a damaged or missing settings file reads as "simple".
+//   POST /api/config/ui-detail, body EXACTLY {"uiDetail":"simple"|"pro"}
+//        → 200 {"uiDetail":…} | 400 {"code":"invalid-ui-detail"}
+//        | 409 {"code":"config_unreadable"} when the settings file is damaged.
+//
+// Not behind guardConcurrent, for /ui-state's reason: nothing on any write
+// path reads it, and a 409 while an ingest runs would refuse a preference for
+// no reason. The cross-origin and Host guards in server.js apply to it, as to
+// every mutating /api route. The strict body is what bounds the write into the
+// file that holds the API keys: one key, two literal values.
+router.get('/ui-detail', (_req, res) => {
+  let uiDetail = 'simple';
+  try { uiDetail = getUiDetail() === 'pro' ? 'pro' : 'simple'; } catch { uiDetail = 'simple'; }
+  res.status(200).json({ uiDetail });
+});
+
+router.post('/ui-detail', (req, res) => {
+  const b = req.body;
+  const v = (b && typeof b === 'object' && !Array.isArray(b)
+    && Object.keys(b).length === 1 && Object.prototype.hasOwnProperty.call(b, 'uiDetail'))
+    ? b.uiDetail : undefined;
+  if (v !== 'simple' && v !== 'pro') {
+    return res.status(400).json({ code: 'invalid-ui-detail',
+      error: 'The request body must be exactly {"uiDetail":"simple"} or {"uiDetail":"pro"}.' });
+  }
+  try {
+    const r = setUiDetail(v);
+    if (!r.ok) return res.status(400).json({ code: 'invalid-ui-detail', error: 'Unknown value.' });
+    return res.status(200).json({ uiDetail: r.uiDetail });
+  } catch (err) {
+    if (err && err.code === 'config_unreadable') {
+      return res.status(409).json({ ok: false, code: 'config_unreadable', error: scrubPaths(err.message || '') });
+    }
+    return res.status(500).json({ error: scrubPaths((err && err.message) || 'The setting could not be saved.') });
+  }
+});
+
+// ── Retired models (2026-10-08)─────────────────────────────────────────────
 //
 // GET returns the retirement map (old id → successor) so the browser can move
 // the chat composer's remembered pick forward (localStorage

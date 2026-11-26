@@ -496,7 +496,7 @@ check('frontend: it reads domains_status in CODE, not only in a comment',
   check('frontend: a missing folder is named as missing, UNFOLDED (the result line, never behind a chevron)',
     /cur-status-line[^]*Not working:[^]*your knowledge folder ~\/gone does not exist/.test(strip(missing)));
   check('frontend: the missing-folder sentence says it is NOT a tool config mistake',
-    /not a mistake in an AI app/i.test(strip(missing)));
+    /not a mistake in an agent harness/i.test(strip(missing)));
   const empty = renderMcpPage(baseState({ selfTest: { ok: true, tool_count: 24, domains_status: 'empty' }, selfTestAt: at })).html;
   check('frontend: …and an EMPTY folder is a different sentence, with no missing-folder warning',
     /knowledge folder is empty \(normal on a fresh install\)/.test(empty) && !/does not exist/.test(empty));

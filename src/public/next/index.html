@@ -161,6 +161,14 @@
      not have to touch this file. -->
 <link rel="stylesheet" href="/next/shared/switch.css">
 
+<!-- shared/pro.css — the app-wide Pro switch (v4.2). One rule hides every
+     `data-detail="pro"` element while <html data-pro> is not "on", plus the
+     quiet "More in Pro" door. The state is shared/pro.js's; app.js calls its
+     initPro() at the top of boot(), before the first paint. Linked here
+     because scripts/test-css-tokens.js §5 discovers /next stylesheets only
+     from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/pro.css">
+
 <!-- shared/freshness.css — the ONE freshness scale in /next: how recently
      something happened, said the same way on the Agent-memory pip, both
      sidebar status rows and (in its own colour space, since desktop/ may not

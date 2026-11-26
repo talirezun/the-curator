@@ -81,8 +81,8 @@ section('2. Tool activity counts AI apps, not test runs');
   ok(/cur-mon-key">save_working_state<\/span><span class="cur-mon-value">[^]*177/.test(mon), 'the busiest tool is the AI apps’ busiest (177 saves)');
   ok(!/500/.test(mon), 'a test run’s 500 calls on get_node count for nothing (count7dAgent wins)');
   ok(/class="cur-depth/.test(mon) && !/cur-depth-over|budget/.test(mon), 'depth bars against the busiest — a max, never a budget (never red)');
-  ok(/cur-mon-key">last time an AI app started My Curator<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+"/.test(mon),
-    'the deck’s first line: the last time an AI app started My Curator, with the app’s freshness dot');
+  ok(/cur-mon-key">last time an agent harness started My Curator<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+"/.test(mon),
+    'the deck’s first line: the last time an agent harness started My Curator, with the app’s freshness dot');
   ok(!/last save|handoff saved/.test(mon), 'no handoff line (the owner, 2026-11-01: handoffs are the Context page’s)');
   ok(/<div class="cur-mon-note">16 tools not used this week\.<\/div>/.test(mon), 'its last line: how many tools went unused this week');
   ok(/class="cur-mon cur-mon-ident" id="mcp-agent-use"/.test(use), 'the keys are identifiers (`keys: \'identifier\'`): a tool name keeps its own case');
@@ -90,7 +90,7 @@ section('2. Tool activity counts AI apps, not test runs');
   const fresh = baseState({ mcpUsage: { present: false, tools: baseState().mcpUsage.tools.map((t) => ({ ...t, count7dAgent: 0, lastUsedAt: null, lastAgentAt: null })), sessions: {} },
     mcpInstall: { ...baseState().mcpInstall, status: { data: { ...baseState().mcpInstall.status.data, tools: [] } } } });
   const f = card(renderMcpPage(fresh).html, 'use');
-  ok(/last time an AI app started My Curator<\/span><span class="cur-mon-value">—/.test(f) && /24 tools not used this week/.test(f),
+  ok(/last time an agent harness started My Curator<\/span><span class="cur-mon-value">—/.test(f) && /24 tools not used this week/.test(f),
     'a fresh install: a dash, and every tool not used this week — the deck’s own words, no invented empty state');
   const failedLog = card(renderMcpPage(baseState({ mcpUsage: null, mcpUsageError: 'disk' })).html, 'use');
   ok(/tx-status tx-status-danger[^]*Could not read which tools were used[^]*disk/.test(failedLog), 'an unreadable log is a danger status with the reason');

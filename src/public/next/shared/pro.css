@@ -1,0 +1,26 @@
+/* ── Pro mode (v4.2) — shared/pro.js owns the state ──────────────────────────
+   ONE rule hides every piece of Pro-only markup while Pro is not on. It keys
+   on `html:not([data-pro="on"])`, not on `[data-pro="off"]`, so a page whose
+   attribute was never set (pro.js failed to load) shows the SIMPLE view — the
+   direction that hides no warning, because nothing a user needs is ever
+   behind `data-detail="pro"` (scripts/test-pro-guard.js). `display: none`
+   also takes the parts out of the accessibility tree and the tab order. */
+html:not([data-pro="on"]) [data-detail="pro"] { display: none !important; }
+
+/* The quiet door, "More in Pro: … ›" (moreInProLine). It is the LAST line of
+   the section it qualifies, is never an accent and never a warning, and goes
+   away once Pro is on — the detail it pointed at is then on screen. */
+.pro-more {
+  margin: var(--space-4) 0 0;
+}
+html[data-pro="on"] .pro-more { display: none !important; }
+.pro-more-btn { color: var(--text-2); }
+
+/* The anchor pro.js focuses after a door press, so focus never lands on
+   <body> when the pressed door disappears. Programmatic focus on a section is
+   not a control's focus: no ring. */
+[data-pro-focus]:focus { outline: none; }
+
+/* The Undo pro.js adds to the "Pro is on" toast (shared/toast.js draws text
+   only). Sits under the title, left-aligned with it. */
+.pro-undo-btn { margin-top: var(--space-2); align-self: flex-start; }
