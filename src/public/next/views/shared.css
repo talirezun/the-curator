@@ -1388,6 +1388,13 @@ a.sb-card-repo:hover { color: var(--text-link); }
    `:focus-visible` and a shadow here would fight it). */
 .upd-actions a.btn { text-decoration: none; }
 
+/* v4.1.2: `.sbw-hidden` hides ANY wizard element, not only the four kinds
+   with their own rule above (a <dt>/<dd> pair in step 5 relied on the
+   `hidden` attribute alone). `[class]` lifts it to two-class specificity so a
+   later one-class `display:` rule cannot show a hidden element; it is placed
+   before the motion block, which must stay last. */
+[class].sbw-hidden { display: none; }
+
 /* ── Reduced motion: press ────────────────────────────────────────────────
    Travel off, colour step kept. The `.sbw-panel` entrance has its own
    `animation: none` escape higher up (it has to stay beside the animation it

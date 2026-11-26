@@ -1317,7 +1317,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'renderSectionDoor', 'renderSectionConnection', 'renderPushConfirm', 'renderSynthesizeConfirm',
     'tokenCheckApplies', 'adminAffordances',
     // v3.72.1
-    'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
+    'ageTickAttrs', 'sectionPushedLine', 'pendingReading', 'leaveConsequences', // v4.1.2
     'tokenVerdictLoud', // v3.99.2
     'freshTokenForm', 'tokenRejectionKey', 'sbTokenPanelOpen', 'renderReplaceToken', // v3.99.2 Replace token
   ];
@@ -1388,6 +1388,22 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   eq(rows[4][3], 'fellow c77a791a…', 'C: the leave row names the fellow id');
   ok(/data-sb-action="leave-confirm"/.test(html) && /Your local wiki files stay exactly as they are/.test(html),
     'C: Leave keeps its sentence, and opening the row IS the confirm step');
+  // v4.1.2 (integration, F3 follow-up): Leave says what it loses, on the confirm itself.
+  {
+    const leaveBody = (/data-sb-sec-row="c1:leave"[\s\S]*?<p class="sb-sec-line">([\s\S]*?)<\/p>/.exec(html) || [, ''])[1];
+    ok(/50 pages not yet pushed stay unpushed: push first if they belong in the Shared Brain\./.test(leaveBody),
+      'C: Leave says the 50 pages not yet pushed stay unpushed', leaveBody);
+    ok(/your admin token is removed from this computer with the connection, and rejoining with an invite does not bring it back/.test(leaveBody),
+      'C: …and, for an admin, that the admin token goes with it and rejoining does not bring it back');
+    const L = cBox.leaveConsequences;
+    ok(/1 page not yet pushed stays unpushed/.test(L({ pending_pages: 1 })), 'Leave: one page reads singular');
+    ok(/Pages you have not pushed stay unpushed/.test(L({ pending_pages: null })), 'Leave: an unknown count still says unpushed pages stay unpushed');
+    eq(L({ pending_pages: 0 }), '', 'CONTROL Leave: a known zero and no admin token adds nothing');
+    eq(L({ read_only: true, pending_pages: 9 }), '', 'CONTROL Leave: a read-only member pushes nothing, so nothing about pushing is said');
+    ok(!/admin token/.test(L({ pending_pages: 2, has_admin_token: false })), 'CONTROL Leave: a contributor hears nothing about an admin token');
+    ok(/admin token/.test(L({ read_only: true, has_admin_token: true })), 'Leave: an admin token is named even with nothing to push');
+    ok(!/<script>/.test(L({ pending_pages: '<script>' })), 'CONTROL Leave: a non-number count is not echoed');
+  }
   // v3.71.1: the ⓘ IS the shared.token-check explainer (id unchanged); the
   // expiry CONSEQUENCE is printed visibly under it, never folded (v3.16.1).
   ok(html.includes(explainerMark('sb-sec-token-info-c1', 'shared.token-check').panel)

@@ -1276,6 +1276,31 @@ function pendingReading(conn) {
   return { pending, retry };
 }
 
+/**
+ * v4.1.2 (integration, F3 follow-up): what Leave loses, said on the confirm
+ * itself, never behind anything. Leave removes this computer's connection
+ * record, so (a) a contributor's pages not yet pushed are never sent by it,
+ * and (b) an admin's admin token goes with it — and an admin token can only
+ * be added when a Shared Brain is created (routes/sharedbrain.js POST /save
+ * refuses `no_admin_token`), so rejoining with an invite does not bring it
+ * back. Read-only members push nothing; a known zero pending says nothing.
+ * Returns escaped text ('' when there is nothing to add). Pure.
+ */
+export function leaveConsequences(conn) {
+  const parts = [];
+  const readOnly = !!(conn && conn.read_only === true);
+  if (!readOnly) {
+    const { pending } = pendingReading(conn);
+    if (pending === null) parts.push('Pages you have not pushed stay unpushed: push them first if they belong in the Shared Brain.');
+    else if (pending > 0) parts.push(pending + (pending === 1 ? ' page' : ' pages') + ' not yet pushed stay' + (pending === 1 ? 's' : '') + ' unpushed: push first if they belong in the Shared Brain.');
+  }
+  if (conn && conn.has_admin_token === true) {
+    parts.push('You are this Shared Brain\u2019s admin: your admin token is removed from this computer with the connection, ' +
+      'and rejoining with an invite does not bring it back, so you could no longer revoke members or rotate the admin token from here.');
+  }
+  return parts.length ? ' ' + escapeHtml(parts.join(' ')) : '';
+}
+
 /** The repository cell — a link only for a real GitHub repo; local/other
  *  storage types show a plain (non-clickable) label. ONE function for both
  *  hosts (v3.65.3): renderCard calls it too. */
@@ -1462,7 +1487,7 @@ function renderSectionConnection(conn, last) {
     '<p class="sb-sec-line">Your local wiki files stay exactly as they are, including the read-only ' +
       (mirrorDomain ? '<span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
       ' — only the sync connection is removed from this machine. This does not remove you as a GitHub collaborator ' +
-      'on the repo; ask the admin for that. You can rejoin any time with a new invite token.</p>' +
+      'on the repo; ask the admin for that. You can rejoin any time with a new invite token.' + leaveConsequences(conn) + '</p>' +
     '<div class="sb-sec-row-line"><button type="button" class="btn btn-secondary" data-sb-action="leave-confirm"' + (busy ? ' disabled' : '') + '>' +
       (card.acting === 'leave' ? 'Leaving…' : 'Leave') + '</button></div>');
 
@@ -1787,7 +1812,7 @@ function renderCard(conn) {
               '<span>Leave this Shared Brain? Your local wiki files stay exactly as they are, including the read-only ' +
               (mirrorDomain ? '<span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
               ' — only the sync connection is removed from this machine. This does not remove you as a GitHub ' +
-              'collaborator on the repo; ask the admin for that. You can rejoin any time with a new invite token.</span>' +
+              'collaborator on the repo; ask the admin for that. You can rejoin any time with a new invite token.' + leaveConsequences(conn) + '</span>' +
               '<div class="sb-confirm-actions">' +
                 '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="leave-confirm"' + (busy ? ' disabled' : '') + '>' +
                   (card.acting === 'leave' ? 'Leaving…' : 'Leave') +
@@ -2585,8 +2610,9 @@ function renderAdminBody(conn, card, aff, busy, mirrorBusy) {
       ? renderRevoke(conn, card, busy, mirrorBusy)
       : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
         '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
-        'Only the cohort admin’s own connection stores one. If you are the admin here, re-run the ' +
-        'brain-setup wizard — it issues an admin token and saves it to this connection.</span></div>')
+        'Only the cohort admin’s own connection stores one, made when the Shared Brain was created; The Curator ' +
+        'can’t add one to an existing connection. Who can change the repository is still decided on GitHub, in the ' +
+        'repository’s Settings › Collaborators.</span></div>')
   );
 }
 
@@ -2599,7 +2625,7 @@ function renderAdminToken(card, aff, busy, connId) {
         '<p class="sb-admin-hint">' +
           (aff.hasToken
             ? 'Authorises contributor revocation on this connection. Rotate it if you think it leaked — the current token stops working immediately.'
-            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection, so there is nothing to rotate — the brain-setup wizard is the only path to one.') +
+            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection, so there is nothing to rotate: one is made only when a Shared Brain is created.') +
         '</p>' +
       '</div>' +
       (!aff.showRotate || card.rotateConfirmOpen
@@ -2623,7 +2649,7 @@ function renderAdminToken(card, aff, busy, connId) {
         '</span>' +
         '<input type="password" class="sb-revoke-input" id="sb-rotate-token-' + escapeHtml(connId || '') + '" ' +
           'placeholder="sbat_… (the current token)" autocomplete="off" spellcheck="false">' +
-        '<p class="sb-admin-hint">Read the current token from your password manager. Rotation needs it — if it is lost, re-run the brain-setup wizard to issue a new one.</p>' +
+        '<p class="sb-admin-hint">Read the current token from your password manager. Rotation needs it, and a lost admin token can’t be reissued for this connection.</p>' +
         '<div class="sb-confirm-actions">' +
           '<button type="button" class="btn btn-primary btn-xs" data-sb-action="rotate-confirm"' + (busy ? ' disabled' : '') + '>' +
             'Rotate token' +

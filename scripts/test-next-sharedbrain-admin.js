@@ -734,8 +734,11 @@ section('8. Rendered markup — hiding, no-prefill, shown-once');
   ok(!html.includes('data-sb-action="revoke-open"'), 'no admin token: the revoke control is absent from the markup');
   ok(!html.includes('data-sb-action="rotate-open"'),
     'NO ADMIN TOKEN: THE ROTATE BUTTON IS ABSENT FROM THE MARKUP — it could only 403, and offering it was F-01');
-  ok(/re-run the brain-setup wizard/.test(html),
-    'no admin token: the markup names the real way to get one (the wizard) instead of pointing at a button that is not there');
+  // v4.1.2 (integration): "re-run the brain-setup wizard" was not a real way
+  // (connectionClash refuses a second connection to the same brain), so the
+  // markup now says the true thing and names GitHub's own gate.
+  ok(!/re-run the brain-setup wizard/.test(html) && /can’t add one to an existing connection/.test(html) && /Settings › Collaborators/.test(html),
+    'no admin token: the markup says no admin token can be added to an existing connection, and names GitHub\'s collaborator settings — never a refused path');
   ok(!/Generate one above first/.test(html),
     'the old copy promising a Generate button above is gone — a card must not point at a control it does not render');
 }

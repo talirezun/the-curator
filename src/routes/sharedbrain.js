@@ -1069,9 +1069,11 @@ router.get('/:id/members', gate, async (req, res) => {
 // have no admin_token yet" provisioning case this route used to serve is gone.
 // It cannot be kept: a route that mints a token for any connection lacking one
 // is exactly the hole, and nothing on this machine can tell a legacy admin
-// from a contributor. Such an admin re-runs the brain-setup wizard, whose
-// POST /generate-invite returns a fresh admin_token that /save persists — the
-// same path every admin since v3.0.5 has taken. The error message says so.
+// from a contributor. v4.1.2: such an admin can no longer get one at all —
+// re-running the wizard for a brain this computer is connected to is refused
+// by connectionClash, and POST /save never adds an admin token to an existing
+// connection (audit B3). The error message says that, and points at GitHub's
+// collaborator settings, which are the real gate.
 
 router.post('/:id/admin-token/rotate', gate, (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
@@ -1079,15 +1081,23 @@ router.post('/:id/admin-token/rotate', gate, (req, res) => {
 
   const proof = adminTokenGate(conn, req.body && req.body.admin_token);
   if (!proof.ok) {
+    // v4.1.2 (integration): the old sentences sent a pre-v3.0.5 admin, and an
+    // admin who lost the token, to "re-run the brain-setup wizard" — which
+    // connectionClash refuses for a brain this computer is already connected
+    // to. The true answer: an admin token is made only when a Shared Brain is
+    // created, nothing can add one later, and GitHub's own permissions decide
+    // who can change the repository either way (audit B3).
     const error = proof.code === 'no_admin_token'
       ? 'This connection has no admin token, so there is nothing to rotate. Only the cohort admin\'s ' +
-        'connection stores one. If you ARE the admin on a pre-v3.0.5 connection, re-run the brain-setup ' +
-        'wizard to issue and save a new admin token.'
+        'connection stores one, made when the Shared Brain was created; The Curator can\'t add one to an ' +
+        'existing connection, including one made before v3.0.5. Who can change the repository is still ' +
+        'decided on GitHub, in the repository\'s Settings › Collaborators.'
       : proof.code === 'admin_token_required'
         ? 'The current admin_token is required to rotate it. Paste the sbat_… token you were shown when ' +
           'this brain was set up (or at the last rotation).'
-        : 'That is not this connection\'s admin token. Rotation needs the CURRENT token; if it is lost, ' +
-          're-run the brain-setup wizard to issue a new one.';
+        : 'That is not this connection\'s admin token. Rotation needs the CURRENT token, and a lost admin ' +
+          'token can\'t be reissued for this connection. Who can change the repository is still decided on ' +
+          'GitHub, in the repository\'s Settings › Collaborators.';
     return res.status(403).json({ error, code: proof.code });
   }
 

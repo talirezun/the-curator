@@ -180,6 +180,10 @@ section('1. F-01 CRITICAL — rotate requires proof of possession');
   eq(r1.status, 403, 'a connection with no admin token is REFUSED, not issued one');
   eq(r1.body && r1.body.code, 'no_admin_token', 'the refusal carries code=no_admin_token');
   ok(!(r1.body && r1.body.admin_token), 'no token is returned on the refusal');
+  // v4.1.2 (integration): the sentence names no path the app refuses (the
+  // wizard for a brain already connected is refused by connectionClash).
+  ok(r1.body && !/re-run the brain-setup wizard/.test(r1.body.error) && /can't add one to an existing connection/.test(r1.body.error)
+    && /Settings › Collaborators/.test(r1.body.error), 'the refusal says no admin token can be added, and points at GitHub\'s collaborator settings', r1.body && r1.body.error);
   const afterRefusal = getSharedBrainWithToken(MEMBER_ID).admin_token;
   ok(afterRefusal === undefined || afterRefusal === null,
     'AND NOTHING WAS WRITTEN — the member connection still stores no admin token');
@@ -205,6 +209,8 @@ section('1. F-01 CRITICAL — rotate requires proof of possession');
   const r3 = await req('POST', `/api/sharedbrain/${ADMIN_ID}/admin-token/rotate`, { admin_token: wrong });
   eq(r3.status, 403, 'a wrong admin token is refused');
   eq(r3.body && r3.body.code, 'admin_token_mismatch', 'code=admin_token_mismatch');
+  ok(r3.body && !/re-run the brain-setup wizard/.test(r3.body.error) && /can't be reissued/.test(r3.body.error),
+    'the mismatch sentence says a lost token can\'t be reissued, never "re-run the wizard"', r3.body && r3.body.error);
   eq(getSharedBrainWithToken(ADMIN_ID).admin_token, ADMIN_TOKEN,
     'a wrong token does not rotate anything');
 
