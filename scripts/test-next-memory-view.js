@@ -314,6 +314,7 @@ function cleanup() {
 }
 
 const { __setDomainsDirOverride } = await import('../src/brain/config.js');
+const PRO_GUARD = await import('./test-helpers/pro-guard.js');
 const { renderOverview: realRenderOverview } = await import('../src/public/next/shared/overview.js');
 __setDomainsDirOverride(DOMAINS);
 
@@ -12539,6 +12540,10 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
           && /<div data-detail="pro">[^]*bk-enlarged[^]*bk-legend/.test(simple), seen.slice(0, 600));
         ok('v4.2 ④ ' + name + ': ...and every meter note stays outside the Pro part',
           (simple.match(/class="bk-note/g) || []).length === (seen.match(/class="bk-note/g) || []).length);
+        // The Pro rule, by package P's shared guard (scripts/test-helpers/pro-guard.js):
+        // nothing protected is behind data-detail="pro", in either mode.
+        const g1 = PRO_GUARD.proGuardFaults(simple).concat(PRO_GUARD.proGuardFaults(pro));
+        ok('v4.2 ④ ' + name + ': the shared Pro guard finds nothing protected behind data-detail="pro"', g1.length === 0, g1.join(' | '));
         ok('v4.2 ④ ' + name + ': ...the enlargement\'s label carries the "PRO" mark attribute, the window bar\'s does not',
           /<span class="bk-label" data-pro-mark>The Curator’s part, enlarged/.test(simple) && !/<span class="bk-label" data-pro-mark>Your context window/.test(simple));
         ok('v4.2 ④ ' + name + ': Pro on is today\'s step: three pickers, the full monitor, the reach fold, no door',
