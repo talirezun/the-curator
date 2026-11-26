@@ -54,7 +54,11 @@ src/
     llm.js        — LLM abstraction (Gemini or Claude, auto-detected via config.js)
     chat.js       — multi-turn chat against the wiki
     recent-new-pages.js — which pages recent ingests created (per domain, in the user-data dir, outside domains/); only orders the duplicate scan
-    sync.js       — GitHub sync (git --git-dir / --work-tree)
+    sync.js       — GitHub sync (git --git-dir / --work-tree). v4.1.2: argv-only git() (a string is refused);
+                    the synced folder recorded as `curator.workTree` in the sync repo's git config
+    atomic-write.js — writeFileAtomic / writeFileAtomicSync (0600 option); v4.1.2: on win32 the rename
+                    retries EPERM/EACCES/EBUSY, at most 7 attempts (~2.75 s); one rename elsewhere
+    setup-skill-zip.js — v4.1.2: builds a skill's zip in-process off macOS (macOS keeps `ditto`)
     reserved-names.js — page names Windows keeps for devices (con, nul, com1…): `writePage` and synthesis never create one; an existing page is left alone
     sync-safety.js — what Sync must not send: secret-shaped names, nested repositories, plugin settings holding a key; no git, no network
     duplicate-checks.js — what "Find duplicate pages" remembers (per domain, in the user-data dir, outside domains/) and the spelling-variant test that gates batch merge
@@ -66,8 +70,9 @@ src/
                     On the MCP child's import graph: never writes to stdout
     config.js     — persistent config (.curator-config.json): getApiKeys, setApiKeys, getEffectiveKey, getDomainsDir;
                     setGithubReadToken/clearGithubReadToken/getGithubReadTokenStatus (v3.65.2) — the first writer
-                    `githubReadToken` ever had; refuses (`config_unreadable`) rather than overwriting an unparseable
-                    config, unlike the older setters
+                    `githubReadToken` ever had. v4.1.2: EVERY write refuses (`config_unreadable`) over a damaged
+                    file at the one writer (`writeRaw`); keeps a 0600 copy `<file>.unreadable-<sha12>`;
+                    inspectSettingsFile / setAsideDamagedConfig (helpers shared with sharedbrain-config.js)
     working-state.js— the memory layer STORE (v3.17.0; tier 0 `foundations/` v3.59.0): four tiers under domains/<project>/state/ —
                     project.md (standing brief, human-authored), <scope>/<machine>/current.md
                     (OVERWRITTEN each save), journal.jsonl (append-only). Deliberately NOT routed
@@ -125,7 +130,9 @@ src/
     wiki.js       — GET /api/wiki/:domain
     health.js     — GET /api/health/:domain, POST /api/health/:domain/fix[-all]; POST …/index/plan + …/index/apply (the index.md rebuild, v3.83.0)
     sync.js       — sync endpoints
-    config.js     — Settings/config endpoints (API keys, updates, domains path); GET|PUT|DELETE
+    config.js     — Settings/config endpoints (API keys, updates, domains path: refused `sync-connected`
+                    while Sync is connected, v4.1.2); GET /api/config/settings-files + POST …/set-aside
+                    (v4.1.2, a damaged settings file); GET|PUT|DELETE
                     /api/config/github-read-token + POST …/test (v3.65.2) — the only HTTP path a GitHub read-only
                     token value arrives on; it never leaves the server again
     memory.js     — GET /api/memory (one row per PROJECT), GET|POST /api/memory/:domain/projects
@@ -154,13 +161,13 @@ src/
                     project enforced in the store, a repo-owned document's CONTENT never written
                     here, only mirrored; tiers 2/3 stay agent-only over MCP — a browser writer there
                     would be a SECOND writer (see the invariants below)
-    mcp.js        — My Curator MCP endpoints (config, self-test, usage, exercise, reveal-config). `write-config`,
-                    `claude-config` and `claude-full-config` are the retired wizard's routes: kept for API
-                    compatibility, called by no screen since v3.85.0
+    mcp.js        — My Curator MCP endpoints (config, self-test, usage, exercise, reveal-config). `claude-config`
+                    is the retired wizard's read-only snippet route, called by no screen since v3.85.0; its
+                    `write-config` and `claude-full-config` were REMOVED in v4.1.2 (audit M7)
     mcp-install.js— v3.85.0: `GET /api/mcp/install/status`, `POST /plan`, `POST /apply` — the one-click
                     install of the my-curator entry (gate: same-origin `Origin` required, macOS only)
     diagnostics.js— GET /api/diagnostics/quick (free), POST /api/diagnostics/live (opt-in AI ping)
-  public/         — vanilla JS frontend (no build step; Settings tab hosts the MCP bridge (status card, tools installer), System Check panel, Health tab, onboarding wizard)
+  public/         — vanilla JS frontend (no build step; Settings tab hosts the MCP bridge (status card, tools installer), System Check panel, Health tab, the first-run panel)
     next/shared/overview.js — renderOverview() (v3.64.2): the ONE overview card, rendered by BOTH
                     the Domains page's OVERVIEW and the Context page's three-layer readings; kit
                     classes `cur-ov-*` carry every rule, the domain page's nine historical `dm-*`
@@ -175,6 +182,9 @@ src/
                     `sb-sec-*` ride as opt-in aliases. Guarded by scripts/test-next-section-kit.js and,
                     for a page's rendered markup, scripts/test-helpers/page-contract.js
                     (scripts/test-next-page-contract.js holds the per-page registry)
+    next/shared/settings-file-banner.js — v4.1.2: the shell's persistent banner for a damaged
+                    settings file (renderStatus danger, no Dismiss) and its Start fresh (confirmThen →
+                    POST /api/config/settings-files/set-aside)
     next/shared/sidebar.js — renderSidebarHead/Group/Row() (v3.65.0): the ONE sidebar, rendered by
                     Domains, Context and Settings; `cur-sb-*` classes carry every rule, Domains'
                     historical `dm-row-*` tokens ride as an opt-in ALIAS (`alias: 'dm'`), matched
@@ -253,6 +263,12 @@ scripts/
   bulk-reingest.js              — re-ingest all raw files in a domain
   repair-wiki.js                — comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
   build-app.sh                  — rebuild The Curator.app from the AppleScript template
+  test-*.js                     — the suites; scripts/run-tests.js is the manifest (OFFLINE / LIVE). v4.1.2 added:
+                                  test-sync-folder-safety.js (argv git, the folder guard, connect rollback,
+                                  second-computer Merge/Pull), test-config-durability.js and
+                                  test-config-durability-ui.js (damaged settings files, the banner, the routes),
+                                  test-sharedbrain-safety-v412.js, test-mcp-install-safety.js,
+                                  test-win-atomic-write.js, test-win-setup-check.js, test-onboarding-steps.js
 domains/
   <domain>/
     CLAUDE.md         — domain schema (system prompt for LLM)

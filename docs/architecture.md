@@ -473,6 +473,8 @@ the-curator/
 
 **One consequence is worth stating here rather than leaving to be discovered**, because it produced a real data loss: `getUserDataDir()` forks on install mode, but the sync **work tree** does not — it is always `getDomainsDir()`. So pointing the packaged app at a folder a repo install already syncs would, before v3.32.0, have produced two independent git histories over one set of files. `setup()` now adopts the sibling repository instead; see [sync.md](sync.md).
 
+**The same binding made a folder change destructive, until v4.1.2.** Because `--work-tree` is whatever `getDomainsDir()` answers at the moment git runs, and staging is `git add -A`, changing the knowledge folder while connected made the next Sync commit the new folder as the whole wiki and push the deletion of every domain the old one held. Two layers now stop it: the folder routes refuse while Sync is connected, and `push()`/`pull()` refuse `folder-changed` when the current folder is not the one recorded in the sync repository's own git config (`curator.workTree`, machine-local, never pushed). Sync's git also runs argv-only since v4.1.2 (`execFile` with an argument array; a string is refused), so a folder name, URL or token can never be read by a shell. See [decisions-knowledge.md § Sync and Shared Brain](dev/decisions-knowledge.md#sync-and-shared-brain).
+
 ---
 
 ## Errors in plain words (v3.99.2)
@@ -2379,7 +2381,9 @@ src/cli/install-hooks.js  writes hook CONFIGURATION and nothing else, into
                         file (CLAUDE.md / AGENTS.md / GEMINI.md / rules) —
                         that paste stays the owner's; --print-instructions
                         prints the snippet instead. Refuses a file it cannot
-                        parse, the buildFullConfigPayload precedent.
+                        parse, the buildFullConfigPayload precedent (that
+                        function left with the retired wizard's routes in
+                        v4.1.2; the rule stays).
 src/cli/doctor.js       PRINTS, writes nothing, exits 0 ALWAYS — a doctor
                         that fails is a doctor nobody runs.
 ```
@@ -2556,7 +2560,9 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 |--------|-------------|
 | `getDomainsDir()` | Resolved absolute path to the domains folder. Precedence: in-process test override → `CURATOR_TEST_DOMAINS_DIR` (env, test-only) → `setCliDomainsDir()`'s value (**v3.17.0**, production, MCP-only) → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default (`paths.js`'s `getDefaultDomainsDir()`). The two test rungs are always inert in production and the CLI rung is null in the web app, so app behaviour is unchanged from before v3.1.0: config beats the env var. |
 | `setCliDomainsDir(dir)` | **v3.17.0.** Installs the `--domains-path` this process was launched with. Called once, only by `mcp/server.js`, at module scope on the line above `createStorageAdapter` — it must run before anything resolves a domains path, and before the adapter, which snapshots its base at construction. Deliberately **not** the `__setDomainsDirOverride` test seam: that one is guarded by `test-paths.js` §4 as "production never sets this", and reusing it would destroy the guarantee that assertion exists to make. A missing or blank value is a no-op, so launching the MCP without the arg still falls through to the stored setting exactly as before. |
-| `setDomainsDir(newPath)` | Persists a new domains path to `.curator-config.json` |
+| `setDomainsDir(newPath)` | Persists a new domains path to `.curator-config.json`. Since v4.1.2 the route layer refuses it while Sync is connected (`reason: 'sync-connected'`), and `sync.js` refuses `folder-changed` if the folder changed anyway |
+| `inspectSettingsFile(file, {validShape})` / `assertSettingsFileWritable` | **v4.1.2.** `{state: 'missing'\|'ok'\|'damaged', reason?, backup?}`. A damaged file gets a 0600 byte-for-byte copy `<file>.unreadable-<sha256:12>` beside it and one stderr line; every write through `writeRaw` then throws `ConfigFileUnreadableError` (`code: 'config_unreadable'`, answered 409). Shared with `sharedbrain-config.js` |
+| `getConfigFileStatus()` / `setAsideDamagedConfig()` | **v4.1.2.** The status `GET /api/config/settings-files` reports, and the banner's Start fresh: copy, verify, then remove the damaged file (refuses a good or missing one) |
 | `getConfig()` | Returns `{ domainsPath, domainsPathSource }` for the UI |
 | `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
 | `setApiKeys({ geminiApiKey, anthropicApiKey })` | Saves API keys to the config file (partial update) |
@@ -2643,6 +2649,8 @@ Single chokepoint for all wiki + config writes. Replaces `fs.writeFile` and `fs.
 |--------|-------------|
 | `writeFileAtomic(targetPath, content, encodingOrOpts?)` | Async atomic write: writes content to `<dir>/.tmp-<base>-<pid>-<counter>`, then `rename`s into place. Refuses to write through a symlink (`lstat` pre-check). Cleans up the orphan tempfile if rename fails. |
 | `writeFileAtomicSync(targetPath, content, encodingOrOpts?)` | Sync variant for `.curator-config.json` writes that happen before the async runtime is fully online. |
+
+**On Windows the rename retries (v4.1.2, audit W5).** An antivirus scan, OneDrive or the search indexer can hold a file for a moment, and the rename then fails with `EPERM`, `EACCES` or `EBUSY`. On win32 only, and only for those three codes, both functions retry the rename at most 7 times (about 2.75 s in all, the MCP installer's own backoff) before the error is raised; macOS and Linux do exactly one rename, as before. Pinned by `scripts/test-win-atomic-write.js`.
 
 **The third parameter takes an options object, not just an encoding string** — `{ encoding, mode }` (v3.0.1-beta.20). Passing a bare string still works (legacy form, unchanged). **Any file holding a secret MUST pass `{ mode: 0o600 }`**: the helper `chmod`s the tempfile *before* the rename, so the umask cannot loosen it. Documenting only the encoding form is how the next credentials file ends up world-readable at 0644 — which is exactly what `.sync-config.json` and `.sharedbrain-config.json` were until beta.20. Files currently on that rule: `.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`; a startup sweep in `src/server.js` also hardens them plus `.env` and `.knowledge-git/config` on existing installs, so a new secrets file should be added to that list too.
 
@@ -3027,7 +3035,11 @@ POST /api/config/domains-path  → set domains folder path; since v3.87.1 also t
                                  validated by src/brain/knowledge-folder-path.js (absolute, exists, a
                                  folder, readable, not inside the app's own files)
 POST /api/config/pick-folder   → native folder picker (macOS osascript; Windows FolderBrowserDialog via
-                                 src/brain/win-folder-dialog.js, v3.87.1); MUTATES — calls setDomainsDir()
+                                 src/brain/win-folder-dialog.js, v3.87.1); MUTATES — calls setDomainsDir().
+                                 v4.1.2: the typed path's validation on every platform; both routes refuse
+                                 `sync-connected` while Sync is connected (the picker before its dialog)
+GET  /api/config/settings-files → v4.1.2: each settings file's state (missing | ok | damaged) + kept copy
+POST /api/config/settings-files/set-aside → v4.1.2: Start fresh for ONE damaged file, body exactly {file}
 POST /api/config/pick-path     → native folder picker that mutates NOTHING — hands back a path only
                                  (v3.61.1; the Foundations chooser's "Choose folder…")
 GET  /api/config/api-keys      → masked keys + active provider info, plus (v3.12.0+) `offerable`

@@ -2727,7 +2727,17 @@ stripped and the home folder shown as `~`, `code` one of the `sync-*` codes in t
 [error catalogue](errors.md#sync) (`sync-token-rejected`, `sync-token-no-access`,
 `sync-repo-not-found`, `sync-offline`, `sync-remote-ahead`, `sync-merge-conflict`,
 `sync-busy-retry`, `sync-held-back-collision`, `sync-nested-repo`, `sync-git-missing`,
-or `sync-failed` for a failure it does not recognise). Before, an unrecognised failure
+`sync-index-locked` (v4.1.2: git left `.knowledge-git/index.lock` behind; never removed
+automatically), or `sync-failed` for a failure it does not recognise).
+
+**v4.1.2 (argv-only git, the folder guard).** Every git command runs through `execFile`
+with an argument array; nothing reaches a shell, so a folder, URL or token is always one
+argument whatever it contains. `POST /push`, `/pull` and `/sync` refuse with code
+**`folder-changed`** (`{error, code, details: {field: "domainsPath"}}`), before anything is
+sent or received, when the knowledge folder is not the one this install backs up (recorded
+in the sync repository's own git config as `curator.workTree`; a repository with no record
+yet is checked by what it tracks). The sentence says to set the folder back, or to
+Disconnect and connect again. Before, an unrecognised failure
 answered with git's own text, home path and all. `GET /remote-status` is polled in the
 background, so it carries `remoteError` (the sentence) and `remoteErrorCode`, and never
 a `detail`.
@@ -2797,7 +2807,12 @@ endpoint that exists because a refusal which leaves only the destructive path op
 worse than no refusal.
 
 **Request** — `{ "repoUrl": "…", "token": "…" }`. Both required; a missing one is a
-`400`. It is a `POST` rather than a `GET` **because it carries a PAT**, which has no
+`400`. **v4.1.2:** both are checked by field before anything is written: `400
+{ok: false, error, code, details: {field}}` with `code` **`invalid-repo-url`** (not an
+`https://` address, `git@github.com:owner/repo` or `file://`; spaces or control
+characters) or **`invalid-token`** (not a shape GitHub issues). A trailing slash and a
+pasted GitHub page address (`…/owner/repo/tree/main`) are reduced to the repository.
+`/setup` applies the same check. It is a `POST` rather than a `GET` **because it carries a PAT**, which has no
 business in a URL.
 
 **Response** `200 OK`
@@ -2882,7 +2897,21 @@ credential file.
 
 **Refusals** are `409` with a `code` and a `details` object:
 `invalid-mode`, `foreign-sync-repo`, `remote-not-empty`, `remote-empty`,
-`pull-would-overwrite`.
+`pull-would-overwrite`, and (v4.1.2) **`already-connected`**: `POST /setup` on an install
+that is already connected refuses rather than re-pointing it at another repository
+(Disconnect first; Replace token changes only the token).
+
+**A connect that does not finish leaves the install as it found it (v4.1.2).** Whatever
+stops it (a refused push, a rejected token, an unreachable host, a refusal above): a sync
+git dir THIS call created is removed; one that already existed keeps everything and only
+its `origin` address is put back (none at all if the install was not connected, so no
+token stays behind); the `.gitignore` it wrote into the folder is taken back out. The
+git config is chmod `0600` as soon as it holds a token. **Second computer:** after a
+refused `push` (`remote-not-empty`), `merge` and `pull` work; a commit an unfinished
+connect from an earlier version left behind is kept on its own branch
+`curator-before-connect-<stamp>` (never pushed), and untracked files identical to the
+remote's no longer block a `pull`. A repository created by `/setup` pins
+`core.autocrlf=false`; an existing one is not changed.
 
 > **A policy that applies to every one of these strings:** they name an **action and a
 > screen**, never a button label. Naming *"Merge — keep both"* would have reproduced the
@@ -2891,7 +2920,7 @@ credential file.
 
 ### POST /api/sync/push · /pull · /sync · DELETE /disconnect
 
-Unchanged behaviour. `pull()` resolves with `git pull --no-rebase -X theirs` — the
+Unchanged behaviour, except the v4.1.2 `folder-changed` refusal above. `pull()` resolves with `git pull --no-rebase -X theirs` — the
 steady-state rule, where origin is shared truth and this machine is expected to have
 pushed already. That is **not** the same as `merge`'s `-X ours` on a first connect,
 where the local side has by construction never been pushed anywhere, so preferring
@@ -2994,11 +3023,11 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 | Path | Description |
 |---|---|
 | `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. `pending_pages` and `pending_retry_pages` are each `null` (not `0`) when they could not be counted (an unreadable watermark or a domain scan that threw) — a client should read that as "unknown", never as "nothing pending". `pending_retry_pages` (**new in v3.72.1**, additive) is how many of `pending_pages` are automatic retries of a page that failed a previous push and still exists locally. It is read by the Shared Brain panel; the shell's Sync badge deliberately does NOT fold it in (`src/public/next/app.js`), and the navbar that once carried it went with the old shell in v3.41.0. `last_contribution_at` (**new in v3.72.1**) is set only once a push has actually sent a contribution — a push that finds nothing to send never moves it; a connection whose only recorded time predates v3.72.1 shows that older watermark instead, labelled as such by the client. |
-| `POST /api/sharedbrain/save` | Body: `{connection: {...}}`. Validated server-side. UUIDs assigned if missing. Rejects with 400 if `github_pat` looks like a masked display value (defense against round-trip overwrites). v3.0.4+: optional boolean `read_only` field (defaults `false`) — set by the wizard when the PAT verdict is valid-but-no-write-access; read-only connections may have zero `local_domains`. v3.0.5+: optional `admin_token` (single-line string 16-200 chars or null; masked-ellipsis values refused) and `data_handling_terms` (`contributor_retains` \| `organisational`, persisted for invite re-display). |
-| `DELETE /api/sharedbrain/:id` | Removes the connection from this machine. The remote shared repo is unaffected. |
+| `POST /api/sharedbrain/save` | Body: `{connection: {...}}`. Validated server-side. UUIDs assigned if missing. Rejects with 400 if `github_pat` looks like a masked display value (defense against round-trip overwrites). v3.0.4+: optional boolean `read_only` field (defaults `false`) — set by the wizard when the PAT verdict is valid-but-no-write-access; read-only connections may have zero `local_domains`. v3.0.5+: optional `admin_token` (single-line string 16-200 chars or null; masked-ellipsis values refused) and `data_handling_terms` (`contributor_retains` \| `organisational`, persisted for invite re-display). **v4.1.2 (audit B3), on an EXISTING id:** `fellow_id` is kept (a different one → 400 `sharedbrain-fellow-id-fixed`); an update that omits `admin_token` keeps the stored one; adding one to a connection that has none → 403 `no_admin_token` (an admin token is set only when a connection is created); a different one → 403 `admin_token_mismatch` (rotate changes it). The admin token is a check on this computer only; what a person can change on GitHub is decided by their own GitHub token's permissions. **v4.1.2 (B4):** a `label`/brain name must be a single line of at most 200 characters. |
+| `DELETE /api/sharedbrain/:id` | Removes the connection from this machine. The remote shared repo is unaffected. **v4.1.2 (B8):** `409` (the write-conflict body) while THIS connection's push, pull, synthesis, revoke or token replace runs; an unrelated ingest does not block it. |
 | `POST /api/sharedbrain/:id/unskip` | v3.0.4+. Body: `{pages?: string[]}` — clears the listed pages from `permanent_skip` (omit `pages` to clear all) and resets their `pending_retry` strike counters, so they're re-attempted on the next push. Paths not actually skipped are ignored. Returns `{ok, unskipped, permanent_skip}`. Local config change only; not SSE. |
 | `GET /api/sharedbrain/:id/members` | v3.0.5+. Member directory: everyone who has ever contributed to this brain. Returns `{members: [{fellow_id, short_id, submissions, pages, page_updates, first_contributed_at, last_contributed_at, display_name}], self_fellow_id}`. Identity is storage-path-derived (same trust rule as synthesis); display names are informational. Reads every contribution payload — fine at cohort scale. Powers the revoke UI's fellow picker. `pages` (**meaning fixed in v3.72.1**) is the count of **distinct** page paths this fellow has ever sent a delta for — it used to sum every delta, over-counting a page touched by several submissions; that raw sum is now the separate `page_updates` field. `last_contributed_at` is the contributor's own app's clock, not a server- or GitHub-observed time — shown as "as reported". |
-| `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. **v3.43.0 — PROOF OF POSSESSION IS NOW REQUIRED.** Body: `{admin_token}` — the connection's CURRENT `sbat_…` token, compared constant-time through the same gate the revoke route uses. On success it generates a fresh token, stores it (single audited credential write path) and returns it **once**: `{ok, admin_token, rotated}`. Three **403** shapes, each carrying a machine-readable `code` beside the prose `error`: `no_admin_token` (this connection stores none — it is a plain contributor's, and this route will never mint one), `admin_token_required` (no usable token in the body), `admin_token_mismatch` (a token was supplied and it is the wrong one). **Until v3.43.0 this route took NO body and authenticated nothing**, so any connection on the machine could mint an admin token — and with it read every `fellow_id` from `/:id/members` and pass `/:id/revoke`, letting a plain contributor GDPR-erase the cohort admin. The provisioning use this row used to describe ("used to provision pre-v3.0.5 connections") is therefore **gone and cannot come back**: nothing on this machine can tell a legacy admin from a contributor. Such an admin re-runs the brain-setup wizard, whose `/generate-invite` returns a fresh `admin_token` that `/save` persists. |
+| `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. **v3.43.0 — PROOF OF POSSESSION IS NOW REQUIRED.** Body: `{admin_token}` — the connection's CURRENT `sbat_…` token, compared constant-time through the same gate the revoke route uses. On success it generates a fresh token, stores it (single audited credential write path) and returns it **once**: `{ok, admin_token, rotated}`. Three **403** shapes, each carrying a machine-readable `code` beside the prose `error`: `no_admin_token` (this connection stores none — it is a plain contributor's, and this route will never mint one), `admin_token_required` (no usable token in the body), `admin_token_mismatch` (a token was supplied and it is the wrong one). **Until v3.43.0 this route took NO body and authenticated nothing**, so any connection on the machine could mint an admin token — and with it read every `fellow_id` from `/:id/members` and pass `/:id/revoke`, letting a plain contributor GDPR-erase the cohort admin. The provisioning use this row used to describe ("used to provision pre-v3.0.5 connections") is therefore **gone and cannot come back**: nothing on this machine can tell a legacy admin from a contributor. **Since v4.1.2 there is no way to get one either:** re-running the brain-setup wizard for a brain this computer is connected to is refused by `connectionClash`, and `/save` never adds an admin token to an existing connection. A pre-v3.0.5 admin, or one who lost the token, manages members on GitHub (the repository's Settings › Collaborators), which is the real gate. |
 
 ### POST /api/sharedbrain/:id/token
 
@@ -3081,14 +3110,14 @@ been measured against GitHub.
 
 | Path | Description |
 |---|---|
-| `POST /api/sharedbrain/parse-invite` | Body: `{token: "sbi_..."}`. Decodes and validates the invite token (no network calls). |
+| `POST /api/sharedbrain/parse-invite` | Body: `{token: "sbi_..."}`. Decodes and validates the invite token (no network calls). v4.1.2: a brain name that is not a single line of at most 200 characters is refused here ("Ask your admin for a new invite"), not at save; `generate-invite` refuses to mint one. |
 | `POST /api/sharedbrain/generate-invite` | Body: `{repo, name, shared_domain, branch?, storage_type?, data_handling_terms?}`. **`storage_type` must be `"github"` or omitted** — since v3.6.1 the codec refuses to MINT (400) or PARSE any other value, because a non-GitHub brain cannot be joined by the invite flow at all (it works by accepting a repo invitation and creating a PAT). Previously such a token minted and parsed fine, and the contributor was only refused at save — after creating a real PAT. Encodes metadata into an `sbi_...` token (deterministic — same metadata reproduces the same token, which is how the card's "Show invite token" works). v3.0.5+: the response also carries a freshly generated `admin_token` for the admin wizard; it is NOT embedded in the invite token, is not persisted by this call, and should be ignored by non-wizard callers. |
 
 ### Live PAT validator (server-proxy)
 
 | Path | Description |
 |---|---|
-| `POST /api/sharedbrain/validate-pat` | Body: `{repo: "owner/name", pat: "github_pat_..."}`. Curator backend makes one GitHub API call with the supplied PAT, returns `{valid, hasWriteAccess, repoFullName, isPrivate, defaultBranch, message}`. The PAT never leaves the user's machine via the browser. PAT length capped at 400 chars (DoS defense). v3.0.4+: a `valid: true, hasWriteAccess: false` verdict is no longer a dead end — the wizard lets the user continue as a read-only member; 401/403/404 error copy explicitly points at the unaccepted-collaborator-invitation case. |
+| `POST /api/sharedbrain/validate-pat` | Body: `{repo: "owner/name", pat: "github_pat_..."}`. Curator backend makes one GitHub API call with the supplied PAT, returns `{valid, hasWriteAccess, repoFullName, isPrivate, defaultBranch, message}`. The PAT never leaves the user's machine via the browser. PAT length capped at 400 chars (DoS defense). v3.0.4+: a `valid: true, hasWriteAccess: false` verdict is no longer a dead end — the wizard lets the user continue as a read-only member (Join only: since v4.1.2 Create refuses a read-only token); 401/403/404 error copy explicitly points at the unaccepted-collaborator-invitation case. **v4.1.2 (B5/B7):** a shape check (`sharedbrain-pat-invalid`, `sharedbrain-pat-repo-invalid`), a 30-second timeout (`sharedbrain-pat-check-timeout`), offline (`sharedbrain-pat-check-offline`), a rate-limited 403 reported as such (`sharedbrain-pat-rate-limited`, not as a rejected token), `sharedbrain-pat-rejected`, `sharedbrain-pat-no-access`, `sharedbrain-pat-check-failed`; the token is never echoed or logged. Fetches through the `CURATOR_TEST_GITHUB_API` seam. |
 
 ---
 
@@ -3100,10 +3129,13 @@ its own section below — the [one-click install routes](#one-click-install-rout
 which add, update or remove only the `my-curator` entry. `CLAUDE_CONFIG_PATH` is a module constant in
 `src/routes/mcp.js` with no override seam.
 
-> **Retired wizard (v3.85.0).** The three-step MCP setup wizard is gone from the app. Its three
-> routes — `GET /api/mcp/claude-config`, `GET /api/mcp/claude-full-config` and
-> `POST /api/mcp/write-config` — are **no longer called by the app; kept for compatibility**, and
-> behave exactly as documented in the table.
+> **Retired wizard (v3.85.0; routes removed v4.1.2).** The three-step MCP setup wizard is gone from
+> the app. `GET /api/mcp/claude-config` (the entry-only snippet) is no longer called by the app and is
+> kept for compatibility. **`GET /api/mcp/claude-full-config` and `POST /api/mcp/write-config` were
+> REMOVED in v4.1.2** (audit M7): still mounted with none of the install rules, the GET returned
+> other servers' secrets from Claude Desktop's file and the POST rewrote that file with no Origin,
+> plan token or preview. Both now answer the API's JSON 404. The one-click install routes are the only
+> writer of another application's file.
 
 The config entry these endpoints describe is always:
 
@@ -3130,9 +3162,7 @@ that setter, so its own resolution is unchanged. See
 |---|---|
 | `GET /api/mcp/config` | Install status. `{ok, mcp_server_path, mcp_server_exists, mcp_server_name, domains_dir, domains_dir_exists, node_binary, claude_config_path, claude_config_exists, claude_config_parse_error, installed, stale}`. `ok` is `mcp_server_exists && domains_dir_exists`. `installed` is true when the config already has an `mcpServers["my-curator"]` entry; `stale` is true when that entry's `command`/`args` differ from what this install would generate (the usual cause is a moved domains folder). Both are forced `false` when `claude_config_parse_error` is true — an unreadable file cannot be inspected. |
 | `GET /api/mcp/claude-config` | *(Legacy — no longer called by the app; kept for compatibility.)* The entry-only snippet, nothing else. Always valid, in every state. |
-| `GET /api/mcp/claude-full-config` | *(Legacy — no longer called by the app; kept for compatibility.)* Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
 | `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
-| `POST /api/mcp/write-config` | *(Legacy — no longer called by the app; kept for compatibility.)* **The wizard's "do it for me" step — the only endpoint in this app that writes ANOTHER application's config file.** Rewrites only `mcpServers["my-curator"]` in `claude_desktop_config.json`, leaving every other server byte-identical, and keeps a `.bak` holding the **original bytes** rather than a re-serialisation. Three input states: **absent** → creates the file with just our entry (no `.bak`, nothing to back up); **readable** → merges, response names the servers it preserved; **corrupt** → **409** `{refused: 'claude_config_parse_error'}` and the file is left byte-identical. **On Windows** (2026-11-20) it writes nothing and reads nothing: **409** `{ok: false, refused: 'use_install_for_me', error, written: false}`, the sentence pointing at Install for me (Settings → MCP bridge), which finds the right file (the Microsoft Store build keeps it elsewhere) and checks Claude Desktop is closed. The old wizard's reads of Claude Desktop's file use `%APPDATA%\Claude\claude_desktop_config.json` there (`<home>\AppData\Roaming` when `APPDATA` is unset). ⚠️ It is **POST-only on purpose** — a GET is what a prefetch or a poll would issue, and this must never fire without a click. Nothing calls it automatically: `stale` on `GET /api/mcp/config` is what tells the user to return to the wizard. **Known gap:** newer Claude Desktop versions edit that file themselves, so a write landing between our read and our write is lost, mitigated only by the `.bak`. |
 | `GET /api/mcp/config` *(`bridge_processes`, v3.64.0; reshaped v3.88.0)* | `bridge_processes: {checked, reason, running, stale, codeChangedAt, serverPath, current, bridges}` and `bridge_stale_remedy` (unchanged). A **read-only** reading from `ps` over a fixed argv with no shell (Windows: PowerShell `Get-CimInstance`; both unmeasured on real machines). **`checked: false` means the reading was not taken** and carries `reason`; it must never be rendered as "no stale bridge". **v3.88.0: `stale` keeps its shape (`[{pid, startedAt, ageMs}]`) but now lists ONLY bridges whose tool list is proven different** (`tools: "different"`); it used to list every bridge started before the files' mtime. `current` is `{version, toolsHash, toolCount}`. Each `bridges[]` entry: `{pid, startedAt, ageMs, app:{id, label, via, checked, bundle?}, client, version, toolsHash, tools, olderThanCode, notice, remedy}`. `app.id` is a harness id or `null`; `via` is `"app"`, `"cli"` or `"self-test"`; `checked:false` gives label "an app". `tools` is `"same"`, `"different"` or `"unknown"` (a bridge started before v3.88.0 has no hash), decided from the tool-list hash, never mtimes. `notice` is decided by the backend: `"warn"` (different), `"soft"` (unknown and started before the code changed), `"quiet"` (same tools, other version), `"none"`. `remedy` (from `staleRemedyFor`) names the quit step — macOS "Quit {App} (⌘Q — closing the window is not enough) and reopen it." (Claude Desktop adds that this ends Claude Code sessions in its Code tab); a CLI parent gets "End that Claude Code session…"; it is `null` for `quiet` and `none`. Each bridge writes `pid`, `version` and `toolsHash` on its content-free session line. |
 | `GET /api/mcp/config` *(three additive fields, v3.30.0)* | `mcp_launch_style` (`'node-script'` in a source install, `'launcher-script'` in a packaged app), `launcher_path` and `launcher_exists`. They let the app tell whether the live Claude Desktop entry is its own flavour — a source install and a packaged app write structurally different entries, not merely different paths. |
 | `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
@@ -3632,8 +3662,8 @@ harness config, a skill folder, a repository file or a git ref; the two PUTs wri
 | `GET /api/setup/projects/:domain/:project` | `tools[]` × `saved` (from the project's handoffs, every computer) · `bridge` · `skills` · `block` · `hooks`; `repo` (`path`, `exists`, `marker` with `git.{repo,tracked,uncommitted,unpushed,upstream}`); `computers[]` (`machine`, `thisMachine`, `tools`, `newestAt`, `curator`, `waiting`); `sync`; `toFix[]` (`kind`, `text`, `detail`, `fix`); `repoSuggestions`; `markerLine`; `addedTools`. 400 bad name · 404 unknown domain |
 | `PUT /api/setup/projects/:domain/:project/repo` | `{path}` (absolute, an existing folder; `~/` expanded) or `{path: null}` to clear. 400 relative/junk · 409 no such folder |
 | `PUT /api/setup/tools` | `{ids: [...]}` — the "+ Add a tool" choice; ids must be known harnesses |
-| `POST /api/setup/reveal` | `{path}` — opens Finder at a path a check has LISTED (or its folder if it does not exist yet); 400 otherwise |
-| `GET /api/setup/skills/:name.zip` | `my-curator.zip` / `curator-continuity.zip` of this app's own `skills/` folder (macOS `ditto`); 404 unknown name or no copy shipped |
+| `POST /api/setup/reveal` | `{path}` — opens Finder at a path a check has LISTED (or its folder if it does not exist yet); 400 otherwise. macOS only (v4.1.2): refused on every other platform, and step 5 draws no Reveal there |
+| `GET /api/setup/skills/:name.zip` | `my-curator.zip` / `curator-continuity.zip` of this app's own `skills/` folder, on every platform: macOS `ditto`, elsewhere built in-process (`src/brain/setup-skill-zip.js`, v4.1.2; until then 501 off macOS); 404 unknown name or no copy shipped |
 
 ---
 
@@ -6309,6 +6339,11 @@ fresh install — the wiki is plain markdown on disk, so naming the folder *is* 
 
 The path is normalised (`..` resolved) and the **normalised** path is what is applied and returned.
 
+**Sync connected (v4.1.2)** — while Sync is connected the folder cannot change: `400
+{ok: false, reason: "sync-connected", error}`, the sentence saying to open Sync, choose Disconnect,
+change the folder, then connect again. Before v4.1.2 the next Sync after a folder change committed the
+new folder as the whole wiki and removed every other domain from GitHub.
+
 **Error response** `400` — `{"error": "path is required"}`, or, since v3.87.1 (when this became the
 typed-path fallback beside the folder picker), `{"ok": false, "reason", "error"}` with `reason` one of
 `empty` · `invalid` (a NUL byte) · `not-absolute` (on Windows: no drive letter or UNC prefix) ·
@@ -6373,8 +6408,11 @@ field beside every picker refusal. No body.
 { "cancelled": true }
 ```
 
-**Error response** `400` — `{"error": "Folder does not exist: ..."}` ·
-**Refusal response** `409` — an in-flight write.
+**Error response** `400` — `{"error": "Folder does not exist: ..."}`, or (v4.1.2, every platform)
+the typed path's own refusals (`reason` as for [`domains-path`](#post-apiconfigdomains-path): until
+v4.1.2 only Windows validated a picked folder, so macOS and Linux applied the app's own code folder) ·
+`400 {ok: false, reason: "sync-connected", error}` while Sync is connected, answered **before** the
+dialog opens · **Refusal response** `409` — an in-flight write.
 
 **On Windows** (2026-11-20; the PowerShell dialog of the browser install and the Electron dialog of
 the Windows app) a picked folder goes through the same Windows rules as a typed one (see
@@ -6481,9 +6519,9 @@ this file.
 
 **Refusal response** `400 invalid_token` — the value did not trim to a recognised shape.
 
-**Error response** `500 config_unreadable` — `.curator-config.json` exists but does not parse as
-JSON; nothing was written, because writing would have replaced every other setting in it with an
-empty object.
+**Error response** `409 config_unreadable` (500 before v4.1.2) — `.curator-config.json` exists but
+cannot be read; nothing was written, because writing would have replaced every other setting in it.
+See [`GET /api/config/settings-files`](#get-apiconfigsettings-files).
 
 ⚠️ The token is never echoed back in any response, log line or thrown error — a redaction pass
 strips it from error messages even on an unexpected failure.
@@ -6550,6 +6588,45 @@ not a failure of this endpoint. Every message names the token's *source*, never 
 ⚠️ **This is the only HTTP path a GitHub token value ever arrives on** (the `PUT` above) — every
 other response about it (this GET, the Context view's own reads) carries presence and `last4` only,
 never the value.
+
+---
+
+## GET /api/config/settings-files
+
+**v4.1.2.** Whether The Curator's two settings files can be read. Read-only: it writes nothing.
+
+```json
+{ "ok": true, "files": [
+  { "file": ".curator-config.json", "state": "damaged", "reason": "parse", "backup": ".curator-config.json.unreadable-3f9a0c1e2b4d" },
+  { "file": ".sharedbrain-config.json", "state": "missing" } ] }
+```
+
+`state` is `missing` (absent, or empty: first run), `ok`, or `damaged`, with `reason` `read` (the file
+could not be opened: permissions, a folder in its place), `parse` (not JSON) or `shape` (JSON of the
+wrong shape). `backup` is the BASENAME of the 0600 byte-for-byte copy kept beside it in the user-data
+folder, `<file>.unreadable-<sha256:12>`, or absent when none could be kept (`read`). Basenames only, never
+a path.
+
+**The rule behind it.** A damaged settings file is never overwritten: reads answer "nothing configured",
+and every write to it is refused with **`409 {…, code: "config_unreadable"}`**, whatever route attempted
+it (an API key, the knowledge folder, a setup-guide dismissal, a Shared Brain save). The sentence names the
+file and the kept copy. Before v4.1.2 the next ordinary write replaced the file, erasing every key and
+connection in it. The app shows a persistent banner for each damaged file.
+
+## POST /api/config/settings-files/set-aside
+
+**v4.1.2.** The banner's **Start fresh**. Body exactly `{ "file": ".curator-config.json" }` or
+`{ "file": ".sharedbrain-config.json" }` (any other shape: `400 {ok: false, reason: "unknown_file"}`).
+Behind the write guards (`409` while a write is in flight). Copies the damaged bytes first, verifies the
+copy, then removes the live file so the next save starts a new one.
+
+`200 {ok: true, file, backup}`. `409 {ok: false, reason, error}` with `reason` `not_damaged` (the file can
+be read: a stale banner can never remove a good file), `missing`, `unreadable_bytes` (no copy could be
+read, so nothing was set aside) or `copy_failed`.
+
+Setting `.curator-config.json` aside forgets everything in it: API keys, the knowledge folder's LOCATION
+(the folder itself is untouched) and every other choice. Setting `.sharedbrain-config.json` aside forgets
+every Shared Brain connection; wiki pages and mirror domains stay.
 
 ---
 
