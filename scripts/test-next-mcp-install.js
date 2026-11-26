@@ -79,7 +79,7 @@ section('§1 words and ticks');
   ok(/Next step · 2 to do/.test(next) && /<button type="button" class="btn btn-primary btn-xs cur-action-chip" id="mcpi-install-btn" data-mcpi-act="install"><span class="cur-action-label">Install for me<\/span><\/button>/.test(next)
     && /data-mcpi-act="copy-myself" data-tool="cursor"><span class="cur-action-label">Copy the setup text<\/span>/.test(next),
     'Install for me (primary) and Copy the setup text, after the items');
-  ok(/class="cur-action-footnote"><p class="tx-desc">Install for me changes only The Curator’s own line in each app’s settings file\. It shows you the change first and keeps a backup\.<\/p>/.test(next),
+  ok(/class="cur-action-footnote"><p class="tx-desc">Install for me changes only The Curator’s own line in each agent harness’s settings file\. It shows you the change first and keeps a backup\.<\/p>/.test(next),
     'the safety line is the card’s footnote, its last line');
   const cdRow = row(html, 'claude-desktop');
   ok(/<span class="cur-fold-label">Claude Desktop<\/span><span class="cur-fold-meta">connected<\/span>/.test(cdRow), 'a connected row reads "connected"');

@@ -454,14 +454,14 @@ section('§13 the explainer');
   const e = EXPLAINERS['context.setup'];
   ok(!!e && e.title === 'Setup', 'context.setup is an explainer titled Setup');
   const all = [e.lead, ...(e.points || []).map((p) => p.text), e.try || '', ...((e.visual && e.visual.rows) || []).flat()].join(' ');
-  ok(/\*\*Re-check\*\* reads the files; apps needn’t run/.test(all), 'Re-check reads the files again; the agent apps need not be running');
+  ok(/\*\*Re-check\*\* reads the files/.test(all), 'Re-check reads the files again; the agent harnesses need not be running');
   ok(/code checkout, not your knowledge folder; set per computer/.test(all), 'the repository: a code checkout, separate from the knowledge folder, per computer');
   ok(/two installs on one Mac count once/.test(all), 'Computers: installs on one Mac are grouped');
   ok(/whole knowledge folder, every domain/.test(all), 'Sync now syncs the whole knowledge folder');
-  ok(/\*\*Custom agent app…\*\*/.test(all), 'custom agent apps');
+  ok(/\*\*Custom agent harness…\*\*/.test(all), 'custom agent harnesses');
   // v3.79.0 (contract §B): the marks table became HOW EACH PART TRAVELS; what
   // each mark means moved to the user guide.
-  ok(JSON.stringify(e.visual.rows.map((r) => r[0])) === JSON.stringify(['Computers', 'Repository on this computer', 'Agent apps']),
+  ok(JSON.stringify(e.visual.rows.map((r) => r[0])) === JSON.stringify(['Computers', 'Repository on this computer', 'Agent harnesses']),
     'the table: Computers · Repository on this computer · Tools — the three folds', JSON.stringify(e.visual.rows));
   ok(e.visual.rows[0][2] === 'Sync now' && /handoffs, the brief/.test(e.visual.rows[0][1])
     && e.visual.rows[1][2] === 'your project’s own git' && /instruction files, the marker/.test(e.visual.rows[1][1])

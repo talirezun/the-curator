@@ -698,7 +698,7 @@ export function overviewLine(tools, platform, ctx = {}) {
   if (c.connected) parts.push(c.connected + ' connected');
   if (c.fix) parts.push(c.fix + ' to fix');
   if (c.notConnected) parts.push(c.notConnected + ' not connected');
-  return 'My Curator in your agent apps — ' + (parts.length ? parts.join(' · ') : 'no agent app found on this ' + machineWord(platform));
+  return 'My Curator in your agent harnesses — ' + (parts.length ? parts.join(' · ') : 'no agent harness found on this ' + machineWord(platform));
 }
 
 /** Put attributes on the FIRST tag of a kit fragment (the kit takes no data-attributes). */
@@ -1094,7 +1094,7 @@ export function nextStepCard(models, data, st = {}) {
     eyebrow: 'Next step · ' + items.length + ' to do',
     eyebrowCase: 'sentence',
     runHtml: lines + extra.join('') + '<div class="cur-action-chips">' + chips + '</div>' + picks,
-    footnoteHtml: renderDescription('Install for me changes only The Curator’s own line in each app’s settings file. It shows you the change first and keeps a backup.'),
+    footnoteHtml: renderDescription('Install for me changes only The Curator’s own line in each agent harness’s settings file. It shows you the change first and keeps a backup.'),
   }), ' id="mcpi-next-step" data-mcpi-next');
 }
 
@@ -1214,8 +1214,8 @@ export function renderAgentApps(st) {
   const status = s.status || null;
   const data = status && status.data;
   if (!data) {
-    if (status && status.error) return renderUserError({ error: status.error, detail: errorDetailOf(status.error) }, { title: 'Could not check your AI apps' });
-    return renderStatus({ state: 'neutral', title: 'Checking your AI apps…' });
+    if (status && status.error) return renderUserError({ error: status.error, detail: errorDetailOf(status.error) }, { title: 'Could not check your agent harnesses' });
+    return renderStatus({ state: 'neutral', title: 'Checking your agent harnesses…' });
   }
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const ctx = { ticks: s.ticks, folds: s.folds, paths: s.paths, machineFiles: s.machineFiles, data,
@@ -1233,7 +1233,7 @@ export function renderAgentApps(st) {
       : nextStepCard(models, data, { ticks: s.ticks, busy: s.busy }));
   const rows = models.map((m) => appFoldRow(m, ctx)).join('') + notFoundFoldRow(data, ctx);
   if (rows) out.push(withAttrs(renderFoldRows(rows), ' id="mcpi-rows"'));
-  else out.push(renderStatus({ state: 'neutral', title: 'No AI app was found on this ' + machineWord(data.platform) + '.' }));
+  else out.push(renderStatus({ state: 'neutral', title: 'No agent harness was found on this ' + machineWord(data.platform) + '.' }));
   return out.join('');
 }
 
@@ -1254,7 +1254,7 @@ const SKILL_STATE_WORDS = Object.freeze({ current: 'up to date', outdated: 'out 
  * `raw.skills`, GET /api/setup/machine v3.90.0); `folds` the open state.
  */
 export function renderSkills(machine, opts = {}) {
-  if (!machine) return renderStatus({ state: 'neutral', title: 'Checking your AI apps…' });
+  if (!machine) return renderStatus({ state: 'neutral', title: 'Checking your agent harnesses…' });
   const list = Array.isArray(machine.raw && machine.raw.skills) ? machine.raw.skills : [];
   const platform = opts.platform;
   const rows = list.filter((s) => s && isStr(s.skill)).map((s) => {
@@ -1285,7 +1285,7 @@ export function renderSkills(machine, opts = {}) {
       key,
       labelHtml: '<span class="mono">' + escapeHtml(s.skill) + '</span>' + escapeHtml(SKILL_WORDS[s.skill] ? ' — ' + SKILL_WORDS[s.skill] : ''),
       label: s.skill,
-      meta: checkable.length ? upToDate + ' of ' + checkable.length + (checkable.length === 1 ? ' app' : ' apps') + ' up to date' : undefined,
+      meta: checkable.length ? upToDate + ' of ' + checkable.length + (checkable.length === 1 ? ' harness' : ' harnesses') + ' up to date' : undefined,
       open: !!(opts.folds && opts.folds[key]),
       bodyHtml: body.join(''),
     }), ' data-mcpi-skill="' + escapeHtml(s.skill) + '"');
@@ -1297,7 +1297,7 @@ export function renderSkills(machine, opts = {}) {
 
 async function readJson(res) {
   const ct = String(res.headers && res.headers.get ? res.headers.get('content-type') || '' : '').toLowerCase();
-  if (ct.includes('text/html')) return { ok: false, code: 'stale', message: 'This version of The Curator can’t install into AI apps yet — update the app.' };
+  if (ct.includes('text/html')) return { ok: false, code: 'stale', message: 'This version of The Curator can’t install into agent harnesses yet — update the app.' };
   let j = null;
   try { j = await res.json(); } catch { /* not JSON */ }
   if (res.ok && j) return { ok: true, data: j };
