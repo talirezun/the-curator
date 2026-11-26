@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v4.0.1` | The Windows tray icon shows the Mac widget's real state (an empty ring, a dot only while an agent has just saved), and a left-click opens the widget's menu instead of the app window. |
 | `v4.0.0` | The Curator for Windows: a normal Windows app. Download one installer, Next, Finish, and it opens in its own window, with its own git for Sync, a tray icon, one-click Claude Desktop, and updates it installs itself; your notes live outside the program folder and survive every update and uninstall. |
 | `v3.99.3` | "Install update" no longer offers the version you already have, forever, on browser installs. |
 | `v3.99.2` | Every error is plain words: what happened, whether anything was lost or charged, and the one next step, with the technical text underneath for support; Sync and Shared Brain get Replace token; every message is in a published catalogue. |
