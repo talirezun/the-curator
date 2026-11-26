@@ -69,12 +69,15 @@ import { toUserError } from '../brain/user-errors.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { recordDomainIdentities } from '../brain/domain-identity.js';
 import { replaceSharedBrainToken, SHAREDBRAIN_TOKEN_MESSAGES } from '../brain/sharedbrain-token.js';
+import { GITHUB_API, rateLimitReading, sanitizeDetail } from '../brain/github-read-client.js';
+import { sharedBrainGithubFetch } from '../brain/sharedbrain-storage-factory.js';
 import {
   registerWrite,
   acquireFileLock,
   isUpdateInProgress,
   hasActiveWrites,
   conflictResponse,
+  listActiveWrites,
 } from '../brain/write-registry.js';
 
 // v3.99.2 plain-language errors: an SSE `error` frame never passes through the
@@ -154,6 +157,16 @@ const READ_ONLY_WAY_TO_CONTRIBUTE =
 // and the new one was saved under it.
 const tokenReplacing = new Set();
 
+/** Is a Shared Brain operation of THIS connection running now? (v4.1.2, B8) */
+function connectionBusy(conn) {
+  if (tokenReplacing.has(conn.id)) return true;
+  const mine = new Set([
+    typeof conn.shared_brain_slug === 'string' ? `shared-${conn.shared_brain_slug}` : '',
+    ...(Array.isArray(conn.local_domains) ? conn.local_domains : []),
+  ].filter(Boolean));
+  return listActiveWrites().some(w => mine.has(w.domain) && w.ops.some(op => /^sharedbrain-/.test(op)));
+}
+
 /** 409 and true when this connection's token is being replaced. */
 function refuseWhileTokenReplacing(conn, res, attemptedOp) {
   if (!conn || !tokenReplacing.has(conn.id)) return false;
@@ -229,6 +242,15 @@ const VALID_DATA_HANDLING_TERMS = ['contributor_retains', 'organisational'];
 // "fixed the call site, not the class" shape this repo has hit before.
 const INVITE_STORAGE_TYPE = 'github';
 
+// v4.1.2 (audit B4): the brain name becomes the connection's label, which must
+// be one line (sharedbrain-config.js validateConnection), and it is shown at
+// step 1. Same rule at both ends of the codec (encodeInviteToken writes it out;
+// keep the two in step).
+const INVITE_NAME_MAX_CHARS = 200;
+function isInviteNameShaped(name) {
+  return typeof name === 'string' && name.length <= INVITE_NAME_MAX_CHARS && !/[\r\n\u2028\u2029]/.test(name);
+}
+
 export function encodeInviteToken(metadata) {
   if (!metadata || typeof metadata !== 'object') {
     throw new Error('encodeInviteToken: metadata is required');
@@ -246,6 +268,11 @@ export function encodeInviteToken(metadata) {
   // can't be generated in the first place.
   if (!isValidRepo(payload.repo || '')) throw new Error('encodeInviteToken: repo must be "owner/name"');
   if (typeof payload.name !== 'string' || !payload.name.trim()) throw new Error('encodeInviteToken: name is required');
+  // isInviteNameShaped's rule, written out: scripts/test-next-invite-and-inert.js
+  // lifts this function and runs it standalone, so it may name no new helper.
+  if (payload.name.length > 200 || /[\r\n\u2028\u2029]/.test(payload.name)) {
+    throw new Error('encodeInviteToken: name must be a single line of at most 200 characters');
+  }
   if (!isSlug(payload.shared_domain)) throw new Error('encodeInviteToken: shared_domain must be slug-shaped');
   // See INVITE_STORAGE_TYPE above — refuse at MINT time too, so an admin can
   // never hand out a token that every contributor's wizard will reject.
@@ -292,6 +319,12 @@ export function decodeInviteToken(token) {
   }
   if (!isValidRepo(parsed.repo || '')) throw new Error('Invite token: repo must be "owner/name"');
   if (typeof parsed.name !== 'string' || !parsed.name.trim()) throw new Error('Invite token: name is required');
+  // v4.1.2 (audit B4): refused HERE, at step 1, not at step 5 after the person
+  // has made a GitHub token (/save refuses a multi-line label), and capped so a
+  // crafted invite cannot fill step 1 with ~6,000 characters of chosen prose.
+  if (!isInviteNameShaped(parsed.name)) {
+    throw new Error(`Invite token: the brain name must be a single line of at most ${INVITE_NAME_MAX_CHARS} characters. Ask your admin for a new invite.`);
+  }
   if (!isSlug(parsed.shared_domain)) throw new Error('Invite token: shared_domain must be slug-shaped');
   if (parsed.branch) {
     // Valid git ref name: alphanumeric start, no consecutive dots, no leading
@@ -389,6 +422,55 @@ router.post('/save', gate, (req, res) => {
     if (!conn || typeof conn !== 'object') {
       return res.status(400).json({ error: 'connection object is required in body' });
     }
+
+    // ── An UPDATE keeps who this connection is (v4.1.2, audit B3) ─────────
+    //
+    // /save with an existing id used to replace the record unchecked, which
+    // undid the v3.43.0 rotate gate from the side: a plain contributor posted
+    // their own connection back with an `admin_token` they made up, got 200,
+    // and revoke and rotate then accepted that token. The same call silently
+    // ERASED a stored admin token (omit it) and could set `fellow_id` to
+    // another member's id. The wizard never re-saves an existing id (join
+    // and create both arrive without one), so these rules change nothing a
+    // person does in the app:
+    //   · fellow_id is fixed for the life of a connection;
+    //   · an admin token is set when a connection is CREATED (the Create
+    //     wizard) and changed only by POST /:id/admin-token/rotate, which
+    //     proves the current one; an update that omits it keeps it;
+    //   · an update may resend the stored token unchanged.
+    // WHAT THIS CANNOT DO, said rather than implied: the admin token is a
+    // check on THIS computer only. A person who edits their own
+    // .sharedbrain-config.json, or Leaves and re-creates the brain, can still
+    // hold a token they made up. What GitHub then lets them delete is decided
+    // by their own GitHub token's write access, never by The Curator.
+    const existing = typeof conn.id === 'string' && conn.id ? getSharedBrainWithToken(conn.id) : null;
+    if (existing) {
+      if (conn.fellow_id && conn.fellow_id !== existing.fellow_id) {
+        return res.status(400).json({
+          error: 'A connection keeps the member id it was created with; it cannot be changed. Nothing was saved.',
+          code: 'sharedbrain-fellow-id-fixed',
+        });
+      }
+      conn.fellow_id = existing.fellow_id;
+      const sent = typeof conn.admin_token === 'string' && conn.admin_token ? conn.admin_token : '';
+      const stored = typeof existing.admin_token === 'string' ? existing.admin_token : '';
+      if (!sent) {
+        if (stored) conn.admin_token = stored;
+      } else if (!stored) {
+        return res.status(403).json({
+          error: 'An admin token can only be added when a Shared Brain is created. This connection has none, ' +
+            'so it cannot be given one. Nothing was saved.',
+          code: 'no_admin_token',
+        });
+      } else if (!adminTokenGate(existing, sent).ok) {
+        return res.status(403).json({
+          error: 'That is not this connection\'s admin token. To change it, use Rotate admin token, which ' +
+            'needs the current one. Nothing was saved.',
+          code: 'admin_token_mismatch',
+        });
+      }
+    }
+
     // Caller may omit id / fellow_id for first save — assign UUIDs.
     if (!conn.id)        conn.id        = newUuid();
     if (!conn.fellow_id) conn.fellow_id = newUuid();
@@ -410,6 +492,17 @@ router.delete('/:id', gate, (req, res) => {
   try {
     const id = req.params.id;
     if (!isUuid(id)) return res.status(400).json({ error: 'id must be a UUID' });
+    // v4.1.2 (audit B8): Leave answered 200 while this connection's own Pull
+    // was still writing its mirror, so the Pull finished for a connection
+    // that no longer existed. The card already blocks Leave mid-operation;
+    // this is the server's half. Only THIS connection's Shared Brain work
+    // (push, pull, synthesis, revoke, token replace) blocks it, never an
+    // unrelated ingest.
+    const conn = getSharedBrainWithToken(id);
+    if (conn && connectionBusy(conn)) {
+      const { status, body } = conflictResponse('leave this Shared Brain');
+      return res.status(status).json(body);
+    }
     const removed = removeSharedBrain(id);
     if (!removed) return res.status(404).json({ error: 'connection not found' });
     res.json({ removed: true });
@@ -1081,15 +1174,44 @@ router.post('/:id/token', gate, async (req, res) => {
 // access, returns a clean verdict, and forgets the PAT (we never persist
 // here — persistence happens on /save after the user finishes the wizard).
 
-router.post('/validate-pat', gate, async (req, res) => {
-  try {
-    const { repo, pat } = req.body || {};
+// v4.1.2 (audit B5, B7): the wizard's token check had no timeout (a hung
+// GitHub left "Checking…" up forever), read a rate-limited 403 as a rejected
+// token, took any 20-400 characters (a token holding a newline made fetch
+// throw a message that carried the whole token, which was echoed in the
+// answer and to stderr), and carried no code. It now uses Replace token's
+// shape, timeout and rate-limit reading (sharedbrain-token.js) and the same
+// fetch seam (CURATOR_TEST_GITHUB_API), answers with a `code` on every
+// refusal, and never puts the token in an answer or a log. The verdicts the
+// wizard reads (valid, hasWriteAccess, repoFullName, message) and the three
+// sentences for 401/403, 404 and other statuses are unchanged. The codes are
+// `sharedbrain-pat-*`, NOT the Replace-token catalogue codes: those name
+// sentences ("Nothing was changed ... the new token") this check does not say.
+const VALIDATE_PAT_SHAPE = /^[A-Za-z0-9_-]{20,400}$/;
+let validatePatTimeoutMs = 30000;
 
+function scrubToken(text, pat) {
+  let out = sanitizeDetail(String(text ?? ''));
+  if (pat) out = out.split(pat).join('***');
+  return out.slice(0, 600);
+}
+
+router.post('/validate-pat', gate, async (req, res) => {
+  const { repo, pat } = req.body || {};
+  try {
     if (typeof repo !== 'string' || !isValidRepo(repo)) {
-      return res.status(400).json({ error: 'repo must be "owner/name"' });
+      return res.status(400).json({ error: 'repo must be "owner/name"', code: 'sharedbrain-pat-repo-invalid' });
     }
     if (typeof pat !== 'string' || pat.length < 20 || pat.length > 400) {
-      return res.status(400).json({ error: 'pat is required (fine-grained PAT, 20-400 chars)' });
+      return res.status(400).json({ error: 'pat is required (fine-grained PAT, 20-400 chars)', code: 'sharedbrain-pat-invalid' });
+    }
+    if (!VALIDATE_PAT_SHAPE.test(pat)) {
+      return res.status(400).json({
+        valid: false,
+        hasWriteAccess: false,
+        error: 'That doesn’t look like a GitHub token. Copy the whole token from GitHub (it starts with ' +
+               'ghp_ or github_pat_) and paste it again.',
+        code: 'sharedbrain-pat-invalid',
+      });
     }
 
     // Step 1: Authenticate via GET /repos/:owner/:repo
@@ -1100,9 +1222,38 @@ router.post('/validate-pat', gate, async (req, res) => {
       'User-Agent': 'the-curator-sharedbrain-validator',
       'X-GitHub-Api-Version': '2022-11-28',
     };
-    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
-    const r = await fetch(url, { method: 'GET', headers });
+    const url = `${GITHUB_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+    let r;
+    try {
+      r = await sharedBrainGithubFetch()(url, { method: 'GET', headers, signal: AbortSignal.timeout(validatePatTimeoutMs) });
+    } catch (err) {
+      const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+      console.error('[sharedbrain validate-pat]', scrubToken(err && err.message, pat));
+      return res.status(502).json({
+        valid: false,
+        hasWriteAccess: false,
+        error: timedOut
+          ? 'GitHub did not answer in time, so the token could not be checked. Check your internet connection and press Check token again.'
+          : 'The Curator couldn’t reach GitHub to check the token. Check your internet connection and press Check token again.',
+        code: timedOut ? 'sharedbrain-pat-check-timeout' : 'sharedbrain-pat-check-offline',
+      });
+    }
 
+    let body = null;
+    try { body = await r.json(); } catch { body = null; }
+    const ghSaid = body && typeof body.message === 'string' ? body.message : '';
+
+    const limited = r.status === 429 || rateLimitReading(r).exhausted ||
+      (r.status === 403 && /rate limit/i.test(ghSaid));
+    if (limited) {
+      return res.json({
+        valid: false,
+        hasWriteAccess: false,
+        error: 'GitHub is limiting requests right now, so the token couldn’t be checked. Nothing is wrong with ' +
+               'the token as far as this check knows. Wait a few minutes, then press Check token again.',
+        code: 'sharedbrain-pat-rate-limited',
+      });
+    }
     if (r.status === 401 || r.status === 403) {
       return res.json({
         valid: false,
@@ -1110,6 +1261,7 @@ router.post('/validate-pat', gate, async (req, res) => {
         error: 'GitHub rejected the token (401/403). Check that the token is pasted correctly, and that you have ' +
                'ACCEPTED the collaborator invitation — GitHub emails it when the admin adds you, and the token is ' +
                'rejected until you click Accept. Then re-paste the token here.',
+        code: 'sharedbrain-pat-rejected',
       });
     }
     if (r.status === 404) {
@@ -1119,6 +1271,7 @@ router.post('/validate-pat', gate, async (req, res) => {
         error: 'Repository not found, or your token does not have access. The most common cause: the collaborator ' +
                'invitation email was never accepted (check your inbox/spam for "[GitHub]"). Otherwise ask the admin ' +
                'to confirm the repo name and re-send the invitation.',
+        code: 'sharedbrain-pat-no-access',
       });
     }
     if (!r.ok) {
@@ -1126,13 +1279,13 @@ router.post('/validate-pat', gate, async (req, res) => {
         valid: false,
         hasWriteAccess: false,
         error: `GitHub returned ${r.status} — try again in a moment.`,
+        code: 'sharedbrain-pat-check-failed',
       });
     }
 
     // Step 2: Determine write access. GitHub returns `permissions.push` on
     // authenticated repo lookups; true means the token has write access.
-    let body;
-    try { body = await r.json(); } catch { body = {}; }
+    if (!body || typeof body !== 'object') body = {};
     const hasWriteAccess = !!(body && body.permissions && body.permissions.push);
 
     res.json({
@@ -1151,11 +1304,13 @@ router.post('/validate-pat', gate, async (req, res) => {
           'to contribute, re-create the token with Contents: Read and write.',
     });
   } catch (err) {
-    // Network errors etc. Never include the PAT in the response.
-    console.error('[sharedbrain validate-pat]', err.message);
+    // Never include the PAT in the response or the log.
+    const detail = scrubToken(err && err.message, typeof pat === 'string' ? pat : '');
+    console.error('[sharedbrain validate-pat]', detail);
     res.status(500).json({
       valid: false,
-      error: `Could not reach GitHub: ${err.message}`,
+      error: `Could not reach GitHub: ${detail}`,
+      code: 'sharedbrain-pat-check-failed',
     });
   }
 });
@@ -1172,5 +1327,6 @@ export const __testing = {
   computeUnskipPatch,
   generateAdminToken,
   adminTokenGate,
+  setValidatePatTimeoutMs: (ms) => { validatePatTimeoutMs = ms; },
   errorFrame, // wave 3: the revoke catch's surface (a throw there is rare; the suite drives it directly)
 };
