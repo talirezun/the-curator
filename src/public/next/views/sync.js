@@ -94,7 +94,7 @@ import {
   registerView, setSidebar, setMain, escapeHtml, icon, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
-  refreshSyncBadge, refreshSyncRemoteBadge,
+  refreshSyncBadge, refreshSyncRemoteBadge, openReader,
 } from '../app.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // The ONE text system in /next. renderViewHeader owns the top of this view so a
@@ -109,7 +109,10 @@ import { explainerHtml } from '../shared/explainer.js';
 import {
   SYNC_RUN_KINDS, currentSyncRun, lastSyncOutcome, markOutcomeSeen,
   onSyncRunChange, configureSyncRun, startSyncRun, adoptServerSyncJob,
+  dismissDeletionQuestion,
 } from '../shared/sync-run.js';
+// v4.2.1: the deletion guard's question, as a card on this page.
+import { deletionCardHtml, deletionListHtml } from '../shared/sync-deletion-card.js';
 // ── THE MONITOR ─────────────────────────────────────────────
 // `.sync-status-card` was a HAND COPY of views/settings.js's bridge status
 // card — the same status pill, the same mono `<code>` identity
@@ -141,6 +144,9 @@ function freshState() {
     actionError: null,
     actionErrorDetail: null, // the route's `detail`: shown, smaller, under the error
     actionErrorCode: null,   // the route's `code`: a token code opens Replace token
+    // v4.2.1: the deletion guard's question (the outcome it arrived on):
+    // {kind, details, confirmed}. Shown as the confirm card instead of the error.
+    deletionAsk: null,
     statusErrorDetail: null,
     statusErrorCode: null,
     // Replace token (2026-11-19). `token` holds keystrokes only until the
@@ -220,6 +226,7 @@ export function seedFromSyncRun(st, run, outcome) {
     st.actionError = null;
     st.actionErrorDetail = null;
     st.actionErrorCode = null;
+    st.deletionAsk = null;
     return st;
   }
   if (st.acting && SYNC_RUN_KINDS.indexOf(st.acting) !== -1) st.acting = null;
@@ -228,6 +235,11 @@ export function seedFromSyncRun(st, run, outcome) {
     st.actionError = outcome.ok ? null : outcome.error;
     st.actionErrorDetail = outcome.ok ? null : (outcome.detail || null);
     st.actionErrorCode = outcome.ok ? null : (outcome.code || null);
+    st.deletionAsk = !outcome.ok && outcome.details && typeof outcome.details.confirmToken === 'string' && typeof outcome.details.count === 'number'
+      ? { kind: outcome.kind, details: outcome.details, confirmed: outcome.confirmed || [], outcome }
+      : null;
+  } else if (outcome && outcome.dismissed) {
+    st.deletionAsk = null;
   }
   return st;
 }
@@ -843,7 +855,11 @@ function renderConfigured(s) {
       // unfolded, not only in the header's ⓘ (v3.16.1).
       '<div class="sync-undo-note">' + escapeHtml(SYNC_UNDO_NOTE) + '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
-      (state.actionError ? syncErrorHtml(state.actionError, state.actionErrorDetail, 'margin-top:8px', state.actionErrorCode) : '') +
+      // THE DELETION GUARD'S QUESTION (v4.2.1) replaces the error line: the
+      // count and domains on the card, the list in the reader, never folded.
+      (state.deletionAsk
+        ? '<div style="margin-top:12px">' + deletionCardHtml(state.deletionAsk.details, { disabled: crossBusy }) + '</div>'
+        : (state.actionError ? syncErrorHtml(state.actionError, state.actionErrorDetail, 'margin-top:8px', state.actionErrorCode) : '')) +
       // Replace token: OPEN right under the error when the error says GitHub
       // refused the token (never behind a chevron, v3.16.1); otherwise one
       // quiet button, so a token can be changed without Disconnect.
@@ -1083,6 +1099,41 @@ function wireListeners() {
   if (discCancel) discCancel.addEventListener('click', () => { state.disconnectConfirmOpen = false; render(myMountToken); });
   const discConfirm = document.getElementById('btn-disconnect-confirm');
   if (discConfirm) discConfirm.addEventListener('click', () => onDisconnect(myMountToken));
+
+  // The deletion guard's card (v4.2.1).
+  const delCancel = document.getElementById('btn-deletions-cancel');
+  if (delCancel) delCancel.addEventListener('click', () => {
+    const ask = state.deletionAsk;
+    if (!ask) return;
+    dismissDeletionQuestion(ask.outcome);
+    state.deletionAsk = null;
+    state.actionError = null;
+    state.actionErrorCode = null;
+    state.actionMessage = 'Cancelled. Nothing was changed: no file was deleted here or on GitHub.';
+    render(myMountToken);
+    const now = document.getElementById('btn-sync-now');
+    if (now && typeof now.focus === 'function') { try { now.focus(); } catch { /* not focusable */ } }
+  });
+  const delShow = document.getElementById('btn-deletions-show');
+  if (delShow) delShow.addEventListener('click', () => {
+    const ask = state.deletionAsk;
+    if (!ask) return;
+    openReader({
+      slug: 'sync/deletions',
+      title: ask.details.direction === 'in' ? 'What this sync would delete on this computer' : 'What this sync would delete from GitHub',
+      bodyHtml: deletionListHtml(ask.details),
+      hideBacklinks: true,
+      returnFocusTo: 'btn-deletions-show',
+    }, myMountToken);
+  });
+  const delConfirm = document.getElementById('btn-deletions-confirm');
+  if (delConfirm) delConfirm.addEventListener('click', () => {
+    const ask = state.deletionAsk;
+    if (!ask || currentSyncRun()) return;
+    const tokens = ask.confirmed.concat([ask.details.confirmToken]);
+    state.deletionAsk = null;
+    onAction(ask.kind, myMountToken, { confirmDeletions: tokens });
+  });
 
   const tokOpen = document.getElementById('btn-token-open');
   if (tokOpen) tokOpen.addEventListener('click', () => {
@@ -1356,7 +1407,7 @@ async function runSetup(mode, confirmOverwrite, token) {
   }
 }
 
-async function onAction(kind, token) {
+async function onAction(kind, token, opts) {
   // ONE sync at a time. A run started on an earlier mount, or by another
   // view, is still running in the shell; this click must not start a second
   // one beside it (that second run used to die with "Another sync check was
@@ -1378,7 +1429,7 @@ async function onAction(kind, token) {
   // Before v3.89.2 this function awaited the request itself and dropped the
   // result on a stale mount token, so a sync that finished while the user
   // was on another page left the Sync page idle, enabled and unchanged.
-  await startSyncRun(kind);
+  await startSyncRun(kind, opts);
 }
 
 // ── Result copy ─────────────────────────────────────────────────────────

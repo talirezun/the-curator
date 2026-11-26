@@ -80,6 +80,9 @@ export async function runSyncJob(kind, fn, { describeError } = {}) {
         error = d.error;
         if (typeof d.detail === 'string' && d.detail) extra.detail = d.detail;
         if (typeof d.code === 'string' && d.code) extra.code = d.code;
+        // A question the run stopped on (v4.2.1, the deletion guard): its
+        // numbers and confirm token, so the Sync page can ask it.
+        if (d.details && typeof d.details === 'object') extra.details = d.details;
       }
     } catch { extra = {}; /* keep the raw message */ }
     _last = { ...job, finishedAt: new Date().toISOString(), state: 'failed', error, ...extra };

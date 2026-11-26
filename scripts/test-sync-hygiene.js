@@ -213,11 +213,24 @@ function sh(gitDir, workTree, cmd, { retries = 3, delayMs = 150 } = {}) {
  * commit" guards, the aheadCount short-circuit, etc.) — this mirrors
  * exactly what a real user would do by clicking Sync again.
  */
+// v4.2.1: these suites delete whole domains ON PURPOSE (the v2.3.4 ghost
+// prune). The deletion guard asks before such a sync; here the "person"
+// confirms with the token each refusal returns, as the Sync page's Delete
+// them button does, and DELETION_ASKS counts the questions so a section can
+// assert that one was asked.
+let DELETION_ASKS = 0;
 async function withGitLockRetry(fn, { retries = 2, delayMs = 200 } = {}) {
+  const opts = { confirmDeletions: [] };
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fn();
+      return await fn(opts);
     } catch (err) {
+      if (err && /^sync-(pull-)?deletions-need-confirm$/.test(err.curatorSyncCode || '') && opts.confirmDeletions.length < 4) {
+        DELETION_ASKS++;
+        opts.confirmDeletions.push(err.curatorSyncDetails.confirmToken);
+        attempt--;
+        continue;
+      }
       if (attempt < retries && TRANSIENT_GIT_LOCK_RE.test(err.message || '')) {
         await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
         continue;
@@ -713,7 +726,7 @@ try {
 
     assertTrue(isConfigured(), 'isConfigured() is true once overrides + config file are in place');
 
-    const r1 = await withGitLockRetry(() => push());
+    const r1 = await withGitLockRetry((o) => push(o));
     assertTrue(r1.pushed === true, 'first push() succeeds');
     const afterPush = trackedFiles(gitDir, domainsDir);
     assertTrue(!afterPush.some(f => f.includes('.write-lock') || f.includes('.DS_Store')),
@@ -725,7 +738,7 @@ try {
       '.DS_Store is untracked but the actual Finder file on disk is left alone (we only stop syncing it)');
 
     // Idempotency / the "nothing to commit" guard path
-    const r2 = await withGitLockRetry(() => push());
+    const r2 = await withGitLockRetry((o) => push(o));
     assertEq(r2.pushed, false, 'a second push() with nothing new does not throw and reports pushed:false');
   }
 
@@ -744,7 +757,7 @@ try {
     await seedDomain(domainsA, 'articles');
     __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
     __setDomainsDirOverride(domainsA);
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
 
     // Machine B clones from the remote, then independently commits its OWN
     // stale files locally (simulating an old pre-fix Curator instance, or an
@@ -775,7 +788,7 @@ try {
 
     __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
     __setDomainsDirOverride(domainsB);
-    const rp = await withGitLockRetry(() => pull());
+    const rp = await withGitLockRetry((o) => pull(o));
     assertTrue(rp.pulled === true, 'pull() completes successfully');
 
     const afterPull = trackedFiles(gitDirB, domainsB);
@@ -798,7 +811,7 @@ try {
 
     __setSyncTestOverrides({ gitDir, configFile });
     __setDomainsDirOverride(domainsDir);
-    await withGitLockRetry(() => push()); // establish origin/main
+    await withGitLockRetry((o) => push(o)); // establish origin/main
 
     // Acquire a REAL fresh lock via write-registry's own function (as the
     // MCP server would while mid-write).
@@ -806,11 +819,11 @@ try {
     assertTrue(typeof release === 'function', 'fresh lock acquired');
     assertTrue(await isFileLocked(path.join(domainsDir, 'articles')), 'isFileLocked() true while held');
 
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
     assertTrue(existsSync(path.join(domainsDir, 'articles', '.write-lock')), 'lock file survives push() untouched');
     assertTrue(await isFileLocked(path.join(domainsDir, 'articles')), 'still reported locked after push()');
 
-    await withGitLockRetry(() => pull());
+    await withGitLockRetry((o) => pull(o));
     assertTrue(existsSync(path.join(domainsDir, 'articles', '.write-lock')), 'lock file survives pull() untouched');
     assertTrue(await isFileLocked(path.join(domainsDir, 'articles')), 'still reported locked after pull()');
 
@@ -855,14 +868,16 @@ try {
     // and BEFORE pull()'s own NEW post-merge cleanup commit — this is
     // exactly the HIGH-severity audit fix (see recoverHygieneMergeConflict's
     // doc comment): running them BEFORE the merge is what broke real pulls.
-    const pushBody = src.slice(src.indexOf('export async function push()'), src.indexOf('export async function pull()'));
+    const pushBody = src.slice(src.indexOf('export async function push('), src.indexOf('export async function pull('));
     assertTrue(pushBody.indexOf('untrackStaleDSStore') < pushBody.indexOf('status --porcelain'),
       'push(): untrackStaleDSStore() runs before the status/commit block (push never merges, so this ordering is safe)');
     assertTrue(pushBody.indexOf('cleanupStaleLocalLocks') < pushBody.indexOf('status --porcelain'),
       'push(): cleanupStaleLocalLocks() runs before the status/commit block');
 
-    const pullBody = src.slice(src.indexOf('export async function pull()'), src.indexOf('async function recoverHygieneMergeConflict'));
-    const idxMerge         = pullBody.indexOf("git(['pull', '--no-rebase'");
+    const pullBody = src.slice(src.indexOf('export async function pull('), src.indexOf('async function recoverHygieneMergeConflict'));
+    // v4.2.1: the merge merges the exact commit the deletion guard assessed
+    // (`mergeArgs`, `git merge -X theirs <target>`), not `git pull`.
+    const idxMerge         = pullBody.indexOf('await git(mergeArgs');
     const idxUntrackLocks  = pullBody.indexOf('await untrackStaleWriteLocks()');
     const idxUntrackDS     = pullBody.indexOf('await untrackStaleDSStore()');
     const idxCleanupLocks  = pullBody.indexOf('await cleanupStaleLocalLocks()');
@@ -883,7 +898,7 @@ try {
     // The merge call itself must be wrapped in try/catch feeding
     // recoverHygieneMergeConflict — not just a bare `await git(...)` that
     // would propagate the "untracked working tree files" error unhandled.
-    assertTrue(/try\s*\{[\s\S]*?pull --no-rebase[\s\S]*?\}\s*catch\s*\(err\)\s*\{[\s\S]*?recoverHygieneMergeConflict\(err\)/.test(pullBody),
+    assertTrue(/try\s*\{[\s\S]*?git\(mergeArgs[\s\S]*?\}\s*catch\s*\(err\)\s*\{[\s\S]*?recoverHygieneMergeConflict\(err, mergeArgs\)/.test(pullBody),
       'pull(): the merge call is wrapped in try/catch that routes failures through recoverHygieneMergeConflict()');
   }
 
@@ -938,7 +953,7 @@ try {
     let threw = null;
     let result;
     try {
-      result = await withGitLockRetry(() => pull());
+      result = await withGitLockRetry((o) => pull(o));
     } catch (e) {
       threw = e;
     }
@@ -1008,7 +1023,7 @@ try {
     let threw = null;
     let result;
     try {
-      result = await withGitLockRetry(() => pull());
+      result = await withGitLockRetry((o) => pull(o));
     } catch (e) {
       threw = e;
     }
@@ -1074,7 +1089,7 @@ try {
     let threw = null;
     let result;
     try {
-      result = await withGitLockRetry(() => pull());
+      result = await withGitLockRetry((o) => pull(o));
     } catch (e) {
       threw = e;
     }
@@ -1139,7 +1154,7 @@ try {
 
     let threw = null;
     try {
-      await withGitLockRetry(() => pull());
+      await withGitLockRetry((o) => pull(o));
     } catch (e) {
       threw = e;
     }
@@ -1344,7 +1359,7 @@ try {
     __setDomainsDirOverride(domainsDir);
 
     let threw = null;
-    try { await withGitLockRetry(() => push()); } catch (e) { threw = e; }
+    try { await withGitLockRetry((o) => push(o)); } catch (e) { threw = e; }
     assertTrue(threw === null, 'push() does not throw while self-healing the new junk classes', threw && threw.message);
 
     const after = trackedFiles(gitDir, domainsDir);
@@ -1402,7 +1417,7 @@ try {
     let threw = null;
     let result;
     try {
-      result = await withGitLockRetry(() => pull());
+      result = await withGitLockRetry((o) => pull(o));
     } catch (e) {
       threw = e;
     }
@@ -1434,10 +1449,10 @@ try {
       // merge command textually BEFORE the two new untrack calls (i.e. the
       // fix is actually shipped in the position this whole section assumes).
       const syncSrc = await readFile(path.join(ROOT, 'src/brain/sync.js'), 'utf8');
-      const pullFnMatch = syncSrc.match(/export async function pull\(\)[\s\S]*?\n}\n/);
+      const pullFnMatch = syncSrc.match(/export async function pull\(opts = \{\}\)[\s\S]*?\n}\n/);
       assertTrue(!!pullFnMatch, 'mutation sanity — pull() was extractable from the real source file');
       const pullFnSrc = pullFnMatch[0];
-      const mergeIdx = pullFnSrc.indexOf("git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main']");
+      const mergeIdx = pullFnSrc.indexOf('await git(mergeArgs');
       const workspaceUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianWorkspace();');
       const leftoversUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianLeftovers();');
       assertTrue(mergeIdx > -1 && workspaceUntrackIdx > -1 && leftoversUntrackIdx > -1,
@@ -1565,7 +1580,7 @@ try {
     await seedDomain(domainsA, 'ghost');
     __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
     __setDomainsDirOverride(domainsA);
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
 
     // Machine B: clone.
     const gitDirB = await mktempTracked('sh-gitdir-17b-');
@@ -1587,7 +1602,7 @@ try {
     await writeFile(path.join(domainsA, 'articles', 'wiki', 'a1.md'), '# a1\n');
     await writeFile(path.join(domainsA, 'articles', 'wiki', 'a2.md'), '# a2\n');
     await rm(path.join(domainsA, 'ghost'), { recursive: true, force: true });
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
 
     // B makes its own local change, so this is a genuine BOTH-directions sync.
     __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
@@ -1604,8 +1619,11 @@ try {
     await mkdir(path.join(domainsB, 'ghost', 'raw'), { recursive: true });
     await writeFile(path.join(domainsB, 'ghost', 'raw', 'paper.pdf'), 'not really a pdf');
 
-    const result = await withGitLockRetry(() => sync());
+    const asksBefore = DELETION_ASKS;
+    const result = await withGitLockRetry((o) => sync(o));
 
+    assertTrue(DELETION_ASKS > asksBefore,
+      'v4.2.1: the incoming deletion of the whole ghost domain was asked first, then confirmed');
     // (a) The wire genuinely carries both directions.
     assertTrue(result && result.pullResult && result.pushResult,
       'POST /api/sync/sync payload carries BOTH pullResult and pushResult');
@@ -1714,7 +1732,7 @@ try {
     await seedDomain(domainsA, 'articles');
     __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
     __setDomainsDirOverride(domainsA);
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
 
     const gitDirB = await mktempTracked('sh-gitdir-18b-');
     const domainsB = await mktempTracked('sh-domains-18b-');
@@ -1743,7 +1761,7 @@ try {
     for (const n of ['r1.md', 'r2.md', 'r3.md']) {
       await writeFile(path.join(domainsA, 'articles', 'wiki', n), '# ' + n + '\n');
     }
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
 
     __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
     __setDomainsDirOverride(domainsB);
@@ -1825,7 +1843,7 @@ try {
     //     invalidated by pull() itself, so this is a fresh measurement.
     invalidateRemoteCache();
     assertEq((await getRemoteStatus()).behindFiles, 3, 'precondition: still 3 waiting before the pull');
-    await withGitLockRetry(() => pull());
+    await withGitLockRetry((o) => pull(o));
     const afterPull = await getRemoteStatus();
     assertEq(afterPull.cached, false, 'pull() invalidated the cache, so this is a fresh check');
     assertEq(afterPull.behindFiles, 0, 'after pulling, nothing is waiting on GitHub');
@@ -1837,12 +1855,12 @@ try {
     __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
     __setDomainsDirOverride(domainsA);
     await writeFile(path.join(domainsA, 'articles', 'wiki', 'r4.md'), '# r4\n');
-    await withGitLockRetry(() => push());
+    await withGitLockRetry((o) => push(o));
     __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
     __setDomainsDirOverride(domainsB);
     invalidateRemoteCache();
     const predicted = (await getRemoteStatus()).behindFiles;
-    const actual = (await withGitLockRetry(() => pull())).filesChanged;
+    const actual = (await withGitLockRetry((o) => pull(o))).filesChanged;
     assertEq(predicted, actual,
       'the number the badge promises is exactly the number the pull then reports');
 

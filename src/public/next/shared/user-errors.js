@@ -235,6 +235,9 @@ export const SYNC_CODES = Object.freeze([
   'sync-token-check-offline', 'sync-token-check-failed', 'sync-token-save-failed', 'sync-config-unreadable',
   'sync-not-configured', 'sync-new-token-read-only', 'sync-token-check-rate-limited', 'sync-token-save-partial',
   'sync-new-token-org-blocked', 'sync-token-check-redirected', 'sync-index-locked',
+  // v4.2.1, the deletion guard (src/brain/sync-deletions.js): a question, shown
+  // on the Sync page as a confirm card and elsewhere as this sentence.
+  'sync-deletions-need-confirm', 'sync-pull-deletions-need-confirm',
 ]);
 // Shared Brain's Replace token refusals (src/brain/sharedbrain-token.js, whose
 // SHAREDBRAIN_TOKEN_MESSAGES holds their sentences as data).

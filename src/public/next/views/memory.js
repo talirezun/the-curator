@@ -12676,8 +12676,13 @@ function bindSetup(root, token) {
             : await fetch('/api/sync/remote-status');
           const j = await res.json().catch(() => ({}));
           if (act === 'sync') {
-            showToast({ key: 'setup-sync', tone: res.ok ? 'success' : 'danger',
-              title: res.ok ? 'Synced' : 'Sync did not complete',
+            // v4.2.1: the deletion guard's question. This button sends no
+            // confirmation, so such a sync never passes from here: the toast
+            // says so, and the Sync page shows the question as its card
+            // (it reads the refusal from the sync job).
+            const asks = j && (j.code === 'sync-deletions-need-confirm' || j.code === 'sync-pull-deletions-need-confirm');
+            showToast({ key: 'setup-sync', tone: res.ok ? 'success' : (asks ? 'attention' : 'danger'),
+              title: res.ok ? 'Synced' : (asks ? 'Sync is asking before it deletes' : 'Sync did not complete'),
               lines: res.ok ? ['Your whole knowledge folder — every domain — now matches GitHub.']
                 : errorLines(failText(j, res.status, 'Sync did not finish. Try again, or open Sync for details.')) });
             try { refreshSyncBadge(); } catch { /* the badge re-reads on its own timer */ }

@@ -116,9 +116,24 @@ function sh(gitDir, workTree, cmd) {
   }
 }
 
+// v4.2.1: these suites delete whole domains ON PURPOSE (the v2.3.4 ghost
+// prune). The deletion guard asks before such a sync; here the "person"
+// confirms with the token each refusal returns, as the Sync page's Delete
+// them button does, and DELETION_ASKS counts the questions so a section can
+// assert that one was asked.
+let DELETION_ASKS = 0;
 async function withGitLockRetry(fn, { retries = 2, delayMs = 200 } = {}) {
+  const opts = { confirmDeletions: [] };
   for (let attempt = 0; ; attempt++) {
-    try { return await fn(); } catch (err) {
+    try {
+      return await fn(opts);
+    } catch (err) {
+      if (err && /^sync-(pull-)?deletions-need-confirm$/.test(err.curatorSyncCode || '') && opts.confirmDeletions.length < 4) {
+        DELETION_ASKS++;
+        opts.confirmDeletions.push(err.curatorSyncDetails.confirmToken);
+        attempt--;
+        continue;
+      }
       if (attempt < retries && TRANSIENT_GIT_LOCK_RE.test(err.message || '')) {
         await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
         continue;
@@ -278,7 +293,7 @@ console.log('1. CONTROL — the pre-fix rule really does destroy user folders, a
   await writeFile(path.join(a.domains, 'newdomain', 'draft.md'), '# draft I am still writing\n');
 
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   assertTrue(trackedPaths(a).includes('Attachments/diagram.png'),
     'precondition: push() `git add -A` TRACKS a stray user folder — it is repo content, not a local curiosity');
@@ -317,10 +332,10 @@ console.log('\n2. THE FIX — a pull with NOTHING incoming prunes nothing (the e
   await writeFile(path.join(a.domains, 'newdomain', 'draft.md'), '# draft I am still writing\n');
 
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   const before = await treeMap(a.domains);
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
   assertEq((await topLevel(a.domains)).join(','), 'Attachments,demo,newdomain',
     'FIXED: all three folders survive a pull that had nothing to do');
@@ -361,7 +376,7 @@ console.log('\n2b. THE BASELINE IS TAKEN AFTER THE AUTO-SAVE — a LOCAL delete 
   await writeFile(path.join(a.domains, 'Notes', 'a.md'), '# a\n');
   await writeFile(path.join(a.domains, 'Notes', 'view.base'), 'obsidian base\n');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   assertTrue(trackedPaths(a).includes('Notes/a.md') && !trackedPaths(a).includes('Notes/view.base'),
     'precondition: a.md is tracked, the .base file is gitignored — so only the baseline protects it');
@@ -369,7 +384,7 @@ console.log('\n2b. THE BASELINE IS TAKEN AFTER THE AUTO-SAVE — a LOCAL delete 
   // The user tidies up in Finder: the only tracked file under Notes/ goes.
   await rm(path.join(a.domains, 'Notes', 'a.md'));
 
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
   assertEq(result.pruned.length, 0,
     `a purely LOCAL deletion nominates nothing — got ${JSON.stringify(result.pruned)}`);
@@ -391,7 +406,7 @@ console.log('\n3. ONE PULL, BOTH BEHAVIOURS — the deleted domain is cleaned up
   await seedDomain(a.domains, 'articles');
   await seedDomain(a.domains, 'ghost');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   const b = await makeInstall('m-b', remote);
   sh(b.gitDir, b.domains, 'fetch origin -q');
@@ -401,7 +416,7 @@ console.log('\n3. ONE PULL, BOTH BEHAVIOURS — the deleted domain is cleaned up
   use(a);
   await writeFile(path.join(a.domains, 'articles', 'wiki', 'new-page.md'), '# new\n');
   await rm(path.join(a.domains, 'ghost'), { recursive: true, force: true });
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   // B: the ghost shell survives locally ONLY because `raw/` is gitignored and
   // holds a source file — which is the real-world reason the shell exists at
@@ -415,8 +430,10 @@ console.log('\n3. ONE PULL, BOTH BEHAVIOURS — the deleted domain is cleaned up
   await mkdir(path.join(b.domains, 'Templates'), { recursive: true });
   await writeFile(path.join(b.domains, 'Templates', 'daily.md'), '# daily note template\n');
 
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
+  assertEq(DELETION_ASKS, 2,
+    'v4.2.1: deleting the whole ghost domain was asked first, once on the computer that deleted it (push) and once on the one receiving it (pull)');
   assertTrue(result.pruned.includes('ghost'),
     `v2.3.4 PRESERVED: the domain deleted on the other machine is pruned — got ${JSON.stringify(result.pruned)}`);
   assertTrue(!existsSync(path.join(b.domains, 'ghost')),
@@ -437,7 +454,7 @@ console.log('\n3. ONE PULL, BOTH BEHAVIOURS — the deleted domain is cleaned up
   const dirty = porcelain(b);
   assertTrue(!dirty.some(l => /^\s*D/.test(l)),
     `the prune leaves NO staged or unstaged deletion behind — got ${JSON.stringify(dirty)}`);
-  const afterPush = await withGitLockRetry(() => push());
+  const afterPush = await withGitLockRetry((o) => push(o));
   assertTrue(afterPush !== null, 'a push after the prune completes');
   // Whatever the push did, the stray folders are still here and still tracked.
   assertTrue(trackedPaths(b).includes('Attachments/diagram.png'),
@@ -473,7 +490,7 @@ console.log('\n3b. RULE 1 ALONE — the folders no other rule can save\n');
   await seedDomain(a.domains, 'articles');
   await seedDomain(a.domains, 'ghost');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   const b = await makeInstall('bare-b', remote);
   sh(b.gitDir, b.domains, 'fetch origin -q');
@@ -481,7 +498,7 @@ console.log('\n3b. RULE 1 ALONE — the folders no other rule can save\n');
 
   use(a);
   await rm(path.join(a.domains, 'ghost'), { recursive: true, force: true });
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   use(b);
   // The doomed domain's shell only survives the merge because something
@@ -495,7 +512,7 @@ console.log('\n3b. RULE 1 ALONE — the folders no other rule can save\n');
   await mkdir(path.join(b.domains, 'Sources', 'raw'), { recursive: true });
   await writeFile(path.join(b.domains, 'Sources', 'raw', 'paper.pdf'), 'not really a pdf');
 
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
   // Precondition: these really are invisible to every other rule.
   const tracked = trackedPaths(b);
@@ -533,7 +550,7 @@ console.log('\n4. RULE 3 — a folder that still holds TRACKED files is never pr
   await seedDomain(a.domains, 'half');
   await writeFile(path.join(a.domains, 'half', 'wiki', 'keeper.md'), '# keeper\n');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   const b = await makeInstall('half-b', remote);
   sh(b.gitDir, b.domains, 'fetch origin -q');
@@ -541,10 +558,10 @@ console.log('\n4. RULE 3 — a folder that still holds TRACKED files is never pr
 
   use(a);
   await rm(path.join(a.domains, 'half', 'CLAUDE.md'));
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   use(b);
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
   assertTrue(existsSync(path.join(b.domains, 'half', 'wiki', 'keeper.md')),
     'a page under a schema-less folder survives — a partial delete is not a delete');
@@ -569,7 +586,7 @@ console.log('\n5. RULE 4 — a file written into the shell DURING the pull is ke
   await seedDomain(a.domains, 'articles');
   await seedDomain(a.domains, 'doomed');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   const b = await makeInstall('race-b', remote);
   sh(b.gitDir, b.domains, 'fetch origin -q');
@@ -577,7 +594,7 @@ console.log('\n5. RULE 4 — a file written into the shell DURING the pull is ke
 
   use(a);
   await rm(path.join(a.domains, 'doomed'), { recursive: true, force: true });
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
 
   use(b);
   const preMergeHead = sh(b.gitDir, b.domains, 'rev-parse HEAD').trim();
@@ -631,7 +648,7 @@ console.log('\n5b. MECHANISM — through pull(), rule 4 hands its case to rule 3
   await seedDomain(a.domains, 'articles');
   await seedDomain(a.domains, 'doomed');
   use(a);
-  await withGitLockRetry(() => push());          // writes the canonical .gitignore
+  await withGitLockRetry((o) => push(o));          // writes the canonical .gitignore
 
   const b = await makeInstall('wire-b', remote);
   sh(b.gitDir, b.domains, 'fetch origin -q');
@@ -653,7 +670,7 @@ console.log('\n5b. MECHANISM — through pull(), rule 4 hands its case to rule 3
   await mkdir(path.join(b.domains, 'doomed', 'raw'), { recursive: true });
   await writeFile(path.join(b.domains, 'doomed', 'raw', 'paper.pdf'), 'the only copy');
 
-  const result = await withGitLockRetry(() => pull());
+  const result = await withGitLockRetry((o) => pull(o));
 
   assertEq(await readOrMissing(path.join(b.domains, 'doomed', 'raw', 'paper.pdf')), 'the only copy',
     "THE POINT: the user's unpushed source file is still on disk, byte-identical");
@@ -676,7 +693,7 @@ console.log('\n6. FAIL-SAFE — an unusable baseline deletes nothing, and never 
   await mkdir(path.join(a.domains, 'stray'), { recursive: true });
   await writeFile(path.join(a.domains, 'stray', 'x.md'), 'x\n');
   use(a);
-  await withGitLockRetry(() => push());
+  await withGitLockRetry((o) => push(o));
   const fingerprint = await treeFingerprint(a.domains);
 
   for (const bad of [null, undefined, '', 'HEAD', 'main',

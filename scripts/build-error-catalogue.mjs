@@ -39,6 +39,7 @@ import {
 } from '../src/public/next/shared/user-errors.js';
 import { describeSyncError, REPLACE_TOKEN_MESSAGES, gitMissingMessage } from '../src/brain/sync.js';
 import { SHAREDBRAIN_TOKEN_MESSAGES } from '../src/brain/sharedbrain-token.js';
+import { deletionGuardMessage } from '../src/brain/sync-deletions.js';
 import { FOLDER_ACCESS_MESSAGES } from '../src/brain/folder-access.js';
 import { WIN32_UPDATE_FAILURES, WIN32_INSTALL_OUTCOMES } from '../desktop/lib/update-plan-win32.js';
 
@@ -106,6 +107,13 @@ export const PLATFORM_SENTENCES = {
   ],
 };
 
+// The deletion guard's sentence (v4.2.1), with its numbers as placeholders.
+const DELETION_EXAMPLE = (direction) => ({ direction, count: '[number]', pages: '[number]', byDomain: [{ domain: '[domain]', count: '[number]' }] });
+const DELETION_SENTENCES = {
+  'sync-deletions-need-confirm': () => deletionGuardMessage(DELETION_EXAMPLE('out')),
+  'sync-pull-deletions-need-confirm': () => deletionGuardMessage(DELETION_EXAMPLE('in')),
+};
+
 function syncSentence(code, text, opts) {
   const d = describeSyncError(new Error(text), opts);
   if (d.code !== code) throw new Error(`build-error-catalogue: the text for ${code} now maps to ${d.code}; update SYNC_TRIGGERS`);
@@ -142,6 +150,9 @@ export function sentencesFor(code) {
     const admin = SURFACE_MESSAGES.sharedbrain && SURFACE_MESSAGES.sharedbrain.admin;
     if (admin && admin[code]) out.push({ label: 'On an admin’s screen', text: admin[code](ctx) });
     return out;
+  }
+  if (Object.prototype.hasOwnProperty.call(DELETION_SENTENCES, code)) {
+    return [{ label: '', text: DELETION_SENTENCES[code]() }];
   }
   if (Object.prototype.hasOwnProperty.call(REPLACE_TOKEN_MESSAGES, code)) {
     const v = REPLACE_TOKEN_MESSAGES[code];
@@ -218,6 +229,12 @@ export const ENTRIES = {
   'sync-index-locked': { section: 'sync',
     means: 'A sync that stopped part-way left git’s lock file behind. Nothing was changed.',
     todo: 'If no other sync is running, delete index.lock in the hidden .knowledge-git folder in The Curator’s data folder, then sync again.' },
+  'sync-deletions-need-confirm': { section: 'sync',
+    means: 'This sync would delete over 5 files, a whole domain or over 10% from GitHub. Nothing was changed.',
+    todo: 'On the Sync page: Show the pages, then Cancel or Delete them.' },
+  'sync-pull-deletions-need-confirm': { section: 'sync',
+    means: 'A pull would delete as many here (removed elsewhere). Nothing was changed.',
+    todo: 'Same card: Cancel keeps them.' },
   'sync-failed': { section: 'sync',
     means: 'Sync stopped for a reason The Curator does not recognise. Part of the run (for example changes already pulled) may have finished.',
     todo: 'Try again in a minute. If it repeats, send the Technical detail line to support.' },
@@ -243,11 +260,11 @@ export const ENTRIES = {
     means: 'The new token is valid but cannot open Sync’s repository (GitHub answers a private repository it cannot see as not found). Nothing was changed.',
     todo: 'Give the token that repository with Contents: Read and write (fine-grained) or the repo scope (classic).' },
   'sync-new-token-org-blocked': { section: 'token',
-    means: 'For a github.com repository, GitHub accepted the new token but answered that the organisation owning the repository keeps it out: single sign-on (SAML) not yet authorised for this token, a fine-grained token waiting for an owner’s approval, or another organisation rule. Nothing was changed.',
-    todo: 'Single sign-on: on GitHub’s token settings page, press Configure SSO next to the token and authorise it for the organisation. Fine-grained token: ask an organisation owner to approve it. Then try again.' },
+    means: 'GitHub accepted the new token, but the organisation owning the repository keeps it out: single sign-on not authorised for it, or a fine-grained token awaiting an owner’s approval. Nothing was changed.',
+    todo: 'Single sign-on: on GitHub’s token page press Configure SSO and authorise it. Fine-grained: ask an organisation owner to approve it. Then try again.' },
   'sync-token-check-redirected': { section: 'token',
-    means: 'For a github.com repository, GitHub answered the check with a redirect The Curator does not follow: to an address outside GitHub’s API, or one redirect after another. A renamed or transferred repository is followed (it stays on GitHub’s API). The token was not sent anywhere else. Nothing was changed.',
-    todo: 'Check that the repository still exists on GitHub, then try again. If it repeats, send the Technical detail line to support.' },
+    means: 'GitHub answered the check with a redirect outside its API, or a chain of them, which The Curator does not follow (a renamed repository is followed). The token went nowhere else. Nothing was changed.',
+    todo: 'Check the repository still exists on GitHub, then try again. If it repeats, send the Technical detail line to support.' },
   'sync-new-token-read-only': { section: 'token',
     means: 'For a github.com repository, The Curator asks GitHub what the new token may do. This one can read the repository but not write to it, so Sync could not send changes. Nothing was changed.',
     todo: 'Create a token with Contents: Read and write on that repository (fine-grained) or the repo scope (classic), then try again.' },

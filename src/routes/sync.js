@@ -11,6 +11,8 @@ import { recordDomainIdentities } from '../brain/domain-identity.js';
 // v3.89.2: one sync at a time, and a record of it that outlives the request
 // that started it — see src/brain/sync-job.js for the measured report.
 import { runSyncJob, getSyncJob, SyncBusyError } from '../brain/sync-job.js';
+// v4.2.1: the deletion guard's refusals and the confirmations that answer them.
+import { isDeletionCode, confirmedTokens } from '../brain/sync-deletions.js';
 
 const router = Router();
 
@@ -49,6 +51,24 @@ function busyResponse(res, err) {
 // a run and the page following it showed two codes for one failure).
 // describeSyncError does that upgrade itself now, for both.
 const JOB_OPTS = { describeError: (err) => describeSyncError(err) };
+
+// THE DELETION GUARD (v4.2.1). A push, pull or sync that would delete more
+// than a page or two is refused by brain/sync.js before anything changes, and
+// passes only with the `confirmDeletions` token(s) that refusal returned
+// (a string or an array; anything else is dropped). A request without one —
+// the Context page's Sync button, any API client — is always refused, and the
+// refusal is recorded on the sync job, so the Sync page can show it. 409 with
+// {error, code, details}: a question, not a crash.
+function runOpts(req) {
+  return { confirmDeletions: confirmedTokens(req.body && req.body.confirmDeletions) };
+}
+function syncFailure(res, err) {
+  const refusal = syncRefusalOf(err);
+  if (refusal && isDeletionCode(refusal.code)) {
+    return res.status(409).json({ error: refusal.message, code: refusal.code, details: refusal.details });
+  }
+  return res.status(500).json(describeSyncError(err));
+}
 const CONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'connect' }) };
 const DISCONNECT_JOB_OPTS = { describeError: (err) => describeSyncError(err, { context: 'disconnect' }) };
 
@@ -242,40 +262,43 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
 router.post('/push', guardConcurrent('push to sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    res.json(await runSyncJob('push', () => push(), JOB_OPTS));
+    const opts = runOpts(req);
+    res.json(await runSyncJob('push', () => push(opts), JOB_OPTS));
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json(describeSyncError(err));
+    syncFailure(res, err);
   }
 });
 
 router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
+    const opts = runOpts(req);
     const pulled = await runSyncJob('pull', async () => {
-      const r = await pull();
+      const r = await pull(opts);
       await recordDomainIdentities();
       return r;
     }, JOB_OPTS);
     res.json(pulled);
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json(describeSyncError(err));
+    syncFailure(res, err);
   }
 });
 
 router.post('/sync', guardConcurrent('sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
+    const opts = runOpts(req);
     const synced = await runSyncJob('sync', async () => {
-      const r = await sync();
+      const r = await sync(opts);
       await recordDomainIdentities();
       return r;
     }, JOB_OPTS);
     res.json(synced);
   } catch (err) {
     if (err instanceof SyncBusyError) return busyResponse(res, err);
-    res.status(500).json(describeSyncError(err));
+    syncFailure(res, err);
   }
 });
 

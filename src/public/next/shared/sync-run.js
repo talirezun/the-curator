@@ -33,12 +33,24 @@
 //
 // `createSyncRunner(env)` takes fetch and the timers as arguments so
 // scripts/test-sync-run-survives-navigation.js drives the real code in Node.
+//
+// THE DELETION GUARD (v4.2.1). A run the server refused because it would
+// delete more than a page or two settles with `code` one of DELETION_CODES
+// and `details` (count, domains, sample, paths, confirmToken), plus
+// `confirmed`: the tokens that request already carried. The Sync page turns
+// that outcome into its confirm card; "Delete them" is
+// startSyncRun(kind, { confirmDeletions: [...confirmed, details.confirmToken] }).
+// A run started anywhere else carries no token, so it can never pass such a
+// deletion: the refusal is recorded on the server's job, and
+// adoptServerSyncJob() brings it to the Sync page as the same card.
 
 export const SYNC_RUN_KINDS = ['sync', 'push', 'pull'];
 export const SYNC_JOB_POLL_MS = 1000;
 // A run the page only observes (it did not start it) is followed for at most
 // this many polls; past it the page stops claiming anything is running.
 export const SYNC_JOB_POLL_MAX = 900;
+export const SYNC_DELETION_CODES = ['sync-deletions-need-confirm', 'sync-pull-deletions-need-confirm'];
+export const isSyncDeletionCode = (c) => SYNC_DELETION_CODES.indexOf(c) !== -1;
 
 export function createSyncRunner(env) {
   const listeners = new Set();
@@ -47,6 +59,10 @@ export function createSyncRunner(env) {
   let pollTimer = null;
   let polls = 0;
   let hooks = { beforeSettle: null, describe: null };
+  // Server job ids whose deletion question this page already showed: a
+  // finished job is adopted as a question once, never again after it was
+  // answered (or cancelled).
+  const askedJobs = new Set();
 
   function notify() {
     for (const fn of Array.from(listeners)) {
@@ -91,11 +107,21 @@ export function createSyncRunner(env) {
     if (last && SYNC_RUN_KINDS.includes(last.kind)) {
       await settle(last.state === 'done'
         ? { kind: last.kind, ok: true, message: describe(last.kind, last.result), error: null, at: last.finishedAt, seen: false }
-        : { kind: last.kind, ok: false, message: null, error: last.error || 'The sync did not complete.',
-            detail: last.detail || null, code: last.code || null, at: last.finishedAt, seen: false });
+        : failedFromJob(last));
     } else {
       await settle(outcome);
     }
+  }
+
+  function failedFromJob(last) {
+    const o = { kind: last.kind, ok: false, message: null, error: last.error || 'The sync did not complete.',
+      detail: last.detail || null, code: last.code || null, at: last.finishedAt, seen: false };
+    if (isSyncDeletionCode(last.code) && last.details && typeof last.details === 'object') {
+      o.details = last.details;
+      o.confirmed = [];
+      if (last.id != null) askedJobs.add(last.id);
+    }
+    return o;
   }
 
   function follow(kind) {
@@ -112,14 +138,23 @@ export function createSyncRunner(env) {
     onSyncRunChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     configureSyncRun(h) { hooks = { ...hooks, ...(h || {}) }; },
 
-    async startSyncRun(kind) {
+    async startSyncRun(kind, opts) {
       if (!SYNC_RUN_KINDS.includes(kind)) return null;
       if (run) return null; // one sync at a time — synchronous check-and-set
       run = { kind, startedAt: Date.now(), here: true };
       notify();
+      // Only the Sync page's "Delete them" sends tokens; every other start
+      // is byte-for-byte the request it always was.
+      const confirmed = opts && Array.isArray(opts.confirmDeletions)
+        ? opts.confirmDeletions.filter((t) => typeof t === 'string' && t) : [];
       let next;
       try {
-        const res = await env.fetch('/api/sync/' + kind, { method: 'POST' });
+        const res = confirmed.length
+          ? await env.fetch('/api/sync/' + kind, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ confirmDeletions: confirmed }),
+            })
+          : await env.fetch('/api/sync/' + kind, { method: 'POST' });
         let data = {};
         try { data = await res.json(); } catch { data = {}; }
         if (res.status === 409 && data && data.code === 'sync_running') {
@@ -136,6 +171,10 @@ export function createSyncRunner(env) {
               detail: (data && typeof data.detail === 'string' && data.detail) || null,
               code: (data && typeof data.code === 'string' && data.code) || null,
               at: new Date().toISOString(), seen: false };
+        if (!res.ok && data && isSyncDeletionCode(data.code) && data.details && typeof data.details === 'object') {
+          next.details = data.details;
+          next.confirmed = confirmed;
+        }
       } catch (err) {
         next = { kind, ok: false, message: null, error: (err && err.message) || 'That didn’t work.', at: new Date().toISOString(), seen: false };
       }
@@ -145,9 +184,28 @@ export function createSyncRunner(env) {
     adoptServerSyncJob(payload) {
       if (run) return false;
       const r = payload && payload.running;
-      if (!r || !SYNC_RUN_KINDS.includes(r.kind)) return false;
+      if (!r || !SYNC_RUN_KINDS.includes(r.kind)) {
+        // A run another page started (the Context page's Sync button) that
+        // stopped on the deletion guard's question: bring the question here,
+        // once per job, unless this page already holds that question.
+        const last = payload && payload.last;
+        if (last && last.state === 'failed' && SYNC_RUN_KINDS.includes(last.kind) && isSyncDeletionCode(last.code)
+            && last.details && last.id != null && !askedJobs.has(last.id)
+            && !(outcome && outcome.details && outcome.details.confirmToken === last.details.confirmToken)) {
+          outcome = failedFromJob(last);
+          notify();
+          return true;
+        }
+        return false;
+      }
       follow(r.kind);
       return true;
+    },
+
+    // The person answered the question (Cancel): it is not asked again from
+    // this outcome. The next sync re-counts and asks again if it still applies.
+    dismissDeletionQuestion(o) {
+      if (o && o === outcome && o.details) { outcome = { ...o, details: null, seen: true, dismissed: true }; notify(); }
     },
   };
 }
@@ -165,3 +223,4 @@ export const onSyncRunChange = runner.onSyncRunChange;
 export const configureSyncRun = runner.configureSyncRun;
 export const startSyncRun = runner.startSyncRun;
 export const adoptServerSyncJob = runner.adoptServerSyncJob;
+export const dismissDeletionQuestion = runner.dismissDeletionQuestion;

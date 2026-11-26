@@ -118,7 +118,8 @@ try {
     ok(Object.values(KLASS_CODES).every((c) => CATALOGUE_CODES.includes(c)), 'every klass code is in the catalogue');
     ok(SYNC_CODES.every((c) => CATALOGUE_CODES.includes(c)), 'every sync code is in the catalogue');
     ok(UE.isCatalogueCode === isCatalogueCode && UE.CATALOGUE_CODES === CATALOGUE_CODES, 'the server re-exports the same list');
-    const syncSrc = readFileSync(path.join(ROOT, 'src/brain/sync.js'), 'utf8') + readFileSync(path.join(ROOT, 'src/routes/sync.js'), 'utf8');
+    const syncSrc = readFileSync(path.join(ROOT, 'src/brain/sync.js'), 'utf8') + readFileSync(path.join(ROOT, 'src/routes/sync.js'), 'utf8')
+      + readFileSync(path.join(ROOT, 'src/brain/sync-deletions.js'), 'utf8'); // v4.2.1: the deletion guard's codes
     // The codes sync emits are the literals next to a code key, a refusal() call, or curatorSyncCode.
     const emitted = new Set([...syncSrc.matchAll(/(?:code\s*[:=]\s*|refusal\(\s*|curatorSyncCode\s*[:=]\s*|Code\s*[:=]\s*)'(sync-[a-z0-9-]+)'/g)].map((m) => m[1]));
     const anyLiteral = new Set([...syncSrc.matchAll(/'(sync-[a-z0-9-]+)'/g)].map((m) => m[1]));

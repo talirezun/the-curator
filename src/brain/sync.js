@@ -14,6 +14,9 @@ import { scrubSecrets } from './logger.js';
 import { scrubPaths } from './scrub-paths.js';
 import { toUserError } from './user-errors.js';
 import {
+  summarizeDeletions, confirmedTokens, deletionGuardMessage, DELETION_CODES, isDeletionCode,
+} from './sync-deletions.js';
+import {
   CREDENTIAL_GITIGNORE_RULES, isCredentialPath, scanWorkTree, anchoredIgnoreLine,
   writeExcludeBlock, classifyLeftOut,
 } from './sync-safety.js';
@@ -483,6 +486,10 @@ export function describeSyncError(err, opts = {}) {
   if (err && err.curatorSyncCode) {
     const r = { error: err.message, code: err.curatorSyncCode };
     if (err.curatorSyncDetail) r.detail = sanitizeErrorDetail(err.curatorSyncDetail);
+    // The deletion guard's question carries what the confirm card needs
+    // (v4.2.1); the sync job records it, so a page that did not start the
+    // run can still ask it.
+    if (isDeletionCode(err.curatorSyncCode)) r.details = err.curatorSyncDetails || {};
     return r;
   }
   const raw = errorText(err);
@@ -1864,6 +1871,24 @@ const LAST_SYNC_KEY = 'curator.lastSyncAt';
 // through, so it stops applying after one sync.
 const WORK_TREE_KEY = 'curator.workTree';
 
+// THE REAL FOLDER, recorded too (v4.2.1; v4.1.2 final audit F1). The record
+// above holds the folder as the setting spells it, and comparableFolder()
+// resolves BOTH sides at compare time, so a setting that names a link stayed
+// "unchanged" after the link was pointed at another vault: both sides resolved
+// to the new target and Sync replaced the remote with it. So the folder's
+// realpath is written beside it on every good sync, and compared as recorded
+// (never resolved again: the stored path is the fact; re-resolving it would
+// follow the same moved link). When present it is the one authority: the
+// knowledge folder is the synced one exactly when it resolves to that path.
+// An install with no real record (every one before v4.2.1) keeps the checks it
+// had and is recorded on its next good sync, so nobody is locked out. A
+// current folder whose realpath cannot be taken falls back to those checks too
+// (the deletion guard below still counts what a sync would remove).
+// Legitimate spellings still pass: a symlinked home, /tmp vs /private/tmp,
+// another letter case on APFS (realpath answers the name as stored) and a
+// trailing slash all resolve to the recorded real path.
+const WORK_TREE_REAL_KEY = 'curator.workTreeReal';
+
 // Two sentences, and each names only a way out that works (v4.1.2, candidate
 // audit N2/N3). With a record, the folder routes accept the recorded folder
 // while Sync is connected (src/routes/config.js), so "set it back in
@@ -1877,6 +1902,15 @@ const folderChangedMessage = (recorded) =>
   `GitHub. Nothing was changed. To keep syncing the folder you had, set the knowledge folder back ` +
   `to it in Settings: ${recorded}. To sync this folder instead, open Sync, choose Disconnect, then ` +
   'connect again: connecting shows what it would change before it changes anything.';
+// The setting still names the same path, but it now leads to another folder
+// on disk (a link pointed elsewhere, another drive under the same name).
+const folderMovedMessage = (recordedReal) =>
+  'Your knowledge folder now leads to a different folder on disk than the one Sync backs up on this ' +
+  'computer, so Sync stopped before sending or receiving anything. Syncing now would remove the other ' +
+  'folder\u2019s pages from GitHub. Nothing was changed. To keep syncing the folder you had, point the ' +
+  `knowledge folder back to it, or set it to that folder in Settings: ${recordedReal}. To sync this folder ` +
+  'instead, open Sync, choose Disconnect, then connect again: connecting shows what it would change before ' +
+  'it changes anything.';
 const FOLDER_CHANGED_LEGACY_MESSAGE =
   'Your knowledge folder holds none of the domains Sync backs up on this computer, so Sync stopped ' +
   'before sending or receiving anything. Syncing now would remove those domains from GitHub. ' +
@@ -1904,13 +1938,31 @@ function comparableFolder(p) {
 }
 
 /**
+ * The folder's real path in the same comparable spelling, or null when it
+ * cannot be taken (the folder is missing or unreadable). Resolved once, here.
+ */
+function realFolderOf(p) {
+  let r;
+  try { r = realpathSync.native(path.resolve(String(p))); } catch { return null; }
+  r = r.replace(/[\\/]+$/, '') || r;
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** A RECORDED real path in comparable spelling: never resolved again (see WORK_TREE_REAL_KEY). */
+function comparableRecordedReal(p) {
+  const r = String(p).replace(/[\\/]+$/, '') || String(p);
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/**
  * The folder recorded in this repo's OWN config, exactly as written (no
  * trim: a name may end in a space), or null when none is recorded (git's exit
  * 1). `--local`, so a global or system setting is never read as the record.
- * Any other git failure throws: it is not "no record".
+ * Any other git failure throws: it is not "no record". `key` is
+ * curator.workTree (the default) or curator.workTreeReal.
  */
-async function readRecordedFolder(opts = {}) {
-  const r = await gitArgv(['config', '--local', '--null', '--get', WORK_TREE_KEY], { ...opts, okCodes: [1] });
+async function readRecordedFolder(opts = {}, key = WORK_TREE_KEY) {
+  const r = await gitArgv(['config', '--local', '--null', '--get', key], { ...opts, okCodes: [1] });
   if (r.code === 1) return null;
   const v = r.stdout.endsWith('\0') ? r.stdout.slice(0, -1) : r.stdout;
   return v === '' ? null : v;
@@ -1921,10 +1973,10 @@ async function readRecordedFolder(opts = {}) {
  * is no record OR it cannot be read: the routes then refuse, which is the
  * safe answer.
  */
-function readRecordedFolderSync() {
+function readRecordedFolderSync(key = WORK_TREE_KEY) {
   try {
     const out = execFileSync('git', [
-      ...GIT_CONFIG_ARGS, `--git-dir=${currentGitDir()}`, 'config', '--local', '--null', '--get', WORK_TREE_KEY,
+      ...GIT_CONFIG_ARGS, `--git-dir=${currentGitDir()}`, 'config', '--local', '--null', '--get', key,
     ], { cwd: ROOT, env: GIT_ENV, timeout: 10000, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     const v = out.endsWith('\0') ? out.slice(0, -1) : out;
     return v === '' ? null : v;
@@ -1940,7 +1992,11 @@ function readRecordedFolderSync() {
 export function isRecordedSyncFolder(p) {
   if (!isConfigured() || typeof p !== 'string' || !p) return false;
   const rec = readRecordedFolderSync();
-  return rec !== null && comparableFolder(rec) === comparableFolder(p);
+  if (rec === null) return false;
+  const real = readRecordedFolderSync(WORK_TREE_REAL_KEY);
+  const pReal = real !== null ? realFolderOf(p) : null;
+  if (pReal !== null) return pReal === comparableRecordedReal(real);
+  return comparableFolder(rec) === comparableFolder(p);
 }
 
 /**
@@ -1951,7 +2007,11 @@ export function isRecordedSyncFolder(p) {
 export function syncFolderIsElsewhere() {
   if (!isConfigured()) return false;
   const rec = readRecordedFolderSync();
-  return rec !== null && comparableFolder(rec) !== comparableFolder(getDomainsDir());
+  if (rec === null) return false;
+  const real = readRecordedFolderSync(WORK_TREE_REAL_KEY);
+  const curReal = real !== null ? realFolderOf(getDomainsDir()) : null;
+  if (curReal !== null) return curReal !== comparableRecordedReal(real);
+  return comparableFolder(rec) !== comparableFolder(getDomainsDir());
 }
 
 /** Throws the 'folder-changed' refusal when the folder is not the synced one. */
@@ -1959,8 +2019,17 @@ async function assertSyncedFolderUnchanged(opts = {}) {
   const current = getDomainsDir();
   const recorded = await readRecordedFolder(opts);
   if (recorded !== null) {
-    if (comparableFolder(recorded) === comparableFolder(current)) return;
-    throw refusal('folder-changed', folderChangedMessage(recorded), { field: 'domainsPath', syncedFolder: recorded });
+    // The real path, when recorded beside the path (v4.2.1), is the authority.
+    const recordedReal = await readRecordedFolder(opts, WORK_TREE_REAL_KEY);
+    const currentReal = recordedReal !== null ? realFolderOf(current) : null;
+    if (currentReal !== null && currentReal === comparableRecordedReal(recordedReal)) return;
+    const samePath = comparableFolder(recorded) === comparableFolder(current);
+    if (currentReal === null && samePath) return;
+    // The setting names another folder: say which one to set back. The same
+    // setting now leading somewhere else: say that the folder moved.
+    if (!samePath) throw refusal('folder-changed', folderChangedMessage(recorded), { field: 'domainsPath', syncedFolder: recorded });
+    throw refusal('folder-changed', folderMovedMessage(recordedReal),
+      { field: 'domainsPath', syncedFolder: recordedReal, realPathChanged: true });
   }
   // A failure to list is a failure, never "nothing tracked" (it would let
   // the sync through and record whatever folder is current).
@@ -1980,6 +2049,12 @@ async function recordSyncSuccess(gitDir) {
   try {
     await git(['config', WORK_TREE_KEY, getDomainsDir()], gitDir ? { gitDir } : {});
   } catch { /* the legacy check above still stands for a repo with no record */ }
+  // The real path beside it (v4.2.1), as realpath answers it. Not written
+  // when it cannot be taken: the checks above stand for that repo.
+  try {
+    const real = realpathSync.native(path.resolve(getDomainsDir()));
+    await git(['config', WORK_TREE_REAL_KEY, real], gitDir ? { gitDir } : {});
+  } catch { /* the path record still stands */ }
   try {
     await git(['config', LAST_SYNC_KEY, String(at)], gitDir ? { gitDir } : {});
     await chmod(path.join(gitDir || currentGitDir(), 'config'), 0o600).catch(() => {});
@@ -2823,13 +2898,157 @@ async function connectOwnRepo({ repoUrl, token, mode, opts, remoteUrl, gitDir, a
     await refreshSyncSafety({ gitDir }));
 }
 
-export async function push() {
+// ── The deletion guard (v4.2.1) ─────────────────────────────────────────────
+//
+// The GitHub backup can never be silently emptied. After staging and before
+// any commit, merge or push, this counts what the sync would DELETE: from
+// GitHub (paths the remote still has and this computer's tree no longer has),
+// and on this computer (paths the remote removed that this computer still
+// has). The rules and the token are in sync-deletions.js. A set over the
+// threshold is refused with its count, its domains, a sample and a token,
+// and the index goes back to HEAD: nothing staged, committed, merged or
+// pushed, the work tree untouched. Only a request carrying that token passes.
+//
+// NO CALLER IS EXEMPT. push(), pull() and sync() take the token as an
+// argument and default to none, so every path that runs them without a person
+// at the screen (the Context page's Sync button, an API client, anything
+// added later) is refused and the refusal is recorded on the sync job, where
+// the Sync page shows it as the confirm card.
+//
+// Read from git's own lists, with object ids, so the token is bound to the
+// content that would be lost. A failure to READ throws: it is never "nothing
+// would be deleted".
+
+/** A commit id, or null when `ref` does not exist (exit 1). Any other failure throws. */
+async function commitOrNull(ref) {
+  const r = await gitArgv(['rev-parse', '--verify', '-q', `${ref}^{commit}`], { okCodes: [1] });
+  return r.code === 1 ? null : (r.stdout.trim() || null);
+}
+
+async function mergeBaseOrNull(a, b) {
+  const r = await gitArgv(['merge-base', a, b], { okCodes: [1] });
+  return r.code === 1 ? null : (r.stdout.trim() || null);
+}
+
+/** path → object id for every file in a commit's tree. */
+async function treeEntries(commit) {
+  const { stdout } = await gitArgv(['ls-tree', '-r', '-z', '--full-tree', commit]);
+  const m = new Map();
+  for (const rec of zSplit(stdout)) {
+    const tab = rec.indexOf('\t');
+    if (tab < 0) continue;
+    const oid = rec.slice(0, tab).split(' ')[2];
+    m.set(rec.slice(tab + 1), oid);
+  }
+  return m;
+}
+
+/** path → object id for every entry in the index (what the next commit holds). */
+async function indexEntries() {
+  const { stdout } = await gitArgv(['ls-files', '-s', '-z']);
+  const m = new Map();
+  for (const rec of zSplit(stdout)) {
+    const tab = rec.indexOf('\t');
+    if (tab < 0) continue;
+    m.set(rec.slice(tab + 1), rec.slice(0, tab).split(' ')[1]);
+  }
+  return m;
+}
+
+/**
+ * What syncing the index with `remote` (a commit) would delete, both ways,
+ * against their merge base: `out` = in the base and on the remote, gone from
+ * the index (git would delete them on GitHub); `in` = in the base and in the
+ * index, gone from the remote (the merge would delete them here). Null halves
+ * when there is no remote, no HEAD or no common history: nothing tracked can
+ * be deleted then (a first push, or a push git will refuse as unrelated).
+ */
+async function assessDeletions(remote) {
+  if (!remote) return { out: null, in: null };
+  const head = await commitOrNull('HEAD');
+  if (!head) return { out: null, in: null };
+  const base = await mergeBaseOrNull(head, remote);
+  if (!base) return { out: null, in: null };
+  const [baseTree, remoteTree, index] = await Promise.all([
+    treeEntries(base), base === remote ? null : treeEntries(remote), indexEntries(),
+  ]);
+  const onRemote = remoteTree || baseTree;
+  const out = [];
+  const inc = [];
+  for (const p of baseTree.keys()) {
+    const r = onRemote.has(p);
+    const l = index.has(p);
+    if (r && !l) out.push([p, onRemote.get(p)]);
+    else if (!r && l) inc.push([p, index.get(p)]);
+  }
+  return {
+    out: summarizeDeletions('out', out, onRemote, index, isHygieneJunkPath),
+    in: summarizeDeletions('in', inc, index, onRemote, isHygieneJunkPath),
+  };
+}
+
+function deletionRefusal(summary, confirmed) {
+  const prefix = summary.confirmToken.slice(0, 4);
+  const { significant, total, ...shown } = summary;
+  return refusal(DELETION_CODES[summary.direction], deletionGuardMessage(summary), {
+    ...shown,
+    // A token for this direction was sent and did not match: the set changed
+    // since the person was asked, so they are asked again.
+    stale: confirmed.some((t) => t.startsWith(prefix)),
+  });
+}
+
+/** Index back to HEAD (nothing staged); the work tree is never touched. */
+async function unstageAll() {
+  if (await commitOrNull('HEAD')) await gitArgv(['reset', '-q'], { okCodes: [1] });
+  else await gitArgv(['read-tree', '--empty']);
+}
+
+// The folder's .gitignore before this run's self-heal (ensureDomainsGitignore)
+// wrote it: `undefined` when it could not be read. A refusal puts it back, so
+// the folder is exactly as it was (the self-heal runs again next time).
+async function readGitignoreOrUnknown() {
+  try { return await readFile(path.join(getDomainsDir(), '.gitignore'), 'utf8'); }
+  catch (err) { return err && err.code === 'ENOENT' ? null : undefined; }
+}
+async function putGitignoreBack(before) {
+  if (before === undefined) return;
+  const p = path.join(getDomainsDir(), '.gitignore');
+  const now = await readGitignoreOrUnknown();
+  if (now === undefined || now === before) return;
+  try {
+    if (before === null) await unlink(p);
+    else await writeFileAtomic(p, before, 'utf8');
+  } catch { /* best-effort: the refusal is what the person needs to see */ }
+}
+
+/**
+ * Throws the refusal for the first significant, unconfirmed half, after
+ * putting the index (and the folder's .gitignore) back. `halves` names which
+ * halves this caller guards.
+ */
+async function guardDeletions(remote, confirmed, halves, gitignoreBefore) {
+  const assessed = await assessDeletions(remote);
+  for (const h of halves) {
+    const s = assessed[h];
+    if (s && s.significant && !confirmed.includes(s.confirmToken)) {
+      await unstageAll();
+      await putGitignoreBack(gitignoreBefore);
+      throw deletionRefusal(s, confirmed);
+    }
+  }
+  return assessed;
+}
+
+export async function push(opts = {}) {
+  const confirmed = confirmedTokens(opts.confirmDeletions);
   // Before anything is written, the work tree included (audit O1).
   await assertSyncedFolderUnchanged();
   // Self-heal: existing installs configured before a DOMAINS_GITIGNORE_RULES
   // addition (e.g. the */.write-lock rule) never re-run ensureDomainsGitignore()
   // otherwise — it was previously only called from setup(). Idempotent no-op
   // when the file is already current.
+  const gitignoreBefore = await readGitignoreOrUnknown();
   await ensureDomainsGitignore();
   const safety = await refreshSyncSafety();
   // A gitlink an earlier version committed stays broken with a clean status, so
@@ -2869,11 +3088,17 @@ export async function push() {
   const { stdout } = await git(['status', '--porcelain']);
   const uncommittedCount = stdout.split('\n').filter(Boolean).length;
 
+  if (uncommittedCount > 0) await stageAll(safety);
+  // THE DELETION GUARD, after staging and before the commit (see above): what
+  // this push would delete from GitHub, staged or in commits not yet pushed
+  // (Pull only's auto-save). Against the remote as last fetched; a push over
+  // a remote that moved is refused by GitHub anyway.
+  await guardDeletions(await commitOrNull('refs/remotes/origin/main'), confirmed, ['out'], gitignoreBefore);
+
   if (uncommittedCount > 0) {
     const now  = new Date();
     const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    await stageAll(safety);
     // `add -A` can legitimately cancel out everything `status --porcelain`
     // counted above — most concretely, untrackStaleWriteLocks() staging a
     // "D  <domain>/.write-lock" deletion (counted as 1+ of uncommittedCount)
@@ -2975,56 +3200,35 @@ export async function push() {
  * Throws if there is no origin/main yet (first sync) — both callers treat
  * that as "nothing known to be incoming", never as an error to surface.
  */
-async function countIncoming() {
-  const { stdout: cnt } = await git(['rev-list', '--count', 'HEAD..origin/main']);
+async function countIncoming(rev = 'origin/main') {
+  const { stdout: cnt } = await git(['rev-list', '--count', `HEAD..${rev}`]);
   const commits = parseInt(cnt.trim(), 10) || 0;
   if (commits <= 0) return { commits: 0, files: 0, preview: [] };
 
-  const { stdout: baseOut } = await git(['merge-base', 'HEAD', 'origin/main']);
+  const { stdout: baseOut } = await git(['merge-base', 'HEAD', rev]);
   const base = baseOut.trim();
   if (!base) return { commits, files: 0, preview: [] };
 
-  const { stdout: names } = await git(['diff', '--name-only', `${base}..origin/main`]);
+  const { stdout: names } = await git(['diff', '--name-only', `${base}..${rev}`]);
   const list = names.split('\n').filter(Boolean);
   return { commits, files: list.length, preview: list.slice(0, 20) };
 }
 
-export async function pull() {
+export async function pull(opts = {}) {
+  const confirmed = confirmedTokens(opts.confirmDeletions);
   // Before anything is written, the work tree included (audit O1).
   await assertSyncedFolderUnchanged();
   // Self-heal: see push() — keeps .gitignore current on installs configured
   // before a DOMAINS_GITIGNORE_RULES addition. Safe to run before the merge:
   // it only writes a config FILE, never touches a path the incoming merge
   // might also want to write.
+  const gitignoreBefore = await readGitignoreOrUnknown();
   await ensureDomainsGitignore();
   const safety = await refreshSyncSafety();
 
   // Self-heal: a sync killed between its merge and the record step below left
   // HEAD on an unreconciled merge. Before the auto-save, which would bury it.
   await reconcileRecordFiles(null);
-
-  // Auto-commit local changes so the pull merge succeeds — unchanged,
-  // pre-existing behaviour (real content, unrelated to hygiene).
-  const { stdout } = await git(['status', '--porcelain']);
-  if (stdout.trim()) {
-    const date = new Date().toLocaleString();
-    await stageAll(safety);
-    await guardedCommit(`Auto-save before sync — ${date}`);
-  }
-
-  // The prune's baseline — see pruneGhostDomainDirs(). Captured HERE, after
-  // the auto-save commit and before the merge, so the deletion diff below
-  // contains only what the REMOTE removed. Capturing it earlier would put
-  // the user's own local deletions into that diff and hand the prune a
-  // nomination it has no business acting on.
-  //
-  // An unborn HEAD (a repo with no commits) throws; that is not an error
-  // condition here, it means nothing can have been deleted yet.
-  let preMergeHead = null;
-  try {
-    const { stdout: headSha } = await git(['rev-parse', 'HEAD']);
-    preMergeHead = headSha.trim() || null;
-  } catch { /* no commits yet — prune nothing */ }
 
   // ── THIS FETCH IS FOR REPORTING ONLY, AND ITS FAILURE MUST NOT ABORT THE
   // SYNC (RELEASE-BLOCKER fix) ────────────────────────────────────────────
@@ -3069,16 +3273,65 @@ export async function pull() {
   // confusing reports like "pulled 206 / pushed 206" for the same 206 files.
   // Using `merge-base` lets us count only files origin advanced beyond the
   // common ancestor (v3.0.1-beta.6).
+  //
+  // v4.2.1, THE DELETION GUARD: the fetch now comes BEFORE the auto-save, and
+  // the merge below merges the exact commit that was assessed (`target`),
+  // never "whatever `git pull` fetches next", so what the person confirmed is
+  // what is merged. If the reporting fetch lost a ref race to another process
+  // (the cross-process case above), a second fetch that writes NO ref
+  // (`--refmap=`: FETCH_HEAD only, so it cannot lose that race) names the
+  // commit. Only when both fail does the pull stop, with the fetch's own
+  // error, which is the same text `git pull`'s internal fetch printed.
   let filesPulled = 0;
   let commitsPulled = 0;
   let filePreview = [];
+  let target = null;
+  let fetchErr = null;
+  for (const args of [['origin', 'main'], ['--refmap=', 'origin', 'main']]) {
+    try {
+      await gitFetch(args, { timeout: 120000 });
+      target = await commitOrNull(args[0] === 'origin' ? 'refs/remotes/origin/main' : 'FETCH_HEAD');
+      if (target) break;
+    } catch (err) { fetchErr = err; }
+  }
+  if (!target) throw fetchErr || new Error("git fetch failed: fatal: couldn't find remote ref main");
   try {
-    await gitFetch(['origin', 'main'], { timeout: 120000 });
-    const incoming = await countIncoming();
+    const incoming = await countIncoming(target);
     commitsPulled = incoming.commits;
     filesPulled   = incoming.files;
     filePreview   = incoming.preview;
-  } catch { /* no remote yet, or a losing ref race — the merge below decides */ }
+  } catch { /* a count that cannot be made is reported as 0, as before */ }
+
+  // Stage local changes, then THE DELETION GUARD, before the auto-save
+  // commit: what this sync would delete from GitHub (local deletions the
+  // auto-save would commit and the next push would send) and on this
+  // computer (what the remote removed). Over the threshold and unconfirmed:
+  // the index goes back to HEAD and nothing is committed or merged.
+  const { stdout } = await git(['status', '--porcelain']);
+  const dirty = !!stdout.trim();
+  if (dirty) await stageAll(safety);
+  await guardDeletions(target, confirmed, ['out', 'in'], gitignoreBefore);
+
+  // Auto-commit local changes so the pull merge succeeds — unchanged,
+  // pre-existing behaviour (real content, unrelated to hygiene).
+  if (dirty) {
+    const date = new Date().toLocaleString();
+    await guardedCommit(`Auto-save before sync — ${date}`);
+  }
+
+  // The prune's baseline — see pruneGhostDomainDirs(). Captured HERE, after
+  // the auto-save commit and before the merge, so the deletion diff below
+  // contains only what the REMOTE removed. Capturing it earlier would put
+  // the user's own local deletions into that diff and hand the prune a
+  // nomination it has no business acting on.
+  //
+  // An unborn HEAD (a repo with no commits) throws; that is not an error
+  // condition here, it means nothing can have been deleted yet.
+  let preMergeHead = null;
+  try {
+    const { stdout: headSha } = await git(['rev-parse', 'HEAD']);
+    preMergeHead = headSha.trim() || null;
+  } catch { /* no commits yet — prune nothing */ }
 
   // ── ORDERING IS LOAD-BEARING (HIGH-severity adversarial-audit finding,
   // fixed here) ──────────────────────────────────────────────────────────
@@ -3108,9 +3361,12 @@ export async function pull() {
   // While `.write-lock`/`.DS_Store` are still tracked locally at merge
   // time, the merge treats them as normal file updates instead of an
   // untracked-file collision.
+  // The commit that was assessed, and no other (v4.2.1). `-X theirs` as
+  // `git pull --no-rebase -X theirs origin main` used, which this replaces.
+  const mergeArgs = ['merge', '--no-edit', '-X', 'theirs', '-m', "Merge branch 'main' of GitHub (The Curator sync)", target];
   let pullOut;
   try {
-    ({ stdout: pullOut } = await git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main'], { timeout: 120000 }));
+    ({ stdout: pullOut } = await git(mergeArgs, { timeout: 120000 }));
   } catch (err) {
     // Even with the reordering above, the SAME preflight check (or a
     // genuine modify/delete conflict — see recoverHygieneMergeConflict) can
@@ -3122,7 +3378,7 @@ export async function pull() {
     // ONLY when every implicated path is unambiguously one of our own
     // hygiene junk files — never for anything that could be real wiki
     // content.
-    pullOut = await recoverHygieneMergeConflict(err);
+    pullOut = await recoverHygieneMergeConflict(err, mergeArgs);
   }
 
   // Record files both computers appended to: keep both sides' records, which
@@ -3212,7 +3468,7 @@ export async function pull() {
  * unchanged: auto-resolving a genuine merge conflict risks silently
  * discarding the user's work, which must never happen.
  */
-async function recoverHygieneMergeConflict(err) {
+async function recoverHygieneMergeConflict(err, mergeArgs = ['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main']) {
   const untrackedPaths = extractUntrackedOverwritePaths(err.message);
   if (untrackedPaths.length > 0) {
     if (!untrackedPaths.every(isHygieneJunkPath)) throw err;
@@ -3223,7 +3479,7 @@ async function recoverHygieneMergeConflict(err) {
     // state is created — so a plain retry is the correct next step. If this
     // retry ALSO throws (e.g. a genuinely different problem), it propagates
     // unchanged to the caller; we deliberately do not loop/recurse here.
-    const { stdout } = await git(['pull', '--no-rebase', '-X', 'theirs', 'origin', 'main'], { timeout: 120000 });
+    const { stdout } = await git(mergeArgs, { timeout: 120000 });
     return stdout;
   }
 
@@ -3510,11 +3766,14 @@ async function pruneGhostDomainDirs(preMergeHead) {
   return { pruned, keptLocalContent };
 }
 
-export async function sync() {
+export async function sync(opts = {}) {
   // Bidirectional sync: pull remote changes first, then push local changes.
-  // This is the safest order — always get the latest before pushing.
-  const pullResult = await pull();
-  const pushResult = await push();
+  // This is the safest order — always get the latest before pushing. The
+  // same confirmations reach both halves: the deletion tokens are bound to
+  // the deletion set, not to HEAD, so the pull's auto-save does not make the
+  // push ask again.
+  const pullResult = await pull(opts);
+  const pushResult = await push(opts);
   return { pullResult, pushResult };
 }
 
@@ -3871,6 +4130,9 @@ export const __testing = {
   assertSyncedFolderUnchanged,
   readRecordedFolder,
   WORK_TREE_KEY,
+  WORK_TREE_REAL_KEY,
+  assessDeletions,
+  guardDeletions,
   setAsideUnfinishedConnect,
   repoIdentity,
   foreignSyncGitDirCandidate,

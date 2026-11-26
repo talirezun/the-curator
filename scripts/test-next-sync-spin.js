@@ -249,7 +249,7 @@ section('6. Source-level guard — onAction() repaints on BOTH the start and the
   // The runner settles on success AND on a caught error (its try/catch always
   // reaches settle()); both behaviours are driven for real in
   // scripts/test-sync-run-survives-navigation.js §2d/§2j and §3b/§3c.
-  ok(/await startSyncRun\(kind\)/.test(onAction), 'onAction hands the run to the shell-level runner');
+  ok(/await startSyncRun\(kind(, opts)?\)/.test(onAction), 'onAction hands the run to the shell-level runner');
   const changed = extractFunction(syncSrc, 'onSyncRunChanged', 'views/sync.js');
   ok(/seedFromSyncRun\(state,[\s\S]*render\(mountToken\)/.test(changed), 'a settle clears state.acting (seedFromSyncRun) and repaints — never left spinning after a failed sync');
 }
