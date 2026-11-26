@@ -268,7 +268,9 @@ scripts/
                                   second-computer Merge/Pull), test-config-durability.js and
                                   test-config-durability-ui.js (damaged settings files, the banner, the routes),
                                   test-sharedbrain-safety-v412.js, test-mcp-install-safety.js,
-                                  test-win-atomic-write.js, test-win-setup-check.js, test-onboarding-steps.js
+                                  test-win-atomic-write.js, test-win-setup-check.js, test-onboarding-steps.js,
+                                  test-credential-kept-copies.js (kept settings copies are credentials),
+                                  test-sharedbrain-empty-repo.js (Pull on a repository with no commit)
 domains/
   <domain>/
     CLAUDE.md         — domain schema (system prompt for LLM)

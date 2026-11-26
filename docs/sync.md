@@ -341,12 +341,16 @@ have removed them on its next pull. Now:
 | You do | What happens |
 |---|---|
 | Settings › Knowledge base › **Choose folder**, a pasted path, or Domains › **Use existing folder** | Refused before anything changes: *"Disconnect Sync before you change the folder"* |
-| The folder changes another way (an edited settings file, `--domains-path`, an older version) | **Sync now**, **Push only** and **Pull only** stop before sending or receiving anything: *"Your knowledge folder is not the one Sync backs up on this computer…"* |
+| The folder changes another way (an edited settings file, **Start fresh** on a damaged settings file, `--domains-path`, an older version) | **Sync now**, **Push only** and **Pull only** stop before sending or receiving anything: *"Your knowledge folder is not the one Sync backs up on this computer…"*, naming the folder Sync backs up |
+| Then you choose that folder again in Settings (or paste its path) | Accepted while Sync is connected: it is the way back. Any other folder is still refused |
 
 To move to another folder: open **Sync → Disconnect**, change the folder, then connect Sync again.
 Connecting shows what it would change before it changes anything. To keep syncing the folder you had,
-set it back in Settings. The folder Sync backs up is recorded on this computer only, inside its sync
-history; it is never pushed. An install connected before v4.1.2 records it on its first sync.
+set it back in Settings: the message names it. The folder Sync backs up is recorded on this computer
+only, inside its sync history, exactly as written (a name ending in a space included); it is never
+pushed. An install connected before v4.1.2 records it on its first sync; until then, if the folder
+holds none of the domains Sync backs up, the message names only Disconnect, because there is no
+recorded folder to go back to.
 
 ---
 

@@ -6745,7 +6745,7 @@ A connect that stops (a wrong token, a typo in the address, no network, a refuse
 | *"That repository address is not one Sync can use…"* | The address has spaces, is not a repository address, or is something else pasted by mistake | Paste the repository's own address, such as `https://github.com/your-name/your-wiki`. A trailing `/` or a pasted `…/tree/main` is fine |
 | *"That token is not in a shape GitHub issues…"* | Part of the token, or extra spaces | Copy the whole token again (it starts with `ghp_` or `github_pat_`) |
 | *"Sync is already connected on this computer…"* | Connect was sent to a connected install | To use another repository, **Disconnect** first. To change only the token, use **Replace token** |
-| *"Your knowledge folder is not the one Sync backs up on this computer…"* | The knowledge folder changed after Sync was connected | Set the folder back in Settings, or Disconnect and connect again. Nothing was sent or received |
+| *"Your knowledge folder is not the one Sync backs up on this computer…"* | The knowledge folder changed after Sync was connected | Set the folder back in Settings to the folder the message names (accepted while Sync is connected), or Disconnect and connect again. Nothing was sent or received |
 | *"Sync could not start because git left a lock file behind…"* (`sync-index-locked`) | A git command was stopped part-way (a crash, a laptop that slept) | Quit every Curator window, delete `index.lock` inside the `.knowledge-git` folder, then sync again |
 
 The lock-file message has a code in the [error catalogue](errors.md#sync), with every other Sync message; the four Connect and folder sentences above are complete in themselves and carry no catalogue code.
@@ -7440,8 +7440,11 @@ it is what makes the button safe to press, not an explanation.
 > you change the folder"*, and nothing changes. To use another folder: open **Sync**, choose
 > **Disconnect**, change the folder, then connect Sync again (Connect shows what it would change
 > before it changes anything). If the folder changes some other way (an edited settings file, a
-> `--domains-path`), Sync stops before sending or receiving anything and says so; set the folder
-> back, or Disconnect and connect again.
+> `--domains-path`, **Start fresh** on a damaged settings file), Sync stops before sending or receiving
+> anything and says so, naming the folder it backs up; set the folder back to that one (Settings
+> accepts it while Sync is connected), or Disconnect and connect again. When **Choose folder** is
+> refused because Sync is connected, Settings shows the refusal and no field to paste a path: a pasted
+> path follows the same rule.
 
 > **On Windows** a chosen or pasted folder is also checked against Windows' own rules: OneDrive,
 > Controlled folder access, long paths, reserved names (CON, NUL…), a whole drive, a network share,

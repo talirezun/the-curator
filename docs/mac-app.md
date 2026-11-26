@@ -605,7 +605,9 @@ untouched): set the keys again and choose the folder again in Settings › Knowl
 **"Disconnect Sync before you change the folder"** *(v4.1.2)*
 
 Sync is connected and backs up the folder you have now, so the knowledge folder can't change. Open
-**Sync → Disconnect**, change the folder, then connect again.
+**Sync → Disconnect**, change the folder, then connect again. After **Start fresh** on the settings
+file, Sync says your folder is not the one it backs up and names that folder: choose it again in
+Settings › Knowledge base (accepted while Sync is connected) and Sync works again.
 
 **"The Curator could not start" dialog appears**
 

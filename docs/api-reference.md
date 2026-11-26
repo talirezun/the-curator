@@ -2733,11 +2733,14 @@ automatically), or `sync-failed` for a failure it does not recognise).
 **v4.1.2 (argv-only git, the folder guard).** Every git command runs through `execFile`
 with an argument array; nothing reaches a shell, so a folder, URL or token is always one
 argument whatever it contains. `POST /push`, `/pull` and `/sync` refuse with code
-**`folder-changed`** (`{error, code, details: {field: "domainsPath"}}`), before anything is
+**`folder-changed`** (`{error, code, details: {field: "domainsPath", syncedFolder?}}`), before anything is
 sent or received, when the knowledge folder is not the one this install backs up (recorded
-in the sync repository's own git config as `curator.workTree`; a repository with no record
-yet is checked by what it tracks). The sentence says to set the folder back, or to
-Disconnect and connect again. Before, an unrecognised failure
+in the sync repository's own git config as `curator.workTree`, read with `--local` and
+compared exactly: no trim; only `..`, a trailing separator, links and, on Windows, letter
+case are folded; a repository with no record yet is checked by what it tracks). With a
+record, the sentence names that folder (`syncedFolder`) and says to set it back in Settings
+(the folder routes accept exactly that folder while connected), or to Disconnect and connect
+again; with no record, it names only Disconnect. Before, an unrecognised failure
 answered with git's own text, home path and all. `GET /remote-status` is polled in the
 background, so it carries `remoteError` (the sentence) and `remoteErrorCode`, and never
 a `detail`.
@@ -2834,7 +2837,7 @@ business in a URL.
 |---|---|
 | `remoteHasMain` | The repository has a `main` branch. `false` means empty — not an error |
 | `localHasContent` | The domains folder holds at least one domain |
-| `overwriteCount` / `overwriteSample` | Files that exist **on both sides with different content**, i.e. what a checkout would replace. Sample is the first 10, sorted |
+| `overwriteCount` / `overwriteSample` | Files that exist **on both sides with different content**, i.e. what a checkout would replace, and (v4.1.2) any local file, link or folder **in the way** of the repository's (a file `alpha` where the repository has `alpha/…`), listed by its local path. Sample is the first 10, sorted |
 | `createCount` | Files the checkout would merely create |
 | `foreignSyncRepo` | Another install's sync repository governing this same folder, or `null`. `originUrl` has credentials stripped |
 | `recommendedMode` | `adopt` \| `push` \| `merge` \| `pull` — a **UI hint**. Note `adopt` is *not* a valid `mode` for `POST /setup`; adoption is detected there, not requested |
@@ -6341,7 +6344,9 @@ The path is normalised (`..` resolved) and the **normalised** path is what is ap
 
 **Sync connected (v4.1.2)** — while Sync is connected the folder cannot change: `400
 {ok: false, reason: "sync-connected", error}`, the sentence saying to open Sync, choose Disconnect,
-change the folder, then connect again. Before v4.1.2 the next Sync after a folder change committed the
+change the folder, then connect again. Two paths are accepted while connected: the folder already
+set (nothing changes), and the folder Sync recorded (`curator.workTree`), which is how an install in
+the `folder-changed` state gets back; in that state the sentence says only that folder is accepted. Before v4.1.2 the next Sync after a folder change committed the
 new folder as the whole wiki and removed every other domain from GitHub.
 
 **Error response** `400` — `{"error": "path is required"}`, or, since v3.87.1 (when this became the
@@ -6412,7 +6417,8 @@ field beside every picker refusal. No body.
 the typed path's own refusals (`reason` as for [`domains-path`](#post-apiconfigdomains-path): until
 v4.1.2 only Windows validated a picked folder, so macOS and Linux applied the app's own code folder) ·
 `400 {ok: false, reason: "sync-connected", error}` while Sync is connected, answered **before** the
-dialog opens · **Refusal response** `409` — an in-flight write.
+dialog opens (except in the `folder-changed` state, when the dialog opens and only the folder Sync
+recorded is accepted) · **Refusal response** `409` — an in-flight write.
 
 **On Windows** (2026-11-20; the PowerShell dialog of the browser install and the Electron dialog of
 the Windows app) a picked folder goes through the same Windows rules as a typed one (see
