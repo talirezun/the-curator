@@ -32,6 +32,8 @@ import { explainerMark, explainerHtml } from '../../src/public/next/shared/expla
 import { formatAge, freshnessTier } from '../../src/public/next/shared/age.js';
 import { domainIdentityClass } from '../../src/public/next/shared/sidebar.js';
 import { gatedLoader } from '../../src/public/next/shared/loading-gate.js';
+// Phase 2: the page's kit notice that sends connecting to Projects › Agents.
+import { notice as kitNotice } from '../../src/public/next/shared/notice.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SETTINGS_SRC = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
@@ -69,7 +71,7 @@ export const PAGE_FUNCTIONS = ['renderMcp', 'mcpSection', 'mcpOverviewHtml', 'mc
   'renderToolMapBody', 'installRevealPaths', 'installMachineFiles', 'currentBridgeFacts', 'lastSelfTest',
   'lastExerciseRun', 'installWords', 'installPlatform', 'ageSecondsOf', 'agentReading',
   'tickedAgeHtml', 'sessionLine', 'mcpToolCount', 'lastConnectionTest', 'lastAgentUseAt', 'lastAppStartAt'];
-const CONSTS = ['mcpMetaAges', 'AGENT_USE_TOP', 'MCP_LEDE', 'MCP_FOOT', 'SKILLS_LEDE_HTML', 'MCP_DOMAIN_CONSEQUENCE'];
+const CONSTS = ['MCP_PROJECTS_NOTICE', 'mcpMetaAges', 'AGENT_USE_TOP', 'MCP_LEDE', 'MCP_FOOT', 'SKILLS_LEDE_HTML', 'MCP_DOMAIN_CONSEQUENCE'];
 
 function bodyOf(src) {
   const code = stripComments(src);
@@ -84,7 +86,7 @@ const listbox = (cfg) => '<span class="lb" data-lb-root="' + esc(cfg.id) + '"><b
   + esc((cfg.options.find((o) => o.value === cfg.value) || cfg.options[0]).label) + '</span></button></span>';
 
 const DEPS = {
-  escapeHtml: esc, icon, renderListboxHtml: listbox, explainerMark, explainerHtml, renderOverview, renderMonitor,
+  escapeHtml: esc, icon, kitNotice, renderListboxHtml: listbox, explainerMark, explainerHtml, renderOverview, renderMonitor,
   renderStatus, renderDescription, formatAge, freshnessTier, domainIdentityClass, gatedLoader,
   machineWord: MI.machineWord, adaptMachine: MI.adaptMachine, adaptBridges: MI.adaptBridges, tildePath: MI.tildePath,
   renderAgentApps: MI.renderAgentApps, countsFor: MI.countsFor, appRowModels: MI.appRowModels,

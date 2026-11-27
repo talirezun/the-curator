@@ -77,3 +77,13 @@
   flex: none;
   color: var(--text-faint);
 }
+
+/* A NARROW WINDOW (phase 2, measured at 375 px): the title and meta keep the
+   first line; the chip, the one action and the chevron wrap under them,
+   indented to the text, instead of pushing the row past the window. */
+@media (max-width: 600px) {
+  .kit-row { flex-wrap: wrap; row-gap: var(--space-3); }
+  .kit-row-text { flex: 1 1 calc(100% - 24px); }
+  .kit-row-status { margin-left: auto; }
+  .kit-row-meta { white-space: normal; }
+}

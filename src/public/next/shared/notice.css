@@ -54,5 +54,8 @@
 
 @media (max-width: 600px) {
   .kit-notice-main { flex-wrap: wrap; }
-  .kit-notice-acts { width: 100%; padding-left: calc(16px + var(--space-6)); }
+  /* border-box and wrapping (phase 2, measured at 375 px): the padded row
+     was 100% PLUS its indent, and two buttons did not fit one line. */
+  .kit-notice-acts { width: 100%; box-sizing: border-box; flex-wrap: wrap; padding-left: calc(16px + var(--space-6)); }
+  .kit-notice-text { min-width: 0; flex: 1 1 0; }
 }

@@ -366,8 +366,12 @@ for (const v of ALL) {
 // and the reason the field could be re-pointed at a different word at all. An
 // abbreviation would have had to stay "Memory".
 eq(R.api.VIEW_META.shared.caption, 'Shared', 'Shared Brain shortens to "Shared" on the rail');
-eq(R.api.VIEW_META.memory.caption, 'Context', 'Project context shortens to "Context" on the rail');
-ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Project context',
+// PHASE 2 (2026-11-27, owner decision D3): the view is "Projects" — one word,
+// so its caption, label and title are the same word; only Shared Brain still
+// shortens.
+eq(R.api.VIEW_META.memory.caption, 'Projects', 'the project view is "Projects" on the rail');
+ok(R.api.VIEW_META.shared.title === 'Shared Brain' && R.api.VIEW_META.memory.title === 'Projects'
+  && R.api.VIEW_META.memory.label === 'Projects',
   'the FULL names survive on `title` — the caption shortens the rail, not the app');
 // THE VIEW ID DOES NOT MOVE (rename Tier C, refused). `memory` is the stored
 // `curator-next-view` value, the onboarding agent door's target, and the

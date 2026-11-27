@@ -392,6 +392,7 @@ export function historyPanel(m) {
 /** m = { budgetPickersHtml, meterHtml, layers: [{layer, tokens, size, share}], receivesHtml, reachHtml, errorsHtml } */
 export function budgetPanel(m) {
   const out = [];
+  out.push(notices(m.notices));
   out.push(flow(m.budgetPickersHtml, 'budgetPickersHtml'));
   out.push(flow(m.meterHtml, 'meterHtml'));
   if (Array.isArray(m.layers) && m.layers.length) {

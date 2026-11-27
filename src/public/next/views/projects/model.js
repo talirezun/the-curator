@@ -51,6 +51,24 @@ export function firstSentence(text) {
 }
 
 /**
+ * A notice title of at most 12 words (the kit's rule) and the rest of the
+ * sentence for its line — NOTHING is dropped: a longer first sentence is cut
+ * at a clause break (" (", ";", ",", " — ") inside the first 12 words, else
+ * after word 12, and what follows leads the line.
+ */
+export function noticeTitle(text, max = 12) {
+  const [first, after] = firstSentence(text);
+  const w = first.split(/\s+/).filter(Boolean);
+  if (w.length <= max) return [first, after];
+  const head = w.slice(0, max).join(' ');
+  const cut = Math.max(head.lastIndexOf(' ('), head.lastIndexOf('; '), head.lastIndexOf(', '), head.lastIndexOf(' — '));
+  const at = cut > 20 ? cut : head.length;
+  const title = first.slice(0, at).replace(/[,;(—\s]+$/, '') + '.';
+  const rest = first.slice(at).replace(/^[\s,;—]+/, '').replace(/^\((.*)\)\.?$/, '$1.');
+  return [title, [rest, after].filter(Boolean).join(' ')];
+}
+
+/**
  * Every <button> in a piece of setup-step.js markup, as kit action specs
  * ({label, attrs}): its words and its data-* attributes, which are what the
  * view's delegated listeners (`bindSetup`) key on. Links (a skill .zip) are
@@ -162,7 +180,7 @@ export function toFixNotices(data) {
   const tools = ((data && data.tools) || []).filter(Boolean);
   return toFix.map((f) => {
     const text = plainText(String(f.text || ''));
-    const [title, rest] = firstSentence(text);
+    const [title, rest] = noticeTitle(text);
     const detail = plainText(String(f.detail || ''));
     const t = isStr(f.tool) ? tools.find((x) => x && x.id === f.tool) : null;
     const fixes = Array.isArray(f.fixes) ? f.fixes : [];

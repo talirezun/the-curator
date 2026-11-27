@@ -158,3 +158,33 @@ export function parityFaults(proHtml, simpleHtml) {
   return protectedTexts(proHtml, { words: true }).filter((t) => !visible.includes(unbyte(t)))
     .map((t) => `shown in Pro but not in the simple view: "${t.slice(0, 160)}"`);
 }
+
+/**
+ * Rule 3 (phase 2, the Projects page — D1 "two layouts, one model"): a page
+ * whose Simple and Pro layouts are DIFFERENT renders, compared TAB BY TAB.
+ *
+ *   simpleTabs  { tabId: html }  every tab Simple draws, rendered with Pro OFF
+ *   proTabs     { tabId: html }  every tab Pro draws, rendered with Pro ON
+ *   proOnly     [tabId…]         the tabs that exist only in Pro
+ *
+ * Faults:
+ *   · a protected text (a warning, a refusal, an outcome, a cost) in ANY Pro
+ *     tab that is not visible somewhere in the Simple tabs — the never-hide
+ *     rule over the whole page, not one block;
+ *   · in a Pro-only tab the same fault is named for where it lives: a
+ *     Pro-only tab can never hold a never-hide item Simple does not show;
+ *   · a Pro-only tab that Simple draws anyway.
+ */
+export function pageParityFaults({ simpleTabs = {}, proTabs = {}, proOnly = [] } = {}) {
+  const faults = [];
+  const simpleAll = Object.values(simpleTabs).join('\n');
+  for (const id of proOnly) {
+    if (Object.prototype.hasOwnProperty.call(simpleTabs, id)) faults.push(`the Pro-only tab "${id}" is drawn in Simple`);
+  }
+  for (const [id, html] of Object.entries(proTabs)) {
+    for (const f of parityFaults(html, simpleAll)) {
+      faults.push((proOnly.includes(id) ? `the Pro-only tab "${id}" holds a never-hide item — ` : `tab "${id}": `) + f);
+    }
+  }
+  return faults;
+}

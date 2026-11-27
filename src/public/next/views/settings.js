@@ -140,7 +140,10 @@ import {
   preserveMainScroll, resetMainScroll, revealInMain,
   currentFontScale, fontScaleOptions, setFontScale,
   consumeSettingsSection, refreshSyncBadge,
+  // Phase 2: the MCP bridge's notice opens Projects › Agents.
+  navigate,
 } from '../app.js';
+import { notice as kitNotice } from '../shared/notice.js';
 // ── SETTINGS › TRASH (v3.76.0) ────────────────────────────────────────────
 // The words, the one typed-confirmation predicate and the outcome sentences,
 // in a DOM-free module so scripts/test-trash-restore.js imports the real
@@ -9120,6 +9123,12 @@ function renderSkillsCard() {
 }
 
 
+// PHASE 2 (owner decision D8): connecting an agent is one flow started from a
+// project. This page keeps its content (phase 5 slims it) and says so first.
+const MCP_PROJECTS_NOTICE = () => kitNotice({ tone: 'info', title: 'Connect agents from a project now.',
+  line: 'Projects › Agents walks you through it, one agent at a time; this page keeps the details.',
+  actions: [{ label: 'Open Projects', attrs: { 'data-mcpi-act': 'to-projects' } }] });
+
 function renderMcp() {
   // THE PAGE (v3.90.0, the copy deck): OVERVIEW, then four numbered sections
   // — ① Your AI apps · ② Skills · ③ Connection test · ④ Tool activity —
@@ -9131,15 +9140,15 @@ function renderMcp() {
     // jump when the readings land — and only once the gate says a loader is
     // worth showing (no flash on a fast load).
     if (!(loadGate && loadGate.visible)) return '';
-    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', gatedLoader(loadGate, 'Checking your agent harnesses…', 'tx-note'));
+    return renderPageLede(MCP_LEDE) + MCP_PROJECTS_NOTICE() + mcpOverviewHtml() + apps('', gatedLoader(loadGate, 'Checking your agent harnesses…', 'tx-note'));
   }
   if (state.mcpError) {
-    return renderPageLede(MCP_LEDE) + mcpOverviewHtml() + apps('', renderUserError({ error: state.mcpError, detail: errorDetailOf(state.mcpError) }, { title: 'Could not check your agent harnesses' }));
+    return renderPageLede(MCP_LEDE) + MCP_PROJECTS_NOTICE() + mcpOverviewHtml() + apps('', renderUserError({ error: state.mcpError, detail: errorDetailOf(state.mcpError) }, { title: 'Could not check your agent harnesses' }));
   }
   const n = mcpToolCount();
   // The page's one-line lede is the column's first block under the view
   // header (renderViewHeader has, on purpose, no prose slot).
-  return renderPageLede(MCP_LEDE) + mcpOverviewHtml()
+  return renderPageLede(MCP_LEDE) + MCP_PROJECTS_NOTICE() + mcpOverviewHtml()
     + apps(appsMetaWords(), renderAgentAppsCard())
     + mcpSection(2, 'skills', 'Skills', explainerMark('mcp-sec-skills-info', 'settings.mcp-skills'), skillsMetaWords(), renderSkillsCard(),
       { lede: SKILLS_LEDE_HTML, ledeIsHtml: true })
@@ -10735,6 +10744,10 @@ function focusReplaceInput() {
 /** v3.85.0 — the install panel's controls. Every write starts at a click here. */
 function wireInstallListeners(token) {
   const mi = state.mcpInstall;
+  // Phase 2: the page's notice (above the overview) opens Projects.
+  document.querySelectorAll('.kit-notice [data-mcpi-act="to-projects"]').forEach((el) => {
+    el.addEventListener('click', () => navigate('memory'));
+  });
   const root = '#mcp-card-apps ';
   document.querySelectorAll(root + '[data-mcpi-tick]').forEach((el) => {
     el.addEventListener('change', () => {
