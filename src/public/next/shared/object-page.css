@@ -1,0 +1,44 @@
+/* shared/object-page.css — THE PAGE ANATOMY (kit v1). shared/object-page.js
+   owns the markup; this file owns the `kit-op` prefix. Header, one status
+   sentence, the tab strip, the body. */
+
+.kit-op { display: block; min-width: 0; }
+.kit-op-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+.kit-op-titles { flex: 1 1 auto; min-width: 0; }
+.kit-op-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-2);
+  font: var(--weight-regular) var(--text-md)/var(--leading-snug) var(--font-sans);
+  color: var(--text-3);
+}
+.kit-op-title {
+  margin: 0;
+  font: var(--type-h1);
+  letter-spacing: var(--track-title);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.kit-op-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.kit-op-status {
+  margin: var(--space-4) 0 0;
+  max-width: 48rem;
+  font: var(--weight-regular) var(--text-lg)/var(--leading-normal) var(--font-sans);
+  color: var(--text-2);
+}
+.kit-op-tabs { margin: var(--space-12) 0 var(--space-12); }
+.kit-op-body { min-width: 0; }
+
+@media (max-width: 600px) {
+  .kit-op-head { flex-wrap: wrap; }
+}

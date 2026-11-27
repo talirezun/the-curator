@@ -1,0 +1,79 @@
+/* shared/tabs.css — TABS and SEGMENTED (kit v1). shared/tabs.js owns the
+   markup; this file owns the `kit-tab` and `kit-seg` prefixes. */
+
+/* ── Tabs: an underlined strip on the page's hairline ──────────────────── */
+.kit-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.kit-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--hit-min);
+  padding: var(--space-4) var(--space-7) var(--space-5);
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: var(--weight-medium) var(--text-base)/1 var(--font-sans);
+  letter-spacing: var(--track-body);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color var(--t-state), background-color var(--t-state);
+}
+.kit-tab:hover { color: var(--text); background: var(--mat-row-hover); }
+.kit-tab.is-active,
+.kit-tab[aria-selected="true"] { color: var(--text); }
+.kit-tab[aria-selected="true"]::after {
+  content: '';
+  position: absolute;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+/* A Pro tab is drawn only while Pro is on; its label carries the accent
+   text so the extra tabs read as the Pro set without a "PRO" label on each. */
+.kit-tab-pro { color: var(--accent-text); }
+.kit-tab-count {
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-sans);
+  font-variant-numeric: var(--numeric-tabular);
+  color: var(--text-2);
+  background: var(--mat-row-hover);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ── Segmented: 2–4 choices of one setting ─────────────────────────────── */
+.kit-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--surface-inset);
+}
+.kit-seg-opt {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
+  padding: 0 var(--space-6);
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: var(--text-3);
+  font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color var(--t-state), background-color var(--t-state);
+}
+.kit-seg-opt:first-child { border-left: 0; }
+.kit-seg-opt:hover { color: var(--text); background: var(--mat-row-hover); }
+.kit-seg-opt[aria-checked="true"] { color: var(--text); background: var(--mat-row-active); }

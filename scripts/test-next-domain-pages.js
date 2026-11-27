@@ -48,7 +48,8 @@
  *    preserve; that is stated in the source and seen in the rendered pass.
  */
 
-import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
+import './test-helpers/net-globals.js';
+import './test-helpers/format-globals.js'; // kit v1: lifted Domains functions call shared/format.js // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

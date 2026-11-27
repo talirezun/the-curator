@@ -51,6 +51,7 @@
  * Run with:  node scripts/test-next-domain-sections.js
  */
 
+import './test-helpers/format-globals.js'; // kit v1: lifted view functions call shared/format.js
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';

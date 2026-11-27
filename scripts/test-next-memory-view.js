@@ -122,6 +122,7 @@
  *    returns for a falsy scope. Said so in the source, and measured.
  */
 
+import './test-helpers/format-globals.js'; // kit v1: lifted views call shared/format.js
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, utimesSync } from 'node:fs';
 // v3.99.2: lifted Context-page functions call the real plain-language error helpers.
 import './test-helpers/context-error-globals.js';
@@ -11931,8 +11932,10 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       /id="mem-ss-harness-hint">Your harness’s share — what the app your agent runs in \(Claude Code, Codex, Cursor…\) puts in the window itself: The Curator can’t measure this\. It only changes the meter; nothing is sent\.</.test(html));
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
       /<details class="mem-fold" data-mem-fold="receives" data-pro-drawn open>/.test(html), html.slice(0, 300));
+    // Kit v1 (2026-11-27): sizes through shared/format.js — one decimal only
+    // under 10 KB, so 51.7 KB → 52 KB, 37.3 KB → 37 KB, 30.7 KB → 31 KB, 39.1 KB → 39 KB.
     ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
-      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K \(default\)<\/span>\s*<\/summary>/.test(html)
+      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 52 KB · 6\.6% of 200K \(default\)<\/span>\s*<\/summary>/.test(html)
       && !/cur-depth/.test((/id="mem-fold-receives">([\s\S]*?)<\/summary>/.exec(html) || ['', 'cur-depth'])[1]), html);
     ok('the per-viewer "Context window" fold is GONE (the window is in the head row now); "How an agent reaches this" stays closed',
       !/data-mem-fold="window"/.test(html) && !/data-ctx-window/.test(html)
@@ -11941,7 +11944,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     // THE COST LINE — unfolded, before the first chevron, with its one action.
     const cost = /id="mem-ss-cost"[\s\S]*?<\/div>/.exec(html);
     ok('an untouched project whose start hands over more than Lean gets the COST LINE, in tokens',
-      !!cost && /Every session is handed ≈9\.5k tokens of document text \(37\.3 KB\): nothing is marked read first and no reading budget is set\. One more document did not fit the ≈30\.7k-token default and is listed by name\./.test(cost[0]),
+      !!cost && /Every session is handed ≈9\.5k tokens of document text \(37 KB\): nothing is marked read first and no reading budget is set\. One more document did not fit the ≈30\.7k-token default and is listed by name\./.test(cost[0]),
       cost ? cost[0] : html.slice(0, 800));
     ok('...UNFOLDED — it sits before the first chevron (v3.16.1: a cost is never behind one)',
       html.indexOf('id="mem-ss-cost"') >= 0 && html.indexOf('id="mem-ss-cost"') < firstFold);
@@ -11958,11 +11961,11 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /796 bytes · of the ≈8\.2k brief budget/.test(html), html);
     ok('...the handoff\'s against the 48 KB handoff budget, NAMED', /of the 48 KB handoff budget/.test(html));
     ok('...the untouched project\'s document text against the DEFAULT, and says why it is sent',
-      /37\.3 KB · of the ≈30\.7k default · sent because nothing is planned/.test(html));
+      /37 KB · of the ≈30\.7k default · sent because nothing is planned/.test(html));
     ok('..."read first" says no budget is set rather than drawing a bar against nothing',
       /read first<\/span><span class="cur-mon-value">0<\/span><span class="cur-mon-sub">no reading budget set/.test(html));
     ok('...the session start is a SHARE of the window (never danger), named, with its replies',
-      /session start<\/span>[\s\S]*?≈13\.2k · 6\.6%[\s\S]*?≈13\.2k tokens of a 200K-token window[\s\S]*?51\.7 KB · measured · 1 MCP reply/.test(html), html);
+      /session start<\/span>[\s\S]*?≈13\.2k · 6\.6%[\s\S]*?≈13\.2k tokens of a 200K-token window[\s\S]*?52 KB · measured · 1 MCP reply/.test(html), html);
     ok('...the harness is its own line, "not set" — never summed into the start',
       /your harness’s share<\/span><span class="cur-mon-value">not set/.test(html));
     ok('...and free at start is the window less the MEASURED start (the harness unknown)',
@@ -11973,7 +11976,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const big = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 1000000,
       harnessEstimateTokens: 120000, choices: [200000, 400000, 1000000] } })).renderSessionStart(st.projectRead);
     ok('1M + a 120k harness: the share, the words and the harness line follow the SETTINGS',
-      /≈13\.2k tokens · 51\.7 KB · 1\.3% of 1M/.test(big)
+      /≈13\.2k tokens · 52 KB · 1\.3% of 1M/.test(big)
       && /your harness’s share<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">its own prompt, tools and files, such as CLAUDE\.md or AGENTS\.md · your estimate</.test(big)
       && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
     ok('...the note stays once an estimate is set (it says what the figure is for, not that it is missing)', /mem-ss-harness-hint/.test(big));
@@ -12248,7 +12251,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /<b>Preview, not saved<\/b> · ≈37\.5k tokens · 18\.8% of 200k · 2 MCP replies/.test(html), html.slice(0, 4000));
     ok('...and names the preset being previewed', /Previewing the Deep ≈32\.8k reading budget/.test(html));
     ok('...while the monitor below keeps the MEASURED figures — a preview is not saved',
-      /≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K/.test(html));
+      /≈13\.2k tokens · 52 KB · 6\.6% of 200K/.test(html));
     const stale = withSS(ssData(), { budgetPreview: { domain: 'acme', project: 'lumina', sig: 'older',
       bytes: 131072, data: pv } });
     ok('a preview made against an OLDER measurement is never painted',
@@ -12446,7 +12449,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       /id="mem-plan-apply">Apply suggestion<\/button><button type="button" class="btn btn-ghost btn-xs" id="mem-plan-dismiss">Dismiss<\/button>/.test(html)
       && !/id="mem-plan-open"/.test(html));
     ok('the proposal\'s one-line summary, as the picture words it',
-      /Suggested plan · 2 read first · 30\.7 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
+      /Suggested plan · 2 read first · 31 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
     ok('...and, with no budget set, the tick that sets the one it was planned against — ticked',
       /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard ≈16\.4k · 64 KB<\/span>/.test(html), html);
     ok('after an AI run, the AFTER line — what ran and what it cost',
@@ -13342,7 +13345,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       st.openFolds = { planner: true };
       const pend = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
       ok('an OPEN fold stays open across a repaint', /data-mem-fold="planner" open>/.test(pend));
-      ok('a changed row is tinted AND says what is saved, in words', /<tr class="mem-pl-row is-changed">[\s\S]*?decisions · 39\.1 KB · saved: on request/.test(pend));
+      ok('a changed row is tinted AND says what is saved, in words', /<tr class="mem-pl-row is-changed">[\s\S]*?decisions · 39 KB · saved: on request/.test(pend));
       ok('the pending line: "Preview, not saved." with the preview\'s own tokens, share of the window and replies',
         /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200K \(default\) · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
       ok('...with Discard and "Apply 1 change"', /id="mem-pl-discard"[^>]*>Discard</.test(pend) && /id="mem-pl-apply"[^>]*>Apply 1 change</.test(pend));

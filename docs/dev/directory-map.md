@@ -191,6 +191,22 @@ src/
                     (the rail's and Settings › General's one switch). pro.css hides
                     `[data-detail="pro"]` unless <html data-pro="on"> and draws the Pro-only visual
                     signature. Pro only REVEALS; scripts/test-pro-guard.js holds that line
+    next/shared/format.js — kit v1 (2026-11-27): THE FIGURE. fmtCount / fmtPages / fmtSize
+                    (ONE divisor, 1024) / fmtSizeDelta / fmtTokens (+ fmtTokenFigure, the meter's
+                    ladder, which shared/bucket.js now calls) / fmtAge (age.js's ladder + input +
+                    clock skew) / fmtUsd (formatUsdHonest). DOM-free. scripts/test-format.js scans
+                    /next for local size, age and token ladders (named exceptions with reasons)
+    next/shared/status.js + status.css, notice.js + notice.css, row.js + row.css,
+    next/shared/tabs.js + tabs.css, table.js + table.css, object-page.js + object-page.css,
+    next/shared/verbs.js — kit v1: the status chip (closed vocabulary), the notice (≤ 2
+                    actions, "Why?"), the row (the whole row is the target), tabs + segmented
+                    (roving focus; Pro tabs drawn only in Pro), the data table (aria-sort, Pro
+                    columns, stacks < 900 px), the page anatomy and the verb list. Own the `kit-`
+                    prefix; new views draw only these (docs/dev/decisions-app.md "The shared kit
+                    (v1)"). scripts/test-kit-parts.js drives them in test-helpers/kit-dom.js
+src/dev/kit/        — kit v1: the DEV-ONLY kit page (kit.html + kit.js), every part in every
+                    state, both themes. Outside src/public/; served at /next/kit.html only with
+                    CURATOR_KIT_PAGE=1 by src/routes/kit-page.js. scripts/kit-shots.mjs renders it
     next/shared/settings-file-banner.js — v4.1.2: the shell's persistent banner for a damaged
                     settings file (renderStatus danger, no Dismiss) and its Start fresh (confirmThen →
                     POST /api/config/settings-files/set-aside)

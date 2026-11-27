@@ -41,6 +41,7 @@
 // shell's by the suite — because the shell's lives in `app.js`, which IS
 // DOM-bound at import time.
 import { formatAge, freshnessTier } from './age.js';
+import { fmtSize } from './format.js';
 // ── AND THE MONITOR KIT (v3.65.2) ───────────────────────────────────────
 // shared/monitor.js has no imports and touches no DOM, so it clears the same
 // bar age.js does. It is taken for two readings the add panel needs and must
@@ -957,9 +958,7 @@ export function candidateAgeHtml(iso) {
  * another is two descriptions of one wall.
  */
 export function formatBytes(n) {
-  const b = Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
-  if (b < 1024) return b + ' bytes';
-  return Math.round(b / 1024).toLocaleString('en-US') + ' KB';
+  return fmtSize(Number.isFinite(n) && n > 0 ? Math.round(n) : 0);
 }
 
 /**

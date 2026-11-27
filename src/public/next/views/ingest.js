@@ -157,6 +157,7 @@ import {
 // separate module precisely because those are frozen to app.js and this
 // fixes a defect in how money is displayed. See ../shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { fmtSize, fmtSizeDelta } from '../shared/format.js';
 // v3.71.1: the main header's ⓘ is the `ingest.page` explainer — the SAME
 // entry the domain page's ① Ingest carries.
 import { explainerHtml } from '../shared/explainer.js';
@@ -2467,10 +2468,7 @@ function formatIngestDoneLabelHtml(changes) {
 // genuinely unchanged — e.g. a re-ingest of byte-identical content — since
 // "+0 B" reads as a claim that something happened when nothing did.
 function formatByteDeltaLabel(n) {
-  if (!Number.isFinite(n) || n === 0) return null;
-  const sign = n > 0 ? '+' : '−';
-  const abs = Math.abs(n);
-  return sign + (abs < 1024 ? (abs + ' B') : ((abs / 1024).toFixed(1) + ' KB'));
+  return fmtSizeDelta(n);
 }
 
 /**
@@ -2772,9 +2770,7 @@ function goToWikiHealth() {
 //    of app.js's DOM-mutation-in-place one). ─────────────────────────────
 
 function formatBytesLocal(n) {
-  if (n == null) return '';
-  if (n < 1024) return n + ' B';
-  return (n / 1024).toFixed(1) + ' KB';
+  return n == null ? '' : (fmtSize(n) || '');
 }
 
 // `toggleId` defaults to the live path's original literal, so that call site

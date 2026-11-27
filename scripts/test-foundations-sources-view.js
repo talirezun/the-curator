@@ -28,6 +28,7 @@
  *
  * Run with:  node scripts/test-foundations-sources-view.js   (exit 0 = all green)
  */
+import './test-helpers/format-globals.js'; // kit v1: lifted views call shared/format.js
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

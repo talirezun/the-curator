@@ -315,3 +315,18 @@ export function explainerMark(id, key, opts) {
   const e = entryFor(key);
   return renderInfoMark(id, e.label, explainerHtml(key, opts), { html: true });
 }
+
+/**
+ * KIT v1: the same mark with a visible WORD instead of the ⓘ glyph — the
+ * notice's "Why?" (shared/notice.js). Same panel, same ids, same listener;
+ * only the button's face differs (renderInfoMark's `text`). THROWS on an
+ * unknown key, like explainerMark.
+ * @param {string} id
+ * @param {string} key   a key of EXPLAINERS
+ * @param {string} word  the button's visible word, e.g. 'Why?'
+ * @returns {{btn: string, panel: string}}
+ */
+export function explainerWordMark(id, key, word) {
+  const e = entryFor(key);
+  return renderInfoMark(id, e.label, explainerHtml(key), { html: true, text: word });
+}

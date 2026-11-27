@@ -1,0 +1,58 @@
+/* shared/notice.css — THE NOTICE (kit v1). shared/notice.js owns the markup;
+   this file owns the `kit-notice` prefix.
+
+   Three tones. The glyph's SHAPE differs per tone (note card, triangle,
+   octagon), the title carries the words, the tint and the glyph's colour are
+   the third carrier. The title and line stay on the text ramp (--text,
+   --text-2), so their contrast never depends on a tint. */
+
+.kit-notice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  padding: var(--space-6) var(--space-8);
+}
+.kit-notice-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+.kit-notice-ic {
+  flex: none;
+  margin-top: var(--space-1);
+  color: var(--text-3);
+}
+.kit-notice-text { flex: 1 1 auto; min-width: 0; }
+.kit-notice-title {
+  margin: 0;
+  font: var(--weight-medium) var(--text-base)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+}
+.kit-notice-line {
+  margin: var(--space-2) 0 0;
+  font: var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+  color: var(--text-2);
+}
+.kit-notice-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.kit-notice-info .kit-notice-ic { color: var(--status-work); }
+.kit-notice-attention {
+  border-color: var(--status-attn-border);
+  background: var(--status-attn-tint);
+}
+.kit-notice-attention .kit-notice-ic { color: var(--status-attn); }
+.kit-notice-error {
+  border-color: var(--status-err-border);
+  background: var(--status-err-tint);
+}
+.kit-notice-error .kit-notice-ic { color: var(--status-err); }
+
+@media (max-width: 600px) {
+  .kit-notice-main { flex-wrap: wrap; }
+  .kit-notice-acts { width: 100%; padding-left: calc(16px + var(--space-6)); }
+}

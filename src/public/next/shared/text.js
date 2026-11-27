@@ -691,13 +691,18 @@ export function renderInfoMark(id, label, info, opts) {
   const text = typeof info === 'string' ? info.trim() : '';
   if (!id || !text) return { btn: '', panel: '' };
   const name = label || 'More information';
+  // KIT v1: `opts.text` draws a WORD ("Why?") instead of the glyph — the
+  // notice's door to its explainer. The word is the accessible name (no
+  // aria-label over it: the visible label must be in the name); the entry's
+  // label stays as the tooltip. Without `text` the markup is byte-identical.
+  const word = opts && typeof opts.text === 'string' && opts.text.trim() ? opts.text.trim() : '';
   return {
     btn:
-      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
+      '<button type="button" class="tx-vh-info' + (word ? ' tx-vh-info-text' : '') + '" id="' + escapeHtml(id) + '-btn"' +
         ' data-tx-info="' + escapeHtml(id) + '"' +
         ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
-        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
-        INFO_GLYPH +
+        (word ? '' : ' aria-label="' + escapeHtml(name) + '"') + ' title="' + escapeHtml(name) + '">' +
+        (word ? escapeHtml(word) : INFO_GLYPH) +
       '</button>',
     panel:
       '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +

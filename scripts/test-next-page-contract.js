@@ -30,6 +30,7 @@
  * OFFLINE. No network, no browser, no user data.
  */
 
+import { fmtSize, fmtCount } from '../src/public/next/shared/format.js';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -237,6 +238,7 @@ function renderDomainHealth(stateOver) {
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     icon: (n) => '<svg data-icon="' + n + '"></svg>', buttonRingHtml: () => '<span class="cur-ring"></span>',
     fmtInt: (n) => String(n), inFlightWriteSlugs: new Set(),
+    fmtSize, fmtCount,   // kit v1: fmtKB/fmtInt write through shared/format.js
     renderBanner: () => '', gatedLoader: () => '', loadGate: null,
     renderMirrorNote: () => renderStatus({ title: 'This domain is a read-only Shared Brain mirror', detail: 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.' }),
     activeSemanticScan: () => (stateOver && stateOver.semanticScan) || null,

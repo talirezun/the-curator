@@ -167,7 +167,10 @@ function extractFunction(source, name) {
   // v3.99.2: `./net.js` joins — the plain-language error helpers. It imports
   // only ./user-errors.js and ./text.js, and neither imports anything
   // (asserted just below, off their own source), so it runs in plain Node.
-  const bad = lines.filter((line) => !/from '\.\/(age|monitor|platform|net)\.js'/.test(line));
+  // Kit v1 (2026-11-27): `./format.js` joins — the one figure formatter. It
+  // imports only ./age.js and ./format-usd.js (neither imports anything) and
+  // touches no DOM, so it runs in plain Node.
+  const bad = lines.filter((line) => !/from '\.\/(age|monitor|platform|net|format)\.js'/.test(line));
   if (bad.length) {
     console.log('  ✗ shared/foundations-init.js imports something outside the DOM-free kit — '
       + JSON.stringify(bad));
@@ -279,9 +282,9 @@ section('§1 — THE FOUR STORE MIRRORS ARE THE STORE\'S');
   // Asserted as an ALLOW-LIST rather than as an absence, so the property that
   // matters is the one measured: every import line, if there is one, names
   // `./age.js`. An import of a view, the shell or the listbox reddens this.
-  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js, ./monitor.js, ./platform.js, ./net.js)',
+  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js, ./monitor.js, ./platform.js, ./net.js, ./format.js)',
     initSrc.match(/^import\s[^\n]*/gm) === null
-      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/(age|monitor|platform|net)\.js'/.test(line)),
+      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/(age|monitor|platform|net|format)\.js'/.test(line)),
     JSON.stringify(initSrc.match(/^import\s[^\n]*/gm)));
   // Its local escapeHtml is byte-compared against the shell's, so the two
   // cannot drift into escaping different characters.

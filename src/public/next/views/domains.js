@@ -169,6 +169,7 @@ import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   identitySlotClass } from '../shared/sidebar.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { fmtSize, fmtCount } from '../shared/format.js';
 
 // The design system's two-layer progress ring. Health's long AI operations
 // (broken-link planning, orphan rescue, the duplicate scan, the batch
@@ -1756,11 +1757,13 @@ function countSafeFixable(report) {
     + (Array.isArray(report.summaryLinkSections) ? report.summaryLinkSections.length : 0);
 }
 
-// v3.83.0 — whole numbers with thousands separators, and a size in KB
-// (1 KB = 1000 bytes, as the plan card's copy says). Plain functions so the
-// suites that lift one view function can lift these beside it.
-function fmtInt(n) { return (Number(n) || 0).toLocaleString('en-US'); }
-function fmtKB(bytes) { return Math.max(1, Math.round((Number(bytes) || 0) / 1000)).toLocaleString('en-US') + ' KB'; }
+// v3.83.0 — whole numbers with thousands separators, and a size. Kit v1
+// (2026-11-27): both go through shared/format.js, the ONE figure formatter —
+// the size divisor is 1024 there (it was 1000 here), so this card and every
+// other size in the app agree. Plain functions so the suites that lift one
+// view function can lift these beside it (they inject fmtSize/fmtCount).
+function fmtInt(n) { return fmtCount(Number(n) || 0); }
+function fmtKB(bytes) { return fmtSize(Number(bytes) || 0); }
 function countOf(n, one, many) { const v = Number(n) || 0; return fmtInt(v) + ' ' + (v === 1 ? one : many); }
 
 function totalOpenIssues(report) {
@@ -5851,7 +5854,7 @@ function renderBrowsePanel() {
       ? (b.memory || []).length
       : (f.key === 'all' ? b.entries.length : b.entries.filter((e) => e.folder === f.key).length);
     return '<button class="dm-browse-tab' + (b.folder === f.key ? ' active' : '') + '" data-browse-folder="' + f.key + '">' +
-      escapeHtml(f.label) + ' <span class="dm-browse-tab-count">' + n + '</span></button>';
+      escapeHtml(f.label) + ' <span class="dm-browse-tab-count">' + fmtCount(n) + '</span></button>';
   }).join('');
 
   // ONE ROW, ONE PAINTER, DECIDED PER ROW rather than per list — the All

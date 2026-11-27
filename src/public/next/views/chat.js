@@ -53,6 +53,7 @@ import { renderAnswer, sourcesHtml, sourceByNumber } from '../shared/answer.js';
 // cheapest model measures ~$0.0000015, so that is this surface's ORDINARY case,
 // not an edge case. See shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { fmtSize } from '../shared/format.js';
 import { migrateStoredChatModel } from '../shared/model-retirement.js';
 import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
 // v3.72.0 (P4): the ONE model-row body, shared by the Model menu and the
@@ -2093,9 +2094,7 @@ function cancelNoticeHtml() {
 //     to a clean one.
 
 function formatBytesChat(n) {
-  if (n == null) return '';
-  if (n < 1024) return n + ' B';
-  return (n / 1024).toFixed(1) + ' KB';
+  return n == null ? '' : (fmtSize(n) || '');
 }
 
 // Pure — builds the inner HTML for a finished compile's change list. No DOM,

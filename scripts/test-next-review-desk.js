@@ -52,7 +52,8 @@ section('§1 The words');
   ok(afterLine('a', 'b', 0, 'Merged from a').endsWith('No links move, because nothing links here.'), 'after line: no links');
   ok(!afterLine('a', 'b', 3, null).includes('everything else'), 'after line: with nothing to move it does not say something moves');
   ok(afterLine('a<b', 'c', 2, 'Merged from a<b').includes('a&lt;b') && !afterLine('a<b', 'c', 2, 'x').includes('a<b'), 'a page name is escaped');
-  ok(formatSize(251) === '251 B' && formatSize(1100) === '1.1 KB' && formatSize(34000) === '34 KB', 'sizes');
+  // Kit v1 (shared/format.js, divisor 1024): was '251 B' / '1.1 KB' / '34 KB'.
+  ok(formatSize(251) === '251 bytes' && formatSize(1100) === '1.1 KB' && formatSize(34000) === '33 KB', 'sizes');
   ok(pageBody('---\na: 1\n---\n\n# T\n') === '\n# T\n' && pageBody('# T\n---\nx') === '# T\n---\nx', 'only a leading frontmatter block is left out');
   const noReason = await opened([pair('a', 'b', { rationale: '' })]);
   ok(text(noReason.html()).includes('The AI gave no reason.'), 'no reason: it says so');

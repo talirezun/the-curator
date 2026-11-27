@@ -43,6 +43,7 @@ import {
   slugOf, folderOf, keepOf, removeOf, CHOOSE_FIRST, walkPagesWithNoPair, walksToStore, worstSlots,
 } from './health-family.js';
 import { userMessageFrom, errorDetailOf, renderErrorDetail } from '../shared/net.js';
+import { fmtSize } from '../shared/format.js';
 
 /** How long the comparison must be on screen before Merge opens. */
 export const ARM_MS = 500;
@@ -67,11 +68,10 @@ const failedHtml = (sentence, button, detail) => esc(sentence) + (button || '') 
 const n0 = (v) => (Number(v) || 0).toLocaleString('en-US');
 const name = (s) => '<span class="mono">' + esc(s) + '</span>';
 
-/** A page's size, from its length in characters. */
+/** A page's size, from its length in characters (kit v1: shared/format.js's
+ *  fmtSize, the app's one size rule — divisor 1024, "bytes" under 1 KB). */
 export function formatSize(chars) {
-  const v = Number(chars) || 0;
-  if (v < 1000) return n0(v) + ' B';
-  return (v / 1000).toLocaleString('en-US', { maximumFractionDigits: v < 10000 ? 1 : 0 }) + ' KB';
+  return fmtSize(Number(chars) || 0);
 }
 
 /** The page's own text, without the frontmatter block the reader leaves out too. */

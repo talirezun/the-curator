@@ -278,6 +278,7 @@
 // creates no cycle.
 import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 import { docsUrl } from './shared/docs-links.js';
+import { fmtSize } from './shared/format.js';
 import { createSidebarDrawer } from './shared/sidebar-drawer.js';
 import { checkModelRetirement } from './shared/model-retirement.js';
 import { checkSettingsFiles, armSettingsFileRecheck } from './shared/settings-file-banner.js';
@@ -1463,10 +1464,7 @@ function renderReader() {
 // can extract and execute them standalone. Keep them that way.
 
 function formatSourceBytes(n) {
-  if (typeof n !== 'number' || !isFinite(n) || n < 0) return '';
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return fmtSize(n) || '';
 }
 
 // Maps a GET /api/wiki/:domain/source response onto one of the display

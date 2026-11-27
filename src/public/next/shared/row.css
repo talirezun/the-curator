@@ -1,0 +1,79 @@
+/* shared/row.css — THE ROW (kit v1). shared/row.js owns the markup; this
+   file owns the `kit-row` prefix.
+
+   The whole row is the target when it opens: the title's own button (or
+   link) is stretched over the row by `::after`, so the pointer, the hover and
+   the press cover the row while the keyboard reaches one control. The one
+   action and the chip sit ABOVE the stretch (position + z-index), so a press
+   on the action never opens the row. Rows sit on a material, so hover and
+   active take the alpha overlays (--mat-row-*), never an opaque surface. */
+
+.kit-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: var(--hit-min);
+  padding: var(--space-6) var(--space-8);
+  border-top: 1px solid var(--border-subtle);
+}
+.kit-row:first-child { border-top: 0; }
+
+.kit-row-dot { flex: none; }
+
+.kit-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.kit-row-title {
+  font: var(--weight-medium) var(--text-base)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kit-row-meta {
+  font: var(--weight-regular) var(--text-sm)/var(--leading-snug) var(--font-sans);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The open target: a plain-looking button or link whose ::after covers the
+   row. */
+.kit-row-open {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.kit-row-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.kit-row-open:focus { outline: none; }
+.kit-row-opens:has(.kit-row-open:focus-visible) { box-shadow: inset 0 0 0 2px var(--border-focus); }
+.kit-row-opens:hover { background: var(--mat-row-hover); }
+.kit-row-opens:active { background: var(--mat-row-active); }
+
+.kit-row-status,
+.kit-row-act {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+.kit-row-chev {
+  flex: none;
+  color: var(--text-faint);
+}

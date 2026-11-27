@@ -77,6 +77,7 @@
  * an extractable named function.
  */
 
+import { fmtSize } from '../src/public/next/shared/format.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -228,7 +229,9 @@ function buildCompileHtmlSandbox(chatSrc) {
     extractFunction(chatSrc, 'formatBytesChat') + '\n\n' +
     extractFunction(chatSrc, 'buildCompileOutcomeHtml') + '\n' +
     'return { formatBytesChat, buildCompileOutcomeHtml };';
-  return new Function(src)();
+  // Kit v1: formatBytesChat writes through shared/format.js's fmtSize, which
+  // chat.js imports — the sandbox is handed the real one.
+  return new Function('fmtSize', src)(fmtSize);
 }
 
 const { requestChatScope, consumeChatScopeRequest, __peek } = buildScopeHandoffSandbox(app);
@@ -489,8 +492,9 @@ section('3. compileStillTargetsActive() — the mid-compile-switch guard');
 section('4. buildCompileOutcomeHtml()/formatBytesChat() — the change-list card body');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  eq(formatBytesChat(500), '500 B', 'formatBytesChat: sub-1024 renders as bytes');
-  eq(formatBytesChat(2048), '2.0 KB', 'formatBytesChat: 1024+ renders as KB');
+  // Kit v1 (shared/format.js): was '500 B' / '2.0 KB'.
+  eq(formatBytesChat(500), '500 bytes', 'formatBytesChat: sub-1024 renders as bytes');
+  eq(formatBytesChat(2048), '2 KB', 'formatBytesChat: 1024+ renders as KB');
   eq(formatBytesChat(null), '', 'formatBytesChat: null -> empty string, not "null"');
   eq(formatBytesChat(undefined), '', 'formatBytesChat: undefined -> empty string');
 

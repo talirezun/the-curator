@@ -210,21 +210,28 @@ function scanPanels(rel, src) {
     if (!key) problems.push('settingsBlock ⓘ is not a key literal: ' + String(info).slice(0, 40));
     else keys.push(key);
   }
-  for (const name of ['explainerMark', 'explainerHtml', 'explainerLabel']) {
+  // explainerWordMark (kit v1) is explainerMark with a visible word ("Why?"),
+  // so it is held to the same rule: its key is a literal or a named kit
+  // parameter. shared/notice.js passes its caller's `why` (`opts.why`), and
+  // every view's `why: '<key>'` literal is collected below like `infoKey:`.
+  for (const name of ['explainerMark', 'explainerWordMark', 'explainerHtml', 'explainerLabel']) {
     for (const k of calls(c, name)) {
       if (rel === 'shared/explainer.js') continue;
       const a = splitTop(k.args);
-      const arg = name === 'explainerMark' ? a[1] : a[0];
+      const arg = name === 'explainerMark' || name === 'explainerWordMark' ? a[1] : a[0];
       const key = keyOf(arg);
       if (key) { keys.push(key); continue; }
       const cond = /^[\w.$]+\s*\?\s*('[^']+')\s*:\s*('[^']+')$/.exec(String(arg || '').trim());
       if (cond) { keys.push(keyOf(cond[1]), keyOf(cond[2])); continue; }
       // A parameter carrying a key: settingsBlock / renderBlock / memStep / the section map.
       if (['infoKey', 'o.infoKey', 'key'].includes(String(arg).trim())) continue;
+      if (rel === 'shared/notice.js' && String(arg).trim() === 'opts.why') continue;
       problems.push(name + ' with a non-literal key: ' + String(arg).slice(0, 40));
     }
   }
   for (const m of c.matchAll(/infoKey:\s*('[a-z.-]+')/g)) keys.push(keyOf(m[1]));
+  // A kit notice's "Why?" (shared/notice.js `why:`), kit v1.
+  for (const m of c.matchAll(/\bwhy:\s*('[a-z.-]+')/g)) keys.push(keyOf(m[1]));
   return { problems, keys: keys.filter(Boolean) };
 }
 

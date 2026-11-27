@@ -58,6 +58,7 @@
  *     scripts/test-raw-store.js and scripts/test-raw-source-ui.js.
  */
 
+import { fmtSize } from '../src/public/next/shared/format.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -163,14 +164,19 @@ const IMPURE_FNS = ['loadReaderSource', 'revealReaderSource'];
 // its own so the extracted loadReaderSource() closes over something. §8
 // separately asserts the real declaration still exists, so this stand-in
 // cannot mask its removal.
-const sandbox = new Function(
-  'document', 'fetch', 'isCurrentReader',
+// Kit v1: formatSourceBytes() now writes through shared/format.js's fmtSize
+// (the app's ONE size rule), which app.js imports; the sandbox is handed the
+// real one.
+const rawSandbox = new Function(
+  'document', 'fetch', 'isCurrentReader', 'fmtSize',
   'let readerSourceSeq = 0;\n' +
   [...PURE_FNS, ...IMPURE_FNS]
     .map((n) => extractFunction(appJs, n).replace(/^export /, ''))
     .join('\n\n') + '\n' +
   `return { ${[...PURE_FNS, ...IMPURE_FNS].join(', ')} };`
 );
+
+const sandbox = (d, f, cur) => rawSandbox(d, f, cur, fmtSize);
 
 // ── Fake DOM / fetch ────────────────────────────────────────────────────
 function makeEl(id) {
@@ -252,10 +258,12 @@ const RES_NOT_A_FILE = { ok: true, found: false, reason: 'not-a-file', page: 'su
 // ════════════════════════════════════════════════════════════════════════
 section('1. formatSourceBytes()');
 {
-  eq(formatSourceBytes(0), '0 B', 'zero bytes');
-  eq(formatSourceBytes(512), '512 B', 'sub-KB stays in bytes');
-  eq(formatSourceBytes(1024), '1.0 KB', 'exactly 1 KB');
-  eq(formatSourceBytes(22179), '21.7 KB', 'a real .md source size');
+  // Kit v1 (shared/format.js): "bytes" under 1 KB, one decimal under 10 of a
+  // unit, whole from 10, ".0" dropped. Was '0 B' / '512 B' / '1.0 KB' / '21.7 KB'.
+  eq(formatSourceBytes(0), '0 bytes', 'zero bytes');
+  eq(formatSourceBytes(512), '512 bytes', 'sub-KB stays in bytes');
+  eq(formatSourceBytes(1024), '1 KB', 'exactly 1 KB');
+  eq(formatSourceBytes(22179), '22 KB', 'a real .md source size');
   eq(formatSourceBytes(2516582), '2.4 MB', 'a real PDF size');
   eq(formatSourceBytes(-1), '', 'negative -> empty (never a bar reading "-1 B")');
   eq(formatSourceBytes(NaN), '', 'NaN -> empty');

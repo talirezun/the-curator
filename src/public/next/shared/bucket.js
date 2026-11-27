@@ -92,6 +92,8 @@
 // Every caller string is escaped; a layer KEY is looked up in a frozen table,
 // never interpolated, so an unknown key yields the 'other' class.
 
+import { fmtTokenFigure } from './format.js';
+
 export const LAYER_KEYS = Object.freeze(['framing', 'brief', 'handoff', 'journal', 'index', 'read']);
 
 /** The bar width, in CSS px, below which inline segment names drop to the
@@ -124,18 +126,11 @@ function pct(v) {
   return String(r);
 }
 
+/** The meter's token figure, without "≈". Kit v1: the ladder moved to
+ *  shared/format.js (fmtTokenFigure) so the meter and every other token
+ *  figure in the app are one function; this name stays for its callers. */
 export function formatTokens(n) {
-  const v = num(n);
-  if (v === 0) return '0';
-  if (v >= 1e6) {
-    const m = Math.round(v / 1e5) / 10;
-    return (Number.isInteger(m) ? String(m) : m.toFixed(1)) + 'M';
-  }
-  if (v >= 1e5) return Math.round(v / 1000) + 'k';
-  const k = Math.round(v / 100) / 10;
-  if (k >= 100) return Math.round(v / 1000) + 'k';
-  if (k >= 10 && Number.isInteger(k)) return k + 'k';   // "20k", not "20.0k"
-  return (k === 0 ? '0.1' : k.toFixed(1)) + 'k';
+  return fmtTokenFigure(num(n));
 }
 
 function share(part, whole) {

@@ -239,6 +239,7 @@ import { renderDepthCell } from '../shared/depth-bar.js';
 // Step ④ draws the route's `meter` through it, and every token figure on the
 // step goes through its one formatter.
 import { renderBucket, formatTokens } from '../shared/bucket.js';
+import { fmtSize, fmtTokens } from '../shared/format.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -7003,10 +7004,7 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelet
       : (s.harness ? escapeHtml(s.harness) : '');
     const who = [toolHtml, s.model ? escapeHtml(s.model) : ''].filter(Boolean).join(' · ');
     // THE SIZE CELL'S TWO INPUTS (v3.66.0, P2) — see the cell itself.
-    const sizeText = Number.isInteger(s.bytes) && s.bytes >= 0
-      ? (s.bytes < 1024 ? s.bytes + ' bytes'
-        : Math.round(s.bytes / 1024).toLocaleString('en-US') + ' KB')
-      : null;
+    const sizeText = Number.isInteger(s.bytes) && s.bytes >= 0 ? fmtSize(s.bytes) : null;
     const budget = Number.isInteger(budgetBytes) && budgetBytes > 0 ? budgetBytes : null;
     return (
       '<tr class="mem-ws-row' + (isOpen ? ' mem-ws-row-open' : '') + '"' +
@@ -7074,8 +7072,7 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelet
           amount: budget === null ? s.bytes : Math.min(s.bytes, budget),
           budget: budget === null ? undefined : budget,
           label: budget === null ? undefined
-            : sizeText + ' of a ' + Math.round(budget / 1024).toLocaleString('en-US')
-              + ' KB handoff budget',
+            : sizeText + ' of a ' + fmtSize(budget) + ' handoff budget',
         })) + '</td>' +
         // ── DELETE WORK-STREAM (v3.75.0) ─────────────────────────────────
         // THE ONE ROW-ACTION RULE (shared/row-action.css): a neutral trash,
@@ -8276,8 +8273,7 @@ function foundationsMonitor(facts) {
 
 /** Bytes, in the two units this block quotes them in. One derivation. */
 function fndSize(bytes) {
-  const b = Number.isInteger(bytes) && bytes > 0 ? bytes : 0;
-  return b < 1024 ? b + ' bytes' : Math.round(b / 1024).toLocaleString('en-US') + ' KB';
+  return fmtSize(Number.isInteger(bytes) && bytes > 0 ? bytes : 0);
 }
 
 /**
@@ -8472,7 +8468,7 @@ function fndRowHtml(d, keptOnly, readonly, budgetBytes, suggest, sources) {
     ? Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000)) : null;
   const age = Number.isFinite(ageSecs) ? formatAge(ageSecs) : null;
   const bytes = Number.isInteger(d.bytes) ? d.bytes : 0;
-  const size = bytes < 1024 ? bytes + ' bytes' : Math.round(bytes / 1024).toLocaleString('en-US') + ' KB';
+  const size = fmtSize(bytes);
   return (
     '<tr class="fnd-row" data-fnd-kind="' + escapeHtml(kind) + '">' +
       // ── THE UNIFIED TABLE IS SIX COLUMNS, NOT EIGHT (v3.69.0) ──────────
@@ -11321,25 +11317,18 @@ function planHeadHtml() {
     + 'Suggest a reading plan</button>';
 }
 
-/** Bytes as step ④ and the helper quote them: one decimal under 100 KB. */
+/** Bytes as step ④ and the helper quote them — kit v1: shared/format.js's
+ *  fmtSize (one decimal under 10 KB, whole from 10; a whole-KB budget reads
+ *  "64 KB"). Zero keeps its old "0 KB" (a budget of nothing). */
 function ssSize(bytes) {
   const b = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  if (b === 0) return '0 KB';
-  if (b < 1024) return b.toLocaleString('en-US') + ' bytes';
-  const kb = b / 1024;
-  // A budget is a whole number of KB and reads as one ("64 KB", not "64.0").
-  if (b % 1024 === 0) return kb.toLocaleString('en-US') + ' KB';
-  return (kb < 100 ? (Math.round(kb * 10) / 10).toFixed(1) : Math.round(kb).toLocaleString('en-US'))
-    + ' KB';
+  return b === 0 ? '0 KB' : fmtSize(b);
 }
 
 /** Tokens, ESTIMATED at four bytes each — the ⓘ of ④ says so. From BYTES,
  *  for the helper's lines, which still quote bytes. */
 function ssTokens(bytes) {
-  const t = Number.isFinite(bytes) && bytes > 0 ? bytes / 4 : 0;
-  return '≈' + (t < 10000
-    ? (Math.round(t / 100) / 10).toLocaleString('en-US')
-    : Math.round(t / 1000).toLocaleString('en-US')) + 'k';
+  return fmtTokens(Number.isFinite(bytes) && bytes > 0 ? bytes / 4 : 0);
 }
 
 /** ≈ tokens, through the meter kit's ONE formatter, so a figure in the

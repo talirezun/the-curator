@@ -84,6 +84,7 @@
  *    capped, and not measured.
  */
 
+import './test-helpers/format-globals.js'; // kit v1: lifted view functions call shared/format.js
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

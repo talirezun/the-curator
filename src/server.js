@@ -25,6 +25,7 @@ import readingPlanRouter from './routes/reading-plan.js';
 import writeStatusRouter from './routes/write-status.js';
 import trashRouter from './routes/trash.js';
 import setupRouter from './routes/setup.js';
+import kitPageRouter from './routes/kit-page.js';
 import { getProviderInfo, migrateRetiredModelSelections } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles, getLogsDir } from './brain/paths.js';
@@ -408,6 +409,11 @@ app.get(['/old', '/old/'], (req, res) => {
 app.get(['/next', '/next/'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'next', 'index.html'));
 });
+
+// The DEV-ONLY kit page (kit v1): /next/kit.html + /next/kit.js, served from
+// src/dev/kit/ only with CURATOR_KIT_PAGE=1; a 404 otherwise, in every
+// install. See src/routes/kit-page.js.
+app.use(kitPageRouter);
 
 // An unknown /api path (any method) is a JSON 404, never the SPA's HTML at
 // 200; then the /api error handler (malformed or oversized JSON, a thrown

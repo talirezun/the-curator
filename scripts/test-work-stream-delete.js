@@ -26,6 +26,7 @@
  * the outcome sentence, because provoking the interleaving needs a second
  * process timed to a syscall. Layout and contrast are a browser question.
  */
+import './test-helpers/format-globals.js'; // kit v1: lifted view functions call shared/format.js
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync,
 } from 'node:fs';

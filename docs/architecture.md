@@ -400,6 +400,14 @@ the-curator/
 │           │                    ever Pro-only — scripts/test-pro-guard.js (+ test-helpers/pro-guard.js)
 │           │                    renders Context in both modes and fails on either fault. Its first
 │           │                    consumer is Context steps 4 and 5 (views/memory.js, views/setup-step.js)
+│           │                    format.js — kit v1 (2026-11-27): THE FIGURE, one formatter for every
+│           │                    count, size (ONE divisor, 1024), token estimate, age and price in /next
+│           │                    status.js · notice.js · row.js · tabs.js · table.js · object-page.js ·
+│           │                    verbs.js (+ a .css each) — kit v1: the shared kit every rebuilt view
+│           │                    draws (closed status vocabulary, ≤ 2-action notice, whole-row target,
+│           │                    roving tabs, sortable table, page anatomy, the verb list); `kit-` prefix.
+│           │                    No view uses them yet. Dev-only kit page: src/dev/kit/, served at
+│           │                    /next/kit.html only with CURATOR_KIT_PAGE=1 (src/routes/kit-page.js)
 │           └── views/          One file + one same-named CSS file per registered VIEW (chat, domains,
 │                                ingest, memory, settings, shared, sync — all real). Since v3.64.0 only
 │                                three of them are rail entries: ingest and shared are HOSTED_VIEWS,

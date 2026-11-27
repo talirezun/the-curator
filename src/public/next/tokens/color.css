@@ -65,6 +65,11 @@
   --red-500:   #EF5568;
   --red-400:   #F87F8D;
   --red-600:   #C33345;
+  /* Kit v1 (2026-11-27): one rung darker than -600 on the two ramps whose
+     -600 is under 4.5:1 for TEXT on white (teal-600 4.05, summary-600 3.58).
+     Used only by the light theme's --status-* words below. */
+  --teal-700:    #14714F;
+  --summary-700: #8A5A12;
 
   /* ── Semantic aliases — DARK (default) ───────────────────────────────── */
 
@@ -177,6 +182,39 @@
   --danger-tint: rgba(239,85,104,0.13);
   --info-tint:   var(--accent-tint);
 
+  /* ── Status chip and notice tones (kit v1, owner decision D9) ─────────
+     The CLOSED status vocabulary of shared/status.js — Ready · Needs you ·
+     Working · Not connected/Off · Unknown · Failed — in four tones plus the
+     accent for "working". Supersedes "status tags are greyscale" for the
+     chip only; identity colours stay on the identity dot.
+
+     These ARE text colours (the chip's word is written in its tone), so the
+     floor is WCAG 1.4.3's 4.5:1, measured against --surface AND against the
+     chip's own tint composited on --surface (the stricter of the two is the
+     one that binds). Plain WCAG arithmetic over the hexes; re-computed by
+     scripts/test-kit-parts.js:
+                          on --surface    on its tint
+       --status-ok        10.37 / 5.99    8.73 / 5.31   (dark / light)
+       --status-attn      11.03 / 5.91    9.11 / 5.30
+       --status-err        7.80 / 5.41    6.86 / 4.73
+       --status-work       9.31 / 9.13    8.23 / 8.08
+       --status-off        6.16 / 5.60    (no tint)
+     The light theme cannot reuse the success and attention TEXT tokens
+     (4.05 and 3.58 on white, text.js FINDING 2), hence the -700 rungs
+     above. (No "name-colon" in this comment: one suite's token parser reads
+     comments.) */
+  --status-ok:          var(--teal-400);
+  --status-ok-tint:     var(--success-tint);
+  --status-attn:        var(--summary-400);
+  --status-attn-tint:   var(--attention-tint);
+  --status-attn-border: rgba(224,163,58,0.35);
+  --status-err:         var(--red-400);
+  --status-err-tint:    var(--danger-tint);
+  --status-err-border:  rgba(239,85,104,0.35);
+  --status-work:        var(--accent-text);
+  --status-work-tint:   var(--accent-tint);
+  --status-off:         var(--text-3);
+
   /* ── Freshness — HOW RECENTLY, and nothing else ──────────────────────
      ONE app-wide scale for "when did this last happen": the Agent-memory
      save pip, both sidebar status rows, and (in its own colour space, since
@@ -280,6 +318,19 @@
   --danger:      var(--red-600);
   --danger-text: var(--red-600);
   --danger-tint: rgba(195,51,69,0.09);
+
+  /* Status tones (kit v1) — measured in the :root block's table. */
+  --status-ok:          var(--teal-700);
+  --status-ok-tint:     var(--success-tint);
+  --status-attn:        var(--summary-700);
+  --status-attn-tint:   var(--attention-tint);
+  --status-attn-border: rgba(181,124,33,0.35);
+  --status-err:         var(--red-600);
+  --status-err-tint:    var(--danger-tint);
+  --status-err-border:  rgba(195,51,69,0.30);
+  --status-work:        var(--accent-text);
+  --status-work-tint:   var(--accent-tint);
+  --status-off:         var(--text-3);
 
   /* Freshness — see the long note in the :root block above. Each rung drops
      to the ramp step that clears 3:1 against a WHITE surface: teal-500 and

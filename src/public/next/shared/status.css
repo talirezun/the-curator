@@ -1,0 +1,72 @@
+/* shared/status.css — THE STATUS CHIP (kit v1). shared/status.js owns the
+   markup and the closed vocabulary; this file owns the `kit-chip` prefix.
+
+   SHAPE + WORD + TONE. The mark's SHAPE differs per kind (filled dot,
+   diamond, turning ring, hollow ring, dashed ring, square), the word is
+   always rendered, and the tone (tokens/color.css `--status-*`, measured
+   ≥ 4.5:1 for the word in both themes) is the third, redundant carrier.
+
+   The chip is a READING, never a control: no cursor rule, no hover. A row
+   or a table cell that opens carries the pointer itself. */
+
+.kit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--space-12);
+  padding: 0 var(--space-5) 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font: var(--weight-medium) var(--text-sm)/1 var(--font-sans);
+  letter-spacing: var(--track-body);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.kit-chip-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+}
+.kit-chip-label { color: inherit; }
+
+/* ready — a filled dot */
+.kit-chip-ready { color: var(--status-ok); background: var(--status-ok-tint); }
+
+/* needs you — a diamond */
+.kit-chip-needs-you { color: var(--status-attn); background: var(--status-attn-tint); }
+.kit-chip-needs-you .kit-chip-mark { border-radius: 1px; transform: rotate(45deg); }
+
+/* failed — a square */
+.kit-chip-error { color: var(--status-err); background: var(--status-err-tint); }
+.kit-chip-error .kit-chip-mark { border-radius: 1px; }
+
+/* working — a ring with a gap that turns. Still under reduced motion: the
+   gap alone still reads as "in progress" beside the word. */
+.kit-chip-working { color: var(--status-work); background: var(--status-work-tint); }
+.kit-chip-working .kit-chip-mark {
+  width: 9px;
+  height: 9px;
+  background: transparent;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  animation: curator-spin 1.15s linear infinite;   /* the app's one rotate cadence (test-next-press-motion.js) */
+}
+@media (prefers-reduced-motion: reduce) {
+  .kit-chip-working .kit-chip-mark { animation: none; transform: rotate(-45deg); }
+}
+
+/* off / not connected — a hollow ring, no tint (grey, quiet) */
+.kit-chip-off { color: var(--status-off); border-color: var(--border); }
+.kit-chip-off .kit-chip-mark { background: transparent; border: 1.5px solid currentColor; }
+
+/* unknown — a dashed ring and a dashed outline */
+.kit-chip-unknown { color: var(--status-off); border: 1px dashed var(--border-strong); }
+.kit-chip-unknown .kit-chip-mark {
+  width: 9px;
+  height: 9px;
+  background: transparent;
+  border: 1.5px dashed currentColor;
+}

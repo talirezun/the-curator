@@ -31,6 +31,7 @@
 //   typed exactly. Red appears only on that card's button.
 
 import { formatAge } from '../shared/age.js';
+import { fmtSize } from '../shared/format.js';
 // v3.99.2: an error sentence the host made with net.js's plainError carries its
 // technical detail; errorDetailHtml prints it under the sentence (visible,
 // muted, selectable). net.js is DOM-free, so this module still imports in Node.
@@ -53,13 +54,7 @@ export const TRASH_NOUN = Object.freeze({ domains: 'domain', projects: 'project'
 
 /** 1234567 → "1.2 MB". Exact below 1 KB. */
 export function formatBytes(n) {
-  if (!Number.isFinite(n) || n < 0) return null;
-  if (n < 1024) return n + ' B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + units[i];
+  return fmtSize(n);
 }
 
 /** "2026-09-25 16:04 UTC" from an ISO instant. */

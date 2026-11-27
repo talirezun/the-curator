@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Curator — kit v1 (dev only)</title>
+<!-- DEV-ONLY: served by src/routes/kit-page.js only with CURATOR_KIT_PAGE=1
+     (`CURATOR_KIT_PAGE=1 npm start`, then /next/kit.html); never in navigation.
+     The same token and shared sheets the shell links, in the shell's order
+     (src/public/next/index.html), so the parts look here as they will there. -->
+<link rel="stylesheet" href="/next/tokens/base.css">
+<link rel="stylesheet" href="/next/tokens/color.css">
+<link rel="stylesheet" href="/next/tokens/space.css">
+<link rel="stylesheet" href="/next/tokens/shape.css">
+<link rel="stylesheet" href="/next/tokens/motion.css">
+<link rel="stylesheet" href="/next/tokens/typography.css">
+<link rel="stylesheet" href="/next/tokens/fonts-local.css">
+<link rel="stylesheet" href="/next/tokens/material.css">
+<link rel="stylesheet" href="/next/tokens/identity.css">
+<link rel="stylesheet" href="/next/tokens/layer.css">
+<link rel="stylesheet" href="/next/shell.css">
+<link rel="stylesheet" href="/next/shared/listbox.css">
+<link rel="stylesheet" href="/next/shared/text.css">
+<link rel="stylesheet" href="/next/shared/explainer.css">
+<link rel="stylesheet" href="/next/shared/pro.css">
+<link rel="stylesheet" href="/next/shared/sidebar.css">
+<link rel="stylesheet" href="/next/shared/status.css">
+<link rel="stylesheet" href="/next/shared/notice.css">
+<link rel="stylesheet" href="/next/shared/row.css">
+<link rel="stylesheet" href="/next/shared/tabs.css">
+<link rel="stylesheet" href="/next/shared/table.css">
+<link rel="stylesheet" href="/next/shared/object-page.css">
+<link rel="stylesheet" href="/next/shared/section.css">
+<style>
+  /* The kit page's own layout only — every part below is drawn by its module. */
+  html, body { height: auto !important; overflow: visible !important; }
+  body { margin: 0; background: var(--surface-sunken); color: var(--text); font: var(--type-body); }
+  .kit-demo-intro { padding: var(--space-12) var(--space-16) 0; max-width: 72rem; }
+  .kit-demo-intro h1 { margin: 0 0 var(--space-2); font: var(--type-h2); }
+  .kit-demo-intro p { margin: 0; color: var(--text-2); }
+  #kit-root { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-12); padding: var(--space-12) var(--space-16) var(--space-24); }
+  .kit-demo-col { background: var(--canvas); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-12); min-width: 0; }
+  .kit-demo-theme { margin: 0 0 var(--space-8); font: var(--weight-medium) var(--text-xs)/1 var(--font-sans); letter-spacing: var(--track-eyebrow); text-transform: uppercase; color: var(--text-3); }
+  .kit-demo-h { margin: var(--space-16) 0 var(--space-2); font: var(--type-h3); }
+  .kit-demo-col > .kit-demo-h:first-of-type { margin-top: 0; }
+  .kit-demo-sub, .kit-demo-cap, .kit-demo-out { margin: 0 0 var(--space-6); color: var(--text-3); font-size: var(--text-md); }
+  .kit-demo-cap { margin: var(--space-8) 0 var(--space-4); }
+  .kit-demo-card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-6); margin-bottom: var(--space-6); }
+  .kit-demo-line { display: flex; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-4) 0; }
+  .kit-demo-stack { display: grid; gap: var(--space-6); }
+  .kit-demo-out { margin: var(--space-4) var(--space-8); }
+  @media (max-width: 1100px) { #kit-root { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="kit-demo-intro">
+  <h1>The shared kit, v1</h1>
+  <p>Every part in every state, dark and light side by side. Synthetic data; this page fetches nothing. Dev only.</p>
+</div>
+<main id="kit-root"></main>
+<script type="module" src="/next/kit.js"></script>
+</body>
+</html>

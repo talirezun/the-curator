@@ -61,6 +61,8 @@
 // status where the batch is actually writing to the wiki — every other
 // status (pending/paused/done/cancelled/failed, and the synthetic `null`
 // meaning "not attached") is not-busy. Returns 'enter' | 'exit' | null.
+import { fmtSize } from './format.js';
+
 function queueBusyTransition(prevStatus, nextStatus) {
   const wasBusy = prevStatus === 'running';
   const isBusy = nextStatus === 'running';
@@ -73,13 +75,8 @@ function queueBusyTransition(prevStatus, nextStatus) {
 // (unlike the KB-scale formatBytes() above, used for single pages). Never
 // renders NaN/undefined text — a non-finite input renders as an em dash.
 function formatQueueBytes(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return '—';
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let val = n / 1024;
-  let i = 0;
-  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
-  return `${val.toFixed(1)} ${units[i]}`;
+  // Kit v1: shared/format.js's fmtSize, the app's one size rule.
+  return fmtSize(n) || '—';
 }
 
 // Pre-spend USD range formatter. Renders a real range, a single value when

@@ -539,6 +539,17 @@
               transform var(--t-press);
 }
 
+/* KIT v1 — the WORD form of the mark (renderInfoMark's `text`, the notice's
+   "Why?"): the same states and colours, sized to its word instead of a 24px
+   circle, with the control height the kit's small buttons use. */
+.tx-vh-info.tx-vh-info-text {
+  width: auto;
+  height: var(--control-sm);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-control);
+  font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
+}
+
 .tx-vh-info::before {
   content: "";
   position: absolute;

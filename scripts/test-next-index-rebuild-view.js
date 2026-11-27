@@ -19,6 +19,7 @@
  *   §6 The plan runner: nothingToDo → info banner, no card.
  */
 
+import { fmtSize, fmtCount } from '../src/public/next/shared/format.js';
 import './test-helpers/net-globals.js'; // v3.99.2: lifted Domains functions call shared/net.js
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -92,7 +93,7 @@ function build(fetchStub) {
     'state', 'escapeHtml', 'icon', 'buttonRingHtml', 'renderRunsOn', 'renderSpent', 'renderStatus', 'renderDescription',
     'quickAiButton', 'fetch', 'render', 'loadHealth', 'beginDomainWrite', 'inFlightWriteSlugs', 'isCurrentMount',
     'myMountToken', 'emptyPlanNotice', 'confirmFixSafe', 'confirmAiAction', 'GIT_UNDO_WARN',
-    ...SECTION_KIT_NAMES,
+    ...SECTION_KIT_NAMES, 'fmtSize', 'fmtCount',
     body
   )(
     state, esc, () => '<svg/>', () => '<i class="ring"></i>', () => '', () => '', (o) => '<div>' + o.title + '</div>', (t) => '<p>' + t + '</p>',
@@ -100,7 +101,7 @@ function build(fetchStub) {
     async (url, opts) => { calls.fetch.push({ url, opts }); return fetchStub(url, opts); },
     () => { calls.renders++; }, async () => { calls.loadHealth++; },
     (slug, label) => { calls.gates.push(label); return () => { calls.gates.push('release:' + label); }; },
-    inFlight, () => true, 1, () => 'empty', () => {}, () => {}, 'WARN', ...SECTION_KIT_VALUES
+    inFlight, () => true, 1, () => 'empty', () => {}, () => {}, 'WARN', ...SECTION_KIT_VALUES, fmtSize, fmtCount
   );
   return { api, state, calls };
 }
@@ -176,7 +177,8 @@ section('§4 plan card');
   ok(card.includes('3 rows now point to the page they name.'), 'repoint sentence when > 0');
   ok(!/repeated row/.test(card), 'no merge sentence at 0');
   ok(card.includes('No AI, no cost') && card.includes('Summaries, Entities and Concepts'), 'detail: free, sorted');
-  ok(card.includes('It grows from 146 KB to 438 KB.'), 'size change in KB');
+  // Kit v1: sizes through shared/format.js (divisor 1024; was 1000: 146 KB → 142 KB, 438 KB → 428 KB, 100 KB → 98 KB).
+  ok(card.includes('It grows from 142 KB to 428 KB.'), 'size change in KB');
   ok(card.includes(api.GIT_UNDO_NOTE), 'GIT_UNDO_NOTE is in the card');
   ok(!/cannot be linked/.test(card) && !/share a name/.test(card), 'unlinkable / unaddressable sentences absent at 0');
   ok(/Rebuild the list/.test(card) && /Cancel/.test(card), 'the buttons say what they do');
@@ -188,10 +190,10 @@ section('§4 plan card');
   ok(warn.includes('1 repeated row becomes one.'), 'merge sentence (singular) when > 0');
   ok(warn.includes('5 pages have file names that cannot be linked (a leading or trailing space, or | [ ] #)'), 'unlinkable sentence when > 0');
   ok(warn.includes('2 concept pages share a name with an entity page') && warn.includes('Merge those first.'), 'unaddressable sentence when > 0');
-  ok(warn.includes('It shrinks from 146 KB to 100 KB'), 'a smaller index says shrinks');
+  ok(warn.includes('It shrinks from 142 KB to 98 KB'), 'a smaller index says shrinks');
   eq(detailsMax(warn), 0, 'warnings are not inside a <details> either');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'c', samples: {}, summary: { ...SUMMARY, indexExists: false, bytesBefore: 0 } };
-  ok(api.renderPendingPlan(false).includes('It grows from 0 KB to 438 KB.'), 'no index yet: it grows from nothing');
+  ok(api.renderPendingPlan(false).includes('It grows from 0 KB to 428 KB.'), 'no index yet: it grows from nothing');
   state.pendingPlan = { kind: 'indexRebuild', basis: 'd', samples: {}, summary: { ...SUMMARY, add: 1, removeStale: 1, keepDescriptions: 1 } };
   ok(api.renderPendingPlan(false).includes('1 page joins the page list and 1 row that points to a missing page is removed. 1 description stays as written.'), 'singular summary');
 }

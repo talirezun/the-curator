@@ -323,6 +323,22 @@
 <!-- v3.77.0: the Setup check's state words, drawn by Context step 5 and
      Settings › MCP bridge › Tools on this Mac, so neither view owns them. -->
 <link rel="stylesheet" href="/next/shared/setup-check.css">
+<!-- THE SHARED KIT, v1 (2026-11-27): status chip, notice, row, tabs and
+     segmented, data table, page anatomy — drawn by shared/status.js,
+     notice.js, row.js, tabs.js, table.js and object-page.js. Every new view
+     from phase 2 of the Simple/Pro redesign draws these and nothing
+     look-alike. No view uses them yet, so linking them changes no layout;
+     they own the `kit-` prefix outright. Linked here, after the other shared
+     sheets and before shared/section.css (which test-next-section-kit.js
+     requires to be the LAST shared sheet), because scripts/test-css-tokens.js
+     discovers /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/status.css">
+<link rel="stylesheet" href="/next/shared/notice.css">
+<link rel="stylesheet" href="/next/shared/row.css">
+<link rel="stylesheet" href="/next/shared/tabs.css">
+<link rel="stylesheet" href="/next/shared/table.css">
+<link rel="stylesheet" href="/next/shared/object-page.css">
+
 <!-- shared/section.css — A NUMBERED SECTION AND WHAT GOES IN IT (v3.89.0):
      the section head, the card, the fold rows, the tinted action card and the
      one-line status card, drawn by shared/section.js. Moved out of

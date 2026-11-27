@@ -1,0 +1,107 @@
+/* shared/table.css — THE DATA TABLE (kit v1). shared/table.js owns the
+   markup; this file owns the `kit-table`, `kit-th`, `kit-td`, `kit-tr` and
+   `kit-num` names.
+
+   Numbers right-aligned in tabular figures. The head is a quiet eyebrow in
+   the SANS face (the mono face is for literals, not for column names). A row
+   that opens shows the pointer and the row overlay over its whole width. */
+
+.kit-table-wrap { width: 100%; }
+.kit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--weight-regular) var(--text-md)/var(--leading-snug) var(--font-sans);
+  color: var(--text-2);
+}
+.kit-table-caption {
+  text-align: left;
+  padding: 0 0 var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.kit-th {
+  text-align: left;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  font: var(--weight-medium) var(--text-xs)/1.2 var(--font-sans);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.kit-th-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit-min);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.kit-th-btn:hover { color: var(--text); }
+.kit-th[aria-sort] { color: var(--text-2); }
+.kit-th-sort { flex: none; }
+.kit-td {
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.kit-tr:last-child .kit-td { border-bottom: 0; }
+.kit-num {
+  text-align: right;
+  font-variant-numeric: var(--numeric-tabular);
+}
+.kit-th.kit-num .kit-th-btn { flex-direction: row-reverse; }
+.kit-td-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--weight-medium) var(--text-md)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.kit-tr-opens { cursor: pointer; }
+.kit-tr-opens:hover { background: var(--mat-row-hover); }
+.kit-tr-opens:active { background: var(--mat-row-active); }
+
+/* ── Below 900 px: each row becomes a stacked card, nothing scrolls
+   sideways. Every cell carries data-label, written before its value. ── */
+@media (max-width: 900px) {
+  .kit-table,
+  .kit-table tbody,
+  .kit-table tr,
+  .kit-table td { display: block; width: 100%; }
+  /* The head stays as a wrapping strip of the SORT buttons only, so a
+     narrow window can still sort; a head that does not sort is dropped (its
+     label is on every card). */
+  .kit-table thead { display: block; }
+  .kit-table thead tr { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); }
+  .kit-table .kit-th { display: block; width: auto; border-bottom: 0; padding: 0 var(--space-6); }
+  .kit-table .kit-th:not(:has(.kit-th-btn)) { display: none; }
+  .kit-table .kit-tr {
+    padding: var(--space-4) 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .kit-table .kit-tr:last-child { border-bottom: 0; }
+  .kit-table .kit-td {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-6);
+    padding: var(--space-2) var(--space-6);
+    border-bottom: 0;
+    text-align: right;
+  }
+  .kit-table .kit-td::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--text-3);
+    font-size: var(--text-sm);
+    text-align: left;
+  }
+}
