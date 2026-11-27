@@ -2574,7 +2574,7 @@ function renderProMode() {
       '<div class="settings-field-block" id="block-pro-mode">' +
         '<div class="cur-group-label">' +
           '<span class="settings-field-label">Pro</span>' +
-          '<p class="settings-hint-text">Saved on this computer. Today it adds detail to the Context page.</p>' +
+          '<p class="settings-hint-text">Saved on this computer. Today it opens more of the Projects page.</p>' +
         '</div>' +
         proSwitchHtml({ id: 'settings-pro-switch' }) +
       '</div>' +

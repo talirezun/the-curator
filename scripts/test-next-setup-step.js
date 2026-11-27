@@ -25,7 +25,7 @@
  *       the custom name rule.
  *   §10 a tool's evidence in the reader, with no BACKLINKS section.
  *   §11 the focus re-check's staleness rule (contract §7).
- *   §12 the head: when it was checked, ticking, and Re-check.
+ *   §12 the head: when it was checked, ticking, and Check again.
  *   §13 the explainer says what the approved design says it says.
  *   v3.79.0 (the setup-understandable contract):
  *   §14 a to-fix note is TWO lines (text, then detail), never one glued run.
@@ -461,7 +461,7 @@ section('§12 the head');
 {
   const h = S.setupHeadHtml({ data: maint() });
   ok(/class="mem-setup-checked" data-age-at="[^"]+" data-age-prefix="checked" data-age-text>checked 2 min ago</.test(h), '"checked 2 min ago", a ticking age', h);
-  ok(/class="btn btn-ghost btn-xs" data-setup-act="check">Re-check</.test(h), 'a ghost "Re-check"');
+  ok(/class="btn btn-ghost btn-xs" data-setup-act="check">Check again</.test(h), 'a ghost "Check again" (the one verb)');
   ok(/disabled>Checking…</.test(S.setupHeadHtml({ data: maint(), loading: true })), 'while checking: disabled, "Checking…"');
   ok(!/Add an agent app/.test(h), '"+ Add an agent app" is not in the head any more (it is the body\'s picker row)');
   ok(/Checking this computer…/.test(S.renderSetupBody({ loading: true }, {})) && /role="alert">Could not check this computer: boom/.test(S.renderSetupBody({ error: 'boom' }, {})),
@@ -472,7 +472,7 @@ section('§12 the head');
 section('§13 the explainer');
 {
   const e = EXPLAINERS['context.setup'];
-  ok(!!e && e.title === 'Setup', 'context.setup is an explainer titled Setup');
+  ok(!!e && e.title === 'Agents', 'context.setup is an explainer titled Agents (the tab it opens from, phase 2)');
   const all = [e.lead, ...(e.points || []).map((p) => p.text), e.try || '', ...((e.visual && e.visual.rows) || []).flat()].join(' ');
   ok(/\*\*Check again\*\* reads the files/.test(all), 'Check again (the one verb, phase 2) reads the files again; the agent harnesses need not be running');
   ok(/code checkout, not your knowledge folder; set per computer/.test(all), 'the repository: a code checkout, separate from the knowledge folder, per computer');
@@ -489,7 +489,7 @@ section('§13 the explainer');
   '…handoffs and the brief by Sync now; instruction files and the marker by the project’s git; MCP, skills and hooks set up per computer');
   ok(!/ready|can’t check here/.test(JSON.stringify(e.visual)), '…and the marks table is gone from the ⓘ');
   const ov = EXPLAINERS['context.overview'];
-  ok(/^Six readings/.test(ov.lead) && ov.visual.rows.some((r) => r[0] === 'SETUP'), 'the overview explainer counts SIX readings and names SETUP');
+  ok(ov.title === 'History' && /every note an agent saved/.test(ov.lead) && !/jump to its step|Six readings/.test(JSON.stringify(ov)), 'the overview explainer is History\'s now (phase 2): no six readings, no step jumps');
 }
 
 
@@ -576,8 +576,8 @@ section('§15 every button is labelled with what it does — fixes[] in order (a
   ok(!/\bscope\b/i.test(textOf(S.renderSetupBody({ data: d }, {})).replace(/data-[a-z-]+="[^"]*"/g, '')), 'no "scope" anywhere in the step\'s to-fix copy');
   const b2 = S.fixButtons(d.toFix[2], d.repo);
   ok(/data-setup-act="reveal" data-path="\/Users\/t\/\.gemini\/antigravity\/mcp_config\.json">Reveal file</.test(b2)
-    && /data-setup-act="check">Re-check</.test(b2) && /data-setup-act="settings">Open Settings › MCP bridge</.test(b2),
-  'bridge-file: Reveal file · Re-check · Open Settings › MCP bridge (an older server\'s "Open Tools on this Mac" label is re-worded)', b2);
+    && /data-setup-act="check">Check again</.test(b2) && /data-setup-act="settings">Open Settings › MCP bridge</.test(b2),
+  'bridge-file: Reveal file · Check again · Open Settings › MCP bridge (an older server\'s "Open Tools on this Mac" label is re-worded)', b2);
   ok(/data-setup-act="copy-snippet" data-tool="antigravity">Copy MCP entry</.test(S.fixButtons(d.toFix[3], d.repo)), 'copy-snippet: "Copy MCP entry", naming its tool');
   const b4 = S.fixButtons(d.toFix[4], d.repo);
   ok(/<a class="btn btn-secondary btn-xs" href="\/api\/setup\/skills\/my-curator\.zip" download>Get the new my-curator skill \(\.zip\)<\/a>/.test(b4)

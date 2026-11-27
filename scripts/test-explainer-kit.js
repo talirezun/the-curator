@@ -212,7 +212,7 @@ for (const k of keys) {
 {
   // The lead's words reach the page exactly, and nothing unescaped does.
   const html = explainerHtml('context.memory');
-  ok(visibleText(html).includes('Memory is where the last session stopped, plus your standing instructions.'),
+  ok(visibleText(html).includes('Now shows the note the last agent left: where the work stands and what comes next.'),
     'the lead\'s words reach the rendered text');
 }
 
@@ -222,7 +222,7 @@ section('§4  THE FIVE VISUALS');
 ok(VISUAL_TYPES.join(' ') === 'frame flow meter table steps', 'exactly five visual types');
 {
   const h = explainerHtml('context.memory');
-  ok(/<table class="xp-tbl"><caption class="xp-sr">What Memory holds<\/caption>/.test(h), 'table: a real <table> with a visually-hidden caption');
+  ok(/<table class="xp-tbl"><caption class="xp-sr">Who writes what<\/caption>/.test(h), 'table: a real <table> with a visually-hidden caption');
   ok((h.match(/<th scope="col">/g) || []).length === 3 && (h.match(/<th scope="row">/g) || []).length === 4,
     '…column headers scope=col, row names scope=row');
   ok(/data-col="Who writes it"/.test(h), '…each cell carries its column name for the stacked narrow layout');
@@ -275,13 +275,13 @@ section('§6  explainerMark IS renderInfoMark, WITH THE ENTRY\'S LABEL');
 
 {
   const m = explainerMark('mem-step-memory', 'context.memory');
-  const ref = renderInfoMark('mem-step-memory', 'About Memory', explainerHtml('context.memory'), { html: true });
+  const ref = renderInfoMark('mem-step-memory', 'About Now', explainerHtml('context.memory'), { html: true });
   ok(m.btn === ref.btn && m.panel === ref.panel, 'byte-identical to renderInfoMark(id, label, explainerHtml(key), {html:true})');
-  ok(/data-tx-info="mem-step-memory"/.test(m.btn) && /aria-label="About Memory"/.test(m.btn) && /id="mem-step-memory-btn"/.test(m.btn),
+  ok(/data-tx-info="mem-step-memory"/.test(m.btn) && /aria-label="About Now"/.test(m.btn) && /id="mem-step-memory-btn"/.test(m.btn),
     '…so the ⓘ keeps its id, its data-tx-info and its accessible name — the listener needs nothing new');
-  ok(/^<div class="tx-vh-panel" id="mem-step-memory" role="group" aria-label="About Memory" hidden><div class="xp"/.test(m.panel),
+  ok(/^<div class="tx-vh-panel" id="mem-step-memory" role="group" aria-label="About Now" hidden><div class="xp"/.test(m.panel),
     '…and the panel is the same hidden, in-flow group, now holding the explainer');
-  ok(explainerLabel('context.session-start') === 'About Session start', 'explainerLabel gives the ⓘ its name');
+  ok(explainerLabel('context.session-start') === 'About the Starting kit', 'explainerLabel gives the ⓘ its name');
   const here = explainerMark('x', 'domains.page', { here: 'shared-brain' });
   ok(/is-here[\s\S]*?Shared Brain/.test(here.panel), 'opts pass through to the body');
 }

@@ -12710,8 +12710,8 @@ try {
   // pinned words are P2's reviewed ones rather than a second copy typed here.
   {
     const about = explainerHtml('context.page', { here: 'agent-memory' });
-    ok('the header ⓘ OPENS on the model: what agents read first, and where work stopped',
-      about.includes('<p class="xp-lead">This page is your agents’ memory for one project: what they read first, and where work stopped.</p>'),
+    ok('the header ⓘ OPENS on the model: a notebook agents read when they start and write in when they stop (phase 2 wording)',
+      about.includes('<p class="xp-lead">A notebook your agents share: they read it when they start, and write in it when they stop.</p>'),
       about.slice(0, 300));
     const page = makeRenderers(withSS(ssData())).renderProject();
     const panel = (id) => { const p = panelSpans(page).find((x) => x.id === 'settings-block-info-' + id); return p ? p.body : ''; };
@@ -13196,7 +13196,7 @@ try {
       ok('"Documents at start" is a fold of step ④, CLOSED by default',
         /^<details class="mem-fold" data-mem-fold="planner">/.test(closed) && /<span>Documents at start<\/span>/.test(closed));
       ok('...its summary carries WORDS only (no control, no bar): the counts and the budget',
-        /<span class="mem-fold-meta">1 read first · 1 on request · 1 not at start · ≈5\.0k of the ≈16\.4k reading budget<\/span>/.test(closed),
+        /<span class="mem-fold-meta">1 always read · 1 when needed · 1 hidden · ≈5\.0k of the ≈16\.4k reading budget<\/span>/.test(closed),
         (closed.match(/<summary[\s\S]*?<\/summary>/) || [''])[0]);
       const sum = (closed.match(/<summary[\s\S]*?<\/summary>/) || [''])[0];
       ok('...and nothing interactive or bar-shaped inside the <summary>', !/<input|<button|cur-depth/.test(sum));

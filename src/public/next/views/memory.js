@@ -10351,7 +10351,7 @@ function bindSetup(root, token) {
         const s = setupFor();
         const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
         const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
-        if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Re-check here.');
+        if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Check again here.');
         else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Settings › MCP bridge for this agent harness’s entry.'] });
         return;
       }
@@ -10888,9 +10888,9 @@ function previewBudget(bytes, token) {
 
 /** The planner's three states, in the store's alphabet (`START_STATES`). */
 const PLANNER_STATES = [
-  { value: 'read-first', label: 'Read first' },
-  { value: 'on-request', label: 'On request' },
-  { value: 'not-at-start', label: 'Not at start' },
+  { value: 'read-first', label: 'Always read' },
+  { value: 'on-request', label: 'When needed' },
+  { value: 'not-at-start', label: 'Hidden' },
 ];
 
 /** The planner draft for the project on screen, or null. */
@@ -11065,11 +11065,11 @@ async function applyPlanner(token) {
   await reloadActive(token);
 }
 
-/** "3 read first · 5 on request · 1 not at start". */
+/** "3 always read · 5 when needed · 1 hidden" (the page's words, phase 2). */
 function plannerCountsWord(rows) {
   const n = (v) => rows.filter((r) => r.now === v).length;
-  return n('read-first') + ' read first · ' + n('on-request') + ' on request · '
-    + n('not-at-start') + ' not at start';
+  return n('read-first') + ' always read · ' + n('on-request') + ' when needed · '
+    + n('not-at-start') + ' hidden';
 }
 
 /**

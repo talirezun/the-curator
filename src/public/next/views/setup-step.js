@@ -593,7 +593,8 @@ function fixButton(fx, f, repo, primary) {
     case 'settings':
       return b('settings', label('Open Settings › MCP bridge'));
     case 'recheck':
-      return b('check', label('Re-check'));
+      // One verb (phase 2): an older server's "Re-check" label reads Check again.
+      return b('check', fx.label === 'Re-check' ? 'Check again' : label('Check again'));
     case 'skills':
       // v3.78.0's one "skills" fix: the settings door and both downloads.
       return b('settings', label('Open Settings › MCP bridge')) + ZIPS;
@@ -1205,7 +1206,7 @@ export function renderSetupBody(s, ui = {}) {
   const folds = ui.openFolds || {};
   const recheckErr = s.error
     ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + (/[.!?]$/.test(String(s.error)) ? '' : '.')),
-      'What is shown is the reading before it.', btnG('check', 'Re-check')) + errorDetailHtml(s.error)
+      'What is shown is the reading before it.', btnG('check', 'Check again')) + errorDetailHtml(s.error)
     : '';
   if (!ui.pro) {
     const door = typeof ui.moreInPro === 'function' ? ui.moreInPro(setupProDoorWhat(data)) : '';
@@ -1253,7 +1254,7 @@ export function setupHeadHtml(s) {
   const at = data && data.checkedAt;
   return (isStr(at) ? ageSpan(at, 'checked', 'mem-setup-checked') : '')
     + '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="check"' + (s && s.loading ? ' disabled' : '') + '>'
-    + (s && s.loading ? 'Checking…' : 'Re-check') + '</button>';
+    + (s && s.loading ? 'Checking…' : 'Check again') + '</button>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1572,7 +1573,7 @@ export function toolGuide(t, data) {
     + '<h3 class="mem-setup-ev-h" id="mem-setup-guide-h" tabindex="-1">' + escapeHtml('Set up ' + label + ' on this computer') + '</h3>'
     + '<p class="mem-setup-ev-p" data-guide-left="' + left + '">' + escapeHtml((left
       ? plural(left, 'step') + ' to do' + (opt ? ', ' + opt + ' optional' : '') + cant + '. Setup re-checks when you come back to this window.'
-      : 'Nothing left to do here' + (opt ? ' (' + opt + ' optional)' : '') + cant + ' — Re-check to read it again.')) + '</p>'
+      : 'Nothing left to do here' + (opt ? ' (' + opt + ' optional)' : '') + cant + ' — Check again to read it again.')) + '</p>'
     + '<ol class="mem-setup-steps">'
     + steps.map((x, i) => {
       const [cls, word] = GUIDE_MARKS[x.state] || GUIDE_MARKS.todo;

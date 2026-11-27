@@ -40,39 +40,27 @@
 const E = {
   // ── Context (views/memory.js) ──────────────────────────────────────────
   'context.page': {
-    label: 'About Project context',
-    title: 'Project context',
-    lead: 'This page is your agents’ memory for one project: what they read first, and where work stopped.',
+    label: 'About a project',
+    title: 'A project',
+    lead: 'A notebook your agents share: they read it when they start, and write in it when they stop.',
     visual: { type: 'frame', here: 'agent-memory' },
     points: [
-      { icon: 'layers', text: 'Four steps, top to bottom, add up to what an agent gets.' },
+      { icon: 'layers', text: '**Now**, **Agents** and **Starting kit** each answer one question.' },
       { icon: 'pencil', text: 'You write **the brief** and choose the **Documents**.' },
-      { icon: 'agent', text: 'Your agents save **Handoffs** and the **Journal** as they work.' },
+      { icon: 'agent', text: 'Your agents save **Handoffs** as they work; Pro adds **History**.' },
     ],
-    try: 'Press **Copy agent instructions** and paste it into your agent once.',
+    try: 'Press **Connect an agent**, then ask your agent to save where you are.',
     guide: { key: 'context.page', heading: 'Project context — what the screen shows' },
   },
 
   'context.overview': {
-    label: 'About the readings on this page',
-    title: 'Overview',
-    lead: 'Six readings about this project, in Pro’s tile strip. Each tab says the rest.',
-    visual: {
-      type: 'table',
-      caption: 'The six readings',
-      rows: [
-        ['DOCUMENTS', 'how many, and whether they’re current'],
-        ['MEMORY', 'when an agent last saved'],
-        ['KNOWLEDGE', 'pages in the domains it searches'],
-        ['SESSION START', 'what an agent starts with'],
-        ['SETUP', 'can each harness reach this project?'],
-      ],
-    },
+    label: 'About History',
+    title: 'History',
+    lead: '**History** lists every note an agent saved: one row per work-stream and computer, newest first.',
     points: [
       { icon: 'clock', text: 'Times are when the agent saved, or when the file arrived here.' },
-      { icon: 'dot', text: 'A dot shows a real check; a dashed ring shows none.' },
-      // A table holds five rows at most, so the sixth reading is a point.
-      { icon: 'agent', text: '**AGENT CONNECTIONS** shows whether agents read first, and saved.' },
+      { icon: 'agent', text: '**Agent connections** says not logged when there is no usage log.' },
+      { icon: 'search', text: 'Search a headline, or pick one harness.' },
     ],
     guide: { key: 'context.overview', heading: 'The freshness dot, one scale everywhere' },
   },
@@ -100,12 +88,12 @@ const E = {
   },
 
   'context.memory': {
-    label: 'About Memory',
-    title: 'Memory',
-    lead: '**Memory** is where the last session stopped, plus your standing instructions. Each save replaces the last.',
+    label: 'About Now',
+    title: 'Now',
+    lead: '**Now** shows the note the last agent left: where the work stands and what comes next.',
     visual: {
       type: 'table',
-      caption: 'What Memory holds',
+      caption: 'Who writes what',
       head: ['', 'Who writes it', 'What it holds'],
       rows: [
         ['The brief', { icon: 'pencil', text: 'you' }, 'your goal and firm decisions'],
@@ -115,9 +103,10 @@ const E = {
       ],
     },
     points: [
-      { icon: 'computer', text: 'Each computer keeps its own Handoffs, so syncing never overwrites them.' },
-      { icon: 'search', text: '**Agent connections** counts agent harnesses that connected through the MCP bridge.' },
+      { icon: 'computer', text: 'Each computer keeps its own notes, so syncing never overwrites them.' },
+      { icon: 'agent', text: 'Each save replaces that note; the Journal keeps one line per save.' },
     ],
+    try: 'Copy the “continue” prompt and paste it into your agent.',
     guide: { key: 'context.memory', heading: 'Memory — the brief, Handoffs and the Journal' },
   },
 
@@ -134,17 +123,16 @@ const E = {
   },
 
   'context.session-start': {
-    label: 'About Session start',
-    title: 'Session start',
-    lead: 'What an agent is handed the moment it starts: **the brief**, the latest Handoff, and **read first** documents.',
+    label: 'About the Starting kit',
+    title: 'Starting kit',
+    lead: 'What an agent is handed the moment it starts: **the brief**, the latest note, and **Always read** documents.',
     visual: { type: 'meter' },
     points: [
       { icon: 'window', text: '**Window** — how much your model can hold. Set per computer.' },
       { icon: 'gauge', text: '**Reading budget** — the most The Curator sends. Standard suits most.' },
-      // v3.79.0 (contract §D): "Harness" became "Your tool’s share".
       { icon: 'harness', text: '**Your harness’s share** — its own prompt, tools and files; estimated, meter only.' },
     ],
-    try: 'In **Documents at start**, change a start state — the meter previews it.',
+    try: 'In Pro, **Budget** shows every layer and the three settings.',
     guide: { key: 'context.session-start', heading: 'Session start and the context window' },
   },
 
@@ -155,8 +143,8 @@ const E = {
   // channels and the one that is not a channel; what each mark means moved
   // to the user guide (the step's marks are words on screen already).
   'context.setup': {
-    label: 'About Setup',
-    title: 'Setup',
+    label: 'About Agents',
+    title: 'Agents',
     lead: '**Agents** checks each harness (the app your agent runs in) reaches this project. **Check again** reads the files.',
     visual: {
       type: 'table',
@@ -173,7 +161,7 @@ const E = {
       { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
       { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'An added harness opens setup steps. Unlisted? **Another harness…**',
+    try: 'Press **Connect an agent**. Unlisted? **Another harness…**',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 
@@ -905,6 +893,7 @@ export const SCREEN_WORDS = [
   'Agent connections', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
   // Phase 2 (Projects): the page's own words.
   'Always read', 'When needed', 'Hidden', 'Agents', 'Starting kit', 'Now', 'History', 'Budget',
+  'Connect an agent',
   'Window', 'Reading budget', 'Documents at start', 'Copy agent instructions',
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',

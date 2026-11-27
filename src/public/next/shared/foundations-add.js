@@ -444,9 +444,9 @@ export function renderDoors(doors, opts) {
  */
 export function startLegendHtml() {
   return '<p class="mem-fnd-legend" id="mem-fnd-legend">'
-    + '<b>Read first</b> — sent in full when a session starts (counts against the reading budget). '
-    + '<b>On request</b> — listed by name; the agent opens it only when needed (no budget cost). '
-    + '<b>Not at start</b> — hidden at the start; opened by name only.'
+    + '<b>Always read</b> — sent in full when a session starts (counts against the reading budget). '
+    + '<b>When needed</b> — listed by name; the agent opens it only when needed (no budget cost). '
+    + '<b>Hidden</b> — not listed at the start; opened by name only.'
     + '</p>';
 }
 

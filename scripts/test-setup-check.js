@@ -444,9 +444,9 @@ section('§11 config file states (v3.78.0): empty, invalid, unopenable');
   const fb = pb.toFix.find((f) => f.tool === 'antigravity' && f.kind === 'bridge-file');
   const emptyFile = path.join(HB, '.gemini', 'antigravity', 'mcp_config.json');
   ok(fb && fb.text === 'Antigravity’s MCP settings file (~/.gemini/antigravity/mcp_config.json) is empty, so Antigravity can’t reach The Curator on this Mac.', 'the to-fix text names the file (v3.79.0 wording)', fb);
-  ok(fb && /^Open Antigravity once \(it fills the file\), then Re-check\./.test(fb.detail) && /reveal it and fix or delete it/.test(fb.detail), '…the detail says what to do', fb?.detail);
+  ok(fb && /^Open Antigravity once \(it fills the file\), then Check again\./.test(fb.detail) && /reveal it and fix or delete it/.test(fb.detail), '…the detail says what to do', fb?.detail);
   ok(fb && fb.fix.kind === 'reveal' && fb.fix.path === emptyFile && fb.fix.label === 'Reveal mcp_config.json', '…and the fix reveals that exact file', fb?.fix);
-  ok(fb && fb.fixes.map((x) => x.kind).join() === 'reveal,recheck,settings' && fb.fixes.every((x) => x.label), '…then Re-check and Tools on this Mac, each labelled', fb?.fixes);
+  ok(fb && fb.fixes.map((x) => x.kind).join() === 'reveal,recheck,settings' && fb.fixes.every((x) => x.label), '…then Check again and Tools on this Mac, each labelled', fb?.fixes);
   ok(pb.tools.find((t) => t.id === 'antigravity').status === 'to-fix', 'the tool\'s one word is "to-fix"');
 
   // (c) invalid JSON alone: to fix; beside a working file: a note.

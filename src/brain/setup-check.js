@@ -1557,13 +1557,13 @@ function toolStatus(row) {
 function badFileDetail(id, label, status) {
   if (status === 'empty') {
     return id === 'antigravity'
-      ? 'Open Antigravity once (it fills the file), then Re-check. If it stays empty, reveal it and fix or delete it.'
-      : `Open ${label} once (it may fill the file), then Re-check. If it stays empty, reveal it and add the my-curator entry, or delete it.`;
+      ? 'Open Antigravity once (it fills the file), then Check again. If it stays empty, reveal it and fix or delete it.'
+      : `Open ${label} once (it may fill the file), then Check again. If it stays empty, reveal it and add the my-curator entry, or delete it.`;
   }
   if (status === 'invalid') {
-    return `Nothing in it can be read, and ${label} may not read it either. Reveal it and fix the syntax (or delete it if it is a leftover), then Re-check.`;
+    return `Nothing in it can be read, and ${label} may not read it either. Reveal it and fix the syntax (or delete it if it is a leftover), then Check again.`;
   }
-  return 'Reveal it and check its permissions (or give The Curator access under System Settings › Privacy & Security), then Re-check.';
+  return 'Reveal it and check its permissions (or give The Curator access under System Settings › Privacy & Security), then Check again.';
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1594,7 +1594,7 @@ export const FIX = Object.freeze({
   sync: () => ({ kind: 'sync', label: 'Sync now' }),
   changeRepo: (label = 'Choose the folder') => ({ kind: 'change-repo', label }),
   settings: () => ({ kind: 'settings', label: 'Open Settings › MCP bridge' }),
-  recheck: () => ({ kind: 'recheck', label: 'Re-check' }),
+  recheck: () => ({ kind: 'recheck', label: 'Check again' }),
 });
 
 /** A to-fix item: `fixes` in button order, and `fix` = the first (a v3.78.0 view reads that). */
