@@ -28,8 +28,10 @@
  *
  * ── ONE NETWORK CALL, AND IT IS THE ROUTE'S OWN ─────────────────────────────
  *
- * `RELEASES_API_URL`, `RELEASES_USER_AGENT` and `RELEASES_TIMEOUT_MS` are the
- * route's exported constants, used verbatim. The alternative — asking the
+ * The read is the route's own exported `fetchReleaseList` (v4.2.2; before it
+ * was `RELEASES_API_URL`, `RELEASES_USER_AGENT` and `RELEASES_TIMEOUT_MS` used
+ * verbatim here), so the URL, the headers, both budgets and the failure
+ * classification have one owner. The alternative — asking the
  * app's own `/api/config/update-check` and then making a SECOND call to
  * `releases/tags/<tag>` for the assets — would be two round trips, a fourth
  * copy of the repository slug, and a window in which a release published
@@ -61,7 +63,8 @@ import { localizeFailure } from './update-plan-win32.js';
  */
 export async function resolveInstallerRelease(deps = {}) {
   const cfg = deps.configModule;
-  if (!cfg || typeof cfg.pickInstallableRelease !== 'function' || typeof cfg.decideInstallerUpdate !== 'function') {
+  if (!cfg || typeof cfg.pickInstallableRelease !== 'function' || typeof cfg.decideInstallerUpdate !== 'function'
+      || typeof cfg.fetchReleaseList !== 'function') {
     // Not a user-facing state: it means the shell resolved a different module
     // than the server is running, which is the exact failure `desktop-host.js`
     // warns about for the hook registry. Named, never a raw TypeError.
@@ -74,33 +77,31 @@ export async function resolveInstallerRelease(deps = {}) {
   const current = typeof deps.currentVersion === 'string' ? deps.currentVersion.trim() : '';
   if (!current) return updateFailure('local-version-unreadable', 'no current version supplied');
 
-  let response;
-  try {
-    response = await doFetch(cfg.RELEASES_API_URL, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': cfg.RELEASES_USER_AGENT },
-      // Same budget as the route. The caught error below is deliberately not
-      // read, let alone surfaced — the route's own comment gives the reason and
-      // it holds here for the same reason: nothing in it is actionable, and not
-      // touching it is the strongest guarantee that nothing derived from the
-      // request reaches a dialog.
-      // `AbortSignal.any`, not an override. The first draft of this line wrote
-      // the caller's signal OVER the timeout, which silently removed the 8 s
-      // budget and left a cancellable-but-unbounded request — a hang with a
-      // Cancel button rather than a bounded call. Both signals must be live:
-      // the timeout bounds it, the caller's cancels it.
-      signal: deps.signal ? AbortSignal.any([AbortSignal.timeout(cfg.RELEASES_TIMEOUT_MS), deps.signal])
-        : AbortSignal.timeout(cfg.RELEASES_TIMEOUT_MS),
-    });
-  } catch {
+  // ── DELEGATED: the read itself (v4.2.2). ──
+  // `cfg.fetchReleaseList` is the route's own read: the same URL, headers and
+  // two budgets (answer, then body), and the same classification, so Settings'
+  // check and this resolver can never call one failure two different things.
+  // The caller's signal (Cancel) is passed through and aborts either phase;
+  // the budgets still bound it (the v3.x lesson recorded here before: a
+  // caller's signal must never REPLACE the timeout). `deps.releaseTimeouts`
+  // is the test seam ({ headersMs, bodyMs }).
+  const read = await cfg.fetchReleaseList(doFetch, {
+    ...(deps.releaseTimeouts || {}),
+    ...(deps.signal ? { signal: deps.signal } : {}),
+  });
+  if (!read.ok) {
+    if (read.kind === 'http') {
+      const r = read.response;
+      return updateFailure('github-error', `status ${r ? r.status : 'none'}`);
+    }
+    // A body that did not arrive in full is a NETWORK failure ("try again"),
+    // never 'unexpected-response': before v4.2.2 a body cut off by the 8 s
+    // budget was reported as "not in the expected form".
+    if (read.kind === 'body') return updateFailure('network-unreachable', 'the release list did not arrive in full');
+    if (read.kind === 'shape') return updateFailure('unexpected-response', 'release list is not an array');
     return updateFailure('network-unreachable');
   }
-  if (!response || !response.ok) {
-    return updateFailure('github-error', `status ${response ? response.status : 'none'}`);
-  }
-
-  let payload;
-  try { payload = await response.json(); } catch { payload = undefined; }
-  if (!Array.isArray(payload)) return updateFailure('unexpected-response', 'release list is not an array');
+  const payload = read.payload;
 
   // ── DELEGATED: which release. ──
   // The platform travels with the question, as it does in the route's own

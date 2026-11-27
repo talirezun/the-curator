@@ -4004,12 +4004,26 @@ export function decideUpdateAvailable({ current, latest, localCommit, remoteComm
 // returns more than one name without this site changing.
 
 /** Where the release listing is read from. One call, unauthenticated, no user
- *  data of any kind — not in a header, not in a query string. `per_page=30` is
- *  GitHub's default page size and comfortably covers a repo with five
- *  releases; the newest installable one is selected by SEMVER over the page
- *  rather than by trusting the listing's order. */
+ *  data of any kind — not in a header, not in a query string. The newest
+ *  installable release is selected by SEMVER over the page rather than by
+ *  trusting the listing's order.
+ *
+ *  WHY 10 (v4.2.2; it was 30, GitHub's default). Every release from v4.1.0 on
+ *  carries 35 assets (three installers, three stable-name copies, and the GPL
+ *  source of every copyleft part of the bundled MinGit), so on 2026-11-27 the
+ *  30-release page measured 663,656 bytes uncompressed (46,504 gzipped) and
+ *  10 releases 534,156 (38,672). The listing is newest-CREATED first, and the
+ *  page only has to hold ONE release carrying an installer for this platform.
+ *  Nothing non-installable sits on top in practice: a rehearsal tag
+ *  (`vX.Y.Z-wintest.N`) publishes nothing (the desktop-dmg.yml gate), a draft
+ *  is invisible to this unauthenticated call, and every published release
+ *  from v3.89.1 to v4.2.1 carries both Mac DMGs (v4.0.0 on, the Windows EXE
+ *  too). So 10 is wrong only after ten CONSECUTIVE releases that each lost
+ *  this platform's installer, and then the answer is the honest "no
+ *  installable build", never an older version offered as the newest.
+ *  `scripts/test-update-release-read.js` §4 pins that page arithmetic. */
 export const RELEASES_API_URL =
-  'https://api.github.com/repos/talirezun/the-curator/releases?per_page=30';
+  'https://api.github.com/repos/talirezun/the-curator/releases?per_page=10';
 
 /** Where the user is sent when there is nothing more specific to open. */
 export const RELEASES_PAGE_URL = 'https://github.com/talirezun/the-curator/releases';
@@ -4018,8 +4032,87 @@ export const RELEASES_PAGE_URL = 'https://github.com/talirezun/the-curator/relea
  *  version, no hostname and nothing else that could identify an install. */
 export const RELEASES_USER_AGENT = 'the-curator-update-check';
 
-/** How long to wait before calling it unreachable. */
+/** How long to wait for GitHub to ANSWER (connect + status + headers) before
+ *  calling it unreachable. */
 export const RELEASES_TIMEOUT_MS = 8000;
+
+/** How long the BODY may take once GitHub has answered (v4.2.2). Before, the
+ *  8 s budget above bounded the headers AND the body together, and a body cut
+ *  off by it made `response.json()` throw, which was reported as "not in the
+ *  expected form" (owner, 2026-11-27, gone on retry). Headers arriving prove
+ *  GitHub is reachable; what is left is a download of ~40 KB gzipped, which a
+ *  slow or waking link can stretch, so it gets its own, longer budget rather
+ *  than the remainder of the first one. Worst case 8 + 15 = 23 s, which the
+ *  shell's own wait (`UPDATE_CHECK_TIMEOUT_MS`, desktop/lib/update-check.js)
+ *  must exceed — scripts/test-desktop-menu.js pins that. */
+export const RELEASES_BODY_TIMEOUT_MS = 15000;
+
+/**
+ * Read GitHub's release list: the ONE network read both the update-check route
+ * and the desktop resolver (desktop/lib/update-release.js) make, so the two can
+ * never classify the same failure differently (v4.2.2).
+ *
+ * Two budgets on one AbortController: `headersMs` until `fetch` resolves, then
+ * a fresh `bodyMs` for reading the body. A caller's own `signal` (the desktop
+ * updater's Cancel) aborts either phase.
+ *
+ * Returns `{ ok: true, payload }` or `{ ok: false, kind, response? }` where
+ * `kind` is:
+ *   'network'  fetch itself failed or timed out: GitHub was never heard from
+ *   'http'     GitHub answered, not 2xx (`response` is carried for the status
+ *              and the rate-limit headers)
+ *   'body'     GitHub answered 2xx but the body could not be read or parsed:
+ *              aborted, timed out, cut off, or not JSON. A NETWORK-class
+ *              failure — the same request usually succeeds on retry
+ *   'shape'    the body parsed, and it is not a release list (not an array)
+ *
+ * The caught errors are deliberately not read: nothing in them is actionable
+ * and not touching them keeps anything derived from the request out of every
+ * response.
+ */
+export async function fetchReleaseList(fetchImpl, opts = {}) {
+  const headersMs = Number.isFinite(opts.headersMs) ? opts.headersMs : RELEASES_TIMEOUT_MS;
+  const bodyMs = Number.isFinite(opts.bodyMs) ? opts.bodyMs : RELEASES_BODY_TIMEOUT_MS;
+  const controller = new AbortController();
+  const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
+  let timer = null;
+  const arm = (ms, what) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      try { controller.abort(new DOMException(`the release list's ${what} took longer than ${ms} ms`, 'TimeoutError')); }
+      catch { /* ignore */ }
+    }, ms);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  };
+  try {
+    arm(headersMs, 'answer');
+    let response;
+    try {
+      response = await fetchImpl(RELEASES_API_URL, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': RELEASES_USER_AGENT },
+        signal,
+      });
+    } catch {
+      return { ok: false, kind: 'network' };
+    }
+    if (!response || !response.ok) return { ok: false, kind: 'http', response: response || null };
+    arm(bodyMs, 'download');
+    let payload;
+    try {
+      if (typeof response.json !== 'function') return { ok: false, kind: 'body' };
+      payload = await response.json();
+    } catch {
+      // AbortError / TimeoutError (a budget ran out, or Cancel), TypeError
+      // ("terminated": the connection dropped mid-body), SyntaxError (a body
+      // cut short, or not JSON at all). Never 'shape': nothing parsed.
+      return { ok: false, kind: 'body' };
+    }
+    if (!Array.isArray(payload)) return { ok: false, kind: 'shape' };
+    return { ok: true, payload };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** What counts as "you can install this" ON A MAC. Unchanged since the Mac
  *  app shipped; it is also the list every platform other than win32 uses, so
@@ -4209,6 +4302,20 @@ export function classifyReleaseFailure(kind, statusCode, headers) {
       },
     };
   }
+  if (kind === 'body') {
+    // v4.2.2. GitHub answered, and the list did not arrive in full (a budget
+    // ran out, the connection dropped, or what arrived does not parse). A
+    // network-class failure: it says try again, never "not in the expected
+    // form", which before this release was the sentence for a cut-off body.
+    return {
+      status: 502,
+      body: {
+        error: 'The release list from GitHub did not arrive in full — the connection was slow or dropped. ' +
+               'Check your internet connection and try again.',
+        reason: 'download-interrupted',
+      },
+    };
+  }
   return {
     status: 502,
     body: {
@@ -4242,32 +4349,21 @@ async function installerUpdateCheck(res, deps) {
     return res.status(500).json({ error: err.message, reason: 'local-version-unreadable' });
   }
 
-  let response;
-  try {
-    response = await fetchImpl(RELEASES_API_URL, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': RELEASES_USER_AGENT },
-      signal: AbortSignal.timeout(RELEASES_TIMEOUT_MS),
-    });
-  } catch {
-    // The caught error is deliberately not read, let alone echoed: it carries
-    // nothing a user can act on beyond "we couldn't reach it", and not
-    // touching it is the strongest guarantee nothing derived from the request
-    // reaches the response. Same rule as the OpenRouter key validator above.
-    const f = classifyReleaseFailure('network');
+  // One read, shared with the desktop resolver (fetchReleaseList above). The
+  // caught errors inside it are deliberately not read, let alone echoed: they
+  // carry nothing a user can act on, and not touching them is the strongest
+  // guarantee nothing derived from the request reaches the response. Same
+  // rule as the OpenRouter key validator above. `deps.releaseTimeouts` is the
+  // test seam for the two budgets ({ headersMs, bodyMs }); null in production.
+  const read = await fetchReleaseList(fetchImpl, (deps && deps.releaseTimeouts) || {});
+  if (!read.ok) {
+    const r = read.response;
+    const f = read.kind === 'http'
+      ? classifyReleaseFailure('http', r && r.status, r && r.headers)
+      : classifyReleaseFailure(read.kind);
     return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
   }
-
-  if (!response || !response.ok) {
-    const f = classifyReleaseFailure('http', response && response.status, response && response.headers);
-    return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
-  }
-
-  let payload;
-  try { payload = await response.json(); } catch { payload = undefined; }
-  if (!Array.isArray(payload)) {
-    const f = classifyReleaseFailure('shape');
-    return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
-  }
+  const payload = read.payload;
 
   const release = pickInstallableRelease(payload, { platform });
 

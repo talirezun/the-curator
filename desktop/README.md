@@ -934,8 +934,10 @@ Two further blockers, each sufficient on its own:
 
 ### The design
 
-1. **Resolve.** One unauthenticated GET to `RELEASES_API_URL` — *config.js's own
-   exported constant* — then `pickInstallableRelease()` and
+1. **Resolve.** One unauthenticated GET to `RELEASES_API_URL`, made by
+   `fetchReleaseList()` — *config.js's own exported read* (v4.2.2: 8 s for
+   GitHub's answer, then 15 s for the body; a body that does not arrive in full
+   is `network-unreachable`, never `unexpected-response`) — then `pickInstallableRelease()` and
    `decideInstallerUpdate()`, *config.js's own exported functions*. There is no
    version comparator anywhere in `desktop/lib/`, and the suite asserts it. The
    only thing `update-release.js` adds is re-associating the chosen release's

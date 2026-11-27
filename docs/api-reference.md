@@ -7629,8 +7629,12 @@ apart would report the second as the first.
 
 ### Arm 2 — `download-installer`
 
-One unauthenticated `GET https://api.github.com/repos/talirezun/the-curator/releases?per_page=30`,
-with a fixed `User-Agent` and an 8-second `AbortSignal.timeout`. **No credential, no query parameter
+One unauthenticated `GET https://api.github.com/repos/talirezun/the-curator/releases?per_page=10`,
+with a fixed `User-Agent` and two budgets (v4.2.2): 8 seconds for GitHub to answer, then a fresh
+15 seconds to read the body. The page was 30 releases until v4.2.2; every release now carries 35
+assets, and a page of 10 still holds the newest installable release (a rehearsal tag publishes
+nothing, and a draft is invisible to this call). The desktop updater reads the list through the
+same function (`fetchReleaseList`), so the two never classify a failure differently. **No credential, no query parameter
 other than the page size, and nothing derived from the user or the machine ever leaves the process.**
 No subprocess runs on this arm — `git` is never invoked.
 
@@ -7688,10 +7692,11 @@ nothing downstream can read a failed check as a reassuring "you are up to date".
 
 | `reason` | Cause |
 |---|---|
-| `unreachable` | the fetch threw or timed out. The raw transport error is never echoed. |
+| `unreachable` | the fetch threw, or GitHub did not answer within 8 s. The raw transport error is never echoed. |
 | `rate-limited` | `403`/`429` **with** `x-ratelimit-remaining: 0`. The header is what separates it from an ordinary refusal. |
 | `http-error` | any other non-`2xx` |
-| `unexpected-response` | the body was not a JSON array |
+| `download-interrupted` | **v4.2.2.** GitHub answered `2xx` but the body did not arrive in full: the 15 s body budget ran out, the connection dropped, or what arrived does not parse as JSON. The sentence says to try again. Before v4.2.2 this was reported as `unexpected-response`. |
+| `unexpected-response` | the body parsed as JSON and is not an array |
 
 `500` with `reason: "local-version-unreadable"` is the one local failure: this install's own
 `package.json` could not be read.

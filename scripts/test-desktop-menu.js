@@ -274,7 +274,7 @@ section('§3 the in-flight state drives the item, so the menu IS the progress in
   eq(busy.label, menu.CHECK_LABEL_BUSY, 'in flight: the item reads "Checking for Updates…"');
   eq(busy.enabled, false, 'in flight: the item is DISABLED, so a second click cannot stack a second dialog');
   ok(menu.CHECK_LABEL_IDLE !== menu.CHECK_LABEL_BUSY,
-     'the two labels genuinely differ — the check is a live network call with a 12s ceiling, and an item that looked unchanged for ten seconds is the defect being avoided');
+     'the two labels genuinely differ — the check is a live network call with a 27s ceiling, and an item that looked unchanged for ten seconds is the defect being avoided');
   ok(menu.CHECK_LABEL_IDLE.endsWith('…'),
      'the idle label ends in an ellipsis — the macOS convention promising a dialog, which is what this item shows');
 
@@ -828,12 +828,15 @@ section('§9 fetchUpdateCheck — and a tripwire against reaching the real netwo
   }
 }
 {
-  // Timeout budget. The route's own upstream ceiling is RELEASES_TIMEOUT_MS.
+  // Timeout budget. The route's own upstream ceiling is RELEASES_TIMEOUT_MS
+  // (GitHub's answer) PLUS RELEASES_BODY_TIMEOUT_MS (the body), v4.2.2.
   const routeSrc = read(path.join(ROOT, 'src', 'routes', 'config.js'));
   const m = routeSrc.match(/RELEASES_TIMEOUT_MS\s*=\s*(\d+)/);
-  ok(!!m, 'CONTROL — the route still declares RELEASES_TIMEOUT_MS');
-  ok(updateCheck.UPDATE_CHECK_TIMEOUT_MS > Number(m[1]),
-     `the shell waits LONGER (${updateCheck.UPDATE_CHECK_TIMEOUT_MS}ms) than the route's own upstream budget (${m[1]}ms) — a shorter one would abort a check that was about to succeed and report a failure the server never had`);
+  const b = routeSrc.match(/RELEASES_BODY_TIMEOUT_MS\s*=\s*(\d+)/);
+  ok(!!m && !!b, 'CONTROL — the route still declares RELEASES_TIMEOUT_MS and RELEASES_BODY_TIMEOUT_MS');
+  const upstream = Number(m && m[1]) + Number(b && b[1]);
+  ok(updateCheck.UPDATE_CHECK_TIMEOUT_MS > upstream,
+     `the shell waits LONGER (${updateCheck.UPDATE_CHECK_TIMEOUT_MS}ms) than the route's own upstream budget (${m && m[1]} + ${b && b[1]} = ${upstream}ms) — a shorter one would abort a check that was about to succeed and report a failure the server never had`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -619,6 +619,7 @@ const FAILURES = [
   ['500 upstream', CF('http', 500, new Map([['x-ratelimit-remaining', '58']]))],
   ['403 not rate limit', CF('http', 403, new Map([['x-ratelimit-remaining', '58']]))],
   ['bad shape', CF('shape')],
+  ['body did not arrive', CF('body')],
 ];
 for (const [name, f] of FAILURES) {
   ok(typeof f.body.error === 'string' && f.body.error.length > 20, `§5 ${name}: carries an actionable error sentence`);
@@ -900,7 +901,16 @@ const okJson = (payload, extra = {}) => async () => ({
 }
 {
   const r = await realCheck(async () => ({ ok: true, status: 200, headers: new Map(), json: async () => { throw new Error('bad json'); } }));
-  eq(r.body.reason, 'unexpected-response', '§7 an unparseable body degrades the same way');
+  // DELIBERATE REVERSAL (v4.2.2). This pinned 'unexpected-response' ("not in
+  // the expected form"). A body that does not parse is, in practice, a body cut
+  // off by the timeout or a dropped connection, and the owner met exactly that
+  // sentence on a check a retry fixed. It is now a network-class failure that
+  // says try again; 'unexpected-response' is kept for a body that PARSED into
+  // the wrong shape (the case above). scripts/test-update-release-read.js
+  // drives the timeout and truncation cases themselves.
+  eq(r.body.reason, 'download-interrupted', '§7 an unparseable body is a download that did not arrive in full, not a wrong shape');
+  ok(/try again/i.test(r.body.error) && !/expected form/i.test(r.body.error),
+    '§7 and it says try again, never "not in the expected form"');
 }
 {
   const r = await realCheck(async () => null);

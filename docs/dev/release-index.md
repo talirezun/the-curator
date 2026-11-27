@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v4.1.2` | A safety-fix release for the setup flows: changing the knowledge folder can no longer delete your domains from GitHub, Sync's git never goes through a shell, a damaged settings file is never overwritten, a Shared Brain Pull never deletes your own pages, and Check entry runs only this app's own node. |
 | `v4.1.1` | Test-only: the live ingest suite reports a high broken-link rate as inconclusive model variance instead of failing, so a model's noisy run no longer turns the README's Tests badge red. |
 | `v4.1.0` | On Windows the tray widget looks and works like the Mac one: a left-click opens a popover with the Mac widget's rows, captions, dots, bars and activity strip, a right-click the plain Windows menu; stable-name download links for every installer. |
 | `v4.0.1` | The Windows tray icon shows the Mac widget's real state (an empty ring, a dot only while an agent has just saved), and a left-click opens the widget's menu instead of the app window. |

@@ -32,12 +32,14 @@
  */
 
 /** Milliseconds before we stop waiting. The route's own upstream budget is
- *  RELEASES_TIMEOUT_MS = 8000 (src/routes/config.js) plus request overhead, so
- *  a shorter timeout here would abort a check that was about to succeed and
- *  report a failure the server never had. Deliberately LONGER than
+ *  RELEASES_TIMEOUT_MS = 8000 for GitHub's answer plus, since v4.2.2,
+ *  RELEASES_BODY_TIMEOUT_MS = 15000 for the body (src/routes/config.js), plus
+ *  request overhead, so a shorter timeout here would abort a check that was
+ *  about to succeed and report a failure the server never had (it was 12000
+ *  while the route's budget was 8000 in all). Deliberately LONGER than
  *  write-status's 2500: this call is not on the quit path and it really does
  *  go to the network. */
-export const UPDATE_CHECK_TIMEOUT_MS = 12000;
+export const UPDATE_CHECK_TIMEOUT_MS = 27000;
 
 /** Refuse to parse a body larger than this. The documented payload is ~600
  *  bytes; this is three orders of magnitude of headroom and still bounded. */

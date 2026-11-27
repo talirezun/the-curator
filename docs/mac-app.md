@@ -339,9 +339,13 @@ flowchart TD
 ```
 
 1. **Check for updates** reads GitHub's public release list — one unauthenticated
-   `GET`, no credentials, no personal data, an 8-second timeout. It selects **the
+   `GET` for the ten newest releases, no credentials, no personal data; GitHub has
+   8 seconds to answer and then 15 more to send the list. It selects **the
    newest release that actually carries an installer** and compares that version
-   with the one you are running.
+   with the one you are running. If the list does not arrive in full (a slow or
+   dropped connection), the check says so and asks you to **try again**; only a
+   list that arrived and is not a release list says it was *not in the expected
+   form* (before v4.2.2 a cut-off download said that too).
 2. If yours is older you get **Update available** with both version numbers and
    the release name, a **Download and install** button, and — still — a link to
    open the download page if you would rather do it by hand.
