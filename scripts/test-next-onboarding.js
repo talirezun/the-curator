@@ -1734,10 +1734,11 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
   ok(!/Claude Desktop/i.test(obCode), '…and neither does any other string in the module');
   ok(!/nothing else works|you need a key|requires a key/i.test(agentCopy),
     'and it never states a key requirement');
-  ok(/MCP bridge/.test(STEP_COPY.bridge.todo),
-    'the bridge step names the Settings block it points at, by its shipped label');
-  ok(/MCP bridge'\]/.test(settingsCode) || /'mcp',\s*'MCP bridge'/.test(settingsCode),
-    '…which views/settings.js really calls that today (this guard would rot silently otherwise)');
+  // v4.3.0 fix round (e2e M5/M6): the step opens the ONE connect flow and
+  // says what is true of it — no snippet, no "MCP bridge".
+  ok(/sets it up for you where it can; otherwise it shows exactly what to paste/.test(STEP_COPY.bridge.todo)
+    && !/snippet|MCP/.test(STEP_COPY.bridge.todo),
+    'the bridge step says what the connect flow does, in plain words (no "snippet", no "MCP")');
   ok(/[Pp]roject/.test(STEP_COPY.project.todo),
     'and the project step says the word "project" — which appeared in NO step before this release');
 
@@ -1748,18 +1749,17 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
 
   // ── THE NEW STEPS POINT, LIKE EVERY OTHER STEP ────────────────────────
   eq(targetViewFor('project'), 'domains', 'the project step points at Domains, which owns the project list and its form');
-  eq(targetViewFor('bridge'), 'settings', 'the bridge step points at Settings, which owns the snippet');
+  eq(targetViewFor('bridge'), 'memory', 'the bridge step points at Projects, where the ONE connect flow is');
   ok(AGENT_STEP_ORDER.every((id) => targetViewFor(id) !== null), 'every agent step has a destination');
   ok(!/method:\s*'PUT'|method:\s*'PATCH'|method:\s*'DELETE'/.test(obCode),
     'and none of them mutates anything — the panel still only reads');
 
-  // The bridge step opens the SECTION, the same way step 2 opens Domains'
-  // create form: through afterViewMount, because v3.57.0's exit animation
-  // means the statement order says nothing about the event order.
+  // v4.3.0 fix round (e2e M6): the bridge step RECORDS a connect request and
+  // navigates to Projects (record first, then navigate — the same order every
+  // producer of a shell request uses); it clicks nothing in Settings.
   {
     const goSrc2 = extractFunction(obCode, 'go') + '\n' +
-      extractFunction(obCode, 'goToDomainsCreate') + '\n' +
-      extractFunction(obCode, 'goToMcpBridge');
+      extractFunction(obCode, 'goToDomainsCreate');
     function runGo2(stepId, { deferMount }) {
       const log = [];
       const queued = [];
@@ -1767,10 +1767,10 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
       const btn = { click: () => log.push('click') };
       const doc = {
         getElementById: (id) => ((id === 'dm-new-domain-btn' && mounted) ? btn : null),
-        querySelector: (sel) => ((sel === '.settings-nav-row[data-section="mcp"]' && mounted) ? btn : null),
+        querySelector: () => null,
       };
       const api = new Function(
-        'navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
+        'navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen', 'requestProject',
         goSrc2 + '\nreturn { go };')(
         (v) => { log.push('navigate:' + v); if (!deferMount) mounted = true; },
         (cb) => { if (deferMount) { queued.push(cb); return; } cb(); },
@@ -1778,6 +1778,7 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
         doc,
         () => log.push('refresh'),
         0,
+        (d, p, o) => log.push('request:' + JSON.stringify([d, p, o])),
       );
       let threw = null;
       try { api.go(stepId); } catch (e) { threw = e; }
@@ -1785,32 +1786,16 @@ section('14. THE TWO DOORS (v3.61.0) — derived, not stored, and still not a mo
     }
     const r = runGo2('bridge', { deferMount: true });
     ok(r.threw === null, 'go(\'bridge\') does not throw while the mount is pending');
-    ok(!r.log.includes('click'), 'and does NOT click the nav row before Settings has mounted — it does not exist yet');
+    ok(r.log[0] === 'request:' + JSON.stringify([null, null, { connect: true }]) && r.log[1] === 'navigate:memory',
+      'it records a connect request FIRST, then navigates to Projects', r.log.join(' → '));
     r.flushMount();
-    ok(r.log.includes('click'), '…and DOES once it has');
-    ok(r.log.indexOf('navigate:settings') < r.log.indexOf('click'), 'navigation first, then the section click');
-    ok(r.log.filter((e) => e === 'click').length === 1, 'exactly one click');
-
-    const imm = runGo2('bridge', { deferMount: false });
-    ok(imm.log.indexOf('navigate:settings') < imm.log.indexOf('click')
-      && imm.log.indexOf('click') < imm.log.indexOf('refresh'),
-      `motion off: navigate → click → refresh (got ${imm.log.join(' → ')})`);
+    ok(!r.log.includes('click'), '…and clicks nothing in Settings');
 
     // A project step must NOT open the create form — it points at the list.
     const proj = runGo2('project', { deferMount: false });
     ok(proj.log.includes('navigate:domains'), 'the project step navigates to Domains');
     ok(!proj.log.includes('click'),
       'and clicks nothing: it points at the project list rather than opening a form the panel does not own');
-
-    // Degradation contract: a renamed hook is a no-op, never a throw.
-    const gone = new Function('navigate', 'afterViewMount', 'targetViewFor', 'document', 'refresh', 'panelGen',
-      goSrc2 + '\nreturn { go };')(
-      () => {}, (cb) => cb(), targetViewFor,
-      { getElementById: () => null, querySelector: () => null }, () => {}, 0);
-    let threw2 = null;
-    try { gone.go('bridge'); } catch (e) { threw2 = e; }
-    ok(threw2 === null,
-      'a renamed nav row leaves the user on Settings with the section list in front of them rather than throwing');
   }
 
   // ── STILL NOT A MODAL, and the doors did not smuggle one in ───────────

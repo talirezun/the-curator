@@ -198,3 +198,18 @@
 /* The sidebar's filter (Pro). */
 .prj-sidebar-filter { padding: 0 0 var(--space-6); }
 .prj-sidebar-filter .prj-search { width: 100%; max-width: none; }
+
+/* ── v4.3.0 fix round (the orchestrator's screen review) ────────────────── */
+/* Item 4: a tile's FIGURE never wraps ("≈3.2k tokens" broke in two); its
+   label and sub-line wrap instead. */
+.prj-tiles .cur-ov-value { white-space: nowrap; }
+/* Item 9: at phone width Pro's six tiles are a compact strip — three
+   columns, a smaller figure — so the first screen is not all tiles. */
+@media (max-width: 640px) {
+  .prj-tiles .cur-ov-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+  .prj-tiles .cur-ov-value { font-size: var(--text-md); }
+  .prj-tiles .cur-ov-card { padding: var(--space-4); }
+}
+/* Item 5: the Projects sidebar's Pro meta ("Claude Code · 3 work-streams")
+   gives way BEFORE the freshness dot, so the dot is never clipped. */
+#sidebar .cur-sb-meta .cur-sb-figure { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

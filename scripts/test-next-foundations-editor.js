@@ -1954,6 +1954,9 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     'bindFoldToggles', 'bindSessionAndPlan',
     // v3.77.0 — step 5's controls, bound in one place the same way.
     'bindSetup',
+    // v4.3.0 fix round (e2e M2): "+ New project" with no domain says so in a
+    // toast — the companion suite injects its `showToast` spy.
+    'showToast',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",

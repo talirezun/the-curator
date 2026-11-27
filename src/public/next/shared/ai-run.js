@@ -54,7 +54,8 @@ function cleanId(id) {
 
 /** 6,799 → "7k"; 640 → "640". Rounded, because the figure is an estimate. */
 function formatK(n) {
-  if (n < 1000) return String(Math.round(n));
+  // 953 → "1k", not "953" beside "1k" in one range ("≈953–1k", e2e m6).
+  if (n < 950) return String(Math.round(n));
   return Math.round(n / 1000).toLocaleString('en-US') + 'k';
 }
 

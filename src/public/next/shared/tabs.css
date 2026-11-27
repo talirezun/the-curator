@@ -39,9 +39,9 @@
   border-radius: 2px;
   background: var(--accent);
 }
-/* A Pro tab is drawn only while Pro is on; its label carries the accent
-   text so the extra tabs read as the Pro set without a "PRO" label on each. */
-.kit-tab-pro { color: var(--accent-text); }
+/* A Pro tab is drawn only while Pro is on, in the SAME style as every tab
+   (review item 3, v4.3.0 fix round: an accent label read as a link, and D5
+   says Pro does not mark itself — the rail switch is the cue). */
 .kit-tab-count {
   font: var(--weight-medium) var(--text-xs)/1 var(--font-sans);
   font-variant-numeric: var(--numeric-tabular);
@@ -77,3 +77,19 @@
 .kit-seg-opt:first-child { border-left: 0; }
 .kit-seg-opt:hover { color: var(--text); background: var(--mat-row-hover); }
 .kit-seg-opt[aria-checked="true"] { color: var(--text); background: var(--mat-row-active); }
+
+/* ── Narrow windows: the strip SCROLLS sideways, it never wraps (review
+   item 7, v4.3.0 fix round: "Starting kit" dropped to a second line at
+   375 px). The underline sits inside the strip so the scroll clips nothing. */
+@media (max-width: 640px) {
+  .kit-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .kit-tabs::-webkit-scrollbar { display: none; }
+  .kit-tab { flex: 0 0 auto; white-space: nowrap; }
+  .kit-tab[aria-selected="true"]::after { bottom: 0; }
+}

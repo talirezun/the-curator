@@ -101,6 +101,8 @@
 //
 // Owns views/onboarding.css (the `obp-` prefix, used nowhere else).
 
+// v4.3.0 fix round (e2e M6): step 3 opens the ONE connect flow on Projects.
+import { requestProject } from './memory.js';
 import { navigate, afterViewMount, icon, escapeHtml,
          requestDomainFold, ADD_SOURCES_FOLD } from '../app.js';
 import { loadUiState, durableStorage } from '../shared/ui-state.js';
@@ -356,11 +358,14 @@ const STEP_COPY = {
   // log, never from `installed` in GET /api/mcp/config, which inspects
   // Claude Desktop's config file ONLY and would read false for ever for
   // everyone else — step 3's never-completing defect, rebuilt.
+  // v4.3.0 fix round (e2e M6): the step opens the ONE connect flow on
+  // Projects, which sets the agent up where it can and shows exactly what to
+  // paste otherwise.
   bridge: {
     title: 'Connect your agent',
-    todo: 'Settings → MCP bridge hands you the snippet your agent needs. It runs with the app closed.',
-    done: 'Your agent has called the bridge — it can read and save.',
-    action: 'Open Settings',
+    todo: 'Pick your agent. The Curator sets it up for you where it can; otherwise it shows exactly what to paste.',
+    done: 'Your agent has called The Curator — it can read and save.',
+    action: 'Connect an agent',
   },
 };
 
@@ -631,7 +636,7 @@ function targetViewFor(stepId) {
   if (stepId === 'project') return 'domains';
   // Settings owns the MCP bridge blocks. go() additionally opens that
   // SECTION, the same way step 2 opens Domains' create form.
-  if (stepId === 'bridge') return 'settings';
+  if (stepId === 'bridge') return 'memory';
   return null;
 }
 
@@ -1154,6 +1159,9 @@ function go(stepId) {
   // way goToDomainsCreate() is: that helper needs the DOM, this needs to be
   // early.
   if (stepId === 'ingest') requestDomainFold(ADD_SOURCES_FOLD);
+  // e2e M6: the bridge step opens the ONE connect flow (recorded first, the
+  // same record-then-navigate order).
+  if (stepId === 'bridge') requestProject(null, null, { connect: true });
   navigate(view);
   // views/settings.js's freshState() opens on SETTINGS_SECTIONS[0], which is
   // 'general' since v3.72 — NOT the API-keys section. So the key step clicks
@@ -1172,7 +1180,7 @@ function go(stepId) {
   // goToMcpBridge(). Settings lands on its FIRST section (Providers & keys,
   // from SETTINGS_SECTIONS[0]), so without this the bridge step would send
   // somebody to the key screen it has just told them they do not need.
-  if (stepId === 'bridge') afterViewMount(goToMcpBridge);
+  // (v4.3.0: the bridge step no longer opens Settings › MCP bridge.)
   // v4.1.2 (audit O3): the key step opens Providers & keys the same way.
   // Settings lands on its FIRST section, which is General (no key field
   // there), so plain navigation sent people to the wrong screen.

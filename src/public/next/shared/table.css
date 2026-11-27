@@ -73,6 +73,9 @@
 /* ── Below 900 px: each row becomes a stacked card, nothing scrolls
    sideways. Every cell carries data-label, written before its value. ── */
 @media (max-width: 900px) {
+  /* Review item 11: the caption is a line of its own above the cards, never
+     squeezed into the first card's column. */
+  .kit-table-caption { display: block; width: 100%; padding: 0 var(--space-6) var(--space-4); }
   .kit-table,
   .kit-table tbody,
   .kit-table tr,

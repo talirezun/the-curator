@@ -133,6 +133,8 @@
 //
 // Owns views/settings.css.
 
+// v4.3.0 fix round (e2e M6): the MCP bridge's notice opens the ONE connect flow.
+import { requestProject } from './memory.js';
 import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
@@ -9126,8 +9128,8 @@ function renderSkillsCard() {
 // PHASE 2 (owner decision D8): connecting an agent is one flow started from a
 // project. This page keeps its content (phase 5 slims it) and says so first.
 const MCP_PROJECTS_NOTICE = () => kitNotice({ tone: 'info', title: 'Connect agents from a project now.',
-  line: 'Projects › Agents walks you through it, one agent at a time; this page keeps the details.',
-  actions: [{ label: 'Open Projects', attrs: { 'data-mcpi-act': 'to-projects' } }] });
+  line: 'Projects walks you through it, one agent at a time: The Curator sets it up for you where it can; otherwise it shows exactly what to paste. This page keeps the details.',
+  actions: [{ label: 'Connect an agent', attrs: { 'data-mcpi-act': 'to-projects' } }] });
 
 function renderMcp() {
   // THE PAGE (v3.90.0, the copy deck): OVERVIEW, then four numbered sections
@@ -10746,7 +10748,8 @@ function wireInstallListeners(token) {
   const mi = state.mcpInstall;
   // Phase 2: the page's notice (above the overview) opens Projects.
   document.querySelectorAll('.kit-notice [data-mcpi-act="to-projects"]').forEach((el) => {
-    el.addEventListener('click', () => navigate('memory'));
+    // e2e M6: the ONE connect flow, on the project Projects opens.
+    el.addEventListener('click', () => { requestProject(null, null, { connect: true }); navigate('memory'); });
   });
   const root = '#mcp-card-apps ';
   document.querySelectorAll(root + '[data-mcpi-tick]').forEach((el) => {

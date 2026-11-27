@@ -282,8 +282,24 @@ const retiredHit = new Set();
 const retiredPassed = new Set();
 const failedKeys = [];
 let currentSection = '';
+// ── A PASS COMPUTED ON A GONE STAND-IN IS NOT A PASS (audit M4) ─────────
+// A lift of a GONE_OK name returns '' and counts the call. An assertion that
+// passes right after such a call was decided on '' — it is counted as a
+// FAILURE ("vacuous") unless it is retired by name. The audit counted 46;
+// they are retired in memory-view-retired.json (`vacuous`), and the
+// behaviours that still exist are pinned on the new page in
+// scripts/test-projects-page.js §16.
+let goneSeen = 0;
+let vacuous = 0;
 function ok(label, cond, detail) {
   const key = currentSection + ' :: ' + label;
+  const g = globalThis.__memViewGoneCalls || 0;
+  const onGone = g > goneSeen;
+  goneSeen = g;
+  if (cond && onGone) {
+    if (RETIRED.has(key)) { retired++; retiredHit.add(key); console.log('  ⊘ retired (decided on a gone renderer\'s \'\'): ' + label); return; }
+    vacuous++; failed++; failedKeys.push(key); console.log('  ✗ VACUOUS — passed on a gone renderer\'s \'\' stand-in: ' + label); return;
+  }
   if (cond) { passed++; if (RETIRED.has(key)) retiredPassed.add(key); console.log('  ✓ ' + label); }
   else if (RETIRED.has(key)) { retired++; retiredHit.add(key); console.log('  ⊘ retired (its page is gone): ' + label); }
   else { failed++; failedKeys.push(key); console.log('  ✗ ' + label + (detail ? ' — ' + detail : '')); }
@@ -1044,10 +1060,51 @@ section('§5 — View helpers, lifted from live source and EXECUTED');
  *  loudly on a desync rather than producing a confusing SyntaxError later.
  *  (Same helper as scripts/test-next-loading-gate.js.) */
 const GONE = new Set();
+// ── THE GONE-LIST IS EXPLICIT (audit M4, v4.3.0 fix round) ──────────────
+// The five-step page's renderers were deleted with it. A lift of one of
+// THESE names still returns a stand-in, so the blocks that name them keep
+// running and their pins are RETIRED by name (memory-view-retired.json) —
+// but the stand-in now counts every call (`GONE_CALLS`), and §17 fails if an
+// assertion that is NOT retired passed in a block that called one (a pass
+// computed on '' is no pass). Any OTHER missing name is a FAILURE: a renamed
+// or deleted function can no longer turn its pins vacuous in silence.
+const GONE_OK = Object.freeze({
+  renderSaveStatus: 'the five-step page\'s save monitor; the Now tab says the same verdicts as kit notices (model.js nowNotices, test-save-kind §6)',
+  wsMoreHtml: 'the work-stream table\'s "Show N more"; History is a kit table with no paging',
+  wsRowHtml: 'a work-stream table row; History and Earlier notes are kit rows/tables (test-projects-page)',
+  renderWorkStreams: 'the work-stream table; History (test-projects-page §8)',
+  workStreamCounts: 'the work-stream table\'s counts; the tab count is read.scopes.length',
+  renderJournal: 'the journal fold; Pro Now draws the journal as a kit table (prjNowModel)',
+  renderBrief: 'the brief fold; the Brief row + reader (test-projects-page §10)',
+  briefClocksHtml: 'the brief fold\'s two clocks line; briefClocks itself is still EXECUTED',
+  renderEmptyProject: 'the empty-project page; the connect checklist (test-projects-page §7)',
+  memStep: 'the numbered step wrapper; there are no numbered steps',
+  renderLayerStrip: 'the six-tile overview strip; Pro\'s tiles are projectTiles (test-next-overview-kit)',
+  projectHeadline: 'the old page header; the object page\'s status sentence (test-projects-page §2)',
+  renderWorkStreamsFold: 'the Handoffs fold; Earlier notes + History',
+  captureFacts: 'the capture row\'s facts; connectionsSummary (test-projects-page)',
+  renderCaptureMeter: 'the capture meter; History\'s figure row',
+  renderStaleNotice: 'the stale notice; nowNotices staleWrite (test-projects-page §16)',
+  renderUnlistedNote: 'the unlisted note; nowNotices unlisted (test-projects-page §3)',
+  renderBriefOnlyNotice: 'the brief-only notice; the checklist covers a project with no save',
+  ssTokens: 'step ④\'s token cell; fmtTokens (test-format)',
+  renderSessionStart: 'step ④; Starting kit + Budget (test-projects-page §5b, §15, §16)',
+  renderSetupStep: 'step 5; the Agents tab (test-projects-page §1, §9, §13)',
+  renderProject: 'the five-step page itself; renderProjectsPage (test-projects-page §4)',
+  renderProjectSkeleton: 'the five-step skeleton; loadingPanel (test-projects-page §10)',
+  showMoreWorkStreams: 'the work-stream table\'s paging',
+});
+let GONE_CALLS = 0;
 function extractFunction(src, name, where) {
   const marker = new RegExp(`(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ${name}\\s*\\(`);
   const m = marker.exec(src);
-  if (!m) { GONE.add(name); return `function ${name}() { return ''; }`; }
+  if (!m) {
+    if (!Object.prototype.hasOwnProperty.call(GONE_OK, name)) {
+      throw new Error(`extractFunction: "${name}" not found in ${where}, and it is not on the GONE_OK list — a missing function is a failure, never a silent '' stand-in`);
+    }
+    GONE.add(name);
+    return `function ${name}() { globalThis.__memViewGoneCalls = (globalThis.__memViewGoneCalls || 0) + 1; return ''; }`;
+  }
   const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
   let p = src.indexOf('(', start), parenDepth = 0;
   for (; p < src.length; p++) {
@@ -4548,11 +4605,13 @@ try {
 try {
   // The case that matters: "Show more" REMOVES itself, so a by-id-only
   // restore would drop focus every time it worked.
-  const r = makeFocusRig({ activeId: 'mem-journal-more', presentIds: ['mem-fold-journal'] });
+  // v4.3.0 fix round (audit minor): the journal fold went with the five-step
+  // page; the Now card's heading is the nearest stable thing now.
+  const r = makeFocusRig({ activeId: 'mem-journal-more', presentIds: ['prj-now-h'] });
   r.captureFocus();
   r.restoreFocus();
   eq('a control that removed itself falls back to the nearest stable thing',
-    r.focused.length ? r.focused[0].id : null, 'mem-fold-journal');
+    r.focused.length ? r.focused[0].id : null, 'prj-now-h');
 } catch (e) { blockCrashed(e); }
 try {
   // Reload dismisses the notice it lives in — same shape, its own fallback.
@@ -5470,7 +5529,7 @@ try {
     editing.includes('id="mem-brief-save"') && editing.includes('id="mem-brief-preview"')
     && editing.includes('id="mem-brief-cancel"'));
   ok('...and it says REPLACE rather than implying an append',
-    /replaces the whole document/i.test(editing));
+    /replaces the whole (document|brief)/i.test(editing));
 
   // FOUR, not three. Preview joined Save, Cancel and the textarea when the
   // editor gained it in v3.55.0 — updated deliberately, because a control the
@@ -5576,7 +5635,8 @@ try {
     field.value = 'loaded plus three more words';
     field._input();
     eq('typing updates the WORD count in place', stats.words, '5 words');
-    eq('...and the BYTE count', stats.bytes, '28 of 32768 bytes');
+    // v4.3.0 fix round (e2e m1): byte figures carry separators.
+    eq('...and the BYTE count', stats.bytes, '28 of 32,768 bytes');
     eq('...and says the draft is now modified', stats.dirty, 'modified');
     eq('the wall stays hidden under the budget', overEl.hidden, true);
     eq('...and Save stays available', saveEl.disabled, false);
@@ -5632,7 +5692,7 @@ try {
     const at8k = mkEdit({ text: real, loaded: real }).renderBriefEditor(present, false);
 
     ok('THE REPORTED CASE: an 8,484-byte draft reports itself as unchanged and '
-      + 'a quarter of the budget', /unchanged/.test(at8k) && at8k.includes('8484 of 32768 bytes'),
+      + 'a quarter of the budget', /unchanged/.test(at8k) && at8k.includes('8,484 of 32,768 bytes'),
     at8k.slice(at8k.indexOf('mem-brief-stats'), at8k.indexOf('mem-brief-stats') + 220));
     ok('...and Save is offered, because the save WILL land',
       !/id="mem-brief-save"[^>]* disabled/.test(at8k));
@@ -5733,7 +5793,7 @@ try {
 
   // ── THE DRAFT'S READOUT ─────────────────────────────────────────────────
   ok('the status line reports modified / words / bytes',
-    /class="mem-brief-stats"[\s\S]*?modified[\s\S]*?words[\s\S]*?of \d+ bytes/
+    /class="mem-brief-stats"[\s\S]*?modified[\s\S]*?words[\s\S]*?of [\d,]+ bytes/
       .test(mkEdit({ text: 'two words here' }).renderBriefEditor(present, false)));
   ok('...and says "unchanged" when the draft matches what was loaded',
     /class="mem-brief-stats"[\s\S]*?unchanged/.test(under) === false
@@ -10900,7 +10960,7 @@ try {
     fndDoc({ readFirst: true }), fndDoc({ slug: 'b.md' }), fndDoc({ slug: 'c.md' })])));
   eq('one flagged of three reads 1 · 2', some.readFirstCount + '·' + some.onRequestCount, '1·2');
   ok('...and the summary line says both numbers',
-    /1 read first · 2 on request/.test(F.foundationsSummaryMeta(some)),
+    /1 always read · 2 when needed/.test(F.foundationsSummaryMeta(some)),
     F.foundationsSummaryMeta(some));
   eq('...and `readFirst` is `=== true`, so an ABSENT flag is false rather than '
     + 'undefined-as-maybe',
@@ -11112,7 +11172,7 @@ try {
       JSON.stringify(row));
     ok('the summary line is rewritten in place, with the counts the ROUTE '
       + 'reported rather than a second derivation',
-    /1 read first · 0 on request/.test(r.meta.textContent), r.meta.textContent);
+    /1 always read · 0 when needed/.test(r.meta.textContent), r.meta.textContent);
     ok('...and the budget warning appears, naming the set and the consequence',
       r.warn.hidden === false && /flagged “read first”/.test(r.warn._span.textContent),
       r.warn._span.textContent);
@@ -11132,7 +11192,7 @@ try {
       hiddenCount: 1 }), {}, 'not-at-start');
     eq('not at start writes atStart', h.calls.bodies.join(','), '{"atStart":"not-at-start"}');
     ok('...and the summary names the third state from the route\'s own count',
-      /1 not at start/.test(h.meta.textContent), h.meta.textContent);
+      /1 hidden/.test(h.meta.textContent), h.meta.textContent);
     // An unknown state never leaves the view.
     const junk = await drive(okAnswer(), {}, 'everything');
     eq('a value outside the alphabet sends nothing at all', junk.calls.urls.length, 0);
@@ -12085,12 +12145,13 @@ try {
       && R.budgetPickerCfg({ readingBudgetBytes: null }, ssData(), true).triggerText === 'Saving…');
     // THE WINDOW AND THE HARNESS — this computer's settings.
     const w = R.windowPickerCfg(false);
-    ok('the window picker offers 200K · 400K · 1M and a Custom… action row',
+    // v4.3.0 fix round (e2e m6): one "200k" style for a window everywhere.
+    ok('the window picker offers 200k · 400k · 1M and a Custom… action row',
       JSON.stringify(w.options.map((o) => o.value)) === '["200000","400000","1000000","custom"]'
-      && JSON.stringify(w.actionValues) === '["custom"]' && w.triggerText === '200K');
+      && JSON.stringify(w.actionValues) === '["custom"]' && w.triggerText === '200k');
     const wc = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 300000, choices: [200000, 400000, 1000000] } }))
       .windowPickerCfg(false);
-    ok('...a custom window selects no choice and names itself', wc.value === null && wc.triggerText === 'Custom · 300K');
+    ok('...a custom window selects no choice and names itself', wc.value === null && wc.triggerText === 'Custom · 300k');
     const h = R.harnessPickerCfg(false);
     ok('the harness picker: Not set · Light ≈20k · Typical ≈50k · Heavy ≈120k · Exact…, Not set by default',
       JSON.stringify(h.options.map((o) => o.label)) === '["Not set","Light ≈20k","Typical ≈50k","Heavy ≈120k","Exact…"]'
@@ -12318,7 +12379,7 @@ try {
     // ladder's names come from it (v3.70.0).
     sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData(), error: null } });
     const html = makeRenderers(st).renderFoundations(st.projectRead);
-    ok('a proposal adds the transient SUGGESTED column', /<th scope="col">At session start<\/th><th scope="col">Suggested<\/th>/.test(html));
+    ok('a proposal adds the transient SUGGESTED column', /<th scope="col">At start<\/th><th scope="col">Suggested<\/th>/.test(html));
     ok('...a differing row carries a TICK, ticked, the proposed state and its one-line reason',
       /data-plan-tick="architecture\.md" checked aria-label="Apply the suggestion for Architecture: read first"><span class="fnd-suggest-word fnd-suggest-change">read first<\/span><\/label><span class="fnd-suggest-why">architecture, fits the budget<\/span>/.test(html), html);
     ok('...a row the plan leaves alone carries no tick and says "as now"',
@@ -12328,7 +12389,7 @@ try {
       /id="mem-plan-apply">Apply suggestion<\/button><button type="button" class="btn btn-ghost btn-xs" id="mem-plan-dismiss">Dismiss<\/button>/.test(html)
       && !/id="mem-plan-open"/.test(html));
     ok('the proposal\'s one-line summary, as the picture words it',
-      /Suggested plan · 2 read first · 31 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
+      /Suggested plan · 2 always read · 31 KB of the 64 KB reading budget · 1 when needed · nothing applied yet/.test(html), html);
     ok('...and, with no budget set, the tick that sets the one it was planned against — ticked',
       /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard ≈16\.4k · 64 KB<\/span>/.test(html), html);
     ok('after an AI run, the AFTER line — what ran and what it cost',
@@ -13226,7 +13287,7 @@ try {
       ok('an OPEN fold stays open across a repaint', /data-mem-fold="planner" open>/.test(pend));
       ok('a changed row is tinted AND says what is saved, in words', /<tr class="mem-pl-row is-changed">[\s\S]*?decisions · 39 KB · saved: on request/.test(pend));
       ok('the pending line: "Preview, not saved." with the preview\'s own tokens, share of the window and replies',
-        /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200K \(default\) · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
+        /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200k \(default\) · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
       ok('...with Discard and "Apply 1 change"', /id="mem-pl-discard"[^>]*>Discard</.test(pend) && /id="mem-pl-apply"[^>]*>Apply 1 change</.test(pend));
       ok('...and the totals follow the DRAFT: 2 read first, ≈15k of the budget, not over it',
         /2 read first · ≈15k of the ≈16\.4k reading budget<\/span>/.test(pend) && !/over it by/.test(pend));
@@ -13234,7 +13295,7 @@ try {
       st.plannerPreview = null;
       const over = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
       ok('a read-first set over the budget says so in WORDS, and its totals bar is the one danger bar',
-        /3 read first · ≈17k of the ≈16\.4k reading budget — over it by ≈0\.6k/.test(over)
+        /3 read first · ≈17k of the ≈16\.4k reading budget — over it by ≈620/.test(over)
         && /mem-pl-totals-bar"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger/.test(over), (over.match(/mem-pl-totals[\s\S]*?<\/div>/) || [''])[0]);
       ok('...and before its preview lands the pending line says it is measuring', /2 changes: measuring…/.test(over));
       const ro = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, true);
@@ -13636,7 +13697,7 @@ for (const n of ['readRememberedTab', 'rememberTab', 'currentTab', 'prjSeconds',
   'prjBudgetNotices', 'prjBudgetModel', 'prjComputersModel', 'prjPanelHtml', 'renderProjectsPage', 'prjFocus', 'openBriefReader',
   'startBriefEdit', 'copyContinuePrompt', 'prjPairOf', 'wireProjects', 'maybeLoadNewest']) NOT_EXECUTED[n] = PROJECTS_GLUE;
 const CONNECT_FLOW = 'phase 2, the one connect flow (D8) in the reader: connectFlowHtml is EXECUTED in test-projects-page.js; the install calls are views/mcp-install.js\'s (test-next-mcp-install.js); the flow is driven in a real browser by e2e-projects.mjs';
-for (const n of ['openConnectFlow', 'connectModel', 'plainOf', 'paintConnect', 'connectChoose', 'connectStatus', 'connectPlan', 'connectApply', 'connectCopy']) NOT_EXECUTED[n] = CONNECT_FLOW;
+for (const n of ['openConnectFlow', 'connectModel', 'plainOf', 'paintConnect', 'connectChoose', 'connectStatus', 'connectPlan', 'connectApply', 'connectCopy', 'connectAdd']) NOT_EXECUTED[n] = CONNECT_FLOW;
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',
   TOP_LEVEL_FNS.length >= 30, 'found ' + TOP_LEVEL_FNS.length);
@@ -14400,13 +14461,17 @@ try {
 // Pinned to the LITERAL count phase 2 wrote. A later change that wants to
 // retire one more pin has to change this number in the same commit, which is
 // a decision on the record rather than an assertion quietly given up.
-eq('the retired list is the one phase 2 wrote (387 pins: the five-step page\'s markup)', RETIRED.size, 387);
+// v4.3.0 fix round (audit M4): +46, the pins that passed only on a gone
+// renderer's '' (each by name; `vacuousReason` in the json says where the
+// behaviours that still exist are pinned now).
+eq('the retired list is phase 2\'s 387 (the five-step page\'s markup) + the 46 vacuous pins the v4.3.0 audit found', RETIRED.size, 433);
 // A RETIREMENT IS A FAILING PIN OF GONE MARKUP, NOTHING ELSE (builder resume,
 // 2026-11-27). A crash key would hide every assertion after the throw, so it
 // may never be retired; a retired pin that no longer runs, or now passes, is
 // stale and must leave the list (otherwise the list grows into a blanket).
 ok('no crash is retired — a block that throws is always a failure',
   [...RETIRED].every((k) => !k.includes(':: a block ran to the end')));
+ok('no assertion passes on a gone renderer\'s stand-in unless it is retired by name (audit M4)', vacuous === 0, vacuous + ' vacuous');
 ok('every retired pin still RUNS and still FAILS (no stale or vacuous retirement)',
   [...RETIRED].every((k) => retiredHit.has(k) && !retiredPassed.has(k)),
   [...RETIRED].filter((k) => !retiredHit.has(k) || retiredPassed.has(k)).slice(0, 5).join(' | '));

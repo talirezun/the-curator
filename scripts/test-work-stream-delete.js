@@ -378,7 +378,13 @@ try {
   const btnDisabled = (html) => /id="mem-ws-del-go" disabled/.test(html);
   {
     const html = V.wsDeleteCardHtml(del(), NOW);
-    ok('the card asks "Delete handoff main?"', /Delete handoff <span class="mem-wsdel-name">main<\/span>\?/.test(html));
+    // v4.3.0 fix round (e2e M7): whose notes, in plain words; the consequence
+    // in one line; the name to type shown as text.
+    ok('the card asks whose notes go: "Delete the notes saved as “main”?" (no agent known)', html.includes('Delete the notes saved as “main”?'), html);
+    ok('...and, with the agent known, "Delete Claude Code’s notes on this project?"', V.wsDeleteCardHtml(del({ who: 'Claude Code' }), NOW).includes('Delete Claude Code’s notes on this project?'));
+    ok('...says the consequence in one line', html.includes(V.WS_DELETE_CONSEQUENCE));
+    ok('...shows the name to type as visible text', /These notes are saved under the name <code class="mem-wsdel-name[^"]*">main<\/code>\. Type it to confirm:/.test(html), html);
+    ok('...and the confirm button says what it does', /id="mem-ws-del-go"[^>]*>Delete these notes</.test(html));
     ok('...lists each machine copy with its headline and age', html.includes('laptop-b') && html.includes('Theirs')
       && html.includes('saved 1 hr ago') && html.includes('saved 2 days ago'), html);
     ok('...marks this machine', html.includes('this machine'));
@@ -400,8 +406,7 @@ try {
     eq('wsDeleteBody sends the typed text as {confirm} and nothing else', V.wsDeleteBody(del({ confirmText: 'main' })), '{"confirm":"main"}');
     const out = V.wsDeleteOutcomeText({ scope: 'main', trashPath: '/t/alpha--alpha--main--x', machines: ['a', 'b'], restoreTo: 'state/', recreated: false }, 'main');
     eq('the outcome says what went, where, and how to restore it', out,
-      'Deleted handoff “main” — 2 saved copies (a, b). It was moved to The Curator’s trash, at /t/alpha--alpha--main--x. '
-      + 'To restore it, open Settings › Trash and press Restore — or move that folder back into state/ and rename it main.');
+      'Deleted the notes saved as “main” — 2 saved copies (a, b). They are in The Curator’s trash: to restore them, open Settings › Trash and press Restore.');
     ok('...and a save that landed during the move is SAID', /exists again holding only that save/.test(
       V.wsDeleteOutcomeText({ scope: 'main', trashPath: '/t', machines: ['a'], recreated: true }, 'main')));
   }
@@ -440,13 +445,18 @@ try {
     const w = card('a"b');
     ok('the Now card carries ONE delete press for the handoff on it, with the name escaped',
       (w.match(/data-ws-delete=/g) || []).length === 1 && w.includes('data-ws-delete="a&quot;b"'), w);
-    ok('...labelled for the handoff', w.includes('aria-label="Delete handoff a&quot;b…"'), w);
+    ok('...saying whose notes it deletes', w.includes('>Delete the notes saved as “a&quot;b”…</button>'), w);
+    const w2 = P.nowPanel({ hasSave: true, notices: [], earlier: [], handoff: { title: 'T', bodyHtml: '', footer: 'x', deleteScope: 'claude-code', deleteWho: 'Claude Code' },
+      deleteHtml: '<div class="mem-wsdel-card">CARD</div>' });
+    ok('...by the agent when it is known ("Delete Claude Code’s notes…")', w2.includes('>Delete Claude Code’s notes…</button>'), w2);
+    ok('the confirm card renders AT the press — right after the note card, before Earlier notes',
+      w2.indexOf('CARD') > w2.indexOf('data-ws-delete') && w2.indexOf('CARD') < (w2.indexOf('Earlier notes') < 0 ? Infinity : w2.indexOf('Earlier notes')));
     ok('...a neutral ghost button, never red (the red is the confirm\'s only)', /class="btn btn-ghost btn-xs" data-ws-delete=/.test(w) && !/btn-danger/.test(w));
     ok('no handoff to delete (a read-only mirror: the view passes no scope) → NO press at all', !/data-ws-delete/.test(card(null)));
     const rows = [{ id: 'note:a', scope: 'a"b', machine: 'm1', harness: 'Claude Code', model: '', headline: 'h', bytes: 10, seconds: 60, when: '1 min ago', computer: 'this Mac' }];
     const hist = P.historyPanel({ rows, harnesses: [], canDelete: true });
     ok('History: one delete press per row, the same data-ws-delete and label',
-      (hist.match(/data-ws-delete="a&quot;b"/g) || []).length === 1 && hist.includes('aria-label="Delete handoff a&quot;b…"'), hist);
+      (hist.match(/data-ws-delete="a&quot;b"/g) || []).length === 1 && hist.includes('aria-label="Delete Claude Code’s notes…"'), hist);
     ok('History on a read-only mirror (canDelete false) carries NO press', !/data-ws-delete/.test(P.historyPanel({ rows, harnesses: [], canDelete: false })));
   }
 
@@ -455,7 +465,7 @@ try {
       scope: 'main', machine: null, detail: { scope: 'main' } };
     const calls = { render: 0, reload: 0, index: 0, fetch: [] };
     const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'reportAsyncMountFailure',
-      'forgetProject', 'activeKey', 'keyOf', 'reloadActive', 'refreshIndex',
+      'forgetProject', 'activeKey', 'keyOf', 'reloadActive', 'refreshIndex', 'maybeLoadSetup', 'loadCapture',
       'wsDeleteCanSubmit', 'wsDeleteConfirmMatches', 'wsDeleteBody', 'wsDeleteOutcomeText',
       'let pendingFocusId = null;\n' + lift('openWorkStreamDelete') + '\n' + lift('runWorkStreamDelete') + '\n'
       + lift('bindWorkStreamRows') + '\n'
@@ -464,6 +474,7 @@ try {
       async (url, init) => { calls.fetch.push({ url, init }); return fetchImpl(url, init); },
       () => {}, () => {}, () => 'alpha/alpha', (d, p) => d + '/' + p,
       async () => { calls.reload++; }, async () => { calls.index++; },
+      () => { calls.setup = (calls.setup || 0) + 1; }, async () => { calls.capture = (calls.capture || 0) + 1; },
       V.wsDeleteCanSubmit, V.wsDeleteConfirmMatches, V.wsDeleteBody, V.wsDeleteOutcomeText);
     return { state, calls, api };
   }
@@ -502,9 +513,11 @@ try {
     eq('...with {confirm: "main"} as its body', sent && sent.init.body, '{"confirm":"main"}');
     eq('on success the card closes', h.state.wsDelete, null);
     ok('...its outcome takes the slot, from the server\'s answer', h.state.wsDeleteOutcome
-      && /at \/t\/x\./.test(h.state.wsDeleteOutcome.text) && h.state.wsDeleteOutcome.project === 'alpha');
+      && /Deleted the notes saved as “main” — 1 saved copy \(a\)\. They are in The Curator’s trash/.test(h.state.wsDeleteOutcome.text) && h.state.wsDeleteOutcome.project === 'alpha',
+      h.state.wsDeleteOutcome && h.state.wsDeleteOutcome.text);
     ok('...the open handoff, which went with it, is dropped', h.state.scope === null && h.state.detail === null);
     ok('...and the table and the rail are re-read, not patched', h.calls.reload === 1 && h.calls.index === 1);
+    ok('...and the Agents check and the 7-day saves too, so every count agrees (e2e M7)', h.calls.setup === 1 && h.calls.capture === 1, JSON.stringify(h.calls));
   }
   {
     const h = harness(async (url, init) => (init ? json(409, { ok: false, reason: 'locked', error: 'Another write is in progress.' }) : json(200, preview)));

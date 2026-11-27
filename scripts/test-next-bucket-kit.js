@@ -168,7 +168,8 @@ section('§3  The reading-budget room');
   ok(withClass(zi, 'bk-room').length === 0 && /no reading budget \(index only\)/.test(B.bucketText({ ...TODAY, budgetTokens: 0 }).enlargement),
     'Index only: no room, and the text alternative says there is no reading budget');
   const zt = B.renderEnlargement(TWO);
-  ok(/budget left ≈0\.6k/.test(zt) || /budget left ≈0\.6k/.test(B.renderLegend(TWO)), 'read first under the budget: "budget left ≈0.6k"');
+  // v4.3.0 fix round (e2e m6): a figure under ~1k is said as itself.
+  ok(/budget left ≈580/.test(zt) || /budget left ≈580/.test(B.renderLegend(TWO)), 'read first under the budget: "budget left ≈580"');
   ok(!withClass(zt, 'bk-room')[0].classes.includes('is-unused'), 'and the room is not marked unused');
   const full = { ...TODAY, layers: LAYERS(16384) };
   ok(withClass(B.renderEnlargement(full), 'bk-room').length === 0 && /, full\./.test(B.bucketText(full).enlargement), 'budget exactly spent: no room, "full" in words');
@@ -197,7 +198,7 @@ section('§5  The text alternative');
 {
   const t = B.bucketText(TODAY);
   eq('window sentence', t.window, 'A 1M-token window, drawn to scale: your harness\'s share about 120k (your estimate), The Curator about 6.8k tokens (measured, 0.7%), about 873k free.');
-  ok(/framing 0\.9k, brief 3\.5k, handoff 0\.5k, journal 1\.0k, document list 0\.9k, read first 0; reading budget ≈16\.4k, unused: nothing is read first\./.test(t.enlargement), 'enlargement sentence names every layer and the room', t.enlargement);
+  ok(/framing 930, brief 3\.5k, handoff 500, journal 1\.0k, document list 850, read first 0; reading budget ≈16\.4k, unused: nothing is read first\./.test(t.enlargement), 'enlargement sentence names every layer and the room', t.enlargement);
   ok(/9 documents, about 47\.9k tokens/.test(t.onDemand) && /outside the window/.test(t.onDemand), 'on-demand sentence: outside the window, with its figure');
   const all = B.renderBucket(TODAY);
   const imgs = tags(all).filter((x) => x.attrs.role === 'img');
@@ -220,7 +221,7 @@ section('§6  Escaping and the key allow-list');
   ok(withClass(html, 'bk-ly-other').length >= 1, 'an unknown key draws as bk-ly-other');
   ok(B.bucketModel({ ...TODAY, harnessTokens: 'lots' }).harnessSet === false, 'a non-number harness is Not set');
   ok(B.bucketModel({ ...TODAY, layers: [{ key: 'brief', tokens: -5 }, { key: 'read', tokens: NaN }] }).curator === 0, 'negative / NaN tokens count as 0');
-  eq('formatTokens', ['0', '0.5k', '6.8k', '20k', '873k', '1M', '1.5M'].join(' '),
+  eq('formatTokens', ['0', '500', '6.8k', '20k', '873k', '1M', '1.5M'].join(' '),
     [0, 500, 6800, 20000, 873000, 1e6, 1.5e6].map(B.formatTokens).join(' '));
 }
 
@@ -359,7 +360,10 @@ section('§10  v3.70.1 — one segment per read-first document (the planner)');
   const digest = createHash('sha256').update(G.map((m) => unApprox(unRename(B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m))))).join('\u0001')).digest('hex');
   ok(/reading budget ≈/.test(G.map((m) => B.renderBucket(m) + JSON.stringify(B.bucketText(m))).join('')),
     'CONTROL: the digest input really carries the v3.76.0 "≈" that unApprox removes');
-  ok(digest === 'd87404e1e700488006f02aa9caae538084bdd0c9bb609abbe1c511d3411ecdab',
+  // v4.3.0 fix round (e2e m6): figures under ~1k are said as themselves
+  // ("≈580", not "≈0.6k"); that is the ONE change since the last digest, and
+  // the three pins above it name the new strings. Re-taken for that change.
+  ok(digest === '3a26784a25ab85909a50cf66a6e2638f7837cfcba46ce1b1ea8ea0d02f382dc8',
     'a meter WITHOUT per-document parts renders byte-identical to v3.70.0 (markup and text alternative)', digest);
 
   const parts = [

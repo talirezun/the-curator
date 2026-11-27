@@ -57,6 +57,21 @@ function plural(n, one, many) {
   return n + ' ' + (n === 1 ? one : many);
 }
 
+/** One line: what deleting a work-stream's notes does (e2e M7). */
+export const WS_DELETE_CONSEQUENCE = 'Its latest note and its journal go to The Curator’s trash, from every computer that saved them. Its connection to The Curator is not touched.';
+
+/** Whose notes: "Delete Claude Code’s notes on this project?", by the agent that saved them. */
+export function wsDeleteQuestion(del) {
+  const who = del && typeof del.who === 'string' && del.who.trim() ? del.who.trim() : '';
+  return who ? 'Delete ' + who + '’s notes on this project?' : 'Delete the notes saved as “' + String((del && del.scope) || '') + '”?';
+}
+
+/** The press's own words, on the Now card and on a History row. */
+export function wsDeleteLabel(who, scope) {
+  const w = typeof who === 'string' && who.trim() ? who.trim() : '';
+  return w ? 'Delete ' + w + '’s notes…' : 'Delete the notes saved as “' + String(scope || '') + '”…';
+}
+
 /** The ONE predicate: exact, no trim, no case folding. */
 export function wsDeleteConfirmMatches(del) {
   return !!del && typeof del.scope === 'string' && del.scope !== ''
@@ -178,11 +193,14 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
   return (
     '<div class="mem-wsdel-card" role="group" aria-labelledby="mem-ws-del-title" data-ws-del-scope="' +
       escapeHtml(scope) + '">' +
-      '<div class="mem-wsdel-title" id="mem-ws-del-title">Delete handoff ' +
-        '<span class="mem-wsdel-name">' + escapeHtml(scope) + '</span>?</div>' +
+      // v4.3.0 fix round (e2e M7): the question says WHAT goes in plain
+      // words — whose notes — and the consequence in one line; the name to
+      // type is shown as text to copy, never only inside the input's label.
+      '<div class="mem-wsdel-title" id="mem-ws-del-title">' + escapeHtml(wsDeleteQuestion(del)) + '</div>' +
+      '<div class="mem-wsdel-body">' + escapeHtml(WS_DELETE_CONSEQUENCE) + '</div>' +
       what + warn + where +
-      '<label class="mem-wsdel-label" for="mem-ws-del-input">Type <span class="mem-wsdel-name">' +
-        escapeHtml(scope) + '</span> to confirm</label>' +
+      '<label class="mem-wsdel-label" for="mem-ws-del-input">These notes are saved under the name ' +
+        '<code class="mem-wsdel-name mem-wsdel-copyable">' + escapeHtml(scope) + '</code>. Type it to confirm:</label>' +
       '<input class="mem-wsdel-input" id="mem-ws-del-input" type="text" autocomplete="off" spellcheck="false" value="' +
         escapeHtml(del.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
       (del.error
@@ -190,7 +208,7 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
         : '') +
       '<div class="mem-wsdel-actions">' +
         '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-ws-del-go"' + (can ? '' : ' disabled') + '>' +
-          (busy ? 'Deleting…' : 'Delete handoff') + '</button>' +
+          (busy ? 'Deleting…' : 'Delete these notes') + '</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" id="mem-ws-del-no"' + (busy ? ' disabled' : '') +
           '>Keep it</button>' +
       '</div>' +
@@ -205,16 +223,14 @@ export function wsDeleteOutcomeText(result, scope) {
   const machines = Array.isArray(r.machines) ? r.machines.filter((m) => typeof m === 'string') : [];
   const unlisted = Number.isInteger(r.unlistedMachines) ? r.unlistedMachines : 0;
   const n = machines.length + unlisted;
-  let text = 'Deleted handoff “' + name + '”';
+  let text = 'Deleted the notes saved as “' + name + '”';
   if (n) text += ' — ' + plural(n, 'saved copy', 'saved copies') + (machines.length ? ' (' + machines.join(', ') + ')' : '');
   text += '.';
   if (typeof r.trashPath === 'string' && r.trashPath) {
-    // v3.76.0: the restore is a button now — Settings › Trash. The by-hand
-    // path stays, as the fallback the user guide also keeps.
-    text += ' It was moved to The Curator’s trash, at ' + r.trashPath + '. To restore it, open Settings › Trash ' +
-      'and press Restore — or move that folder back into ' +
-      (typeof r.restoreTo === 'string' && r.restoreTo ? r.restoreTo : 'this project’s state folder') +
-      ' and rename it ' + name + '.';
+    // v3.76.0: the restore is a button — Settings › Trash. v4.3.0 (e2e
+    // polish): the outcome no longer prints the long absolute paths; Settings
+    // › Trash shows where it is and puts it back.
+    text += ' They are in The Curator’s trash: to restore them, open Settings › Trash and press Restore.';
   }
   if (r.recreated === true) {
     text += ' A save landed while it was being deleted, so “' + name + '” exists again holding only that save.';

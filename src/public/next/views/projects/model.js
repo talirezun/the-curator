@@ -144,13 +144,16 @@ export function harnessRow(t, data) {
   else kind = 'ready';
   const fixLines = Number.isInteger(m.fixLines) ? m.fixLines : 0;
   const lines = (m.lines || []).slice(fixLines).map(plainText).filter(Boolean);
-  // A row whose to-fix lines are said in full in the notices under the list
-  // names the first one in its meta, so the row reads alone too.
+  // REVIEW item 1 (v4.3.0 fix round): a row whose to-fix lines are said IN
+  // FULL in the notices under the list carries a SHORT reason, never the
+  // notice's sentence again — and no fix button of its own: the notice holds
+  // the fix, so it appears once (the whole row still opens its steps).
+  const first = ((data && data.toFix) || []).find((f) => f && f.tool === t.id) || null;
   const meta = (fixLines
-    ? [firstSentence(plainText(m.lines[0]))[0]].concat(lines)
+    ? [shortReason(first) || firstSentence(plainText(m.lines[0]))[0]].concat(lines)
     : (m.status === 'steps' ? [m.word].concat(lines) : lines)).join(' · ');
-  let action = buttonSpecs(m.action)[0] || null;
-  if (!action && m.status !== 'ready') {
+  let action = fixLines ? null : (buttonSpecs(m.action)[0] || null);
+  if (!action && !fixLines && m.status !== 'ready') {
     action = { label: 'Open its steps', attrs: { 'data-setup-act': 'tool-open', 'data-tool': t.id } };
   }
   return {
@@ -165,6 +168,48 @@ export function harnessRow(t, data) {
     removable: removableOf(t).ok,
     targetId: 'mem-setup-tool-' + t.id,
   };
+}
+
+/**
+ * A to-fix item's SHORT reason for its harness row (review item 1: "Its
+ * instructions are out of date, so it may skip saving"). By the item's kind,
+ * the server's closed set (src/brain/setup-check.js); '' for one it does not
+ * know (the row then says the notice's first sentence).
+ */
+export function shortReason(f) {
+  const k = String((f && f.kind) || '');
+  if (k === 'bridge' || k === 'bridge-file') return 'Its connection to The Curator needs a fix';
+  if (k === 'skills') return f && f.reason === 'missing' ? 'Its skills are not installed' : 'Its skills are out of date';
+  if (k === 'block-missing') return 'Its instructions don’t mention this project yet';
+  if (k === 'block-outdated') return 'Its instructions are out of date, so it may skip saving';
+  if (k === 'block-wrong') return 'Its instructions point at another project';
+  if (k === 'block-cap') return 'Its instruction file is too long to be read in full';
+  if (k === 'wrong-scope') return 'It saved under another name';
+  return '';
+}
+
+/**
+ * THE REPOSITORY PROMPT, as a kit notice (review item 2): OPTIONAL — a
+ * student's project has no code. `cands` is setup-step.js repoCandidatesOf,
+ * `files` its repoCheckedFiles, `machine` "Mac" / "PC" / "computer". Null
+ * when the folder is set.
+ */
+export function repoNotice(data, cands, files, machine) {
+  if (!data || data.repo) return null;
+  const word = machine || 'computer';
+  const c = Array.isArray(cands) ? cands : [];
+  const line = 'Then Check again can read ' + (files || 'its instruction files') + ' there. A project without code can skip this.';
+  const title = 'If this project has a folder on this ' + word + ', set it.';
+  if (c.length === 1) {
+    return { tone: 'info', title, line: 'Found: ' + c[0].display + '. ' + line,
+      actions: [{ label: 'Use this folder', attrs: { 'data-setup-act': 'use-repo', 'data-path': c[0].path }, primary: true },
+        { label: 'Choose another folder', attrs: { 'data-setup-act': 'choose-repo' } }] };
+  }
+  if (c.length > 1) {
+    return { tone: 'info', title, line: fmtCount(c.length) + ' folders look like it. ' + line,
+      actions: [{ label: 'Choose a folder', attrs: { 'data-setup-act': 'choose-repo' } }] };
+  }
+  return { tone: 'info', title, line, actions: [{ label: 'Set the folder', attrs: { 'data-setup-act': 'choose-repo' } }] };
 }
 
 /** Every harness on the project's list, as rows. Empty array when none. */
@@ -440,6 +485,26 @@ export function nowCardRead(o) {
   return { detail: null, keep: null, fetch: want };
 }
 
+// The store's note vocabulary (working-state.js bans loss words from any note
+// that is not a loss), read the way the MCP's notes_meaning reads it.
+const LOSS_NOTE_RE = /\b(dropped|omitted|truncated|rejected|discarded|lost)\b/i;
+const REPLACED_NOTE_RE = /\boverwrote\b/i;
+/**
+ * A journal entry's notes (`rejections`, the persisted name), LABELLED BY
+ * WHAT HAPPENED (audit minor: the candidate dropped them). Three outcomes,
+ * because the store produces three: a real loss; a deliberate replace of a
+ * larger handoff; a normalisation (a value filled in and disclosed — nothing
+ * lost). The third label never uses a loss word. '' when there are none.
+ */
+export function journalNotes(rejections) {
+  const notes = (Array.isArray(rejections) ? rejections : []).map((n) => String(n == null ? '' : n).trim()).filter(Boolean);
+  if (!notes.length) return '';
+  const label = notes.some((n) => LOSS_NOTE_RE.test(n)) ? 'Some content was dropped or truncated: '
+    : notes.some((n) => REPLACED_NOTE_RE.test(n)) ? 'This save replaced a larger handoff: '
+      : 'How this save was normalised (the content itself was stored in full): ';
+  return label + notes.join(' · ');
+}
+
 /** The handoff card's footer facts: harness · computer · age (plain). */
 export function handoffFooter(o) {
   const x = o || {};
@@ -486,9 +551,9 @@ export function connectChecklist(o) {
   const connected = rows.some((r) => r.connected);
   const told = tools.some((t) => toolParts(t).block.state === 'ok');
   return [
-    { key: 'create', title: 'Create the project', line: '', done: true },
+    { key: 'create', title: 'Create the project', line: '', done: true, pre: true },
     { key: 'connect', title: 'Connect an agent',
-      line: 'Pick Claude Code, Cursor, Codex… The Curator sets it up and shows what it changed.',
+      line: 'Pick Claude Code, Cursor, Codex… The Curator sets it up for you where it can; otherwise it shows exactly what to paste.',
       done: connected, action: connected ? null : { label: 'Connect', attrs: { 'data-prj-act': 'connect' }, primary: true } },
     { key: 'tell', title: 'Tell it about this project',
       line: 'One paste into your project’s instruction file.',
@@ -698,7 +763,7 @@ export function agentMatrix(data, o = {}) {
       const at = newestToolSave(g, t.id);
       if (!at) continue;
       rows.push({
-        id: 'tool:' + t.id + ':' + rows.length,
+        id: 'tool:' + t.id + ':c' + groups.indexOf(g),
         tool: t.id,
         harness: labelOf(t),
         computer: names.get(g.id) || g.name,
@@ -787,7 +852,7 @@ export function projectTiles(f) {
       sub: ls ? [ls.who, ls.computer].filter(isStr).join(' · ') || undefined : undefined },
     { label: 'Agents', value: ag ? fmtCount(ag.count) : '…',
       sub: ag ? (ag.needYou ? fmtCount(ag.needYou) + (ag.needYou === 1 ? ' needs you' : ' need you') : 'none need you') : undefined },
-    { label: 'Saves', value: x.saves7 === 'not-logged' ? 'not logged' : Number.isInteger(x.saves7) ? fmtCount(x.saves7) : '…', sub: 'last 7 days' },
+    { label: 'Saves', value: x.saves7 === 'not-logged' ? 'not logged' : x.saves7 === 'unreadable' ? 'could not be read' : Number.isInteger(x.saves7) ? fmtCount(x.saves7) : '…', sub: 'last 7 days' },
     docs.manifestError
       ? { label: 'Documents', value: docs.manifestNewer ? 'newer version' : 'manifest unreadable', sub: docs.manifestNewer ? 'update The Curator' : undefined }
       : { label: 'Documents', value: fmtCount(docs.count || 0), sub: fmtCount(docs.readFirst || 0) + ' always read' },

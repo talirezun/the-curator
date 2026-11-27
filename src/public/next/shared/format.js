@@ -145,10 +145,14 @@ export function fmtTokenFigure(n) {
     const k = Math.round(v / 1000);
     return k >= 1000 ? m(v) : k + 'k';
   }
+  // Below ~1k a count is said as itself (e2e m6, v4.3.0 fix round: 115 bytes
+  // read "≈0.1k" — honest is "≈30"); to the nearest 10 from 100, so an
+  // estimate never claims single-token precision.
+  if (v < 950) return String(v < 100 ? Math.max(1, Math.round(v)) : Math.round(v / 10) * 10);
   const k = Math.round(v / 100) / 10;
   if (k >= 100) return Math.round(v / 1000) + 'k';
   if (k >= 10 && Number.isInteger(k)) return k + 'k';   // "20k", not "20.0k"
-  return (k === 0 ? '0.1' : k.toFixed(1)) + 'k';
+  return k.toFixed(1) + 'k';
 }
 
 /** An estimated token count: "≈10.3k". Zero is exact: "0". null when not a

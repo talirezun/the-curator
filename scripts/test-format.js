@@ -95,8 +95,12 @@ eq(fmtSizeDelta(NaN), null, 'NaN → null');
 // ═══════════════════════════════════════════════════════════════════════════
 section('§3  fmtTokens — the meter ladder, moved here');
 eq(fmtTokens(0), '0', 'zero is exact, no "≈"');
-eq(fmtTokens(30), '≈0.1k', 'a positive count under 50 never reads as nothing');
-eq(fmtTokens(500), '≈0.5k', '500');
+// v4.3.0 fix round (e2e m6): below ~1k a count is said as itself — "≈30",
+// not "≈0.1k" — to the nearest 10 from 100; never "0" for something.
+eq(fmtTokens(30), '≈30', 'a small count is said as itself');
+eq(fmtTokens(0.4), '≈1', 'a positive count never reads as nothing');
+eq(fmtTokens(500), '≈500', '500');
+eq(fmtTokens(953), '≈1.0k', '953 joins the k ladder (never "953" beside "1k")');
 eq(fmtTokens(6800), '≈6.8k', '6,800');
 eq(fmtTokens(10300), '≈10.3k', '10,300');
 eq(fmtTokens(20000), '≈20k', '20,000 drops ".0"');
@@ -118,8 +122,8 @@ eq(bucketTokens(873000), fmtTokenFigure(873000), 'shared/bucket.js formatTokens 
     const strip = (x) => x.replace(/\.0$/, '');
     if (Math.round(v / 1000) >= 1000 || v >= 1e6) return strip((Math.round(v / 1e5) / 10).toFixed(1)) + 'M';
     if (v >= 1e5) return Math.round(v / 1000) + 'k';
+    if (v < 950) return String(v < 100 ? Math.max(1, Math.round(v)) : Math.round(v / 10) * 10);
     const k = Math.round(v / 100) / 10;
-    if (k === 0) return '0.1k';
     if (k >= 100) return Math.round(v / 1000) + 'k';
     if (k >= 10) return (Number.isInteger(k) ? String(k) : k.toFixed(1)) + 'k';
     return k.toFixed(1) + 'k';

@@ -382,7 +382,7 @@ import {
   // v3.79.0 (contract §C): a Repository file and a computer, in the reader.
   fileReaderContent, computerReaderContent,
   // phase 2 (Projects): the Agents tab draws these two fields and the matrix's facts.
-  customField, simpleRepo, machineNamesOf, repoCheckedFiles, toolGuideSteps,
+  customField, simpleRepo, machineNamesOf, repoCheckedFiles, repoCandidatesOf, toolGuideSteps,
 } from './setup-step.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
 // v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
@@ -399,7 +399,7 @@ import {
 import {
   statusSentence, newestScope, harnessRows, toFixNotices, thisComputerNames, nowNotices, earlierNotes,
   connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary, connectionNotice, projectTiles,
-  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt, nowCardRead, routeNoteNotices,
+  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt, nowCardRead, routeNoteNotices, journalNotes, repoNotice,
 } from './projects/model.js';
 import { activeTab, wireTabs, wireSegmented } from '../shared/tabs.js';
 import { wireRows } from '../shared/row.js';
@@ -1138,13 +1138,13 @@ const FOCUSABLE_IDS = [
 // worked. The journal's own summary is the nearest stable thing the user was
 // just inside.
 const FOCUS_FALLBACK = {
-  'mem-journal-more': '#mem-fold-journal',
+  'mem-journal-more': '#prj-now-h',
   // ── "DELETE HANDOFF" (v3.75.0) ──────────────────────────────────────────
   // Keep it and Dismiss each remove themselves (the card, the outcome line),
   // so the Handoffs summary they sat under is where the keyboard lands; a
   // successful Delete is replaced by its outcome, whose Dismiss is next.
-  'mem-ws-del-no': '#mem-fold-streams',
-  'mem-ws-del-dismiss': '#mem-fold-streams',
+  'mem-ws-del-no': '#prj-now-h',
+  'mem-ws-del-dismiss': '#prj-now-h',
   'mem-ws-del-go': '#mem-ws-del-dismiss',
   // The last "Show N more" press paints the remaining rows and takes the
   // button with them. The newly-revealed last row is what the user was
@@ -1159,13 +1159,16 @@ const FOCUS_FALLBACK = {
   'mem-brief-edit': '#mem-brief-text',
   // Save and Cancel both dismiss the editor. The Edit button is the nearest
   // stable control that does the same KIND of thing.
-  'mem-brief-save': '#mem-brief-edit',
-  'mem-brief-cancel': '#mem-brief-edit',
+  'mem-brief-save': '[data-prj-act="brief-edit"]',
+  'mem-brief-cancel': '[data-prj-act="brief-edit"]',
   // Discard closes the editor, so the pencil that reopens it is the nearest
   // stable control; Keep editing dismisses only the bar, so the field the user
   // asked to stay in is where they should land.
-  'mem-brief-discard': '#mem-brief-edit',
+  'mem-brief-discard': '[data-prj-act="brief-edit"]',
   'mem-brief-keep': '#mem-brief-text',
+  // e2e M4: a keyboard save (⌘S in the field) closes the editor under the
+  // caret; the Brief row's Edit is where the keyboard lands.
+  'mem-brief-text': '[data-prj-act="brief-edit"]',
   // ── TIER 0'S EDITOR (v3.61.0) ─────────────────────────────────────────
   // "Add document" and "Add from repository" are both replaced by what they
   // open, so restoring by id would drop focus every time they WORKED. The
@@ -1179,20 +1182,20 @@ const FOCUS_FALLBACK = {
   // Save and Cancel both dismiss the editor; the row's own Edit control is
   // gone with the row that is about to be re-read, so the nearest stable
   // thing that does the same KIND of thing is the fold the table sits in.
-  'mem-fnd-save': '#mem-fold-foundations',
-  'mem-fnd-cancel': '#mem-fold-foundations',
+  'mem-fnd-save': '#prj-kit-documents',
+  'mem-fnd-cancel': '#prj-kit-documents',
   // Discard closes the editor; Keep editing dismisses only the bar.
-  'mem-fnd-discard': '#mem-fold-foundations',
+  'mem-fnd-discard': '#prj-kit-documents',
   'mem-fnd-keep': '#mem-fnd-text',
   // The three confirm strips. Each replaces itself: a taken confirm performs
   // the action and the strip goes with it, a declined one just closes.
   'mem-fnd-delete': '#mem-fnd-text',
-  'mem-fnd-delete-go': '#mem-fold-foundations',
+  'mem-fnd-delete-go': '#prj-kit-documents',
   'mem-fnd-delete-no': '#mem-fnd-text',
-  'mem-fnd-shrink-go': '#mem-fold-foundations',
+  'mem-fnd-shrink-go': '#prj-kit-documents',
   'mem-fnd-shrink-no': '#mem-fnd-text',
-  'mem-fnd-stop-go': '#mem-fold-foundations',
-  'mem-fnd-stop-no': '#mem-fold-foundations',
+  'mem-fnd-stop-go': '#prj-kit-documents',
+  'mem-fnd-stop-no': '#prj-kit-documents',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -2287,7 +2290,7 @@ async function refreshIndex(token) {
     }
 
     const before = renderedSignature;
-    if (screenSignature() !== before) render(token);
+    if (screenSignature() !== before) render(token, 'idle');
   } finally {
     state.refreshing = false;
   }
@@ -2512,6 +2515,11 @@ async function saveBrief(token) {
   // it would correct it a frame later, which reads as the save having failed.
   forgetProject(e.domain, e.project);
   state.briefEdit = null;
+  // e2e M4 + m2 (v4.3.0 fix round): the editor closes under the caret, so
+  // focus goes to the Brief row's Edit (FOCUS_FALLBACK), never <body>; and
+  // the save SAYS it happened (a notice on Starting kit, both modes).
+  pendingFocusId = 'mem-brief-save';
+  state.briefSaved = { key, at: Date.now() };
   if (activeKey() === key) {
     await reloadActive(token);
     refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
@@ -2569,11 +2577,15 @@ let pendingProject = null;
  * Exported rather than reached for, and consumed rather than read, so there is
  * exactly one writer, one reader and no lifetime longer than one navigation.
  */
-export function requestProject(domain, project) {
+export function requestProject(domain, project, opts) {
   const d = String(domain == null ? '' : domain).trim();
   const p = String(project == null ? '' : project).trim();
-  if (!d || !p) { pendingProject = null; return; }
-  pendingProject = { domain: d, project: p };
+  // e2e M6 (v4.3.0 fix round): `{connect: true}` opens the ONE connect flow
+  // on arrival — on this project, or on whichever project the arrival opens
+  // when the caller names none (the first-run guide, Settings › MCP bridge).
+  const connect = !!(opts && opts.connect === true);
+  if (!d || !p) { pendingProject = connect ? { domain: null, project: null, connect: true } : null; return; }
+  pendingProject = connect ? { domain: d, project: p, connect: true } : { domain: d, project: p };
 }
 
 /**
@@ -2632,6 +2644,7 @@ async function loadIndex(token) {
   });
 
   if (pick) await selectProject(pick.domain, pick.project, token);
+  if (want && want.connect === true && pick && isCurrentMount(token)) openConnectFlow(token);
 }
 
 /**
@@ -3359,8 +3372,31 @@ export function splitHandoffPreamble(raw) {
  * querySelectorAll) and under Node with no DOM at all. In a browser both are
  * always taken.
  */
-function render(token) {
+function render(token, why) {
   if (!isCurrentMount(token)) return;
+  // ── A PAINT NOBODY PRESSED FOR WAITS (e2e M3, v4.3.0 fix round) ────────
+  // `why === 'idle'` is a background paint: the poll, a reading that landed,
+  // a check that answered. It replaces both panes by innerHTML, which shut an
+  // open listbox or menu within seconds and took focus out of a field
+  // mid-typing. While a listbox/menu is open, or a text field on this view
+  // has focus, it is DEFERRED and re-tried until the user is done; a paint a
+  // press asked for (no `why`) is never delayed. Inline, with only `state`
+  // and globals, because suites lift render() by brace-matching.
+  if (why === 'idle' && typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+    const a = document.activeElement;
+    const tag = a && a.tagName ? String(a.tagName).toUpperCase() : '';
+    const inView = !!(a && typeof a.closest === 'function' && a.closest('#view-root, #sidebar, #reader-root'));
+    const typing = inView && (tag === 'TEXTAREA' || tag === 'SELECT'
+      || (tag === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(String(a.type || ''))));
+    const open = !!document.querySelector('#view-root [aria-expanded="true"][data-lb-trigger], #sidebar [aria-expanded="true"][data-lb-trigger]');
+    if (typing || open) {
+      if (!state.idlePaintPending) {
+        state.idlePaintPending = true;
+        setTimeout(() => { state.idlePaintPending = false; render(token, 'idle'); }, 700);
+      }
+      return;
+    }
+  }
   renderedSignature = screenSignature();
   captureFocus();
 
@@ -3419,7 +3455,26 @@ function captureFocus() {
   if (typeof document === 'undefined') return;
   const active = document.activeElement;
   const id = active && active.id;
-  if (id && FOCUSABLE_IDS.includes(id)) { pendingFocusId = id; return; }
+  if (id && FOCUSABLE_IDS.includes(id)) { pendingFocusId = id; if (state) state.focusSel = null; return; }
+  // ── ANY OTHER CONTROL ON THIS VIEW (e2e M4, v4.3.0 fix round) ──────────
+  // The Projects page's presses (Copy agent instructions, Check again, Sync
+  // now, Use folder, a picker, Add a domain…) are kit buttons with no listed
+  // id, so a repaint dropped focus on <body>. Remembered here by the ONE
+  // attribute that names the control (its id, else its data-* action), only
+  // inside this view's panes, and put back only when focus fell to <body>.
+  // A press is remembered for 10 s (a press that settles after an await);
+  // an older one is never re-applied to a later, unrelated repaint.
+  if (active && active !== document.body && typeof active.closest === 'function' && active.closest('#view-root, #sidebar')) {
+    const q = (v) => '"' + String(v).replace(/["\\]/g, '\\$&') + '"';
+    const ga = (k) => (typeof active.getAttribute === 'function' ? active.getAttribute(k) : null);
+    const KEYS = ['data-prj-act', 'data-kit-row-open', 'data-kit-tab', 'data-kit-sort', 'data-kit-seg', 'data-fnd-edit', 'data-fnd-delete',
+      'data-fnd-door', 'data-ws-delete', 'data-mem-k-remove', 'data-mem-k-domains', 'data-mem-k-chat'];
+    let sel = null;
+    if (id && /^[A-Za-z][\w-]*$/.test(id)) sel = '#' + id;
+    else if (ga('data-setup-act')) sel = '[data-setup-act=' + q(ga('data-setup-act')) + ']' + (ga('data-tool') ? '[data-tool=' + q(ga('data-tool')) + ']' : '');
+    else for (const k of KEYS) { if (ga(k) !== null) { sel = '[' + k + '=' + q(ga(k)) + ']'; break; } }
+    if (sel) state.focusSel = { sel, at: Date.now() };
+  }
   // THE ID-LESS BRANCH IS GONE WITH THE ELEMENT IT EXISTED FOR. It resolved the
   // shared explainer's <summary>, which carries no id of its own, through
   // `data-tx-explainer`. "How this works" is now the header's ⓘ — a real
@@ -3430,26 +3485,39 @@ function captureFocus() {
 }
 
 function restoreFocus() {
-  if (!pendingFocusId || typeof document === 'undefined') return;
-  const el = document.getElementById(pendingFocusId) ||
-    (FOCUS_FALLBACK[pendingFocusId] ? document.querySelector(FOCUS_FALLBACK[pendingFocusId]) : null);
-  if (el && typeof el.focus === 'function') {
-    pendingFocusId = null;
-    // preventScroll: the element is already where the user left it; letting
-    // the browser scroll to it would undo the reading position that the
-    // re-render preserved.
-    try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
-    // A text field of the add panel (v3.68.0) keeps typing where it left
-    // off: a render rebuilt the field, and a caret at 0 would put the next
-    // keystroke at the front of the path.
-    if (/^(fadd-|mem-ws-del-input$)/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
-      try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
+  if (typeof document === 'undefined') return;
+  if (pendingFocusId) {
+    const el = document.getElementById(pendingFocusId) ||
+      (FOCUS_FALLBACK[pendingFocusId] ? document.querySelector(FOCUS_FALLBACK[pendingFocusId]) : null);
+    if (el && typeof el.focus === 'function') {
+      pendingFocusId = null;
+      // preventScroll: the element is already where the user left it; letting
+      // the browser scroll to it would undo the reading position that the
+      // re-render preserved.
+      try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
+      // A text field of the add panel (v3.68.0) keeps typing where it left
+      // off: a render rebuilt the field, and a caret at 0 would put the next
+      // keystroke at the front of the path.
+      if (/^(fadd-|mem-ws-del-input$)/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
+        try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
+      }
+      return;
     }
-    return;
+    // Nothing to restore to. Keep the target only while another render is
+    // still coming; otherwise drop it so it cannot fire later out of context.
+    if (!state.detailLoading) pendingFocusId = null;
   }
-  // Nothing to restore to. Keep the target only while another render is
-  // still coming; otherwise drop it so it cannot fire later out of context.
-  if (!state.detailLoading) pendingFocusId = null;
+  // e2e M4: the control captureFocus named by attribute — only when focus
+  // fell to <body>, and only inside this view's panes. Inline (no helper):
+  // suites lift this function by brace-matching.
+  const fs = state && state.focusSel;
+  const sel = fs && typeof fs.sel === 'string' && Date.now() - fs.at < 10000 ? fs.sel : null;
+  if (!sel || typeof document.querySelector !== 'function') return;
+  const a = document.activeElement;
+  if (a && a !== document.body) return;
+  let el = null;
+  try { el = document.querySelector('#view-root ' + sel + ', #sidebar ' + sel); } catch { el = null; }
+  if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
 }
 
 /**
@@ -3715,7 +3783,9 @@ function renderSidebar(token) {
   }
   if (!state.projects.length) {
     setSidebar(head +
-      renderDescription('No domains yet. Project context is kept per domain — create one in Domains first.'),
+      renderDescription(state.domainsScanned === 0
+        ? 'No domains yet. A project lives inside a domain — + New project starts with one.'
+        : 'No projects yet. + New project adds one to a domain.'),
       token);
     return;
   }
@@ -3829,7 +3899,7 @@ function maybeLoadNewest(token) {
     if (!isCurrentMount(token) || activeKey() !== w.key) return;
     if (read && read.data) { state.nowDetail = { key: w.key, d: read.data, sig: w.sig }; state.nowFailed = null; }
     else state.nowFailed = { id, key: w.key, error: (read && read.error) || 'The newest note could not be read.' };
-    render(token);
+    render(token, 'idle');
   }).catch((err) => reportAsyncMountFailure(token, err));
 }
 
@@ -3869,12 +3939,13 @@ function prjTiles(read) {
   const eff = newest ? effectiveSave(newest) : null;
   return renderOverview({
     id: 'prj-ov',
+    sectionClass: 'prj-tiles',
     eyebrow: 'Overview',
     cards: projectTiles({
       lastSave: newest ? { age: eff && eff.seconds !== null ? formatAge(eff.seconds) : null,
         who: newest.harnessLabel || newest.harness || '', computer: newest.machine ? prjMachineName(newest.machine) : '' } : null,
       agents: rows ? { count: rows.length, needYou: rows.filter((r) => r.kind === 'needs-you').length } : null,
-      saves7,
+      saves7: saves7 === null && state.capture && state.capture.error && state.capture.domain === state.activeDomain && state.capture.project === state.activeProject ? 'unreadable' : saves7,
       documents: { count: facts.count, readFirst: facts.readFirstCount, manifestError: facts.manifestError || null, manifestNewer: !!facts.manifestNewer },
       knowledge: { pages: known ? pages : null, domains: domains.length },
       kit: mcpT === null ? null : { tokens: mcpT, share: ssPct(mcpT, contextWindowNow()) + ' of ' + windowWord(contextWindowNow()) },
@@ -3960,6 +4031,7 @@ function prjNowModel(read) {
     footer: [who, computer, formatAge(eff.seconds)].filter(Boolean).join(' · '),
     targetId: openIsNewest ? 'mem-ws-active' : undefined,
     deleteScope: readonly || !newest ? null : newest.scope,
+    deleteWho: who || null,
   };
   m.earlier = earlierNotes(scopes, newest, { secondsOf: prjSeconds, machineName: prjMachineName, limit: 4 })
     .map((e) => ({ ...e, targetId: d && !openIsNewest && d.scope === e.scope && (d.machine || null) === e.machine ? 'mem-ws-active' : undefined }));
@@ -3977,6 +4049,7 @@ function prjNowModel(read) {
       rows: entries.map((e, i) => ({ id: 'j' + i, cells: {
         when: { text: formatAge(effectiveSave({ writtenAt: e.at }).seconds) || '—', sort: Date.parse(e.at) || null },
         harness: e.harnessLabel || e.harness || '—', model: e.model || '—', headline: e.headline || '—',
+        notes: journalNotes(e.rejections) || '—',
       } })),
       moreHtml: nd && nd.journal && nd.journal.hasMore
         ? '<div class="prj-actions"><button type="button" class="btn btn-ghost btn-xs" id="mem-journal-more">Show more</button></div>' : '',
@@ -4003,10 +4076,13 @@ function prjAgentsModel() {
     checkedWords: data && data.checkedAt ? ageWordsFor(data.checkedAt, Date.now(), 'checked') : '',
     pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
     customHtml: data ? customField({ customOpen: state.setupCustomOpen, customDraft: state.setupCustomDraft, customError: state.setupCustomError }) : '',
-    repoHtml: data ? simpleRepo(data, {
-      forceRepoOpen: state.setupRepoForceOpen, editRepo: state.setupEditRepo, repoDraft: state.setupRepoDraft,
-      repoError: state.setupRepoError, pickUnavailable: state.setupPickUnavailable,
-    }) + (state.setupRepoError && !(state.setupRepoForceOpen || state.setupEditRepo)
+    // Review item 2: the repository prompt is a kit notice (optional, for a
+    // project with code); the typed field stays the embedded flow.
+    repoHtml: data ? (((n) => (n ? notice(n) : ''))(repoNotice(data, repoCandidatesOf(data), repoCheckedFiles(data), thisMachine()))
+      + ((state.setupRepoForceOpen || state.setupEditRepo) ? simpleRepo({ ...data, repo: data.repo || { path: '' } }, {
+        forceRepoOpen: state.setupRepoForceOpen, editRepo: state.setupEditRepo, repoDraft: state.setupRepoDraft,
+        repoError: state.setupRepoError, pickUnavailable: state.setupPickUnavailable,
+      }) : '')) + (state.setupRepoError && !(state.setupRepoForceOpen || state.setupEditRepo)
       ? '<p class="mem-setup-err" role="alert">' + escapeHtml(state.setupRepoError) + '</p>' : '') : '',
   };
   if (pro && data) {
@@ -4055,6 +4131,10 @@ function prjKitModel(read) {
   // audit M1: the measurement's own notes, in both modes.
   notices.push(...routeNoteNotices(data && data.notes));
   if (state.knowledgeSaveError) notices.push({ tone: 'error', title: 'The knowledge domains were not changed.', line: String(state.knowledgeSaveError) });
+  // e2e m2: Save brief says what happened (for a minute after the save).
+  if (state.briefSaved && state.briefSaved.key === activeKey() && Date.now() - state.briefSaved.at < 60000) {
+    notices.unshift({ tone: 'info', title: 'Brief saved.', line: 'Every agent reads it at the start of its next session.' });
+  }
   const open = state.briefEdit ? 'brief' : state.kitOpen || null;
   const docRows = facts.docs.map((d) => {
     const slug = String(d.slug || '');
@@ -4084,7 +4164,8 @@ function prjKitModel(read) {
     open,
     notices,
     sessionNoticesHtml: foundationsNotices(read) + (data ? sessionNoticesHtml(data, facts, readonly) : ''),
-    brief: { meta: briefMeta({ present: !!b, words: b ? briefStats(splitHandoffPreamble(b.text || '').body).words : 0 }) },
+    // e2e m1: the SAME count the editor shows (the whole stored brief).
+    brief: { meta: briefMeta({ present: !!b, words: b ? briefStats(b.text || '').words : 0 }) },
     documents: { meta: documentsMeta(facts) },
     knowledge: {
       meta: domains.join(', ') + (known ? ' · ' + fmtPages(pages) + ' an agent can search' : ''),
@@ -4133,7 +4214,8 @@ function prjHistoryModel(read) {
     harnesses,
     harnessPickerHtml: harnesses.length > 1 ? renderListboxHtml(prjHistoryHarnessCfg(harnesses)) : '',
     sortBy: state.historySort || null,
-    summary: connectionsSummary(cap),
+    summary: connectionsSummary(cap) || (state.capture && state.capture.error && state.capture.domain === state.activeDomain && state.capture.project === state.activeProject
+      ? 'could not be read: ' + String(state.capture.error) : null),
     summaryLabel: 'Last ' + CAPTURE_WINDOW_DAYS + ' days',
     savesLine: sbt ? sbt.tools.map((t) => (t.label || t.id) + ' ' + fmtCount(t.events)).join(' · ')
       + (sbt.lowerBound ? ' (at least — some journals were read only from their newest part)' : '') : null,
@@ -4291,28 +4373,19 @@ function renderMain(token) {
 function renderNoProjects() {
   const n = state.domainsScanned;
   const noDomains = n === 0;
-  const title = noDomains ? 'No domains yet' : 'No project context yet';
+  const title = noDomains ? 'No domains yet' : 'No projects yet';
   // `html: true` because these sentences carry an inline <code>. The caller
   // owns escaping when it opts in; every value here is a literal or a
   // server-supplied INTEGER, which is why `n` is checked with Number.isInteger
   // before it is used and rendered as a count rather than interpolated raw.
   const body = noDomains
-    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s knowledge. ' +
-      'Create a domain first, then point an agent at it — the brief appears here the moment one saves.'
+    ? 'A project lives inside a domain. Create a domain first, then a project in it — '
+      + 'its notes appear here the moment an agent saves one.'
     : (Number.isInteger(n) && n > 0
         ? 'Nothing has been saved in ' + (n === 1 ? 'your domain' : 'any of your ' + n + ' domains') + ' yet. '
         : 'Nothing has been saved yet. ') +
-      'Project context lives under <code>state/</code> beside a domain’s knowledge, and a project appears here ' +
-      'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
-  // ── WHO THIS IS FOR, SAID ON THE SCREEN WHERE THE QUESTION IS ASKED ───
-  // v3.64.0, §5.2. The rail cannot carry prose — its captions are one word
-  // — and `title`/`aria-label` already read "Project context", which names
-  // the thing without saying who needs it. So a researcher with no agents
-  // meets a third rail button and has no way to find out what it is for
-  // except by pressing it. This is where they land when they do, and it is
-  // the one sentence that answers them: the second audience is the first
-  // audience's future, said once, here.
-  const audience = 'Project context is for work that outlives one session: a book, a research programme, a codebase.';
+      'A project appears here the moment an agent saves a note, or you write it a brief in Domains → Projects.';
+  const audience = 'A project is for work that outlives one session: a book, a research programme, a codebase.';
   // ── §8(e): THE POINTER LIVES WHERE THE MISSING THING IS A PROJECT ──────
   // Moved here from `renderFoundations`'s no-manifest arm (v3.62.0): that
   // state is reached INSIDE a project that has already been selected — the
@@ -4942,10 +5015,10 @@ async function loadDomainList(token) {
         ? data.identity : null;
       state.domainListReadonly = Array.isArray(data.readonlyDomains)
         ? data.readonlyDomains.filter((d) => typeof d === 'string') : [];
-      render(token);
+      render(token, 'idle');
     } else {
       state.domainListRefused = true;
-      render(token);
+      render(token, 'idle');
     }
   } catch {
     // The rail keeps its local order and the picker says it could not read
@@ -5017,7 +5090,7 @@ async function loadKnowledge(domains, token, opts) {
       if (hit && !next.data) return;
       if (hit && JSON.stringify(hit.data) === JSON.stringify(next.data)) return;
       state.knowledge.set(domain, next);
-      render(token);
+      render(token, 'idle');
     })().catch((err) => reportAsyncMountFailure(token, err));
     painted = true;
   }
@@ -5187,7 +5260,7 @@ async function loadCapture(domain, project, token, opts) {
   const sig = (d) => JSON.stringify(d, (k, v) => (/ageSeconds$|AgeSeconds$/.test(k) ? 0 : v));
   if (hit && sig(hit.data) === sig(next.data)) return;
   state.capture = next;
-  render(token);
+  render(token, 'idle');
 }
 
 
@@ -5820,8 +5893,8 @@ function renderBriefEditor(read, readonly) {
       '<span data-brief-stat="dirty">' + (dirty ? 'modified' : 'unchanged') + '</span>' +
       '<span data-brief-stat="words">' + escapeHtml(String(stats.words)) +
         ' word' + (stats.words === 1 ? '' : 's') + '</span>' +
-      '<span data-brief-stat="bytes">' + escapeHtml(String(stats.bytes)) + ' of ' +
-        escapeHtml(String(BRIEF_MAX_BYTES)) + ' bytes</span>' +
+      '<span data-brief-stat="bytes">' + escapeHtml(stats.bytes.toLocaleString('en-US')) + ' of ' +
+        escapeHtml(BRIEF_MAX_BYTES.toLocaleString('en-US')) + ' bytes</span>' +
     '</div>' +
     '<div class="mem-note mem-note-loud" id="mem-brief-over"' + (stats.over ? '' : ' hidden') + '>' +
       icon('alertTriangle', 13) +
@@ -5886,7 +5959,7 @@ function renderBriefEditor(read, readonly) {
       // own header states that a warning never folds. A guard already pinned
       // it (test-next-memory-view.js §16g asserts the editor "says REPLACE
       // rather than implying an append"); that guard is right.
-      renderDescription('Saving replaces the whole document — send the complete brief, not an addition.') +
+      renderDescription('Saving replaces the whole brief — keep everything you want in it, not just what is new.') +
     '</div>'
   );
 }
@@ -6312,11 +6385,12 @@ function foundationsSummaryMeta(facts) {
     // request" would report the ABSENCE of a decision as a decision, and the
     // absence is the ordinary state of every project that predates the flag.
     flagged
-      ? facts.readFirstCount + ' read first · ' + facts.onRequestCount + ' on request'
+      // v4.3.0 fix round (e2e m7): the page's own words.
+      ? facts.readFirstCount + ' always read · ' + facts.onRequestCount + ' when needed'
       : null,
     // v3.67.0: the third state, said only when it applies — "0 not at start"
     // would report the absence of a decision as a decision.
-    facts.hiddenCount > 0 ? facts.hiddenCount + ' not at start' : null,
+    facts.hiddenCount > 0 ? facts.hiddenCount + ' hidden' : null,
     foundationsWord(facts),
   ].filter(Boolean).join(' · ');
 }
@@ -7179,7 +7253,7 @@ function renderFoundations(read, opts = {}) {
           // cell over a column the body does not emit makes the columns
           // quietly stop lining up, which is the class of defect only a
           // rendered look finds (v3.61.0's own note, one column over).
-          (readonly ? '' : '<th scope="col">At session start</th>') +
+          (readonly ? '' : '<th scope="col">At start</th>') +
           (proposal ? '<th scope="col">Suggested</th>' : '') +
           // ── FIVE COLUMNS OR SIX, BY THE DOCUMENTS (P2-1, v3.69.0) ────
           // A project of kept documents has ONE State column (written by
@@ -9344,7 +9418,8 @@ function harnessNow() {
 
 /** "200K", "1M" — a window's name. */
 function windowWord(tokens) {
-  return formatTokens(tokens).replace(/k$/, 'K');
+  // ONE style for a window on every surface (e2e m6: "200K" beside "200k").
+  return formatTokens(tokens);
 }
 
 /** A share of the window, "4.4%" ("<0.1%" for a sliver, never "0.0%"). */
@@ -9593,9 +9668,9 @@ function sessionMeterHtml(data, error) {
         + '</p>'
       : src.kind === 'planner'
         ? '<p class="mem-ss-preview-of">' + escapeHtml('Previewing ' + src.changes + ' change'
-          + (src.changes === 1 ? '' : 's') + ' from Documents at start — Apply or Discard them there.') + '</p>'
+          + (src.changes === 1 ? '' : 's') + ' from Starting kit — Apply or Discard them there.') + '</p>'
       : src.kind === 'plan'
-        ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it under Documents.</p>' : '';
+        ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it on Starting kit.</p>' : '';
     // The one-line hint the harness picker carries, said where the gap is
     // drawn, and only while the estimate is Not set.
     // v3.79.0 (contract §D): one note, always — what the figure is for.
@@ -10061,7 +10136,7 @@ function patchSetup(token) {
   if (rIn) state.setupRepoDraft = rIn.value;
   const cIn = document.getElementById('mem-setup-custom-input');
   if (cIn) state.setupCustomDraft = cIn.value;
-  render(token);
+  render(token, 'idle');
   const s1 = setupFor();
   if (setupReader && isCurrentReader(setupReader.epoch) && s1 && s1.data) {
     if (setupReader.kind === 'file') openSetupFileReader(setupReader.key, token, true);
@@ -10335,7 +10410,9 @@ function bindSetup(root, token) {
         if (input && typeof input.focus === 'function') input.focus();
         return;
       }
-      addSetupTool(value, token).catch((err) => reportAsyncMountFailure(token, err));
+      // e2e M6: the add menu leads to the ONE connect flow, at that harness.
+      openConnectFlow(token);
+      connectChoose(value, token).catch((err) => reportAsyncMountFailure(token, err));
     };
     mountListbox(cfg);
   }
@@ -10596,7 +10673,7 @@ function patchSessionStart(token) {
   // Budget tab and the tiles, so its arrival repaints the page; the "in full"
   // reader, if it is open, follows.
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
-  render(token);
+  render(token, 'idle');
   if (sessionFullEpoch !== null && isCurrentReader(sessionFullEpoch)) openSessionFullReader(token);
 }
 
@@ -11677,10 +11754,10 @@ function renderPlanPanel(facts, p) {
     const tt = r.totals && typeof r.totals === 'object' ? r.totals : {};
     const n = (v) => (Number.isInteger(v) ? v : 0);
     const clauses = ['Suggested plan',
-      n(tt.readFirstCount) + ' read first',
+      n(tt.readFirstCount) + ' always read',
       ssSize(tt.readFirstBytes) + ' of the ' + budgetWord(r.budgetBytes) + ' reading budget',
-      n(tt.onRequestCount) + ' on request'];
-    if (n(tt.notAtStartCount)) clauses.push(n(tt.notAtStartCount) + ' not at start');
+      n(tt.onRequestCount) + ' when needed'];
+    if (n(tt.notAtStartCount)) clauses.push(n(tt.notAtStartCount) + ' hidden');
     clauses.push(planChangeCount(p) ? 'nothing applied yet' : 'nothing to change');
     const dropped = Array.isArray(r.dropped) ? r.dropped.filter((x) => x && x.slug) : [];
     const notes = Array.isArray(r.notes) ? r.notes.filter((x) => typeof x === 'string' && x) : [];
@@ -11878,16 +11955,27 @@ function bindWorkStreamRows(root, token) {
   byId('mem-ws-del-go')?.addEventListener('click', () => {
     runWorkStreamDelete(token).catch((err) => reportAsyncMountFailure(token, err));
   });
+  // Keep it / Dismiss: focus goes back to the press that opened the card
+  // (audit minor: it went to <body> — the old target, the Handoffs fold, is
+  // gone), else to the Now card's heading, else to the tab.
+  const backToPress = () => {
+    const sel = state.wsDeleteOpener;
+    const doc = typeof document !== 'undefined' && typeof document.querySelector === 'function' ? document : null;
+    const el = doc ? ((sel && doc.querySelector('#view-root ' + sel)) || doc.getElementById('prj-now-h') || doc.querySelector('#view-root [role="tab"][aria-selected="true"]')) : null;
+    if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: false }); } catch { el.focus(); } }
+  };
   byId('mem-ws-del-no')?.addEventListener('click', () => {
     if (state.wsDelete && state.wsDelete.busy) return;
     state.wsDelete = null;
-    pendingFocusId = 'mem-fold-streams';
+    pendingFocusId = null;
     render(token);
+    backToPress();
   });
   byId('mem-ws-del-dismiss')?.addEventListener('click', () => {
     state.wsDeleteOutcome = null;
-    pendingFocusId = 'mem-fold-streams';
+    pendingFocusId = null;
     render(token);
+    backToPress();
   });
 }
 
@@ -11906,14 +11994,24 @@ async function openWorkStreamDelete(scope, token) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   if (!domain || !project || !scope) return;
+  // e2e M7: whose notes (the agent that saved this work-stream), and where
+  // the press was, so Keep it / Dismiss put focus back on it.
+  const row = ((state.projectRead && state.projectRead.scopes) || []).find((x) => x && x.scope === scope) || null;
+  const who = row ? (row.harnessLabel || row.harness || null) : null;
   const del = {
     domain, project, scope, preview: null, loading: true, loadError: null,
-    confirmText: '', busy: false, error: null,
+    confirmText: '', busy: false, error: null, who,
   };
   state.wsDelete = del;
   state.wsDeleteOutcome = null;
+  state.wsDeleteOpener = '[data-ws-delete="' + String(scope).replace(/["\\]/g, '\\$&') + '"]';
   pendingFocusId = 'mem-ws-del-input';
   render(token);
+  // The card is AT the press; bring it (and its typed field) into view.
+  if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+    const card = document.querySelector('.mem-wsdel-card');
+    if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'center' });
+  }
 
   let data = null;
   let error = null;
@@ -11993,6 +12091,12 @@ async function runWorkStreamDelete(token) {
   if (activeKey() === keyOf(domain, project)) {
     await reloadActive(token);
     refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+    // e2e M7: every count agrees afterwards — the sidebar (above), the header
+    // and tiles (the reload), the Agents list (an agent known only from its
+    // saves leaves it; one set up here stays, with its setup state) and the
+    // 7-day saves (the capture re-read).
+    maybeLoadSetup(token, true);
+    loadCapture(domain, project, token, { maxAgeMs: 0 }).catch((err) => reportAsyncMountFailure(token, err));
   } else {
     render(token);
   }
@@ -12147,7 +12251,8 @@ function openBriefReader(token) {
     title: 'Brief',
     type: 'memory',
     typeLabel: 'brief',
-    bodyHtml: b ? '<div class="mem-reader-doc">' + renderMarkdown(body) + '</div>'
+    bodyHtml: b ? (b.truncated ? renderDescription('This brief is longer than an agent is handed at the start; the end shown here is where agents stop reading.') : '')
+      + '<div class="mem-reader-doc">' + renderMarkdown(body) + '</div>'
       : renderDescription('No brief yet. Press Edit on the Starting kit tab to write the standing instructions every agent reads first.'),
     backlinks: [],
     hideBacklinks: true,
@@ -12252,7 +12357,7 @@ function wireProjects(token) {
     }
   });
   const SORT_COLS = {
-    'prj-history': [{ id: 'size', numeric: true }, { id: 'when' }],
+    'prj-history': [{ id: 'size', numeric: true }, { id: 'when', numeric: true }],
     'prj-agents': [{ id: 'saves', numeric: true }],
     'prj-docs': [{ id: 'tokens', numeric: true }],
   };
@@ -12271,7 +12376,11 @@ function wireProjects(token) {
         const p = prjPairOf(s);
         openWorkStream(p.scope, p.machine, token).catch((err) => reportAsyncMountFailure(token, err));
       } else if (s.startsWith('tool:')) {
-        openSetupToolReader(s.split(':')[1] || '', token, null, true);
+        // A row for ANOTHER computer opens that computer's reader (its saves,
+        // its install); this computer's row opens the harness's steps.
+        const part = s.split(':');
+        if (/^c\d+$/.test(part[2] || '')) openSetupComputerReader(part[2].slice(1), token);
+        else openSetupToolReader(part[1] || '', token, null, true);
       } else if (s.startsWith('doc:')) {
         openFoundation(s.slice(4), token).catch((err) => reportAsyncMountFailure(token, err));
       } else if (s.startsWith('comp:')) {
@@ -12349,20 +12458,23 @@ function connectModel() {
     for (const a of (data && data.addable) || []) {
       if (!a || !a.id || rows.some((r) => r.id === a.id)) continue;
       m.harnesses.push({ id: a.id, label: a.id === CUSTOM_TOOL_VALUE ? 'Another agent…' : (a.label || a.id),
-        meta: a.id === CUSTOM_TOOL_VALUE ? 'Any other agent that speaks MCP — you name it' : 'Not set up for this project yet',
+        meta: a.id === CUSTOM_TOOL_VALUE ? 'Any other agent that can connect to The Curator — you name it' : 'Not set up for this project yet',
         kind: a.id === CUSTOM_TOOL_VALUE ? '' : 'off' });
     }
     if (!data) m.harnesses = [{ id: 'wait', label: 'Checking this computer…', meta: '', kind: 'working' }];
     return m;
   }
   const t = data && (data.tools || []).find((x) => x && x.id === c.tool);
-  m.chosen = { id: c.tool, label: (t && t.label) || c.tool };
+  // e2e m14: a harness picked from the list is NOT added to the project until
+  // the user goes ahead; until then its words come from the addable list.
+  const a = !t && data ? (data.addable || []).find((x) => x && x.id === c.tool) : null;
+  m.chosen = { id: c.tool, label: (t && t.label) || (a && a.label) || c.tool };
   if (c.error) m.outcome = { tone: 'error', title: 'That did not finish.', line: c.error };
-  if (c.busy === 'status' || !t) {
+  if (c.busy === 'status' || c.busy === 'add' || (!t && !a)) {
     m.computerHtml = '<p class="prj-wait" aria-busy="true">Checking ' + escapeHtml(m.chosen.label) + ' on this computer…</p>';
     return m;
   }
-  const { steps } = toolGuideSteps(t, data);
+  const steps = t ? toolGuideSteps(t, data).steps : [];
   const st = c.status;
   const it = st && Array.isArray(st.tools) ? st.tools.find((x) => x && x.id === c.tool) : null;
   const platform = st && st.platform;
@@ -12370,26 +12482,42 @@ function connectModel() {
     + '<p class="prj-step-title">' + escapeHtml(x.title) + ' ' + statusChip(GUIDE_CHIP[x.state] || 'unknown')
     + (x.when ? ' <span class="prj-sub">' + escapeHtml(x.when) + '</span>' : '') + '</p>'
     + x.html + (x.doors ? '<div class="prj-actions">' + x.doors + '</div>' : '') + '</div>';
+  // ONE COMPUTER PART, ONE PROJECT PART (e2e m9): the connection and the
+  // skills are set up once per computer; the instruction file and the first
+  // save belong to this project.
+  const PER_COMPUTER = ['mcp', 'skills'];
+  const mine = steps.filter((x) => PER_COMPUTER.includes(x.key));
+  const project = steps.filter((x) => !PER_COMPUTER.includes(x.key));
+  const settled = (x) => ['done', 'optional', 'cant', 'skip'].includes(x.state);
+  let part;
   if (c.results) {
-    m.computerHtml = renderResults(c.results, (st && st.tools) || [], platform);
+    part = renderResults(c.results, (st && st.tools) || [], platform);
   } else if (c.plan) {
-    m.computerHtml = renderPlanCard(c.plan, (st && st.tools) || [], c.busy);
+    part = renderPlanCard(c.plan, (st && st.tools) || [], c.busy);
   } else if (it && isInstallable(it, platform)) {
     // Installable first: an entry from an older version is "connected" by
     // the guide's reading but still wants the update the installer offers.
     const upd = it.status === 'needs-update';
-    m.computerHtml = '<p class="prj-sub">' + escapeHtml(upd
+    part = '<p class="prj-sub">' + escapeHtml(upd
       ? m.chosen.label + '’s connection was written by an older version of The Curator. The Curator can update it for you.'
       : 'The Curator can add itself to ' + m.chosen.label + '’s settings for you.')
       + ' You see the exact change first, and a copy of the file is kept.</p>'
       + '<div class="prj-actions"><button type="button" class="btn btn-primary btn-xs" data-prj-connect="plan"'
       + (c.busy ? ' disabled' : '') + '>' + (c.busy === 'plan' ? 'Preparing…' : (upd ? 'Update it for me' : 'Set it up for me')) + '</button></div>';
-  } else if (steps[0] && steps[0].state === 'done') {
-    m.computerHtml = notice({ tone: 'info', title: m.chosen.label + ' is connected on this computer.', line: plainOf(steps[0].html) });
+  } else if (mine[0] && mine[0].state === 'done') {
+    part = notice({ tone: 'info', title: m.chosen.label + ' is connected on this computer.', line: plainOf(mine[0].html) });
+  } else if (mine[0]) {
+    part = '<p class="prj-sub">' + escapeHtml('The Curator cannot change ' + m.chosen.label + '’s settings for you here. Paste this into them:') + '</p>' + stepHtml(mine[0]);
   } else {
-    m.computerHtml = stepHtml(steps[0]);
+    part = '<p class="prj-sub">' + escapeHtml('Go ahead to see exactly what to paste into ' + m.chosen.label + '’s settings.') + '</p>';
   }
-  m.projectHtml = steps.slice(1).map(stepHtml).join('');
+  m.computerHtml = part + mine.slice(1).map(stepHtml).join('');
+  m.projectHtml = t ? project.map(stepHtml).join('')
+    : '<p class="prj-sub">' + escapeHtml(m.chosen.label + ' is not on this project’s list yet. Go ahead to add it and see this project’s steps.') + '</p>'
+      + '<div class="prj-actions"><button type="button" class="btn btn-primary btn-xs" data-prj-connect="go-ahead">'
+      + escapeHtml('Add ' + m.chosen.label + ' to this project') + '</button></div>';
+  m.computerDone = !!t && mine.length > 0 && mine.every(settled);
+  m.complete = !!t && m.computerDone && project.length > 0 && project.every(settled);
   return m;
 }
 
@@ -12423,13 +12551,15 @@ function paintConnect(token) {
     b.addEventListener('click', () => {
       const a = b.getAttribute('data-prj-connect') || b.getAttribute('data-mcpi-act');
       if (a === 'back') { c.step = 'pick'; c.tool = null; c.plan = null; c.results = null; c.error = null; paintConnect(token); }
+      else if (a === 'done') { state.connect = null; closeReader(); prjFocus('prj-connect'); }
+      else if (a === 'go-ahead') connectAdd(token).then(() => paintConnect(token)).catch((err) => reportAsyncMountFailure(token, err));
       else if (a === 'plan') connectPlan(token).catch((err) => reportAsyncMountFailure(token, err));
       else if (a === 'apply') connectApply(token).catch((err) => reportAsyncMountFailure(token, err));
       else if (a === 'cancel') { c.plan = null; paintConnect(token); }
       else if (a === 'check-again') { c.results = null; connectStatus(token).catch((err) => reportAsyncMountFailure(token, err)); }
       // audit M5: the plan's and the results' "Copy the setup text" (a
       // refused write says "add by hand" and offers it).
-      else if (a === 'copy' || a === 'copy-myself') connectCopy(b.getAttribute('data-tool') || c.tool);
+      else if (a === 'copy' || a === 'copy-myself') { connectCopy(b.getAttribute('data-tool') || c.tool); connectAdd(token).then((added) => { if (added) paintConnect(token); }).catch((err) => reportAsyncMountFailure(token, err)); }
       else if (a === 'dismiss') { c.results = null; paintConnect(token); }
     });
   });
@@ -12469,13 +12599,27 @@ async function connectChoose(id, token) {
   }
   c.step = 'computer'; c.tool = id; c.error = null; c.busy = 'status'; c.plan = null; c.results = null;
   paintConnect(token);
-  if (!(data.tools || []).some((t) => t && t.id === id)) {
-    const ok = await putSetupToolIds([...(data.addedTools || []), id], token);
-    if (state.connect !== c) return;
-    if (!ok) { c.busy = null; c.error = 'It could not be added to this computer’s list.'; paintConnect(token); return; }
-    await loadSetup(state.activeDomain, state.activeProject, token);
-  }
+  // e2e m14: NOT added to the project here — only when the user goes ahead
+  // (connectAdd), so Back leaves the list as it was.
   await connectStatus(token);
+}
+
+/** Going ahead: put the chosen harness on this project's list, once. True when it is there. */
+async function connectAdd(token) {
+  const c = state.connect;
+  const s = setupFor();
+  const data = s && s.data;
+  if (!c || !data || !c.tool) return false;
+  if ((data.tools || []).some((t) => t && t.id === c.tool)) return true;
+  c.busy = 'add'; c.error = null;
+  paintConnect(token);
+  const ok = await putSetupToolIds([...(data.addedTools || []), c.tool], token);
+  if (state.connect !== c) return false;
+  if (!ok) { c.busy = null; c.error = 'It could not be added to this computer’s list.'; return false; }
+  await loadSetup(state.activeDomain, state.activeProject, token);
+  if (state.connect !== c) return false;
+  c.busy = null;
+  return true;
 }
 
 async function connectStatus(token) {
@@ -12494,6 +12638,8 @@ async function connectStatus(token) {
 async function connectPlan(token) {
   const c = state.connect;
   if (!c || c.busy) return;
+  // Set it up for me IS going ahead: the harness joins the project's list.
+  if (!(await connectAdd(token)) || state.connect !== c) { if (state.connect === c) paintConnect(token); return; }
   c.busy = 'plan'; c.error = null;
   paintConnect(token);
   const r = await requestPlan('install', [c.tool]);
@@ -12655,15 +12801,24 @@ function wire(token) {
   bindKnowledgeRows(document, token);
 
   document.getElementById('mem-new-project')?.addEventListener('click', () => {
-    const domain = state.activeDomain;
-    // NO DOMAIN, NO REQUEST — but still the pointer. A user with no project
-    // selected still wants the create form; what cannot be claimed is which
-    // domain it should open on.
+    // e2e M2 (v4.3.0 fix round): ALWAYS a domain to open the form on — the
+    // open project's, else the first one this install can write to — and
+    // Domains then scrolls the form into view with focus in its name field.
+    // With no domain at all, the user is told so and lands on the New domain
+    // form instead of an empty page.
     // `openCreate: true` rather than a bare request: the pointer's whole job
     // is to land on the CREATE FORM of this domain, and B's shell normalises
-    // the flag to that. A request with no flag would land on the domain and
-    // leave the person looking for the form they pressed a button to reach.
-    if (domain) requestDomain(domain, { openCreate: true });
+    // the flag to that.
+    const ro = Array.isArray(state.domainListReadonly) ? state.domainListReadonly : [];
+    const writable = (Array.isArray(state.domainList) ? state.domainList : []).filter((d) => !ro.includes(d) && !/^shared-/.test(d));
+    const domain = state.activeDomain && !ro.includes(state.activeDomain) && !/^shared-/.test(state.activeDomain)
+      ? state.activeDomain : (writable[0] || null);
+    if (domain) { requestDomain(domain, { openCreate: true }); navigate('domains'); return; }
+    if (state.domainsScanned === 0 || (Array.isArray(state.domainList) && state.domainList.length === 0)) {
+      showToast({ key: 'prj-new-project', tone: 'info', title: 'Create a domain first',
+        lines: ['A project lives inside a domain. Name your first domain, then add the project to it.'] });
+      requestDomain('*', { reason: 'new-domain' });
+    }
     navigate('domains');
   });
 
@@ -12741,7 +12896,7 @@ function wire(token) {
       };
       set('dirty', briefText.value !== (state.briefEdit.loaded || '') ? 'modified' : 'unchanged');
       set('words', stats.words + ' word' + (stats.words === 1 ? '' : 's'));
-      set('bytes', stats.bytes + ' of ' + BRIEF_MAX_BYTES + ' bytes');
+      set('bytes', stats.bytes.toLocaleString('en-US') + ' of ' + BRIEF_MAX_BYTES.toLocaleString('en-US') + ' bytes');
       box.classList.toggle('mem-brief-stats-over', stats.over);
     }
     const over = document.getElementById('mem-brief-over');

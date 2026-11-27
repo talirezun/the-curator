@@ -97,7 +97,7 @@ const E = {
       head: ['', 'Who writes it', 'What it holds'],
       rows: [
         ['The brief', { icon: 'pencil', text: 'you' }, 'your goal and firm decisions'],
-        ['Handoffs', { icon: 'agent', text: 'agents' }, 'where each piece of work stopped'],
+        ['Notes', { icon: 'agent', text: 'agents' }, 'where each piece of work stopped'],
         ['Journal', { icon: 'agent', text: 'agents' }, 'one line per save; only grows'],
         ['Agent connections', { icon: 'search', text: 'a reading' }, 'did agents read first, and save?'],
       ],
@@ -893,7 +893,7 @@ export const SCREEN_WORDS = [
   'Agent connections', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
   // Phase 2 (Projects): the page's own words.
   'Always read', 'When needed', 'Hidden', 'Agents', 'Starting kit', 'Now', 'History', 'Budget',
-  'Connect an agent',
+  'Connect an agent', 'Notes',
   'Window', 'Reading budget', 'Documents at start', 'Copy agent instructions',
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',

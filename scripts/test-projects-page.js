@@ -108,8 +108,25 @@ section('§1 the harness rows — the closed status vocabulary');
   ok(rows.every((r) => ['ready', 'needs-you', 'working', 'off', 'unknown', 'error'].includes(r.kind)), 'every kind is one of shared/status.js\'s');
   ok(rows.every((r) => !/<|&[a-z]+;/.test(r.meta)), 'every meta line is plain text (no markup, no entities)', rows.map((r) => r.meta).join(' | '));
   ok(by['claude-code'].action === null, 'a Ready row carries no action', JSON.stringify(by['claude-code'].action));
-  ok(['codex', 'opencode', 'antigravity'].every((id) => by[id].action && by[id].action.attrs['data-setup-act']),
-    'every other row carries ONE action the view\'s setup listener knows (data-setup-act)', JSON.stringify(rows.map((r) => r.action)));
+  ok(['codex', 'opencode'].every((id) => by[id].action && by[id].action.attrs['data-setup-act']),
+    'every row with steps left carries ONE action the view\'s setup listener knows (data-setup-act)', JSON.stringify(rows.map((r) => r.action)));
+  // Review item 1 (v4.3.0 fix round): a row whose fix is in a notice carries
+  // a SHORT reason and no button — the fix appears once, in the notice.
+  ok(by.antigravity.action === null, 'a row whose fix is said in a notice carries no fix button of its own (the fix appears once)', JSON.stringify(by.antigravity.action));
+  ok(by.antigravity.meta.startsWith('Its skills are out of date') && !by.antigravity.meta.includes('older than the copy this app carries'),
+    '...and its meta is a SHORT reason, not the notice\'s sentence', by.antigravity.meta);
+  const nAg = M.toFixNotices(demo()).find((n) => n.tool === 'antigravity');
+  ok(nAg && nAg.actions.length >= 1, '...while the notice still carries the fix', JSON.stringify(nAg && nAg.actions));
+  ok(M.shortReason({ kind: 'block-outdated' }) === 'Its instructions are out of date, so it may skip saving' && M.shortReason({ kind: 'nope' }) === '',
+    'the short reasons are by kind; an unknown kind falls back to the notice\'s first sentence');
+  // Review item 2: the repository prompt is a kit notice, worded as optional.
+  const rn = M.repoNotice({ project: 'p', repo: null }, [], 'AGENTS.md and CLAUDE.md', 'Mac');
+  ok(rn && rn.tone === 'info' && rn.title === 'If this project has a folder on this Mac, set it.' && rn.title.split(/\s+/).length <= 12
+    && /A project without code can skip this\./.test(rn.line) && rn.actions[0].label === 'Set the folder' && rn.actions[0].attrs['data-setup-act'] === 'choose-repo',
+    'the repository prompt is an info notice, optional for a project without code, with Set the folder', JSON.stringify(rn));
+  const rn1 = M.repoNotice({ project: 'p', repo: null }, [{ display: '~/code/p', path: '/u/code/p' }], 'AGENTS.md', 'Mac');
+  ok(rn1.actions[0].attrs['data-setup-act'] === 'use-repo' && rn1.actions[0].attrs['data-path'] === '/u/code/p' && rn1.line.includes('~/code/p'), 'one folder found: Use this folder, by its path');
+  ok(M.repoNotice({ repo: { path: '/x' } }, [], '', 'Mac') === null, 'a folder already set: no prompt');
   ok(rows.every((r) => r.targetId === 'mem-setup-tool-' + r.id), 'each row\'s open target carries the id its reader returns focus to');
   // The count a row says is the guide's (guideTally), never a second count.
   const codexModel = S.harnessRowModel(demo().tools[2], demo());
@@ -580,6 +597,186 @@ section('§15 owner decision 2026-11-27 — Starting kit\'s controls in Simple')
   const chooseBody = mv.slice(i, mv.indexOf('\n  }\n', i));
   ok(/state\.kitOpen = 'documents'/.test(chooseBody) && !/data-ov-jump/.test(chooseBody) && !/mem-fold-planner/.test(chooseBody),
     '"Choose read-first documents" opens the Documents list in both modes (no Pro-only fold, no retired door)');
+}
+
+section('§16 audit M4 — the retired five-step pins whose behaviour still exists, re-pinned here');
+{
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  // Brace-matched lift of a REAL function; a missing one THROWS (never a '' stand-in).
+  const lift = (name) => {
+    const m = new RegExp('(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ' + name + '\\s*\\(').exec(mv);
+    if (!m) throw new Error('lift: "' + name + '" not found in memory.js');
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let p = mv.indexOf('(', start), d = 0;
+    for (; p < mv.length; p++) { if (mv[p] === '(') d++; else if (mv[p] === ')') { d--; if (!d) { p++; break; } } }
+    let i = mv.indexOf('{', p); d = 0;
+    for (; i < mv.length; i++) { if (mv[i] === '{') d++; else if (mv[i] === '}') { d--; if (!d) { i++; break; } } }
+    return mv.slice(start, i);
+  };
+  // 1. The stale-write notice offers Reload, and the page handles that press.
+  const st = M.nowNotices({ staleWrite: true });
+  ok(st.length === 1 && st[0].tone === 'attention' && st[0].actions[0].attrs['data-prj-act'] === 'reload', 'an agent saved since the page was read: an attention notice with Reload');
+  ok(M.nowNotices({}).length === 0, '...and no write since arrival paints no notice at all');
+  ok(/act === 'reload'\) \{ reloadActive\(token\)/.test(lift('wireProjects')), '...whose press re-reads the project (reloadActive)');
+  // 2. Reload: keeps the user's pair when it still exists, else falls back to the freshest; drops the Now card's kept read.
+  const runReload = async (scopes, keep) => {
+    const calls = [];
+    const state = { activeDomain: 'd', activeProject: 'p', scope: keep, machine: null, nowDetail: { key: 'x' }, nowFailed: { id: 1 } };
+    const fn = new Function('state', 'keyOf', 'activeKey', 'forgetProject', 'render', 'fetchState', 'isCurrentMount', 'loadScope', 'workStreamOrder',
+      lift('reloadActive') + '\nreturn reloadActive;')(state, (a, b) => a + '/' + b, () => 'd/p', () => calls.push('forget'), () => {},
+      async () => ({ data: { scopes }, error: null }), () => true, async (sc, m, t, o) => { calls.push('load:' + sc + (o && o.deliberate === false ? ':auto' : '')); },
+      (list) => list.slice());
+    await fn(1);
+    return { calls, state };
+  };
+  const r1 = await runReload([{ scope: 'a' }, { scope: 'b' }], 'b');
+  ok(r1.calls.includes('load:b') && r1.state.nowDetail === null && r1.state.nowFailed === null, 'Reload re-reads the pair the user was on, and the newest pair\'s kept read goes too', r1.calls);
+  const r2 = await runReload([{ scope: 'a' }], 'gone');
+  ok(r2.calls.includes('load:a:auto'), 'a pair that is gone falls back to the freshest, not deliberately pinned', r2.calls);
+  // 3–4. The cost line's action, over the reading budget, Index only: today's sentences, lifted and run.
+  const sn = new Function('escapeHtml', 'icon', 'plannerBody', 'ssSize', 'tok', lift('sessionNoticesHtml') + '\nreturn sessionNoticesHtml;')(
+    (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])), () => '', () => null,
+    (b) => Math.round(b / 1024) + ' KB', (t) => '≈' + (Math.round(t / 100) / 10) + 'k');
+  const cost = sn({ costLine: { applies: true, documentTextBytes: 64000 }, planned: false, tiers: { readFirst: { count: 0 }, omitted: { count: 0 } }, budget: { bytes: 122880 } }, { count: 3, readFirstCount: 0 }, false);
+  ok(/id="mem-ss-cost"/.test(cost) && /id="mem-ss-set-budget"/.test(cost), 'the cost line says what every session is handed and offers Set a reading budget (whose picker is on Starting kit, §15)');
+  ok(!/mem-ss-set-budget/.test(sn({ costLine: { applies: true, documentTextBytes: 64000 }, planned: false, tiers: {}, budget: {} }, { count: 3 }, true)), '...and a read-only mirror is offered no action');
+  const idx = sn({ planned: true, budget: { bytes: 0 }, tiers: {} }, { count: 2, readFirstCount: 2 }, false);
+  ok(/id="mem-ss-index-only"/.test(idx) && /handed none of/.test(idx), 'Index only with documents marked Always read says agents are handed none of their text');
+  const over = sn({ planned: true, budget: { bytes: 16384 }, tiers: { readFirst: { exceeded: true, bytes: 16000 } } }, { count: 2, readFirstCount: 2, readFirstBytes: 40000 }, false);
+  ok(/id="mem-ss-over"/.test(over) && /over the/.test(over), 'a read-first set over the reading budget says so, and what agents are handed');
+  ok(/flow\(m\.sessionNoticesHtml, 'sessionNoticesHtml'\)/.test(readFileSync(join(ROOT, 'src/public/next/views/projects/page.js'), 'utf8')), '...on the Starting kit tab, which both modes draw');
+  // 5. The journal's notes never claim a loss that did not happen.
+  const norm = M.journalNotes(['observations[0].at: filled with the save time']);
+  ok(/stored in full/.test(norm) && !/dropped|omitted|truncated|rejected|discarded|lost/i.test(norm.replace(/observations\[0\]\.at: filled with the save time/, '')), 'a normalisation is labelled as one — no loss word in the label');
+  ok(/^Some content was dropped or truncated: /.test(M.journalNotes(['nextSteps: 3 item(s) omitted over the state size budget'])), 'a real loss says so');
+  ok(/^This save replaced a larger handoff: /.test(M.journalNotes(['replace: deliberately overwrote a larger handoff'])), 'a deliberate replace says so, and is not called a loss');
+  ok(M.journalNotes([]) === '' && M.journalNotes(undefined) === '', 'a save with no notes says nothing');
+  ok(/notes: journalNotes\(e\.rejections\)/.test(lift('prjNowModel')), 'the Pro journal table shows each save\'s notes (they were dropped in the candidate)');
+}
+
+section('§17 v4.3.0 fix round — must-fix 6–9 and review item 3/4/5/7/9/11, offline');
+{
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const lift = (src, name) => {
+    const m = new RegExp('(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function ' + name + '\\s*\\(').exec(src);
+    if (!m) throw new Error('lift: "' + name + '" not found');
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let p = src.indexOf('(', start), d = 0;
+    for (; p < src.length; p++) { if (src[p] === '(') d++; else if (src[p] === ')') { d--; if (!d) { p++; break; } } }
+    let i = src.indexOf('{', p); d = 0;
+    for (; i < src.length; i++) { if (src[i] === '{') d++; else if (src[i] === '}') { d--; if (!d) { i++; break; } } }
+    return src.slice(start, i);
+  };
+  // ── e2e M3: a background paint waits for an open menu / a field in use ──
+  const mkDoc = (active, openMenu) => {
+    const view = { id: 'view-root' };
+    return {
+      body: { tagName: 'BODY' },
+      activeElement: active ? { tagName: active.tag, type: active.type || 'text', closest: (sel) => (active.inView && /#view-root/.test(sel) ? view : null) } : null,
+      querySelector: (sel) => (openMenu && /aria-expanded="true"/.test(sel) ? {} : null),
+      querySelectorAll: () => [],
+      getElementById: () => null,
+    };
+  };
+  const runRender = (doc, why) => {
+    const calls = [];
+    const timers = [];
+    const state = {};
+    const render = new Function('isCurrentMount', 'screenSignature', 'captureFocus', 'renderSidebar', 'renderMain', 'wire', 'wireProjects', 'restoreFocus',
+      'maybeLoadSessionStart', 'maybeLoadSetup', 'document', 'state', 'setTimeout',
+      'let renderedSignature = null;\n' + lift(mv, 'render') + '\nreturn render;')(
+      () => true, () => 's', () => {}, () => calls.push('sidebar'), () => calls.push('main'), () => {}, () => {}, () => {}, () => {}, () => {},
+      doc, state, (fn, ms) => { timers.push(ms); });
+    render(1, why);
+    return { calls, timers, state };
+  };
+  const typing = runRender(mkDoc({ tag: 'INPUT', inView: true }), 'idle');
+  ok(typing.calls.length === 0 && typing.timers.length === 1, 'a background paint while a field on the page has focus is DEFERRED (never takes the field)', JSON.stringify(typing));
+  const menu = runRender(mkDoc(null, true), 'idle');
+  ok(menu.calls.length === 0 && menu.timers.length === 1, 'a background paint while a menu/listbox is open is DEFERRED (never shuts it)');
+  ok(runRender(mkDoc({ tag: 'INPUT', inView: true }), undefined).calls.includes('main'), 'a paint a PRESS asked for is never delayed');
+  ok(runRender(mkDoc({ tag: 'INPUT', type: 'checkbox', inView: true }), 'idle').calls.includes('main'), 'a focused checkbox is not "typing"');
+  ok(runRender(mkDoc({ tag: 'INPUT', inView: false }), 'idle').calls.includes('main'), 'a field in another part of the app (not this view) does not hold the paint');
+  for (const fn of ['loadCapture', 'loadKnowledge', 'patchSetup', 'patchSessionStart', 'loadDomainList', 'refreshIndex', 'maybeLoadNewest']) {
+    ok(/render\(token, 'idle'\)/.test(lift(mv, fn)) && !/render\(token\);/.test(lift(mv, fn)), fn + ' paints as a BACKGROUND paint (render(token, \'idle\'))');
+  }
+  // ── e2e M4: focus returns to the pressed control, never body ──
+  const focusRig = (pressed) => {
+    const focused = [];
+    const el = { getAttribute: (k) => pressed[k] === undefined ? null : pressed[k], focus: () => focused.push('pressed') };
+    const view = {};
+    const doc = { body: { tagName: 'BODY' }, activeElement: null, querySelector: (sel) => (sel.includes(pressed.__sel) ? el : null), getElementById: () => null };
+    const state = { detailLoading: false, focusSel: null };
+    const api = new Function('document', 'state', 'FOCUSABLE_IDS', 'FOCUS_FALLBACK',
+      'let pendingFocusId = null;\n' + lift(mv, 'captureFocus') + '\n' + lift(mv, 'restoreFocus') + '\nreturn { captureFocus, restoreFocus };')(doc, state, [], {});
+    doc.activeElement = { id: pressed.id || '', getAttribute: el.getAttribute, closest: () => view };
+    api.captureFocus();
+    doc.activeElement = doc.body;       // the paint replaced the pane: focus fell to <body>
+    api.restoreFocus();
+    return { focused, state };
+  };
+  const ca = focusRig({ 'data-setup-act': 'check', __sel: '[data-setup-act="check"]' });
+  ok(ca.focused.length === 1, 'Check again (data-setup-act, no listed id): focus goes back to it after the repaint', JSON.stringify(ca.state));
+  const ss = focusRig({ 'data-setup-act': 'sync', __sel: '[data-setup-act="sync"]' });
+  ok(ss.focused.length === 1, 'Sync now: the same');
+  const lb = focusRig({ id: 'mem-budget-lb', __sel: '#mem-budget-lb' });
+  ok(lb.focused.length === 1, 'a picker (by its id): the same');
+  const ad = focusRig({ 'data-prj-act': 'knowledge-add', __sel: '[data-prj-act="knowledge-add"]' });
+  ok(ad.focused.length === 1, 'Add a domain (data-prj-act): the same');
+  ok(/'mem-brief-text': '\[data-prj-act="brief-edit"\]'/.test(mv) && /pendingFocusId = 'mem-brief-save';/.test(lift(mv, 'saveBrief')), 'Save brief lands on the Brief row\'s Edit (the editor is gone)');
+  ok(!/#mem-fold-(streams|journal|foundations)'/.test(mv.slice(mv.indexOf('const FOCUS_FALLBACK'), mv.indexOf('};', mv.indexOf('const FOCUS_FALLBACK')))),
+    'no focus fallback names a fold the five-step page took with it');
+  // ── e2e M5/M6, m9, m14: one honest connect flow ──
+  const pick = P.connectFlowHtml({ step: 'pick', harnesses: [{ id: 'cursor', label: 'Cursor', meta: 'x', kind: 'off' }] });
+  ok(words(pick).includes(P.CONNECT_PROMISE), 'the flow says what is true: it sets the agent up where it can, otherwise shows exactly what to paste');
+  ok(M.connectChecklist({ harnessRows: [], setup: { tools: [] } })[1].line.includes('sets it up for you where it can; otherwise it shows exactly what to paste'), '...and so does the checklist');
+  const atComputer = P.connectFlowHtml({ step: 'computer', chosen: { id: 'c', label: 'Cursor' }, computerHtml: '<p>c</p>', projectHtml: '<p>p</p>' });
+  const atProject = P.connectFlowHtml({ step: 'computer', chosen: { id: 'c', label: 'Cursor' }, computerHtml: '<p>c</p>', projectHtml: '<p>p</p>', computerDone: true });
+  const done = P.connectFlowHtml({ step: 'computer', chosen: { id: 'c', label: 'Cursor' }, computerHtml: '<p>c</p>', projectHtml: '<p>p</p>', computerDone: true, complete: true });
+  const current = (h) => ((/<li class="prj-step[^"]*is-current[^"]*"[^>]*>[\s\S]*?prj-step-title">([^<]+)/.exec(h)) || [])[1];
+  ok(current(atComputer) === 'Connect it on this computer' && current(atProject) === 'Point it at this project' && !/is-current/.test(done) && (done.match(/✓/g) || []).length === 3,
+    'the step header ADVANCES with the readings (computer → project → all done)', [current(atComputer), current(atProject)]);
+  ok(/data-prj-connect="done"/.test(atComputer) && /set up for this project/.test(words(done)), 'there is a Done, and a finished flow says so');
+  ok(/On this computer[\s\S]*For this project/.test(words(atComputer)), 'the computer part comes first, then the project part');
+  const cm = lift(mv, 'connectModel');
+  ok(/PER_COMPUTER = \['mcp', 'skills'\]/.test(cm), 'the skills step is under "On this computer" (it is set up once per computer), not under "For this project"');
+  const simpleAgents = P.agentsPanel({ pro: false, state: 'ok', rows: M.harnessRows(demo()), notices: [], pickerHtml: '<button id="mem-setup-add">+ Add an agent harness</button>' });
+  ok(/id="prj-agents-connect"[^>]*>\+ Connect an agent</.test(simpleAgents) && !/Add an agent harness/.test(simpleAgents), 'Simple\'s Agents toolbar says "+ Connect an agent" (the ONE flow), not "+ Add an agent harness"');
+  ok(/mem-setup-add/.test(P.agentsPanel({ pro: true, state: 'ok', rows: M.harnessRows(demo()), notices: [], pickerHtml: '<button id="mem-setup-add">x</button>', matrix: { rows: [] } })), 'Pro keeps the add menu');
+  ok(/openConnectFlow\(token\);\s*connectChoose\(value, token\)/.test(lift(mv, 'bindSetup')), '...whose every pick opens the ONE flow at that agent');
+  // connectChoose adds nothing; going ahead does.
+  {
+    const puts = [];
+    const c = { step: 'pick' };
+    const state = { connect: c, activeDomain: 'd', activeProject: 'p' };
+    const fn = new Function('state', 'setupFor', 'CUSTOM_TOOL_VALUE', 'paintConnect', 'putSetupToolIds', 'loadSetup', 'connectStatus', 'closeReader', 'render', 'prjFocus',
+      lift(mv, 'connectChoose') + '\n' + lift(mv, 'connectAdd') + '\nreturn { connectChoose, connectAdd };')(
+      state, () => ({ data: { tools: [{ id: 'claude-code' }], addedTools: [] } }), '__custom__', () => {}, async (ids) => { puts.push(ids); return true; },
+      async () => {}, async () => {}, () => {}, () => {}, () => {});
+    await fn.connectChoose('cursor', 1);
+    ok(puts.length === 0 && c.tool === 'cursor', 'picking an agent adds NOTHING to the project (Back leaves the list unchanged)', JSON.stringify(puts));
+    await fn.connectAdd(1);
+    ok(puts.length === 1 && puts[0].includes('cursor'), '...it is added when the user goes ahead', JSON.stringify(puts));
+  }
+  const dm = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
+  ok(/id="dm-proj-connect">Connect an agent<\/button>/.test(dm) && /requestProject\(f\.slug, f\.project, \{ connect: true \}\)/.test(dm) && !/Copy marker line|Copy agent instructions/.test(lift(dm, 'renderProjectCreated')),
+    'Domains\' post-create card opens the ONE flow (no pastes of its own)');
+  const st = readFileSync(join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+  ok(/requestProject\(null, null, \{ connect: true \}\); navigate\('memory'\)/.test(st), 'Settings › MCP bridge\'s notice opens the ONE flow');
+  ok(/want && want\.connect === true && pick && isCurrentMount\(token\)\) openConnectFlow\(token\)/.test(lift(mv, 'loadIndex')), 'Projects opens the flow on an arrival that asked for it');
+  // ── e2e M2: + New project always has a domain to open the form on ──
+  ok(/requestDomain\(domain, \{ openCreate: true \}\)/.test(mv) && /writable\[0\]/.test(mv) && /reason: 'new-domain'/.test(mv), '+ New project opens the form on the open project\'s domain, else the first writable one; with none, the New domain form');
+  ok(/pendingCreateFocus/.test(dm) && /dm-proj-name/.test(dm.slice(dm.indexOf('if (state.pendingCreateFocus) {'))), 'Domains puts focus in the form\'s name field and keeps it in view while the page settles');
+  // ── review items 3, 4, 5, 7, 9, 11 (the CSS) ──
+  const tabsCss = readFileSync(join(ROOT, 'src/public/next/shared/tabs.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(!/\.kit-tab-pro\s*\{[^}]*color/.test(tabsCss), 'item 3: a Pro tab has no colour of its own (one tab style)');
+  ok(/@media \(max-width: 640px\)[\s\S]*\.kit-tabs\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/.test(tabsCss), 'item 7: at phone width the tab strip scrolls on one line');
+  const pc = readFileSync(join(ROOT, 'src/public/next/views/projects/projects.css'), 'utf8');
+  ok(/\.prj-tiles \.cur-ov-value \{ white-space: nowrap; \}/.test(pc), 'item 4: a tile figure never wraps');
+  ok(/@media \(max-width: 640px\)[\s\S]*\.prj-tiles \.cur-ov-grid \{ grid-template-columns: repeat\(3/.test(pc), 'item 9: a compact tile strip at phone width');
+  ok(/\.cur-sb-figure \{ flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis/.test(pc), 'item 5: the sidebar meta gives way before the dot');
+  ok(/@media \(max-width: 900px\) \{[\s\S]*?\.kit-table-caption \{ display: block; width: 100%/.test(readFileSync(join(ROOT, 'src/public/next/shared/table.css'), 'utf8')), 'item 11: a caption is its own line where tables stack');
+  ok(/'No projects yet'/.test(mv) && !/No project context yet/.test(mv), 'item 10: "No projects yet"');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-projects-page: ' + pass + ' passed, ' + fail + ' failed');

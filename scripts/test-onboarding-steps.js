@@ -66,11 +66,11 @@ console.log('\nO3. The key step lands on Providers & keys');
       getElementById: (id) => (mounted && id === 'dm-new-domain-btn' ? row('#' + id) : null),
       querySelector: (sel) => (mounted ? row(sel) : null),
     };
-    const api = new Function('navigate', 'afterViewMount', 'document', 'refresh', 'panelGen', 'requestDomainFold', 'ADD_SOURCES_FOLD',
+    const api = new Function('navigate', 'afterViewMount', 'document', 'refresh', 'panelGen', 'requestDomainFold', 'ADD_SOURCES_FOLD', 'requestProject',
       src + '\nreturn { go };')(
       (v) => { log.push('navigate:' + v); if (!deferMount) mounted = true; },
       (cb) => { if (deferMount) { queued.push(cb); return; } cb(); },
-      doc, () => log.push('refresh'), 0, (id) => log.push('fold:' + id), 'add-sources');
+      doc, () => log.push('refresh'), 0, (id) => log.push('fold:' + id), 'add-sources', () => log.push('request-connect'));
     let threw = null;
     try { api.go(stepId); } catch (e) { threw = e; }
     return { log, threw, flush() { mounted = true; queued.splice(0).forEach((c) => c()); } };
@@ -92,7 +92,8 @@ console.log('\nO3. The key step lands on Providers & keys');
   }
   {
     const r = run('bridge', false);
-    ok(r.log.includes(MCP) && !r.log.includes(PROV), 'CONTROL: the bridge step still opens MCP bridge, never Providers');
+    // v4.3.0 fix round (e2e M6): the bridge step opens the ONE connect flow on Projects.
+    ok(!r.log.includes(MCP) && !r.log.includes(PROV) && r.log.includes('navigate:memory'), 'CONTROL: the bridge step goes to Projects (the connect flow), never Providers', r.log.join(' → '));
     const d = run('domain', false);
     ok(!d.log.includes(PROV) && !d.log.includes(MCP), 'CONTROL: the domain step opens no Settings section');
   }

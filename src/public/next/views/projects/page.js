@@ -40,6 +40,7 @@ import { table } from '../../shared/table.js';
 import { fmtAge, fmtCount, fmtSize } from '../../shared/format.js';
 import { CHECK_AGAIN, SYNC_NOW } from '../../shared/verbs.js';
 import { explainerMark, explainerWordMark } from '../../shared/explainer.js';
+import { wsDeleteLabel } from '../ws-delete.js';
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -78,7 +79,7 @@ export const TAB_LEDES = Object.freeze({
   now: { text: 'Where the work stands — the note the last agent left.' },
   agents: { text: 'The agents that can open this project’s notes.' },
   kit: { text: 'What every agent reads before it does anything.' },
-  history: { text: 'Every note any agent saved, in one table.' },
+  history: { text: 'The latest note of each work-stream, on each computer, in one table.' },
   budget: { text: 'How much of the agent’s window the starting kit takes.' },
   computers: { text: 'Which computers hold this project, and how each part reaches them.' },
 });
@@ -100,6 +101,10 @@ export function tabLede(tab) {
   return '<div class="prj-lede"><p class="prj-lede-text">' + esc(l.text) + '</p>'
     + marks.map((m) => m.btn).join('') + '</div>' + marks.map((m) => m.panel).join('');
 }
+
+/** What the connect flow does, said where it starts and on the checklist (e2e M5:
+ *  the candidate promised "sets it up and shows what it changed" everywhere). */
+export const CONNECT_PROMISE = 'The Curator sets it up for you where it can; otherwise it shows exactly what to paste.';
 
 /** The one quiet line under the tabs in Simple. */
 export const MORE_IN_PRO_LINE = 'More in Pro: every save in a table, the token budget, your computers.';
@@ -193,15 +198,18 @@ export function nowPanel(m) {
         // is said in the footer's text rather than drawn as a chip.
         + '<span class="prj-foot-facts"><span class="prj-foot-text">Saved · ' + esc(h.footer || '') + '</span></span>'
         + '<button type="button" class="prj-link" data-prj-act="open-note"' + (h.targetId ? ' id="' + esc(h.targetId) + '"' : '') + '>Open the full note ›</button>'
-        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '" aria-label="' + esc('Delete handoff ' + h.deleteScope + '…') + '">Delete…</button>' : '')
+        + (h.deleteScope ? '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(h.deleteScope) + '">' + esc(wsDeleteLabel(h.deleteWho, h.deleteScope)) + '</button>' : '')
       + '</footer>'
       + facts,
       'The latest note'));
+    // e2e M7: the confirm card sits AT the press (under the note it deletes),
+    // never below Earlier notes.
+    out.push(flow(m.deleteHtml, 'deleteHtml'));
     if (m.pro && m.journal && Array.isArray(m.journal.rows) && m.journal.rows.length) {
       out.push(card('<header class="prj-card-head">' + h2('This work-stream’s journal') + '</header>'
         + table({ id: 'prj-journal', columns: [
           { id: 'when', label: 'When' }, { id: 'harness', label: 'Harness' }, { id: 'model', label: 'Model' },
-          { id: 'headline', label: 'Headline' }],
+          { id: 'headline', label: 'Headline' }, { id: 'notes', label: 'Notes' }],
         rows: m.journal.rows }) + (m.journal.moreHtml || ''), 'Journal'));
     }
   }
@@ -211,7 +219,7 @@ export function nowPanel(m) {
         id: 'note:' + encodeURIComponent(e.scope || '') + ':' + encodeURIComponent(e.machine || ''), title: e.title, meta: e.meta, opens: true, targetId: e.targetId,
       })).join('') + '</div>', 'Earlier notes'));
   }
-  out.push(flow(m.deleteHtml, 'deleteHtml'));
+  if (!m.handoff) out.push(flow(m.deleteHtml, 'deleteHtml'));
   return '<div class="prj-stack">' + out.join('') + '</div>';
 }
 
@@ -220,8 +228,10 @@ export function checklistHtml(items) {
   const list = Array.isArray(items) ? items : [];
   return card('<header class="prj-card-head"><div class="prj-card-titles">' + h2('Three steps, then your agent remembers', 'prj-check-h')
       + '<p class="prj-sub">No agent has saved a note here yet.</p></div></header>'
-    + '<ol class="prj-steps">' + list.map((it, i) => '<li class="prj-step' + (it.done ? ' is-done' : '') + '" data-prj-step="' + esc(it.key) + '">'
-      + '<span class="prj-step-num" aria-hidden="true">' + (it.done ? '✓' : String(i + 1)) + '</span>'
+    // "Three steps": the project already exists (its ✓ carries no number),
+    // so the steps that remain are numbered 1–3 (e2e polish).
+    + '<ol class="prj-steps">' + list.map((it) => '<li class="prj-step' + (it.done ? ' is-done' : '') + '" data-prj-step="' + esc(it.key) + '">'
+      + '<span class="prj-step-num" aria-hidden="true">' + (it.done ? '✓' : String(list.filter((x) => !x.pre).indexOf(it) + 1)) + '</span>'
       + '<span class="prj-step-text"><span class="prj-step-title">' + esc(it.title)
         + (it.done ? '<span class="visually-hidden"> — done</span>' : '') + '</span>'
         + (it.line ? '<span class="prj-step-line">' + esc(it.line) + '</span>' : '') + '</span>'
@@ -246,7 +256,9 @@ export function agentsPanel(m) {
     + '<span class="prj-toolbar-end">'
       + (m.checkedWords ? '<span class="prj-sub">' + esc(m.checkedWords) + '</span>' : '')
       + btn(m.state === 'loading' ? 'Checking…' : CHECK_AGAIN, { 'data-setup-act': 'check' })
-      + flow(m.pickerHtml, 'pickerHtml')
+      // e2e M6: Simple's toolbar says what it does and opens the ONE flow;
+      // Pro keeps the add menu, whose every pick also opens that flow.
+      + (m.pro ? flow(m.pickerHtml, 'pickerHtml') : btn('+ Connect an agent', { 'data-prj-act': 'connect' }, false, 'prj-agents-connect'))
     + '</span></div>';
   out.push(head);
   out.push(flow(m.customHtml, 'customHtml'));
@@ -269,7 +281,7 @@ export function agentsPanel(m) {
   out.push(notices(m.notices));
   if (m.unsynced) {
     out.push(notice({ tone: 'info', title: fmtCount(m.unsynced) + ' file' + (m.unsynced === 1 ? ' is' : 's are') + ' only on this computer.',
-      line: 'Your other computers see the newest note after you sync.',
+      line: 'Counted across all domains. Your other computers see the newest note after you sync.',
       actions: [{ label: SYNC_NOW, attrs: { 'data-setup-act': 'sync' } }] }));
   }
   out.push(flow(m.repoHtml, 'repoHtml'));
@@ -400,7 +412,7 @@ export function historyPanel(m) {
   const out = [];
   out.push('<div class="prj-toolbar">'
     + '<input type="search" class="prj-search" id="prj-history-q" data-prj-filter="history" placeholder="Search notes…" aria-label="Search notes" value="' + esc(m.q || '') + '">'
-    + (m.harnessPickerHtml || '<span class="prj-sub">' + esc(opts.length - 1 + ' harnesses') + '</span>')
+    + (m.harnessPickerHtml || '<span class="prj-sub">' + esc(fmtCount(opts.length - 1) + (opts.length - 1 === 1 ? ' harness' : ' harnesses')) + '</span>')
     + '</div>');
   if (m.summary || m.savesLine) {
     out.push(table({ id: 'prj-history-figures', caption: 'Agent connections', columns: [{ id: 'k', label: 'Reading' }, { id: 'v', label: 'Value' }],
@@ -409,9 +421,11 @@ export function historyPanel(m) {
   }
   out.push(table({
     id: 'prj-history',
-    caption: 'Every saved note',
+    caption: 'The latest note of each work-stream, per computer',
     opens: true,
-    sortBy: m.sortBy || { id: 'when', dir: 'asc' },
+    // Newest first, and SAID so: the When cell sorts by its time, so the
+    // default is announced "descending" (the candidate said "ascending").
+    sortBy: m.sortBy || { id: 'when', dir: 'desc' },
     columns: [
       { id: 'when', label: 'When', sort: true },
       { id: 'scope', label: 'Work-stream', sort: true },
@@ -422,12 +436,12 @@ export function historyPanel(m) {
       { id: 'size', label: 'Size', numeric: true, sort: true },
     ].concat(m.canDelete ? [{ id: 'del', label: 'Delete' }] : []),
     rows: (m.rows || []).map((r) => ({ id: r.id, targetId: r.targetId, cells: {
-      when: { text: r.when, sort: r.seconds === null ? null : r.seconds },
+      when: { text: r.when, sort: r.seconds === null ? null : -r.seconds },
       scope: r.scope, harness: r.harness || '—', model: r.model || '—', headline: r.headline || '—',
       computer: r.computer || '—',
       size: { text: r.bytes === null ? '—' : fmtSize(r.bytes), sort: r.bytes },
       del: m.canDelete ? { html: '<button type="button" class="btn btn-ghost btn-xs" data-ws-delete="' + esc(r.scope) + '" aria-label="'
-        + esc('Delete handoff ' + r.scope + '…') + '">Delete…</button>' } : '',
+        + esc(wsDeleteLabel(r.harness, r.scope)) + '">Delete…</button>' } : '',
     } })),
   }));
   if (!(m.rows || []).length) out.push('<p class="prj-sub">No note matches.</p>');
@@ -505,14 +519,18 @@ export function connectFlowHtml(m) {
     { key: 'computer', title: 'Connect it on this computer' },
     { key: 'project', title: 'Point it at this project' },
   ];
-  const at = steps.findIndex((s) => s.key === m.step);
+  // The header ADVANCES with the readings (e2e m9): the computer part is done
+  // when its steps are; after the project part every step is ✓.
+  const at = m.step === 'pick' ? 0 : m.complete ? steps.length : m.computerDone ? 2 : 1;
   const head = '<ol class="prj-steps prj-steps-compact">' + steps.map((s, i) => '<li class="prj-step' + (i < at ? ' is-done' : '') + (i === at ? ' is-current' : '') + '"'
     + (i === at ? ' aria-current="step"' : '') + '>'
     + '<span class="prj-step-num" aria-hidden="true">' + (i < at ? '✓' : String(i + 1)) + '</span>'
-    + '<span class="prj-step-text"><span class="prj-step-title">' + esc(s.title) + '</span></span></li>').join('') + '</ol>';
+    + '<span class="prj-step-text"><span class="prj-step-title">' + esc(s.title) + '</span>'
+    + (i < at ? '<span class="visually-hidden"> — done</span>' : '') + '</span></li>').join('') + '</ol>';
   let body = '';
   if (m.step === 'pick') {
     body = '<h3 class="prj-h" id="prj-connect-h" tabindex="-1">Which agent do you use?</h3>'
+      + '<p class="prj-sub">' + esc(CONNECT_PROMISE) + '</p>'
       + '<div class="prj-list">' + (m.harnesses || []).map((h) => row({
         id: 'connect:' + h.id, title: h.label, meta: h.meta, status: h.kind ? statusChip(h.kind) : '', opens: true,
       })).join('') + '</div>'
@@ -520,9 +538,10 @@ export function connectFlowHtml(m) {
   } else {
     body = '<h3 class="prj-h" id="prj-connect-h" tabindex="-1">' + esc((m.chosen && m.chosen.label) || 'Your agent') + '</h3>'
       + (m.outcome ? notice(m.outcome) : '')
+      + (m.complete ? notice({ tone: 'info', title: ((m.chosen && m.chosen.label) || 'Your agent') + ' is set up for this project.', line: 'Open it and say “save where we are” — the note appears on the Now tab.' }) : '')
       + (m.computerHtml ? '<section class="prj-flow-part" aria-label="On this computer">' + h2('On this computer') + m.computerHtml + '</section>' : '')
       + (m.projectHtml ? '<section class="prj-flow-part" aria-label="For this project">' + h2('For this project') + m.projectHtml + '</section>' : '')
-      + '<div class="prj-actions">' + btn('Pick another agent', { 'data-prj-connect': 'back' }) + '</div>';
+      + '<div class="prj-actions">' + btn('Done', { 'data-prj-connect': 'done' }, true) + btn('Pick another agent', { 'data-prj-connect': 'back' }) + '</div>';
   }
   return '<div class="prj-connect">' + head + body + '</div>';
 }

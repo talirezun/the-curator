@@ -2204,7 +2204,7 @@ try {
       '/api/memory/acme/lumina?scope=design&machine=mac-ab12');
     ok('a CURATOR-authored document is NOT captioned as a Shared Brain mirror',
       !/Shared Brain/i.test(curatorOwned.readonlyNote || ''), curatorOwned.readonlyNote);
-    ok('...it says where it IS changed', /Project context/.test(curatorOwned.readonlyNote || ''),
+    ok('...it says where it IS changed', /Projects, under Starting kit › Documents/.test(curatorOwned.readonlyNote || ''),
       curatorOwned.readonlyNote);
     const mirrored = await drive({ ok: true, slug: 'architecture.md', role: 'architecture',
       text: '# A', source: { kind: 'repo', path: 'docs/architecture.md' } });

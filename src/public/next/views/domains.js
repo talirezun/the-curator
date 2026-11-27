@@ -1864,15 +1864,21 @@ async function loadDomainsList(token) {
       // `takePendingProject` records for the same shape, one view over.
       const want = arrivalRequest;
       arrivalRequest = null;
+      // e2e M2: which create form this arrival must land on ('project' | 'domain').
+      if (want && want.reason === 'new-domain') state.pendingCreateFocus = 'domain';
       if (!state.activeSlug || !state.domains.some((d) => d.slug === state.activeSlug)) {
-        if (want && want.slug) {
+        if (want && want.slug && want.slug !== '*') {
           console.warn('[next/domains] requestDomain("' + want.slug + '") named a domain this '
             + 'install does not have — opening '
             + (state.domains.length ? state.domains[0].slug : 'nothing') + ' instead.'
             + (want.reason ? ' (reason: ' + want.reason + ')' : ''));
         }
         state.activeSlug = state.domains.length ? state.domains[0].slug : null;
+      } else if (want && want.reason === 'new-domain') {
+        // e2e M2: Projects' "+ New project" with no domain at all.
+        state.pendingCreateFocus = 'domain';
       } else if (want && want.reason === NEW_PROJECT_REASON) {
+        state.pendingCreateFocus = 'project';
         // THE POINTER'S SECOND HALF. `requestDomain(slug, {reason})` is a
         // NAVIGATION, not a write: this opens the create FORM on the domain
         // the caller named, and the POST still only ever happens from
@@ -1909,6 +1915,36 @@ async function loadDomainsList(token) {
     settleGate(gate, () => { commit(); render(token); resolve(); });
   });
   if (!isCurrentMount(token)) return;
+  // e2e M2 (v4.3.0 fix round): "+ New project" lands ON the form — scrolled
+  // into view, focus in its name field — never at the top of the page with
+  // focus on <body>. The form paints with the project card, which may land a
+  // moment after this paint, so it is looked for a few times, then given up.
+  if (state.pendingCreateFocus) {
+    const which = state.pendingCreateFocus;
+    state.pendingCreateFocus = null;
+    // The page's own later reads (the project list, the page list, the
+    // health report) repaint the card and drop focus to <body>, so for two
+    // seconds focus is put back whenever it fell there — never taken from
+    // anything the user moved it to.
+    let tries = 0;
+    let scrolled = false;
+    const reveal = () => {
+      if (!isCurrentMount(token)) return;
+      if (which === 'domain') { const b = document.getElementById('dm-new-domain-btn'); if (b) { b.click(); return; } }
+      const el = which === 'project' ? document.getElementById('dm-proj-name') : null;
+      const a = document.activeElement;
+      if (el && a !== el && (!a || a === document.body)) {
+        try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+      }
+      // Kept in view while the page settles (a repaint above it moves it).
+      if (el && document.activeElement === el && typeof el.scrollIntoView === 'function') {
+        const r = el.getBoundingClientRect();
+        if (!scrolled || r.top < 0 || r.bottom > window.innerHeight) { el.scrollIntoView({ block: 'center' }); scrolled = true; }
+      }
+      if (++tries < 40) setTimeout(reveal, 50);
+    };
+    reveal();
+  }
 
   if (state.activeSlug) {
     // ── THE TWO CHEAP READS START NOW, NOT AFTER THE SCAN ────────────────
@@ -5031,8 +5067,6 @@ function renderProjectLifecycleCard() {
  */
 function renderProjectCreated(f) {
   const name = String(f.project == null ? '' : f.project);
-  const markerInfo = explainerMark('dm-proj-done-marker-info', 'domains.marker-line');
-  const agentInfo = explainerMark('dm-proj-done-agent-info', 'domains.agent-instructions');
   const outcome = renderStatus({
     state: 'success',
     title: 'Created ' + name,
@@ -5055,21 +5089,18 @@ function renderProjectCreated(f) {
       outcome +
       refused +
       notCopied +
+      // v4.3.0 fix round (e2e M6): ONE connect flow. This card used to hand
+      // out two pastes of its own; it now opens the Projects page's flow,
+      // which sets the agent up where it can and shows exactly what to paste
+      // otherwise — the marker line and the instructions among its steps.
       '<div class="dm-lc-title">Connect your agent</div>' +
-      renderDescription('Paste these two where your agent works — the project’s folder, once.') +
-      '<div class="dm-lc-actions dm-proj-done-copies">' +
-        '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
-          'Copy marker line</button>' +
-        markerInfo.btn +
-        '<button class="btn btn-ghost dm-proj-btn" data-proj-agent="' + escapeHtml(name) + '">' +
-          'Copy agent instructions</button>' +
-        agentInfo.btn +
-      '</div>' +
-      markerInfo.panel +
-      agentInfo.panel +
+      renderDescription('Sets your agent up where it can; otherwise shows exactly what to paste.') +
+      // NO PRIMARY: nothing here commits anything (two navigations, one
+      // dismissal) — the v3.62.0 rule this card has always kept.
       '<div class="dm-lc-actions">' +
-        '<button class="btn btn-secondary btn-xs" id="dm-proj-open-memory">' +
-          'Open in Project context</button>' +
+        '<button class="btn btn-secondary btn-xs" id="dm-proj-connect">Connect an agent</button>' +
+        '<button class="btn btn-ghost btn-xs" id="dm-proj-open-memory">' +
+          'Open in Projects</button>' +
         '<button class="btn btn-ghost btn-xs" id="dm-proj-cancel">Done</button>' +
       '</div>' +
     '</div>'
@@ -6199,7 +6230,7 @@ async function openMemoryPageFromBrowse(row) {
         // route does not send (the other half of the same v3.61.0 defect).
         readonlyNote: (data.source && data.source.kind === 'repo')
           ? 'Mirrored from the folder — edit it there, then refresh.'
-          : 'Edit this in Project context, under Documents.',
+          : 'Edit this in Projects, under Starting kit › Documents.',
         bodyHtml: (notes.length ? notes.map((n) => renderDescription(n)).join('') : '')
           + renderMarkdown(body),
         backlinks: [],
@@ -6596,7 +6627,7 @@ async function runProjectAction() {
     if (fndErr) {
       detailParts.push('The project was created, but its Documents were not set up: ' +
         (fndErr.message || fndErr.reason || 'the server refused it') +
-        '. Choose again from Project context → Documents.');
+        '. Choose again from Projects › Starting kit › Documents.');
     }
     if (failed.length) {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +
@@ -6811,6 +6842,12 @@ function bindProjectListeners() {
   // Both are one gesture and neither is a write.
   document.getElementById('dm-proj-open-memory')?.addEventListener('click', () => {
     requestProject(f.slug, f.project);
+    state.projectLc = null;
+    shell.navigate('memory');
+  });
+  // e2e M6: the ONE connect flow, on the project just created.
+  document.getElementById('dm-proj-connect')?.addEventListener('click', () => {
+    requestProject(f.slug, f.project, { connect: true });
     state.projectLc = null;
     shell.navigate('memory');
   });
@@ -11029,7 +11066,8 @@ registerView('domains', {
     // commit, which is also where a miss is disclosed. `arrivalRequest` is
     // what carries the request across that await.
     arrivalRequest = consumeDomainRequest();
-    if (arrivalRequest && arrivalRequest.slug) state.activeSlug = arrivalRequest.slug;
+    // '*' (e2e M2): "no domain yet — open the New domain form", never a slug.
+    if (arrivalRequest && arrivalRequest.slug && arrivalRequest.slug !== '*') state.activeSlug = arrivalRequest.slug;
 
     // The run line's door (v3.67.0): "Change model" / "Add one in Providers &
     // keys" under Wiki health's AI actions. Delegated on the shell's view root

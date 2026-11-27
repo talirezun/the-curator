@@ -1038,21 +1038,17 @@ section('S6 -- The actions: what the view actually sends');
       const words = lede ? lede[1].trim().split(/\s+/).filter(Boolean).length : 99;
       ok('...of 13 visible words or fewer (design-system \u00a73)', words <= 13,
         words + ' words: ' + (lede ? lede[1] : ''));
-      eq('...and it names where an agent works, never a repository a project may not have',
+      // v4.3.0 fix round (e2e M5/M6): the ONE connect flow's own promise.
+      eq('...and it says what the connect flow does, truthfully',
         lede ? lede[1] : null,
-        'Paste these two where your agent works \u2014 the project\u2019s folder, once.');
+        'Sets your agent up where it can; otherwise shows exactly what to paste.');
     }
-    ok('...and offers BOTH copy controls, on the row\u2019s own hooks so there is '
-      + 'no second implementation of either',
-    done.includes('data-proj-marker="newthing"') && done.includes('data-proj-agent="newthing"'),
-    done.slice(0, 900));
-    // Two marks, two panels, both shipping closed. Counted on the PANEL's own
-    // id rather than on the class, because the class appears in the button's
-    // `aria-controls` too and a class count would be four.
-    const panels = done.match(/<div class="tx-vh-panel" id="[^"]+"[^>]*hidden>/g) || [];
-    ok('...each with its own ⓘ, and both panels ship CLOSED', panels.length === 2,
-      JSON.stringify(panels));
-    ok('...and the handoff into Project context', done.includes('id="dm-proj-open-memory"'));
+    // v4.3.0 fix round (e2e M6): ONE connect flow — this card opens it on
+    // Projects instead of handing out two pastes of its own.
+    ok('...and opens the ONE connect flow (no pastes of its own)',
+      done.includes('id="dm-proj-connect"') && !done.includes('data-proj-marker=') && !done.includes('data-proj-agent='),
+      done.slice(0, 900));
+    ok('...and the handoff into Projects', done.includes('id="dm-proj-open-memory"') && />Open in Projects</.test(done));
     ok('...and a way out that commits nothing', /id="dm-proj-cancel"[^>]*>Done</.test(done), done.slice(-500));
     // NO PRIMARY. Nothing on this panel commits anything — two copies, one
     // navigation, one dismissal — and inventing a primary would be the tier-1
@@ -1264,7 +1260,7 @@ section('S6 -- The actions: what the view actually sends');
     // documents were not set up; neither is a suffix to the other (v3.16.1).
     ok('...and the refusal is a SECOND fact, not a suffix to the first',
       /not set up/.test(d) && /not on this computer/.test(d), d);
-    ok('...naming where to finish the job', /Project context/.test(d));
+    ok('...naming where to finish the job', /Projects › Starting kit › Documents/.test(d));
     eq('...while the success half still says what DID happen',
       lc.outcomeDetail, 'The project and its brief are saved.');
     const done = renderProjectCreated(lc);
@@ -2047,9 +2043,10 @@ const WRITABLE = () => freshState({
       isExplainerAt(rowHtml, projInfoId('agent', 'lumina', 0), 'domains.agent-instructions'));
     __setState(freshState({ projectLc: { mode: 'created', project: 'lumina', slug: 'alpha' } }));
     const done = renderProjectCreated({ mode: 'created', project: 'lumina', slug: 'alpha' });
-    ok('...and the created card carries the same two explainers on its own ids',
-      isExplainerAt(done, 'dm-proj-done-marker-info', 'domains.marker-line')
-      && isExplainerAt(done, 'dm-proj-done-agent-info', 'domains.agent-instructions'), done.slice(0, 600));
+    // v4.3.0 fix round: the created card carries no pastes, so no explainers
+    // for them; the connect flow explains its own steps.
+    ok('...and the created card carries no paste explainers (the connect flow explains its steps)',
+      !/dm-proj-done-(marker|agent)-info/.test(done), done.slice(0, 600));
     __setState(WRITABLE());
   }
   ok('...and every mark points at one that exists, with the -btn id convention',

@@ -886,7 +886,7 @@ section('§7b  THE UI VOCABULARY — one noun per thing, across every owned view
     // v3.71.1: "Handoffs " lived only in the old PROJECTS_INFO_HTML ⓘ prose,
     // which is an explainer now; the delete card's "every Handoff under it"
     // is the view's own surviving use of the noun.
-    ok(/Project context, under Documents\./.test(dom) && /every Handoff under it/.test(dom),
+    ok(/Projects, under Starting kit › Documents\./.test(dom) && /every Handoff under it/.test(dom),
       'CONTROL: views/domains.js really does carry the new nouns');
   }
 }
