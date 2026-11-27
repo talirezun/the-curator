@@ -467,7 +467,10 @@ ok(selectOffenders.length === 0,
 //     (`prjHistoryHarnessCfg`), and the start-state cell drawn a second time
 //     in the Starting kit's documents table (the same `fndStartCfg`); step
 //     ④'s three pickers moved into the Budget tab (same builders, one call each).
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 9 };
+//   · v4.3.0 fix round, memory.js 9 -> 10 (owner decision 2026-11-27): the
+//     reading-budget picker beside the Starting kit's bar, in BOTH modes (the
+//     same `budgetPickerCfg`; only one tab is drawn at a time, so one id).
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 10 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -484,7 +487,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 21, `TWENTY-ONE adoptions across four views (found ${total})`);
+ok(total === 22, `TWENTY-TWO adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //

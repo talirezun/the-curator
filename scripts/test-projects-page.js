@@ -252,6 +252,42 @@ section('§5 NEVER-HIDE over the whole page, tab by tab (D1)');
   ok(JSON.stringify(P.PRO_ONLY_TABS) === JSON.stringify(['history', 'budget', 'computers']), 'the Pro-only tabs are History, Budget, Computers');
 }
 
+section('§5b audit M1 — over the window and the route\'s notes, in Simple too');
+{
+  const B = await import('../src/public/next/shared/bucket.js');
+  // The audit's repro: window 32k, the agent app's share 20k, the kit ≈19.4k.
+  const meter = { windowTokens: 32000, harnessTokens: 20000, budgetTokens: 16000,
+    layers: [{ key: 'brief', label: 'Brief', tokens: 9400 }, { key: 'read', label: 'Read first', tokens: 10000 }] };
+  const g = B.bucketModel(meter);
+  ok(g.over === 7400, 'CONTROL: the meter says the start is over the window by 7.4k', g.over);
+  const proBudget = P.budgetPanel({ notices: [], meterHtml: B.renderWindowBar(meter, { unsetHint: '' }), layers: [] });
+  ok(/Over the window by ≈7\.4k tokens/.test(words(proBudget)), 'CONTROL: Pro\'s Budget tab draws the meter\'s over-the-window note');
+  const NOTES = ['1 later page could not be read for the split; the total is still the measured one.',
+    'the foundations manifest could not be read: Unexpected token'];
+  // The Pro reader ("What an agent receives, in full") carries the notes as the monitor's note.
+  const proReader = '<p class="cur-mon-note">' + NOTES.join(' ') + '</p>';
+  const simpleKit = (figure, notes) => P.kitPanel({ ...kitModel(false), notices: kitModel(false).notices.concat(M.routeNoteNotices(notes)), figure });
+  const good = M.kitBudgetFigure(g.curator, g.windowTokens, { harness: g.harness });
+  const faultsOf = (kit, extraPro) => pageParityFaults({
+    simpleTabs: { ...pages(false), kit },
+    proTabs: { ...pages(true), budget: proBudget, ...(extraPro || {}) },
+    proOnly: [...P.PRO_ONLY_TABS] });
+  ok(faultsOf(simpleKit(good, NOTES)).length === 0, 'Simple\'s Starting kit says "Over the window by ≈7.4k tokens…" from the same arithmetic', faultsOf(simpleKit(good, NOTES)).join('\n'));
+  ok(!/most of the room/.test(words(simpleKit(good, NOTES))), '...and never "most of the room" over a start that does not fit');
+  // A figure that ignores the agent app's share (the candidate's bug) is CAUGHT.
+  const bad = M.kitBudgetFigure(g.curator, g.windowTokens);
+  ok(faultsOf(simpleKit(bad, NOTES)).some((f) => /Over the window/.test(f)), 'a Simple figure without the harness share is caught by the parity guard', faultsOf(simpleKit(bad, NOTES)).join('\n'));
+  // The route's notes: on Starting kit in both modes; dropping them is caught.
+  const withNotes = { ...pages(true), budget: proBudget };
+  const fN = pageParityFaults({ simpleTabs: { ...pages(false), kit: simpleKit(good, NOTES) }, proTabs: { ...withNotes, receives: proReader }, proOnly: [...P.PRO_ONLY_TABS, 'receives'] });
+  ok(fN.length === 0, 'the session-start route\'s notes are said on Simple\'s Starting kit (the Pro reader\'s monitor note)', fN.join('\n'));
+  const fD = pageParityFaults({ simpleTabs: { ...pages(false), kit: simpleKit(good, []) }, proTabs: { ...withNotes, receives: proReader }, proOnly: [...P.PRO_ONLY_TABS, 'receives'] });
+  ok(fD.length > 0, 'a Starting kit that drops the route\'s notes is caught', fD.length);
+  const k = simpleKit(good, NOTES);
+  ok(words(k).includes(NOTES.join(' ')), 'the notes are said verbatim, in order, in one attention notice');
+  ok(M.kitBudgetFigure(19400, 200000, { harness: 20000 }).qualifier.includes('your estimate'), 'with the share set and room left, the qualifier says what is in use and that the share is an estimate');
+}
+
 section('§6 THE KIT GUARD — the page\'s own classes are layout only');
 {
   const dir = join(ROOT, 'src/public/next/views/projects');
@@ -424,6 +460,126 @@ section('§11 ESCAPING — hostile project, harness, headline and document names
     ok(text.includes(H), label + ': ...and the name reads back exactly as typed (escaped once, not mangled)');
   }
   ok(M.continuePrompt('d', 'a"b').includes('"a"b"'), 'the copied "continue" prompt is plain text (it goes to the clipboard, not the page)');
+}
+
+section('§12 audit B1 — the Now card reads the NEWEST pair, whatever is open');
+{
+  const K = 'd\nexhibit-site';
+  const older = { scope: 'claude-code', machine: 'mac-a', writtenAt: iso(3600e3) };
+  const openOlder = { scope: 'claude-code', machine: 'mac-a', current: { present: true, text: 'old' } };
+  // At mount the open pair IS the newest: drawn, and kept apart from the open one.
+  const r0 = M.nowCardRead({ newest: older, open: openOlder, kept: null, key: K });
+  ok(r0.detail === openOlder && r0.fetch === null && r0.keep && r0.keep.d === openOlder, 'at mount: the open pair is the newest — drawn, kept, nothing fetched');
+  // A NEW work-stream saves after mount: it becomes newest, nothing has read it.
+  const fresh = { scope: 'session-new', machine: 'mac-a', writtenAt: iso(1e3), headline: 'NEW SAVE ONE' };
+  const r1 = M.nowCardRead({ newest: fresh, open: openOlder, kept: r0.keep, key: K });
+  ok(r1.detail === null && r1.fetch && r1.fetch.scope === 'session-new' && r1.fetch.machine === 'mac-a',
+    'a scope added after mount: the card FETCHES the newest pair (never waits on "Reading the note…")', JSON.stringify(r1));
+  // Another computer's pair becomes newest (after a sync) — same path.
+  const other = { scope: 'claude-code', machine: 'studio-mac', writtenAt: iso(500) };
+  const r2 = M.nowCardRead({ newest: other, open: openOlder, kept: r0.keep, key: K });
+  ok(r2.fetch && r2.fetch.machine === 'studio-mac', "another computer's pair becoming newest is fetched by its own machine");
+  // The fetched read is kept and drawn; a later save to that pair refreshes it while the old stays on screen.
+  const got = { scope: 'session-new', machine: 'mac-a', current: { present: true, text: 'NEW' } };
+  const kept = { key: K, d: got, sig: r1.fetch.sig };
+  const r3 = M.nowCardRead({ newest: fresh, open: openOlder, kept, key: K });
+  ok(r3.detail === got && r3.fetch === null, 'once fetched it is drawn and not fetched again');
+  const fresh2 = { ...fresh, writtenAt: iso(10), headline: 'NEW SAVE TWO' };
+  const r4 = M.nowCardRead({ newest: fresh2, open: openOlder, kept, key: K });
+  ok(r4.detail === got && r4.fetch && r4.fetch.sig !== kept.sig, 'a later save to the newest pair: the old read stays drawn while the newer one is fetched');
+  // A kept read of ANOTHER project is never drawn.
+  const r5 = M.nowCardRead({ newest: fresh, open: null, kept: { ...kept, key: 'other\nproj' }, key: K });
+  ok(r5.detail === null && r5.fetch, "another project's kept read is never drawn here");
+  ok(M.nowCardRead({ newest: null, open: openOlder }).detail === null, 'no save at all: nothing drawn, nothing fetched');
+  // The view wires it: the decision is the model's, the fetch runs after every paint, Reload drops the kept read.
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const fnBody = (name) => { const i = mv.indexOf('function ' + name + '('); return i < 0 ? '' : mv.slice(i, mv.indexOf('\n}\n', i)); };
+  ok(/nowCardRead\(/.test(fnBody('prjNewestDetail')) && /state\.nowWant\s*=/.test(fnBody('prjNewestDetail')), 'memory.js: prjNewestDetail asks nowCardRead and records the wanted fetch');
+  ok(/maybeLoadNewest\(token\)/.test(fnBody('wireProjects')), 'memory.js: every paint runs the wanted fetch (wireProjects → maybeLoadNewest)');
+  ok(/state\.nowDetail\s*=\s*null/.test(fnBody('reloadActive')), 'memory.js: Reload refreshes the newest pair (drops the kept read)');
+}
+
+section('§13 audit M3 — every fix kind the server sends gives an action');
+{
+  const SC = await import('../src/brain/setup-check.js');
+  const made = {
+    reveal: SC.FIX.reveal('/Users/x/proj/AGENTS.md'),
+    copyBlock: SC.FIX.copyBlock('AGENTS.md'),
+    command: SC.FIX.command('git add .curator-project', 'Copy the git command', '/Users/x/proj', '/Users/x'),
+    copyMarker: SC.FIX.copyMarker(),
+    copySnippet: SC.FIX.copySnippet('codex'),
+    downloadSkill: SC.FIX.downloadSkill('my-curator'),
+    sync: SC.FIX.sync(),
+    changeRepo: SC.FIX.changeRepo(),
+    settings: SC.FIX.settings(),
+    recheck: SC.FIX.recheck(),
+  };
+  ok(Object.keys(SC.FIX).every((k) => k in made), 'CONTROL: this list covers every FIX.* constructor the server has', Object.keys(SC.FIX).filter((k) => !(k in made)));
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const handled = (act) => new RegExp("act === '" + act + "'").test(mv);
+  for (const [k, fx] of Object.entries(made)) {
+    const spec = M.fixSpec(fx, { id: 'codex' }, { path: '/Users/x/proj' });
+    ok(spec && spec.label && spec.attrs && spec.attrs['data-setup-act'], 'FIX.' + k + ' (' + fx.kind + ') → an action: ' + (spec && spec.label), JSON.stringify(spec));
+    ok(spec && handled(spec.attrs['data-setup-act']), '...whose press the view handles (data-setup-act="' + (spec && spec.attrs['data-setup-act']) + '")');
+    ok(M.FIX_KINDS.includes(fx.kind), '...and its kind is in FIX_KINDS');
+  }
+  ok(M.fixSpec({ kind: 'skills' }, { id: 'antigravity' }) && M.fixSpec({ kind: 'choose-folder' }), "v3.78.0's kinds (skills, choose-folder) still give an action");
+  ok(M.fixSpec({ kind: 'reveal', reveal: 'AGENTS.md' }, null, { path: '/p' }).attrs['data-path'] === '/p/AGENTS.md', 'a reveal by file name resolves against the project folder');
+  ok(M.fixSpec({ kind: 'reveal', reveal: 'AGENTS.md' }, null, null) === null && M.fixSpec({ kind: 'copy-command' }) === null && M.fixSpec({ kind: 'nope' }) === null,
+    'an entry that cannot be acted on (no folder, no command, an unknown kind) gives none — never a dead button');
+  // The missing project folder (the audit's case): its notice carries Change folder.
+  const data = demo();
+  data.toFix = [{ kind: 'repo', text: 'The project folder recorded for exhibit-site is not on this Mac.', fixes: [SC.FIX.changeRepo()] }];
+  const n = M.toFixNotices(data)[0];
+  ok(n.actions.some((a) => a.attrs['data-setup-act'] === 'change-repo'), 'a missing project folder\'s notice offers Change folder in Simple', JSON.stringify(n.actions));
+  // The legacy singular `fix` (no fixes[]).
+  const legacy = demo();
+  legacy.toFix = [{ tool: 'claude-code', text: 'Claude Code saves under the wrong name.', fix: { kind: 'copy-block', label: 'Copy instructions' } }];
+  const ln = M.toFixNotices(legacy)[0];
+  ok(ln.actions[0] && ln.actions[0].attrs['data-setup-act'] === 'copy-block', "a v3.78.0 item's singular `fix` is offered", JSON.stringify(ln.actions));
+  // plainText is never run on the server's plain text.
+  const odd = demo();
+  odd.toFix = [{ text: 'The harness <my agent> is not connected.' }];
+  ok(M.toFixNotices(odd)[0].title.includes('<my agent>'), 'a harness label written with <…> survives in the notice (plain text is not stripped as markup)');
+}
+
+section('§14 audit M5 — every press on the connect flow\'s plan and result cards is handled');
+{
+  const MI = await import('../src/public/next/views/mcp-install.js');
+  const plan = MI.renderPlanCard({ action: 'install', items: [
+    { id: 'cursor', label: 'Cursor', refused: { message: 'The file is not valid JSON' } },
+    { id: 'claude-desktop', label: 'Claude Desktop', file: '~/x.json', entryText: '{}', basis: 'present', backupWillBe: 'x.bak' }] }, [], null);
+  const res = MI.renderResults({ action: 'install', items: [{ id: 'cursor', label: 'Cursor', outcome: 'refused', message: 'no' },
+    { id: 'claude-desktop', label: 'Claude Desktop', outcome: 'written' }] }, [], 'darwin');
+  const acts = [...new Set([...(plan + res).matchAll(/data-mcpi-act="([a-z-]+)"/g)].map((x) => x[1]))];
+  ok(acts.includes('copy'), 'CONTROL: a refused plan item and a refused result each offer "Copy the setup text"', acts);
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const i = mv.indexOf('function paintConnect(');
+  const body = mv.slice(i, mv.indexOf('\n}\n', i));
+  for (const a of acts) ok(new RegExp("a === '" + a + "'").test(body), 'the connect flow handles data-mcpi-act="' + a + '"');
+  ok(/function connectCopy\(/.test(mv) && /copyPlanFor\(id, c\.status/.test(mv), 'its copy is the same setup text Settings › MCP bridge copies (copyPlanFor)');
+}
+
+section('§15 owner decision 2026-11-27 — Starting kit\'s controls in Simple');
+{
+  const table = P.documentsTable([{ slug: 'arch', title: 'Architecture', source: 'this computer', startWord: 'Always read',
+    startHtml: '<span data-fnd-first="arch"><button data-lb-trigger>Always read</button></span>', tokens: '≈8.4k', tokenCount: 8400, updated: '2 days ago',
+    actionsHtml: '<button type="button" data-fnd-edit="arch">Edit</button><button type="button" data-fnd-delete="arch">Delete</button>' }]);
+  const base = { ...kitModel(false), docTable: table, kitBudgetPickerHtml: '<button id="mem-budget-lb" data-lb-trigger>Default</button>' };
+  const closed = P.kitPanel(base);
+  const open = P.kitPanel({ ...base, open: 'documents' });
+  ok(!/data-kit-table="prj-docs"/.test(closed), 'Simple: the document list stays shut until the Documents row is pressed');
+  ok(/data-kit-table="prj-docs"/.test(open), 'Simple: the Documents row opens the list');
+  ok(/data-fnd-first="arch"/.test(open) && /data-fnd-edit="arch"/.test(open) && /data-fnd-delete="arch"/.test(open),
+    '...each document with its Always read / When needed / Hidden picker, Edit and Delete (today\'s binders and confirms)');
+  ok(/data-kit-row-open="doc:arch"/.test(open), '...and the row opens the document in the reader');
+  ok(/id="mem-budget-lb"/.test(closed), 'Simple: the reading-budget picker sits beside the bar, so "Set a reading budget" has a picker to open');
+  ok(/data-prj-flow="kitBudgetPickerHtml"/.test(P.kitPanel({ ...base, pro: true })), 'Pro: the same picker on Starting kit');
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const i = mv.indexOf("const choose = one('#mem-ss-choose');");
+  const chooseBody = mv.slice(i, mv.indexOf('\n  }\n', i));
+  ok(/state\.kitOpen = 'documents'/.test(chooseBody) && !/data-ov-jump/.test(chooseBody) && !/mem-fold-planner/.test(chooseBody),
+    '"Choose read-first documents" opens the Documents list in both modes (no Pro-only fold, no retired door)');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-projects-page: ' + pass + ' passed, ' + fail + ' failed');

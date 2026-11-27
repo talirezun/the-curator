@@ -23,8 +23,9 @@
 // earlier reading is `unknown`.
 
 import { fmtAge, fmtCount, fmtPages, fmtSize, fmtTokens } from '../../shared/format.js';
+import { overWindowSentence } from '../../shared/bucket.js';
 import {
-  harnessRowModel, toolGuideSteps, toolParts, physicalOf, removableOf, machineNamesOf,
+  harnessRowModel, toolGuideSteps, toolParts, physicalOf, removableOf, machineNamesOf, fixListOf,
 } from '../setup-step.js';
 
 const isStr = (v) => typeof v === 'string' && v.length > 0;
@@ -181,17 +182,21 @@ export function toFixNotices(data) {
   const toFix = Array.isArray(data && data.toFix) ? data.toFix.filter(Boolean) : [];
   const tools = ((data && data.tools) || []).filter(Boolean);
   return toFix.map((f) => {
-    const text = plainText(String(f.text || ''));
+    // The server's to-fix text is PLAIN text (setup-step.js escapes it when it
+    // draws it): never run it through plainText, which would eat a harness
+    // label such as "<my agent>" (audit minor).
+    const flat = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+    const text = flat(f.text);
     const [title, rest] = noticeTitle(text);
-    const detail = plainText(String(f.detail || ''));
+    const detail = flat(f.detail);
     const t = isStr(f.tool) ? tools.find((x) => x && x.id === f.tool) : null;
-    const fixes = Array.isArray(f.fixes) ? f.fixes : [];
+    // `fixes[]`, or v3.78.0's singular `fix` (setup-step.js fixListOf).
+    const fixes = fixListOf(f);
     const actions = [];
     // The fix buttons setup-step.js would draw for this line (its own words).
     for (const fx of fixes) {
       if (actions.length) break;
-      if (!fx || typeof fx !== 'object') continue;
-      const spec = fixSpec(fx, t);
+      const spec = fixSpec(fx, t, data && data.repo);
       if (spec) actions.push(spec);
     }
     if (t) actions.push({ label: 'Open its steps', attrs: { 'data-setup-act': 'tool-open', 'data-tool': t.id } });
@@ -206,8 +211,20 @@ export function toFixNotices(data) {
   });
 }
 
-/** One fix kind → a kit action (the kinds setup-step.js's fixButton knows). */
-function fixSpec(fx, t) {
+/**
+ * EVERY FIX KIND THE SERVER SENDS (src/brain/setup-check.js `FIX.*`), plus
+ * v3.78.0's names, → a kit action (audit M3). The candidate knew 'choose-repo'
+ * — not a server kind — and missed change-repo, recheck, reveal,
+ * download-skill and skills, so those lines lost their only fix in Simple.
+ * scripts/test-projects-page.js cross-checks every `FIX.*` constructor here.
+ * Returns null only for an entry that cannot be acted on (no command, no path).
+ */
+export const FIX_KINDS = Object.freeze(['copy-block', 'copy-marker', 'copy-command', 'copy-snippet', 'sync', 'settings',
+  'change-repo', 'choose-folder', 'choose-repo', 'recheck', 'reveal', 'download-skill', 'skills']);
+const SKILL_HREF = /^\/api\/setup\/skills\/[a-z0-9-]+\.zip$/;
+const SKILL_NAME = /^[a-z0-9-]+$/;
+export function fixSpec(fx, t, repo) {
+  if (!fx || typeof fx !== 'object') return null;
   const tool = t ? { 'data-tool': t.id } : {};
   const label = (d) => (isStr(fx.label) && !/^Open Tools on this /.test(fx.label) ? fx.label : d);
   switch (fx.kind) {
@@ -216,10 +233,36 @@ function fixSpec(fx, t) {
     case 'copy-command': return isStr(fx.command)
       ? { label: label('Copy command'), attrs: { 'data-setup-act': 'copy-command', 'data-cmd': fx.command, 'data-cwd': isStr(fx.cwdDisplay) ? fx.cwdDisplay : '' } }
       : null;
-    case 'copy-snippet': return { label: label('Copy MCP entry'), attrs: { 'data-setup-act': 'copy-snippet', ...tool } };
+    case 'copy-snippet': {
+      const id = isStr(fx.tool) ? fx.tool : (t ? t.id : null);
+      return id ? { label: label('Copy MCP entry'), attrs: { 'data-setup-act': 'copy-snippet', 'data-tool': id } } : null;
+    }
     case 'sync': return { label: 'Sync now', attrs: { 'data-setup-act': 'sync' } };
     case 'settings': return { label: label('Open Settings › MCP bridge'), attrs: { 'data-setup-act': 'settings' } };
+    // The server's kind is change-repo (a folder is recorded, or wrong);
+    // v3.78.0 said choose-folder; the candidate's own word was choose-repo.
+    case 'change-repo': return { label: label('Change folder'), attrs: { 'data-setup-act': 'change-repo' } };
+    case 'choose-folder':
     case 'choose-repo': return { label: label('Set the folder'), attrs: { 'data-setup-act': 'choose-repo' } };
+    case 'recheck': return { label: fx.label === 'Re-check' ? 'Check again' : label('Check again'), attrs: { 'data-setup-act': 'check' } };
+    case 'reveal': {
+      if (isStr(fx.path)) return { label: label('Reveal ' + fx.path.split('/').pop()), attrs: { 'data-setup-act': 'reveal', 'data-path': fx.path } };
+      const name = isStr(fx.reveal) ? fx.reveal : null;
+      if (name && repo && isStr(repo.path)) {
+        return { label: label('Reveal ' + name), attrs: { 'data-setup-act': 'reveal', 'data-path': repo.path.replace(/\/+$/, '') + '/' + name } };
+      }
+      return null;
+    }
+    case 'download-skill': {
+      const href = isStr(fx.href) && SKILL_HREF.test(fx.href) ? fx.href
+        : (isStr(fx.skill) && SKILL_NAME.test(fx.skill) ? '/api/setup/skills/' + fx.skill + '.zip' : null);
+      if (!href) return null;
+      const name = href.split('/').pop().replace(/\.zip$/, '');
+      const word = !isStr(fx.label) || /^Download .*\.zip$/.test(fx.label) ? 'Get the new ' + name + ' skill (.zip)' : fx.label;
+      return { label: word, attrs: { 'data-setup-act': 'download', 'data-href': href } };
+    }
+    // v3.78.0's one "skills" fix: the settings door (the downloads are in the steps).
+    case 'skills': return { label: label('Open Settings › MCP bridge'), attrs: { 'data-setup-act': 'settings', ...tool } };
     default: return null;
   }
 }
@@ -362,6 +405,41 @@ export function nowNotices(f) {
   return out;
 }
 
+/** The newest row's identity of WHAT was saved (a new save moves it). */
+export function newestSig(s) {
+  if (!s || typeof s !== 'object') return '';
+  return [s.scope, s.machine || '', s.writtenAt || '', s.savedAt || '', s.lastWriteAt || '',
+    Number.isInteger(s.bytes) ? s.bytes : '', s.headline || ''].join('|');
+}
+
+/**
+ * WHICH READ THE NOW CARD SHOWS, and whether it must fetch one (audit B1).
+ *
+ * The Now card always shows the NEWEST pair; the reader's open pair
+ * (`open`, memory.js's state.detail) can be any pair. `kept` is the newest
+ * pair's own read ({key, d, sig}) remembered apart from the open one. When
+ * the newest pair is neither the open one nor the kept one — a new
+ * work-stream, another computer's pair after a sync, a second agent's first
+ * save — the card FETCHES it; it never waits for a read nobody asked for
+ * (the v4.3.0 candidate stuck on "Reading the note…"). A kept read whose
+ * pair has saved again is shown while the newer one is fetched.
+ *
+ * Returns { detail, keep, fetch }: the read to draw (or null), the kept
+ * record to store (or null = unchanged), the pair to fetch (or null).
+ */
+export function nowCardRead(o) {
+  const x = o || {};
+  const newest = x.newest;
+  if (!newest) return { detail: null, keep: null, fetch: null };
+  const same = (d) => !!(d && d.scope === newest.scope && (d.machine || null) === (newest.machine || null));
+  const sig = newestSig(newest);
+  const want = { scope: newest.scope, machine: newest.machine || null, sig };
+  if (same(x.open)) return { detail: x.open, keep: { key: x.key, d: x.open, sig }, fetch: null };
+  const k = x.kept;
+  if (k && k.key === x.key && same(k.d)) return { detail: k.d, keep: null, fetch: k.sig === sig ? null : want };
+  return { detail: null, keep: null, fetch: want };
+}
+
 /** The handoff card's footer facts: harness · computer · age (plain). */
 export function handoffFooter(o) {
   const x = o || {};
@@ -458,19 +536,52 @@ export function briefMeta(o) {
  * THE ONE BAR (Simple): "The starting kit uses N% of your agent's memory" and
  * a plain qualifier. `tokens` is what an agent receives at start, `window`
  * the context window it is drawn against. Null until measured.
+ *
+ * audit M1 (never-hide): the SAME arithmetic as the meter (shared/bucket.js
+ * bucketModel) — `o.harness` is the agent app's own share when the owner set
+ * an estimate. With it the qualifier is about what is IN USE, and a start that
+ * does not fit says the meter's own sentence (`overWindowSentence`) in both
+ * modes; before, Simple said "most of the room" while Pro said "Over the
+ * window by ≈7.4k tokens".
  */
-export function kitBudgetFigure(tokens, windowTokens) {
+export function kitBudgetFigure(tokens, windowTokens, o = {}) {
   if (!Number.isFinite(tokens) || tokens < 0 || !Number.isFinite(windowTokens) || windowTokens <= 0) return null;
+  const harness = Number.isFinite(o.harness) && o.harness > 0 ? o.harness : 0;
+  const used = tokens + harness;
+  const over = Math.max(0, used - windowTokens);
   const pct = (tokens / windowTokens) * 100;
-  const pctWord = pct > 0 && pct < 1 ? 'less than 1%' : Math.round(pct) + '%';
-  const qualifier = pct < 10 ? 'plenty of room left' : pct < 30 ? 'room left' : pct < 60 ? 'a large share' : 'most of the room';
+  const usedPct = (used / windowTokens) * 100;
+  const pctWord = (p) => (p > 0 && p < 1 ? 'less than 1%' : Math.round(p) + '%');
+  const roomWord = (p) => (p < 10 ? 'plenty of room left' : p < 30 ? 'room left' : p < 60 ? 'a large share' : 'most of the room');
+  const qualifier = over > 0
+    ? 'It does not fit: choose a smaller reading budget, or fewer documents to always read.'
+    : harness
+      ? 'With your agent app’s own share (' + fmtTokens(harness) + ', your estimate) ' + pctWord(usedPct) + ' is in use — ' + roomWord(usedPct) + '.'
+      : roomWord(pct);
   return {
     pct: Math.min(100, Math.max(0, pct)),
-    words: 'The starting kit uses ' + pctWord + ' of your agent’s memory',
+    words: 'The starting kit uses ' + pctWord(pct) + ' of your agent’s memory',
     qualifier,
+    over,
+    overLine: over > 0 ? overWindowSentence(over) : '',
     tokens: fmtTokens(tokens),
     window: fmtTokens(windowTokens),
   };
+}
+
+/**
+ * THE MEASUREMENT'S OWN NOTES (the session-start route's `notes`: later
+ * replies that could not be read, an unreadable reading budget, a manifest
+ * that could not be read, a bounded measurement). audit M1: v4.2.2's Simple
+ * showed them; they are kit notices on the Starting kit tab in BOTH modes.
+ */
+export function routeNoteNotices(notes) {
+  const list = (Array.isArray(notes) ? notes : []).filter(isStr);
+  if (!list.length) return [];
+  // ONE notice, the notes verbatim and in order — the same words the Pro
+  // reader's monitor says (it joins them the same way), so nothing is
+  // re-worded on the way.
+  return [{ tone: 'attention', title: list.length === 1 ? 'A note on this measurement.' : 'Notes on this measurement.', line: list.join(' ') }];
 }
 
 // ── the History tab (Pro) ─────────────────────────────────────────────────

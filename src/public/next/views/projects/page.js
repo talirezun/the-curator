@@ -64,7 +64,7 @@ export const PRO_ONLY_TABS = Object.freeze(TAB_ITEMS.filter((t) => t.pro).map((t
 /** The embedded flows (today's code, reused), by the model key that carries each. */
 export const EMBEDDED_FLOWS = Object.freeze([
   'briefEditorHtml', 'documentsHtml', 'knowledgeHtml', 'plannerHtml', 'meterHtml',
-  'sessionNoticesHtml', 'repoHtml', 'customHtml', 'pickerHtml', 'deleteHtml', 'budgetPickersHtml',
+  'sessionNoticesHtml', 'repoHtml', 'customHtml', 'pickerHtml', 'deleteHtml', 'budgetPickersHtml', 'kitBudgetPickerHtml',
   'receivesHtml', 'reachHtml', 'copyOutcomeHtml', 'mirrorsHtml',
 ]);
 
@@ -341,16 +341,25 @@ export function kitPanel(m) {
       opens: true, targetId: 'prj-kit-knowledge',
       action: m.readonly ? undefined : { label: 'Add a domain', attrs: { 'data-prj-act': 'knowledge-add' } } })
     + '</div>', 'Starting kit'));
+  // audit M1: a start that does not fit says the meter's own sentence here,
+  // in both modes (Pro's Budget draws it on the window bar).
+  if (m.figure && m.figure.over > 0) {
+    out.push(notice({ tone: 'attention', title: m.figure.overLine, line: m.figure.qualifier }));
+  }
   if (m.figure) {
     out.push(card('<div class="prj-meter-head"><p class="prj-meter-words">' + esc(m.figure.words) + '</p>'
-      + '<p class="prj-sub">' + esc(m.figure.qualifier) + '</p></div>'
+      + (m.figure.over > 0 ? '' : '<p class="prj-sub">' + esc(m.figure.qualifier) + '</p>')
+      + flow(m.kitBudgetPickerHtml, 'kitBudgetPickerHtml') + '</div>'
       + '<div class="prj-meter" role="img" aria-label="' + esc(m.figure.words + ' — ' + m.figure.tokens + ' of ' + m.figure.window + ' tokens') + '">'
       + '<span class="prj-meter-fill" style="width:' + (Math.round(m.figure.pct * 10) / 10) + '%"></span></div>'
       + (m.settingsWords ? '<p class="prj-sub">' + esc(m.settingsWords) + '</p>' : ''), 'Starting kit size'));
   } else if (m.figureError) {
     out.push(notice({ tone: 'attention', title: 'What an agent receives could not be measured.', line: m.figureError }));
   }
-  if (m.pro && m.docTable) out.push(m.docTable);
+  // Owner decision 2026-11-27: the Documents row opens the list in BOTH
+  // modes (each document's At-start picker, open, edit, delete); Pro keeps
+  // it open.
+  if (m.docTable && (m.pro || m.open === 'documents')) out.push(m.docTable);
   if (m.open === 'brief') out.push(flow(m.briefEditorHtml, 'briefEditorHtml'));
   if (m.open === 'documents' || m.pro) out.push(flow(m.documentsHtml, 'documentsHtml'));
   if (m.open === 'knowledge') out.push(flow(m.knowledgeHtml, 'knowledgeHtml'));
@@ -370,10 +379,13 @@ export function documentsTable(docs) {
       { id: 'start', label: 'At start' },
       { id: 'tokens', label: 'Tokens', numeric: true, sort: true },
       { id: 'updated', label: 'Updated', sort: true },
-    ],
+    ].concat((docs || []).some((d) => isStr(d.actionsHtml)) ? [{ id: 'act', label: 'Actions' }] : []),
     rows: (docs || []).map((d) => ({ id: 'doc:' + d.slug, targetId: d.targetId, cells: {
       doc: d.title, source: d.source, start: { html: d.startHtml || esc(d.startWord), sort: d.startWord },
       tokens: { text: d.tokens, sort: d.tokenCount }, updated: { text: d.updated, sort: d.updatedSort },
+      // Today's edit (kept documents) and delete buttons, by their own data-*
+      // attributes, so bindFoundationRows wires them and the confirms are today's.
+      act: isStr(d.actionsHtml) ? { html: d.actionsHtml } : '',
     } })),
   });
 }

@@ -237,7 +237,7 @@ import { renderDepthCell } from '../shared/depth-bar.js';
 // v3.70.0: the window meter — the SEGMENTED depth bar (rule 6 as amended).
 // Step ④ draws the route's `meter` through it, and every token figure on the
 // step goes through its one formatter.
-import { renderBucket, formatTokens } from '../shared/bucket.js';
+import { renderBucket, formatTokens, bucketModel } from '../shared/bucket.js';
 import { fmtSize, fmtTokens, fmtCount, fmtPages } from '../shared/format.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
@@ -399,7 +399,7 @@ import {
 import {
   statusSentence, newestScope, harnessRows, toFixNotices, thisComputerNames, nowNotices, earlierNotes,
   connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary, connectionNotice, projectTiles,
-  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt,
+  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt, nowCardRead, routeNoteNotices,
 } from './projects/model.js';
 import { activeTab, wireTabs, wireSegmented } from '../shared/tabs.js';
 import { wireRows } from '../shared/row.js';
@@ -407,7 +407,7 @@ import { wireTable, nextSort } from '../shared/table.js';
 import { notice } from '../shared/notice.js';
 import { statusChip } from '../shared/status.js';
 import {
-  fetchInstallStatus, requestPlan, requestApply, renderPlanCard, renderResults, isInstallable, failureWords,
+  fetchInstallStatus, requestPlan, requestApply, renderPlanCard, renderResults, isInstallable, failureWords, copyPlanFor,
 } from './mcp-install.js';
 // v4.2.0 fix (e2e A, confusion 7): a computer is shown by its NAME, never its folder id.
 import { machineDisplayName } from '../shared/machine-name.js';
@@ -980,6 +980,9 @@ function freshState() {
     historyHarness: '',
     historySort: null,
     nowDetail: null,
+    nowWant: null,
+    nowFetching: null,
+    nowFailed: null,
     connect: null,
   };
 }
@@ -2398,6 +2401,9 @@ async function reloadActive(token) {
   // flight, would make the one control whose entire meaning is "go and look
   // again" inert — which is the defect this button exists to answer.
   forgetProject(domain, project);
+  // audit B1: Reload refreshes the NEWEST pair too (the Now card's own read).
+  state.nowDetail = null;
+  state.nowFailed = null;
 
   state.detailFetchedAt = Date.now();
   // Both reads below start now, so both marks move together here.
@@ -3801,10 +3807,30 @@ function prjHarnessRows() {
  */
 function prjNewestDetail(newest) {
   const k = activeKey();
-  const same = (d) => !!(d && newest && d.scope === newest.scope && (d.machine || null) === (newest.machine || null));
-  if (same(state.detail)) { state.nowDetail = { key: k, d: state.detail }; return state.detail; }
-  const nd = state.nowDetail;
-  return nd && nd.key === k && same(nd.d) ? nd.d : null;
+  // audit B1: the decision is model.js's `nowCardRead`; a newest pair that is
+  // neither open nor kept is FETCHED (maybeLoadNewest, after the paint).
+  const r = nowCardRead({ newest, open: state.detail, kept: state.nowDetail, key: k });
+  if (r.keep) state.nowDetail = r.keep;
+  state.nowWant = r.fetch ? { key: k, ...r.fetch } : null;
+  return r.detail;
+}
+
+/** The fetch prjNewestDetail asked for, once per (pair, save). Never throws. */
+function maybeLoadNewest(token) {
+  const w = state.nowWant;
+  if (!w || !state.activeProject) return;
+  const id = [w.key, w.scope, w.machine || '', w.sig].join('\n');
+  if (state.nowFetching === id || (state.nowFailed && state.nowFailed.id === id)) return;
+  state.nowFetching = id;
+  const q = { scope: w.scope };
+  if (w.machine) q.machine = w.machine;
+  fetchState(state.activeDomain, state.activeProject, q, token).then((read) => {
+    if (state.nowFetching === id) state.nowFetching = null;
+    if (!isCurrentMount(token) || activeKey() !== w.key) return;
+    if (read && read.data) { state.nowDetail = { key: w.key, d: read.data, sig: w.sig }; state.nowFailed = null; }
+    else state.nowFailed = { id, key: w.key, error: (read && read.error) || 'The newest note could not be read.' };
+    render(token);
+  }).catch((err) => reportAsyncMountFailure(token, err));
 }
 
 /** The status sentence under the project's name. */
@@ -3928,7 +3954,9 @@ function prjNowModel(read) {
     bodyHtml: cur ? renderMarkdown(split.body)
       : (nd && nd.current && !nd.current.present
         ? '<p class="prj-wait">' + escapeHtml(nd.message || 'Nothing has been saved under this handoff on this machine yet.') + '</p>'
-        : '<p class="prj-wait" aria-busy="true">Reading the note…</p>'),
+        : (state.nowFailed && state.nowFailed.key === activeKey()
+          ? '<p class="prj-wait" role="alert">' + escapeHtml('The newest note could not be read: ' + state.nowFailed.error) + '</p>'
+          : '<p class="prj-wait" aria-busy="true">Reading the note…</p>')),
     footer: [who, computer, formatAge(eff.seconds)].filter(Boolean).join(' · '),
     targetId: openIsNewest ? 'mem-ws-active' : undefined,
     deleteScope: readonly || !newest ? null : newest.scope,
@@ -4024,6 +4052,8 @@ function prjKitModel(read) {
       actions: readonly ? [] : [{ label: 'Choose documents', attrs: { 'data-prj-act': 'documents-open' } }] });
   }
   notices.push(...prjBudgetNotices());
+  // audit M1: the measurement's own notes, in both modes.
+  notices.push(...routeNoteNotices(data && data.notes));
   if (state.knowledgeSaveError) notices.push({ tone: 'error', title: 'The knowledge domains were not changed.', line: String(state.knowledgeSaveError) });
   const open = state.briefEdit ? 'brief' : state.kitOpen || null;
   const docRows = facts.docs.map((d) => {
@@ -4040,6 +4070,12 @@ function prjKitModel(read) {
       tokens: fmtTokens(bytes / 4), tokenCount: bytes / 4,
       updated: d.updatedAt ? (formatAge(Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000))) || fw.word) : fw.word,
       updatedSort: d.updatedAt ? -Date.parse(d.updatedAt) : null,
+      // Owner decision 2026-11-27: today's edit (kept documents only — the
+      // route refuses a mirrored one) and delete, with today's confirms.
+      actionsHtml: readonly ? '' : (['written', 'copied'].includes(FSRC.rowKind(d, facts.sources))
+        ? '<button type="button" class="btn btn-ghost btn-xs" data-fnd-edit="' + escapeHtml(slug) + '" aria-label="'
+          + escapeHtml('Edit ' + (d.title || slug)) + '">Edit</button>' : '')
+        + FSRC.deleteIconHtml(d),
     };
   });
   return {
@@ -4054,7 +4090,17 @@ function prjKitModel(read) {
       meta: domains.join(', ') + (known ? ' · ' + fmtPages(pages) + ' an agent can search' : ''),
       dot: state.domainIdentity && domains[0] ? domainIdentityClass(state.domainIdentity, domains[0]) : '',
     },
-    figure: mcpT === null ? null : kitBudgetFigure(mcpT, contextWindowNow()),
+    // audit M1: the meter's own arithmetic (bucketModel over meterModel),
+    // harness share included; the route's token total until a meter exists.
+    figure: (() => {
+      const g = data && data.meter ? bucketModel(meterModel(data)) : null;
+      if (g) return kitBudgetFigure(g.curator, g.windowTokens, { harness: g.harness });
+      return mcpT === null ? null : kitBudgetFigure(mcpT, contextWindowNow(), { harness: harnessNow() || 0 });
+    })(),
+    // Owner decision 2026-11-27: the reading-budget picker beside the bar, in both modes.
+    kitBudgetPickerHtml: readonly ? ''
+      : '<span class="mem-ss-ctl"><span class="mem-ss-ctl-label" id="mem-ss-budget-label">Reading budget</span>'
+        + renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true)) + '</span>',
     figureError: ss && ss.error && !data ? ss.error : null,
     settingsWords: said.join(' · '),
     briefEditorHtml: readonly ? '' : renderBriefEditor(read, readonly),
@@ -10368,6 +10414,16 @@ function bindSetup(root, token) {
         } catch (err) { reportAsyncActionFailure(err); }
         return;
       }
+      // audit M3: a to-fix notice's skill download (the steps carry it as a link).
+      if (act === 'download') {
+        const href = el.dataset.href || '';
+        if (/^\/api\/setup\/skills\/[a-z0-9-]+\.zip$/.test(href) && typeof document !== 'undefined') {
+          const a = document.createElement('a');
+          a.href = href; a.download = href.split('/').pop();
+          document.body.appendChild(a); a.click(); a.remove();
+        }
+        return;
+      }
       if (act === 'settings') {
         requestSettingsSection('mcp');
         navigate('settings');
@@ -11417,27 +11473,21 @@ function bindSessionAndPlan(root, token) {
       if (trigger && !trigger.disabled) trigger.click();
     });
   }
-  // "Choose read-first documents" goes where the answer is. v3.70.1: the
-  // planner fold just below — it previews a choice on the meter before
-  // anything is saved — opened and focused; step ①, through the overview's
-  // own door, when there is no planner on screen.
+  // "Choose read-first documents" goes where the answer is: the Documents
+  // list on the Starting kit tab, opened, with focus on the first document's
+  // At-start picker (owner decision 2026-11-27: it works in BOTH modes; the
+  // v4.3.0 candidate looked for a Pro-only fold or a door that was gone).
   const choose = one('#mem-ss-choose');
   if (once(choose)) {
     choose.addEventListener('click', () => {
-      const fold = document.querySelector('[data-mem-fold="planner"]');
-      if (fold) {
-        if (!state.openFolds) state.openFolds = {};
-        state.openFolds.planner = true;
-        fold.open = true;
-        const sum = document.getElementById('mem-fold-planner');
-        if (sum) {
-          try { sum.focus({ preventScroll: true }); } catch { sum.focus(); }
-          sum.scrollIntoView({ block: 'start', behavior: 'smooth' });
-        }
-        return;
+      state.tab = 'kit';
+      state.kitOpen = 'documents';
+      render(token);
+      const first = document.querySelector('[data-fnd-first] [data-lb-trigger]');
+      if (first && typeof first.focus === 'function') {
+        try { first.focus({ preventScroll: true }); } catch { first.focus(); }
+        if (typeof first.scrollIntoView === 'function') first.scrollIntoView({ block: 'center' });
       }
-      const door = document.querySelector('[data-ov-jump="context-canonical"]');
-      if (door) door.click();
     });
   }
 
@@ -12139,6 +12189,8 @@ function prjPairOf(id) {
 }
 
 function wireProjects(token) {
+  // audit B1: the newest pair's read, when the paint asked for one.
+  maybeLoadNewest(token);
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
   const pf = typeof document.getElementById === 'function' ? document.getElementById('prj-filter') : null;
   if (pf && !pf.__prjBound) {
@@ -12375,9 +12427,30 @@ function paintConnect(token) {
       else if (a === 'apply') connectApply(token).catch((err) => reportAsyncMountFailure(token, err));
       else if (a === 'cancel') { c.plan = null; paintConnect(token); }
       else if (a === 'check-again') { c.results = null; connectStatus(token).catch((err) => reportAsyncMountFailure(token, err)); }
+      // audit M5: the plan's and the results' "Copy the setup text" (a
+      // refused write says "add by hand" and offers it).
+      else if (a === 'copy' || a === 'copy-myself') connectCopy(b.getAttribute('data-tool') || c.tool);
+      else if (a === 'dismiss') { c.results = null; paintConnect(token); }
     });
   });
   prjFocus('prj-connect-h');
+}
+
+/** Copy one agent's setup text (the same text Settings › MCP bridge copies),
+ *  with the line that says where it goes; a refusal hands the text over. */
+async function connectCopy(id) {
+  const c = state.connect;
+  const plan = c && c.status && id ? copyPlanFor(id, c.status, null) : null;
+  if (!plan) {
+    showToast({ key: 'prj-connect-copy', tone: 'danger', title: 'No setup text to copy', lines: ['Press Check again, then try again.'] });
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(plan.text);
+    showToast({ key: 'prj-connect-copy', tone: 'success', title: 'Setup text copied', lines: [plan.line.replace(/\.$/, '') + '.'] });
+  } catch {
+    showToast({ key: 'prj-connect-copy', tone: 'danger', title: 'Could not copy', lines: ['Select it by hand — ' + plan.line.replace(/\.$/, '') + ':', plan.text] });
+  }
 }
 
 async function connectChoose(id, token) {

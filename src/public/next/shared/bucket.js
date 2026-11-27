@@ -357,6 +357,12 @@ function axis(windowTokens) {
   return '<div class="bk-axis" aria-hidden="true">' + ticks.map((t) => '<span>' + escapeHtml(t) + '</span>').join('') + '</div>';
 }
 
+/** The over-the-window sentence, ONE copy: the meter's note and the Projects
+ *  page's Starting kit (both modes, audit M1) say these exact words. */
+export function overWindowSentence(overTokens) {
+  return 'Over the window by ≈' + formatTokens(overTokens) + ' tokens at the start of a session.';
+}
+
 // What the "not set" note says to do about it. `o.unsetHint` (v4.2.0 fix,
 // audit minor 3): a view with no picker on screen (Context with Pro off)
 // passes '' so the note never names a control that is not there.
@@ -385,7 +391,7 @@ export function renderWindowBar(m, o = {}) {
       + 'Your harness’s share is not set. Its own prompt, tools and files also use this window' + escapeHtml(hint) + '.</p>')
     + '<div class="bk-bar" role="img" aria-label="' + escapeHtml(t.window) + '">' + segs + '</div>'
     + axis(g.windowTokens)
-    + (g.over > 0 ? '<p class="bk-note">Over the window by ≈' + escapeHtml(formatTokens(g.over)) + ' tokens at the start of a session.</p>' : '')
+    + (g.over > 0 ? '<p class="bk-note">' + escapeHtml(overWindowSentence(g.over)) + '</p>' : '')
     + '</div>';
 }
 

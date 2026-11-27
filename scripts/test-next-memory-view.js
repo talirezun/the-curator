@@ -13634,9 +13634,9 @@ const PROJECTS_GLUE = 'phase 2 glue: gathers state into views/projects/model.js 
 for (const n of ['readRememberedTab', 'rememberTab', 'currentTab', 'prjSeconds', 'prjMachineName', 'prjHarnessRows', 'prjNewestDetail',
   'prjSentence', 'prjTiles', 'prjMoreCfg', 'prjNowModel', 'prjAgentsModel', 'prjKitModel', 'prjHistoryModel', 'prjHistoryHarnessCfg',
   'prjBudgetNotices', 'prjBudgetModel', 'prjComputersModel', 'prjPanelHtml', 'renderProjectsPage', 'prjFocus', 'openBriefReader',
-  'startBriefEdit', 'copyContinuePrompt', 'prjPairOf', 'wireProjects']) NOT_EXECUTED[n] = PROJECTS_GLUE;
+  'startBriefEdit', 'copyContinuePrompt', 'prjPairOf', 'wireProjects', 'maybeLoadNewest']) NOT_EXECUTED[n] = PROJECTS_GLUE;
 const CONNECT_FLOW = 'phase 2, the one connect flow (D8) in the reader: connectFlowHtml is EXECUTED in test-projects-page.js; the install calls are views/mcp-install.js\'s (test-next-mcp-install.js); the flow is driven in a real browser by e2e-projects.mjs';
-for (const n of ['openConnectFlow', 'connectModel', 'plainOf', 'paintConnect', 'connectChoose', 'connectStatus', 'connectPlan', 'connectApply']) NOT_EXECUTED[n] = CONNECT_FLOW;
+for (const n of ['openConnectFlow', 'connectModel', 'plainOf', 'paintConnect', 'connectChoose', 'connectStatus', 'connectPlan', 'connectApply', 'connectCopy']) NOT_EXECUTED[n] = CONNECT_FLOW;
 
 ok('the census enumerated this view\'s top-level functions FROM DISK',
   TOP_LEVEL_FNS.length >= 30, 'found ' + TOP_LEVEL_FNS.length);
