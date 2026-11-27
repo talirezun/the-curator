@@ -125,7 +125,7 @@ export function table(o) {
     const tds = cols.map((c, i) => {
       const p = cellParts(r && r.cells ? r.cells[c.id] : null);
       const inner = opens && i === 0
-        ? '<button type="button" class="kit-td-open" data-kit-row-open="' + escapeHtml(rid) + '">' + p.html + '</button>'
+        ? '<button type="button" class="kit-td-open"' + (r && typeof r.targetId === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/.test(r.targetId) ? ' id="' + r.targetId + '"' : '') + ' data-kit-row-open="' + escapeHtml(rid) + '">' + p.html + '</button>'
         : p.html;
       return '<td class="kit-td' + (right(c) ? ' kit-num' : '') + '" data-label="' + escapeHtml(c.label) + '">' + inner + '</td>';
     }).join('');

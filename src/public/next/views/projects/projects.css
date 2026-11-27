@@ -1,0 +1,190 @@
+/* views/projects/projects.css — the Projects page's LAYOUT (phase 2).
+
+   LAYOUT ONLY. Every row, chip, notice, tab, table and the page anatomy are
+   the shared kit's (shared/{row,status,notice,tabs,table,object-page}.css);
+   this file places them: a panel's stack, a card that holds a list, the
+   handoff's reading column, the one bar, the numbered checklist, a toolbar.
+   scripts/test-projects-page.js refuses a `prj-` class that names a row,
+   chip, notice, table or fold. */
+
+.prj-page { min-width: 0; }
+
+.prj-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* A card holds a list of rows, the handoff, or one figure. */
+.prj-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  min-width: 0;
+  overflow: hidden;
+}
+.prj-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10) var(--space-4);
+}
+.prj-card-titles { flex: 1 1 auto; min-width: 0; }
+.prj-card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-10);
+  border-top: 1px solid var(--border-subtle);
+}
+.prj-foot-facts { display: inline-flex; align-items: center; gap: var(--space-4); flex: 1 1 auto; min-width: 0; }
+.prj-foot-text { font: var(--weight-regular) var(--text-sm)/var(--leading-snug) var(--font-sans); color: var(--text-3); }
+
+.prj-h {
+  margin: 0;
+  font: var(--weight-semibold) var(--text-lg)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+}
+.prj-sub {
+  margin: var(--space-1) 0 0;
+  font: var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans);
+  color: var(--text-3);
+}
+.prj-wait { margin: 0; color: var(--text-3); font: var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans); }
+
+/* The handoff, on the page, as a document. */
+.prj-handoff { padding: var(--space-2) var(--space-10) var(--space-8); min-width: 0; }
+.prj-handoff-title {
+  margin: var(--space-4) 0 var(--space-6);
+  font: var(--weight-semibold) var(--text-xl)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+}
+.prj-handoff-body { color: var(--text-2); overflow-wrap: anywhere; }
+.prj-handoff-body h1,
+.prj-handoff-body h2,
+.prj-handoff-body h3,
+.prj-handoff-body .chat-md-h {
+  margin: var(--space-10) 0 var(--space-3);
+  font: var(--type-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.prj-handoff-body p,
+.prj-handoff-body ul,
+.prj-handoff-body ol { margin: 0 0 var(--space-6); font: var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans); }
+.prj-handoff-body li + li { margin-top: var(--space-2); }
+
+/* A list of kit rows inside a card. */
+.prj-list { display: block; }
+.prj-empty { padding: var(--space-10); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-6); color: var(--text-2); }
+.prj-empty p { margin: 0; }
+
+/* The numbered checklist — the page's only numbers. */
+.prj-steps { list-style: none; margin: 0; padding: 0; }
+.prj-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-7) var(--space-10);
+  border-top: 1px solid var(--border-subtle);
+}
+.prj-step:first-child { border-top: 0; }
+.prj-step-num {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  font: var(--weight-medium) var(--text-sm)/1 var(--font-sans);
+  color: var(--text-2);
+}
+.prj-step.is-done .prj-step-num { color: var(--status-ok); border-color: var(--status-ok); }
+.prj-step.is-current .prj-step-num { color: var(--accent-text); border-color: var(--accent); }
+.prj-step-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.prj-step-title { font: var(--weight-medium) var(--text-md)/var(--leading-snug) var(--font-sans); color: var(--text); }
+.prj-step.is-done .prj-step-title { color: var(--text-3); }
+.prj-step-line { font: var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans); color: var(--text-2); }
+.prj-steps-compact .prj-step { padding: var(--space-4) 0; border-top: 0; }
+
+/* A toolbar above a list or a table. */
+.prj-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+.prj-toolbar-end { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.prj-search {
+  flex: 1 1 14rem;
+  min-width: 0;
+  max-width: 24rem;
+  height: var(--control-md);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--weight-regular) var(--text-md)/1 var(--font-sans);
+}
+.prj-search:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+.prj-actions { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+
+/* The one bar (Simple's Starting kit). */
+.prj-meter-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-8); padding: var(--space-8) var(--space-10) var(--space-4); }
+.prj-meter-words { margin: 0; font: var(--weight-medium) var(--text-md)/var(--leading-snug) var(--font-sans); color: var(--text); }
+.prj-meter {
+  position: relative;
+  height: 8px;
+  margin: 0 var(--space-10) var(--space-8);
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+.prj-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.prj-card > .prj-sub { padding: 0 var(--space-10) var(--space-8); margin: 0; }
+
+/* The one quiet line under the tabs (Simple). */
+.prj-quiet { margin: var(--space-10) 0 0; font: var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-sans); color: var(--text-3); }
+.prj-link {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--text-link);
+  cursor: pointer;
+}
+.prj-link:hover { text-decoration: underline; }
+.prj-link:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: var(--radius-xs); }
+
+/* An embedded flow (today's editor or list, reused until its re-skin). */
+.prj-flow { min-width: 0; }
+
+/* The connect flow, in the reader. */
+.prj-connect { display: flex; flex-direction: column; gap: var(--space-8); }
+.prj-connect .prj-list { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.prj-flow-part { display: flex; flex-direction: column; gap: var(--space-6); }
+
+@media (max-width: 600px) {
+  .prj-card-head { flex-wrap: wrap; padding: var(--space-6); }
+  .prj-handoff, .prj-card-foot { padding-left: var(--space-6); padding-right: var(--space-6); }
+  .prj-step { padding: var(--space-6); flex-wrap: wrap; }
+  .prj-search { max-width: none; flex-basis: 100%; }
+  .prj-toolbar-end { margin-left: 0; }
+}
+
+/* The sidebar's filter (Pro). */
+.prj-sidebar-filter { padding: 0 0 var(--space-6); }
+.prj-sidebar-filter .prj-search { width: 100%; max-width: none; }

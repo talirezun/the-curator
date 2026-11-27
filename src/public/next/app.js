@@ -411,7 +411,9 @@ const VIEW_META = {
   chat:     { label: 'Chat',             caption: 'Chat',     icon: 'messageSquare', title: 'Chat' },
   domains:  { label: 'Domains',          caption: 'Domains',  icon: 'grid',          title: 'Domains' },
   shared:   { label: 'Shared Brain',     caption: 'Shared',   icon: 'users',         title: 'Shared Brain' },
-  memory:   { label: 'Project context',  caption: 'Context',  icon: 'cpu',           title: 'Project context' },
+  // Phase 2 (2026-11-27, owner decision D3): the rail word is Projects; the
+  // view id, URLs, API and on-disk names are unchanged.
+  memory:   { label: 'Projects',         caption: 'Projects', icon: 'cpu',           title: 'Projects' },
   ingest:   { label: 'Ingest',           caption: 'Ingest',   icon: 'upload',        title: 'Ingest' },
   sync:     { label: 'Sync',             caption: 'Sync',     icon: 'refresh',       title: 'Sync' },
   settings: { label: 'Settings',         caption: 'Settings', icon: 'settings',      title: 'Settings' },

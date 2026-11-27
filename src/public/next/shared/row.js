@@ -71,11 +71,15 @@ export function row(o) {
   if (opts.opens && opts.href !== undefined && href === null) throw new Error('row: unsafe href');
   const opens = !!opts.opens;
   const titleHtml = escapeHtml(title);
+  // `targetId` (phase 2): a DOM id on the open target, so a reader the row
+  // opened can hand focus back to it on close (focus never lands on body).
+  const tid = typeof opts.targetId === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/.test(opts.targetId)
+    ? ' id="' + opts.targetId + '"' : '';
   const target = !opens
     ? '<span class="kit-row-title">' + titleHtml + '</span>'
     : href !== null
-      ? '<a class="kit-row-title kit-row-open" href="' + escapeHtml(href) + '" data-kit-row-open="' + escapeHtml(id) + '">' + titleHtml + '</a>'
-      : '<button type="button" class="kit-row-title kit-row-open" data-kit-row-open="' + escapeHtml(id) + '">' + titleHtml + '</button>';
+      ? '<a class="kit-row-title kit-row-open"' + tid + ' href="' + escapeHtml(href) + '" data-kit-row-open="' + escapeHtml(id) + '">' + titleHtml + '</a>'
+      : '<button type="button" class="kit-row-title kit-row-open"' + tid + ' data-kit-row-open="' + escapeHtml(id) + '">' + titleHtml + '</button>';
   const a = opts.action;
   const actionHtml = a && typeof a === 'object' && a.label
     ? '<button type="button" class="btn btn-xs btn-secondary kit-row-act"' + attrsHtml(a.attrs) + '>' + escapeHtml(a.label) + '</button>'

@@ -196,7 +196,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // component now, and the domain page's card is the design that won.
 import { renderOverview } from '../shared/overview.js';
 // v3.76.0 (F4): the app's ONE age clock, run from this view's own interval.
-import { tickAges as tickSharedAges } from '../shared/age-ticker.js';
+import { tickAges as tickSharedAges, ageWordsFor } from '../shared/age-ticker.js';
 // ── THE SIDEBAR IS THE KIT'S NOW (v3.65.0, R2) ──────────────────────────────
 // The maintainer, with both rails in front of him: *"We have two middle menus,
 // Domains and Context, in totally different designs ... I suggest we go with
@@ -239,7 +239,7 @@ import { renderDepthCell } from '../shared/depth-bar.js';
 // Step ④ draws the route's `meter` through it, and every token figure on the
 // step goes through its one formatter.
 import { renderBucket, formatTokens } from '../shared/bucket.js';
-import { fmtSize, fmtTokens } from '../shared/format.js';
+import { fmtSize, fmtTokens, fmtCount, fmtPages } from '../shared/format.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -382,12 +382,34 @@ import {
   toolReaderContent, setupCheckIsStale, CUSTOM_TOOL_VALUE,
   // v3.79.0 (contract §C): a Repository file and a computer, in the reader.
   fileReaderContent, computerReaderContent,
+  // phase 2 (Projects): the Agents tab draws these two fields and the matrix's facts.
+  customField, simpleRepo, machineNamesOf, repoCheckedFiles, toolGuideSteps,
 } from './setup-step.js';
 import { machineWord as thisMachine } from '../shared/platform.js';
 // v4.2 — THE APP-WIDE PRO SWITCH (shared/pro.js, package P). Steps 4 and 5 ask
 // `isPro()` at render and repaint on `onProChange`; the view never keeps its
 // own copy of the mode. `moreInProLine` is the one quiet door to what Pro adds.
-import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr, proDrawnAttr } from '../shared/pro.js';
+import { isPro, onProChange, moreInProLine, proAttr, proMarkAttr, proDrawnAttr, setPro } from '../shared/pro.js';
+// ── THE PROJECTS PAGE (phase 2, 2026-11-27) ─────────────────────────────────
+// The page's words are decided in views/projects/model.js and drawn from the
+// shared kit in views/projects/page.js; this view gathers its state into them.
+import {
+  TAB_ITEMS, renderProjectsPage as renderProjectsPageHtml, loadingPanel, nowPanel, agentsPanel, kitPanel,
+  historyPanel, budgetPanel, computersPanel, documentsTable, connectFlowHtml,
+} from './projects/page.js';
+import {
+  statusSentence, newestScope, harnessRows, toFixNotices, thisComputerNames, nowNotices, earlierNotes,
+  connectChecklist, documentsMeta, briefMeta, kitBudgetFigure, historyRows, filterHistory, connectionsSummary,
+  agentMatrix, agentMatrixPerHarness, computerRows, TRAVEL_ROUTES, START_WORDS, continuePrompt, sidebarFigure,
+} from './projects/model.js';
+import { activeTab, wireTabs, wireSegmented } from '../shared/tabs.js';
+import { wireRows } from '../shared/row.js';
+import { wireTable, nextSort } from '../shared/table.js';
+import { notice } from '../shared/notice.js';
+import { statusChip } from '../shared/status.js';
+import {
+  fetchInstallStatus, requestPlan, requestApply, renderPlanCard, renderResults, isInstallable, failureWords,
+} from './mcp-install.js';
 // v4.2.0 fix (e2e A, confusion 7): a computer is shown by its NAME, never its folder id.
 import { machineDisplayName } from '../shared/machine-name.js';
 // v3.99.2: plain-language errors. A failed request on this page becomes the
@@ -483,11 +505,13 @@ const READING_BUDGET_STANDARD = 65536;
 // the model — at start, on demand, or not offered — is taught in the control
 // that sets it rather than in a paragraph above it.
 const START_STATES = [
-  { value: 'read-first', label: 'read first',
+  // Phase 2: the on-screen words are Always read / When needed / Hidden
+  // (D4 vocabulary); the stored values are unchanged.
+  { value: 'read-first', label: 'Always read',
     hint: 'Handed to the agent at the start of every session.' },
-  { value: 'on-request', label: 'on request',
+  { value: 'on-request', label: 'When needed',
     hint: 'Listed; the agent opens it by name when the task needs it.' },
-  { value: 'not-at-start', label: 'not at start',
+  { value: 'not-at-start', label: 'Hidden',
     hint: 'Kept and mirrored, but not listed at the start. Name it in the brief if an agent '
       + 'should find it.' },
 ];
@@ -940,6 +964,24 @@ function freshState() {
     // applying, errors}`), never persisted, and its measured preview.
     planner: null,
     plannerPreview: null,
+
+    // ── THE PROJECTS PAGE (phase 2) ──────────────────────────────────────
+    // Which tab is drawn (null = read the remembered one at first paint), the
+    // Starting kit's open section, the Agents table's grouping, filter and
+    // sort, the History filters and sort, the newest pair's read (the Now
+    // card keeps it while an earlier note is open in the reader), and the
+    // connect flow's state (`{step, tool, status, plan, results, busy, error}`).
+    tab: null,
+    projectFilter: '',
+    kitOpen: null,
+    agentsView: 'computer',
+    agentsFilter: '',
+    agentsSort: null,
+    historyQ: '',
+    historyHarness: '',
+    historySort: null,
+    nowDetail: null,
+    connect: null,
   };
 }
 
@@ -1394,50 +1436,19 @@ registerView('memory', {
     if (typeof window !== 'undefined') window.addEventListener('focus', wakeHandler);
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wakeHandler);
     schedulePoll(mountToken);
-    // v4.2 — THE PRO SWITCH repaints steps 4 and 5 in place (never the page:
-    // a fold, a draft or a scroll elsewhere is kept), and a harness's reader
-    // that is open follows (its "What Setup read" fold opens with Pro).
+    // ── THE PRO SWITCH (phase 2, D1: two layouts, one model) ────────────
+    // Pro changes the page's LAYOUT — more tabs, tables instead of rows, the
+    // tile strip — so a switch repaints the page. A Pro-only tab that goes
+    // away falls back to Now, and focus that was on the page goes to the
+    // selected tab (never body).
     offPro = onProChange(() => {
       if (!isCurrentMount(mountToken)) return;
       closeAllListboxes();
-      // KEEP THE SECTION UNDER THE POINTER (DESIGN §2.6): the step whose
-      // "More in Pro" door was pressed — else the step nearest the top of
-      // the view — stays where it was; what Pro adds above it must not push
-      // it away. The page scrolls in `main`, not the window.
-      const anchorOf = () => {
-        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
-        const pressed = proDoorPressed && Date.now() - proDoorPressed.at < 3000 ? document.querySelector(proDoorPressed.sel) : null;
-        if (pressed) return proDoorPressed.sel;
-        const steps = ['.settings-block-context-session', '.settings-block-' + SETUP_JUMP];
-        const vis = steps.map((sel) => [sel, document.querySelector(sel)]).filter(([, el]) => el && el.getBoundingClientRect().bottom > 0);
-        return vis.length ? vis[0][0] : null;
-      };
-      const sel = anchorOf();
-      const before = sel ? document.querySelector(sel).getBoundingClientRect().top : null;
-      // v4.2.0 fix (audit M1): the browser's own scroll anchoring would
-      // correct the same move AGAIN at the next frame (measured: step 4 thrown
-      // 154 px with no script touching scrollTop), so it is off for the
-      // repaint and back on two frames later — one corrector, this one.
-      const mainEl = typeof document !== 'undefined' ? document.querySelector('main.main') : null;
-      if (mainEl && mainEl.style) {
-        mainEl.style.overflowAnchor = 'none';
-        const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f) => setTimeout(f, 16);
-        raf(() => raf(() => { try { mainEl.style.overflowAnchor = ''; } catch { /* */ } }));
-      }
-      patchSessionStart(mountToken);
-      patchSetup(mountToken);
-      proDoorPressed = null;
-      const after = sel && document.querySelector(sel) ? document.querySelector(sel).getBoundingClientRect().top : null;
-      const scroller = typeof document !== 'undefined' ? document.querySelector('main.main') : null;
-      if (scroller && before !== null && after !== null && Math.abs(after - before) > 1) scroller.scrollTop += after - before;
+      const act = typeof document !== 'undefined' ? document.activeElement : null;
+      const hadFocus = !!(act && typeof act.closest === 'function' && act.closest('.prj-page'));
+      render(mountToken);
+      if (hadFocus) prjFocus('prj-tab-' + currentTab());
     });
-    // Which step's door was pressed, read by the anchor above.
-    proDoorListener = (e) => {
-      const b = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-pro-more]') : null;
-      const block = b ? b.closest('.settings-block-context-session, .settings-block-' + SETUP_JUMP) : null;
-      if (block) proDoorPressed = { sel: block.classList.contains('settings-block-context-session') ? '.settings-block-context-session' : '.settings-block-' + SETUP_JUMP, at: Date.now() };
-    };
-    if (typeof document !== 'undefined') document.addEventListener('click', proDoorListener, true);
 
     return () => {
       // Timer hygiene: an armed delay timer surviving teardown would paint a
@@ -3489,6 +3500,8 @@ function render(token) {
   }
 
   wire(token);
+  // phase 2: the Projects page's own listeners (tabs, rows, tables, menu).
+  wireProjects(token);
   restoreFocus();
   // v3.67.0: step ④'s measurement follows the project read it describes. It
   // is asked for AFTER the paint, never on a switch's critical path.
@@ -3627,7 +3640,7 @@ export function sidebarBandSignature(projects, now = Date.now()) {
   }).join('|');
 }
 
-export function renderProjectGroups(projects, activeDomain, activeProject, identityMap) {
+export function renderProjectGroups(projects, activeDomain, activeProject, identityMap, pro = false) {
   const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
   const order = [];
   const byDomain = new Map();
@@ -3702,8 +3715,12 @@ export function renderProjectGroups(projects, activeDomain, activeProject, ident
       // clocks."* The kit puts the mark and the glyph BETWEEN the figure and
       // the age, which cannot be done by splitting a formatted line, and it
       // emits the glyph itself so a host cannot forget it.
-      const n = Number.isInteger(p.scopeCount) ? p.scopeCount : null;
-      const figure = [domain || null, n === null ? null : n + ' scope' + (n === 1 ? '' : 's')]
+      // PHASE 2 (Projects): the meta line is "<harness> · <age>" and the
+      // headline is line three; "N scopes" is gone (Pro adds the work-stream
+      // count, in the store's own uncapped figure).
+      const figure = [toolsText || null,
+        pro && Number.isInteger(p.distinctScopeCount ?? p.scopeCount)
+          ? fmtCount(p.distinctScopeCount ?? p.scopeCount) + ' work-stream' + ((p.distinctScopeCount ?? p.scopeCount) === 1 ? '' : 's') : null]
         .filter(Boolean).join(' · ');
       return renderSidebarRow({
         alias: 'mem',
@@ -3727,8 +3744,7 @@ export function renderProjectGroups(projects, activeDomain, activeProject, ident
         // OMITTED rather than filled with a placeholder when there is none.
         // v3.74.0: the TOOL leads line three and the headline follows it —
         // the widget's "project · tool" order, in the kit's two event slots.
-        event: toolsText || p.headline || '',
-        eventDetail: toolsText ? (p.headline || '') : '',
+        event: p.headline || '',
         active,
         stateClass: has ? '' : 'mem-row-quiet',
         ariaCurrent: active,
@@ -3769,14 +3785,14 @@ function renderSidebar(token) {
   // so the destination is announced before the press rather than discovered
   // after it.
   const head = renderSidebarHead({
-    title: 'Project context',
+    title: 'Projects',
     primary: {
       label: '+ New project',
       id: 'mem-new-project',
       className: 'mem-new-project',
     },
     secondary: {
-      label: 'Refresh',
+      label: 'Check again',
       id: 'mem-refresh',
       className: 'mem-refresh',
     },
@@ -3812,8 +3828,14 @@ function renderSidebar(token) {
   // below: test-next-memory-view §9 reads the token argument within a
   // 12-line window of the call, and it is right to — a call whose arguments
   // no longer fit on a screen is a call whose token is easy to drop.
-  const rows = renderProjectGroups(
-    state.projects, state.activeDomain, state.activeProject, state.domainIdentity);
+  // PHASE 2: Pro adds a filter field over the list (by project or domain name).
+  const q = isPro() ? String(state.projectFilter || '').trim().toLowerCase() : '';
+  const listed = q ? state.projects.filter((p) => p && (String(p.project) + ' ' + String(p.domain)).toLowerCase().includes(q)) : state.projects;
+  const filter = isPro()
+    ? '<div class="prj-sidebar-filter"><input type="search" class="prj-search" id="prj-filter" placeholder="Filter projects…"'
+      + ' aria-label="Filter projects" autocomplete="off" value="' + escapeHtml(state.projectFilter || '') + '"></div>' : '';
+  const rows = filter + renderProjectGroups(
+    listed, state.activeDomain, state.activeProject, state.domainIdentity, isPro());
   // v3.76.0 (F4): what the grouping was cut on, for the tick to compare.
   sidebarBandSig = sidebarBandSignature(state.projects);
 
@@ -3824,7 +3846,490 @@ function renderSidebar(token) {
   setSidebar(head + rows, token);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE PROJECTS PAGE (phase 2 of the Simple/Pro redesign, 2026-11-27)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The owner's verdict on the five-step Context page (ANALYSIS-pro-ux §A) was
+// that it followed the storage model, hid the value behind folds and showed
+// the measuring instrument instead of the answer. It is now ONE object page
+// (shared/object-page.js): the project's name, one status sentence, and a tab
+// strip — Now · Agents · Starting kit, and in Pro History · Budget · Computers.
+//
+// WHO DECIDES WHAT. This view still owns the state, every request and every
+// listener (the loaders, the brief editor, the add doors, the setup check and
+// its actions are unchanged). views/projects/model.js decides what the page
+// SAYS from that state; views/projects/page.js draws it from kit parts. The
+// functions below only gather the state into those models.
+//
+// THE TAB IS REMEMBERED per browser (a convenience, never state that must
+// survive): a Pro-only tab falls back to Now while Pro is off.
+
+const PROJECTS_TAB_KEY = 'curator-projects-tab-v1';
+function readRememberedTab() {
+  try {
+    const v = localStorage.getItem(PROJECTS_TAB_KEY);
+    return TAB_ITEMS.some((t) => t.id === v) ? v : 'now';
+  } catch { return 'now'; }
+}
+function rememberTab(id) {
+  try { localStorage.setItem(PROJECTS_TAB_KEY, id); } catch { /* private window — the app forgets */ }
+}
+/** The tab drawn now: the remembered one, or Now when it is Pro-only and Pro is off. */
+function currentTab() {
+  if (!state.tab) state.tab = readRememberedTab();
+  return activeTab(TAB_ITEMS, state.tab, isPro()) || 'now';
+}
+
+/** A save row's age in seconds, by this view's one clock. */
+function prjSeconds(row) { return effectiveSave(row).seconds; }
+
+/** A raw machine id → its display name among this project's machines. */
+function prjMachineName(raw) {
+  const read = state.projectRead;
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const s = setupFor();
+  // This computer is "this Mac" everywhere on the page (the sentence, the
+  // rows and the tables say it the same way).
+  if (s && s.data && thisComputerNames(s.data).has(raw)) return 'this ' + thisMachine();
+  const names = s && s.data ? machineNamesOf(s.data) : null;
+  if (names && names.has(raw)) return names.get(raw);
+  return machineDisplayName(raw, scopes.map((x) => x && x.machine));
+}
+
+/** The harness rows for the project on screen, or null before the check answers. */
+function prjHarnessRows() {
+  const s = setupFor();
+  return s && s.data ? harnessRows(s.data) : null;
+}
+
+/**
+ * THE NEWEST PAIR'S READ, kept apart from the OPEN pair. Opening an earlier
+ * note in the reader moves `state.detail` to that pair; the Now card must go
+ * on showing the newest note, so its read is remembered here whenever the
+ * open pair IS the newest one.
+ */
+function prjNewestDetail(newest) {
+  const k = activeKey();
+  const same = (d) => !!(d && newest && d.scope === newest.scope && (d.machine || null) === (newest.machine || null));
+  if (same(state.detail)) { state.nowDetail = { key: k, d: state.detail }; return state.detail; }
+  const nd = state.nowDetail;
+  return nd && nd.key === k && same(nd.d) ? nd.d : null;
+}
+
+/** The status sentence under the project's name. */
+function prjSentence(read) {
+  const s = setupFor();
+  return statusSentence({
+    read,
+    harnessRows: prjHarnessRows(),
+    secondsOf: prjSeconds,
+    thisNames: s && s.data ? thisComputerNames(s.data) : null,
+    machineWord: thisMachine(),
+    machineName: prjMachineName,
+    readonly: !!(read && read.readonly) || !!(state.detail && state.detail.readonly),
+  });
+}
+
+/** Pro's tile strip — the shared overview card (design rule 1). */
+function prjTiles(read) {
+  const scopes = (read && read.scopes) || [];
+  const newest = newestScope(scopes, prjSeconds);
+  const rows = prjHarnessRows();
+  const facts = foundationsFacts(read);
+  const cap = state.capture && state.capture.domain === state.activeDomain && state.capture.project === state.activeProject
+    ? state.capture.data : null;
+  const saves7 = cap && cap.savesByTool && Array.isArray(cap.savesByTool.tools)
+    ? cap.savesByTool.tools.reduce((n, t) => n + (Number.isInteger(t.events) ? t.events : 0), 0) : null;
+  const ss = sessionStartFor();
+  const mcpT = ss && ss.data && ss.data.tokens && Number.isInteger(ss.data.tokens.mcp) ? ss.data.tokens.mcp : null;
+  const domains = read && Array.isArray(read.knowledgeDomains) && read.knowledgeDomains.length
+    ? read.knowledgeDomains : (state.activeDomain ? [state.activeDomain] : []);
+  let pages = 0; let known = false;
+  for (const dm of domains) {
+    const k = state.knowledge instanceof Map ? state.knowledge.get(dm) : null;
+    if (k && k.data && Number.isInteger(k.data.pageCount)) { pages += k.data.pageCount; known = true; }
+  }
+  const eff = newest ? effectiveSave(newest) : null;
+  return renderOverview({
+    id: 'prj-ov',
+    eyebrow: 'Overview',
+    cards: [
+      { label: 'Last save', value: eff && eff.seconds !== null ? formatAge(eff.seconds) : 'none yet',
+        sub: newest ? [newest.harnessLabel || newest.harness || null, newest.machine ? prjMachineName(newest.machine) : null].filter(Boolean).join(' · ') : undefined },
+      { label: 'Agents', value: rows ? fmtCount(rows.length) : '…',
+        sub: rows ? (rows.filter((r) => r.kind === 'needs-you').length ? fmtCount(rows.filter((r) => r.kind === 'needs-you').length) + ' need you' : 'none need you') : undefined },
+      { label: 'Saves', value: saves7 === null ? '—' : fmtCount(saves7), sub: 'last 7 days' },
+      { label: 'Documents', value: fmtCount(facts.count), sub: fmtCount(facts.readFirstCount) + ' always read' },
+      { label: 'Knowledge', value: known ? fmtPages(pages) : '…', sub: domains.length === 1 ? '1 domain' : fmtCount(domains.length) + ' domains' },
+      { label: 'Starting kit', value: mcpT === null ? '…' : fmtTokens(mcpT) + ' tokens',
+        sub: mcpT === null ? undefined : ssPct(mcpT, contextWindowNow()) + ' of ' + windowWord(contextWindowNow()) },
+    ],
+  });
+}
+
+/** The "···" menu: actions, not a value (listbox action rows). */
+function prjMoreCfg() {
+  return {
+    id: 'prj-more',
+    triggerText: '···',
+    ariaLabel: 'More actions for this project',
+    triggerClass: 'btn btn-secondary',
+    actionValues: ['copy-agent', 'check-again'],
+    options: [
+      { value: 'copy-agent', label: 'Copy agent instructions', action: true },
+      { value: 'check-again', label: 'Check again', action: true },
+    ],
+  };
+}
+
+/** NOW — the model for views/projects/page.js nowPanel. */
+function prjNowModel(read) {
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const newest = newestScope(scopes, prjSeconds);
+  const nd = prjNewestDetail(newest);
+  const d = state.detail;
+  const cur = nd && nd.current && nd.current.present ? nd.current : null;
+  const readonly = !!(d && d.readonly) || !!(read && read.readonly);
+  const els = newerOnAnotherMachine(scopes, nd || d);
+  const n = unlistedCount(read);
+  const machines = d && typeof d.unlistedMachines === 'number' && d.unlistedMachines > 0 ? d.unlistedMachines : 0;
+  const unlistedReason = (read && typeof read.unlistedReason === 'string' && read.unlistedReason)
+    ? read.unlistedReason
+    : n + ' director' + (n === 1 ? 'y entry is' : 'ies are') + ' not addressable by name. They are on disk and are NOT read.';
+  const src = cur || newest || {};
+  const notices = nowNotices({
+    readonly,
+    staleWrite: !!state.staleWrite,
+    lastSaveKind: src.lastSaveKind || null,
+    lastSaveNote: firstNote(src.lastSaveNotes),
+    sharedHandoffs: scopes.filter((x) => x && x.harnessShared === true)
+      .map((x) => ({ scope: x.scope, who: (x.harnesses || []).slice(0, 4).join(' and ') })),
+    elsewhere: els ? { machine: prjMachineName(els.machine), scope: els.scope, age: formatAge(effectiveSave(els).seconds) } : null,
+    unlisted: (n || machines) ? { reason: unlistedReason + (machines ? ' ' + machines + ' machine folder' + (machines === 1 ? ' is' : 's are') + ' also unreadable.' : '') } : null,
+    truncated: !!(cur && cur.truncated),
+    sanitised: !!(cur && cur.sanitisedOnRead),
+  });
+  // The delete card and its outcome, wherever the press came from.
+  const onThis = (x) => !!x && x.domain === state.activeDomain && x.project === state.activeProject;
+  const deleteHtml = (!readonly && onThis(state.wsDelete) ? wsDeleteCardHtml(state.wsDelete) : '')
+    + (onThis(state.wsDeleteOutcome)
+      ? '<div class="mem-wsdel-outcome" role="status"><span>' + escapeHtml(state.wsDeleteOutcome.text) + '</span>'
+        + '<button type="button" class="btn btn-ghost btn-xs" id="mem-ws-del-dismiss">Dismiss</button></div>'
+      : '');
+  const m = {
+    pro: isPro(),
+    notices,
+    hasSave: scopes.length > 0,
+    error: state.detailError && !nd ? state.detailError : null,
+    deleteHtml,
+  };
+  if (!m.hasSave) {
+    const s = setupFor();
+    m.checklist = connectChecklist({ harnessRows: prjHarnessRows(), setup: s && s.data });
+    return m;
+  }
+  const openIsNewest = !d || (newest && d.scope === newest.scope && (d.machine || null) === (newest.machine || null));
+  const split = cur ? splitHandoffPreamble(cur.text || '') : null;
+  const eff = effectiveSave(cur || newest);
+  const who = (newest && (newest.harnessLabel || newest.harness)) || harnessOf(nd) || '';
+  const computer = nd && nd.machineIsThisMachine === true ? 'this ' + thisMachine()
+    : newest && newest.machine ? prjMachineName(newest.machine) : '';
+  m.handoff = {
+    title: (split && split.headline) || (newest && newest.headline) || (newest && newest.scope) || 'Handoff',
+    bodyHtml: cur ? renderMarkdown(split.body)
+      : (nd && nd.current && !nd.current.present
+        ? '<p class="prj-wait">' + escapeHtml(nd.message || 'Nothing has been saved under this handoff on this machine yet.') + '</p>'
+        : '<p class="prj-wait" aria-busy="true">Reading the note…</p>'),
+    footer: [who, computer, formatAge(eff.seconds)].filter(Boolean).join(' · '),
+    targetId: openIsNewest ? 'mem-ws-active' : undefined,
+    deleteScope: readonly || !newest ? null : newest.scope,
+  };
+  m.earlier = earlierNotes(scopes, newest, { secondsOf: prjSeconds, machineName: prjMachineName, limit: 4 })
+    .map((e) => ({ ...e, targetId: d && !openIsNewest && d.scope === e.scope && (d.machine || null) === e.machine ? 'mem-ws-active' : undefined }));
+  if (m.pro && newest) {
+    m.proFacts = [
+      { label: 'Work-stream', value: newest.scope },
+      { label: 'Harness', value: who || '—' },
+      { label: 'Model', value: newest.model || (nd && nd.journal && nd.journal.entries && nd.journal.entries[0] && nd.journal.entries[0].model) || '—' },
+      { label: 'Computer', value: computer || '—' },
+      { label: 'Size', value: Number.isInteger(newest.bytes) ? fmtSize(newest.bytes) : '—' },
+      { label: 'File', value: 'state/' + state.activeProject + '/' + newest.scope + (newest.machine ? '/' + newest.machine : '') + '/current.md' },
+    ];
+    const entries = nd && nd.journal && Array.isArray(nd.journal.entries) ? nd.journal.entries : [];
+    m.journal = {
+      rows: entries.map((e, i) => ({ id: 'j' + i, cells: {
+        when: { text: formatAge(effectiveSave({ writtenAt: e.at }).seconds) || '—', sort: Date.parse(e.at) || null },
+        harness: e.harnessLabel || e.harness || '—', model: e.model || '—', headline: e.headline || '—',
+      } })),
+      moreHtml: nd && nd.journal && nd.journal.hasMore
+        ? '<div class="prj-actions"><button type="button" class="btn btn-ghost btn-xs" id="mem-journal-more">Show more</button></div>' : '',
+    };
+  }
+  return m;
+}
+
+/** AGENTS — the model for agentsPanel. */
+function prjAgentsModel() {
+  const s = setupFor();
+  const data = s && s.data;
+  const pro = isPro();
+  const rows = data ? harnessRows(data) : [];
+  const m = {
+    pro,
+    state: !s || (s.loading && !data) ? 'loading' : data ? 'ok' : 'error',
+    error: s && s.error,
+    recheckError: data && s.error ? s.error : null,
+    rows,
+    notices: data ? toFixNotices(data) : [],
+    unsynced: data && data.sync && data.sync.configured && Number.isInteger(data.sync.pending) && data.sync.pending > 0 ? data.sync.pending : 0,
+    checkedWords: data && data.checkedAt ? ageWordsFor(data.checkedAt, Date.now(), 'checked') : '',
+    pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
+    customHtml: data ? customField({ customOpen: state.setupCustomOpen, customDraft: state.setupCustomDraft, customError: state.setupCustomError }) : '',
+    repoHtml: data ? simpleRepo(data, {
+      forceRepoOpen: state.setupRepoForceOpen, editRepo: state.setupEditRepo, repoDraft: state.setupRepoDraft,
+      repoError: state.setupRepoError, pickUnavailable: state.setupPickUnavailable,
+    }) + (state.setupRepoError && !(state.setupRepoForceOpen || state.setupEditRepo)
+      ? '<p class="mem-setup-err" role="alert">' + escapeHtml(state.setupRepoError) + '</p>' : '') : '',
+  };
+  if (pro && data) {
+    const all = agentMatrix(data, { savesByTool: state.capture && state.capture.data && state.capture.data.savesByTool, machineWord: thisMachine() });
+    const view = state.agentsView === 'harness' ? 'harness' : 'computer';
+    const shown = view === 'harness' ? agentMatrixPerHarness(all) : all;
+    const q = String(state.agentsFilter || '').trim().toLowerCase();
+    m.matrix = {
+      view, filter: state.agentsFilter || '', sortBy: state.agentsSort || null,
+      rows: q ? shown.filter((r) => (r.harness + ' ' + r.computer).toLowerCase().includes(q)) : shown,
+    };
+  }
+  return m;
+}
+
+/** STARTING KIT — the model for kitPanel. */
+function prjKitModel(read) {
+  const facts = foundationsFacts(read);
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
+  const pro = isPro();
+  const ss = sessionStartFor();
+  const data = ss && ss.data;
+  const b = read && read.brief && read.brief.present ? read.brief : null;
+  const domains = read && Array.isArray(read.knowledgeDomains) && read.knowledgeDomains.length
+    ? read.knowledgeDomains.filter((x) => typeof x === 'string' && x) : (state.activeDomain ? [state.activeDomain] : []);
+  let pages = 0; let known = 0;
+  for (const dm of domains) {
+    const k = state.knowledge instanceof Map ? state.knowledge.get(dm) : null;
+    if (k && k.data && Number.isInteger(k.data.pageCount)) { pages += k.data.pageCount; known++; }
+  }
+  const mcpT = data && data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp
+    : (data && data.bytes && Number.isInteger(data.bytes.mcp) ? Math.round(data.bytes.mcp / 4) : null);
+  // A setting that is not at its default is SAID in Simple, in words (D1).
+  const owner = read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+  const said = [];
+  if (owner !== null) said.push('Reading budget: ' + presetName(owner));
+  if (!contextWindowIsDefault() && state.ctxSettings) said.push('Window: ' + windowWord(contextWindowNow()));
+  if (harnessNow() !== null) said.push(HARNESS_LABEL + ': ' + tok(harnessNow()) + ' (your estimate)');
+  const notices = [];
+  const budgetSentence = foundationsBudgetWarning(facts);
+  if (budgetSentence) {
+    notices.push({ tone: 'attention', title: 'The always-read documents are over their budget.', line: budgetSentence,
+      actions: readonly ? [] : [{ label: 'Choose documents', attrs: { 'data-prj-act': 'documents-open' } }] });
+  }
+  if (state.budgetError && state.budgetError.domain === state.activeDomain && state.budgetError.project === state.activeProject) {
+    notices.push({ tone: 'error', title: 'The reading budget was not changed.', line: String(state.budgetError.error) });
+  }
+  if (state.ctxError) notices.push({ tone: 'error', title: 'This computer’s window setting was not saved.', line: String(state.ctxError) });
+  if (state.knowledgeSaveError) notices.push({ tone: 'error', title: 'The knowledge domains were not changed.', line: String(state.knowledgeSaveError) });
+  const open = state.briefEdit ? 'brief' : state.kitOpen || null;
+  const docRows = facts.docs.map((d) => {
+    const slug = String(d.slug || '');
+    const fw = FSRC.rowFreshWord(d, facts.sources);
+    const bytes = Number.isInteger(d.bytes) ? d.bytes : 0;
+    return {
+      slug, targetId: 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-'),
+      title: d.title || slug,
+      source: FSRC.sourceWord(d),
+      startWord: START_WORDS[fndStartOf(d)] || '',
+      startHtml: readonly ? escapeHtml(START_WORDS[fndStartOf(d)] || '')
+        : '<span data-fnd-first="' + escapeHtml(slug) + '">' + renderListboxHtml(fndStartCfg(d, state.startSaving === slug)) + '</span>',
+      tokens: fmtTokens(bytes / 4), tokenCount: bytes / 4,
+      updated: d.updatedAt ? (formatAge(Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000))) || fw.word) : fw.word,
+      updatedSort: d.updatedAt ? -Date.parse(d.updatedAt) : null,
+    };
+  });
+  return {
+    pro,
+    readonly,
+    open,
+    notices,
+    sessionNoticesHtml: foundationsNotices(read) + (data ? sessionNoticesHtml(data, facts, readonly) : ''),
+    brief: { meta: briefMeta({ present: !!b, words: b ? briefStats(splitHandoffPreamble(b.text || '').body).words : 0 }) },
+    documents: { meta: documentsMeta(facts) },
+    knowledge: {
+      meta: domains.join(', ') + (known ? ' · ' + fmtPages(pages) + ' an agent can search' : ''),
+      dot: state.domainIdentity && domains[0] ? domainIdentityClass(state.domainIdentity, domains[0]) : '',
+    },
+    figure: mcpT === null ? null : kitBudgetFigure(mcpT, contextWindowNow()),
+    figureError: ss && ss.error && !data ? ss.error : null,
+    settingsWords: said.join(' · '),
+    briefEditorHtml: readonly ? '' : renderBriefEditor(read, readonly),
+    documentsHtml: renderFoundations(read, { noTable: true }),
+    docTable: (pro || open === 'documents') && docRows.length && !(planFor() && planFor().result && Array.isArray(planFor().result.proposals))
+      ? documentsTable(docRows) : '',
+    knowledgeHtml: renderKnowledge(),
+    plannerHtml: data ? plannerFoldHtml(read, data, readonly) : '',
+  };
+}
+
+/** HISTORY (Pro) — the model for historyPanel. */
+function prjHistoryModel(read) {
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
+  const all = historyRows(scopes, { secondsOf: prjSeconds, machineName: prjMachineName });
+  const d = state.detail;
+  const rows = filterHistory(all, state.historyQ, state.historyHarness).map((r) => ({
+    ...r,
+    targetId: d && d.scope === r.scope && (d.machine || null) === r.machine ? 'mem-ws-active' : undefined,
+  }));
+  const cap = state.capture && state.capture.domain === state.activeDomain && state.capture.project === state.activeProject
+    ? state.capture.data : null;
+  const sbt = cap && cap.savesByTool && Array.isArray(cap.savesByTool.tools) ? cap.savesByTool : null;
+  const harnesses = [...new Set(all.map((r) => r.harness).filter(Boolean))].sort();
+  const onThis = (x) => !!x && x.domain === state.activeDomain && x.project === state.activeProject;
+  return {
+    rows,
+    q: state.historyQ || '',
+    harnesses,
+    harnessPickerHtml: harnesses.length > 1 ? renderListboxHtml(prjHistoryHarnessCfg(harnesses)) : '',
+    sortBy: state.historySort || null,
+    summary: connectionsSummary(cap),
+    savesLine: sbt ? sbt.tools.map((t) => (t.label || t.id) + ' ' + fmtCount(t.events)).join(' · ')
+      + (sbt.lowerBound ? ' (at least — some journals were read only from their newest part)' : '') : null,
+    canDelete: !readonly,
+    deleteHtml: (!readonly && onThis(state.wsDelete) ? wsDeleteCardHtml(state.wsDelete) : '')
+      + (onThis(state.wsDeleteOutcome)
+        ? '<div class="mem-wsdel-outcome" role="status"><span>' + escapeHtml(state.wsDeleteOutcome.text) + '</span>'
+          + '<button type="button" class="btn btn-ghost btn-xs" id="mem-ws-del-dismiss">Dismiss</button></div>' : ''),
+  };
+}
+function prjHistoryHarnessCfg(harnesses) {
+  return {
+    id: 'prj-history-harness',
+    value: state.historyHarness || '',
+    ariaLabel: 'Show the notes of one harness',
+    options: [{ value: '', label: 'Every harness' }].concat(harnesses.map((h) => ({ value: h, label: h }))),
+  };
+}
+
+/** BUDGET (Pro) — the model for budgetPanel. */
+function prjBudgetModel(read) {
+  const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
+  const ss = sessionStartFor();
+  const data = ss && ss.data;
+  const owner = Number.isInteger(read && read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+  const ctxBusy = state.ctxSaving === true;
+  const ctl = (label, id, control) => '<span class="mem-ss-ctl"><span class="mem-ss-ctl-label" id="' + id + '">' + label + '</span>' + control + '</span>';
+  const budgetCtl = readonly
+    ? '<span class="mem-ss-budget-fixed">' + escapeHtml(owner === null ? 'Default' : presetName(owner)) + '</span>'
+    : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true));
+  const win = contextWindowNow();
+  const layers = data && Array.isArray(data.layers) ? data.layers.map((l) => ({
+    layer: l.label || l.key, tokens: fmtTokens(l.tokens || 0), tokenCount: l.tokens || 0,
+    size: fmtSize(l.bytes || 0), bytes: l.bytes || 0, share: ssPct(l.tokens || 0, win),
+  })) : [];
+  if (data && data.tokens && Number.isInteger(data.tokens.mcp)) {
+    layers.push({ layer: 'Total at start', tokens: fmtTokens(data.tokens.mcp), tokenCount: data.tokens.mcp,
+      size: fmtSize((data.bytes && data.bytes.mcp) || 0), bytes: (data.bytes && data.bytes.mcp) || 0,
+      share: ssPct(data.tokens.mcp, win) + ' of ' + windowWord(win) });
+  }
+  return {
+    budgetPickersHtml: '<div class="mem-ss-head">'
+      + ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
+      + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
+      + ctl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)))
+      + '</div>' + ctxEditHtml(),
+    meterHtml: sessionMeterHtml(data, ss && ss.error),
+    layers,
+    reachHtml: data ? sessionReachMonitor(data) : '',
+  };
+}
+
+/** COMPUTERS (Pro) — the model for computersPanel. */
+function prjComputersModel() {
+  const s = setupFor();
+  const data = s && s.data;
+  if (!data) return null;
+  const sync = data.sync || {};
+  return {
+    rows: computerRows(data),
+    routes: TRAVEL_ROUTES,
+    repo: data.repo ? { path: data.repo.display || data.repo.path } : null,
+    pending: sync.configured && Number.isInteger(sync.pending) ? sync.pending : null,
+    syncConfigured: !!sync.configured,
+    files: [repoCheckedFiles(data)],
+  };
+}
+
+/** The selected tab's panel. */
+function prjPanelHtml(tab, read) {
+  if (state.detailError && !read) {
+    return notice({ tone: 'error', title: 'Could not read this project’s context.', line: state.detailError });
+  }
+  if (!read) return loadingPanel('Reading this project…');
+  if (tab === 'agents') return agentsPanel(prjAgentsModel());
+  if (tab === 'kit') return kitPanel(prjKitModel(read));
+  if (tab === 'history') return historyPanel(prjHistoryModel(read));
+  if (tab === 'budget') return budgetPanel(prjBudgetModel(read));
+  if (tab === 'computers') {
+    const m = prjComputersModel();
+    return m ? computersPanel(m) : loadingPanel('Checking this computer…');
+  }
+  return nowPanel(prjNowModel(read));
+}
+
+/** The whole project page. */
+function renderProjectsPage() {
+  const read = state.projectRead;
+  const tab = currentTab();
+  const pro = isPro();
+  const rows = prjHarnessRows();
+  const s = setupFor();
+  return renderProjectsPageHtml({
+    pro,
+    tab,
+    kicker: String(state.activeDomain || '') + ' / ' + String(state.activeProject || ''),
+    title: String(state.activeProject || ''),
+    identityDot: state.domainIdentity ? domainIdentityClass(state.domainIdentity, String(state.activeDomain || '')) : '',
+    sentence: read ? prjSentence(read) : '',
+    menuHtml: renderListboxHtml(prjMoreCfg()),
+    tilesHtml: pro && read ? prjTiles(read) : '',
+    counts: {
+      agents: rows ? rows.length : undefined,
+      history: read && Array.isArray(read.scopes) ? read.scopes.length : undefined,
+      computers: s && s.data ? computerRows(s.data).length : undefined,
+    },
+    panelHtml: renderCopyOutcome() + prjPanelHtml(tab, read),
+  });
+}
+
 function renderMain(token) {
+  let body;
+  if (state.loading) {
+    body = gatedLoader(loadGate, 'Loading your projects…');
+  } else if (state.indexError) {
+    body = renderStatus({
+      state: 'danger', title: 'Could not load your projects', detail: state.indexError,
+      support: supportOf(state.indexError),
+    });
+  } else if (!state.activeProject) {
+    body = renderNoProjects();
+  } else {
+    setMain(renderProjectsPage(), token);
+    return;
+  }
+  setMain('<div class="prj-page">' + body + '</div>', token);
+}
+
+function renderMainV1(token) {
   let body;
   if (state.loading) {
     body = gatedLoader(loadGate, 'Loading project context…');
@@ -8784,7 +9289,7 @@ function foundationsNotices(read) {
   return notes;
 }
 
-function renderFoundations(read) {
+function renderFoundations(read, opts = {}) {
   const facts = foundationsFacts(read);
   // A READ-ONLY SHARED BRAIN MIRROR (P1-3). Read exactly where `renderBrief`
   // reads it, off the same two fields, so the two blocks cannot disagree about
@@ -8947,6 +9452,21 @@ function renderFoundations(read) {
   // v3.67.0: the helper's proposal, when there is one for THIS project.
   const plan = readonly ? null : planFor();
   const proposal = plan && plan.result && Array.isArray(plan.result.proposals) ? plan : null;
+  // ── THE PROJECTS PAGE (phase 2): THE DOORS AND FLOWS, WITHOUT THE TABLE ──
+  // The Starting kit tab lists the documents in the kit's data table
+  // (views/projects/page.js documentsTable); this section then contributes
+  // what the table is not: the add doors, the GitHub mirrors strip, the add
+  // panel, the editor and the reading-plan panel. The over-budget sentence is
+  // a kit notice on the tab (never-hide), so it is not repeated here.
+  // A reading plan with proposals keeps today's table: its "Suggested"
+  // column and ticks live there (re-skin pending, see the contract).
+  if (opts.noTable && !proposal) {
+    return '<div class="mem-fnd-row">'
+      + '<div class="mem-fnd-head-controls">' + action + '</div>' + strip + addPanel
+      + (editing ? renderFoundationEditor(facts) : (plan && plan.open ? renderPlanPanel(facts, plan) : ''))
+      + renderFoundationStop(facts)
+      + '</div>' + askBtn.panel + withheld;
+  }
   const rows = facts.docs.map(
     (d) => fndRowHtml(d, keptOnly, readonly, facts.bytes,
       proposal ? planRowFor(proposal, d.slug) : undefined,
@@ -11666,7 +12186,8 @@ function sessionMeterHtml(data, error) {
     // Pro off there is none on screen, and one sentence for both modes keeps
     // the warning's words identical (the Pro guard's parity rule). With Pro
     // on, the harness picker sits in the step's head beside it.
-    inner = renderBucket(m, { detailAttr: proAttr(), labelAttr: proMarkAttr(), unsetHint: '' }) + which + hint;
+    // Phase 2: drawn only on Pro's Budget tab, open, with no PRO label (D5).
+    inner = renderBucket(m, { detailAttr: '', labelAttr: '', unsetHint: '' }) + which + hint;
   } else {
     // v4.2.0 fix (audit M3): a failed measurement is a refusal — marked by
     // meaning (`data-never-pro`), so the Pro guard protects it.
@@ -12241,7 +12762,26 @@ async function loadSetup(domain, project, token) {
 function patchSetup(token) {
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
   const block = document.querySelector('.settings-block-' + SETUP_JUMP);
-  if (!block) return;
+  if (!block) {
+    // THE PROJECTS PAGE (phase 2): the check feeds the header's sentence, the
+    // Agents tab, the Computers tab and the tiles, so a new reading repaints
+    // the page (the reader is its own root and is followed below).
+    if (document.querySelector('.prj-page')) {
+      const rIn = document.getElementById('mem-setup-repo-input');
+      if (rIn) state.setupRepoDraft = rIn.value;
+      const cIn = document.getElementById('mem-setup-custom-input');
+      if (cIn) state.setupCustomDraft = cIn.value;
+      render(token);
+      const s1 = setupFor();
+      if (setupReader && isCurrentReader(setupReader.epoch) && s1 && s1.data) {
+        if (setupReader.kind === 'file') openSetupFileReader(setupReader.key, token, true);
+        else if (setupReader.kind === 'computer') openSetupComputerReader(setupReader.key, token);
+        else refreshSetupToolReader(setupReader.key, token);
+      }
+      if (state.connect && state.connect.epoch !== null && isCurrentReader(state.connect.epoch)) paintConnect(token);
+    }
+    return;
+  }
   // What is being typed survives a repaint (a focus re-check lands mid-word).
   const repoIn = document.getElementById('mem-setup-repo-input');
   if (repoIn && block.contains(repoIn)) state.setupRepoDraft = repoIn.value;
@@ -12341,11 +12881,6 @@ function openSetupToolReader(toolId, token, step = null, focusIn = false) {
   // when it closes, or focus falls to <body> and the steps are lost behind a
   // closed fold. With Pro on, opening a harness opens its fold; with Pro off
   // the row is always on screen.
-  if (isPro() && !(state.openFolds && state.openFolds['setup-tools'])) {
-    if (!state.openFolds) state.openFolds = {};
-    state.openFolds['setup-tools'] = true;
-    patchSetupBlockOnly(token);
-  }
   showSetupReader({ kind: 'tool', key: toolId }, content, token);
   // "Continue setup" / "Show the fix" open the reader AT their step.
   if (step && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
@@ -14447,6 +14982,393 @@ function bindFoldToggles(root) {
       } catch { /* private window, blocked site data, quota — the app forgets */ }
     });
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE PROJECTS PAGE'S LISTENERS (phase 2)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// One delegated pass over the page after every paint (`render` calls it after
+// `wire`). Every control that already had a listener keeps it: the setup
+// actions are `data-setup-act` (bindSetup), a handoff delete is
+// `data-ws-delete` (bindWorkStreamRows), the document doors and editors are
+// bindFoundationRows', the pickers are mounted from the same cfg they were
+// rendered from. What is new here is only the page's own: the tabs, the
+// rows' opens, the tables' sorts and opens, the "···" menu, and `data-prj-act`.
+
+/** Put focus on an element by id after a paint (never on body). */
+function prjFocus(id, select) {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const el = document.getElementById(id);
+  if (!el || typeof el.focus !== 'function') return;
+  try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+  if (select && typeof el.setSelectionRange === 'function') {
+    try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* not a text field */ }
+  }
+}
+
+/** Open the brief in the reader (a row press), never inline. */
+function openBriefReader(token) {
+  const read = state.projectRead;
+  const b = read && read.brief && read.brief.present ? read.brief : null;
+  const body = b ? splitHandoffPreamble(b.text || '').body : '';
+  openReader({
+    slug: 'state/' + (state.activeProject || '') + '/project.md',
+    title: 'Brief',
+    type: 'memory',
+    typeLabel: 'brief',
+    bodyHtml: b ? '<div class="mem-reader-doc">' + renderMarkdown(body) + '</div>'
+      : renderDescription('No brief yet. Press Edit on the Starting kit tab to write the standing instructions every agent reads first.'),
+    backlinks: [],
+    hideBacklinks: true,
+    returnFocusTo: 'prj-kit-brief',
+  }, token);
+}
+
+/** Edit → the brief editor on the Starting kit tab (the same state the old pencil set). */
+function startBriefEdit(token) {
+  const read = state.projectRead;
+  const present = !!(read && read.brief && read.brief.present);
+  const text = present ? (read.brief.text || '') : BRIEF_TEMPLATE;
+  state.tab = 'kit';
+  rememberTab('kit');
+  state.kitOpen = 'brief';
+  state.briefEdit = {
+    domain: state.activeDomain, project: state.activeProject,
+    loaded: text, text, busy: false, error: null, preview: false, confirmDiscard: false,
+  };
+  render(token);
+  prjFocus('mem-brief-text');
+}
+
+/** Copy the "continue" prompt, with the toast every copy on this page uses. */
+async function copyContinuePrompt() {
+  const text = continuePrompt(state.activeDomain, state.activeProject);
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast({ key: 'prj-continue', tone: 'success', title: 'Copied — paste it into your agent', lines: [text] });
+  } catch {
+    showToast({ key: 'prj-continue', tone: 'danger', title: 'Could not copy', lines: ['Select it by hand:', text] });
+  }
+}
+
+/** Row ids carry their own target: "note:<scope>:<machine>", URI-encoded. */
+function prjPairOf(id) {
+  const parts = String(id || '').split(':');
+  return { scope: decodeURIComponent(parts[1] || ''), machine: parts[2] ? decodeURIComponent(parts[2]) : null };
+}
+
+function wireProjects(token) {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const pf = typeof document.getElementById === 'function' ? document.getElementById('prj-filter') : null;
+  if (pf && !pf.__prjBound) {
+    pf.__prjBound = true;
+    pf.addEventListener('input', () => { state.projectFilter = pf.value; render(token); prjFocus('prj-filter', true); });
+  }
+  const page = document.querySelector('.prj-page');
+  if (!page || page.__prjWired) return;
+  page.__prjWired = true;
+
+  if (document.getElementById('prj-more')) {
+    const cfg = prjMoreCfg();
+    cfg.onChange = (v) => {
+      if (v === 'copy-agent') copyAgentInstructions(token).catch((err) => reportAsyncMountFailure(token, err));
+      if (v === 'check-again') {
+        refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+        reloadActive(token).catch((err) => reportAsyncMountFailure(token, err));
+        maybeLoadSetup(token, true);
+      }
+    };
+    mountListbox(cfg);
+  }
+  if (document.getElementById('prj-history-harness')) {
+    const read = state.projectRead;
+    const all = historyRows((read && read.scopes) || [], { secondsOf: prjSeconds });
+    const cfg = prjHistoryHarnessCfg([...new Set(all.map((r) => r.harness).filter(Boolean))].sort());
+    cfg.onChange = (v) => { state.historyHarness = v || ''; render(token); prjFocus('prj-history-harness'); };
+    mountListbox(cfg);
+  }
+
+  wireTabs(page, (id) => {
+    if (!id) return;
+    state.tab = id;
+    rememberTab(id);
+    closeAllListboxes();
+    render(token);
+    prjFocus('prj-tab-' + id);
+  });
+  wireSegmented(page, (id) => {
+    state.agentsView = id === 'harness' ? 'harness' : 'computer';
+    render(token);
+    const b = document.querySelector('[data-kit-seg="' + state.agentsView + '"]');
+    if (b && typeof b.focus === 'function') b.focus();
+  });
+  wireRows(page, (id) => {
+    const s = String(id || '');
+    if (s.startsWith('tool:')) { openSetupToolReader(s.slice(5), token, null, true); return; }
+    if (s.startsWith('note:')) {
+      const p = prjPairOf(s);
+      openWorkStream(p.scope, p.machine, token).catch((err) => reportAsyncMountFailure(token, err));
+      return;
+    }
+    if (s === 'kit:brief') { openBriefReader(token); return; }
+    if (s === 'kit:documents' || s === 'kit:knowledge') {
+      const what = s.slice(4);
+      state.kitOpen = state.kitOpen === what ? null : what;
+      render(token);
+      prjFocus('prj-kit-' + what);
+    }
+  });
+  const SORT_COLS = {
+    'prj-history': [{ id: 'size', numeric: true }, { id: 'when' }],
+    'prj-agents': [{ id: 'saves', numeric: true }],
+    'prj-docs': [{ id: 'tokens', numeric: true }],
+  };
+  wireTable(page, {
+    onSort: (col, tableId) => {
+      const key = tableId === 'prj-history' ? 'historySort' : tableId === 'prj-agents' ? 'agentsSort' : tableId === 'prj-docs' ? 'docsSort' : null;
+      if (!key) return;
+      state[key] = nextSort(state[key], col, SORT_COLS[tableId] || []);
+      render(token);
+      const b = document.querySelector('[data-kit-table="' + tableId + '"] [data-kit-sort="' + col + '"]');
+      if (b && typeof b.focus === 'function') b.focus();
+    },
+    onOpen: (rowId) => {
+      const s = String(rowId || '');
+      if (s.startsWith('note:')) {
+        const p = prjPairOf(s);
+        openWorkStream(p.scope, p.machine, token).catch((err) => reportAsyncMountFailure(token, err));
+      } else if (s.startsWith('tool:')) {
+        openSetupToolReader(s.split(':')[1] || '', token, null, true);
+      } else if (s.startsWith('doc:')) {
+        openFoundation(s.slice(4), token).catch((err) => reportAsyncMountFailure(token, err));
+      } else if (s.startsWith('comp:')) {
+        openSetupComputerReader(s.slice(5), token);
+      }
+    },
+  });
+
+  page.addEventListener('input', (e) => {
+    const t = e.target;
+    const which = t && t.getAttribute ? t.getAttribute('data-prj-filter') : null;
+    if (which === 'agents') { state.agentsFilter = t.value; render(token); prjFocus('prj-agents-filter', true); }
+    if (which === 'history') { state.historyQ = t.value; render(token); prjFocus('prj-history-q', true); }
+  });
+
+  page.addEventListener('click', (e) => {
+    const b = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-prj-act]') : null;
+    if (!b || !page.contains(b)) return;
+    const act = b.getAttribute('data-prj-act');
+    if (act === 'connect') { openConnectFlow(token); return; }
+    if (act === 'pro-on') { setPro(true); return; }
+    if (act === 'reload') { reloadActive(token).catch((err) => reportAsyncMountFailure(token, err)); return; }
+    if (act === 'copy-continue') { copyContinuePrompt(); return; }
+    if (act === 'open-note') {
+      const read = state.projectRead;
+      const newest = newestScope((read && read.scopes) || [], prjSeconds);
+      if (newest) openWorkStream(newest.scope, newest.machine || null, token).catch((err) => reportAsyncMountFailure(token, err));
+      return;
+    }
+    if (act === 'brief-edit') { startBriefEdit(token); return; }
+    if (act === 'documents-add' || act === 'documents-open') {
+      state.tab = 'kit'; state.kitOpen = 'documents';
+      render(token);
+      const first = document.querySelector(act === 'documents-add' ? '[data-fnd-door]' : '[data-fnd-first] [data-lb-trigger]');
+      if (first && typeof first.focus === 'function') { first.focus(); if (typeof first.scrollIntoView === 'function') first.scrollIntoView({ block: 'center' }); }
+      return;
+    }
+    if (act === 'knowledge-add') {
+      state.tab = 'kit'; state.kitOpen = 'knowledge';
+      render(token);
+      prjFocus('mem-k-add');
+      return;
+    }
+    if (act === 'receives-full') { openSessionFullReader(token); }
+  });
+}
+
+// ── THE CONNECT FLOW (owner decision D8): ONE flow, in the reader ─────────
+//
+// Pick the agent → the part on THIS computer (today's one-click install with
+// its preview and backup, views/mcp-install.js and the /api/mcp/install
+// routes, or the MCP entry to copy where the app cannot write the file) →
+// the part for THIS project (the agent's own setup steps 2–4: the skill, the
+// instructions paste, the first save), each with its outcome on screen.
+// Nothing is written without a press; the install writes only after Apply on
+// a preview of the exact change, exactly as Settings › MCP bridge does.
+
+function openConnectFlow(token) {
+  state.connect = { step: 'pick', tool: null, status: null, plan: null, results: null, busy: null, error: null, epoch: null };
+  if (!setupFor()) maybeLoadSetup(token);
+  paintConnect(token);
+}
+
+const GUIDE_CHIP = { done: 'ready', fix: 'needs-you', todo: 'needs-you', wait: 'needs-you', cant: 'unknown', optional: 'unknown', skip: 'off' };
+
+function connectModel() {
+  const c = state.connect;
+  const s = setupFor();
+  const data = s && s.data;
+  const m = { step: c.step, chosen: null };
+  if (c.step === 'pick') {
+    const rows = data ? harnessRows(data) : [];
+    m.harnesses = rows.map((r) => ({ id: r.id, label: r.label, kind: r.kind,
+      meta: r.kind === 'ready' ? 'Connected here and ready' : r.meta || 'On this project’s list' }));
+    for (const a of (data && data.addable) || []) {
+      if (!a || !a.id || rows.some((r) => r.id === a.id)) continue;
+      m.harnesses.push({ id: a.id, label: a.id === CUSTOM_TOOL_VALUE ? 'Another agent…' : (a.label || a.id),
+        meta: a.id === CUSTOM_TOOL_VALUE ? 'Any other agent that speaks MCP — you name it' : 'Not set up for this project yet',
+        kind: a.id === CUSTOM_TOOL_VALUE ? '' : 'off' });
+    }
+    if (!data) m.harnesses = [{ id: 'wait', label: 'Checking this computer…', meta: '', kind: 'working' }];
+    return m;
+  }
+  const t = data && (data.tools || []).find((x) => x && x.id === c.tool);
+  m.chosen = { id: c.tool, label: (t && t.label) || c.tool };
+  if (c.error) m.outcome = { tone: 'error', title: 'That did not finish.', line: c.error };
+  if (c.busy === 'status' || !t) {
+    m.computerHtml = '<p class="prj-wait" aria-busy="true">Checking ' + escapeHtml(m.chosen.label) + ' on this computer…</p>';
+    return m;
+  }
+  const { steps } = toolGuideSteps(t, data);
+  const st = c.status;
+  const it = st && Array.isArray(st.tools) ? st.tools.find((x) => x && x.id === c.tool) : null;
+  const platform = st && st.platform;
+  const stepHtml = (x) => '<div class="prj-flow-part" data-guide-step="' + escapeHtml(x.key) + '">'
+    + '<p class="prj-step-title">' + escapeHtml(x.title) + ' ' + statusChip(GUIDE_CHIP[x.state] || 'unknown')
+    + (x.when ? ' <span class="prj-sub">' + escapeHtml(x.when) + '</span>' : '') + '</p>'
+    + x.html + (x.doors ? '<div class="prj-actions">' + x.doors + '</div>' : '') + '</div>';
+  if (c.results) {
+    m.computerHtml = renderResults(c.results, (st && st.tools) || [], platform);
+  } else if (c.plan) {
+    m.computerHtml = renderPlanCard(c.plan, (st && st.tools) || [], c.busy);
+  } else if (it && isInstallable(it, platform)) {
+    // Installable first: an entry from an older version is "connected" by
+    // the guide's reading but still wants the update the installer offers.
+    const upd = it.status === 'needs-update';
+    m.computerHtml = '<p class="prj-sub">' + escapeHtml(upd
+      ? m.chosen.label + '’s connection was written by an older version of The Curator. The Curator can update it for you.'
+      : 'The Curator can add itself to ' + m.chosen.label + '’s settings for you.')
+      + ' You see the exact change first, and a copy of the file is kept.</p>'
+      + '<div class="prj-actions"><button type="button" class="btn btn-primary btn-xs" data-prj-connect="plan"'
+      + (c.busy ? ' disabled' : '') + '>' + (c.busy === 'plan' ? 'Preparing…' : (upd ? 'Update it for me' : 'Set it up for me')) + '</button></div>';
+  } else if (steps[0] && steps[0].state === 'done') {
+    m.computerHtml = notice({ tone: 'info', title: m.chosen.label + ' is connected on this computer.', line: plainOf(steps[0].html) });
+  } else {
+    m.computerHtml = stepHtml(steps[0]);
+  }
+  m.projectHtml = steps.slice(1).map(stepHtml).join('');
+  return m;
+}
+
+/** Markup → text, for a one-line notice. */
+function plainOf(html) {
+  return String(html || '').replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+function paintConnect(token) {
+  const c = state.connect;
+  if (!c || !isCurrentMount(token)) return;
+  if (c.epoch !== null && !isCurrentReader(c.epoch)) { state.connect = null; return; }
+  c.epoch = openReader({
+    slug: 'Connect an agent',
+    title: 'Connect an agent',
+    typeLabel: 'agent harness',
+    bodyHtml: connectFlowHtml(connectModel()),
+    hideBacklinks: true,
+    returnFocusTo: 'prj-connect',
+  }, token);
+  const root = typeof document !== 'undefined' && typeof document.getElementById === 'function'
+    ? document.getElementById('reader-root') : null;
+  if (!root) return;
+  bindSetup(root, token);
+  wireRows(root, (id) => {
+    const s = String(id || '');
+    if (s.startsWith('connect:') && s !== 'connect:wait') connectChoose(s.slice(8), token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+  root.querySelectorAll('[data-prj-connect], [data-mcpi-act]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const a = b.getAttribute('data-prj-connect') || b.getAttribute('data-mcpi-act');
+      if (a === 'back') { c.step = 'pick'; c.tool = null; c.plan = null; c.results = null; c.error = null; paintConnect(token); }
+      else if (a === 'plan') connectPlan(token).catch((err) => reportAsyncMountFailure(token, err));
+      else if (a === 'apply') connectApply(token).catch((err) => reportAsyncMountFailure(token, err));
+      else if (a === 'cancel') { c.plan = null; paintConnect(token); }
+      else if (a === 'check-again') { c.results = null; connectStatus(token).catch((err) => reportAsyncMountFailure(token, err)); }
+    });
+  });
+  prjFocus('prj-connect-h');
+}
+
+async function connectChoose(id, token) {
+  const c = state.connect;
+  const s = setupFor();
+  const data = s && s.data;
+  if (!c || !data) return;
+  if (id === CUSTOM_TOOL_VALUE) {
+    closeReader();
+    state.connect = null;
+    state.tab = 'agents';
+    state.setupCustomOpen = true;
+    render(token);
+    prjFocus('mem-setup-custom-input');
+    return;
+  }
+  c.step = 'computer'; c.tool = id; c.error = null; c.busy = 'status'; c.plan = null; c.results = null;
+  paintConnect(token);
+  if (!(data.tools || []).some((t) => t && t.id === id)) {
+    const ok = await putSetupToolIds([...(data.addedTools || []), id], token);
+    if (state.connect !== c) return;
+    if (!ok) { c.busy = null; c.error = 'It could not be added to this computer’s list.'; paintConnect(token); return; }
+    await loadSetup(state.activeDomain, state.activeProject, token);
+  }
+  await connectStatus(token);
+}
+
+async function connectStatus(token) {
+  const c = state.connect;
+  if (!c) return;
+  c.busy = 'status';
+  const r = await fetchInstallStatus();
+  if (state.connect !== c || !isCurrentMount(token)) return;
+  c.busy = null;
+  c.status = r.ok ? r.data : null;
+  // A failed status read is not a failure of the flow: the copy-the-entry
+  // step still works, so it is said only when nothing else can be offered.
+  paintConnect(token);
+}
+
+async function connectPlan(token) {
+  const c = state.connect;
+  if (!c || c.busy) return;
+  c.busy = 'plan'; c.error = null;
+  paintConnect(token);
+  const r = await requestPlan('install', [c.tool]);
+  if (state.connect !== c) return;
+  c.busy = null;
+  if (r.ok) c.plan = { action: 'install', token: r.data.token, expiresAt: r.data.expiresAt, items: r.data.items };
+  else c.error = failureWords(r);
+  paintConnect(token);
+}
+
+async function connectApply(token) {
+  const c = state.connect;
+  if (!c || c.busy || !c.plan || !c.plan.token) return;
+  c.busy = 'apply';
+  paintConnect(token);
+  const r = await requestApply(c.plan.token);
+  if (state.connect !== c) return;
+  c.busy = null;
+  if (r.ok) {
+    c.results = { action: c.plan.action, planItems: c.plan.items, items: r.data.results };
+    c.plan = null;
+    await loadSetup(state.activeDomain, state.activeProject, token);
+    if (state.connect !== c) return;
+  } else {
+    c.error = failureWords(r) + ' Preview again to continue.';
+    c.plan = null;
+  }
+  paintConnect(token);
 }
 
 function wire(token) {

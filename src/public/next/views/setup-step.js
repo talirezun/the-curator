@@ -507,7 +507,8 @@ export function customToolNameError(name) {
   return null;
 }
 
-function customField(ui) {
+// Exported (phase 2): the Projects page's Agents tab draws the custom-harness field.
+export function customField(ui) {
   if (!ui.customOpen) return '';
   return '<div class="mem-setup-path-row mem-setup-custom">'
     + '<label class="visually-hidden" for="mem-setup-custom-input">The harness’s name</label>'
@@ -1153,8 +1154,9 @@ export function setupProDoorWhat(data) {
     .filter(Boolean).join(', ');
 }
 
-/** The repository line in the simple view: the quiet question when unset, the field when asked for. Pure. */
-function simpleRepo(data, ui) {
+/** The repository line in the simple view: the quiet question when unset, the field when asked for. Pure.
+ *  Exported (phase 2) for the Projects page's Agents tab, both modes. */
+export function simpleRepo(data, ui) {
   const field = ui.forceRepoOpen || ui.editRepo
     ? pathRow(data, ui, ui.repoDraft ?? (data.repo ? data.repo.path : ''))
       + (ui.pickUnavailable ? '<p class="mem-setup-empty" data-never-pro>' + escapeHtml(ui.pickUnavailable) + '</p>' : '')
