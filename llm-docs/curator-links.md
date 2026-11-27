@@ -49,7 +49,8 @@ Each row links straight to that section.
 | 6. Starting and quitting | Launching, closing, restarting the app | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#6-starting-and-quitting |
 | 6b. The menu bar icon (Mac app) | The optional macOS menu bar readout | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#6b-the-menu-bar-icon-mac-app |
 | 7. Finding your way around | The left rail and screens | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#7-finding-your-way-around |
-| 7c. Simple and Pro | The Pro switch: where it is, what it reveals, what it never hides | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#7c-simple-and-pro |
+| 7. Projects — what the screen shows | A project's header, its tabs (Now, Agents, Starting kit; History, Budget, Computers in Pro), Connect an agent | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#project-context--what-the-screen-shows |
+| 7c. Simple and Pro | The Pro switch: two layouts of one data model, and what is never Pro-only | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#7c-simple-and-pro |
 | 8. Ingest a source | Adding a PDF or article | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#8-ingest-a-source |
 | 8. What ingest keeps from a document full of numbers or technical detail | Key Facts, the one-time re-reading, model choice, limits, domain or Documents | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-ingest-keeps-from-a-document-full-of-numbers-or-technical-detail |
 | 9. Chat with your brain | Asking questions of your wiki | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#9-chat-with-your-brain |
@@ -63,11 +64,11 @@ Each row links straight to that section.
 | 13c. Making capture real | The my-curator command, per-harness hooks, and the capture meter | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter |
 | 13d. Several agent tools and several computers | The setup checklist, each row with where the app shows it | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist |
 | 13d. What travels between your computers | Personal Sync versus the project's git versus per-computer setup, a day on two computers, common mistakes | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how |
-| 13e. The Setup check in the app | Context's step 5: every warning, its meaning and its fix | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app |
-| 13e. The simple view | One row per agent harness, its status and action, the four setup steps | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#the-simple-view--one-row-per-harness-v420 |
+| 13e. The Setup check in the app | A project's Agents tab: every warning, its meaning and its fix | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app |
+| 13e. The Agents tab | One row per agent, its status and action, the four setup steps | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#the-agents-tab--one-row-per-agent |
 | 13e. Adding a harness | The + Add an agent harness menu, removing a harness | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#adding-a-harness |
 | 13e. A harness that isn't listed | Another harness… | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#a-harness-that-isnt-listed |
-| 13e. Why a repository folder? | Why Setup asks for the project's folder, and how it finds it | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#why-a-repository-folder |
+| 13e. Why a repository folder? | Why the Agents tab asks for the project's folder, and how it finds it | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#why-a-repository-folder |
 | 13e. How many computers? | Why two installs on one Mac count as one computer | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#how-many-computers |
 | 14. Daily workflow | A suggested routine for regulars | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#14-daily-workflow |
 | 15. Sync across computers | GitHub backup across your own machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15-sync-across-computers |

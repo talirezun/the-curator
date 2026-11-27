@@ -59,7 +59,7 @@ to the project's own containing domain. It's how Claude knows where to `search_w
 app only.
 
 **`get_project_context` honours your reading budget (v3.67.0), now a 7-step token ladder
-(v3.70.0).** Its default `max_bytes` is now **your reading budget** — set in Context, step ④, as
+(v3.70.0).** Its default `max_bytes` is now **your reading budget** — set on the Projects page (Pro's **Budget** tab; step ④ of the Context page before v4.3.0), as
 Index only (0) · Lean (≈8.2k tokens / 32 KB) · Standard (≈16.4k / 64 KB) · Deep (≈32.8k / 128 KB) ·
 Large (≈65.5k / 256 KB) · Extra large (≈131k / 512 KB) · Max (≈205k / 800 KB), each figure bytes ÷ 4 as
 the app shows it since v3.76.0 — or 120 KB when you have not
@@ -175,7 +175,16 @@ A frontier model can always get the full picture — it just has to ask in piece
 checks the tools it can find, shows you exactly what it would write, keeps a copy of your original
 file, and changes nothing but its own `my-curator` entry.
 
-1. Open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Agent harnesses**): a **Next step** card when something needs doing, then one row per agent harness found on this computer.
+> **Since v4.3.0, start from a project: Projects → open a project → + Connect an agent.** One flow,
+> in the reader on the right: **1 · Pick the agent** → **2 · Connect it on this computer** (the
+> same **Install for me** as below, with its preview and backup, or the entry to copy) →
+> **3 · Point it at this project** (the two skills, the agent instructions for the file it reads,
+> its first save). Every agent's state afterwards is on that project's **Agents** tab
+> ([user guide §13e](user-guide.md#13e-the-setup-check-in-the-app)). The steps below are the same
+> install, from **Settings → MCP bridge**, which keeps the machine-wide view and now opens with a
+> notice — *"Connect agents from a project now."* — and an **Open Projects** button.
+
+1. Or open The Curator → **Settings** (rail footer) → **MCP bridge**, and read section ① (**Agent harnesses**): a **Next step** card when something needs doing, then one row per agent harness found on this computer.
 2. Tick the apps you want (the ones that need it are already ticked) and click **Install for me**. A card reads **Check the change · nothing written yet** and shows, per file, *‹app› — ‹path›*, **Adds:** (or, for an update, **Changes the My Curator setup to:**) with the exact setup text, *Your other connections stay as they are: …*, and *Backup: ‹file name›*. An update that keeps settings from the old entry names them, never their values: *Also keeps what was added to the old setup: env, disabled.* (v4.1.2)
 3. Click **Apply**. One result line per file stays on screen, for example *"✓ Cursor is set up. Quit Cursor completely and open it again to use My Curator. (⌘Q — closing the window is not enough)"*.
 4. **Fully quit and reopen the app** (⌘Q on a Mac; on Windows right-click its icon by the clock → Quit). An agent harness reads its list of MCP servers only when it starts. Claude Desktop rewrites its own file, so quitting it first is the safest install.
@@ -447,7 +456,7 @@ handoff, size limits, and the security posture.
 > ⚠️ **Without this skill the write half never runs.** Nothing in The Curator forces an agent to
 > save — capture is skill-instructed, deliberately, because a skill works in every MCP host while
 > a hook has to be rebuilt per harness. An agent that has not been told the discipline simply
-> never writes, so the store stays empty and the app's **Project context** view has nothing to show.
+> never writes, so the store stays empty and the app's **Projects** page has nothing to show.
 > If you want working state at all, install this.
 >
 > The inverse is the answer to *"how do I turn the memory layer off?"* — removing this skill

@@ -92,7 +92,7 @@ Freshness is **computed, never remembered**: there is no stored flag, only a sha
 
 Each document is capped at 512 KB and is refused above it, because a canonical document cannot be honestly trimmed. A project's foundations are capped at 200 KB in total, and an over-budget save there is accepted and disclosed rather than refused — the same rule a handoff follows, since a rejected save loses the document outright.
 
-In the app, Documents is step 1 on the Project context screen, closed by default. Each row shows the document's role, title, size, whether it is marked read first, its source and its freshness; pressing a row opens it in the reader.
+In the app, documents are the **Starting kit**'s Documents row (Pro: a table with each document's source, start state, tokens and age); pressing one opens it in the side panel.
 
 ## How do I start a project, and where do its foundations come from?
 
@@ -165,7 +165,7 @@ Seven presets, all owner-written only — no MCP tool, no CLI flag and no hook e
 The picker names each preset with the same figure the meter draws (bytes ÷ 4). A project already holding an older 120 KB or 200 KB value keeps it, unchanged, and reads as
 **Custom** with its nearest preset named.
 
-The **Session start** step of the Project context screen (step ④) draws that bootstrap as one
+Pro's **Budget** tab (step ④ "Session start" before 4.3.0; with Pro off, the Starting kit's one bar) draws that bootstrap as one
 bar: your whole context window to scale, your harness's share hatched at the left (an
 owner-entered estimate of what your agent harness loads for itself, never measured, never added
 to what The Curator sends), then The Curator's own layers, each named, and a dashed room the
@@ -308,7 +308,7 @@ One `.curator-project` file, holding `domain/project`, serves every tool: the co
 
 Antigravity has its own row in Setup. `my-curator doctor` reports whether its MCP config names the bridge (it checks `~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json`), whether `AGENTS.md` or `GEMINI.md` in the current folder carries the block, and whether the installed skills match this version. `my-curator install-hooks antigravity` wires `PreInvocation` (the project's context before its first model call) and `Stop` (one save ask when it stopped after reading without saving), in the project-level `<repo>/.agents/hooks.json` by default (`--git-exclude` keeps it out of git). On 26 September 2026 the session-start injection was seen used from that file (from the user-level `~/.gemini/config/hooks.json` it ran but was not used); the Stop ask has not been observed. `my-curator hook-log` prints one content-free line per hook run. Antigravity's sessions appear as `other` in the usage log. If the agent's first reply names none of the brief's rules, the pointer did not reach it.
 
-Since version 3.77.0 the app shows all of this without a terminal: **Context → a project → step 5, Setup** shows, for that project on this computer, one row per agent harness with what is left, each fix a copy, reveal or Sync now button, and **Settings → MCP bridge → Agent harnesses** lists each harness's config files, skills and hooks. The Setup check only reads those files, to see whether they name `my-curator`; the app writes that one entry only when you press **Install for me**. The user-guide file answers what each Setup warning means, how to add or remove a harness, and what travels by Personal Sync, by the project's git, or not at all. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
+Since version 3.77.0 the app shows all of this without a terminal: **Projects → a project → Agents** (step 5 of the Context page before 4.3.0) shows, for that project on this computer, one row per agent harness with what is left, each fix a copy, reveal or Sync now button, and **Settings → MCP bridge → Agent harnesses** lists each harness's config files, skills and hooks. The Setup check only reads those files, to see whether they name `my-curator`; the app writes that one entry only when you press **Install for me**. The user-guide file answers what each Setup warning means, how to add or remove a harness, and what travels by Personal Sync, by the project's git, or not at all. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
 
 Skills for Antigravity, from its documentation: a `skills/` folder under `~/.gemini/config/` for every project or `.agents/` in the project, or a plugin's `skills/` folder such as `~/.gemini/config/plugins/the-curator/skills/`. Copy each skill folder whole, companion files included; Setup, or `my-curator doctor`, names a skill that differs from this version or is missing.
 
@@ -332,16 +332,16 @@ Once or twice it is not complicated, but a few preconditions must hold. The chec
 | Step | How | How to check |
 |---|---|---|
 | The latest Curator on every computer | Settings → Updates; then quit and reopen each agent harness, so no old bridge keeps running | The same version at the foot of Settings on every computer |
-| The Curator's MCP in every agent harness | Settings → MCP bridge sets up Claude Desktop. For another harness, + Add an agent harness in Setup, then Copy MCP entry into the file its step 1 names, in that harness's format (Antigravity has three files; opencode has its own shape) | The agent lists 24 `my-curator` tools; Setup |
-| Both skills, current, in every harness | The two `.zip` files from step 2 of the harness's Setup steps, unzipped into its skills folder (Claude Code: `~/.claude/skills/`; the Claude app: an upload). Again after every release that changes a skill | "What skills are available?"; Setup |
-| The Copy agent instructions block at the top of both `CLAUDE.md` and `AGENTS.md` | Use that project's own Copy button (the text differs only in the project name); paste again after a release that changes the block | Setup; the first reply names the brief's rules |
+| The Curator's MCP in every agent harness | Projects → Connect an agent (or Settings → MCP bridge) sets up Claude Desktop, Cursor and Antigravity. For another harness, Copy MCP entry into the file its step 1 names, in that harness's format (Antigravity has three files; opencode has its own shape) | The agent lists 24 `my-curator` tools; Agents tab |
+| Both skills, current, in every harness | The two `.zip` files from step 2 of the harness's setup steps, unzipped into its skills folder (Claude Code: `~/.claude/skills/`; the Claude app: an upload). Again after every release that changes a skill | "What skills are available?"; Agents tab |
+| The Copy agent instructions block at the top of both `CLAUDE.md` and `AGENTS.md` | Use that project's own Copy button (the text differs only in the project name); paste again after a release that changes the block | Agents tab; the first reply names the brief's rules |
 | `.curator-project` committed in the project repository | Copy marker line, then commit and push the file, so every clone knows its project | `git ls-files .curator-project` |
 | Personal Sync before starting and after the last save | Sync now | No local changes left unpushed |
 | The project's code pulled and pushed | `git pull` before, `git push` after | `git status` |
 | A new conversation, or "continue" | A new one always reads first; since version 3.76.1 an open one reads again on continue or resume | The reply names the handoff, tool and machine it opened |
 | Optional hooks | `my-curator install-hooks claude-code` or `antigravity` (source install only) | `my-curator hook-log`; Antigravity's Stop hook not yet observed |
 
-The app's Setup step checks, on this computer, the MCP entries, skills, the block, the marker and a newer handoff waiting on GitHub; `my-curator doctor` is its terminal version. Neither checks the rest of the code's git or an open conversation.
+The app's Agents tab checks, on this computer, the MCP entries, skills, the block, the marker and a newer handoff waiting on GitHub; `my-curator doctor` is its terminal version. Neither checks the rest of the code's git or an open conversation.
 
 Measured: on 2026-09-25, on one Mac, a handover Claude Code → Antigravity → Claude Code worked unprompted with one scope per harness (without `AGENTS.md`, Antigravity saved to `main` and replaced Claude Code's handoff, which led to the 3.74.0 warning and `previous.md`). On 2026-09-26, across two Macs through Personal Sync, a new conversation opened the newest handoff in both directions; an open one did not re-read until the 3.76.1 sentence (Sonnet 5: 0 of 8 before, 8 of 8 after). Not yet measured: Antigravity's Stop hook, and a live handover with opencode, Codex or Cursor. Full checklist: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist
 
@@ -733,30 +733,32 @@ The standing brief is the one file two machines can genuinely conflict on, becau
 
 ## Where do I see this inside the app?
 
-The **Context** item on the rail opens **Project context**: everything one project gives an agent, as five numbered steps under an overview card, in the order a session start reads them. A domain named anywhere on the screen carries that domain's own colour. Since version 4.2.0 the app has a **Pro** switch (on the rail above Settings, and in Settings → General): steps 4 and 5 show a simple view by default and every detail with Pro on; nothing that is a warning, cost or result is ever Pro-only, and steps 1 to 3 are the same either way. **When guiding someone on this screen, ask first whether Pro is on**; a control marked (Pro) below appears only then.
+Since version 4.3.0 the rail item is **Projects** (it was **Context**, the page **Project context**). One sentence: *a project is a notebook your agents share: they read it when they start, and write in it when they stop.* Pick a project in the sidebar (each row: the domain's colour dot, the name, the agent and age of the last save, the last headline); the page shows a header — "‹Domain› / ‹project›", the name, **one status sentence** such as "Claude Code saved a note 27 min ago on this Mac. Antigravity needs one step from you." (or "No agent has saved here yet. Connect one to start."), the button **+ Connect an agent**, and a **···** menu (Copy agent instructions, Check again) — then tabs. The old numbered steps 1–5, the six overview tiles in Simple, and the PRO labels are gone.
 
-- **The sidebar** lists your projects, grouped by domain, each with its work-stream count and last-written age. A project with a brief but no save yet is listed, dimmed: "no state saved yet". The screen opens on the project written to most recently and remembers the one you chose.
-- **The header** carries **Copy agent instructions**, beside a breadcrumb naming the domain and project.
-- **The overview card**: DOCUMENTS, MEMORY, KNOWLEDGE, **AGENT CONNECTIONS**, **SESSION START** (step 4's total) and **SETUP** ("N to fix", "repository not set" or "ready"), each with its figure, a qualifier and a freshness dot with the word beside it. Press one to jump to its step; nothing filters. An unknown age is a dashed ring, never age zero.
-- **Step 1, Documents**: the canonical documents, with **Add from this computer**, **Add from GitHub** (up to 8 sources), per-source Refresh, **Suggest a reading plan**, a size bar per document against the 200 KB project budget, and the **At session start** control (read first, on request, not at start).
-- **Step 2, Memory**: four closed rows — Agent connections (the honesty meter, below), Handoffs (press a row to read it in the side panel; the Harness column names each tool once), The brief (yours, with a pencil; its age is its own written time) and Journal. Ages recount every second; a project goes Idle by itself after 24 hours. Only loud outcomes about one save sit above the rows (the table below); a healthy save shows nothing there.
-- **Step 3, Knowledge**: one row per domain the project draws on (its own domain always), opening to entity, concept and summary counts with bars and two doors, Open in Domains and Ask this domain, plus Remove; **+ Add a domain** adds up to twelve, a read-only Shared Brain mirror included.
-- **Step 4, Session start**: what an agent is handed at the start (see "What is a project's reading budget?"). Simple: the **Reading budget** picker, the window bar with its notes, a four-line reading (brief, latest handoff, read first, session start with what is free), **What an agent receives, in full ›** in the side panel, and the **Documents at start** planner. Pro adds the **Window** and **Your harness's share** pickers, the enlarged bar with its legend, and the folds **What an agent receives** and **How an agent reaches this** (Pro).
-- **Step 5, Setup**: whether each agent harness (the app your agent runs in) can reach the project from this computer. Simple: one row per harness with one status (Needs a fix, Not on this computer, N steps left, Ready) and one action, the whole row opening four steps in the side panel — Connect it to The Curator, Teach it how to use The Curator, Point it at this project, Let it save once from this computer. Pro: the full table and the Repository and Computers folds (Pro). The user-guide file answers the details.
-- Every fold starts closed and remembers whether you left it open; each summary line carries the figure that decides whether to open it.
+| Tab | Its sentence | Simple | Pro adds |
+|---|---|---|---|
+| **Now** | Where the work stands — the note the last agent left | The latest handoff as readable text; footer "Saved · agent · computer · age", **Open the full note ›** (side panel), **Delete…**; **Copy "continue" prompt**; **Earlier notes**. Before the first save: a checklist — Create the project (done) · Connect an agent · Tell it about this project (Copy agent instructions) · Open your agent and say "save where we are" | The note's facts (work-stream, harness, model, computer, size, path) and its work-stream's journal, as tables |
+| **Agents** | The agents that can open this project's notes | One row per harness, one status (**Ready**, **Needs you**, **Not connected**), at most one action; the row opens its four setup steps in the side panel; every warning as a notice; "N files are only on this computer" with **Sync now** | One table row per harness per computer: Connected · Skills · Instructions · Hooks · Last save · Saves 7 d |
+| **Starting kit** | What every agent reads before it does anything | **Brief** (Edit), **Documents** (Add; "9 documents · 2 always read, 7 when needed"), **Knowledge** (Add a domain), and one bar: "The starting kit uses 3% of your agent's memory — plenty of room left" | The documents table (Document · Source · At start · Tokens · Updated) and Suggest a reading plan |
+| **History** (Pro) | Every note any agent saved, in one table | — | When · Work-stream · Harness · Model · Headline · Computer · Size; the agent-connections figures |
+| **Budget** (Pro) | How much of the agent's window the starting kit takes | — | Window, Reading budget and harness-share pickers, the meter, a per-layer table |
+| **Computers** (Pro) | Which computers hold this project, and how each part reaches them | — | Computers, the project folder, files not sent, the three travel routes |
 
-The qualifying lines that can appear above the Memory step's rows — as of v3.65.1, only outcomes about one specific save, never which clock or which machine (both moved to the overview's info panel and the Handoffs table respectively):
+The **Pro** switch (rail, above Settings; Settings → General) changes the layout, not the data: a warning, cost, refusal, confirm or result is never Pro-only, and every task finishes in Simple. **When guiding someone, ask first whether Pro is on**; a control marked (Pro) appears only then. Start states on screen are **Always read / When needed / Hidden** (on disk still `read-first`, `on-request`, `not-at-start`). **Connect an agent** is one flow in the side panel: pick the agent → connect it on this computer (Install for me or the entry to copy) → point it at this project (skills, instructions, first save). Settings → MCP bridge still exists and opens with "Connect agents from a project now." Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#project-context--what-the-screen-shows
 
-| Line | When it appears | What it means |
-|---|---|---|
-| "part of this handoff did not survive the save" | Handoff content was cut — a section, or items past a list's cap | The handoff really is missing what the note names. Ask the agent to save that content again |
-| A full-width report, "Handoff saved in full" (version 3.65.2) | Only a label was clipped, most often the one-line headline, capped at 200 characters | Nothing urgent. It states plainly that the handoff saved in full, shows the character count against the limit as a bar, and one line per note if more than one field was clipped. It clears on the next save whose headline fits |
-| "that save deliberately replaced a larger handoff" | The agent overrode the guard that refuses a small save over a much larger one | Nothing was lost from what it sent, but the longer document it overwrote is not recoverable |
-| "two tools are writing this handoff" | Two agent harnesses have both saved into the same handoff file | Give each tool its own scope |
-| "newer state in this project" | Another scope in this project holds something more recent | Worth checking. An agent can be saving beside you into a scope you are not watching |
-| "this machine saved after this computer" | Another machine has saved more recently than this one | Pull before you continue |
+Notices above the note on **Now**, never folded (a healthy save shows none):
 
-The overview's MEMORY tile says "saved", never "you are saved". It knows when the last save happened; it cannot know whether anything has changed since.
+| Notice | Means |
+|---|---|
+| Part of the last handoff did not survive the save. | Content was cut; ask the agent to save it again |
+| The last handoff's summary or a label was shortened. | Nothing lost; clears on the next save that fits |
+| The last save replaced a larger handoff. | What the agent sent is complete; the longer document it overwrote is not recoverable |
+| Two agents are writing the same handoff. | Give each agent its own work-stream |
+| There is newer state in this project. | Another work-stream holds something more recent |
+| ‹computer› saved after this computer. | Sync now before you continue |
+| An agent saved here since you opened this page. | Press Reload |
+
+The page says "saved", never "you are saved": it knows when the last save happened, not whether anything changed since.
 
 Almost all of the screen is read-only, and that is by design rather than by omission. A browser write path into a handoff would make the app a second writer to those files, which is the property the whole sync-safety argument rests on, and a human edit arriving through the app would wear the last agent's provenance line. The standing brief is the one exception, because it was never in that argument: it has no machine segment and it is your document.
 
@@ -775,7 +777,7 @@ Yes. The Mac app can put a small icon in the menu bar (the Windows app a tray ic
 - **Knowledge · N domains** — a fold; its submenu draws each domain's page-count bar, in that domain's own identity colour.
 - **Open Project Context…**, **Open The Curator**, **Settings…**, **Updated HH:MM**, and **Quit**.
 
-The menu has no "Session start" or documents line and no capture bars (those counted bridge processes, not sessions); the app's Context page shows them.
+The menu has no starting-kit or documents line and no capture bars (those counted bridge processes, not sessions); the app's Projects page shows them.
 
 A row's submenu offers Open in The Curator, Copy resume prompt, Copy handoff as Markdown, and Reveal the handoff file in Finder.
 

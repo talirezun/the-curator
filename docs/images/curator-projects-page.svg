@@ -1,0 +1,221 @@
+<svg viewBox="0 0 760 700" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-projects-page-title curator-projects-page-desc">
+  <title id="curator-projects-page-title">The Projects page — a header, one status sentence and a tab strip</title>
+  <desc id="curator-projects-page-desc">
+    A wireframe of one project on the Projects page (v4.3.0). At the top, the header: a kicker with
+    the domain's identity dot reading "Work / my-app", the project's name "my-app", and one status
+    sentence, "Claude Code saved a note 27 min ago on this Mac. Antigravity needs one step from
+    you." To the right, the one primary button "+ Connect an agent" and a "···" menu. Under it the
+    tab strip. The three tabs every view shows are drawn solid: Now, Agents and Starting kit. The
+    three tabs Pro adds are drawn dashed after a gap: History, Budget and Computers. Below, three
+    panels side by side, one per Simple tab, each headed by its one sentence. Now: "Where the work
+    stands — the note the last agent left", a card with the note's headline and its sections, a
+    footer reading "Saved · Claude Code · this Mac · 27 min ago" with "Open the full note", and a
+    "Copy continue prompt" button, then two Earlier notes rows. Agents: "The agents that can open
+    this project's notes", three rows each with one status chip — Claude Code Ready, Antigravity
+    Needs you with an Update button, OpenCode Not connected with Continue — and an information
+    notice "14 files are only on this computer" with Sync now. Starting kit: "What every agent
+    reads before it does anything", three rows — Brief with Edit, Documents with Add, Knowledge with
+    Add a domain — and one bar, "The starting kit uses 3% of your agent's memory — plenty of room
+    left". At the foot, a quiet line "More in Pro: every save in a table, the token budget, your
+    computers. Turn on Pro", and a caption: in Simple, three tabs that each answer one question;
+    in Pro, the same three widen into tables and three more tabs appear; a warning, a cost, a
+    refusal or an outcome is never only in Pro.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --violet: #8250df;
+      --ok: #1a7f37;
+      --attn: #9a6700;
+      --off: #6e7781;
+      --id-a: #bf3989;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --violet: #c8a6ff;
+        --ok: #4ac26b;
+        --attn: #d4a72c;
+        --off: #9198a1;
+        --id-a: #f778ba;
+      }
+    }
+    .bg { fill: var(--bg); }
+    .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .inner { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .rule { stroke: var(--border); stroke-width: 1.2; }
+    .h1 { font: 700 20px system-ui, sans-serif; fill: var(--text); }
+    .h { font: 700 13px system-ui, sans-serif; fill: var(--text); }
+    .t { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .m { font: 400 11px system-ui, sans-serif; fill: var(--text-2); }
+    .s { font: 400 12.5px system-ui, sans-serif; fill: var(--text); }
+    .cap { font: 700 9.5px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .1em; }
+    .tab { font: 600 12.5px system-ui, sans-serif; fill: var(--text); }
+    .tabpro { font: 600 12.5px system-ui, sans-serif; fill: var(--text-2); }
+    .proline { fill: none; stroke: var(--text-2); stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .btnp { fill: var(--violet); }
+    .btnptxt { font: 600 12px system-ui, sans-serif; fill: #ffffff; }
+    .btn { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .btntxt { font: 600 10.5px system-ui, sans-serif; fill: var(--text); }
+    .link { font: 600 10.5px system-ui, sans-serif; fill: var(--violet); }
+    .chip-ok { fill: none; stroke: var(--ok); stroke-width: 1.2; }
+    .chip-attn { fill: none; stroke: var(--attn); stroke-width: 1.2; }
+    .chip-off { fill: none; stroke: var(--off); stroke-width: 1.2; stroke-dasharray: 2 2; }
+    .ok { font: 600 10px system-ui, sans-serif; fill: var(--ok); }
+    .attn { font: 600 10px system-ui, sans-serif; fill: var(--attn); }
+    .off { font: 600 10px system-ui, sans-serif; fill: var(--off); }
+    .bar { fill: var(--border); }
+    .barfill { fill: var(--violet); }
+    .foot { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="700"/>
+
+  <!-- ── HEADER ─────────────────────────────────────────────────── -->
+  <circle cx="30" cy="30" r="5" fill="var(--id-a)"/>
+  <text class="m" x="42" y="34">Work / my-app</text>
+  <text class="h1" x="24" y="64">my-app</text>
+  <text class="s" x="24" y="90">Claude Code saved a note 27 min ago on this Mac. Antigravity needs one step from you.</text>
+  <rect class="btnp" x="556" y="44" width="140" height="28" rx="7"/>
+  <text class="btnptxt" x="626" y="62" text-anchor="middle">+ Connect an agent</text>
+  <rect class="btn" x="704" y="44" width="34" height="28" rx="7"/>
+  <text class="btntxt" x="721" y="62" text-anchor="middle">···</text>
+  <text class="cap" x="556" y="90">HEADER · ONE SENTENCE</text>
+
+  <!-- ── TABS ───────────────────────────────────────────────────── -->
+  <line class="rule" x1="24" y1="132" x2="736" y2="132"/>
+  <text class="tab" x="24" y="124">Now</text>
+  <line x1="22" y1="131" x2="54" y2="131" stroke="var(--violet)" stroke-width="2.5"/>
+  <text class="tab" x="78" y="124">Agents 3</text>
+  <text class="tab" x="152" y="124">Starting kit</text>
+  <line class="rule" x1="246" y1="110" x2="246" y2="128"/>
+  <rect class="proline" x="258" y="108" width="246" height="22" rx="6"/>
+  <text class="tabpro" x="270" y="124">History 45</text>
+  <text class="tabpro" x="354" y="124">Budget</text>
+  <text class="tabpro" x="410" y="124">Computers 2</text>
+  <text class="cap" x="516" y="124">← PRO ADDS THESE THREE</text>
+
+  <!-- ── PANEL: NOW ─────────────────────────────────────────────── -->
+  <rect class="card" x="24" y="150" width="228" height="430" rx="10"/>
+  <text class="cap" x="38" y="172">NOW</text>
+  <text class="m" x="38" y="190">Where the work stands — the note</text>
+  <text class="m" x="38" y="204">the last agent left.</text>
+  <rect class="inner" x="36" y="216" width="204" height="210" rx="8"/>
+  <text class="t" x="48" y="238">Checkout flow: tests green,</text>
+  <text class="t" x="48" y="253">payment retry still open</text>
+  <text class="cap" x="48" y="276">WHERE THINGS STAND</text>
+  <text class="m" x="48" y="292">• Cart and address steps done</text>
+  <text class="m" x="48" y="307">• Retry fails on the 2nd attempt</text>
+  <text class="cap" x="48" y="330">NEXT STEPS</text>
+  <text class="m" x="48" y="346">• Fix the token refresh</text>
+  <line class="rule" x1="48" y1="362" x2="228" y2="362"/>
+  <text class="m" x="48" y="380">Saved · Claude Code · this Mac</text>
+  <text class="m" x="48" y="394">· 27 min ago</text>
+  <text class="link" x="48" y="414">Open the full note ›</text>
+  <rect class="btn" x="36" y="436" width="204" height="24" rx="6"/>
+  <text class="btntxt" x="138" y="452" text-anchor="middle">Copy “continue” prompt</text>
+  <text class="cap" x="38" y="484">EARLIER NOTES</text>
+  <rect class="inner" x="36" y="494" width="204" height="38" rx="6"/>
+  <text class="t" x="46" y="510">Address step done</text>
+  <text class="m" x="46" y="524">Claude Code · this Mac · yesterday</text>
+  <rect class="inner" x="36" y="536" width="204" height="38" rx="6"/>
+  <text class="t" x="46" y="552">Project set up</text>
+  <text class="m" x="46" y="566">Cursor · studio-mac · 3 days ago</text>
+
+  <!-- ── PANEL: AGENTS ──────────────────────────────────────────── -->
+  <rect class="card" x="266" y="150" width="228" height="430" rx="10"/>
+  <text class="cap" x="280" y="172">AGENTS</text>
+  <text class="m" x="280" y="190">The agents that can open this</text>
+  <text class="m" x="280" y="204">project’s notes.</text>
+
+  <rect class="inner" x="278" y="216" width="204" height="52" rx="8"/>
+  <text class="t" x="290" y="236">Claude Code</text>
+  <text class="m" x="290" y="252">saved 27 min ago</text>
+  <rect class="chip-ok" x="418" y="226" width="54" height="18" rx="9"/>
+  <text class="ok" x="445" y="239" text-anchor="middle">● Ready</text>
+
+  <rect class="inner" x="278" y="274" width="204" height="68" rx="8"/>
+  <text class="t" x="290" y="294">Antigravity</text>
+  <text class="m" x="290" y="310">Its instructions are out of</text>
+  <text class="m" x="290" y="324">date</text>
+  <rect class="chip-attn" x="400" y="284" width="72" height="18" rx="9"/>
+  <text class="attn" x="436" y="297" text-anchor="middle">◆ Needs you</text>
+  <rect class="btn" x="412" y="314" width="60" height="20" rx="5"/>
+  <text class="btntxt" x="442" y="328" text-anchor="middle">Update</text>
+
+  <rect class="inner" x="278" y="348" width="204" height="68" rx="8"/>
+  <text class="t" x="290" y="368">OpenCode</text>
+  <text class="m" x="290" y="384">2 of 3 steps left</text>
+  <rect class="chip-off" x="384" y="358" width="88" height="18" rx="9"/>
+  <text class="off" x="428" y="371" text-anchor="middle">○ Not connected</text>
+  <rect class="btn" x="404" y="388" width="68" height="20" rx="5"/>
+  <text class="btntxt" x="438" y="402" text-anchor="middle">Continue</text>
+
+  <rect class="inner" x="278" y="428" width="204" height="70" rx="8"/>
+  <text class="t" x="290" y="448">14 files are only on this computer.</text>
+  <text class="m" x="290" y="466">Your other computers see</text>
+  <text class="m" x="290" y="480">the newest note after</text>
+  <text class="m" x="290" y="493">you sync.</text>
+  <rect class="btn" x="404" y="470" width="68" height="20" rx="5"/>
+  <text class="btntxt" x="438" y="484" text-anchor="middle">Sync now</text>
+  <text class="cap" x="280" y="524">ONE ROW PER AGENT:</text>
+  <text class="m" x="280" y="540">one status, at most one action;</text>
+  <text class="m" x="280" y="554">the row opens its steps in the</text>
+  <text class="m" x="280" y="568">reader on the right</text>
+
+  <!-- ── PANEL: STARTING KIT ────────────────────────────────────── -->
+  <rect class="card" x="508" y="150" width="228" height="430" rx="10"/>
+  <text class="cap" x="522" y="172">STARTING KIT</text>
+  <text class="m" x="522" y="190">What every agent reads before it</text>
+  <text class="m" x="522" y="204">does anything.</text>
+
+  <rect class="inner" x="520" y="216" width="204" height="52" rx="8"/>
+  <text class="t" x="532" y="236">Brief</text>
+  <text class="m" x="532" y="252">your standing instructions</text>
+  <rect class="btn" x="672" y="228" width="42" height="20" rx="5"/>
+  <text class="btntxt" x="693" y="242" text-anchor="middle">Edit</text>
+
+  <rect class="inner" x="520" y="274" width="204" height="52" rx="8"/>
+  <text class="t" x="532" y="294">Documents</text>
+  <text class="m" x="532" y="310">9 · 2 always read,</text>
+  <text class="m" x="532" y="322">7 when needed</text>
+  <rect class="btn" x="680" y="284" width="34" height="20" rx="5"/>
+  <text class="btntxt" x="697" y="298" text-anchor="middle">Add</text>
+
+  <rect class="inner" x="520" y="332" width="204" height="52" rx="8"/>
+  <text class="t" x="532" y="352">Knowledge</text>
+  <circle cx="536" cy="365" r="4" fill="var(--id-a)"/>
+  <text class="m" x="544" y="369">Work · 1,070 pages</text>
+  <rect class="btn" x="636" y="338" width="78" height="18" rx="5"/>
+  <text class="btntxt" x="675" y="351" text-anchor="middle">Add a domain</text>
+
+  <rect class="inner" x="520" y="396" width="204" height="70" rx="8"/>
+  <text class="t" x="532" y="416">The starting kit uses 3% of</text>
+  <text class="t" x="532" y="431">your agent’s memory</text>
+  <text class="m" x="532" y="446">plenty of room left</text>
+  <rect class="bar" x="532" y="453" width="180" height="6" rx="3"/>
+  <rect class="barfill" x="532" y="453" width="8" height="6" rx="3"/>
+  <text class="cap" x="522" y="494">ALWAYS READ · WHEN NEEDED ·</text>
+  <text class="cap" x="522" y="508">HIDDEN</text>
+  <text class="m" x="522" y="526">the three start states a</text>
+  <text class="m" x="522" y="540">document can have</text>
+
+  <!-- ── FOOT ───────────────────────────────────────────────────── -->
+  <text class="foot" x="24" y="606">More in Pro: every save in a table, the token budget, your computers.</text>
+  <text class="link" x="430" y="606">Turn on Pro ›</text>
+  <line class="rule" x1="24" y1="622" x2="736" y2="622"/>
+  <text class="foot" x="24" y="646">Simple: three tabs, each answering one question. Pro: the same three widen into tables, and History,</text>
+  <text class="foot" x="24" y="664">Budget and Computers appear. Two layouts, one data model — a warning, a cost, a refusal or an</text>
+  <text class="foot" x="24" y="682">outcome is never only in Pro, and every task can be finished in Simple.</text>
+</svg>

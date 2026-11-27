@@ -276,7 +276,7 @@ Since version 3.64.0 the rail is **three** places, read as *ask, knowledge, cont
 |---|---|---|---|
 | Chat | Chat | ask | Ask questions of one domain's wiki — and, with a project pinned, that project's context as well. |
 | Domains | Domains | knowledge | One subject at a time, and everything that acts on it: counts, ingest, the page list, Projects, Shared Brain and Wiki health. This is Home. |
-| Project context | Context | context | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over the MCP bridge. Called Agent memory before v3.62.0. |
+| Projects | Projects | context | One project at a time — a notebook your agents share: they read it when they start, and write in it when they stop. Tabs Now, Agents, Starting kit (Pro adds History, Budget, Computers). Called Context / Project context until v4.3.0, Agent memory before v3.62.0. |
 
 At the bottom of the rail, separated by a gap: the sun/moon **theme toggle**, **Sync**, the **Pro** switch (since version 4.2.0) and **Settings**.
 
@@ -284,7 +284,7 @@ Anything you can press — a button, a row, a menu item, a link — turns the po
 
 ## What is Pro mode? I can't find a control the guide describes
 
-Since version 4.2.0 the app has one switch, **Pro**, on the rail directly above **Settings** (on every screen) and in **Settings → General → Pro mode**. Off, the default for everyone, existing installs included, shows the **simple** view; on shows every detail and control. It is free, not a paid tier. It only reveals: it never removes, renames or changes a control, and the simple view never hides a warning, a cost, a result, a refusal, a confirmation or anything needed to finish a task. It is saved on this computer only, never synced. A section with more to show ends with **More in Pro: …**; pressing it turns Pro on, keeps the section in place, moves the keyboard focus to it and offers **Undo** (which keeps the same place). Every Pro-only part carries a small **PRO** label. In 4.2.0 it changes only the Context page's steps 4 and 5. Controls marked (Pro) in these files appear only with Pro on.
+Since version 4.2.0 the app has one switch, **Pro**, on the rail directly above **Settings** (on every screen) and in **Settings → General → Pro mode**. Off, the default for everyone, shows the **simple** layout: each screen answers in a sentence and gives the next step. On shows every detail and control, in tables, open. Since version 4.3.0 the two are **different layouts of the same data**: a warning, a cost, a result, a refusal or a confirmation is never Pro-only, every task can be finished with Pro off, each thing has one name in both, and a button does the same thing in both. A Pro setting that is not at its default is said in words in Simple. It is free, saved on this computer only, never synced. There are no PRO labels any more; the glowing switch is the only mark. In 4.3.0 it changes the **Projects** page; with Pro off a project shows the line "More in Pro: every save in a table, the token budget, your computers. Turn on Pro ›". Controls marked (Pro) in these files appear only with Pro on. Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#7c-simple-and-pro
 
 **When guiding someone through a screen, first ask whether Pro is on** (the Pro switch at the bottom of the left rail, or Settings → General). If they cannot find a control marked (Pro), tell them to turn Pro on; it changes nothing the app does.
 
@@ -718,11 +718,11 @@ When you work on one project from two computers, everything travels by one of th
 |---|---|---|---|
 | A project's standing brief, handoffs, journal and Documents; wiki pages; chat conversations; domain schemas; Health dismissals | Your knowledge folder | Personal Sync, through your private knowledge repository on GitHub | **Sync now**, before you start and after the agent's last save |
 | The project's code, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` and `.curator-project` | The project folder, a git clone | The project's own git repository | Commit and `git push` on one computer, `git pull` on the other (the first time, `git clone`) |
-| Each agent harness's MCP entry, the two skills, hooks, the repository folder you chose in Setup, harnesses you added to Setup, the Pro switch, API keys, the Personal Sync connection and app settings | That computer | Nothing — they stay on the computer | Set them up once on each computer |
+| Each agent harness's MCP entry, the two skills, hooks, the project folder you chose on the Agents tab, harnesses you added there, the Pro switch, API keys, the Personal Sync connection and app settings | That computer | Nothing — they stay on the computer | Set them up once on each computer |
 
 A handoff is the note an agent saves about where the work stands; a scope is the name it is saved under. Your ingested source files in `raw/` are never synced. **Sync now** syncs your whole knowledge folder, every domain, not only one project.
 
-In the app, **Context → a project → step 5, Setup** marks each of its three folds with a small grey tag naming its route: Tools "set up on each computer", Repository on this computer "project's git", Computers "Personal Sync".
+In the app, a project's **Computers** tab (Pro) lists the three routes as a table: notes, the brief, documents and the wiki by **Sync now**; the instruction file and `.curator-project` by **your project's git**; the agent connection, skills and hooks **set up on each computer**.
 
 Full answer, with a diagram: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how
 
@@ -735,16 +735,16 @@ Full answer, with a diagram: https://github.com/talirezun/the-curator/blob/main/
 5. Start a new conversation there, or say "continue" in an open one. It opens the newest handoff — the one the first computer saved — and should say it came from another machine.
 6. When you stop there, repeat step 3.
 
-Common mistakes, and what the Setup step shows:
+Common mistakes, and what the Agents tab shows:
 
-| Mistake | What happens | What Setup shows |
+| Mistake | What happens | What the app shows |
 |---|---|---|
-| No Sync now after the last save | The other computer opens an older handoff | Nothing on the other computer, because the handoff never reached GitHub. On this one, the Computers fold counts files "here not on GitHub yet" |
+| No Sync now after the last save | The other computer opens an older handoff | Nothing on the other computer, because the handoff never reached GitHub. On this one, the Agents tab says "N files are only on this computer" with Sync now |
 | No Sync now before starting | Same: an older handoff | "[computer] saved a newer handoff; it's waiting in your Personal Sync on GitHub", with a Sync now button |
 | Instructions pasted into `AGENTS.md` but not committed and pushed | The other computer's copy has none; its tool doesn't know the project and may save under another tool's scope | On the other computer: "AGENTS.md in [folder] has no Curator instructions". On this one, the file's reader says "Not committed to the project's git yet" |
 | `.curator-project` not committed, or not pushed | Agents and hooks on the other computer can't tell which project the folder is | Here: "isn't committed" or "is committed but not pushed". There: "[folder] has no .curator-project" |
 | No `git pull` on the second computer | It keeps the old files | The same lines, until you pull |
-| A tool, its skills or its MCP entry never set up on the second computer | No Curator tools there, or old skills | That tool's row is not "ready"; its setup guide shows the step that is left |
+| A tool, its skills or its MCP entry never set up on the second computer | No Curator tools there, or old skills | That agent's row is not "Ready"; its setup steps show the step that is left |
 
 ## Why isn't my AGENTS.md or CLAUDE.md on my other computer?
 
@@ -792,7 +792,7 @@ Shared Brain pushes are managed in the Shared Brain view, not in Sync. The Sync 
 
 ## How do I connect The Curator to Claude Desktop?
 
-The MCP bridge lets an AI client read and write your wiki directly. Since version 3.85.0, on a Mac (the Mac app, or a local install on macOS), and since 3.86.0 for Claude Desktop on Windows, The Curator does the setup for you: it shows what it would write, keeps a copy of your original file, and changes only its own `my-curator` entry. It takes under two minutes and lives in **Settings → MCP bridge**. The old setup wizard, and its Re-connect, View config and Copy snippet buttons, no longer exist.
+The MCP bridge lets an AI client read and write your wiki directly. Since version 3.85.0, on a Mac (the Mac app, or a local install on macOS), and since 3.86.0 for Claude Desktop on Windows, The Curator does the setup for you: it shows what it would write, keeps a copy of your original file, and changes only its own `my-curator` entry. It takes under two minutes. **Since version 4.3.0 the quickest way in is a project: Projects → open a project → + Connect an agent** — one flow in the side panel: pick the agent, connect it on this computer (Install for me, or the entry to copy), point it at this project (skills, instructions, first save). The same install also lives in **Settings → MCP bridge**, which opens with the notice "Connect agents from a project now." and an **Open Projects** button. The old setup wizard, and its Re-connect, View config and Copy snippet buttons, no longer exist.
 
 | Step | What to do |
 |---|---|
@@ -858,30 +858,32 @@ One gap worth knowing: in the Mac app the **Git** row reports "Not required by t
 
 System check answers "is the app working?". A domain's **Wiki health** panel answers "is my wiki clean?". They are different things.
 
-## What does the Setup step on the Context page check?
+## What does the Agents tab of a project check? (the Setup check)
 
-**Context → a project → step 5, Setup** (since version 3.77.0; a simple view since 4.2.0) checks whether each agent harness — the app your agent runs in: Claude Code, Claude Desktop, Codex, Cursor, Antigravity, opencode — can reach that project from this computer. The check is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository. Every fix is a button that copies, downloads, reveals a file in Finder (on a Mac only), or runs Sync now, and you paste. The exception is **Install for me** for Claude Desktop, Cursor or Antigravity (Claude Desktop only on Windows), which opens Settings → MCP bridge and writes only the `my-curator` entry, after a preview. On Windows it reads Claude Desktop's settings under `%APPDATA%` and `%LOCALAPPDATA%`. The machine-wide half is **Settings → MCP bridge → Agent harnesses**.
+**Projects → a project → Agents** (since version 4.3.0; it was step 5 "Setup" of the Context page from 3.77.0) checks whether each agent harness — the app your agent runs in: Claude Code, Claude Desktop, Codex, Cursor, Antigravity, opencode — can reach that project from this computer. The check is read-only: it reads files and runs read-only `git`, and never writes to a skills folder or your repository. Every fix is a button that copies, downloads, reveals a file in Finder (on a Mac only), or runs Sync now, and you paste. The exception is **Install for me** for Claude Desktop, Cursor or Antigravity (Claude Desktop only on Windows), which writes only the `my-curator` entry, after a preview, keeping the original. On Windows it reads Claude Desktop's settings under `%APPDATA%` and `%LOCALAPPDATA%`.
 
 It checks, for this project on this computer: each harness's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` (present, naming this project, current, not past what the harness reads); `.curator-project` (present, naming this project, committed and pushed); whether each harness has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
 
-**With Pro off**, the step is: any warning about the whole project, loud, with its buttons; then **one row per harness, with one status and one action**; **+ Add an agent harness**; "N files here are not on GitHub yet" with **Sync now** when there are any; the three travel routes said once; and **More in Pro: every check per harness, the repository files, your computers**. Pressing anywhere on a row opens that harness's setup steps in the side panel.
+**The tab** (both layouts): when it last checked, **Check again**, **+ Add an agent harness**; **one row per harness, with one status and at most one action**, the whole row opening that harness's four setup steps in the side panel; every warning as a notice (title = what is wrong, line = why and what to do, its fix buttons beside it); "N files are only on this computer" with **Sync now** when there are any; and the folder question when the project's folder is not set here. With no harness yet: "No agent on this project yet." and **Connect an agent**.
 
 | Status | Means | The row's action |
 |---|---|---|
-| Needs a fix | Something about this harness is wrong; the row says it in full | That fix's first button; any other fixes are in its steps |
-| Not on this computer | It saved this project from another computer and is not connected here | Set up here |
-| N steps left | Nothing broken, steps not done; "Next: …" names one | Continue setup |
+| Needs you | Something is wrong, or it is connected here and steps are left | That fix's first button, or Open its steps |
+| Not connected | Not set up on this computer | Set up here, Continue setup, or Open its steps |
 | Ready | Connected here, reads the instructions, has saved from this computer | none |
+| Working | The check is running | — |
 
-A row's number is the number its steps open on. A step that can't be checked on this computer is never counted as done: Claude Code whose skills may be in the Claude account shows **Ready** with "skills can't be checked here". Computers are shown by name ("studio-mac"), not by folder id. The skills step names a full folder: a project folder such as OpenCode's `.agents/skills/` "in your project's top folder", or for Claude Code `~/.claude/skills` or Claude: Customize → Skills.
+A step that can't be checked on this computer is never counted as done: Claude Code whose skills may be in the Claude account shows **Ready** with "skills can't be checked here". Computers are shown by name ("studio-mac"), not by folder id.
 
-**With Pro on** (Pro): the to-fix lines on top, each with all its buttons, "N files here are not on GitHub yet" with Sync now, then three closed folds marked PRO: **Agent harnesses** (a table: Harness, Status, Last saved, Saved from, On this computer, the MCP / skills / block / hooks marks, **Open setup steps** on rows not ready, Remove), **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" or "ready" in both views.
+**With Pro on** (Pro): the rows become one table, one row per harness per computer (or per harness): Harness · Computer · Status · Connected · Skills · Instructions · Hooks · Last save · Saves 7 d (· Remove on a harness you added), with Filter and Per computer / Per harness; a cell opens its evidence in the side panel. The repository files and the computers are on the **Computers** tab (Pro). There is no score.
+
+**Connect an agent** (the header's main button) walks one harness through the same steps in one flow: pick it, connect it on this computer, point it at this project.
 
 Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
 
-## What do the Setup step's words mean?
+## What do the Agents tab's words mean?
 
-The Pro table's status words, and the words inside a harness's steps:
+The words in Pro's table cells (yes, needs a fix, can't check here, not checked, not measured, no, unknown) and inside a harness's steps:
 
 | Word | Means |
 |---|---|
@@ -899,23 +901,23 @@ No. Setup only reads files already on disk; it never asks a harness whether it i
 
 ## When does Setup check again?
 
-Press **Re-check** at the head of the step, beside "checked N ago". It also re-checks by itself when you come back to the window and the last reading is more than 10 seconds old, so a fix made in Finder or a terminal shows up without a click. Re-checking changes nothing.
+Press **Check again** on the Agents tab, beside "checked N ago" (or in the project's ··· menu; it was Re-check before 4.3.0). It also re-checks by itself when you come back to the window and the last reading is more than 10 seconds old, so a fix made in Finder or a terminal shows up without a click. Re-checking changes nothing.
 
 ## Why does Setup ask for a repository folder, and how does it find it?
 
-The instruction files and `.curator-project` live in your project's code folder — not in your knowledge folder, and often at a different path on each computer — so Setup has to know where that folder is before it can check them. It offers folders it found on this computer, each with **Use**: a folder Claude Code opened whose `.curator-project` names this project, a folder this project's Documents were read from, a folder a Curator hook started a session in, or a folder whose git remote matches the project's documents. Only folders under your home folder that name this project, or match its remote, are offered. Otherwise press **Choose the folder** (in the simple view the question appears only while the folder is not set; in Pro it is the **Repository on this computer** fold). The choice is kept on this computer only and is never synced.
+The instruction files and `.curator-project` live in your project's code folder — not in your knowledge folder, and often at a different path on each computer — so Setup has to know where that folder is before it can check them. It offers folders it found on this computer, each with **Use**: a folder Claude Code opened whose `.curator-project` names this project, a folder this project's Documents were read from, a folder a Curator hook started a session in, or a folder whose git remote matches the project's documents. Only folders under your home folder that name this project, or match its remote, are offered. Otherwise press **Choose another folder** (the question appears on the Agents tab while the folder is not set; Pro's **Computers** tab also offers Set the folder / Change folder). The choice is kept on this computer only and is never synced.
 
 ## Why does Setup show more computers, or installs, than I own?
 
-It doesn't any more. Since version 3.78.0 computers are grouped by physical machine: a Mac running both the downloaded app and a source checkout has two installs, each with its own name, and the Computers fold (Pro) shows them as one computer — for example "1 computer · 2 installs". Each computer's row shows which tools saved from it, its newest save, and the Curator version it saved with. Press a row to read it in the side panel.
+It doesn't any more. Since version 3.78.0 computers are grouped by physical machine: a Mac running both the downloaded app and a source checkout has two installs, each with its own name, and the **Computers** tab (Pro) shows them as one computer, its installs named in the App column. Each computer's row shows which tools saved from it, its newest save, and the Curator version it saved with. Press a row to read it in the side panel.
 
-## What does Sync now on the Setup step sync?
+## What does Sync now on the Agents tab sync?
 
 Your whole knowledge folder, every domain — not only this project. The "files not on GitHub" count likewise adds up every domain.
 
 ## What does each Setup warning mean, and what do I do?
 
-With Pro off, a warning about one harness is that harness's row ("Needs a fix"), in the same words, and its first fix is the row's button; the rest are in its steps.
+Each warning is a notice on the Agents tab, in Simple and Pro alike, with its fix buttons; the harness it names shows Needs you.
 
 | Warning | What to do |
 |---|---|
@@ -952,21 +954,21 @@ Pick **Another harness…** (called "Custom tool…" before 4.2.0) at the bottom
 
 ## How do I remove a harness from Setup?
 
-Press **Remove from this list** on its page in the side panel, or the trash icon on its row in the Agent harnesses fold (Pro). There is no confirmation, because nothing is uninstalled: it only stops Setup checking it on this computer, and **+ Add an agent harness** brings it back. Two kinds of row can't be removed, and the page says why: a harness that has saved this project, and one whose MCP settings on this computer already name The Curator.
+Press **Remove from this list** on its page in the side panel, or **Remove** on its row in the Agents table (Pro). There is no confirmation, because nothing is uninstalled: it only stops Setup checking it on this computer, and **+ Add an agent harness** brings it back. Two kinds of row can't be removed, and the page says why: a harness that has saved this project, and one whose MCP settings on this computer already name The Curator.
 
 ## Can I read my AGENTS.md or CLAUDE.md inside the app?
 
-Yes, since version 3.79.0. Press a file under **Repository on this computer** (Pro) and it opens read-only in the side panel, with the Curator instructions framed and marked current, outdated, naming another project, or past what a tool reads; a line shows where a tool stops reading when it has a limit, and **Copy current instructions** sits on the frame. Only `.curator-project` and the instruction files of tools this project lists can be opened this way — never a tool's MCP config.
+Yes, since version 3.79.0. Press an instruction file or `.curator-project` (from a harness's evidence or a notice) and it opens read-only in the side panel, with the Curator instructions framed and marked current, outdated, naming another project, or past what a tool reads; a line shows where a tool stops reading when it has a limit, and **Copy current instructions** sits on the frame. Only `.curator-project` and the instruction files of tools this project lists can be opened this way — never a tool's MCP config.
 
 ## How do I set up DeepSeek Harness (dsh)?
 
 Put The Curator's entry in `~/.dsh/cordis.patch.yml` (every profile) or `~/.dsh/profiles/<name>/cordis.patch.yml` (one profile) — never in `cordis.yml`, which dsh empties on every launch. The entry is one `- insert:` item naming the `@deepseek-ai/dsh-mcp-client` plugin; merge it into the file rather than copying over it. dsh reads both `AGENTS.md` and `CLAUDE.md`, and its skills folders are `.dsh/skills`, `.agents/skills`, `~/.dsh/skills` and `~/.agents/skills`. Its hooks are unverified. Setup finds the entry by reading the patch file line by line, so it can tell whether the entry is there but cannot tell a malformed file from a correct one.
 
-## What does the Session start step show, and what is "Your harness's share"?
+## What does a project's Starting kit and Budget show, and what is "Your harness's share"?
 
-**Context → a project → step 4, Session start** shows what an agent is handed when it starts work on the project. With Pro off: the **Reading budget** picker, the context window drawn to scale with its notes, a four-line reading (standing brief, latest handoff, read first, and the session start in tokens with what is left free, plus the "if applied" figure while a suggestion is pending), **What an agent receives, in full ›** (opens in the side panel), and the **Documents at start** planner. Pro adds the **Window** and **Your harness's share** pickers (Pro), the enlarged bar with its legend (Pro), and the folds **What an agent receives** and **How an agent reaches this** (Pro).
+**Projects → a project → Starting kit** (step 4 "Session start" before 4.3.0) shows what every agent reads first: **Brief** (Edit), **Documents** (Add; e.g. "9 documents · 2 always read, 7 when needed"), **Knowledge** (Add a domain), and one bar: "The starting kit uses 3% of your agent's memory" with a plain qualifier (plenty of room left, room left, a large share, most of the room). A Pro setting not at its default is said under the bar in words. Start states on screen: **Always read**, **When needed**, **Hidden** (was read first, on request, not at start). Pro adds the documents table (Document · Source · At start · Tokens · Updated) and Suggest a reading plan, and a **Budget** tab (Pro): the **Window**, **Reading budget** and **Your harness's share** pickers, the window meter, a per-layer table (Layer · Tokens · Size · Of the window), and **What an agent receives, in full ›**.
 
-**Your harness's share** (Pro; "Harness" until 3.79.0, "Your tool's share" until 4.2.0, same setting) is your own estimate of what your agent harness loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It and **Window** are set per computer; with Pro off the meter still uses their saved values.
+**Your harness's share** (Pro, Budget tab; "Harness" until 3.79.0, "Your tool's share" until 4.2.0, same setting) is your own estimate of what your agent harness loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It and **Window** are set per computer; with Pro off the Starting kit's bar still uses their saved values.
 
 ## How do I turn on the tray icon in the Windows app?
 

@@ -126,10 +126,10 @@ running under your own account could read it.
 ## Simple and Pro
 
 *Since v4.2.0.* The app opens in the **simple** view. The **Pro** switch on the left rail, directly
-above **Settings** (also **Settings › General › Pro mode**), shows every detail and control. It is
-free, it only reveals (no warning, cost or result is ever hidden in the simple view), it is saved on
-this PC only (in `%LOCALAPPDATA%\TheCurator\App`, with your other settings), and today it changes the
-Context page's steps 4 and 5. Full description: [user guide §7c](user-guide.md#7c-simple-and-pro).
+above **Settings** (also **Settings › General › Pro mode**), shows every detail and control, in tables. It is
+free, and no warning, cost or result is ever hidden in the simple view (since v4.3.0 the two are
+different layouts of the same data); it is saved on this PC only (in `%LOCALAPPDATA%\TheCurator\App`,
+with your other settings), and today it changes the **Projects** page. Full description: [user guide §7c](user-guide.md#7c-simple-and-pro).
 
 ---
 
@@ -219,10 +219,14 @@ icon.)
 The app can write its own entry into Claude Desktop's settings for you:
 
 1. **Quit Claude Desktop fully**: right-click its icon by the clock → **Quit** (closing its window is not enough).
-2. In The Curator: **Settings → MCP bridge**, section **Agent harnesses**. Tick Claude Desktop and click **Install for me**, then **Apply**.
-3. Open Claude Desktop again, then click **Check again** in The Curator; the row should read **connected**.
+2. In The Curator: **Projects** → open a project → **+ Connect an agent** → **Claude Desktop**, and
+   on **Connect it on this computer** click **Install for me**, then **Apply**. *(The same install is
+   still in **Settings → MCP bridge**, section **Agent harnesses** — tick Claude Desktop, **Install
+   for me**, **Apply**.)*
+3. Open Claude Desktop again, then click **Check again** in The Curator; its row should read
+   **Ready** once it has saved the project from this PC (in Settings › MCP bridge: **connected**).
 
-**Context → a project → Setup agrees (v4.1.2).** The project Setup check reads Claude Desktop's Windows
+**Projects → a project → Agents agrees (v4.1.2).** The project's setup check reads Claude Desktop's Windows
 settings file from every place the installer looks (under `%APPDATA%` and `%LOCALAPPDATA%`), and
 shows paths in those words, such as `%APPDATA%\Claude\claude_desktop_config.json`. Before v4.1.2 it
 looked only for the Mac's file and said "no config file found" after a successful install. On Windows
@@ -329,7 +333,8 @@ from each other.
    token. The app finds the browser install's sync history next to that folder and carries on with
    it, instead of starting a second history over the same files. If you later replace the token in
    one install, replace it in the other too.
-5. Press **Install for me** in **Settings → MCP bridge**, so Claude Desktop starts the app's bridge
+5. Press **Install for me** (**Projects → Connect an agent → Claude Desktop**, or **Settings → MCP
+   bridge**), so Claude Desktop starts the app's bridge
    instead of the browser install's (Claude Desktop holds one My Curator entry).
 
 **Run one of them at a time.** Two installs writing into one knowledge folder at once can get in
