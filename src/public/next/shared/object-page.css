@@ -36,6 +36,7 @@
   font: var(--weight-regular) var(--text-lg)/var(--leading-normal) var(--font-sans);
   color: var(--text-2);
 }
+.kit-op-strip { margin: var(--space-12) 0 0; }
 .kit-op-tabs { margin: var(--space-12) 0 var(--space-12); }
 .kit-op-body { min-width: 0; }
 

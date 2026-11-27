@@ -4,7 +4,7 @@
  * → body. No numbered sections.
  *
  *   objectPage({ identityDot?, kicker?, title, statusSentence?, primaryAction?,
- *                moreMenu?, tabs?, body? }) → HTML
+ *                moreMenu?, strip?, tabs?, body? }) → HTML
  *
  *   identityDot     an identity CLASS (shared/sidebar.js identitySlotClass) —
  *                   the domain's recorded slot, never a list position.
@@ -17,6 +17,9 @@
  *   primaryAction   TRUSTED HTML: one button (the kit's .btn-primary).
  *   moreMenu        TRUSTED HTML: the "···" menu (shared/listbox.js), where
  *                   rename/delete live with their confirms unchanged.
+ *   strip           TRUSTED HTML: an optional figure strip between the status
+ *                   sentence and the tabs (shared/overview.js renderOverview —
+ *                   Projects' Pro tiles, phase 2). Readings only, never a notice.
  *   tabs            TRUSTED HTML: shared/tabs.js tabs().
  *   body            TRUSTED HTML: the selected tab's panel (wrap it with
  *                   tabPanelAttrs()).
@@ -63,6 +66,7 @@ export function objectPage(o) {
         (acts ? '<div class="kit-op-acts">' + acts + '</div>' : '') +
       '</header>' +
       (status ? '<p class="kit-op-status">' + escapeHtml(status) + '</p>' : '') +
+      (opts.strip ? '<div class="kit-op-strip">' + opts.strip + '</div>' : '') +
       (opts.tabs ? '<div class="kit-op-tabs">' + opts.tabs + '</div>' : '') +
       (opts.body ? '<div class="kit-op-body">' + opts.body + '</div>' : '') +
     '</article>';

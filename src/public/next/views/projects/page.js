@@ -133,8 +133,7 @@ export function renderProjectsPage(m) {
   const pageInfo = explainerMark('prj-page-info', 'context.page', { here: 'agent-memory' });
   const quiet = pro ? '' : '<p class="prj-quiet">' + esc(MORE_IN_PRO_LINE)
     + ' <button type="button" class="prj-link" data-prj-act="pro-on">Turn on Pro ›</button></p>';
-  const body = (pro && m.tilesHtml ? m.tilesHtml : '')
-    + '<div class="prj-panel"' + tabPanelAttrs(TABS_ID, m.tab) + ' data-prj-panel="' + esc(m.tab) + '">' + tabLede(m.tab) + (m.panelHtml || '') + '</div>'
+  const body = '<div class="prj-panel"' + tabPanelAttrs(TABS_ID, m.tab) + ' data-prj-panel="' + esc(m.tab) + '">' + tabLede(m.tab) + (m.panelHtml || '') + '</div>'
     + quiet;
   return '<div class="prj-page" data-prj-mode="' + (pro ? 'pro' : 'simple') + '">' + objectPage({
     identityDot: m.identityDot || '',
@@ -143,6 +142,9 @@ export function renderProjectsPage(m) {
     statusSentence: m.sentence,
     primaryAction: '<button type="button" class="btn btn-primary" id="prj-connect" data-prj-act="connect">+ Connect an agent</button>',
     moreMenu: (m.menuHtml || '') + pageInfo.btn,
+    // Pro's tile strip sits between the status sentence and the tabs (the
+    // approved mockup): readings about the whole project, above every tab.
+    strip: pro && m.tilesHtml ? m.tilesHtml : '',
     tabs: strip,
     body: pageInfo.panel + body,
   }) + '</div>';

@@ -169,6 +169,15 @@ src/
                     install of the my-curator entry (gate: same-origin `Origin` required, macOS only)
     diagnostics.js— GET /api/diagnostics/quick (free), POST /api/diagnostics/live (opt-in AI ping)
   public/         — vanilla JS frontend (no build step; Settings tab hosts the MCP bridge (status card, tools installer), System Check panel, Health tab, the first-run panel)
+    next/views/projects/ — phase 2 (2026-11-27): THE PROJECTS PAGE (rail word "Projects"; view id
+                    still `memory`). model.js — pure, DOM-free: what the page SAYS (the closed harness
+                    status mapping from setup-step.js harnessRowModel, the one status sentence, every
+                    notice, the connect checklist, History/Agents/Computers rows, the Pro tiles,
+                    "not logged"). page.js — DOM-free markup from kit parts only (object page, tabs,
+                    rows, chips, notices, tables; EMBEDDED_FLOWS is the closed list of today's editors
+                    it hosts). projects.css — layout only (`prj-*`). views/memory.js keeps the state,
+                    requests and listeners and gathers them into the models (`prj*Model`).
+                    Guards: scripts/test-projects-page.js; browser: scripts/e2e-projects.mjs.
     next/shared/overview.js — renderOverview() (v3.64.2): the ONE overview card, rendered by BOTH
                     the Domains page's OVERVIEW and the Context page's three-layer readings; kit
                     classes `cur-ov-*` carry every rule, the domain page's nine historical `dm-*`

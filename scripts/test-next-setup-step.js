@@ -474,7 +474,7 @@ section('§13 the explainer');
   const e = EXPLAINERS['context.setup'];
   ok(!!e && e.title === 'Setup', 'context.setup is an explainer titled Setup');
   const all = [e.lead, ...(e.points || []).map((p) => p.text), e.try || '', ...((e.visual && e.visual.rows) || []).flat()].join(' ');
-  ok(/\*\*Re-check\*\* reads the files/.test(all), 'Re-check reads the files again; the agent harnesses need not be running');
+  ok(/\*\*Check again\*\* reads the files/.test(all), 'Check again (the one verb, phase 2) reads the files again; the agent harnesses need not be running');
   ok(/code checkout, not your knowledge folder; set per computer/.test(all), 'the repository: a code checkout, separate from the knowledge folder, per computer');
   ok(/two installs on one Mac count once/.test(all), 'Computers: installs on one Mac are grouped');
   ok(/whole knowledge folder, every domain/.test(all), 'Sync now syncs the whole knowledge folder');

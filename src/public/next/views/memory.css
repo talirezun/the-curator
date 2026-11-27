@@ -2306,6 +2306,9 @@
   min-width: 0;
 }
 .mem-ss-ctl-label { font-size: var(--text-sm); color: var(--text-2); white-space: nowrap; }
+/* Phase 2 (Projects › Budget): the three pickers' row, now a block of its own
+   (the step head it used to sit in is gone). */
+.mem-ss-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-8); }
 .mem-window-btn { min-width: 9ch; }
 .mem-harness-btn { min-width: 12ch; }
 .mem-ss-meter {

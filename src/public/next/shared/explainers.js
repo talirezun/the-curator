@@ -56,7 +56,7 @@ const E = {
   'context.overview': {
     label: 'About the readings on this page',
     title: 'Overview',
-    lead: 'Six readings, one per part of this page. Press one to jump to its step.',
+    lead: 'Six readings about this project, in Pro’s tile strip. Each tab says the rest.',
     visual: {
       type: 'table',
       caption: 'The six readings',
@@ -85,9 +85,9 @@ const E = {
       type: 'table',
       caption: 'The three start states',
       rows: [
-        ['read first', 'handed over at every start'],
-        ['on request', 'listed; opened by name when needed'],
-        ['not at start', 'kept, but not listed'],
+        ['Always read', 'handed over at every start'],
+        ['When needed', 'listed; opened by name when needed'],
+        ['Hidden', 'kept, but not listed'],
       ],
     },
     points: [
@@ -95,7 +95,7 @@ const E = {
       { icon: 'refresh', text: 'A **mirrored** document follows its original; change it there.' },
       { icon: 'pencil', text: 'Documents you write or copy in are yours to edit here.' },
     ],
-    try: 'Mark one or two documents **read first** — most projects need no more.',
+    try: 'Mark one or two documents **Always read** — most projects need no more.',
     guide: { key: 'context.documents', heading: 'Documents — the files that travel with a project' },
   },
 
@@ -157,10 +157,10 @@ const E = {
   'context.setup': {
     label: 'About Setup',
     title: 'Setup',
-    lead: '**Setup** checks each agent harness (the app your agent runs in) reaches this project. **Re-check** reads the files.',
+    lead: '**Agents** checks each harness (the app your agent runs in) reaches this project. **Check again** reads the files.',
     visual: {
       type: 'table',
-      caption: 'How each part reaches another computer (each is a fold with Pro on)',
+      caption: 'How each part reaches another computer (Pro: the Computers tab)',
       head: ['', 'What', 'Travels by'],
       rows: [
         ['Computers', 'handoffs, the brief', 'Sync now'],
@@ -903,6 +903,8 @@ export const FRAMING = {
 export const SCREEN_WORDS = [
   'the brief', 'The brief', 'Documents', 'Memory', 'Knowledge', 'Handoffs', 'Journal',
   'Agent connections', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
+  // Phase 2 (Projects): the page's own words.
+  'Always read', 'When needed', 'Hidden', 'Agents', 'Starting kit', 'Now', 'History', 'Budget',
   'Window', 'Reading budget', 'Documents at start', 'Copy agent instructions',
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',

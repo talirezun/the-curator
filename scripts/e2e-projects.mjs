@@ -111,8 +111,13 @@ try {
   };
   const shot = async (name) => {
     if (!SHOTS) return;
+    // Toasts and the app-wide provider-news banner are transient and are not the page.
+    await page.evaluate(() => document.querySelectorAll('#model-retirement-banner').forEach((t) => { t.style.display = 'none'; }));
     // Toasts are transient and can carry provider news; they are not the page.
     await page.evaluate(() => document.querySelectorAll('.cur-toast, [data-toast]').forEach((t) => { t.style.display = 'none'; }));
+    // At phone width the Pro tile strip fills the first screen; a 375 px shot
+    // scrolls the tab strip to the top so the tab's own content is in frame.
+    if (/-375$/.test(name)) await page.evaluate(() => { const t = document.querySelector('.kit-op-tabs'); if (t) t.scrollIntoView({ block: 'start' }); });
     await delay(150);
     const { data } = await page.send('Page.captureScreenshot', { format: 'png' });
     writeFileSync(path.join(SHOTS, name + '.png'), Buffer.from(data, 'base64'));
@@ -210,7 +215,7 @@ try {
     && !document.querySelector('.prj-page [data-pro-mark], .prj-page [data-pro-drawn]')));
   await tab('now');
   step('Pro › now: the note, plus its facts as a table (work-stream, harness, model, computer, size, file)', await page.evaluate(() =>
-    !!document.querySelector('[data-prj-panel="now"] .prj-handoff-body') && /Work-stream/.test((document.querySelector('#prj-now-facts') || {}).textContent || '')));
+    !!document.querySelector('[data-prj-panel="now"] .prj-handoff-body') && /Work-stream/.test((document.querySelector('[data-kit-table="prj-now-facts"]') || {}).textContent || '')));
   await shot('pro-now-dark');
   for (const id of ['agents', 'history', 'budget', 'computers']) {
     await tab(id);
@@ -259,6 +264,7 @@ try {
     await delay(400);
   }
   // Pro off while on a Pro-only tab → Now.
+  await tab('history');
   await setPro(false);
   step('turning Pro off on a Pro-only tab falls back to Now', await page.evaluate(() => !!document.querySelector('[data-prj-panel="now"]')));
 

@@ -64,7 +64,9 @@ export function noticeTitle(text, max = 12) {
   const cut = Math.max(head.lastIndexOf(' ('), head.lastIndexOf('; '), head.lastIndexOf(', '), head.lastIndexOf(' — '));
   const at = cut > 20 ? cut : head.length;
   const title = first.slice(0, at).replace(/[,;(—\s]+$/, '') + '.';
-  const rest = first.slice(at).replace(/^[\s,;—]+/, '').replace(/^\((.*)\)\.?$/, '$1.');
+  const rest0 = first.slice(at).replace(/^[\s,;—]+/, '').replace(/^\((.*)\)\.?$/, '$1.');
+  // The line reads as its own sentence: "not its own name…" → "Not its own name…".
+  const rest = rest0 ? rest0.charAt(0).toUpperCase() + rest0.slice(1) : rest0;
   return [title, [rest, after].filter(Boolean).join(' ')];
 }
 
