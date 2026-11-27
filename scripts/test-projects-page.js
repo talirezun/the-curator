@@ -115,6 +115,17 @@ section('§1 the harness rows — the closed status vocabulary');
   ok(by.antigravity.action === null, 'a row whose fix is said in a notice carries no fix button of its own (the fix appears once)', JSON.stringify(by.antigravity.action));
   ok(by.antigravity.meta.startsWith('Its skills are out of date') && !by.antigravity.meta.includes('older than the copy this app carries'),
     '...and its meta is a SHORT reason, not the notice\'s sentence', by.antigravity.meta);
+  {
+    // A fix whose first action is a BUTTON (copy the instructions): the notice
+    // has it, the row does not (the fixture's skills fix is a download link,
+    // which a row never carried).
+    const d2 = demo();
+    d2.toFix = [{ tool: 'claude-code', kind: 'block-outdated', text: 'Claude Code’s instructions are older than this app’s.', fixes: [{ kind: 'copy-block', label: 'Copy instructions' }] }];
+    const r2 = M.harnessRows(d2).find((r) => r.id === 'claude-code');
+    const n2 = M.toFixNotices(d2)[0];
+    ok(r2.action === null && n2.actions[0].attrs['data-setup-act'] === 'copy-block', 'a button fix is on the notice only — the row carries none (it appears once)', JSON.stringify([r2.action, n2.actions]));
+    ok(r2.meta.startsWith('Its instructions are out of date, so it may skip saving'), '...and the row says the short reason', r2.meta);
+  }
   const nAg = M.toFixNotices(demo()).find((n) => n.tool === 'antigravity');
   ok(nAg && nAg.actions.length >= 1, '...while the notice still carries the fix', JSON.stringify(nAg && nAg.actions));
   ok(M.shortReason({ kind: 'block-outdated' }) === 'Its instructions are out of date, so it may skip saving' && M.shortReason({ kind: 'nope' }) === '',
@@ -777,6 +788,23 @@ section('§17 v4.3.0 fix round — must-fix 6–9 and review item 3/4/5/7/9/11, 
   ok(/\.cur-sb-figure \{ flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis/.test(pc), 'item 5: the sidebar meta gives way before the dot');
   ok(/@media \(max-width: 900px\) \{[\s\S]*?\.kit-table-caption \{ display: block; width: 100%/.test(readFileSync(join(ROOT, 'src/public/next/shared/table.css'), 'utf8')), 'item 11: a caption is its own line where tables stack');
   ok(/'No projects yet'/.test(mv) && !/No project context yet/.test(mv), 'item 10: "No projects yet"');
+}
+
+section('§18 should-fix — one source per figure; the Simple note reader');
+{
+  const mv = readFileSync(join(ROOT, 'src/public/next/views/memory.js'), 'utf8');
+  const i = mv.indexOf('function prjBudgetModel(');
+  const body = mv.slice(i, mv.indexOf('\n}\n', i));
+  ok(/meterTokens\.has\(l\.key\) \? meterTokens\.get\(l\.key\)/.test(body), 'Budget\'s layer table takes each layer\'s tokens from the meter (one source: the bar and the table agree)');
+  const j = mv.indexOf('function handoffReaderContent(');
+  const rd = mv.slice(j, mv.indexOf('\n}\n', j));
+  ok(/'saved on this computer'/.test(rd) && /hideBacklinks: true/.test(rd), 'Simple\'s note reader: plain words for the computer, no backlinks block');
+  ok(M.historyRows([{ scope: 'a', writtenAt: new Date(Date.now() - 60e3).toISOString() }])[0].seconds >= 59, 'CONTROL: history rows carry their age');
+  const h = P.historyPanel({ rows: M.historyRows([{ scope: 'a', writtenAt: new Date(Date.now() - 60e3).toISOString() }, { scope: 'b', writtenAt: new Date(Date.now() - 3600e3).toISOString() }]), harnesses: ['Claude Code'] });
+  ok(/aria-sort="descending"/.test(h) && h.indexOf('data-kit-row="note:a') < h.indexOf('data-kit-row="note:b'), 'History: newest first, and announced "descending" (it said ascending)');
+  ok(/The latest note of each work-stream, per computer/.test(h) && /1 harness</.test(h), 'History says what it lists, and "1 harness" (not "1 harnesses")');
+  const cl = P.checklistHtml(M.connectChecklist({ harnessRows: [], setup: { tools: [] } }));
+  ok(/Three steps/.test(cl) && JSON.stringify([...cl.matchAll(/prj-step-num" aria-hidden="true">([^<]+)</g)].map((x) => x[1])) === '["✓","1","2","3"]', '"Three steps" and three numbers (the project already exists: ✓)');
 }
 
 console.log('\n' + (fail ? '✗' : '✓') + ' test-projects-page: ' + pass + ' passed, ' + fail + ' failed');

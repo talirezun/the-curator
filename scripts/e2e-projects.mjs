@@ -174,6 +174,15 @@ try {
   step('one quiet "More in Pro" line, and no PRO label anywhere', await page.evaluate(() => document.querySelectorAll('.prj-quiet').length === 1
     && !document.querySelector('.prj-page [data-pro-mark], .prj-page [data-pro-drawn], .prj-page [data-detail="pro"]')));
   await shot('simple-now-dark');
+  // The Simple note reader says the agent and the computer in plain words (e2e polish).
+  await click('[data-prj-act="open-note"]');
+  await until('the note reader', () => !!document.querySelector('#reader-root .mem-reader-doc'), null, 10000);
+  await delay(300);
+  step('Simple: the note reader shows no raw "handoff:" / "machine:" metadata and no backlinks', await page.evaluate(() => {
+    const t = document.getElementById('reader-root').innerText;
+    return !/handoff:|machine:/i.test(t) && !/backlinks/i.test(t); }), await page.evaluate(() => document.getElementById('reader-root').innerText.slice(0, 200).replace(/\s+/g, ' ')));
+  await key('Escape', 'Escape', 27);
+  await delay(400);
 
   // Tabs by keyboard: focus the selected tab, → moves AND selects.
   await page.evaluate(() => document.getElementById('prj-tab-now').focus());
@@ -235,111 +244,6 @@ try {
   step('Edit on the Brief row opens today\'s editor, focus in the text', (await active()).id === 'mem-brief-text', JSON.stringify(await active()));
   await click('#mem-brief-cancel');
   await delay(300);
-
-  // ── 1b. v4.3.0 fix round — the must-fix behaviours, in Simple ─────────────
-  await tab('agents');
-  // Review items 1–2 and e2e M6: the toolbar connects; a fix appears once; the folder prompt is an optional notice.
-  step('Simple › Agents: the toolbar says "+ Connect an agent" (no "+ Add an agent harness")', await page.evaluate(() =>
-    !!document.querySelector('#prj-agents-connect') && !document.querySelector('[data-prj-panel="agents"] #mem-setup-add')));
-  step('a row whose fix is in a notice carries a SHORT reason and no fix button (the fix appears once)', await page.evaluate(() => {
-    const notices = [...document.querySelectorAll('[data-prj-panel="agents"] .kit-notice-title')].map((n) => n.textContent);
-    const rows = [...document.querySelectorAll('[data-prj-panel="agents"] .kit-row')];
-    return rows.every((r) => { const meta = (r.querySelector('.kit-row-meta') || {}).textContent || ''; return !notices.some((t) => t.length > 20 && meta.includes(t.replace(/\.$/, ''))); });
-  }));
-  step('the folder prompt is a kit notice, optional for a project without code', await page.evaluate(() =>
-    [...document.querySelectorAll('[data-prj-panel="agents"] .kit-notice')].some((n) => /If this project has a folder on this/.test(n.textContent) && /without code can skip/.test(n.textContent))));
-  // e2e M4: focus after Check again stays on the control, never body.
-  await page.evaluate(() => document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"]').focus());
-  await page.evaluate(() => document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"]').click());
-  await delay(2500);
-  step('after Check again, focus is on Check again (never body)', await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-setup-act') === 'check'),
-    JSON.stringify(await active()));
-  // e2e M3: a background paint never shuts an open menu, never takes a field.
-  await click('#prj-more');
-  await until('the ··· menu', () => document.getElementById('prj-more').getAttribute('aria-expanded') === 'true');
-  agentSave('claude-code', 'A SAVE WHILE THE MENU IS OPEN');
-  await wake();
-  await delay(3000);
-  step('a background refresh does NOT close an open menu (···)', await page.evaluate(() => document.getElementById('prj-more').getAttribute('aria-expanded') === 'true'));
-  await click('#prj-more');   // the trigger toggles the menu shut
-  await until('the menu to close', () => document.getElementById('prj-more').getAttribute('aria-expanded') !== 'true', null, 4000).catch(() => null);
-  await until('the deferred paint after the menu closes', () => /just now/.test(document.querySelector('.kit-op-status').textContent), null, 15000).catch(() => null);
-  step('...and the deferred paint lands once it closes', await page.evaluate(() => /just now/.test(document.querySelector('.kit-op-status').textContent)),
-    await page.evaluate(() => document.querySelector('.kit-op-status').textContent));
-  if (await click('[data-prj-panel="agents"] .kit-notice [data-setup-act="choose-repo"]')) {
-    await until('the folder field', () => !!document.getElementById('mem-setup-repo-input'), null, 5000).catch(() => null);
-    await page.evaluate(() => { const f = document.getElementById('mem-setup-repo-input'); if (f) { f.focus(); f.value = '/tmp/typing-here'; } });
-    agentSave('claude-code', 'A SAVE WHILE TYPING');
-    await wake();
-    await delay(3000);
-    step('a background refresh never takes focus from a field the user is in', await page.evaluate(() =>
-      document.activeElement && document.activeElement.id === 'mem-setup-repo-input' && document.activeElement.value === '/tmp/typing-here'),
-      await page.evaluate(() => JSON.stringify({ a: document.activeElement && (document.activeElement.id || document.activeElement.tagName), f: !!document.getElementById('mem-setup-repo-input') })));
-    await page.evaluate(() => { const f = document.getElementById('mem-setup-repo-input'); if (f) f.blur(); });
-    await delay(1200);
-  }
-  // Audit B1: a NEW work-stream saved after mount becomes the Now card's note.
-  await tab('now');
-  agentSave('session-after-mount', 'A NEW WORK-STREAM AFTER MOUNT');
-  await wake();
-  await until('the new work-stream on the Now card', () => /A NEW WORK-STREAM AFTER MOUNT/.test((document.querySelector('.prj-handoff-body') || {}).textContent || ''), null, 15000).catch(() => null);
-  step('B1: a work-stream added after mount is fetched and shown on Now (never stuck on "Reading the note…")', await page.evaluate(() =>
-    /A NEW WORK-STREAM AFTER MOUNT/.test((document.querySelector('.prj-handoff-body') || {}).textContent || '') && !document.querySelector('.prj-handoff-body [aria-busy="true"]')));
-  // e2e M7: delete says whose notes, the card is AT the press and in view, Keep it returns focus.
-  const delLabel = await page.evaluate(() => (document.querySelector('[data-prj-panel="now"] [data-ws-delete]') || {}).textContent || '');
-  step('the Now card\'s delete says whose notes it deletes', /^Delete .+’s notes…$|^Delete the notes saved as/.test(delLabel), delLabel);
-  await page.evaluate(() => document.querySelector('[data-prj-panel="now"] [data-ws-delete]').click());
-  await until('the delete card', () => !!document.querySelector('.mem-wsdel-card') && !document.querySelector('.mem-wsdel-card [disabled]#mem-ws-del-no'), null, 8000);
-  await delay(600);
-  step('the confirm card renders AT the note (before Earlier notes) and is in view, its field focused', await page.evaluate(() => {
-    const card = document.querySelector('.mem-wsdel-card'); const earlier = [...document.querySelectorAll('.prj-h')].find((h) => /Earlier notes/.test(h.textContent));
-    const r = card.getBoundingClientRect();
-    return (!earlier || (card.compareDocumentPosition(earlier) & Node.DOCUMENT_POSITION_FOLLOWING)) && r.top < innerHeight && r.bottom > 0
-      && document.activeElement && document.activeElement.id === 'mem-ws-del-input';
-  }));
-  step('...and shows the name to type as visible text', await page.evaluate(() => !!document.querySelector('.mem-wsdel-card code.mem-wsdel-name')));
-  await click('#mem-ws-del-no');
-  await delay(500);
-  step('Keep it puts focus back on the Delete press (never body)', await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-ws-delete')),
-    JSON.stringify(await active()));
-  // Audit M1: over the window is said in Simple.
-  await page.evaluate(async () => { await fetch('/api/config/context-window', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contextWindowTokens: 8000, harnessEstimateTokens: 6000 }) }); });
-  await page.evaluate(() => location.reload());
-  await until('the page again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 30000);
-  await delay(1500);
-  await tab('kit');
-  await until('the measurement', () => !!document.querySelector('[data-prj-panel="kit"] .prj-meter'), null, 15000).catch(() => null);
-  step('M1: Simple › Starting kit says "Over the window by …" when the start does not fit', await page.evaluate(() => /Over the window by ≈/.test(document.querySelector('[data-prj-panel="kit"]').textContent)));
-  step('the reading-budget picker is beside the bar, in Simple', await page.evaluate(() => !!document.querySelector('[data-prj-panel="kit"] #mem-budget-lb')));
-  await page.evaluate(async () => { await fetch('/api/config/context-window', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contextWindowTokens: 200000, harnessEstimateTokens: null }) }); });
-  await page.evaluate(() => location.reload());
-  await until('the page again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 30000);
-  await delay(1200);
-  await tab('kit');
-  await click('[data-kit-row-open="kit:documents"]');
-  await delay(600);
-  step('Simple: the Documents row opens the list — each with its At-start picker, Edit, Delete', await page.evaluate(() =>
-    document.querySelectorAll('[data-kit-table="prj-docs"] [data-fnd-first] [data-lb-trigger]').length >= 1
-    && document.querySelectorAll('[data-kit-table="prj-docs"] [data-fnd-delete]').length >= 1));
-  // e2e M4: Save brief by keyboard → focus on the Brief's Edit, and the next Tab stays on the page.
-  await click('[data-prj-act="brief-edit"]');
-  await until('the brief editor', () => !!document.getElementById('mem-brief-text'));
-  await page.evaluate(() => { const t = document.getElementById('mem-brief-text'); t.value = t.value + '\nOne more line.'; t.dispatchEvent(new Event('input', { bubbles: true })); t.focus(); });
-  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 's', code: 'KeyS', modifiers: 4, windowsVirtualKeyCode: 83 });
-  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 's', code: 'KeyS', modifiers: 4, windowsVirtualKeyCode: 83 });
-  await until('the save to land', () => !document.getElementById('mem-brief-text'), null, 10000).catch(() => null);
-  await delay(800);
-  step('after Save brief, focus is on the Brief\'s Edit (never body)', await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-prj-act') === 'brief-edit'),
-    JSON.stringify(await active()));
-  // e2e M2: + New project lands on a working form with focus in it.
-  await click('#mem-new-project');
-  await until('the Domains create form', () => !!document.getElementById('dm-proj-name') && document.activeElement && document.activeElement.id === 'dm-proj-name', null, 15000).catch(() => null);
-  step('+ New project lands on the create form, focus in its name field, in view', await page.evaluate(() => {
-    const el = document.getElementById('dm-proj-name'); if (!el || document.activeElement !== el) return false;
-    const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), JSON.stringify(await active()));
-  await page.evaluate(() => { const b = document.querySelector('.rail [data-view="memory"], [data-rail="memory"], #rail-btn-memory'); if (b) b.click(); });
-  await until('Projects again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 20000);
-  await delay(800);
 
   // ── 2. Pro ────────────────────────────────────────────────────────────────
   await setPro(true);
@@ -450,6 +354,114 @@ try {
     step('375 px, Simple › ' + id + ': no sideways scroll', await noSideways());
     await shot('simple-' + id + '-375');
   }
+  // ── 4b. v4.3.0 fix round — the must-fix behaviours, in Simple (AFTER the
+  //        acceptance shots: these steps write saves and change settings) ──
+  await page.setViewport(1360, 1000, 1);
+  await setPro(false);
+  await tab('agents');
+  // Review items 1–2 and e2e M6: the toolbar connects; a fix appears once; the folder prompt is an optional notice.
+  step('Simple › Agents: the toolbar says "+ Connect an agent" (no "+ Add an agent harness")', await page.evaluate(() =>
+    !!document.querySelector('#prj-agents-connect') && !document.querySelector('[data-prj-panel="agents"] #mem-setup-add')));
+  step('a row whose fix is in a notice carries a SHORT reason and no fix button (the fix appears once)', await page.evaluate(() => {
+    const notices = [...document.querySelectorAll('[data-prj-panel="agents"] .kit-notice-title')].map((n) => n.textContent);
+    const rows = [...document.querySelectorAll('[data-prj-panel="agents"] .kit-row')];
+    return rows.every((r) => { const meta = (r.querySelector('.kit-row-meta') || {}).textContent || ''; return !notices.some((t) => t.length > 20 && meta.includes(t.replace(/\.$/, ''))); });
+  }));
+  step('the folder prompt is a kit notice, optional for a project without code', await page.evaluate(() =>
+    [...document.querySelectorAll('[data-prj-panel="agents"] .kit-notice')].some((n) => /If this project has a folder on this/.test(n.textContent) && /without code can skip/.test(n.textContent))));
+  // e2e M4: focus after Check again stays on the control, never body.
+  await page.evaluate(() => document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"]').focus());
+  await page.evaluate(() => document.querySelector('[data-prj-panel="agents"] [data-setup-act="check"]').click());
+  await delay(2500);
+  step('after Check again, focus is on Check again (never body)', await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-setup-act') === 'check'),
+    JSON.stringify(await active()));
+  // e2e M3: a background paint never shuts an open menu, never takes a field.
+  await click('#prj-more');
+  await until('the ··· menu', () => document.getElementById('prj-more').getAttribute('aria-expanded') === 'true');
+  agentSave('claude-code', 'A SAVE WHILE THE MENU IS OPEN');
+  await wake();
+  await delay(3000);
+  step('a background refresh does NOT close an open menu (···)', await page.evaluate(() => document.getElementById('prj-more').getAttribute('aria-expanded') === 'true'));
+  await click('#prj-more');   // the trigger toggles the menu shut
+  await until('the menu to close', () => document.getElementById('prj-more').getAttribute('aria-expanded') !== 'true', null, 4000).catch(() => null);
+  await until('the deferred paint after the menu closes', () => /just now/.test(document.querySelector('.kit-op-status').textContent), null, 15000).catch(() => null);
+  step('...and the deferred paint lands once it closes', await page.evaluate(() => /just now/.test(document.querySelector('.kit-op-status').textContent)),
+    await page.evaluate(() => document.querySelector('.kit-op-status').textContent));
+  if (await click('[data-prj-panel="agents"] .kit-notice [data-setup-act="choose-repo"]')) {
+    await until('the folder field', () => !!document.getElementById('mem-setup-repo-input'), null, 5000).catch(() => null);
+    await page.evaluate(() => { const f = document.getElementById('mem-setup-repo-input'); if (f) { f.focus(); f.value = '/tmp/typing-here'; } });
+    agentSave('claude-code', 'A SAVE WHILE TYPING');
+    await wake();
+    await delay(3000);
+    step('a background refresh never takes focus from a field the user is in', await page.evaluate(() =>
+      document.activeElement && document.activeElement.id === 'mem-setup-repo-input' && document.activeElement.value === '/tmp/typing-here'),
+      await page.evaluate(() => JSON.stringify({ a: document.activeElement && (document.activeElement.id || document.activeElement.tagName), f: !!document.getElementById('mem-setup-repo-input') })));
+    await page.evaluate(() => { const f = document.getElementById('mem-setup-repo-input'); if (f) f.blur(); });
+    await delay(1200);
+  }
+  // Audit B1: a NEW work-stream saved after mount becomes the Now card's note.
+  await tab('now');
+  agentSave('session-after-mount', 'A NEW WORK-STREAM AFTER MOUNT');
+  await wake();
+  await until('the new work-stream on the Now card', () => /A NEW WORK-STREAM AFTER MOUNT/.test((document.querySelector('.prj-handoff-body') || {}).textContent || ''), null, 15000).catch(() => null);
+  step('B1: a work-stream added after mount is fetched and shown on Now (never stuck on "Reading the note…")', await page.evaluate(() =>
+    /A NEW WORK-STREAM AFTER MOUNT/.test((document.querySelector('.prj-handoff-body') || {}).textContent || '') && !document.querySelector('.prj-handoff-body [aria-busy="true"]')));
+  // e2e M7: delete says whose notes, the card is AT the press and in view, Keep it returns focus.
+  const delLabel = await page.evaluate(() => (document.querySelector('[data-prj-panel="now"] [data-ws-delete]') || {}).textContent || '');
+  step('the Now card\'s delete says whose notes it deletes', /^Delete .+’s notes…$|^Delete the notes saved as/.test(delLabel), delLabel);
+  await page.evaluate(() => document.querySelector('[data-prj-panel="now"] [data-ws-delete]').click());
+  await until('the delete card', () => !!document.querySelector('.mem-wsdel-card') && !document.querySelector('.mem-wsdel-card [disabled]#mem-ws-del-no'), null, 8000);
+  await delay(600);
+  step('the confirm card renders AT the note (before Earlier notes) and is in view, its field focused', await page.evaluate(() => {
+    const card = document.querySelector('.mem-wsdel-card'); const earlier = [...document.querySelectorAll('.prj-h')].find((h) => /Earlier notes/.test(h.textContent));
+    const r = card.getBoundingClientRect();
+    return (!earlier || (card.compareDocumentPosition(earlier) & Node.DOCUMENT_POSITION_FOLLOWING)) && r.top < innerHeight && r.bottom > 0
+      && document.activeElement && document.activeElement.id === 'mem-ws-del-input';
+  }));
+  step('...and shows the name to type as visible text', await page.evaluate(() => !!document.querySelector('.mem-wsdel-card code.mem-wsdel-name')));
+  await click('#mem-ws-del-no');
+  await delay(500);
+  step('Keep it puts focus back on the Delete press (never body)', await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-ws-delete')),
+    JSON.stringify(await active()));
+  // Audit M1: over the window is said in Simple.
+  await page.evaluate(async () => { await fetch('/api/config/context-window', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contextWindowTokens: 8000, harnessEstimateTokens: 6000 }) }); });
+  await page.evaluate(() => location.reload());
+  await until('the page again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 30000);
+  await delay(1500);
+  await tab('kit');
+  await until('the measurement', () => !!document.querySelector('[data-prj-panel="kit"] .prj-meter'), null, 15000).catch(() => null);
+  step('M1: Simple › Starting kit says "Over the window by …" when the start does not fit', await page.evaluate(() => /Over the window by ≈/.test(document.querySelector('[data-prj-panel="kit"]').textContent)));
+  step('the reading-budget picker is beside the bar, in Simple', await page.evaluate(() => !!document.querySelector('[data-prj-panel="kit"] #mem-budget-lb')));
+  await page.evaluate(async () => { await fetch('/api/config/context-window', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contextWindowTokens: 200000, harnessEstimateTokens: null }) }); });
+  await page.evaluate(() => location.reload());
+  await until('the page again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 30000);
+  await delay(1200);
+  await tab('kit');
+  await click('[data-kit-row-open="kit:documents"]');
+  await delay(600);
+  step('Simple: the Documents row opens the list — each with its At-start picker, Edit, Delete', await page.evaluate(() =>
+    document.querySelectorAll('[data-kit-table="prj-docs"] [data-fnd-first] [data-lb-trigger]').length >= 1
+    && document.querySelectorAll('[data-kit-table="prj-docs"] [data-fnd-delete]').length >= 1));
+  // e2e M4: Save brief by keyboard → focus on the Brief's Edit, and the next Tab stays on the page.
+  await click('[data-prj-act="brief-edit"]');
+  await until('the brief editor', () => !!document.getElementById('mem-brief-text'));
+  await page.evaluate(() => { const t = document.getElementById('mem-brief-text'); t.value = t.value + '\nOne more line.'; t.dispatchEvent(new Event('input', { bubbles: true })); t.focus(); });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 's', code: 'KeyS', modifiers: 4, windowsVirtualKeyCode: 83 });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 's', code: 'KeyS', modifiers: 4, windowsVirtualKeyCode: 83 });
+  await until('the save to land', () => !document.getElementById('mem-brief-text'), null, 10000).catch(() => null);
+  await delay(800);
+  step('after Save brief, focus is on the Brief\'s Edit (never body)', await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-prj-act') === 'brief-edit'),
+    JSON.stringify(await active()));
+  // e2e M2: + New project lands on a working form with focus in it.
+  await click('#mem-new-project');
+  await until('the Domains create form', () => !!document.getElementById('dm-proj-name') && document.activeElement && document.activeElement.id === 'dm-proj-name', null, 15000).catch(() => null);
+  step('+ New project lands on the create form, focus in its name field, in view', await page.evaluate(() => {
+    const el = document.getElementById('dm-proj-name'); if (!el || document.activeElement !== el) return false;
+    const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), JSON.stringify(await active()));
+  await page.evaluate(() => { const b = document.querySelector('.rail [data-view="memory"], [data-rail="memory"], #rail-btn-memory'); if (b) b.click(); });
+  await until('Projects again', () => !!document.querySelector('.prj-page [role="tablist"]'), null, 20000);
+  await delay(800);
+
   // ── 5. e2e M7: a real delete, then every count agrees ───────────────────
   await page.setViewport(1360, 1000, 1);
   await setPro(true);

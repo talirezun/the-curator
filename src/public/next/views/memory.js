@@ -4258,10 +4258,14 @@ function prjBudgetModel(read) {
     ? '<span class="mem-ss-budget-fixed">' + escapeHtml(owner === null ? 'Default' : presetName(owner)) + '</span>'
     : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true));
   const win = contextWindowNow();
-  const layers = data && Array.isArray(data.layers) ? data.layers.map((l) => ({
-    layer: l.label || l.key, tokens: fmtTokens(l.tokens || 0), tokenCount: l.tokens || 0,
-    size: fmtSize(l.bytes || 0), bytes: l.bytes || 0, share: ssPct(l.tokens || 0, win),
-  })) : [];
+  // ONE SOURCE per figure (e2e m6): a layer's tokens are the meter's own,
+  // so the table and the bar never disagree; the bytes are the route's.
+  const meterTokens = new Map(((data && data.meter && Array.isArray(data.meter.layers)) ? data.meter.layers : [])
+    .filter((l) => l && l.key && Number.isFinite(l.tokens)).map((l) => [l.key, l.tokens]));
+  const layers = data && Array.isArray(data.layers) ? data.layers.map((l) => {
+    const t = meterTokens.has(l.key) ? meterTokens.get(l.key) : (l.tokens || 0);
+    return { layer: l.label || l.key, tokens: fmtTokens(t), tokenCount: t, size: fmtSize(l.bytes || 0), bytes: l.bytes || 0, share: ssPct(t, win) };
+  }) : [];
   if (data && data.tokens && Number.isInteger(data.tokens.mcp)) {
     layers.push({ layer: 'Total at start', tokens: fmtTokens(data.tokens.mcp), tokenCount: data.tokens.mcp,
       size: fmtSize((data.bytes && data.bytes.mcp) || 0), bytes: (data.bytes && data.bytes.mcp) || 0,
@@ -5669,17 +5673,26 @@ function handoffReaderContent() {
     title: headline || (scope ? 'Handoff — ' + scope : 'Handoff'),
     type: 'memory',
     typeLabel: 'handoff',
-    tags: [
+    // e2e polish (v4.3.0 fix round): with Pro off the reader names the agent
+    // and the computer in plain words (the age is the readout above); Pro
+    // keeps the store's own names. `typeof` guards: this function is lifted
+    // by brace-matching into suites that do not supply the page's helpers.
+    tags: (typeof isPro === 'function' && isPro()) ? [
       scope ? 'handoff: ' + scope : null,
       machine ? 'machine: ' + machine : null,
       d.machineIsThisMachine === true ? 'this machine' : null,
       d.machineIsThisMachine === false ? 'synced from another machine' : null,
       cur && cur.truncated ? 'truncated at the read cap' : null,
       cur && cur.sanitisedOnRead ? 'sanitised on read' : null,
+    ].filter(Boolean) : [
+      typeof harnessOf === 'function' ? harnessOf(d) : null,
+      d.machineIsThisMachine === true ? 'saved on this computer'
+        : (machine ? 'saved on ' + (typeof prjMachineName === 'function' ? prjMachineName(machine) : machine) : null),
     ].filter(Boolean),
     readonly: !!d.readonly,
     bodyHtml,
     backlinks: [],
+    hideBacklinks: true,
     // ESCAPE AND THE ✕ PUT FOCUS BACK ON THE ROW. `mem-ws-active` is the id the
     // OPEN row carries — the row that was just pressed, by the time this closes
     // — and it is an id rather than a node because every render on this screen
